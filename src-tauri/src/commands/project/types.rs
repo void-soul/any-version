@@ -27,7 +27,7 @@ pub struct EnvVarDef {
 
 /// 路径解析模式
 #[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResolvePattern {
     /// 在 PATH 中查找包含指定路径关键字的条目
     PathContains { path_key: String, exe_name: String },
