@@ -137,10 +137,31 @@ pub struct ProjectDef {
     /// 停止命令
     pub stop_cmd: Option<String>,
 
-    /// 下载 URL 模板
+    /// 下载 URL 模板（用 {version} 占位符）
     pub download_url_template: Option<String>,
+    /// 下载文件扩展名 (zip / tar.gz / nupkg / exe)
+    #[serde(default)]
+    pub download_file_ext: Option<String>,
+    /// 解压后的子目录（如 python 的 "tools"）
+    #[serde(default)]
+    pub extract_subdir: Option<String>,
+    /// 版本前缀 → URL 模板映射（如 java 的 adoptium-/microsoft- 前缀）
+    #[serde(default)]
+    pub version_prefix_map: Option<std::collections::HashMap<String, String>>,
+    /// 版本前缀 → URL 模板映射（按版本号前缀匹配，如 mysql 的 5.7/8.0/8.4）
+    #[serde(default)]
+    pub version_url_prefix_map: Option<std::collections::HashMap<String, String>>,
+
     /// 远程版本列表 URL
+    #[serde(default)]
     pub remote_versions_url: Option<String>,
+    /// 远程版本获取配置
+    #[serde(default)]
+    pub remote_versions_config: Option<serde_json::Value>,
+
+    /// 安装后置配置
+    #[serde(default)]
+    pub post_install: Option<serde_json::Value>,
 }
 
 /// 环境变量运行时状态
@@ -257,3 +278,4 @@ pub struct ManagedProject {
     pub backup: ProjectBackup,
     pub state: String,
 }
+                                                    

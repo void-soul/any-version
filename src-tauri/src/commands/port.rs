@@ -127,6 +127,47 @@ fn find_port_owner(port_str: &str) -> Option<PortOwner> {
     })
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ReservedPortRange {
+    pub start: i32,
+    pub end: i32,
+    pub process: String,
+}
+
+#[tauri::command]
+pub fn get_reserved_ports() -> Result<Vec<ReservedPortRange>, String> {
+    let output = Command::new("netsh")
+        .args(&["int", "ipv4", "show", "excludedportrange", "protocol=tcp"])
+        .output()
+        .map_err(|e| format!("执行 netsh 失败: {}", e))?;
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut ranges = Vec::new();
+    let mut in_table = false;
+
+    for line in text.lines() {
+        let line_trimmed = line.trim();
+        if line_trimmed.contains("---") {
+            in_table = true;
+            continue;
+        }
+        if !in_table || line_trimmed.is_empty() {
+            continue;
+        }
+        let fields: Vec<&str> = line_trimmed.split_whitespace().collect();
+        if fields.len() < 2 {
+            continue;
+        }
+        if let (Ok(start), Ok(end)) = (fields[0].parse::<i32>(), fields[1].parse::<i32>()) {
+            let process = if fields.len() > 2 { fields[2..].join(" ") } else { String::new() };
+            ranges.push(ReservedPortRange { start, end, process });
+        }
+    }
+
+    ranges.sort_by_key(|r| r.start);
+    Ok(ranges)
+}
+
 #[tauri::command]
 pub fn check_port_status(port_str: String) -> Result<PortStatus, String> {
     let port = port_str.parse::<i32>().map_err(|_| "端口号无效".to_string())?;

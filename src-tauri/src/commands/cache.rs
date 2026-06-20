@@ -64,11 +64,13 @@ pub fn format_bytes(bytes: u64) -> String {
 
 pub fn create_junction(link_path: &Path, target_path: &Path) -> Result<(), String> {
     if link_path.exists() || link_path.is_symlink() {
-        if link_path.is_dir() && !fs::symlink_metadata(link_path).map(|m| m.file_type().is_symlink() || m.file_type().is_dir()).unwrap_or(false) {
-            fs::remove_dir_all(link_path).map_err(|e| e.to_string())?;
-        } else {
-            // Windows symlink / junction deletion
-            fs::remove_file(link_path).map_err(|e| e.to_string())?;
+        // Junctions are directory reparse points on Windows.
+        // fs::remove_dir removes the junction itself without deleting target contents.
+        // fs::remove_file would fail with Access Denied (os error 5) on a junction.
+        let _ = fs::remove_dir(link_path);
+        // Fallback: if remove_dir failed (e.g. it's a real dir, not a junction)
+        if link_path.exists() {
+            fs::remove_dir_all(link_path).map_err(|e| format!("删除旧链接失败: {}", e))?;
         }
     }
     if let Some(parent) = link_path.parent() {

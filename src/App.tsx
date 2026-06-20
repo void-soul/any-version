@@ -1,58 +1,81 @@
 import React, { useState, useEffect } from "react";
-import Sidebar from "./components/Sidebar";
 import ProjectManager from "./components/ProjectManager";
 import SystemTools from "./components/SystemTools";
 import GlobalSettings from "./components/GlobalSettings";
-import EnvBackupManager from "./components/EnvBackupManager"; // Environmental backups manager
 import { invoke } from "@tauri-apps/api/core";
-import { ShieldCheck, Info } from "lucide-react";
-
+import { Wrench, Settings, X } from "lucide-react";
 import "./App.css";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState("projects");
+  const [activeTab, setActiveTab] = useState<"projects" | "tools" | "settings">("projects");
 
-  // Call init command on mount to ensure directory structure and path env vars are initialized
   useEffect(() => {
     const initApp = async () => {
-      try {
-        const conf = await invoke("get_config");
-        console.log("AnyVersion initialized config: ", conf);
-      } catch (e) {
-        console.error("Initialization error: ", e);
-      }
+      try { await invoke("get_config"); } catch (e) { console.error("Init error:", e); }
     };
     initApp();
   }, []);
 
   return (
-    <div className="flex w-screen h-screen overflow-hidden bg-[#0d111d] text-slate-100 font-sans">
-      {/* Sidebar Navigation */}
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
-
-      {/* Main Content Area */}
-      <main className="flex-1 min-w-0 flex flex-col h-screen relative bg-gradient-to-br from-[#0d111d] via-[#101627] to-[#0a0e1a]">
-        {/* Glow background effects */}
-        <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-blue-600/5 blur-[120px] pointer-events-none"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] rounded-full bg-blue-500/5 blur-[150px] pointer-events-none"></div>
-
-        {/* Dynamic page content */}
-        <div className="flex-1 relative z-10">
-          <div className={activeTab === "projects" ? "h-full w-full" : "hidden"}>
-            <ProjectManager />
+    <div className="w-screen h-screen overflow-hidden bg-[#0d111d] text-slate-100 font-sans flex flex-col">
+      {/* top bar */}
+      <div className="flex-shrink-0 flex items-center justify-between px-4 py-1.5 border-b border-white/5 bg-white/[0.02] z-50">
+        <div className="flex items-center gap-2">
+          <div className="w-5 h-5 rounded bg-blue-600 flex items-center justify-center">
+            <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
           </div>
+          <span className="text-[11px] font-semibold text-white tracking-wide">AnyVersion</span>
+        </div>
+        <div className="flex items-center gap-0.5 bg-white/5 border border-white/5 rounded-lg p-0.5">
+          <button
+            onClick={() => setActiveTab(activeTab === "tools" ? "projects" : "tools")}
+            className={`px-2.5 py-1 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+              activeTab === "tools" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+            }`}
+          >
+            <Wrench className="w-3 h-3" />
+            系统工具
+          </button>
+          <button
+            onClick={() => setActiveTab(activeTab === "settings" ? "projects" : "settings")}
+            className={`px-2.5 py-1 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+              activeTab === "settings" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+            }`}
+          >
+            <Settings className="w-3 h-3" />
+            设置
+          </button>
+        </div>
+      </div>
 
-          <div className={activeTab === "tools" ? "h-full w-full" : "hidden"}>
+      {/* content */}
+      <div className="flex-1 min-h-0 relative">
+        <div className={activeTab === "projects" ? "h-full w-full" : "hidden"}>
+          <ProjectManager />
+        </div>
+        {activeTab === "tools" && (
+          <div className="h-full w-full flex flex-col">
+            <div className="flex justify-end px-4 pt-2 flex-shrink-0">
+              <button onClick={() => setActiveTab("projects")} className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-slate-200 cursor-pointer" title="返回">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
             <SystemTools />
           </div>
-          <div className={activeTab === "backups" ? "h-full w-full" : "hidden"}>
-            <EnvBackupManager />
-          </div>
-          <div className={activeTab === "settings" ? "h-full w-full" : "hidden"}>
+        )}
+        {activeTab === "settings" && (
+          <div className="h-full w-full flex flex-col overflow-y-auto">
+            <div className="flex justify-end px-4 pt-2 flex-shrink-0">
+              <button onClick={() => setActiveTab("projects")} className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-slate-200 cursor-pointer" title="返回">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
             <GlobalSettings />
           </div>
-        </div>
-      </main>
+        )}
+      </div>
     </div>
   );
 }

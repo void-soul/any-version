@@ -137,7 +137,7 @@ pub fn project_manage(id: String) -> Result<(), String> {
     }
 
     // 5. 添加 bin 路径到 PATH
-    let bin_paths = get_bin_paths_for_manage(&def.id, &link_str);
+    let bin_paths = scanner::get_bin_paths(&def.id, &link_str);
     if !bin_paths.is_empty() {
         let _ = add_to_user_path(&bin_paths);
     }
@@ -178,7 +178,7 @@ pub fn project_unmanage(id: String) -> Result<(), String> {
     // 2. 从 PATH 中移除 AnyVersion 添加的条目
     let link_dir = std::path::Path::new(&config.links_dir).join(&id);
     let link_str = link_dir.to_string_lossy().to_string();
-    let bin_paths = get_bin_paths_for_manage(&def.id, &link_str);
+    let bin_paths = scanner::get_bin_paths(&def.id, &link_str);
     if !bin_paths.is_empty() {
         let _ = remove_from_user_path(&bin_paths);
     }
@@ -200,34 +200,6 @@ pub fn project_unmanage(id: String) -> Result<(), String> {
     crate::commands::config::save_config(&config)?;
 
     Ok(())
-}
-
-/// 获取 SDK 的可执行目录列表（用于 PATH 管理，与 scanner 中逻辑一致）
-fn get_bin_paths_for_manage(sdk_id: &str, link_dir: &str) -> Vec<String> {
-    match sdk_id {
-        "go" | "java" | "flutter" | "maven" | "gradle" | "harmony" | "cuda" | "ffmpeg" => {
-            vec![format!("{}\\bin", link_dir)]
-        }
-        "python" => {
-            vec![link_dir.to_string(), format!("{}\\Scripts", link_dir)]
-        }
-        "rust" => {
-            vec![format!("{}\\.cargo\\bin", link_dir)]
-        }
-        "android" => {
-            vec![
-                format!("{}\\cmdline-tools\\latest\\bin", link_dir),
-                format!("{}\\platform-tools", link_dir),
-            ]
-        }
-        "nodejs" | "bun" | "yarn" | "pnpm" | "nginx" | "redis" => {
-            vec![link_dir.to_string()]
-        }
-        "mysql" | "mongodb" | "postgresql" => {
-            vec![format!("{}\\bin", link_dir)]
-        }
-        _ => vec![],
-    }
 }
 
 /// 执行 shell 命令并捕获输出（用于包管理器版本检测、镜像切换等）
@@ -300,3 +272,4 @@ pub fn migrate_pkg_cache(cache_detect_cmd: String, new_path: String) -> Result<(
     }
     crate::commands::cache::migrate_cache_path_raw(&cache_path, &new_path)
 }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        

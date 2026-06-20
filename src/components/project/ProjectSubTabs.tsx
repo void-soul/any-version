@@ -62,6 +62,10 @@ export interface SubTabProps {
   onServiceToggle: () => void;
   // 刷新
   onRefresh: () => void;
+  /** 操作进行中，禁用按钮 */
+  isOperating?: boolean;
+  /** 当前活跃标签页 */
+  activeSubTab?: string;
 }
 
 // ═══════════════════════════════════════
@@ -73,6 +77,7 @@ export function VersionsTab({
   downloadProgress, installStep,
   localVersion, localPath, registering, registerErr,
   onLocalVersionChange, onLocalPathChange, onRegisterLocal,
+  isOperating,
 }: SubTabProps) {
   return (
     <div className="space-y-6">
@@ -149,7 +154,10 @@ export function VersionsTab({
 
       {/* 已安装版本 */}
       <div className="space-y-3">
-        <h4 className="text-xs font-semibold text-slate-300">本地已安装版本</h4>
+        <div>
+          <h4 className="text-xs font-semibold text-slate-300">本地已安装版本</h4>
+          <p className="text-[10px] text-slate-500 mt-0.5">已下载到本机的版本，点击「启用」可切换当前使用的版本。</p>
+        </div>
         {!project.installed_versions || project.installed_versions.length === 0 ? (
           <p className="text-[11px] text-slate-500">尚未安装任何版本。请从下方远程版本列表安装。</p>
         ) : (
@@ -175,14 +183,16 @@ export function VersionsTab({
                     {!isActive && (
                       <button
                         onClick={() => onUse(v)}
-                        className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400 hover:text-slate-200 text-[10px] cursor-pointer transition-all flex items-center gap-0.5"
+                        disabled={isOperating}
+                        className="p-1.5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-slate-400 hover:text-slate-200 text-[10px] cursor-pointer transition-all flex items-center gap-0.5"
                       >
                         <Check className="w-3.5 h-3.5" /> 启用
                       </button>
                     )}
                     <button
                       onClick={() => onUninstall(v)}
-                      className="p-1.5 hover:bg-red-500/10 hover:text-red-400 rounded-lg text-slate-500 cursor-pointer transition-all"
+                      disabled={isOperating}
+                      className="p-1.5 hover:bg-red-500/10 hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-slate-500 cursor-pointer transition-all"
                       title="卸载此版本"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -197,7 +207,10 @@ export function VersionsTab({
 
       {/* 远程版本安装 */}
       <div className="space-y-3 border-t border-white/5 pt-4">
-        <h4 className="text-xs font-semibold text-slate-300">在线安装远程版本</h4>
+        <div>
+          <h4 className="text-xs font-semibold text-slate-300">在线安装远程版本</h4>
+          <p className="text-[10px] text-slate-500 mt-0.5">从官方服务器下载并安装新版本，选择版本后点击「一键安装」即可。</p>
+        </div>
         {loadingRemote ? (
           <div className="flex items-center gap-2 text-slate-400 text-xs py-2">
             <RefreshCw className="w-4 h-4 animate-spin text-blue-400" />
@@ -216,7 +229,7 @@ export function VersionsTab({
                 const sel = document.getElementById("remote-version-select") as HTMLSelectElement;
                 if (sel?.value) onInstall(sel.value);
               }}
-              disabled={installingVersion !== null}
+              disabled={installingVersion !== null || isOperating}
               className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-md shadow-blue-500/10 cursor-pointer transition-all flex items-center gap-1.5"
             >
               <Download className="w-3.5 h-3.5" />
@@ -278,8 +291,11 @@ export function EnvVarsTab({ project }: SubTabProps) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-slate-300">项目关联环境变量</span>
-        <span className="text-[10px] text-slate-500">{vars.length} 个变量</span>
+        <div>
+          <span className="text-xs font-semibold text-slate-300">项目关联环境变量</span>
+          <span className="text-[10px] text-slate-500 ml-1.5">{vars.length} 个变量</span>
+          <p className="text-[10px] text-slate-500 mt-0.5">环境变量告诉系统这个工具安装在哪里、怎么找到它。托管后会自动配置。</p>
+        </div>
       </div>
       {vars.length === 0 ? (
         <div className="p-8 text-center text-slate-500">
@@ -440,7 +456,10 @@ export function PackagesTab({ packages, loadingPackages, upgradingPackage, packa
   return (
     <div className="space-y-4 flex flex-col h-full min-h-0">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-slate-300">全局依赖包列表</span>
+        <div>
+          <span className="text-xs font-semibold text-slate-300">全局依赖包列表</span>
+          <p className="text-[10px] text-slate-500 mt-0.5">查看当前安装的所有全局包，可一键升级到最新版本。</p>
+        </div>
         <button
           onClick={onRefreshPackages}
           disabled={loadingPackages}
@@ -627,6 +646,9 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle 
 //  包管理器管理
 // ═══════════════════════════════════════
 export function PkgMgrTab({ def }: SubTabProps) {
+  const [detectStep, setDetectStep] = useState("");
+  const [detectIndex, setDetectIndex] = useState(0);
+  const [detectTotal, setDetectTotal] = useState(0);
   const [pkgStatuses, setPkgStatuses] = useState<Record<string, { installed: boolean; version: string | null }>>({});
   const [cacheInfos, setCacheInfos] = useState<Record<string, { path: string; size: string; is_link: boolean; real_target: string }>>({});
   const [checking, setChecking] = useState(false);
@@ -642,42 +664,69 @@ export function PkgMgrTab({ def }: SubTabProps) {
     setChecking(true);
     const result: Record<string, { installed: boolean; version: string | null }> = {};
     const caches: Record<string, { path: string; size: string; is_link: boolean; real_target: string }> = {};
+
+    // 构建检测队列：每个包管理器的版本检测 + 缓存检测各算一步
+    const steps: Array<{ label: string; run: () => Promise<void> }> = [];
     for (const mgr of managers) {
-      // 版本检测
-      if (mgr.version_cmd) {
-        try {
-          const output = await invoke<string>("run_cmd_capture", { cmd: mgr.version_cmd });
-          result[mgr.id] = { installed: true, version: output.trim() };
-        } catch {
-          result[mgr.id] = { installed: false, version: null };
-        }
-      } else {
-        result[mgr.id] = { installed: false, version: null };
-      }
-      // 缓存检测
-      if (mgr.cache_detect_cmd) {
-        try {
-          const info = await invoke<{ path: string; size: string; is_link: boolean; real_target: string }>("get_pkg_cache_info", { cmd: mgr.cache_detect_cmd });
-          caches[mgr.id] = info;
-          // 初始化迁移目标路径
-          if (!cacheTargets[mgr.id] && !info.is_link) {
-            const drive = info.path.match(/^([A-Za-z]):\\/);
-            if (drive && drive[1].toUpperCase() === "C") {
-              setCacheTargets(prev => ({ ...prev, [mgr.id]: `D:\\any-version-caches\\${mgr.id}` }));
+      steps.push({
+        label: `正在检测 ${mgr.display_name} 版本...`,
+        run: async () => {
+          if (mgr.version_cmd) {
+            try {
+              const output = await invoke<string>("run_cmd_capture", { cmd: mgr.version_cmd });
+              result[mgr.id] = { installed: true, version: output.trim() };
+            } catch {
+              result[mgr.id] = { installed: false, version: null };
             }
+          } else {
+            result[mgr.id] = { installed: false, version: null };
           }
-        } catch {
-          // 缓存检测失败，忽略
-        }
+          setPkgStatuses({ ...result });
+        },
+      });
+      if (mgr.cache_detect_cmd || mgr.cache_default_path) {
+        steps.push({
+          label: `正在检测 ${mgr.display_name} 缓存路径...`,
+          run: async () => {
+            if (mgr.cache_detect_cmd) {
+              try {
+                const info = await invoke<{ path: string; size: string; is_link: boolean; real_target: string }>("get_pkg_cache_info", { cmd: mgr.cache_detect_cmd });
+                caches[mgr.id] = info;
+                if (!cacheTargets[mgr.id] && !info.is_link) {
+                  const drive = info.path.match(/^([A-Za-z]):\\/);
+                  if (drive && drive[1].toUpperCase() === "C") {
+                    setCacheTargets(prev => ({ ...prev, [mgr.id]: `D:\\any-version-caches\\${mgr.id}` }));
+                  }
+                }
+              } catch {
+                // 缓存检测失败，忽略
+              }
+            }
+            setCacheInfos({ ...caches });
+          },
+        });
       }
     }
-    setPkgStatuses(result);
-    setCacheInfos(caches);
+
+    setDetectTotal(steps.length);
+    for (let i = 0; i < steps.length; i++) {
+      setDetectIndex(i + 1);
+      setDetectStep(steps[i].label);
+      await steps[i].run();
+    }
+    setDetectStep("");
+    setDetectIndex(0);
+    setDetectTotal(0);
     setChecking(false);
   };
 
+  // 懒加载：仅当标签页可见且尚未检测过时才执行
+  const [hasChecked, setHasChecked] = useState(false);
   useEffect(() => {
-    checkInstalled();
+    if (def?.id && !hasChecked && !checking) {
+      setHasChecked(true);
+      checkInstalled();
+    }
   }, [def?.id]);
 
   const handleInstall = async (mgr: PackageManagerDef) => {
@@ -726,6 +775,18 @@ export function PkgMgrTab({ def }: SubTabProps) {
     }
   };
 
+  const handleBrowseFolder = async (mgrId: string) => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({ directory: true, title: "选择缓存迁移目标文件夹" });
+      if (selected) {
+        setCacheTargets(prev => ({ ...prev, [mgrId]: selected as string }));
+      }
+    } catch {
+      alert("文件夹选择器不可用，请手动输入路径。");
+    }
+  };
+
   if (managers.length === 0) {
     return (
       <div className="p-8 text-center text-slate-500">
@@ -741,8 +802,26 @@ export function PkgMgrTab({ def }: SubTabProps) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Package className="w-4 h-4 text-blue-400" />
-          <span className="text-xs font-semibold text-slate-300">包管理器</span>
-          <span className="text-[10px] text-slate-500">{managers.length} 个</span>
+          <div>
+            <span className="text-xs font-semibold text-slate-300">包管理器</span>
+            <span className="text-[10px] text-slate-500 ml-1.5">{managers.length} 个</span>
+            <p className="text-[10px] text-slate-500 mt-0.5">检测并管理该语言的包管理工具（如 npm、pip），可查看和迁移缓存路径。</p>
+            {detectStep && (
+              <div className="mt-1.5 space-y-1">
+                <div className="flex items-center gap-2">
+                  <Loader className="w-3 h-3 animate-spin text-blue-400" />
+                  <span className="text-[10px] text-blue-300 font-medium">{detectStep}</span>
+                  <span className="text-[9px] text-slate-500">{detectIndex}/{detectTotal}</span>
+                </div>
+                <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                    style={{ width: `${(detectIndex / detectTotal) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
         <button
           onClick={checkInstalled}
@@ -753,7 +832,7 @@ export function PkgMgrTab({ def }: SubTabProps) {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="space-y-3">
         {managers.map((mgr) => {
           const st = pkgStatuses[mgr.id];
           const isInstalled = st?.installed ?? false;
@@ -790,7 +869,7 @@ export function PkgMgrTab({ def }: SubTabProps) {
 
               {/* 操作按钮 */}
               {!isInstalled && mgr.install_cmd && (
-                        <button
+                <button
                   onClick={() => handleInstall(mgr)}
                   disabled={isInstallingThis}
                   className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-[10px] font-semibold cursor-pointer transition-all flex items-center justify-center gap-1.5"
@@ -799,6 +878,65 @@ export function PkgMgrTab({ def }: SubTabProps) {
                   {isInstallingThis ? "正在安装..." : "安装"}
                 </button>
               )}
+
+              {/* 缓存路径管理 */}
+              {(mgr.cache_detect_cmd || mgr.cache_default_path) && (() => {
+                const ci = cacheInfos[mgr.id];
+                const displayPath = ci?.path || mgr.cache_default_path || "";
+                const isLink = ci?.is_link ?? false;
+                const realTarget = ci?.real_target ?? "";
+                return (
+                <div className="pt-2 border-t border-white/5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-slate-400 font-semibold uppercase tracking-wider">缓存路径</span>
+                    <div className="flex items-center gap-1.5">
+                      {ci?.size && (
+                        <span className="font-mono text-[9px] text-slate-300 bg-black/20 px-1.5 py-0.5 rounded">{ci.size}</span>
+                      )}
+                      {isLink && (
+                        <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[8px] font-medium flex items-center gap-0.5">
+                          <Link className="w-2 h-2" /> 已重定向
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <p className="font-mono text-[10px] text-slate-300 truncate" title={displayPath}>
+                    {displayPath || "未检测到"}
+                  </p>
+                  {isLink && realTarget && (
+                    <p className="font-mono text-[9px] text-blue-400 flex items-center gap-1">
+                      <ArrowRight className="w-2.5 h-2.5" /> 实际位置: {realTarget}
+                    </p>
+                  )}
+                  {!isLink && mgr.cache_detect_cmd && (
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={cacheTargets[mgr.id] || ""}
+                        onChange={(e) => setCacheTargets(prev => ({ ...prev, [mgr.id]: e.target.value }))}
+                        className="flex-1 glass-input px-2 py-1.5 text-[10px] font-mono"
+                        placeholder="迁移目标路径..."
+                      />
+                      <button
+                        onClick={() => handleBrowseFolder(mgr.id)}
+                        className="p-1.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-md border border-white/5 cursor-pointer transition-all"
+                        title="选择文件夹"
+                      >
+                        <FolderOpen className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleMigrateCache(mgr)}
+                        disabled={migratingCache === mgr.id || !cacheTargets[mgr.id]}
+                        className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-md text-[9px] font-semibold cursor-pointer transition-all flex items-center gap-0.5 flex-shrink-0"
+                      >
+                        <FolderSync className="w-3 h-3" />
+                        {migratingCache === mgr.id ? "迁移中" : "迁移"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+                );
+              })()}
             </div>
           );
         })}

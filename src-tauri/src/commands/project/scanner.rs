@@ -420,7 +420,7 @@ fn build_service_status(def: &ProjectDef, junction_path: &Path) -> Option<Servic
 }
 
 /// 获取 SDK 的可执行目录列表（用于 PATH 管理）
-fn get_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
+pub fn get_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
     match sdk_id {
         "go" | "java" | "flutter" | "maven" | "gradle" | "harmony" | "cuda" | "ffmpeg" => {
             vec![format!("{}\\bin", link_dir)]

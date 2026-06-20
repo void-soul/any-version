@@ -4,6 +4,7 @@ pub mod commands;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::config::get_config,
             commands::config::update_config,
@@ -20,6 +21,7 @@ pub fn run() {
             commands::hosts::write_hosts,
             commands::port::check_port_status,
             commands::port::kill_port_owner,
+            commands::port::get_reserved_ports,
             commands::pkg::get_global_packages,
             commands::pkg::upgrade_global_package,
             commands::mirror::get_mirrors_list,
@@ -42,6 +44,4 @@ pub fn run() {
             commands::project::versions::project_use_version,
             commands::project::versions::project_register_local,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
-}
+        

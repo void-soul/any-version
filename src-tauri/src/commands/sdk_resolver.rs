@@ -16,7 +16,6 @@
 //! 每种 SDK 在 sdk_registry.rs 中定义一组 FindRule，按优先级排列。
 //! 本模块的 find_sdk_root() 按优先级依次尝试，返回第一个匹配的结果。
 
-use std::fs;
 use std::path::{Path, PathBuf};
 use serde::{Serialize, Deserialize};
 
@@ -288,3 +287,4 @@ fn get_all_path_values() -> Vec<String> {
     }
     result
 }
+             

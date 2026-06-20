@@ -38,6 +38,15 @@ export interface PackageManagerDef {
   pkg_list_cmd: string | null;
   mirror_cmd_template: string | null;
   mirror_options: Array<{ mirror_type: string; name: string; url: string }> | null;
+  // 缓存路径
+  cache_default_path: string | null;
+  cache_env_var: string | null;
+  cache_set_cmd_template: string | null;
+  // 数据文件路径
+  data_detect_cmd: string | null;
+  data_default_path: string | null;
+  data_env_var: string | null;
+  data_set_cmd_template: string | null;
 }
 
 export interface ProjectStatus {

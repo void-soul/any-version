@@ -6,7 +6,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use serde::{Serialize, Deserialize};
+use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use crate::commands::config::{load_config, get_base_dir};
 
@@ -24,213 +24,237 @@ pub struct DownloadProgress {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  远程版本 API 响应结构
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-#[derive(Deserialize)]
-struct GoRelease {
-    version: String,
-    stable: bool,
-}
-
-#[derive(Deserialize)]
-struct NodeRelease {
-    version: String,
-    lts: serde_json::Value,
-}
-
-#[derive(Deserialize)]
-struct NugetVersions {
-    versions: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct GithubRelease {
-    tag_name: String,
-}
-
-#[derive(Deserialize)]
-struct AdoptiumReleases {
-    releases: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct ZuluPackage {
-    download_url: String,
-    java_version: Vec<i32>,
-    name: String,
-}
-
-#[derive(Deserialize)]
-struct FlutterReleaseJSON {
-    releases: Vec<FlutterRelease>,
-}
-
-#[derive(Deserialize)]
-struct FlutterRelease {
-    version: String,
-    channel: String,
-    archive: String,
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  Tauri 命令
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/// 获取远程版本列表
+/// 获取远程版本列表（从 projects.json 的 remote_versions_config 读取配置）
 #[tauri::command]
 pub async fn project_list_remote_versions(id: String) -> Result<Vec<String>, String> {
+    let def = super::registry::find_by_id(&id)
+        .ok_or_else(|| format!("未找到项目: {}", id))?;
+
+    let config = def.remote_versions_config.as_ref()
+        .ok_or_else(|| format!("未配置远程版本: {}", id))?;
+
     let client = reqwest::Client::builder()
         .user_agent("Any-Version-Manager")
+        .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| e.to_string())?;
 
-    match id.as_str() {
-        "go" => {
-            let releases: Vec<GoRelease> = client.get("https://go.dev/dl/?mode=json&include=all")
-                .send().await.map_err(|e| e.to_string())?
-                .json().await.map_err(|e| e.to_string())?;
-            let versions = releases.into_iter()
-                .filter(|r| r.stable)
-                .map(|r| r.version.trim_start_matches("go").to_string())
-                .take(100)
-                .collect();
+    let config_type = config.get("type").and_then(|v| v.as_str()).unwrap_or("static");
+
+    match config_type {
+        "static" => {
+            let versions = config.get("versions")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
             Ok(versions)
         }
-        "nodejs" => {
-            let releases: Vec<NodeRelease> = client.get("https://nodejs.org/dist/index.json")
-                .send().await.map_err(|e| e.to_string())?
-                .json().await.map_err(|e| e.to_string())?;
-            let versions = releases.into_iter()
-                .map(|r| {
-                    let v = r.version.trim_start_matches('v').to_string();
-                    let lts_label = if r.lts.is_boolean() && r.lts.as_bool().unwrap_or(false) {
-                        " (LTS)".to_string()
-                    } else if r.lts.is_string() {
-                        format!(" (LTS: {})", r.lts.as_str().unwrap_or_default())
-                    } else {
-                        "".to_string()
-                    };
-                    format!("{}{}", v, lts_label)
-                })
-                .take(120)
-                .collect();
-            Ok(versions)
-        }
-        "python" => {
-            let data: NugetVersions = client.get("https://api.nuget.org/v3-flatcontainer/python/index.json")
-                .send().await.map_err(|e| e.to_string())?
-                .json().await.map_err(|e| e.to_string())?;
-            let mut versions: Vec<String> = data.versions.into_iter()
-                .filter(|v| !v.contains('-'))
-                .collect();
-            versions.reverse();
-            versions.truncate(100);
-            Ok(versions)
-        }
-        "bun" => {
-            let releases: Vec<GithubRelease> = client.get("https://api.github.com/repos/oven-sh/bun/releases")
-                .send().await.map_err(|e| e.to_string())?
-                .json().await.map_err(|e| e.to_string())?;
-            let versions = releases.into_iter()
-                .map(|r| r.tag_name.trim_start_matches("bun-v").trim_start_matches('v').to_string())
-                .collect();
-            Ok(versions)
-        }
-        "rust" => {
-            let releases: Vec<GithubRelease> = client.get("https://api.github.com/repos/rust-lang/rust/releases")
-                .send().await.map_err(|e| e.to_string())?
-                .json().await.map_err(|e| e.to_string())?;
-            let versions = releases.into_iter()
-                .filter(|r| !r.tag_name.contains('-'))
-                .map(|r| r.tag_name.clone())
-                .collect();
-            Ok(versions)
-        }
-        "flutter" => {
-            let data: FlutterReleaseJSON = client.get("https://storage.googleapis.com/flutter_infra_release/releases/releases_windows.json")
-                .send().await.map_err(|e| e.to_string())?
-                .json().await.map_err(|e| e.to_string())?;
-            let versions = data.releases.into_iter()
-                .filter(|r| r.channel == "stable")
-                .map(|r| r.version)
-                .collect();
-            Ok(versions)
-        }
-        "java" => {
-            let mut versions = Vec::new();
-            // Adoptium 版本
-            for major in &["21", "17", "11", "8"] {
-                let adopt_url = format!("https://api.adoptium.net/v3/info/release_names?project=jdk&release_type=ga&os=windows&architecture=x64&image_type=jdk&version=[{},{})", major, major.parse::<i32>().unwrap() + 1);
-                if let Ok(res) = client.get(&adopt_url).send().await {
-                    if let Ok(data) = res.json::<AdoptiumReleases>().await {
-                        for r in data.releases.into_iter().take(5) {
-                            versions.push(format!("adoptium-{}", r.trim_start_matches("jdk-")));
-                        }
-                    }
-                }
-            }
-            // Azul Zulu
-            let zulu_url = "https://api.azul.com/metadata/v1/zulu/packages/?os=windows&arch=amd64&archive_type=zip&java_package_type=jdk&release_status=ga&latest=true&page_size=20";
-            if let Ok(res) = client.get(zulu_url).send().await {
-                if let Ok(pkgs) = res.json::<Vec<ZuluPackage>>().await {
-                    for pkg in pkgs {
-                        if pkg.name.contains("-ca-jdk") {
-                            let v = pkg.java_version.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(".");
-                            versions.push(format!("zulu-{}", v));
-                        }
-                    }
-                }
-            }
-            versions.push("microsoft-21".to_string());
-            versions.push("microsoft-17".to_string());
-            versions.push("oracle-21".to_string());
-            versions.push("oracle-17".to_string());
-            Ok(versions)
-        }
-        "android" => {
-            // Android 命令行工具：常见稳定构建号
-            Ok(vec![
-                "13114758".to_string(),
-                "11076708".to_string(),
-                "10406996".to_string(),
-                "9477386".to_string(),
-                "8512546".to_string(),
-            ])
-        }
-        "harmony" => {
-            // OpenHarmony / 鸿蒙：常见发行版本号
-            Ok(vec![
-                "5.0.5".to_string(),
-                "5.0.3".to_string(),
-                "4.1.0".to_string(),
-                "4.0.0".to_string(),
-            ])
-        }
-        "cuda" => {
-            // CUDA Toolkit：常用版本供参考
-            Ok(vec!["12.6.3".to_string(), "12.5.1".to_string(), "12.4.1".to_string(), "12.2.2".to_string(), "11.8.0".to_string()])
-        }
-        "ffmpeg" => {
-            // FFmpeg Windows 构建来自 gyan.dev 或 BtbN
-            Ok(vec!["7.1.1".to_string(), "7.1".to_string(), "7.0.2".to_string(), "6.1.2".to_string(), "6.0".to_string()])
-        }
-        "nginx" => Ok(vec!["1.26.1".to_string(), "1.26.0".to_string(), "1.24.0".to_string(), "1.22.1".to_string()]),
-        "redis" => Ok(vec!["5.0.14.1".to_string(), "3.0.504".to_string()]),
-        "mysql" => Ok(vec!["8.0.36".to_string(), "8.4.0".to_string(), "5.7.44".to_string()]),
-        "mongodb" => Ok(vec!["7.0.5".to_string(), "6.0.13".to_string(), "5.0.24".to_string()]),
-        "postgresql" => Ok(vec!["16.2".to_string(), "15.6".to_string(), "14.11".to_string()]),
-        "maven" => Ok(vec!["3.9.6".to_string(), "3.8.8".to_string(), "3.6.3".to_string()]),
-        "gradle" => Ok(vec!["8.6".to_string(), "8.5".to_string(), "7.6.4".to_string()]),
-        "yarn" => Ok(vec!["1.22.19".to_string(), "3.8.1".to_string()]),
-        "pnpm" => Ok(vec!["9.0.5".to_string(), "8.15.4".to_string()]),
-        _ => Err(format!("不支持的项目类别: {}", id)),
+        "json_api" => fetch_json_api(&client, config, def.remote_versions_url.as_deref()).await,
+        "multi_source" => fetch_multi_source(&client, config).await,
+        _ => Err(format!("不支持的远程版本类型: {}", config_type)),
     }
 }
+
+async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, url_override: Option<&str>) -> Result<Vec<String>, String> {
+    let url = if let Some(u) = url_override {
+        u
+    } else if let Some(u) = config.get("url").and_then(|v| v.as_str()) {
+        u
+    } else {
+        return Err("缺少 url 配置".to_string());
+    };
+    let max_count = config.get("max_count").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+    let response_type = config.get("response_type").and_then(|v| v.as_str()).unwrap_or("array");
+    let version_field = config.get("version_field").and_then(|v| v.as_str()).unwrap_or("version");
+    let version_transform = config.get("version_transform").and_then(|v| v.as_str()).unwrap_or("");
+    let filter_field = config.get("filter_field").and_then(|v| v.as_str());
+    let filter_value = config.get("filter_value");
+    let filter_contains_not = config.get("filter_contains_not").and_then(|v| v.as_str());
+    let reverse = config.get("reverse").and_then(|v| v.as_bool()).unwrap_or(false);
+    let extra_field = config.get("extra_field").and_then(|v| v.as_str());
+
+    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+
+    let items: Vec<serde_json::Value> = match response_type {
+        "array" => body.as_array().cloned().unwrap_or_default(),
+        "object_with_array" => {
+            let arr_field = config.get("array_field").and_then(|v| v.as_str()).unwrap_or("versions");
+            body.get(arr_field).and_then(|v| v.as_array()).cloned().unwrap_or_default()
+        }
+        "object_with_nested_array" => {
+            let arr_field = config.get("array_field").and_then(|v| v.as_str()).unwrap_or("releases");
+            body.get(arr_field).and_then(|v| v.as_array()).cloned().unwrap_or_default()
+        }
+        _ => return Err(format!("不支持的 response_type: {}", response_type)),
+    };
+
+    let mut versions: Vec<String> = Vec::new();
+    for item in &items {
+        if let Some(ff) = filter_field {
+            if let Some(fv) = filter_value {
+                let item_val = item.get(ff);
+                if let Some(fv_bool) = fv.as_bool() {
+                    if item_val.and_then(|v| v.as_bool()).unwrap_or(false) != fv_bool { continue; }
+                } else if let Some(fv_str) = fv.as_str() {
+                    if item_val.and_then(|v| v.as_str()).unwrap_or("") != fv_str { continue; }
+                }
+            }
+        }
+
+        let raw_version = if response_type == "object_with_array" {
+            item.as_str().map(String::from).unwrap_or_default()
+        } else {
+            item.get(version_field).and_then(|v| {
+                if v.is_string() { v.as_str().map(String::from) }
+                else if v.is_array() {
+                    Some(v.as_array().unwrap().iter().map(|n| n.to_string()).collect::<Vec<_>>().join("."))
+                } else { Some(v.to_string()) }
+            }).unwrap_or_default()
+        };
+
+        if raw_version.is_empty() { continue; }
+        if let Some(fc) = filter_contains_not {
+            if raw_version.contains(fc) { continue; }
+        }
+
+        let mut ver = apply_transform(&raw_version, version_transform);
+
+        if let Some(ef) = extra_field {
+            if let Some(extra_val) = item.get(ef) {
+                let extra_format = config.get("extra_format").and_then(|v| v.as_str()).unwrap_or("");
+                if extra_format == "lts_label" {
+                    if extra_val.is_boolean() && extra_val.as_bool().unwrap_or(false) {
+                        ver = format!("{} (LTS)", ver);
+                    } else if extra_val.is_string() {
+                        let lts_name = extra_val.as_str().unwrap_or("");
+                        if !lts_name.is_empty() && lts_name != "false" {
+                            ver = format!("{} (LTS: {})", ver, lts_name);
+                        }
+                    }
+                }
+            }
+        }
+        versions.push(ver);
+    }
+
+    if reverse { versions.reverse(); }
+    versions.truncate(max_count);
+    Ok(versions)
+}
+
+async fn fetch_multi_source(client: &reqwest::Client, config: &serde_json::Value) -> Result<Vec<String>, String> {
+    let mut all_versions: Vec<String> = Vec::new();
+
+    if let Some(statics) = config.get("static_versions").and_then(|v| v.as_array()) {
+        for v in statics {
+            if let Some(s) = v.as_str() { all_versions.push(s.to_string()); }
+        }
+    }
+
+    if let Some(sources) = config.get("sources").and_then(|v| v.as_array()) {
+        let futures: Vec<_> = sources.iter().map(|source| {
+            let c = client.clone();
+            let source = source.clone();
+            async move {
+                let url = if let Some(url_template) = source.get("url_template").and_then(|v| v.as_str()) {
+                    let versions = source.get("versions").and_then(|v| v.as_array());
+                    if let Some(vers) = versions {
+                        let mut results = Vec::new();
+                        for v in vers {
+                            if let Some(ver_str) = v.as_str() {
+                                let next: i32 = ver_str.parse().unwrap_or(0) + 1;
+                                let u = url_template.replace("{major}", ver_str).replace("{next}", &next.to_string());
+                                if let Some(r) = fetch_single_source(&c, &source, &u).await {
+                                    results.extend(r);
+                                }
+                            }
+                        }
+                        return results;
+                    }
+                    return Vec::new();
+                } else if let Some(u) = source.get("url").and_then(|v| v.as_str()) {
+                    u.to_string()
+                } else {
+                    return Vec::new();
+                };
+                fetch_single_source(&c, &source, &url).await.unwrap_or_default()
+            }
+        }).collect();
+
+        let results = futures_util::future::join_all(futures).await;
+        for mut r in results { all_versions.append(&mut r); }
+    }
+
+    Ok(all_versions)
+}
+
+async fn fetch_single_source(client: &reqwest::Client, source: &serde_json::Value, url: &str) -> Option<Vec<String>> {
+    let resp = client.get(url).send().await.ok()?;
+    let body: serde_json::Value = resp.json().await.ok()?;
+
+    let response_type = source.get("response_type").and_then(|v| v.as_str()).unwrap_or("array");
+    let max_per = source.get("max_per_source").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+    let version_transform = source.get("version_transform").and_then(|v| v.as_str()).unwrap_or("");
+
+    let items: Vec<serde_json::Value> = match response_type {
+        "array" => body.as_array().cloned().unwrap_or_default(),
+        "object_with_array" => {
+            let arr_field = source.get("array_field").and_then(|v| v.as_str()).unwrap_or("releases");
+            body.get(arr_field).and_then(|v| v.as_array()).cloned().unwrap_or_default()
+        }
+        _ => return None,
+    };
+
+    let mut versions = Vec::new();
+    for item in items.iter().take(max_per) {
+        if let Some(ff) = source.get("filter_field").and_then(|v| v.as_str()) {
+            if let Some(fc) = source.get("filter_contains").and_then(|v| v.as_str()) {
+                let val = item.get(ff).and_then(|v| v.as_str()).unwrap_or("");
+                if !val.contains(fc) { continue; }
+            }
+        }
+        let raw = if response_type == "object_with_array" {
+            item.as_str().map(String::from).unwrap_or_default()
+        } else {
+            let vf = source.get("version_field").and_then(|v| v.as_str()).unwrap_or("version");
+            item.get(vf).and_then(|v| {
+                if v.is_string() { v.as_str().map(String::from) }
+                else if v.is_array() {
+                    let fmt = source.get("version_format").and_then(|f| f.as_str()).unwrap_or("");
+                    if fmt == "join_dots" {
+                        Some(v.as_array().unwrap().iter().map(|n| n.to_string()).collect::<Vec<_>>().join("."))
+                    } else { Some(v.to_string()) }
+                } else { Some(v.to_string()) }
+            }).unwrap_or_default()
+        };
+        if !raw.is_empty() { versions.push(apply_transform(&raw, version_transform)); }
+    }
+    Some(versions)
+}
+
+fn apply_transform(version: &str, transform: &str) -> String {
+    let mut ver = version.to_string();
+    for op in transform.split(';') {
+        let op = op.trim();
+        if let Some(prefix) = op.strip_prefix("trim_prefix:") {
+            ver = ver.strip_prefix(prefix).unwrap_or(&ver).to_string();
+        } else if let Some(prefix) = op.strip_prefix("prefix:") {
+            ver = format!("{}{}", prefix, ver);
+        }
+    }
+    ver
+}
+
 
 /// 安装指定版本（下载 -> 解压 -> 安装到 versions_dir -> 创建 junction -> 配置环境变量）
 #[tauri::command]
 pub async fn project_install_version(app: AppHandle, id: String, version: String) -> Result<(), String> {
+    let def = super::registry::find_by_id(&id)
+        .ok_or_else(|| format!("未找到项目: {}", id))?;
     let config = load_config();
     let (download_url, file_ext) = get_download_url(&id, &version)?;
 
@@ -277,9 +301,10 @@ pub async fn project_install_version(app: AppHandle, id: String, version: String
     // 4. 安装到 versions_dir
     let dest_dir = Path::new(&config.versions_dir).join(&id).join(&version);
 
-    // python 特殊处理：解压后的目录结构不同
-    let src_dir = if id == "python" {
-        extract_dir.join("tools")
+    // 使用 JSON 配置的 extract_subdir
+    let extract_subdir = def.extract_subdir.as_deref().unwrap_or("");
+    let src_dir = if !extract_subdir.is_empty() {
+        extract_dir.join(extract_subdir)
     } else {
         extract_dir
     };
@@ -291,24 +316,24 @@ pub async fn project_install_version(app: AppHandle, id: String, version: String
 
     cleanup();
 
-    // 5. 后置配置（如 mysql 初始化）
-    if id == "mysql" {
-        let my_ini_path = dest_dir.join("my.ini");
-        let data_dir = dest_dir.join("data");
-        let clean_base = dest_dir.to_string_lossy().replace("\\", "/");
-        let clean_data = data_dir.to_string_lossy().replace("\\", "/");
-
-        let my_ini_content = format!(
-            "[mysqld]\nport=3306\nbasedir={}\ndatadir={}\nmax_connections=200\ncharacter-set-server=utf8mb4\ndefault-storage-engine=INNODB\ndefault_authentication_plugin=mysql_native_password\n\n[mysql]\ndefault-character-set=utf8mb4\n\n[client]\nport=3306\ndefault-character-set=utf8mb4\n",
-            clean_base, clean_data
-        );
-        let _ = fs::write(&my_ini_path, my_ini_content);
-
-        // 初始化 MySQL
-        let mysql_daemon = dest_dir.join("bin").join("mysqld.exe");
-        let _ = std::process::Command::new(mysql_daemon)
-            .args(&["--defaults-file", &my_ini_path.to_string_lossy(), "--initialize-insecure"])
-            .output();
+    // 5. 后置配置（从 JSON post_install 读取）
+    if let Some(ref post_install) = def.post_install {
+        if post_install.get("generate_config").and_then(|v| v.as_bool()).unwrap_or(false) {
+            if let Some(tpl) = post_install.get("config_template").and_then(|v| v.as_str()) {
+                let ini_path = dest_dir.join("my.ini");
+                let data_dir = dest_dir.join("data");
+                let content = tpl
+                    .replace("{basedir}", &dest_dir.to_string_lossy().replace("\\", "/"))
+                    .replace("{datadir}", &data_dir.to_string_lossy().replace("\\", "/"));
+                let _ = fs::write(&ini_path, content);
+            }
+        }
+        if let Some(init_cmd) = post_install.get("init_command").and_then(|v| v.as_str()) {
+            let parts: Vec<&str> = init_cmd.splitn(2, ' ').collect();
+            let exe = dest_dir.join(parts[0]);
+            let args: Vec<&str> = if parts.len() > 1 { parts[1].split(' ').collect() } else { vec![] };
+            let _ = std::process::Command::new(exe).args(&args).current_dir(&dest_dir).output();
+        }
     }
 
     // 6. 首次安装时自动创建 junction
@@ -702,6 +727,7 @@ where
     use futures_util::StreamExt;
     let client = reqwest::Client::builder()
         .user_agent("Any-Version-Manager")
+        .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -727,106 +753,40 @@ where
 
 /// 获取下载 URL 和文件扩展名
 fn get_download_url(project_id: &str, version: &str) -> Result<(String, String), String> {
-    let version_clean = version.trim_start_matches('v').split(' ').next().unwrap_or(version).to_string();
-    let download_url: String;
-    let mut file_ext = "zip".to_string();
+    let def = super::registry::find_by_id(project_id)
+        .ok_or_else(|| format!("未找到项目: {}", project_id))?;
 
-    match project_id {
-        "go" => {
-            download_url = format!("https://go.dev/dl/go{}.windows-amd64.zip", version_clean);
-        }
-        "nodejs" => {
-            download_url = format!("https://nodejs.org/dist/v{}/node-v{}-win-x64.zip", version_clean, version_clean);
-        }
-        "python" => {
-            download_url = format!("https://www.nuget.org/api/v2/package/python/{}", version_clean);
-            file_ext = "nupkg".to_string();
-        }
-        "bun" => {
-            download_url = format!("https://github.com/oven-sh/bun/releases/download/bun-v{}/bun-windows-x64.zip", version_clean);
-        }
-        "android" => {
-            download_url = format!("https://dl.google.com/android/repository/commandlinetools-win-{}_latest.zip", version_clean);
-        }
-        "harmony" => {
-            return Err("鸿蒙(HarmonyOS)命令行工具需在华为开发者官网登录后下载，暂无免登录直链。\n请前往官网下载：https://developer.huawei.com/consumer/cn/download/ （选择 Command Line Tools）。\n下载解压后，使用本页下方的『注册本地版本』功能，填入版本号和解压目录即可纳入版本管理。".to_string());
-        }
-        "rust" => {
-            download_url = format!("https://static.rust-lang.org/dist/rust-{}-x86_64-pc-windows-msvc.tar.gz", version_clean);
-            file_ext = "tar.gz".to_string();
-        }
-        "java" => {
-            let mut resolved_ver = version.to_string();
-            if !version.starts_with("adoptium-") && !version.starts_with("microsoft-") && !version.starts_with("oracle-") && !version.starts_with("zulu-") {
-                resolved_ver = format!("adoptium-{}", version);
-            }
+    let version_clean = version.trim_start_matches('v').split(' ').next().unwrap_or(version);
+    let file_ext = def.download_file_ext.clone().unwrap_or_else(|| "zip".to_string());
 
-            if resolved_ver.starts_with("adoptium-") {
-                let v = resolved_ver.trim_start_matches("adoptium-");
-                download_url = format!("https://api.adoptium.net/v3/binary/version/jdk-{}/windows/x64/jdk/hotspot/normal/eclipse?project=jdk", v);
-            } else if resolved_ver.starts_with("microsoft-") {
-                let v = resolved_ver.trim_start_matches("microsoft-");
-                download_url = format!("https://aka.ms/download-jdk/microsoft-jdk-{}-windows-x64.zip", v);
-            } else if resolved_ver.starts_with("oracle-") {
-                let v = resolved_ver.trim_start_matches("oracle-");
-                download_url = format!("https://download.oracle.com/java/{}/latest/jdk-{}_windows-x64_bin.zip", v, v);
-            } else {
-                let v = resolved_ver.trim_start_matches("zulu-");
-                download_url = format!("https://api.adoptium.net/v3/binary/latest/{}/ga/windows/x64/jdk/hotspot/normal/eclipse?project=jdk", v);
+    // 1. 优先按版本前缀映射（如 java: adoptium-/microsoft-/oracle-/zulu-）
+    if let Some(ref prefix_map) = def.version_prefix_map {
+        for (prefix, template) in prefix_map {
+            if version.starts_with(prefix) {
+                let ver = version.trim_start_matches(prefix);
+                let url = template.replace("{ver}", ver).replace("{version}", version_clean);
+                return Ok((url, file_ext));
             }
         }
-        "flutter" => {
-            download_url = format!("https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_{}-stable.zip", version_clean);
-        }
-        "nginx" => {
-            download_url = format!("https://nginx.org/download/nginx-{}.zip", version_clean);
-        }
-        "redis" => {
-            if version_clean == "3.0.504" {
-                download_url = "https://github.com/microsoftarchive/redis/releases/download/win-3.0.504/Redis-x64-3.0.504.zip".to_string();
-            } else {
-                download_url = format!("https://github.com/tporadowski/redis/releases/download/v{}/Redis-x64-{}.zip", version_clean, version_clean);
-            }
-        }
-        "mysql" => {
-            if version_clean.starts_with("5.7") {
-                download_url = format!("https://cdn.mysql.com/Downloads/MySQL-5.7/mysql-{}-winx64.zip", version_clean);
-            } else if version_clean.starts_with("8.0") {
-                download_url = format!("https://cdn.mysql.com/Downloads/MySQL-8.0/mysql-{}-winx64.zip", version_clean);
-            } else if version_clean.starts_with("8.4") {
-                download_url = format!("https://cdn.mysql.com/Downloads/MySQL-8.4/mysql-{}-winx64.zip", version_clean);
-            } else {
-                download_url = format!("https://cdn.mysql.com/Downloads/MySQL-8.0/mysql-{}-winx64.zip", version_clean);
-            }
-        }
-        "mongodb" => {
-            download_url = format!("https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-{}.zip", version_clean);
-        }
-        "postgresql" => {
-            download_url = format!("https://get.enterprisedb.com/postgresql/postgresql-{}-1-windows-x64-binaries.zip", version_clean);
-        }
-        "maven" => {
-            download_url = format!("https://archive.apache.org/dist/maven/maven-3/{}/binaries/apache-maven-{}-bin.zip", version_clean, version_clean);
-        }
-        "gradle" => {
-            download_url = format!("https://services.gradle.org/distributions/gradle-{}-bin.zip", version_clean);
-        }
-        "yarn" => {
-            download_url = format!("https://github.com/yarnpkg/yarn/releases/download/v{}/yarn-v{}.tar.gz", version_clean, version_clean);
-            file_ext = "tar.gz".to_string();
-        }
-        "pnpm" => {
-            download_url = format!("https://github.com/pnpm/pnpm/releases/download/v{}/pnpm-win-x64.exe", version_clean);
-            file_ext = "exe".to_string();
-        }
-        "cuda" => {
-            return Err("CUDA Toolkit 需从 NVIDIA 官网下载（需登录）：https://developer.nvidia.com/cuda-toolkit-archive 。下载后使用「注册本地版本」功能导入。".to_string());
-        }
-        "ffmpeg" => {
-            download_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip".to_string();
-        }
-        _ => return Err(format!("不支持自动下载的项目: {}", project_id)),
     }
 
-    Ok((download_url, file_ext))
+    // 2. 按版本号前缀映射（如 mysql: 5.7/8.0/8.4）
+    if let Some(ref url_prefix_map) = def.version_url_prefix_map {
+        for (ver_prefix, template) in url_prefix_map {
+            if version_clean.starts_with(ver_prefix) {
+                let url = template.replace("{version}", version_clean);
+                return Ok((url, file_ext));
+            }
+        }
+    }
+
+    // 3. 使用通用 download_url_template
+    if let Some(ref template) = def.download_url_template {
+        let url = template.replace("{version}", version_clean);
+        return Ok((url, file_ext));
+    }
+
+    Err(format!("未配置下载地址: {}", project_id))
 }
+
+
