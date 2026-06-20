@@ -205,7 +205,7 @@ pub fn project_unmanage(id: String) -> Result<(), String> {
 /// 执行 shell 命令并捕获输出（用于包管理器版本检测、镜像切换等）
 #[tauri::command]
 pub fn run_cmd_capture(cmd: String) -> Result<String, String> {
-    let output = std::process::Command::new("cmd")
+    let output = super::super::hidden_cmd::hidden_cmd("cmd")
         .args(&["/c", &cmd])
         .output()
         .map_err(|e| format!("执行命令失败: {}", e))?;

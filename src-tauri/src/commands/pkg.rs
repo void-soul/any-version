@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::process::Command;
 use serde::{Serialize, Deserialize};
 use crate::commands::config::load_config;
 
@@ -69,7 +68,7 @@ fn get_global_npm_packages() -> Result<Vec<PackageInfo>, String> {
     let npm = get_npm_path();
 
     // 1. Run npm list -g --depth=0 --json
-    let list_out = Command::new(&npm)
+    let list_out = super::hidden_cmd::hidden_cmd(&npm)
         .args(&["list", "-g", "--depth=0", "--json"])
         .output()
         .map_err(|e| format!("运行 npm list 失败: {}", e))?;
@@ -88,7 +87,7 @@ fn get_global_npm_packages() -> Result<Vec<PackageInfo>, String> {
     }
 
     // 2. Run npm outdated -g --json
-    let outdated_out = Command::new(&npm)
+    let outdated_out = super::hidden_cmd::hidden_cmd(&npm)
         .args(&["outdated", "-g", "--json"])
         .output()
         .map_err(|e| format!("运行 npm outdated 失败: {}", e))?;
@@ -133,7 +132,7 @@ fn get_global_pip_packages() -> Result<Vec<PackageInfo>, String> {
     let python = get_python_path();
 
     // 1. Run python -m pip list --format=json
-    let list_out = Command::new(&python)
+    let list_out = super::hidden_cmd::hidden_cmd(&python)
         .args(&["-m", "pip", "list", "--format=json"])
         .output()
         .map_err(|e| format!("运行 pip list 失败: {}", e))?;
@@ -146,7 +145,7 @@ fn get_global_pip_packages() -> Result<Vec<PackageInfo>, String> {
         .map_err(|e| format!("解析 pip list JSON 失败: {}", e))?;
 
     // 2. Run python -m pip list --outdated --format=json
-    let outdated_out = Command::new(&python)
+    let outdated_out = super::hidden_cmd::hidden_cmd(&python)
         .args(&["-m", "pip", "list", "--outdated", "--format=json"])
         .output()
         .map_err(|e| format!("运行 pip list --outdated 失败: {}", e))?;
@@ -207,12 +206,12 @@ pub fn upgrade_global_package(sdk_name: String, pkg_name: String) -> Result<(), 
 
     let output = if name_lower == "nodejs" || name_lower == "npm" {
         let npm = get_npm_path();
-        Command::new(npm)
+        super::hidden_cmd::hidden_cmd(npm)
             .args(&["install", "-g", &format!("{}@latest", pkg_name.trim())])
             .output()
     } else if name_lower == "python" || name_lower == "pip" {
         let python = get_python_path();
-        Command::new(python)
+        super::hidden_cmd::hidden_cmd(python)
             .args(&["-m", "pip", "install", "--upgrade", pkg_name.trim()])
             .output()
     } else {

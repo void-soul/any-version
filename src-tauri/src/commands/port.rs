@@ -1,4 +1,3 @@
-use std::process::Command;
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -25,7 +24,7 @@ struct ExcludedPortRange {
 
 fn get_excluded_port_ranges() -> Vec<ExcludedPortRange> {
     let mut ranges = Vec::new();
-    let output = Command::new("netsh")
+    let output = super::hidden_cmd::hidden_cmd("netsh")
         .args(&["int", "ipv4", "show", "excludedportrange", "protocol=tcp"])
         .output();
 
@@ -63,7 +62,7 @@ fn is_port_reserved(port: i32, ranges: &[ExcludedPortRange]) -> bool {
 }
 
 fn find_port_owner(port_str: &str) -> Option<PortOwner> {
-    let output = Command::new("netstat")
+    let output = super::hidden_cmd::hidden_cmd("netstat")
         .args(&["-ano", "-p", "tcp"])
         .output()
         .ok()?;
@@ -107,7 +106,7 @@ fn find_port_owner(port_str: &str) -> Option<PortOwner> {
     }
 
     // tasklist to find process name
-    let task_output = Command::new("tasklist")
+    let task_output = super::hidden_cmd::hidden_cmd("tasklist")
         .args(&["/fi", &format!("pid eq {}", pid), "/fo", "csv", "/nh"])
         .output()
         .ok()?;
@@ -136,7 +135,7 @@ pub struct ReservedPortRange {
 
 #[tauri::command]
 pub fn get_reserved_ports() -> Result<Vec<ReservedPortRange>, String> {
-    let output = Command::new("netsh")
+    let output = super::hidden_cmd::hidden_cmd("netsh")
         .args(&["int", "ipv4", "show", "excludedportrange", "protocol=tcp"])
         .output()
         .map_err(|e| format!("执行 netsh 失败: {}", e))?;
@@ -205,7 +204,7 @@ pub fn kill_port_owner(port_str: String) -> Result<(), String> {
     }
 
     let owner = find_port_owner(&port_str).ok_or_else(|| format!("未找到占用端口 {} 的进程", port_str))?;
-    let output = Command::new("taskkill")
+    let output = super::hidden_cmd::hidden_cmd("taskkill")
         .args(&["/f", "/pid", &owner.pid])
         .output()
         .map_err(|e| e.to_string())?;

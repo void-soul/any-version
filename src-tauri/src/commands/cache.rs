@@ -18,7 +18,7 @@ pub struct CacheInfo {
 }
 
 pub fn is_installed(cli: &str) -> bool {
-    std::process::Command::new("cmd")
+    super::hidden_cmd::hidden_cmd("cmd")
         .args(&["/c", "where", cli])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -77,7 +77,7 @@ pub fn create_junction(link_path: &Path, target_path: &Path) -> Result<(), Strin
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     fs::create_dir_all(target_path).map_err(|e| e.to_string())?;
-    let output = std::process::Command::new("cmd")
+    let output = super::hidden_cmd::hidden_cmd("cmd")
         .args(&[
             "/c",
             "mklink",
@@ -94,7 +94,7 @@ pub fn create_junction(link_path: &Path, target_path: &Path) -> Result<(), Strin
 }
 
 fn get_cmd_output(cmd: &str, args: &[&str]) -> String {
-    std::process::Command::new(cmd)
+    super::hidden_cmd::hidden_cmd(cmd)
         .args(args)
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -238,7 +238,7 @@ pub fn get_maven_cache_path() -> PathBuf {
 
     // 3. Global settings.xml from Maven resolved via path
     if mvn_path.is_empty() {
-        if let Ok(output) = std::process::Command::new("cmd")
+        if let Ok(output) = super::hidden_cmd::hidden_cmd("cmd")
             .args(&["/c", "where", "mvn"])
             .output()
         {

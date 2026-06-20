@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use crate::commands::config::load_config;
@@ -77,7 +76,7 @@ pub(crate) struct PortOwnerSimple {
 }
 
 pub(crate) fn find_port_owner_simple(port_str: &str) -> Option<PortOwnerSimple> {
-    let output = Command::new("netstat")
+    let output = super::hidden_cmd::hidden_cmd("netstat")
         .args(&["-ano", "-p", "tcp"])
         .output()
         .ok()?;
@@ -121,7 +120,7 @@ pub(crate) fn find_port_owner_simple(port_str: &str) -> Option<PortOwnerSimple> 
     }
 
     // tasklist to find process name
-    let task_output = Command::new("tasklist")
+    let task_output = super::hidden_cmd::hidden_cmd("tasklist")
         .args(&["/fi", &format!("pid eq {}", pid), "/fo", "csv", "/nh"])
         .output()
         .ok()?;
@@ -206,7 +205,7 @@ pub fn get_running_services() -> Result<Vec<ServiceInfo>, String> {
     }
 
     // Use WMIC command to query running processes
-    let output = Command::new("wmic")
+    let output = super::hidden_cmd::hidden_cmd("wmic")
         .args(&["process", "get", "ExecutablePath,ProcessId"])
         .output();
 
@@ -301,7 +300,7 @@ pub fn start_service(name: String, version: String) -> Result<(), String> {
 
     let output = match name.as_str() {
         "nginx" => {
-            Command::new("cmd")
+            super::hidden_cmd::hidden_cmd("cmd")
                 .args(&["/c", "start", "/b", "nginx.exe"])
                 .current_dir(&dir)
                 .output()
@@ -309,19 +308,19 @@ pub fn start_service(name: String, version: String) -> Result<(), String> {
         "redis" => {
             let conf = if dir.join("redis.windows.conf").exists() { "redis.windows.conf" } else { "" };
             if !conf.is_empty() {
-                Command::new("cmd")
+                super::hidden_cmd::hidden_cmd("cmd")
                     .args(&["/c", "start", "/b", "redis-server.exe", conf])
                     .current_dir(&dir)
                     .output()
             } else {
-                Command::new("cmd")
+                super::hidden_cmd::hidden_cmd("cmd")
                     .args(&["/c", "start", "/b", "redis-server.exe"])
                     .current_dir(&dir)
                     .output()
             }
         }
         "mysql" => {
-            Command::new("cmd")
+            super::hidden_cmd::hidden_cmd("cmd")
                 .args(&["/c", "start", "/b", "bin\\mysqld.exe", "--defaults-file=my.ini", "--console"])
                 .current_dir(&dir)
                 .output()
@@ -329,7 +328,7 @@ pub fn start_service(name: String, version: String) -> Result<(), String> {
         "mongodb" => {
             let db_path = dir.join("data");
             let _ = fs::create_dir_all(&db_path);
-            Command::new("cmd")
+            super::hidden_cmd::hidden_cmd("cmd")
                 .args(&["/c", "start", "/b", "bin\\mongod.exe", "--port", "27017", "--dbpath", &db_path.to_string_lossy()])
                 .current_dir(&dir)
                 .output()
@@ -337,7 +336,7 @@ pub fn start_service(name: String, version: String) -> Result<(), String> {
         "postgresql" => {
             let db_path = dir.join("data");
             let log_file = dir.join("logfile");
-            Command::new("cmd")
+            super::hidden_cmd::hidden_cmd("cmd")
                 .args(&["/c", "start", "/b", "bin\\pg_ctl.exe", "-D", &db_path.to_string_lossy(), "-l", &log_file.to_string_lossy(), "start"])
                 .current_dir(&dir)
                 .output()
@@ -366,7 +365,7 @@ pub fn stop_service(name: String) -> Result<(), String> {
 
     if is_external {
         if svc.pid > 0 {
-            let output = Command::new("taskkill")
+            let output = super::hidden_cmd::hidden_cmd("taskkill")
                 .args(&["/f", "/pid", &svc.pid.to_string()])
                 .output()
                 .map_err(|e| format!("停止外部服务失败: {}", e))?;
@@ -385,7 +384,7 @@ pub fn stop_service(name: String) -> Result<(), String> {
     let mut shutdown_err = false;
     match name.as_str() {
         "nginx" => {
-            let _ = Command::new(dir.join("nginx.exe"))
+            let _ = super::hidden_cmd::hidden_cmd(dir.join("nginx.exe"))
                 .args(&["-s", "stop"])
                 .current_dir(&dir)
                 .output()
@@ -393,7 +392,7 @@ pub fn stop_service(name: String) -> Result<(), String> {
         }
         "redis" => {
             let cli_exe = dir.join("redis-cli.exe");
-            let output = Command::new(&cli_exe)
+            let output = super::hidden_cmd::hidden_cmd(&cli_exe)
                 .args(&["-p", &svc.port, "shutdown"])
                 .current_dir(&dir)
                 .output();
@@ -404,7 +403,7 @@ pub fn stop_service(name: String) -> Result<(), String> {
         }
         "mysql" => {
             let admin_exe = dir.join("bin").join("mysqladmin.exe");
-            let output = Command::new(&admin_exe)
+            let output = super::hidden_cmd::hidden_cmd(&admin_exe)
                 .args(&["--port", &svc.port, "-u", "root", "shutdown"])
                 .current_dir(&dir)
                 .output();
@@ -414,7 +413,7 @@ pub fn stop_service(name: String) -> Result<(), String> {
             }
         }
         "postgresql" => {
-            let _ = Command::new(dir.join("bin").join("pg_ctl.exe"))
+            let _ = super::hidden_cmd::hidden_cmd(dir.join("bin").join("pg_ctl.exe"))
                 .args(&["-D", &dir.join("data").to_string_lossy(), "stop"])
                 .current_dir(&dir)
                 .output()
@@ -424,7 +423,7 @@ pub fn stop_service(name: String) -> Result<(), String> {
     }
 
     if shutdown_err && svc.pid > 0 {
-        let output = Command::new("taskkill")
+        let output = super::hidden_cmd::hidden_cmd("taskkill")
             .args(&["/f", "/pid", &svc.pid.to_string()])
             .output()
             .map_err(|e| format!("强制终止服务失败: {}", e))?;

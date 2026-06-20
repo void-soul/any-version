@@ -704,7 +704,7 @@ pub fn create_env_backup(description: String) -> Result<EnvBackup, String> {
         .unwrap_or(0));
 
     // Get simple local timestamp using powershell date
-    let timestamp = std::process::Command::new("powershell")
+    let timestamp = super::hidden_cmd::hidden_cmd("powershell")
         .args(&["-Command", "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'"])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())

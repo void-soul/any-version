@@ -332,7 +332,7 @@ pub async fn project_install_version(app: AppHandle, id: String, version: String
             let parts: Vec<&str> = init_cmd.splitn(2, ' ').collect();
             let exe = dest_dir.join(parts[0]);
             let args: Vec<&str> = if parts.len() > 1 { parts[1].split(' ').collect() } else { vec![] };
-            let _ = std::process::Command::new(exe).args(&args).current_dir(&dest_dir).output();
+            let _ = super::super::hidden_cmd::hidden_cmd(exe).args(&args).current_dir(&dest_dir).output();
         }
     }
 
@@ -509,7 +509,7 @@ fn detect_version_from_path(project_id: &str, path: &Path) -> Option<String> {
     let exe_path = exe_path?;
 
     // 执行版本检测命令
-    let output = std::process::Command::new(&exe_path)
+    let output = super::super::hidden_cmd::hidden_cmd(&exe_path)
         .args(args)
         .output()
         .ok()?;

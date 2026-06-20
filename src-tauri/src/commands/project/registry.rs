@@ -33,22 +33,27 @@ pub fn load_registry() -> Vec<ProjectDef> {
     search_dirs.push(base_dir);
 
     for dir in &search_dirs {
-        let path = dir.join("projects.json");
-        eprintln!("[registry] 检查: {} -> 存在: {}", path.display(), path.exists());
-        if path.exists() {
-            match std::fs::read_to_string(&path) {
-                Ok(data) => {
-                    match serde_json::from_str::<Vec<ProjectDef>>(&data) {
-                        Ok(list) => {
-                            eprintln!("[registry] 成功加载 {} 个项目 from {}", list.len(), path.display());
-                            if !list.is_empty() {
-                                return list;
+        // 优先检查 _up_ 子目录（Tauri 打包后 bundled resources 在此）
+        let up_dir = dir.join("_up_");
+        let candidates = [up_dir.as_path(), dir.as_path()];
+        for candidate in &candidates {
+            let path = candidate.join("projects.json");
+            eprintln!("[registry] 检查: {} -> 存在: {}", path.display(), path.exists());
+            if path.exists() {
+                match std::fs::read_to_string(&path) {
+                    Ok(data) => {
+                        match serde_json::from_str::<Vec<ProjectDef>>(&data) {
+                            Ok(list) => {
+                                eprintln!("[registry] 成功加载 {} 个项目 from {}", list.len(), path.display());
+                                if !list.is_empty() {
+                                    return list;
+                                }
                             }
+                            Err(e) => eprintln!("[registry] JSON 解析失败: {}", e),
                         }
-                        Err(e) => eprintln!("[registry] JSON 解析失败: {}", e),
                     }
+                    Err(e) => eprintln!("[registry] 读取失败: {}", e),
                 }
-                Err(e) => eprintln!("[registry] 读取失败: {}", e),
             }
         }
     }

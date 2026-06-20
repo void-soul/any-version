@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -11,7 +10,7 @@ pub struct MirrorInfo {
 }
 
 fn get_cmd_output(cmd: &str, args: &[&str]) -> String {
-    Command::new(cmd)
+    super::hidden_cmd::hidden_cmd(cmd)
         .args(args)
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -137,12 +136,12 @@ pub fn set_mirror(tool: String, mirror_type: String) -> Result<(), String> {
                 "tencent" => "https://mirrors.cloud.tencent.com/npm/",
                 _ => "https://registry.npmjs.org/",
             };
-            let _ = Command::new("cmd").args(&["/c", "npm", "config", "set", "registry", url_val]).output();
+            let _ = super::hidden_cmd::hidden_cmd("cmd").args(&["/c", "npm", "config", "set", "registry", url_val]).output();
             if crate::commands::cache::is_installed("yarn") {
-                let _ = Command::new("cmd").args(&["/c", "yarn", "config", "set", "registry", url_val]).output();
+                let _ = super::hidden_cmd::hidden_cmd("cmd").args(&["/c", "yarn", "config", "set", "registry", url_val]).output();
             }
             if crate::commands::cache::is_installed("pnpm") {
-                let _ = Command::new("cmd").args(&["/c", "pnpm", "config", "set", "registry", url_val]).output();
+                let _ = super::hidden_cmd::hidden_cmd("cmd").args(&["/c", "pnpm", "config", "set", "registry", url_val]).output();
             }
         }
         "pip" => {
@@ -189,7 +188,7 @@ pub fn set_mirror(tool: String, mirror_type: String) -> Result<(), String> {
                 _ => "https://proxy.golang.org,direct",
             };
             if crate::commands::cache::is_installed("go") {
-                let _ = Command::new("cmd").args(&["/c", "go", "env", "-w", &format!("GOPROXY={}", url_val)]).output();
+                let _ = super::hidden_cmd::hidden_cmd("cmd").args(&["/c", "go", "env", "-w", &format!("GOPROXY={}", url_val)]).output();
             }
         }
         "rust" => {
