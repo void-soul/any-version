@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import Sidebar from "./components/Sidebar";
 import SdkManager from "./components/SdkManager";
+import ProjectManager from "./components/ProjectManager";
 import SystemTools from "./components/SystemTools";
 import GlobalSettings from "./components/GlobalSettings";
 import EnvBackupManager from "./components/EnvBackupManager"; // Environmental backups manager
@@ -10,7 +11,7 @@ import { ShieldCheck, Info } from "lucide-react";
 import "./App.css";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState("sdks");
+  const [activeTab, setActiveTab] = useState("projects");
 
   // Call init command on mount to ensure directory structure and path env vars are initialized
   useEffect(() => {
@@ -38,8 +39,8 @@ export default function App() {
 
         {/* Dynamic page content */}
         <div className="flex-1 relative z-10">
-          <div className={activeTab === "sdks" ? "h-full w-full" : "hidden"}>
-            <SdkManager />
+          <div className={activeTab === "projects" ? "h-full w-full" : "hidden"}>
+            <ProjectManager />
           </div>
 
           <div className={activeTab === "tools" ? "h-full w-full" : "hidden"}>

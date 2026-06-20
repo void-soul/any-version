@@ -35,8 +35,7 @@ pub fn run() {
             commands::env::delete_env_backup,
             commands::env::restore_env_backup,
             commands::env::toggle_item_management,
-            commands::sdk::get_sdk_detailed_status
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
-}
+            commands::sdk::get_sdk_detailed_status,
+            // 项目管理模块
+            commands::project::commands::project_list,
+            commands::

@@ -1,0 +1,545 @@
+import React from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import {
+  ExternalLink,
+  CheckCircle,
+  AlertTriangle,
+  RefreshCw,
+  Check,
+  Trash2,
+  Download,
+  Plus,
+  Globe,
+  HardDrive,
+  Activity,
+  FolderOpen,
+  ArrowRight,
+  Link,
+  FolderSync,
+  ArrowUpCircle,
+} from "lucide-react";
+import type { ProjectStatus, ProjectDef, EnvVarStatus, CacheStatus, ServiceStatus } from "./types";
+
+// ── 共享的子标签页 Props ──
+export interface SubTabProps {
+  project: ProjectStatus;
+  def: ProjectDef | null;
+  // 版本管理
+  remoteVersions: string[];
+  loadingRemote: boolean;
+  installingVersion: string | null;
+  onInstall: (version: string) => void;
+  onUninstall: (version: string) => void;
+  onUse: (version: string) => void;
+  // 本地注册
+  localVersion: string;
+  localPath: string;
+  registering: boolean;
+  registerErr: string | null;
+  onLocalVersionChange: (v: string) => void;
+  onLocalPathChange: (v: string) => void;
+  onRegisterLocal: () => void;
+  // 包管理
+  packages: Array<{ name: string; current_version: string; latest_version: string; status: string; homepage: string }>;
+  loadingPackages: boolean;
+  upgradingPackage: string | null;
+  packageError: string | null;
+  onRefreshPackages: () => void;
+  onUpgradePackage: (name: string) => void;
+  // 缓存管理
+  cacheDestPath: string;
+  migratingCache: boolean;
+  onCacheDestPathChange: (v: string) => void;
+  onMigrateCache: () => void;
+  // 服务管理
+  serviceCtrlLoading: boolean;
+  onServiceToggle: () => void;
+  // 刷新
+  onRefresh: () => void;
+}
+
+// ═══════════════════════════════════════
+//  版本管理
+// ═══════════════════════════════════════
+export function VersionsTab({
+  project, remoteVersions, loadingRemote, installingVersion,
+  onInstall, onUninstall, onUse,
+  localVersion, localPath, registering, registerErr,
+  onLocalVersionChange, onLocalPathChange, onRegisterLocal,
+}: SubTabProps) {
+  return (
+    <div className="space-y-6">
+      {/* 已安装版本 */}
+      <div className="space-y-3">
+        <h4 className="text-xs font-semibold text-slate-300">本地已安装版本</h4>
+        {!project.installed_versions || project.installed_versions.length === 0 ? (
+          <p className="text-[11px] text-slate-500">尚未安装任何版本。请从下方远程版本列表安装。</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {project.installed_versions.map((v) => {
+              const isActive = project.active_version === v;
+              return (
+                <div
+                  key={v}
+                  className={`p-3 rounded-xl border flex items-center justify-between transition-all ${
+                    isActive
+                      ? "bg-blue-600/10 border-blue-500/30 text-white shadow-md shadow-blue-500/5"
+                      : "bg-black/20 border-white/5 text-slate-300"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-medium">{v}</span>
+                    {isActive && (
+                      <span className="px-1.5 py-0.5 rounded text-[8px] bg-blue-600 text-white font-bold">当前</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {!isActive && (
+                      <button
+                        onClick={() => onUse(v)}
+                        className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400 hover:text-slate-200 text-[10px] cursor-pointer transition-all flex items-center gap-0.5"
+                      >
+                        <Check className="w-3.5 h-3.5" /> 启用
+                      </button>
+                    )}
+                    <button
+                      onClick={() => onUninstall(v)}
+                      className="p-1.5 hover:bg-red-500/10 hover:text-red-400 rounded-lg text-slate-500 cursor-pointer transition-all"
+                      title="卸载此版本"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* 远程版本安装 */}
+      <div className="space-y-3 border-t border-white/5 pt-4">
+        <h4 className="text-xs font-semibold text-slate-300">在线安装远程版本</h4>
+        {loadingRemote ? (
+          <div className="flex items-center gap-2 text-slate-400 text-xs py-2">
+            <RefreshCw className="w-4 h-4 animate-spin text-blue-400" />
+            正在获取远程版本列表...
+          </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <select className="flex-1 glass-input px-3.5 py-2 text-xs" id="remote-version-select">
+              <option value="">-- 请选择版本 --</option>
+              {remoteVersions.map((v) => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => {
+                const sel = document.getElementById("remote-version-select") as HTMLSelectElement;
+                if (sel?.value) onInstall(sel.value);
+              }}
+              disabled={installingVersion !== null}
+              className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-md shadow-blue-500/10 cursor-pointer transition-all flex items-center gap-1.5"
+            >
+              <Download className="w-3.5 h-3.5" />
+              {installingVersion ? "正在安装..." : "一键安装"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 手动注册 */}
+      <div className="space-y-3 border-t border-white/5 pt-4">
+        <h4 className="text-xs font-semibold text-slate-300">手动注册本地已存在版本</h4>
+        <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/1 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-[10px] text-slate-400 font-medium">指定版本号:</label>
+              <input
+                type="text"
+                className="w-full glass-input px-3.5 py-2 text-xs font-mono"
+                value={localVersion}
+                onChange={(e) => onLocalVersionChange(e.target.value)}
+                placeholder="例如: 18.16.0"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] text-slate-400 font-medium">本地路径 (bin 的父目录):</label>
+              <input
+                type="text"
+                className="w-full glass-input px-3.5 py-2 text-xs font-mono"
+                value={localPath}
+                onChange={(e) => onLocalPathChange(e.target.value)}
+                placeholder="例如: D:\my-sdks\nodejs"
+              />
+            </div>
+          </div>
+          <div className="flex items-center justify-between pt-1">
+            <div>
+              {registerErr && <span className="text-[10px] text-red-400 font-medium">{registerErr}</span>}
+            </div>
+            <button
+              onClick={onRegisterLocal}
+              disabled={registering || !localVersion || !localPath}
+              className="px-5 py-2 bg-white/5 border border-white/10 hover:bg-white/10 disabled:opacity-50 text-slate-300 rounded-lg text-xs font-medium cursor-pointer transition-all flex items-center gap-1.5"
+            >
+              <Plus className="w-3.5 h-3.5" /> 注册本地版本
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════
+//  环境变量
+// ═══════════════════════════════════════
+export function EnvVarsTab({ project }: SubTabProps) {
+  const vars: EnvVarStatus[] = project.env_vars_status ?? [];
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-slate-300">项目关联环境变量</span>
+        <span className="text-[10px] text-slate-500">{vars.length} 个变量</span>
+      </div>
+      {vars.length === 0 ? (
+        <div className="p-8 text-center text-slate-500">
+          <Globe className="w-10 h-10 mx-auto text-slate-600 mb-3" />
+          <p className="text-xs">该项目无需配置环境变量</p>
+        </div>
+      ) : (
+        <div className="border border-white/5 rounded-xl overflow-hidden overflow-x-auto">
+          <table className="w-full text-left border-collapse text-[10px] min-w-[450px]">
+            <thead>
+              <tr className="bg-white/3 border-b border-white/5 text-slate-400 font-medium">
+                <th className="p-2.5 w-32">变量名</th>
+                <th className="p-2.5 w-36">说明</th>
+                <th className="p-2.5">当前配置值</th>
+                <th className="p-2.5 w-20">来源</th>
+                <th className="p-2.5 w-16">状态</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5 text-slate-300">
+              {vars.map((v) => (
+                <tr key={v.name} className="hover:bg-white/1 font-mono">
+                  <td className="p-2.5 font-semibold text-slate-200">{v.name}</td>
+                  <td className="p-2.5 text-slate-400 font-sans">{v.desc}</td>
+                  <td className="p-2.5 break-all select-text">
+                    {v.value || <span className="text-slate-600 font-sans">未配置</span>}
+                  </td>
+                  <td className="p-2.5">
+                    {v.source === "HKCU" ? (
+                      <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[9px] font-semibold">用户级</span>
+                    ) : v.source === "HKLM" ? (
+                      <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[9px] font-semibold">系统级</span>
+                    ) : (
+                      <span className="px-1.5 py-0.5 rounded bg-white/5 text-slate-500 border border-white/5 text-[9px]">未设置</span>
+                    )}
+                  </td>
+                  <td className="p-2.5">
+                    {v.exists ? (
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                    ) : (
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════
+//  缓存管理
+// ═══════════════════════════════════════
+export function CacheTab({ project, cacheDestPath, migratingCache, onCacheDestPathChange, onMigrateCache }: SubTabProps) {
+  const cache: CacheStatus | null = project.cache_status ?? null;
+  if (!cache) {
+    return (
+      <div className="p-8 text-center text-slate-500">
+        <HardDrive className="w-10 h-10 mx-auto text-slate-600 mb-3" />
+        <p className="text-xs font-medium text-slate-400">未检测到缓存目录</p>
+        <p className="text-[10px] text-slate-500 mt-1">该项目暂无可管理的缓存文件。</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="glass-panel rounded-2xl p-5 border border-white/5 space-y-4 bg-white/2">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1 flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-semibold text-white">缓存目录</h3>
+              {cache.is_link && (
+                <span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[9px] font-medium flex items-center gap-0.5 font-mono">
+                  <Link className="w-3 h-3" /> 已重定向
+                </span>
+              )}
+            </div>
+            <div className="font-mono text-[10px] text-slate-400 space-y-0.5 mt-1">
+              <p>路径: {cache.path}</p>
+              {cache.is_link && (
+                <p className="text-blue-400 flex items-center gap-1 font-semibold">
+                  <ArrowRight className="w-3 h-3" /> 实际位置: {cache.real_target}
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-1 bg-black/20 px-3.5 py-2.5 rounded-xl border border-white/5">
+            <HardDrive className="w-3.5 h-3.5 text-slate-500" />
+            <span className="font-mono font-bold text-xs text-white">{cache.size}</span>
+          </div>
+        </div>
+
+        {!cache.is_link && (
+          <div className="p-3 bg-black/20 rounded-xl border border-white/5 space-y-2">
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={cacheDestPath}
+                onChange={(e) => onCacheDestPathChange(e.target.value)}
+                className="flex-1 glass-input px-3 py-1.5 text-xs font-mono"
+                placeholder="目标路径: D:\any-version-caches\..."
+              />
+              <button
+                onClick={onMigrateCache}
+                disabled={migratingCache || !cacheDestPath}
+                className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold cursor-pointer transition-all flex items-center gap-1"
+              >
+                <FolderSync className="w-3 h-3" />
+                {migratingCache ? "迁移中..." : "迁移缓存"}
+              </button>
+            </div>
+            <p className="text-[9px] text-slate-500">
+              将缓存从 C 盘迁移至指定目录，原路径自动替换为 NTFS Junction 链接，完全无感。
+            </p>
+          </div>
+        )}
+
+        <div className="p-3 rounded-xl bg-amber-500/5 border border-amber-500/15 text-[10px] space-y-1">
+          <span className="font-semibold text-amber-400">检测来源</span>
+          <p className="text-slate-300 font-mono break-all">{cache.detect_source}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════
+//  镜像配置
+// ═══════════════════════════════════════
+export function MirrorTab(_props: SubTabProps) {
+  return (
+    <div className="space-y-4">
+      <div className="glass-panel rounded-2xl p-5 border border-white/5 space-y-4 bg-white/2">
+        <div className="flex items-center gap-2">
+          <Globe className="w-4 h-4 text-blue-400" />
+          <h3 className="text-xs font-semibold text-white">镜像配置</h3>
+        </div>
+        <p className="text-[11px] text-slate-400">
+          该项目支持镜像加速配置。启用托管后，可在下方切换下载源。
+        </p>
+        <div className="p-8 text-center text-slate-500">
+          <Globe className="w-10 h-10 mx-auto text-slate-600 mb-3" />
+          <p className="text-xs">镜像配置功能加载中...</p>
+          <p className="text-[10px] text-slate-500 mt-1">请先启用托管以查看可用镜像源</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════
+//  全局包
+// ═══════════════════════════════════════
+export function PackagesTab({ packages, loadingPackages, upgradingPackage, packageError, onRefreshPackages, onUpgradePackage }: SubTabProps) {
+  return (
+    <div className="space-y-4 flex flex-col h-full min-h-0">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-slate-300">全局依赖包列表</span>
+        <button
+          onClick={onRefreshPackages}
+          disabled={loadingPackages}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-[10px] border border-white/5 cursor-pointer"
+        >
+          <RefreshCw className={`w-3 h-3 ${loadingPackages ? "animate-spin" : ""}`} /> 刷新
+        </button>
+      </div>
+
+      {packageError && (
+        <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-[11px] font-mono break-all">
+          {packageError}
+        </div>
+      )}
+
+      <div className="flex-1 min-h-0 glass-panel border border-white/5 rounded-2xl overflow-hidden flex flex-col">
+        <div className="flex-1 overflow-y-auto max-h-[300px]">
+          <table className="w-full text-left border-collapse text-[11px]">
+            <thead>
+              <tr className="bg-white/3 border-b border-white/5 text-slate-400 font-semibold">
+                <th className="p-3">依赖包名称</th>
+                <th className="p-3 w-24">当前版本</th>
+                <th className="p-3 w-24">最新版本</th>
+                <th className="p-3 w-20">状态</th>
+                <th className="p-3 w-20 text-center">操作</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {loadingPackages ? (
+                <tr>
+                  <td colSpan={5} className="p-8 text-center text-slate-500">
+                    <RefreshCw className="w-5 h-5 animate-spin text-blue-400 mx-auto mb-2" />
+                    正在扫描全局依赖包列表...
+                  </td>
+                </tr>
+              ) : packages.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="p-8 text-center text-slate-500">
+                    无全局依赖包，或环境未安装就绪
+                  </td>
+                </tr>
+              ) : (
+                packages.map((pkg) => (
+                  <tr key={pkg.name} className="hover:bg-white/2 text-slate-300">
+                    <td className="p-3 font-semibold text-slate-200">
+                      <button
+                        onClick={() => openUrl(pkg.homepage)}
+                        className="inline-flex items-center gap-1 hover:text-blue-400 transition-colors cursor-pointer group text-[11px]"
+                      >
+                        {pkg.name}
+                        <ExternalLink className="w-3 h-3 text-slate-500 group-hover:text-blue-400 opacity-0 group-hover:opacity-100" />
+                      </button>
+                    </td>
+                    <td className="p-3 font-mono">{pkg.current_version}</td>
+                    <td className="p-3 font-mono text-slate-400">{pkg.latest_version}</td>
+                    <td className="p-3">
+                      {pkg.status === "outdated" ? (
+                        <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[9px] font-semibold">可升级</span>
+                      ) : (
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] font-semibold">最新</span>
+                      )}
+                    </td>
+                    <td className="p-3 text-center">
+                      {pkg.status === "outdated" ? (
+                        <button
+                          onClick={() => onUpgradePackage(pkg.name)}
+                          disabled={upgradingPackage === pkg.name}
+                          className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-md text-[9px] font-semibold cursor-pointer transition-all flex items-center justify-center gap-0.5 mx-auto"
+                        >
+                          <ArrowUpCircle className="w-3 h-3" />
+                          {upgradingPackage === pkg.name ? "升级中" : "升级"}
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-slate-600">无需更新</span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════
+//  服务管理
+// ═══════════════════════════════════════
+export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle }: SubTabProps) {
+  const svc: ServiceStatus | null = project.service_status ?? null;
+  if (!svc) {
+    return (
+      <div className="p-8 text-center text-slate-500">
+        <Activity className="w-10 h-10 mx-auto text-slate-600 mb-3" />
+        <p className="text-xs font-medium text-slate-400">未检测到服务信息</p>
+        <p className="text-[10px] text-slate-500 mt-1">该项目暂无可管理的本地服务。</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="glass-panel border border-white/5 rounded-2xl p-5 bg-white/2 space-y-4">
+        <div className="flex items-center gap-2 border-b border-white/5 pb-3">
+          <Activity className="w-4 h-4 text-blue-400" />
+          <h4 className="text-xs font-semibold text-white">本地服务控制台</h4>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+          <div className="p-3 bg-black/20 rounded-xl border border-white/5 space-y-1.5">
+            <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block">当前状态</span>
+            <div className="flex items-center gap-2">
+              {svc.running ? (
+                <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold flex items-center gap-1 animate-fadeIn">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                  运行中 {svc.pid ? `(PID: ${svc.pid})` : ""}
+                </span>
+              ) : (
+                <span className="px-2.5 py-1 rounded-lg bg-slate-500/10 text-slate-400 border border-white/5 font-semibold">已停止</span>
+              )}
+            </div>
+          </div>
+
+          <div className="p-3 bg-black/20 rounded-xl border border-white/5 space-y-1">
+            <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block">运行参数</span>
+            <div className="text-slate-300 font-mono space-y-0.5">
+              <p>端口: {svc.port || def?.default_port || "无"}</p>
+              <p>版本: {project.active_version || "未启用"}</p>
+            </div>
+          </div>
+
+          <div className="p-3 bg-black/20 rounded-xl border border-white/5 flex items-center justify-center gap-2">
+            <button
+              onClick={onServiceToggle}
+              disabled={serviceCtrlLoading}
+              className={`px-4 py-2 ${svc.running ? "bg-red-600 hover:bg-red-500" : "bg-emerald-600 hover:bg-emerald-500"} disabled:opacity-50 text-white font-semibold rounded-xl text-xs cursor-pointer shadow-md transition-all flex items-center gap-1`}
+            >
+              {serviceCtrlLoading ? "操作中..." : svc.running ? "停止服务" : "启动服务"}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs pt-2">
+          {svc.data_dir && (
+            <div className="p-3 bg-black/20 rounded-xl border border-white/5 flex items-center justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                <span className="text-[10px] text-slate-400 font-semibold block">数据目录</span>
+                <p className="font-mono text-slate-300 truncate mt-1">{svc.data_dir}</p>
+              </div>
+              <button
+                onClick={() => openUrl(svc.data_dir)}
+                className="p-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg border border-white/5 cursor-pointer flex-shrink-0"
+                title="在资源管理器中打开"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+          {svc.log_dir && (
+            <div className="p-3 bg-black/20 rounded-xl border border-white/5 flex items-center justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                <span className="text-[10px] text-slate-400 font-semibold block">日志目录</span>
+                <p className="font-mono text-slate-300 truncate mt-1">{svc.log_dir}</p>
+              </div>
+              <button
+                onClick={() => openUrl(svc.log_dir)}
+                className="p-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg border border-white/5 cursor-pointer flex-shrink-0"
+                title="在资源管理器中打开"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
