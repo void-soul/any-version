@@ -33,6 +33,11 @@ pub fn run() {
             commands::project::commands::project_preview_manage,
             commands::project::commands::project_manage,
             commands::project::commands::project_unmanage,
+            commands::project::versions::project_list_remote_versions,
+            commands::project::versions::project_install_version,
+            commands::project::versions::project_uninstall_version,
+            commands::project::versions::project_use_version,
+            commands::project::versions::project_register_local,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
