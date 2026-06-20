@@ -6,4 +6,6 @@ pub mod sdk_registry;
 pub mod sdk_resolver;
 pub mod hosts;
 pub mod port;
-pu
+pub mod pkg;
+pub mod mirror;
+pub mod service;
