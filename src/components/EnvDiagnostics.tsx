@@ -110,34 +110,37 @@ export default function EnvDiagnostics() {
     switch (sev) {
       case "严重": return "bg-red-500/10 text-red-400 border border-red-500/20";
       case "警告": return "bg-amber-500/10 text-amber-400 border border-amber-500/20";
-      default: return "bg-blue-500/10 text-blue-400 border border-blue-500/20";
+      case "建议": return "bg-blue-500/10 text-blue-400 border border-blue-500/20";
+      case "信息": return "bg-teal-500/10 text-teal-400 border border-teal-500/20";
+      default: return "bg-slate-500/10 text-slate-400 border border-slate-500/20";
     }
   };
 
   const criticalCount = problems.filter(p => p.severity === "严重").length;
   const warningCount = problems.filter(p => p.severity === "警告").length;
   const suggestionCount = problems.filter(p => p.severity === "建议").length;
+  const infoCount = problems.filter(p => p.severity === "信息").length;
 
   const rules = [
     {
       id: "c_drive_cache",
-      title: "C盘缓存占用检测",
-      desc: "依据 npm/yarn/pnpm 的 config 命令、pip.ini、.m2/settings.xml 等定位缓存目录，判断是否仍在 C 盘且未重定向",
+      title: "C盘缓存",
+      desc: "npm/yarn/pnpm/pip/maven/nuget 等包管理器缓存是否在 C 盘且未重定向",
     },
     {
       id: "dead_env_path",
-      title: "无效环境变量检测",
-      desc: "读取注册表 HKCU\\Environment 的 PATH 及 JAVA_HOME 等变量，逐条核对磁盘上是否真实存在",
+      title: "无效环境变量",
+      desc: "PATH 及 SDK 环境变量（GOROOT、JAVA_HOME、ANDROID_HOME 等）是否指向不存在的路径",
     },
     {
-      id: "conflict_env",
-      title: "环境优先级冲突检测",
-      desc: "扫描 PATH 顺序，检测是否存在排在 Any-Version 之前的外部 go/node/python 等，导致版本切换不生效",
+      id: "unmanaged_sdk",
+      title: "非 AnyVersion 管理的 SDK",
+      desc: "PATH 中检测到外部安装的开发工具路径（Scoop、手动安装等），以及未被管理的 SDK 环境变量",
     },
     {
       id: "residue_files",
-      title: "服务残留数据检测",
-      desc: "扫描 MySQL/MongoDB/PostgreSQL 常见默认数据目录，找出已停止服务遗留的数据文件夹",
+      title: "残留服务文件",
+      desc: "MySQL/MongoDB/PostgreSQL 已停止服务遗留的数据目录",
     },
   ];
 
@@ -178,7 +181,7 @@ export default function EnvDiagnostics() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-white tracking-wide">集成环境体检</h2>
-          <p className="text-xs text-slate-400 mt-1">扫描环境变量、路径冲突、文件残留及本地缓存配置并一键优化修复。每一项都会说明「依据哪个配置文件检测」和「将要如何修复」。</p>
+          <p className="text-xs text-slate-400 mt-1">扫描缓存、环境变量、外部 SDK、残留文件四大类问题并一键修复。</p>
         </div>
 
         {hasScanned && (
@@ -263,6 +266,9 @@ export default function EnvDiagnostics() {
                 </span>
                 <span className="px-2.5 py-1 bg-blue-500/10 border border-blue-500/20 rounded-md text-[10px] text-blue-400">
                   建议: {suggestionCount}
+                </span>
+                <span className="px-2.5 py-1 bg-teal-500/10 border border-teal-500/20 rounded-md text-[10px] text-teal-400">
+                  信息: {infoCount}
                 </span>
               </div>
             </div>
@@ -366,51 +372,51 @@ export default function EnvDiagnostics() {
                       <p className="text-xs text-white font-medium mt-1">{selectedProblem.description}</p>
                     </div>
 
-                    {/* 检测依据：为什么判定为问题 */}
+                    {/* 检测结果 */}
                     <div className="p-3 rounded-xl bg-amber-500/5 border border-amber-500/15 space-y-2.5">
                       <div className="flex items-center gap-1.5">
                         <Info className="w-3.5 h-3.5 text-amber-400" />
-                        <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wide">检测依据（为什么）</span>
+                        <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wide">检测</span>
                       </div>
                       <div>
-                        <span className="text-[9px] text-slate-500">检测来源</span>
+                        <span className="text-[9px] text-slate-500">来源</span>
                         <p className="text-[11px] text-slate-200 mt-0.5 break-all">{selectedProblem.evidence_source}</p>
                       </div>
                       <div>
-                        <span className="text-[9px] text-slate-500">读取到的内容</span>
+                        <span className="text-[9px] text-slate-500">读取值</span>
                         <p className="text-[11px] font-mono text-slate-300 mt-0.5 whitespace-pre-wrap break-all p-2 bg-black/30 rounded-lg border border-white/5">
                           {selectedProblem.evidence_content || selectedProblem.detail}
                         </p>
                       </div>
                       <div>
-                        <span className="text-[9px] text-slate-500">判定逻辑</span>
+                        <span className="text-[9px] text-slate-500">规则</span>
                         <p className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">{selectedProblem.evidence_reason}</p>
                       </div>
                     </div>
 
-                    {/* 修复方案：将要怎么做、做什么 */}
+                    {/* 修复 */}
                     <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/15 space-y-2.5">
                       <div className="flex items-center gap-1.5">
                         <Zap className="w-3.5 h-3.5 text-blue-400" />
-                        <span className="text-[10px] font-semibold text-blue-400 uppercase tracking-wide">修复方案（怎么做）</span>
+                        <span className="text-[10px] font-semibold text-blue-400 uppercase tracking-wide">修复</span>
                       </div>
                       <p className="text-[11px] text-slate-200 leading-relaxed">{selectedProblem.fix_plan}</p>
 
                       {selectedProblem.fix_file && (
                         <div>
-                          <span className="text-[9px] text-slate-500">将修改的文件 / 位置</span>
+                          <span className="text-[9px] text-slate-500">目标文件</span>
                           <p className="text-[11px] font-mono text-slate-300 mt-0.5 break-all">{selectedProblem.fix_file}</p>
                         </div>
                       )}
                       {selectedProblem.fix_source_path && (
                         <div>
-                          <span className="text-[9px] text-slate-500">源路径（从）</span>
+                          <span className="text-[9px] text-slate-500">源路径</span>
                           <p className="text-[11px] font-mono text-slate-300 mt-0.5 break-all">{selectedProblem.fix_source_path}</p>
                         </div>
                       )}
                       {selectedProblem.fix_dest_path && (
                         <div>
-                          <span className="text-[9px] text-slate-500">目标位置（到）</span>
+                          <span className="text-[9px] text-slate-500">目标位置</span>
                           <p className="text-[11px] font-mono text-emerald-300 mt-0.5 break-all">{selectedProblem.fix_dest_path}</p>
                         </div>
                       )}
@@ -419,13 +425,16 @@ export default function EnvDiagnostics() {
 
                   <div className="pt-4 mt-2 border-t border-white/5">
                     <span className="text-[10px] text-slate-500">
-                      修复类型: <span className="font-mono text-slate-400">{selectedProblem.fix_type}</span>
+                      类型: <span className="font-mono text-slate-400">{selectedProblem.problem_type}</span>
+                      {selectedProblem.fix_type && (
+                        <span className="ml-2">操作: <span className="font-mono text-slate-400">{selectedProblem.fix_type}</span></span>
+                      )}
                     </span>
                   </div>
                 </div>
               ) : (
-                <div className="flex-1 flex items-center justify-center text-center text-slate-500 text-xs">
-                  请选择左侧列表中的诊断项，查看「为什么」和「将如何修复」
+                <div className="flex-1 flex items-center  justify-center text-center text-slate-500 text-xs">
+                  选择左侧诊断项查看检测结果与修复方案
                 </div>
               )}
             </div>

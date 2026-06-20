@@ -37,10 +37,11 @@ interface ProgressPayload {
 
 function categoryLabel(cat: string): string {
   switch (cat) {
-    case "language": return "编程语言";
-    case "service":  return "本地服务";
+    case "language":   return "编程语言";
+    case "service":    return "本地服务";
     case "build_tool": return "构建工具";
-    case "mobile":   return "移动端 SDK";
+    case "mobile":     return "移动端 SDK";
+    case "tool":       return "开发工具";
     default: return cat;
   }
 }
@@ -543,7 +544,7 @@ export default function SdkManager() {
               <HelpCircle className="w-12 h-12 text-slate-600 mb-4" />
               <p className="text-xs font-medium text-slate-400">请在左侧列表中选择一个开发库/服务进行管理</p>
             </div>
-          )}
+         )}
         </div>
       </div>
     </div>

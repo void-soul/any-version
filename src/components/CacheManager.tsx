@@ -83,7 +83,7 @@ export default function CacheManager() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-white tracking-wide">开发缓存清理</h2>
-          <p className="text-xs text-slate-400 mt-1">迁移 C 盘下的包管理器全局缓存到其他磁盘（NTFS 目录联接映射），拯救 C 盘空间。每一项都会告诉你「依据哪个配置检测到的」以及「将要怎么迁移」。</p>
+          <p className="text-xs text-slate-400 mt-1">将 C 盘缓存迁移到其他磁盘（NTFS 目录联接），释放 C 盘空间。</p>
         </div>
 
         <button
@@ -177,27 +177,25 @@ export default function CacheManager() {
               {/* 检测依据：透明展示我们是怎么找到这个缓存目录的 */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3 border-t border-white/5">
                 <div className="p-3 rounded-xl bg-amber-500/5 border border-amber-500/15 space-y-1.5">
-                  <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wide">检测依据（如何找到）</span>
+                  <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wide">检测</span>
                   <p className="text-[10px] text-slate-300 leading-relaxed">{cache.detect_source}</p>
                   <p className="text-[10px] font-mono text-slate-400 break-all bg-black/20 rounded p-1.5 border border-white/5">{cache.detect_content}</p>
                 </div>
 
-                {/* 迁移方案：透明展示将要怎么做 */}
+                {/* 迁移方案 */}
                 {!cache.is_link ? (
                   <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/15 space-y-1.5">
-                    <span className="text-[10px] font-semibold text-blue-400 uppercase tracking-wide">迁移方案（将要怎么做）</span>
+                    <span className="text-[10px] font-semibold text-blue-400 uppercase tracking-wide">迁移方案</span>
                     <p className="text-[10px] text-slate-300 leading-relaxed">
-                      将缓存从 <span className="font-mono text-slate-200">{cache.path}</span> 整体移动到
+                      <span className="font-mono text-slate-200">{cache.path}</span> →
                       <span className="font-mono text-emerald-300"> {target || "（请填写目标路径）"}</span>，
-                      并在原位置创建 NTFS 目录联接（mklink /J）。工具仍按原路径访问，文件却存到非 C 盘，使用无感。
+                      创建 NTFS 目录联接（mklink /J）。
                     </p>
                   </div>
                 ) : (
                   <div className="p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/15 space-y-1.5">
                     <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wide">当前状态</span>
-                    <p className="text-[10px] text-slate-300 leading-relaxed">
-                      已通过目录联接重定向到 <span className="font-mono text-emerald-300 break-all">{cache.real_target}</span>，不再占用 C 盘空间。
-                    </p>
+                    <p className="text-[10px] font-mono text-emerald-300 break-all">{cache.real_target}</p>
                   </div>
                 )}
               </div>
