@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>av-gui</AssemblyName>
+    <ApplicationIcon />
+    <StartupObject>AnyVersion.Program</StartupObject>
+  </PropertyGroup>
+
+</Project>

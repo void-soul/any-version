@@ -1,0 +1,10 @@
+# Build artifacts
+bin/
+obj/
+av.exe
+av-gui.exe
+av-gui.dll
+av-gui.deps.json
+av-gui.pdb
+av-gui.runtimeconfig.json
+.tmp/

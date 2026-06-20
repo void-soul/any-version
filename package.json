@@ -1,0 +1,21 @@
+{
+  "name": "any-version",
+  "version": "1.0.0",
+  "description": "Windows 多语言开发环境版本管理器",
+  "scripts": {
+    "build:backend": "cmd /c \"set GOROOT=D:\\tool\\go&& go build -o av.exe ./backend\"",
+    "build:gui": "dotnet build av-gui.csproj",
+    "build:copy-gui": "powershell -NoProfile -Command \"Copy-Item -Path 'bin/Debug/net10.0-windows/*' -Destination '.' -Force\"",
+    "build": "npm run build:backend && npm run build:gui && npm run build:copy-gui"
+  },
+  "keywords": [
+    "version-manager",
+    "sdk",
+    "windows",
+    "go",
+    "dotnet",
+    "csharp"
+  ],
+  "author": "",
+  "license": "Apache-2.0"
+}
