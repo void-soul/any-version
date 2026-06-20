@@ -6,6 +6,9 @@ use serde::{Serialize, Deserialize};
 pub struct Config {
     pub versions_dir: String,
     pub links_dir: String,
+    pub managed_items: std::collections::HashSet<String>,
+    pub original_envs: std::collections::HashMap<String, String>,
+    pub original_paths: std::collections::HashMap<String, Vec<String>>,
 }
 
 pub fn get_base_dir() -> PathBuf {
@@ -42,6 +45,9 @@ pub fn load_config() -> Config {
     let default_config = Config {
         versions_dir: base_dir.join("versions").to_string_lossy().to_string(),
         links_dir: base_dir.join("links").to_string_lossy().to_string(),
+        managed_items: std::collections::HashSet::new(),
+        original_envs: std::collections::HashMap::new(),
+        original_paths: std::collections::HashMap::new(),
     };
     let _ = fs::create_dir_all(&base_dir);
     let _ = save_config(&default_config);

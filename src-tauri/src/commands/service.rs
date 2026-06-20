@@ -14,7 +14,7 @@ pub struct ServiceInfo {
     pub pid: i32,
 }
 
-fn read_port_from_ini(ini_path: &Path, key: &str) -> String {
+pub(crate) fn read_port_from_ini(ini_path: &Path, key: &str) -> String {
     if let Ok(content) = fs::read_to_string(ini_path) {
         for line in content.lines() {
             let line_trimmed = line.trim();
@@ -29,7 +29,7 @@ fn read_port_from_ini(ini_path: &Path, key: &str) -> String {
     String::new()
 }
 
-fn read_port_from_conf(conf_path: &Path, key: &str) -> String {
+pub(crate) fn read_port_from_conf(conf_path: &Path, key: &str) -> String {
     if let Ok(content) = fs::read_to_string(conf_path) {
         for line in content.lines() {
             let line_trimmed = line.trim();
@@ -44,7 +44,7 @@ fn read_port_from_conf(conf_path: &Path, key: &str) -> String {
     String::new()
 }
 
-fn read_nginx_port(conf_path: &Path) -> String {
+pub(crate) fn read_nginx_port(conf_path: &Path) -> String {
     if let Ok(content) = fs::read_to_string(conf_path) {
         if let Some(idx) = content.find("listen") {
             let sub = &content[idx..];
@@ -71,12 +71,12 @@ fn extract_version_from_path(path: &str, name: &str) -> String {
     String::new()
 }
 
-struct PortOwnerSimple {
-    pid: String,
-    process_name: String,
+pub(crate) struct PortOwnerSimple {
+    pub(crate) pid: String,
+    pub(crate) process_name: String,
 }
 
-fn find_port_owner_simple(port_str: &str) -> Option<PortOwnerSimple> {
+pub(crate) fn find_port_owner_simple(port_str: &str) -> Option<PortOwnerSimple> {
     let output = Command::new("netstat")
         .args(&["-ano", "-p", "tcp"])
         .output()

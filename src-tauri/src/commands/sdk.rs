@@ -7,9 +7,14 @@ use crate::commands::config::{load_config, get_base_dir};
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SdkInfo {
     pub name: String,
+    pub display_name: String,
     pub category: String,
     pub active_version: String,
     pub installed_versions: Vec<String>,
+    pub official_website: String,
+    pub has_cache: bool,
+    pub has_mirror: bool,
+    pub has_pkg: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -191,7 +196,7 @@ pub async fn get_sdks_list() -> Result<Vec<SdkInfo>, String> {
 
     let mut list = Vec::new();
     for sdk_def in registry {
-        let name = sdk_def.id;
+        let name = &sdk_def.id;
         let cat = sdk_def.category.as_str();
         let sdk_dir = Path::new(&config.versions_dir).join(name);
         let junction_path = Path::new(&config.links_dir).join(name);
@@ -222,9 +227,14 @@ pub async fn get_sdks_list() -> Result<Vec<SdkInfo>, String> {
 
         list.push(SdkInfo {
             name: name.to_string(),
+            display_name: sdk_def.display_name.to_string(),
             category: cat.to_string(),
             active_version,
             installed_versions: installed,
+            official_website: sdk_def.official_website.to_string(),
+            has_cache: sdk_def.has_cache,
+            has_mirror: sdk_def.has_mirror,
+            has_pkg: sdk_def.has_pkg,
         });
     }
 
@@ -729,4 +739,328 @@ pub fn add_local_sdk_version(sdk_name: String, version: String, local_path: Stri
     let _ = crate::commands::env::configure_sdk_env_vars(&sdk_name, &link_str, &dest_str);
 
     Ok(())
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct EnvVarStatus {
+    pub name: String,
+    pub desc: String,
+    pub current_value: String,
+    pub source: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SdkDetailedStatus {
+    pub is_installed: bool,
+    pub install_path: String,
+    pub version: String,
+    pub is_managed: bool,
+    pub cache_path: String,
+    pub cache_size: String,
+    pub cache_is_redirected: bool,
+    pub env_vars: Vec<EnvVarStatus>,
+    
+    // Service-specific diagnostics
+    pub is_service: bool,
+    pub service_status: String, // "running" | "stopped" | "not_installed"
+    pub default_port: u16,
+    pub port: String,
+    pub pid: i32,
+    pub data_path: String,
+    pub log_path: String,
+}
+
+#[tauri::command]
+pub async fn get_sdk_detailed_status(sdk_id: String) -> Result<SdkDetailedStatus, String> {
+    let config = load_config();
+    let sdk_def = super::sdk_registry::find_by_id(&sdk_id)
+        .ok_or_else(|| format!("未找到该 SDK 的定义: {}", sdk_id))?;
+
+    let is_managed = config.managed_items.contains(&sdk_id);
+
+    // 1. Check if installed and where
+    let mut is_installed = false;
+    let mut install_path = String::new();
+    let mut version = String::new();
+
+    // Check managed first
+    let junction_path = Path::new(&config.links_dir).join(&sdk_id);
+    if junction_path.exists() {
+        if let Ok(real) = fs::canonicalize(&junction_path) {
+            is_installed = true;
+            install_path = real.to_string_lossy().to_string().trim_start_matches(r"\\?\").to_string();
+            if let Some(v) = install_path.split('\\').last() {
+                version = v.to_string();
+            }
+        }
+    }
+
+    // If not found in managed, search external via find_rules
+    if !is_installed {
+        if let Some(loc) = super::sdk_resolver::find_sdk_root(&sdk_id, &sdk_def.find_rules) {
+            is_installed = true;
+            install_path = loc.root.to_string_lossy().to_string();
+            version = get_external_version(&sdk_id, &loc.root);
+        }
+    }
+
+    // 2. Cache status
+    let mut cache_path = String::new();
+    let mut cache_size = String::new();
+    let mut cache_is_redirected = false;
+
+    if sdk_def.has_cache {
+        let cache_name = get_cache_name_helper(&sdk_id);
+        if let Ok(caches) = crate::commands::cache::get_caches_list() {
+            if let Some(c) = caches.iter().find(|item| item.name == cache_name) {
+                cache_path = c.path.clone();
+                cache_size = c.size.clone();
+                cache_is_redirected = c.is_link;
+            }
+        }
+    }
+
+    // 3. Env variables
+    let mut env_vars = Vec::new();
+    for var in &sdk_def.env_vars {
+        let mut current_value = String::new();
+        let mut source = "未设置".to_string();
+        if let Some((val, src)) = crate::commands::env::get_registry_env_any(&var.name) {
+            current_value = val;
+            source = src.to_string();
+        }
+        env_vars.push(EnvVarStatus {
+            name: var.name.clone(),
+            desc: var.desc.clone(),
+            current_value,
+            source,
+        });
+    }
+
+    // 4. Service Specific Details
+    let is_service = sdk_def.is_service.unwrap_or(false);
+    let mut service_status = "stopped".to_string();
+    let default_port = sdk_def.default_port.unwrap_or(0);
+    let mut port = default_port.to_string();
+    let mut pid = 0;
+    let mut data_path = String::new();
+    let mut log_path = String::new();
+
+    if is_service {
+        if !is_installed {
+            service_status = "not_installed".to_string();
+        } else {
+            let root_dir = Path::new(&install_path);
+            
+            // Read configured port from service config
+            if sdk_id == "mysql" {
+                let config_port = crate::commands::service::read_port_from_ini(&root_dir.join("my.ini"), "port");
+                if !config_port.is_empty() {
+                    port = config_port;
+                }
+            } else if sdk_id == "redis" {
+                let config_port = crate::commands::service::read_port_from_conf(&root_dir.join("redis.windows.conf"), "port");
+                if !config_port.is_empty() {
+                    port = config_port;
+                }
+            } else if sdk_id == "nginx" {
+                let config_port = crate::commands::service::read_nginx_port(&root_dir.join("conf").join("nginx.conf"));
+                if !config_port.is_empty() {
+                    port = config_port;
+                }
+            }
+
+            // Data dir and Log dir paths
+            if let Some(ref d_dir) = sdk_def.data_dir {
+                data_path = root_dir.join(d_dir).to_string_lossy().to_string();
+            }
+            if let Some(ref l_dir) = sdk_def.log_dir {
+                log_path = root_dir.join(l_dir).to_string_lossy().to_string();
+            }
+
+            // Determine running state / PID
+            let mut process_found = false;
+            let output = std::process::Command::new("wmic")
+                .args(&["process", "get", "ExecutablePath,ProcessId"])
+                .output();
+
+            if let Ok(out) = output {
+                let text = String::from_utf8_lossy(&out.stdout);
+                let versions_dir_clean = config.versions_dir.to_lowercase().replace('/', "\\");
+                let install_path_clean = install_path.to_lowercase().replace('/', "\\");
+
+                for line in text.lines() {
+                    let line_trimmed = line.trim();
+                    if line_trimmed.is_empty() || line_trimmed.to_lowercase().starts_with("executablepath") {
+                        continue;
+                    }
+
+                    if let Some(last_space_idx) = line_trimmed.rfind(' ') {
+                        let path_part = line_trimmed[..last_space_idx].trim().to_string();
+                        let pid_part = line_trimmed[last_space_idx..].trim().to_string();
+
+                        let path_clean = path_part.to_lowercase().replace('/', "\\");
+                        let matches_path = if is_managed {
+                            path_clean.contains(&versions_dir_clean) && path_clean.contains(&sdk_id)
+                        } else {
+                            path_clean.contains(&install_path_clean)
+                        };
+
+                        if matches_path {
+                            if let Ok(p_id) = pid_part.parse::<i32>() {
+                                let matches_bin = match sdk_id.as_str() {
+                                    "nginx" => path_clean.ends_with("nginx.exe"),
+                                    "redis" => path_clean.ends_with("redis-server.exe"),
+                                    "mysql" => path_clean.ends_with("mysqld.exe"),
+                                    "mongodb" => path_clean.ends_with("mongod.exe"),
+                                    "postgresql" => path_clean.ends_with("postgres.exe"),
+                                    _ => false,
+                                };
+                                if matches_bin {
+                                    service_status = "running".to_string();
+                                    pid = p_id;
+                                    process_found = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fallback: netstat check
+            if !process_found && !port.is_empty() {
+                if let Some(owner) = crate::commands::service::find_port_owner_simple(&port) {
+                    service_status = "running".to_string();
+                    if let Ok(p_id) = owner.pid.parse::<i32>() {
+                        pid = p_id;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(SdkDetailedStatus {
+        is_installed,
+        install_path,
+        version,
+        is_managed,
+        cache_path,
+        cache_size,
+        cache_is_redirected,
+        env_vars,
+        
+        is_service,
+        service_status,
+        default_port,
+        port,
+        pid,
+        data_path,
+        log_path,
+    })
+}
+
+fn get_cache_name_helper(sdk_id: &str) -> String {
+    match sdk_id {
+        "nodejs" => "npm".to_string(),
+        "python" => "pip".to_string(),
+        "maven" => "mvn".to_string(),
+        _ => sdk_id.to_string(),
+    }
+}
+
+fn get_external_version(sdk_id: &str, root_path: &Path) -> String {
+    let path_str = root_path.to_string_lossy();
+    if let Some(v) = extract_version_simple(&path_str) {
+        return v;
+    }
+
+    let exe_name = match sdk_id {
+        "nodejs" => "node.exe",
+        "go" => "go.exe",
+        "python" => "python.exe",
+        "java" => "java.exe",
+        "rust" => "rustc.exe",
+        "bun" => "bun.exe",
+        "maven" => "mvn.cmd",
+        "gradle" => "gradle.bat",
+        "yarn" => "yarn.cmd",
+        "pnpm" => "pnpm.exe",
+        "nginx" => "nginx.exe",
+        "redis" => "redis-server.exe",
+        "mysql" => "mysql.exe",
+        "mongodb" => "mongod.exe",
+        "postgresql" => "psql.exe",
+        "android" => "sdkmanager.bat",
+        "harmony" => "ohpm.bat",
+        "cuda" => "nvcc.exe",
+        "ffmpeg" => "ffmpeg.exe",
+        _ => "",
+    };
+
+    if !exe_name.is_empty() {
+        let bin_path = root_path.join(exe_name);
+        let bin_path_alt = root_path.join("bin").join(exe_name);
+        
+        let target_exe = if bin_path.exists() {
+            Some(bin_path)
+        } else if bin_path_alt.exists() {
+            Some(bin_path_alt)
+        } else {
+            None
+        };
+
+        if let Some(exe) = target_exe {
+            let arg = match sdk_id {
+                "nodejs" | "rust" | "bun" | "yarn" | "pnpm" | "ffmpeg" => "-v",
+                "go" | "java" | "gradle" | "mysql" | "mongodb" | "postgresql" | "cuda" => "version",
+                "maven" => "-version",
+                _ => "--version"
+            };
+
+            if let Ok(output) = std::process::Command::new(exe)
+                .arg(arg)
+                .output()
+            {
+                let text = if output.status.success() {
+                    String::from_utf8_lossy(&output.stdout).to_string()
+                } else {
+                    String::from_utf8_lossy(&output.stderr).to_string()
+                };
+                if let Some(v) = extract_version_simple(&text) {
+                    return v;
+                }
+            }
+        }
+    }
+
+    "未知版本".to_string()
+}
+
+fn extract_version_simple(text: &str) -> Option<String> {
+    let mut chars = text.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        if c.is_ascii_digit() {
+            let mut version = String::new();
+            let mut dot_count = 0;
+            while let Some(&c) = chars.peek() {
+                if c.is_ascii_digit() || c == '.' {
+                    if c == '.' {
+                        dot_count += 1;
+                        if dot_count > 2 {
+                            break;
+                        }
+                    }
+                    version.push(chars.next().unwrap());
+                } else {
+                    break;
+                }
+            }
+            if !version.is_empty() && version.contains('.') {
+                return Some(version);
+            }
+        }
+        chars.next();
+    }
+    None
 }

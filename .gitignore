@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Auto-recovered editor fragments
+src-tauri/src/commands/recovered_*.rs

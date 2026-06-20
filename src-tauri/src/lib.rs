@@ -33,7 +33,9 @@ pub fn run() {
             commands::env::create_env_backup,
             commands::env::list_env_backups,
             commands::env::delete_env_backup,
-            commands::env::restore_env_backup
+            commands::env::restore_env_backup,
+            commands::env::toggle_item_management,
+            commands::sdk::get_sdk_detailed_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

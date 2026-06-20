@@ -168,7 +168,7 @@ pub fn scan_environment() -> Result<Vec<DiagnosticProblem>, String> {
                         evidence_content: format!("PATH 中包含路径片段: {}", p_str),
                         evidence_reason: "该路径在磁盘上不存在（已被删除或移动），属于无效的死链 PATH 条目，会拖慢命令查找并可能引发错误。".to_string(),
                         fix_plan: format!("从用户 PATH 中删除这一条无效路径「{}」，其余路径保持不变。", p_str),
-                        fix_file: "注册表: HKEY_CURRENT_USER\\Environment\\PATH".to_string(),
+                        fix_file: "注册表 HKEY_CURRENT_USER\\Environment\\PATH".to_string(),
                         fix_source_path: String::new(),
                         fix_dest_path: String::new(),
                     });
@@ -187,9 +187,13 @@ pub fn scan_environment() -> Result<Vec<DiagnosticProblem>, String> {
 
     // 遍历注册表中所有 SDK，检查其关联的环境变量
     for sdk_def in sdk_registry::registry() {
-        let sdk_name = sdk_def.display_name;
+        let sdk_name = &sdk_def.display_name;
 
-        for &(var_name, desc, ref check_type) in sdk_def.env_vars {
+        for var_info in &sdk_def.env_vars {
+            let var_name = &var_info.name;
+            let desc = &var_info.desc;
+            let check_type = &var_info.check_type;
+
             // 同时检查用户级(HKCU)和系统级(HKLM)
             if let Some((val, source)) = get_registry_env_any(var_name) {
                 // 值指向 AnyVersion 链接目录：正常，跳过
@@ -225,8 +229,8 @@ pub fn scan_environment() -> Result<Vec<DiagnosticProblem>, String> {
                             });
                         } else if !reported_paths.contains(&val.to_lowercase()) {
                             // 路径存在但不属于 AnyVersion 管理 → 未管理的 SDK
-                            let is_managed = sdk_registry::find_by_id(sdk_def.id).is_some()
-                                && links_dir.join(sdk_def.id).exists();
+                            let is_managed = sdk_registry::find_by_id(&sdk_def.id).is_some()
+                                && links_dir.join(&sdk_def.id).exists();
 
                             if !is_managed {
                                 reported_paths.insert(val.to_lowercase());
@@ -260,10 +264,10 @@ pub fn scan_environment() -> Result<Vec<DiagnosticProblem>, String> {
         }
 
         // PATH 中的外部 SDK 路径扫描（使用注册表的 find_rules）
-        for rule in sdk_def.find_rules {
-            if let super::sdk_resolver::ResolvePattern::PathContains(pattern, exe_hint) = &rule.pattern {
-                let pattern = *pattern;
-                let exe_hint = *exe_hint;
+        for rule in &sdk_def.find_rules {
+            if let super::sdk_resolver::ResolvePattern::PathContains { keyword: pattern, exe: exe_hint } = &rule.pattern {
+                let pattern = pattern.as_str();
+                let exe_hint = exe_hint.as_str();
                 // 扫描用户级 PATH
                 let path_sources: Vec<(&str, Option<String>)> = vec![
                     ("HKCU", get_registry_env("PATH")),
@@ -305,7 +309,7 @@ pub fn scan_environment() -> Result<Vec<DiagnosticProblem>, String> {
                         if has_exe || dir_exists {
                             reported_paths.insert(p_lower.clone());
 
-                            let is_managed = links_dir.join(sdk_def.id).exists();
+                            let is_managed = links_dir.join(&sdk_def.id).exists();
                             let (severity, fix_desc) = if is_managed {
                                 ("警告".to_string(),
                                  format!("已由 AnyVersion 管理 {}，此外部路径可能造成版本冲突。", sdk_name))
@@ -565,14 +569,20 @@ pub fn remove_from_user_path(paths: &[String]) -> Result<(), String> {
 pub fn configure_sdk_env_vars(sdk_id: &str, link_dir: &str, _version_dir: &str) -> Result<(), String> {
     use super::sdk_registry;
 
+    let config = load_config();
+    if !config.managed_items.contains(sdk_id) {
+        return Ok(());
+    }
+
     let sdk_def = match sdk_registry::find_by_id(sdk_id) {
         Some(d) => d,
         None => return Ok(()),
     };
 
-    for &(var_name, _desc, _) in sdk_def.env_vars {
+    for var_info in &sdk_def.env_vars {
+        let var_name = &var_info.name;
         // 对不同变量使用不同的值策略
-        let value = match var_name {
+        let value = match var_name.as_str() {
             // 特殊子目录映射
             "CARGO_HOME"      => format!("{}\\.cargo", link_dir),
             "RUSTUP_HOME"     => format!("{}\\.rustup", link_dir),
@@ -602,8 +612,8 @@ pub fn remove_sdk_env_vars(sdk_id: &str) -> Result<(), String> {
         None => return Ok(()),
     };
 
-    for &(var_name, _desc, _) in sdk_def.env_vars {
-        let _ = set_registry_env(var_name, "");
+    for var_info in &sdk_def.env_vars {
+        let _ = set_registry_env(&var_info.name, "");
     }
 
     // 从用户 PATH 中移除该 SDK 的可执行目录
@@ -811,3 +821,129 @@ pub fn restore_env_backup(id: String) -> Result<(), String> {
 
     Ok(())
 }
+
+#[tauri::command]
+pub fn toggle_item_management(id: String, enable: bool, cache_dest: Option<String>) -> Result<(), String> {
+    use super::sdk_registry;
+    let sdk_def = sdk_registry::find_by_id(&id)
+        .ok_or_else(|| format!("未找到该标识符对应的配置: {}", id))?;
+
+    let mut config = load_config();
+
+    if enable {
+        // 1. Add to managed_items
+        config.managed_items.insert(id.clone());
+
+        // 2. Backup conflicting environment variables
+        for var_info in &sdk_def.env_vars {
+            let var_name = &var_info.name;
+            if let Some((val, _source)) = get_registry_env_any(var_name) {
+                if !val.to_lowercase().contains(&config.links_dir.to_lowercase()) {
+                    config.original_envs.entry(var_name.to_string()).or_insert(val);
+                }
+            }
+        }
+
+        // 3. Backup conflicting PATH entries from HKCU
+        let mut original_paths_to_save = Vec::new();
+        if let Some(user_path) = get_registry_env("PATH") {
+            let parts = std::env::split_paths(&user_path)
+                .map(|p| p.to_string_lossy().to_string())
+                .collect::<Vec<_>>();
+            
+            let mut matched_entries = Vec::new();
+            let mut remaining_entries = Vec::new();
+
+            for p_str in parts {
+                if p_str.is_empty() {
+                    continue;
+                }
+                
+                let mut matches = false;
+                let p_lower = p_str.to_lowercase();
+                
+                if !p_lower.contains(&config.links_dir.to_lowercase()) {
+                    for rule in &sdk_def.find_rules {
+                        match &rule.pattern {
+                            crate::commands::sdk_resolver::ResolvePattern::PathContains { keyword: pattern, .. } => {
+                                if p_lower.contains(&pattern.to_lowercase()) {
+                                    matches = true;
+                                    break;
+                                }
+                            }
+                            crate::commands::sdk_resolver::ResolvePattern::FixedPath { path: fixed_path, .. } => {
+                                if p_lower.contains(&fixed_path.to_lowercase()) {
+                                    matches = true;
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                if matches {
+                    matched_entries.push(p_str.clone());
+                    original_paths_to_save.push(p_str);
+                } else {
+                    remaining_entries.push(p_str);
+                }
+            }
+
+            if !matched_entries.is_empty() {
+                config.original_paths.entry(id.clone()).or_insert_with(Vec::new).extend(matched_entries);
+                
+                let new_path = std::env::join_paths(remaining_entries.iter().map(Path::new))
+                    .map_err(|e| e.to_string())?
+                    .to_string_lossy()
+                    .to_string();
+                set_registry_env("PATH", &new_path)?;
+            }
+        }
+
+        // Save config changes so far
+        crate::commands::config::save_config(&config)?;
+
+        // 4. Configure SDK env vars if a version is active
+        let junction_path = Path::new(&config.links_dir).join(&id);
+        if junction_path.exists() {
+            let link_str = junction_path.to_string_lossy().to_string();
+            let dest_str = fs::canonicalize(&junction_path)
+                .map(|p| p.to_string_lossy().to_string().trim_start_matches(r"\\?\").to_string())
+                .unwrap_or_default();
+            let _ = configure_sdk_env_vars(&id, &link_str, &dest_str);
+        }
+
+        // 5. Migrate cache if requested
+        if let Some(dest) = cache_dest {
+            if !dest.is_empty() {
+                let _ = crate::commands::cache::migrate_cache_path(id.clone(), dest);
+            }
+        }
+    } else {
+        // Disable management
+        config.managed_items.remove(&id);
+
+        // 1. Remove AnyVersion environment variables for this SDK
+        let _ = remove_sdk_env_vars(&id);
+
+        // 2. Restore original environment variables from backup
+        for var_info in &sdk_def.env_vars {
+            let var_name = &var_info.name;
+            if let Some(orig_val) = config.original_envs.remove(var_name) {
+                let _ = set_registry_env(var_name, &orig_val);
+            }
+        }
+
+        // 3. Restore original PATH entries
+        if let Some(orig_paths) = config.original_paths.remove(&id) {
+            let _ = add_to_user_path(&orig_paths);
+        }
+
+        // Save updated config
+        crate::commands::config::save_config(&config)?;
+    }
+
+    Ok(())
+}
+

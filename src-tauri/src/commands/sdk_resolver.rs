@@ -18,6 +18,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use serde::{Serialize, Deserialize};
 
 /// SDK 被发现时的结果
 #[derive(Debug, Clone)]
@@ -25,7 +26,7 @@ pub struct SdkLocation {
     /// SDK 根目录
     pub root: PathBuf,
     /// 来源描述（如 "Scoop", "Chocolatey", "环境变量 JAVA_HOME" 等）
-    pub source: &'static str,
+    pub source: String,
 }
 
 /// 安装来源类型（用于 UI 显示和去重）
@@ -63,42 +64,30 @@ pub enum InstallSource {
     Other,
 }
 
-/// 路径解析规则类型
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResolvePattern {
-    /// 在 PATH 条目中查找包含指定关键词的目录，然后检查 exe 是否存在
-    /// (path_contains, exe_name)
-    PathContains(&'static str, &'static str),
-
-    /// 从环境变量获取根目录，检查 exe 是否在 {root}/{bin_sub}/{exe_name}
-    /// (env_var_name, bin_sub_path, exe_name)
-    EnvBin(&'static str, &'static str, &'static str),
-
-    /// 固定路径 + exe 检查
-    /// (fixed_path, exe_name)
-    FixedPath(&'static str, &'static str),
-
-    /// 在已知父目录下按模式查找（如 %USERPROFILE%\.pyenv\pyenv-win\）
-    /// (parent_env_var_or_known, relative_glob_pattern, exe_name)
-    ParentDirPattern(&'static str, &'static str, &'static str),
+    PathContains { keyword: String, exe: String },
+    EnvBin { env: String, bin_sub: String, exe: String },
+    FixedPath { path: String, exe: String },
+    ParentDirPattern { parent_env: String, rel_pattern: String, exe: String },
 }
 
 /// 单条解析规则
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FindRule {
     /// 规则模式
     pub pattern: ResolvePattern,
     /// 来源标签
-    pub source_label: &'static str,
+    pub source_label: String,
     /// 优先级（越小越优先，0 = 最高）
     pub priority: u8,
     /// 发现后，实际 SDK 根目录相对于匹配路径的向上回溯层数
-    /// 例如：如果 PATH 匹配到 ...\nodejs\bin，而根目录是 ...\nodejs，则 root_offset = 1
     pub root_offset: u8,
 }
 
 /// 对某个 SDK 执行路径解析，按优先级返回第一个匹配结果。
-pub fn find_sdk_root(sdk_id: &str, find_rules: &[FindRule]) -> Option<SdkLocation> {
+pub fn find_sdk_root(_sdk_id: &str, find_rules: &[FindRule]) -> Option<SdkLocation> {
     let links_dir = crate::commands::config::load_config().links_dir;
     let links_lower = links_dir.to_lowercase();
 
@@ -106,17 +95,17 @@ pub fn find_sdk_root(sdk_id: &str, find_rules: &[FindRule]) -> Option<SdkLocatio
 
     for rule in find_rules {
         let matched_path = match &rule.pattern {
-            ResolvePattern::PathContains(path_key, exe_name) => {
-                resolve_from_path(path_key, exe_name)
+            ResolvePattern::PathContains { keyword, exe } => {
+                resolve_from_path(keyword, exe)
             }
-            ResolvePattern::EnvBin(env_var, bin_sub, exe_name) => {
-                resolve_from_env_bin(env_var, bin_sub, exe_name)
+            ResolvePattern::EnvBin { env, bin_sub, exe } => {
+                resolve_from_env_bin(env, bin_sub, exe)
             }
-            ResolvePattern::FixedPath(fixed, exe_name) => {
-                resolve_from_fixed(fixed, exe_name)
+            ResolvePattern::FixedPath { path, exe } => {
+                resolve_from_fixed(path, exe)
             }
-            ResolvePattern::ParentDirPattern(parent_env, rel_pattern, exe_name) => {
-                resolve_from_parent_dir(parent_env, rel_pattern, exe_name)
+            ResolvePattern::ParentDirPattern { parent_env, rel_pattern, exe } => {
+                resolve_from_parent_dir(parent_env, rel_pattern, exe)
             }
         };
 
@@ -141,7 +130,7 @@ pub fn find_sdk_root(sdk_id: &str, find_rules: &[FindRule]) -> Option<SdkLocatio
 
             candidates.push((rule.priority, SdkLocation {
                 root: path,
-                source: rule.source_label,
+                source: rule.source_label.clone(),
             }));
         }
     }
@@ -152,7 +141,7 @@ pub fn find_sdk_root(sdk_id: &str, find_rules: &[FindRule]) -> Option<SdkLocatio
 }
 
 /// 枚举某个 SDK 在系统上的所有安装位置（用于"未管理的 SDK"检测）
-pub fn find_all_installations(sdk_id: &str, find_rules: &[FindRule]) -> Vec<SdkLocation> {
+pub fn find_all_installations(_sdk_id: &str, find_rules: &[FindRule]) -> Vec<SdkLocation> {
     let links_dir = crate::commands::config::load_config().links_dir;
     let links_lower = links_dir.to_lowercase();
     let mut results = Vec::new();
@@ -160,17 +149,17 @@ pub fn find_all_installations(sdk_id: &str, find_rules: &[FindRule]) -> Vec<SdkL
 
     for rule in find_rules {
         let matched_path = match &rule.pattern {
-            ResolvePattern::PathContains(path_key, exe_name) => {
-                resolve_from_path(path_key, exe_name)
+            ResolvePattern::PathContains { keyword, exe } => {
+                resolve_from_path(keyword, exe)
             }
-            ResolvePattern::EnvBin(env_var, bin_sub, exe_name) => {
-                resolve_from_env_bin(env_var, bin_sub, exe_name)
+            ResolvePattern::EnvBin { env, bin_sub, exe } => {
+                resolve_from_env_bin(env, bin_sub, exe)
             }
-            ResolvePattern::FixedPath(fixed, exe_name) => {
-                resolve_from_fixed(fixed, exe_name)
+            ResolvePattern::FixedPath { path, exe } => {
+                resolve_from_fixed(path, exe)
             }
-            ResolvePattern::ParentDirPattern(parent_env, rel_pattern, exe_name) => {
-                resolve_from_parent_dir(parent_env, rel_pattern, exe_name)
+            ResolvePattern::ParentDirPattern { parent_env, rel_pattern, exe } => {
+                resolve_from_parent_dir(parent_env, rel_pattern, exe)
             }
         };
 
@@ -189,7 +178,7 @@ pub fn find_all_installations(sdk_id: &str, find_rules: &[FindRule]) -> Vec<SdkL
             if seen.insert(key) {
                 results.push(SdkLocation {
                     root: path,
-                    source: rule.source_label,
+                    source: rule.source_label.clone(),
                 });
             }
         }

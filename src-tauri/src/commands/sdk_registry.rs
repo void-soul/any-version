@@ -1,510 +1,547 @@
-//! SDK 注册表 — 所有 SDK/工具/库的统一定义。
+//! SDK 注册表 — 所有 SDK/工具/库的动态定义。
 //!
-//! 新增 SDK 只需在此文件添加一个 SdkDef 条目。以下功能自动生效：
-//!   - 一键体检（环境变量 + PATH 扫描）
-//!   - SDK 版本管理（安装/卸载/切换）
-//!   - 环境变量自动配置/清理
-//!
-//! 重要：环境变量检查同时覆盖 用户级(HKCU) 和 系统级(HKLM) 注册表。
+//! 支持从文件 `%USERPROFILE%\.any-version\sdks_registry.json` 加载。
+//! 如果文件不存在，会自动创建默认的设置文件。
 
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use super::sdk_resolver::{FindRule, ResolvePattern};
 
 /// SDK 分类
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SdkCategory {
-    Language,
-    Service,
-    BuildTool,
-    Mobile,
-    Tool,
+    Language,   // 开发语言
+    LibManager, // 库管理
+    Tool,       // 开发工具
+    Service,    // 本地服务
 }
 
 impl SdkCategory {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Language   => "language",
-            Self::Service    => "service",
-            Self::BuildTool  => "build_tool",
-            Self::Mobile     => "mobile",
+            Self::LibManager => "lib_manager",
             Self::Tool       => "tool",
+            Self::Service    => "service",
         }
     }
 }
 
 /// 环境变量检查类型
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EnvCheckType {
     Path,
     NonEmpty,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvVar {
+    pub name: String,
+    pub desc: String,
+    pub check_type: EnvCheckType,
+}
+
 /// SDK 定义条目
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SdkDef {
-    pub id: &'static str,
-    pub display_name: &'static str,
+    pub id: String,
+    pub display_name: String,
     pub category: SdkCategory,
-    /// 该 SDK 关联的环境变量：(变量名, 用途, 检查类型)
-    pub env_vars: &'static [(&'static str, &'static str, EnvCheckType)],
-    /// 路径解析规则：如何在用户电脑上找到这个 SDK
-    pub find_rules: &'static [FindRule],
+    pub official_website: String,
+    pub has_cache: bool,
+    pub has_mirror: bool,
+    pub has_pkg: bool,
+    /// 该 SDK 关联的环境变量
+    pub env_vars: Vec<EnvVar>,
+    /// 路径解析规则
+    pub find_rules: Vec<FindRule>,
+    
+    // 服务与端口数据路径管理
+    #[serde(default)]
+    pub is_service: Option<bool>,
+    #[serde(default)]
+    pub default_port: Option<u16>,
+    #[serde(default)]
+    pub data_dir: Option<String>,
+    #[serde(default)]
+    pub log_dir: Option<String>,
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  辅助宏：简化规则定义
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-macro_rules! env_path {
-    ($name:expr, $desc:expr) => { ($name, $desc, EnvCheckType::Path) };
-}
-macro_rules! env_str {
-    ($name:expr, $desc:expr) => { ($name, $desc, EnvCheckType::NonEmpty) };
+/// 全局 SDK 注册表，从磁盘 JSON 文件中读取。
+pub fn registry() -> Vec<SdkDef> {
+    load_registry()
 }
 
-/// 在 PATH 中查找包含关键词的目录
-macro_rules! path_match {
-    ($key:expr, $exe:expr, $label:expr, $prio:expr, $offset:expr) => {
-        FindRule {
-            pattern: ResolvePattern::PathContains($key, $exe),
-            source_label: $label,
-            priority: $prio,
-            root_offset: $offset,
+/// 从配置文件动态加载注册表
+pub fn load_registry() -> Vec<SdkDef> {
+    let base_dir = crate::commands::config::get_base_dir();
+    let registry_path = base_dir.join("sdks_registry.json");
+    if registry_path.exists() {
+        if let Ok(data) = std::fs::read_to_string(&registry_path) {
+            if let Ok(list) = serde_json::from_str::<Vec<SdkDef>>(&data) {
+                // 如果已存的默认服务项没有 is_service 字段，强制重新生成配置以载入服务与端口数据
+                let needs_regeneration = list.iter().any(|s| {
+                    (s.id == "mysql" || s.id == "redis" || s.id == "nginx") && s.is_service.is_none()
+                });
+                if !needs_regeneration {
+                    return list;
+                }
+            }
         }
-    };
-    ($key:expr, $exe:expr, $label:expr, $prio:expr) => {
-        path_match!($key, $exe, $label, $prio, 0)
-    };
-    ($key:expr, $exe:expr, $label:expr) => {
-        path_match!($key, $exe, $label, 50, 0)
-    };
-}
-
-/// 从环境变量推导路径
-macro_rules! env_match {
-    ($env:expr, $bin:expr, $exe:expr, $label:expr, $prio:expr) => {
-        FindRule {
-            pattern: ResolvePattern::EnvBin($env, $bin, $exe),
-            source_label: $label,
-            priority: $prio,
-            root_offset: 0,
-        }
-    };
-    ($env:expr, $bin:expr, $exe:expr, $label:expr) => {
-        env_match!($env, $bin, $exe, $label, 20)
-    };
-}
-
-/// 固定路径检查
-macro_rules! fixed_match {
-    ($path:expr, $exe:expr, $label:expr, $prio:expr, $offset:expr) => {
-        FindRule {
-            pattern: ResolvePattern::FixedPath($path, $exe),
-            source_label: $label,
-            priority: $prio,
-            root_offset: $offset,
-        }
-    };
-    ($path:expr, $exe:expr, $label:expr, $prio:expr) => {
-        fixed_match!($path, $exe, $label, $prio, 0)
-    };
-}
-
-/// 全局 SDK 注册表。新增 SDK 只需在此添加条目。
-pub fn registry() -> &'static [SdkDef] {
-    &[
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  编程语言
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    SdkDef {
-        id: "nodejs",
-        display_name: "Node.js",
-        category: SdkCategory::Language,
-        env_vars: &[
-            env_path!("NODE_PATH",          "全局模块搜索路径"),
-            env_path!("NPM_CONFIG_PREFIX",  "npm 全局安装前缀"),
-            env_path!("NPM_CONFIG_CACHE",   "npm 缓存目录"),
-            env_path!("NVM_DIR",            "nvm-windows 安装目录"),
-            env_path!("NVM_HOME",           "nvm-windows 根目录"),
-            env_path!("VOLTA_HOME",         "Volta 安装目录"),
-        ],
-        find_rules: &[
-            // 优先级高：nvm-windows（通过 NVM_HOME 定位）
-            env_match!("NVM_HOME", "", "node.exe", "nvm-windows", 10),
-            // Volta
-            env_match!("VOLTA_HOME", "bin", "node.exe", "Volta", 10),
-            // Scoop
-            path_match!("scoop\\apps\\nodejs", "node.exe", "Scoop", 40, 1),
-            // Chocolatey
-            path_match!("chocolatey\\lib\\nodejs", "node.exe", "Chocolatey", 40, 1),
-            // MSYS2
-            fixed_match!("C:\\msys64\\mingw64\\bin", "node.exe", "MSYS2", 60),
-            // Program Files
-            fixed_match!("C:\\Program Files\\nodejs", "node.exe", "Program Files", 70),
-            // 通用
-            path_match!("\\nodejs\\", "node.exe", "系统 PATH", 80, 1),
-        ],
-    },
-
-    SdkDef {
-        id: "go",
-        display_name: "Go",
-        category: SdkCategory::Language,
-        env_vars: &[
-            env_path!("GOROOT",      "Go 安装根目录"),
-            env_path!("GOPATH",      "Go 工作区路径"),
-            env_path!("GOBIN",       "Go 二进制安装目录"),
-            env_path!("GOCACHE",     "Go 构建缓存目录"),
-            env_str!("GOPROXY",     "Go 模块代理地址"),
-            env_str!("GONOSUMDB",   "跳过 sum 校验的模块列表"),
-            env_str!("GONOSUMCHECK","跳过校验的模块列表"),
-        ],
-        find_rules: &[
-            env_match!("GOROOT", "bin", "go.exe", "环境变量 GOROOT", 5),
-            path_match!("scoop\\apps\\go", "go.exe", "Scoop", 40, 1),
-            path_match!("chocolatey\\lib\\golang", "go.exe", "Chocolatey", 40, 1),
-            fixed_match!("C:\\Program Files\\Go\\bin", "go.exe", "Program Files", 70),
-            path_match!("\\go\\bin", "go.exe", "系统 PATH", 80, 1),
-            // Go 默认安装到用户目录
-            fixed_match!("C:\\Users", "go.exe", "用户目录", 90),  // 特殊处理
-        ],
-    },
-
-    SdkDef {
-        id: "python",
-        display_name: "Python",
-        category: SdkCategory::Language,
-        env_vars: &[
-            env_path!("PYTHONHOME",     "Python 解释器根目录"),
-            env_path!("PYTHONPATH",     "Python 模块搜索路径"),
-            env_path!("PIP_CACHE_DIR",  "pip 缓存目录"),
-            env_path!("CONDA_PREFIX",   "conda 环境目录"),
-            env_path!("PYENV_ROOT",     "pyenv-win 根目录"),
-        ],
-        find_rules: &[
-            // conda / Anaconda / Miniconda
-            env_match!("CONDA_PREFIX", "", "python.exe", "conda", 10),
-            // pyenv-win
-            env_match!("PYENV_ROOT", "pyenv-win\\shims", "python.exe", "pyenv-win", 15),
-            // Scoop
-            path_match!("scoop\\apps\\python", "python.exe", "Scoop", 40, 1),
-            // Chocolatey
-            path_match!("chocolatey\\lib\\python", "python.exe", "Chocolatey", 40, 1),
-            // MSYS2
-            fixed_match!("C:\\msys64\\mingw64\\bin", "python.exe", "MSYS2", 60),
-            // Program Files（多个版本）
-            fixed_match!("C:\\Program Files\\Python313", "python.exe", "Program Files", 70),
-            fixed_match!("C:\\Program Files\\Python312", "python.exe", "Program Files", 70),
-            fixed_match!("C:\\Program Files\\Python311", "python.exe", "Program Files", 70),
-            fixed_match!("C:\\Program Files\\Python310", "python.exe", "Program Files", 70),
-            // 用户安装
-            path_match!("\\python3", "python.exe", "系统 PATH", 80),
-            path_match!("\\python2", "python.exe", "系统 PATH", 80),
-        ],
-    },
-
-    SdkDef {
-        id: "java",
-        display_name: "Java",
-        category: SdkCategory::Language,
-        env_vars: &[
-            env_path!("JAVA_HOME",  "JDK 安装根目录"),
-            env_path!("JDK_HOME",   "JDK 根目录（替代变量）"),
-            env_path!("JRE_HOME",   "JRE 根目录"),
-            env_str!("CLASSPATH",  "Java 类库搜索路径"),
-        ],
-        find_rules: &[
-            env_match!("JAVA_HOME", "bin", "java.exe", "环境变量 JAVA_HOME", 5),
-            // Scoop（多个发行版）
-            path_match!("scoop\\apps\\temurin",  "java.exe", "Scoop (Temurin)",  40),
-            path_match!("scoop\\apps\\corretto", "java.exe", "Scoop (Corretto)", 40),
-            path_match!("scoop\\apps\\openjdk",  "java.exe", "Scoop (OpenJDK)",  40),
-            path_match!("scoop\\apps\\zulu",     "java.exe", "Scoop (Zulu)",     40),
-            path_match!("scoop\\apps\\liberica", "java.exe", "Scoop (Liberica)", 40),
-            // Chocolatey
-            path_match!("chocolatey\\lib\\temurin",  "java.exe", "Chocolatey", 40),
-            path_match!("chocolatey\\lib\\corretto", "java.exe", "Chocolatey", 40),
-            path_match!("chocolatey\\lib\\jdk",      "java.exe", "Chocolatey", 40),
-            // Adoptium / Eclipse Temurin
-            fixed_match!("C:\\Program Files\\Eclipse Adoptium", "java.exe", "Adoptium", 60),
-            fixed_match!("C:\\Program Files\\Eclipse Foundation", "java.exe", "Eclipse", 60),
-            // Oracle JDK
-            fixed_match!("C:\\Program Files\\Java", "java.exe", "Program Files\\Java", 65),
-            // Amazon Corretto
-            fixed_match!("C:\\Program Files\\Amazon Corretto", "java.exe", "Amazon Corretto", 60),
-            // Azul Zulu
-            fixed_match!("C:\\Program Files\\Zulu", "java.exe", "Azul Zulu", 60),
-            // Microsoft JDK
-            fixed_match!("C:\\Program Files\\Microsoft", "java.exe", "Microsoft JDK", 60),
-            // MSYS2
-            fixed_match!("C:\\msys64\\mingw64\\bin", "java.exe", "MSYS2", 70),
-            // 通用
-            path_match!("\\java\\jdk", "java.exe", "系统 PATH", 80),
-            path_match!("\\java\\jre", "java.exe", "系统 PATH", 80),
-            path_match!("\\adoptium",  "java.exe", "系统 PATH", 80),
-        ],
-    },
-
-    SdkDef {
-        id: "flutter",
-        display_name: "Flutter",
-        category: SdkCategory::Language,
-        env_vars: &[
-            env_path!("FLUTTER_ROOT",             "Flutter SDK 根目录"),
-            env_str!("FLUTTER_STORAGE_BASE_URL", "Flutter 引擎下载 URL"),
-            env_str!("PUB_HOSTED_URL",           "Dart pub 包仓库地址"),
-        ],
-        find_rules: &[
-            env_match!("FLUTTER_ROOT", "bin", "flutter.bat", "环境变量 FLUTTER_ROOT", 10),
-            path_match!("scoop\\apps\\flutter", "flutter.bat", "Scoop", 40, 1),
-            path_match!("chocolatey\\lib\\flutter", "flutter.bat", "Chocolatey", 40, 1),
-            fixed_match!("C:\\flutter\\bin", "flutter.bat", "C:\\flutter", 60),
-            fixed_match!("C:\\src\\flutter\\bin", "flutter.bat", "C:\\src\\flutter", 60),
-            path_match!("\\flutter\\bin", "flutter.bat", "系统 PATH", 80, 1),
-        ],
-    },
-
-    SdkDef {
-        id: "rust",
-        display_name: "Rust",
-        category: SdkCategory::Language,
-        env_vars: &[
-            env_path!("CARGO_HOME",         "Cargo 包管理器目录"),
-            env_path!("RUSTUP_HOME",        "Rustup 工具链目录"),
-            env_path!("CARGO_TARGET_DIR",   "Cargo 构建输出目录"),
-        ],
-        find_rules: &[
-            // rustup（优先级最高）
-            env_match!("RUSTUP_HOME", "", "rustc.exe", "rustup", 5),
-            env_match!("CARGO_HOME", "bin", "rustc.exe", "Cargo", 8),
-            // Scoop
-            path_match!("scoop\\apps\\rustup", "rustc.exe", "Scoop", 40, 1),
-            // Chocolatey
-            path_match!("chocolatey\\lib\\rust", "rustc.exe", "Chocolatey", 40, 1),
-            // MSYS2
-            fixed_match!("C:\\msys64\\mingw64\\bin", "rustc.exe", "MSYS2", 60),
-            // 通用
-            path_match!("\\.cargo\\bin", "rustc.exe", ".cargo\\bin", 50),
-            path_match!("\\rustup\\",    "rustc.exe", "rustup", 55),
-        ],
-    },
-
-    SdkDef {
-        id: "bun",
-        display_name: "Bun",
-        category: SdkCategory::Language,
-        env_vars: &[
-            env_path!("BUN_INSTALL", "Bun 安装根目录"),
-        ],
-        find_rules: &[
-            env_match!("BUN_INSTALL", "bin", "bun.exe", "环境变量 BUN_INSTALL", 10),
-            path_match!("scoop\\apps\\bun", "bun.exe", "Scoop", 40),
-            path_match!("\\.bun\\bin", "bun.exe", ".bun\\bin", 50),
-            fixed_match!("C:\\Users", "bun.exe", "用户目录", 90), // 特殊
-        ],
-    },
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  本地服务
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    SdkDef {
-        id: "nginx",
-        display_name: "Nginx",
-        category: SdkCategory::Service,
-        env_vars: &[env_path!("NGINX_HOME", "Nginx 安装根目录")],
-        find_rules: &[
-            path_match!("scoop\\apps\\nginx", "nginx.exe", "Scoop", 40),
-            path_match!("chocolatey\\lib\\nginx", "nginx.exe", "Chocolatey", 40),
-            fixed_match!("C:\\nginx", "nginx.exe", "C:\\nginx", 60),
-        ],
-    },
-
-    SdkDef {
-        id: "redis",
-        display_name: "Redis",
-        category: SdkCategory::Service,
-        env_vars: &[env_path!("REDIS_HOME", "Redis 安装根目录")],
-        find_rules: &[
-            env_match!("REDIS_HOME", "", "redis-server.exe", "环境变量 REDIS_HOME", 10),
-            path_match!("scoop\\apps\\redis", "redis-server.exe", "Scoop", 40),
-            fixed_match!("C:\\redis", "redis-server.exe", "C:\\redis", 60),
-        ],
-    },
-
-    SdkDef {
-        id: "mysql",
-        display_name: "MySQL",
-        category: SdkCategory::Service,
-        env_vars: &[env_path!("MYSQL_HOME", "MySQL 安装根目录")],
-        find_rules: &[
-            env_match!("MYSQL_HOME", "bin", "mysql.exe", "环境变量 MYSQL_HOME", 10),
-            path_match!("scoop\\apps\\mysql", "mysql.exe", "Scoop", 40, 1),
-            fixed_match!("C:\\Program Files\\MySQL\\MySQL Server", "mysql.exe", "Program Files", 70, 1),
-        ],
-    },
-
-    SdkDef {
-        id: "mongodb",
-        display_name: "MongoDB",
-        category: SdkCategory::Service,
-        env_vars: &[env_path!("MONGO_HOME", "MongoDB 安装根目录")],
-        find_rules: &[
-            env_match!("MONGO_HOME", "bin", "mongod.exe", "环境变量 MONGO_HOME", 10),
-            path_match!("scoop\\apps\\mongodb", "mongod.exe", "Scoop", 40, 1),
-            fixed_match!("C:\\Program Files\\MongoDB\\Server", "mongod.exe", "Program Files", 70, 1),
-        ],
-    },
-
-    SdkDef {
-        id: "postgresql",
-        display_name: "PostgreSQL",
-        category: SdkCategory::Service,
-        env_vars: &[
-            env_path!("PGDATA", "PostgreSQL 数据目录"),
-            env_path!("PGHOME", "PostgreSQL 安装根目录"),
-        ],
-        find_rules: &[
-            env_match!("PGHOME", "bin", "psql.exe", "环境变量 PGHOME", 10),
-            path_match!("scoop\\apps\\postgresql", "psql.exe", "Scoop", 40, 1),
-            fixed_match!("C:\\Program Files\\PostgreSQL", "psql.exe", "Program Files", 70, 1),
-        ],
-    },
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  构建工具
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    SdkDef {
-        id: "maven",
-        display_name: "Maven",
-        category: SdkCategory::BuildTool,
-        env_vars: &[
-            env_path!("MAVEN_HOME", "Maven 安装根目录"),
-            env_path!("M2_HOME", "Maven 根目录（旧版本）"),
-        ],
-        find_rules: &[
-            env_match!("MAVEN_HOME", "bin", "mvn.cmd", "环境变量 MAVEN_HOME", 10),
-            path_match!("scoop\\apps\\maven", "mvn.cmd", "Scoop", 40, 1),
-            path_match!("\\apache-maven\\bin", "mvn.cmd", "系统 PATH", 80, 1),
-        ],
-    },
-
-    SdkDef {
-        id: "gradle",
-        display_name: "Gradle",
-        category: SdkCategory::BuildTool,
-        env_vars: &[
-            env_path!("GRADLE_HOME", "Gradle 安装目录"),
-            env_path!("GRADLE_USER_HOME", "Gradle 用户数据目录"),
-        ],
-        find_rules: &[
-            env_match!("GRADLE_HOME", "bin", "gradle.bat", "环境变量 GRADLE_HOME", 10),
-            path_match!("scoop\\apps\\gradle", "gradle.bat", "Scoop", 40, 1),
-            path_match!("\\gradle\\bin", "gradle.bat", "系统 PATH", 80, 1),
-        ],
-    },
-
-    SdkDef {
-        id: "yarn",
-        display_name: "Yarn",
-        category: SdkCategory::BuildTool,
-        env_vars: &[],
-        find_rules: &[
-            path_match!("scoop\\apps\\yarn", "yarn.cmd", "Scoop", 40),
-            path_match!("\\.yarn\\bin", "yarn.cmd", ".yarn\\bin", 50),
-        ],
-    },
-
-    SdkDef {
-        id: "pnpm",
-        display_name: "pnpm",
-        category: SdkCategory::BuildTool,
-        env_vars: &[],
-        find_rules: &[
-            path_match!("scoop\\apps\\pnpm", "pnpm.exe", "Scoop", 40),
-            path_match!("\\.pnpm\\", "pnpm.exe", ".pnpm", 50),
-        ],
-    },
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  移动端 SDK
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    SdkDef {
-        id: "android",
-        display_name: "Android SDK",
-        category: SdkCategory::Mobile,
-        env_vars: &[
-            env_path!("ANDROID_HOME", "Android SDK 根目录"),
-            env_path!("ANDROID_SDK_ROOT", "Android SDK 根目录（旧版本）"),
-            env_path!("ANDROID_SDK_HOME", "Android 用户数据目录"),
-            env_path!("ANDROID_NDK_HOME", "Android NDK 目录"),
-            env_path!("ANDROID_PREFS_ROOT", "Android 偏好设置目录"),
-            env_path!("NDK_HOME", "NDK 根目录"),
-        ],
-        find_rules: &[
-            env_match!("ANDROID_HOME", "cmdline-tools\\latest\\bin", "sdkmanager.bat", "环境变量 ANDROID_HOME", 10),
-            path_match!("\\android-sdk", "sdkmanager.bat", "系统 PATH", 80),
-        ],
-    },
-
-    SdkDef {
-        id: "harmony",
-        display_name: "鸿蒙 HarmonyOS",
-        category: SdkCategory::Mobile,
-        env_vars: &[
-            env_path!("OHOS_SDK_HOME", "鸿蒙 SDK 根目录"),
-        ],
-        find_rules: &[
-            env_match!("OHOS_SDK_HOME", "bin", "ohpm.bat", "环境变量 OHOS_SDK_HOME", 10),
-            path_match!("\\ohpm\\bin", "ohpm.bat", "系统 PATH", 80),
-        ],
-    },
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  开发工具
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    SdkDef {
-        id: "cuda",
-        display_name: "CUDA Toolkit",
-        category: SdkCategory::Tool,
-        env_vars: &[
-            env_path!("CUDA_PATH", "CUDA Toolkit 安装目录"),
-            env_path!("CUDA_HOME", "CUDA Toolkit 根目录"),
-        ],
-        find_rules: &[
-            env_match!("CUDA_PATH", "bin", "nvcc.exe", "环境变量 CUDA_PATH", 10),
-            path_match!("scoop\\apps\\cuda", "nvcc.exe", "Scoop", 40, 1),
-            fixed_match!("C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA", "nvcc.exe", "NVIDIA GPU", 60),
-        ],
-    },
-
-    SdkDef {
-        id: "ffmpeg",
-        display_name: "FFmpeg",
-        category: SdkCategory::Tool,
-        env_vars: &[
-            env_path!("FFMPEG_HOME", "FFmpeg 安装目录"),
-        ],
-        find_rules: &[
-            env_match!("FFMPEG_HOME", "bin", "ffmpeg.exe", "环境变量 FFMPEG_HOME", 10),
-            path_match!("scoop\\apps\\ffmpeg", "ffmpeg.exe", "Scoop", 40, 1),
-            path_match!("\\ffmpeg\\", "ffmpeg.exe", "系统 PATH", 80, 1),
-        ],
-    },
-    ]
+    }
+    // 不存在或解析错误则写入默认列表
+    let defaults = get_default_registry();
+    let _ = std::fs::create_dir_all(&base_dir);
+    if let Ok(data) = serde_json::to_string_pretty(&defaults) {
+        let _ = std::fs::write(&registry_path, data);
+    }
+    defaults
 }
 
 /// 根据 id 查找 SDK 定义
-pub fn find_by_id(id: &str) -> Option<&'static SdkDef> {
-    registry().iter().find(|s| s.id == id)
+pub fn find_by_id(id: &str) -> Option<SdkDef> {
+    registry().into_iter().find(|s| s.id == id)
 }
 
 /// 返回所有 SDK id 列表（用于遍历）
-pub fn all_ids() -> Vec<&'static str> {
-    registry().iter().map(|s| s.id).collect()
+pub fn all_ids() -> Vec<String> {
+    registry().into_iter().map(|s| s.id).collect()
+}
+
+pub fn get_default_registry() -> Vec<SdkDef> {
+    vec![
+        SdkDef {
+            id: "nodejs".to_string(),
+            display_name: "Node.js".to_string(),
+            category: SdkCategory::Language,
+            official_website: "https://nodejs.org".to_string(),
+            has_cache: true,
+            has_mirror: true,
+            has_pkg: true,
+            env_vars: vec![EnvVar { name: "NODE_PATH".to_string(), desc: "全局模块搜索路径".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "NPM_CONFIG_PREFIX".to_string(), desc: "npm 全局安装前缀".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "NPM_CONFIG_CACHE".to_string(), desc: "npm 缓存目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "NVM_DIR".to_string(), desc: "nvm-windows 安装目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "NVM_HOME".to_string(), desc: "nvm-windows 根目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "VOLTA_HOME".to_string(), desc: "Volta 安装目录".to_string(), check_type: EnvCheckType::Path }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::EnvBin { env: "NVM_HOME".to_string(), bin_sub: "".to_string(), exe: "node.exe".to_string() }, source_label: "nvm-windows".to_string(), priority: 10, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::EnvBin { env: "VOLTA_HOME".to_string(), bin_sub: "bin".to_string(), exe: "node.exe".to_string() }, source_label: "Volta".to_string(), priority: 10, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\nodejs".to_string(), exe: "node.exe".to_string() }, source_label: "Scoop".to_string(), priority: 40, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "chocolatey\\lib\\nodejs".to_string(), exe: "node.exe".to_string() }, source_label: "Chocolatey".to_string(), priority: 40, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\msys64\\mingw64\\bin".to_string(), exe: "node.exe".to_string() }, source_label: "MSYS2".to_string(), priority: 60, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Program Files\\nodejs".to_string(), exe: "node.exe".to_string() }, source_label: "Program Files".to_string(), priority: 70, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\nodejs\\".to_string(), exe: "node.exe".to_string() }, source_label: "系统 PATH".to_string(), priority: 80, root_offset: 1 }
+            ],
+            is_service: None,
+            default_port: None,
+            data_dir: None,
+            log_dir: None,
+        },
+        SdkDef {
+            id: "go".to_string(),
+            display_name: "Go".to_string(),
+            category: SdkCategory::Language,
+            official_website: "https://go.dev".to_string(),
+            has_cache: false,
+            has_mirror: true,
+            has_pkg: false,
+            env_vars: vec![EnvVar { name: "GOROOT".to_string(), desc: "Go 安装根目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "GOPATH".to_string(), desc: "Go 工作区路径".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "GOBIN".to_string(), desc: "Go 二进制安装目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "GOCACHE".to_string(), desc: "Go 构建缓存目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "GOPROXY".to_string(), desc: "Go 模块代理地址".to_string(), check_type: EnvCheckType::NonEmpty }, EnvVar { name: "GONOSUMDB".to_string(), desc: "跳过 sum 校验 of 模块列表".to_string(), check_type: EnvCheckType::NonEmpty }, EnvVar { name: "GONOSUMCHECK".to_string(), desc: "跳过校验 of 模块列表".to_string(), check_type: EnvCheckType::NonEmpty }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::EnvBin { env: "GOROOT".to_string(), bin_sub: "bin".to_string(), exe: "go.exe".to_string() }, source_label: "环境变量 GOROOT".to_string(), priority: 5, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\go".to_string(), exe: "go.exe".to_string() }, source_label: "Scoop".to_string(), priority: 40, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "chocolatey\\lib\\golang".to_string(), exe: "go.exe".to_string() }, source_label: "Chocolatey".to_string(), priority: 40, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Program Files\\Go\\bin".to_string(), exe: "go.exe".to_string() }, source_label: "Program Files".to_string(), priority: 70, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\go\\bin".to_string(), exe: "go.exe".to_string() }, source_label: "系统 PATH".to_string(), priority: 80, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Users".to_string(), exe: "go.exe".to_string() }, source_label: "用户目录".to_string(), priority: 90, root_offset: 0 }
+            ],
+            is_service: None,
+            default_port: None,
+            data_dir: None,
+            log_dir: None,
+        },
+        SdkDef {
+            id: "python".to_string(),
+            display_name: "Python".to_string(),
+            category: SdkCategory::Language,
+            official_website: "https://www.python.org".to_string(),
+            has_cache: true,
+            has_mirror: true,
+            has_pkg: true,
+            env_vars: vec![EnvVar { name: "PYTHONHOME".to_string(), desc: "Python 解释器根目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "PYTHONPATH".to_string(), desc: "Python 模块搜索路径".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "PIP_CACHE_DIR".to_string(), desc: "pip 缓存目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "CONDA_PREFIX".to_string(), desc: "conda 环境目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "PYENV_ROOT".to_string(), desc: "pyenv-win 根目录".to_string(), check_type: EnvCheckType::Path }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::EnvBin { env: "CONDA_PREFIX".to_string(), bin_sub: "".to_string(), exe: "python.exe".to_string() }, source_label: "conda".to_string(), priority: 10, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::EnvBin { env: "PYENV_ROOT".to_string(), bin_sub: "pyenv-win\\shims".to_string(), exe: "python.exe".to_string() }, source_label: "pyenv-win".to_string(), priority: 15, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\python".to_string(), exe: "python.exe".to_string() }, source_label: "Scoop".to_string(), priority: 40, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "chocolatey\\lib\\python".to_string(), exe: "python.exe".to_string() }, source_label: "Chocolatey".to_string(), priority: 40, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\msys64\\mingw64\\bin".to_string(), exe: "python.exe".to_string() }, source_label: "MSYS2".to_string(), priority: 60, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Program Files\\Python313".to_string(), exe: "python.exe".to_string() }, source_label: "Program Files".to_string(), priority: 70, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Program Files\\Python312".to_string(), exe: "python.exe".to_string() }, source_label: "Program Files".to_string(), priority: 70, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Program Files\\Python311".to_string(), exe: "python.exe".to_string() }, source_label: "Program Files".to_string(), priority: 70, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Program Files\\Python310".to_string(), exe: "python.exe".to_string() }, source_label: "Program Files".to_string(), priority: 70, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\python3".to_string(), exe: "python.exe".to_string() }, source_label: "系统 PATH".to_string(), priority: 80, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\python2".to_string(), exe: "python.exe".to_string() }, source_label: "系统 PATH".to_string(), priority: 80, root_offset: 0 }
+            ],
+            is_service: None,
+            default_port: None,
+            data_dir: None,
+            log_dir: None,
+        },
+        SdkDef {
+            id: "java".to_string(),
+            display_name: "Java".to_string(),
+            category: SdkCategory::Language,
+            official_website: "https://adoptium.net".to_string(),
+            has_cache: false,
+            has_mirror: false,
+            has_pkg: false,
+            env_vars: vec![EnvVar { name: "JAVA_HOME".to_string(), desc: "JDK 安装根目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "JDK_HOME".to_string(), desc: "JDK 根目录（替代变量）".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "JRE_HOME".to_string(), desc: "JRE 根目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "CLASSPATH".to_string(), desc: "Java 类库搜索路径".to_string(), check_type: EnvCheckType::NonEmpty }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::EnvBin { env: "JAVA_HOME".to_string(), bin_sub: "bin".to_string(), exe: "java.exe".to_string() }, source_label: "环境变量 JAVA_HOME".to_string(), priority: 5, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\temurin".to_string(), exe: "java.exe".to_string() }, source_label: "Scoop (Temurin)".to_string(), priority: 40, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\corretto".to_string(), exe: "java.exe".to_string() }, source_label: "Scoop (Corretto)".to_string(), priority: 40, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\openjdk".to_string(), exe: "java.exe".to_string() }, source_label: "Scoop (OpenJDK)".to_string(), priority: 40, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\zulu".to_string(), exe: "java.exe".to_string() }, source_label: "Scoop (Zulu)".to_string(), priority: 40, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\liberica".to_string(), exe: "java.exe".to_string() }, source_label: "Scoop (Liberica)".to_string(), priority: 40, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "chocolatey\\lib\\temurin".to_string(), exe: "java.exe".to_string() }, source_label: "Chocolatey".to_string(), priority: 40, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "chocolatey\\lib\\corretto".to_string(), exe: "java.exe".to_string() }, source_label: "Chocolatey".to_string(), priority: 40, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "chocolatey\\lib\\jdk".to_string(), exe: "java.exe".to_string() }, source_label: "Chocolatey".to_string(), priority: 40, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Program Files\\Eclipse Adoptium".to_string(), exe: "java.exe".to_string() }, source_label: "Adoptium".to_string(), priority: 60, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Program Files\\Eclipse Foundation".to_string(), exe: "java.exe".to_string() }, source_label: "Eclipse".to_string(), priority: 60, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Program Files\\Java".to_string(), exe: "java.exe".to_string() }, source_label: "Program Files\\Java".to_string(), priority: 65, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Program Files\\Amazon Corretto".to_string(), exe: "java.exe".to_string() }, source_label: "Amazon Corretto".to_string(), priority: 60, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Program Files\\Zulu".to_string(), exe: "java.exe".to_string() }, source_label: "Azul Zulu".to_string(), priority: 60, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Program Files\\Microsoft".to_string(), exe: "java.exe".to_string() }, source_label: "Microsoft JDK".to_string(), priority: 60, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\msys64\\mingw64\\bin".to_string(), exe: "java.exe".to_string() }, source_label: "MSYS2".to_string(), priority: 70, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\java\\jdk".to_string(), exe: "java.exe".to_string() }, source_label: "系统 PATH".to_string(), priority: 80, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\java\\jre".to_string(), exe: "java.exe".to_string() }, source_label: "系统 PATH".to_string(), priority: 80, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\adoptium".to_string(), exe: "java.exe".to_string() }, source_label: "系统 PATH".to_string(), priority: 80, root_offset: 0 }
+            ],
+            is_service: None,
+            default_port: None,
+            data_dir: None,
+            log_dir: None,
+        },
+        SdkDef {
+            id: "flutter".to_string(),
+            display_name: "Flutter".to_string(),
+            category: SdkCategory::Language,
+            official_website: "https://flutter.dev".to_string(),
+            has_cache: false,
+            has_mirror: true,
+            has_pkg: false,
+            env_vars: vec![EnvVar { name: "FLUTTER_ROOT".to_string(), desc: "Flutter SDK 根目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "FLUTTER_STORAGE_BASE_URL".to_string(), desc: "Flutter 引擎下载 URL".to_string(), check_type: EnvCheckType::NonEmpty }, EnvVar { name: "PUB_HOSTED_URL".to_string(), desc: "Dart pub 包仓库地址".to_string(), check_type: EnvCheckType::NonEmpty }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::EnvBin { env: "FLUTTER_ROOT".to_string(), bin_sub: "bin".to_string(), exe: "flutter.bat".to_string() }, source_label: "环境变量 FLUTTER_ROOT".to_string(), priority: 10, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\flutter".to_string(), exe: "flutter.bat".to_string() }, source_label: "Scoop".to_string(), priority: 40, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "chocolatey\\lib\\flutter".to_string(), exe: "flutter.bat".to_string() }, source_label: "Chocolatey".to_string(), priority: 40, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\flutter\\bin".to_string(), exe: "flutter.bat".to_string() }, source_label: "C:\\flutter".to_string(), priority: 60, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\src\\flutter\\bin".to_string(), exe: "flutter.bat".to_string() }, source_label: "C:\\src\\flutter".to_string(), priority: 60, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\flutter\\bin".to_string(), exe: "flutter.bat".to_string() }, source_label: "系统 PATH".to_string(), priority: 80, root_offset: 1 }
+            ],
+            is_service: None,
+            default_port: None,
+            data_dir: None,
+            log_dir: None,
+        },
+        SdkDef {
+            id: "rust".to_string(),
+            display_name: "Rust".to_string(),
+            category: SdkCategory::Language,
+            official_website: "https://www.rust-lang.org".to_string(),
+            has_cache: false,
+            has_mirror: true,
+            has_pkg: false,
+            env_vars: vec![EnvVar { name: "CARGO_HOME".to_string(), desc: "Cargo 包管理器目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "RUSTUP_HOME".to_string(), desc: "Rustup 工具链目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "CARGO_TARGET_DIR".to_string(), desc: "Cargo 构建输出目录".to_string(), check_type: EnvCheckType::Path }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::EnvBin { env: "RUSTUP_HOME".to_string(), bin_sub: "".to_string(), exe: "rustc.exe".to_string() }, source_label: "rustup".to_string(), priority: 5, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::EnvBin { env: "CARGO_HOME".to_string(), bin_sub: "bin".to_string(), exe: "rustc.exe".to_string() }, source_label: "Cargo".to_string(), priority: 8, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\rustup".to_string(), exe: "rustc.exe".to_string() }, source_label: "Scoop".to_string(), priority: 40, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "chocolatey\\lib\\rust".to_string(), exe: "rustc.exe".to_string() }, source_label: "Chocolatey".to_string(), priority: 40, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\msys64\\mingw64\\bin".to_string(), exe: "rustc.exe".to_string() }, source_label: "MSYS2".to_string(), priority: 60, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\.cargo\\bin".to_string(), exe: "rustc.exe".to_string() }, source_label: ".cargo\\bin".to_string(), priority: 50, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\rustup\\".to_string(), exe: "rustc.exe".to_string() }, source_label: "rustup".to_string(), priority: 55, root_offset: 0 }
+            ],
+            is_service: None,
+            default_port: None,
+            data_dir: None,
+            log_dir: None,
+        },
+        SdkDef {
+            id: "bun".to_string(),
+            display_name: "Bun".to_string(),
+            category: SdkCategory::Language,
+            official_website: "https://bun.sh".to_string(),
+            has_cache: false,
+            has_mirror: false,
+            has_pkg: false,
+            env_vars: vec![EnvVar { name: "BUN_INSTALL".to_string(), desc: "Bun 安装根目录".to_string(), check_type: EnvCheckType::Path }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::EnvBin { env: "BUN_INSTALL".to_string(), bin_sub: "bin".to_string(), exe: "bun.exe".to_string() }, source_label: "环境变量 BUN_INSTALL".to_string(), priority: 10, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\bun".to_string(), exe: "bun.exe".to_string() }, source_label: "Scoop".to_string(), priority: 40, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\.bun\\bin".to_string(), exe: "bun.exe".to_string() }, source_label: ".bun\\bin".to_string(), priority: 50, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Users".to_string(), exe: "bun.exe".to_string() }, source_label: "用户目录".to_string(), priority: 90, root_offset: 0 }
+            ],
+            is_service: None,
+            default_port: None,
+            data_dir: None,
+            log_dir: None,
+        },
+        SdkDef {
+            id: "maven".to_string(),
+            display_name: "Maven".to_string(),
+            category: SdkCategory::LibManager,
+            official_website: "https://maven.apache.org".to_string(),
+            has_cache: true,
+            has_mirror: true,
+            has_pkg: false,
+            env_vars: vec![EnvVar { name: "MAVEN_HOME".to_string(), desc: "Maven 安装根目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "M2_HOME".to_string(), desc: "Maven 根目录（旧版本）".to_string(), check_type: EnvCheckType::Path }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::EnvBin { env: "MAVEN_HOME".to_string(), bin_sub: "bin".to_string(), exe: "mvn.cmd".to_string() }, source_label: "环境变量 MAVEN_HOME".to_string(), priority: 10, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\maven".to_string(), exe: "mvn.cmd".to_string() }, source_label: "Scoop".to_string(), priority: 40, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\apache-maven\\bin".to_string(), exe: "mvn.cmd".to_string() }, source_label: "系统 PATH".to_string(), priority: 80, root_offset: 1 }
+            ],
+            is_service: None,
+            default_port: None,
+            data_dir: None,
+            log_dir: None,
+        },
+        SdkDef {
+            id: "gradle".to_string(),
+            display_name: "Gradle".to_string(),
+            category: SdkCategory::LibManager,
+            official_website: "https://gradle.org".to_string(),
+            has_cache: false,
+            has_mirror: false,
+            has_pkg: false,
+            env_vars: vec![EnvVar { name: "GRADLE_HOME".to_string(), desc: "Gradle 安装目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "GRADLE_USER_HOME".to_string(), desc: "Gradle 用户数据目录".to_string(), check_type: EnvCheckType::Path }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::EnvBin { env: "GRADLE_HOME".to_string(), bin_sub: "bin".to_string(), exe: "gradle.bat".to_string() }, source_label: "环境变量 GRADLE_HOME".to_string(), priority: 10, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\gradle".to_string(), exe: "gradle.bat".to_string() }, source_label: "Scoop".to_string(), priority: 40, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\gradle\\bin".to_string(), exe: "gradle.bat".to_string() }, source_label: "系统 PATH".to_string(), priority: 80, root_offset: 1 }
+            ],
+            is_service: None,
+            default_port: None,
+            data_dir: None,
+            log_dir: None,
+        },
+        SdkDef {
+            id: "yarn".to_string(),
+            display_name: "Yarn".to_string(),
+            category: SdkCategory::LibManager,
+            official_website: "https://yarnpkg.com".to_string(),
+            has_cache: true,
+            has_mirror: false,
+            has_pkg: false,
+            env_vars: vec![],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\yarn".to_string(), exe: "yarn.cmd".to_string() }, source_label: "Scoop".to_string(), priority: 40, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\.yarn\\bin".to_string(), exe: "yarn.cmd".to_string() }, source_label: ".yarn\\bin".to_string(), priority: 50, root_offset: 0 }
+            ],
+            is_service: None,
+            default_port: None,
+            data_dir: None,
+            log_dir: None,
+        },
+        SdkDef {
+            id: "pnpm".to_string(),
+            display_name: "pnpm".to_string(),
+            category: SdkCategory::LibManager,
+            official_website: "https://pnpm.io".to_string(),
+            has_cache: true,
+            has_mirror: false,
+            has_pkg: false,
+            env_vars: vec![],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\pnpm".to_string(), exe: "pnpm.exe".to_string() }, source_label: "Scoop".to_string(), priority: 40, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\.pnpm\\".to_string(), exe: "pnpm.exe".to_string() }, source_label: ".pnpm".to_string(), priority: 50, root_offset: 0 }
+            ],
+            is_service: None,
+            default_port: None,
+            data_dir: None,
+            log_dir: None,
+        },
+        SdkDef {
+            id: "nuget".to_string(),
+            display_name: "NuGet".to_string(),
+            category: SdkCategory::LibManager,
+            official_website: "https://www.nuget.org".to_string(),
+            has_cache: true,
+            has_mirror: false,
+            has_pkg: false,
+            env_vars: vec![EnvVar { name: "NUGET_PACKAGES".to_string(), desc: "NuGet 全局包缓存目录".to_string(), check_type: EnvCheckType::Path }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\.nuget\\packages".to_string(), exe: "nuget.exe".to_string() }, source_label: "NuGet cache".to_string(), priority: 80, root_offset: 0 }
+            ],
+            is_service: None,
+            default_port: None,
+            data_dir: None,
+            log_dir: None,
+        },
+        SdkDef {
+            id: "nginx".to_string(),
+            display_name: "Nginx".to_string(),
+            category: SdkCategory::Service,
+            official_website: "https://nginx.org".to_string(),
+            has_cache: false,
+            has_mirror: false,
+            has_pkg: false,
+            env_vars: vec![EnvVar { name: "NGINX_HOME".to_string(), desc: "Nginx 安装根目录".to_string(), check_type: EnvCheckType::Path }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\nginx".to_string(), exe: "nginx.exe".to_string() }, source_label: "Scoop".to_string(), priority: 40, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "chocolatey\\lib\\nginx".to_string(), exe: "nginx.exe".to_string() }, source_label: "Chocolatey".to_string(), priority: 40, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\nginx".to_string(), exe: "nginx.exe".to_string() }, source_label: "C:\\nginx".to_string(), priority: 60, root_offset: 0 }
+            ],
+            is_service: Some(true),
+            default_port: Some(80),
+            data_dir: Some("html".to_string()),
+            log_dir: Some("logs".to_string()),
+        },
+        SdkDef {
+            id: "redis".to_string(),
+            display_name: "Redis".to_string(),
+            category: SdkCategory::Service,
+            official_website: "https://redis.io".to_string(),
+            has_cache: false,
+            has_mirror: false,
+            has_pkg: false,
+            env_vars: vec![EnvVar { name: "REDIS_HOME".to_string(), desc: "Redis 安装根目录".to_string(), check_type: EnvCheckType::Path }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::EnvBin { env: "REDIS_HOME".to_string(), bin_sub: "".to_string(), exe: "redis-server.exe".to_string() }, source_label: "环境变量 REDIS_HOME".to_string(), priority: 10, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\redis".to_string(), exe: "redis-server.exe".to_string() }, source_label: "Scoop".to_string(), priority: 40, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\redis".to_string(), exe: "redis-server.exe".to_string() }, source_label: "C:\\redis".to_string(), priority: 60, root_offset: 0 }
+            ],
+            is_service: Some(true),
+            default_port: Some(6379),
+            data_dir: Some(".".to_string()),
+            log_dir: Some(".".to_string()),
+        },
+        SdkDef {
+            id: "mysql".to_string(),
+            display_name: "MySQL".to_string(),
+            category: SdkCategory::Service,
+            official_website: "https://www.mysql.com".to_string(),
+            has_cache: false,
+            has_mirror: false,
+            has_pkg: false,
+            env_vars: vec![EnvVar { name: "MYSQL_HOME".to_string(), desc: "MySQL 安装根目录".to_string(), check_type: EnvCheckType::Path }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::EnvBin { env: "MYSQL_HOME".to_string(), bin_sub: "bin".to_string(), exe: "mysql.exe".to_string() }, source_label: "环境变量 MYSQL_HOME".to_string(), priority: 10, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\mysql".to_string(), exe: "mysql.exe".to_string() }, source_label: "Scoop".to_string(), priority: 40, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Program Files\\MySQL\\MySQL Server".to_string(), exe: "mysql.exe".to_string() }, source_label: "Program Files".to_string(), priority: 70, root_offset: 1 }
+            ],
+            is_service: Some(true),
+            default_port: Some(3306),
+            data_dir: Some("data".to_string()),
+            log_dir: Some("data".to_string()),
+        },
+        SdkDef {
+            id: "mongodb".to_string(),
+            display_name: "MongoDB".to_string(),
+            category: SdkCategory::Service,
+            official_website: "https://www.mongodb.com".to_string(),
+            has_cache: false,
+            has_mirror: false,
+            has_pkg: false,
+            env_vars: vec![EnvVar { name: "MONGO_HOME".to_string(), desc: "MongoDB 安装根目录".to_string(), check_type: EnvCheckType::Path }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::EnvBin { env: "MONGO_HOME".to_string(), bin_sub: "bin".to_string(), exe: "mongod.exe".to_string() }, source_label: "环境变量 MONGO_HOME".to_string(), priority: 10, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\mongodb".to_string(), exe: "mongod.exe".to_string() }, source_label: "Scoop".to_string(), priority: 40, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Program Files\\MongoDB\\Server".to_string(), exe: "mongod.exe".to_string() }, source_label: "Program Files".to_string(), priority: 70, root_offset: 1 }
+            ],
+            is_service: Some(true),
+            default_port: Some(27017),
+            data_dir: Some("data".to_string()),
+            log_dir: Some("mongod.log".to_string()),
+        },
+        SdkDef {
+            id: "postgresql".to_string(),
+            display_name: "PostgreSQL".to_string(),
+            category: SdkCategory::Service,
+            official_website: "https://www.postgresql.org".to_string(),
+            has_cache: false,
+            has_mirror: false,
+            has_pkg: false,
+            env_vars: vec![EnvVar { name: "PGDATA".to_string(), desc: "PostgreSQL 数据目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "PGHOME".to_string(), desc: "PostgreSQL 安装根目录".to_string(), check_type: EnvCheckType::Path }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::EnvBin { env: "PGHOME".to_string(), bin_sub: "bin".to_string(), exe: "psql.exe".to_string() }, source_label: "环境变量 PGHOME".to_string(), priority: 10, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\postgresql".to_string(), exe: "psql.exe".to_string() }, source_label: "Scoop".to_string(), priority: 40, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Program Files\\PostgreSQL".to_string(), exe: "psql.exe".to_string() }, source_label: "Program Files".to_string(), priority: 70, root_offset: 1 }
+            ],
+            is_service: Some(true),
+            default_port: Some(5432),
+            data_dir: Some("data".to_string()),
+            log_dir: Some("logfile".to_string()),
+        },
+        SdkDef {
+            id: "android".to_string(),
+            display_name: "Android SDK".to_string(),
+            category: SdkCategory::Tool,
+            official_website: "https://developer.android.com".to_string(),
+            has_cache: false,
+            has_mirror: false,
+            has_pkg: false,
+            env_vars: vec![EnvVar { name: "ANDROID_HOME".to_string(), desc: "Android SDK 根目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "ANDROID_SDK_ROOT".to_string(), desc: "Android SDK 根目录（旧版本）".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "ANDROID_SDK_HOME".to_string(), desc: "Android 用户数据目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "ANDROID_NDK_HOME".to_string(), desc: "Android NDK 目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "ANDROID_PREFS_ROOT".to_string(), desc: "Android 偏好设置目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "NDK_HOME".to_string(), desc: "NDK 根目录".to_string(), check_type: EnvCheckType::Path }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::EnvBin { env: "ANDROID_HOME".to_string(), bin_sub: "cmdline-tools\\latest\\bin".to_string(), exe: "sdkmanager.bat".to_string() }, source_label: "环境变量 ANDROID_HOME".to_string(), priority: 10, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\android-sdk".to_string(), exe: "sdkmanager.bat".to_string() }, source_label: "系统 PATH".to_string(), priority: 80, root_offset: 0 }
+            ],
+            is_service: None,
+            default_port: None,
+            data_dir: None,
+            log_dir: None,
+        },
+        SdkDef {
+            id: "harmony".to_string(),
+            display_name: "鸿蒙 HarmonyOS".to_string(),
+            category: SdkCategory::Tool,
+            official_website: "https://developer.huawei.com/consumer/cn/harmony/".to_string(),
+            has_cache: false,
+            has_mirror: false,
+            has_pkg: false,
+            env_vars: vec![EnvVar { name: "OHOS_SDK_HOME".to_string(), desc: "鸿蒙 SDK 根目录".to_string(), check_type: EnvCheckType::Path }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::EnvBin { env: "OHOS_SDK_HOME".to_string(), bin_sub: "bin".to_string(), exe: "ohpm.bat".to_string() }, source_label: "环境变量 OHOS_SDK_HOME".to_string(), priority: 10, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\ohpm\\bin".to_string(), exe: "ohpm.bat".to_string() }, source_label: "系统 PATH".to_string(), priority: 80, root_offset: 0 }
+            ],
+            is_service: None,
+            default_port: None,
+            data_dir: None,
+            log_dir: None,
+        },
+        SdkDef {
+            id: "cuda".to_string(),
+            display_name: "CUDA Toolkit".to_string(),
+            category: SdkCategory::Tool,
+            official_website: "https://developer.nvidia.com/cuda-toolkit".to_string(),
+            has_cache: false,
+            has_mirror: false,
+            has_pkg: false,
+            env_vars: vec![EnvVar { name: "CUDA_PATH".to_string(), desc: "CUDA Toolkit 安装目录".to_string(), check_type: EnvCheckType::Path }, EnvVar { name: "CUDA_HOME".to_string(), desc: "CUDA Toolkit 根目录".to_string(), check_type: EnvCheckType::Path }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::EnvBin { env: "CUDA_PATH".to_string(), bin_sub: "bin".to_string(), exe: "nvcc.exe".to_string() }, source_label: "环境变量 CUDA_PATH".to_string(), priority: 10, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\cuda".to_string(), exe: "nvcc.exe".to_string() }, source_label: "Scoop".to_string(), priority: 40, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::FixedPath { path: "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA".to_string(), exe: "nvcc.exe".to_string() }, source_label: "NVIDIA GPU".to_string(), priority: 60, root_offset: 1 }
+            ],
+            is_service: None,
+            default_port: None,
+            data_dir: None,
+            log_dir: None,
+        },
+        SdkDef {
+            id: "ffmpeg".to_string(),
+            display_name: "FFmpeg".to_string(),
+            category: SdkCategory::Tool,
+            official_website: "https://ffmpeg.org".to_string(),
+            has_cache: false,
+            has_mirror: false,
+            has_pkg: false,
+            env_vars: vec![EnvVar { name: "FFMPEG_HOME".to_string(), desc: "FFmpeg 安装目录".to_string(), check_type: EnvCheckType::Path }],
+            find_rules: vec![
+                FindRule { pattern: ResolvePattern::EnvBin { env: "FFMPEG_HOME".to_string(), bin_sub: "bin".to_string(), exe: "ffmpeg.exe".to_string() }, source_label: "环境变量 FFMPEG_HOME".to_string(), priority: 10, root_offset: 0 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "scoop\\apps\\ffmpeg".to_string(), exe: "ffmpeg.exe".to_string() }, source_label: "Scoop".to_string(), priority: 40, root_offset: 1 },
+                FindRule { pattern: ResolvePattern::PathContains { keyword: "\\ffmpeg\\".to_string(), exe: "ffmpeg.exe".to_string() }, source_label: "系统 PATH".to_string(), priority: 80, root_offset: 1 }
+            ],
+            is_service: None,
+            default_port: None,
+            data_dir: None,
+            log_dir: None,
+        }
+    ]
 }

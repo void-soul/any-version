@@ -18,14 +18,9 @@ interface SidebarProps {
 
 export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
   const menuItems = [
-    { id: "diagnostics", label: "集成环境体检", icon: HeartPulse },
-    { id: "sdks", label: "SDK 版本管理", icon: Layers },
-    { id: "services", label: "本地服务管理", icon: Database },
-    { id: "caches", label: "开发缓存清理", icon: Trash2 },
-    { id: "mirrors", label: "国内镜像配置", icon: Globe },
-    { id: "packages", label: "全局包管理", icon: Box },
-    { id: "tools", label: "系统实用工具", icon: Wrench },
+    { id: "sdks", label: "开发环境管理", icon: Layers },
     { id: "backups", label: "环境备份还原", icon: ShieldCheck },
+    { id: "tools", label: "系统实用工具", icon: Wrench },
     { id: "settings", label: "全局路径设置", icon: Settings },
   ];
 
