@@ -180,13 +180,13 @@ pub fn scan_environment() -> Result<Vec<DiagnosticProblem>, String> {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     //  检测类型 2 + 3：环境变量 + 外部 SDK（注册表驱动，支持 HKCU + HKLM）
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    use super::sdk_registry;
+    use super::project::registry;
 
     let links_lower = links_dir.to_string_lossy().to_lowercase();
     let mut reported_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // 遍历注册表中所有 SDK，检查其关联的环境变量
-    for sdk_def in sdk_registry::registry() {
+    for sdk_def in project::registry::registry() {
         let sdk_name = &sdk_def.display_name;
 
         for var_info in &sdk_def.env_vars {
@@ -201,8 +201,8 @@ pub fn scan_environment() -> Result<Vec<DiagnosticProblem>, String> {
                     continue;
                 }
 
-                match check_type {
-                    super::sdk_registry::EnvCheckType::Path => {
+                match check_type.as_str() {
+                    "path" => {
                         let val_path = Path::new(&val);
                         if !val_path.exists() {
                             // 路径不存在 → 无效环境变量
@@ -229,7 +229,7 @@ pub fn scan_environment() -> Result<Vec<DiagnosticProblem>, String> {
                             });
                         } else if !reported_paths.contains(&val.to_lowercase()) {
                             // 路径存在但不属于 AnyVersion 管理 → 未管理的 SDK
-                            let is_managed = sdk_registry::find_by_id(&sdk_def.id).is_some()
+                            let is_managed = project::registry::find_by_id(&sdk_def.id).is_some()
                                 && links_dir.join(&sdk_def.id).exists();
 
                             if !is_managed {
@@ -265,7 +265,7 @@ pub fn scan_environment() -> Result<Vec<DiagnosticProblem>, String> {
 
         // PATH 中的外部 SDK 路径扫描（使用注册表的 find_rules）
         for rule in &sdk_def.find_rules {
-            if let super::sdk_resolver::ResolvePattern::PathContains { keyword: pattern, exe: exe_hint } = &rule.pattern {
+            if let super::project::types::ResolvePattern::PathContains { path_key: pattern, exe_name: exe_hint } = &rule.pattern {
                 let pattern = pattern.as_str();
                 let exe_hint = exe_hint.as_str();
                 // 扫描用户级 PATH
@@ -560,21 +560,21 @@ pub fn remove_from_user_path(paths: &[String]) -> Result<(), String> {
 }
 
 /// 自动配置 SDK 相关环境变量（注册表驱动）。
-/// 新增 SDK 时只需在 sdk_registry.rs 中定义 env_vars，此函数自动生效。
+/// 新增 SDK 时只需在 projects.json 中定义 env_vars，此函数自动生效。
 ///
 /// 设计原则：
 ///   - 所有 *_HOME 类变量指向 link_dir（版本切换只需重定向 junction）
 ///   - CARGO_HOME / RUSTUP_HOME 指向 link_dir 下的子目录
 ///   - ANDROID_SDK_HOME 指向 link_dir 下的 .android 子目录
 pub fn configure_sdk_env_vars(sdk_id: &str, link_dir: &str, _version_dir: &str) -> Result<(), String> {
-    use super::sdk_registry;
+    use super::project::registry;
 
     let config = load_config();
     if !config.managed_items.contains(sdk_id) {
         return Ok(());
     }
 
-    let sdk_def = match sdk_registry::find_by_id(sdk_id) {
+    let sdk_def = match project::registry::find_by_id(sdk_id) {
         Some(d) => d,
         None => return Ok(()),
     };
@@ -605,9 +605,9 @@ pub fn configure_sdk_env_vars(sdk_id: &str, link_dir: &str, _version_dir: &str) 
 /// 移除 SDK 相关的环境变量（注册表驱动）。
 /// 当卸载某 SDK 最后一个版本时调用。
 pub fn remove_sdk_env_vars(sdk_id: &str) -> Result<(), String> {
-    use super::sdk_registry;
+    use super::project::registry;
 
-    let sdk_def = match sdk_registry::find_by_id(sdk_id) {
+    let sdk_def = match project::registry::find_by_id(sdk_id) {
         Some(d) => d,
         None => return Ok(()),
     };
@@ -824,8 +824,8 @@ pub fn restore_env_backup(id: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn toggle_item_management(id: String, enable: bool, cache_dest: Option<String>) -> Result<(), String> {
-    use super::sdk_registry;
-    let sdk_def = sdk_registry::find_by_id(&id)
+    use super::project::registry;
+    let sdk_def = project::registry::find_by_id(&id)
         .ok_or_else(|| format!("未找到该标识符对应的配置: {}", id))?;
 
     let mut config = load_config();
@@ -865,13 +865,13 @@ pub fn toggle_item_management(id: String, enable: bool, cache_dest: Option<Strin
                 if !p_lower.contains(&config.links_dir.to_lowercase()) {
                     for rule in &sdk_def.find_rules {
                         match &rule.pattern {
-                            crate::commands::sdk_resolver::ResolvePattern::PathContains { keyword: pattern, .. } => {
+                            super::project::types::ResolvePattern::PathContains { path_key: pattern, .. } => {
                                 if p_lower.contains(&pattern.to_lowercase()) {
                                     matches = true;
                                     break;
                                 }
                             }
-                            crate::commands::sdk_resolver::ResolvePattern::FixedPath { path: fixed_path, .. } => {
+                            super::project::types::ResolvePattern::FixedPath { path: fixed_path, .. } => {
                                 if p_lower.contains(&fixed_path.to_lowercase()) {
                                     matches = true;
                                     break;
