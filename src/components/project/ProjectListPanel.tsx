@@ -5,7 +5,6 @@ import {
   Wrench,
   Server,
   CheckCircle,
-  AlertTriangle,
   ShieldCheck,
 } from "lucide-react";
 import type { ProjectStatus, ProjectCategory } from "./types";
@@ -100,33 +99,16 @@ export default function ProjectListPanel({
               <div
                 key={p.id}
                 onClick={() => onSelect(p)}
-                className={`p-3.5 flex items-center gap-3 hover:bg-white/2 cursor-pointer transition-all ${
+                className={`p-3.5 flex items-center justify-between hover:bg-white/2 cursor-pointer transition-all ${
                   isSelected ? "bg-blue-600/5 border-l-2 border-blue-500" : ""
                 }`}
               >
-                {/* 图标 */}
-                <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-sm flex-shrink-0">
-                  {p.icon ? (
-                    <span>{p.icon}</span>
-                  ) : (
-                    categoryIcon[p.category] ?? <Layers className="w-3.5 h-3.5 text-slate-400" />
-                  )}
-                </div>
-
-                {/* 信息 */}
+                {/* 左侧：名称 + 分类标签 */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
                     <h4 className="font-semibold text-white text-xs truncate">{p.display_name}</h4>
-                    {p.managed && (
-                      <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[8px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold flex items-center gap-0.5">
-                        <ShieldCheck className="w-2.5 h-2.5" />
-                        已托管
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-0.5">
                     <span
-                      className={`px-1.5 py-0.5 rounded text-[8px] font-semibold border ${
+                      className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[8px] font-semibold border ${
                         p.category === "language"
                           ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
                           : p.category === "tool"
@@ -136,35 +118,45 @@ export default function ProjectListPanel({
                     >
                       {categoryLabel(p.category)}
                     </span>
-                    {p.install_source && (
-                      <span className="text-[8px] text-slate-500">{p.install_source}</span>
-                    )}
                   </div>
+                  {p.install_source && (
+                    <p className="text-[9px] text-slate-500 mt-0.5">来源: {p.install_source}</p>
+                  )}
                 </div>
 
-                {/* 状态 */}
-                <div className="text-right flex-shrink-0">
-                  {p.installed ? (
-                    <div className="flex items-center gap-1">
-                      <CheckCircle className="w-3 h-3 text-emerald-400" />
+                {/* 右侧：状态 */}
+                <div className="text-right flex-shrink-0 ml-3">
+                  {p.managed ? (
+                    /* 已托管 */
+                    <div>
+                      <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-semibold">
+                        <ShieldCheck className="w-3 h-3" />
+                        已托管
+                      </span>
                       {p.active_version ? (
-                        <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded font-mono font-medium">
+                        <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded font-mono font-medium mt-0.5 inline-block">
                           v{p.active_version}
                         </span>
                       ) : (
-                        <span className="text-[10px] text-slate-400">已安装</span>
+                        <p className="text-[9px] text-amber-400 mt-0.5">未选择版本</p>
                       )}
                     </div>
+                  ) : p.installed ? (
+                    /* 未托管，但有本地安装 */
+                    <div>
+                      <span className="text-[10px] text-slate-400">未托管</span>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <CheckCircle className="w-3 h-3 text-slate-400" />
+                        {p.active_version ? (
+                          <span className="text-[10px] text-slate-300 font-mono">v{p.active_version}</span>
+                        ) : (
+                          <span className="text-[10px] text-slate-500">{p.installed_versions.length} 个版本</span>
+                        )}
+                      </div>
+                    </div>
                   ) : (
-                    <span className="text-[10px] text-slate-500 flex items-center gap-1">
-                      <AlertTriangle className="w-3 h-3" />
-                      未安装
-                    </span>
-                  )}
-                  {p.installed_versions.length > 0 && (
-                    <p className="text-[9px] text-slate-500 mt-0.5">
-                      {p.installed_versions.length} 个版本
-                    </p>
+                    /* 未托管，未安装 */
+                    <span className="text-[10px] text-slate-500">未安装</span>
                   )}
                 </div>
               </div>
