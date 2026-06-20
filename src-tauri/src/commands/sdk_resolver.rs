@@ -287,4 +287,3 @@ fn get_all_path_values() -> Vec<String> {
     }
     result
 }
-             

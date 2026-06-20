@@ -6,4 +6,6 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "di
+    "dialog:default"
+  ]
+}

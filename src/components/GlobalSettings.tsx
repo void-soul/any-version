@@ -261,4 +261,5 @@ export default function GlobalSettings() {
         </div>
       </div>
     </div>
- 
+  );
+}

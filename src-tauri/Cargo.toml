@@ -27,4 +27,5 @@ tar = "0.4"
 flate2 = "1.0"
 trash = "5.1"
 sysinfo = "0.31"
-futures
+futures-util = "0.3"
+md5 = "0.7"

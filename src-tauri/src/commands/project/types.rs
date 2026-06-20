@@ -278,4 +278,3 @@ pub struct ManagedProject {
     pub backup: ProjectBackup,
     pub state: String,
 }
-                                                    

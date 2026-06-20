@@ -44,4 +44,6 @@ pub fn run() {
             commands::project::versions::project_use_version,
             commands::project::versions::project_register_local,
         ])
-        
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
