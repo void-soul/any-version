@@ -638,12 +638,12 @@ pub async fn install_sdk_version(app: AppHandle, sdk_name: String, version: Stri
         let _ = crate::commands::cache::create_junction(&junction_path, &dest_dir);
     }
 
-    // 7. 移动端 SDK：自动配置环境变量，指向稳定的链接目录（切换版本无需改环境变量）
-    if sdk_name == "android" {
-        let android_home = junction_path.to_string_lossy().to_string();
-        let _ = crate::commands::env::set_registry_env("ANDROID_HOME", &android_home);
-        let _ = crate::commands::env::set_registry_env("ANDROID_SDK_ROOT", &android_home);
-    }
+    // 7. 自动配置该 SDK 的所有相关环境变量（如 ANDROID_HOME, JAVA_HOME, CARGO_HOME 等）。
+    //    所有变量统一指向 links 目录下的稳定路径，这样切换版本只需重定向 junction，
+    //    不需要再次修改环境变量。
+    let link_str = junction_path.to_string_lossy().to_string();
+    let dest_str = dest_dir.to_string_lossy().to_string();
+    let _ = crate::commands::env::configure_sdk_env_vars(&sdk_name, &link_str, &dest_str);
 
     Ok(())
 }
@@ -667,7 +667,19 @@ pub fn uninstall_sdk_version(sdk_name: String, version: String) -> Result<(), St
         let _ = fs::remove_file(&junction_path);
     }
 
-    fs::remove_dir_all(dest_dir).map_err(|e| e.to_string())?;
+    fs::remove_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+
+    // 如果这是该 SDK 最后一个已安装版本，自动清理其相关环境变量
+    let sdk_dir = Path::new(&config.versions_dir).join(&sdk_name);
+    let has_other_versions = fs::read_dir(&sdk_dir)
+        .ok()
+        .map(|entries| entries.filter_map(|e| e.ok()).any(|e| e.path() != dest_dir))
+        .unwrap_or(false);
+
+    if !has_other_versions {
+        let _ = crate::commands::env::remove_sdk_env_vars(&sdk_name);
+    }
+
     Ok(())
 }
 
@@ -681,6 +693,13 @@ pub fn use_sdk_version(sdk_name: String, version: String) -> Result<(), String> 
 
     let junction_path = Path::new(&config.links_dir).join(&sdk_name);
     crate::commands::cache::create_junction(&junction_path, &dest_dir)?;
+
+    // 切换版本后，重新确认环境变量指向正确（链接目录不变，通常无需修改，
+    // 但对首次从手动安装迁移到 AnyVersion 管理的场景，此步确保变量存在）
+    let link_str = junction_path.to_string_lossy().to_string();
+    let dest_str = dest_dir.to_string_lossy().to_string();
+    let _ = crate::commands::env::configure_sdk_env_vars(&sdk_name, &link_str, &dest_str);
+
     Ok(())
 }
 
@@ -705,15 +724,10 @@ pub fn add_local_sdk_version(sdk_name: String, version: String, local_path: Stri
         let _ = crate::commands::cache::create_junction(&junction_path, &dest_dir);
     }
 
-    // 移动端 SDK：注册本地版本后也自动配置环境变量，指向稳定链接目录
-    if sdk_name == "android" {
-        let android_home = junction_path.to_string_lossy().to_string();
-        let _ = crate::commands::env::set_registry_env("ANDROID_HOME", &android_home);
-        let _ = crate::commands::env::set_registry_env("ANDROID_SDK_ROOT", &android_home);
-    } else if sdk_name == "harmony" {
-        let sdk_home = junction_path.to_string_lossy().to_string();
-        let _ = crate::commands::env::set_registry_env("OHOS_SDK_HOME", &sdk_home);
-    }
+    // 注册本地版本后，自动配置该 SDK 的所有相关环境变量
+    let link_str = junction_path.to_string_lossy().to_string();
+    let dest_str = dest_dir.to_string_lossy().to_string();
+    let _ = crate::commands::env::configure_sdk_env_vars(&sdk_name, &link_str, &dest_str);
 
     Ok(())
 }

@@ -149,43 +149,127 @@ pub fn scan_environment() -> Result<Vec<DiagnosticProblem>, String> {
         }
     }
 
-    // Check specific environment variables
-    let env_vars_to_check = vec![
-        ("GOROOT", "Go 安装根目录"),
-        ("JAVA_HOME", "Java 安装根目录"),
-        ("ANDROID_HOME", "Android SDK 安装目录"),
-        ("ANDROID_SDK_ROOT", "Android SDK 根目录"),
-        ("MAVEN_HOME", "Maven 安装目录"),
-        ("GRADLE_HOME", "Gradle 安装目录"),
-        ("NODE_PATH", "Node.js 全局模块路径"),
-        ("CARGO_HOME", "Cargo 包管理器目录"),
-        ("RUSTUP_HOME", "Rustup 工具链目录"),
+    // 检查所有 SDK 相关的独立环境变量（注册表 HKCU\Environment）。
+    // 这是一个完整的"SDK 环境变量注册表"，每项格式为：
+    //   (变量名, 所属 SDK 名称, 用途描述, 检查类型)
+    //
+    // 检查类型：
+    //   "path"      → 该变量的值应是一个存在的目录路径，如果路径不存在则为"严重"
+    //   "nonempty"  → 该变量的值应为非空字符串（如代理地址、URL），空值则为"建议"级别
+    //
+    // 来源透明：用户可以在界面上看到每条变量"属于哪个 SDK"、"是做什么用的"。
+    let env_vars_to_check: Vec<(&str, &str, &str, &str)> = vec![
+        // ── Go ────────────────────────────────────────
+        ("GOROOT",          "Go",       "Go 安装根目录（包含标准库与编译器）",                           "path"),
+        ("GOPATH",          "Go",       "Go 工作区路径（第三方包、构建产物存储位置）",                   "path"),
+        ("GOPROXY",         "Go",       "Go 模块下载代理地址",                                         "nonempty"),
+        ("GONOSUMDB",       "Go",       "跳过 sum 校验的模块列表",                                     "nonempty"),
+        ("GOFLAGS",         "Go",       "Go 命令默认额外参数",                                         "nonempty"),
+
+        // ── Node.js ───────────────────────────────────
+        ("NODE_PATH",       "Node.js",  "Node.js 全局模块搜索路径（npm link / require 查找目录）",      "path"),
+        ("NPM_CONFIG_PREFIX", "Node.js", "npm 全局安装前缀路径（全局 node_modules / bin 所在目录）",     "path"),
+
+        // ── Python ────────────────────────────────────
+        ("PYTHONHOME",      "Python",   "Python 标准库与解释器根目录",                                 "path"),
+        ("PYTHONPATH",      "Python",   "Python 模块额外搜索路径",                                     "path"),
+        ("PIP_CACHE_DIR",   "Python",   "pip 下载缓存目录（可通过 pip.ini 覆盖）",                     "path"),
+
+        // ── Java / JDK ────────────────────────────────
+        ("JAVA_HOME",       "Java",     "JDK 安装根目录（java, javac, javadoc 所在位置）",             "path"),
+        ("JDK_HOME",        "Java",     "JDK 安装根目录（部分工具使用此变量替代 JAVA_HOME）",           "path"),
+        ("CLASSPATH",       "Java",     "Java 类库搜索路径",                                           "nonempty"),
+
+        // ── Android SDK ───────────────────────────────
+        ("ANDROID_HOME",        "Android", "Android SDK 根目录（推荐使用，由 Android 官方建议）",       "path"),
+        ("ANDROID_SDK_ROOT",    "Android", "Android SDK 根目录（旧版变量，部分工具仍使用）",            "path"),
+        ("ANDROID_SDK_HOME",    "Android", "Android 用户数据目录（AVD 虚拟设备配置存储位置）",          "path"),
+        ("ANDROID_NDK_HOME",    "Android", "Android NDK 安装目录",                                     "path"),
+        ("ANDROID_PREFS_ROOT",  "Android", "Android 工具偏好设置存储目录",                              "path"),
+        ("NDK_HOME",            "Android", "Android NDK 根目录（部分构建系统使用此变量）",              "path"),
+
+        // ── Flutter ───────────────────────────────────
+        ("FLUTTER_ROOT",    "Flutter",  "Flutter SDK 安装根目录",                                      "path"),
+        ("FLUTTER_STORAGE_BASE_URL", "Flutter", "Flutter 引擎下载基础 URL（镜像加速时使用）",           "nonempty"),
+        ("PUB_HOSTED_URL",  "Flutter",  "Dart pub 包仓库地址（镜像加速时使用）",                       "nonempty"),
+
+        // ── Rust ──────────────────────────────────────
+        ("CARGO_HOME",      "Rust",     "Cargo 包管理器目录（crate 缓存、registry 索引）",             "path"),
+        ("RUSTUP_HOME",     "Rust",     "Rustup 工具链管理目录（Rust 版本、组件下载存储）",            "path"),
+
+        // ── Bun ───────────────────────────────────────
+        ("BUN_INSTALL",     "Bun",      "Bun 安装根目录",                                              "path"),
+
+        // ── Maven / Gradle ────────────────────────────
+        ("MAVEN_HOME",      "Maven",    "Maven 安装根目录（包含 bin/mvn）",                            "path"),
+        ("M2_HOME",         "Maven",    "Maven 安装根目录（旧版变量，部分 CI 工具仍使用）",            "path"),
+        ("GRADLE_HOME",     "Gradle",   "Gradle 安装目录",                                             "path"),
+        ("GRADLE_USER_HOME","Gradle",   "Gradle 用户数据目录（缓存、wrapper、init 脚本）",             "path"),
+
+        // ── MySQL ─────────────────────────────────────
+        ("MYSQL_HOME",      "MySQL",    "MySQL 安装根目录（包含 bin/mysqld）",                         "path"),
+
+        // ── MongoDB ───────────────────────────────────
+        ("MONGO_HOME",      "MongoDB",  "MongoDB 安装根目录",                                          "path"),
+
+        // ── PostgreSQL ────────────────────────────────
+        ("PGDATA",          "PostgreSQL", "PostgreSQL 数据目录",                                       "path"),
+        ("PGHOME",          "PostgreSQL", "PostgreSQL 安装根目录",                                     "path"),
+
+        // ── Redis ─────────────────────────────────────
+        ("REDIS_HOME",      "Redis",    "Redis 安装根目录",                                            "path"),
+
+        // ── Nginx ─────────────────────────────────────
+        ("NGINX_HOME",      "Nginx",    "Nginx 安装根目录",                                            "path"),
+
+        // ── 鸿蒙 HarmonyOS / OpenHarmony ─────────────
+        ("OHOS_SDK_HOME",   "鸿蒙 HarmonyOS", "鸿蒙 SDK 根目录（ohpm, hdc 等工具所在位置）",          "path"),
     ];
 
-    for (var_name, desc) in env_vars_to_check {
+    for (var_name, sdk_name, desc, check_type) in env_vars_to_check {
         if let Some(val) = get_registry_env(var_name) {
             if val.is_empty() {
                 continue;
             }
             let val_path = Path::new(&val);
-            if !val.to_lowercase().contains(&links_dir.to_string_lossy().to_lowercase()) {
-                if !val_path.exists() {
-                    problems.push(DiagnosticProblem {
-                        id: md5_hash(&format!("dead_var:{}", var_name)),
-                        problem_type: "dead_env_path".to_string(),
-                        description: format!("环境变量 {} ({}) 指向不存在的目录", var_name, desc),
-                        detail: format!("{}={}", var_name, val),
-                        severity: "严重".to_string(),
-                        fix_type: "set_env".to_string(),
-                        fix_target: var_name.to_string(),
-                        evidence_source: format!("注册表 HKEY_CURRENT_USER\\Environment 中的 {} 值", var_name),
-                        evidence_content: format!("{} = {}", var_name, val),
-                        evidence_reason: format!("环境变量 {} 指向的目录「{}」在磁盘上不存在，说明对应软件已被卸载或移动，该变量已失效。", var_name, val),
-                        fix_plan: format!("清空（删除）失效的环境变量 {}，避免相关工具读取到错误路径。", var_name),
-                        fix_file: format!("注册表: HKEY_CURRENT_USER\\Environment\\{}", var_name),
-                        fix_source_path: String::new(),
-                        fix_dest_path: String::new(),
-                    });
+
+            // 如果值指向 Any-Version 管理的链接目录，则跳过（不是问题）
+            if val.to_lowercase().contains(&links_dir.to_string_lossy().to_lowercase()) {
+                continue;
+            }
+
+            match check_type {
+                "path" => {
+                    // 路径类型的变量：检查指向的目录是否存在
+                    if !val_path.exists() {
+                        let severity = "严重".to_string();
+                        problems.push(DiagnosticProblem {
+                            id: md5_hash(&format!("dead_var:{}", var_name)),
+                            problem_type: "dead_env_path".to_string(),
+                            description: format!("[{}] 环境变量 {} ({}) 指向不存在的目录", sdk_name, var_name, desc),
+                            detail: format!("{}={}", var_name, val),
+                            severity,
+                            fix_type: "set_env".to_string(),
+                            fix_target: var_name.to_string(),
+                            evidence_source: format!("注册表 HKEY_CURRENT_USER\\Environment 中的 {} 值", var_name),
+                            evidence_content: format!("{} = {}", var_name, val),
+                            evidence_reason: format!(
+                                "该变量属于「{}」SDK 的环境配置项。其值「{}」在磁盘上不存在，说明对应工具已被卸载或移动，变量已失效。",
+                                sdk_name, val
+                            ),
+                            fix_plan: format!(
+                                "清空（删除）失效的环境变量 {}，避免相关工具读取到错误路径。操作位置：HKCU\\Environment",
+                                var_name
+                            ),
+                            fix_file: format!("注册表: HKEY_CURRENT_USER\\Environment\\{}", var_name),
+                            fix_source_path: String::new(),
+                            fix_dest_path: String::new(),
+                        });
+                    }
+                }
+                _ => {
+                    // 非路径类型（URL、列表等）：仅在明确失效时给出建议（此处暂不报问题）
+                    // 未来可以扩展：如检查 URL 是否可达等
                 }
             }
         }
@@ -370,6 +454,113 @@ fn cache_detection_evidence(name: &str, resolved: &str) -> (String, String) {
             format!("检测到的缓存目录为: {}", resolved),
         ),
     }
+}
+
+/// 自动配置 SDK 相关环境变量（在 SDK 安装或切换版本时调用）。
+/// `sdk_name`: SDK 标识（如 "nodejs", "android", "rust"）
+/// `link_dir`  : 该 SDK 在 links 目录下的稳定路径（如 C:\Users\...\.any-version\links\nodejs）
+/// `version_dir`: 该版本的物理安装目录（如 C:\Users\...\.any-version\versions\nodejs\20.11.1）
+///
+/// 设计原则：
+///   - 所有 *_HOME 类变量指向 link_dir（版本切换时只需重定向 junction，不需改环境变量）
+///   - 所有实际配置在 install_sdk_version / use_sdk_version 后自动执行
+pub fn configure_sdk_env_vars(sdk_name: &str, link_dir: &str, version_dir: &str) -> Result<(), String> {
+    let link = link_dir.to_string();
+    let ver  = version_dir.to_string();
+
+    match sdk_name {
+        "android" => {
+            let _ = set_registry_env("ANDROID_HOME", &link);
+            let _ = set_registry_env("ANDROID_SDK_ROOT", &link);
+            // ANDROID_SDK_HOME 指向 SDK 内的用户数据子目录（如果存在）
+            let avd_home = format!("{}\\.android", link);
+            let _ = set_registry_env("ANDROID_SDK_HOME", &avd_home);
+        }
+        "go" => {
+            let _ = set_registry_env("GOROOT", &link);
+            // GOPATH 默认为用户目录下的 go，可由用户自行覆盖
+        }
+        "java" => {
+            let _ = set_registry_env("JAVA_HOME", &link);
+            let _ = set_registry_env("JDK_HOME", &link);
+        }
+        "nodejs" => {
+            let _ = set_registry_env("NODE_PATH", &link);
+            let npm_prefix = format!("{}\\node_modules", link);
+            let _ = set_registry_env("NPM_CONFIG_PREFIX", &npm_prefix);
+        }
+        "python" => {
+            let _ = set_registry_env("PYTHONHOME", &link);
+        }
+        "rust" => {
+            let _ = set_registry_env("CARGO_HOME", &format!("{}\\.cargo", link));
+            let _ = set_registry_env("RUSTUP_HOME", &format!("{}\\.rustup", link));
+        }
+        "bun" => {
+            let _ = set_registry_env("BUN_INSTALL", &link);
+        }
+        "flutter" => {
+            let _ = set_registry_env("FLUTTER_ROOT", &link);
+        }
+        "maven" => {
+            let _ = set_registry_env("MAVEN_HOME", &link);
+            let _ = set_registry_env("M2_HOME", &link);
+        }
+        "gradle" => {
+            let _ = set_registry_env("GRADLE_HOME", &link);
+        }
+        "mysql" => {
+            let _ = set_registry_env("MYSQL_HOME", &link);
+        }
+        "mongodb" => {
+            let _ = set_registry_env("MONGO_HOME", &link);
+        }
+        "postgresql" => {
+            let _ = set_registry_env("PGDATA", &format!("{}\\data", link));
+            let _ = set_registry_env("PGHOME", &link);
+        }
+        "redis" => {
+            let _ = set_registry_env("REDIS_HOME", &link);
+        }
+        "nginx" => {
+            let _ = set_registry_env("NGINX_HOME", &link);
+        }
+        "harmony" => {
+            let _ = set_registry_env("OHOS_SDK_HOME", &link);
+        }
+        _ => {} // 未知 SDK 类型不自动设置
+    }
+
+    Ok(())
+}
+
+/// 移除 SDK 相关的环境变量（在卸载 SDK 最后一个版本时调用）。
+pub fn remove_sdk_env_vars(sdk_name: &str) -> Result<(), String> {
+    let vars: Vec<&str> = match sdk_name {
+        "android"  => vec!["ANDROID_HOME", "ANDROID_SDK_ROOT", "ANDROID_SDK_HOME", "ANDROID_NDK_HOME", "ANDROID_PREFS_ROOT", "NDK_HOME"],
+        "go"       => vec!["GOROOT"],
+        "java"     => vec!["JAVA_HOME", "JDK_HOME"],
+        "nodejs"   => vec!["NODE_PATH", "NPM_CONFIG_PREFIX"],
+        "python"   => vec!["PYTHONHOME", "PYTHONPATH"],
+        "rust"     => vec!["CARGO_HOME", "RUSTUP_HOME"],
+        "bun"      => vec!["BUN_INSTALL"],
+        "flutter"  => vec!["FLUTTER_ROOT"],
+        "maven"    => vec!["MAVEN_HOME", "M2_HOME"],
+        "gradle"   => vec!["GRADLE_HOME"],
+        "mysql"    => vec!["MYSQL_HOME"],
+        "mongodb"  => vec!["MONGO_HOME"],
+        "postgresql" => vec!["PGDATA", "PGHOME"],
+        "redis"    => vec!["REDIS_HOME"],
+        "nginx"    => vec!["NGINX_HOME"],
+        "harmony"  => vec!["OHOS_SDK_HOME"],
+        _          => vec![],
+    };
+
+    for var in vars {
+        let _ = set_registry_env(var, "");
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
