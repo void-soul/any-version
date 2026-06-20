@@ -38,4 +38,12 @@ pub fn run() {
             commands::sdk::get_sdk_detailed_status,
             // 项目管理模块
             commands::project::commands::project_list,
-            commands::
+            commands::project::commands::project_status,
+            commands::project::commands::project_detail,
+            commands::project::commands::project_preview_manage,
+            commands::project::commands::project_manage,
+            commands::project::commands::project_unmanage,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
