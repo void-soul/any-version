@@ -236,4 +236,24 @@ pub struct ManagePreview {
 }
 
 /// 托管操作步骤
-#[derive(Serialize, Clone, Debu
+#[derive(Serialize, Clone, Debug, Clone, Debug)]
+pub struct ManageStep {
+    pub action: String,
+    pub description: String,
+    pub target: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ProjectBackup {
+    pub env_vars: HashMap<String, String>,
+    pub path_entries: Vec<String>,
+    pub service_path: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ManagedProject {
+    pub project_id: String,
+    pub managed_at: String,
+    pub backup: ProjectBackup,
+    pub state: String,
+}
