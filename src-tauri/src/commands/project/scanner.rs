@@ -442,4 +442,8 @@ fn get_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
             vec![link_dir.to_string()]
         }
         "mysql" | "mongodb" | "postgresql" => {
-      
+                  vec![format!("{}\\bin", link_dir)]
+        }
+        _ => vec![link_dir.to_string()],
+    }
+}
