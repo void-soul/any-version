@@ -25,6 +25,7 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
     { id: "mirrors", label: "国内镜像配置", icon: Globe },
     { id: "packages", label: "全局包管理", icon: Box },
     { id: "tools", label: "系统实用工具", icon: Wrench },
+    { id: "backups", label: "环境备份还原", icon: ShieldCheck },
     { id: "settings", label: "全局路径设置", icon: Settings },
   ];
 

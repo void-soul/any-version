@@ -259,75 +259,79 @@ pub fn scan_environment() -> Result<Vec<DiagnosticProblem>, String> {
             }
         }
 
-        // PATH 中的外部 SDK 路径扫描（使用注册表的 path_patterns）
-        for &(pattern, exe_hint) in sdk_def.path_patterns {
-            // 扫描用户级 PATH
-            let path_sources: Vec<(&str, Option<String>)> = vec![
-                ("HKCU", get_registry_env("PATH")),
-                ("HKLM", get_system_registry_env("PATH")),
-            ];
+        // PATH 中的外部 SDK 路径扫描（使用注册表的 find_rules）
+        for rule in sdk_def.find_rules {
+            if let super::sdk_resolver::ResolvePattern::PathContains(pattern, exe_hint) = &rule.pattern {
+                let pattern = *pattern;
+                let exe_hint = *exe_hint;
+                // 扫描用户级 PATH
+                let path_sources: Vec<(&str, Option<String>)> = vec![
+                    ("HKCU", get_registry_env("PATH")),
+                    ("HKLM", get_system_registry_env("PATH")),
+                ];
 
-            for (path_source, path_val) in path_sources {
-                let path_val = match path_val {
-                    Some(v) => v,
-                    None => continue,
-                };
-                let parts = std::env::split_paths(&path_val).collect::<Vec<_>>();
+                for (path_source, path_val) in path_sources {
+                    let path_val = match path_val {
+                        Some(v) => v,
+                        None => continue,
+                    };
+                    let parts = std::env::split_paths(&path_val).collect::<Vec<_>>();
 
-                for p in &parts {
-                    if p.as_os_str().is_empty() {
-                        continue;
-                    }
-                    let p_str = p.to_string_lossy().to_string();
-                    let p_lower = p_str.to_lowercase();
+                    for p in &parts {
+                        if p.as_os_str().is_empty() {
+                            continue;
+                        }
+                        let p_str = p.to_string_lossy().to_string();
+                        let p_lower = p_str.to_lowercase();
 
-                    // 跳过 AnyVersion 管理的目录
-                    if p_lower.contains(&links_lower) {
-                        continue;
-                    }
-                    // 去重
-                    if !reported_paths.contains(&p_lower) {
-                        continue;
-                    }
+                        // 跳过 AnyVersion 管理的目录
+                        if p_lower.contains(&links_lower) {
+                            continue;
+                        }
+                        // 去重：如果已经报过了，就跳过
+                        if reported_paths.contains(&p_lower) {
+                            continue;
+                        }
 
-                    if !p_lower.contains(pattern) {
-                        continue;
-                    }
+                        if !p_lower.contains(pattern) {
+                            continue;
+                        }
 
-                    // 模式匹配，检查目录是否存在
-                    let has_exe = p.join(exe_hint).exists()
-                        || p.join("bin").join(exe_hint).exists();
-                    let dir_exists = p.exists();
+                        // 模式匹配，检查目录是否存在
+                        let has_exe = p.join(exe_hint).exists()
+                            || p.join("bin").join(exe_hint).exists();
+                        let dir_exists = p.exists();
 
-                    if has_exe || dir_exists {
-                        reported_paths.insert(p_lower.clone());
+                        if has_exe || dir_exists {
+                            reported_paths.insert(p_lower.clone());
 
-                        let is_managed = links_dir.join(sdk_def.id).exists();
-                        let (severity, fix_desc) = if is_managed {
-                            ("警告".to_string(),
-                             format!("已由 AnyVersion 管理 {}，此外部路径可能造成版本冲突。", sdk_name))
-                        } else {
-                            ("信息".to_string(),
-                             format!("未被 AnyVersion 管理。可在 SDK 版本管理中安装 {}。", sdk_name))
-                        };
+                            let is_managed = links_dir.join(sdk_def.id).exists();
+                            let (severity, fix_desc) = if is_managed {
+                                ("警告".to_string(),
+                                 format!("已由 AnyVersion 管理 {}，此外部路径可能造成版本冲突。", sdk_name))
+                            } else {
+                                ("信息".to_string(),
+                                 format!("未被 AnyVersion 管理。可在 SDK 版本管理中安装 {}。", sdk_name))
+                            };
 
-                        problems.push(DiagnosticProblem {
-                            id: md5_hash(&format!("external_sdk:{}:{}:{}", path_source, sdk_name, p_str)),
-                            problem_type: "unmanaged_sdk".to_string(),
-                            description: format!("PATH（{}）中存在 {} 路径", path_source, sdk_name),
-                            detail: p_str.clone(),
-                            severity,
-                            fix_type: "remove_path".to_string(),
-                            fix_target: p_str.clone(),
-                            evidence_source: format!("注册表 {}\\Environment\\PATH", path_source),
-                            evidence_content: format!("PATH 包含: {}", p_str),
-                            evidence_reason: format!("匹配模式「{}」，{} 存在。", pattern, exe_hint),
-                            fix_plan: format!("{}从 PATH 中移除此条目：{}", fix_desc, p_str),
-                            fix_file: format!("注册表 {}\\Environment\\PATH", path_source),
-                            fix_source_path: String::new(),
-                            fix_dest_path: String::new(),
-                        });
-                        break;
+                            problems.push(DiagnosticProblem {
+                                id: md5_hash(&format!("external_sdk:{}:{}:{}", path_source, sdk_name, p_str)),
+                                problem_type: "unmanaged_sdk".to_string(),
+                                description: format!("PATH（{}）中存在 {} 路径", path_source, sdk_name),
+                                detail: p_str.clone(),
+                                severity,
+                                fix_type: "remove_path".to_string(),
+                                fix_target: p_str.clone(),
+                                evidence_source: format!("注册表 {}\\Environment\\PATH", path_source),
+                                evidence_content: format!("PATH 包含: {}", p_str),
+                                evidence_reason: format!("匹配模式「{}」，{} 存在。", pattern, exe_hint),
+                                fix_plan: format!("{}从 PATH 中移除此条目：{}", fix_desc, p_str),
+                                fix_file: format!("注册表 {}\\Environment\\PATH", path_source),
+                                fix_source_path: String::new(),
+                                fix_dest_path: String::new(),
+                            });
+                            break;
+                        }
                     }
                 }
             }
@@ -467,6 +471,90 @@ fn cache_detection_evidence(name: &str, resolved: &str) -> (String, String) {
     }
 }
 
+fn get_sdk_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
+    match sdk_id {
+        "go" | "java" | "flutter" | "maven" | "gradle" | "harmony" | "cuda" | "ffmpeg" => {
+            vec![format!("{}\\bin", link_dir)]
+        }
+        "python" => {
+            vec![link_dir.to_string(), format!("{}\\Scripts", link_dir)]
+        }
+        "rust" => {
+            vec![format!("{}\\.cargo\\bin", link_dir)]
+        }
+        "android" => {
+            vec![
+                format!("{}\\cmdline-tools\\latest\\bin", link_dir),
+                format!("{}\\platform-tools", link_dir),
+            ]
+        }
+        "nodejs" | "bun" | "yarn" | "pnpm" | "nginx" | "redis" => {
+            vec![link_dir.to_string()]
+        }
+        "mysql" | "mongodb" | "postgresql" => {
+            vec![format!("{}\\bin", link_dir)]
+        }
+        _ => vec![],
+    }
+}
+
+pub fn add_to_user_path(paths: &[String]) -> Result<(), String> {
+    if let Some(user_path) = get_registry_env("PATH") {
+        let mut parts = std::env::split_paths(&user_path)
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        
+        let mut modified = false;
+        for path in paths {
+            let path_lower = path.to_lowercase();
+            if !parts.iter().any(|p| p.to_lowercase() == path_lower) {
+                parts.push(path.clone());
+                modified = true;
+            }
+        }
+        
+        if modified {
+            let new_path = std::env::join_paths(parts.iter().map(Path::new))
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .to_string();
+            set_registry_env("PATH", &new_path)?;
+        }
+    } else {
+        let new_path = std::env::join_paths(paths.iter().map(Path::new))
+            .map_err(|e| e.to_string())?
+            .to_string_lossy()
+            .to_string();
+        set_registry_env("PATH", &new_path)?;
+    }
+    Ok(())
+}
+
+pub fn remove_from_user_path(paths: &[String]) -> Result<(), String> {
+    if let Some(user_path) = get_registry_env("PATH") {
+        let parts = std::env::split_paths(&user_path)
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        
+        let initial_len = parts.len();
+        let new_parts = parts.into_iter()
+            .filter(|p| {
+                let p_lower = p.to_lowercase();
+                !paths.iter().any(|target| target.to_lowercase() == p_lower)
+            })
+            .collect::<Vec<_>>();
+        
+        if new_parts.len() != initial_len {
+            let new_path = std::env::join_paths(new_parts.iter().map(Path::new))
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .to_string();
+            set_registry_env("PATH", &new_path)?;
+        }
+    }
+    Ok(())
+}
+
 /// 自动配置 SDK 相关环境变量（注册表驱动）。
 /// 新增 SDK 时只需在 sdk_registry.rs 中定义 env_vars，此函数自动生效。
 ///
@@ -497,6 +585,10 @@ pub fn configure_sdk_env_vars(sdk_id: &str, link_dir: &str, _version_dir: &str) 
         let _ = set_registry_env(var_name, &value);
     }
 
+    // 自动将可执行目录添加到用户 PATH 变量中
+    let bin_paths = get_sdk_bin_paths(sdk_id, link_dir);
+    let _ = add_to_user_path(&bin_paths);
+
     Ok(())
 }
 
@@ -513,6 +605,13 @@ pub fn remove_sdk_env_vars(sdk_id: &str) -> Result<(), String> {
     for &(var_name, _desc, _) in sdk_def.env_vars {
         let _ = set_registry_env(var_name, "");
     }
+
+    // 从用户 PATH 中移除该 SDK 的可执行目录
+    let config = load_config();
+    let junction_path = Path::new(&config.links_dir).join(sdk_id);
+    let link_str = junction_path.to_string_lossy().to_string();
+    let bin_paths = get_sdk_bin_paths(sdk_id, &link_str);
+    let _ = remove_from_user_path(&bin_paths);
 
     Ok(())
 }
@@ -555,5 +654,160 @@ pub fn resolve_problems(problems: Vec<DiagnosticProblem>) -> Result<(), String> 
             _ => return Err(format!("不支持的修复方式: {}", p.fix_type)),
         }
     }
+    Ok(())
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct EnvBackup {
+    pub id: String,
+    pub timestamp: String,
+    pub description: String,
+    pub user_vars: std::collections::HashMap<String, String>,
+    pub sys_vars: std::collections::HashMap<String, String>,
+}
+
+#[tauri::command]
+pub fn create_env_backup(description: String) -> Result<EnvBackup, String> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let mut user_vars = std::collections::HashMap::new();
+    if let Ok(env_key) = hkcu.open_subkey("Environment") {
+        for name in env_key.enum_values().filter_map(|x| x.ok()).map(|(n, _)| n) {
+            if let Ok(val) = env_key.get_value::<String, _>(&name) {
+                user_vars.insert(name, val);
+            }
+        }
+    }
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let mut sys_vars = std::collections::HashMap::new();
+    if let Ok(env_key) = hklm.open_subkey("SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment") {
+        for name in env_key.enum_values().filter_map(|x| x.ok()).map(|(n, _)| n) {
+            if let Ok(val) = env_key.get_value::<String, _>(&name) {
+                sys_vars.insert(name, val);
+            }
+        }
+    }
+
+    let id = format!("{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0));
+
+    // Get simple local timestamp using powershell date
+    let timestamp = std::process::Command::new("powershell")
+        .args(&["-Command", "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|_| "Unknown Time".to_string());
+
+    let backup = EnvBackup {
+        id,
+        timestamp,
+        description,
+        user_vars,
+        sys_vars,
+    };
+
+    let base_dir = crate::commands::config::get_base_dir();
+    let backups_dir = base_dir.join("backups");
+    fs::create_dir_all(&backups_dir).map_err(|e| e.to_string())?;
+
+    let backup_file = backups_dir.join(format!("env_backup_{}.json", backup.id));
+    let data = serde_json::to_string_pretty(&backup).map_err(|e| e.to_string())?;
+    fs::write(backup_file, data).map_err(|e| e.to_string())?;
+
+    Ok(backup)
+}
+
+#[tauri::command]
+pub fn list_env_backups() -> Result<Vec<EnvBackup>, String> {
+    let base_dir = crate::commands::config::get_base_dir();
+    let backups_dir = base_dir.join("backups");
+    if !backups_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut list = Vec::new();
+    if let Ok(entries) = fs::read_dir(backups_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            if entry.path().extension().map(|s| s == "json").unwrap_or(false) {
+                if let Ok(content) = fs::read_to_string(entry.path()) {
+                    if let Ok(backup) = serde_json::from_str::<EnvBackup>(&content) {
+                        list.push(backup);
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort backups by timestamp descending
+    list.sort_by(|a, b| b.id.cmp(&a.id));
+    Ok(list)
+}
+
+#[tauri::command]
+pub fn delete_env_backup(id: String) -> Result<(), String> {
+    let base_dir = crate::commands::config::get_base_dir();
+    let backup_file = base_dir.join("backups").join(format!("env_backup_{}.json", id));
+    if backup_file.exists() {
+        fs::remove_file(backup_file).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn restore_env_backup(id: String) -> Result<(), String> {
+    let base_dir = crate::commands::config::get_base_dir();
+    let backup_file = base_dir.join("backups").join(format!("env_backup_{}.json", id));
+    if !backup_file.exists() {
+        return Err("备份文件不存在".to_string());
+    }
+
+    let content = fs::read_to_string(backup_file).map_err(|e| e.to_string())?;
+    let backup = serde_json::from_str::<EnvBackup>(&content).map_err(|e| e.to_string())?;
+
+    // 1. Restore User Variables
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let (user_key, _) = hkcu.create_subkey("Environment").map_err(|e| e.to_string())?;
+
+    // Delete keys not in backup
+    let existing_user_keys: Vec<String> = user_key.enum_values().filter_map(|x| x.ok()).map(|(n, _)| n).collect();
+    for name in existing_user_keys {
+        if !backup.user_vars.contains_key(&name) {
+            let _ = user_key.delete_value(&name);
+        }
+    }
+
+    // Restore keys from backup
+    for (name, val) in &backup.user_vars {
+        user_key.set_value(name, val).map_err(|e| e.to_string())?;
+    }
+
+    // 2. Restore System Variables (try, but don't fail if we lack permissions)
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let mut system_restore_msg = String::new();
+    match hklm.open_subkey_with_flags("SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment", KEY_ALL_ACCESS) {
+        Ok(sys_key) => {
+            let existing_sys_keys: Vec<String> = sys_key.enum_values().filter_map(|x| x.ok()).map(|(n, _)| n).collect();
+            for name in existing_sys_keys {
+                if !backup.sys_vars.contains_key(&name) {
+                    let _ = sys_key.delete_value(&name);
+                }
+            }
+            for (name, val) in &backup.sys_vars {
+                let _ = sys_key.set_value(name, val);
+            }
+        }
+        Err(_) => {
+            system_restore_msg = "\n注意：系统级环境变量恢复失败（权限不足，请以管理员身份运行此程序进行完整恢复）。用户级环境变量已成功恢复！".to_string();
+        }
+    }
+
+    broadcast_setting_change();
+
+    if !system_restore_msg.is_empty() {
+        return Err(system_restore_msg);
+    }
+
     Ok(())
 }

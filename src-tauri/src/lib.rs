@@ -29,7 +29,11 @@ pub fn run() {
             commands::mirror::set_mirror,
             commands::service::get_running_services,
             commands::service::start_service,
-            commands::service::stop_service
+            commands::service::stop_service,
+            commands::env::create_env_backup,
+            commands::env::list_env_backups,
+            commands::env::delete_env_backup,
+            commands::env::restore_env_backup
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

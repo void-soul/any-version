@@ -711,4 +711,22 @@ pub fn add_local_sdk_version(sdk_name: String, version: String, local_path: Stri
         return Err("本地路径不存在".to_string());
     }
 
- 
+    let dest_dir = Path::new(&config.versions_dir).join(&sdk_name).join(&version);
+    if dest_dir.exists() {
+        return Err("版本已存在，无需重复添加".to_string());
+    }
+
+    crate::commands::cache::copy_dir_all(src, &dest_dir).map_err(|e| e.to_string())?;
+
+    // Auto-switch if first installed
+    let junction_path = Path::new(&config.links_dir).join(&sdk_name);
+    if !junction_path.exists() {
+        let _ = crate::commands::cache::create_junction(&junction_path, &dest_dir);
+    }
+
+    let link_str = junction_path.to_string_lossy().to_string();
+    let dest_str = dest_dir.to_string_lossy().to_string();
+    let _ = crate::commands::env::configure_sdk_env_vars(&sdk_name, &link_str, &dest_str);
+
+    Ok(())
+}

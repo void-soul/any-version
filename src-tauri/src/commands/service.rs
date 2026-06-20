@@ -273,7 +273,10 @@ pub fn get_running_services() -> Result<Vec<ServiceInfo>, String> {
         }
     }
 
-    Ok(services.into_values().collect())
+    let order = ["nginx", "redis", "mysql", "mongodb", "postgresql"];
+    let mut result: Vec<ServiceInfo> = services.into_values().collect();
+    result.sort_by_key(|s| order.iter().position(|&x| x == s.name).unwrap_or(99));
+    Ok(result)
 }
 
 #[tauri::command]
@@ -359,6 +362,23 @@ pub fn stop_service(name: String) -> Result<(), String> {
         return Err(format!("服务 {} 未运行", name));
     }
 
+    let is_external = svc.active_version.contains("系统/外部进程");
+
+    if is_external {
+        if svc.pid > 0 {
+            let output = Command::new("taskkill")
+                .args(&["/f", "/pid", &svc.pid.to_string()])
+                .output()
+                .map_err(|e| format!("停止外部服务失败: {}", e))?;
+            if !output.status.success() {
+                let err_msg = String::from_utf8_lossy(&output.stderr).to_string();
+                return Err(format!("无法终止外部服务进程 (PID: {}): {}", svc.pid, err_msg));
+            }
+            return Ok(());
+        }
+        return Err("外部服务未检测到有效的 PID".to_string());
+    }
+
     let config = load_config();
     let dir = PathBuf::from(&config.versions_dir).join(&name).join(&svc.active_version);
 
@@ -372,18 +392,26 @@ pub fn stop_service(name: String) -> Result<(), String> {
                 .map_err(|_| shutdown_err = true);
         }
         "redis" => {
-            let _ = Command::new(dir.join("redis-cli.exe"))
-                .args(&["shutdown"])
+            let cli_exe = dir.join("redis-cli.exe");
+            let output = Command::new(&cli_exe)
+                .args(&["-p", &svc.port, "shutdown"])
                 .current_dir(&dir)
-                .output()
-                .map_err(|_| shutdown_err = true);
+                .output();
+            match output {
+                Ok(out) if out.status.success() => {},
+                _ => { shutdown_err = true; }
+            }
         }
         "mysql" => {
-            let _ = Command::new(dir.join("bin").join("mysqladmin.exe"))
-                .args(&["-u", "root", "shutdown"])
+            let admin_exe = dir.join("bin").join("mysqladmin.exe");
+            let output = Command::new(&admin_exe)
+                .args(&["--port", &svc.port, "-u", "root", "shutdown"])
                 .current_dir(&dir)
-                .output()
-                .map_err(|_| shutdown_err = true);
+                .output();
+            match output {
+                Ok(out) if out.status.success() => {},
+                _ => { shutdown_err = true; }
+            }
         }
         "postgresql" => {
             let _ = Command::new(dir.join("bin").join("pg_ctl.exe"))
@@ -395,10 +423,15 @@ pub fn stop_service(name: String) -> Result<(), String> {
         _ => shutdown_err = true,
     }
 
-    if shutdown_err || svc.pid > 0 {
-        let _ = Command::new("taskkill")
+    if shutdown_err && svc.pid > 0 {
+        let output = Command::new("taskkill")
             .args(&["/f", "/pid", &svc.pid.to_string()])
-            .output();
+            .output()
+            .map_err(|e| format!("强制终止服务失败: {}", e))?;
+        if !output.status.success() {
+            let err_msg = String::from_utf8_lossy(&output.stderr).to_string();
+            return Err(format!("正常关闭失败，且无法强制终止进程 (PID: {}): {}", svc.pid, err_msg));
+        }
     }
 
     Ok(())

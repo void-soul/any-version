@@ -72,6 +72,9 @@ macro_rules! path_match {
             root_offset: $offset,
         }
     };
+    ($key:expr, $exe:expr, $label:expr, $prio:expr) => {
+        path_match!($key, $exe, $label, $prio, 0)
+    };
     ($key:expr, $exe:expr, $label:expr) => {
         path_match!($key, $exe, $label, 50, 0)
     };
@@ -94,13 +97,16 @@ macro_rules! env_match {
 
 /// 固定路径检查
 macro_rules! fixed_match {
-    ($path:expr, $exe:expr, $label:expr, $prio:expr) => {
+    ($path:expr, $exe:expr, $label:expr, $prio:expr, $offset:expr) => {
         FindRule {
             pattern: ResolvePattern::FixedPath($path, $exe),
             source_label: $label,
             priority: $prio,
-            root_offset: 0,
+            root_offset: $offset,
         }
+    };
+    ($path:expr, $exe:expr, $label:expr, $prio:expr) => {
+        fixed_match!($path, $exe, $label, $prio, 0)
     };
 }
 
@@ -313,4 +319,192 @@ pub fn registry() -> &'static [SdkDef] {
             path_match!("scoop\\apps\\nginx", "nginx.exe", "Scoop", 40),
             path_match!("chocolatey\\lib\\nginx", "nginx.exe", "Chocolatey", 40),
             fixed_match!("C:\\nginx", "nginx.exe", "C:\\nginx", 60),
-     
+        ],
+    },
+
+    SdkDef {
+        id: "redis",
+        display_name: "Redis",
+        category: SdkCategory::Service,
+        env_vars: &[env_path!("REDIS_HOME", "Redis 安装根目录")],
+        find_rules: &[
+            env_match!("REDIS_HOME", "", "redis-server.exe", "环境变量 REDIS_HOME", 10),
+            path_match!("scoop\\apps\\redis", "redis-server.exe", "Scoop", 40),
+            fixed_match!("C:\\redis", "redis-server.exe", "C:\\redis", 60),
+        ],
+    },
+
+    SdkDef {
+        id: "mysql",
+        display_name: "MySQL",
+        category: SdkCategory::Service,
+        env_vars: &[env_path!("MYSQL_HOME", "MySQL 安装根目录")],
+        find_rules: &[
+            env_match!("MYSQL_HOME", "bin", "mysql.exe", "环境变量 MYSQL_HOME", 10),
+            path_match!("scoop\\apps\\mysql", "mysql.exe", "Scoop", 40, 1),
+            fixed_match!("C:\\Program Files\\MySQL\\MySQL Server", "mysql.exe", "Program Files", 70, 1),
+        ],
+    },
+
+    SdkDef {
+        id: "mongodb",
+        display_name: "MongoDB",
+        category: SdkCategory::Service,
+        env_vars: &[env_path!("MONGO_HOME", "MongoDB 安装根目录")],
+        find_rules: &[
+            env_match!("MONGO_HOME", "bin", "mongod.exe", "环境变量 MONGO_HOME", 10),
+            path_match!("scoop\\apps\\mongodb", "mongod.exe", "Scoop", 40, 1),
+            fixed_match!("C:\\Program Files\\MongoDB\\Server", "mongod.exe", "Program Files", 70, 1),
+        ],
+    },
+
+    SdkDef {
+        id: "postgresql",
+        display_name: "PostgreSQL",
+        category: SdkCategory::Service,
+        env_vars: &[
+            env_path!("PGDATA", "PostgreSQL 数据目录"),
+            env_path!("PGHOME", "PostgreSQL 安装根目录"),
+        ],
+        find_rules: &[
+            env_match!("PGHOME", "bin", "psql.exe", "环境变量 PGHOME", 10),
+            path_match!("scoop\\apps\\postgresql", "psql.exe", "Scoop", 40, 1),
+            fixed_match!("C:\\Program Files\\PostgreSQL", "psql.exe", "Program Files", 70, 1),
+        ],
+    },
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  构建工具
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    SdkDef {
+        id: "maven",
+        display_name: "Maven",
+        category: SdkCategory::BuildTool,
+        env_vars: &[
+            env_path!("MAVEN_HOME", "Maven 安装根目录"),
+            env_path!("M2_HOME", "Maven 根目录（旧版本）"),
+        ],
+        find_rules: &[
+            env_match!("MAVEN_HOME", "bin", "mvn.cmd", "环境变量 MAVEN_HOME", 10),
+            path_match!("scoop\\apps\\maven", "mvn.cmd", "Scoop", 40, 1),
+            path_match!("\\apache-maven\\bin", "mvn.cmd", "系统 PATH", 80, 1),
+        ],
+    },
+
+    SdkDef {
+        id: "gradle",
+        display_name: "Gradle",
+        category: SdkCategory::BuildTool,
+        env_vars: &[
+            env_path!("GRADLE_HOME", "Gradle 安装目录"),
+            env_path!("GRADLE_USER_HOME", "Gradle 用户数据目录"),
+        ],
+        find_rules: &[
+            env_match!("GRADLE_HOME", "bin", "gradle.bat", "环境变量 GRADLE_HOME", 10),
+            path_match!("scoop\\apps\\gradle", "gradle.bat", "Scoop", 40, 1),
+            path_match!("\\gradle\\bin", "gradle.bat", "系统 PATH", 80, 1),
+        ],
+    },
+
+    SdkDef {
+        id: "yarn",
+        display_name: "Yarn",
+        category: SdkCategory::BuildTool,
+        env_vars: &[],
+        find_rules: &[
+            path_match!("scoop\\apps\\yarn", "yarn.cmd", "Scoop", 40),
+            path_match!("\\.yarn\\bin", "yarn.cmd", ".yarn\\bin", 50),
+        ],
+    },
+
+    SdkDef {
+        id: "pnpm",
+        display_name: "pnpm",
+        category: SdkCategory::BuildTool,
+        env_vars: &[],
+        find_rules: &[
+            path_match!("scoop\\apps\\pnpm", "pnpm.exe", "Scoop", 40),
+            path_match!("\\.pnpm\\", "pnpm.exe", ".pnpm", 50),
+        ],
+    },
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  移动端 SDK
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    SdkDef {
+        id: "android",
+        display_name: "Android SDK",
+        category: SdkCategory::Mobile,
+        env_vars: &[
+            env_path!("ANDROID_HOME", "Android SDK 根目录"),
+            env_path!("ANDROID_SDK_ROOT", "Android SDK 根目录（旧版本）"),
+            env_path!("ANDROID_SDK_HOME", "Android 用户数据目录"),
+            env_path!("ANDROID_NDK_HOME", "Android NDK 目录"),
+            env_path!("ANDROID_PREFS_ROOT", "Android 偏好设置目录"),
+            env_path!("NDK_HOME", "NDK 根目录"),
+        ],
+        find_rules: &[
+            env_match!("ANDROID_HOME", "cmdline-tools\\latest\\bin", "sdkmanager.bat", "环境变量 ANDROID_HOME", 10),
+            path_match!("\\android-sdk", "sdkmanager.bat", "系统 PATH", 80),
+        ],
+    },
+
+    SdkDef {
+        id: "harmony",
+        display_name: "鸿蒙 HarmonyOS",
+        category: SdkCategory::Mobile,
+        env_vars: &[
+            env_path!("OHOS_SDK_HOME", "鸿蒙 SDK 根目录"),
+        ],
+        find_rules: &[
+            env_match!("OHOS_SDK_HOME", "bin", "ohpm.bat", "环境变量 OHOS_SDK_HOME", 10),
+            path_match!("\\ohpm\\bin", "ohpm.bat", "系统 PATH", 80),
+        ],
+    },
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  开发工具
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    SdkDef {
+        id: "cuda",
+        display_name: "CUDA Toolkit",
+        category: SdkCategory::Tool,
+        env_vars: &[
+            env_path!("CUDA_PATH", "CUDA Toolkit 安装目录"),
+            env_path!("CUDA_HOME", "CUDA Toolkit 根目录"),
+        ],
+        find_rules: &[
+            env_match!("CUDA_PATH", "bin", "nvcc.exe", "环境变量 CUDA_PATH", 10),
+            path_match!("scoop\\apps\\cuda", "nvcc.exe", "Scoop", 40, 1),
+            fixed_match!("C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA", "nvcc.exe", "NVIDIA GPU", 60),
+        ],
+    },
+
+    SdkDef {
+        id: "ffmpeg",
+        display_name: "FFmpeg",
+        category: SdkCategory::Tool,
+        env_vars: &[
+            env_path!("FFMPEG_HOME", "FFmpeg 安装目录"),
+        ],
+        find_rules: &[
+            env_match!("FFMPEG_HOME", "bin", "ffmpeg.exe", "环境变量 FFMPEG_HOME", 10),
+            path_match!("scoop\\apps\\ffmpeg", "ffmpeg.exe", "Scoop", 40, 1),
+            path_match!("\\ffmpeg\\", "ffmpeg.exe", "系统 PATH", 80, 1),
+        ],
+    },
+    ]
+}
+
+/// 根据 id 查找 SDK 定义
+pub fn find_by_id(id: &str) -> Option<&'static SdkDef> {
+    registry().iter().find(|s| s.id == id)
+}
+
+/// 返回所有 SDK id 列表（用于遍历）
+pub fn all_ids() -> Vec<&'static str> {
+    registry().iter().map(|s| s.id).collect()
+}

@@ -8,6 +8,7 @@ import MirrorManager from "./components/MirrorManager";
 import PkgManager from "./components/PkgManager";
 import SystemTools from "./components/SystemTools";
 import GlobalSettings from "./components/GlobalSettings";
+import EnvBackupManager from "./components/EnvBackupManager";
 import { invoke } from "@tauri-apps/api/core";
 import { ShieldCheck, Info } from "lucide-react";
 
@@ -63,6 +64,9 @@ export default function App() {
           </div>
           <div className={activeTab === "tools" ? "h-full w-full" : "hidden"}>
             <SystemTools />
+          </div>
+          <div className={activeTab === "backups" ? "h-full w-full" : "hidden"}>
+            <EnvBackupManager />
           </div>
           <div className={activeTab === "settings" ? "h-full w-full" : "hidden"}>
             <GlobalSettings />

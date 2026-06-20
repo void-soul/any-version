@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { 
   Download, 
   Trash2, 
@@ -34,6 +35,29 @@ interface ProgressPayload {
   total: number;
   pct: number;
 }
+
+const officialLinks: Record<string, string> = {
+  nodejs: "https://nodejs.org",
+  go: "https://go.dev",
+  python: "https://www.python.org",
+  java: "https://adoptium.net",
+  flutter: "https://flutter.dev",
+  rust: "https://www.rust-lang.org",
+  bun: "https://bun.sh",
+  nginx: "https://nginx.org",
+  redis: "https://redis.io",
+  mysql: "https://www.mysql.com",
+  mongodb: "https://www.mongodb.com",
+  postgresql: "https://www.postgresql.org",
+  maven: "https://maven.apache.org",
+  gradle: "https://gradle.org",
+  yarn: "https://yarnpkg.com",
+  pnpm: "https://pnpm.io",
+  android: "https://developer.android.com",
+  harmony: "https://developer.huawei.com/consumer/cn/harmony/",
+  cuda: "https://developer.nvidia.com/cuda-toolkit",
+  ffmpeg: "https://ffmpeg.org",
+};
 
 function categoryLabel(cat: string): string {
   switch (cat) {
@@ -291,7 +315,21 @@ export default function SdkManager() {
               <div className="p-5 border-b border-white/5 flex items-center justify-between bg-white/2">
                 <div>
                   <h3 className="text-base font-semibold text-white capitalize">{selectedSdk.name}</h3>
-                  <span className="text-[10px] text-slate-400 uppercase">当前管理控制台</span>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-[10px] text-slate-400 uppercase">当前管理控制台</span>
+                    {officialLinks[selectedSdk.name] && (
+                      <>
+                        <span className="text-slate-600 text-[10px]">•</span>
+                        <button
+                          onClick={() => openUrl(officialLinks[selectedSdk.name])}
+                          className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-0.5 cursor-pointer inline-flex"
+                        >
+                          官方网站
+                          <ExternalLink className="w-2.5 h-2.5" />
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-1">
@@ -550,3 +588,4 @@ export default function SdkManager() {
     </div>
   );
 }
+
