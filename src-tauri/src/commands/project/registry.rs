@@ -15,7 +15,7 @@ pub fn load_registry() -> Vec<ProjectDef> {
         if let Some(exe_dir) = exe_path.parent() {
             search_dirs.push(exe_dir.to_path_buf());
             let mut dir = exe_dir.to_path_buf();
-            for _ in 0..3 {
+            for _ in 0..5 {
                 if let Some(parent) = dir.parent() {
                     dir = parent.to_path_buf();
                     search_dirs.push(dir.clone());
@@ -34,17 +34,26 @@ pub fn load_registry() -> Vec<ProjectDef> {
 
     for dir in &search_dirs {
         let path = dir.join("projects.json");
+        eprintln!("[registry] 检查: {} -> 存在: {}", path.display(), path.exists());
         if path.exists() {
-            if let Ok(data) = std::fs::read_to_string(&path) {
-                if let Ok(list) = serde_json::from_str::<Vec<ProjectDef>>(&data) {
-                    if !list.is_empty() {
-                        return list;
+            match std::fs::read_to_string(&path) {
+                Ok(data) => {
+                    match serde_json::from_str::<Vec<ProjectDef>>(&data) {
+                        Ok(list) => {
+                            eprintln!("[registry] 成功加载 {} 个项目 from {}", list.len(), path.display());
+                            if !list.is_empty() {
+                                return list;
+                            }
+                        }
+                        Err(e) => eprintln!("[registry] JSON 解析失败: {}", e),
                     }
                 }
+                Err(e) => eprintln!("[registry] 读取失败: {}", e),
             }
         }
     }
 
+    eprintln!("[registry] 所有路径均未找到 projects.json");
     Vec::new()
 }
 
