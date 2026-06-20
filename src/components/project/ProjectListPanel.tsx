@@ -124,7 +124,7 @@ export default function ProjectListPanel({
                     </span>
                   </div>
                   {p.install_source && (
-                    <p className="text-[9px] text-slate-500 mt-0.5">来源: {p.install_source}</p>
+                    <p className="text-[9px] text-slate-500 mt-0.5">安装方式: {p.install_source}</p>
                   )}
                 </div>
                 <div className="flex-shrink-0 ml-3 relative z-10">
@@ -150,5 +150,5 @@ export default function ProjectListPanel({
         )}
       </div>
     </div>
-  );
+   );
 }

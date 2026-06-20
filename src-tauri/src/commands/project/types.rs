@@ -61,7 +61,28 @@ pub struct MirrorOption {
     pub url: String,
 }
 
-/// 项目定义（存储在 sdks_registry.json）
+/// 包管理器定义（嵌套在项目内，如 Node.js 下的 yarn/pnpm）
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PackageManagerDef {
+    /// 唯一标识
+    pub id: String,
+    /// 显示名称
+    pub display_name: String,
+    /// 安装命令（如 "npm install -g yarn"）
+    pub install_cmd: Option<String>,
+    /// 版本检测命令（如 "yarn --version"）
+    pub version_cmd: Option<String>,
+    /// 缓存路径检测命令（如 "yarn cache dir"）
+    pub cache_detect_cmd: Option<String>,
+    /// 全局包列表命令
+    pub pkg_list_cmd: Option<String>,
+    /// 镜像设置命令模板
+    pub mirror_cmd_template: Option<String>,
+    /// 可用镜像选项
+    pub mirror_options: Option<Vec<MirrorOption>>,
+}
+
+/// 项目定义（存储在 projects.json）
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ProjectDef {
     /// 唯一标识
@@ -72,8 +93,10 @@ pub struct ProjectDef {
     pub category: ProjectCategory,
     /// 官方网站
     pub official_website: String,
-    /// 图标标识
-    pub icon: String,
+
+    /// 该项目可用的包管理器（如 Node.js 下的 yarn/pnpm/npm）
+    #[serde(default)]
+    pub package_managers: Vec<PackageManagerDef>,
 
     /// 关联的环境变量
     pub env_vars: Vec<EnvVarDef>,
@@ -176,8 +199,6 @@ pub struct ProjectStatus {
     pub display_name: String,
     /// 分类
     pub category: ProjectCategory,
-    /// 图标标识
-    pub icon: String,
     /// 是否已安装（至少存在一个版本）
     pub installed: bool,
     /// 当前激活的版本
@@ -215,36 +236,4 @@ pub struct ManagePreview {
 }
 
 /// 托管操作步骤
-#[derive(Serialize, Clone, Debug)]
-pub struct ManageStep {
-    /// 操作类型
-    pub action: String,
-    /// 操作描述
-    pub description: String,
-    /// 操作目标
-    pub target: String,
-}
-
-/// 托管前快照（用于还原）
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ProjectBackup {
-    /// 环境变量备份
-    pub env_vars: HashMap<String, String>,
-    /// PATH 条目备份
-    pub path_entries: Vec<String>,
-    /// 服务路径备份
-    pub service_path: Option<String>,
-}
-
-/// 已托管项目记录
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ManagedProject {
-    /// 项目 ID
-    pub project_id: String,
-    /// 托管时间
-    pub managed_at: String,
-    /// 托管前快照
-    pub backup: ProjectBackup,
-    /// 托管状态: "active" | "disabling" | "error"
-    pub state: String,
-}
+#[derive(Serialize, Clone, Debu

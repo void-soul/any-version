@@ -4,7 +4,6 @@
     "display_name": "Node.js",
     "category": "language",
     "official_website": "https://nodejs.org",
-    "icon": "nodejs",
     "env_vars": [
       { "name": "NODE_PATH", "desc": "全局模块搜索路径", "check_type": "path" },
       { "name": "NPM_CONFIG_PREFIX", "desc": "npm 全局安装前缀", "check_type": "path" },
@@ -40,14 +39,41 @@
     "start_cmd": null,
     "stop_cmd": null,
     "download_url_template": null,
-    "remote_versions_url": null
+    "remote_versions_url": null,
+    "package_managers": [
+      {
+        "id": "yarn",
+        "display_name": "Yarn",
+        "install_cmd": "npm install -g yarn",
+        "version_cmd": "yarn --version",
+        "cache_detect_cmd": "yarn cache dir",
+        "pkg_list_cmd": "yarn global list",
+        "mirror_cmd_template": "yarn config set registry {url}",
+        "mirror_options": [
+          {"mirror_type": "official", "name": "官方源", "url": "https://registry.yarnpkg.com/"},
+          {"mirror_type": "aliyun", "name": "阿里云", "url": "https://registry.npmmirror.com/"}
+        ]
+      },
+      {
+        "id": "pnpm",
+        "display_name": "pnpm",
+        "install_cmd": "npm install -g pnpm",
+        "version_cmd": "pnpm --version",
+        "cache_detect_cmd": "pnpm store path",
+        "pkg_list_cmd": "pnpm list -g --depth=0",
+        "mirror_cmd_template": "pnpm config set registry {url}",
+        "mirror_options": [
+          {"mirror_type": "official", "name": "官方源", "url": "https://registry.npmjs.org/"},
+          {"mirror_type": "aliyun", "name": "阿里云", "url": "https://registry.npmmirror.com/"}
+        ]
+      }
+    ]
   },
   {
     "id": "go",
     "display_name": "Go",
     "category": "language",
     "official_website": "https://go.dev",
-    "icon": "go",
     "env_vars": [
       { "name": "GOROOT", "desc": "Go 安装根目录", "check_type": "path" },
       { "name": "GOPATH", "desc": "Go 工作区路径", "check_type": "path" },
@@ -83,14 +109,14 @@
     "start_cmd": null,
     "stop_cmd": null,
     "download_url_template": null,
-    "remote_versions_url": null
+    "remote_versions_url": null,
+    "package_managers": []
   },
   {
     "id": "python",
     "display_name": "Python",
     "category": "language",
     "official_website": "https://www.python.org",
-    "icon": "python",
     "env_vars": [
       { "name": "PYTHONHOME", "desc": "Python 解释器根目录", "check_type": "path" },
       { "name": "PYTHONPATH", "desc": "Python 模块搜索路径", "check_type": "path" },
@@ -130,14 +156,14 @@
     "start_cmd": null,
     "stop_cmd": null,
     "download_url_template": null,
-    "remote_versions_url": null
+    "remote_versions_url": null,
+    "package_managers": []
   },
   {
     "id": "java",
     "display_name": "Java",
     "category": "language",
     "official_website": "https://adoptium.net",
-    "icon": "java",
     "env_vars": [
       { "name": "JAVA_HOME", "desc": "JDK 安装根目录", "check_type": "path" },
       { "name": "JDK_HOME", "desc": "JDK 根目录（替代变量）", "check_type": "path" },
@@ -181,14 +207,38 @@
     "start_cmd": null,
     "stop_cmd": null,
     "download_url_template": null,
-    "remote_versions_url": null
+    "remote_versions_url": null,
+    "package_managers": [
+      {
+        "id": "maven",
+        "display_name": "Maven",
+        "install_cmd": null,
+        "version_cmd": "mvn --version",
+        "cache_detect_cmd": null,
+        "pkg_list_cmd": null,
+        "mirror_cmd_template": null,
+        "mirror_options": [
+          {"mirror_type": "official", "name": "Maven Central", "url": "https://repo.maven.apache.org/maven2"},
+          {"mirror_type": "aliyun", "name": "阿里云", "url": "https://maven.aliyun.com/repository/public"}
+        ]
+      },
+      {
+        "id": "gradle",
+        "display_name": "Gradle",
+        "install_cmd": null,
+        "version_cmd": "gradle --version",
+        "cache_detect_cmd": null,
+        "pkg_list_cmd": null,
+        "mirror_cmd_template": null,
+        "mirror_options": []
+      }
+    ]
   },
   {
     "id": "flutter",
     "display_name": "Flutter",
     "category": "language",
     "official_website": "https://flutter.dev",
-    "icon": "flutter",
     "env_vars": [
       { "name": "FLUTTER_ROOT", "desc": "Flutter SDK 根目录", "check_type": "path" },
       { "name": "FLUTTER_STORAGE_BASE_URL", "desc": "Flutter 引擎下载 URL", "check_type": "nonempty" },
@@ -221,14 +271,14 @@
     "start_cmd": null,
     "stop_cmd": null,
     "download_url_template": null,
-    "remote_versions_url": null
+    "remote_versions_url": null,
+    "package_managers": []
   },
   {
     "id": "rust",
     "display_name": "Rust",
     "category": "language",
     "official_website": "https://www.rust-lang.org",
-    "icon": "rust",
     "env_vars": [
       { "name": "CARGO_HOME", "desc": "Cargo 包管理器目录", "check_type": "path" },
       { "name": "RUSTUP_HOME", "desc": "Rustup 工具链目录", "check_type": "path" },
@@ -262,14 +312,14 @@
     "start_cmd": null,
     "stop_cmd": null,
     "download_url_template": null,
-    "remote_versions_url": null
+    "remote_versions_url": null,
+    "package_managers": []
   },
   {
     "id": "bun",
     "display_name": "Bun",
     "category": "language",
     "official_website": "https://bun.sh",
-    "icon": "bun",
     "env_vars": [
       { "name": "BUN_INSTALL", "desc": "Bun 安装根目录", "check_type": "path" }
     ],
@@ -295,170 +345,14 @@
     "start_cmd": null,
     "stop_cmd": null,
     "download_url_template": null,
-    "remote_versions_url": null
-  },
-  {
-    "id": "maven",
-    "display_name": "Maven",
-    "category": "language",
-    "official_website": "https://maven.apache.org",
-    "icon": "maven",
-    "env_vars": [
-      { "name": "MAVEN_HOME", "desc": "Maven 安装根目录", "check_type": "path" },
-      { "name": "M2_HOME", "desc": "Maven 根目录（旧版本）", "check_type": "path" }
-    ],
-    "find_rules": [
-      { "pattern": { "type": "env_bin", "env_var": "MAVEN_HOME", "bin_sub": "bin", "exe_name": "mvn.cmd" }, "source_label": "环境变量 MAVEN_HOME", "priority": 10, "root_offset": 0 },
-      { "pattern": { "type": "path_contains", "path_key": "scoop\\apps\\maven", "exe_name": "mvn.cmd" }, "source_label": "Scoop", "priority": 40, "root_offset": 1 },
-      { "pattern": { "type": "path_contains", "path_key": "\\apache-maven\\bin", "exe_name": "mvn.cmd" }, "source_label": "系统 PATH", "priority": 80, "root_offset": 1 }
-    ],
-    "has_cache": true,
-    "cache_detect_cmd": null,
-    "cache_default_path": null,
-    "has_mirror": true,
-    "mirror_options": [
-      { "mirror_type": "maven_central", "name": "阿里云 Maven 镜像", "url": "https://maven.aliyun.com/repository/public" }
-    ],
-    "has_pkg": false,
-    "pkg_manager": null,
-    "pkg_homepage_template": null,
-    "is_service": false,
-    "default_port": null,
-    "data_dir": null,
-    "log_dir": null,
-    "config_file": null,
-    "start_cmd": null,
-    "stop_cmd": null,
-    "download_url_template": null,
-    "remote_versions_url": null
-  },
-  {
-    "id": "gradle",
-    "display_name": "Gradle",
-    "category": "language",
-    "official_website": "https://gradle.org",
-    "icon": "gradle",
-    "env_vars": [
-      { "name": "GRADLE_HOME", "desc": "Gradle 安装目录", "check_type": "path" },
-      { "name": "GRADLE_USER_HOME", "desc": "Gradle 用户数据目录", "check_type": "path" }
-    ],
-    "find_rules": [
-      { "pattern": { "type": "env_bin", "env_var": "GRADLE_HOME", "bin_sub": "bin", "exe_name": "gradle.bat" }, "source_label": "环境变量 GRADLE_HOME", "priority": 10, "root_offset": 0 },
-      { "pattern": { "type": "path_contains", "path_key": "scoop\\apps\\gradle", "exe_name": "gradle.bat" }, "source_label": "Scoop", "priority": 40, "root_offset": 1 },
-      { "pattern": { "type": "path_contains", "path_key": "\\gradle\\bin", "exe_name": "gradle.bat" }, "source_label": "系统 PATH", "priority": 80, "root_offset": 1 }
-    ],
-    "has_cache": false,
-    "cache_detect_cmd": null,
-    "cache_default_path": null,
-    "has_mirror": false,
-    "mirror_options": null,
-    "has_pkg": false,
-    "pkg_manager": null,
-    "pkg_homepage_template": null,
-    "is_service": false,
-    "default_port": null,
-    "data_dir": null,
-    "log_dir": null,
-    "config_file": null,
-    "start_cmd": null,
-    "stop_cmd": null,
-    "download_url_template": null,
-    "remote_versions_url": null
-  },
-  {
-    "id": "yarn",
-    "display_name": "Yarn",
-    "category": "language",
-    "official_website": "https://yarnpkg.com",
-    "icon": "yarn",
-    "env_vars": [],
-    "find_rules": [
-      { "pattern": { "type": "path_contains", "path_key": "scoop\\apps\\yarn", "exe_name": "yarn.cmd" }, "source_label": "Scoop", "priority": 40, "root_offset": 0 },
-      { "pattern": { "type": "path_contains", "path_key": "\\.yarn\\bin", "exe_name": "yarn.cmd" }, "source_label": ".yarn\\bin", "priority": 50, "root_offset": 0 }
-    ],
-    "has_cache": true,
-    "cache_detect_cmd": "yarn cache dir",
-    "cache_default_path": null,
-    "has_mirror": false,
-    "mirror_options": null,
-    "has_pkg": false,
-    "pkg_manager": null,
-    "pkg_homepage_template": null,
-    "is_service": false,
-    "default_port": null,
-    "data_dir": null,
-    "log_dir": null,
-    "config_file": null,
-    "start_cmd": null,
-    "stop_cmd": null,
-    "download_url_template": null,
-    "remote_versions_url": null
-  },
-  {
-    "id": "pnpm",
-    "display_name": "pnpm",
-    "category": "language",
-    "official_website": "https://pnpm.io",
-    "icon": "pnpm",
-    "env_vars": [],
-    "find_rules": [
-      { "pattern": { "type": "path_contains", "path_key": "scoop\\apps\\pnpm", "exe_name": "pnpm.exe" }, "source_label": "Scoop", "priority": 40, "root_offset": 0 },
-      { "pattern": { "type": "path_contains", "path_key": "\\.pnpm\\", "exe_name": "pnpm.exe" }, "source_label": ".pnpm", "priority": 50, "root_offset": 0 }
-    ],
-    "has_cache": true,
-    "cache_detect_cmd": "pnpm store path",
-    "cache_default_path": null,
-    "has_mirror": false,
-    "mirror_options": null,
-    "has_pkg": false,
-    "pkg_manager": null,
-    "pkg_homepage_template": null,
-    "is_service": false,
-    "default_port": null,
-    "data_dir": null,
-    "log_dir": null,
-    "config_file": null,
-    "start_cmd": null,
-    "stop_cmd": null,
-    "download_url_template": null,
-    "remote_versions_url": null
-  },
-  {
-    "id": "nuget",
-    "display_name": "NuGet",
-    "category": "language",
-    "official_website": "https://www.nuget.org",
-    "icon": "nuget",
-    "env_vars": [
-      { "name": "NUGET_PACKAGES", "desc": "NuGet 全局包缓存目录", "check_type": "path" }
-    ],
-    "find_rules": [
-      { "pattern": { "type": "path_contains", "path_key": "\\.nuget\\packages", "exe_name": "nuget.exe" }, "source_label": "NuGet cache", "priority": 80, "root_offset": 0 }
-    ],
-    "has_cache": true,
-    "cache_detect_cmd": null,
-    "cache_default_path": null,
-    "has_mirror": false,
-    "mirror_options": null,
-    "has_pkg": false,
-    "pkg_manager": null,
-    "pkg_homepage_template": null,
-    "is_service": false,
-    "default_port": null,
-    "data_dir": null,
-    "log_dir": null,
-    "config_file": null,
-    "start_cmd": null,
-    "stop_cmd": null,
-    "download_url_template": null,
-    "remote_versions_url": null
+    "remote_versions_url": null,
+    "package_managers": []
   },
   {
     "id": "nginx",
     "display_name": "Nginx",
     "category": "service",
     "official_website": "https://nginx.org",
-    "icon": "nginx",
     "env_vars": [
       { "name": "NGINX_HOME", "desc": "Nginx 安装根目录", "check_type": "path" }
     ],
@@ -483,14 +377,14 @@
     "start_cmd": "nginx.exe",
     "stop_cmd": "nginx.exe -s stop",
     "download_url_template": null,
-    "remote_versions_url": null
+    "remote_versions_url": null,
+    "package_managers": []
   },
   {
     "id": "redis",
     "display_name": "Redis",
     "category": "service",
     "official_website": "https://redis.io",
-    "icon": "redis",
     "env_vars": [
       { "name": "REDIS_HOME", "desc": "Redis 安装根目录", "check_type": "path" }
     ],
@@ -515,14 +409,14 @@
     "start_cmd": "redis-server.exe",
     "stop_cmd": "redis-cli.exe shutdown",
     "download_url_template": null,
-    "remote_versions_url": null
+    "remote_versions_url": null,
+    "package_managers": []
   },
   {
     "id": "mysql",
     "display_name": "MySQL",
     "category": "service",
     "official_website": "https://www.mysql.com",
-    "icon": "mysql",
     "env_vars": [
       { "name": "MYSQL_HOME", "desc": "MySQL 安装根目录", "check_type": "path" }
     ],
@@ -547,14 +441,14 @@
     "start_cmd": "bin\\mysqld.exe --defaults-file=my.ini --console",
     "stop_cmd": "bin\\mysqladmin.exe -u root shutdown",
     "download_url_template": null,
-    "remote_versions_url": null
+    "remote_versions_url": null,
+    "package_managers": []
   },
   {
     "id": "mongodb",
     "display_name": "MongoDB",
     "category": "service",
     "official_website": "https://www.mongodb.com",
-    "icon": "mongodb",
     "env_vars": [
       { "name": "MONGO_HOME", "desc": "MongoDB 安装根目录", "check_type": "path" }
     ],
@@ -579,14 +473,14 @@
     "start_cmd": "bin\\mongod.exe --port 27017 --dbpath data",
     "stop_cmd": null,
     "download_url_template": null,
-    "remote_versions_url": null
+    "remote_versions_url": null,
+    "package_managers": []
   },
   {
     "id": "postgresql",
     "display_name": "PostgreSQL",
     "category": "service",
     "official_website": "https://www.postgresql.org",
-    "icon": "postgresql",
     "env_vars": [
       { "name": "PGDATA", "desc": "PostgreSQL 数据目录", "check_type": "path" },
       { "name": "PGHOME", "desc": "PostgreSQL 安装根目录", "check_type": "path" }
@@ -612,14 +506,14 @@
     "start_cmd": "bin\\pg_ctl.exe -D data -l logfile start",
     "stop_cmd": "bin\\pg_ctl.exe -D data stop",
     "download_url_template": null,
-    "remote_versions_url": null
+    "remote_versions_url": null,
+    "package_managers": []
   },
   {
     "id": "android",
     "display_name": "Android SDK",
     "category": "tool",
     "official_website": "https://developer.android.com",
-    "icon": "android",
     "env_vars": [
       { "name": "ANDROID_HOME", "desc": "Android SDK 根目录", "check_type": "path" },
       { "name": "ANDROID_SDK_ROOT", "desc": "Android SDK 根目录（旧版本）", "check_type": "path" },
@@ -648,14 +542,14 @@
     "start_cmd": null,
     "stop_cmd": null,
     "download_url_template": null,
-    "remote_versions_url": null
+    "remote_versions_url": null,
+    "package_managers": []
   },
   {
     "id": "harmony",
     "display_name": "鸿蒙 HarmonyOS",
     "category": "tool",
     "official_website": "https://developer.huawei.com/consumer/cn/harmony/",
-    "icon": "harmony",
     "env_vars": [
       { "name": "OHOS_SDK_HOME", "desc": "鸿蒙 SDK 根目录", "check_type": "path" }
     ],
@@ -679,14 +573,14 @@
     "start_cmd": null,
     "stop_cmd": null,
     "download_url_template": null,
-    "remote_versions_url": null
+    "remote_versions_url": null,
+    "package_managers": []
   },
   {
     "id": "cuda",
     "display_name": "CUDA Toolkit",
     "category": "tool",
     "official_website": "https://developer.nvidia.com/cuda-toolkit",
-    "icon": "cuda",
     "env_vars": [
       { "name": "CUDA_PATH", "desc": "CUDA Toolkit 安装目录", "check_type": "path" },
       { "name": "CUDA_HOME", "desc": "CUDA Toolkit 根目录", "check_type": "path" }
@@ -712,14 +606,14 @@
     "start_cmd": null,
     "stop_cmd": null,
     "download_url_template": null,
-    "remote_versions_url": null
+    "remote_versions_url": null,
+    "package_managers": []
   },
   {
     "id": "ffmpeg",
     "display_name": "FFmpeg",
     "category": "tool",
     "official_website": "https://ffmpeg.org",
-    "icon": "ffmpeg",
     "env_vars": [
       { "name": "FFMPEG_HOME", "desc": "FFmpeg 安装目录", "check_type": "path" }
     ],
@@ -744,6 +638,7 @@
     "start_cmd": null,
     "stop_cmd": null,
     "download_url_template": null,
-    "remote_versions_url": null
+    "remote_versions_url": null,
+    "package_managers": []
   }
 ]

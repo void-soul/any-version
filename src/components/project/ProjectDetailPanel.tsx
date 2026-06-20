@@ -359,7 +359,7 @@ export default function ProjectDetailPanel({ project, onRefresh }: Props) {
                 </button>
               )}
               {status.install_source && (
-                <><span className="text-slate-600 text-[10px]">.</span><span className="text-[10px] text-slate-400">{"来源"}: {status.install_source}</span></>
+                <><span className="text-slate-600 text-[10px]">.</span><span className="text-[10px] text-slate-400">{"安装方式"}: {status.install_source}</span></>
               )}
             </div>
           </div>
@@ -532,5 +532,5 @@ export default function ProjectDetailPanel({ project, onRefresh }: Props) {
         </div>
       </div>
     </div>
-  );
+   );
 }

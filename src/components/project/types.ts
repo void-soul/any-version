@@ -29,11 +29,21 @@ export interface ServiceStatus {
   log_dir: string;
 }
 
+export interface PackageManagerDef {
+  id: string;
+  display_name: string;
+  install_cmd: string | null;
+  version_cmd: string | null;
+  cache_detect_cmd: string | null;
+  pkg_list_cmd: string | null;
+  mirror_cmd_template: string | null;
+  mirror_options: Array<{ mirror_type: string; name: string; url: string }> | null;
+}
+
 export interface ProjectStatus {
   id: string;
   display_name: string;
   category: ProjectCategory;
-  icon: string;
   installed: boolean;
   active_version: string | null;
   installed_versions: string[];
@@ -50,13 +60,13 @@ export interface ProjectDef {
   display_name: string;
   category: ProjectCategory;
   official_website: string;
-  icon: string;
   env_vars: Array<{ name: string; desc: string; check_type: string }>;
   has_cache: boolean;
   has_mirror: boolean;
   has_pkg: boolean;
   is_service: boolean;
   default_port: number | null;
+  package_managers: PackageManagerDef[];
   // ... 其他字段
   [key: string]: unknown;
 }

@@ -172,7 +172,6 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
         id: def.id.clone(),
         display_name: def.display_name.clone(),
         category: def.category.clone(),
-        icon: def.icon.clone(),
         installed,
         active_version,
         installed_versions,
