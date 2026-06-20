@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ExternalLink,
@@ -17,8 +18,10 @@ import {
   Link,
   FolderSync,
   ArrowUpCircle,
+  Package,
+  Loader,
 } from "lucide-react";
-import type { ProjectStatus, ProjectDef, EnvVarStatus, CacheStatus, ServiceStatus } from "./types";
+import type { ProjectStatus, ProjectDef, EnvVarStatus, CacheStatus, ServiceStatus, PackageManagerDef } from "./types";
 
 // ── 共享的子标签页 Props ──
 export interface SubTabProps {
@@ -31,6 +34,9 @@ export interface SubTabProps {
   onInstall: (version: string) => void;
   onUninstall: (version: string) => void;
   onUse: (version: string) => void;
+  // 下载进度
+  downloadProgress: { sdk: string; downloaded: number; total: number; pct: number } | null;
+  installStep: string;
   // 本地注册
   localVersion: string;
   localPath: string;
@@ -64,11 +70,83 @@ export interface SubTabProps {
 export function VersionsTab({
   project, remoteVersions, loadingRemote, installingVersion,
   onInstall, onUninstall, onUse,
+  downloadProgress, installStep,
   localVersion, localPath, registering, registerErr,
   onLocalVersionChange, onLocalPathChange, onRegisterLocal,
 }: SubTabProps) {
   return (
     <div className="space-y-6">
+      {/* 安装进度面板 */}
+      {installingVersion && (
+        <div className="glass-panel rounded-2xl p-5 border border-blue-500/20 bg-blue-600/5 space-y-4 animate-fadeIn">
+          <div className="flex items-center gap-2">
+            <Loader className="w-4 h-4 text-blue-400 animate-spin" />
+            <h4 className="text-xs font-semibold text-blue-300">
+              正在安装 {project.display_name} v{installingVersion.split(" ")[0]}
+            </h4>
+          </div>
+
+          {/* 步骤指示器 */}
+          <div className="flex items-center gap-1">
+            {["下载中", "解压中", "配置中", "完成"].map((step, idx) => {
+              const steps = ["下载中", "解压中", "配置中", "完成"];
+              const currentIdx = steps.indexOf(installStep);
+              const isActive = step === installStep;
+              const isCompleted = currentIdx > idx;
+              return (
+                <React.Fragment key={step}>
+                  {idx > 0 && (
+                    <div className={`flex-1 h-0.5 rounded-full ${isCompleted ? "bg-emerald-500" : isActive ? "bg-blue-500" : "bg-white/10"}`} />
+                  )}
+                  <div className="flex items-center gap-1.5">
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold border ${
+                      isCompleted
+                        ? "bg-emerald-500 text-white border-emerald-500"
+                        : isActive
+                        ? "bg-blue-600 text-white border-blue-500 animate-pulse"
+                        : "bg-white/5 text-slate-500 border-white/10"
+                    }`}>
+                      {isCompleted ? <Check className="w-3 h-3" /> : idx + 1}
+                    </div>
+                    <span className={`text-[10px] font-medium ${isActive ? "text-blue-300" : isCompleted ? "text-emerald-400" : "text-slate-500"}`}>
+                      {step}
+                    </span>
+                  </div>
+                </React.Fragment>
+              );
+            })}
+          </div>
+
+          {/* 下载进度条 */}
+          {downloadProgress && installStep === "下载中" && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="text-slate-400">下载进度</span>
+                <span className="text-blue-300 font-mono font-semibold">{downloadProgress.pct}%</span>
+              </div>
+              <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-blue-600 to-blue-400 rounded-full transition-all duration-300"
+                  style={{ width: `${downloadProgress.pct}%` }}
+                />
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-slate-500">
+                <span>{(downloadProgress.downloaded / 1024 / 1024).toFixed(1)} MB</span>
+                <span>{(downloadProgress.total / 1024 / 1024).toFixed(1)} MB</span>
+              </div>
+            </div>
+          )}
+
+          {/* 当前步骤文字说明 */}
+          <p className="text-[10px] text-slate-400">
+            {installStep === "下载中" && "正在从远程服务器下载安装包，请稍候..."}
+            {installStep === "解压中" && "下载完成，正在解压安装文件..."}
+            {installStep === "配置中" && "解压完成，正在配置环境变量和路径..."}
+            {installStep === "完成" && "安装配置完成！"}
+          </p>
+        </div>
+      )}
+
       {/* 已安装版本 */}
       <div className="space-y-3">
         <h4 className="text-xs font-semibold text-slate-300">本地已安装版本</h4>
@@ -465,6 +543,7 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle 
     );
   }
 
+
   return (
     <div className="space-y-4">
       <div className="glass-panel border border-white/5 rounded-2xl p-5 bg-white/2 space-y-4">
@@ -539,6 +618,169 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle 
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════
+//  包管理器管理
+// ═══════════════════════════════════════
+export function PkgMgrTab({ def }: SubTabProps) {
+  const [pkgStatuses, setPkgStatuses] = useState<Record<string, { installed: boolean; version: string | null }>>({});
+  const [checking, setChecking] = useState(false);
+  const [installingPkg, setInstallingPkg] = useState<string | null>(null);
+  const [switchingMirror, setSwitchingMirror] = useState<string | null>(null);
+
+  const managers: PackageManagerDef[] = def?.package_managers ?? [];
+
+  const checkInstalled = async () => {
+    if (!def || managers.length === 0) return;
+    setChecking(true);
+    const result: Record<string, { installed: boolean; version: string | null }> = {};
+    for (const mgr of managers) {
+      if (mgr.version_cmd) {
+        try {
+          const output = await invoke<string>("run_cmd_capture", { cmd: mgr.version_cmd });
+          result[mgr.id] = { installed: true, version: output.trim() };
+        } catch {
+          result[mgr.id] = { installed: false, version: null };
+        }
+      } else {
+        result[mgr.id] = { installed: false, version: null };
+      }
+    }
+    setPkgStatuses(result);
+    setChecking(false);
+  };
+
+  useEffect(() => {
+    checkInstalled();
+  }, [def?.id]);
+
+  const handleInstall = async (mgr: PackageManagerDef) => {
+    if (!mgr.install_cmd) return;
+    setInstallingPkg(mgr.id);
+    try {
+      await invoke("run_cmd_capture", { cmd: mgr.install_cmd });
+      await checkInstalled();
+    } catch (e: unknown) {
+      alert("安装 " + mgr.display_name + " 失败: " + e);
+    } finally {
+      setInstallingPkg(null);
+    }
+  };
+
+  const handleSwitchMirror = async (mgr: PackageManagerDef, mirrorUrl: string) => {
+    if (!mgr.mirror_cmd_template) return;
+    setSwitchingMirror(mgr.id + mirrorUrl);
+    try {
+      const cmd = mgr.mirror_cmd_template.replace("{url}", mirrorUrl);
+      await invoke("run_cmd_capture", { cmd });
+      alert(mgr.display_name + " 镜像源已切换");
+    } catch (e: unknown) {
+      alert("切换镜像源失败: " + e);
+    } finally {
+      setSwitchingMirror(null);
+    }
+  };
+
+  if (managers.length === 0) {
+    return (
+      <div className="p-8 text-center text-slate-500">
+        <Package className="w-10 h-10 mx-auto text-slate-600 mb-3" />
+        <p className="text-xs font-medium text-slate-400">未配置包管理器</p>
+        <p className="text-[10px] text-slate-500 mt-1">该项目暂无关联的包管理器。</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Package className="w-4 h-4 text-blue-400" />
+          <span className="text-xs font-semibold text-slate-300">包管理器</span>
+          <span className="text-[10px] text-slate-500">{managers.length} 个</span>
+        </div>
+        <button
+          onClick={checkInstalled}
+          disabled={checking}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-[10px] border border-white/5 cursor-pointer"
+        >
+          <RefreshCw className={`w-3 h-3 ${checking ? "animate-spin" : ""}`} /> 刷新检测
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {managers.map((mgr) => {
+          const st = pkgStatuses[mgr.id];
+          const isInstalled = st?.installed ?? false;
+          const isInstallingThis = installingPkg === mgr.id;
+          return (
+            <div key={mgr.id} className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
+              {/* 标题行 */}
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-semibold text-white">{mgr.display_name}</h4>
+                {st && (
+                  isInstalled ? (
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] font-bold flex items-center gap-0.5">
+                      <CheckCircle className="w-2.5 h-2.5" /> {st.version || "已安装"}
+                    </span>
+                  ) : (
+                    <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-white/5 text-[9px] font-medium">
+                      未安装
+                    </span>
+                  )
+                )}
+                {!st && checking && (
+                  <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[9px] font-medium flex items-center gap-0.5">
+                    <Loader className="w-2.5 h-2.5 animate-spin" /> 检测中
+                  </span>
+                )}
+              </div>
+
+              {/* 安装命令 */}
+              {mgr.install_cmd && (
+                <p className="text-[10px] text-slate-500 font-mono truncate" title={mgr.install_cmd}>
+                  {mgr.install_cmd}
+                </p>
+              )}
+
+              {/* 操作按钮 */}
+              {!isInstalled && mgr.install_cmd && (
+                <button
+                  onClick={() => handleInstall(mgr)}
+                  disabled={isInstallingThis}
+                  className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-[10px] font-semibold cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Download className="w-3 h-3" />
+                  {isInstallingThis ? "正在安装..." : "安装"}
+                </button>
+              )}
+
+              {/* 镜像切换 */}
+              {mgr.mirror_options && mgr.mirror_options.length > 0 && (
+                <div className="pt-2 border-t border-white/5 space-y-1.5">
+                  <span className="text-[9px] text-slate-500 font-semibold uppercase tracking-wider">镜像源切换</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {mgr.mirror_options.map((opt) => (
+                      <button
+                        key={opt.mirror_type}
+                        onClick={() => handleSwitchMirror(mgr, opt.url)}
+                        disabled={switchingMirror === mgr.id + opt.url}
+                        className="px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/5 hover:border-blue-500/30 text-slate-300 rounded-md text-[9px] font-medium cursor-pointer transition-all disabled:opacity-50"
+                        title={opt.url}
+                      >
+                        {switchingMirror === mgr.id + opt.url ? "切换中..." : opt.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

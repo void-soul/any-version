@@ -236,7 +236,7 @@ pub struct ManagePreview {
 }
 
 /// 托管操作步骤
-#[derive(Serialize, Clone, Debug, Clone, Debug)]
+#[derive(Serialize, Clone, Debug)]
 pub struct ManageStep {
     pub action: String,
     pub description: String,

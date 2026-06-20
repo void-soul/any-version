@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ExternalLink,
@@ -25,9 +26,10 @@ import {
   MirrorTab,
   PackagesTab,
   ServicesTab,
+  PkgMgrTab,
 } from "./ProjectSubTabs";
 
-type SubTab = "versions" | "envvars" | "cache" | "mirror" | "packages" | "services";
+type SubTab = "versions" | "envvars" | "cache" | "mirror" | "packages" | "services" | "pkgmgr";
 
 const tabLabels: Record<SubTab, string> = {
   versions: "版本管理",
@@ -36,6 +38,7 @@ const tabLabels: Record<SubTab, string> = {
   mirror: "镜像配置",
   packages: "全局包",
   services: "服务管理",
+  pkgmgr: "包管理器",
 };
 
 interface Props {
@@ -50,6 +53,8 @@ export default function ProjectDetailPanel({ project, onRefresh }: Props) {
   const [remoteVersions, setRemoteVersions] = useState<string[]>([]);
   const [loadingRemote, setLoadingRemote] = useState(false);
   const [installingVersion, setInstallingVersion] = useState<string | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<{ sdk: string; downloaded: number; total: number; pct: number } | null>(null);
+  const [installStep, setInstallStep] = useState("");
   const [localVersion, setLocalVersion] = useState("");
   const [localPath, setLocalPath] = useState("");
   const [registering, setRegistering] = useState(false);
@@ -137,17 +142,41 @@ export default function ProjectDetailPanel({ project, onRefresh }: Props) {
     if (def?.has_pkg && project) fetchPackages();
   }, [def?.has_pkg, project?.id]);
 
+  // 监听下载进度事件
+  useEffect(() => {
+    const unlisten = listen<{ sdk: string; downloaded: number; total: number; pct: number }>(
+      "download-progress",
+      (event) => {
+        setDownloadProgress(event.payload);
+        if (event.payload.pct < 100) {
+          setInstallStep("下载中");
+        } else {
+          setInstallStep("解压中");
+        }
+      }
+    );
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
   const handleInstall = async (version: string) => {
     if (!project) return;
     setInstallingVersion(version);
+    setInstallStep("下载中");
+    setDownloadProgress(null);
     try {
       await invoke("project_install_version", { id: project.id, version: version.split(" ")[0] });
+      setInstallStep("完成");
       await fetchDetail();
       onRefresh();
     } catch (e: unknown) {
       alert("安装失败: " + e);
     } finally {
-      setInstallingVersion(null);
+      // 延迟 2 秒后清除进度状态
+      setTimeout(() => {
+        setInstallingVersion(null);
+        setDownloadProgress(null);
+        setInstallStep("");
+      }, 2000);
     }
   };
 
@@ -293,6 +322,7 @@ export default function ProjectDetailPanel({ project, onRefresh }: Props) {
   if (def?.has_mirror) availableTabs.push("mirror");
   if (def?.has_pkg) availableTabs.push("packages");
   if (def?.is_service || project?.service_status) availableTabs.push("services");
+  if (def?.package_managers && def.package_managers.length > 0) availableTabs.push("pkgmgr");
 
   if (!project || !status) {
     return (
@@ -308,6 +338,7 @@ export default function ProjectDetailPanel({ project, onRefresh }: Props) {
     project: status,
     def,
     remoteVersions, loadingRemote, installingVersion,
+    downloadProgress, installStep,
     onInstall: handleInstall, onUninstall: handleUninstall, onUse: handleUse,
     localVersion, localPath, registering, registerErr,
     onLocalVersionChange: setLocalVersion, onLocalPathChange: setLocalPath,
@@ -327,6 +358,7 @@ export default function ProjectDetailPanel({ project, onRefresh }: Props) {
     mirror: <MirrorTab {...subTabProps} />,
     packages: <PackagesTab {...subTabProps} />,
     services: <ServicesTab {...subTabProps} />,
+    pkgmgr: <PkgMgrTab {...subTabProps} />,
   };
 
   return (
@@ -512,7 +544,7 @@ export default function ProjectDetailPanel({ project, onRefresh }: Props) {
               </div>
             </div>
           );
-        })()}
+              })()}
 
         <div className="flex items-center justify-between">
           <div className="text-[10px] text-slate-500">
