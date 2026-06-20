@@ -186,7 +186,7 @@ pub fn scan_environment() -> Result<Vec<DiagnosticProblem>, String> {
     let mut reported_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // 遍历注册表中所有 SDK，检查其关联的环境变量
-    for sdk_def in project::registry::registry() {
+    for sdk_def in registry::registry() {
         let sdk_name = &sdk_def.display_name;
 
         for var_info in &sdk_def.env_vars {
@@ -229,7 +229,7 @@ pub fn scan_environment() -> Result<Vec<DiagnosticProblem>, String> {
                             });
                         } else if !reported_paths.contains(&val.to_lowercase()) {
                             // 路径存在但不属于 AnyVersion 管理 → 未管理的 SDK
-                            let is_managed = project::registry::find_by_id(&sdk_def.id).is_some()
+                            let is_managed = registry::find_by_id(&sdk_def.id).is_some()
                                 && links_dir.join(&sdk_def.id).exists();
 
                             if !is_managed {
@@ -574,7 +574,7 @@ pub fn configure_sdk_env_vars(sdk_id: &str, link_dir: &str, _version_dir: &str) 
         return Ok(());
     }
 
-    let sdk_def = match project::registry::find_by_id(sdk_id) {
+    let sdk_def = match registry::find_by_id(sdk_id) {
         Some(d) => d,
         None => return Ok(()),
     };
@@ -607,7 +607,7 @@ pub fn configure_sdk_env_vars(sdk_id: &str, link_dir: &str, _version_dir: &str) 
 pub fn remove_sdk_env_vars(sdk_id: &str) -> Result<(), String> {
     use super::project::registry;
 
-    let sdk_def = match project::registry::find_by_id(sdk_id) {
+    let sdk_def = match registry::find_by_id(sdk_id) {
         Some(d) => d,
         None => return Ok(()),
     };
@@ -825,7 +825,7 @@ pub fn restore_env_backup(id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn toggle_item_management(id: String, enable: bool, cache_dest: Option<String>) -> Result<(), String> {
     use super::project::registry;
-    let sdk_def = project::registry::find_by_id(&id)
+    let sdk_def = registry::find_by_id(&id)
         .ok_or_else(|| format!("未找到该标识符对应的配置: {}", id))?;
 
     let mut config = load_config();
