@@ -187,31 +187,12 @@ where
 #[tauri::command]
 pub async fn get_sdks_list() -> Result<Vec<SdkInfo>, String> {
     let config = load_config();
-    let sdks = vec![
-        ("nodejs", "language"),
-        ("java", "language"),
-        ("python", "language"),
-        ("flutter", "language"),
-        ("go", "language"),
-        ("rust", "language"),
-        ("bun", "language"),
-        ("android", "mobile"),
-        ("harmony", "mobile"),
-        ("nginx", "service"),
-        ("redis", "service"),
-        ("mysql", "service"),
-        ("mongodb", "service"),
-        ("postgresql", "service"),
-        ("maven", "build_tool"),
-        ("gradle", "build_tool"),
-        ("pub", "build_tool"),
-        ("vcpkg", "build_tool"),
-        ("yarn", "build_tool"),
-        ("pnpm", "build_tool"),
-    ];
+    let registry = super::sdk_registry::registry();
 
     let mut list = Vec::new();
-    for (name, cat) in sdks {
+    for sdk_def in registry {
+        let name = sdk_def.id;
+        let cat = sdk_def.category.as_str();
         let sdk_dir = Path::new(&config.versions_dir).join(name);
         let junction_path = Path::new(&config.links_dir).join(name);
 
@@ -382,6 +363,15 @@ pub async fn list_remote_versions(sdk_name: String) -> Result<Vec<String>, Strin
                 "4.0.0".to_string(),
             ])
         }
+        "cuda" => {
+            // CUDA Toolkit: NVIDIA 官方下载需要注册，此处提供常用版本供参考，
+            // 用户可从 https://developer.nvidia.com/cuda-toolkit-archive 下载后用本地注册导入。
+            Ok(vec!["12.6.3".to_string(), "12.5.1".to_string(), "12.4.1".to_string(), "12.2.2".to_string(), "11.8.0".to_string()])
+        }
+        "ffmpeg" => {
+            // FFmpeg Windows 构建来自 gyan.dev 或 BtbN 的 GitHub Release
+            Ok(vec!["7.1.1".to_string(), "7.1".to_string(), "7.0.2".to_string(), "6.1.2".to_string(), "6.0".to_string()])
+        }
         "nginx" => Ok(vec!["1.26.1".to_string(), "1.26.0".to_string(), "1.24.0".to_string(), "1.22.1".to_string()]),
         "redis" => Ok(vec!["5.0.14.1".to_string(), "3.0.504".to_string()]),
         "mysql" => Ok(vec!["8.0.36".to_string(), "8.4.0".to_string(), "5.7.44".to_string()]),
@@ -492,6 +482,16 @@ pub fn get_download_url(sdk_name: &str, version: &str) -> Result<(String, String
         "pnpm" => {
             download_url = format!("https://github.com/pnpm/pnpm/releases/download/v{}/pnpm-win-x64.exe", version_clean);
             file_ext = "exe".to_string();
+        }
+        "cuda" => {
+            // CUDA Toolkit: NVIDIA 官方下载需要登录开发者账号，无免登录直链。
+            // 引导用户前往官网下载后用本地注册导入。
+            return Err("CUDA Toolkit 需从 NVIDIA 官网下载（需登录）：https://developer.nvidia.com/cuda-toolkit-archive 。下载后使用「注册本地 SDK」功能导入。".to_string());
+        }
+        "ffmpeg" => {
+            // FFmpeg Windows 构建：BtbN 的 GitHub Release（公开直链）
+            // BtbN 不按版本号发布，而是提供 latest 滚动构建
+            download_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip".to_string();
         }
         _ => return Err(format!("不支持自动下载的 SDK/服务: {}", sdk_name)),
     }
@@ -711,23 +711,4 @@ pub fn add_local_sdk_version(sdk_name: String, version: String, local_path: Stri
         return Err("本地路径不存在".to_string());
     }
 
-    let dest_dir = Path::new(&config.versions_dir).join(&sdk_name).join(&version);
-    if dest_dir.exists() {
-        return Err("版本已存在，无需重复添加".to_string());
-    }
-
-    crate::commands::cache::copy_dir_all(src, &dest_dir).map_err(|e| e.to_string())?;
-
-    // Auto-switch if first installed
-    let junction_path = Path::new(&config.links_dir).join(&sdk_name);
-    if !junction_path.exists() {
-        let _ = crate::commands::cache::create_junction(&junction_path, &dest_dir);
-    }
-
-    // 注册本地版本后，自动配置该 SDK 的所有相关环境变量
-    let link_str = junction_path.to_string_lossy().to_string();
-    let dest_str = dest_dir.to_string_lossy().to_string();
-    let _ = crate::commands::env::configure_sdk_env_vars(&sdk_name, &link_str, &dest_str);
-
-    Ok(())
-}
+ 

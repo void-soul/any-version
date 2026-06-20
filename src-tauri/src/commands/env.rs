@@ -94,6 +94,34 @@ pub fn get_registry_env(name: &str) -> Option<String> {
     None
 }
 
+/// 读取系统级(HKLM)环境变量
+pub fn get_system_registry_env(name: &str) -> Option<String> {
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    if let Ok(env_key) = hklm.open_subkey("SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment") {
+        if let Ok(val) = env_key.get_value::<String, _>(name) {
+            return Some(val);
+        }
+    }
+    None
+}
+
+/// 同时检查用户级和系统级注册表，返回值及其来源
+pub fn get_registry_env_any(name: &str) -> Option<(String, &'static str)> {
+    // 用户级优先
+    if let Some(val) = get_registry_env(name) {
+        if !val.is_empty() {
+            return Some((val, "HKCU"));
+        }
+    }
+    // 系统级
+    if let Some(val) = get_system_registry_env(name) {
+        if !val.is_empty() {
+            return Some((val, "HKLM"));
+        }
+    }
+    None
+}
+
 pub fn set_registry_env(name: &str, value: &str) -> Result<(), String> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let (env_key, _) = hkcu.create_subkey("Environment").map_err(|e| e.to_string())?;
@@ -149,174 +177,157 @@ pub fn scan_environment() -> Result<Vec<DiagnosticProblem>, String> {
         }
     }
 
-    // 检查所有 SDK 相关的独立环境变量（注册表 HKCU\Environment）。
-    // 这是一个完整的"SDK 环境变量注册表"，每项格式为：
-    //   (变量名, 所属 SDK 名称, 用途描述, 检查类型)
-    //
-    // 检查类型：
-    //   "path"      → 该变量的值应是一个存在的目录路径，如果路径不存在则为"严重"
-    //   "nonempty"  → 该变量的值应为非空字符串（如代理地址、URL），空值则为"建议"级别
-    //
-    // 来源透明：用户可以在界面上看到每条变量"属于哪个 SDK"、"是做什么用的"。
-    let env_vars_to_check: Vec<(&str, &str, &str, &str)> = vec![
-        // ── Go ────────────────────────────────────────
-        ("GOROOT",          "Go",       "Go 安装根目录（包含标准库与编译器）",                           "path"),
-        ("GOPATH",          "Go",       "Go 工作区路径（第三方包、构建产物存储位置）",                   "path"),
-        ("GOPROXY",         "Go",       "Go 模块下载代理地址",                                         "nonempty"),
-        ("GONOSUMDB",       "Go",       "跳过 sum 校验的模块列表",                                     "nonempty"),
-        ("GOFLAGS",         "Go",       "Go 命令默认额外参数",                                         "nonempty"),
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  检测类型 2 + 3：环境变量 + 外部 SDK（注册表驱动，支持 HKCU + HKLM）
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    use super::sdk_registry;
 
-        // ── Node.js ───────────────────────────────────
-        ("NODE_PATH",       "Node.js",  "Node.js 全局模块搜索路径（npm link / require 查找目录）",      "path"),
-        ("NPM_CONFIG_PREFIX", "Node.js", "npm 全局安装前缀路径（全局 node_modules / bin 所在目录）",     "path"),
+    let links_lower = links_dir.to_string_lossy().to_lowercase();
+    let mut reported_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-        // ── Python ────────────────────────────────────
-        ("PYTHONHOME",      "Python",   "Python 标准库与解释器根目录",                                 "path"),
-        ("PYTHONPATH",      "Python",   "Python 模块额外搜索路径",                                     "path"),
-        ("PIP_CACHE_DIR",   "Python",   "pip 下载缓存目录（可通过 pip.ini 覆盖）",                     "path"),
+    // 遍历注册表中所有 SDK，检查其关联的环境变量
+    for sdk_def in sdk_registry::registry() {
+        let sdk_name = sdk_def.display_name;
 
-        // ── Java / JDK ────────────────────────────────
-        ("JAVA_HOME",       "Java",     "JDK 安装根目录（java, javac, javadoc 所在位置）",             "path"),
-        ("JDK_HOME",        "Java",     "JDK 安装根目录（部分工具使用此变量替代 JAVA_HOME）",           "path"),
-        ("CLASSPATH",       "Java",     "Java 类库搜索路径",                                           "nonempty"),
-
-        // ── Android SDK ───────────────────────────────
-        ("ANDROID_HOME",        "Android", "Android SDK 根目录（推荐使用，由 Android 官方建议）",       "path"),
-        ("ANDROID_SDK_ROOT",    "Android", "Android SDK 根目录（旧版变量，部分工具仍使用）",            "path"),
-        ("ANDROID_SDK_HOME",    "Android", "Android 用户数据目录（AVD 虚拟设备配置存储位置）",          "path"),
-        ("ANDROID_NDK_HOME",    "Android", "Android NDK 安装目录",                                     "path"),
-        ("ANDROID_PREFS_ROOT",  "Android", "Android 工具偏好设置存储目录",                              "path"),
-        ("NDK_HOME",            "Android", "Android NDK 根目录（部分构建系统使用此变量）",              "path"),
-
-        // ── Flutter ───────────────────────────────────
-        ("FLUTTER_ROOT",    "Flutter",  "Flutter SDK 安装根目录",                                      "path"),
-        ("FLUTTER_STORAGE_BASE_URL", "Flutter", "Flutter 引擎下载基础 URL（镜像加速时使用）",           "nonempty"),
-        ("PUB_HOSTED_URL",  "Flutter",  "Dart pub 包仓库地址（镜像加速时使用）",                       "nonempty"),
-
-        // ── Rust ──────────────────────────────────────
-        ("CARGO_HOME",      "Rust",     "Cargo 包管理器目录（crate 缓存、registry 索引）",             "path"),
-        ("RUSTUP_HOME",     "Rust",     "Rustup 工具链管理目录（Rust 版本、组件下载存储）",            "path"),
-
-        // ── Bun ───────────────────────────────────────
-        ("BUN_INSTALL",     "Bun",      "Bun 安装根目录",                                              "path"),
-
-        // ── Maven / Gradle ────────────────────────────
-        ("MAVEN_HOME",      "Maven",    "Maven 安装根目录（包含 bin/mvn）",                            "path"),
-        ("M2_HOME",         "Maven",    "Maven 安装根目录（旧版变量，部分 CI 工具仍使用）",            "path"),
-        ("GRADLE_HOME",     "Gradle",   "Gradle 安装目录",                                             "path"),
-        ("GRADLE_USER_HOME","Gradle",   "Gradle 用户数据目录（缓存、wrapper、init 脚本）",             "path"),
-
-        // ── MySQL ─────────────────────────────────────
-        ("MYSQL_HOME",      "MySQL",    "MySQL 安装根目录（包含 bin/mysqld）",                         "path"),
-
-        // ── MongoDB ───────────────────────────────────
-        ("MONGO_HOME",      "MongoDB",  "MongoDB 安装根目录",                                          "path"),
-
-        // ── PostgreSQL ────────────────────────────────
-        ("PGDATA",          "PostgreSQL", "PostgreSQL 数据目录",                                       "path"),
-        ("PGHOME",          "PostgreSQL", "PostgreSQL 安装根目录",                                     "path"),
-
-        // ── Redis ─────────────────────────────────────
-        ("REDIS_HOME",      "Redis",    "Redis 安装根目录",                                            "path"),
-
-        // ── Nginx ─────────────────────────────────────
-        ("NGINX_HOME",      "Nginx",    "Nginx 安装根目录",                                            "path"),
-
-        // ── 鸿蒙 HarmonyOS / OpenHarmony ─────────────
-        ("OHOS_SDK_HOME",   "鸿蒙 HarmonyOS", "鸿蒙 SDK 根目录（ohpm, hdc 等工具所在位置）",          "path"),
-    ];
-
-    for (var_name, sdk_name, desc, check_type) in env_vars_to_check {
-        if let Some(val) = get_registry_env(var_name) {
-            if val.is_empty() {
-                continue;
-            }
-            let val_path = Path::new(&val);
-
-            // 如果值指向 Any-Version 管理的链接目录，则跳过（不是问题）
-            if val.to_lowercase().contains(&links_dir.to_string_lossy().to_lowercase()) {
-                continue;
-            }
-
-            match check_type {
-                "path" => {
-                    // 路径类型的变量：检查指向的目录是否存在
-                    if !val_path.exists() {
-                        let severity = "严重".to_string();
-                        problems.push(DiagnosticProblem {
-                            id: md5_hash(&format!("dead_var:{}", var_name)),
-                            problem_type: "dead_env_path".to_string(),
-                            description: format!("[{}] 环境变量 {} ({}) 指向不存在的目录", sdk_name, var_name, desc),
-                            detail: format!("{}={}", var_name, val),
-                            severity,
-                            fix_type: "set_env".to_string(),
-                            fix_target: var_name.to_string(),
-                            evidence_source: format!("注册表 HKEY_CURRENT_USER\\Environment 中的 {} 值", var_name),
-                            evidence_content: format!("{} = {}", var_name, val),
-                            evidence_reason: format!(
-                                "该变量属于「{}」SDK 的环境配置项。其值「{}」在磁盘上不存在，说明对应工具已被卸载或移动，变量已失效。",
-                                sdk_name, val
-                            ),
-                            fix_plan: format!(
-                                "清空（删除）失效的环境变量 {}，避免相关工具读取到错误路径。操作位置：HKCU\\Environment",
-                                var_name
-                            ),
-                            fix_file: format!("注册表: HKEY_CURRENT_USER\\Environment\\{}", var_name),
-                            fix_source_path: String::new(),
-                            fix_dest_path: String::new(),
-                        });
-                    }
+        for &(var_name, desc, ref check_type) in sdk_def.env_vars {
+            // 同时检查用户级(HKCU)和系统级(HKLM)
+            if let Some((val, source)) = get_registry_env_any(var_name) {
+                // 值指向 AnyVersion 链接目录：正常，跳过
+                if val.to_lowercase().contains(&links_lower) {
+                    continue;
                 }
-                _ => {
-                    // 非路径类型（URL、列表等）：仅在明确失效时给出建议（此处暂不报问题）
-                    // 未来可以扩展：如检查 URL 是否可达等
+
+                match check_type {
+                    super::sdk_registry::EnvCheckType::Path => {
+                        let val_path = Path::new(&val);
+                        if !val_path.exists() {
+                            // 路径不存在 → 无效环境变量
+                            let reg_path = if source == "HKCU" {
+                                format!("HKCU\\Environment\\{}", var_name)
+                            } else {
+                                format!("HKLM\\SYSTEM\\...\\Environment\\{}", var_name)
+                            };
+                            problems.push(DiagnosticProblem {
+                                id: md5_hash(&format!("dead_var:{}:{}", source, var_name)),
+                                problem_type: "dead_env_path".to_string(),
+                                description: format!("[{}] {} = {} 路径不存在", sdk_name, var_name, val),
+                                detail: format!("{}={}", var_name, val),
+                                severity: "严重".to_string(),
+                                fix_type: "set_env".to_string(),
+                                fix_target: var_name.to_string(),
+                                evidence_source: format!("注册表 {}", reg_path),
+                                evidence_content: format!("{} = {}", var_name, val),
+                                evidence_reason: format!("{}：{}。来源: {}。路径在磁盘上不存在。", sdk_name, desc, source),
+                                fix_plan: format!("清空环境变量 {}。", var_name),
+                                fix_file: reg_path,
+                                fix_source_path: String::new(),
+                                fix_dest_path: String::new(),
+                            });
+                        } else if !reported_paths.contains(&val.to_lowercase()) {
+                            // 路径存在但不属于 AnyVersion 管理 → 未管理的 SDK
+                            let is_managed = sdk_registry::find_by_id(sdk_def.id).is_some()
+                                && links_dir.join(sdk_def.id).exists();
+
+                            if !is_managed {
+                                reported_paths.insert(val.to_lowercase());
+                                let reg_path = if source == "HKCU" {
+                                    format!("HKCU\\Environment\\{}", var_name)
+                                } else {
+                                    format!("HKLM\\SYSTEM\\...\\Environment\\{}", var_name)
+                                };
+                                problems.push(DiagnosticProblem {
+                                    id: md5_hash(&format!("unmanaged_sdk_env:{}:{}:{}", source, sdk_name, var_name)),
+                                    problem_type: "unmanaged_sdk".to_string(),
+                                    description: format!("{}：{} 已设置（来源: {}），未被 AnyVersion 管理", sdk_name, var_name, source),
+                                    detail: format!("{}={}", var_name, val),
+                                    severity: "信息".to_string(),
+                                    fix_type: "remove_path".to_string(),
+                                    fix_target: var_name.to_string(),
+                                    evidence_source: format!("注册表 {}", reg_path),
+                                    evidence_content: format!("{} = {}", var_name, val),
+                                    evidence_reason: format!("{}：{}。来源: {}。不在 AnyVersion 管理范围内。", sdk_name, desc, source),
+                                    fix_plan: format!("如需管理 {}，可在 SDK 版本管理中安装；如已不再使用，可清空此变量。", sdk_name),
+                                    fix_file: reg_path,
+                                    fix_source_path: String::new(),
+                                    fix_dest_path: String::new(),
+                                });
+                            }
+                        }
+                    }
+                    _ => { /* nonempty 类型：仅记录 */ }
                 }
             }
         }
-    }
 
-    // 2. External conflict development environment variables (non-managed by Any-Version)
-    let conflict_exes = vec![
-        ("go.exe", "go"),
-        ("node.exe", "nodejs"),
-        ("python.exe", "python"),
-        ("flutter.bat", "flutter"),
-        ("rustc.exe", "rust"),
-        ("java.exe", "java"),
-    ];
+        // PATH 中的外部 SDK 路径扫描（使用注册表的 path_patterns）
+        for &(pattern, exe_hint) in sdk_def.path_patterns {
+            // 扫描用户级 PATH
+            let path_sources: Vec<(&str, Option<String>)> = vec![
+                ("HKCU", get_registry_env("PATH")),
+                ("HKLM", get_system_registry_env("PATH")),
+            ];
 
-    if let Some(user_path) = get_registry_env("PATH") {
-        let parts = std::env::split_paths(&user_path).collect::<Vec<_>>();
-        for (i, p) in parts.iter().enumerate() {
-            let p_str = p.to_string_lossy().to_string();
-            if p_str.to_lowercase().contains(&links_dir.to_string_lossy().to_lowercase()) {
-                continue;
-            }
-            for (exe, sdk_name) in &conflict_exes {
-                let full_exe = p.join(exe);
-                if full_exe.exists() {
-                    // Check if Any-Version's link path precedes it
-                    let av_link_path = links_dir.join(sdk_name);
-                    let av_precedes = parts.iter().take(i).any(|x| {
-                        x.to_string_lossy().to_lowercase().contains(&av_link_path.to_string_lossy().to_lowercase())
-                    });
-                    if !av_precedes {
+            for (path_source, path_val) in path_sources {
+                let path_val = match path_val {
+                    Some(v) => v,
+                    None => continue,
+                };
+                let parts = std::env::split_paths(&path_val).collect::<Vec<_>>();
+
+                for p in &parts {
+                    if p.as_os_str().is_empty() {
+                        continue;
+                    }
+                    let p_str = p.to_string_lossy().to_string();
+                    let p_lower = p_str.to_lowercase();
+
+                    // 跳过 AnyVersion 管理的目录
+                    if p_lower.contains(&links_lower) {
+                        continue;
+                    }
+                    // 去重
+                    if !reported_paths.contains(&p_lower) {
+                        continue;
+                    }
+
+                    if !p_lower.contains(pattern) {
+                        continue;
+                    }
+
+                    // 模式匹配，检查目录是否存在
+                    let has_exe = p.join(exe_hint).exists()
+                        || p.join("bin").join(exe_hint).exists();
+                    let dir_exists = p.exists();
+
+                    if has_exe || dir_exists {
+                        reported_paths.insert(p_lower.clone());
+
+                        let is_managed = links_dir.join(sdk_def.id).exists();
+                        let (severity, fix_desc) = if is_managed {
+                            ("警告".to_string(),
+                             format!("已由 AnyVersion 管理 {}，此外部路径可能造成版本冲突。", sdk_name))
+                        } else {
+                            ("信息".to_string(),
+                             format!("未被 AnyVersion 管理。可在 SDK 版本管理中安装 {}。", sdk_name))
+                        };
+
                         problems.push(DiagnosticProblem {
-                            id: md5_hash(&format!("conflict:{}:{}", sdk_name, p_str)),
-                            problem_type: "conflict_env".to_string(),
-                            description: format!("检测到外部优先的 {} 环境，可能导致 Any-Version 切换不生效", sdk_name),
-                            detail: format!("外部路径: {}", p_str),
-                            severity: "警告".to_string(),
+                            id: md5_hash(&format!("external_sdk:{}:{}:{}", path_source, sdk_name, p_str)),
+                            problem_type: "unmanaged_sdk".to_string(),
+                            description: format!("PATH（{}）中存在 {} 路径", path_source, sdk_name),
+                            detail: p_str.clone(),
+                            severity,
                             fix_type: "remove_path".to_string(),
                             fix_target: p_str.clone(),
-                            evidence_source: "注册表 HKEY_CURRENT_USER\\Environment 中的 PATH 值".to_string(),
-                            evidence_content: format!("在 PATH 中发现 {}（位于「{}」），且其顺序排在 Any-Version 链接目录「{}」之前。", exe, p_str, av_link_path.to_string_lossy()),
-                            evidence_reason: format!("Windows 按 PATH 顺序查找可执行文件。由于该外部 {} 排在 Any-Version 之前，您在 Any-Version 里切换的 {} 版本不会生效。", exe, sdk_name),
-                            fix_plan: format!("将该外部路径「{}」从用户 PATH 中移除，使 Any-Version 管理的 {} 版本成为唯一生效来源。", p_str, sdk_name),
-                            fix_file: "注册表: HKEY_CURRENT_USER\\Environment\\PATH".to_string(),
+                            evidence_source: format!("注册表 {}\\Environment\\PATH", path_source),
+                            evidence_content: format!("PATH 包含: {}", p_str),
+                            evidence_reason: format!("匹配模式「{}」，{} 存在。", pattern, exe_hint),
+                            fix_plan: format!("{}从 PATH 中移除此条目：{}", fix_desc, p_str),
+                            fix_file: format!("注册表 {}\\Environment\\PATH", path_source),
                             fix_source_path: String::new(),
                             fix_dest_path: String::new(),
                         });
+                        break;
                     }
                 }
             }
@@ -456,108 +467,51 @@ fn cache_detection_evidence(name: &str, resolved: &str) -> (String, String) {
     }
 }
 
-/// 自动配置 SDK 相关环境变量（在 SDK 安装或切换版本时调用）。
-/// `sdk_name`: SDK 标识（如 "nodejs", "android", "rust"）
-/// `link_dir`  : 该 SDK 在 links 目录下的稳定路径（如 C:\Users\...\.any-version\links\nodejs）
-/// `version_dir`: 该版本的物理安装目录（如 C:\Users\...\.any-version\versions\nodejs\20.11.1）
+/// 自动配置 SDK 相关环境变量（注册表驱动）。
+/// 新增 SDK 时只需在 sdk_registry.rs 中定义 env_vars，此函数自动生效。
 ///
 /// 设计原则：
-///   - 所有 *_HOME 类变量指向 link_dir（版本切换时只需重定向 junction，不需改环境变量）
-///   - 所有实际配置在 install_sdk_version / use_sdk_version 后自动执行
-pub fn configure_sdk_env_vars(sdk_name: &str, link_dir: &str, version_dir: &str) -> Result<(), String> {
-    let link = link_dir.to_string();
-    let ver  = version_dir.to_string();
+///   - 所有 *_HOME 类变量指向 link_dir（版本切换只需重定向 junction）
+///   - CARGO_HOME / RUSTUP_HOME 指向 link_dir 下的子目录
+///   - ANDROID_SDK_HOME 指向 link_dir 下的 .android 子目录
+pub fn configure_sdk_env_vars(sdk_id: &str, link_dir: &str, _version_dir: &str) -> Result<(), String> {
+    use super::sdk_registry;
 
-    match sdk_name {
-        "android" => {
-            let _ = set_registry_env("ANDROID_HOME", &link);
-            let _ = set_registry_env("ANDROID_SDK_ROOT", &link);
-            // ANDROID_SDK_HOME 指向 SDK 内的用户数据子目录（如果存在）
-            let avd_home = format!("{}\\.android", link);
-            let _ = set_registry_env("ANDROID_SDK_HOME", &avd_home);
-        }
-        "go" => {
-            let _ = set_registry_env("GOROOT", &link);
-            // GOPATH 默认为用户目录下的 go，可由用户自行覆盖
-        }
-        "java" => {
-            let _ = set_registry_env("JAVA_HOME", &link);
-            let _ = set_registry_env("JDK_HOME", &link);
-        }
-        "nodejs" => {
-            let _ = set_registry_env("NODE_PATH", &link);
-            let npm_prefix = format!("{}\\node_modules", link);
-            let _ = set_registry_env("NPM_CONFIG_PREFIX", &npm_prefix);
-        }
-        "python" => {
-            let _ = set_registry_env("PYTHONHOME", &link);
-        }
-        "rust" => {
-            let _ = set_registry_env("CARGO_HOME", &format!("{}\\.cargo", link));
-            let _ = set_registry_env("RUSTUP_HOME", &format!("{}\\.rustup", link));
-        }
-        "bun" => {
-            let _ = set_registry_env("BUN_INSTALL", &link);
-        }
-        "flutter" => {
-            let _ = set_registry_env("FLUTTER_ROOT", &link);
-        }
-        "maven" => {
-            let _ = set_registry_env("MAVEN_HOME", &link);
-            let _ = set_registry_env("M2_HOME", &link);
-        }
-        "gradle" => {
-            let _ = set_registry_env("GRADLE_HOME", &link);
-        }
-        "mysql" => {
-            let _ = set_registry_env("MYSQL_HOME", &link);
-        }
-        "mongodb" => {
-            let _ = set_registry_env("MONGO_HOME", &link);
-        }
-        "postgresql" => {
-            let _ = set_registry_env("PGDATA", &format!("{}\\data", link));
-            let _ = set_registry_env("PGHOME", &link);
-        }
-        "redis" => {
-            let _ = set_registry_env("REDIS_HOME", &link);
-        }
-        "nginx" => {
-            let _ = set_registry_env("NGINX_HOME", &link);
-        }
-        "harmony" => {
-            let _ = set_registry_env("OHOS_SDK_HOME", &link);
-        }
-        _ => {} // 未知 SDK 类型不自动设置
+    let sdk_def = match sdk_registry::find_by_id(sdk_id) {
+        Some(d) => d,
+        None => return Ok(()),
+    };
+
+    for &(var_name, _desc, _) in sdk_def.env_vars {
+        // 对不同变量使用不同的值策略
+        let value = match var_name {
+            // 特殊子目录映射
+            "CARGO_HOME"      => format!("{}\\.cargo", link_dir),
+            "RUSTUP_HOME"     => format!("{}\\.rustup", link_dir),
+            "ANDROID_SDK_HOME" => format!("{}\\.android", link_dir),
+            "NPM_CONFIG_PREFIX" => format!("{}\\node_modules", link_dir),
+            "PGDATA"          => format!("{}\\data", link_dir),
+            // 其他变量统一指向 link_dir
+            _                 => link_dir.to_string(),
+        };
+        let _ = set_registry_env(var_name, &value);
     }
 
     Ok(())
 }
 
-/// 移除 SDK 相关的环境变量（在卸载 SDK 最后一个版本时调用）。
-pub fn remove_sdk_env_vars(sdk_name: &str) -> Result<(), String> {
-    let vars: Vec<&str> = match sdk_name {
-        "android"  => vec!["ANDROID_HOME", "ANDROID_SDK_ROOT", "ANDROID_SDK_HOME", "ANDROID_NDK_HOME", "ANDROID_PREFS_ROOT", "NDK_HOME"],
-        "go"       => vec!["GOROOT"],
-        "java"     => vec!["JAVA_HOME", "JDK_HOME"],
-        "nodejs"   => vec!["NODE_PATH", "NPM_CONFIG_PREFIX"],
-        "python"   => vec!["PYTHONHOME", "PYTHONPATH"],
-        "rust"     => vec!["CARGO_HOME", "RUSTUP_HOME"],
-        "bun"      => vec!["BUN_INSTALL"],
-        "flutter"  => vec!["FLUTTER_ROOT"],
-        "maven"    => vec!["MAVEN_HOME", "M2_HOME"],
-        "gradle"   => vec!["GRADLE_HOME"],
-        "mysql"    => vec!["MYSQL_HOME"],
-        "mongodb"  => vec!["MONGO_HOME"],
-        "postgresql" => vec!["PGDATA", "PGHOME"],
-        "redis"    => vec!["REDIS_HOME"],
-        "nginx"    => vec!["NGINX_HOME"],
-        "harmony"  => vec!["OHOS_SDK_HOME"],
-        _          => vec![],
+/// 移除 SDK 相关的环境变量（注册表驱动）。
+/// 当卸载某 SDK 最后一个版本时调用。
+pub fn remove_sdk_env_vars(sdk_id: &str) -> Result<(), String> {
+    use super::sdk_registry;
+
+    let sdk_def = match sdk_registry::find_by_id(sdk_id) {
+        Some(d) => d,
+        None => return Ok(()),
     };
 
-    for var in vars {
-        let _ = set_registry_env(var, "");
+    for &(var_name, _desc, _) in sdk_def.env_vars {
+        let _ = set_registry_env(var_name, "");
     }
 
     Ok(())
