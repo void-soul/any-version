@@ -99,14 +99,27 @@ export default function ProjectListPanel({
               <div
                 key={p.id}
                 onClick={() => onSelect(p)}
-                className={`p-3.5 flex items-center justify-between hover:bg-white/2 cursor-pointer transition-all ${
-                  isSelected ? "bg-blue-600/5 border-l-2 border-blue-500" : ""
+                className={`relative p-3.5 flex items-center justify-between cursor-pointer transition-all overflow-hidden ${
+                  isSelected
+                    ? "bg-blue-600/10 border-l-2 border-blue-500"
+                    : p.managed
+                    ? "hover:bg-emerald-500/5 border-l-2 border-emerald-500/30"
+                    : "hover:bg-white/2 border-l-2 border-transparent"
                 }`}
               >
-                {/* 左侧：名称 + 分类标签 */}
-                <div className="flex-1 min-w-0">
+                {/* 水印背景文字 */}
+                {p.managed && (
+                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[28px] font-black text-emerald-500/[0.04] pointer-events-none select-none tracking-widest">
+                    MANAGED
+                  </span>
+                )}
+
+                {/* 左侧：名称 + 分类标签 + 来源 */}
+                <div className="flex-1 min-w-0 relative z-10">
                   <div className="flex items-center gap-1.5">
-                    <h4 className="font-semibold text-white text-xs truncate">{p.display_name}</h4>
+                    <h4 className={`font-semibold text-xs truncate ${p.managed ? "text-emerald-100" : "text-white"}`}>
+                      {p.display_name}
+                    </h4>
                     <span
                       className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[8px] font-semibold border ${
                         p.category === "language"
@@ -124,29 +137,21 @@ export default function ProjectListPanel({
                   )}
                 </div>
 
-                {/* 右侧：状态 */}
-                <div className="text-right flex-shrink-0 ml-3 space-y-0.5">
-                  {/* 托管状态 */}
-                  {p.managed ? (
-                    <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-semibold justify-end">
-                      <ShieldCheck className="w-3 h-3" />
-                      已托管
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-slate-500">未托管</span>
-                  )}
-                  {/* 安装状态 */}
+                {/* 右侧：安装状态 tag */}
+                <div className="flex-shrink-0 ml-3 relative z-10">
                   {p.installed ? (
-                    <div className="flex items-center gap-1 justify-end">
-                      <CheckCircle className="w-3 h-3 text-slate-400" />
-                      {p.active_version ? (
-                        <span className="text-[10px] text-slate-300 font-mono">v{p.active_version}</span>
-                      ) : (
-                        <span className="text-[10px] text-slate-400">已安装</span>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="text-[10px] text-slate-600">未安装</span>
+                    p.active_version ? (
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
+                        v{p.active_version}
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        已安装
+                      </span>
+                    )                  ) : (
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-red-500/10 text-red-400 border border-red-500/20">
+                      未安装
+                    </span>
                   )}
                 </div>
               </div>
