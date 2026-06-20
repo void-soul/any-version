@@ -142,11 +142,11 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
     let junction_path = links_dir.join(id);
     let active_version = resolve_active_version(&junction_path);
 
-    // 判断是否已安装
-    let installed = !installed_versions.is_empty() || active_version.is_some();
-
     // 安装来源检测（使用 sdk_resolver）
     let (install_source, install_root) = detect_install_source(def);
+
+    // 判断是否已安装（AnyVersion 版本目录 或 外部安装均可）
+    let installed = !installed_versions.is_empty() || active_version.is_some() || install_root.is_some();
 
     // 是否被 AnyVersion 托管
     let managed = config.managed_items.contains(id.as_str());
@@ -442,7 +442,4 @@ fn get_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
             vec![link_dir.to_string()]
         }
         "mysql" | "mongodb" | "postgresql" => {
-            vec![format!("{}\\bin", link_dir)]
-        }
-        _ => vec![]    }
-}
+      

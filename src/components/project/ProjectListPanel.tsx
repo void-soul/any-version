@@ -125,38 +125,28 @@ export default function ProjectListPanel({
                 </div>
 
                 {/* 右侧：状态 */}
-                <div className="text-right flex-shrink-0 ml-3">
+                <div className="text-right flex-shrink-0 ml-3 space-y-0.5">
+                  {/* 托管状态 */}
                   {p.managed ? (
-                    /* 已托管 */
-                    <div>
-                      <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-semibold">
-                        <ShieldCheck className="w-3 h-3" />
-                        已托管
-                      </span>
+                    <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-semibold justify-end">
+                      <ShieldCheck className="w-3 h-3" />
+                      已托管
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-500">未托管</span>
+                  )}
+                  {/* 安装状态 */}
+                  {p.installed ? (
+                    <div className="flex items-center gap-1 justify-end">
+                      <CheckCircle className="w-3 h-3 text-slate-400" />
                       {p.active_version ? (
-                        <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded font-mono font-medium mt-0.5 inline-block">
-                          v{p.active_version}
-                        </span>
+                        <span className="text-[10px] text-slate-300 font-mono">v{p.active_version}</span>
                       ) : (
-                        <p className="text-[9px] text-amber-400 mt-0.5">未选择版本</p>
+                        <span className="text-[10px] text-slate-400">已安装</span>
                       )}
                     </div>
-                  ) : p.installed ? (
-                    /* 未托管，但有本地安装 */
-                    <div>
-                      <span className="text-[10px] text-slate-400">未托管</span>
-                      <div className="flex items-center gap-1 mt-0.5">
-                        <CheckCircle className="w-3 h-3 text-slate-400" />
-                        {p.active_version ? (
-                          <span className="text-[10px] text-slate-300 font-mono">v{p.active_version}</span>
-                        ) : (
-                          <span className="text-[10px] text-slate-500">{p.installed_versions.length} 个版本</span>
-                        )}
-                      </div>
-                    </div>
                   ) : (
-                    /* 未托管，未安装 */
-                    <span className="text-[10px] text-slate-500">未安装</span>
+                    <span className="text-[10px] text-slate-600">未安装</span>
                   )}
                 </div>
               </div>
