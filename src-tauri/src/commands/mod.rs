@@ -9,3 +9,4 @@ pub mod port;
 pub mod pkg;
 pub mod mirror;
 pub mod service;
+pub mod project;
