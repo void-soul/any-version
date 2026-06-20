@@ -1,0 +1,47 @@
+name: CI 持续集成构建
+
+# 每次推送到 main 或提交 Pull Request 时，自动验证前端与 Rust 后端能否正常编译。
+# 这一步不会发布任何文件，只用于尽早发现编译/类型错误。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+# 同一分支的新提交会取消上一次仍在运行的构建，节省 CI 时间。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-check:
+    name: 编译验证 (Windows)
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 Rust 依赖 (加速构建)
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 前端类型检查与构建
+        run: npm run build
+
+      - name: Rust 后端编译检查
+        working-directory: src-tauri
+        run: cargo check --locked --all-targets

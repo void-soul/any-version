@@ -1,21 +1,29 @@
 {
-  "name": "any-version",
-  "version": "1.0.0",
-  "description": "Windows 多语言开发环境版本管理器",
+  "name": "tauri-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
   "scripts": {
-    "build:backend": "cmd /c \"set GOROOT=D:\\tool\\go&& go build -o av.exe ./backend\"",
-    "build:gui": "dotnet build av-gui.csproj",
-    "build:copy-gui": "powershell -NoProfile -Command \"Copy-Item -Path 'bin/Debug/net10.0-windows/*' -Destination '.' -Force\"",
-    "build": "npm run build:backend && npm run build:gui && npm run build:copy-gui"
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
   },
-  "keywords": [
-    "version-manager",
-    "sdk",
-    "windows",
-    "go",
-    "dotnet",
-    "csharp"
-  ],
-  "author": "",
-  "license": "Apache-2.0"
+  "dependencies": {
+    "@tailwindcss/vite": "^4.3.1",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "lucide-react": "^1.21.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tailwindcss": "^4.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4"
+  }
 }

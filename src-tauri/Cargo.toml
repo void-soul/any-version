@@ -1,0 +1,30 @@
+[package]
+name = "any-version"
+version = "1.0.0"
+description = "Windows Multi-Language Dev Environment Version Manager"
+authors = ["AnyVersion Team"]
+edition = "2021"
+
+[lib]
+name = "tauri_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+winreg = "0.52"
+walkdir = "2.5"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+tokio = { version = "1", features = ["full"] }
+zip = "2.1"
+tar = "0.4"
+flate2 = "1.0"
+trash = "5.1"
+sysinfo = "0.31"
+futures-util = "0.3"
+md5 = "0.7"

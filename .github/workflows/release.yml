@@ -1,0 +1,77 @@
+name: Release 发布构建
+
+# 触发方式：当推送一个以 v 开头的标签（如 v1.0.1、v1.2.0）时，
+# 自动编译 Windows 安装包并发布到 GitHub Releases。
+#
+# 使用方法（在本地仓库执行）：
+#   git tag v1.0.1
+#   git push origin v1.0.1
+#
+# 也可以在 GitHub 网页的 Actions 页面手动触发（workflow_dispatch）。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的版本标签 (例如 v1.0.1)'
+        required: true
+        default: 'v0.0.0-test'
+
+# GITHUB_TOKEN 需要写入权限才能创建 Release。
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 构建并发布 (Windows)
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 Rust 依赖 (加速构建)
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 解析版本标签
+        id: tagname
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 编译 Tauri 应用并发布 Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ steps.tagname.outputs.value }}
+          releaseName: 'AnyVersion ${{ steps.tagname.outputs.value }}'
+          releaseBody: |
+            AnyVersion 开发环境管理器 ${{ steps.tagname.outputs.value }}
+
+            ## 下载说明
+            - `.msi` / `.exe`：Windows 安装包，双击即可安装。
+
+            本版本由 GitHub Actions 自动构建发布。
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: false
