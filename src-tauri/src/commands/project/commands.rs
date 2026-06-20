@@ -229,3 +229,74 @@ fn get_bin_paths_for_manage(sdk_id: &str, link_dir: &str) -> Vec<String> {
         _ => vec![],
     }
 }
+
+/// 执行 shell 命令并捕获输出（用于包管理器版本检测、镜像切换等）
+#[tauri::command]
+pub fn run_cmd_capture(cmd: String) -> Result<String, String> {
+    let output = std::process::Command::new("cmd")
+        .args(&["/c", &cmd])
+        .output()
+        .map_err(|e| format!("执行命令失败: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+    if output.status.success() {
+        Ok(stdout)
+    } else if !stderr.is_empty() {
+        Err(stderr)
+    } else {
+        Err(format!("命令执行失败 (exit code: {})", output.status.code().unwrap_or(-1)))
+    }
+}
+
+/// 获取包管理器缓存信息
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct PkgCacheInfo {
+    pub path: String,
+    pub size: String,
+    pub is_link: bool,
+    pub real_target: String,
+}
+
+#[tauri::command]
+pub fn get_pkg_cache_info(cmd: String) -> Result<PkgCacheInfo, String> {
+    let cache_path = run_cmd_capture(cmd)?;
+    if cache_path.is_empty() {
+        return Err("缓存路径为空".to_string());
+    }
+
+    let path = std::path::Path::new(&cache_path);
+    let (is_link, real_target) = if let Ok(meta) = std::fs::symlink_metadata(path) {
+        if meta.file_type().is_symlink() {
+            let target = std::fs::read_link(path)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            (true, target)
+        } else {
+            (false, String::new())
+        }
+    } else {
+        (false, String::new())
+    };
+
+    let size = crate::commands::cache::get_dir_size(path);
+    let size_str = crate::commands::cache::format_bytes(size);
+
+    Ok(PkgCacheInfo {
+        path: cache_path,
+        size: size_str,
+        is_link,
+        real_target,
+    })
+}
+
+/// 迁移包管理器缓存目录
+#[tauri::command]
+pub fn migrate_pkg_cache(cache_detect_cmd: String, new_path: String) -> Result<(), String> {
+    let cache_path = run_cmd_capture(cache_detect_cmd)?;
+    if cache_path.is_empty() {
+        return Err("缓存路径为空".to_string());
+    }
+    crate::commands::cache::migrate_cache_path_raw(&cache_path, &new_path)
+}

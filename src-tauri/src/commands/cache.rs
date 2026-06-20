@@ -437,3 +437,28 @@ pub fn migrate_cache_path(name: String, new_path: String) -> Result<(), String> 
 
     Ok(())
 }
+
+/// 迁移缓存目录（接受原始路径，用于包管理器缓存迁移）
+pub fn migrate_cache_path_raw(orig_path_str: &str, new_path_str: &str) -> Result<(), String> {
+    let orig_path = Path::new(orig_path_str);
+    let target_path = Path::new(new_path_str);
+
+    if orig_path == target_path {
+        return Err("原路径与目标路径相同，无需迁移".to_string());
+    }
+
+    fs::create_dir_all(target_path).map_err(|e| format!("无法创建目标目录: {}", e))?;
+
+    let is_symlink = fs::symlink_metadata(orig_path).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+
+    if is_symlink {
+        fs::remove_file(orig_path).map_err(|e| format!("无法移除已有的旧链接: {}", e))?;
+    } else {
+        if orig_path.exists() {
+            copy_dir_all(orig_path, target_path).map_err(|e| format!("复制缓存文件失败: {}", e))?;
+            fs::remove_dir_all(orig_path).map_err(|e| format!("清空原缓存目录失败: {}", e))?;
+        }
+    }
+
+    create_junction(orig_path, target_path)
+}
