@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
 import Sidebar from "./components/Sidebar";
-import SdkManager from "./components/SdkManager";
 import ProjectManager from "./components/ProjectManager";
 import SystemTools from "./components/SystemTools";
 import GlobalSettings from "./components/GlobalSettings";
