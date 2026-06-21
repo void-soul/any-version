@@ -57,8 +57,11 @@ interface ProjectUIState {
   localPath: string;
   registering: boolean;
   registerErr: string | null;
+  scanResults: Array<{ path: string; version: string; source: string }>;
+  scanning: boolean;
   showManagePreview: boolean;
   managePreview: ManagePreview | null;
+  registerLocalChecked: boolean;
   managing: boolean;
   unmanaging: boolean;
   cacheDestPath: string;
@@ -89,8 +92,11 @@ const EMPTY_UI: ProjectUIState = {
   localPath: "",
   registering: false,
   registerErr: null,
+  scanResults: [],
+  scanning: false,
   showManagePreview: false,
   managePreview: null,
+  registerLocalChecked: false,
   managing: false,
   unmanaging: false,
   cacheDestPath: "",
@@ -317,21 +323,38 @@ export default function ProjectDetailPanel({ project, onRefresh, onProjectUpdate
     }
   }, [pid, uiMap, patch, loadDetail, onRefresh]);
 
+  const handleScanLocal = useCallback(async () => {
+    if (!pid) return;
+    patch(pid, { scanning: true, scanResults: [] });
+    try {
+      const results = await invoke<Array<{ path: string; version: string; source: string }>>("project_scan_local", { id: pid });
+      patch(pid, { scanResults: results, scanning: false });
+    } catch (e: unknown) {
+      patch(pid, { scanning: false });
+      alert("扫描失败: " + e);
+    }
+  }, [pid, patch]);
+
+  const handleSelectScanResult = useCallback((result: { path: string; version: string }) => {
+    if (!pid) return;
+    patch(pid, { localVersion: result.version, localPath: result.path });
+  }, [pid, patch]);
+
   const handlePreviewManage = useCallback(async () => {
     if (!pid) return;
     try {
       const preview = await invoke<ManagePreview>("project_preview_manage", { id: pid });
-      patch(pid, { managePreview: preview, showManagePreview: true });
+      patch(pid, { managePreview: preview, showManagePreview: true, registerLocalChecked: !!preview.has_local_install });
     } catch {
-      patch(pid, { managePreview: null, showManagePreview: true });
+      patch(pid, { managePreview: null, showManagePreview: true, registerLocalChecked: false });
     }
   }, [pid, patch]);
 
-  const handleManage = useCallback(async () => {
+  const handleManage = useCallback(async (registerLocal: boolean = false) => {
     if (!pid) return;
     patch(pid, { managing: true });
     try {
-      await invoke("project_manage", { id: pid });
+      await invoke("project_manage", { id: pid, registerLocal });
       patch(pid, { showManagePreview: false, managePreview: null, managing: false });
       await refreshSingle(pid);
     } catch (e: unknown) {
@@ -452,6 +475,10 @@ export default function ProjectDetailPanel({ project, onRefresh, onProjectUpdate
     onLocalVersionChange: (v: string) => patch(pid!, { localVersion: v }),
     onLocalPathChange: (v: string) => patch(pid!, { localPath: v }),
     onRegisterLocal: handleRegisterLocal,
+    scanResults: ui.scanResults,
+    scanning: ui.scanning,
+    onScanLocal: handleScanLocal,
+    onSelectScanResult: handleSelectScanResult,
     packages: ui.packages,
     loadingPackages: ui.loadingPackages,
     upgradingPackage: ui.upgradingPackage,
@@ -613,6 +640,7 @@ export default function ProjectDetailPanel({ project, onRefresh, onProjectUpdate
           const envVars = def?.env_vars || [];
           const linkPath = "%USERPROFILE%\\.any-version\\links\\" + pid;
           const versionsDir = "%USERPROFILE%\\.any-version\\versions";
+          const preview = ui.managePreview;
           return (
             <div className="mb-4 p-4 bg-blue-600/5 border border-blue-500/15 rounded-xl space-y-3 animate-fadeIn">
               <h4 className="text-xs font-semibold text-blue-300 flex items-center gap-1.5">
@@ -649,7 +677,7 @@ export default function ProjectDetailPanel({ project, onRefresh, onProjectUpdate
                 </div>
               )}
 
-              {ui.managePreview && ui.managePreview.steps.filter((s) => s.action === "add_path" || s.action === "clean_path").map((step, idx) => (
+              {preview && preview.steps.filter((s) => s.action === "add_path" || s.action === "clean_path").map((step, idx) => (
                 <div key={idx} className="flex items-start gap-2 text-[11px]">
                   <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">{4 + idx}</span>
                   <div>
@@ -658,6 +686,31 @@ export default function ProjectDetailPanel({ project, onRefresh, onProjectUpdate
                   </div>
                 </div>
               ))}
+
+              {/* 本地版本注册选项 */}
+              {preview?.has_local_install && (
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={ui.registerLocalChecked}
+                      onChange={(e) => patch(pid!, { registerLocalChecked: e.target.checked })}
+                      className="w-3.5 h-3.5 rounded accent-emerald-500"
+                    />
+                    <div className="text-[10px]">
+                      <span className="text-emerald-300 font-medium">
+                        将本地已安装版本也注册到 AnyVersion
+                      </span>
+                      {preview.local_install_root && (
+                        <p className="text-slate-400 mt-0.5">路径: {preview.local_install_root}</p>
+                      )}
+                      {preview.local_install_source && (
+                        <p className="text-slate-500">来源: {preview.local_install_source}</p>
+                      )}
+                    </div>
+                  </label>
+                </div>
+              )}
 
               <div className="p-2.5 rounded-lg bg-black/20 border border-white/5 text-[10px] space-y-1.5">
                 <div className="flex items-center gap-1.5 text-slate-300">
@@ -671,7 +724,7 @@ export default function ProjectDetailPanel({ project, onRefresh, onProjectUpdate
               </div>
 
               <div className="flex items-center gap-2 pt-1">
-                <button onClick={handleManage} disabled={ui.managing} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all">
+                <button onClick={() => handleManage(ui.registerLocalChecked)} disabled={ui.managing} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all">
                   {ui.managing ? "正在执行..." : "确认托管"}
                 </button>
                 <button onClick={() => patch(pid!, { showManagePreview: false, managePreview: null })} className="px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs font-medium cursor-pointer border border-white/10">

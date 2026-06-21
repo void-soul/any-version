@@ -91,6 +91,9 @@ export interface ManagePreview {
     description: string;
     target: string;
   }>;
+  has_local_install: boolean;
+  local_install_root: string | null;
+  local_install_source: string | null;
 }
 
 export function categoryLabel(cat: ProjectCategory): string {

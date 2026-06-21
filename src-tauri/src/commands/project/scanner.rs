@@ -62,6 +62,20 @@ pub fn preview_manage(id: &str) -> Result<ManagePreview, String> {
 
     let mut steps = Vec::new();
 
+    // 检测本地安装
+    let (local_install_root, local_install_source) = detect_install_source(&def);
+    let has_local = local_install_root.is_some();
+
+    if has_local {
+        steps.push(ManageStep {
+            action: "found_local".to_string(),
+            description: format!("检测到本地已安装版本: {} (来源: {})",
+                local_install_root.as_deref().unwrap_or("未知"),
+                local_install_source.as_deref().unwrap_or("未知")),
+            target: local_install_root.clone().unwrap_or_default(),
+        });
+    }
+
     // 步骤 1: 备份当前环境变量
     let env_count = def.env_vars.len();
     if env_count > 0 {
@@ -122,7 +136,12 @@ pub fn preview_manage(id: &str) -> Result<ManagePreview, String> {
         });
     }
 
-    Ok(ManagePreview { steps })
+    Ok(ManagePreview {
+        steps,
+        has_local_install: has_local,
+        local_install_root,
+        local_install_source,
+    })
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -229,7 +248,7 @@ fn resolve_active_version(junction_path: &Path) -> Option<String> {
 }
 
 /// 检测安装来源（通过 sdk_resolver）
-fn detect_install_source(def: &ProjectDef) -> (Option<String>, Option<String>) {
+pub fn detect_install_source(def: &ProjectDef) -> (Option<String>, Option<String>) {
     // 转换 types::ResolvePattern -> sdk_resolver::ResolvePattern
     let resolver_rules = to_resolver_rules(&def.find_rules);
 

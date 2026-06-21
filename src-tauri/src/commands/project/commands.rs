@@ -38,8 +38,9 @@ pub fn project_preview_manage(id: String) -> Result<ManagePreview, String> {
 /// 4. 添加 bin 路径到 PATH
 /// 5. 将项目 ID 添加到 managed_items
 /// 6. 保存配置
+/// 7. (可选) 注册本地已安装版本
 #[tauri::command]
-pub fn project_manage(id: String) -> Result<(), String> {
+pub fn project_manage(id: String, register_local: Option<bool>) -> Result<(), String> {
     use crate::commands::config::load_config;
     use crate::commands::env::{get_registry_env_any, set_registry_env, add_to_user_path};
     use super::registry;
@@ -140,6 +141,17 @@ pub fn project_manage(id: String) -> Result<(), String> {
     let bin_paths = scanner::get_bin_paths(&def.id, &link_str);
     if !bin_paths.is_empty() {
         let _ = add_to_user_path(&bin_paths);
+    }
+
+    // 6. (可选) 注册本地已安装版本
+    if register_local.unwrap_or(false) {
+        let (install_root, _install_source) = scanner::detect_install_source(&def);
+        if let Some(local_path) = install_root {
+            // 只在有本地路径且不在 versions_dir 中时注册
+            if !local_path.to_lowercase().contains(&config.versions_dir.to_lowercase()) {
+                let _ = super::versions::project_register_local_inner(&id, &local_path);
+            }
+        }
     }
 
     Ok(())

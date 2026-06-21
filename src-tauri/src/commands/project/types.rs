@@ -254,6 +254,12 @@ pub struct ProjectDetail {
 pub struct ManagePreview {
     /// 操作步骤列表
     pub steps: Vec<ManageStep>,
+    /// 是否检测到本地已安装版本
+    pub has_local_install: bool,
+    /// 本地安装路径
+    pub local_install_root: Option<String>,
+    /// 本地安装来源标签
+    pub local_install_source: Option<String>,
 }
 
 /// 托管操作步骤

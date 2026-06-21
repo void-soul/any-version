@@ -475,7 +475,7 @@ fn cache_detection_evidence(name: &str, resolved: &str) -> (String, String) {
     }
 }
 
-fn get_sdk_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
+pub fn get_sdk_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
     match sdk_id {
         "go" | "java" | "flutter" | "maven" | "gradle" | "harmony" | "cuda" | "ffmpeg" => {
             vec![format!("{}\\bin", link_dir)]

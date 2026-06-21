@@ -7,7 +7,8 @@ import {
   Info,
   CheckCircle2,
   ExternalLink,
-  FolderOpen
+  FolderOpen,
+  AlertTriangle
 } from "lucide-react";
 
 interface Config {
@@ -15,16 +16,30 @@ interface Config {
   links_dir: string;
 }
 
+interface MigrateResult {
+  moved_versions: boolean;
+  moved_links: boolean;
+  recreated_junctions: string[];
+  updated_env_vars: string[];
+  updated_path_entries: string[];
+  errors: string[];
+}
+
 export default function GlobalSettings() {
   const [versionsDir, setVersionsDir] = useState("");
   const [linksDir, setLinksDir] = useState("");
+  const [oldVersionsDir, setOldVersionsDir] = useState("");
+  const [oldLinksDir, setOldLinksDir] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [migrateResult, setMigrateResult] = useState<MigrateResult | null>(null);
+  const [showMigrateConfirm, setShowMigrateConfirm] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [updateBody, setUpdateBody] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState("");
 
   const fetchConfig = async () => {
     setLoading(true);
@@ -33,6 +48,8 @@ export default function GlobalSettings() {
       const config = await invoke<Config>("get_config");
       setVersionsDir(config.versions_dir);
       setLinksDir(config.links_dir);
+      setOldVersionsDir(config.versions_dir);
+      setOldLinksDir(config.links_dir);
     } catch (e) {
       console.error(e);
     } finally {
@@ -40,16 +57,44 @@ export default function GlobalSettings() {
     }
   };
 
+  const fetchVersion = async () => {
+    try {
+      const ver = await invoke<string>("get_app_version");
+      setAppVersion(ver);
+    } catch {
+      setAppVersion("1.0.0");
+    }
+  };
+
   useEffect(() => {
     fetchConfig();
+    fetchVersion();
   }, []);
+
+  const pathsChanged = (): boolean => {
+    const normalize = (s: string) => s.trim().replace(/[\\/]+$/, "");
+    return normalize(versionsDir) !== normalize(oldVersionsDir) ||
+           normalize(linksDir) !== normalize(oldLinksDir);
+  };
+
+  const handleSaveClick = () => {
+    if (!versionsDir || !linksDir) return;
+    if (pathsChanged()) {
+      setShowMigrateConfirm(true);
+    } else {
+      handleSave();
+    }
+  };
 
   const handleSave = async () => {
     if (!versionsDir || !linksDir) return;
     setSaving(true);
     setSuccess(false);
+    setMigrateResult(null);
+    setShowMigrateConfirm(false);
     try {
-      await invoke("update_config", { versionsDir, linksDir });
+      const result = await invoke<MigrateResult>("update_config", { versionsDir, linksDir });
+      setMigrateResult(result);
       setSuccess(true);
       await fetchConfig();
     } catch (e: any) {
@@ -64,19 +109,19 @@ export default function GlobalSettings() {
     setUpdateError(null);
     setLatestVersion(null);
     try {
-      const resp = await fetch("https://api.github.com/repos/anyversion/anyversion/releases/latest", {
+      const resp = await fetch("https://api.github.com/repos/void-soul/any-version/releases/latest", {
         headers: { "Accept": "application/vnd.github.v3+json" }
       });
       if (!resp.ok) throw new Error("检查失败: " + resp.status);
       const data = await resp.json();
       const tag = data.tag_name?.replace(/^v/, "") ?? "";
-      if (tag && tag !== "1.0.0") {
+      const currentVer = appVersion || "1.0.0";
+      if (tag && tag !== currentVer) {
         setLatestVersion(tag);
         setUpdateBody(data.body ?? null);
       } else {
         setLatestVersion(null);
         setUpdateError(null);
-        // Show "already latest" feedback
         alert("当前已是最新版本！");
       }
     } catch (e: any) {
@@ -97,7 +142,7 @@ export default function GlobalSettings() {
   };
 
   const handleDownloadUpdate = () => {
-    window.open("https://github.com/anyversion/anyversion/releases/latest", "_blank");
+    window.open("https://github.com/void-soul/any-version/releases/latest", "_blank");
   };
 
   return (
@@ -161,28 +206,69 @@ export default function GlobalSettings() {
               <p className="text-[9px] text-slate-500">此目录存放各个工具的固定快捷链接文件夹（会自动加入系统 PATH），切换版本即是秒级修改其底层指向。</p>
             </div>
 
-            <div className="p-4 bg-blue-950/10 border border-blue-500/20 rounded-xl space-y-2">
-              <h4 className="text-xs font-semibold text-blue-400 flex items-center gap-1.5">
-                <Info className="w-4 h-4" />
-                警告与提示
-              </h4>
-              <p className="text-[10px] text-slate-400 leading-relaxed">
-                更新路径后，AnyVersion 将自动移除旧路径在 PATH 中的环境变量，并将新路径重新注册。已存在的 SDK 链接关系也将自动转移。
-              </p>
-            </div>
+            {/* 路径变更确认弹窗 */}
+            {showMigrateConfirm && (
+              <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl space-y-3 animate-fadeIn">
+                <h4 className="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4" />
+                  确认路径迁移
+                </h4>
+                <div className="text-[10px] text-slate-300 space-y-1.5">
+                  <p>检测到存储路径已更改，AnyVersion 将执行以下操作：</p>
+                  <p className="text-amber-300">1. 将旧目录下的所有已安装版本文件移动到新目录</p>
+                  <p className="text-amber-300">2. 更新所有 junction 链接的指向</p>
+                  <p className="text-amber-300">3. 更新 PATH 环境变量中的旧路径为新路径</p>
+                  <p className="text-slate-400 mt-1">整个过程无需手动操作，已安装的 SDK 不会丢失。</p>
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5"
+                  >
+                    <Save className="w-3 h-3" />
+                    {saving ? "正在迁移..." : "确认迁移并保存"}
+                  </button>
+                  <button
+                    onClick={() => setShowMigrateConfirm(false)}
+                    className="px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs font-medium cursor-pointer border border-white/10"
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 迁移结果展示 */}
+            {migrateResult && (
+              <div className="p-4 bg-emerald-500/5 border border-emerald-500/15 rounded-xl space-y-2 text-[10px]">
+                <h4 className="text-xs font-semibold text-emerald-400">迁移完成</h4>
+                {migrateResult.moved_versions && <p className="text-slate-300">✓ 版本文件已移动到新目录</p>}
+                {migrateResult.moved_links && <p className="text-slate-300">✓ 链接目录已移动到新目录</p>}
+                {migrateResult.recreated_junctions.length > 0 && (
+                  <p className="text-slate-300">✓ 已重建 {migrateResult.recreated_junctions.length} 个 junction 链接: {migrateResult.recreated_junctions.join(", ")}</p>
+                )}
+                {migrateResult.updated_env_vars.length > 0 && (
+                  <p className="text-slate-300">✓ 已更新环境变量: {migrateResult.updated_env_vars.join(", ")}</p>
+                )}
+                {migrateResult.updated_path_entries.length > 0 && (
+                  <p className="text-slate-300">✓ 已更新 {migrateResult.updated_path_entries.length} 个 PATH 条目</p>
+                )}
+              </div>
+            )}
 
             <div className="flex items-center justify-between pt-4 border-t border-white/5">
               <div>
-                {success && (
+                {success && !migrateResult?.moved_versions && !migrateResult?.moved_links && (
                   <span className="text-xs font-medium text-emerald-400 flex items-center gap-1.5">
                     <CheckCircle2 className="w-4 h-4" />
-                    路径配置已保存，环境变量已成功同步！
+                    配置已保存
                   </span>
                 )}
               </div>
 
               <button
-                onClick={handleSave}
+                onClick={handleSaveClick}
                 disabled={saving || !versionsDir || !linksDir}
                 className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/10 cursor-pointer transition-all flex items-center gap-1.5"
               >
@@ -213,7 +299,7 @@ export default function GlobalSettings() {
 
         <div className="flex items-center gap-3 text-xs">
           <span className="text-slate-400">当前版本:</span>
-          <span className="font-mono text-slate-200 bg-black/20 px-2 py-0.5 rounded">v1.0.0</span>
+          <span className="font-mono text-slate-200 bg-black/20 px-2 py-0.5 rounded">v{appVersion || "1.0.0"}</span>
         </div>
 
         {updateError && (
@@ -245,21 +331,6 @@ export default function GlobalSettings() {
         )}
       </div>
 
-      {/* 路径迁移说明 */}
-      <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-4">
-        <div className="flex items-center gap-2 pb-3 border-b border-white/5">
-          <FolderKanban className="w-4 h-4 text-blue-400" />
-          <h3 className="text-xs font-semibold text-white">路径迁移</h3>
-        </div>
-        <div className="p-4 bg-amber-500/5 border border-amber-500/15 rounded-xl text-[10px] text-slate-300 leading-relaxed space-y-2">
-          <p className="font-semibold text-amber-300">修改路径后会自动迁移</p>
-          <p>当您修改上方的 SDK 存储目录或链接映射目录并保存后，AnyVersion 会自动：</p>
-          <p>1. 将旧目录下的所有已安装版本文件移动到新目录</p>
-          <p>2. 更新所有 junction 链接的指向</p>
-          <p>3. 更新 PATH 环境变量中的旧路径为新路径</p>
-          <p>整个过程无需手动操作，已安装的 SDK 不会丢失。</p>
-        </div>
-      </div>
     </div>
   );
 }

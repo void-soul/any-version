@@ -6,9 +6,12 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::collections::HashSet;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use crate::commands::config::{load_config, get_base_dir};
+use crate::commands::sdk_resolver::{FindRule, ResolvePattern as ResolverPattern};
+use super::types::ResolvePattern;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  数据结构
@@ -412,25 +415,22 @@ pub fn project_use_version(id: String, version: String) -> Result<(), String> {
 /// 判断它是什么版本并自动识别版本号。
 #[tauri::command]
 pub fn project_register_local(id: String, version: String, local_path: String) -> Result<(), String> {
+    project_register_local_inner(&id, &local_path)
+}
+
+/// 内部注册本地版本（供 project_manage 等调用）
+pub fn project_register_local_inner(id: &str, local_path: &str) -> Result<(), String> {
     let config = load_config();
-    let src = Path::new(&local_path);
+    let src = Path::new(local_path);
     if !src.exists() {
         return Err("本地路径不存在".to_string());
     }
 
-    // 自动识别版本号：如果用户没有指定版本，则尝试从可执行文件获取
-    let effective_version = if version.trim().is_empty() {
-        detect_version_from_path(&id, src)
-            .unwrap_or_else(|| "unknown".to_string())
-    } else {
-        version.trim().to_string()
-    };
+    // 自动识别版本号
+    let effective_version = detect_version_from_path(id, src)
+        .ok_or_else(|| "无法自动识别版本号，请手动指定版本号".to_string())?;
 
-    if effective_version == "unknown" {
-        return Err("无法自动识别版本号，请手动指定版本号".to_string());
-    }
-
-    let dest_dir = Path::new(&config.versions_dir).join(&id).join(&effective_version);
+    let dest_dir = Path::new(&config.versions_dir).join(id).join(&effective_version);
     if dest_dir.exists() {
         return Err(format!("版本 {} 已存在，无需重复添加", effective_version));
     }
@@ -438,14 +438,14 @@ pub fn project_register_local(id: String, version: String, local_path: String) -
     crate::commands::cache::copy_dir_all(src, &dest_dir).map_err(|e| e.to_string())?;
 
     // 首次安装时自动创建 junction
-    let junction_path = Path::new(&config.links_dir).join(&id);
+    let junction_path = Path::new(&config.links_dir).join(id);
     if !junction_path.exists() {
         let _ = crate::commands::cache::create_junction(&junction_path, &dest_dir);
     }
 
     let link_str = junction_path.to_string_lossy().to_string();
     let dest_str = dest_dir.to_string_lossy().to_string();
-    let _ = crate::commands::env::configure_sdk_env_vars(&id, &link_str, &dest_str);
+    let _ = crate::commands::env::configure_sdk_env_vars(id, &link_str, &dest_str);
 
     Ok(())
 }
@@ -525,6 +525,211 @@ fn detect_version_from_path(project_id: &str, path: &Path) -> Option<String> {
 
     // 解析版本号
     parse_version_from_output(project_id, &combined)
+}
+
+/// 自动扫描本地安装（扫描 PATH 和常见安装路径）
+#[derive(Serialize, Clone, Debug)]
+pub struct ScanResult {
+    pub path: String,
+    pub version: String,
+    pub source: String,
+}
+
+#[tauri::command]
+pub fn project_scan_local(id: String) -> Result<Vec<ScanResult>, String> {
+    let def = super::registry::find_by_id(&id)
+        .ok_or_else(|| format!("未找到项目: {}", id))?;
+    let config = load_config();
+    let mut results = Vec::new();
+    let mut seen_roots = std::collections::HashSet::new();
+
+    // 1. 使用 find_rules 检测
+    let resolver_rules: Vec<FindRule> = def.find_rules.iter().map(|r| {
+        let pattern = match &r.pattern {
+            super::types::ResolvePattern::PathContains { path_key, exe_name } => {
+                ResolverPattern::PathContains { keyword: path_key.clone(), exe: exe_name.clone() }
+            }
+            super::types::ResolvePattern::EnvBin { env_var, bin_sub, exe_name } => {
+                ResolverPattern::EnvBin { env: env_var.clone(), bin_sub: bin_sub.clone(), exe: exe_name.clone() }
+            }
+            super::types::ResolvePattern::FixedPath { path, exe_name } => {
+                ResolverPattern::FixedPath { path: path.clone(), exe: exe_name.clone() }
+            }
+        };
+        FindRule { pattern, source_label: r.source_label.clone(), priority: r.priority, root_offset: r.root_offset }
+    }).collect();
+
+    if let Some(location) = crate::commands::sdk_resolver::find_sdk_root(&def.id, &resolver_rules) {
+        let root_str = location.root.to_string_lossy().to_string();
+        let root_normalized = root_str.trim_end_matches('\\').trim_end_matches('/').to_lowercase();
+        if !root_normalized.contains(&config.versions_dir.to_lowercase()) && seen_roots.insert(root_normalized.clone()) {
+            if let Some(detected_ver) = detect_version_from_path(&id, &location.root) {
+                results.push(ScanResult {
+                    path: root_str,
+                    version: detected_ver,
+                    source: location.source.clone(),
+                });
+            }
+        }
+    }
+
+    // 2. 扫描 PATH 中可能遗漏的路径
+    use crate::commands::env::get_registry_env_any;
+    if let Some((path_str, _)) = get_registry_env_any("PATH") {
+        let exe_hints: Vec<&str> = def.find_rules.iter()
+            .filter_map(|r| match &r.pattern {
+                super::types::ResolvePattern::PathContains { exe_name, .. } => Some(exe_name.as_str()),
+                super::types::ResolvePattern::EnvBin { exe_name, .. } => Some(exe_name.as_str()),
+                super::types::ResolvePattern::FixedPath { exe_name, .. } => Some(exe_name.as_str()),
+            })
+            .collect();
+
+        let parts = std::env::split_paths(&path_str);
+        for p in parts {
+            let p_str = p.to_string_lossy().to_string();
+            let p_lower = p_str.to_lowercase();
+            if p_lower.contains(&config.links_dir.to_lowercase()) || p_lower.contains(&config.versions_dir.to_lowercase()) {
+                continue;
+            }
+            for exe_hint in &exe_hints {
+                let exe_path = p.join(exe_hint);
+                if exe_path.exists() {
+                    // 尝试找 SDK 根目录（向上回溯）
+                    let root = find_sdk_root_from_bin_dir(&p, &def.find_rules);
+                    let root_str = root.to_string_lossy().to_string();
+                    let root_normalized = root_str.trim_end_matches('\\').trim_end_matches('/').to_lowercase();
+                    if !root_normalized.contains(&config.versions_dir.to_lowercase())
+                        && seen_roots.insert(root_normalized.clone())
+                    {
+                        if let Some(detected_ver) = detect_version_from_path(&id, &root) {
+                            results.push(ScanResult {
+                                path: root_str,
+                                version: detected_ver,
+                                source: "PATH 扫描".to_string(),
+                            });
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    // 3. 扫描固定常见路径
+    let common_paths: Vec<(&str, &str)> = match id.as_str() {
+        "go" => vec![
+            ("C:\\Go", "默认安装路径"),
+            ("C:\\Program Files\\Go", "默认安装路径"),
+            ("%USERPROFILE%\\go", "用户安装"),
+            ("%USERPROFILE%\\sdk\\go", "SDK 路径"),
+        ],
+        "nodejs" => vec![
+            ("C:\\Program Files\\nodejs", "默认安装路径"),
+            ("%ProgramFiles(x86)%\\nodejs", "32位安装"),
+        ],
+        "python" => vec![
+            ("C:\\Python", "默认安装路径"),
+            ("%LOCALAPPDATA%\\Programs\\Python", "用户安装"),
+            ("%APPDATA%\\Python", "AppData"),
+        ],
+        "java" => vec![
+            ("C:\\Program Files\\Java", "默认安装路径"),
+            ("C:\\Program Files\\Eclipse Adoptium", "Adoptium"),
+            ("C:\\Program Files\\Microsoft", "Microsoft JDK"),
+            ("C:\\Program Files\\Amazon Corretto", "Amazon Corretto"),
+        ],
+        "rust" => vec![
+            ("%USERPROFILE%\\.rustup", "Rustup"),
+            ("%USERPROFILE%\\.cargo", "Cargo"),
+        ],
+        _ => vec![],
+    };
+
+    for (path_template, source) in &common_paths {
+        let expanded = expand_env_vars(path_template);
+        let p = Path::new(&expanded);
+        if p.exists() {
+            let root_or_path = if p.is_dir() && p.read_dir().ok().map_or(false, |mut d| d.next().is_some()) {
+                // 可能是根目录（如 C:\Program Files\Java），扫描子目录
+                if let Ok(entries) = fs::read_dir(&p) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                            let sub_path = entry.path();
+                            let sub_str = sub_path.to_string_lossy().to_string();
+                            let sub_normal = sub_str.trim_end_matches('\\').trim_end_matches('/').to_lowercase();
+                            if !sub_normal.contains(&config.versions_dir.to_lowercase()) && seen_roots.insert(sub_normal.clone()) {
+                                if let Some(detected_ver) = detect_version_from_path(&id, &sub_path) {
+                                    results.push(ScanResult {
+                                        path: sub_str,
+                                        version: detected_ver,
+                                        source: format!("{}/{}", source, entry.file_name().to_string_lossy()),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                continue;
+            } else {
+                p.to_path_buf()
+            };
+
+            let root_str = root_or_path.to_string_lossy().to_string();
+            let root_normal = root_str.trim_end_matches('\\').trim_end_matches('/').to_lowercase();
+            if !root_normal.contains(&config.versions_dir.to_lowercase()) && seen_roots.insert(root_normal) {
+                if let Some(detected_ver) = detect_version_from_path(&id, &root_or_path) {
+                    results.push(ScanResult {
+                        path: root_str,
+                        version: detected_ver,
+                        source: source.to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    // 按版本排序
+    results.sort_by(|a, b| a.version.cmp(&b.version));
+
+    Ok(results)
+}
+
+/// 从 bin 目录向上回溯找到 SDK 根目录
+fn find_sdk_root_from_bin_dir(bin_path: &Path, _find_rules: &[super::types::FindRule]) -> PathBuf {
+    // 简单策略：bin 目录的父目录通常是 SDK 根目录
+    if let Some(file_name) = bin_path.file_name() {
+        if file_name.to_string_lossy().to_lowercase() == "bin" {
+            if let Some(parent) = bin_path.parent() {
+                return parent.to_path_buf();
+            }
+        }
+    }
+    bin_path.to_path_buf()
+}
+
+fn expand_env_vars(s: &str) -> String {
+    let mut result = s.to_string();
+    if result.contains("%USERPROFILE%") {
+        let up = std::env::var("USERPROFILE").unwrap_or_default();
+        result = result.replace("%USERPROFILE%", &up);
+    }
+    if result.contains("%LOCALAPPDATA%") {
+        let la = std::env::var("LOCALAPPDATA").unwrap_or_default();
+        result = result.replace("%LOCALAPPDATA%", &la);
+    }
+    if result.contains("%APPDATA%") {
+        let ad = std::env::var("APPDATA").unwrap_or_default();
+        result = result.replace("%APPDATA%", &ad);
+    }
+    if result.contains("%ProgramFiles%") {
+        let pf = std::env::var("ProgramFiles").unwrap_or_default();
+        result = result.replace("%ProgramFiles%", &pf);
+    }
+    if result.contains("%ProgramFiles(x86)%") {
+        let pf = std::env::var("ProgramFiles(x86)").unwrap_or_default();
+        result = result.replace("%ProgramFiles(x86)%", &pf);
+    }
+    result
 }
 
 /// 从命令输出中解析版本号

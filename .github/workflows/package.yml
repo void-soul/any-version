@@ -1,0 +1,51 @@
+name: 打包发布
+
+# 手动触发，输入版本号后自动更新版本文件、创建 tag 并触发 Release 构建。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '新版本号 (如 1.0.4，不需要 v 前缀)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  bump-and-tag:
+    name: 更新版本号并创建 Tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: 更新版本号
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          echo "更新版本号为: v${VERSION}"
+
+          # 更新 Cargo.toml
+          sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" src-tauri/Cargo.toml
+
+          # 更新 tauri.conf.json
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" src-tauri/tauri.conf.json
+
+          # 更新 package.json
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" package.json
+
+      - name: 提交版本变更
+        run: |
+          git add src-tauri/Cargo.toml src-tauri/tauri.conf.json package.json
+          git commit -m "chore: bump version to v${{ github.event.inputs.version }}"
+          git push origin main
+
+      - name: 创建 Tag
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"

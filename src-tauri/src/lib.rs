@@ -8,6 +8,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::config::get_config,
             commands::config::update_config,
+            commands::config::get_app_version,
             commands::env::scan_environment,
             commands::env::resolve_problems,
             commands::env::create_env_backup,
@@ -43,6 +44,7 @@ pub fn run() {
             commands::project::versions::project_uninstall_version,
             commands::project::versions::project_use_version,
             commands::project::versions::project_register_local,
+            commands::project::versions::project_scan_local,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
