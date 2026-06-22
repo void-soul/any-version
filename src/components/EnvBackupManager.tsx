@@ -11,7 +11,8 @@ import {
   AlertTriangle,
   Search,
   CheckCircle,
-  Info
+  Info,
+  Wrench
 } from "lucide-react";
 
 interface EnvBackup {
@@ -27,6 +28,8 @@ export default function EnvBackupManager() {
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [repairing, setRepairing] = useState(false);
+  const [repairLog, setRepairLog] = useState<string[] | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // Description for new backup
@@ -112,6 +115,22 @@ export default function EnvBackupManager() {
     }
   };
 
+  const handleRepairRegistry = async () => {
+    if (!confirm("此操作将修复注册表中环境变量的类型错误（REG_SZ ↔ REG_EXPAND_SZ）。\n\n这不会修改变量的值，只修正其存储类型。\n\n如果因还原备份导致 PATH 等含 %SystemRoot% 的变量损坏（例如无法打开'高级系统设置'），此修复可以解决。\n\n确定执行修复吗？")) return;
+    setRepairing(true);
+    setRepairLog(null);
+    setRestoreMessage(null);
+    try {
+      const log = await invoke<string[]>("repair_registry_env_types");
+      setRepairLog(log);
+      setRestoreMessage({ text: `修复完成！共处理 ${log.length} 项（详见下方日志）。更改已广播至系统。`, isError: false });
+    } catch (e: any) {
+      setRestoreMessage({ text: `修复失败: ${e}`, isError: true });
+    } finally {
+      setRepairing(false);
+    }
+  };
+
   // Filter variables based on search query
   const getFilteredVars = (vars: Record<string, string>) => {
     if (!searchQuery) return Object.entries(vars);
@@ -148,6 +167,15 @@ export default function EnvBackupManager() {
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
             刷新列表
+          </button>
+
+          <button
+            onClick={handleRepairRegistry}
+            disabled={repairing}
+            className="flex items-center gap-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-amber-500/20 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+          >
+            <Wrench className="w-4 h-4" />
+            {repairing ? "修复中..." : "修复注册表"}
           </button>
         </div>
       </div>
@@ -201,6 +229,37 @@ export default function EnvBackupManager() {
           </div>
         </div>
       )}
+
+      {/* Repair Log */}
+      {repairLog && repairLog.length > 0 && (
+        <div className="glass-panel p-4 rounded-2xl border border-amber-500/20 animate-fadeIn max-h-64 overflow-y-auto">
+          <h4 className="text-xs font-semibold text-amber-300 mb-2 flex items-center gap-1.5">
+            <Wrench className="w-3.5 h-3.5" />
+            修复日志
+          </h4>
+          <div className="space-y-0.5">
+            {repairLog.map((line, i) => {
+              const isError = line.startsWith("❌");
+              const isWarning = line.startsWith("⚠️");
+              const isOk = line.startsWith("OK");
+              const isInfo = line.startsWith("ℹ️");
+              return (
+                <p key={i} className={`text-[10px] leading-relaxed font-mono ${
+                  isError ? "text-red-400" : 
+                  isWarning ? "text-amber-300" : 
+                  isOk ? "text-slate-500" :
+                  isInfo ? "text-blue-300" :
+                  "text-emerald-400"
+                }`}>
+                  {line}
+                </p>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
         {/* Left pane: Backups History */}

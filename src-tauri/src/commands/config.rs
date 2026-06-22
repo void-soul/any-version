@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use serde::{Serialize, Deserialize};
+use tauri::Emitter;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
@@ -76,16 +77,40 @@ pub struct MigrateResult {
     pub updated_env_vars: Vec<String>,
     pub updated_path_entries: Vec<String>,
     pub errors: Vec<String>,
+    /// 迁移后仍在原位置的旧目录（供前端询问是否删除）
+    pub old_dirs_remain: Vec<String>,
+}
+
+/// 迁移进度事件（通过 Tauri emit 发送）
+#[derive(Serialize, Clone, Debug)]
+pub struct MigrateProgress {
+    pub stage: String,       // 当前阶段描述
+    pub current: usize,
+    pub total: usize,
+    pub file_name: String,   // 当前正在处理的文件/目录名
 }
 
 /// 执行存储路径迁移：移动文件、更新 junction、更新环境变量/PATH
+/// app_handle 用于发射进度事件（可选，传 None 则跳过）
 pub fn do_migrate_storage(
     old_versions_dir: &str,
     new_versions_dir: &str,
     old_links_dir: &str,
     new_links_dir: &str,
     managed_items: &std::collections::HashSet<String>,
+    app_handle: Option<&tauri::AppHandle>,
 ) -> MigrateResult {
+    let emit_progress = |stage: &str, current: usize, total: usize, file_name: &str| {
+        if let Some(handle) = app_handle {
+            let _ = handle.emit("migrate-progress", MigrateProgress {
+                stage: stage.to_string(),
+                current,
+                total,
+                file_name: file_name.to_string(),
+            });
+        }
+    };
+
     let mut result = MigrateResult {
         moved_versions: false,
         moved_links: false,
@@ -93,6 +118,7 @@ pub fn do_migrate_storage(
         updated_env_vars: Vec::new(),
         updated_path_entries: Vec::new(),
         errors: Vec::new(),
+        old_dirs_remain: Vec::new(),
     };
 
     let versions_changed = normalize(old_versions_dir) != normalize(new_versions_dir);
@@ -107,56 +133,53 @@ pub fn do_migrate_storage(
         let old_links = Path::new(old_links_dir);
         let new_links = Path::new(new_links_dir);
 
-        // 移动所有 junction 目录
         if old_links.exists() {
             if let Err(e) = fs::create_dir_all(new_links) {
                 result.errors.push(format!("创建新 links 目录失败: {}", e));
             } else {
-                // 先取消所有旧 junction 的 env vars 和 PATH 指向
-                let mut old_path_entries = Vec::new();
-                for item_id in managed_items {
-                    // 记录需要更新的 PATH 条目
-                    let link_path = old_links.join(item_id);
-                    let link_str = link_path.to_string_lossy().to_string();
-                    let bin_paths = crate::commands::env::get_sdk_bin_paths(item_id, &link_str);
-                    for bp in &bin_paths {
-                        old_path_entries.push(bp.clone());
-                    }
-                }
+                // 收集条目列表
+                let entries: Vec<_> = if let Ok(rd) = fs::read_dir(old_links) {
+                    rd.filter_map(|e| e.ok())
+                        .filter(|e| e.path().is_dir() || e.path().is_symlink())
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let total = entries.len();
 
                 // 移动 junction 目录
-                if let Ok(entries) = fs::read_dir(old_links) {
-                    for entry in entries.filter_map(|e| e.ok()) {
-                        let name = entry.file_name();
-                        let old_path = old_links.join(&name);
-                        let new_path = new_links.join(&name);
-                        if old_path.is_dir() || old_path.is_symlink() {
-                            if new_path.exists() {
-                                let _ = fs::remove_dir_all(&new_path);
-                            }
-                            if fs::rename(&old_path, &new_path).is_err() {
-                                // 跨盘符时 rename 会失败，改用复制
-                                if let Err(e) = crate::commands::cache::copy_dir_all(&old_path, &new_path) {
-                                    result.errors.push(format!("复制链接目录 {:?} 失败: {}", e, name));
-                                } else {
-                                    let _ = fs::remove_dir_all(&old_path);
-                                }
-                            }
+                for (i, entry) in entries.iter().enumerate() {
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy().to_string();
+                    emit_progress("移动链接目录", i + 1, total, &name_str);
+
+                    let old_path = old_links.join(&name);
+                    let new_path = new_links.join(&name);
+                    if new_path.exists() {
+                        let _ = fs::remove_dir_all(&new_path);
+                    }
+                    if fs::rename(&old_path, &new_path).is_err() {
+                        if let Err(e) = crate::commands::cache::copy_dir_all_with_progress(
+                            &old_path, &new_path, app_handle,
+                        ) {
+                            result.errors.push(format!("复制链接目录 {:?} 失败: {}", e, name_str));
+                        } else {
+                            let _ = fs::remove_dir_all(&old_path);
                         }
                     }
                 }
                 result.moved_links = true;
 
-                // 重建所有 junction（因为目标路径可能也变了）
-                for item_id in managed_items {
+                // 重建所有 junction
+                let managed_vec: Vec<_> = managed_items.iter().collect();
+                let total_j = managed_vec.len();
+                for (i, item_id) in managed_vec.iter().enumerate() {
+                    emit_progress("重建 junction 链接", i + 1, total_j, item_id);
                     let link_path = new_links.join(item_id);
                     if let Ok(canonical) = fs::canonicalize(&link_path) {
-                        // 获取 junction 实际指向的版本目录名
                         let target_str = canonical.to_string_lossy().to_string()
                             .trim_start_matches(r"\\?\").to_string();
-                        // 如果 versions_dir 也变了，重新计算目标路径
                         let new_target = if versions_changed {
-                            // 从旧目标路径中提取 project_id/version 部分
                             let old_ver_prefix = format!("{}\\{}", normalize(old_versions_dir), item_id);
                             let target_lower = target_str.to_lowercase();
                             if let Some(rel_pos) = target_lower.find(&old_ver_prefix) {
@@ -169,81 +192,81 @@ pub fn do_migrate_storage(
                         } else {
                             target_str
                         };
-
                         let _ = crate::commands::cache::create_junction(&link_path, Path::new(&new_target));
-                        result.recreated_junctions.push(item_id.clone());
+                        result.recreated_junctions.push(item_id.to_string());
                     }
                 }
 
-                // 更新 PATH 中的旧链接路径
+                // ── 重写 PATH 环境变量：删除所有旧 links_dir 相关条目，重新写入所有托管 SDK 的路径 ──
                 if let Some(user_path) = crate::commands::env::get_registry_env("PATH") {
                     let parts: Vec<String> = std::env::split_paths(&user_path)
                         .map(|p| p.to_string_lossy().to_string())
                         .collect();
 
                     let old_links_lower = normalize(old_links_dir);
-                    let mut new_parts = Vec::new();
-                    let mut updated = false;
+                    let new_links_lower = normalize(new_links_dir);
+                    let mut remaining_parts: Vec<String> = Vec::new();
+                    let mut removed_count = 0usize;
 
+                    // 删除所有与软件相关的 PATH 条目（旧 links_dir 和新 links_dir 的都删掉，确保干净重写）
                     for part in &parts {
                         let part_lower = part.to_lowercase();
-                        if part_lower.contains(&old_links_lower) {
-                            let new_part = part_lower.replacen(
-                                &old_links_lower,
-                                &normalize(new_links_dir),
-                                1,
-                            );
-                            // 保持原始大小写
-                            let mut rebuilt = String::new();
-                            let mut old_chars = part.chars();
-                            let mut new_chars = new_part.chars();
-                            loop {
-                                match (old_chars.next(), new_chars.next()) {
-                                    (Some(_), Some(nc)) => rebuilt.push(nc),
-                                    (Some(oc), None) => rebuilt.push(oc),
-                                    _ => break,
-                                }
-                            }
-                            result.updated_path_entries.push(rebuilt.clone());
-                            new_parts.push(rebuilt);
-                            updated = true;
+                        if part_lower.contains(&old_links_lower) || part_lower.contains(&new_links_lower) {
+                            result.updated_path_entries.push(format!("删除: {}", part));
+                            removed_count += 1;
                         } else {
-                            new_parts.push(part.clone());
+                            remaining_parts.push(part.clone());
                         }
                     }
 
-                    if updated {
-                        let new_path = std::env::join_paths(new_parts.iter().map(Path::new))
-                            .map(|e| e.to_string())
-                            .map(|s| s.to_string_lossy().to_string())
-                            .unwrap_or_default();
-                        let _ = crate::commands::env::set_registry_env("PATH", &new_path);
+                    // 重新写入：根据当前托管 SDK 列表生成新的 PATH 条目
+                    use crate::commands::project::scanner;
+                    for item_id in managed_items {
+                        let link_dir = format!("{}\\{}", new_links_dir, item_id);
+                        let bin_paths = scanner::get_bin_paths(item_id, &link_dir);
+                        for bp in &bin_paths {
+                            remaining_parts.push(bp.clone());
+                            result.updated_path_entries.push(format!("添加: {}", bp));
+                        }
+                    }
+
+                    if removed_count > 0 || !managed_items.is_empty() {
+                        emit_progress("重写 PATH 环境变量", 1, 1, "");
+                        if let Ok(new_path) = std::env::join_paths(remaining_parts.iter().map(Path::new)) {
+                            let _ = crate::commands::env::set_registry_env(
+                                "PATH",
+                                &new_path.to_string_lossy().to_string(),
+                            );
+                        }
                     }
                 }
 
-                // 更新注册表中的环境变量
+                // ── 重写注册表环境变量：全部删除旧值，重新写入新值 ──
                 use crate::commands::project::registry;
                 for item_id in managed_items {
                     if let Some(sdk_def) = registry::find_by_id(item_id) {
                         for var_info in &sdk_def.env_vars {
-                            if let Some((val, _)) = crate::commands::env::get_registry_env_any(&var_info.name) {
-                                let val_lower = val.to_lowercase();
-                                if val_lower.contains(&normalize(old_links_dir)) {
-                                    let new_val = val_lower.replacen(
-                                        &normalize(old_links_dir),
-                                        &normalize(new_links_dir),
-                                        1,
-                                    );
-                                    // 恢复原始大小写模式
-                                    let rebuilt = val.replacen(old_links_dir, new_links_dir, 1);
-                                    let _ = crate::commands::env::set_registry_env(&var_info.name, &rebuilt);
-                                    result.updated_env_vars.push(var_info.name.clone());
-                                }
-                            }
+                            // 无条件重写：根据新的 links_dir 计算值
+                            let link_dir = format!("{}\\{}", new_links_dir, item_id);
+                            let value = match var_info.name.as_str() {
+                                "CARGO_HOME"       => format!("{}\\.cargo", link_dir),
+                                "RUSTUP_HOME"      => format!("{}\\.rustup", link_dir),
+                                "ANDROID_SDK_HOME" => format!("{}\\.android", link_dir),
+                                "NPM_CONFIG_PREFIX" => format!("{}\\node_modules", link_dir),
+                                "PGDATA"           => format!("{}\\data", link_dir),
+                                _                  => link_dir.clone(),
+                            };
+                            let _ = crate::commands::env::set_registry_env(&var_info.name, &value);
+                            result.updated_env_vars.push(format!("{} => {}", var_info.name, value));
                         }
                     }
                 }
             }
+        }
+
+        // 记录残留的旧目录
+        if old_links.exists() {
+            result.old_dirs_remain.push(old_links_dir.to_string());
         }
     }
 
@@ -256,23 +279,32 @@ pub fn do_migrate_storage(
             if let Err(e) = fs::create_dir_all(new_versions) {
                 result.errors.push(format!("创建新 versions 目录失败: {}", e));
             } else {
-                // 移动所有项目版本目录
-                if let Ok(entries) = fs::read_dir(old_versions) {
-                    for entry in entries.filter_map(|e| e.ok()) {
-                        let name = entry.file_name();
-                        let old_path = old_versions.join(&name);
-                        let new_path = new_versions.join(&name);
-                        if old_path.is_dir() {
-                            if new_path.exists() {
-                                let _ = fs::remove_dir_all(&new_path);
-                            }
-                            if fs::rename(&old_path, &new_path).is_err() {
-                                if let Err(e) = crate::commands::cache::copy_dir_all(&old_path, &new_path) {
-                                    result.errors.push(format!("复制版本目录 {:?} 失败: {}", e, name));
-                                } else {
-                                    let _ = fs::remove_dir_all(&old_path);
-                                }
-                            }
+                let entries: Vec<_> = if let Ok(rd) = fs::read_dir(old_versions) {
+                    rd.filter_map(|e| e.ok())
+                        .filter(|e| e.path().is_dir())
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let total = entries.len();
+
+                for (i, entry) in entries.iter().enumerate() {
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy().to_string();
+                    emit_progress("移动版本目录", i + 1, total, &name_str);
+
+                    let old_path = old_versions.join(&name);
+                    let new_path = new_versions.join(&name);
+                    if new_path.exists() {
+                        let _ = fs::remove_dir_all(&new_path);
+                    }
+                    if fs::rename(&old_path, &new_path).is_err() {
+                        if let Err(e) = crate::commands::cache::copy_dir_all_with_progress(
+                            &old_path, &new_path, app_handle,
+                        ) {
+                            result.errors.push(format!("复制版本目录 {:?} 失败: {}", e, name_str));
+                        } else {
+                            let _ = fs::remove_dir_all(&old_path);
                         }
                     }
                 }
@@ -281,7 +313,10 @@ pub fn do_migrate_storage(
                 // 如果 links_dir 没变，需要单独重建 junction
                 if !links_changed {
                     let links_path = Path::new(new_links_dir);
-                    for item_id in managed_items {
+                    let managed_vec: Vec<_> = managed_items.iter().collect();
+                    let total_j = managed_vec.len();
+                    for (i, item_id) in managed_vec.iter().enumerate() {
+                        emit_progress("重建 junction 链接", i + 1, total_j, item_id);
                         let link_path = links_path.join(item_id);
                         if let Ok(canonical) = fs::canonicalize(&link_path) {
                             let target_str = canonical.to_string_lossy().to_string()
@@ -293,16 +328,45 @@ pub fn do_migrate_storage(
                                 let rel = rel.trim_start_matches('\\').trim_start_matches('/');
                                 let new_target = format!("{}\\{}\\{}", new_versions_dir, item_id, rel);
                                 let _ = crate::commands::cache::create_junction(&link_path, Path::new(&new_target));
-                                result.recreated_junctions.push(item_id.clone());
+                                result.recreated_junctions.push(item_id.to_string());
                             }
                         }
                     }
                 }
             }
         }
+
+        // 记录残留的旧目录
+        if old_versions.exists() {
+            result.old_dirs_remain.push(old_versions_dir.to_string());
+        }
     }
 
+    // 发送完成事件
+    emit_progress("完成", 1, 1, "");
     result
+}
+
+/// 删除旧的存储目录（迁移后调用）
+#[tauri::command]
+pub fn delete_old_storage_dirs(dirs: Vec<String>) -> Result<Vec<String>, String> {
+    let mut deleted = Vec::new();
+    let mut errors = Vec::new();
+    for dir in &dirs {
+        let path = Path::new(dir);
+        if path.exists() {
+            match fs::remove_dir_all(path) {
+                Ok(()) => deleted.push(dir.clone()),
+                Err(e) => errors.push(format!("删除 {} 失败: {}", dir, e)),
+            }
+        } else {
+            deleted.push(format!("{} (已不存在)", dir));
+        }
+    }
+    if !errors.is_empty() {
+        return Err(errors.join("\n"));
+    }
+    Ok(deleted)
 }
 
 #[tauri::command]
@@ -322,7 +386,7 @@ pub fn get_app_version() -> Result<String, String> {
 ///   2. 更新所有 junction 链接的指向
 ///   3. 更新 PATH 环境变量中的旧路径为新路径
 #[tauri::command]
-pub fn update_config(versions_dir: String, links_dir: String) -> Result<MigrateResult, String> {
+pub fn update_config(app_handle: tauri::AppHandle, versions_dir: String, links_dir: String) -> Result<MigrateResult, String> {
     let old_config = load_config();
     let old_versions_dir = old_config.versions_dir.clone();
     let old_links_dir = old_config.links_dir.clone();
@@ -335,6 +399,7 @@ pub fn update_config(versions_dir: String, links_dir: String) -> Result<MigrateR
         &old_links_dir,
         &links_dir,
         &config.managed_items,
+        Some(&app_handle),
     );
 
     if !result.errors.is_empty() {

@@ -8,6 +8,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::config::get_config,
             commands::config::update_config,
+            commands::config::delete_old_storage_dirs,
             commands::config::get_app_version,
             commands::env::scan_environment,
             commands::env::resolve_problems,
@@ -16,6 +17,7 @@ pub fn run() {
             commands::env::delete_env_backup,
             commands::env::restore_env_backup,
             commands::env::toggle_item_management,
+            commands::env::repair_registry_env_types,
             commands::cache::get_caches_list,
             commands::cache::migrate_cache_path,
             commands::hosts::read_hosts,
@@ -45,6 +47,7 @@ pub fn run() {
             commands::project::versions::project_use_version,
             commands::project::versions::project_register_local,
             commands::project::versions::project_scan_local,
+            commands::project::scoop_manifest::update_projects_from_scoop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

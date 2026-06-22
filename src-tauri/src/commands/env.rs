@@ -122,13 +122,42 @@ pub fn get_registry_env_any(name: &str) -> Option<(String, &'static str)> {
     None
 }
 
+/// 智能写入注册表环境变量：
+/// - 值包含 % 时使用 REG_EXPAND_SZ（支持 %SystemRoot% 等展开）
+/// - 普通字符串使用 REG_SZ
+#[cfg(windows)]
+fn set_registry_value_smart(key: &RegKey, name: &str, value: &str) -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    let is_expandable = value.contains('%');
+    let reg_type = if is_expandable { REG_EXPAND_SZ } else { REG_SZ };
+
+    // 将字符串编码为 UTF-16LE + null terminator，再转为 &[u8]
+    let wide: Vec<u16> = OsStr::new(value)
+        .encode_wide()
+        .chain(std::iter::once(0))  // null terminator
+        .collect();
+    let bytes = unsafe {
+        std::slice::from_raw_parts(
+            wide.as_ptr() as *const u8,
+            wide.len() * std::mem::size_of::<u16>(),
+        )
+    };
+    let reg_value = winreg::RegValue {
+        vtype: reg_type,
+        bytes: bytes.to_vec(),
+    };
+    key.set_raw_value(name, &reg_value).map_err(|e| e.to_string())
+}
+
 pub fn set_registry_env(name: &str, value: &str) -> Result<(), String> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let (env_key, _) = hkcu.create_subkey("Environment").map_err(|e| e.to_string())?;
     if value.is_empty() {
         let _ = env_key.delete_value(name);
     } else {
-        env_key.set_value(name, &value).map_err(|e| e.to_string())?;
+        set_registry_value_smart(&env_key, name, value)?;
     }
     broadcast_setting_change();
     Ok(())
@@ -503,6 +532,13 @@ pub fn get_sdk_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
 }
 
 pub fn add_to_user_path(paths: &[String]) -> Result<(), String> {
+    // 检查已知工具名，避免重复拼接
+    let known_tools = [
+        "nodejs", "bun", "yarn", "pnpm", "nginx", "redis",
+        "go", "java", "flutter", "maven", "gradle", "harmony", "cuda", "ffmpeg",
+        "python", "rust", "android", "mysql", "mongodb", "postgresql",
+    ];
+
     if let Some(user_path) = get_registry_env("PATH") {
         let mut parts = std::env::split_paths(&user_path)
             .map(|p| p.to_string_lossy().to_string())
@@ -511,6 +547,16 @@ pub fn add_to_user_path(paths: &[String]) -> Result<(), String> {
         let mut modified = false;
         for path in paths {
             let path_lower = path.to_lowercase();
+
+            // 防御检查：是否包含重复的工具名（如 ...nodejs\nodejs）
+            for tool in &known_tools {
+                let double = format!("{}{}", tool, tool);
+                let double_sep = format!("{}\\{}", tool, tool);
+                if path_lower.ends_with(&double) || path_lower.ends_with(&double_sep) {
+                    return Err(format!("PATH 条目疑似损坏（重复的工具名）: {}", path));
+                }
+            }
+
             if !parts.iter().any(|p| p.to_lowercase() == path_lower) {
                 parts.push(path.clone());
                 modified = true;
@@ -719,10 +765,9 @@ pub fn create_env_backup(description: String) -> Result<EnvBackup, String> {
     };
 
     let base_dir = crate::commands::config::get_base_dir();
-    let backups_dir = base_dir.join("backups");
-    fs::create_dir_all(&backups_dir).map_err(|e| e.to_string())?;
-
-    let backup_file = backups_dir.join(format!("env_backup_{}.json", backup.id));
+    let backup_dir = base_dir.join("backup");
+    fs::create_dir_all(&backup_dir).map_err(|e| e.to_string())?;
+    let backup_file = backup_dir.join(format!("env_backup_{}.json", backup.id));
     let data = serde_json::to_string_pretty(&backup).map_err(|e| e.to_string())?;
     fs::write(backup_file, data).map_err(|e| e.to_string())?;
 
@@ -732,15 +777,17 @@ pub fn create_env_backup(description: String) -> Result<EnvBackup, String> {
 #[tauri::command]
 pub fn list_env_backups() -> Result<Vec<EnvBackup>, String> {
     let base_dir = crate::commands::config::get_base_dir();
-    let backups_dir = base_dir.join("backups");
-    if !backups_dir.exists() {
+    let backup_dir = base_dir.join("backup");
+    if !backup_dir.exists() {
         return Ok(Vec::new());
     }
 
     let mut list = Vec::new();
-    if let Ok(entries) = fs::read_dir(backups_dir) {
+    if let Ok(entries) = fs::read_dir(&backup_dir) {
         for entry in entries.filter_map(|e| e.ok()) {
-            if entry.path().extension().map(|s| s == "json").unwrap_or(false) {
+            let file_name = entry.file_name();
+            let name = file_name.to_string_lossy();
+            if name.starts_with("env_backup_") && name.ends_with(".json") {
                 if let Ok(content) = fs::read_to_string(entry.path()) {
                     if let Ok(backup) = serde_json::from_str::<EnvBackup>(&content) {
                         list.push(backup);
@@ -758,7 +805,7 @@ pub fn list_env_backups() -> Result<Vec<EnvBackup>, String> {
 #[tauri::command]
 pub fn delete_env_backup(id: String) -> Result<(), String> {
     let base_dir = crate::commands::config::get_base_dir();
-    let backup_file = base_dir.join("backups").join(format!("env_backup_{}.json", id));
+    let backup_file = base_dir.join("backup").join(format!("env_backup_{}.json", id));
     if backup_file.exists() {
         fs::remove_file(backup_file).map_err(|e| e.to_string())?;
     }
@@ -768,7 +815,7 @@ pub fn delete_env_backup(id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn restore_env_backup(id: String) -> Result<(), String> {
     let base_dir = crate::commands::config::get_base_dir();
-    let backup_file = base_dir.join("backups").join(format!("env_backup_{}.json", id));
+    let backup_file = base_dir.join("backup").join(format!("env_backup_{}.json", id));
     if !backup_file.exists() {
         return Err("备份文件不存在".to_string());
     }
@@ -790,7 +837,7 @@ pub fn restore_env_backup(id: String) -> Result<(), String> {
 
     // Restore keys from backup
     for (name, val) in &backup.user_vars {
-        user_key.set_value(name, val).map_err(|e| e.to_string())?;
+        set_registry_value_smart(&user_key, name, val)?;
     }
 
     // 2. Restore System Variables (try, but don't fail if we lack permissions)
@@ -805,7 +852,7 @@ pub fn restore_env_backup(id: String) -> Result<(), String> {
                 }
             }
             for (name, val) in &backup.sys_vars {
-                let _ = sys_key.set_value(name, val);
+                let _ = set_registry_value_smart(&sys_key, name, val);
             }
         }
         Err(_) => {
@@ -946,4 +993,210 @@ pub fn toggle_item_management(id: String, enable: bool, cache_dest: Option<Strin
 
     Ok(())
 }
+
+/// 修复注册表环境变量类型
+/// - 将含 % 的变量从 REG_SZ 转为 REG_EXPAND_SZ
+/// - 将不含 % 的 REG_EXPAND_SZ 转为 REG_SZ
+/// - 检测可能损坏的 PATH 条目
+#[tauri::command]
+pub fn repair_registry_env_types() -> Result<Vec<String>, String> {
+    let mut fixes: Vec<String> = Vec::new();
+
+    // 修复 HKCU\Environment
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    if let Ok(env_key) = hkcu.open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE) {
+        // 先收集所有值名
+        let value_names: Vec<String> = env_key.enum_values()
+            .filter_map(|v| v.ok())
+            .map(|(name, _)| name)
+            .collect();
+
+        for name in &value_names {
+            // 读取原始值的类型和内容
+            let raw: winreg::RegValue = match env_key.get_raw_value(name) {
+                Ok(v) => v,
+                Err(e) => {
+                    fixes.push(format!("  ⚠ 无法读取 {}: {}", name, e));
+                    continue;
+                }
+            };
+
+            let vtype = raw.vtype;
+            // REG_SZ=1, REG_EXPAND_SZ=2
+            let bytes = &raw.bytes;
+
+            // 将 UTF-16LE bytes 解码为 String
+            let value_str = if bytes.len() >= 2 {
+                let u16_count = bytes.len() / 2;
+                let u16_slice: &[u16] = unsafe {
+                    std::slice::from_raw_parts(bytes.as_ptr() as *const u16, u16_count)
+                };
+                // 去掉末尾 null terminator
+                let end = u16_slice.iter().position(|&c| c == 0).unwrap_or(u16_slice.len());
+                String::from_utf16_lossy(&u16_slice[..end])
+            } else {
+                String::new()
+            };
+
+            let has_percent = value_str.contains('%');
+            let correct_type = if has_percent { REG_EXPAND_SZ } else { REG_SZ };
+            let needs_fix = vtype != correct_type;
+
+            // 检测损坏：\t 被解释为 tab、\s 异常、明显乱码
+            let has_tab = value_str.contains('\t');
+            let has_nul = value_str.contains('\0');
+            let suspicious = has_tab || has_nul
+                || (has_percent && value_str.contains("6\\")
+                    && (value_str.contains("6\\Windows") || value_str.contains("6\\system32")));
+
+            if needs_fix {
+                match set_registry_value_smart(&env_key, name, &value_str) {
+                    Ok(()) => {
+                        let from = if vtype == REG_SZ { "REG_SZ" } else if vtype == REG_EXPAND_SZ { "REG_EXPAND_SZ" } else { "其他" };
+                        let to = if correct_type == REG_EXPAND_SZ { "REG_EXPAND_SZ" } else { "REG_SZ" };
+                        fixes.push(format!("✅ [HKCU] {}: {} → {}", name, from, to));
+                    }
+                    Err(e) => {
+                        fixes.push(format!("❌ [HKCU] 修复 {} 失败: {}", name, e));
+                    }
+                }
+            } else {
+                fixes.push(format!("OK [HKCU] {} (类型正确)", name));
+            }
+
+            if suspicious {
+                fixes.push(format!("⚠️ [HKCU] {} 可能已损坏! 当前值前 120 字符: {}", name, &value_str[..value_str.len().min(120)]));
+            }
+        }
+    } else {
+        fixes.push("无法访问 HKCU\\Environment (权限不足?)".to_string());
+    }
+
+    // 尝试修复 HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment (需要管理员权限)
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    if let Ok(env_key) = hklm.open_subkey_with_flags(
+        "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+        KEY_READ | KEY_WRITE,
+    ) {
+        let value_names: Vec<String> = env_key.enum_values()
+            .filter_map(|v| v.ok())
+            .map(|(name, _)| name)
+            .collect();
+
+        for name in &value_names {
+            let raw: winreg::RegValue = match env_key.get_raw_value(name) {
+                Ok(v) => v,
+                Err(e) => {
+                    fixes.push(format!("  ⚠ 无法读取 HKLM {}: {}", name, e));
+                    continue;
+                }
+            };
+
+            let vtype = raw.vtype;
+            let bytes = &raw.bytes;
+            let value_str = if bytes.len() >= 2 {
+                let u16_count = bytes.len() / 2;
+                let u16_slice: &[u16] = unsafe {
+                    std::slice::from_raw_parts(bytes.as_ptr() as *const u16, u16_count)
+                };
+                let end = u16_slice.iter().position(|&c| c == 0).unwrap_or(u16_slice.len());
+                String::from_utf16_lossy(&u16_slice[..end])
+            } else {
+                String::new()
+            };
+
+            let has_percent = value_str.contains('%');
+            let correct_type = if has_percent { REG_EXPAND_SZ } else { REG_SZ };
+            let needs_fix = vtype != correct_type;
+
+            if needs_fix {
+                match set_registry_value_smart(&env_key, name, &value_str) {
+                    Ok(()) => {
+                        let from = if vtype == REG_SZ { "REG_SZ" } else { "REG_EXPAND_SZ" };
+                        let to = if correct_type == REG_EXPAND_SZ { "REG_EXPAND_SZ" } else { "REG_SZ" };
+                        fixes.push(format!("✅ [HKLM] {}: {} → {}", name, from, to));
+                    }
+                    Err(e) => {
+                        fixes.push(format!("❌ [HKLM] 修复 {} 失败: {}", name, e));
+                    }
+                }
+            }
+        }
+    } else {
+        fixes.push("ℹ️ 无法写入 HKLM (需要管理员权限，已跳过)".to_string());
+    }
+
+    // ── PATH 内容清理：检测并修复损坏的条目 ──
+    let known_tools = [
+        "nodejs", "bun", "yarn", "pnpm", "nginx", "redis",
+        "go", "java", "flutter", "maven", "gradle", "harmony", "cuda", "ffmpeg",
+        "python", "rust", "android", "mysql", "mongodb", "postgresql",
+    ];
+
+    fixes.push("".to_string());
+    fixes.push("── PATH 内容检查 ──".to_string());
+
+    if let Some(path_val) = get_registry_env("PATH") {
+        let parts: Vec<String> = std::env::split_paths(&path_val)
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+        let mut cleaned_parts = parts.clone();
+        let mut path_modified = false;
+
+        for (i, part) in parts.iter().enumerate() {
+            let lower = part.to_lowercase();
+
+            // 检测重复的工具名（如 nodejsnodejs）
+            for tool in &known_tools {
+                let double = format!("{}{}", tool, tool);
+                let double_no_sep = format!("{}{}", tool, tool);
+
+                if lower.ends_with(&double_no_sep) && !lower.contains(&double) {
+                    // 尝试修复：去掉末尾重复的工具名
+                    let fixed = part[..part.len() - tool.len()].to_string();
+                    fixes.push(format!(
+                        "🔧 PATH[{}] 检测到重复的工具名 {}:<待修复> => 修复为: {}",
+                        i, tool, fixed
+                    ));
+                    cleaned_parts[i] = fixed;
+                    path_modified = true;
+                } else if lower.contains(&double) {
+                    // 更严重：中间的重复
+                    fixes.push(format!(
+                        "⚠️ PATH[{}] 含重复路径段 {}{}: {}",
+                        i, tool, tool, part
+                    ));
+                }
+            }
+
+            // 检测无意义短条目
+            if part.len() <= 3 && !part.contains(':') {
+                fixes.push(format!("⚠️ PATH[{}] 疑似损坏的短条目: '{}'", i, part));
+            }
+        }
+
+        if path_modified {
+            match std::env::join_paths(cleaned_parts.iter().map(Path::new)) {
+                Ok(new_path) => {
+                    let new_str = new_path.to_string_lossy().to_string();
+                    if let Err(e) = set_registry_env("PATH", &new_str) {
+                        fixes.push(format!("❌ 写入修复后的 PATH 失败: {}", e));
+                    } else {
+                        fixes.push("✅ PATH 条目已自动修复".to_string());
+                    }
+                }
+                Err(e) => {
+                    fixes.push(format!("❌ 重新拼接 PATH 失败: {}", e));
+                }
+            }
+        } else {
+            fixes.push("OK PATH 条目未发现明显损坏".to_string());
+        }
+    }
+
+    broadcast_setting_change();
+    Ok(fixes)
+}
+
+
 

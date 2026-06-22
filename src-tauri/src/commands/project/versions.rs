@@ -39,9 +39,12 @@ pub async fn project_list_remote_versions(id: String) -> Result<Vec<String>, Str
     let config = def.remote_versions_config.as_ref()
         .ok_or_else(|| format!("未配置远程版本: {}", id))?;
 
+    // connect_timeout: 仅限制建立连接的超时（15s），不限制请求总时长
+    // 对 GitHub API 等有时候很慢的接口更友好
     let client = reqwest::Client::builder()
         .user_agent("Any-Version-Manager")
-        .timeout(std::time::Duration::from_secs(15))
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -79,74 +82,114 @@ async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, ur
     let reverse = config.get("reverse").and_then(|v| v.as_bool()).unwrap_or(false);
     let extra_field = config.get("extra_field").and_then(|v| v.as_str());
 
-    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
-    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-
-    let items: Vec<serde_json::Value> = match response_type {
-        "array" => body.as_array().cloned().unwrap_or_default(),
-        "object_with_array" => {
-            let arr_field = config.get("array_field").and_then(|v| v.as_str()).unwrap_or("versions");
-            body.get(arr_field).and_then(|v| v.as_array()).cloned().unwrap_or_default()
+    // 带重试的请求（最多 3 次，指数退避：1s, 2s, 4s）
+    let mut last_error = String::new();
+    for attempt in 0..3 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(1 << (attempt - 1))).await;
         }
-        "object_with_nested_array" => {
-            let arr_field = config.get("array_field").and_then(|v| v.as_str()).unwrap_or("releases");
-            body.get(arr_field).and_then(|v| v.as_array()).cloned().unwrap_or_default()
-        }
-        _ => return Err(format!("不支持的 response_type: {}", response_type)),
-    };
-
-    let mut versions: Vec<String> = Vec::new();
-    for item in &items {
-        if let Some(ff) = filter_field {
-            if let Some(fv) = filter_value {
-                let item_val = item.get(ff);
-                if let Some(fv_bool) = fv.as_bool() {
-                    if item_val.and_then(|v| v.as_bool()).unwrap_or(false) != fv_bool { continue; }
-                } else if let Some(fv_str) = fv.as_str() {
-                    if item_val.and_then(|v| v.as_str()).unwrap_or("") != fv_str { continue; }
-                }
+        let resp = match client.get(url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                last_error = format!("网络请求失败: {}", e);
+                continue;
             }
+        };
+        // 检查 HTTP 状态码
+        let status = resp.status();
+        if !status.is_success() {
+            last_error = format!("HTTP {} ({}), 可能是 API 限流或网络问题", status.as_u16(), status.canonical_reason().unwrap_or("未知"));
+            continue;
         }
-
-        let raw_version = if response_type == "object_with_array" {
-            item.as_str().map(String::from).unwrap_or_default()
-        } else {
-            item.get(version_field).and_then(|v| {
-                if v.is_string() { v.as_str().map(String::from) }
-                else if v.is_array() {
-                    Some(v.as_array().unwrap().iter().map(|n| n.to_string()).collect::<Vec<_>>().join("."))
-                } else { Some(v.to_string()) }
-            }).unwrap_or_default()
+        // 读取响应文本，便于在解析失败时输出诊断信息
+        let resp_text = match resp.text().await {
+            Ok(t) => t,
+            Err(e) => {
+                last_error = format!("读取响应体失败: {}", e);
+                continue;
+            }
+        };
+        let body: serde_json::Value = match serde_json::from_str(&resp_text) {
+            Ok(v) => v,
+            Err(e) => {
+                // 截取前 200 字符帮助诊断
+                let preview: String = resp_text.chars().take(200).collect();
+                last_error = format!("JSON 解析失败: {}，响应预览: {}", e, preview);
+                continue;
+            }
         };
 
-        if raw_version.is_empty() { continue; }
-        if let Some(fc) = filter_contains_not {
-            if raw_version.contains(fc) { continue; }
-        }
+        let items: Vec<serde_json::Value> = match response_type {
+            "array" => body.as_array().cloned().unwrap_or_default(),
+            "object_with_array" => {
+                let arr_field = config.get("array_field").and_then(|v| v.as_str()).unwrap_or("versions");
+                body.get(arr_field).and_then(|v| v.as_array()).cloned().unwrap_or_default()
+            }
+            "object_with_nested_array" => {
+                let arr_field = config.get("array_field").and_then(|v| v.as_str()).unwrap_or("releases");
+                body.get(arr_field).and_then(|v| v.as_array()).cloned().unwrap_or_default()
+            }
+            _ => {
+                last_error = format!("不支持的 response_type: {}", response_type);
+                continue;
+            }
+        };
 
-        let mut ver = apply_transform(&raw_version, version_transform);
+        let mut versions: Vec<String> = Vec::new();
+        for item in &items {
+            if let Some(ff) = filter_field {
+                if let Some(fv) = filter_value {
+                    let item_val = item.get(ff);
+                    if let Some(fv_bool) = fv.as_bool() {
+                        if item_val.and_then(|v| v.as_bool()).unwrap_or(false) != fv_bool { continue; }
+                    } else if let Some(fv_str) = fv.as_str() {
+                        if item_val.and_then(|v| v.as_str()).unwrap_or("") != fv_str { continue; }
+                    }
+                }
+            }
 
-        if let Some(ef) = extra_field {
-            if let Some(extra_val) = item.get(ef) {
-                let extra_format = config.get("extra_format").and_then(|v| v.as_str()).unwrap_or("");
-                if extra_format == "lts_label" {
-                    if extra_val.is_boolean() && extra_val.as_bool().unwrap_or(false) {
-                        ver = format!("{} (LTS)", ver);
-                    } else if extra_val.is_string() {
-                        let lts_name = extra_val.as_str().unwrap_or("");
-                        if !lts_name.is_empty() && lts_name != "false" {
-                            ver = format!("{} (LTS: {})", ver, lts_name);
+            let raw_version = if response_type == "object_with_array" {
+                item.as_str().map(String::from).unwrap_or_default()
+            } else {
+                item.get(version_field).and_then(|v| {
+                    if v.is_string() { v.as_str().map(String::from) }
+                    else if v.is_array() {
+                        Some(v.as_array().unwrap().iter().map(|n| n.to_string()).collect::<Vec<_>>().join("."))
+                    } else { Some(v.to_string()) }
+                }).unwrap_or_default()
+            };
+
+            if raw_version.is_empty() { continue; }
+            if let Some(fc) = filter_contains_not {
+                if raw_version.contains(fc) { continue; }
+            }
+
+            let mut ver = apply_transform(&raw_version, version_transform);
+
+            if let Some(ef) = extra_field {
+                if let Some(extra_val) = item.get(ef) {
+                    let extra_format = config.get("extra_format").and_then(|v| v.as_str()).unwrap_or("");
+                    if extra_format == "lts_label" {
+                        if extra_val.is_boolean() && extra_val.as_bool().unwrap_or(false) {
+                            ver = format!("{} (LTS)", ver);
+                        } else if extra_val.is_string() {
+                            let lts_name = extra_val.as_str().unwrap_or("");
+                            if !lts_name.is_empty() && lts_name != "false" {
+                                ver = format!("{} (LTS: {})", ver, lts_name);
+                            }
                         }
                     }
                 }
             }
+            versions.push(ver);
         }
-        versions.push(ver);
+
+        if reverse { versions.reverse(); }
+        versions.truncate(max_count);
+        return Ok(versions);
     }
 
-    if reverse { versions.reverse(); }
-    versions.truncate(max_count);
-    Ok(versions)
+    Err(last_error)
 }
 
 async fn fetch_multi_source(client: &reqwest::Client, config: &serde_json::Value) -> Result<Vec<String>, String> {
@@ -259,7 +302,10 @@ pub async fn project_install_version(app: AppHandle, id: String, version: String
     let def = super::registry::find_by_id(&id)
         .ok_or_else(|| format!("未找到项目: {}", id))?;
     let config = load_config();
-    let (download_url, file_ext) = get_download_url(&id, &version)?;
+
+    let dl_info = get_download_url(&id, &version)?;
+    let download_url = dl_info.url;
+    let file_ext = dl_info.file_ext;
 
     // 1. 创建临时目录
     let (temp_dir, cleanup) = setup_temp_dir(&id)?;
@@ -285,15 +331,18 @@ pub async fn project_install_version(app: AppHandle, id: String, version: String
 
     // 3. 解压
     let extract_dir = temp_dir.join("extracted");
-    let ext_result = if file_ext == "tar.gz" {
-        extract_tar_gz(&archive_path, &extract_dir)
-    } else if file_ext == "exe" {
-        fs::create_dir_all(&extract_dir).map_err(|e| e.to_string())?;
-        fs::copy(&archive_path, extract_dir.join(format!("{}.exe", id)))
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    } else {
-        unzip_file(&archive_path, &extract_dir)
+    let ext_result = match file_ext.as_str() {
+        "tar.gz" | "tgz" => extract_tar_gz(&archive_path, &extract_dir),
+        "tar.xz" => extract_tar_xz(&archive_path, &extract_dir),
+        "tar.bz2" => extract_tar_bz2(&archive_path, &extract_dir),
+        "msi" => extract_msi(&archive_path, &extract_dir),
+        "exe" => {
+            fs::create_dir_all(&extract_dir).map_err(|e| e.to_string())?;
+            fs::copy(&archive_path, extract_dir.join(format!("{}.exe", id)))
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        }
+        _ => unzip_file(&archive_path, &extract_dir),
     };
 
     if let Err(e) = ext_result {
@@ -304,8 +353,8 @@ pub async fn project_install_version(app: AppHandle, id: String, version: String
     // 4. 安装到 versions_dir
     let dest_dir = Path::new(&config.versions_dir).join(&id).join(&version);
 
-    // 使用 JSON 配置的 extract_subdir
-    let extract_subdir = def.extract_subdir.as_deref().unwrap_or("");
+    // 使用 scoop 推导的 extract_subdir 或 JSON 配置
+    let extract_subdir = dl_info.extract_subdir.as_deref().unwrap_or("");
     let src_dir = if !extract_subdir.is_empty() {
         extract_dir.join(extract_subdir)
     } else {
@@ -573,17 +622,18 @@ pub fn project_scan_local(id: String) -> Result<Vec<ScanResult>, String> {
         }
     }
 
+    // 预收集可执行文件名线索（供后续 PATH 扫描和 where 命令使用）
+    let exe_hints: Vec<&str> = def.find_rules.iter()
+        .filter_map(|r| match &r.pattern {
+            super::types::ResolvePattern::PathContains { exe_name, .. } => Some(exe_name.as_str()),
+            super::types::ResolvePattern::EnvBin { exe_name, .. } => Some(exe_name.as_str()),
+            super::types::ResolvePattern::FixedPath { exe_name, .. } => Some(exe_name.as_str()),
+        })
+        .collect();
+
     // 2. 扫描 PATH 中可能遗漏的路径
     use crate::commands::env::get_registry_env_any;
     if let Some((path_str, _)) = get_registry_env_any("PATH") {
-        let exe_hints: Vec<&str> = def.find_rules.iter()
-            .filter_map(|r| match &r.pattern {
-                super::types::ResolvePattern::PathContains { exe_name, .. } => Some(exe_name.as_str()),
-                super::types::ResolvePattern::EnvBin { exe_name, .. } => Some(exe_name.as_str()),
-                super::types::ResolvePattern::FixedPath { exe_name, .. } => Some(exe_name.as_str()),
-            })
-            .collect();
-
         let parts = std::env::split_paths(&path_str);
         for p in parts {
             let p_str = p.to_string_lossy().to_string();
@@ -615,7 +665,43 @@ pub fn project_scan_local(id: String) -> Result<Vec<ScanResult>, String> {
         }
     }
 
-    // 3. 扫描固定常见路径
+    // 3. 使用 where 命令扫描（Windows 内置命令，从 XP 起即自带）
+    //    where <exe> 会输出所有在 PATH 中的可执行文件完整路径
+    if let Some(exe_name) = exe_hints.first().copied() {
+        let where_result = super::super::hidden_cmd::hidden_cmd("where")
+            .arg(exe_name)
+            .output();
+
+        if let Ok(output) = where_result {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() { continue; }
+                    let exe_path = Path::new(trimmed);
+                    if let Some(parent) = exe_path.parent() {
+                        let root = find_sdk_root_from_bin_dir(parent, &def.find_rules);
+                        let root_str = root.to_string_lossy().to_string();
+                        let root_normalized = root_str.trim_end_matches('\\').trim_end_matches('/').to_lowercase();
+                        if !root_normalized.contains(&config.versions_dir.to_lowercase())
+                            && !root_normalized.contains(&config.links_dir.to_lowercase())
+                            && seen_roots.insert(root_normalized.clone())
+                        {
+                            if let Some(detected_ver) = detect_version_from_path(&id, &root) {
+                                results.push(ScanResult {
+                                    path: root_str,
+                                    version: detected_ver,
+                                    source: "where 命令扫描".to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. 扫描固定常见路径
     let common_paths: Vec<(&str, &str)> = match id.as_str() {
         "go" => vec![
             ("C:\\Go", "默认安装路径"),
@@ -683,6 +769,94 @@ pub fn project_scan_local(id: String) -> Result<Vec<ScanResult>, String> {
                         version: detected_ver,
                         source: source.to_string(),
                     });
+                }
+            }
+        }
+    }
+
+    // 5. 系统进程检查：如果工具正在运行，从进程路径逆推 SDK 根目录
+    {
+        let mut system = sysinfo::System::new();
+        system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+        for (_pid, process) in system.processes() {
+            let proc_name = process.name().to_string_lossy().to_lowercase();
+            for exe_hint in &exe_hints {
+                let hint_lower = exe_hint.to_lowercase();
+                if proc_name == hint_lower {
+                    if let Some(exe_path) = process.exe() {
+                        if let Some(bin_dir) = exe_path.parent() {
+                            let root = find_sdk_root_from_bin_dir(bin_dir, &def.find_rules);
+                            let root_str = root.to_string_lossy().to_string();
+                            let root_normalized = root_str.trim_end_matches('\\').trim_end_matches('/').to_lowercase();
+                            if !root_normalized.contains(&config.versions_dir.to_lowercase())
+                                && !root_normalized.contains(&config.links_dir.to_lowercase())
+                                && seen_roots.insert(root_normalized.clone())
+                            {
+                                if let Some(detected_ver) = detect_version_from_path(&id, &root) {
+                                    results.push(ScanResult {
+                                        path: root_str,
+                                        version: detected_ver,
+                                        source: format!("进程扫描 ({})", process.name().to_string_lossy()),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    break; // 同一个 exe_hint 只匹配一次
+                }
+            }
+        }
+    }
+
+    // 6. 系统服务检查：扫描注册表 HKLM\SYSTEM\CurrentControlSet\Services 找到相关 SDK
+    if cfg!(windows) {
+        use winreg::enums::*;
+        use winreg::RegKey;
+        if let Ok(hklm) = RegKey::predef(HKEY_LOCAL_MACHINE)
+            .open_subkey_with_flags(
+                r"SYSTEM\CurrentControlSet\Services",
+                KEY_READ,
+            )
+        {
+            // 遍历所有服务子键，检查 ImagePath
+            for service_name in hklm.enum_keys().filter_map(|k| k.ok()) {
+                if let Ok(svc_key) = hklm.open_subkey_with_flags(&service_name, KEY_READ) {
+                    if let Ok(image_path) = svc_key.get_value::<String, _>("ImagePath") {
+                        let image_lower = image_path.to_lowercase();
+                        for exe_hint in &exe_hints {
+                            let hint_lower = exe_hint.to_lowercase();
+                            if image_lower.contains(&hint_lower) {
+                                // 提取 exe 路径
+                                let clean = image_path
+                                    .trim_matches('"')
+                                    .split_whitespace()
+                                    .next()
+                                    .unwrap_or("");
+                                if clean.is_empty() {
+                                    continue;
+                                }
+                                let exe = Path::new(clean);
+                                if let Some(bin_dir) = exe.parent() {
+                                    let root = find_sdk_root_from_bin_dir(bin_dir, &def.find_rules);
+                                    let root_str = root.to_string_lossy().to_string();
+                                    let root_normalized = root_str.trim_end_matches('\\').trim_end_matches('/').to_lowercase();
+                                    if !root_normalized.contains(&config.versions_dir.to_lowercase())
+                                        && !root_normalized.contains(&config.links_dir.to_lowercase())
+                                        && seen_roots.insert(root_normalized.clone())
+                                    {
+                                        if let Some(detected_ver) = detect_version_from_path(&id, &root) {
+                                            results.push(ScanResult {
+                                                path: root_str,
+                                                version: detected_ver,
+                                                source: format!("服务扫描 ({})", service_name),
+                                            });
+                                        }
+                                    }
+                                }
+                                break; // 每个服务只匹配第一个 exe_hint
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -890,6 +1064,41 @@ fn extract_tar_gz(src: &Path, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// 提取 tar.xz 归档（需要 xz2 依赖）
+fn extract_tar_xz(src: &Path, dest: &Path) -> Result<(), String> {
+    let file = fs::File::open(src).map_err(|e| e.to_string())?;
+    let decoder = xz2::read::XzDecoder::new(file);
+    let mut archive = tar::Archive::new(decoder);
+    archive.unpack(dest).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 提取 tar.bz2 归档（需要 bzip2 依赖）
+fn extract_tar_bz2(src: &Path, dest: &Path) -> Result<(), String> {
+    let file = fs::File::open(src).map_err(|e| e.to_string())?;
+    let decoder = bzip2::read::BzDecoder::new(file);
+    let mut archive = tar::Archive::new(decoder);
+    archive.unpack(dest).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 提取 MSI 安装包（使用 msiexec /a 行政安装）
+fn extract_msi(src: &Path, dest: &Path) -> Result<(), String> {
+    fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    let dest_str = dest.to_string_lossy().to_string();
+    let src_str = src.to_string_lossy().to_string();
+
+    let output = crate::commands::hidden_cmd::hidden_cmd("msiexec")
+        .args(["/a", &src_str, "/qn", &format!("TARGETDIR={}", dest_str)])
+        .output()
+        .map_err(|e| format!("msiexec 执行失败: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!("MSI 提取失败，退出码: {:?}", output.status.code()));
+    }
+    Ok(())
+}
+
 /// 将解压后的内容移动到目标目录
 fn move_extract_to_dest(extracted_dir: &Path, dest_dir: &Path) -> Result<(), String> {
     let entries = fs::read_dir(extracted_dir).map_err(|e| e.to_string())?
@@ -930,13 +1139,15 @@ where
     F: Fn(u64, u64),
 {
     use futures_util::StreamExt;
+    // 下载大文件（如 Rust 200MB+）时不应有短超时
+    // connect_timeout 仅限制建立连接的时间，不限制下载总时长
     let client = reqwest::Client::builder()
         .user_agent("Any-Version-Manager")
-        .timeout(std::time::Duration::from_secs(15))
+        .connect_timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())?;
 
-    let res = client.get(url).send().await.map_err(|e| e.to_string())?;
+    let res = client.get(url).send().await.map_err(|e| format!("下载请求失败: {}", e))?;
     if !res.status().is_success() {
         return Err(format!("HTTP 请求失败，状态码: {}", res.status()));
     }
@@ -957,7 +1168,13 @@ where
 }
 
 /// 获取下载 URL 和文件扩展名
-fn get_download_url(project_id: &str, version: &str) -> Result<(String, String), String> {
+struct DownloadInfo {
+    url: String,
+    file_ext: String,
+    extract_subdir: Option<String>,
+}
+
+fn get_download_url(project_id: &str, version: &str) -> Result<DownloadInfo, String> {
     let def = super::registry::find_by_id(project_id)
         .ok_or_else(|| format!("未找到项目: {}", project_id))?;
 
@@ -966,29 +1183,39 @@ fn get_download_url(project_id: &str, version: &str) -> Result<(String, String),
 
     // 1. 优先按版本前缀映射（如 java: adoptium-/microsoft-/oracle-/zulu-）
     if let Some(ref prefix_map) = def.version_prefix_map {
+        let major_version = version_clean.split('.').next().unwrap_or("0");
         for (prefix, template) in prefix_map {
             if version.starts_with(prefix) {
                 let ver = version.trim_start_matches(prefix);
-                let url = template.replace("{ver}", ver).replace("{version}", version_clean);
-                return Ok((url, file_ext));
+                let url = template
+                    .replace("{ver}", ver)
+                    .replace("{version}", version_clean)
+                    .replace("{majorVersion}", major_version);
+                return Ok(DownloadInfo { url, file_ext, extract_subdir: def.extract_subdir.clone() });
             }
         }
     }
 
     // 2. 按版本号前缀映射（如 mysql: 5.7/8.0/8.4）
     if let Some(ref url_prefix_map) = def.version_url_prefix_map {
+        let major_version = version_clean.split('.').next().unwrap_or("0");
         for (ver_prefix, template) in url_prefix_map {
             if version_clean.starts_with(ver_prefix) {
-                let url = template.replace("{version}", version_clean);
-                return Ok((url, file_ext));
+                let url = template
+                    .replace("{version}", version_clean)
+                    .replace("{majorVersion}", major_version);
+                return Ok(DownloadInfo { url, file_ext, extract_subdir: def.extract_subdir.clone() });
             }
         }
     }
 
-    // 3. 使用通用 download_url_template
+    // 3. 使用通用 download_url_template（由 Scoop 更新或手动定义）
     if let Some(ref template) = def.download_url_template {
-        let url = template.replace("{version}", version_clean);
-        return Ok((url, file_ext));
+        let major_version = version_clean.split('.').next().unwrap_or("0");
+        let url = template
+            .replace("{version}", version_clean)
+            .replace("{majorVersion}", major_version);
+        return Ok(DownloadInfo { url, file_ext, extract_subdir: def.extract_subdir.clone() });
     }
 
     Err(format!("未配置下载地址: {}", project_id))

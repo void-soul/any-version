@@ -439,7 +439,20 @@ fn build_service_status(def: &ProjectDef, junction_path: &Path) -> Option<Servic
 }
 
 /// 获取 SDK 的可执行目录列表（用于 PATH 管理）
+/// 优先使用 projects.json 中由 Scoop 更新或手动定义的 bin_dirs 字段
 pub fn get_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
+    // ── 优先从 ProjectDef.bin_dirs 读取 ──
+    if let Some(def) = registry::find_by_id(sdk_id) {
+        if let Some(ref bin_dirs) = def.bin_dirs {
+            if !bin_dirs.is_empty() {
+                return bin_dirs.iter()
+                    .map(|d| format!("{}\\{}", link_dir, d))
+                    .collect();
+            }
+        }
+    }
+
+    // ── 硬编码 fallback（无 bin_dirs 定义时） ──
     match sdk_id {
         "go" | "java" | "flutter" | "maven" | "gradle" | "harmony" | "cuda" | "ffmpeg" => {
             vec![format!("{}\\bin", link_dir)]
@@ -460,7 +473,7 @@ pub fn get_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
             vec![link_dir.to_string()]
         }
         "mysql" | "mongodb" | "postgresql" => {
-                  vec![format!("{}\\bin", link_dir)]
+            vec![format!("{}\\bin", link_dir)]
         }
         _ => vec![link_dir.to_string()],
     }

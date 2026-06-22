@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { 
   FolderKanban, 
   Save, 
@@ -8,7 +9,12 @@ import {
   CheckCircle2,
   ExternalLink,
   FolderOpen,
-  AlertTriangle
+  AlertTriangle,
+  Trash2,
+  Loader2,
+  FileText,
+  Download,
+  Database
 } from "lucide-react";
 
 interface Config {
@@ -23,6 +29,28 @@ interface MigrateResult {
   updated_env_vars: string[];
   updated_path_entries: string[];
   errors: string[];
+  old_dirs_remain: string[];
+}
+
+interface MigrateProgress {
+  stage: string;
+  current: number;
+  total: number;
+  file_name: string;
+}
+
+interface ScoopUpdateEntry {
+  id: string;
+  display_name: string;
+  error?: string;
+}
+
+interface ScoopUpdateReport {
+  success: boolean;
+  total: number;
+  updated: ScoopUpdateEntry[];
+  skipped: ScoopUpdateEntry[];
+  failed: ScoopUpdateEntry[];
 }
 
 export default function GlobalSettings() {
@@ -40,6 +68,12 @@ export default function GlobalSettings() {
   const [updateBody, setUpdateBody] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState("");
+  const [progress, setProgress] = useState<MigrateProgress | null>(null);
+  const [deletingOldDirs, setDeletingOldDirs] = useState(false);
+  const [deletedOldDirs, setDeletedOldDirs] = useState<string[] | null>(null);
+  const [scoopUpdating, setScoopUpdating] = useState(false);
+  const [scoopReport, setScoopReport] = useState<ScoopUpdateReport | null>(null);
+  const [scoopError, setScoopError] = useState<string | null>(null);
 
   const fetchConfig = async () => {
     setLoading(true);
@@ -92,6 +126,14 @@ export default function GlobalSettings() {
     setSuccess(false);
     setMigrateResult(null);
     setShowMigrateConfirm(false);
+    setDeletedOldDirs(null);
+    setProgress(null);
+
+    // 监听进度事件
+    const unlisten = await listen<MigrateProgress>("migrate-progress", (event) => {
+      setProgress(event.payload);
+    });
+
     try {
       const result = await invoke<MigrateResult>("update_config", { versionsDir, linksDir });
       setMigrateResult(result);
@@ -100,7 +142,27 @@ export default function GlobalSettings() {
     } catch (e: any) {
       alert(`保存配置失败: ${e}`);
     } finally {
+      unlisten();
+      setProgress(null);
       setSaving(false);
+    }
+  };
+
+  const handleDeleteOldDirs = async () => {
+    if (!migrateResult?.old_dirs_remain?.length) return;
+    if (!confirm(`确定要删除以下旧目录吗？\n\n${migrateResult.old_dirs_remain.join("\n")}\n\n删除后无法恢复！`)) return;
+    setDeletingOldDirs(true);
+    try {
+      const deleted = await invoke<string[]>("delete_old_storage_dirs", {
+        dirs: migrateResult.old_dirs_remain,
+      });
+      setDeletedOldDirs(deleted);
+      // 清除残留目录列表
+      setMigrateResult({ ...migrateResult, old_dirs_remain: [] });
+    } catch (e: any) {
+      alert(`删除失败: ${e}`);
+    } finally {
+      setDeletingOldDirs(false);
     }
   };
 
@@ -138,6 +200,20 @@ export default function GlobalSettings() {
       if (selected) setter(selected as string);
     } catch {
       alert("文件夹选择器不可用，请手动输入路径。");
+    }
+  };
+
+  const handleScoopUpdate = async () => {
+    setScoopUpdating(true);
+    setScoopError(null);
+    setScoopReport(null);
+    try {
+      const report = await invoke<ScoopUpdateReport>("update_projects_from_scoop");
+      setScoopReport(report);
+    } catch (e: any) {
+      setScoopError(e?.toString?.() || "更新失败");
+    } finally {
+      setScoopUpdating(false);
     }
   };
 
@@ -239,6 +315,35 @@ export default function GlobalSettings() {
               </div>
             )}
 
+            {/* 迁移进度条 */}
+            {progress && (
+              <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl space-y-2 animate-fadeIn">
+                <div className="flex items-center justify-between text-[10px]">
+                  <span className="text-blue-300 font-semibold flex items-center gap-1.5">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    {progress.stage}
+                  </span>
+                  {progress.total > 0 && (
+                    <span className="text-blue-400 font-mono">{progress.current}/{progress.total}</span>
+                  )}
+                </div>
+                {progress.total > 0 && (
+                  <div className="w-full bg-blue-500/20 rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className="bg-blue-400 h-full rounded-full transition-all duration-300"
+                      style={{ width: `${Math.round((progress.current / progress.total) * 100)}%` }}
+                    />
+                  </div>
+                )}
+                {progress.file_name && (
+                  <div className="flex items-center gap-1 text-[9px] text-slate-400">
+                    <FileText className="w-2.5 h-2.5 flex-shrink-0" />
+                    <span className="truncate">{progress.file_name}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* 迁移结果展示 */}
             {migrateResult && (
               <div className="p-4 bg-emerald-500/5 border border-emerald-500/15 rounded-xl space-y-2 text-[10px]">
@@ -253,6 +358,34 @@ export default function GlobalSettings() {
                 )}
                 {migrateResult.updated_path_entries.length > 0 && (
                   <p className="text-slate-300">✓ 已更新 {migrateResult.updated_path_entries.length} 个 PATH 条目</p>
+                )}
+
+                {/* 旧目录清理提示 */}
+                {migrateResult.old_dirs_remain.length > 0 && (
+                  <div className="pt-2 mt-2 border-t border-amber-500/15 space-y-2">
+                    <div className="flex items-start gap-1.5 text-amber-300">
+                      <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                      <span>以下旧目录仍存在，您可以安全删除以释放磁盘空间：</span>
+                    </div>
+                    {migrateResult.old_dirs_remain.map((dir, i) => (
+                      <p key={i} className="font-mono text-[9px] text-slate-400 pl-5">{dir}</p>
+                    ))}
+                    {deletedOldDirs ? (
+                      <p className="text-emerald-400 text-[10px] flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        已删除 {deletedOldDirs.length} 个旧目录
+                      </p>
+                    ) : (
+                      <button
+                        onClick={handleDeleteOldDirs}
+                        disabled={deletingOldDirs}
+                        className="px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 disabled:opacity-50 text-red-300 rounded-lg text-[10px] font-medium cursor-pointer transition-all flex items-center gap-1.5 border border-red-500/20"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        {deletingOldDirs ? "正在删除..." : "删除旧目录"}
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             )}
@@ -328,6 +461,85 @@ export default function GlobalSettings() {
 
         {latestVersion === null && !checkingUpdate && !updateError && (
           <p className="text-[10px] text-slate-500">点击「检查更新」查看是否有新版本可用。</p>
+        )}
+      </div>
+
+      {/* Scoop 数据同步 */}
+      <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b border-white/5">
+          <div className="flex items-center gap-2">
+            <Database className="w-4 h-4 text-green-400" />
+            <h3 className="text-xs font-semibold text-white">Scoop 数据同步</h3>
+          </div>
+          <button
+            onClick={handleScoopUpdate}
+            disabled={scoopUpdating}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600/20 hover:bg-green-600/40 disabled:opacity-50 text-green-300 rounded-lg text-[10px] border border-green-500/20 cursor-pointer transition-all"
+          >
+            <Download className={`w-3 h-3 ${scoopUpdating ? "animate-bounce" : ""}`} />
+            {scoopUpdating ? "同步中..." : "从 Scoop 更新数据"}
+          </button>
+        </div>
+
+        <p className="text-[10px] text-slate-400 leading-relaxed">
+        从 ScoopInstaller 仓库拉取 manifest，辅助填充各工具的下载地址、解压目录、PATH 路径等信息到 <span className="font-mono text-slate-300">projects.json</span>。该功能为可选数据助手，主数据源仍以 projects.json 为准。
+        </p>
+
+        {scoopError && (
+          <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-[10px] text-red-400">
+            {scoopError}
+          </div>
+        )}
+
+        {scoopUpdating && (
+          <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-xl flex items-center gap-2 text-[10px] text-green-300">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            正在从 Scoop 拉取最新数据...
+          </div>
+        )}
+
+        {scoopReport && (
+          <div className="space-y-2 text-[10px]">
+            <div className="flex items-center gap-3 text-slate-300">
+              <span className="text-emerald-400 flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3" /> 已更新 {scoopReport.updated.length} 个
+              </span>
+              <span className="text-slate-500">跳过 {scoopReport.skipped.length} 个</span>
+              {scoopReport.failed.length > 0 && (
+                <span className="text-red-400">失败 {scoopReport.failed.length} 个</span>
+              )}
+            </div>
+
+            {scoopReport.updated.length > 0 && (
+              <div className="p-2 bg-emerald-500/5 border border-emerald-500/10 rounded-lg">
+                <p className="text-emerald-400 font-semibold mb-1">已更新：</p>
+                {scoopReport.updated.map((e) => (
+                  <p key={e.id} className="text-slate-400 pl-3">• {e.display_name}</p>
+                ))}
+              </div>
+            )}
+
+            {scoopReport.failed.length > 0 && (
+              <div className="p-2 bg-red-500/5 border border-red-500/10 rounded-lg">
+                <p className="text-red-400 font-semibold mb-1">失败：</p>
+                {scoopReport.failed.map((e) => (
+                  <p key={e.id} className="text-red-400/80 pl-3">
+                    • {e.display_name} — {e.error}
+                  </p>
+                ))}
+              </div>
+            )}
+
+            <p className="text-slate-500">
+              下次安装 SDK 时将直接使用已同步的数据，无需联网访问 Scoop。
+            </p>
+          </div>
+        )}
+
+        {!scoopReport && !scoopUpdating && !scoopError && (
+          <p className="text-[10px] text-slate-500">
+            点击按钮从 ScoopInstaller 仓库获取最新的安装配置信息。
+          </p>
         )}
       </div>
 

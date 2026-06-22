@@ -80,7 +80,44 @@ pub struct PackageManagerDef {
     pub mirror_cmd_template: Option<String>,
     /// 可用镜像选项
     pub mirror_options: Option<Vec<MirrorOption>>,
+
+    /// Remote version detection config.
+    #[serde(default)]
+    pub remote_versions_config: Option<serde_json::Value>,
+    /// Default cache path.
+    #[serde(default)]
+    pub cache_default_path: Option<String>,
+    /// Cache environment variable.
+    #[serde(default)]
+    pub cache_env_var: Option<String>,
+    /// Cache set command template.
+    #[serde(default)]
+    pub cache_set_cmd_template: Option<String>,
+    /// Default data path.
+    #[serde(default)]
+    pub data_default_path: Option<String>,
+    /// Data environment variable.
+    #[serde(default)]
+    pub data_env_var: Option<String>,
+    /// Data set command template.
+    #[serde(default)]
+    pub data_set_cmd_template: Option<String>,
+    /// Data path detect command.
+    #[serde(default)]
+    pub data_detect_cmd: Option<String>,
 }
+
+/// Scoop 引用：指向 ScoopInstaller 仓库中的 manifest
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ScoopRef {
+    /// Bucket 名称（默认 "Main"）
+    #[serde(default = "default_bucket")]
+    pub bucket: String,
+    /// manifest 文件名（不含 .json 后缀）
+    pub name: String,
+}
+
+fn default_bucket() -> String { "Main".to_string() }
 
 /// 项目定义（存储在 projects.json）
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -137,14 +174,26 @@ pub struct ProjectDef {
     /// 停止命令
     pub stop_cmd: Option<String>,
 
-    /// 下载 URL 模板（用 {version} 占位符）
+    /// Scoop manifest 引用（用于从 Scoop 更新安装参数）
+    #[serde(default)]
+    pub scoop_ref: Option<ScoopRef>,
+
+    /// 下载 URL 模板（{version} 为占位符）
+    #[serde(default)]
     pub download_url_template: Option<String>,
-    /// 下载文件扩展名 (zip / tar.gz / nupkg / exe)
+    /// 下载文件扩展名 (zip / tar.gz / nupkg / exe / msi / 7z)
     #[serde(default)]
     pub download_file_ext: Option<String>,
     /// 解压后的子目录（如 python 的 "tools"）
     #[serde(default)]
     pub extract_subdir: Option<String>,
+    /// 需要添加到 PATH 的目录列表（相对于安装根目录）
+    /// 由 Scoop 更新工具自动填充，也支持手动定义
+    #[serde(default)]
+    pub bin_dirs: Option<Vec<String>>,
+    /// Scoop 数据最后同步时间（ISO 8601）
+    #[serde(default)]
+    pub scoop_updated_at: Option<String>,
     /// 版本前缀 → URL 模板映射（如 java 的 adoptium-/microsoft- 前缀）
     #[serde(default)]
     pub version_prefix_map: Option<std::collections::HashMap<String, String>>,

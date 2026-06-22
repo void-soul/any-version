@@ -4,6 +4,9 @@
     "display_name": "Node.js",
     "category": "language",
     "official_website": "https://nodejs.org",
+    "scoop_ref": {
+      "name": "nodejs"
+    },
     "env_vars": [
       {
         "name": "NODE_PATH",
@@ -112,7 +115,7 @@
     ],
     "has_cache": true,
     "cache_detect_cmd": "npm config get cache",
-    "cache_default_path": null,
+    "cache_default_path": "{home}\\AppData\\Local\\npm-cache",
     "has_mirror": true,
     "mirror_options": [
       {
@@ -207,6 +210,9 @@
     "display_name": "Go",
     "category": "language",
     "official_website": "https://go.dev",
+    "scoop_ref": {
+      "name": "go"
+    },
     "env_vars": [
       {
         "name": "GOROOT",
@@ -308,8 +314,8 @@
       }
     ],
     "has_cache": false,
-    "cache_detect_cmd": null,
-    "cache_default_path": null,
+    "cache_detect_cmd": "go env GOMODCACHE",
+    "cache_default_path": "{home}\\go\\pkg\\mod",
     "has_mirror": true,
     "mirror_options": [
       {
@@ -373,6 +379,9 @@
     "display_name": "Python",
     "category": "language",
     "official_website": "https://www.python.org",
+    "scoop_ref": {
+      "name": "python"
+    },
     "env_vars": [
       {
         "name": "PYTHONHOME",
@@ -516,7 +525,7 @@
     ],
     "has_cache": true,
     "cache_detect_cmd": "pip cache dir",
-    "cache_default_path": null,
+    "cache_default_path": "{home}\\AppData\\Local\\pip\\cache",
     "has_mirror": true,
     "mirror_options": [
       {
@@ -984,10 +993,16 @@
       }
     ],
     "has_cache": false,
-    "cache_detect_cmd": null,
-    "cache_default_path": null,
-    "has_mirror": false,
-    "mirror_options": null,
+    "cache_detect_cmd": "mvn help:evaluate -q -DforceStdout -Dexpression=settings.localRepository -f NUL",
+    "cache_default_path": "{home}\\.m2\\repository",
+    "has_mirror": true,
+    "mirror_options": [
+      {
+        "mirror_type": "maven",
+        "name": "Aliyun Maven",
+        "url": "https://maven.aliyun.com/repository/central"
+      }
+    ],
     "has_pkg": false,
     "pkg_manager": null,
     "pkg_homepage_template": null,
@@ -1255,6 +1270,9 @@
     "display_name": "Rust",
     "category": "language",
     "official_website": "https://www.rust-lang.org",
+    "scoop_ref": {
+      "name": "rust"
+    },
     "env_vars": [
       {
         "name": "CARGO_HOME",
@@ -1347,8 +1365,8 @@
       }
     ],
     "has_cache": false,
-    "cache_detect_cmd": null,
-    "cache_default_path": null,
+    "cache_detect_cmd": "cargo --version",
+    "cache_default_path": "{home}\\.cargo\\registry\\cache",
     "has_mirror": true,
     "mirror_options": [
       {
@@ -1428,6 +1446,9 @@
     "display_name": "Bun",
     "category": "language",
     "official_website": "https://bun.sh",
+    "scoop_ref": {
+      "name": "bun"
+    },
     "env_vars": [
       {
         "name": "BUN_INSTALL",
@@ -1545,6 +1566,9 @@
     "display_name": "Nginx",
     "category": "service",
     "official_website": "https://nginx.org",
+    "scoop_ref": {
+      "name": "nginx"
+    },
     "env_vars": [
       {
         "name": "NGINX_HOME",
@@ -1618,6 +1642,9 @@
     "display_name": "Redis",
     "category": "service",
     "official_website": "https://redis.io",
+    "scoop_ref": {
+      "name": "redis"
+    },
     "env_vars": [
       {
         "name": "REDIS_HOME",
@@ -1689,6 +1716,9 @@
     "display_name": "MySQL",
     "category": "service",
     "official_website": "https://www.mysql.com",
+    "scoop_ref": {
+      "name": "mysql"
+    },
     "env_vars": [
       {
         "name": "MYSQL_HOME",
@@ -1772,6 +1802,9 @@
     "display_name": "MongoDB",
     "category": "service",
     "official_website": "https://www.mongodb.com",
+    "scoop_ref": {
+      "name": "mongodb"
+    },
     "env_vars": [
       {
         "name": "MONGO_HOME",
@@ -1845,6 +1878,9 @@
     "display_name": "PostgreSQL",
     "category": "service",
     "official_website": "https://www.postgresql.org",
+    "scoop_ref": {
+      "name": "postgresql"
+    },
     "env_vars": [
       {
         "name": "PGDATA",
@@ -2154,6 +2190,9 @@
     "display_name": "FFmpeg",
     "category": "tool",
     "official_website": "https://ffmpeg.org",
+    "scoop_ref": {
+      "name": "ffmpeg"
+    },
     "env_vars": [
       {
         "name": "FFMPEG_HOME",
@@ -2223,5 +2262,113 @@
         "6.0"
       ]
     }
+  },
+  {
+    "id": "dotnet",
+    "display_name": ".NET SDK",
+    "category": "language",
+    "official_website": "https://dotnet.microsoft.com",
+    "env_vars": [
+      {
+        "name": "DOTNET_ROOT",
+        "desc": ".NET SDK root",
+        "check_type": "path"
+      },
+      {
+        "name": "DOTNET_CLI_HOME",
+        "desc": "CLI home directory",
+        "check_type": "path"
+      },
+      {
+        "name": "NUGET_PACKAGES",
+        "desc": "global packages cache",
+        "check_type": "path"
+      }
+    ],
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "env_bin",
+          "env_var": "DOTNET_ROOT",
+          "bin_sub": "",
+          "exe_name": "dotnet.exe"
+        },
+        "source_label": "DOTNET_ROOT",
+        "priority": 5,
+        "root_offset": 0
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "dotnet\\sdk",
+          "exe_name": "dotnet.exe"
+        },
+        "source_label": "SDK path",
+        "priority": 50,
+        "root_offset": 2
+      },
+      {
+        "pattern": {
+          "type": "fixed_path",
+          "path": "C:\\Program Files\\dotnet",
+          "exe_name": "dotnet.exe"
+        },
+        "source_label": "Program Files",
+        "priority": 70,
+        "root_offset": 0
+      }
+    ],
+    "has_cache": true,
+    "cache_detect_cmd": "dotnet nuget locals global-packages -l",
+    "cache_default_path": "{home}\\.nuget\\packages",
+    "has_mirror": true,
+    "mirror_options": [
+      {
+        "mirror_type": "nuget",
+        "name": "Azure China",
+        "url": "https://nuget.c"
+      }
+    ],
+    "has_pkg": true,
+    "pkg_manager": "nuget",
+    "pkg_homepage_template": "https://www.nuget.org/packages/{pkg}",
+    "is_service": false,
+    "default_port": null,
+    "data_dir": null,
+    "log_dir": null,
+    "config_file": null,
+    "start_cmd": null,
+    "stop_cmd": null,
+    "download_url_template": "https://dotnetcli.azureedge.net/dotnet/Sdk/{version}/dotnet-sdk-{version}-win-x64.zip",
+    "download_file_ext": "zip",
+    "remote_versions_url": "https://dotnetcli.azureedge.net/dotnet/release-metadata/releases-index.json",
+    "remote_versions_config": {
+      "type": "json_api",
+      "url": "https://dotnetcli.azureedge.net/dotnet/release-metadata/releases-index.json",
+      "response_type": "object_with_array",
+      "array_field": "releases-index",
+      "version_field": "sdk-version",
+      "max_count": 80
+    },
+    "package_managers": [
+      {
+        "id": "nuget",
+        "display_name": "NuGet",
+        "install_cmd": null,
+        "version_cmd": "dotnet nuget --version",
+        "cache_detect_cmd": "dotnet nuget locals global-packages -l",
+        "pkg_list_cmd": null,
+        "mirror_cmd_template": null,
+        "mirror_options": [],
+        "remote_versions_config": null,
+        "cache_default_path": "{home}\\.nuget\\packages",
+        "cache_env_var": "NUGET_PACKAGES",
+        "cache_set_cmd_template": null,
+        "data_default_path": "{home}\\.nuget",
+        "data_env_var": "NUGET_PACKAGES",
+        "data_set_cmd_template": null,
+        "data_detect_cmd": "dotnet nuget locals global-packages -l"
+      }
+    ]
   }
 ]

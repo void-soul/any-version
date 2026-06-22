@@ -2,6 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use serde::{Serialize, Deserialize};
 use walkdir::WalkDir;
+use tauri::Emitter;
+
+use super::config::MigrateProgress;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CacheInfo {
@@ -110,6 +113,41 @@ pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Re
             copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
         } else {
             fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
+/// 带进度事件的目录复制
+pub fn copy_dir_all_with_progress(
+    src: impl AsRef<Path>,
+    dst: impl AsRef<Path>,
+    app_handle: Option<&tauri::AppHandle>,
+) -> std::io::Result<()> {
+    // 先统计总文件数
+    let total_files = WalkDir::new(&src).into_iter().filter_map(|e| e.ok()).count();
+    let mut current = 0usize;
+
+    fs::create_dir_all(&dst)?;
+    for entry in WalkDir::new(&src) {
+        let entry = entry?;
+        let rel_path = entry.path().strip_prefix(&src).unwrap_or(entry.path());
+        let dest_path = dst.as_ref().join(rel_path);
+
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&dest_path)?;
+        } else {
+            current += 1;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(handle) = app_handle {
+                let _ = handle.emit("migrate-progress", MigrateProgress {
+                    stage: "复制文件".to_string(),
+                    current,
+                    total: total_files,
+                    file_name: name,
+                });
+            }
+            fs::copy(entry.path(), &dest_path)?;
         }
     }
     Ok(())
