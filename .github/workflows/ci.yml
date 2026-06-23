@@ -1,15 +1,14 @@
-name: CI 持续集成构建
+name: CI 编译验证
 
-# 每次推送到 main 或提交 Pull Request 时，自动验证前端与 Rust 后端能否正常编译。
-# 这一步不会发布任何文件，只用于尽早发现编译/类型错误。
+# 仅在推送 v* 标签时触发编译验证。
+# 不会发布任何文件，只用于尽早发现编译/类型错误。
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    tags:
+      - 'v*'
   workflow_dispatch: {}
 
-# 同一分支的新提交会取消上一次仍在运行的构建，节省 CI 时间。
+# 同一 tag 的新构建会取消上一次仍在运行的构建，节省 CI 时间。
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
