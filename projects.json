@@ -1017,7 +1017,46 @@
         "1.74.0", "1.73.0", "1.72.1", "1.72.0", "1.71.1", "1.71.0", "1.70.0", "1.69.0"
       ]
     },
-    "package_managers": []
+    "package_managers": [
+      {
+        "id": "cargo",
+        "display_name": "Cargo",
+        "built_in": true,
+        "install_cmd": null,
+        "version_cmd": "cargo --version",
+        "version_exe": "cargo",
+        "cache_detect_cmd": null,
+        "cache_default_path": "{home}\\.cargo",
+        "cache_env_var": "CARGO_HOME",
+        "cache_set_cmd_template": null,
+        "data_detect_cmd": null,
+        "data_default_path": null,
+        "data_env_var": null,
+        "data_set_cmd_template": null,
+        "proxy_detect_cmd": null,
+        "proxy_set_cmd_template": null,
+        "pkg_list_cmd": null,
+        "pkg_homepage_template": "https://crates.io/crates/{pkg}",
+        "mirror_cmd_template": null,
+        "mirror_options": [
+          {
+            "mirror_type": "official",
+            "name": "官方源 (crates.io)",
+            "url": "https://github.com/rust-lang/crates.io-index"
+          },
+          {
+            "mirror_type": "rsproxy",
+            "name": "Rsproxy 镜像",
+            "url": "https://rsproxy.cn"
+          },
+          {
+            "mirror_type": "tsinghua",
+            "name": "清华大学镜像",
+            "url": "https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index"
+          }
+        ]
+      }
+    ]
   },
   {
     "id": "flutter",

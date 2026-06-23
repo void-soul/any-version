@@ -252,7 +252,7 @@ pub fn set_mirror(tool: String, mirror_type: String) -> Result<(), String> {
                 let _ = super::hidden_cmd::hidden_cmd("cmd").args(&["/c", "go", "env", "-w", &format!("GOPROXY={}", url_val)]).output();
             }
         }
-        "rust" => {
+        "rust" | "cargo" => {
             let cargo_config = PathBuf::from(&user_profile).join(".cargo").join("config.toml");
             let cargo_config_old = PathBuf::from(&user_profile).join(".cargo").join("config");
             if m_type == "official" {

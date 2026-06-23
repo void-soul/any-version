@@ -834,7 +834,7 @@ export function LegacyTab({ projectId }: { projectId: string }) {
             <h4 className="text-xs font-semibold text-white">备份的环境变量</h4>
             <span className="text-[12px] text-slate-500">({envVarEntries.length} 个)</span>
           </div>
-          <div className="max-h-[200px] overflow-y-auto">
+          <div className="w-full">
             <table className="w-full text-left text-[13px]">
               <thead><tr className="text-slate-500 border-b border-white/5"><th className="p-2 w-48">变量名</th><th className="p-2">原始值</th></tr></thead>
               <tbody className="divide-y divide-white/5">
@@ -858,7 +858,7 @@ export function LegacyTab({ projectId }: { projectId: string }) {
             <h4 className="text-xs font-semibold text-white">移除的 PATH 条目</h4>
             <span className="text-[12px] text-slate-500">({data.removed_path_entries.length} 条)</span>
           </div>
-          <div className="max-h-[150px] overflow-y-auto space-y-1">
+          <div className="w-full space-y-1">
             {data.removed_path_entries.map((entry, idx) => (
               <div key={idx} className="p-2 bg-black/20 rounded-lg border border-white/5 text-[12px] font-mono text-slate-400 break-all">
                 {entry}
@@ -1160,19 +1160,25 @@ export function PackageManagerTab({ projectId, pm, hidden }: { projectId: string
         },
       });
     }
-
     // Step 4: current mirror
-    if (pm.mirror_cmd_template) {
+    if (pm.mirror_cmd_template || (pm.mirror_options && pm.mirror_options.length > 0)) {
       steps.push({
         label: `正在检测 ${pm.display_name} 当前镜像源...`,
         run: async () => {
           try {
-            // 尝试从镜像模板推断 get 命令
-            const getCmd = pm.mirror_cmd_template!.replace("set ", "get ").replace("{url}", "");
-            const out = await invoke<string>("run_cmd_capture", { cmd: getCmd });
-            const v = out.trim();
-            if (v && v !== "null" && v !== "undefined") {
-              setCurrentMirror(v);
+            if (pm.mirror_cmd_template) {
+              const getCmd = pm.mirror_cmd_template.replace("set ", "get ").replace("{url}", "");
+              const out = await invoke<string>("run_cmd_capture", { cmd: getCmd });
+              const v = out.trim();
+              if (v && v !== "null" && v !== "undefined") {
+                setCurrentMirror(v);
+              }
+            } else {
+              const list = await invoke<Array<{ tool: string; current: string; mirror_name: string }>>("get_mirrors_list");
+              const entry = list.find(m => m.tool.toLowerCase() === pm.id.toLowerCase() || (pm.id === "cargo" && m.tool === "rust"));
+              if (entry) {
+                setCurrentMirror(entry.current);
+              }
             }
           } catch { /* ignore */ }
         },
@@ -1243,12 +1249,15 @@ export function PackageManagerTab({ projectId, pm, hidden }: { projectId: string
   };
 
   // 切换镜像
-  const handleSwitchMirror = async (url: string) => {
-    if (!pm.mirror_cmd_template) return;
+  const handleSwitchMirror = async (url: string, mirrorType: string) => {
     setSwitchingMirror(url);
     try {
-      const cmd = pm.mirror_cmd_template.replace("{url}", url);
-      await invoke("run_cmd_capture", { cmd });
+      if (pm.mirror_cmd_template) {
+        const cmd = pm.mirror_cmd_template.replace("{url}", url);
+        await invoke("run_cmd_capture", { cmd });
+      } else {
+        await invoke("set_mirror", { tool: pm.id, mirrorType });
+      }
       setCurrentMirror(url);
     } catch (e: unknown) {
       alert(`切换镜像失败: ${e}`);
@@ -1384,7 +1393,7 @@ export function PackageManagerTab({ projectId, pm, hidden }: { projectId: string
                 </p>
               </div>
             </label>
-            {!isData && pm.cache_set_cmd_template && (
+            {!isData && (pm.cache_set_cmd_template || pm.cache_env_var) && (
               <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${workflowMethod === "point"
                 ? `${accentBorder} bg-white/5`
                 : "border-white/5 hover:bg-white/[0.02]"
@@ -1394,7 +1403,7 @@ export function PackageManagerTab({ projectId, pm, hidden }: { projectId: string
                 <div>
                   <span className="text-[12px] font-semibold text-purple-300">B. 指向配置</span>
                   <p className="text-[13px] text-slate-500 mt-0.5">
-                    直接修改 {pm.display_name} 的配置，更改{isData ? "数据" : "缓存"}目录路径。不改动已有文件。
+                    直接修改 {pm.display_name} 的配置或环境变量，更改{isData ? "数据" : "缓存"}目录路径。不改动已有文件。
                   </p>
                 </div>
               </label>
@@ -1865,7 +1874,7 @@ export function PackageManagerTab({ projectId, pm, hidden }: { projectId: string
             {pm.mirror_options.map((opt) => {
               const isCurrent = currentMirror === opt.url;
               return (
-                <button key={opt.mirror_type} onClick={() => handleSwitchMirror(opt.url)} disabled={switchingMirror !== null || isCurrent}
+                <button key={opt.mirror_type} onClick={() => handleSwitchMirror(opt.url, opt.mirror_type)} disabled={switchingMirror !== null || isCurrent}
                   className={`flex items-center justify-between px-3 py-2 rounded-lg text-[13px] font-medium cursor-pointer transition-all border
                     ${isCurrent ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300" : "bg-black/20 border-white/5 text-slate-300 hover:bg-white/5"}`}>
                   <span>{opt.name}</span>

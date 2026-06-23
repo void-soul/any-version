@@ -11,7 +11,7 @@ export interface EnvVarStatus {
   source: string; // "HKCU" | "HKLM" | "未设置"
   exists: boolean;
   in_anyversion: boolean;
-  tier?: "core" | "package" | "compat";
+  tier?: "core" | "package" | "compat" | "clear";
 }
 
 export interface CacheStatus {
@@ -87,7 +87,7 @@ export interface ProjectDef {
   display_name: string;
   category: ProjectCategory;
   official_website: string;
-  env_vars: Array<{ name: string; desc: string; check_type: string; tier?: "core" | "package" | "compat" }>;
+  env_vars: Array<{ name: string; desc: string; check_type: string; tier?: "core" | "package" | "compat" | "clear" }>;
   has_cache: boolean;
   has_mirror: boolean;
   has_pkg: boolean;

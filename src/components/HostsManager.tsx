@@ -159,7 +159,7 @@ export default function HostsManager() {
             </div>
           </div>
         ) : (
-          <div className="flex-1 min-h-0 glass-panel border border-white/5 rounded-2xl overflow-hidden flex flex-col h-[480px]">
+          <div className="flex-1 min-h-0 glass-panel border border-white/5 rounded-2xl overflow-hidden flex flex-col h-full">
             <div className="flex-1 overflow-y-auto">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>

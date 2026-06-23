@@ -55,26 +55,22 @@ export default function App() {
         <div className={activeTab === "projects" ? "h-full w-full" : "hidden"}>
           <ProjectManager />
         </div>
-        {activeTab === "tools" && (
-          <div className="h-full w-full flex flex-col">
-            <div className="flex justify-end px-4 pt-2 flex-shrink-0">
-              <button onClick={() => setActiveTab("projects")} className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-slate-200 cursor-pointer" title="返回">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <SystemTools />
+        <div className={activeTab === "tools" ? "h-full w-full flex flex-col" : "hidden"}>
+          <div className="flex justify-end px-4 pt-2 flex-shrink-0">
+            <button onClick={() => setActiveTab("projects")} className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-slate-200 cursor-pointer" title="返回">
+              <X className="w-4 h-4" />
+            </button>
           </div>
-        )}
-        {activeTab === "settings" && (
-          <div className="h-full w-full flex flex-col overflow-y-auto">
-            <div className="flex justify-end px-4 pt-2 flex-shrink-0">
-              <button onClick={() => setActiveTab("projects")} className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-slate-200 cursor-pointer" title="返回">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <GlobalSettings />
+          <SystemTools />
+        </div>
+        <div className={activeTab === "settings" ? "h-full w-full flex flex-col overflow-y-auto" : "hidden"}>
+          <div className="flex justify-end px-4 pt-2 flex-shrink-0">
+            <button onClick={() => setActiveTab("projects")} className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-slate-200 cursor-pointer" title="返回">
+              <X className="w-4 h-4" />
+            </button>
           </div>
-        )}
+          <GlobalSettings />
+        </div>
       </div>
     </div>
   );

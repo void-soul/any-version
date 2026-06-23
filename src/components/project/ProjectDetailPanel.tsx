@@ -121,7 +121,11 @@ interface Props {
   onProjectUpdate?: (id: string) => Promise<void>;
 }
 
-export default function ProjectDetailPanel({ project, onRefresh, onProjectUpdate }: Props) {
+export default function ProjectDetailPanel({
+  project,
+  onRefresh,
+  onProjectUpdate,
+}: Props) {
   const [uiMap, setUiMap] = useState<Record<string, ProjectUIState>>({});
   const eventProjectRef = useRef<string | null>(null);
 
@@ -135,6 +139,7 @@ export default function ProjectDetailPanel({ project, onRefresh, onProjectUpdate
   const patch = useCallback((id: string, partial: Partial<ProjectUIState>) => {
     setUiMap((prev) => ({ ...prev, [id]: { ...(prev[id] ?? EMPTY_UI), ...partial } }));
   }, []);
+
 
   useEffect(() => {
     ensureListeners(
@@ -667,35 +672,70 @@ export default function ProjectDetailPanel({ project, onRefresh, onProjectUpdate
 
               {!isUnmanage ? (
                 <>
-                  {envVars.length > 0 && (
-                    <div className="flex items-start gap-2 text-[11px]">
-                      <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">1</span>
-                      <div>
-                        <span className="text-slate-200 font-medium">{"备份环境变量"}</span>
-                        <p className="text-slate-400 mt-0.5">
-                          {"将备份以下环境变量的当前值"}: <span className="font-mono text-[10px] text-blue-300">{envVars.map((v: { name: string }) => v.name).join(", ")}</span>
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                  {(() => {
+                    const backupVars = envVars.filter(v => v.tier !== "compat");
+                    const clearVars = envVars.filter(v => v.tier === "clear");
+                    const manageVars = envVars.filter(v => v.tier !== "compat" && v.tier !== "clear");
 
-                  <div className="flex items-start gap-2 text-[11px]">
-                    <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">{envVars.length > 0 ? "2" : "1"}</span>
-                    <div>
-                      <span className="text-slate-200 font-medium">{"创建目录联接"}</span>
-                      <p className="font-mono text-[10px] text-blue-300 mt-0.5">{linkPath} → {versionsDir}\{pid}\VERSION</p>
-                    </div>
-                  </div>
+                    return (
+                      <>
+                        {backupVars.length > 0 && (
+                          <div className="flex items-start gap-2 text-[11px]">
+                            <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">1</span>
+                            <div>
+                              <span className="text-slate-200 font-medium">{"备份并清除冲突环境变量"}</span>
+                              <p className="text-slate-400 mt-0.5">
+                                {clearVars.length > 0 ? (
+                                  <>
+                                    {"将备份以下冲突环境变量的当前值并将其从系统中删除"}: <span className="font-mono text-[10px] text-red-300 font-semibold">{clearVars.map(v => v.name).join(", ")}</span>
+                                    {backupVars.filter(v => v.tier !== "clear").length > 0 && (
+                                      <>
+                                        <br />
+                                        {"仅备份但不删除的环境变量"}: <span className="font-mono text-[10px] text-blue-300">{backupVars.filter(v => v.tier !== "clear").map(v => v.name).join(", ")}</span>
+                                      </>
+                                    )}
+                                  </>
+                                ) : (
+                                  <>
+                                    {"将备份以下环境变量的当前值"}: <span className="font-mono text-[10px] text-blue-300">{backupVars.map(v => v.name).join(", ")}</span>
+                                  </>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+                        )}
 
-                  {envVars.length > 0 && (
-                    <div className="flex items-start gap-2 text-[11px]">
-                      <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">3</span>
-                      <div>
-                        <span className="text-slate-200 font-medium">{"设置环境变量"}</span>
-                        <p className="font-mono text-[10px] text-blue-300 mt-0.5">{envVars.map((v: { name: string }) => v.name).join(", ")} → {linkPath}</p>
-                      </div>
-                    </div>
-                  )}
+                        <div className="flex items-start gap-2 text-[11px]">
+                          <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">{backupVars.length > 0 ? "2" : "1"}</span>
+                          <div>
+                            <span className="text-slate-200 font-medium">{"创建目录联接"}</span>
+                            <p className="font-mono text-[10px] text-blue-300 mt-0.5">{linkPath} → {versionsDir}\{pid}\VERSION</p>
+                          </div>
+                        </div>
+
+                        {(manageVars.length > 0 || clearVars.length > 0) && (
+                          <div className="flex items-start gap-2 text-[11px]">
+                            <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">{backupVars.length > 0 ? "3" : "2"}</span>
+                            <div>
+                              <span className="text-slate-200 font-medium">{"更新注册表环境变量"}</span>
+                              <div className="space-y-1 mt-0.5">
+                                {manageVars.length > 0 && (
+                                  <p className="text-slate-400">
+                                    {"设置托管变量 (指向 AnyVersion)"}: <span className="font-mono text-[10px] text-blue-300">{manageVars.map((v: { name: string }) => v.name).join(", ")} → {linkPath}</span>
+                                  </p>
+                                )}
+                                {clearVars.length > 0 && (
+                                  <p className="text-slate-400">
+                                    <span className="text-red-400 font-semibold">{"清空冲突变量 (后续交由 AnyVersion 管理)"}</span>: <span className="font-mono text-[10px] text-red-300">{clearVars.map((v: { name: string }) => v.name).join(", ")}</span>
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
 
                   {preview && preview.steps.filter((s) => s.action === "add_path" || s.action === "clean_path").map((step, idx) => (
                     <div key={idx} className="flex items-start gap-2 text-[11px]">

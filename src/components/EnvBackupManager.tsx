@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { 
-  ShieldCheck, 
-  Trash2, 
-  RefreshCw, 
-  Clock, 
-  FileText, 
-  Plus, 
+import {
+  ShieldCheck,
+  Trash2,
+  RefreshCw,
+  Clock,
+  FileText,
+  Plus,
   RotateCcw,
   AlertTriangle,
   Search,
@@ -46,7 +46,7 @@ export default function EnvBackupManager() {
     try {
       const list = await invoke<EnvBackup[]>("list_env_backups");
       setBackups(list);
-      
+
       // Auto select the latest backup if nothing selected
       if (list.length > 0 && !selectedBackup) {
         setSelectedBackup(list[0]);
@@ -159,7 +159,7 @@ export default function EnvBackupManager() {
             <Plus className="w-4 h-4" />
             创建备份
           </button>
-          
+
           <button
             onClick={fetchBackups}
             disabled={loading}
@@ -169,14 +169,14 @@ export default function EnvBackupManager() {
             刷新列表
           </button>
 
-          <button
+          {/* <button
             onClick={handleRepairRegistry}
             disabled={repairing}
             className="flex items-center gap-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-amber-500/20 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
           >
             <Wrench className="w-4 h-4" />
             {repairing ? "修复中..." : "修复注册表"}
-          </button>
+          </button> */}
         </div>
       </div>
 
@@ -213,11 +213,10 @@ export default function EnvBackupManager() {
 
       {/* Restore Result Notification Alert */}
       {restoreMessage && (
-        <div className={`p-4 rounded-xl border flex items-start gap-3 animate-fadeIn ${
-          restoreMessage.isError 
-            ? "bg-amber-500/10 border-amber-500/20 text-amber-300" 
+        <div className={`p-4 rounded-xl border flex items-start gap-3 animate-fadeIn ${restoreMessage.isError
+            ? "bg-amber-500/10 border-amber-500/20 text-amber-300"
             : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
-        }`}>
+          }`}>
           {restoreMessage.isError ? (
             <AlertTriangle className="w-5 h-5 flex-shrink-0 text-amber-400 mt-0.5" />
           ) : (
@@ -244,13 +243,12 @@ export default function EnvBackupManager() {
               const isOk = line.startsWith("OK");
               const isInfo = line.startsWith("ℹ️");
               return (
-                <p key={i} className={`text-[10px] leading-relaxed font-mono ${
-                  isError ? "text-red-400" : 
-                  isWarning ? "text-amber-300" : 
-                  isOk ? "text-slate-500" :
-                  isInfo ? "text-blue-300" :
-                  "text-emerald-400"
-                }`}>
+                <p key={i} className={`text-[10px] leading-relaxed font-mono ${isError ? "text-red-400" :
+                    isWarning ? "text-amber-300" :
+                      isOk ? "text-slate-500" :
+                        isInfo ? "text-blue-300" :
+                          "text-emerald-400"
+                  }`}>
                   {line}
                 </p>
               );
@@ -292,9 +290,8 @@ export default function EnvBackupManager() {
                       setSelectedBackup(b);
                       setRestoreMessage(null);
                     }}
-                    className={`p-4 flex flex-col gap-2 hover:bg-white/2 cursor-pointer transition-all ${
-                      isSelected ? "bg-blue-600/5 border-l-2 border-blue-500" : ""
-                    }`}
+                    className={`p-4 flex flex-col gap-2 hover:bg-white/2 cursor-pointer transition-all ${isSelected ? "bg-blue-600/5 border-l-2 border-blue-500" : ""
+                      }`}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono">
@@ -370,7 +367,7 @@ export default function EnvBackupManager() {
                     <FileText className="w-4 h-4 text-blue-400" />
                     <h4 className="text-xs font-semibold text-slate-300">用户环境变量 (HKEY_CURRENT_USER\Environment)</h4>
                   </div>
-                  
+
                   <div className="border border-white/5 rounded-xl overflow-hidden font-mono text-[10px]">
                     <table className="w-full text-left border-collapse">
                       <thead>
