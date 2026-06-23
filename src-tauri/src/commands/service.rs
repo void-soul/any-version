@@ -141,22 +141,26 @@ pub(crate) fn find_port_owner_simple(port_str: &str) -> Option<PortOwnerSimple> 
 
 #[tauri::command]
 pub fn get_running_services() -> Result<Vec<ServiceInfo>, String> {
+    use super::project::registry;
+
     let config = load_config();
-    let service_names = vec![
-        ("nginx", "80"),
-        ("redis", "6379"),
-        ("mysql", "3306"),
-        ("mongodb", "27017"),
-        ("postgresql", "5432"),
-    ];
+    let all_projects = registry::registry();
+    let mut service_names = Vec::new();
+
+    for p in &all_projects {
+        if p.category == crate::commands::project::types::ProjectCategory::Service || p.is_service {
+            let port_str = p.default_port.unwrap_or(0).to_string();
+            service_names.push((p.id.clone(), port_str));
+        }
+    }
 
     let mut services = HashMap::new();
-    for (name, default_port) in service_names {
-        services.insert(name.to_string(), ServiceInfo {
-            name: name.to_string(),
+    for (name, default_port) in &service_names {
+        services.insert(name.clone(), ServiceInfo {
+            name: name.clone(),
             status: "stopped".to_string(),
             active_version: String::new(),
-            port: default_port.to_string(),
+            port: default_port.clone(),
             pid: 0,
         });
     }
@@ -175,30 +179,54 @@ pub fn get_running_services() -> Result<Vec<ServiceInfo>, String> {
                 }
             }
         }
+        // If not in AnyVersion versions_dir, check if detected locally via scanner
+        if !has_installed {
+            if let Some(def) = registry::find_by_id(name) {
+                let (_, install_root) = super::project::scanner::detect_install_source(&def);
+                if install_root.is_some() {
+                    has_installed = true;
+                }
+            }
+        }
+
         if !has_installed {
             svc.status = "not_installed".to_string();
         }
 
         let junction_path = PathBuf::from(&config.links_dir).join(name);
-        if let Ok(active_dir_path) = fs::canonicalize(&junction_path) {
-            let active_dir = active_dir_path.to_string_lossy().to_string().trim_start_matches(r"\\?\").to_string();
-            let v_name = Path::new(&active_dir).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let active_dir = if junction_path.exists() || junction_path.is_symlink() {
+            fs::canonicalize(&junction_path).ok()
+                .map(|p| p.to_string_lossy().to_string().trim_start_matches(r"\\?\").to_string())
+        } else {
+            if let Some(def) = registry::find_by_id(name) {
+                let (_, install_root) = super::project::scanner::detect_install_source(&def);
+                install_root
+            } else {
+                None
+            }
+        };
+
+        if let Some(active_dir_path) = active_dir {
+            let active_path = Path::new(&active_dir_path);
+            let v_name = active_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
             svc.active_version = v_name;
 
-            if name == "mysql" {
-                let port = read_port_from_ini(&Path::new(&active_dir).join("my.ini"), "port");
-                if !port.is_empty() {
-                    svc.port = port;
-                }
-            } else if name == "redis" {
-                let port = read_port_from_conf(&Path::new(&active_dir).join("redis.windows.conf"), "port");
-                if !port.is_empty() {
-                    svc.port = port;
-                }
-            } else if name == "nginx" {
-                let port = read_nginx_port(&Path::new(&active_dir).join("conf").join("nginx.conf"));
-                if !port.is_empty() {
-                    svc.port = port;
+            // Resolve port from config
+            if let Some(def) = registry::find_by_id(name) {
+                if let Some(ref conf_file) = def.config_file {
+                    let conf_path = active_path.join(conf_file);
+                    if conf_path.exists() {
+                        let port = if name == "nginx" {
+                            read_nginx_port(&conf_path)
+                        } else if conf_file.ends_with(".ini") {
+                            read_port_from_ini(&conf_path, "port")
+                        } else {
+                            read_port_from_conf(&conf_path, "port")
+                        };
+                        if !port.is_empty() {
+                            svc.port = port;
+                        }
+                    }
                 }
             }
         }
@@ -211,7 +239,6 @@ pub fn get_running_services() -> Result<Vec<ServiceInfo>, String> {
 
     if let Ok(out) = output {
         let text = String::from_utf8_lossy(&out.stdout);
-        let versions_dir_clean = config.versions_dir.to_lowercase().replace('/', "\\");
 
         for line in text.lines() {
             let line_trimmed = line.trim();
@@ -224,31 +251,29 @@ pub fn get_running_services() -> Result<Vec<ServiceInfo>, String> {
                 let pid_part = line_trimmed[last_space_idx..].trim().to_string();
 
                 let path_clean = path_part.to_lowercase().replace('/', "\\");
-                if path_clean.contains(&versions_dir_clean) {
-                    if let Ok(pid) = pid_part.parse::<i32>() {
-                        let proc_lower = path_clean.to_lowercase();
-                        let (svc_key, bin_name) = if proc_lower.ends_with("nginx.exe") {
-                            ("nginx", "nginx")
-                        } else if proc_lower.ends_with("redis-server.exe") {
-                            ("redis", "redis")
-                        } else if proc_lower.ends_with("mysqld.exe") {
-                            ("mysql", "mysql")
-                        } else if proc_lower.ends_with("mongod.exe") {
-                            ("mongodb", "mongodb")
-                        } else if proc_lower.ends_with("postgres.exe") {
-                            ("postgresql", "postgresql")
-                        } else {
-                            ("", "")
-                        };
+                if let Ok(pid) = pid_part.parse::<i32>() {
+                    let mut matched_id = None;
+                    let mut matched_bin = None;
 
-                        if !svc_key.is_empty() {
-                            if let Some(svc) = services.get_mut(svc_key) {
-                                svc.status = "running".to_string();
-                                svc.pid = pid;
-                                let version = extract_version_from_path(&path_part, bin_name);
-                                if !version.is_empty() {
-                                    svc.active_version = version;
-                                }
+                    for p in &all_projects {
+                        if p.category == crate::commands::project::types::ProjectCategory::Service || p.is_service {
+                            let exe_name = p.version_exe.as_deref().unwrap_or(&p.id);
+                            let exe_suffix = format!("{}.exe", exe_name.to_lowercase());
+                            if path_clean.ends_with(&exe_suffix) {
+                                matched_id = Some(p.id.clone());
+                                matched_bin = Some(exe_name.to_string());
+                                break;
+                            }
+                        }
+                    }
+
+                    if let (Some(svc_key), Some(bin_name)) = (matched_id, matched_bin) {
+                        if let Some(svc) = services.get_mut(&svc_key) {
+                            svc.status = "running".to_string();
+                            svc.pid = pid;
+                            let version = extract_version_from_path(&path_part, &bin_name);
+                            if !version.is_empty() {
+                                svc.active_version = version;
                             }
                         }
                     }
@@ -272,14 +297,16 @@ pub fn get_running_services() -> Result<Vec<ServiceInfo>, String> {
         }
     }
 
-    let order = ["nginx", "redis", "mysql", "mongodb", "postgresql"];
+    let order: Vec<String> = all_projects.iter().map(|p| p.id.clone()).collect();
     let mut result: Vec<ServiceInfo> = services.into_values().collect();
-    result.sort_by_key(|s| order.iter().position(|&x| x == s.name).unwrap_or(99));
+    result.sort_by_key(|s| order.iter().position(|x| x == &s.name).unwrap_or(99));
     Ok(result)
 }
 
 #[tauri::command]
 pub fn start_service(name: String, version: String) -> Result<(), String> {
+    use super::project::registry;
+
     let services = get_running_services()?;
     let svc = services.iter().find(|s| s.name == name)
         .ok_or_else(|| format!("未知的服务: {}", name))?;
@@ -288,61 +315,63 @@ pub fn start_service(name: String, version: String) -> Result<(), String> {
         return Err(format!("服务 {} 已经运行中 (PID: {})", name, svc.pid));
     }
 
+    let def = registry::find_by_id(&name)
+        .ok_or_else(|| format!("未找到服务定义: {}", name))?;
+
     let config = load_config();
-    let dir = PathBuf::from(&config.versions_dir).join(&name).join(&version);
-    if !dir.exists() {
-        return Err(format!("服务版本 {} 未安装", version));
+    let dir = if config.managed_items.contains(&name) {
+        let d = PathBuf::from(&config.versions_dir).join(&name).join(&version);
+        if !d.exists() {
+            return Err(format!("服务版本 {} 未安装", version));
+        }
+        // Set junction link
+        let junction_path = PathBuf::from(&config.links_dir).join(&name);
+        let _ = crate::commands::cache::create_junction(&junction_path, &d);
+        junction_path
+    } else {
+        let (_, local_root) = super::project::scanner::detect_install_source(&def);
+        if let Some(local_root) = local_root {
+            PathBuf::from(local_root)
+        } else {
+            return Err("未检测到本地安装，且服务未纳入托管。请先安装或托管。".to_string());
+        }
+    };
+
+    let start_cmd_template = def.start_cmd.as_deref().unwrap_or("");
+    if start_cmd_template.is_empty() {
+        return Err(format!("服务 {} 未配置启动命令", name));
     }
 
-    // Set junction link
-    let junction_path = PathBuf::from(&config.links_dir).join(&name);
-    let _ = crate::commands::cache::create_junction(&junction_path, &dir);
+    // Resolve data dir and log dir
+    let data_dir = if let Some(first_dir) = def.data_dirs.first() {
+        let mut p = first_dir.default_path.clone();
+        p = p.replace("{install_root}", &dir.to_string_lossy());
+        p = crate::commands::utils::expand_home(&p);
+        p
+    } else {
+        String::new()
+    };
 
-    let output = match name.as_str() {
-        "nginx" => {
-            super::hidden_cmd::hidden_cmd("cmd")
-                .args(&["/c", "start", "/b", "nginx.exe"])
-                .current_dir(&dir)
-                .output()
-        }
-        "redis" => {
-            let conf = if dir.join("redis.windows.conf").exists() { "redis.windows.conf" } else { "" };
-            if !conf.is_empty() {
-                super::hidden_cmd::hidden_cmd("cmd")
-                    .args(&["/c", "start", "/b", "redis-server.exe", conf])
-                    .current_dir(&dir)
-                    .output()
-            } else {
-                super::hidden_cmd::hidden_cmd("cmd")
-                    .args(&["/c", "start", "/b", "redis-server.exe"])
-                    .current_dir(&dir)
-                    .output()
-            }
-        }
-        "mysql" => {
-            super::hidden_cmd::hidden_cmd("cmd")
-                .args(&["/c", "start", "/b", "bin\\mysqld.exe", "--defaults-file=my.ini", "--console"])
-                .current_dir(&dir)
-                .output()
-        }
-        "mongodb" => {
-            let db_path = dir.join("data");
-            let _ = fs::create_dir_all(&db_path);
-            super::hidden_cmd::hidden_cmd("cmd")
-                .args(&["/c", "start", "/b", "bin\\mongod.exe", "--port", "27017", "--dbpath", &db_path.to_string_lossy()])
-                .current_dir(&dir)
-                .output()
-        }
-        "postgresql" => {
-            let db_path = dir.join("data");
-            let log_file = dir.join("logfile");
-            super::hidden_cmd::hidden_cmd("cmd")
-                .args(&["/c", "start", "/b", "bin\\pg_ctl.exe", "-D", &db_path.to_string_lossy(), "-l", &log_file.to_string_lossy(), "start"])
-                .current_dir(&dir)
-                .output()
-        }
-        _ => return Err(format!("不支持启动服务: {}", name)),
-    }.map_err(|e| format!("启动服务失败: {}", e))?;
+    let log_dir = def.log_dir.as_deref()
+        .map(|d| dir.join(d).to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    if !data_dir.is_empty() {
+        let _ = fs::create_dir_all(&data_dir);
+    }
+
+    let cmd_str = start_cmd_template
+        .replace("{dir}", &dir.to_string_lossy())
+        .replace("{install_root}", &dir.to_string_lossy())
+        .replace("{port}", &svc.port)
+        .replace("{data_dir}", &data_dir)
+        .replace("{log_dir}", &log_dir);
+
+    let output = super::hidden_cmd::hidden_cmd("cmd")
+        .args(&["/c", &cmd_str])
+        .current_dir(&dir)
+        .output()
+        .map_err(|e| format!("启动服务失败: {}", e))?;
 
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).to_string());
@@ -353,6 +382,8 @@ pub fn start_service(name: String, version: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn stop_service(name: String) -> Result<(), String> {
+    use super::project::registry;
+
     let services = get_running_services()?;
     let svc = services.iter().find(|s| s.name == name)
         .ok_or_else(|| format!("未知的服务: {}", name))?;
@@ -378,48 +409,60 @@ pub fn stop_service(name: String) -> Result<(), String> {
         return Err("外部服务未检测到有效的 PID".to_string());
     }
 
+    let def = registry::find_by_id(&name)
+        .ok_or_else(|| format!("未找到服务定义: {}", name))?;
+
     let config = load_config();
-    let dir = PathBuf::from(&config.versions_dir).join(&name).join(&svc.active_version);
+    let dir = if config.managed_items.contains(&name) {
+        PathBuf::from(&config.links_dir).join(&name)
+    } else {
+        let (_, local_root) = super::project::scanner::detect_install_source(&def);
+        if let Some(local_root) = local_root {
+            PathBuf::from(local_root)
+        } else {
+            PathBuf::new()
+        }
+    };
 
     let mut shutdown_err = false;
-    match name.as_str() {
-        "nginx" => {
-            let _ = super::hidden_cmd::hidden_cmd(dir.join("nginx.exe"))
-                .args(&["-s", "stop"])
-                .current_dir(&dir)
-                .output()
-                .map_err(|_| shutdown_err = true);
-        }
-        "redis" => {
-            let cli_exe = dir.join("redis-cli.exe");
-            let output = super::hidden_cmd::hidden_cmd(&cli_exe)
-                .args(&["-p", &svc.port, "shutdown"])
+
+    if let Some(ref stop_cmd_template) = def.stop_cmd {
+        if !stop_cmd_template.is_empty() && !dir.as_os_str().is_empty() {
+            // Resolve data dir and log dir
+            let data_dir = if let Some(first_dir) = def.data_dirs.first() {
+                let mut p = first_dir.default_path.clone();
+                p = p.replace("{install_root}", &dir.to_string_lossy());
+                p = crate::commands::utils::expand_home(&p);
+                p
+            } else {
+                String::new()
+            };
+
+            let log_dir = def.log_dir.as_deref()
+                .map(|d| dir.join(d).to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            let cmd_str = stop_cmd_template
+                .replace("{dir}", &dir.to_string_lossy())
+                .replace("{install_root}", &dir.to_string_lossy())
+                .replace("{port}", &svc.port)
+                .replace("{data_dir}", &data_dir)
+                .replace("{log_dir}", &log_dir);
+
+            let output = super::hidden_cmd::hidden_cmd("cmd")
+                .args(&["/c", &cmd_str])
                 .current_dir(&dir)
                 .output();
+
             match output {
                 Ok(out) if out.status.success() => {},
                 _ => { shutdown_err = true; }
             }
+        } else {
+            shutdown_err = true;
         }
-        "mysql" => {
-            let admin_exe = dir.join("bin").join("mysqladmin.exe");
-            let output = super::hidden_cmd::hidden_cmd(&admin_exe)
-                .args(&["--port", &svc.port, "-u", "root", "shutdown"])
-                .current_dir(&dir)
-                .output();
-            match output {
-                Ok(out) if out.status.success() => {},
-                _ => { shutdown_err = true; }
-            }
-        }
-        "postgresql" => {
-            let _ = super::hidden_cmd::hidden_cmd(dir.join("bin").join("pg_ctl.exe"))
-                .args(&["-D", &dir.join("data").to_string_lossy(), "stop"])
-                .current_dir(&dir)
-                .output()
-                .map_err(|_| shutdown_err = true);
-        }
-        _ => shutdown_err = true,
+    } else {
+        shutdown_err = true;
     }
 
     if shutdown_err && svc.pid > 0 {

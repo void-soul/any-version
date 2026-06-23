@@ -24,6 +24,7 @@ import {
   ServicesTab,
   PackageManagerTab,
   LegacyTab,
+  DataDirsTab,
 } from "./ProjectSubTabs";
 
 type SubTab = "versions" | "envvars" | "services" | string;
@@ -33,6 +34,7 @@ const baseTabLabels: Record<string, string> = {
   envvars: "环境变量",
   legacy: "旧版数据",
   services: "服务管理",
+  data_dirs: "数据管理",
 };
 
 interface ProjectUIState {
@@ -240,7 +242,11 @@ export default function ProjectDetailPanel({
   useEffect(() => {
     if (!pid || !project) return;
     const state = uiMap[pid];
-    if (!state || (!state.detailLoaded && !state.detailLoading && !state.detectStep)) {
+    const defaultTab = project.category === "service" ? "services" : "versions";
+    if (!state) {
+      patch(pid, { ...EMPTY_UI, activeSubTab: defaultTab });
+      runInitialDetection(pid, project);
+    } else if (!state.detailLoaded && !state.detailLoading && !state.detectStep) {
       runInitialDetection(pid, project);
     }
   }, [pid]);
@@ -452,7 +458,19 @@ export default function ProjectDetailPanel({
   const status: ProjectStatus = ui.detail?.status ?? project;
 
   // 构建动态 Tab 列表：基础 tabs + 每个包管理器一个独立 tab
-  const availableTabs: SubTab[] = ["versions", "envvars"];
+  const availableTabs: SubTab[] = [];
+  if (def?.category === "service" || def?.is_service) {
+    availableTabs.push("services");
+    if (def?.data_dirs && def.data_dirs.length > 0) {
+      availableTabs.push("data_dirs");
+    }
+    availableTabs.push("envvars");
+    availableTabs.push("versions");
+  } else {
+    availableTabs.push("versions");
+    availableTabs.push("envvars");
+  }
+
   // 包管理器 tabs：每个 PM 一个独立子页面，用 "pm:" 前缀标识
   const pmTabs: Array<{ id: string; label: string }> = [];
   if (def?.package_managers && def.package_managers.length > 0) {
@@ -462,7 +480,6 @@ export default function ProjectDetailPanel({
     }
   }
   if (hasLegacy) availableTabs.push("legacy");
-  if (def?.is_service || project?.service_status) availableTabs.push("services");
 
   // Tab 标签映射（基础 + 动态）
   const tabLabels: Record<string, string> = { ...baseTabLabels };
@@ -631,6 +648,7 @@ export default function ProjectDetailPanel({
                 {ui.activeSubTab === "versions" && <VersionsTab {...subTabProps} />}
                 {ui.activeSubTab === "envvars" && <EnvVarsTab {...subTabProps} />}
                 {ui.activeSubTab === "services" && <ServicesTab {...subTabProps} />}
+                {ui.activeSubTab === "data_dirs" && <DataDirsTab project={status} onRefresh={async () => { if (pid) await loadDetail(pid); }} />}
                 {ui.activeSubTab === "legacy" && <LegacyTab projectId={pid!} />}
                 {/* 动态包管理器子页面 —— key 保证每个 PM 独立且切换时不重新挂载 */}
                 {pmTabs.map(pt => {

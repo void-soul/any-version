@@ -213,9 +213,21 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
         None
     };
 
+    // 解析当前实际的安装根路径 (AnyVersion 托管链接 或 外部检测路径)
+    let active_install_root = if junction_path.exists() || junction_path.is_symlink() {
+        Some(junction_path.to_string_lossy().to_string())
+    } else if let Some(ref root) = install_root {
+        Some(root.clone())
+    } else {
+        None
+    };
+
+    // 数据目录状态
+    let data_dirs_status = build_data_dirs_status(def, active_install_root.as_deref());
+
     // 服务状态
     let service_status = if def.is_service {
-        build_service_status(def, &junction_path)
+        build_service_status(def, &junction_path, install_root.as_deref(), &data_dirs_status)
     } else {
         None
     };
@@ -233,6 +245,7 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
         env_vars_status,
         cache_status,
         service_status,
+        data_dirs_status,
     })
 }
 
@@ -461,7 +474,12 @@ fn build_cache_status(def: &ProjectDef) -> Option<CacheStatus> {
 }
 
 /// 构建服务状态
-fn build_service_status(def: &ProjectDef, junction_path: &Path) -> Option<ServiceStatus> {
+fn build_service_status(
+    def: &ProjectDef,
+    junction_path: &Path,
+    local_install_root: Option<&str>,
+    data_dirs_status: &[crate::commands::project::types::DataDirStatus]
+) -> Option<ServiceStatus> {
     use crate::commands::service::find_port_owner_simple;
 
     let default_port = def.default_port.unwrap_or(0);
@@ -476,13 +494,24 @@ fn build_service_status(def: &ProjectDef, junction_path: &Path) -> Option<Servic
     // 解析数据目录和日志目录
     let base_path = if junction_path.exists() || junction_path.is_symlink() {
         junction_path.to_path_buf()
+    } else if let Some(root) = local_install_root {
+        PathBuf::from(root)
     } else {
         PathBuf::new()
     };
 
-    let data_dir = def.data_dir.as_deref()
+    let mut data_dir = def.data_dir.as_deref()
         .map(|d| base_path.join(d).to_string_lossy().to_string())
         .unwrap_or_default();
+
+    // 优先使用实际检测到的已存在的数据文件夹作为 data_dir 反馈给前端
+    if data_dir.is_empty() {
+        if let Some(first_dir) = data_dirs_status.iter().find(|d| d.exists) {
+            data_dir = first_dir.path.clone();
+        } else if let Some(first_def) = data_dirs_status.first() {
+            data_dir = first_def.path.clone();
+        }
+    }
 
     let log_dir = def.log_dir.as_deref()
         .map(|d| base_path.join(d).to_string_lossy().to_string())
@@ -544,4 +573,102 @@ fn which_in_path(name: &str) -> bool {
         }
     }
     false
+}
+
+/// 扫描数据目录状态
+fn build_data_dirs_status(def: &ProjectDef, active_install_root: Option<&str>) -> Vec<crate::commands::project::types::DataDirStatus> {
+    use crate::commands::cache::get_dir_size;
+    use crate::commands::cache::format_bytes;
+    use crate::commands::utils::expand_home;
+    use crate::commands::project::types::DataDirStatus;
+
+    let mut statuses = Vec::new();
+
+    for dir_def in &def.data_dirs {
+        let mut paths_to_check = Vec::new();
+
+        // 1. 优先检查环境变量路径
+        if let Some(ref env_var) = dir_def.env_var {
+            if let Some(env_val) = crate::commands::env::get_registry_env(env_var) {
+                if !env_val.is_empty() {
+                    paths_to_check.push(env_val);
+                }
+            }
+        }
+
+        // 2. 添加 possible_paths 并做变量替换与拓展
+        for p in &dir_def.possible_paths {
+            let mut resolved = expand_home(p);
+            if let Some(root) = active_install_root {
+                resolved = resolved.replace("{install_root}", root);
+            }
+            if !paths_to_check.contains(&resolved) {
+                paths_to_check.push(resolved);
+            }
+        }
+
+        // 3. 补充 default_path 确保有备选
+        let mut default_resolved = expand_home(&dir_def.default_path);
+        if let Some(root) = active_install_root {
+            default_resolved = default_resolved.replace("{install_root}", root);
+        }
+        if !paths_to_check.contains(&default_resolved) {
+            paths_to_check.push(default_resolved.clone());
+        }
+
+        let mut found_any = false;
+        for path_str in paths_to_check {
+            let path = Path::new(&path_str);
+            if path.exists() {
+                found_any = true;
+                let mut is_link = false;
+                let mut real_target = String::new();
+
+                if let Ok(metadata) = fs::symlink_metadata(path) {
+                    if metadata.file_type().is_symlink() || metadata.file_type().is_dir() {
+                        if let Ok(eval_path) = fs::read_link(path) {
+                            is_link = true;
+                            real_target = eval_path.to_string_lossy().to_string();
+                        } else if let Ok(eval_path) = fs::canonicalize(path) {
+                            let canonical = eval_path.to_string_lossy().to_string();
+                            let canonical_clean = canonical.trim_start_matches(r"\\?\").to_string();
+                            if canonical_clean != path.to_string_lossy().to_string() {
+                                is_link = true;
+                                real_target = canonical_clean;
+                            }
+                        }
+                    }
+                }
+
+                let size_path = if is_link && !real_target.is_empty() { Path::new(&real_target) } else { path };
+                let size_bytes = get_dir_size(size_path);
+                let size_str = format_bytes(size_bytes);
+
+                statuses.push(DataDirStatus {
+                    id: dir_def.id.clone(),
+                    display_name: dir_def.display_name.clone(),
+                    path: path_str,
+                    size: size_str,
+                    is_link,
+                    real_target,
+                    exists: true,
+                });
+            }
+        }
+
+        // 若全部不存在，添加默认路径的占位，标记为不存在
+        if !found_any {
+            statuses.push(DataDirStatus {
+                id: dir_def.id.clone(),
+                display_name: dir_def.display_name.clone(),
+                path: default_resolved,
+                size: "0 B".to_string(),
+                is_link: false,
+                real_target: String::new(),
+                exists: false,
+            });
+        }
+    }
+
+    statuses
 }

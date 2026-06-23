@@ -298,7 +298,19 @@ pub fn migrate_pkg_storage_impl(
         return Err("原路径与目标路径相同".to_string());
     }
     if !orig.exists() {
-        return Err("源路径不存在".to_string());
+        if let Some(parent) = orig.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("创建源目录的父级失败: {}", e))?;
+        }
+        fs::create_dir_all(target).map_err(|e| format!("创建目标目录失败: {}", e))?;
+        create_junction(orig, target)?;
+
+        let _ = app_handle.emit("migrate-storage-progress", MigrateStorageProgress {
+            stage: "已完成（源路径不存在，直接创建链接）".to_string(),
+            current: 1,
+            total: 1,
+            file_name: String::new(),
+        });
+        return Ok(());
     }
 
     let can_fast_path = storage_kind == "cache" && delete_old_first;

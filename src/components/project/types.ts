@@ -57,6 +57,16 @@ export interface PackageManagerDef {
   remote_versions_config?: Record<string, unknown> | null;
 }
 
+export interface DataDirStatus {
+  id: string;
+  display_name: string;
+  path: string;
+  size: string;
+  is_link: boolean;
+  real_target: string;
+  exists: boolean;
+}
+
 export interface ProjectStatus {
   id: string;
   display_name: string;
@@ -70,6 +80,7 @@ export interface ProjectStatus {
   env_vars_status: EnvVarStatus[];
   cache_status: CacheStatus | null;
   service_status: ServiceStatus | null;
+  data_dirs_status?: DataDirStatus[];
 }
 
 export interface UserConfigurableVar {
@@ -95,6 +106,13 @@ export interface ProjectDef {
   default_port: number | null;
   package_managers: PackageManagerDef[];
   user_configurable_vars?: UserConfigurableVar[];
+  data_dirs?: Array<{
+    id: string;
+    display_name: string;
+    possible_paths: string[];
+    default_path: string;
+    env_var?: string;
+  }>;
   // ... 其他字段
   [key: string]: unknown;
 }

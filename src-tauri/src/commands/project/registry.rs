@@ -2,8 +2,27 @@
 
 use super::types::ProjectDef;
 
+use std::sync::RwLock;
+
+static REGISTRY_CACHE: RwLock<Option<Vec<ProjectDef>>> = RwLock::new(None);
+
 pub fn registry() -> Vec<ProjectDef> {
-    load_registry()
+    {
+        let read_guard = REGISTRY_CACHE.read().unwrap();
+        if let Some(ref list) = *read_guard {
+            return list.clone();
+        }
+    }
+
+    let list = load_registry();
+    let mut write_guard = REGISTRY_CACHE.write().unwrap();
+    *write_guard = Some(list.clone());
+    list
+}
+
+pub fn clear_registry_cache() {
+    let mut write_guard = REGISTRY_CACHE.write().unwrap();
+    *write_guard = None;
 }
 
 pub fn load_registry() -> Vec<ProjectDef> {

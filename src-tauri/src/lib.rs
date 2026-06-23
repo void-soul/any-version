@@ -185,6 +185,8 @@ pub fn run() {
             commands::project::commands::project_set_cache_path,
             commands::project::commands::handle_point_storage_files,
             commands::project::commands::clean_pkg_cache,
+            commands::project::commands::migrate_data_dir,
+            commands::project::commands::delete_data_dir,
             commands::project::commands::get_legacy_backup,
             commands::project::versions::project_list_remote_versions,
             commands::project::versions::project_install_version,

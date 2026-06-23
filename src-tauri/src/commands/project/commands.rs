@@ -445,19 +445,173 @@ pub fn project_preview_unmanage(id: String) -> Result<ManagePreview, String> {
     })
 }
 
+async fn install_pip_internal() -> Result<String, String> {
+    let config = crate::commands::config::load_config();
+    let link_dir = std::path::PathBuf::from(&config.links_dir).join("python");
+    if !link_dir.exists() {
+        return Err("未找到 Python 链接目录，请先安装或启用 Python 版本。".to_string());
+    }
+
+    // 1. 尝试修改 ._pth 文件以启用 site-packages 导入
+    let canonical_dir = std::fs::canonicalize(&link_dir)
+        .map_err(|e| format!("无法解析 Python 路径: {}", e))?;
+    
+    let mut pth_file = None;
+    if let Ok(entries) = std::fs::read_dir(&canonical_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_file() {
+                let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+                if file_name.ends_with("._pth") || file_name.ends_with(".pth") {
+                    pth_file = Some(path);
+                    break;
+                }
+            }
+        }
+    }
+
+    if let Some(pth_path) = pth_file {
+        if let Ok(content) = std::fs::read_to_string(&pth_path) {
+            let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+            let mut has_import_site = false;
+            let mut modified = false;
+
+            for line in &mut lines {
+                let trimmed = line.trim();
+                if trimmed == "import site" {
+                    has_import_site = true;
+                } else if trimmed == "#import site" || trimmed == "# import site" {
+                    *line = "import site".to_string();
+                    has_import_site = true;
+                    modified = true;
+                }
+            }
+
+            if !has_import_site {
+                lines.push("import site".to_string());
+                modified = true;
+            }
+
+            if modified {
+                let new_content = lines.join("\r\n");
+                let _ = std::fs::write(&pth_path, new_content);
+            }
+        }
+    }
+
+    // 2. 获取 Python 版本以匹配合适的 get-pip.py 下载链接
+    let python_exe = link_dir.join("python.exe");
+    if !python_exe.exists() {
+        return Err("在链接目录中未找到 python.exe".to_string());
+    }
+
+    let ver_output = crate::commands::hidden_cmd::hidden_cmd(&python_exe)
+        .args(&["-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"])
+        .current_dir(&canonical_dir)
+        .output()
+        .map_err(|e| format!("获取 Python 版本失败: {}", e))?;
+
+    let py_ver = String::from_utf8_lossy(&ver_output.stdout).trim().to_string();
+    let parts: Vec<&str> = py_ver.split('.').collect();
+    let is_old = if parts.len() >= 2 {
+        if let (Ok(major), Ok(minor)) = (parts[0].parse::<i32>(), parts[1].parse::<i32>()) {
+            major < 3 || (major == 3 && minor < 10)
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    let download_url = if is_old && !py_ver.is_empty() {
+        format!("https://bootstrap.pypa.io/pip/{}/get-pip.py", py_ver)
+    } else {
+        "https://bootstrap.pypa.io/get-pip.py".to_string()
+    };
+
+    // 3. 下载 get-pip.py
+    let temp_dir = std::env::temp_dir();
+    let get_pip_path = temp_dir.join("get-pip.py");
+    
+    let client = reqwest::Client::builder()
+        .user_agent("Any-Version-Manager")
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+
+    let res = client.get(&download_url)
+        .send()
+        .await
+        .map_err(|e| format!("请求 get-pip.py 失败 (URL: {}): {}", download_url, e))?;
+
+    if !res.status().is_success() {
+        return Err(format!("下载 get-pip.py 返回错误状态码: {} (URL: {})", res.status(), download_url));
+    }
+
+    let bytes = res.bytes().await.map_err(|e| format!("读取 get-pip.py 内容失败: {}", e))?;
+    std::fs::write(&get_pip_path, bytes).map_err(|e| format!("保存 get-pip.py 失败: {}", e))?;
+
+    // 4. 执行 python.exe get-pip.py
+    let output = crate::commands::hidden_cmd::hidden_cmd(&python_exe)
+        .arg(&get_pip_path)
+        .current_dir(&canonical_dir)
+        .output()
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&get_pip_path);
+            format!("执行 get-pip.py 失败: {}", e)
+        })?;
+
+    // 5. 清理 get-pip.py
+    let _ = std::fs::remove_file(&get_pip_path);
+
+    if output.status.success() {
+        Ok("pip 安装成功！".to_string())
+    } else {
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(format!("安装 pip 失败!\nStdout: {}\nStderr: {}", stdout, stderr))
+    }
+}
+
 /// 执行 shell 命令并捕获输出（用于包管理器版本检测、镜像切换等）
 #[tauri::command]
 pub fn run_cmd_capture(cmd: String) -> Result<String, String> {
+    if cmd == "install_pip" {
+        return tauri::async_runtime::block_on(async {
+            install_pip_internal().await
+        });
+    }
+
+    // 将 pip 命令转换为使用本地 active python 运行，以确保多版本/绿色版隔离且正确
+    let mut resolved_cmd = cmd.clone();
+    if cmd == "pip" || cmd.starts_with("pip ") {
+        let config = crate::commands::config::load_config();
+        let link_dir = std::path::PathBuf::from(&config.links_dir).join("python");
+        let active_py = if cfg!(windows) {
+            link_dir.join("python.exe")
+        } else {
+            link_dir.join("python")
+        };
+        if active_py.exists() {
+            let py_str = format!("\"{}\" -m pip", active_py.to_string_lossy());
+            if cmd == "pip" {
+                resolved_cmd = py_str;
+            } else {
+                resolved_cmd = cmd.replacen("pip", &py_str, 1);
+            }
+        }
+    }
+
     let mut command = super::super::hidden_cmd::hidden_cmd("cmd");
 
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.raw_arg(&format!("/c \"{}\"", cmd));
+        command.raw_arg(&format!("/c \"{}\"", resolved_cmd));
     }
     #[cfg(not(windows))]
     {
-        command.args(&["/c", &cmd]);
+        command.args(&["/c", &resolved_cmd]);
     }
 
     // 注入 NPM_CONFIG_PREFIX，确保 npm install -g 安装到正确的 link_dir
@@ -748,6 +902,82 @@ pub fn migrate_pkg_storage(
 /// 指向模式下设置缓存目录。
 /// 如果包管理器配有 cache_env_var 且检测到该环境变量已被配置：
 /// - 若存在设置命令（例如 go env -w）且旧环境变量在 HKCU（用户级），则主动在注册表及进程中将其清空，使命令托管生效；
+fn set_maven_local_repository(new_path: &str) -> Result<(), String> {
+    use crate::commands::utils::expand_home;
+    let config = crate::commands::config::load_config();
+    let user_home = expand_home("{home}");
+    let links_dir = config.links_dir;
+    let maven_home = std::env::var("MAVEN_HOME").unwrap_or_default();
+
+    let paths = vec![
+        std::path::PathBuf::from(&user_home).join(".m2").join("settings.xml"),
+        std::path::PathBuf::from(&maven_home).join("conf").join("settings.xml"),
+        std::path::PathBuf::from(&links_dir).join("maven").join("conf").join("settings.xml"),
+    ];
+
+    let mut target_path = None;
+    for path in &paths {
+        if path.exists() {
+            target_path = Some(path.clone());
+            break;
+        }
+    }
+
+    // Default to {home}/.m2/settings.xml if none exists
+    let settings_path = target_path.unwrap_or_else(|| {
+        let p = std::path::PathBuf::from(&user_home).join(".m2").join("settings.xml");
+        if let Some(parent) = p.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        p
+    });
+
+    if settings_path.exists() {
+        let content = std::fs::read_to_string(&settings_path)
+            .map_err(|e| format!("无法读取 settings.xml: {}", e))?;
+
+        let re_repo = regex::Regex::new(r"(?s)<localRepository>.*?</localRepository>")
+            .map_err(|e| e.to_string())?;
+
+        let new_tag = format!("<localRepository>{}</localRepository>", new_path);
+
+        let new_content = if re_repo.is_match(&content) {
+            // Replace existing localRepository tag
+            re_repo.replace(&content, new_tag.as_str()).to_string()
+        } else {
+            // Find <settings> tag and insert it after
+            let re_settings = regex::Regex::new(r"(?i)<settings\b[^>]*>")
+                .map_err(|e| e.to_string())?;
+
+            if let Some(mat) = re_settings.find(&content) {
+                let insert_idx = mat.end();
+                let mut c = content.clone();
+                c.insert_str(insert_idx, &format!("\n  {}", new_tag));
+                c
+            } else {
+                return Err("未在 settings.xml 中找到 <settings> 标签。".to_string());
+            }
+        };
+
+        std::fs::write(&settings_path, new_content)
+            .map_err(|e| format!("写入 settings.xml 失败: {}", e))?;
+    } else {
+        // Create a new settings.xml with the localRepository
+        let new_content = format!(
+            r#"<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+  <localRepository>{}</localRepository>
+</settings>"#,
+            new_path
+        );
+        std::fs::write(&settings_path, new_content)
+            .map_err(|e| format!("创建 settings.xml 失败: {}", e))?;
+    }
+
+    Ok(())
+}
+
 /// - 若无设置命令或旧环境变量在 HKLM（系统级，无法删除），则通过在 HKCU 中写入新路径来实现优先级覆盖；
 /// - 若执行命令失败且之前删除了 HKCU 环境变量，则进行恢复/兜底设置。
 #[tauri::command]
@@ -756,6 +986,10 @@ pub fn project_set_cache_path(
     pm_id: String,
     new_path: String,
 ) -> Result<(), String> {
+    if pm_id == "maven" {
+        return set_maven_local_repository(&new_path);
+    }
+
     use crate::commands::env::{set_registry_env, get_registry_env_any};
     use super::registry;
 
@@ -878,4 +1112,96 @@ pub fn clean_pkg_cache(
         resolve_pkg_storage_path_dynamic(&project_id, &pm_id, "cache")?
     };
     crate::commands::cache::clean_pkg_cache_impl(&app_handle, &resolved)
+}
+
+#[tauri::command]
+pub fn migrate_data_dir(
+    app_handle: tauri::AppHandle,
+    project_id: String,
+    orig_path: String,
+    new_path: String,
+) -> Result<(), String> {
+    use std::fs;
+    use std::path::Path;
+
+    // 1. 确保服务不在运行中
+    let status = scanner::get_project_status(&project_id)?;
+    if let Some(svc_status) = status.service_status {
+        if svc_status.running {
+            return Err("服务正在运行中，请先停止服务后再进行数据迁移。".to_string());
+        }
+    }
+
+    let orig = Path::new(&orig_path);
+    let target = Path::new(&new_path);
+
+    if orig == target {
+        return Err("原路径与目标路径相同，无需迁移".to_string());
+    }
+    if !orig.exists() {
+        return Err("源路径不存在".to_string());
+    }
+
+    // Ensure target parent folder exists
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("无法创建目标父目录: {}", e))?;
+    }
+
+    let is_symlink = fs::symlink_metadata(orig).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+
+    if is_symlink {
+        // Just remove old junction link
+        fs::remove_dir(orig).map_err(|e| format!("无法移除已有的旧链接: {}", e))?;
+    } else {
+        // Copy directory safely (database data files: delete_old_first = false)
+        // We use migrate_pkg_storage_impl with delete_old_first=false, storage_kind="data"
+        crate::commands::cache::migrate_pkg_storage_impl(
+            &app_handle,
+            &orig_path,
+            &new_path,
+            "data",
+            false,
+        )?;
+    }
+
+    // Create Junction
+    crate::commands::cache::create_junction(orig, target)?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_data_dir(project_id: String, path: String) -> Result<(), String> {
+    use std::fs;
+    use std::path::Path;
+
+    // 1. 确保服务不在运行中
+    let status = scanner::get_project_status(&project_id)?;
+    if let Some(svc_status) = status.service_status {
+        if svc_status.running {
+            return Err("服务正在运行中，请先停止服务后再删除其数据目录。".to_string());
+        }
+    }
+
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err("路径不存在".to_string());
+    }
+
+    let is_symlink = fs::symlink_metadata(p).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+
+    if is_symlink {
+        if let Ok(target) = fs::read_link(p) {
+            let _ = fs::remove_dir(p);
+            if target.exists() {
+                fs::remove_dir_all(&target).map_err(|e| format!("删除链接目标目录失败: {}", e))?;
+            }
+        } else {
+            fs::remove_dir(p).map_err(|e| format!("删除链接失败: {}", e))?;
+        }
+    } else {
+        fs::remove_dir_all(p).map_err(|e| format!("删除数据目录失败: {}", e))?;
+    }
+
+    Ok(())
 }

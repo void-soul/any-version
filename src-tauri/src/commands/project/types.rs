@@ -102,6 +102,27 @@ pub struct CacheConfigSource {
     pub suffix: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DataDirDef {
+    pub id: String,
+    pub display_name: String,
+    pub possible_paths: Vec<String>,
+    pub default_path: String,
+    #[serde(default)]
+    pub env_var: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DataDirStatus {
+    pub id: String,
+    pub display_name: String,
+    pub path: String,
+    pub size: String,
+    pub is_link: bool,
+    pub real_target: String,
+    pub exists: bool,
+}
+
 /// 包管理器定义（嵌套在项目内，如 Node.js 下 of npm/yarn/pnpm）
 ///
 /// 缓存、镜像、数据路径等属性属于包管理器，而非语言本身。
@@ -275,6 +296,11 @@ pub struct ProjectDef {
     /// 解压后的子目录（如 python 的 "tools"）
     #[serde(default)]
     pub extract_subdir: Option<String>,
+    /// 解压后递归合并所有子目录到目标根目录。
+    /// 用于 Rust 独立发行版等需要将 `rustc/`, `cargo/`, `rust-std-*/` 
+    /// 合并到同一个目录结构的场景。
+    #[serde(default)]
+    pub merge_extracted_subdirs: bool,
     /// 需要添加到 PATH 的目录列表（相对于安装根目录）
     /// 由 Scoop 更新工具自动填充，也支持手动定义
     #[serde(default)]
@@ -302,6 +328,9 @@ pub struct ProjectDef {
     /// Local version detection output regex pattern.
     #[serde(default)]
     pub version_parse_regex: Option<String>,
+    /// 数据目录定义列表
+    #[serde(default)]
+    pub data_dirs: Vec<DataDirDef>,
 }
 
 /// 环境变量运行时状态
@@ -380,6 +409,9 @@ pub struct ProjectStatus {
     pub cache_status: Option<CacheStatus>,
     /// 服务状态（如果项目是服务）
     pub service_status: Option<ServiceStatus>,
+    /// 数据目录状态列表
+    #[serde(default)]
+    pub data_dirs_status: Vec<DataDirStatus>,
 }
 
 /// 项目详情（比 Status 多出定义信息）

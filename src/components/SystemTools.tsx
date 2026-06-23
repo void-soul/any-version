@@ -1,17 +1,15 @@
 import React, { useState } from "react";
-import HostsManager from "./HostsManager";
 import PortScanner from "./PortScanner";
-import { Network, ShieldCheck, Database } from "lucide-react";
+import { Network, Database } from "lucide-react";
 import EnvBackupManager from "./EnvBackupManager";
 
 export default function SystemTools() {
-  const [activeTab, setActiveTab] = useState<"hosts" | "ports" | "backups">("hosts");
+  const [activeTab, setActiveTab] = useState<"ports" | "backups">("ports");
 
   return (
     <div className="flex-1 overflow-hidden flex flex-col select-none">
       <div className="px-6 pt-2 pb-3 flex items-center gap-2 flex-shrink-0 border-b border-white/5">
         {[
-          { key: "hosts" as const, label: "Hosts", icon: ShieldCheck },
           { key: "ports" as const, label: "端口排查", icon: Network },
           { key: "backups" as const, label: "环境备份", icon: Database },
         ].map(({ key, label, icon: Icon }) => (
@@ -28,9 +26,6 @@ export default function SystemTools() {
       </div>
 
       <div className="flex-1 min-h-0 relative">
-        <div className={`absolute inset-0 flex flex-col min-h-0 px-6 py-4 ${activeTab === "hosts" ? "" : "hidden"}`}>
-          <HostsManager />
-        </div>
         <div className={`absolute inset-0 flex flex-col min-h-0 px-6 py-4 ${activeTab === "ports" ? "" : "hidden"}`}>
           <div className="flex-1 min-h-0 overflow-y-auto pr-1">
             <div className="max-w-3xl"><PortScanner /></div>

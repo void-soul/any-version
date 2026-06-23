@@ -1705,7 +1705,7 @@ export function PackageManagerTab({ projectId, pm, hidden }: { projectId: string
                 ) : null}
               </>
             )}
-            {!installed && !pm.built_in && pm.install_cmd && (
+            {!installed && pm.install_cmd && (
               <button onClick={handleInstall} disabled={installing || upgrading} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1.5">
                 <Download className="w-3.5 h-3.5" />{installing ? "安装中..." : "安装"}
               </button>
@@ -1954,6 +1954,251 @@ export function PackageManagerTab({ projectId, pm, hidden }: { projectId: string
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════
+//  数据目录管理
+// ═══════════════════════════════════════
+export function DataDirsTab({ project, onRefresh }: { project: ProjectStatus; onRefresh: () => Promise<void> }) {
+  const [migratingId, setMigratingId] = useState<string | null>(null);
+  const [newPath, setNewPath] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [migrateProgress, setMigrateProgress] = useState<{ stage: string; current: number; total: number; file_name: string } | null>(null);
+
+  // 监听迁移进度
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    if (loading) {
+      listen<{ stage: string; current: number; total: number; file_name: string }>(
+        "migrate-storage-progress",
+        (event) => {
+          setMigrateProgress(event.payload);
+        }
+      ).then((u) => {
+        unlisten = u;
+      });
+    }
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [loading]);
+
+  const browseFolder = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({ directory: true, title: "选择数据迁移目标目录" });
+      if (selected) setNewPath(selected as string);
+    } catch {
+      alert("文件夹选择器不可用，请手动输入路径。");
+    }
+  };
+
+  const handleMigrate = async (dirId: string, origPath: string) => {
+    if (!newPath) {
+      alert("请先选择或输入迁移目标路径");
+      return;
+    }
+    if (newPath.toLowerCase().startsWith("c:")) {
+      if (!confirm("警告：目标路径仍在 C 盘下，这无法解决 C 盘空间问题。确定继续？")) {
+        return;
+      }
+    }
+    setLoading(true);
+    setMigrateProgress(null);
+    try {
+      await invoke("migrate_data_dir", {
+        projectId: project.id,
+        origPath,
+        newPath,
+      });
+      alert("数据迁移成功！已自动建立 Junction 目录链接。");
+      setMigratingId(null);
+      setNewPath("");
+      await onRefresh();
+    } catch (e: unknown) {
+      alert("迁移失败: " + e);
+    } finally {
+      setLoading(false);
+      setMigrateProgress(null);
+    }
+  };
+
+  const handleDelete = async (path: string) => {
+    if (!confirm(`警告：该操作将永久删除以下目录及其全部数据：\n${path}\n\n该操作不可撤销，确定继续？`)) {
+      return;
+    }
+    if (!confirm(`再次确认：确定要删除 ${path} 吗？`)) {
+      return;
+    }
+    try {
+      await invoke("delete_data_dir", {
+        projectId: project.id,
+        path,
+      });
+      alert("删除成功！");
+      await onRefresh();
+    } catch (e: unknown) {
+      alert("删除失败: " + e);
+    }
+  };
+
+  const dataDirs = project.data_dirs_status || [];
+
+  return (
+    <div className="space-y-6">
+      <div className="glass-panel rounded-2xl p-5 border border-white/5 bg-white/2 space-y-4">
+        <div className="flex items-center gap-2">
+          <HardDrive className="w-5 h-5 text-blue-400" />
+          <div>
+            <h4 className="text-sm font-semibold text-white">数据文件与数据残留管理</h4>
+            <p className="text-[11px] text-slate-500 mt-0.5">扫描、迁移主数据文件或清除残留的旧版本数据以节省 C 盘空间。</p>
+          </div>
+        </div>
+
+        {dataDirs.length === 0 ? (
+          <p className="text-[13px] text-slate-400 py-2">未配置数据目录规则或未扫描到对应路径。</p>
+        ) : (
+          <div className="space-y-4">
+            {dataDirs.map((dir) => {
+              const isMigrating = migratingId === dir.id;
+              return (
+                <div key={dir.id + "_" + dir.path} className="p-4 bg-black/20 rounded-xl border border-white/5 space-y-3 animate-fadeIn">
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13px] font-semibold text-white">{dir.display_name}</span>
+                        {dir.is_link && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">
+                            已迁移 (Junction)
+                          </span>
+                        )}
+                        {!dir.exists && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20">
+                            未发现路径
+                          </span>
+                        )}
+                      </div>
+                      <p className="font-mono text-[12px] text-slate-400 break-all">{dir.path}</p>
+                      {dir.is_link && dir.real_target && (
+                        <p className="font-mono text-[11px] text-slate-500 break-all">
+                          ↳ 实际指向: {dir.real_target}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-300 font-mono text-[13px] font-semibold bg-white/5 px-2.5 py-1 rounded-lg">
+                        {dir.size}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 操作按钮区 */}
+                  {dir.exists && !isMigrating && (
+                    <div className="flex items-center gap-2 pt-1 border-t border-white/5">
+                      {!dir.is_link && (
+                        <button
+                          onClick={() => {
+                            setMigratingId(dir.id);
+                            // 预设建议目标路径
+                            const driveMatch = dir.path.match(/^([A-Za-z]):\\/);
+                            if (driveMatch && driveMatch[1].toUpperCase() === "C") {
+                              const suffix = dir.path.substring(2); // Remove "C:"
+                              setNewPath(`D:\\AnyVersionData\\${project.id}${suffix}`);
+                            } else {
+                              setNewPath("");
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-blue-600/80 hover:bg-blue-600 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
+                        >
+                          <FolderSync className="w-3.5 h-3.5" /> 迁移数据
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleDelete(dir.path)}
+                        className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> 删除数据
+                      </button>
+                    </div>
+                  )}
+
+                  {/* 迁移进行中 / 迁移配置区 */}
+                  {isMigrating && (
+                    <div className="p-3 bg-white/5 rounded-xl border border-white/5 space-y-3 mt-2 animate-fadeIn">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[12px] text-slate-300 font-semibold">
+                          数据迁移设置 (C 盘 ➔ 非 C 盘)
+                        </span>
+                        <button
+                          onClick={() => {
+                            setMigratingId(null);
+                            setNewPath("");
+                          }}
+                          disabled={loading}
+                          className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer"
+                        >
+                          取消
+                        </button>
+                      </div>
+
+                      {loading ? (
+                        <div className="space-y-2 py-2">
+                          <div className="flex items-center gap-2 text-[12px] text-blue-300 font-medium">
+                            <Loader className="w-3.5 h-3.5 animate-spin" />
+                            <span>{migrateProgress?.stage || "正在准备迁移..."}</span>
+                          </div>
+                          {migrateProgress && migrateProgress.total > 0 && (
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between text-[10px] text-slate-500">
+                                <span className="truncate max-w-[200px]">{migrateProgress.file_name}</span>
+                                <span>{migrateProgress.current} / {migrateProgress.total}</span>
+                              </div>
+                              <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-blue-500 rounded-full transition-all"
+                                  style={{ width: `${(migrateProgress.current / migrateProgress.total) * 100}%` }}
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5">
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={newPath}
+                              onChange={(e) => setNewPath(e.target.value)}
+                              className="flex-1 glass-input px-3 py-1.5 text-[12px] font-mono"
+                              placeholder="例如 D:\AnyVersionData\mysql_data"
+                            />
+                            <button
+                              onClick={browseFolder}
+                              className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-[12px] border border-white/5 cursor-pointer flex items-center gap-1"
+                            >
+                              <FolderOpen className="w-3.5 h-3.5" /> 浏览
+                            </button>
+                          </div>
+                          <div className="flex gap-2 justify-end">
+                            <button
+                              onClick={() => handleMigrate(dir.id, dir.path)}
+                              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[12px] font-semibold cursor-pointer"
+                            >
+                              开始迁移
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

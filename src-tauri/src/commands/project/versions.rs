@@ -109,7 +109,10 @@ fn save_version_cache(project_id: &str, versions: &[String]) -> u64 {
 pub async fn project_list_remote_versions(id: String, force: bool) -> Result<RemoteVersionsResult, String> {
     // 非强制刷新时优先读缓存
     if !force {
-        if let Some(cache) = load_version_cache(&id) {
+        if let Some(mut cache) = load_version_cache(&id) {
+            if id == "python" {
+                cache.versions.retain(|v| is_valid_python_binary_version(v));
+            }
             return Ok(RemoteVersionsResult {
                 versions: cache.versions,
                 updated_at: cache.updated_at,
@@ -156,6 +159,23 @@ async fn fetch_remote_versions_inner(id: &str) -> Result<Vec<String>, String> {
     }
 }
 
+
+fn is_valid_python_binary_version(ver: &str) -> bool {
+    let parts: Vec<&str> = ver.split('.').collect();
+    if parts.len() >= 3 {
+        let major = parts[0].parse::<i32>().unwrap_or(0);
+        let minor = parts[1].parse::<i32>().unwrap_or(0);
+        let patch = parts[2].split(|c: char| !c.is_numeric()).next().unwrap_or("0").parse::<i32>().unwrap_or(0);
+        if major == 3 {
+            if minor == 7 && patch > 9 { return false; }
+            if minor == 8 && patch > 10 { return false; }
+            if minor == 9 && patch > 13 { return false; }
+            if minor == 10 && patch > 11 { return false; }
+            if minor == 11 && patch > 9 { return false; }
+        }
+    }
+    true
+}
 
 async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, url_override: Option<&str>) -> Result<Vec<String>, String> {
     let url = if let Some(u) = url_override {
@@ -265,6 +285,10 @@ async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, ur
             }
 
             let mut ver = apply_transform(&raw_version, version_transform);
+
+            if url.contains("python.org") && !is_valid_python_binary_version(&ver) {
+                continue;
+            }
 
             if let Some(ef) = extra_field {
                 if let Some(extra_val) = item.get(ef) {
@@ -515,7 +539,7 @@ async fn do_install(
         extract_dir
     };
 
-    if let Err(e) = move_extract_to_dest(&src_dir, &dest_dir) {
+    if let Err(e) = move_extract_to_dest(&src_dir, &dest_dir, def.merge_extracted_subdirs) {
         return Err(format!("安装失败: {}", e));
     }
 
@@ -794,8 +818,32 @@ fn extract_msi(src: &Path, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// 将解压后的内容移动到目标目录
-fn move_extract_to_dest(extracted_dir: &Path, dest_dir: &Path) -> Result<(), String> {
+/// 递归合并 src 目录内容到 dest。同名目录递归合并，同名文件覆盖。
+fn merge_dir_all(src: &Path, dest: &Path) -> Result<(), String> {
+    fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+
+    let entries = fs::read_dir(src).map_err(|e| e.to_string())?;
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            merge_dir_all(&src_path, &dest_path)?;
+        } else {
+            if let Some(parent) = dest_path.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::copy(&src_path, &dest_path).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// 将解压后的内容移动到目标目录。
+/// 当 merge_subdirs=true 时，所有子目录内容递归合并到 dest_dir 根下，
+/// 使 rustc/cargo/rust-std-* 等分散的组件融合为同一个目录结构。
+fn move_extract_to_dest(extracted_dir: &Path, dest_dir: &Path, merge_subdirs: bool) -> Result<(), String> {
     let entries = fs::read_dir(extracted_dir).map_err(|e| e.to_string())?
         .filter_map(|e| e.ok())
         .collect::<Vec<_>>();
@@ -813,15 +861,26 @@ fn move_extract_to_dest(extracted_dir: &Path, dest_dir: &Path) -> Result<(), Str
     let sub_entries = fs::read_dir(&src_dir).map_err(|e| e.to_string())?
         .filter_map(|e| e.ok());
 
-    for entry in sub_entries {
-        let old_path = entry.path();
-        let new_path = dest_dir.join(entry.file_name());
-
-        if fs::rename(&old_path, &new_path).is_err() {
+    if merge_subdirs {
+        for entry in sub_entries {
             if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                crate::commands::cache::copy_dir_all(&old_path, &new_path).map_err(|e| e.to_string())?;
+                merge_dir_all(&entry.path(), dest_dir)?;
             } else {
-                fs::copy(&old_path, &new_path).map_err(|e| e.to_string())?;
+                fs::copy(&entry.path(), &dest_dir.join(entry.file_name()))
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+    } else {
+        for entry in sub_entries {
+            let old_path = entry.path();
+            let new_path = dest_dir.join(entry.file_name());
+
+            if fs::rename(&old_path, &new_path).is_err() {
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    crate::commands::cache::copy_dir_all(&old_path, &new_path).map_err(|e| e.to_string())?;
+                } else {
+                    fs::copy(&old_path, &new_path).map_err(|e| e.to_string())?;
+                }
             }
         }
     }

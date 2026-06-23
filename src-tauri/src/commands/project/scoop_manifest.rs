@@ -457,6 +457,9 @@ pub async fn update_projects_from_scoop() -> Result<ScoopUpdateReport, String> {
     std::fs::write(&projects_path, &new_content)
         .map_err(|e| format!("写入 projects.json 失败: {}", e))?;
 
+    // 清理项目注册表缓存以使新写入的内容生效
+    super::registry::clear_registry_cache();
+
     report.success = true;
     Ok(report)
 }
