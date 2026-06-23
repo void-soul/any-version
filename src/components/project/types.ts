@@ -11,6 +11,7 @@ export interface EnvVarStatus {
   source: string; // "HKCU" | "HKLM" | "未设置"
   exists: boolean;
   in_anyversion: boolean;
+  tier?: "core" | "package" | "compat";
 }
 
 export interface CacheStatus {
@@ -32,7 +33,10 @@ export interface ServiceStatus {
 export interface PackageManagerDef {
   id: string;
   display_name: string;
+  built_in?: boolean;
   install_cmd: string | null;
+  upgrade_cmd: string | null;
+  latest_version_cmd: string | null;
   version_cmd: string | null;
   cache_detect_cmd: string | null;
   pkg_list_cmd: string | null;
@@ -47,6 +51,10 @@ export interface PackageManagerDef {
   data_default_path: string | null;
   data_env_var: string | null;
   data_set_cmd_template: string | null;
+  // 代理配置
+  proxy_detect_cmd: string | null;
+  proxy_set_cmd_template: string | null;
+  remote_versions_config?: Record<string, unknown> | null;
 }
 
 export interface ProjectStatus {
@@ -64,18 +72,29 @@ export interface ProjectStatus {
   service_status: ServiceStatus | null;
 }
 
+export interface UserConfigurableVar {
+  name: string;
+  desc: string;
+  placeholder?: string;
+  options?: string[];
+  var_type?: string; // "boolean" | undefined (free text)
+  current_value?: string;
+  source?: string;
+}
+
 export interface ProjectDef {
   id: string;
   display_name: string;
   category: ProjectCategory;
   official_website: string;
-  env_vars: Array<{ name: string; desc: string; check_type: string }>;
+  env_vars: Array<{ name: string; desc: string; check_type: string; tier?: "core" | "package" | "compat" }>;
   has_cache: boolean;
   has_mirror: boolean;
   has_pkg: boolean;
   is_service: boolean;
   default_port: number | null;
   package_managers: PackageManagerDef[];
+  user_configurable_vars?: UserConfigurableVar[];
   // ... 其他字段
   [key: string]: unknown;
 }

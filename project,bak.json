@@ -4,14 +4,7 @@
     "display_name": "Node.js",
     "category": "language",
     "official_website": "https://nodejs.org",
-    "env_vars": [
-      {
-        "name": "NPM_CONFIG_PREFIX",
-        "desc": "npm 全局安装 prefix",
-        "check_type": "nonempty"
-      }
-    ],
-    "bin_dirs": [""],
+    "env_vars": [],
     "find_rules": [
       {
         "pattern": {
@@ -251,7 +244,6 @@
         "tier": "core"
       }
     ],
-    "bin_dirs": ["bin"],
     "find_rules": [
       {
         "pattern": {
@@ -380,14 +372,15 @@
     "config_file": null,
     "start_cmd": null,
     "stop_cmd": null,
-    "download_url_template": "https://api.adoptium.net/v3/binary/version/jdk-{version}/windows/x64/jdk/hotspot/normal/eclipse?project=jdk",
+    "download_url_template": null,
     "remote_versions_url": "https://api.adoptium.net/v3/info/release_versions?page=0&page_size=50&release_type=ga&project=jdk&version=%5B8%2C%29",
     "remote_versions_config": {
       "type": "json_api",
       "response_type": "object_with_array",
       "array_field": "versions",
       "version_field": "openjdk_version",
-      "version_label": "Eclipse Temurin ·"
+      "extra_field": "lts",
+      "extra_format": "lts_label"
     },
     "user_configurable_vars": [
       { "name": "JAVA_TOOL_OPTIONS", "desc": "JVM 启动参数（被所有 JVM 工具读取）", "placeholder": "-Xmx2g -Dfile.encoding=UTF-8" },

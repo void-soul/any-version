@@ -1,4 +1,4 @@
-use std::fs;
+﻿use std::fs;
 use std::path::{Path, PathBuf};
 use serde::{Serialize, Deserialize};
 use tauri::Emitter;
@@ -61,6 +61,55 @@ pub fn save_config(config: &Config) -> Result<(), String> {
     let data = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
     fs::write(config_path, data).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+// ─── Backup storage (separate file) ───
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct BackupStore {
+    /// project_id -> env var name -> original value
+    pub env_vars: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    /// project_id -> list of PATH entries that were removed
+    pub path_entries: std::collections::HashMap<String, Vec<String>>,
+}
+
+fn backup_path() -> PathBuf {
+    get_base_dir().join("backups.json")
+}
+
+pub fn load_backups() -> BackupStore {
+    let path = backup_path();
+    if path.exists() {
+        if let Ok(data) = fs::read_to_string(&path) {
+            if let Ok(store) = serde_json::from_str::<BackupStore>(&data) {
+                return store;
+            }
+        }
+    }
+    BackupStore::default()
+}
+
+pub fn save_backups(store: &BackupStore) -> Result<(), String> {
+    let path = backup_path();
+    let data = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
+    fs::write(path, data).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Migrate old backups from config.json into backups.json (one-time)
+pub fn migrate_backups_from_config(config: &mut Config) {
+    if !config.original_envs.is_empty() || !config.original_paths.is_empty() {
+        let mut store = load_backups();
+        for (k, v) in config.original_envs.drain() {
+            // store under a generic key since old format didn't track per-project
+            store.env_vars.entry("__migrated__".to_string()).or_default().insert(k, v);
+        }
+        for (k, v) in config.original_paths.drain() {
+            store.path_entries.entry(k).or_default().extend(v);
+        }
+        let _ = save_backups(&store);
+        let _ = save_config(config);
+    }
 }
 
 fn normalize(path: &str) -> String {
@@ -246,15 +295,12 @@ pub fn do_migrate_storage(
                 for item_id in managed_items {
                     if let Some(sdk_def) = registry::find_by_id(item_id) {
                         for var_info in &sdk_def.env_vars {
-                            // 无条件重写：根据新的 links_dir 计算值
+                            // 无条件重写：根据新的 links_dir 计算值，子目录由 EnvVarDef.sub_dir 驱动
                             let link_dir = format!("{}\\{}", new_links_dir, item_id);
-                            let value = match var_info.name.as_str() {
-                                "CARGO_HOME"       => format!("{}\\.cargo", link_dir),
-                                "RUSTUP_HOME"      => format!("{}\\.rustup", link_dir),
-                                "ANDROID_SDK_HOME" => format!("{}\\.android", link_dir),
-                                "NPM_CONFIG_PREFIX" => format!("{}\\node_modules", link_dir),
-                                "PGDATA"           => format!("{}\\data", link_dir),
-                                _                  => link_dir.clone(),
+                            let value = if let Some(ref sub) = var_info.sub_dir {
+                                format!("{}\\{}", link_dir, sub)
+                            } else {
+                                link_dir.clone()
                             };
                             let _ = crate::commands::env::set_registry_env(&var_info.name, &value);
                             result.updated_env_vars.push(format!("{} => {}", var_info.name, value));

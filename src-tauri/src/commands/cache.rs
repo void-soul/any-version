@@ -153,6 +153,45 @@ pub fn copy_dir_all_with_progress(
     Ok(())
 }
 
+/// Resolve cache path from projects.json package_managers config.
+/// Tries cache_detect_cmd first, then cache_default_path.
+/// Returns (path, detect_source) if resolved.
+pub fn resolve_cache_from_json(def: &super::project::types::ProjectDef) -> Option<(PathBuf, String)> {
+    for pm in &def.package_managers {
+        // Try detect command first
+        if let Some(ref cmd) = pm.cache_detect_cmd {
+            let raw = get_cmd_output("cmd", &["/c", cmd]);
+            if !raw.is_empty() {
+                let path = PathBuf::from(&raw);
+                if path.exists() {
+                    return Some((path, format!("{} cache_detect_cmd", pm.id)));
+                }
+            }
+        }
+        // Fall back to default path
+        if let Some(ref default_path) = pm.cache_default_path {
+            let expanded = expand_home(default_path);
+            let path = PathBuf::from(&expanded);
+            if path.exists() {
+                return Some((path, format!("{} cache_default_path", pm.id)));
+            }
+        }
+    }
+    None
+}
+
+/// Expand {home} placeholder in path strings
+fn expand_home(path: &str) -> String {
+    if path.contains("{home}") {
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap_or_default();
+        path.replace("{home}", &home)
+    } else {
+        path.to_string()
+    }
+}
+
 pub fn get_npm_cache_path() -> PathBuf {
     let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_default();
     let path_str = get_cmd_output("cmd", &["/c", "npm", "config", "get", "cache"]);
@@ -478,27 +517,232 @@ pub fn migrate_cache_path(name: String, new_path: String) -> Result<(), String> 
     Ok(())
 }
 
-/// 迁移缓存目录（接受原始路径，用于包管理器缓存迁移）
-pub fn migrate_cache_path_raw(orig_path_str: &str, new_path_str: &str) -> Result<(), String> {
-    let orig_path = Path::new(orig_path_str);
-    let target_path = Path::new(new_path_str);
+/// 存储迁移进度（与 config::MigrateProgress 区分，用于 cache/data 迁移）
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct MigrateStorageProgress {
+    pub stage: String,
+    pub current: usize,
+    pub total: usize,
+    pub file_name: String,
+}
 
-    if orig_path == target_path {
-        return Err("原路径与目标路径相同，无需迁移".to_string());
+/// 迁移缓存/数据目录 — 统一处理 cache 和 data 两种类型。
+/// - storage_kind = "cache": 如果 delete_old_first=true，直接删除旧目录再建 junction（快）
+///                           如果 delete_old_first=false，先拷贝再建 junction
+/// - storage_kind = "data":  必须拷贝，不可先删（安全），拷贝后建 junction
+pub fn migrate_pkg_storage_impl(
+    app_handle: &tauri::AppHandle,
+    orig_path: &str,
+    new_path: &str,
+    storage_kind: &str,
+    delete_old_first: bool,
+) -> Result<(), String> {
+    let orig = Path::new(orig_path);
+    let target = Path::new(new_path);
+
+    if orig == target {
+        return Err("原路径与目标路径相同".to_string());
+    }
+    if !orig.exists() {
+        return Err("源路径不存在".to_string());
     }
 
-    fs::create_dir_all(target_path).map_err(|e| format!("无法创建目标目录: {}", e))?;
+    let can_fast_path = storage_kind == "cache" && delete_old_first;
 
-    let is_symlink = fs::symlink_metadata(orig_path).map(|m| m.file_type().is_symlink()).unwrap_or(false);
-
+    // --- 预处理 ---
+    // 删除旧 junction 链接本身（不删目标内容）
+    let is_symlink = fs::symlink_metadata(orig)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
     if is_symlink {
-        fs::remove_file(orig_path).map_err(|e| format!("无法移除已有的旧链接: {}", e))?;
-    } else {
-        if orig_path.exists() {
-            copy_dir_all(orig_path, target_path).map_err(|e| format!("复制缓存文件失败: {}", e))?;
-            fs::remove_dir_all(orig_path).map_err(|e| format!("清空原缓存目录失败: {}", e))?;
+        let _ = fs::remove_dir(orig);
+        if orig.exists() {
+            fs::remove_dir_all(orig).map_err(|e| format!("删除旧链接失败: {}", e))?;
         }
     }
 
-    create_junction(orig_path, target_path)
+    fs::create_dir_all(target).map_err(|e| format!("创建目标目录失败: {}", e))?;
+
+    if can_fast_path {
+        // 快路径：删除旧数据后直接建 junction
+        if !is_symlink && orig.exists() {
+            fs::remove_dir_all(orig).map_err(|e| format!("删除旧缓存目录失败: {}", e))?;
+        }
+        create_junction(orig, target)?;
+
+        let _ = app_handle.emit("migrate-storage-progress", MigrateStorageProgress {
+            stage: "已完成（快速模式）".to_string(),
+            current: 1,
+            total: 1,
+            file_name: String::new(),
+        });
+    } else {
+        // 慢路径：先拷贝再建 junction（适用于 data 或 cache 但用户选择迁移）
+        let total = WalkDir::new(orig).follow_links(false).into_iter().filter_map(|e| e.ok()).count();
+        let mut current = 0usize;
+
+        let _ = app_handle.emit("migrate-storage-progress", MigrateStorageProgress {
+            stage: "开始拷贝".to_string(),
+            current: 0,
+            total,
+            file_name: String::new(),
+        });
+
+        fs::create_dir_all(target).map_err(|e| format!("创建目标目录失败: {}", e))?;
+
+        for entry in WalkDir::new(orig).follow_links(false) {
+            let entry = entry.map_err(|e| format!("遍历目录失败: {}", e))?;
+            let rel = entry.path().strip_prefix(orig).unwrap_or(entry.path());
+            let dest = target.join(rel);
+
+            if entry.file_type().is_dir() {
+                fs::create_dir_all(&dest).map_err(|e| format!("创建子目录失败: {}", e))?;
+            } else {
+                current += 1;
+                let name = entry.file_name().to_string_lossy().to_string();
+                let _ = app_handle.emit("migrate-storage-progress", MigrateStorageProgress {
+                    stage: "拷贝中".to_string(),
+                    current,
+                    total,
+                    file_name: name,
+                });
+                fs::copy(entry.path(), &dest).map_err(|e| format!("拷贝文件失败: {}", e))?;
+            }
+        }
+
+        // 拷贝完成后删除原始目录
+        if !is_symlink && orig.exists() {
+            fs::remove_dir_all(orig).map_err(|e| format!("删除原始目录失败: {}", e))?;
+        }
+
+        create_junction(orig, target)?;
+
+        let _ = app_handle.emit("migrate-storage-progress", MigrateStorageProgress {
+            stage: "已完成".to_string(),
+            current: total,
+            total,
+            file_name: String::new(),
+        });
+    }
+
+    Ok(())
+}
+
+/// 清理缓存进度
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct CleanProgress {
+    pub stage: String,
+    pub current: usize,
+    pub total: usize,
+    pub file_name: String,
+}
+
+/// 清理缓存 — 删除缓存目录中的所有文件，带进度事件。
+/// 不跟随 junction（安全），不删除目录本身（保留结构）。
+pub fn clean_pkg_cache_impl(app_handle: &tauri::AppHandle, cache_path: &str) -> Result<(), String> {
+    let cache = Path::new(&cache_path);
+
+    // 检查路径是否存在
+    if !cache.exists() {
+        return Err("缓存目录不存在（可能已被清理）".to_string());
+    }
+
+    // 如果是 junction，只删除链接本身（不跟随），然后重新创建一个空目录
+    if let Ok(meta) = fs::symlink_metadata(cache) {
+        if meta.file_type().is_symlink() {
+            let _ = fs::remove_dir(cache);
+            if cache.exists() {
+                fs::remove_dir_all(cache).map_err(|e| format!("删除旧链接失败: {}", e))?;
+            }
+            fs::create_dir_all(cache).map_err(|e| format!("重新创建目录失败: {}", e))?;
+
+            let _ = app_handle.emit("clean-cache-progress", CleanProgress {
+                stage: "清理完成".to_string(),
+                current: 1,
+                total: 1,
+                file_name: String::new(),
+            });
+            return Ok(());
+        }
+    }
+
+    // 不跟随符号链接/junction — 防止意外删除链接目标中的文件
+    let entries: Vec<_> = WalkDir::new(cache)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .collect();
+
+    let total = entries.iter().filter(|e| e.file_type().is_file() && e.depth() > 0).count();
+    if total == 0 {
+        let _ = app_handle.emit("clean-cache-progress", CleanProgress {
+            stage: "清理完成（无需清理）".to_string(),
+            current: 0,
+            total: 0,
+            file_name: String::new(),
+        });
+        return Ok(());
+    }
+
+    let _ = app_handle.emit("clean-cache-progress", CleanProgress {
+        stage: "扫描完成".to_string(),
+        current: 0,
+        total,
+        file_name: String::new(),
+    });
+
+    // 从深到浅删除文件
+    let mut current = 0usize;
+    for entry in entries.iter().rev() {
+        if entry.file_type().is_file() && entry.depth() > 0 {
+            current += 1;
+            let _ = app_handle.emit("clean-cache-progress", CleanProgress {
+                stage: "清理中".to_string(),
+                current,
+                total,
+                file_name: entry.file_name().to_string_lossy().to_string(),
+            });
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+
+    // 删除空子目录（保留缓存根目录本身）
+    for entry in entries.iter().rev() {
+        if entry.file_type().is_dir() && entry.depth() > 0 && entry.path() != cache {
+            let _ = fs::remove_dir(entry.path());
+        }
+    }
+
+    let _ = app_handle.emit("clean-cache-progress", CleanProgress {
+        stage: "清理完成".to_string(),
+        current: total,
+        total,
+        file_name: String::new(),
+    });
+
+    Ok(())
+}
+
+/// 保留旧命令别名 — 内部模块可用
+pub fn migrate_cache_path_raw(orig_path_str: &str, new_path_str: &str) -> Result<(), String> {
+    // 内部调用保持兼容（不发射进度事件）
+    let orig = Path::new(orig_path_str);
+    let target = Path::new(new_path_str);
+    if orig == target { return Err("原路径与目标路径相同".to_string()); }
+    if !orig.exists() { return Err("源路径不存在".to_string()); }
+
+    let is_symlink = fs::symlink_metadata(orig).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+    if is_symlink {
+        let _ = fs::remove_dir(orig);
+        if orig.exists() {
+            fs::remove_dir_all(orig).map_err(|e| format!("删除旧链接失败: {}", e))?;
+        }
+    } else {
+        fs::remove_dir_all(orig).map_err(|e| format!("删除旧目录失败: {}", e))?;
+    }
+    fs::create_dir_all(target).map_err(|e| format!("创建目标目录失败: {}", e))?;
+    create_junction(orig, target)
+}
+pub fn move_cache_path_raw(orig_path_str: &str, new_path_str: &str) -> Result<(), String> {
+    migrate_cache_path_raw(orig_path_str, new_path_str)
 }

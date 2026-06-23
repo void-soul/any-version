@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ProjectStatus, ProjectCategory } from "./project/types";
 import ProjectListPanel from "./project/ProjectListPanel";
@@ -10,6 +10,38 @@ export default function ProjectManager() {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ProjectCategory | "all">("all");
+
+  // 左右分栏拖拽
+  const [leftWidth, setLeftWidth] = useState(300);
+  const [dragging, setDragging] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setDragging(true);
+  }, []);
+
+  useEffect(() => {
+    if (!dragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const minW = 200;
+      const maxW = rect.width * 0.7;
+      setLeftWidth(Math.min(maxW, Math.max(minW, x)));
+    };
+
+    const handleMouseUp = () => setDragging(false);
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [dragging]);
 
   const fetchProjects = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -39,8 +71,15 @@ export default function ProjectManager() {
 
   return (
     <div className="h-full select-none px-3 py-2 flex flex-col">
-      <div className="flex-1 min-h-0 grid grid-cols-12 gap-2">
-        <div className="col-span-4 h-full rounded-xl border border-white/5 overflow-hidden bg-white/[0.01]">
+      <div
+        ref={containerRef}
+        className={`flex-1 min-h-0 flex gap-0 ${dragging ? "cursor-col-resize" : ""}`}
+      >
+        {/* 左侧面板 */}
+        <div
+          className="h-full rounded-xl border border-white/5 overflow-hidden bg-white/[0.01] flex-shrink-0"
+          style={{ width: leftWidth }}
+        >
           <ProjectListPanel
             projects={projects}
             selectedId={selectedId}
@@ -53,7 +92,23 @@ export default function ProjectManager() {
             onRefresh={() => fetchProjects()}
           />
         </div>
-        <div className="col-span-8 h-full rounded-xl border border-white/5 overflow-hidden bg-white/[0.01]">
+
+        {/* 拖拽分隔条 */}
+        <div
+          className={`w-2 h-full flex-shrink-0 cursor-col-resize group flex items-center justify-center ${
+            dragging ? "bg-blue-500/20" : ""
+          }`}
+          onMouseDown={handleResizeStart}
+        >
+          <div
+            className={`w-[3px] h-10 rounded-full transition-colors ${
+              dragging ? "bg-blue-400" : "bg-white/10 group-hover:bg-blue-400/60"
+            }`}
+          />
+        </div>
+
+        {/* 右侧面板 */}
+        <div className="flex-1 h-full min-w-[200px] rounded-xl border border-white/5 overflow-hidden bg-white/[0.01]">
           <ProjectDetailPanel
             project={selectedProject}
             onRefresh={async () => { await fetchProjects(); }}

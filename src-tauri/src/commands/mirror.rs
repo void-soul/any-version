@@ -1,4 +1,4 @@
-use std::fs;
+﻿use std::fs;
 use std::path::PathBuf;
 use serde::{Serialize, Deserialize};
 
@@ -113,17 +113,64 @@ pub fn get_mirrors_list() -> Result<Vec<MirrorInfo>, String> {
     }
     let rust_name = classify_mirror(&rust_reg, "rust");
 
-    Ok(vec![
+    let mut mirrors = vec![
         MirrorInfo { tool: "npm".to_string(), current: npm_reg, mirror_name: npm_name },
         MirrorInfo { tool: "pip".to_string(), current: pip_reg, mirror_name: pip_name },
         MirrorInfo { tool: "maven".to_string(), current: mvn_reg, mirror_name: mvn_name },
         MirrorInfo { tool: "go".to_string(), current: go_proxy, mirror_name: go_name },
         MirrorInfo { tool: "rust".to_string(), current: rust_reg, mirror_name: rust_name },
-    ])
+    ];
+
+    // -- Add JSON-driven mirrors --
+    let existing_tools: std::collections::HashSet<String> = mirrors.iter().map(|m| m.tool.clone()).collect();
+    let registry = super::project::registry::registry();
+    for proj in &registry {
+        for pm in &proj.package_managers {
+            if existing_tools.contains(&pm.id) { continue; }
+            if let Some(ref options) = pm.mirror_options {
+                if !options.is_empty() {
+                    let current = pm.mirror_cmd_template.as_deref().unwrap_or("");
+                    mirrors.push(MirrorInfo {
+                        tool: pm.id.clone(),
+                        current: current.to_string(),
+                        mirror_name: "Unknown".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(mirrors)
 }
 
 #[tauri::command]
 pub fn set_mirror(tool: String, mirror_type: String) -> Result<(), String> {
+    // -- Try JSON config first via package_managers --
+    {
+        let registry = super::project::registry::registry();
+        for proj in &registry {
+            for pm in &proj.package_managers {
+                if pm.id.to_lowercase() == tool.to_lowercase() || proj.pkg_manager.as_deref().map(|s| s.to_lowercase()) == Some(tool.to_lowercase()) {
+                    if let Some(ref tpl) = pm.mirror_cmd_template {
+                        if let Some(ref options) = pm.mirror_options {
+                            for opt in options {
+                                if opt.mirror_type.to_lowercase() == mirror_type.to_lowercase() {
+                                    let cmd = tpl.replace("{url}", &opt.url);
+                                    let parts: Vec<&str> = cmd.split_whitespace().collect();
+                                    if !parts.is_empty() {
+                                        let _ = super::hidden_cmd::hidden_cmd("cmd").args(&["/c"]).args(&parts).output();
+                                        return Ok(());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // -- Hardcoded fallback --
     let user_profile = std::env::var("USERPROFILE").unwrap_or_default();
     let app_data = std::env::var("APPDATA").unwrap_or_default();
     let m_type = mirror_type.to_lowercase();
@@ -226,7 +273,7 @@ registry = "https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index"
                 }
             }
         }
-        _ => return Err(format!("未知的工具: {}", tool)),
+        _ => return Err(format!("鏈煡鐨勫伐鍏? {}", tool)),
     }
 
     Ok(())

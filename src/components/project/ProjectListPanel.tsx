@@ -57,7 +57,7 @@ export default function ProjectListPanel({
         <div className="flex gap-1">
           {FILTERS.map((f) => (
             <button key={f.key} onClick={() => onFilterChange(f.key)}
-              className={`flex-1 py-0.5 rounded text-[9px] font-semibold transition-all cursor-pointer ${
+              className={`flex-1 py-0.5 rounded text-[11px] font-semibold transition-all cursor-pointer ${
                 filter === f.key ? "bg-blue-600 text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"
               }`}>
               {f.label}
@@ -76,18 +76,17 @@ export default function ProjectListPanel({
             const isSelected = selectedId === p.id;
             return (
               <div key={p.id} onClick={() => onSelect(p)}
-                className={`relative p-2.5 flex items-center justify-between cursor-pointer transition-all overflow-hidden border-b border-white/[0.03] ${
+                className={`relative p-2.5 flex items-center justify-between cursor-pointer transition-all border-b border-white/[0.03] ${
                   isSelected ? "bg-blue-600/10 border-l-2 border-l-blue-500"
-                    : p.managed ? "hover:bg-emerald-500/5 border-l-2 border-l-emerald-500/30"
                     : "hover:bg-white/[0.03] border-l-2 border-l-transparent"
                 }`}>
-                {p.managed ? (
-                  <span className="absolute top-0 -left-2.5 w-12 text-center text-[6px] font-bold text-white bg-emerald-500/80 py-px rotate-[-45deg] pointer-events-none z-20">已托管</span>
-                ) : (
-                  <span className="absolute top-0 -left-2.5 w-12 text-center text-[6px] font-bold text-white bg-amber-500/70 py-px rotate-[-45deg] pointer-events-none z-20">未托管</span>
-                )}
-                <div className="flex-1 min-w-0 relative z-10 ml-2">
-                  <div className="flex items-center gap-1">
+                <div className="flex-1 min-w-0 flex items-center gap-2">
+                  <span className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                    p.managed ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400"
+                  }`}>
+                    {p.managed ? "✓" : "✗"}
+                  </span>
+                  <div className="min-w-0 flex items-center gap-1">
                     <span className={`font-semibold text-[11px] truncate ${p.managed ? "text-emerald-100" : "text-white"}`}>
                       {p.display_name}
                     </span>

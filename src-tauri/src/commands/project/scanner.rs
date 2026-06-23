@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use super::types::{
     ProjectDef, ProjectStatus, ProjectDetail,
-    EnvVarStatus, CacheStatus, ServiceStatus,
+    EnvVarStatus, EnvVarTier, CacheStatus, ServiceStatus,
     ManagePreview, ManageStep, ResolvePattern,
 };
 use super::registry;
@@ -161,14 +161,31 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
     let junction_path = links_dir.join(id);
     let active_version = resolve_active_version(&junction_path);
 
-    // 安装来源检测（使用 sdk_resolver）
-    let (install_source, install_root) = detect_install_source(def);
-
-    // 判断是否已安装（AnyVersion 版本目录 或 外部安装均可）
-    let installed = !installed_versions.is_empty() || active_version.is_some() || install_root.is_some();
-
     // 是否被 AnyVersion 托管
     let managed = config.managed_items.contains(id.as_str());
+
+    // 安装来源检测（使用 sdk_resolver）—— 仅未托管时报告，托管后旧版信息在"旧版数据"选项卡展示
+    let (install_source, install_root) = if managed {
+        (None, None)
+    } else {
+        detect_install_source(def)
+    };
+
+    // 判断是否已安装（AnyVersion 版本目录 或 外部安装均可）
+    let mut installed = !installed_versions.is_empty() || active_version.is_some() || install_root.is_some();
+    let mut active_version = active_version;
+
+    // 二次验证：未托管的项目通过 version_exe 在 PATH 中确认可执行文件真实存在
+    // 防止残留的版本目录/junction 或无效的 find_rules 匹配导致误判为"已安装"
+    if installed && !managed {
+        if let Some(ref exe) = def.version_exe {
+            let found = which_in_path(exe);
+            if !found {
+                installed = false;
+                active_version = None;
+            }
+        }
+    }
 
     // 环境变量状态
     let env_vars_status = build_env_vars_status(def, &config.links_dir);
@@ -204,17 +221,25 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
 }
 
 /// 扫描已安装版本列表
+///
+/// Windows 上通过「注册本地版本」创建的条目是 junction（reparse point），
+/// `is_dir()` 返回 false，必须同时检查 `is_symlink()` 才能识别。
 fn scan_installed_versions(versions_dir: &Path) -> Vec<String> {
     let mut versions = Vec::new();
     if versions_dir.exists() {
         if let Ok(entries) = fs::read_dir(versions_dir) {
             for entry in entries.filter_map(|e| e.ok()) {
-                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    // 跳过隐藏目录
-                    if !name.starts_with('.') {
-                        versions.push(name);
-                    }
+                let name = entry.file_name().to_string_lossy().to_string();
+                // 跳过隐藏目录
+                if name.starts_with('.') {
+                    continue;
+                }
+                let ft = entry.file_type();
+                let is_dir_or_junction = ft.as_ref()
+                    .map(|t| t.is_dir() || t.is_symlink())
+                    .unwrap_or(false);
+                if is_dir_or_junction {
+                    versions.push(name);
                 }
             }
         }
@@ -300,6 +325,11 @@ fn build_env_vars_status(def: &ProjectDef, links_dir: &str) -> Vec<EnvVarStatus>
     let mut statuses = Vec::new();
 
     for var_def in &def.env_vars {
+        // 跳过兼容层变量（NODE_PATH/NVM_HOME/VOLTA_HOME 等），
+        // 它们属于其他工具的检测线索，与 AnyVersion 管理无关
+        if var_def.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Compat) {
+            continue;
+        }
         let name = &var_def.name;
         let (value, source, exists, in_anyversion) = if let Some((val, src)) = get_registry_env_any(name) {
             let val_path = Path::new(&val);
@@ -321,6 +351,7 @@ fn build_env_vars_status(def: &ProjectDef, links_dir: &str) -> Vec<EnvVarStatus>
             source,
             exists,
             in_anyversion,
+            tier: var_def.tier.clone(),
         });
     }
 
@@ -469,7 +500,11 @@ pub fn get_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
                 format!("{}\\platform-tools", link_dir),
             ]
         }
-        "nodejs" | "bun" | "yarn" | "pnpm" | "nginx" | "redis" => {
+        "nodejs" => {
+            // NPM_CONFIG_PREFIX = link_dir，npm -g 的 bin 直接落在 link_dir 下
+            vec![link_dir.to_string()]
+        }
+        "bun" | "yarn" | "pnpm" | "nginx" | "redis" => {
             vec![link_dir.to_string()]
         }
         "mysql" | "mongodb" | "postgresql" => {
@@ -477,4 +512,31 @@ pub fn get_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
         }
         _ => vec![link_dir.to_string()],
     }
+}
+
+/// 在 PATH 中搜索可执行文件（Windows 兼容 .exe/.cmd/.bat）
+fn which_in_path(name: &str) -> bool {
+    let exe = if cfg!(windows) {
+        format!("{}.exe", name)
+    } else {
+        name.to_string()
+    };
+    let cmd = if cfg!(windows) {
+        format!("{}.cmd", name)
+    } else {
+        String::new()
+    };
+
+    if let Ok(paths) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            let full = dir.join(&exe);
+            if full.exists() {
+                return true;
+            }
+            if !cmd.is_empty() && dir.join(&cmd).exists() {
+                return true;
+            }
+        }
+    }
+    false
 }

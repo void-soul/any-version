@@ -15,14 +15,40 @@ pub enum ProjectCategory {
 }
 
 /// 环境变量定义
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvVarTier {
+    Core,
+    Package,
+    Compat,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct EnvVarDef {
     /// 环境变量名
     pub name: String,
     /// 描述
     pub desc: String,
-    /// 检查类型: "path" | "nonempty"
+    /// 检查类型: "path" | "nonempty" | "runtime"
     pub check_type: String,
+    #[serde(default)]
+    pub tier: Option<EnvVarTier>,
+    /// 托管时的值子目录（相对于 link_dir），不填则值 = link_dir
+    #[serde(default)]
+    pub sub_dir: Option<String>,
+}
+
+/// 用户可配置的环境变量（运行时参数，非路径类）
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UserConfigurableVar {
+    pub name: String,
+    pub desc: String,
+    #[serde(default)]
+    pub placeholder: Option<String>,
+    #[serde(default)]
+    pub options: Option<Vec<String>>,
+    #[serde(default)]
+    pub var_type: Option<String>, // "boolean" | undefined (free text)
 }
 
 /// 路径解析模式
@@ -61,17 +87,28 @@ pub struct MirrorOption {
     pub url: String,
 }
 
-/// 包管理器定义（嵌套在项目内，如 Node.js 下的 yarn/pnpm）
+/// 包管理器定义（嵌套在项目内，如 Node.js 下的 npm/yarn/pnpm）
+///
+/// 缓存、镜像、数据路径等属性属于包管理器，而非语言本身。
+/// 例如 `npm config get cache` / `npm config set registry` 是 npm 的功能，
+/// 不应放在 nodejs 语言定义上。
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PackageManagerDef {
     /// 唯一标识
     pub id: String,
     /// 显示名称
     pub display_name: String,
-    /// 安装命令（如 "npm install -g yarn"）
+    /// 是否为内置包管理器（随语言一起安装，如 npm 随 Node.js 安装）
+    #[serde(default)]
+    pub built_in: bool,
+    /// 安装命令（如 "npm install -g yarn"）；built_in 的包管理器填 null
     pub install_cmd: Option<String>,
-    /// 版本检测命令（如 "yarn --version"）
+    /// 版本检测命令（如 "npm --version"）
+    #[serde(default)]
     pub version_cmd: Option<String>,
+    /// 版本检测可执行文件名（如 "npm", "yarn"）
+    #[serde(default)]
+    pub version_exe: Option<String>,
     /// 缓存路径检测命令（如 "yarn cache dir"）
     pub cache_detect_cmd: Option<String>,
     /// 全局包列表命令
@@ -105,6 +142,12 @@ pub struct PackageManagerDef {
     /// Data path detect command.
     #[serde(default)]
     pub data_detect_cmd: Option<String>,
+    /// Proxy detect command (e.g., "npm config get proxy").
+    #[serde(default)]
+    pub proxy_detect_cmd: Option<String>,
+    /// Proxy set command template (e.g., "npm config set proxy {url}").
+    #[serde(default)]
+    pub proxy_set_cmd_template: Option<String>,
 }
 
 /// Scoop 引用：指向 ScoopInstaller 仓库中的 manifest
@@ -134,6 +177,10 @@ pub struct ProjectDef {
     /// 该项目可用的包管理器（如 Node.js 下的 yarn/pnpm/npm）
     #[serde(default)]
     pub package_managers: Vec<PackageManagerDef>,
+
+    /// 用户可配置的运行时环境变量（非路径类，高级用户可自定义设置）
+    #[serde(default)]
+    pub user_configurable_vars: Vec<UserConfigurableVar>,
 
     /// 关联的环境变量
     pub env_vars: Vec<EnvVarDef>,
@@ -173,6 +220,13 @@ pub struct ProjectDef {
     pub start_cmd: Option<String>,
     /// 停止命令
     pub stop_cmd: Option<String>,
+
+    /// Version detection command (e.g. "node --version", "go version")
+    #[serde(default)]
+    pub version_cmd: Option<String>,
+    /// Version detection executable name (e.g. "node", "go")
+    #[serde(default)]
+    pub version_exe: Option<String>,
 
     /// Scoop manifest 引用（用于从 Scoop 更新安装参数）
     #[serde(default)]
@@ -228,6 +282,8 @@ pub struct EnvVarStatus {
     pub exists: bool,
     /// 是否指向 AnyVersion 管理的目录
     pub in_anyversion: bool,
+    #[serde(default)]
+    pub tier: Option<EnvVarTier>,
 }
 
 /// 缓存状态
@@ -324,6 +380,23 @@ pub struct ProjectBackup {
     pub env_vars: HashMap<String, String>,
     pub path_entries: Vec<String>,
     pub service_path: Option<String>,
+}
+
+/// 旧版安装信息备份（托管时自动保存）
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LegacyInstallInfo {
+    /// 旧版安装来源（如 Scoop、Chocolatey 等）
+    pub install_source: String,
+    /// 旧版安装根目录
+    pub install_root: String,
+    /// 旧版检测到的版本号
+    pub version: String,
+    /// 托管时备份的环境变量（变量名 → 原始值）
+    pub backed_env_vars: HashMap<String, String>,
+    /// 托管时从 PATH 移除的条目
+    pub removed_path_entries: Vec<String>,
+    /// 备份时间戳
+    pub timestamp: u64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

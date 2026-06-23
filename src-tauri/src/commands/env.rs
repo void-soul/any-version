@@ -505,6 +505,19 @@ fn cache_detection_evidence(name: &str, resolved: &str) -> (String, String) {
 }
 
 pub fn get_sdk_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
+    // 优先读取 projects.json 中定义的 bin_dirs
+    use super::project::registry;
+    if let Some(def) = registry::find_by_id(sdk_id) {
+        if let Some(ref bin_dirs) = def.bin_dirs {
+            if !bin_dirs.is_empty() {
+                return bin_dirs.iter()
+                    .map(|d| if d.is_empty() { link_dir.to_string() } else { format!("{}\\{}", link_dir, d) })
+                    .collect();
+            }
+        }
+    }
+
+    // ── 硬编码 fallback（未定义 bin_dirs 时） ──
     match sdk_id {
         "go" | "java" | "flutter" | "maven" | "gradle" | "harmony" | "cuda" | "ffmpeg" => {
             vec![format!("{}\\bin", link_dir)]
@@ -521,7 +534,10 @@ pub fn get_sdk_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
                 format!("{}\\platform-tools", link_dir),
             ]
         }
-        "nodejs" | "bun" | "yarn" | "pnpm" | "nginx" | "redis" => {
+        "nodejs" => {
+            vec![link_dir.to_string()]
+        }
+        "bun" | "yarn" | "pnpm" | "nginx" | "redis" => {
             vec![link_dir.to_string()]
         }
         "mysql" | "mongodb" | "postgresql" => {
@@ -626,17 +642,19 @@ pub fn configure_sdk_env_vars(sdk_id: &str, link_dir: &str, _version_dir: &str) 
     };
 
     for var_info in &sdk_def.env_vars {
+        // Skip compat/discovery tier vars - only scan, not manage
+        if let Some(ref tier) = var_info.tier {
+            if *tier == super::project::types::EnvVarTier::Compat {
+                continue;
+            }
+        }
+
         let var_name = &var_info.name;
-        // 对不同变量使用不同的值策略
-        let value = match var_name.as_str() {
-            // 特殊子目录映射
-            "CARGO_HOME"      => format!("{}\\.cargo", link_dir),
-            "RUSTUP_HOME"     => format!("{}\\.rustup", link_dir),
-            "ANDROID_SDK_HOME" => format!("{}\\.android", link_dir),
-            "NPM_CONFIG_PREFIX" => format!("{}\\node_modules", link_dir),
-            "PGDATA"          => format!("{}\\data", link_dir),
-            // 其他变量统一指向 link_dir
-            _                 => link_dir.to_string(),
+        // 值策略由 EnvVarDef.sub_dir 驱动：有 sub_dir 则拼接触到 link_dir 后，否则直接用 link_dir
+        let value = if let Some(ref sub) = var_info.sub_dir {
+            format!("{}\\{}", link_dir, sub)
+        } else {
+            link_dir.to_string()
         };
         let _ = set_registry_env(var_name, &value);
     }
@@ -659,6 +677,12 @@ pub fn remove_sdk_env_vars(sdk_id: &str) -> Result<(), String> {
     };
 
     for var_info in &sdk_def.env_vars {
+        // Only remove vars we would have set (core + package), skip compat
+        if let Some(ref tier) = var_info.tier {
+            if *tier == super::project::types::EnvVarTier::Compat {
+                continue;
+            }
+        }
         let _ = set_registry_env(&var_info.name, "");
     }
 
@@ -810,6 +834,44 @@ pub fn delete_env_backup(id: String) -> Result<(), String> {
         fs::remove_file(backup_file).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// 获取指定项目可配置的运行时环境变量（user_configurable_vars）的当前值
+#[tauri::command]
+pub fn get_user_configurable_vars(project_id: String) -> Result<Vec<serde_json::Value>, String> {
+    use super::project::registry;
+    let def = registry::find_by_id(&project_id)
+        .ok_or_else(|| format!("未找到项目: {}", project_id))?;
+
+    let mut results = Vec::new();
+    for var in &def.user_configurable_vars {
+        let (current_value, source) = get_registry_env_any(&var.name)
+            .map(|(v, s)| (Some(v), s.to_string()))
+            .unwrap_or((None, "未设置".to_string()));
+
+        results.push(serde_json::json!({
+            "name": var.name,
+            "desc": var.desc,
+            "placeholder": var.placeholder,
+            "options": var.options,
+            "var_type": var.var_type,
+            "current_value": current_value,
+            "source": source,
+        }));
+    }
+    Ok(results)
+}
+
+/// 设置用户自定义环境变量（运行时参数）
+#[tauri::command]
+pub fn set_user_configurable_var(name: String, value: String) -> Result<(), String> {
+    set_registry_env(&name, &value)
+}
+
+/// 删除用户自定义环境变量
+#[tauri::command]
+pub fn delete_user_configurable_var(name: String) -> Result<(), String> {
+    set_registry_env(&name, "")
 }
 
 #[tauri::command]

@@ -192,6 +192,10 @@ pub fn get_global_packages(sdk_name: String) -> Result<Vec<PackageInfo>, String>
         get_global_npm_packages()
     } else if name_lower == "python" || name_lower == "pip" {
         get_global_pip_packages()
+    } else if name_lower == "yarn" {
+        get_global_yarn_packages()
+    } else if name_lower == "pnpm" {
+        get_global_pnpm_packages()
     } else {
         Err(format!("不支持的包管理器: {}", sdk_name))
     }
@@ -214,6 +218,14 @@ pub fn upgrade_global_package(sdk_name: String, pkg_name: String) -> Result<(), 
         super::hidden_cmd::hidden_cmd(python)
             .args(&["-m", "pip", "install", "--upgrade", pkg_name.trim()])
             .output()
+    } else if name_lower == "yarn" {
+        super::hidden_cmd::hidden_cmd("yarn")
+            .args(&["global", "upgrade", pkg_name.trim()])
+            .output()
+    } else if name_lower == "pnpm" {
+        super::hidden_cmd::hidden_cmd("pnpm")
+            .args(&["update", "-g", pkg_name.trim()])
+            .output()
     } else {
         return Err(format!("不支持的包管理器: {}", sdk_name));
     }.map_err(|e| format!("执行命令失败: {}", e))?;
@@ -223,4 +235,85 @@ pub fn upgrade_global_package(sdk_name: String, pkg_name: String) -> Result<(), 
     }
 
     Ok(())
+}
+
+/// 获取 yarn 全局包列表
+fn get_global_yarn_packages() -> Result<Vec<PackageInfo>, String> {
+    let output = super::hidden_cmd::hidden_cmd("yarn")
+        .args(&["global", "list", "--depth=0", "--json"])
+        .output()
+        .map_err(|e| format!("运行 yarn global list 失败: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut list = Vec::new();
+
+    // yarn global list --json 每行一个 JSON 对象，格式: {"type":"info","data":"..."}
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed == "null" || trimmed == "undefined" {
+            continue;
+        }
+        // 尝试解析为 yarn info JSON
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            if val.get("type").and_then(|v| v.as_str()) == Some("info") {
+                if let Some(data) = val.get("data").and_then(|v| v.as_str()) {
+                    // data 格式: "package@version" 或 "\"package@version\""
+                    let clean = data.trim_matches('"').trim_end_matches('\n');
+                    // 去掉版本号部分: "package@1.2.3" -> ("package", "1.2.3")
+                    let mut parts = clean.rsplitn(2, '@');
+                    let ver = parts.next().unwrap_or("unknown").to_string();
+                    let name = parts.next().unwrap_or("").to_string();
+                    if !name.is_empty() {
+                        list.push(PackageInfo {
+                            name: name.clone(),
+                            current_version: ver.clone(),
+                            latest_version: ver,
+                            status: "latest".to_string(),
+                            homepage: format!("https://www.npmjs.com/package/{}", name),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(list)
+}
+
+/// 获取 pnpm 全局包列表
+fn get_global_pnpm_packages() -> Result<Vec<PackageInfo>, String> {
+    let output = super::hidden_cmd::hidden_cmd("pnpm")
+        .args(&["list", "-g", "--depth=0", "--json"])
+        .output()
+        .map_err(|e| format!("运行 pnpm list -g 失败: {}", e))?;
+
+    let stdout_bytes = output.stdout;
+    if stdout_bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // pnpm list -g --json 返回一个数组: [{"name":"...","version":"...","dependencies":{...}}]
+    let parsed: Vec<serde_json::Value> = serde_json::from_slice(&stdout_bytes)
+        .map_err(|e| format!("解析 pnpm list JSON 失败: {}", e))?;
+
+    let mut list = Vec::new();
+    for item in &parsed {
+        if let Some(deps) = item.get("dependencies").and_then(|v| v.as_object()) {
+            for (name, dep) in deps {
+                let ver = dep.get("version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                list.push(PackageInfo {
+                    name: name.clone(),
+                    current_version: ver.clone(),
+                    latest_version: ver,
+                    status: "latest".to_string(),
+                    homepage: format!("https://www.npmjs.com/package/{}", name),
+                });
+            }
+        }
+    }
+
+    Ok(list)
 }

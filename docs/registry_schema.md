@@ -47,3 +47,13 @@ Scoop integration is optional and auxiliary only.
 - `package_managers` should encode install/version/cache/mirror/data configuration when applicable.
 - If a language has package managers, its `package_managers[*]` metadata should be complete rather than implicit.
 - Runtime behavior must prefer structured JSON metadata over hardcoded assumptions where available.
+- Environment variables should be tiered:
+ - core language variables
+ - package manager / cache variables
+ - compat / discovery variables
+
+## Environment Variable Tiering
+Each `env_vars[*]` entry can carry a `tier` field:
+- `core`: directly affects SDK discovery/runtime (GOROOT, JAVA_HOME, DOTNET_ROOT, CARGO_HOME, RUSTUP_HOME)
+- `package`: belongs to package manager or cache layer (NPM_CONFIG_CACHE, PIP_CACHE_DIR, NUGET_PACKAGES)
+- `compat`: legacy/helper discovery, lower priority under AnyVersion (NODE_PATH, NVM_HOME, VOLTA_HOME)
