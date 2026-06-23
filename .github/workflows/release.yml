@@ -35,7 +35,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
+          cache: yarn
 
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@stable
@@ -45,8 +45,10 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: 安装前端依赖
-        run: npm ci
+      - name: 安装 yarn 并安装前端依赖
+        run: |
+          npm install -g yarn
+          yarn install --frozen-lockfile
 
       - name: 解析版本标签
         id: tagname
