@@ -21,6 +21,7 @@ import {
   Search,
   Wifi,
   WifiOff,
+  X,
 } from "lucide-react";
 import type { ProjectStatus, ProjectDef, EnvVarStatus, ServiceStatus, PackageManagerDef } from "./types";
 
@@ -36,8 +37,12 @@ export interface SubTabProps {
   onUninstall: (version: string) => void;
   onUse: (version: string) => void;
   // 下载进度
-  downloadProgress: { sdk: string; downloaded: number; total: number; pct: number } | null;
+  downloadProgress: { sdk: string; downloaded: number; total: number; pct: number; speed_str: string } | null;
   installStep: string;
+  onCancelInstall?: () => void;
+  // 远程版本列表缓存
+  versionsUpdatedAt?: number | null;
+  onRefreshRemoteVersions?: () => void;
   // 包管理
   packages: Array<{ name: string; current_version: string; latest_version: string; status: string; homepage: string }>;
   loadingPackages: boolean;
@@ -69,19 +74,46 @@ export interface SubTabProps {
 export function VersionsTab({
   project, remoteVersions, loadingRemote, installingVersion,
   onInstall, onUninstall, onUse,
-  downloadProgress, installStep,
+  downloadProgress, installStep, onCancelInstall,
+  versionsUpdatedAt, onRefreshRemoteVersions,
   isOperating, activeSubTab, onActiveSubTabChange,
 }: SubTabProps) {
+  const currentVersionNumber = installingVersion
+    ? (installingVersion.includes(" · ") ? installingVersion.split(" · ")[1] : installingVersion).trim().split(" ")[0]
+    : "";
+
+  // 格式化上次更新时间
+  const formatUpdatedAt = (ts: number | null | undefined): string => {
+    if (!ts) return "";
+    const diff = Math.floor(Date.now() / 1000) - ts;
+    if (diff < 60) return "刚刚";
+    if (diff < 3600) return `${Math.floor(diff / 60)}分钟前`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}小时前`;
+    const d = new Date(ts * 1000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+
   return (
     <div className="space-y-6">
       {/* 安装进度面板 */}
       {installingVersion && (
         <div className="glass-panel rounded-2xl p-5 border border-blue-500/20 bg-blue-600/5 space-y-4 animate-fadeIn">
-          <div className="flex items-center gap-2">
-            <Loader className="w-4 h-4 text-blue-400 animate-spin" />
-            <h4 className="text-xs font-semibold text-blue-300">
-              正在安装 {project.display_name} v{installingVersion.split(" ")[0]}
-            </h4>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Loader className="w-4 h-4 text-blue-400 animate-spin" />
+              <h4 className="text-xs font-semibold text-blue-300">
+                正在安装 {project.display_name} v{currentVersionNumber}
+              </h4>
+            </div>
+            {onCancelInstall && (
+              <button
+                onClick={onCancelInstall}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 text-[11px] font-semibold border border-red-500/20 cursor-pointer transition-all"
+                title="取消安装"
+              >
+                <X className="w-3 h-3" /> 取消安装
+              </button>
+            )}
           </div>
 
           {/* 步骤指示器 */}
@@ -97,13 +129,12 @@ export function VersionsTab({
                     <div className={`flex-1 h-0.5 rounded-full ${isCompleted ? "bg-emerald-500" : isActive ? "bg-blue-500" : "bg-white/10"}`} />
                   )}
                   <div className="flex items-center gap-1.5">
-                    <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold border ${
-                      isCompleted
-                        ? "bg-emerald-500 text-white border-emerald-500"
-                        : isActive
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold border ${isCompleted
+                      ? "bg-emerald-500 text-white border-emerald-500"
+                      : isActive
                         ? "bg-blue-600 text-white border-blue-500 animate-pulse"
                         : "bg-white/5 text-slate-500 border-white/10"
-                    }`}>
+                      }`}>
                       {isCompleted ? <Check className="w-3 h-3" /> : idx + 1}
                     </div>
                     <span className={`text-[13px] font-medium ${isActive ? "text-blue-300" : isCompleted ? "text-emerald-400" : "text-slate-500"}`}>
@@ -119,8 +150,15 @@ export function VersionsTab({
           {downloadProgress && installStep === "下载中" && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-[13px]">
-                <span className="text-slate-400">下载进度</span>
-                <span className="text-blue-300 font-mono font-semibold">{downloadProgress.pct}%</span>
+                <span className="text-slate-400">下载进度 ({currentVersionNumber})</span>
+                <div className="flex items-center gap-3">
+                  {downloadProgress.speed_str && (
+                    <span className="text-cyan-400 font-mono font-semibold text-[11px]">
+                      ↓ {downloadProgress.speed_str}
+                    </span>
+                  )}
+                  <span className="text-blue-300 font-mono font-semibold">{downloadProgress.pct}%</span>
+                </div>
               </div>
               <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
                 <div
@@ -137,10 +175,10 @@ export function VersionsTab({
 
           {/* 当前步骤文字说明 */}
           <p className="text-[13px] text-slate-400">
-            {installStep === "下载中" && "正在从远程服务器下载安装包，请稍候..."}
-            {installStep === "解压中" && "下载完成，正在解压安装文件..."}
-            {installStep === "配置中" && "解压完成，正在配置环境变量和路径..."}
-            {installStep === "完成" && "安装配置完成！"}
+            {installStep === "下载中" && `正在从远程服务器下载安装包 (v${currentVersionNumber})，请稍候...`}
+            {installStep === "解压中" && `下载完成，正在解压安装文件 (v${currentVersionNumber})...`}
+            {installStep === "配置中" && `解压完成，正在配置环境变量和创建 Junction 链接 (v${currentVersionNumber})...`}
+            {installStep === "完成" && `v${currentVersionNumber} 安装成功！`}
           </p>
         </div>
       )}
@@ -160,11 +198,10 @@ export function VersionsTab({
               return (
                 <div
                   key={v}
-                  className={`p-3 rounded-xl border flex items-center justify-between transition-all ${
-                    isActive
-                      ? "bg-blue-600/10 border-blue-500/30 text-white shadow-md shadow-blue-500/5"
-                      : "bg-black/20 border-white/5 text-slate-300"
-                  }`}
+                  className={`p-3 rounded-xl border flex items-center justify-between transition-all ${isActive
+                    ? "bg-blue-600/10 border-blue-500/30 text-white shadow-md shadow-blue-500/5"
+                    : "bg-black/20 border-white/5 text-slate-300"
+                    }`}
                 >
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-xs font-medium">{v}</span>
@@ -205,6 +242,8 @@ export function VersionsTab({
         installingVersion={installingVersion}
         isOperating={isOperating}
         onInstall={onInstall}
+        versionsUpdatedAt={versionsUpdatedAt}
+        onRefresh={onRefreshRemoteVersions}
       />
 
 
@@ -537,12 +576,16 @@ function RemoteVersionSelector({
   installingVersion,
   isOperating,
   onInstall,
+  versionsUpdatedAt,
+  onRefresh,
 }: {
   remoteVersions: string[];
   loadingRemote: boolean;
   installingVersion: string | null;
   isOperating?: boolean;
   onInstall: (version: string) => void;
+  versionsUpdatedAt?: number | null;
+  onRefresh?: () => void;
 }) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
@@ -551,6 +594,17 @@ function RemoteVersionSelector({
   const filtered = search.trim()
     ? remoteVersions.filter((v) => v.toLowerCase().includes(search.toLowerCase()))
     : remoteVersions;
+
+  // 格式化上次更新时间
+  const formatUpdatedAt = (ts: number | null | undefined): string => {
+    if (!ts) return "";
+    const diff = Math.floor(Date.now() / 1000) - ts;
+    if (diff < 60) return "刚刚";
+    if (diff < 3600) return `${Math.floor(diff / 60)}分钟前`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}小时前`;
+    const d = new Date(ts * 1000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
 
   // 点击外部关闭下拉
   useEffect(() => {
@@ -577,11 +631,33 @@ function RemoteVersionSelector({
 
   return (
     <div className="space-y-3 border-t border-white/5 pt-4">
-      <div>
-        <h4 className="text-xs font-semibold text-slate-300">在线安装远程版本</h4>
-        <p className="text-[13px] text-slate-500 mt-0.5">输入关键词过滤版本，从官方服务器下载并安装新版本。</p>
+      {/* 标题行：含上次更新时间和刷新按钮 */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h4 className="text-xs font-semibold text-slate-300">在线安装远程版本</h4>
+          <p className="text-[13px] text-slate-500 mt-0.5">输入关键词过滤版本，从官方服务器下载并安装新版本。</p>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {versionsUpdatedAt && !loadingRemote && (
+            <span className="text-[11px] text-slate-600">
+              上次更新：{formatUpdatedAt(versionsUpdatedAt)}
+            </span>
+          )}
+          {onRefresh && (
+            <button
+              onClick={onRefresh}
+              disabled={loadingRemote || !!installingVersion}
+              title="刷新版本列表"
+              className="flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300 rounded-lg text-[11px] border border-white/8 cursor-pointer transition-all"
+            >
+              <RefreshCw className={`w-3 h-3 ${loadingRemote ? "animate-spin text-blue-400" : ""}`} />
+              {loadingRemote ? "更新中..." : "更新列表"}
+            </button>
+          )}
+        </div>
       </div>
-      {loadingRemote ? (
+
+      {loadingRemote && remoteVersions.length === 0 ? (
         <div className="flex items-center gap-2 text-slate-400 text-xs py-2">
           <RefreshCw className="w-4 h-4 animate-spin text-blue-400" />
           正在获取远程版本列表...
@@ -626,9 +702,8 @@ function RemoteVersionSelector({
                   <button
                     key={v}
                     onClick={() => handleSelect(v)}
-                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-blue-600/20 transition-colors cursor-pointer ${
-                      search.trim() === v ? "bg-blue-600/10 text-blue-300" : "text-slate-300"
-                    }`}
+                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-blue-600/20 transition-colors cursor-pointer ${search.trim() === v ? "bg-blue-600/10 text-blue-300" : "text-slate-300"
+                      }`}
                   >
                     {v}
                   </button>
@@ -653,6 +728,7 @@ function RemoteVersionSelector({
     </div>
   );
 }
+
 
 // ═══════════════════════════════════════
 //  旧版数据（托管前备份的安装信息）
@@ -800,7 +876,7 @@ export function LegacyTab({ projectId }: { projectId: string }) {
 //  每个包管理器（npm/yarn/pnpm）都有自己的管理页，包含：
 //  版本检测、缓存管理、镜像配置、代理设置、全局包管理
 // ═══════════════════════════════════════
-export function PackageManagerTab({ pm, hidden }: { pm: PackageManagerDef; hidden?: boolean }) {
+export function PackageManagerTab({ projectId, pm, hidden }: { projectId: string; pm: PackageManagerDef; hidden?: boolean }) {
   const [checking, setChecking] = useState(false);
   const [detectStep, setDetectStep] = useState("");
   const [installed, setInstalled] = useState(false);
@@ -941,15 +1017,16 @@ export function PackageManagerTab({ pm, hidden }: { pm: PackageManagerDef; hidde
         // delete: deleteOldFirst=true, move: deleteOldFirst=false(copy then junction), keep: deleteOldFirst=false
         const deleteOldFirst = workflowFileAction === "delete";
         await invoke("migrate_pkg_storage", {
-          cacheDetectCmd: workflowType === "cache" ? pm.cache_detect_cmd : pm.data_detect_cmd,
-          origPath: workflowLinkPath,
+          projectId,
+          pmId: pm.id,
           newPath: workflowActualPath,
           storageKind: workflowType as string,
           deleteOldFirst,
+          origPath: workflowLinkPath || undefined,
         });
       } else {
         // Point 模式：修改配置（仅缓存支持）
-        if (!pm.cache_set_cmd_template) {
+        if (!pm.cache_set_cmd_template && !pm.cache_env_var) {
           throw new Error("该项目不支持配置指向");
         }
         // 处理旧文件
@@ -961,8 +1038,11 @@ export function PackageManagerTab({ pm, hidden }: { pm: PackageManagerDef; hidde
             action: workflowFileAction,
           });
         }
-        const cmd = pm.cache_set_cmd_template.replace("{path}", workflowPointPath);
-        await invoke("run_cmd_capture", { cmd });
+        await invoke("project_set_cache_path", {
+          projectId,
+          pmId: pm.id,
+          newPath: workflowPointPath,
+        });
       }
       await runDetection();
       setWorkflowStep("done");
@@ -1031,26 +1111,34 @@ export function PackageManagerTab({ pm, hidden }: { pm: PackageManagerDef; hidde
     }
 
     // Step 2: cache
-    if (pm.cache_detect_cmd) {
+    if (pm.cache_detect_cmd || pm.cache_default_path || pm.cache_env_var) {
       steps.push({
         label: `正在检测 ${pm.display_name} 缓存路径...`,
         run: async () => {
           try {
-            const info = await invoke<{ path: string; size: string; is_link: boolean; real_target: string; parent_link: ParentLink | null }>("get_pkg_cache_info", { cmd: pm.cache_detect_cmd });
-            setCacheInfo({ ...info, detect_source: pm.cache_detect_cmd! });
+            const info = await invoke<{ path: string; size: string; is_link: boolean; real_target: string; parent_link: ParentLink | null }>("get_pkg_cache_info", {
+              projectId,
+              pmId: pm.id,
+              storageKind: "cache"
+            });
+            setCacheInfo({ ...info, detect_source: pm.cache_detect_cmd || pm.cache_env_var || pm.cache_default_path || "" });
           } catch { /* ignore */ }
         },
       });
     }
 
     // Step 2b: data
-    if (pm.data_detect_cmd) {
+    if (pm.data_detect_cmd || pm.data_default_path || pm.data_env_var) {
       steps.push({
         label: `正在检测 ${pm.display_name} 数据路径...`,
         run: async () => {
           try {
-            const info = await invoke<{ path: string; size: string; is_link: boolean; real_target: string; parent_link: ParentLink | null }>("get_pkg_cache_info", { cmd: pm.data_detect_cmd });
-            setDataInfo({ path: info.path, size: info.size, is_link: info.is_link, real_target: info.real_target, detect_source: pm.data_detect_cmd! });
+            const info = await invoke<{ path: string; size: string; is_link: boolean; real_target: string; parent_link: ParentLink | null }>("get_pkg_cache_info", {
+              projectId,
+              pmId: pm.id,
+              storageKind: "data"
+            });
+            setDataInfo({ path: info.path, size: info.size, is_link: info.is_link, real_target: info.real_target, detect_source: pm.data_detect_cmd || pm.data_env_var || pm.data_default_path || "" });
           } catch { /* ignore */ }
         },
       });
@@ -1171,7 +1259,7 @@ export function PackageManagerTab({ pm, hidden }: { pm: PackageManagerDef; hidde
 
   // ── 清理缓存（带进度条） ──
   const handleCleanCache = async () => {
-    if (!pm.cache_detect_cmd) return;
+    if (!pm.cache_detect_cmd && !pm.cache_default_path && !pm.cache_env_var) return;
     if (!confirm(`将删除所有缓存文件（约 ${cacheInfo?.size || "?"}），确定继续？`)) return;
     setCleaningCache(true);
     setCleanProgress(null);
@@ -1180,7 +1268,8 @@ export function PackageManagerTab({ pm, hidden }: { pm: PackageManagerDef; hidde
     });
     try {
       await invoke("clean_pkg_cache", {
-        cacheDetectCmd: pm.cache_detect_cmd,
+        projectId,
+        pmId: pm.id,
         cachePath: cacheInfo?.path || null,
       });
       await runDetection();
@@ -1282,11 +1371,10 @@ export function PackageManagerTab({ pm, hidden }: { pm: PackageManagerDef; hidde
           </div>
           <div className="space-y-1.5">
             <p className="text-[12px] text-slate-300">请选择变更方式：</p>
-            <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${
-              workflowMethod === "junction"
-                ? `${accentBorder} bg-white/5`
-                : "border-white/5 hover:bg-white/[0.02]"
-            }`}>
+            <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${workflowMethod === "junction"
+              ? `${accentBorder} bg-white/5`
+              : "border-white/5 hover:bg-white/[0.02]"
+              }`}>
               <input type="radio" name="wf_method" value="junction" checked={workflowMethod === "junction"}
                 onChange={() => setWorkflowMethod("junction")} className="mt-0.5" />
               <div>
@@ -1297,11 +1385,10 @@ export function PackageManagerTab({ pm, hidden }: { pm: PackageManagerDef; hidde
               </div>
             </label>
             {!isData && pm.cache_set_cmd_template && (
-              <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${
-                workflowMethod === "point"
-                  ? `${accentBorder} bg-white/5`
-                  : "border-white/5 hover:bg-white/[0.02]"
-              }`}>
+              <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${workflowMethod === "point"
+                ? `${accentBorder} bg-white/5`
+                : "border-white/5 hover:bg-white/[0.02]"
+                }`}>
                 <input type="radio" name="wf_method" value="point" checked={workflowMethod === "point"}
                   onChange={() => setWorkflowMethod("point")} className="mt-0.5" />
                 <div>
@@ -1452,9 +1539,8 @@ export function PackageManagerTab({ pm, hidden }: { pm: PackageManagerDef; hidde
             <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">操作预览</p>
             <div className="space-y-1.5">
               <div className="flex items-center gap-2 text-[12px]">
-                <span className={`px-1.5 py-0.5 rounded text-[13px] font-semibold ${
-                  workflowMethod === "junction" ? "bg-blue-500/10 text-blue-400" : "bg-purple-500/10 text-purple-400"
-                }`}>
+                <span className={`px-1.5 py-0.5 rounded text-[13px] font-semibold ${workflowMethod === "junction" ? "bg-blue-500/10 text-blue-400" : "bg-purple-500/10 text-purple-400"
+                  }`}>
                   {workflowMethod === "junction" ? "Junction" : "指向"}
                 </span>
                 {workflowMethod === "junction" ? (
@@ -1478,11 +1564,11 @@ export function PackageManagerTab({ pm, hidden }: { pm: PackageManagerDef; hidde
                 <span className="text-slate-500">旧文件处理：</span>
                 <span className={
                   workflowFileAction === "delete" ? "text-red-400 font-semibold" :
-                  workflowFileAction === "move" ? "text-blue-400 font-semibold" :
-                  "text-slate-400"
+                    workflowFileAction === "move" ? "text-blue-400 font-semibold" :
+                      "text-slate-400"
                 }>
                   {workflowFileAction === "delete" ? "🗑 删除旧文件" :
-                   workflowFileAction === "move" ? "📦 移动到新目录" : "📌 不做改动"}
+                    workflowFileAction === "move" ? "📦 移动到新目录" : "📌 不做改动"}
                 </span>
               </div>
               {(workflowMethod === "junction" && workflowLinkPath.toLowerCase().startsWith("c:")) && (
@@ -1659,15 +1745,13 @@ export function PackageManagerTab({ pm, hidden }: { pm: PackageManagerDef; hidde
               <div className="space-y-1">
                 <p className="text-[12px] font-mono text-slate-300 break-all leading-relaxed">
                   <span className="text-slate-300">{cacheInfo.path}</span>
-                  <span className="text-[13px] text-slate-600">（读取自 </span>
-                  <span className="text-[13px] text-slate-500 font-mono">{cacheInfo.detect_source}</span>
-                  <span className="text-[13px] text-slate-600">）</span>
+                  <span className="mx-1 px-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[11px] inline-flex items-center gap-0.5">{cacheInfo.detect_source}</span>
                   {cacheInfo.real_target ? (
                     <>
-                      <span className="text-[11px] text-blue-400"> → </span>
-                      <span className="text-[11px] font-mono text-blue-400">{cacheInfo.real_target}</span>
-                      <span className="ml-1 px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[13px] inline-flex items-center gap-0.5">
-                        <Link className="w-2 h-2" />已链接 · {cacheInfo.size}
+                      <span className="mx-1 px-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[11px] inline-flex items-center gap-0.5"> 链接到(junction) </span>
+                      <span className="text-[11px] font-mono text-slate-300">{cacheInfo.real_target}</span>
+                      <span className="ml-1 px-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[11px] inline-flex items-center gap-0.5">
+                        {cacheInfo.size}
                       </span>
                     </>
                   ) : (
@@ -1726,15 +1810,13 @@ export function PackageManagerTab({ pm, hidden }: { pm: PackageManagerDef; hidde
               <div className="space-y-1">
                 <p className="text-[12px] font-mono text-slate-300 break-all leading-relaxed">
                   <span className="text-slate-300">{dataInfo.path}</span>
-                  <span className="text-[13px] text-slate-600">（读取自 </span>
-                  <span className="text-[13px] text-slate-500 font-mono">{dataInfo.detect_source}</span>
-                  <span className="text-[13px] text-slate-600">）</span>
+                  <span className="mx-1 px-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[11px] inline-flex items-center gap-0.5">{dataInfo.detect_source}</span>
                   {dataInfo.real_target ? (
                     <>
-                      <span className="text-[11px] text-blue-400"> → </span>
-                      <span className="text-[11px] font-mono text-blue-400">{dataInfo.real_target}</span>
-                      <span className="ml-1 px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[13px] inline-flex items-center gap-0.5">
-                        <Link className="w-2 h-2" />已链接 · {dataInfo.size}
+                      <span className="mx-1 px-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[11px] inline-flex items-center gap-0.5"> 链接到(junction) </span>
+                      <span className="text-[11px] font-mono text-slate-300">{dataInfo.real_target}</span>
+                      <span className="ml-1 px-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[11px] inline-flex items-center gap-0.5">
+                        {dataInfo.size}
                       </span>
                     </>
                   ) : (
@@ -1776,7 +1858,7 @@ export function PackageManagerTab({ pm, hidden }: { pm: PackageManagerDef; hidde
             <Globe className="w-4 h-4 text-blue-400" />
             <h4 className="text-xs font-semibold text-white">镜像配置</h4>
             {currentMirror && (
-              <span className="text-[12px] text-slate-400 font-mono truncate max-w-[200px] ml-2">当前: {currentMirror}</span>
+              <span className="ml-auto text-[11px] text-slate-400 font-mono bg-black/20 px-2 py-0.5 rounded border border-white/5 break-all max-w-[400px]">当前: {currentMirror}</span>
             )}
           </div>
           <div className="grid grid-cols-1 gap-1.5">
@@ -1787,10 +1869,12 @@ export function PackageManagerTab({ pm, hidden }: { pm: PackageManagerDef; hidde
                   className={`flex items-center justify-between px-3 py-2 rounded-lg text-[13px] font-medium cursor-pointer transition-all border
                     ${isCurrent ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300" : "bg-black/20 border-white/5 text-slate-300 hover:bg-white/5"}`}>
                   <span>{opt.name}</span>
-                  <span className={`text-[12px] ${isCurrent ? "text-emerald-400" : "text-slate-500"} font-mono truncate max-w-[150px]`}>
-                    {opt.url}
-                  </span>
-                  {switchingMirror === opt.url ? <Loader className="w-3 h-3 animate-spin text-blue-400 ml-1" /> : isCurrent && <CheckCircle className="w-3 h-3 text-emerald-400 ml-1" />}
+                  <div className="flex items-center gap-1.5 ml-auto">
+                    <span className={`text-[12px] ${isCurrent ? "text-emerald-400" : "text-slate-500"} font-mono`}>
+                      {opt.url}
+                    </span>
+                    {switchingMirror === opt.url ? <Loader className="w-3 h-3 animate-spin text-blue-400" /> : isCurrent && <CheckCircle className="w-3 h-3 text-emerald-400" />}
+                  </div>
                 </button>
               );
             })}

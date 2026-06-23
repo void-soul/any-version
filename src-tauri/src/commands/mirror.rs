@@ -1,4 +1,4 @@
-﻿use std::fs;
+use std::fs;
 use std::path::PathBuf;
 use serde::{Serialize, Deserialize};
 
@@ -155,14 +155,28 @@ pub fn set_mirror(tool: String, mirror_type: String) -> Result<(), String> {
                         if let Some(ref options) = pm.mirror_options {
                             for opt in options {
                                 if opt.mirror_type.to_lowercase() == mirror_type.to_lowercase() {
-                                    let cmd = tpl.replace("{url}", &opt.url);
-                                    let parts: Vec<&str> = cmd.split_whitespace().collect();
-                                    if !parts.is_empty() {
-                                        let _ = super::hidden_cmd::hidden_cmd("cmd").args(&["/c"]).args(&parts).output();
-                                        return Ok(());
-                                    }
-                                }
-                            }
+                                     let cmd = tpl.replace("{url}", &opt.url);
+                                     let output = super::hidden_cmd::hidden_cmd("cmd")
+                                         .args(&["/c", &cmd])
+                                         .output();
+                                     match output {
+                                         Ok(out) => {
+                                             if out.status.success() {
+                                                 return Ok(());
+                                             } else {
+                                                 let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                                                 let err_msg = if stderr.is_empty() {
+                                                     format!("命令执行失败 (exit code: {})", out.status.code().unwrap_or(-1))
+                                                 } else {
+                                                     stderr
+                                                 };
+                                                 return Err(format!("配置镜像失败: {}", err_msg));
+                                             }
+                                         }
+                                         Err(e) => return Err(format!("执行配置命令失败: {}", e)),
+                                     }
+                                 }
+                             }
                         }
                     }
                 }

@@ -42,8 +42,9 @@ interface ProjectUIState {
   activeSubTab: SubTab;
   remoteVersions: string[];
   loadingRemote: boolean;
+  versionsUpdatedAt: number | null;
   installingVersion: string | null;
-  downloadProgress: { sdk: string; downloaded: number; total: number; pct: number } | null;
+  downloadProgress: { sdk: string; downloaded: number; total: number; pct: number; speed_str: string } | null;
   installStep: string;
   showManagePreview: boolean;
   managePreview: ManagePreview | null;
@@ -70,6 +71,7 @@ const EMPTY_UI: ProjectUIState = {
   activeSubTab: "versions",
   remoteVersions: [],
   loadingRemote: false,
+  versionsUpdatedAt: null,
   installingVersion: null,
   downloadProgress: null,
   installStep: "",
@@ -90,19 +92,19 @@ const EMPTY_UI: ProjectUIState = {
   detectTotal: 0,
 };
 
-let _onProgress: ((p: { sdk: string; downloaded: number; total: number; pct: number }) => void) | null = null;
+let _onProgress: ((p: { sdk: string; downloaded: number; total: number; pct: number; speed_str: string }) => void) | null = null;
 let _onStep: ((s: string) => void) | null = null;
 let _unlistenProgress: (() => void) | null = null;
 let _unlistenStep: (() => void) | null = null;
 
 function ensureListeners(
-  onProgress: (p: { sdk: string; downloaded: number; total: number; pct: number }) => void,
+  onProgress: (p: { sdk: string; downloaded: number; total: number; pct: number; speed_str: string }) => void,
   onStep: (s: string) => void,
 ) {
   _onProgress = onProgress;
   _onStep = onStep;
   if (!_unlistenProgress) {
-    listen<{ sdk: string; downloaded: number; total: number; pct: number }>("download-progress", (e) => {
+    listen<{ sdk: string; downloaded: number; total: number; pct: number; speed_str: string }>("download-progress", (e) => {
       _onProgress?.(e.payload);
     }).then((u) => { _unlistenProgress = u; });
   }
@@ -197,13 +199,15 @@ export default function ProjectDetailPanel({ project, onRefresh, onProjectUpdate
       },
     });
 
-    // 步骤2：获取远程版本列表
+    // 步骤2：获取远程版本列表（优先读缓存）
     steps.push({
       label: `正在获取 ${proj.display_name} 远程版本列表...`,
       run: async () => {
         try {
-          const v = await invoke<string[]>("project_list_remote_versions", { id });
-          patch(id, { remoteVersions: v });
+          const result = await invoke<{ versions: string[]; updated_at: number; from_cache: boolean }>(
+            "project_list_remote_versions", { id, force: false }
+          );
+          patch(id, { remoteVersions: result.versions, versionsUpdatedAt: result.updated_at });
         } catch {}
       },
     });
@@ -241,7 +245,9 @@ export default function ProjectDetailPanel({ project, onRefresh, onProjectUpdate
     eventProjectRef.current = pid;
     patch(pid, { installingVersion: version, installStep: "下载中", downloadProgress: null });
     try {
-      await invoke("project_install_version", { id: pid, version: version.split(" ")[0] });
+      const parts = version.includes(" · ") ? version.split(" · ")[1] : version;
+      const cleanVer = parts.trim().split(" ")[0];
+      await invoke("project_install_version", { id: pid, version: cleanVer });
       await refreshSingle(pid);
     } catch (e: unknown) {
       alert("安装失败: " + e);
@@ -254,6 +260,32 @@ export default function ProjectDetailPanel({ project, onRefresh, onProjectUpdate
       }, 3000);
     }
   }, [pid, patch, loadDetail, onRefresh]);
+
+  const handleCancelInstall = useCallback(async () => {
+    if (!pid) return;
+    try {
+      await invoke("project_cancel_install", { id: pid });
+    } catch {
+      // 忽略错误（任务可能已完成）
+    } finally {
+      patch(pid, { installingVersion: null, downloadProgress: null, installStep: "" });
+      eventProjectRef.current = null;
+    }
+  }, [pid, patch]);
+
+  const handleRefreshRemoteVersions = useCallback(async () => {
+    if (!pid) return;
+    patch(pid, { loadingRemote: true });
+    try {
+      const result = await invoke<{ versions: string[]; updated_at: number; from_cache: boolean }>(
+        "project_list_remote_versions", { id: pid, force: true }
+      );
+      patch(pid, { remoteVersions: result.versions, versionsUpdatedAt: result.updated_at, loadingRemote: false });
+    } catch (e: unknown) {
+      alert("刷新版本列表失败: " + e);
+      patch(pid, { loadingRemote: false });
+    }
+  }, [pid, patch]);
 
   const handleUninstall = useCallback(async (version: string) => {
     if (!pid || !ui.detail) return;
@@ -440,12 +472,15 @@ export default function ProjectDetailPanel({ project, onRefresh, onProjectUpdate
     def,
     remoteVersions: ui.remoteVersions,
     loadingRemote: ui.loadingRemote,
+    versionsUpdatedAt: ui.versionsUpdatedAt,
     installingVersion: ui.installingVersion,
     downloadProgress: ui.downloadProgress,
     installStep: ui.installStep,
     onInstall: handleInstall,
     onUninstall: handleUninstall,
     onUse: handleUse,
+    onCancelInstall: handleCancelInstall,
+    onRefreshRemoteVersions: handleRefreshRemoteVersions,
     packages: ui.packages,
     loadingPackages: ui.loadingPackages,
     upgradingPackage: ui.upgradingPackage,
@@ -598,7 +633,7 @@ export default function ProjectDetailPanel({ project, onRefresh, onProjectUpdate
                   const pmDef = def?.package_managers?.find(p => p.id === pmId);
                   if (!pmDef) return null;
                   return (
-                    <PackageManagerTab key={pt.id} pm={pmDef} hidden={ui.activeSubTab !== pt.id} />
+                    <PackageManagerTab key={pt.id} projectId={pid!} pm={pmDef} hidden={ui.activeSubTab !== pt.id} />
                   );
                 })}
               </>

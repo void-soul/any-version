@@ -88,16 +88,54 @@ pub fn project_manage(id: String) -> Result<(), String> {
                 let mut matches = false;
                 for rule in &def.find_rules {
                     match &rule.pattern {
-                        super::types::ResolvePattern::PathContains { path_key, .. } => {
+                        super::types::ResolvePattern::PathContains { path_key, exe_name } => {
                             if p_lower.contains(&path_key.to_lowercase()) {
-                                matches = true;
-                                break;
+                                let mut exists = false;
+                                let mut check_names = vec![exe_name.clone()];
+                                #[cfg(windows)]
+                                {
+                                    let exe_lower = exe_name.to_lowercase();
+                                    if !exe_lower.ends_with(".exe") && !exe_lower.ends_with(".cmd") && !exe_lower.ends_with(".bat") {
+                                        check_names.push(format!("{}.exe", exe_name));
+                                        check_names.push(format!("{}.cmd", exe_name));
+                                        check_names.push(format!("{}.bat", exe_name));
+                                    }
+                                }
+                                for name in check_names {
+                                    if Path::new(&p_str).join(&name).exists() {
+                                        exists = true;
+                                        break;
+                                    }
+                                }
+                                if exists {
+                                    matches = true;
+                                    break;
+                                }
                             }
                         }
-                        super::types::ResolvePattern::FixedPath { path: fixed_path, .. } => {
+                        super::types::ResolvePattern::FixedPath { path: fixed_path, exe_name } => {
                             if p_lower.contains(&fixed_path.to_lowercase()) {
-                                matches = true;
-                                break;
+                                let mut exists = false;
+                                let mut check_names = vec![exe_name.clone()];
+                                #[cfg(windows)]
+                                {
+                                    let exe_lower = exe_name.to_lowercase();
+                                    if !exe_lower.ends_with(".exe") && !exe_lower.ends_with(".cmd") && !exe_lower.ends_with(".bat") {
+                                        check_names.push(format!("{}.exe", exe_name));
+                                        check_names.push(format!("{}.cmd", exe_name));
+                                        check_names.push(format!("{}.bat", exe_name));
+                                    }
+                                }
+                                for name in check_names {
+                                    if Path::new(&p_str).join(&name).exists() {
+                                        exists = true;
+                                        break;
+                                    }
+                                }
+                                if exists {
+                                    matches = true;
+                                    break;
+                                }
                             }
                         }
                         _ => {}
@@ -130,9 +168,13 @@ pub fn project_manage(id: String) -> Result<(), String> {
     let link_dir = Path::new(&config.links_dir).join(&id);
     let link_str = link_dir.to_string_lossy().to_string();
     for var_def in &def.env_vars {
-        // Skip compat/discovery tier vars - only manage core + package
+        // Skip compat/discovery tier vars - only manage core + package + clear
         if let Some(tier) = &var_def.tier {
             if *tier == super::types::EnvVarTier::Compat { continue; }
+            if *tier == super::types::EnvVarTier::Clear {
+                let _ = set_registry_env(&var_def.name, "");
+                continue;
+            }
         }
         // 值策略由 EnvVarDef.sub_dir 驱动
         let value = if let Some(ref sub) = var_def.sub_dir {
@@ -150,13 +192,15 @@ pub fn project_manage(id: String) -> Result<(), String> {
     }
 
     // 6. 同步当前进程环境变量，使子进程（如 run_cmd_capture）能立即使用新值
-    if let Some(user_path) = crate::commands::env::get_registry_env("PATH") {
-        std::env::set_var("PATH", &user_path);
-    }
+    crate::sync_process_path();
     // 同步所有项目环境变量到当前进程
     for var_def in &def.env_vars {
         if let Some(tier) = &var_def.tier {
             if *tier == super::types::EnvVarTier::Compat { continue; }
+            if *tier == super::types::EnvVarTier::Clear {
+                std::env::remove_var(&var_def.name);
+                continue;
+            }
         }
         let value = if let Some(ref sub) = var_def.sub_dir {
             format!("{}\\{}", link_str, sub)
@@ -222,6 +266,11 @@ pub fn project_unmanage(id: String) -> Result<(), String> {
         }
         if let Some(orig_val) = config.original_envs.remove(&var_def.name) {
             let _ = set_registry_env(&var_def.name, &orig_val);
+            std::env::set_var(&var_def.name, &orig_val);
+        } else {
+            // 如果没有备份（原来就没设置），则确保从当前进程和注册表中清除它
+            let _ = set_registry_env(&var_def.name, "");
+            std::env::remove_var(&var_def.name);
         }
     }
 
@@ -235,9 +284,7 @@ pub fn project_unmanage(id: String) -> Result<(), String> {
     crate::commands::config::save_config(&config)?;
 
     // 6. 同步当前进程环境变量
-    if let Some(user_path) = crate::commands::env::get_registry_env("PATH") {
-        std::env::set_var("PATH", &user_path);
-    }
+    crate::sync_process_path();
 
     Ok(())
 }
@@ -402,7 +449,16 @@ pub fn project_preview_unmanage(id: String) -> Result<ManagePreview, String> {
 #[tauri::command]
 pub fn run_cmd_capture(cmd: String) -> Result<String, String> {
     let mut command = super::super::hidden_cmd::hidden_cmd("cmd");
-    command.args(&["/c", &cmd]);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.raw_arg(&format!("/c \"{}\"", cmd));
+    }
+    #[cfg(not(windows))]
+    {
+        command.args(&["/c", &cmd]);
+    }
 
     // 注入 NPM_CONFIG_PREFIX，确保 npm install -g 安装到正确的 link_dir
     // （当前进程环境变量可能未同步注册表，这里兜底保证子进程用对 prefix）
@@ -414,7 +470,7 @@ pub fn run_cmd_capture(cmd: String) -> Result<String, String> {
         .output()
         .map_err(|e| format!("执行命令失败: {}", e))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().trim_matches('"').trim_matches('\'').trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
 
     if output.status.success() {
@@ -534,9 +590,96 @@ fn check_parent_junction(cache_path: &str) -> Option<ParentLinkInfo> {
     None
 }
 
+fn resolve_pkg_storage_path_dynamic(
+    project_id: &str,
+    pm_id: &str,
+    storage_kind: &str,
+) -> Result<String, String> {
+    use crate::commands::project::registry;
+    use crate::commands::utils::{expand_home, resolve_custom_cache_path};
+
+    let project = registry::registry().into_iter()
+        .find(|p| p.id.eq_ignore_ascii_case(project_id))
+        .ok_or_else(|| format!("未找到项目: {}", project_id))?;
+
+    let pm = project.package_managers.iter()
+        .find(|m| m.id.eq_ignore_ascii_case(pm_id))
+        .ok_or_else(|| format!("在项目 {} 中未找到包管理器: {}", project_id, pm_id))?;
+
+    let mut resolved_path = String::new();
+
+    if storage_kind == "cache" {
+        resolved_path = resolve_custom_cache_path(pm).unwrap_or_default();
+        if resolved_path.is_empty() {
+            if let Some(ref cmd) = pm.cache_detect_cmd {
+                if let Ok(out) = run_cmd_capture(cmd.clone()) {
+                    let trimmed = out.trim();
+                    if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("undefined") && !trimmed.eq_ignore_ascii_case("null") {
+                        resolved_path = trimmed.to_string();
+                    }
+                }
+            }
+        }
+        if resolved_path.is_empty() {
+            if let Some(ref env_var) = pm.cache_env_var {
+                if let Ok(val) = std::env::var(env_var) {
+                    if !val.trim().is_empty() {
+                        resolved_path = val.trim().to_string();
+                    }
+                }
+            }
+        }
+        if resolved_path.is_empty() {
+            if let Some(ref default_path) = pm.cache_default_path {
+                resolved_path = expand_home(default_path);
+            }
+        }
+    } else if storage_kind == "data" {
+        if let Some(ref cmd) = pm.data_detect_cmd {
+            if let Ok(out) = run_cmd_capture(cmd.clone()) {
+                let trimmed = out.trim();
+                if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("undefined") && !trimmed.eq_ignore_ascii_case("null") {
+                    resolved_path = trimmed.to_string();
+                }
+            }
+        }
+        if resolved_path.is_empty() {
+            if let Some(ref env_var) = pm.data_env_var {
+                if let Ok(val) = std::env::var(env_var) {
+                    if !val.trim().is_empty() {
+                        resolved_path = val.trim().to_string();
+                    }
+                }
+            }
+        }
+        if resolved_path.is_empty() {
+            if let Some(ref default_path) = pm.data_default_path {
+                resolved_path = expand_home(default_path);
+            }
+        }
+    } else {
+        return Err(format!("不支持的存储类型: {}", storage_kind));
+    }
+
+    if resolved_path.is_empty() {
+        return Err(format!("未能检测到 {} 存储路径", storage_kind));
+    }
+
+    let cleaned = resolved_path.trim_matches('"').trim_matches('\'').trim().to_string();
+    if cleaned.is_empty() {
+        return Err(format!("未能检测到 {} 存储路径", storage_kind));
+    }
+
+    Ok(cleaned)
+}
+
 #[tauri::command]
-pub fn get_pkg_cache_info(cmd: String) -> Result<PkgCacheInfo, String> {
-    let cache_path = run_cmd_capture(cmd)?;
+pub fn get_pkg_cache_info(
+    project_id: String,
+    pm_id: String,
+    storage_kind: String,
+) -> Result<PkgCacheInfo, String> {
+    let cache_path = resolve_pkg_storage_path_dynamic(&project_id, &pm_id, &storage_kind)?;
     // 过滤 Yarn 等工具返回的 "undefined" / "null" 字符串
     let trimmed = cache_path.trim();
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("undefined") || trimmed.eq_ignore_ascii_case("null") {
@@ -584,7 +727,8 @@ pub fn get_pkg_cache_info(cmd: String) -> Result<PkgCacheInfo, String> {
 #[tauri::command]
 pub fn migrate_pkg_storage(
     app_handle: tauri::AppHandle,
-    cache_detect_cmd: String,
+    project_id: String,
+    pm_id: String,
     new_path: String,
     storage_kind: String,
     delete_old_first: Option<bool>,
@@ -593,15 +737,93 @@ pub fn migrate_pkg_storage(
     let src_path = if let Some(ref op) = orig_path {
         op.clone()
     } else {
-        let p = run_cmd_capture(cache_detect_cmd)?;
-        if p.is_empty() { return Err("未能检测到存储路径".to_string()); }
-        p
+        resolve_pkg_storage_path_dynamic(&project_id, &pm_id, &storage_kind)?
     };
     let delete_old = delete_old_first.unwrap_or(false);
     crate::commands::cache::migrate_pkg_storage_impl(
         &app_handle, &src_path, &new_path, &storage_kind, delete_old,
     )
 }
+
+/// 指向模式下设置缓存目录。
+/// 如果包管理器配有 cache_env_var 且检测到该环境变量已被配置：
+/// - 若存在设置命令（例如 go env -w）且旧环境变量在 HKCU（用户级），则主动在注册表及进程中将其清空，使命令托管生效；
+/// - 若无设置命令或旧环境变量在 HKLM（系统级，无法删除），则通过在 HKCU 中写入新路径来实现优先级覆盖；
+/// - 若执行命令失败且之前删除了 HKCU 环境变量，则进行恢复/兜底设置。
+#[tauri::command]
+pub fn project_set_cache_path(
+    project_id: String,
+    pm_id: String,
+    new_path: String,
+) -> Result<(), String> {
+    use crate::commands::env::{set_registry_env, get_registry_env_any};
+    use super::registry;
+
+    let def = registry::find_by_id(&project_id)
+        .ok_or_else(|| format!("未找到项目: {}", project_id))?;
+
+    let pm = def.package_managers.iter().find(|p| p.id == pm_id)
+        .ok_or_else(|| format!("未找到包管理器: {}", pm_id))?;
+
+    let mut env_var_updated = false;
+    let mut hkcu_deleted = false;
+    let mut deleted_var_name = String::new();
+
+    if let Some(ref env_var) = pm.cache_env_var {
+        if let Some((_, source)) = get_registry_env_any(env_var) {
+            if pm.cache_set_cmd_template.is_none() {
+                // 没有命令行设置方式，必须修改注册表环境变量
+                set_registry_env(env_var, &new_path)?;
+                std::env::set_var(env_var, &new_path);
+                env_var_updated = true;
+            } else if source == "HKLM" {
+                // 如果是系统级环境变量，无法删除，只能在 HKCU 中写入新值以覆盖它
+                set_registry_env(env_var, &new_path)?;
+                std::env::set_var(env_var, &new_path);
+                env_var_updated = true;
+            } else {
+                // 如果是用户级环境变量 (HKCU)，且有命令可以设置（如 go env -w）
+                // 我们优先将其从 HKCU 中删除，以便改为由 commands (go env -w) 托管
+                set_registry_env(env_var, "")?;
+                std::env::remove_var(env_var);
+                hkcu_deleted = true;
+                deleted_var_name = env_var.clone();
+            }
+        } else {
+            // 如果注册表中完全没有配置该环境变量
+            if pm.cache_set_cmd_template.is_none() {
+                // 如果没有命令行模板，则直接通过注册表环境变量来设置
+                set_registry_env(env_var, &new_path)?;
+                std::env::set_var(env_var, &new_path);
+                env_var_updated = true;
+            }
+        }
+    }
+
+    if let Some(ref tpl) = pm.cache_set_cmd_template {
+        let cmd = tpl.replace("{path}", &new_path);
+        if let Err(e) = run_cmd_capture(cmd) {
+            // 如果命令执行失败
+            if hkcu_deleted {
+                // 如果之前删除了 HKCU 环境变量，且命令执行失败，则需要恢复/设置 HKCU 环境变量作为兜底
+                let _ = set_registry_env(&deleted_var_name, &new_path);
+                std::env::set_var(&deleted_var_name, &new_path);
+            } else if !env_var_updated {
+                // 如果既没删除也没修改过环境变量，则如果有环境变量名，降级/兜底通过修改注册表环境变量来设置它
+                //（例如：在 Go 1.13 以下不支持 go env -w 时，直接改环境变量是唯一的设置方式）
+                if let Some(ref env_var) = pm.cache_env_var {
+                    set_registry_env(env_var, &new_path)?;
+                    std::env::set_var(env_var, &new_path);
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 
 /// 指向模式下处理旧文件 — 在修改配置指向新路径前，处理旧目录中的文件。
 /// - action: "move" 拷贝到新路径后删除旧文件，"delete" 直接删除旧文件，"keep" 不做操作。
@@ -646,15 +868,14 @@ pub fn handle_point_storage_files(
 #[tauri::command]
 pub fn clean_pkg_cache(
     app_handle: tauri::AppHandle,
-    cache_detect_cmd: String,
+    project_id: String,
+    pm_id: String,
     cache_path: Option<String>,
 ) -> Result<(), String> {
     let resolved = if let Some(ref cp) = cache_path {
         cp.clone()
     } else {
-        let p = run_cmd_capture(cache_detect_cmd)?;
-        if p.is_empty() { return Err("未能检测到缓存路径".to_string()); }
-        p
+        resolve_pkg_storage_path_dynamic(&project_id, &pm_id, "cache")?
     };
     crate::commands::cache::clean_pkg_cache_impl(&app_handle, &resolved)
 }

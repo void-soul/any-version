@@ -100,10 +100,26 @@ pub fn preview_manage(id: &str) -> Result<ManagePreview, String> {
 
     // 步骤 3: 设置环境变量
     for var in &def.env_vars {
+        if var.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Compat) {
+            continue;
+        }
+        if var.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Clear) {
+            steps.push(ManageStep {
+                action: "clear_env".to_string(),
+                description: format!("清除注册表中的环境变量 {}（托管后由 anyversion 托管）", var.name),
+                target: var.name.clone(),
+            });
+            continue;
+        }
         let link_str = links_dir.join(&id).to_string_lossy().to_string();
+        let value = if let Some(ref sub) = var.sub_dir {
+            format!("{}\\{}", link_str, sub)
+        } else {
+            link_str.clone()
+        };
         steps.push(ManageStep {
             action: "set_env".to_string(),
-            description: format!("设置环境变量 {} = {}", var.name, link_str),
+            description: format!("设置环境变量 {} = {}", var.name, value),
             target: var.name.clone(),
         });
     }
@@ -188,7 +204,7 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
     }
 
     // 环境变量状态
-    let env_vars_status = build_env_vars_status(def, &config.links_dir);
+    let env_vars_status = build_env_vars_status(def, &config.links_dir, config, managed);
 
     // 缓存状态
     let cache_status = if def.has_cache {
@@ -320,7 +336,12 @@ fn to_resolver_rules(rules: &[super::types::FindRule]) -> Vec<FindRule> {
 }
 
 /// 构建环境变量状态列表
-fn build_env_vars_status(def: &ProjectDef, links_dir: &str) -> Vec<EnvVarStatus> {
+fn build_env_vars_status(
+    def: &ProjectDef,
+    links_dir: &str,
+    config: &crate::commands::config::Config,
+    managed: bool,
+) -> Vec<EnvVarStatus> {
     let links_lower = links_dir.to_lowercase();
     let mut statuses = Vec::new();
 
@@ -331,7 +352,14 @@ fn build_env_vars_status(def: &ProjectDef, links_dir: &str) -> Vec<EnvVarStatus>
             continue;
         }
         let name = &var_def.name;
-        let (value, source, exists, in_anyversion) = if let Some((val, src)) = get_registry_env_any(name) {
+        let (value, source, exists, in_anyversion) = if managed && var_def.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Clear) {
+            // 如果已经被托管且是 Clear 级别的变量，我们展示已清空并托管的状态，并显示备份值
+            if let Some(backup_val) = config.original_envs.get(name) {
+                (Some(format!("已清空并托管 (备份值: {})", backup_val)), "备份管理".to_string(), true, true)
+            } else {
+                (Some("已清空并托管".to_string()), "托管中".to_string(), true, true)
+            }
+        } else if let Some((val, src)) = get_registry_env_any(name) {
             let val_path = Path::new(&val);
             let path_exists = if var_def.check_type == "path" {
                 val_path.exists()
@@ -360,45 +388,39 @@ fn build_env_vars_status(def: &ProjectDef, links_dir: &str) -> Vec<EnvVarStatus>
 
 /// 构建缓存状态
 fn build_cache_status(def: &ProjectDef) -> Option<CacheStatus> {
-    use crate::commands::cache::{get_npm_cache_path, get_yarn_cache_path, get_pnpm_cache_path,
-                                  get_pip_cache_path, get_maven_cache_path, get_nuget_cache_path,
-                                  get_dir_size, format_bytes, cache_detect_evidence};
+    use crate::commands::cache::get_dir_size;
+    use crate::commands::cache::format_bytes;
+    use crate::commands::utils::{expand_home, get_cmd_output, resolve_custom_cache_path};
 
-    // 根据项目 ID 映射缓存路径
-    let (cache_path, detect_source) = match def.id.as_str() {
-        "nodejs" => {
-            let p = get_npm_cache_path();
-            let (src, _) = cache_detect_evidence("npm", &p.to_string_lossy());
-            (p, src)
+    // Find the first package manager under this project that has cache settings configured
+    let pm = def.package_managers.iter().find(|pm| pm.cache_detect_cmd.is_some() || pm.cache_default_path.is_some() || pm.cache_config_source.is_some())?;
+    
+    // Resolve path: try custom config resolver first, then cmd, then default_path
+    let mut resolved_path = resolve_custom_cache_path(pm).unwrap_or_default();
+    
+    if resolved_path.is_empty() {
+        if let Some(ref cmd) = pm.cache_detect_cmd {
+            let parts: Vec<&str> = cmd.split_whitespace().collect();
+            if !parts.is_empty() {
+                let out = get_cmd_output(parts[0], &parts[1..]);
+                if !out.is_empty() && out != "undefined" && out != "null" {
+                    resolved_path = out;
+                }
+            }
         }
-        "yarn" => {
-            let p = get_yarn_cache_path();
-            let (src, _) = cache_detect_evidence("yarn", &p.to_string_lossy());
-            (p, src)
+    }
+    
+    if resolved_path.is_empty() {
+        if let Some(ref default_path) = pm.cache_default_path {
+            resolved_path = expand_home(default_path);
         }
-        "pnpm" => {
-            let p = get_pnpm_cache_path();
-            let (src, _) = cache_detect_evidence("pnpm", &p.to_string_lossy());
-            (p, src)
-        }
-        "python" => {
-            let p = get_pip_cache_path();
-            let (src, _) = cache_detect_evidence("pip", &p.to_string_lossy());
-            (p, src)
-        }
-        "maven" => {
-            let p = get_maven_cache_path();
-            let (src, _) = cache_detect_evidence("mvn", &p.to_string_lossy());
-            (p, src)
-        }
-        "nuget" => {
-            let p = get_nuget_cache_path();
-            let (src, _) = cache_detect_evidence("nuget", &p.to_string_lossy());
-            (p, src)
-        }
-        _ => return None,
-    };
-
+    }
+    
+    if resolved_path.is_empty() {
+        return None;
+    }
+    
+    let cache_path = PathBuf::from(&resolved_path);
     if !cache_path.exists() {
         return None;
     }
@@ -422,6 +444,12 @@ fn build_cache_status(def: &ProjectDef) -> Option<CacheStatus> {
     };
     let size_bytes = get_dir_size(&size_path);
     let size_str = format_bytes(size_bytes);
+
+    let detect_source = if pm.cache_detect_cmd.is_some() {
+        format!("{} config (cmd)", pm.id)
+    } else {
+        format!("{} config (default)", pm.id)
+    };
 
     Some(CacheStatus {
         path: cache_path.to_string_lossy().to_string(),
@@ -477,64 +505,41 @@ pub fn get_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
         if let Some(ref bin_dirs) = def.bin_dirs {
             if !bin_dirs.is_empty() {
                 return bin_dirs.iter()
-                    .map(|d| format!("{}\\{}", link_dir, d))
+                    .map(|d| if d.is_empty() { link_dir.to_string() } else { format!("{}\\{}", link_dir, d) })
                     .collect();
             }
         }
     }
 
-    // ── 硬编码 fallback（无 bin_dirs 定义时） ──
-    match sdk_id {
-        "go" | "java" | "flutter" | "maven" | "gradle" | "harmony" | "cuda" | "ffmpeg" => {
-            vec![format!("{}\\bin", link_dir)]
-        }
-        "python" => {
-            vec![link_dir.to_string(), format!("{}\\Scripts", link_dir)]
-        }
-        "rust" => {
-            vec![format!("{}\\.cargo\\bin", link_dir)]
-        }
-        "android" => {
-            vec![
-                format!("{}\\cmdline-tools\\latest\\bin", link_dir),
-                format!("{}\\platform-tools", link_dir),
-            ]
-        }
-        "nodejs" => {
-            // NPM_CONFIG_PREFIX = link_dir，npm -g 的 bin 直接落在 link_dir 下
-            vec![link_dir.to_string()]
-        }
-        "bun" | "yarn" | "pnpm" | "nginx" | "redis" => {
-            vec![link_dir.to_string()]
-        }
-        "mysql" | "mongodb" | "postgresql" => {
-            vec![format!("{}\\bin", link_dir)]
-        }
-        _ => vec![link_dir.to_string()],
+    // Generic fallback if bin_dirs is not defined
+    let bin_path = format!("{}\\bin", link_dir);
+    if std::path::Path::new(&bin_path).exists() {
+        vec![bin_path]
+    } else {
+        vec![link_dir.to_string()]
     }
 }
 
 /// 在 PATH 中搜索可执行文件（Windows 兼容 .exe/.cmd/.bat）
 fn which_in_path(name: &str) -> bool {
-    let exe = if cfg!(windows) {
-        format!("{}.exe", name)
-    } else {
-        name.to_string()
-    };
-    let cmd = if cfg!(windows) {
-        format!("{}.cmd", name)
-    } else {
-        String::new()
-    };
+    let mut check_names = vec![name.to_string()];
+    #[cfg(windows)]
+    {
+        let name_lower = name.to_lowercase();
+        if !name_lower.ends_with(".exe") && !name_lower.ends_with(".cmd") && !name_lower.ends_with(".bat") {
+            check_names.push(format!("{}.exe", name));
+            check_names.push(format!("{}.cmd", name));
+            check_names.push(format!("{}.bat", name));
+        }
+    }
 
     if let Ok(paths) = std::env::var("PATH") {
         for dir in std::env::split_paths(&paths) {
-            let full = dir.join(&exe);
-            if full.exists() {
-                return true;
-            }
-            if !cmd.is_empty() && dir.join(&cmd).exists() {
-                return true;
+            for check_name in &check_names {
+                let full = dir.join(check_name);
+                if full.exists() {
+                    return true;
+                }
             }
         }
     }

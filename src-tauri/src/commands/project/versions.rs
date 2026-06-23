@@ -9,16 +9,17 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::collections::HashSet;
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use tauri::{AppHandle, Emitter};
 use crate::commands::config::{load_config, get_base_dir};
-use crate::commands::sdk_resolver::{FindRule, ResolvePattern as ResolverPattern};
-use super::types::ResolvePattern;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  数据结构
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+use std::sync::Mutex;
+use std::collections::HashMap;
+use tokio::task::AbortHandle;
 
 /// 下载进度事件
 #[derive(Serialize, Clone)]
@@ -27,23 +28,111 @@ pub struct DownloadProgress {
     pub downloaded: u64,
     pub total: u64,
     pub pct: u8,
+    pub speed_str: String,
+}
+
+#[derive(Serialize, Clone)]
+struct InstallStepPayload {
+    step: String,
+}
+
+struct TempDirGuard {
+    path: PathBuf,
+}
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        if self.path.exists() {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+fn get_active_downloads() -> &'static Mutex<HashMap<String, AbortHandle>> {
+    static ACTIVE_DOWNLOADS: std::sync::OnceLock<Mutex<HashMap<String, AbortHandle>>> = std::sync::OnceLock::new();
+    ACTIVE_DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  远程版本缓存（磁盘 JSON）
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// 磁盘缓存格式
+#[derive(Serialize, Deserialize)]
+struct VersionCache {
+    versions: Vec<String>,
+    updated_at: u64,  // Unix 时间戳（秒）
+}
+
+/// 命令返回值（含 updated_at 供前端显示"上次更新时间"）
+#[derive(Serialize, Clone)]
+pub struct RemoteVersionsResult {
+    pub versions: Vec<String>,
+    pub updated_at: u64,
+    pub from_cache: bool,
+}
+
+fn version_cache_path(project_id: &str) -> PathBuf {
+    get_base_dir().join("version_cache").join(format!("{}.json", project_id))
+}
+
+fn load_version_cache(project_id: &str) -> Option<VersionCache> {
+    let path = version_cache_path(project_id);
+    let content = fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+fn save_version_cache(project_id: &str, versions: &[String]) -> u64 {
+    let updated_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let cache = VersionCache { versions: versions.to_vec(), updated_at };
+    let path = version_cache_path(project_id);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string(&cache) {
+        let _ = fs::write(&path, json);
+    }
+    updated_at
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  Tauri 命令
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/// 获取远程版本列表（从 projects.json 的 remote_versions_config 读取配置）
+/// 获取远程版本列表
+/// - `force = false`：优先读本地磁盘缓存，缓存不存在时才联网
+/// - `force = true` ：强制联网刷新，刷新后写入缓存
 #[tauri::command]
-pub async fn project_list_remote_versions(id: String) -> Result<Vec<String>, String> {
-    let def = super::registry::find_by_id(&id)
+pub async fn project_list_remote_versions(id: String, force: bool) -> Result<RemoteVersionsResult, String> {
+    // 非强制刷新时优先读缓存
+    if !force {
+        if let Some(cache) = load_version_cache(&id) {
+            return Ok(RemoteVersionsResult {
+                versions: cache.versions,
+                updated_at: cache.updated_at,
+                from_cache: true,
+            });
+        }
+    }
+
+    // 联网获取
+    let versions = fetch_remote_versions_inner(&id).await?;
+    let updated_at = save_version_cache(&id, &versions);
+
+    Ok(RemoteVersionsResult { versions, updated_at, from_cache: false })
+}
+
+/// 内部实现：联网获取远程版本列表
+async fn fetch_remote_versions_inner(id: &str) -> Result<Vec<String>, String> {
+    let def = super::registry::find_by_id(id)
         .ok_or_else(|| format!("未找到项目: {}", id))?;
 
     let config = def.remote_versions_config.as_ref()
         .ok_or_else(|| format!("未配置远程版本: {}", id))?;
 
-    // connect_timeout: 仅限制建立连接的超时（15s），不限制请求总时长
-    // 对 GitHub API 等有时候很慢的接口更友好
     let client = reqwest::Client::builder()
         .user_agent("Any-Version-Manager")
         .connect_timeout(std::time::Duration::from_secs(15))
@@ -66,6 +155,7 @@ pub async fn project_list_remote_versions(id: String) -> Result<Vec<String>, Str
         _ => Err(format!("不支持的远程版本类型: {}", config_type)),
     }
 }
+
 
 async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, url_override: Option<&str>) -> Result<Vec<String>, String> {
     let url = if let Some(u) = url_override {
@@ -147,6 +237,10 @@ async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, ur
                         if item_val.and_then(|v| v.as_bool()).unwrap_or(false) != fv_bool { continue; }
                     } else if let Some(fv_str) = fv.as_str() {
                         if item_val.and_then(|v| v.as_str()).unwrap_or("") != fv_str { continue; }
+                    } else if let Some(fv_num) = fv.as_u64() {
+                        if item_val.and_then(|v| v.as_u64()).unwrap_or(0) != fv_num { continue; }
+                    } else if let Some(fv_num) = fv.as_i64() {
+                        if item_val.and_then(|v| v.as_i64()).unwrap_or(0) != fv_num { continue; }
                     }
                 }
             }
@@ -298,7 +392,7 @@ async fn fetch_single_source(client: &reqwest::Client, source: &serde_json::Valu
 fn apply_transform(version: &str, transform: &str) -> String {
     let mut ver = version.to_string();
     for op in transform.split(';') {
-        let op = op.trim();
+        let op = op.trim_start(); // 只去掉前导空白，保留尾部空格（如 "trim_prefix:Python " 中的空格）
         if let Some(suffix) = op.strip_prefix("trim_suffix:") {
             ver = ver.strip_suffix(suffix).unwrap_or(&ver).to_string();
         } else if let Some(prefix) = op.strip_prefix("trim_prefix:") {
@@ -318,37 +412,79 @@ fn apply_transform(version: &str, transform: &str) -> String {
 
 
 /// 安装指定版本（下载 -> 解压 -> 安装到 versions_dir -> 创建 junction -> 配置环境变量）
+/// 安装在独立 Tokio 任务中运行，支持通过 project_cancel_install 取消。
 #[tauri::command]
 pub async fn project_install_version(app: AppHandle, id: String, version: String) -> Result<(), String> {
+    // 预检：项目和下载信息
+    let _def = super::registry::find_by_id(&id)
+        .ok_or_else(|| format!("未找到项目: {}", id))?;
+    let dl_info = get_download_url(&id, &version)?;
+
+    let id_task = id.clone();
+    let version_task = version.clone();
+    let app_task = app.clone();
+
+    // 将实际安装逻辑移入可取消的 Tokio 任务
+    let handle = tokio::spawn(async move {
+        do_install(app_task, id_task, version_task, dl_info).await
+    });
+
+    // 注册 abort handle，允许前端取消
+    let abort_handle = handle.abort_handle();
+    get_active_downloads()
+        .lock()
+        .unwrap()
+        .insert(id.clone(), abort_handle);
+
+    // 等待任务完成（或被取消）
+    let result = handle.await;
+    get_active_downloads().lock().unwrap().remove(&id);
+
+    match result {
+        Ok(inner) => inner,
+        Err(e) if e.is_cancelled() => Err("安装已取消".to_string()),
+        Err(e) => Err(format!("安装任务异常: {}", e)),
+    }
+}
+
+/// 实际安装逻辑（在可取消的 Tokio 任务中运行）
+async fn do_install(
+    app: AppHandle,
+    id: String,
+    version: String,
+    dl_info: DownloadInfo,
+) -> Result<(), String> {
     let def = super::registry::find_by_id(&id)
         .ok_or_else(|| format!("未找到项目: {}", id))?;
     let config = load_config();
+    let file_ext = dl_info.file_ext.clone();
+    let download_url = dl_info.url.clone();
 
-    let dl_info = get_download_url(&id, &version)?;
-    let download_url = dl_info.url;
-    let file_ext = dl_info.file_ext;
-
-    // 1. 创建临时目录
-    let (temp_dir, cleanup) = setup_temp_dir(&id)?;
+    // 1. 创建临时目录，并用 RAII guard 保证取消/错误时自动清理
+    let (temp_dir, _) = setup_temp_dir(&id)?;
+    let _guard = TempDirGuard { path: temp_dir.clone() };
     let archive_path = temp_dir.join(format!("archive.{}", file_ext));
 
-    // 2. 下载（带进度事件）
+    // 2. 下载（带进度和速度事件）
     let id_cap = id.clone();
     let app_handle = app.clone();
-    let dl_result = download_with_progress(&download_url, &archive_path, move |downloaded, total| {
+    let dl_result = download_with_progress(&download_url, &archive_path, move |downloaded, total, speed| {
         let pct = if total > 0 { (downloaded * 100 / total) as u8 } else { 0 };
+        let speed_str = format!("{}/s", crate::commands::cache::format_bytes(speed as u64));
         let _ = app_handle.emit("download-progress", DownloadProgress {
             sdk: id_cap.clone(),
             downloaded,
             total,
             pct,
+            speed_str,
         });
     }).await;
 
     if let Err(e) = dl_result {
-        cleanup();
         return Err(format!("下载失败: {}", e));
     }
+
+    let _ = app.emit("install-step", InstallStepPayload { step: "解压中".to_string() });
 
     // 3. 解压
     let extract_dir = temp_dir.join("extracted");
@@ -367,14 +503,11 @@ pub async fn project_install_version(app: AppHandle, id: String, version: String
     };
 
     if let Err(e) = ext_result {
-        cleanup();
         return Err(format!("解压失败: {}", e));
     }
 
     // 4. 安装到 versions_dir
     let dest_dir = Path::new(&config.versions_dir).join(&id).join(&version);
-
-    // 使用 scoop 推导的 extract_subdir 或 JSON 配置
     let extract_subdir = dl_info.extract_subdir.as_deref().unwrap_or("");
     let src_dir = if !extract_subdir.is_empty() {
         extract_dir.join(extract_subdir)
@@ -383,11 +516,10 @@ pub async fn project_install_version(app: AppHandle, id: String, version: String
     };
 
     if let Err(e) = move_extract_to_dest(&src_dir, &dest_dir) {
-        cleanup();
         return Err(format!("安装失败: {}", e));
     }
 
-    cleanup();
+    // _guard 在此之后 drop 时会清理 temp_dir（正常流程也清理）
 
     // 5. 后置配置（从 JSON post_install 读取）
     if let Some(ref post_install) = def.post_install {
@@ -416,11 +548,26 @@ pub async fn project_install_version(app: AppHandle, id: String, version: String
     }
 
     // 7. 自动配置环境变量（指向 links 目录下的稳定路径）
+    let _ = app.emit("install-step", InstallStepPayload { step: "配置中".to_string() });
     let link_str = junction_path.to_string_lossy().to_string();
     let dest_str = dest_dir.to_string_lossy().to_string();
     let _ = crate::commands::env::configure_sdk_env_vars(&id, &link_str, &dest_str);
 
+    let _ = app.emit("install-step", InstallStepPayload { step: "完成".to_string() });
+
     Ok(())
+}
+
+/// 取消正在进行的安装（中止下载/解压任务，RAII guard 自动清理临时文件）
+#[tauri::command]
+pub fn project_cancel_install(id: String) -> Result<(), String> {
+    let mut map = get_active_downloads().lock().unwrap();
+    if let Some(handle) = map.remove(&id) {
+        handle.abort();
+        Ok(())
+    } else {
+        Err(format!("没有正在进行的安装任务: {}", id))
+    }
 }
 
 /// 卸载指定版本
@@ -482,98 +629,26 @@ pub fn project_use_version(id: String, version: String) -> Result<(), String> {
 /// 从命令输出中解析版本号
 fn parse_version_from_output(project_id: &str, output: &str) -> Option<String> {
     let trimmed = output.trim();
-    match project_id {
-        "go" => {
-            // "go version go1.22.0 windows/amd64" -> "1.22.0"
-            trimmed.split_whitespace()
-                .find(|w| w.starts_with("go"))
-                .map(|w| w.trim_start_matches("go").to_string())
-        }
-        "nodejs" => {
-            // "v18.16.0" -> "18.16.0"
-            Some(trimmed.trim_start_matches('v').to_string())
-        }
-        "python" => {
-            // "Python 3.12.1" -> "3.12.1"
-            trimmed.split_whitespace()
-                .nth(1)
-                .map(|v| v.to_string())
-        }
-        "bun" => {
-            // "1.1.0" -> "1.1.0"
-            Some(trimmed.to_string())
-        }
-        "rust" => {
-            // "rustc 1.76.0 (07dca489a 2024-02-04)" -> "1.76.0"
-            trimmed.split_whitespace()
-                .nth(1)
-                .map(|v| v.to_string())
-        }
-        "java" => {
-            // 'openjdk version "21.0.2" 2024-01-16' -> "21.0.2"
-            trimmed.split('"')
-                .nth(1)
-                .map(|v| v.to_string())
-        }
-        "flutter" => {
-            // "Flutter 3.19.0 ..." -> "3.19.0"
-            trimmed.split_whitespace()
-                .nth(1)
-                .map(|v| v.to_string())
-        }
-        "maven" => {
-            // "Apache Maven 3.9.6 ..." -> "3.9.6"
-            trimmed.split_whitespace()
-                .find(|w| w.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))
-                .map(|v| v.to_string())
-        }
-        "gradle" => {
-            // "Gradle 8.6" -> "8.6"
-            trimmed.split_whitespace()
-                .find(|w| w.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))
-                .map(|v| v.to_string())
-        }
-        "nginx" => {
-            // "nginx version: nginx/1.26.1" -> "1.26.1"
-            trimmed.split('/')
-                .last()
-                .map(|v| v.to_string())
-        }
-        "redis" => {
-            // "Redis server v=5.0.14.1 ..." -> "5.0.14.1"
-            trimmed.split("v=")
-                .nth(1)
-                .and_then(|s| s.split_whitespace().next())
-                .map(|v| v.to_string())
-        }
-        "mysql" => {
-            // "mysql  Ver 8.0.36 ..." -> "8.0.36"
-            trimmed.split_whitespace()
-                .find(|w| w.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))
-                .map(|v| v.to_string())
-        }
-        "mongodb" => {
-            // "db version v7.0.5" -> "7.0.5"
-            trimmed.split_whitespace()
-                .last()
-                .map(|v| v.trim_start_matches('v').to_string())
-        }
-        "postgresql" => {
-            // "psql (PostgreSQL) 16.2" -> "16.2"
-            trimmed.split_whitespace()
-                .find(|w| w.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))
-                .map(|v| v.to_string())
-        }
-        "yarn" => {
-            // "1.22.19" -> "1.22.19"
-            Some(trimmed.to_string())
-        }
-        "pnpm" => {
-            // "9.0.5" -> "9.0.5"
-            Some(trimmed.to_string())
-        }
-        _ => None,
+    if trimmed.is_empty() {
+        return None;
     }
+
+    // Find version_parse_regex from the project registry definition
+    let custom_regex = super::registry::find_by_id(project_id)
+        .and_then(|def| def.version_parse_regex.clone());
+
+    let pattern = custom_regex.as_deref().unwrap_or(r"\b\d+\.\d+(?:\.\d+)*(?:\-[a-zA-Z0-9.]+)?\b");
+    if let Ok(re) = regex::Regex::new(pattern) {
+        if let Some(captures) = re.captures(trimmed) {
+            // If there's a capture group (index 1), return it. Otherwise return the whole match (index 0).
+            if captures.len() > 1 {
+                return captures.get(1).map(|m| m.as_str().to_string());
+            } else {
+                return captures.get(0).map(|m| m.as_str().to_string());
+            }
+        }
+    }
+    None
 }
 
 /// 从本地路径自动检测版本号（公开函数，供 save_manage_backup 等使用）。
@@ -584,11 +659,28 @@ pub fn detect_version_from_path(project_id: &str, path: &Path) -> Option<String>
     if let (Some(ref cmd), Some(ref exe)) = (&def.version_cmd, &def.version_exe) {
         let parts: Vec<&str> = cmd.split_whitespace().collect();
         if !parts.is_empty() {
-            let exe_path = path.join(format!("{}.exe", exe));
-            let bin_exe = path.join("bin").join(format!("{}.exe", exe));
-            for candidate in &[exe_path, bin_exe] {
+            let mut candidates = Vec::new();
+            candidates.push(path.join(exe));
+            candidates.push(path.join("bin").join(exe));
+            #[cfg(windows)]
+            {
+                let exe_lower = exe.to_lowercase();
+                if !exe_lower.ends_with(".exe") && !exe_lower.ends_with(".cmd") && !exe_lower.ends_with(".bat") {
+                    candidates.push(path.join(format!("{}.exe", exe)));
+                    candidates.push(path.join(format!("{}.cmd", exe)));
+                    candidates.push(path.join(format!("{}.bat", exe)));
+                    candidates.push(path.join("bin").join(format!("{}.exe", exe)));
+                    candidates.push(path.join("bin").join(format!("{}.cmd", exe)));
+                    candidates.push(path.join("bin").join(format!("{}.bat", exe)));
+                }
+            }
+            for candidate in &candidates {
                 if candidate.exists() {
-                    if let Ok(output) = super::super::hidden_cmd::hidden_cmd(candidate)
+                    let mut command = super::super::hidden_cmd::hidden_cmd(candidate);
+                    for var_def in &def.env_vars {
+                        command.env_remove(&var_def.name);
+                    }
+                    if let Ok(output) = command
                         .args(&parts[1..])
                         .output()
                     {
@@ -739,7 +831,7 @@ fn move_extract_to_dest(extracted_dir: &Path, dest_dir: &Path) -> Result<(), Str
 /// 带进度回调的下载
 async fn download_with_progress<F>(url: &str, dest: &Path, on_progress: F) -> Result<(), String>
 where
-    F: Fn(u64, u64),
+    F: Fn(u64, u64, f64),
 {
     use futures_util::StreamExt;
     // 下载大文件（如 Rust 200MB+）时不应有短超时
@@ -760,11 +852,21 @@ where
     let mut stream = res.bytes_stream();
     let mut downloaded = 0u64;
 
+    let start_time = std::time::Instant::now();
+
     while let Some(item) = stream.next().await {
         let chunk = item.map_err(|e| e.to_string())?;
         std::io::Write::write_all(&mut file, &chunk).map_err(|e| e.to_string())?;
         downloaded += chunk.len() as u64;
-        on_progress(downloaded, total);
+        
+        let elapsed = start_time.elapsed().as_secs_f64();
+        let speed = if elapsed > 0.0 {
+            downloaded as f64 / elapsed
+        } else {
+            0.0
+        };
+        
+        on_progress(downloaded, total, speed);
     }
 
     Ok(())

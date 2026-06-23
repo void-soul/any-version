@@ -140,7 +140,7 @@ export default function MirrorManager() {
                     {m.mirror_name}
                   </span>
                 </div>
-                <p className="font-mono text-[10px] text-slate-400 truncate">
+                <p className="font-mono text-[10px] text-slate-400 break-all">
                   当前代理源: {m.current}
                 </p>
                 <p className="text-[9px] text-slate-500 flex items-center gap-1 mt-1">

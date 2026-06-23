@@ -405,24 +405,16 @@ pub fn scan_environment() -> Result<Vec<DiagnosticProblem>, String> {
     }
 
     // 4. Package manager caches located on the C-drive
-    let cache_paths = vec![
-        ("npm", crate::commands::cache::get_npm_cache_path()),
-        ("yarn", crate::commands::cache::get_yarn_cache_path()),
-        ("pnpm", crate::commands::cache::get_pnpm_cache_path()),
-        ("pip", crate::commands::cache::get_pip_cache_path()),
-        ("mvn", crate::commands::cache::get_maven_cache_path()),
-        ("nuget", crate::commands::cache::get_nuget_cache_path()),
-    ];
-
-    // 预先计算迁移目标盘符，用于在"修复方案"里向用户透明展示目标路径
+    let caches = crate::commands::cache::get_caches_list().unwrap_or_default();
     let target_drive = pick_non_c_drive();
 
-    for (name, path) in cache_paths {
+    for cache in caches {
+        let path = Path::new(&cache.path);
         if path.exists() {
-            let path_str = path.to_string_lossy().to_string();
+            let path_str = cache.path.clone();
             if path_str.starts_with("C:") || path_str.starts_with("c:") {
                 // Check if it's already a link / symlink / directory junction to another drive
-                let is_symlink = fs::symlink_metadata(&path).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+                let is_symlink = cache.is_link;
                 let is_redirected = if let Ok(canonical) = fs::canonicalize(&path) {
                     let canonical_lower = canonical.to_string_lossy().to_lowercase();
                     !canonical_lower.starts_with(r"\\?\c:") && !canonical_lower.starts_with("c:")
@@ -431,8 +423,10 @@ pub fn scan_environment() -> Result<Vec<DiagnosticProblem>, String> {
                 };
 
                 if !is_symlink && !is_redirected {
+                    let name = cache.name;
                     let dest = format!("{}any-version-caches\\{}", target_drive, name);
-                    let (cfg_source, cfg_content) = cache_detection_evidence(name, &path_str);
+                    let cfg_source = cache.detect_source;
+                    let cfg_content = cache.detect_content;
                     problems.push(DiagnosticProblem {
                         id: md5_hash(&format!("c_drive_cache:{}", name)),
                         problem_type: "c_drive_cache".to_string(),
@@ -468,92 +462,8 @@ fn pick_non_c_drive() -> String {
     "D:\\".to_string()
 }
 
-/// 返回某个缓存路径是"通过哪个配置文件/命令"检测到的，用于向用户透明展示检测依据。
-fn cache_detection_evidence(name: &str, resolved: &str) -> (String, String) {
-    let app_data = std::env::var("APPDATA").unwrap_or_default();
-    let user_profile = std::env::var("USERPROFILE").unwrap_or_default();
-    match name {
-        "npm" => (
-            "命令 `npm config get cache` 的输出".to_string(),
-            format!("npm 报告的缓存目录为: {}", resolved),
-        ),
-        "yarn" => (
-            "命令 `yarn cache dir` 的输出".to_string(),
-            format!("yarn 报告的缓存目录为: {}", resolved),
-        ),
-        "pnpm" => (
-            "命令 `pnpm store path` 的输出".to_string(),
-            format!("pnpm 报告的存储目录为: {}", resolved),
-        ),
-        "pip" => (
-            format!("环境变量 PIP_CACHE_DIR，或配置文件 {}\\pip\\pip.ini 中的 cache-dir 项", app_data),
-            format!("解析得到的 pip 缓存目录为: {}", resolved),
-        ),
-        "mvn" => (
-            format!("配置文件 {}\\.m2\\settings.xml 中的 <localRepository> 节点（或全局 settings.xml）", user_profile),
-            format!("解析得到的 Maven 本地仓库为: {}", resolved),
-        ),
-        "nuget" => (
-            "环境变量 NUGET_PACKAGES（未设置时回退到 %USERPROFILE%\\.nuget\\packages）".to_string(),
-            format!("解析得到的 NuGet 全局包目录为: {}", resolved),
-        ),
-        _ => (
-            "包管理器默认缓存路径".to_string(),
-            format!("检测到的缓存目录为: {}", resolved),
-        ),
-    }
-}
-
-pub fn get_sdk_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
-    // 优先读取 projects.json 中定义的 bin_dirs
-    use super::project::registry;
-    if let Some(def) = registry::find_by_id(sdk_id) {
-        if let Some(ref bin_dirs) = def.bin_dirs {
-            if !bin_dirs.is_empty() {
-                return bin_dirs.iter()
-                    .map(|d| if d.is_empty() { link_dir.to_string() } else { format!("{}\\{}", link_dir, d) })
-                    .collect();
-            }
-        }
-    }
-
-    // ── 硬编码 fallback（未定义 bin_dirs 时） ──
-    match sdk_id {
-        "go" | "java" | "flutter" | "maven" | "gradle" | "harmony" | "cuda" | "ffmpeg" => {
-            vec![format!("{}\\bin", link_dir)]
-        }
-        "python" => {
-            vec![link_dir.to_string(), format!("{}\\Scripts", link_dir)]
-        }
-        "rust" => {
-            vec![format!("{}\\.cargo\\bin", link_dir)]
-        }
-        "android" => {
-            vec![
-                format!("{}\\cmdline-tools\\latest\\bin", link_dir),
-                format!("{}\\platform-tools", link_dir),
-            ]
-        }
-        "nodejs" => {
-            vec![link_dir.to_string()]
-        }
-        "bun" | "yarn" | "pnpm" | "nginx" | "redis" => {
-            vec![link_dir.to_string()]
-        }
-        "mysql" | "mongodb" | "postgresql" => {
-            vec![format!("{}\\bin", link_dir)]
-        }
-        _ => vec![],
-    }
-}
-
 pub fn add_to_user_path(paths: &[String]) -> Result<(), String> {
-    // 检查已知工具名，避免重复拼接
-    let known_tools = [
-        "nodejs", "bun", "yarn", "pnpm", "nginx", "redis",
-        "go", "java", "flutter", "maven", "gradle", "harmony", "cuda", "ffmpeg",
-        "python", "rust", "android", "mysql", "mongodb", "postgresql",
-    ];
+    let known_tools = super::project::registry::all_ids();
 
     if let Some(user_path) = get_registry_env("PATH") {
         let mut parts = std::env::split_paths(&user_path)
@@ -561,7 +471,8 @@ pub fn add_to_user_path(paths: &[String]) -> Result<(), String> {
             .collect::<Vec<_>>();
         
         let mut modified = false;
-        for path in paths {
+        // 倒序遍历插入，以保持传入的 paths 之间的相对顺序在最前列
+        for path in paths.iter().rev() {
             let path_lower = path.to_lowercase();
 
             // 防御检查：是否包含重复的工具名（如 ...nodejs\nodejs）
@@ -573,10 +484,10 @@ pub fn add_to_user_path(paths: &[String]) -> Result<(), String> {
                 }
             }
 
-            if !parts.iter().any(|p| p.to_lowercase() == path_lower) {
-                parts.push(path.clone());
-                modified = true;
-            }
+            // 无论当前 PATH 中是否已存在，我们都先将其移除并插入到最前面，以保证最高优先级
+            parts.retain(|p| p.to_lowercase() != path_lower);
+            parts.insert(0, path.clone());
+            modified = true;
         }
         
         if modified {
@@ -647,6 +558,10 @@ pub fn configure_sdk_env_vars(sdk_id: &str, link_dir: &str, _version_dir: &str) 
             if *tier == super::project::types::EnvVarTier::Compat {
                 continue;
             }
+            if *tier == super::project::types::EnvVarTier::Clear {
+                let _ = set_registry_env(&var_info.name, "");
+                continue;
+            }
         }
 
         let var_name = &var_info.name;
@@ -660,7 +575,7 @@ pub fn configure_sdk_env_vars(sdk_id: &str, link_dir: &str, _version_dir: &str) 
     }
 
     // 自动将可执行目录添加到用户 PATH 变量中
-    let bin_paths = get_sdk_bin_paths(sdk_id, link_dir);
+    let bin_paths = crate::commands::project::scanner::get_bin_paths(sdk_id, link_dir);
     let _ = add_to_user_path(&bin_paths);
 
     Ok(())
@@ -690,7 +605,7 @@ pub fn remove_sdk_env_vars(sdk_id: &str) -> Result<(), String> {
     let config = load_config();
     let junction_path = Path::new(&config.links_dir).join(sdk_id);
     let link_str = junction_path.to_string_lossy().to_string();
-    let bin_paths = get_sdk_bin_paths(sdk_id, &link_str);
+    let bin_paths = crate::commands::project::scanner::get_bin_paths(sdk_id, &link_str);
     let _ = remove_from_user_path(&bin_paths);
 
     Ok(())

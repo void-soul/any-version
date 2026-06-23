@@ -21,6 +21,7 @@ pub enum EnvVarTier {
     Core,
     Package,
     Compat,
+    Clear,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -87,7 +88,21 @@ pub struct MirrorOption {
     pub url: String,
 }
 
-/// 包管理器定义（嵌套在项目内，如 Node.js 下的 npm/yarn/pnpm）
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CacheConfigSource {
+    pub parser_type: String,
+    pub paths: Vec<String>,
+    #[serde(default)]
+    pub keys: Vec<String>,
+    #[serde(default)]
+    pub env_vars: Vec<String>,
+    #[serde(default)]
+    pub replacements: HashMap<String, String>,
+    #[serde(default)]
+    pub suffix: Option<String>,
+}
+
+/// 包管理器定义（嵌套在项目内，如 Node.js 下 of npm/yarn/pnpm）
 ///
 /// 缓存、镜像、数据路径等属性属于包管理器，而非语言本身。
 /// 例如 `npm config get cache` / `npm config set registry` 是 npm 的功能，
@@ -148,6 +163,25 @@ pub struct PackageManagerDef {
     /// Proxy set command template (e.g., "npm config set proxy {url}").
     #[serde(default)]
     pub proxy_set_cmd_template: Option<String>,
+    
+    /// Global package list output format ("npm_json" | "pip_json" | "yarn_json" | "pnpm_json" | "text_lines").
+    #[serde(default)]
+    pub pkg_list_format: Option<String>,
+    /// Global package upgrade command template (e.g., "npm install -g {pkg}@latest").
+    #[serde(default)]
+    pub pkg_upgrade_cmd_template: Option<String>,
+    /// Package homepage template (e.g., "https://www.npmjs.com/package/{pkg}").
+    #[serde(default)]
+    pub pkg_homepage_template: Option<String>,
+    /// Outdated packages list command.
+    #[serde(default)]
+    pub pkg_outdated_cmd: Option<String>,
+    /// Outdated packages list output format ("npm_outdated_json" | "pip_outdated_json" | etc.).
+    #[serde(default)]
+    pub pkg_outdated_format: Option<String>,
+    /// Custom configuration-file based cache resolver config.
+    #[serde(default)]
+    pub cache_config_source: Option<CacheConfigSource>,
 }
 
 /// Scoop 引用：指向 ScoopInstaller 仓库中的 manifest
@@ -265,6 +299,9 @@ pub struct ProjectDef {
     /// 安装后置配置
     #[serde(default)]
     pub post_install: Option<serde_json::Value>,
+    /// Local version detection output regex pattern.
+    #[serde(default)]
+    pub version_parse_regex: Option<String>,
 }
 
 /// 环境变量运行时状态

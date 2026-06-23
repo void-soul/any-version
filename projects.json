@@ -84,6 +84,16 @@
         "source_label": "系统 PATH",
         "priority": 80,
         "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "",
+          "exe_name": "node.exe"
+        },
+        "source_label": "系统 PATH",
+        "priority": 90,
+        "root_offset": 0
       }
     ],
     "has_cache": false,
@@ -138,7 +148,12 @@
         "data_set_cmd_template": null,
         "proxy_detect_cmd": "npm config get proxy",
         "proxy_set_cmd_template": "npm config set proxy {url}",
-        "pkg_list_cmd": "npm list -g --depth=0",
+        "pkg_list_cmd": "npm list -g --depth=0 --json",
+        "pkg_list_format": "npm_json",
+        "pkg_upgrade_cmd_template": "npm install -g {pkg}@latest",
+        "pkg_homepage_template": "https://www.npmjs.com/package/{pkg}",
+        "pkg_outdated_cmd": "npm outdated -g --json",
+        "pkg_outdated_format": "npm_outdated_json",
         "mirror_cmd_template": "npm config set registry {url}",
         "mirror_options": [
           {
@@ -167,7 +182,10 @@
         "version_cmd": "yarn --version",
         "version_exe": "yarn",
         "cache_detect_cmd": "yarn cache dir",
-        "pkg_list_cmd": "yarn global list",
+        "pkg_list_cmd": "yarn global list --json",
+        "pkg_list_format": "yarn_json",
+        "pkg_upgrade_cmd_template": "yarn global upgrade {pkg}",
+        "pkg_homepage_template": "https://www.npmjs.com/package/{pkg}",
         "mirror_cmd_template": "yarn config set registry {url}",
         "mirror_options": [
           {
@@ -200,7 +218,10 @@
         "version_cmd": "pnpm --version",
         "version_exe": "pnpm",
         "cache_detect_cmd": "pnpm store path",
-        "pkg_list_cmd": "pnpm list -g --depth=0",
+        "pkg_list_cmd": "pnpm list -g --depth=0 --json",
+        "pkg_list_format": "pnpm_json",
+        "pkg_upgrade_cmd_template": "pnpm update -g {pkg}",
+        "pkg_homepage_template": "https://www.npmjs.com/package/{pkg}",
         "mirror_cmd_template": "pnpm config set registry {url}",
         "mirror_options": [
           {
@@ -236,7 +257,8 @@
       "max_count": 0
     },
     "version_cmd": "node --version",
-    "version_exe": "node"
+    "version_exe": "node",
+    "version_parse_regex": "v?(\\d+\\.\\d+\\.\\d+)"
   },
   {
     "id": "java",
@@ -363,6 +385,16 @@
         "source_label": "系统 PATH",
         "priority": 80,
         "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "",
+          "exe_name": "java.exe"
+        },
+        "source_label": "系统 PATH",
+        "priority": 90,
+        "root_offset": 0
       }
     ],
     "has_cache": false,
@@ -394,15 +426,248 @@
       { "name": "_JAVA_OPTIONS", "desc": "JVM 启动参数（被 OpenJDK/OracleJDK 读取）", "placeholder": "-Xmx2g -Xms512m" },
       { "name": "JDK_JAVA_OPTIONS", "desc": "JDK 9+ 专用 JVM 选项", "placeholder": "--add-opens java.base/java.lang=ALL-UNNAMED" }
     ],
+    "package_managers": [],
+    "download_file_ext": "zip",
+    "version_cmd": "java -version 2>&1",
+    "version_exe": "java",
+    "version_parse_regex": "(\\d+\\.\\d+\\.\\d+)"
+  },
+  {
+    "id": "python",
+    "display_name": "Python",
+    "category": "language",
+    "official_website": "https://python.org",
+    "env_vars": [
+      {
+        "name": "PYTHONHOME",
+        "desc": "Python 安装根目录",
+        "check_type": "path",
+        "tier": "compat"
+      },
+      {
+        "name": "PYTHONPATH",
+        "desc": "Python 模块搜索路径",
+        "check_type": "path",
+        "tier": "compat"
+      }
+    ],
+    "bin_dirs": ["", "Scripts"],
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "uv\\python",
+          "exe_name": "python.exe"
+        },
+        "source_label": "uv",
+        "priority": 60,
+        "root_offset": 0
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "python",
+          "exe_name": "python.exe"
+        },
+        "source_label": "Python",
+        "priority": 50,
+        "root_offset": 0
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "",
+          "exe_name": "python.exe"
+        },
+        "source_label": "系统 PATH",
+        "priority": 90,
+        "root_offset": 0
+      }
+    ],
+    "has_cache": false,
+    "cache_detect_cmd": null,
+    "cache_default_path": null,
+    "has_mirror": false,
+    "mirror_options": null,
+    "has_pkg": false,
+    "pkg_manager": null,
+    "pkg_homepage_template": null,
+    "is_service": false,
+    "default_port": null,
+    "download_url_template": "https://www.python.org/ftp/python/{version}/python-{version}-embed-amd64.zip",
+    "version_cmd": "python --version",
+    "version_exe": "python",
+    "version_parse_regex": "Python\\s+(\\d+\\.\\d+\\.\\d+)",
+    "remote_versions_config": {
+      "type": "json_api",
+      "url": "https://www.python.org/api/v2/downloads/release/?is_published=true&pre_release=false&format=json",
+      "response_type": "array",
+      "version_field": "name",
+      "version_transform": "trim_prefix:Python ",
+      "filter_field": "version",
+      "filter_value": 3,
+      "reverse": true,
+      "max_count": 60
+    },
+    "package_managers": [
+      {
+        "id": "pip",
+        "display_name": "pip",
+        "built_in": true,
+        "install_cmd": null,
+        "version_cmd": "pip --version",
+        "version_exe": "pip",
+        "cache_detect_cmd": null,
+        "cache_default_path": "{home}\\AppData\\Local\\pip\\Cache",
+        "cache_env_var": "PIP_CACHE_DIR",
+        "cache_set_cmd_template": null,
+        "data_detect_cmd": null,
+        "data_default_path": null,
+        "data_env_var": null,
+        "data_set_cmd_template": null,
+        "proxy_detect_cmd": null,
+        "proxy_set_cmd_template": null,
+        "pkg_list_cmd": "pip list --format=json",
+        "pkg_list_format": "pip_json",
+        "pkg_upgrade_cmd_template": "pip install --upgrade {pkg}",
+        "pkg_homepage_template": "https://pypi.org/project/{pkg}/",
+        "pkg_outdated_cmd": "pip list --outdated --format=json",
+        "pkg_outdated_format": "pip_outdated_json"
+      }
+    ]
+  },
+  {
+    "id": "dotnet",
+    "display_name": ".NET SDK",
+    "category": "language",
+    "official_website": "https://dotnet.microsoft.com",
+    "env_vars": [],
+    "bin_dirs": ["", "tools"],
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "fixed_path",
+          "path": "C:\\Program Files\\dotnet",
+          "exe_name": "dotnet.exe"
+        },
+        "source_label": "Program Files",
+        "priority": 50,
+        "root_offset": 0
+      }
+    ],
+    "has_cache": false,
+    "cache_detect_cmd": null,
+    "cache_default_path": null,
+    "has_mirror": false,
+    "mirror_options": null,
+    "has_pkg": false,
+    "pkg_manager": null,
+    "pkg_homepage_template": null,
+    "is_service": false,
+    "default_port": null,
+    "version_cmd": "dotnet --version",
+    "version_exe": "dotnet",
+    "version_parse_regex": "(\\d+\\.\\d+\\.\\d+)",
+    "package_managers": [
+      {
+        "id": "nuget",
+        "display_name": "NuGet",
+        "built_in": true,
+        "install_cmd": null,
+        "version_cmd": "dotnet nuget --version",
+        "version_exe": "dotnet",
+        "cache_detect_cmd": null,
+        "cache_default_path": "{home}\\.nuget\\packages",
+        "cache_env_var": "NUGET_PACKAGES",
+        "cache_set_cmd_template": null,
+        "data_detect_cmd": null,
+        "data_default_path": null,
+        "data_env_var": null,
+        "data_set_cmd_template": null,
+        "proxy_detect_cmd": null,
+        "proxy_set_cmd_template": null,
+        "pkg_list_cmd": null,
+        "pkg_list_format": null,
+        "pkg_upgrade_cmd_template": null,
+        "pkg_homepage_template": "https://www.nuget.org/packages/{pkg}"
+      }
+    ]
+  },
+  {
+    "id": "maven",
+    "display_name": "Maven",
+    "category": "tool",
+    "official_website": "https://maven.apache.org",
+    "env_vars": [
+      {
+        "name": "MAVEN_HOME",
+        "desc": "Maven 安装根目录",
+        "check_type": "path",
+        "tier": "core"
+      }
+    ],
+    "bin_dirs": ["bin"],
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "maven",
+          "exe_name": "mvn.cmd"
+        },
+        "source_label": "Maven",
+        "priority": 50,
+        "root_offset": 1
+      }
+    ],
+    "has_cache": true,
+    "cache_detect_cmd": null,
+    "cache_default_path": "{home}\\.m2\\repository",
+    "has_mirror": false,
+    "mirror_options": null,
+    "has_pkg": false,
+    "pkg_manager": null,
+    "pkg_homepage_template": null,
+    "is_service": false,
+    "default_port": null,
+    "download_url_template": "https://archive.apache.org/dist/maven/maven-3/{version}/binaries/apache-maven-{version}-bin.zip",
+    "download_file_ext": "zip",
+    "version_cmd": "mvn -v",
+    "version_exe": "mvn",
+    "version_parse_regex": "Apache Maven (\\d+\\.\\d+\\.\\d+)",
+    "remote_versions_url": null,
+    "remote_versions_config": {
+      "type": "static",
+      "versions": [
+        "3.9.9",
+        "3.9.8",
+        "3.9.7",
+        "3.9.6",
+        "3.9.5",
+        "3.9.4",
+        "3.9.3",
+        "3.9.2",
+        "3.9.1",
+        "3.9.0",
+        "3.8.8",
+        "3.8.7",
+        "3.8.6",
+        "3.8.5",
+        "3.8.4",
+        "3.8.3",
+        "3.8.2",
+        "3.8.1",
+        "3.6.3",
+        "3.5.4",
+        "3.3.9"
+      ]
+    },
     "package_managers": [
       {
         "id": "maven",
         "display_name": "Maven",
-        "built_in": false,
+        "built_in": true,
         "install_cmd": null,
-        "upgrade_cmd": null,
-        "latest_version_cmd": null,
-        "version_cmd": "mvn --version 2>&1",
+        "version_cmd": "mvn -v",
         "version_exe": "mvn",
         "cache_detect_cmd": null,
         "cache_default_path": "{home}\\.m2\\repository",
@@ -416,16 +681,79 @@
         "proxy_set_cmd_template": null,
         "pkg_list_cmd": null,
         "mirror_cmd_template": null,
-        "mirror_options": null
-      },
+        "mirror_options": null,
+        "cache_config_source": {
+          "parser_type": "xml",
+          "paths": [
+            "{home}\\.m2\\settings.xml",
+            "{MAVEN_HOME}\\conf\\settings.xml",
+            "{links_dir}\\maven\\conf\\settings.xml"
+          ],
+          "keys": ["<localRepository>\\s*([^<]+?)\\s*</localRepository>"],
+          "replacements": {
+            "${user.home}": "{home}"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "gradle",
+    "display_name": "Gradle",
+    "category": "tool",
+    "official_website": "https://gradle.org",
+    "env_vars": [
+      {
+        "name": "GRADLE_HOME",
+        "desc": "Gradle 安装根目录",
+        "check_type": "path",
+        "tier": "core"
+      }
+    ],
+    "bin_dirs": ["bin"],
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "gradle",
+          "exe_name": "gradle.bat"
+        },
+        "source_label": "Gradle",
+        "priority": 50,
+        "root_offset": 1
+      }
+    ],
+    "has_cache": true,
+    "cache_detect_cmd": null,
+    "cache_default_path": "{home}\\.gradle\\caches",
+    "has_mirror": false,
+    "mirror_options": null,
+    "has_pkg": false,
+    "pkg_manager": null,
+    "pkg_homepage_template": null,
+    "is_service": false,
+    "default_port": null,
+    "download_url_template": "https://services.gradle.org/distributions/gradle-{version}-bin.zip",
+    "download_file_ext": "zip",
+    "version_cmd": "gradle -v",
+    "version_exe": "gradle",
+    "version_parse_regex": "Gradle (\\d+\\.\\d+(?:\\.\\d+)*)",
+    "remote_versions_url": "https://services.gradle.org/versions/all",
+    "remote_versions_config": {
+      "type": "json_api",
+      "response_type": "array",
+      "version_field": "version",
+      "filter_field": "snapshot",
+      "filter_value": false,
+      "max_count": 60
+    },
+    "package_managers": [
       {
         "id": "gradle",
         "display_name": "Gradle",
-        "built_in": false,
+        "built_in": true,
         "install_cmd": null,
-        "upgrade_cmd": null,
-        "latest_version_cmd": null,
-        "version_cmd": "gradle --version 2>&1",
+        "version_cmd": "gradle -v",
         "version_exe": "gradle",
         "cache_detect_cmd": null,
         "cache_default_path": "{home}\\.gradle\\caches",
@@ -439,11 +767,330 @@
         "proxy_set_cmd_template": null,
         "pkg_list_cmd": null,
         "mirror_cmd_template": null,
-        "mirror_options": null
+        "mirror_options": null,
+        "cache_config_source": {
+          "parser_type": "properties",
+          "env_vars": ["GRADLE_USER_HOME"],
+          "paths": [
+            "{home}\\.gradle\\gradle.properties"
+          ],
+          "keys": ["gradle.user.home", "systemProp.gradle.user.home"],
+          "suffix": "caches"
+        }
+      }
+    ]
+  },
+  {
+    "id": "go",
+    "display_name": "Go",
+    "category": "language",
+    "official_website": "https://go.dev",
+    "env_vars": [
+      {
+        "name": "GOROOT",
+        "desc": "Go SDK 安装根目录",
+        "check_type": "path",
+        "tier": "core"
+      },
+      {
+        "name": "GOPATH",
+        "desc": "Go 工作区目录",
+        "check_type": "path",
+        "tier": "clear"
+      },
+      {
+        "name": "GOBIN",
+        "desc": "Go 二进制安装目录",
+        "check_type": "path",
+        "tier": "clear"
+      },
+      {
+        "name": "GOCACHE",
+        "desc": "Go 编译缓存目录",
+        "check_type": "path",
+        "tier": "clear"
+      },
+      {
+        "name": "GOMODCACHE",
+        "desc": "Go 模块下载缓存目录",
+        "check_type": "path",
+        "tier": "clear"
       }
     ],
+    "bin_dirs": ["bin"],
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "env_bin",
+          "env_var": "GOROOT",
+          "bin_sub": "bin",
+          "exe_name": "go.exe"
+        },
+        "source_label": "GOROOT",
+        "priority": 10,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "scoop\\apps\\go",
+          "exe_name": "go.exe"
+        },
+        "source_label": "Scoop",
+        "priority": 40,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "",
+          "exe_name": "go.exe"
+        },
+        "source_label": "系统 PATH",
+        "priority": 90,
+        "root_offset": 0
+      }
+    ],
+    "has_cache": true,
+    "cache_detect_cmd": null,
+    "cache_default_path": "{home}\\go\\pkg\\mod",
+    "has_mirror": true,
+    "mirror_options": [
+      {
+        "mirror_type": "goproxy.cn",
+        "name": "七牛云 GOPROXY",
+        "url": "https://goproxy.cn,direct"
+      },
+      {
+        "mirror_type": "aliyun",
+        "name": "阿里云 GOPROXY",
+        "url": "https://mirrors.aliyun.com/goproxy/,direct"
+      }
+    ],
+    "has_pkg": false,
+    "pkg_manager": null,
+    "pkg_homepage_template": null,
+    "is_service": false,
+    "default_port": null,
+    "download_url_template": "https://go.dev/dl/go{version}.windows-amd64.zip",
     "download_file_ext": "zip",
-    "version_cmd": "java -version 2>&1",
-    "version_exe": "java"
+    "version_cmd": "go version",
+    "version_exe": "go",
+    "version_parse_regex": "go version go(\\d+\\.\\d+(?:\\.\\d+)*)",
+    "remote_versions_config": {
+      "type": "json_api",
+      "url": "https://go.dev/dl/?mode=json&include=all",
+      "response_type": "array",
+      "version_field": "version",
+      "version_transform": "trim_prefix:go",
+      "filter_field": "stable",
+      "filter_value": true,
+      "max_count": 60
+    },
+    "package_managers": [
+      {
+        "id": "go",
+        "display_name": "Go Modules",
+        "built_in": true,
+        "install_cmd": null,
+        "version_cmd": "go version",
+        "version_exe": "go",
+        "cache_detect_cmd": "go env GOMODCACHE",
+        "cache_default_path": "{home}\\go\\pkg\\mod",
+        "cache_env_var": "GOMODCACHE",
+        "cache_set_cmd_template": "go env -w GOMODCACHE=\"{path}\"",
+        "data_detect_cmd": null,
+        "data_default_path": null,
+        "data_env_var": null,
+        "data_set_cmd_template": null,
+        "proxy_detect_cmd": "go env GOPROXY",
+        "proxy_set_cmd_template": "go env -w GOPROXY={url}",
+        "mirror_options": [
+          {
+            "mirror_type": "goproxy.cn",
+            "name": "七牛云 GOPROXY",
+            "url": "https://goproxy.cn,direct"
+          },
+          {
+            "mirror_type": "aliyun",
+            "name": "阿里云 GOPROXY",
+            "url": "https://mirrors.aliyun.com/goproxy/,direct"
+          }
+        ]
+      },
+      {
+        "id": "go-build",
+        "display_name": "Go Build Cache",
+        "built_in": true,
+        "install_cmd": null,
+        "version_cmd": "go version",
+        "version_exe": "go",
+        "cache_detect_cmd": "go env GOCACHE",
+        "cache_default_path": "{home}\\AppData\\Local\\go-build",
+        "cache_env_var": "GOCACHE",
+        "cache_set_cmd_template": "go env -w GOCACHE=\"{path}\"",
+        "data_detect_cmd": null,
+        "data_default_path": null,
+        "data_env_var": null,
+        "data_set_cmd_template": null,
+        "proxy_detect_cmd": null,
+        "proxy_set_cmd_template": null,
+        "mirror_options": null
+      }
+    ]
+  },
+  {
+    "id": "rust",
+    "display_name": "Rust",
+    "category": "language",
+    "official_website": "https://www.rust-lang.org",
+    "env_vars": [
+      {
+        "name": "CARGO_HOME",
+        "desc": "Cargo 工具及包缓存根目录",
+        "check_type": "path",
+        "tier": "core",
+        "sub_dir": "cargo"
+      },
+      {
+        "name": "RUSTUP_HOME",
+        "desc": "Rustup 工具链安装根目录",
+        "check_type": "path",
+        "tier": "core",
+        "sub_dir": "rustup"
+      }
+    ],
+    "bin_dirs": ["cargo\\bin"],
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "env_bin",
+          "env_var": "CARGO_HOME",
+          "bin_sub": "bin",
+          "exe_name": "rustc.exe"
+        },
+        "source_label": "CARGO_HOME",
+        "priority": 10,
+        "root_offset": 2
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "scoop\\apps\\rust",
+          "exe_name": "rustc.exe"
+        },
+        "source_label": "Scoop",
+        "priority": 40,
+        "root_offset": 2
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "",
+          "exe_name": "rustc.exe"
+        },
+        "source_label": "系统 PATH",
+        "priority": 90,
+        "root_offset": 0
+      }
+    ],
+    "has_cache": true,
+    "cache_detect_cmd": null,
+    "cache_default_path": "{home}\\.cargo\\registry\\cache",
+    "has_mirror": false,
+    "mirror_options": null,
+    "has_pkg": false,
+    "pkg_manager": null,
+    "pkg_homepage_template": null,
+    "is_service": false,
+    "default_port": null,
+    "download_url_template": "https://static.rust-lang.org/dist/rust-{version}-x86_64-pc-windows-msvc.tar.gz",
+    "download_file_ext": "tar.gz",
+    "version_cmd": "rustc --version",
+    "version_exe": "rustc",
+    "version_parse_regex": "rustc (\\d+\\.\\d+(?:\\.\\d+)*)",
+    "remote_versions_config": {
+      "type": "static",
+      "versions": [
+        "1.85.0", "1.84.1", "1.84.0", "1.83.0", "1.82.0", "1.81.0", "1.80.1", "1.80.0",
+        "1.79.0", "1.78.0", "1.77.2", "1.77.1", "1.77.0", "1.76.0", "1.75.0", "1.74.1",
+        "1.74.0", "1.73.0", "1.72.1", "1.72.0", "1.71.1", "1.71.0", "1.70.0", "1.69.0"
+      ]
+    },
+    "package_managers": []
+  },
+  {
+    "id": "flutter",
+    "display_name": "Flutter",
+    "category": "language",
+    "official_website": "https://flutter.dev",
+    "env_vars": [
+      {
+        "name": "FLUTTER_ROOT",
+        "desc": "Flutter SDK 安装根目录",
+        "check_type": "path",
+        "tier": "core"
+      }
+    ],
+    "bin_dirs": ["bin"],
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "env_bin",
+          "env_var": "FLUTTER_ROOT",
+          "bin_sub": "bin",
+          "exe_name": "flutter.bat"
+        },
+        "source_label": "FLUTTER_ROOT",
+        "priority": 10,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "scoop\\apps\\flutter",
+          "exe_name": "flutter.bat"
+        },
+        "source_label": "Scoop",
+        "priority": 40,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "",
+          "exe_name": "flutter.bat"
+        },
+        "source_label": "系统 PATH",
+        "priority": 90,
+        "root_offset": 0
+      }
+    ],
+    "has_cache": false,
+    "cache_detect_cmd": null,
+    "cache_default_path": null,
+    "has_mirror": false,
+    "mirror_options": null,
+    "has_pkg": false,
+    "pkg_manager": null,
+    "pkg_homepage_template": null,
+    "is_service": false,
+    "default_port": null,
+    "download_url_template": "https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_{version}-stable.zip",
+    "download_file_ext": "zip",
+    "version_cmd": "flutter --version",
+    "version_exe": "flutter",
+    "version_parse_regex": "Flutter (\\d+\\.\\d+(?:\\.\\d+)*)",
+    "remote_versions_config": {
+      "type": "json_api",
+      "url": "https://storage.googleapis.com/flutter_infra_release/releases/releases_windows.json",
+      "response_type": "object_with_array",
+      "array_field": "releases",
+      "version_field": "version",
+      "filter_field": "channel",
+      "filter_value": "stable",
+      "max_count": 60
+    },
+    "package_managers": []
   }
 ]

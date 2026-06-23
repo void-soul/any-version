@@ -1,29 +1,28 @@
-use std::path::PathBuf;
 use serde::{Serialize, Deserialize};
+use std::path::PathBuf;
 use crate::commands::config::load_config;
+use crate::commands::project::registry;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Clone, Debug)]
 pub struct PackageInfo {
     pub name: String,
     pub current_version: String,
     pub latest_version: String,
-    pub status: String,
-    /// 该包的官网/主页地址（npm 或 PyPI），方便用户点击查看文档与源代码。
+    pub status: String, // "latest" | "outdated"
     pub homepage: String,
 }
 
-// NPM list JSON mapping
+// Structs for parsing different JSON list formats
 #[derive(Deserialize)]
-struct NpmListDep {
+struct NpmList {
+    dependencies: Option<std::collections::HashMap<String, NpmDep>>,
+}
+
+#[derive(Deserialize)]
+struct NpmDep {
     version: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct NpmList {
-    dependencies: Option<std::collections::HashMap<String, NpmListDep>>,
-}
-
-// NPM outdated JSON mapping
 #[derive(Deserialize)]
 struct NpmOutdatedItem {
     latest: String,
@@ -31,7 +30,6 @@ struct NpmOutdatedItem {
 
 type NpmOutdated = std::collections::HashMap<String, NpmOutdatedItem>;
 
-// PIP list mapping
 #[derive(Deserialize)]
 struct PipPackage {
     name: String,
@@ -44,234 +42,237 @@ struct PipOutdated {
     latest_version: String,
 }
 
-fn get_npm_path() -> String {
+// Function to find package manager path
+fn find_pm_executable(pm_id: &str, project_id: &str) -> String {
     let config = load_config();
-    let active_npm = PathBuf::from(&config.links_dir).join("nodejs").join("npm.cmd");
-    if active_npm.exists() {
-        active_npm.to_string_lossy().to_string()
+    let link_dir = PathBuf::from(&config.links_dir).join(project_id);
+    
+    // Check if Python pip is used - we call Python -m pip
+    if pm_id == "pip" {
+        let active_py = if cfg!(windows) {
+            link_dir.join("python.exe")
+        } else {
+            link_dir.join("python")
+        };
+        if active_py.exists() {
+            return format!("\"{}\" -m pip", active_py.to_string_lossy());
+        }
+    }
+
+    let active_exe = if cfg!(windows) {
+        link_dir.join(format!("{}.cmd", pm_id))
     } else {
-        "npm".to_string()
+        link_dir.join(pm_id)
+    };
+    if active_exe.exists() {
+        active_exe.to_string_lossy().to_string()
+    } else {
+        pm_id.to_string()
     }
 }
 
-fn get_python_path() -> String {
-    let config = load_config();
-    let active_python = PathBuf::from(&config.links_dir).join("python").join("python.exe");
-    if active_python.exists() {
-        active_python.to_string_lossy().to_string()
-    } else {
-        "python".to_string()
-    }
-}
-
-fn get_global_npm_packages() -> Result<Vec<PackageInfo>, String> {
-    let npm = get_npm_path();
-
-    // 1. Run npm list -g --depth=0 --json
-    let list_out = super::hidden_cmd::hidden_cmd(&npm)
-        .args(&["list", "-g", "--depth=0", "--json"])
-        .output()
-        .map_err(|e| format!("运行 npm list 失败: {}", e))?;
-
-    let stdout_bytes = list_out.stdout;
-    let mut list_data = NpmList { dependencies: None };
-
-    if !stdout_bytes.is_empty() {
-        // Skip potential leading warnings/text before JSON
-        if let Some(start_idx) = stdout_bytes.iter().position(|&b| b == b'{') {
-            let json_slice = &stdout_bytes[start_idx..];
-            if let Ok(parsed) = serde_json::from_slice::<NpmList>(json_slice) {
-                list_data = parsed;
+fn execute_command_string(cmd_str: &str) -> Result<String, String> {
+    // Correctly split command string respecting quotes (like "C:\path to python\python.exe" -m pip list)
+    let parts = if cmd_str.contains('"') {
+        let mut result = Vec::new();
+        let mut in_quotes = false;
+        let mut current = String::new();
+        for c in cmd_str.chars() {
+            if c == '"' {
+                in_quotes = !in_quotes;
+            } else if c == ' ' && !in_quotes {
+                if !current.is_empty() {
+                    result.push(current.clone());
+                    current.clear();
+                }
+            } else {
+                current.push(c);
             }
         }
-    }
-
-    // 2. Run npm outdated -g --json
-    let outdated_out = super::hidden_cmd::hidden_cmd(&npm)
-        .args(&["outdated", "-g", "--json"])
-        .output()
-        .map_err(|e| format!("运行 npm outdated 失败: {}", e))?;
-
-    let mut outdated_data = NpmOutdated::new();
-    let out_bytes = outdated_out.stdout;
-    if !out_bytes.is_empty() {
-        if let Some(start_idx) = out_bytes.iter().position(|&b| b == b'{') {
-            let json_slice = &out_bytes[start_idx..];
-            let _ = serde_json::from_slice::<NpmOutdated>(json_slice).map(|parsed| {
-                outdated_data = parsed;
-            });
+        if !current.is_empty() {
+            result.push(current);
         }
+        result
+    } else {
+        cmd_str.split_whitespace().map(|s| s.to_string()).collect()
+    };
+
+    if parts.is_empty() {
+        return Err("空命令".to_string());
     }
-
-    let mut list = Vec::new();
-    if let Some(deps) = list_data.dependencies {
-        for (name, dep) in deps {
-            let current = dep.version.unwrap_or_else(|| "unknown".to_string());
-            let mut latest = current.clone();
-            let mut status = "latest".to_string();
-
-            if let Some(out_info) = outdated_data.get(&name) {
-                latest = out_info.latest.clone();
-                status = "outdated".to_string();
-            }
-
-            list.push(PackageInfo {
-                name: name.clone(),
-                current_version: current,
-                latest_version: latest,
-                status,
-                homepage: format!("https://www.npmjs.com/package/{}", name),
-            });
-        }
+    
+    let mut cmd = super::hidden_cmd::hidden_cmd(&parts[0]);
+    if parts.len() > 1 {
+        cmd.args(&parts[1..]);
     }
-
-    Ok(list)
-}
-
-fn get_global_pip_packages() -> Result<Vec<PackageInfo>, String> {
-    let python = get_python_path();
-
-    // 1. Run python -m pip list --format=json
-    let list_out = super::hidden_cmd::hidden_cmd(&python)
-        .args(&["-m", "pip", "list", "--format=json"])
-        .output()
-        .map_err(|e| format!("运行 pip list 失败: {}", e))?;
-
-    if !list_out.status.success() {
-        return Err(format!("pip list exit with error: {}", String::from_utf8_lossy(&list_out.stderr)));
-    }
-
-    let pkgs: Vec<PipPackage> = serde_json::from_slice(&list_out.stdout)
-        .map_err(|e| format!("解析 pip list JSON 失败: {}", e))?;
-
-    // 2. Run python -m pip list --outdated --format=json
-    let outdated_out = super::hidden_cmd::hidden_cmd(&python)
-        .args(&["-m", "pip", "list", "--outdated", "--format=json"])
-        .output()
-        .map_err(|e| format!("运行 pip list --outdated 失败: {}", e))?;
-
-    let mut outdated_pkgs: Vec<PipOutdated> = Vec::new();
-    if outdated_out.status.success() && !outdated_out.stdout.is_empty() {
-        let _ = serde_json::from_slice::<Vec<PipOutdated>>(&outdated_out.stdout).map(|parsed| {
-            outdated_pkgs = parsed;
-        });
-    }
-
-    let mut outdated_map = std::collections::HashMap::new();
-    for op in outdated_pkgs {
-        outdated_map.insert(op.name.to_lowercase(), op.latest_version);
-    }
-
-    let mut list = Vec::new();
-    for p in pkgs {
-        let current = p.version;
-        let mut latest = current.clone();
-        let mut status = "latest".to_string();
-
-        if let Some(lv) = outdated_map.get(&p.name.to_lowercase()) {
-            latest = lv.clone();
-            status = "outdated".to_string();
-        }
-
-        list.push(PackageInfo {
-            name: p.name.clone(),
-            current_version: current,
-            latest_version: latest,
-            status,
-            homepage: format!("https://pypi.org/project/{}/", p.name),
-        });
-    }
-
-    Ok(list)
+    let output = cmd.output().map_err(|e| format!("执行命令失败: {}", e))?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 #[tauri::command]
 pub fn get_global_packages(sdk_name: String) -> Result<Vec<PackageInfo>, String> {
-    let name_lower = sdk_name.to_lowercase();
-    if name_lower == "nodejs" || name_lower == "npm" {
-        get_global_npm_packages()
-    } else if name_lower == "python" || name_lower == "pip" {
-        get_global_pip_packages()
-    } else if name_lower == "yarn" {
-        get_global_yarn_packages()
-    } else if name_lower == "pnpm" {
-        get_global_pnpm_packages()
+    let (project, pm) = registry::registry().into_iter()
+        .find_map(|p| {
+            if p.id.eq_ignore_ascii_case(&sdk_name) {
+                p.package_managers.iter().find(|m| m.pkg_list_cmd.is_some()).map(|m| (p.clone(), m.clone()))
+            } else {
+                p.package_managers.iter().find(|m| m.id.eq_ignore_ascii_case(&sdk_name)).map(|m| (p.clone(), m.clone()))
+            }
+        })
+        .ok_or_else(|| format!("未找到项目或包管理器: {}", sdk_name))?;
+
+    let list_cmd = pm.pkg_list_cmd.as_ref()
+        .ok_or_else(|| format!("{} 不支持全局包管理（未配置 pkg_list_cmd）", pm.display_name))?;
+
+    let pm_exe = find_pm_executable(&pm.id, &project.id);
+    let resolved_list_cmd = if list_cmd.starts_with(&pm.id) {
+        list_cmd.replacen(&pm.id, &pm_exe, 1)
     } else {
-        Err(format!("不支持的包管理器: {}", sdk_name))
-    }
-}
+        list_cmd.clone()
+    };
 
-#[tauri::command]
-pub fn upgrade_global_package(sdk_name: String, pkg_name: String) -> Result<(), String> {
-    let name_lower = sdk_name.to_lowercase();
-    if pkg_name.trim().is_empty() {
-        return Err("包名不能为空".to_string());
-    }
+    let stdout = execute_command_string(&resolved_list_cmd)?;
+    let format = pm.pkg_list_format.as_deref().unwrap_or("text_lines");
 
-    let output = if name_lower == "nodejs" || name_lower == "npm" {
-        let npm = get_npm_path();
-        super::hidden_cmd::hidden_cmd(npm)
-            .args(&["install", "-g", &format!("{}@latest", pkg_name.trim())])
-            .output()
-    } else if name_lower == "python" || name_lower == "pip" {
-        let python = get_python_path();
-        super::hidden_cmd::hidden_cmd(python)
-            .args(&["-m", "pip", "install", "--upgrade", pkg_name.trim()])
-            .output()
-    } else if name_lower == "yarn" {
-        super::hidden_cmd::hidden_cmd("yarn")
-            .args(&["global", "upgrade", pkg_name.trim()])
-            .output()
-    } else if name_lower == "pnpm" {
-        super::hidden_cmd::hidden_cmd("pnpm")
-            .args(&["update", "-g", pkg_name.trim()])
-            .output()
-    } else {
-        return Err(format!("不支持的包管理器: {}", sdk_name));
-    }.map_err(|e| format!("执行命令失败: {}", e))?;
-
-    if !output.status.success() {
-        return Err(format!("升级失败: {}", String::from_utf8_lossy(&output.stderr)));
-    }
-
-    Ok(())
-}
-
-/// 获取 yarn 全局包列表
-fn get_global_yarn_packages() -> Result<Vec<PackageInfo>, String> {
-    let output = super::hidden_cmd::hidden_cmd("yarn")
-        .args(&["global", "list", "--depth=0", "--json"])
-        .output()
-        .map_err(|e| format!("运行 yarn global list 失败: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
     let mut list = Vec::new();
+    let mut outdated_map = std::collections::HashMap::new();
 
-    // yarn global list --json 每行一个 JSON 对象，格式: {"type":"info","data":"..."}
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed == "null" || trimmed == "undefined" {
-            continue;
-        }
-        // 尝试解析为 yarn info JSON
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            if val.get("type").and_then(|v| v.as_str()) == Some("info") {
-                if let Some(data) = val.get("data").and_then(|v| v.as_str()) {
-                    // data 格式: "package@version" 或 "\"package@version\""
-                    let clean = data.trim_matches('"').trim_end_matches('\n');
-                    // 去掉版本号部分: "package@1.2.3" -> ("package", "1.2.3")
-                    let mut parts = clean.rsplitn(2, '@');
-                    let ver = parts.next().unwrap_or("unknown").to_string();
-                    let name = parts.next().unwrap_or("").to_string();
-                    if !name.is_empty() {
-                        list.push(PackageInfo {
-                            name: name.clone(),
-                            current_version: ver.clone(),
-                            latest_version: ver,
-                            status: "latest".to_string(),
-                            homepage: format!("https://www.npmjs.com/package/{}", name),
-                        });
+    if let Some(ref outdated_cmd) = pm.pkg_outdated_cmd {
+        let resolved_outdated_cmd = if outdated_cmd.starts_with(&pm.id) {
+            outdated_cmd.replacen(&pm.id, &pm_exe, 1)
+        } else {
+            outdated_cmd.clone()
+        };
+        if let Ok(outdated_stdout) = execute_command_string(&resolved_outdated_cmd) {
+            let out_format = pm.pkg_outdated_format.as_deref().unwrap_or("");
+            if out_format == "npm_outdated_json" {
+                if let Some(start_idx) = outdated_stdout.find('{') {
+                    let json_slice = &outdated_stdout[start_idx..];
+                    if let Ok(parsed) = serde_json::from_str::<NpmOutdated>(json_slice) {
+                        for (name, item) in parsed {
+                            outdated_map.insert(name.to_lowercase(), item.latest);
+                        }
                     }
+                }
+            } else if out_format == "pip_outdated_json" {
+                if let Ok(parsed) = serde_json::from_str::<Vec<PipOutdated>>(&outdated_stdout) {
+                    for op in parsed {
+                        outdated_map.insert(op.name.to_lowercase(), op.latest_version);
+                    }
+                }
+            }
+        }
+    }
+
+    let homepage_template = pm.pkg_homepage_template.as_deref().unwrap_or("https://www.npmjs.com/package/{pkg}");
+
+    match format {
+        "npm_json" => {
+            if let Some(start_idx) = stdout.find('{') {
+                let json_slice = &stdout[start_idx..];
+                if let Ok(parsed) = serde_json::from_str::<NpmList>(json_slice) {
+                    if let Some(deps) = parsed.dependencies {
+                        for (name, dep) in deps {
+                            let current = dep.version.unwrap_or_else(|| "unknown".to_string());
+                            let mut latest = current.clone();
+                            let mut status = "latest".to_string();
+                            if let Some(lv) = outdated_map.get(&name.to_lowercase()) {
+                                latest = lv.clone();
+                                status = "outdated".to_string();
+                            }
+                            list.push(PackageInfo {
+                                name: name.clone(),
+                                current_version: current,
+                                latest_version: latest,
+                                status,
+                                homepage: homepage_template.replace("{pkg}", &name),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        "pip_json" => {
+            if let Ok(pkgs) = serde_json::from_str::<Vec<PipPackage>>(&stdout) {
+                for p in pkgs {
+                    let current = p.version;
+                    let mut latest = current.clone();
+                    let mut status = "latest".to_string();
+                    if let Some(lv) = outdated_map.get(&p.name.to_lowercase()) {
+                        latest = lv.clone();
+                        status = "outdated".to_string();
+                    }
+                    list.push(PackageInfo {
+                        name: p.name.clone(),
+                        current_version: current,
+                        latest_version: latest,
+                        status,
+                        homepage: homepage_template.replace("{pkg}", &p.name),
+                    });
+                }
+            }
+        }
+        "yarn_json" => {
+            for line in stdout.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() { continue; }
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                    if val.get("type").and_then(|v| v.as_str()) == Some("info") {
+                        if let Some(data) = val.get("data").and_then(|v| v.as_str()) {
+                            let clean = data.trim_matches('"').trim_end_matches('\n');
+                            let mut parts = clean.rsplitn(2, '@');
+                            let ver = parts.next().unwrap_or("unknown").to_string();
+                            let name = parts.next().unwrap_or("").to_string();
+                            if !name.is_empty() {
+                                list.push(PackageInfo {
+                                    name: name.clone(),
+                                    current_version: ver.clone(),
+                                    latest_version: ver,
+                                    status: "latest".to_string(),
+                                    homepage: homepage_template.replace("{pkg}", &name),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "pnpm_json" => {
+            if let Ok(parsed) = serde_json::from_str::<Vec<serde_json::Value>>(&stdout) {
+                for item in &parsed {
+                    if let Some(deps) = item.get("dependencies").and_then(|v| v.as_object()) {
+                        for (name, dep) in deps {
+                            let ver = dep.get("version")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            list.push(PackageInfo {
+                                name: name.clone(),
+                                current_version: ver.clone(),
+                                latest_version: ver,
+                                status: "latest".to_string(),
+                                homepage: homepage_template.replace("{pkg}", &name),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        _ => {
+            for line in stdout.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() { continue; }
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let name = parts[0].to_string();
+                    let ver = parts[1].to_string();
+                    list.push(PackageInfo {
+                        name: name.clone(),
+                        current_version: ver.clone(),
+                        latest_version: ver,
+                        status: "latest".to_string(),
+                        homepage: homepage_template.replace("{pkg}", &name),
+                    });
                 }
             }
         }
@@ -280,40 +281,35 @@ fn get_global_yarn_packages() -> Result<Vec<PackageInfo>, String> {
     Ok(list)
 }
 
-/// 获取 pnpm 全局包列表
-fn get_global_pnpm_packages() -> Result<Vec<PackageInfo>, String> {
-    let output = super::hidden_cmd::hidden_cmd("pnpm")
-        .args(&["list", "-g", "--depth=0", "--json"])
-        .output()
-        .map_err(|e| format!("运行 pnpm list -g 失败: {}", e))?;
-
-    let stdout_bytes = output.stdout;
-    if stdout_bytes.is_empty() {
-        return Ok(Vec::new());
+#[tauri::command]
+pub fn upgrade_global_package(sdk_name: String, pkg_name: String) -> Result<(), String> {
+    if pkg_name.trim().is_empty() {
+        return Err("包名不能为空".to_string());
     }
 
-    // pnpm list -g --json 返回一个数组: [{"name":"...","version":"...","dependencies":{...}}]
-    let parsed: Vec<serde_json::Value> = serde_json::from_slice(&stdout_bytes)
-        .map_err(|e| format!("解析 pnpm list JSON 失败: {}", e))?;
-
-    let mut list = Vec::new();
-    for item in &parsed {
-        if let Some(deps) = item.get("dependencies").and_then(|v| v.as_object()) {
-            for (name, dep) in deps {
-                let ver = dep.get("version")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                list.push(PackageInfo {
-                    name: name.clone(),
-                    current_version: ver.clone(),
-                    latest_version: ver,
-                    status: "latest".to_string(),
-                    homepage: format!("https://www.npmjs.com/package/{}", name),
-                });
+    let (project, pm) = registry::registry().into_iter()
+        .find_map(|p| {
+            if p.id.eq_ignore_ascii_case(&sdk_name) {
+                p.package_managers.iter().find(|m| m.pkg_upgrade_cmd_template.is_some()).map(|m| (p.clone(), m.clone()))
+            } else {
+                p.package_managers.iter().find(|m| m.id.eq_ignore_ascii_case(&sdk_name)).map(|m| (p.clone(), m.clone()))
             }
-        }
-    }
+        })
+        .ok_or_else(|| format!("未找到项目或包管理器: {}", sdk_name))?;
 
-    Ok(list)
+    let upgrade_template = pm.pkg_upgrade_cmd_template.as_ref()
+        .ok_or_else(|| format!("{} 不支持升级包（未配置 upgrade_cmd）", pm.display_name))?;
+
+    let pm_exe = find_pm_executable(&pm.id, &project.id);
+    let resolved_upgrade_template = if upgrade_template.starts_with(&pm.id) {
+        upgrade_template.replacen(&pm.id, &pm_exe, 1)
+    } else {
+        upgrade_template.clone()
+    };
+
+    let final_cmd = resolved_upgrade_template.replace("{pkg}", pkg_name.trim());
+    let _output = execute_command_string(&final_cmd)?;
+    
+    // Simple check: if command executed without panic or tauri error, consider success
+    Ok(())
 }

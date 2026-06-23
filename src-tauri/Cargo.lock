@@ -61,6 +61,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "md5",
+ "regex",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
