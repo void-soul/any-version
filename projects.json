@@ -878,9 +878,9 @@
       "type": "json_api",
       "response_type": "array",
       "version_field": "version",
-      "filter_field": "snapshot",
-      "filter_value": false,
-      "max_count": 60
+      "filter_field": "final",
+      "filter_value": true,
+      "max_count": 0
     },
     "package_managers": [
       {
