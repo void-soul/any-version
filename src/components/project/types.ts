@@ -41,6 +41,7 @@ export interface PackageManagerDef {
   cache_detect_cmd: string | null;
   pkg_list_cmd: string | null;
   mirror_cmd_template: string | null;
+  mirror_detect_cmd?: string | null;
   mirror_options: Array<{ mirror_type: string; name: string; url: string }> | null;
   // 缓存路径
   cache_default_path: string | null;
@@ -77,6 +78,7 @@ export interface ProjectStatus {
   install_source: string | null; // "Scoop" | "AnyVersion" | "手动" | ...
   install_root: string | null;
   managed: boolean;
+  is_simple_managed: boolean;
   env_vars_status: EnvVarStatus[];
   cache_status: CacheStatus | null;
   service_status: ServiceStatus | null;
@@ -98,6 +100,9 @@ export interface ProjectDef {
   display_name: string;
   category: ProjectCategory;
   official_website: string;
+  simple_mode?: boolean;
+  is_git_repo?: boolean;
+  bootstrap_cmd?: string;
   env_vars: Array<{ name: string; desc: string; check_type: string; tier?: "core" | "package" | "compat" | "clear" }>;
   has_cache: boolean;
   has_mirror: boolean;

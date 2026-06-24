@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   ExternalLink,
   ShieldCheck,
@@ -52,6 +53,7 @@ interface ProjectUIState {
   managePreview: ManagePreview | null;
   managing: boolean;
   unmanaging: boolean;
+  isSimpleManage: boolean;
   cacheDestPath: string;
   migratingCache: boolean;
   packages: SubTabProps["packages"];
@@ -81,6 +83,7 @@ const EMPTY_UI: ProjectUIState = {
   managePreview: null,
   managing: false,
   unmanaging: false,
+  isSimpleManage: false,
   cacheDestPath: "",
   migratingCache: false,
   packages: [],
@@ -180,6 +183,33 @@ export default function ProjectDetailPanel({
       await onProjectUpdate(id);
     }
   }, [loadDetail, onProjectUpdate]);
+
+  const handleSelectCustomPath = useCallback(async () => {
+    if (!pid) return;
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "选择安装目录",
+      });
+      if (selected && typeof selected === "string") {
+        await invoke("project_set_custom_path", { id: pid, path: selected });
+        await refreshSingle(pid);
+      }
+    } catch (err) {
+      console.error("Select custom path error:", err);
+    }
+  }, [pid, refreshSingle]);
+
+  const handleClearCustomPath = useCallback(async () => {
+    if (!pid) return;
+    try {
+      await invoke("project_set_custom_path", { id: pid, path: "" });
+      await refreshSingle(pid);
+    } catch (err) {
+      console.error("Clear custom path error:", err);
+    }
+  }, [pid, refreshSingle]);
 
   const loadPackages = useCallback(async (id: string) => {
     patch(id, { loadingPackages: true, packageError: null });
@@ -323,10 +353,11 @@ export default function ProjectDetailPanel({
     }
   }, [pid, patch, loadDetail, onRefresh]);
 
-  const handlePreviewManage = useCallback(async () => {
+  const handlePreviewManage = useCallback(async (isSimple: boolean) => {
     if (!pid) return;
+    patch(pid, { isSimpleManage: isSimple });
     try {
-      const preview = await invoke<ManagePreview>("project_preview_manage", { id: pid });
+      const preview = await invoke<ManagePreview>("project_preview_manage", { id: pid, isSimple });
       patch(pid, { managePreview: preview, showManagePreview: true });
     } catch {
       patch(pid, { managePreview: null, showManagePreview: true });
@@ -337,14 +368,14 @@ export default function ProjectDetailPanel({
     if (!pid) return;
     patch(pid, { managing: true });
     try {
-      await invoke("project_manage", { id: pid });
+      await invoke("project_manage", { id: pid, isSimple: ui.isSimpleManage });
       patch(pid, { showManagePreview: false, managePreview: null, managing: false });
       await refreshSingle(pid);
     } catch (e: unknown) {
       alert("托管操作失败: " + e);
       patch(pid, { managing: false });
     }
-  }, [pid, patch, loadDetail, onRefresh]);
+  }, [pid, patch, ui.isSimpleManage, loadDetail, onRefresh]);
 
   const handlePreviewUnmanage = useCallback(async () => {
     if (!pid) return;
@@ -459,16 +490,25 @@ export default function ProjectDetailPanel({
 
   // 构建动态 Tab 列表：基础 tabs + 每个包管理器一个独立 tab
   const availableTabs: SubTab[] = [];
-  if (def?.category === "service" || def?.is_service) {
-    availableTabs.push("services");
+  if (status.is_simple_managed || def?.simple_mode) {
+    if (def?.category === "service" || def?.is_service) {
+      availableTabs.push("services");
+    }
     if (def?.data_dirs && def.data_dirs.length > 0) {
       availableTabs.push("data_dirs");
     }
-    availableTabs.push("envvars");
-    availableTabs.push("versions");
   } else {
-    availableTabs.push("versions");
-    availableTabs.push("envvars");
+    if (def?.category === "service" || def?.is_service) {
+      availableTabs.push("services");
+      if (def?.data_dirs && def.data_dirs.length > 0) {
+        availableTabs.push("data_dirs");
+      }
+      availableTabs.push("envvars");
+      availableTabs.push("versions");
+    } else {
+      availableTabs.push("versions");
+      availableTabs.push("envvars");
+    }
   }
 
   // 包管理器 tabs：每个 PM 一个独立子页面，用 "pm:" 前缀标识
@@ -479,13 +519,18 @@ export default function ProjectDetailPanel({
       pmTabs.push({ id: `pm:${pm.id}`, label: pm.display_name });
     }
   }
-  if (hasLegacy) availableTabs.push("legacy");
+  if (hasLegacy && !status.is_simple_managed && !def?.simple_mode) {
+    availableTabs.push("legacy");
+  }
 
   // Tab 标签映射（基础 + 动态）
   const tabLabels: Record<string, string> = { ...baseTabLabels };
   for (const pt of pmTabs) {
     tabLabels[pt.id] = pt.label;
   }
+
+  // Fallback to first available tab if activeSubTab is not in availableTabs
+  const activeTab = availableTabs.includes(ui.activeSubTab) ? ui.activeSubTab : (availableTabs[0] || "versions");
 
   const isOperating = !!ui.installingVersion || !!ui.switchingVersion || ui.managing || ui.unmanaging || !!ui.detectStep;
 
@@ -517,7 +562,7 @@ export default function ProjectDetailPanel({
     onServiceToggle: handleServiceToggle,
     onRefresh: async () => { if (pid) await loadDetail(pid); },
     isOperating,
-    activeSubTab: ui.activeSubTab,
+    activeSubTab: activeTab,
     onActiveSubTabChange: (tab: string) => { if (pid) patch(pid, { activeSubTab: tab as SubTab }); },
   };
 
@@ -538,11 +583,17 @@ export default function ProjectDetailPanel({
                 {categoryLabel(status.category)}
               </span>
               {status.managed ? (
-                <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold flex items-center gap-0.5">
-                  <ShieldCheck className="w-2.5 h-2.5" /> {"已托管"}
-                </span>
+                status.is_simple_managed ? (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold flex items-center gap-0.5">
+                    <ShieldCheck className="w-2.5 h-2.5" /> {"简单托管中"}
+                  </span>
+                ) : (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold flex items-center gap-0.5">
+                    <ShieldCheck className="w-2.5 h-2.5" /> {"托管中"}
+                  </span>
+                )
               ) : (
-                <span className="px-1.5 py-0.5 rounded text-[9px] bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium">
+                <span className="px-1.5 py-0.5 rounded text-[9px] bg-slate-500/10 text-slate-400 border border-slate-500/20 font-medium">
                   {"未托管"}
                 </span>
               )}
@@ -562,9 +613,9 @@ export default function ProjectDetailPanel({
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2 mt-0.5">
+            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
               {def?.official_website && (
-                <button onClick={() => openUrl(def.official_website)} className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-0.5 cursor-pointer">
+                <button onClick={() => openUrl(def.official_website)} className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-0.5 cursor-pointer mr-1">
                   {"官方网站"} <ExternalLink className="w-2.5 h-2.5" />
                 </button>
               )}
@@ -572,7 +623,29 @@ export default function ProjectDetailPanel({
                 <><span className="text-slate-600 text-[10px]">.</span><span className="text-[10px] text-slate-400">{"安装方式"}: {status.install_source}</span></>
               )}
               {status.install_root && (
-                <><span className="text-slate-600 text-[10px]">.</span><span className="text-[10px] text-slate-400 font-mono truncate max-w-[200px]">{"安装路径"}: {status.install_root}</span></>
+                <><span className="text-slate-600 text-[10px]">.</span><span className="text-[10px] text-slate-400 font-mono truncate max-w-[300px]" title={status.install_root}>{"安装路径"}: {status.install_root}</span></>
+              )}
+              {(!status.managed || status.is_simple_managed) && (!status.install_root || status.install_source === "手动指定") && (
+                <>
+                  <span className="text-slate-600 text-[10px]">.</span>
+                  <button
+                    onClick={handleSelectCustomPath}
+                    className="text-[10px] text-blue-400 hover:text-blue-300 hover:underline transition-colors flex items-center gap-0.5 cursor-pointer font-medium"
+                  >
+                    {status.install_root ? "修改路径" : "手动指定目录"}
+                  </button>
+                  {status.install_source === "手动指定" && (
+                    <>
+                      <span className="text-slate-600 text-[10px]">.</span>
+                      <button
+                        onClick={handleClearCustomPath}
+                        className="text-[10px] text-amber-500 hover:text-amber-400 hover:underline transition-colors flex items-center gap-0.5 cursor-pointer font-medium"
+                      >
+                        {"恢复自动检测"}
+                      </button>
+                    </>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -602,21 +675,41 @@ export default function ProjectDetailPanel({
             </p>
           </div>
         </div>
+      ) : (status.is_simple_managed || def?.simple_mode) && !status.install_root ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-4">
+          <div className="w-16 h-16 rounded-full bg-blue-600/10 flex items-center justify-center">
+            <Settings className="w-8 h-8 text-blue-500" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-slate-300">{"未检测到本地安装目录"}</p>
+            <p className="text-[11px] text-slate-500 mt-1 max-w-sm">
+              {"该项目为简单托管项目，AnyVersion 不提供版本下载与安装服务。请先手动指定本地已安装的目录以进行托管管理。"}
+            </p>
+          </div>
+          <button
+            onClick={handleSelectCustomPath}
+            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]"
+          >
+            {"手动指定目录"}
+          </button>
+        </div>
       ) : (
         <>
-          <div className="flex bg-white/5 border border-white/5 rounded-xl p-0.5 mx-5 mt-4 flex-shrink-0">
-            {availableTabs.map((tab) => (
-              <button
-                key={tab}
-                onClick={() => pid && patch(pid, { activeSubTab: tab })}
-                className={`flex-1 py-1.5 rounded-lg text-[10px] font-semibold transition-all cursor-pointer ${
-                  ui.activeSubTab === tab ? "bg-blue-600 text-white shadow-md" : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                {tabLabels[tab]}
-              </button>
-            ))}
-          </div>
+          {availableTabs.length > 1 && (
+            <div className="flex bg-white/5 border border-white/5 rounded-xl p-0.5 mx-5 mt-4 flex-shrink-0">
+              {availableTabs.map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => pid && patch(pid, { activeSubTab: tab })}
+                  className={`flex-1 py-1.5 rounded-lg text-[10px] font-semibold transition-all cursor-pointer ${
+                    activeTab === tab ? "bg-blue-600 text-white shadow-md" : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  {tabLabels[tab]}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="flex-1 overflow-y-auto p-5 space-y-5">
             {ui.detectStep || ui.switchingVersion ? (
@@ -645,18 +738,25 @@ export default function ProjectDetailPanel({
               </div>
             ) : (
               <>
-                {ui.activeSubTab === "versions" && <VersionsTab {...subTabProps} />}
-                {ui.activeSubTab === "envvars" && <EnvVarsTab {...subTabProps} />}
-                {ui.activeSubTab === "services" && <ServicesTab {...subTabProps} />}
-                {ui.activeSubTab === "data_dirs" && <DataDirsTab project={status} onRefresh={async () => { if (pid) await loadDetail(pid); }} />}
-                {ui.activeSubTab === "legacy" && <LegacyTab projectId={pid!} />}
+                {activeTab === "versions" && <VersionsTab {...subTabProps} />}
+                {activeTab === "envvars" && <EnvVarsTab {...subTabProps} />}
+                {activeTab === "services" && <ServicesTab {...subTabProps} />}
+                {activeTab === "data_dirs" && <DataDirsTab project={status} onRefresh={async () => { if (pid) await loadDetail(pid); }} />}
+                {activeTab === "legacy" && <LegacyTab projectId={pid!} />}
                 {/* 动态包管理器子页面 —— key 保证每个 PM 独立且切换时不重新挂载 */}
                 {pmTabs.map(pt => {
                   const pmId = pt.id.replace("pm:", "");
                   const pmDef = def?.package_managers?.find(p => p.id === pmId);
                   if (!pmDef) return null;
                   return (
-                    <PackageManagerTab key={pt.id} projectId={pid!} pm={pmDef} hidden={ui.activeSubTab !== pt.id} />
+                    <PackageManagerTab 
+                      key={pt.id} 
+                      projectId={pid!} 
+                      pm={pmDef} 
+                      hidden={activeTab !== pt.id} 
+                      installRoot={status.install_root}
+                      installSource={status.install_source}
+                    />
                   );
                 })}
               </>
@@ -672,6 +772,10 @@ export default function ProjectDetailPanel({
           const versionsDir = "%USERPROFILE%\\.any-version\\versions";
           const preview = ui.managePreview;
           const isUnmanage = status.managed;
+
+          const backupVars = envVars.filter(v => v.tier !== "compat");
+          const clearVars = envVars.filter(v => v.tier === "clear");
+          const manageVars = envVars.filter(v => v.tier !== "compat" && v.tier !== "clear");
 
           const stepColorMap: Record<string, string> = {
             clear_env: "bg-red-600/20 text-red-400",
@@ -689,95 +793,103 @@ export default function ProjectDetailPanel({
               </h4>
 
               {!isUnmanage ? (
-                <>
-                  {(() => {
-                    const backupVars = envVars.filter(v => v.tier !== "compat");
-                    const clearVars = envVars.filter(v => v.tier === "clear");
-                    const manageVars = envVars.filter(v => v.tier !== "compat" && v.tier !== "clear");
-
-                    return (
-                      <>
-                        {backupVars.length > 0 && (
-                          <div className="flex items-start gap-2 text-[11px]">
-                            <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">1</span>
-                            <div>
-                              <span className="text-slate-200 font-medium">{"备份并清除冲突环境变量"}</span>
-                              <p className="text-slate-400 mt-0.5">
-                                {clearVars.length > 0 ? (
-                                  <>
-                                    {"将备份以下冲突环境变量的当前值并将其从系统中删除"}: <span className="font-mono text-[10px] text-red-300 font-semibold">{clearVars.map(v => v.name).join(", ")}</span>
-                                    {backupVars.filter(v => v.tier !== "clear").length > 0 && (
-                                      <>
-                                        <br />
-                                        {"仅备份但不删除的环境变量"}: <span className="font-mono text-[10px] text-blue-300">{backupVars.filter(v => v.tier !== "clear").map(v => v.name).join(", ")}</span>
-                                      </>
-                                    )}
-                                  </>
-                                ) : (
-                                  <>
-                                    {"将备份以下环境变量的当前值"}: <span className="font-mono text-[10px] text-blue-300">{backupVars.map(v => v.name).join(", ")}</span>
-                                  </>
-                                )}
-                              </p>
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="flex items-start gap-2 text-[11px]">
-                          <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">{backupVars.length > 0 ? "2" : "1"}</span>
-                          <div>
-                            <span className="text-slate-200 font-medium">{"创建目录联接"}</span>
-                            <p className="font-mono text-[10px] text-blue-300 mt-0.5">{linkPath} → {versionsDir}\{pid}\VERSION</p>
-                          </div>
+                ui.isSimpleManage ? (
+                  <>
+                    {preview?.steps?.map((step, idx) => (
+                      <div key={idx} className="flex items-start gap-2 text-[11px]">
+                        <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">
+                          {idx + 1}
+                        </span>
+                        <div className="min-w-0">
+                          <span className="text-slate-200 font-medium">{step.description}</span>
+                          {step.target && (
+                            <p className="font-mono text-[10px] text-slate-500 mt-0.5 whitespace-pre-wrap break-all">{step.target}</p>
+                          )}
                         </div>
-
-                        {(manageVars.length > 0 || clearVars.length > 0) && (
-                          <div className="flex items-start gap-2 text-[11px]">
-                            <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">{backupVars.length > 0 ? "3" : "2"}</span>
-                            <div>
-                              <span className="text-slate-200 font-medium">{"更新注册表环境变量"}</span>
-                              <div className="space-y-1 mt-0.5">
-                                {manageVars.length > 0 && (
-                                  <p className="text-slate-400">
-                                    {"设置托管变量 (指向 AnyVersion)"}: <span className="font-mono text-[10px] text-blue-300">{manageVars.map((v: { name: string }) => v.name).join(", ")} → {linkPath}</span>
-                                  </p>
+                      </div>
+                    ))}
+                  </>
+                ) : (
+                  <>
+                    {backupVars.length > 0 && (
+                      <div className="flex items-start gap-2 text-[11px]">
+                        <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">1</span>
+                        <div>
+                          <span className="text-slate-200 font-medium">{"备份并清除冲突环境变量"}</span>
+                          <p className="text-slate-400 mt-0.5">
+                            {clearVars.length > 0 ? (
+                              <>
+                                {"将备份以下冲突环境变量的当前值并将其从系统中删除"}: <span className="font-mono text-[10px] text-red-300 font-semibold">{clearVars.map(v => v.name).join(", ")}</span>
+                                {backupVars.filter(v => v.tier !== "clear").length > 0 && (
+                                  <>
+                                    <br />
+                                    {"仅备份但不删除的环境变量"}: <span className="font-mono text-[10px] text-blue-300">{backupVars.filter(v => v.tier !== "clear").map(v => v.name).join(", ")}</span>
+                                  </>
                                 )}
-                                {clearVars.length > 0 && (
-                                  <p className="text-slate-400">
-                                    <span className="text-red-400 font-semibold">{"清空冲突变量 (后续交由 AnyVersion 管理)"}</span>: <span className="font-mono text-[10px] text-red-300">{clearVars.map((v: { name: string }) => v.name).join(", ")}</span>
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
+                              </>
+                            ) : (
+                              <>
+                                {"将备份以下环境变量的当前值"}: <span className="font-mono text-[10px] text-blue-300">{backupVars.map(v => v.name).join(", ")}</span>
+                              </>
+                            )}
+                          </p>
+                        </div>
+                      </div>
+                    )}
 
-                  {preview && preview.steps.filter((s) => s.action === "add_path" || s.action === "clean_path").map((step, idx) => (
-                    <div key={idx} className="flex items-start gap-2 text-[11px]">
-                      <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">{4 + idx}</span>
+                    <div className="flex items-start gap-2 text-[11px]">
+                      <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">{backupVars.length > 0 ? "2" : "1"}</span>
                       <div>
-                        <span className="text-slate-200 font-medium">{step.description}</span>
-                        {step.target && <p className="font-mono text-[10px] text-slate-500 mt-0.5">{step.target}</p>}
+                        <span className="text-slate-200 font-medium">{"创建目录联接"}</span>
+                        <p className="font-mono text-[10px] text-blue-300 mt-0.5">{linkPath} → {versionsDir}\{pid}\VERSION</p>
                       </div>
                     </div>
-                  ))}
 
-                  {preview?.has_local_install && (
-                    <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-[10px]">
-                      <span className="text-emerald-300 font-medium">检测到本地已安装版本</span>
-                      {preview.local_install_root && (
-                        <p className="text-slate-400 mt-0.5">路径: {preview.local_install_root}</p>
-                      )}
-                      {preview.local_install_source && (
-                        <p className="text-slate-500">来源: {preview.local_install_source}</p>
-                      )}
-                      <p className="text-amber-400/80 mt-1">托管后可在版本管理中扫描并注册本地版本</p>
-                    </div>
-                  )}
-                </>
+                    {(manageVars.length > 0 || clearVars.length > 0) && (
+                      <div className="flex items-start gap-2 text-[11px]">
+                        <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">{backupVars.length > 0 ? "3" : "2"}</span>
+                        <div>
+                          <span className="text-slate-200 font-medium">{"更新注册表环境变量"}</span>
+                          <div className="space-y-1 mt-0.5">
+                            {manageVars.length > 0 && (
+                              <p className="text-slate-400">
+                                {"设置托管变量 (指向 AnyVersion)"}: <span className="font-mono text-[10px] text-blue-300">{manageVars.map((v: { name: string }) => v.name).join(", ")} → {linkPath}</span>
+                              </p>
+                            )}
+                            {clearVars.length > 0 && (
+                              <p className="text-slate-400">
+                                <span className="text-red-400 font-semibold">{"清空冲突变量 (后续交由 AnyVersion 管理)"}</span>: <span className="font-mono text-[10px] text-red-300">{clearVars.map((v: { name: string }) => v.name).join(", ")}</span>
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {preview && preview.steps.filter((s) => s.action === "add_path" || s.action === "clean_path").map((step, idx) => (
+                      <div key={idx} className="flex items-start gap-2 text-[11px]">
+                        <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">{4 + idx}</span>
+                        <div>
+                          <span className="text-slate-200 font-medium">{step.description}</span>
+                          {step.target && <p className="font-mono text-[10px] text-slate-500 mt-0.5">{step.target}</p>}
+                        </div>
+                      </div>
+                    ))}
+
+                    {preview?.has_local_install && (
+                      <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-[10px]">
+                        <span className="text-emerald-300 font-medium">检测到本地已安装版本</span>
+                        {preview.local_install_root && (
+                          <p className="text-slate-400 mt-0.5">路径: {preview.local_install_root}</p>
+                        )}
+                        {preview.local_install_source && (
+                          <p className="text-slate-500">来源: {preview.local_install_source}</p>
+                        )}
+                        <p className="text-amber-400/80 mt-1">托管后可在版本管理中扫描并注册本地版本</p>
+                      </div>
+                    )}
+                  </>
+                )
               ) : (
                 <>
                   {preview?.steps?.map((step, idx) => (
@@ -796,16 +908,18 @@ export default function ProjectDetailPanel({
                 </>
               )}
 
-              <div className="p-2.5 rounded-lg bg-black/20 border border-white/5 text-[10px] space-y-1.5">
-                <div className="flex items-center gap-1.5 text-slate-300">
-                  <span className="font-semibold text-slate-200">{"备份文件位置："}</span>
-                  <span className="font-mono text-blue-300">%USERPROFILE%\\.any-version\\backup\\manage_{pid}_*.json</span>
+              {!(ui.isSimpleManage || status.is_simple_managed) && (
+                <div className="p-2.5 rounded-lg bg-black/20 border border-white/5 text-[10px] space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-slate-300">
+                    <span className="font-semibold text-slate-200">{"备份文件位置："}</span>
+                    <span className="font-mono text-blue-300">%USERPROFILE%\\.any-version\\backup\\manage_{pid}_*.json</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-slate-300">
+                    <span className="font-semibold text-slate-200">{isUnmanage ? "托管时已备份：" : "取消托管时："}</span>
+                    <span>{isUnmanage ? "将从备份还原所有环境变量" : "将从备份还原所有环境变量"}</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5 text-slate-300">
-                  <span className="font-semibold text-slate-200">{isUnmanage ? "托管时已备份：" : "取消托管时："}</span>
-                  <span>{isUnmanage ? "将从备份还原所有环境变量" : "将从备份还原所有环境变量"}</span>
-                </div>
-              </div>
+              )}
 
               <div className="flex items-center gap-2 pt-1">
                 {isUnmanage ? (
@@ -827,7 +941,11 @@ export default function ProjectDetailPanel({
 
         <div className="flex items-center justify-between">
           <div className="text-[10px] text-slate-500">
-            {status.managed ? "托管中: 环境变量和 PATH 已由 AnyVersion 管理" : "未托管: 环境变量由系统或手动管理"}
+            {status.managed 
+              ? status.is_simple_managed 
+                ? "简单托管中: 环境变量、代理和缓存已配置，不接管版本" 
+                : "托管中: 环境变量和 PATH 已由 AnyVersion 管理" 
+              : "未托管: 环境变量由系统或手动管理"}
           </div>
           <div className="flex items-center gap-2">
             {status.managed ? (
@@ -835,9 +953,20 @@ export default function ProjectDetailPanel({
                 {ui.unmanaging ? "取消托管中..." : "取消托管"}
               </button>
             ) : (
-              <button onClick={handlePreviewManage} disabled={ui.managing} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]">
-                {ui.managing ? "托管中..." : "托管此项目"}
-              </button>
+              def?.simple_mode ? (
+                <button onClick={() => handlePreviewManage(true)} disabled={ui.managing} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]">
+                  {ui.managing ? "托管中..." : "托管此项目"}
+                </button>
+              ) : (
+                <>
+                  <button onClick={() => handlePreviewManage(true)} disabled={ui.managing} className="px-4 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98]">
+                    {"简单托管"}
+                  </button>
+                  <button onClick={() => handlePreviewManage(false)} disabled={ui.managing} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]">
+                    {ui.managing ? "托管中..." : "完全托管"}
+                  </button>
+                </>
+              )
             )}
           </div>
         </div>

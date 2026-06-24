@@ -56,7 +56,7 @@ pub fn get_project_detail(id: &str) -> Result<ProjectDetail, String> {
 }
 
 /// 预览托管操作步骤
-pub fn preview_manage(id: &str) -> Result<ManagePreview, String> {
+pub fn preview_manage(id: &str, is_simple: Option<bool>) -> Result<ManagePreview, String> {
     let def = registry::find_by_id(id)
         .ok_or_else(|| format!("未找到项目: {}", id))?;
 
@@ -65,6 +65,22 @@ pub fn preview_manage(id: &str) -> Result<ManagePreview, String> {
     // 检测本地安装
     let (local_install_root, local_install_source) = detect_install_source(&def);
     let has_local = local_install_root.is_some();
+
+    let use_simple = is_simple.unwrap_or(def.simple_mode);
+
+    if use_simple {
+        steps.push(ManageStep {
+            action: "simple_manage".to_string(),
+            description: "启用简单托管模式：AnyVersion 将管理缓存目录、代理和镜像配置，不控制其版本，不修改核心环境变量。".to_string(),
+            target: id.to_string(),
+        });
+        return Ok(ManagePreview {
+            steps,
+            has_local_install: has_local,
+            local_install_root,
+            local_install_source,
+        });
+    }
 
     if has_local {
         steps.push(ManageStep {
@@ -179,9 +195,10 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
 
     // 是否被 AnyVersion 托管
     let managed = config.managed_items.contains(id.as_str());
+    let is_simple_managed = def.simple_mode || config.simple_managed_items.contains(id.as_str());
 
-    // 安装来源检测（使用 sdk_resolver）—— 仅未托管时报告，托管后旧版信息在"旧版数据"选项卡展示
-    let (install_source, install_root) = if managed {
+    // 安装来源检测（使用 sdk_resolver）—— 仅在未托管或简单托管时报告，完全托管后在"旧版数据"选项卡展示
+    let (install_source, install_root) = if managed && !is_simple_managed {
         (None, None)
     } else {
         detect_install_source(def)
@@ -191,9 +208,18 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
     let mut installed = !installed_versions.is_empty() || active_version.is_some() || install_root.is_some();
     let mut active_version = active_version;
 
-    // 二次验证：未托管的项目通过 version_exe 在 PATH 中确认可执行文件真实存在
+    // 如果未托管或处于简单托管模式，且尚未解析出激活版本，尝试从本地安装路径中检测版本号作为激活版本
+    if active_version.is_none() && (!managed || is_simple_managed) {
+        if let Some(ref root) = install_root {
+            if let Some(ver) = super::versions::detect_version_from_path(id, Path::new(root)) {
+                active_version = Some(ver);
+            }
+        }
+    }
+
+    // 二次验证：未托管且不是手动指定路径的项目，通过 version_exe 在 PATH 中确认可执行文件真实存在
     // 防止残留的版本目录/junction 或无效的 find_rules 匹配导致误判为"已安装"
-    if installed && !managed {
+    if installed && !managed && install_source.as_deref() != Some("手动指定") {
         if let Some(ref exe) = def.version_exe {
             let found = which_in_path(exe);
             if !found {
@@ -204,7 +230,7 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
     }
 
     // 环境变量状态
-    let env_vars_status = build_env_vars_status(def, &config.links_dir, config, managed);
+    let env_vars_status = build_env_vars_status(def, &config.links_dir, config, managed && !is_simple_managed);
 
     // 缓存状态
     let cache_status = if def.has_cache {
@@ -242,6 +268,7 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
         install_source,
         install_root,
         managed,
+        is_simple_managed,
         env_vars_status,
         cache_status,
         service_status,
@@ -303,6 +330,11 @@ fn resolve_active_version(junction_path: &Path) -> Option<String> {
 
 /// 检测安装来源（通过 sdk_resolver）
 pub fn detect_install_source(def: &ProjectDef) -> (Option<String>, Option<String>) {
+    let config = load_config();
+    if let Some(custom_path) = config.custom_install_paths.get(&def.id) {
+        return (Some("手动指定".to_string()), Some(custom_path.clone()));
+    }
+
     // 转换 types::ResolvePattern -> sdk_resolver::ResolvePattern
     let resolver_rules = to_resolver_rules(&def.find_rules);
 

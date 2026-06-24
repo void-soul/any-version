@@ -12,9 +12,7 @@ import {
   AlertTriangle,
   Trash2,
   Loader2,
-  FileText,
-  Download,
-  Database
+  FileText
 } from "lucide-react";
 
 interface Config {
@@ -39,20 +37,6 @@ interface MigrateProgress {
   file_name: string;
 }
 
-interface ScoopUpdateEntry {
-  id: string;
-  display_name: string;
-  error?: string;
-}
-
-interface ScoopUpdateReport {
-  success: boolean;
-  total: number;
-  updated: ScoopUpdateEntry[];
-  skipped: ScoopUpdateEntry[];
-  failed: ScoopUpdateEntry[];
-}
-
 export default function GlobalSettings() {
   const [versionsDir, setVersionsDir] = useState("");
   const [linksDir, setLinksDir] = useState("");
@@ -71,9 +55,6 @@ export default function GlobalSettings() {
   const [progress, setProgress] = useState<MigrateProgress | null>(null);
   const [deletingOldDirs, setDeletingOldDirs] = useState(false);
   const [deletedOldDirs, setDeletedOldDirs] = useState<string[] | null>(null);
-  const [scoopUpdating, setScoopUpdating] = useState(false);
-  const [scoopReport, setScoopReport] = useState<ScoopUpdateReport | null>(null);
-  const [scoopError, setScoopError] = useState<string | null>(null);
 
   const fetchConfig = async () => {
     setLoading(true);
@@ -200,20 +181,6 @@ export default function GlobalSettings() {
       if (selected) setter(selected as string);
     } catch {
       alert("文件夹选择器不可用，请手动输入路径。");
-    }
-  };
-
-  const handleScoopUpdate = async () => {
-    setScoopUpdating(true);
-    setScoopError(null);
-    setScoopReport(null);
-    try {
-      const report = await invoke<ScoopUpdateReport>("update_projects_from_scoop");
-      setScoopReport(report);
-    } catch (e: any) {
-      setScoopError(e?.toString?.() || "更新失败");
-    } finally {
-      setScoopUpdating(false);
     }
   };
 
@@ -464,84 +431,6 @@ export default function GlobalSettings() {
         )}
       </div>
 
-      {/* Scoop 数据同步 */}
-      <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-4">
-        <div className="flex items-center justify-between pb-3 border-b border-white/5">
-          <div className="flex items-center gap-2">
-            <Database className="w-4 h-4 text-green-400" />
-            <h3 className="text-xs font-semibold text-white">Scoop 数据同步</h3>
-          </div>
-          <button
-            onClick={handleScoopUpdate}
-            disabled={scoopUpdating}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600/20 hover:bg-green-600/40 disabled:opacity-50 text-green-300 rounded-lg text-[10px] border border-green-500/20 cursor-pointer transition-all"
-          >
-            <Download className={`w-3 h-3 ${scoopUpdating ? "animate-bounce" : ""}`} />
-            {scoopUpdating ? "同步中..." : "从 Scoop 更新数据"}
-          </button>
-        </div>
-
-        <p className="text-[10px] text-slate-400 leading-relaxed">
-        从 ScoopInstaller 仓库拉取 manifest，辅助填充各工具的下载地址、解压目录、PATH 路径等信息到 <span className="font-mono text-slate-300">projects.json</span>。该功能为可选数据助手，主数据源仍以 projects.json 为准。
-        </p>
-
-        {scoopError && (
-          <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-[10px] text-red-400">
-            {scoopError}
-          </div>
-        )}
-
-        {scoopUpdating && (
-          <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-xl flex items-center gap-2 text-[10px] text-green-300">
-            <Loader2 className="w-3 h-3 animate-spin" />
-            正在从 Scoop 拉取最新数据...
-          </div>
-        )}
-
-        {scoopReport && (
-          <div className="space-y-2 text-[10px]">
-            <div className="flex items-center gap-3 text-slate-300">
-              <span className="text-emerald-400 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> 已更新 {scoopReport.updated.length} 个
-              </span>
-              <span className="text-slate-500">跳过 {scoopReport.skipped.length} 个</span>
-              {scoopReport.failed.length > 0 && (
-                <span className="text-red-400">失败 {scoopReport.failed.length} 个</span>
-              )}
-            </div>
-
-            {scoopReport.updated.length > 0 && (
-              <div className="p-2 bg-emerald-500/5 border border-emerald-500/10 rounded-lg">
-                <p className="text-emerald-400 font-semibold mb-1">已更新：</p>
-                {scoopReport.updated.map((e) => (
-                  <p key={e.id} className="text-slate-400 pl-3">• {e.display_name}</p>
-                ))}
-              </div>
-            )}
-
-            {scoopReport.failed.length > 0 && (
-              <div className="p-2 bg-red-500/5 border border-red-500/10 rounded-lg">
-                <p className="text-red-400 font-semibold mb-1">失败：</p>
-                {scoopReport.failed.map((e) => (
-                  <p key={e.id} className="text-red-400/80 pl-3">
-                    • {e.display_name} — {e.error}
-                  </p>
-                ))}
-              </div>
-            )}
-
-            <p className="text-slate-500">
-              下次安装 SDK 时将直接使用已同步的数据，无需联网访问 Scoop。
-            </p>
-          </div>
-        )}
-
-        {!scoopReport && !scoopUpdating && !scoopError && (
-          <p className="text-[10px] text-slate-500">
-            点击按钮从 ScoopInstaller 仓库获取最新的安装配置信息。
-          </p>
-        )}
-      </div>
 
     </div>
   );

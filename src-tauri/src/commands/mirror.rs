@@ -287,7 +287,7 @@ registry = "https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index"
                 }
             }
         }
-        _ => return Err(format!("鏈煡鐨勫伐鍏? {}", tool)),
+        _ => return Err(format!("未知的工具: {}", tool)),
     }
 
     Ok(())

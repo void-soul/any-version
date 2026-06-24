@@ -82,12 +82,22 @@ export default function ProjectListPanel({
                 }`}>
                 <div className="flex-1 min-w-0 flex items-center gap-2">
                   <span className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                    p.managed ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400"
+                    p.managed 
+                      ? p.is_simple_managed 
+                        ? "bg-amber-500/15 text-amber-400" 
+                        : "bg-emerald-500/15 text-emerald-400" 
+                      : "bg-slate-500/10 text-slate-500"
                   }`}>
                     {p.managed ? "✓" : "✗"}
                   </span>
                   <div className="min-w-0 flex items-center gap-1">
-                    <span className={`font-semibold text-[11px] truncate ${p.managed ? "text-emerald-100" : "text-white"}`}>
+                    <span className={`font-semibold text-[11px] truncate ${
+                      p.managed 
+                        ? p.is_simple_managed 
+                          ? "text-amber-100/90" 
+                          : "text-emerald-100" 
+                        : "text-white"
+                    }`}>
                       {p.display_name}
                     </span>
                     <span className={`flex-shrink-0 px-1 py-px rounded text-[7px] font-semibold border ${

@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "any-version"
-version = "2.1.1"
+version = "2.1.2"
 dependencies = [
  "bzip2 0.4.4",
  "chrono",

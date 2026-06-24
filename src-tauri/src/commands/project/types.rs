@@ -151,6 +151,9 @@ pub struct PackageManagerDef {
     pub pkg_list_cmd: Option<String>,
     /// 镜像设置命令模板
     pub mirror_cmd_template: Option<String>,
+    /// 镜像检测命令（当 set/get 替换不适用时使用，如 PowerShell 环境变量场景）
+    #[serde(default)]
+    pub mirror_detect_cmd: Option<String>,
     /// 可用镜像选项
     pub mirror_options: Option<Vec<MirrorOption>>,
 
@@ -205,17 +208,6 @@ pub struct PackageManagerDef {
     pub cache_config_source: Option<CacheConfigSource>,
 }
 
-/// Scoop 引用：指向 ScoopInstaller 仓库中的 manifest
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ScoopRef {
-    /// Bucket 名称（默认 "Main"）
-    #[serde(default = "default_bucket")]
-    pub bucket: String,
-    /// manifest 文件名（不含 .json 后缀）
-    pub name: String,
-}
-
-fn default_bucket() -> String { "Main".to_string() }
 
 /// 项目定义（存储在 projects.json）
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -263,6 +255,9 @@ pub struct ProjectDef {
 
     /// 是否为本地服务
     pub is_service: bool,
+    /// 是否为简单托管模式（仅缓存/代理/镜像/数据目录管理，不控制版本/环境变量）
+    #[serde(default)]
+    pub simple_mode: bool,
     /// 默认端口
     pub default_port: Option<u16>,
     /// 数据目录
@@ -283,9 +278,13 @@ pub struct ProjectDef {
     #[serde(default)]
     pub version_exe: Option<String>,
 
-    /// Scoop manifest 引用（用于从 Scoop 更新安装参数）
+    /// 是否为 Git 仓库管理的项目（如 vcpkg，克隆下来后需要编译初始化）
     #[serde(default)]
-    pub scoop_ref: Option<ScoopRef>,
+    pub is_git_repo: bool,
+    /// 编译/初始化脚本名称（如 bootstrap-vcpkg.bat）
+    #[serde(default)]
+    pub bootstrap_cmd: Option<String>,
+
 
     /// 下载 URL 模板（{version} 为占位符）
     #[serde(default)]
@@ -302,12 +301,9 @@ pub struct ProjectDef {
     #[serde(default)]
     pub merge_extracted_subdirs: bool,
     /// 需要添加到 PATH 的目录列表（相对于安装根目录）
-    /// 由 Scoop 更新工具自动填充，也支持手动定义
+    /// 支持手动定义
     #[serde(default)]
     pub bin_dirs: Option<Vec<String>>,
-    /// Scoop 数据最后同步时间（ISO 8601）
-    #[serde(default)]
-    pub scoop_updated_at: Option<String>,
     /// 版本前缀 → URL 模板映射（如 java 的 adoptium-/microsoft- 前缀）
     #[serde(default)]
     pub version_prefix_map: Option<std::collections::HashMap<String, String>>,
@@ -403,6 +399,8 @@ pub struct ProjectStatus {
     pub install_root: Option<String>,
     /// 是否被 AnyVersion 托管管理
     pub managed: bool,
+    /// 是否为简单托管模式（仅缓存/代理/镜像/数据目录管理）
+    pub is_simple_managed: bool,
     /// 环境变量状态列表
     pub env_vars_status: Vec<EnvVarStatus>,
     /// 缓存状态（如果项目有缓存）

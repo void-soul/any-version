@@ -1,4 +1,4 @@
-﻿use std::fs;
+use std::fs;
 use std::path::{Path, PathBuf};
 use serde::{Serialize, Deserialize};
 use tauri::Emitter;
@@ -8,6 +8,10 @@ pub struct Config {
     pub versions_dir: String,
     pub links_dir: String,
     pub managed_items: std::collections::HashSet<String>,
+    #[serde(default)]
+    pub simple_managed_items: std::collections::HashSet<String>,
+    #[serde(default)]
+    pub custom_install_paths: std::collections::HashMap<String, String>,
     pub original_envs: std::collections::HashMap<String, String>,
     pub original_paths: std::collections::HashMap<String, Vec<String>>,
 }
@@ -47,6 +51,8 @@ pub fn load_config() -> Config {
         versions_dir: base_dir.join("versions").to_string_lossy().to_string(),
         links_dir: base_dir.join("links").to_string_lossy().to_string(),
         managed_items: std::collections::HashSet::new(),
+        simple_managed_items: std::collections::HashSet::new(),
+        custom_install_paths: std::collections::HashMap::new(),
         original_envs: std::collections::HashMap::new(),
         original_paths: std::collections::HashMap::new(),
     };

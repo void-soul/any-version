@@ -985,7 +985,7 @@ fn get_download_url(project_id: &str, version: &str) -> Result<DownloadInfo, Str
         }
     }
 
-    // 3. 使用通用 download_url_template（由 Scoop 更新或手动定义）
+    // 3. 使用通用 download_url_template（手动定义）
     if let Some(ref template) = def.download_url_template {
         let major_version = version_clean.split('.').next().unwrap_or("0");
         let url = template

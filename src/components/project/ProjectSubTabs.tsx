@@ -876,7 +876,21 @@ export function LegacyTab({ projectId }: { projectId: string }) {
 //  每个包管理器（npm/yarn/pnpm）都有自己的管理页，包含：
 //  版本检测、缓存管理、镜像配置、代理设置、全局包管理
 // ═══════════════════════════════════════
-export function PackageManagerTab({ projectId, pm, hidden }: { projectId: string; pm: PackageManagerDef; hidden?: boolean }) {
+export function PackageManagerTab({ 
+  projectId, 
+  pm, 
+  hidden, 
+  installRoot, 
+  installSource,
+  projectDef
+}: { 
+  projectId: string; 
+  pm: PackageManagerDef; 
+  hidden?: boolean; 
+  installRoot?: string | null; 
+  installSource?: string | null; 
+  projectDef?: ProjectDef | null;
+}) {
   const [checking, setChecking] = useState(false);
   const [detectStep, setDetectStep] = useState("");
   const [installed, setInstalled] = useState(false);
@@ -885,6 +899,12 @@ export function PackageManagerTab({ projectId, pm, hidden }: { projectId: string
   const [installProgress, setInstallProgress] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
+
+  // Git repo states (通用 is_git_repo 驱动)
+  const [gitRepoStatus, setGitRepoStatus] = useState<any>(null);
+  const [checkingGitRepo, setCheckingGitRepo] = useState(false);
+  const [bootstrapping, setBootstrapping] = useState(false);
+  const [updatingGitRepo, setUpdatingGitRepo] = useState(false);
 
   // 缓存 & 数据存储管理
   type ParentLink = { parent_path: string; parent_target: string; child_rel: string };
@@ -1078,6 +1098,42 @@ export function PackageManagerTab({ projectId, pm, hidden }: { projectId: string
     const steps: Array<{ label: string; run: () => Promise<void> }> = [];
     setDetectStep(`正在检测 ${pm.display_name}...`);
 
+    // Step 0: git repo (is_git_repo) bootstrap & update status
+    if (projectDef?.is_git_repo && installRoot) {
+      const exeName = (projectDef as any).version_exe ?? pm.id;
+      const bootstrapCmd = projectDef.bootstrap_cmd ?? null;
+      steps.push({
+        label: `正在检测 ${pm.display_name} 初始化状态与更新...`,
+        run: async () => {
+          try {
+            setCheckingGitRepo(true);
+            const status = await invoke<any>("check_git_repo_status", { path: installRoot, exeName, bootstrapCmd });
+            setGitRepoStatus(status);
+
+            // 自动初始化逻辑：符合 git 仓库且没有可执行文件，则自动执行初始化脚本
+            if (status.is_git && !status.has_exe && !bootstrapping && bootstrapCmd) {
+              setBootstrapping(true);
+              setDetectStep(`检测到 ${pm.display_name} 尚未初始化，正在自动编译...`);
+              try {
+                await invoke("bootstrap_git_repo", { path: installRoot, cmd: bootstrapCmd });
+                // 初始化成功后，重新获取状态
+                const newStatus = await invoke<any>("check_git_repo_status", { path: installRoot, exeName, bootstrapCmd });
+                setGitRepoStatus(newStatus);
+              } catch (err) {
+                alert(`自动初始化 ${pm.display_name} 失败: ${err}`);
+              } finally {
+                setBootstrapping(false);
+              }
+            }
+          } catch (e) {
+            console.error(e);
+          } finally {
+            setCheckingGitRepo(false);
+          }
+        }
+      });
+    }
+
     // Step 1: version
     steps.push({
       label: `正在检测 ${pm.display_name} 版本...`,
@@ -1166,12 +1222,14 @@ export function PackageManagerTab({ projectId, pm, hidden }: { projectId: string
         label: `正在检测 ${pm.display_name} 当前镜像源...`,
         run: async () => {
           try {
-            if (pm.mirror_cmd_template) {
-              const getCmd = pm.mirror_cmd_template.replace("set ", "get ").replace("{url}", "");
+            if (pm.mirror_detect_cmd || pm.mirror_cmd_template) {
+              const getCmd = pm.mirror_detect_cmd ?? pm.mirror_cmd_template!.replace("set ", "get ").replace("{url}", "");
               const out = await invoke<string>("run_cmd_capture", { cmd: getCmd });
               const v = out.trim();
               if (v && v !== "null" && v !== "undefined") {
                 setCurrentMirror(v);
+              } else {
+                setCurrentMirror(null);
               }
             } else {
               const list = await invoke<Array<{ tool: string; current: string; mirror_name: string }>>("get_mirrors_list");
@@ -1258,7 +1316,7 @@ export function PackageManagerTab({ projectId, pm, hidden }: { projectId: string
       } else {
         await invoke("set_mirror", { tool: pm.id, mirrorType });
       }
-      setCurrentMirror(url);
+      setCurrentMirror(url || null);
     } catch (e: unknown) {
       alert(`切换镜像失败: ${e}`);
     } finally {
@@ -1731,8 +1789,84 @@ export function PackageManagerTab({ projectId, pm, hidden }: { projectId: string
         )}
       </div>
 
+      {/* Git Update Notification (通用 is_git_repo) */}
+      {projectDef?.is_git_repo && gitRepoStatus?.has_update && (
+        <div className="glass-panel rounded-2xl p-4 border border-amber-500/15 bg-amber-500/5 flex items-center justify-between animate-fadeIn mb-4">
+          <div className="flex items-center gap-2.5 flex-1 min-w-0">
+            <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-amber-300">检测到 {pm.display_name} 有新的 Git 更新</p>
+              <p className="text-[11px] text-amber-400/80 mt-0.5 truncate">
+                当前版本: <span className="font-mono">{gitRepoStatus.current_commit}</span> &rarr; 最新版本: <span className="font-mono">{gitRepoStatus.latest_commit}</span>
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={async () => {
+              if (!installRoot) return;
+              setUpdatingGitRepo(true);
+              setDetectStep(`正在从 Git 拉取最新代码并重新初始化 ${pm.display_name}...`);
+              try {
+                await invoke("update_git_repo", { path: installRoot, bootstrapCmd: projectDef.bootstrap_cmd ?? null });
+                await runDetection();
+              } catch (e) {
+                alert(`更新 ${pm.display_name} 失败: ${e}`);
+              } finally {
+                setUpdatingGitRepo(false);
+                setDetectStep("");
+              }
+            }}
+            disabled={updatingGitRepo}
+            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1 flex-shrink-0 ml-2"
+          >
+            {updatingGitRepo ? (
+              <><Loader className="w-3 h-3 animate-spin" />正在更新...</>
+            ) : (
+              `更新 ${pm.display_name}`
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Git 仓库尚未初始化提示 (通用 is_git_repo) */}
+      {projectDef?.is_git_repo && gitRepoStatus?.is_git && !gitRepoStatus?.has_exe && !checking && (
+        <div className="glass-panel rounded-2xl p-6 border border-blue-500/15 bg-blue-500/5 text-center space-y-4 animate-fadeIn">
+          <Package className="w-10 h-10 text-blue-400 mx-auto opacity-70 animate-pulse" />
+          <div>
+            <p className="text-blue-300 text-sm font-semibold">{pm.display_name} 尚未初始化</p>
+            <p className="text-[12px] text-blue-400/80 mt-1 max-w-md mx-auto leading-relaxed">
+              检测到您指定的目录为 {pm.display_name} 仓库，但尚未生成可执行文件。您需要运行初始化脚本进行编译。
+            </p>
+          </div>
+          <button
+            onClick={async () => {
+              if (!installRoot || !projectDef.bootstrap_cmd) return;
+              setBootstrapping(true);
+              setDetectStep(`正在编译并初始化 ${pm.display_name}...`);
+              try {
+                await invoke("bootstrap_git_repo", { path: installRoot, cmd: projectDef.bootstrap_cmd });
+                await runDetection();
+              } catch (e) {
+                alert(`初始化 ${pm.display_name} 失败: ${e}`);
+              } finally {
+                setBootstrapping(false);
+                setDetectStep("");
+              }
+            }}
+            disabled={bootstrapping}
+            className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all inline-flex items-center gap-1.5"
+          >
+            {bootstrapping ? (
+              <><Loader className="w-3.5 h-3.5 animate-spin" />正在编译初始化...</>
+            ) : (
+              "编译并初始化"
+            )}
+          </button>
+        </div>
+      )}
+
       {/* 未安装提示 */}
-      {hasChecked && !installed && !checking && (
+      {hasChecked && !installed && !checking && !(projectDef?.is_git_repo && gitRepoStatus?.is_git && !gitRepoStatus?.has_exe) && (
         <div className="glass-panel rounded-2xl p-6 border border-white/5 bg-white/2 text-center animate-fadeIn">
           <Package className="w-10 h-10 text-slate-500 mx-auto mb-3 opacity-50" />
           <p className="text-slate-400 text-sm font-semibold">{pm.display_name} 未安装</p>
@@ -1866,13 +2000,13 @@ export function PackageManagerTab({ projectId, pm, hidden }: { projectId: string
           <div className="flex items-center gap-2">
             <Globe className="w-4 h-4 text-blue-400" />
             <h4 className="text-xs font-semibold text-white">镜像配置</h4>
-            {currentMirror && (
-              <span className="ml-auto text-[11px] text-slate-400 font-mono bg-black/20 px-2 py-0.5 rounded border border-white/5 break-all max-w-[400px]">当前: {currentMirror}</span>
-            )}
+            <span className="ml-auto text-[11px] text-slate-400 font-mono bg-black/20 px-2 py-0.5 rounded border border-white/5 break-all max-w-[400px]">
+              当前: {currentMirror || "官方源（默认）"}
+            </span>
           </div>
           <div className="grid grid-cols-1 gap-1.5">
             {pm.mirror_options.map((opt) => {
-              const isCurrent = currentMirror === opt.url;
+              const isCurrent = opt.url === "" ? !currentMirror : currentMirror === opt.url;
               return (
                 <button key={opt.mirror_type} onClick={() => handleSwitchMirror(opt.url, opt.mirror_type)} disabled={switchingMirror !== null || isCurrent}
                   className={`flex items-center justify-between px-3 py-2 rounded-lg text-[13px] font-medium cursor-pointer transition-all border
@@ -1880,7 +2014,7 @@ export function PackageManagerTab({ projectId, pm, hidden }: { projectId: string
                   <span>{opt.name}</span>
                   <div className="flex items-center gap-1.5 ml-auto">
                     <span className={`text-[12px] ${isCurrent ? "text-emerald-400" : "text-slate-500"} font-mono`}>
-                      {opt.url}
+                      {opt.url || "默认"}
                     </span>
                     {switchingMirror === opt.url ? <Loader className="w-3 h-3 animate-spin text-blue-400" /> : isCurrent && <CheckCircle className="w-3 h-3 text-emerald-400" />}
                   </div>

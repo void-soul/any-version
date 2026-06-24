@@ -144,15 +144,7 @@ Node.js 的环境变量原本有 **5 个级别**：
 | `extra_format` | string \| null | 附加字段格式化方式，如 `"lts_label"` |
 | `max_count` | number \| null | 最大获取数量 |
 
-#### Scoop 引用（可选）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `scoop_ref` | object | 指向 ScoopInstaller 仓库 manifest |
-| `scoop_ref.bucket` | string | Bucket 名称，默认 `"Main"` |
-| `scoop_ref.name` | string | manifest 文件名（不含 `.json` 后缀） |
-
-#### bin_dirs（可选，Scoop 自动填充）
+#### bin_dirs（可选）
 
 | 字段 | 类型 | 说明 |
 |------|------|------|

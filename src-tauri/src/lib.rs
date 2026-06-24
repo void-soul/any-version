@@ -37,6 +37,9 @@ pub fn sync_process_path() {
                 // 检查是否匹配任何已托管项目的查找规则，若匹配则将其过滤掉以防进程命令劫持（例如过滤掉旧版 D:\tool\go\bin\go.exe）
                 let mut matches_managed_rule = false;
                 for managed_id in &config.managed_items {
+                    if config.simple_managed_items.contains(managed_id) {
+                        continue;
+                    }
                     if let Some(def) = commands::project::registry::find_by_id(managed_id) {
                         for rule in &def.find_rules {
                             match &rule.pattern {
@@ -179,6 +182,10 @@ pub fn run() {
             commands::project::commands::project_manage,
             commands::project::commands::project_unmanage,
             commands::project::commands::project_preview_unmanage,
+            commands::project::commands::project_set_custom_path,
+            commands::project::commands::check_git_repo_status,
+            commands::project::commands::bootstrap_git_repo,
+            commands::project::commands::update_git_repo,
             commands::project::commands::run_cmd_capture,
             commands::project::commands::get_pkg_cache_info,
             commands::project::commands::migrate_pkg_storage,
@@ -193,7 +200,6 @@ pub fn run() {
             commands::project::versions::project_cancel_install,
             commands::project::versions::project_uninstall_version,
             commands::project::versions::project_use_version,
-            commands::project::scoop_manifest::update_projects_from_scoop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

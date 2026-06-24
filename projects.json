@@ -1316,5 +1316,331 @@
         "pkg_homepage_template": "https://pub.dev/packages/{pkg}"
       }
     ]
+  },
+  {
+    "id": "deno",
+    "display_name": "Deno",
+    "category": "language",
+    "official_website": "https://deno.com",
+    "env_vars": [
+      {
+        "name": "DENO_DIR",
+        "desc": "Deno 缓存与数据目录",
+        "check_type": "path",
+        "tier": "clear"
+      }
+    ],
+    "bin_dirs": [
+      ""
+    ],
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "scoop\\apps\\deno",
+          "exe_name": "deno.exe"
+        },
+        "source_label": "Scoop",
+        "priority": 40,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "",
+          "exe_name": "deno.exe"
+        },
+        "source_label": "系统 PATH",
+        "priority": 90,
+        "root_offset": 0
+      }
+    ],
+    "has_cache": false,
+    "cache_detect_cmd": null,
+    "cache_default_path": null,
+    "has_mirror": false,
+    "mirror_options": null,
+    "has_pkg": false,
+    "pkg_manager": null,
+    "pkg_homepage_template": null,
+    "is_service": false,
+    "default_port": null,
+    "data_dir": null,
+    "log_dir": null,
+    "config_file": null,
+    "start_cmd": null,
+    "stop_cmd": null,
+    "download_url_template": "https://github.com/denoland/deno/releases/download/v{version}/deno-x86_64-pc-windows-msvc.zip",
+    "download_file_ext": "zip",
+    "version_cmd": "deno --version",
+    "version_exe": "deno",
+    "version_parse_regex": "deno (\\d+\\.\\d+\\.\\d+)",
+    "remote_versions_url": "https://cdn.deno.land/deno/meta/versions.json",
+    "remote_versions_config": {
+      "type": "json_api",
+      "response_type": "object_with_array",
+      "array_field": "versions",
+      "version_field": "",
+      "version_transform": "trim_prefix:v",
+      "max_count": 60
+    },
+    "package_managers": [
+      {
+        "id": "deno",
+        "display_name": "Deno",
+        "built_in": true,
+        "install_cmd": null,
+        "version_cmd": "deno --version",
+        "version_exe": "deno",
+        "cache_detect_cmd": null,
+        "cache_default_path": "{home}\\AppData\\Local\\deno",
+        "cache_env_var": "DENO_DIR",
+        "cache_set_cmd_template": null,
+        "data_detect_cmd": null,
+        "data_default_path": null,
+        "data_env_var": null,
+        "data_set_cmd_template": null,
+        "proxy_detect_cmd": null,
+        "proxy_set_cmd_template": null,
+        "mirror_options": null
+      }
+    ]
+  },
+  {
+    "id": "bun",
+    "display_name": "Bun",
+    "category": "language",
+    "official_website": "https://bun.sh",
+    "env_vars": [],
+    "bin_dirs": [
+      ""
+    ],
+    "extract_subdir": "bun-windows-x64",
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "scoop\\apps\\bun",
+          "exe_name": "bun.exe"
+        },
+        "source_label": "Scoop",
+        "priority": 40,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": ".bun\\bin",
+          "exe_name": "bun.exe"
+        },
+        "source_label": "Bun Install",
+        "priority": 50,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "",
+          "exe_name": "bun.exe"
+        },
+        "source_label": "系统 PATH",
+        "priority": 90,
+        "root_offset": 0
+      }
+    ],
+    "has_cache": false,
+    "cache_detect_cmd": null,
+    "cache_default_path": null,
+    "has_mirror": false,
+    "mirror_options": null,
+    "has_pkg": false,
+    "pkg_manager": null,
+    "pkg_homepage_template": null,
+    "is_service": false,
+    "default_port": null,
+    "data_dir": null,
+    "log_dir": null,
+    "config_file": null,
+    "start_cmd": null,
+    "stop_cmd": null,
+    "download_url_template": "https://github.com/oven-sh/bun/releases/download/bun-v{version}/bun-windows-x64.zip",
+    "download_file_ext": "zip",
+    "version_cmd": "bun --version",
+    "version_exe": "bun",
+    "version_parse_regex": "(\\d+\\.\\d+\\.\\d+)",
+    "remote_versions_url": "https://data.jsdelivr.com/v1/packages/npm/bun",
+    "remote_versions_config": {
+      "type": "json_api",
+      "response_type": "object_with_array",
+      "array_field": "versions",
+      "version_field": "version",
+      "max_count": 60
+    },
+    "package_managers": [
+      {
+        "id": "bun",
+        "display_name": "Bun Modules",
+        "built_in": true,
+        "install_cmd": null,
+        "version_cmd": "bun --version",
+        "version_exe": "bun",
+        "cache_detect_cmd": null,
+        "cache_default_path": "{home}\\.bun\\install\\cache",
+        "cache_env_var": "BUN_INSTALL_CACHE_DIR",
+        "cache_set_cmd_template": null,
+        "data_detect_cmd": null,
+        "data_default_path": null,
+        "data_env_var": null,
+        "data_set_cmd_template": null,
+        "proxy_detect_cmd": null,
+        "proxy_set_cmd_template": null,
+        "mirror_options": null
+      }
+    ]
+  },
+  {
+    "id": "vcpkg",
+    "display_name": "vcpkg",
+    "category": "tool",
+    "official_website": "https://github.com/microsoft/vcpkg",
+    "simple_mode": true,
+    "is_git_repo": true,
+    "bootstrap_cmd": "bootstrap-vcpkg.bat",
+    "env_vars": [],
+    "bin_dirs": [
+      ""
+    ],
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "env_bin",
+          "env_var": "VCPKG_ROOT",
+          "bin_sub": "",
+          "exe_name": "vcpkg.exe"
+        },
+        "source_label": "VCPKG_ROOT",
+        "priority": 10,
+        "root_offset": 0
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "",
+          "exe_name": "vcpkg.exe"
+        },
+        "source_label": "系统 PATH",
+        "priority": 90,
+        "root_offset": 0
+      }
+    ],
+    "has_cache": true,
+    "cache_detect_cmd": null,
+    "cache_default_path": "{home}\\AppData\\Local\\vcpkg\\downloads",
+    "has_mirror": true,
+    "mirror_options": [
+      {
+        "mirror_type": "sjtu",
+        "name": "上海交通大学 vcpkg 镜像",
+        "url": "clear;x-azurl=https://mirror.sjtu.edu.cn/vcpkg"
+      }
+    ],
+    "has_pkg": false,
+    "pkg_manager": null,
+    "pkg_homepage_template": null,
+    "is_service": false,
+    "default_port": null,
+    "version_cmd": "vcpkg --version",
+    "version_exe": "vcpkg",
+    "package_managers": [
+      {
+        "id": "vcpkg",
+        "display_name": "vcpkg",
+        "built_in": true,
+        "install_cmd": null,
+        "version_cmd": "vcpkg --version",
+        "version_exe": "vcpkg",
+        "cache_detect_cmd": null,
+        "cache_default_path": "{home}\\AppData\\Local\\vcpkg\\downloads",
+        "cache_env_var": "VCPKG_DOWNLOADS",
+        "cache_set_cmd_template": null,
+        "data_detect_cmd": null,
+        "data_default_path": null,
+        "data_env_var": null,
+        "data_set_cmd_template": null,
+        "proxy_detect_cmd": "powershell -Command \"[Environment]::GetEnvironmentVariable('http_proxy','User')\"",
+        "proxy_set_cmd_template": "powershell -Command \"`$u='{url}'; [Environment]::SetEnvironmentVariable('http_proxy', `$u, 'User'); [Environment]::SetEnvironmentVariable('https_proxy', `$u, 'User')\"",
+        "mirror_options": [
+          {
+            "mirror_type": "official",
+            "name": "官方源（默认）",
+            "url": ""
+          },
+          {
+            "mirror_type": "sjtu",
+            "name": "上海交通大学 vcpkg 镜像",
+            "url": "clear;x-azurl=https://mirror.sjtu.edu.cn/vcpkg"
+          }
+        ],
+        "mirror_cmd_template": "powershell -Command \"`$val='{url}'; if (`$val -ne '') { [Environment]::SetEnvironmentVariable('X_VCPKG_ASSET_SOURCES', `$val, 'User') } else { [Environment]::SetEnvironmentVariable('X_VCPKG_ASSET_SOURCES', `$null, 'User') }\"",
+        "mirror_detect_cmd": "powershell -Command \"[Environment]::GetEnvironmentVariable('X_VCPKG_ASSET_SOURCES', 'User')\""
+      }
+    ]
+  },
+  {
+    "id": "cmake",
+    "display_name": "CMake",
+    "category": "tool",
+    "official_website": "https://cmake.org",
+    "simple_mode": true,
+    "env_vars": [],
+    "bin_dirs": [
+      ""
+    ],
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "",
+          "exe_name": "cmake.exe"
+        },
+        "source_label": "系统 PATH",
+        "priority": 90,
+        "root_offset": 0
+      }
+    ],
+    "has_cache": true,
+    "cache_detect_cmd": null,
+    "cache_default_path": "{home}\\.ccache",
+    "has_mirror": false,
+    "mirror_options": null,
+    "has_pkg": false,
+    "pkg_manager": null,
+    "pkg_homepage_template": null,
+    "is_service": false,
+    "default_port": null,
+    "version_cmd": "cmake --version",
+    "version_exe": "cmake",
+    "package_managers": [
+      {
+        "id": "cmake",
+        "display_name": "CMake",
+        "built_in": true,
+        "install_cmd": null,
+        "version_cmd": "cmake --version",
+        "version_exe": "cmake",
+        "cache_detect_cmd": null,
+        "cache_default_path": "{home}\\.ccache",
+        "cache_env_var": "CCACHE_DIR",
+        "cache_set_cmd_template": null,
+        "data_detect_cmd": null,
+        "data_default_path": null,
+        "data_env_var": null,
+        "data_set_cmd_template": null,
+        "proxy_detect_cmd": "powershell -Command \"[Environment]::GetEnvironmentVariable('http_proxy','User')\"",
+        "proxy_set_cmd_template": "powershell -Command \"`$u='{url}'; [Environment]::SetEnvironmentVariable('http_proxy', `$u, 'User'); [Environment]::SetEnvironmentVariable('https_proxy', `$u, 'User')\"",
+        "mirror_options": null,
+        "mirror_cmd_template": null
+      }
+    ]
   }
 ]

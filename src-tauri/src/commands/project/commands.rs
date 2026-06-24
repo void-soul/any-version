@@ -26,8 +26,8 @@ pub fn project_detail(id: String) -> Result<ProjectDetail, String> {
 
 /// 预览托管操作步骤
 #[tauri::command]
-pub fn project_preview_manage(id: String) -> Result<ManagePreview, String> {
-    scanner::preview_manage(&id)
+pub fn project_preview_manage(id: String, is_simple: Option<bool>) -> Result<ManagePreview, String> {
+    scanner::preview_manage(&id, is_simple)
 }
 
 /// 托管项目（将项目纳入 AnyVersion 管理）
@@ -37,10 +37,10 @@ pub fn project_preview_manage(id: String) -> Result<ManagePreview, String> {
 /// 2. 清理 PATH 中的外部条目
 /// 3. 设置项目环境变量（指向 AnyVersion 管理目录）
 /// 4. 添加 bin 路径到 PATH
-/// 5. 将项目 ID 添加到 managed_items
+/// 5. 将项目 ID 添加 to managed_items
 /// 6. 保存配置和管理备份
 #[tauri::command]
-pub fn project_manage(id: String) -> Result<(), String> {
+pub fn project_manage(id: String, is_simple: Option<bool>) -> Result<(), String> {
     use crate::commands::config::load_config;
     use crate::commands::env::{get_registry_env_any, set_registry_env, add_to_user_path};
     use super::registry;
@@ -50,8 +50,16 @@ pub fn project_manage(id: String) -> Result<(), String> {
 
     let mut config = load_config();
 
-    // 如果已托管，直接返回
-    if config.managed_items.contains(id.as_str()) {
+    let use_simple = is_simple.unwrap_or(def.simple_mode);
+
+    if use_simple {
+        // 如果已托管，直接返回
+        if config.managed_items.contains(id.as_str()) {
+            return Ok(());
+        }
+        config.managed_items.insert(id.clone());
+        config.simple_managed_items.insert(id.clone());
+        crate::commands::config::save_config(&config)?;
         return Ok(());
     }
 
@@ -162,6 +170,7 @@ pub fn project_manage(id: String) -> Result<(), String> {
 
     // 3. 添加到 managed_items
     config.managed_items.insert(id.clone());
+    config.simple_managed_items.remove(&id);
     crate::commands::config::save_config(&config)?;
 
     // 4. 设置项目环境变量（仅语言本身的变量，包管理器变量独立管理）
@@ -236,8 +245,16 @@ pub fn project_unmanage(id: String) -> Result<(), String> {
 
     let mut config = load_config();
 
-    // 如果未托管，直接返回
-    if !config.managed_items.contains(id.as_str()) {
+    let is_simple = def.simple_mode || config.simple_managed_items.contains(&id);
+
+    if is_simple {
+        // 如果未托管，直接返回
+        if !config.managed_items.contains(id.as_str()) {
+            return Ok(());
+        }
+        config.managed_items.remove(&id);
+        config.simple_managed_items.remove(&id);
+        crate::commands::config::save_config(&config)?;
         return Ok(());
     }
 
@@ -281,6 +298,7 @@ pub fn project_unmanage(id: String) -> Result<(), String> {
 
     // 5. 从 managed_items 中移除
     config.managed_items.remove(&id);
+    config.simple_managed_items.remove(&id);
     crate::commands::config::save_config(&config)?;
 
     // 6. 同步当前进程环境变量
@@ -361,6 +379,22 @@ pub fn project_preview_unmanage(id: String) -> Result<ManagePreview, String> {
 
     if !config.managed_items.contains(id.as_str()) {
         return Err("该项目尚未托管".to_string());
+    }
+
+    let is_simple = def.simple_mode || config.simple_managed_items.contains(&id);
+
+    if is_simple {
+        let steps = vec![super::types::ManageStep {
+            action: "simple_unmanage".to_string(),
+            description: "取消托管后，AnyVersion 将不再管理该项目的缓存、代理和镜像配置".to_string(),
+            target: id.clone(),
+        }];
+        return Ok(ManagePreview {
+            steps,
+            has_local_install: false,
+            local_install_root: None,
+            local_install_source: None,
+        });
     }
 
     let mut steps = Vec::new();
@@ -573,6 +607,46 @@ async fn install_pip_internal() -> Result<String, String> {
     }
 }
 
+fn resolve_custom_exe(cmd: &str, config: &crate::commands::config::Config) -> String {
+    let mut parts = cmd.split_whitespace();
+    if let Some(first_word) = parts.next() {
+        let registry = super::registry::registry();
+        for proj in &registry {
+            let matches_proj = proj.id == first_word 
+                || proj.version_exe.as_ref().map(|s| s.as_str()) == Some(first_word);
+            if matches_proj {
+                if let Some(custom_path) = config.custom_install_paths.get(&proj.id) {
+                    let path = std::path::Path::new(custom_path);
+                    let exe = proj.version_exe.as_ref().map(|s| s.as_str()).unwrap_or(&proj.id);
+                    let mut candidates = Vec::new();
+                    candidates.push(path.join(exe));
+                    candidates.push(path.join("bin").join(exe));
+                    #[cfg(windows)]
+                    {
+                        let exe_lower = exe.to_lowercase();
+                        if !exe_lower.ends_with(".exe") && !exe_lower.ends_with(".cmd") && !exe_lower.ends_with(".bat") {
+                            candidates.push(path.join(format!("{}.exe", exe)));
+                            candidates.push(path.join(format!("{}.cmd", exe)));
+                            candidates.push(path.join(format!("{}.bat", exe)));
+                            candidates.push(path.join("bin").join(format!("{}.exe", exe)));
+                            candidates.push(path.join("bin").join(format!("{}.cmd", exe)));
+                            candidates.push(path.join("bin").join(format!("{}.bat", exe)));
+                        }
+                    }
+                    for candidate in candidates {
+                        if candidate.exists() {
+                            let resolved_first = format!("\"{}\"", candidate.to_string_lossy());
+                            let rest = &cmd[first_word.len()..];
+                            return format!("{}{}", resolved_first, rest);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    cmd.to_string()
+}
+
 /// 执行 shell 命令并捕获输出（用于包管理器版本检测、镜像切换等）
 #[tauri::command]
 pub fn run_cmd_capture(cmd: String) -> Result<String, String> {
@@ -582,10 +656,11 @@ pub fn run_cmd_capture(cmd: String) -> Result<String, String> {
         });
     }
 
+    let config = crate::commands::config::load_config();
+    let mut resolved_cmd = resolve_custom_exe(&cmd, &config);
+
     // 将 pip 命令转换为使用本地 active python 运行，以确保多版本/绿色版隔离且正确
-    let mut resolved_cmd = cmd.clone();
-    if cmd == "pip" || cmd.starts_with("pip ") {
-        let config = crate::commands::config::load_config();
+    if resolved_cmd == "pip" || resolved_cmd.starts_with("pip ") {
         let link_dir = std::path::PathBuf::from(&config.links_dir).join("python");
         let active_py = if cfg!(windows) {
             link_dir.join("python.exe")
@@ -594,25 +669,53 @@ pub fn run_cmd_capture(cmd: String) -> Result<String, String> {
         };
         if active_py.exists() {
             let py_str = format!("\"{}\" -m pip", active_py.to_string_lossy());
-            if cmd == "pip" {
+            if resolved_cmd == "pip" {
                 resolved_cmd = py_str;
             } else {
-                resolved_cmd = cmd.replacen("pip", &py_str, 1);
+                resolved_cmd = resolved_cmd.replacen("pip", &py_str, 1);
             }
         }
     }
 
-    let mut command = super::super::hidden_cmd::hidden_cmd("cmd");
+    // PowerShell 命令直接调用 powershell.exe，避免 cmd /c 的引号嵌套问题
+    let is_powershell = cfg!(windows) && {
+        let lower = resolved_cmd.trim_start().to_lowercase();
+        lower.starts_with("powershell ") || lower.starts_with("powershell.exe ")
+    };
 
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.raw_arg(&format!("/c \"{}\"", resolved_cmd));
-    }
-    #[cfg(not(windows))]
-    {
-        command.args(&["/c", &resolved_cmd]);
-    }
+    let mut command = if is_powershell {
+        // 解析 "powershell -Command ..." 结构，提取脚本内容
+        // 直接调用 powershell.exe，脚本作为 -Command 的参数传递
+        let trimmed = resolved_cmd.trim_start();
+        let after_exe = if trimmed.to_lowercase().starts_with("powershell.exe ") {
+            trimmed["powershell.exe ".len()..].trim_start()
+        } else {
+            trimmed["powershell ".len()..].trim_start()
+        };
+        // 提取 -Command 后面的脚本
+        let script = if after_exe.starts_with("-Command ") {
+            after_exe["-Command ".len()..].trim()
+        } else if after_exe.starts_with("-command ") {
+            after_exe["-command ".len()..].trim()
+        } else {
+            after_exe
+        };
+        let mut c = super::super::hidden_cmd::hidden_cmd("powershell.exe");
+        c.args(&["-Command", script]);
+        c
+    } else {
+        let mut c = super::super::hidden_cmd::hidden_cmd("cmd");
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            c.raw_arg(&format!("/c \"chcp 65001 >nul && {}\"", resolved_cmd));
+        }
+        #[cfg(not(windows))]
+        {
+            c.args(&["/c", &resolved_cmd]);
+        }
+        c
+    };
 
     // 注入 NPM_CONFIG_PREFIX，确保 npm install -g 安装到正确的 link_dir
     // （当前进程环境变量可能未同步注册表，这里兜底保证子进程用对 prefix）
@@ -1204,4 +1307,205 @@ pub fn delete_data_dir(project_id: String, path: String) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn project_set_custom_path(id: String, path: String) -> Result<(), String> {
+    use crate::commands::config::{load_config, save_config};
+    let mut config = load_config();
+    if path.is_empty() {
+        config.custom_install_paths.remove(&id);
+    } else {
+        let p = std::path::Path::new(&path);
+        if !p.exists() {
+            return Err("指定的路径不存在".to_string());
+        }
+        config.custom_install_paths.insert(id, path);
+    }
+    save_config(&config)?;
+    Ok(())
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct GitRepoStatus {
+    pub is_git: bool,
+    pub has_exe: bool,
+    pub has_update: bool,
+    pub current_commit: String,
+    pub latest_commit: String,
+}
+
+fn run_git_cmd(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(dir);
+    cmd.args(args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let output = cmd.output().map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+#[tauri::command]
+pub fn check_git_repo_status(path: String, exe_name: String, bootstrap_cmd: Option<String>) -> Result<GitRepoStatus, String> {
+    let path_buf = std::path::Path::new(&path);
+    if !path_buf.exists() {
+        return Ok(GitRepoStatus {
+            is_git: false,
+            has_exe: false,
+            has_update: false,
+            current_commit: String::new(),
+            latest_commit: String::new(),
+        });
+    }
+
+    let has_bootstrap = if let Some(ref b_cmd) = bootstrap_cmd {
+        path_buf.join(b_cmd).exists() || {
+            if b_cmd.ends_with(".bat") || b_cmd.ends_with(".cmd") {
+                let sh_version = b_cmd.replace(".bat", ".sh").replace(".cmd", ".sh");
+                path_buf.join(sh_version).exists()
+            } else {
+                false
+            }
+        }
+    } else {
+        false
+    };
+
+    let is_git = path_buf.join(".git").exists() && (has_bootstrap || bootstrap_cmd.is_none());
+
+    let full_exe_name = if cfg!(windows) {
+        let lower = exe_name.to_lowercase();
+        if !lower.ends_with(".exe") && !lower.ends_with(".cmd") && !lower.ends_with(".bat") {
+            format!("{}.exe", exe_name)
+        } else {
+            exe_name.clone()
+        }
+    } else {
+        exe_name.clone()
+    };
+    let has_exe = path_buf.join(&full_exe_name).exists() || path_buf.join("bin").join(&full_exe_name).exists();
+
+    let mut has_update = false;
+    let mut current_commit = String::new();
+    let mut latest_commit = String::new();
+
+    if is_git {
+        if let Ok(curr) = run_git_cmd(path_buf, &["rev-parse", "--short", "HEAD"]) {
+            current_commit = curr;
+        }
+
+        let _ = run_git_cmd(path_buf, &["fetch"]);
+
+        let upstream = run_git_cmd(path_buf, &["rev-parse", "--short", "@{u}"])
+            .or_else(|_| run_git_cmd(path_buf, &["rev-parse", "--short", "origin/master"]))
+            .or_else(|_| run_git_cmd(path_buf, &["rev-parse", "--short", "origin/main"]));
+
+        if let Ok(up) = upstream {
+            latest_commit = up.clone();
+            if !current_commit.is_empty() && current_commit != latest_commit {
+                if let Ok(merge_base) = run_git_cmd(path_buf, &["merge-base", "HEAD", &latest_commit]) {
+                    if merge_base == current_commit {
+                        has_update = true;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(GitRepoStatus {
+        is_git,
+        has_exe,
+        has_update,
+        current_commit,
+        latest_commit,
+    })
+}
+
+#[tauri::command]
+pub fn bootstrap_git_repo(path: String, cmd: String) -> Result<(), String> {
+    let dir = std::path::Path::new(&path);
+    if !dir.exists() {
+        return Err("目录不存在".to_string());
+    }
+
+    let cmd_to_run = if cfg!(windows) {
+        cmd.clone()
+    } else {
+        if cmd.ends_with(".bat") || cmd.ends_with(".cmd") {
+            let sh_version = cmd.replace(".bat", ".sh").replace(".cmd", ".sh");
+            if dir.join(&sh_version).exists() {
+                format!("./{}", sh_version)
+            } else {
+                cmd.clone()
+            }
+        } else {
+            cmd.clone()
+        }
+    };
+
+    let mut process_cmd = if cfg!(windows) {
+        let mut c = std::process::Command::new("cmd");
+        c.current_dir(dir);
+        c.args(&["/c", &cmd_to_run]);
+        c
+    } else {
+        let mut c = std::process::Command::new("sh");
+        c.current_dir(dir);
+        if cmd_to_run.starts_with("./") {
+            c.args(&[&cmd_to_run[2..]]);
+        } else {
+            c.args(&[&cmd_to_run]);
+        }
+        c
+    };
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        process_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let output = process_cmd.output().map_err(|e| format!("执行初始化脚本失败: {}", e))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Err(format!("初始化脚本执行失败!\nStderr: {}\nStdout: {}", stderr, stdout))
+    }
+}
+
+#[tauri::command]
+pub fn update_git_repo(path: String, bootstrap_cmd: Option<String>) -> Result<(), String> {
+    let dir = std::path::Path::new(&path);
+    if !dir.exists() {
+        return Err("目录不存在".to_string());
+    }
+
+    let mut pull_cmd = std::process::Command::new("git");
+    pull_cmd.current_dir(dir);
+    pull_cmd.args(&["pull"]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        pull_cmd.creation_flags(0x08000000);
+    }
+    let pull_output = pull_cmd.output().map_err(|e| format!("git pull 失败: {}", e))?;
+    if !pull_output.status.success() {
+        let err = String::from_utf8_lossy(&pull_output.stderr).trim().to_string();
+        return Err(format!("Git pull 失败: {}", err));
+    }
+
+    if let Some(ref b_cmd) = bootstrap_cmd {
+        bootstrap_git_repo(path, b_cmd.clone())
+    } else {
+        Ok(())
+    }
 }
