@@ -40,7 +40,7 @@ pub fn project_preview_manage(id: String, is_simple: Option<bool>) -> Result<Man
 /// 5. 将项目 ID 添加 to managed_items
 /// 6. 保存配置和管理备份
 #[tauri::command]
-pub fn project_manage(id: String, is_simple: Option<bool>) -> Result<(), String> {
+pub fn project_manage(app: tauri::AppHandle, id: String, is_simple: Option<bool>) -> Result<(), String> {
     use crate::commands::config::load_config;
     use crate::commands::env::{get_registry_env_any, set_registry_env, add_to_user_path};
     use super::registry;
@@ -60,6 +60,7 @@ pub fn project_manage(id: String, is_simple: Option<bool>) -> Result<(), String>
         config.managed_items.insert(id.clone());
         config.simple_managed_items.insert(id.clone());
         crate::commands::config::save_config(&config)?;
+        let _ = crate::tray::rebuild_tray_menu(&app);
         return Ok(());
     }
 
@@ -199,6 +200,9 @@ pub fn project_manage(id: String, is_simple: Option<bool>) -> Result<(), String>
     if !bin_paths.is_empty() {
         let _ = add_to_user_path(&bin_paths);
     }
+    if id == "nodejs" {
+        let _ = crate::commands::env::configure_npm_prefix(&link_str);
+    }
 
     // 6. 同步当前进程环境变量，使子进程（如 run_cmd_capture）能立即使用新值
     crate::sync_process_path();
@@ -222,6 +226,40 @@ pub fn project_manage(id: String, is_simple: Option<bool>) -> Result<(), String>
     // 7. 备份旧版数据到独立备份目录（便于用户查看和管理）
     save_manage_backup(&id, &def, &config);
 
+    let _ = crate::tray::rebuild_tray_menu(&app);
+    Ok(())
+}
+
+/// 修复项目环境变量和 PATH，使其重新指向 AnyVersion 的稳定 links 路径。
+#[tauri::command]
+pub fn project_repair_env_vars(id: String) -> Result<(), String> {
+    use std::path::Path;
+    use crate::commands::config::load_config;
+    use super::registry;
+
+    let def = registry::find_by_id(&id)
+        .ok_or_else(|| format!("未找到项目: {}", id))?;
+    let config = load_config();
+
+    if !config.managed_items.contains(id.as_str()) {
+        return Err("该项目尚未托管".to_string());
+    }
+    if def.simple_mode || config.simple_managed_items.contains(&id) {
+        return Err("简单托管项目不需要修复版本环境变量".to_string());
+    }
+
+    let link_dir = Path::new(&config.links_dir).join(&id);
+    if !link_dir.exists() && !link_dir.is_symlink() {
+        return Err("请先安装或启用一个版本，然后再修复环境变量".to_string());
+    }
+
+    let link_str = link_dir.to_string_lossy().to_string();
+    let dest_str = std::fs::canonicalize(&link_dir)
+        .map(|p| p.to_string_lossy().to_string().trim_start_matches(r"\\?\").to_string())
+        .unwrap_or_else(|_| link_str.clone());
+
+    crate::commands::env::configure_sdk_env_vars(&id, &link_str, &dest_str)?;
+    crate::sync_process_path();
     Ok(())
 }
 
@@ -235,7 +273,7 @@ pub fn project_manage(id: String, is_simple: Option<bool>) -> Result<(), String>
 /// 5. 从 managed_items 中移除
 /// 6. 保存配置
 #[tauri::command]
-pub fn project_unmanage(id: String) -> Result<(), String> {
+pub fn project_unmanage(app: tauri::AppHandle, id: String) -> Result<(), String> {
     use crate::commands::config::load_config;
     use crate::commands::env::{set_registry_env, remove_from_user_path, add_to_user_path};
     use super::registry;
@@ -255,10 +293,11 @@ pub fn project_unmanage(id: String) -> Result<(), String> {
         config.managed_items.remove(&id);
         config.simple_managed_items.remove(&id);
         crate::commands::config::save_config(&config)?;
+        let _ = crate::tray::rebuild_tray_menu(&app);
         return Ok(());
     }
 
-    // 1. 移除项目环境变量（env_vars 已包含 NPM_CONFIG_PREFIX 等托管变量）
+    // 1. 移除项目环境变量（包管理器专属变量如 NPM_CONFIG_PREFIX 由代码单独处理）
     for var_def in &def.env_vars {
         // Skip compat/discovery tier vars - we did not set them
         if let Some(tier) = &var_def.tier {
@@ -273,6 +312,9 @@ pub fn project_unmanage(id: String) -> Result<(), String> {
     let bin_paths = scanner::get_bin_paths(&def.id, &link_str);
     if !bin_paths.is_empty() {
         let _ = remove_from_user_path(&bin_paths);
+    }
+    if id == "nodejs" {
+        let _ = crate::commands::env::clear_npm_prefix();
     }
 
     // 3. 还原原始环境变量
@@ -304,6 +346,7 @@ pub fn project_unmanage(id: String) -> Result<(), String> {
     // 6. 同步当前进程环境变量
     crate::sync_process_path();
 
+    let _ = crate::tray::rebuild_tray_menu(&app);
     Ok(())
 }
 

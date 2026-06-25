@@ -22,6 +22,7 @@ import {
   Wifi,
   WifiOff,
   X,
+  Wrench,
 } from "lucide-react";
 import type { ProjectStatus, ProjectDef, EnvVarStatus, ServiceStatus, PackageManagerDef } from "./types";
 
@@ -60,6 +61,9 @@ export interface SubTabProps {
   onServiceToggle: () => void;
   // 刷新
   onRefresh: () => void;
+  // 环境变量修复
+  repairingEnv?: boolean;
+  onRepairEnv?: () => void;
   /** 操作进行中，禁用按钮 */
   isOperating?: boolean;
   /** 当前活跃标签页 */
@@ -118,8 +122,8 @@ export function VersionsTab({
 
           {/* 步骤指示器 */}
           <div className="flex items-center gap-1">
-            {["下载中", "解压中", "配置中", "完成"].map((step, idx) => {
-              const steps = ["下载中", "解压中", "配置中", "完成"];
+            {["下载中", "解压中", "创建链接中", "完成"].map((step, idx) => {
+              const steps = ["下载中", "解压中", "创建链接中", "完成"];
               const currentIdx = steps.indexOf(installStep);
               const isActive = step === installStep;
               const isCompleted = currentIdx > idx;
@@ -177,7 +181,7 @@ export function VersionsTab({
           <p className="text-[13px] text-slate-400">
             {installStep === "下载中" && `正在从远程服务器下载安装包 (v${currentVersionNumber})，请稍候...`}
             {installStep === "解压中" && `下载完成，正在解压安装文件 (v${currentVersionNumber})...`}
-            {installStep === "配置中" && `解压完成，正在配置环境变量和创建 Junction 链接 (v${currentVersionNumber})...`}
+            {installStep === "创建链接中" && `解压完成，正在创建 Junction 链接 (v${currentVersionNumber})...`}
             {installStep === "完成" && `v${currentVersionNumber} 安装成功！`}
           </p>
         </div>
@@ -254,7 +258,7 @@ export function VersionsTab({
 // ═══════════════════════════════════════
 //  环境变量
 // ═══════════════════════════════════════
-export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange }: SubTabProps) {
+export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, isOperating, repairingEnv, onRepairEnv }: SubTabProps) {
   const vars: EnvVarStatus[] = project.env_vars_status ?? [];
 
   // 高级模式：显示用户可配置的运行时环境变量
@@ -316,10 +320,23 @@ export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange }:
     <div className="space-y-5">
       {/* 路径类环境变量（系统管理，不可修改） */}
       <div className="space-y-3">
-        <div>
-          <span className="text-xs font-semibold text-slate-300">项目关联环境变量</span>
-          <span className="text-[13px] text-slate-500 ml-1.5">{vars.length} 个变量</span>
-          <p className="text-[13px] text-slate-500 mt-0.5">路径类环境变量由 AnyVersion 自动管理，不可手动修改。</p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <span className="text-xs font-semibold text-slate-300">项目关联环境变量</span>
+            <span className="text-[13px] text-slate-500 ml-1.5">{vars.length} 个变量</span>
+            <p className="text-[13px] text-slate-500 mt-0.5">路径类环境变量由 AnyVersion 自动管理，不可手动修改。</p>
+          </div>
+          {onRepairEnv && (
+            <button
+              onClick={onRepairEnv}
+              disabled={isOperating || repairingEnv}
+              title="重新将环境变量和 PATH 校准到 AnyVersion links 路径"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed text-amber-300 border border-amber-500/20 text-[13px] font-semibold cursor-pointer transition-all whitespace-nowrap"
+            >
+              {repairingEnv ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
+              修复环境变量
+            </button>
+          )}
         </div>
         {vars.length === 0 ? (
           <p className="text-[11px] text-slate-500">该项目无需配置路径类环境变量。</p>

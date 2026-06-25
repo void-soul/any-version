@@ -62,6 +62,7 @@ interface ProjectUIState {
   packageError: string | null;
   serviceCtrlLoading: boolean;
   switchingVersion: string | null;
+  repairingEnv: boolean;
   // 检测进度
   detectStep: string;
   detectIndex: number;
@@ -92,6 +93,7 @@ const EMPTY_UI: ProjectUIState = {
   packageError: null,
   serviceCtrlLoading: false,
   switchingVersion: null,
+  repairingEnv: false,
   detectStep: "",
   detectIndex: 0,
   detectTotal: 0,
@@ -353,6 +355,20 @@ export default function ProjectDetailPanel({
     }
   }, [pid, patch, loadDetail, onRefresh]);
 
+  const handleRepairEnv = useCallback(async () => {
+    if (!pid) return;
+    patch(pid, { repairingEnv: true });
+    try {
+      await invoke("project_repair_env_vars", { id: pid });
+      await refreshSingle(pid);
+      alert("环境变量和 PATH 已重新校准");
+    } catch (e: unknown) {
+      alert("修复环境变量失败: " + e);
+    } finally {
+      patch(pid, { repairingEnv: false });
+    }
+  }, [pid, patch, refreshSingle]);
+
   const handlePreviewManage = useCallback(async (isSimple: boolean) => {
     if (!pid) return;
     patch(pid, { isSimpleManage: isSimple });
@@ -532,7 +548,7 @@ export default function ProjectDetailPanel({
   // Fallback to first available tab if activeSubTab is not in availableTabs
   const activeTab = availableTabs.includes(ui.activeSubTab) ? ui.activeSubTab : (availableTabs[0] || "versions");
 
-  const isOperating = !!ui.installingVersion || !!ui.switchingVersion || ui.managing || ui.unmanaging || !!ui.detectStep;
+  const isOperating = !!ui.installingVersion || !!ui.switchingVersion || ui.managing || ui.unmanaging || ui.repairingEnv || !!ui.detectStep;
 
   const subTabProps: SubTabProps = {
     project: status,
@@ -561,6 +577,8 @@ export default function ProjectDetailPanel({
     serviceCtrlLoading: ui.serviceCtrlLoading,
     onServiceToggle: handleServiceToggle,
     onRefresh: async () => { if (pid) await loadDetail(pid); },
+    repairingEnv: ui.repairingEnv,
+    onRepairEnv: handleRepairEnv,
     isOperating,
     activeSubTab: activeTab,
     onActiveSubTabChange: (tab: string) => { if (pid) patch(pid, { activeSubTab: tab as SubTab }); },

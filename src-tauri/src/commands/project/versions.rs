@@ -465,7 +465,11 @@ pub async fn project_install_version(app: AppHandle, id: String, version: String
     get_active_downloads().lock().unwrap().remove(&id);
 
     match result {
-        Ok(inner) => inner,
+        Ok(inner) => {
+            inner?;
+            let _ = crate::tray::rebuild_tray_menu(&app);
+            Ok(())
+        }
         Err(e) if e.is_cancelled() => Err("安装已取消".to_string()),
         Err(e) => Err(format!("安装任务异常: {}", e)),
     }
@@ -565,17 +569,12 @@ async fn do_install(
         }
     }
 
-    // 6. 首次安装时自动创建 junction
+    // 7. 首次安装时自动创建 junction。环境变量在托管/修复时统一配置，版本安装不隐式修改注册表。
+    let _ = app.emit("install-step", InstallStepPayload { step: "创建链接中".to_string() });
     let junction_path = Path::new(&config.links_dir).join(&id);
     if !junction_path.exists() {
         let _ = crate::commands::cache::create_junction(&junction_path, &dest_dir);
     }
-
-    // 7. 自动配置环境变量（指向 links 目录下的稳定路径）
-    let _ = app.emit("install-step", InstallStepPayload { step: "配置中".to_string() });
-    let link_str = junction_path.to_string_lossy().to_string();
-    let dest_str = dest_dir.to_string_lossy().to_string();
-    let _ = crate::commands::env::configure_sdk_env_vars(&id, &link_str, &dest_str);
 
     let _ = app.emit("install-step", InstallStepPayload { step: "完成".to_string() });
 
@@ -596,7 +595,7 @@ pub fn project_cancel_install(id: String) -> Result<(), String> {
 
 /// 卸载指定版本
 #[tauri::command]
-pub fn project_uninstall_version(id: String, version: String) -> Result<(), String> {
+pub fn project_uninstall_version(app: AppHandle, id: String, version: String) -> Result<(), String> {
     let config = load_config();
     let dest_dir = Path::new(&config.versions_dir).join(&id).join(&version);
     if !dest_dir.exists() {
@@ -611,28 +610,17 @@ pub fn project_uninstall_version(id: String, version: String) -> Result<(), Stri
     let dest_dir_clean = dest_dir.to_string_lossy().to_string().to_lowercase();
 
     if active_dir == dest_dir_clean {
-        let _ = fs::remove_file(&junction_path);
+        let _ = fs::remove_dir(&junction_path);
     }
 
     fs::remove_dir_all(&dest_dir).map_err(|e| e.to_string())?;
 
-    // 如果这是该项目最后一个版本，自动清理环境变量
-    let sdk_dir = Path::new(&config.versions_dir).join(&id);
-    let has_other_versions = fs::read_dir(&sdk_dir)
-        .ok()
-        .map(|entries| entries.filter_map(|e| e.ok()).any(|e| e.path() != dest_dir))
-        .unwrap_or(false);
-
-    if !has_other_versions {
-        let _ = crate::commands::env::remove_sdk_env_vars(&id);
-    }
-
+    let _ = crate::tray::rebuild_tray_menu(&app);
     Ok(())
 }
 
 /// 切换到指定版本（创建 junction 指向目标版本目录）
-#[tauri::command]
-pub fn project_use_version(id: String, version: String) -> Result<(), String> {
+fn project_use_version_impl(id: String, version: String) -> Result<(), String> {
     let config = load_config();
     let dest_dir = Path::new(&config.versions_dir).join(&id).join(&version);
     if !dest_dir.exists() {
@@ -642,11 +630,18 @@ pub fn project_use_version(id: String, version: String) -> Result<(), String> {
     let junction_path = Path::new(&config.links_dir).join(&id);
     crate::commands::cache::create_junction(&junction_path, &dest_dir)?;
 
-    // 切换版本后，重新确认环境变量指向正确
-    let link_str = junction_path.to_string_lossy().to_string();
-    let dest_str = dest_dir.to_string_lossy().to_string();
-    let _ = crate::commands::env::configure_sdk_env_vars(&id, &link_str, &dest_str);
+    Ok(())
+}
 
+/// 切换到指定版本（创建 junction 指向目标版本目录）
+pub fn project_use_version_inner(id: &str, version: &str) -> Result<(), String> {
+    project_use_version_impl(id.to_string(), version.to_string())
+}
+
+#[tauri::command]
+pub fn project_use_version(app: AppHandle, id: String, version: String) -> Result<(), String> {
+    project_use_version_impl(id, version)?;
+    let _ = crate::tray::rebuild_tray_menu(&app);
     Ok(())
 }
 

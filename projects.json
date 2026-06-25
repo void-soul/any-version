@@ -4,13 +4,7 @@
     "display_name": "Node.js",
     "category": "language",
     "official_website": "https://nodejs.org",
-    "env_vars": [
-      {
-        "name": "NPM_CONFIG_PREFIX",
-        "desc": "npm 全局安装 prefix",
-        "check_type": "nonempty"
-      }
-    ],
+    "env_vars": [],
     "bin_dirs": [
       ""
     ],

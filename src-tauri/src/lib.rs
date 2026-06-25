@@ -1,4 +1,5 @@
 pub mod commands;
+mod tray;
 
 /// 同步注册表中的完整 PATH 到当前进程，并确保 AnyVersion 托管路径具有最高优先级。
 /// 解决 windows_subsystem="windows" 模式下进程 PATH 不包含用户 PATH 的问题。
@@ -148,6 +149,18 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            tray::build_tray(app.handle())?;
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::config::get_config,
             commands::config::update_config,
@@ -180,6 +193,7 @@ pub fn run() {
             commands::project::commands::project_detail,
             commands::project::commands::project_preview_manage,
             commands::project::commands::project_manage,
+            commands::project::commands::project_repair_env_vars,
             commands::project::commands::project_unmanage,
             commands::project::commands::project_preview_unmanage,
             commands::project::commands::project_set_custom_path,
@@ -200,6 +214,7 @@ pub fn run() {
             commands::project::versions::project_cancel_install,
             commands::project::versions::project_uninstall_version,
             commands::project::versions::project_use_version,
+            tray::refresh_tray_menu,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -152,7 +152,7 @@ pub fn do_migrate_storage(
     new_versions_dir: &str,
     old_links_dir: &str,
     new_links_dir: &str,
-    managed_items: &std::collections::HashSet<String>,
+    config: &Config,
     app_handle: Option<&tauri::AppHandle>,
 ) -> MigrateResult {
     let emit_progress = |stage: &str, current: usize, total: usize, file_name: &str| {
@@ -175,6 +175,18 @@ pub fn do_migrate_storage(
         errors: Vec::new(),
         old_dirs_remain: Vec::new(),
     };
+
+    let fully_managed_items: Vec<String> = config.managed_items.iter()
+        .filter_map(|item_id| {
+            if config.simple_managed_items.contains(item_id) {
+                return None;
+            }
+            match crate::commands::project::registry::find_by_id(item_id) {
+                Some(def) if !def.simple_mode => Some(item_id.clone()),
+                _ => None,
+            }
+        })
+        .collect();
 
     let versions_changed = normalize(old_versions_dir) != normalize(new_versions_dir);
     let links_changed = normalize(old_links_dir) != normalize(new_links_dir);
@@ -226,7 +238,7 @@ pub fn do_migrate_storage(
                 result.moved_links = true;
 
                 // 重建所有 junction
-                let managed_vec: Vec<_> = managed_items.iter().collect();
+                let managed_vec: Vec<_> = fully_managed_items.iter().collect();
                 let total_j = managed_vec.len();
                 for (i, item_id) in managed_vec.iter().enumerate() {
                     emit_progress("重建 junction 链接", i + 1, total_j, item_id);
@@ -274,18 +286,18 @@ pub fn do_migrate_storage(
                         }
                     }
 
-                    // 重新写入：根据当前托管 SDK 列表生成新的 PATH 条目
+                    // 重新写入：根据当前完全托管 SDK 列表生成新的 PATH 条目
                     use crate::commands::project::scanner;
-                    for item_id in managed_items {
+                    for item_id in &fully_managed_items {
                         let link_dir = format!("{}\\{}", new_links_dir, item_id);
                         let bin_paths = scanner::get_bin_paths(item_id, &link_dir);
-                        for bp in &bin_paths {
-                            remaining_parts.push(bp.clone());
+                        for bp in bin_paths.iter().rev() {
+                            remaining_parts.insert(0, bp.clone());
                             result.updated_path_entries.push(format!("添加: {}", bp));
                         }
                     }
 
-                    if removed_count > 0 || !managed_items.is_empty() {
+                    if removed_count > 0 || !fully_managed_items.is_empty() {
                         emit_progress("重写 PATH 环境变量", 1, 1, "");
                         if let Ok(new_path) = std::env::join_paths(remaining_parts.iter().map(Path::new)) {
                             let _ = crate::commands::env::set_registry_env(
@@ -296,13 +308,21 @@ pub fn do_migrate_storage(
                     }
                 }
 
-                // ── 重写注册表环境变量：全部删除旧值，重新写入新值 ──
+                // ── 重写注册表环境变量：仅处理完全托管项目，并尊重 env tier ──
                 use crate::commands::project::registry;
-                for item_id in managed_items {
+                use crate::commands::project::types::EnvVarTier;
+                for item_id in &fully_managed_items {
                     if let Some(sdk_def) = registry::find_by_id(item_id) {
+                        let link_dir = format!("{}\\{}", new_links_dir, item_id);
                         for var_info in &sdk_def.env_vars {
-                            // 无条件重写：根据新的 links_dir 计算值，子目录由 EnvVarDef.sub_dir 驱动
-                            let link_dir = format!("{}\\{}", new_links_dir, item_id);
+                            if var_info.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Compat) {
+                                continue;
+                            }
+                            if var_info.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Clear) {
+                                let _ = crate::commands::env::set_registry_env(&var_info.name, "");
+                                result.updated_env_vars.push(format!("{} => <清空>", var_info.name));
+                                continue;
+                            }
                             let value = if let Some(ref sub) = var_info.sub_dir {
                                 format!("{}\\{}", link_dir, sub)
                             } else {
@@ -310,6 +330,10 @@ pub fn do_migrate_storage(
                             };
                             let _ = crate::commands::env::set_registry_env(&var_info.name, &value);
                             result.updated_env_vars.push(format!("{} => {}", var_info.name, value));
+                        }
+                        if item_id == "nodejs" {
+                            let _ = crate::commands::env::configure_npm_prefix(&link_dir);
+                            result.updated_env_vars.push(format!("NPM_CONFIG_PREFIX => {}", link_dir));
                         }
                     }
                 }
@@ -365,7 +389,7 @@ pub fn do_migrate_storage(
                 // 如果 links_dir 没变，需要单独重建 junction
                 if !links_changed {
                     let links_path = Path::new(new_links_dir);
-                    let managed_vec: Vec<_> = managed_items.iter().collect();
+                    let managed_vec: Vec<_> = fully_managed_items.iter().collect();
                     let total_j = managed_vec.len();
                     for (i, item_id) in managed_vec.iter().enumerate() {
                         emit_progress("重建 junction 链接", i + 1, total_j, item_id);
@@ -450,7 +474,7 @@ pub fn update_config(app_handle: tauri::AppHandle, versions_dir: String, links_d
         &versions_dir,
         &old_links_dir,
         &links_dir,
-        &config.managed_items,
+        &config,
         Some(&app_handle),
     );
 
