@@ -1,8 +1,13 @@
 use std::path::Path;
 
-use tauri::{AppHandle, Manager, Runtime};
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
+
+const MAIN_WINDOW_LABEL: &str = "main";
+const MAIN_WINDOW_TITLE: &str = "AnyVersion 开发环境管理器";
+const MAIN_WINDOW_WIDTH: f64 = 1150.0;
+const MAIN_WINDOW_HEIGHT: f64 = 780.0;
 
 const TRAY_ID: &str = "main-tray";
 const ID_SHOW: &str = "show";
@@ -63,11 +68,37 @@ pub fn refresh_tray_menu(app: AppHandle) -> Result<(), String> {
 }
 
 fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
+    let window = match app.get_webview_window(MAIN_WINDOW_LABEL) {
+        Some(window) => window,
+        None => match create_main_window(app) {
+            Ok(window) => window,
+            Err(error) => {
+                eprintln!("failed to create main window: {error}");
+                return;
+            }
+        },
+    };
+
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+}
+
+fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::WebviewWindow<R>> {
+    let mut builder = WebviewWindowBuilder::new(
+        app,
+        MAIN_WINDOW_LABEL,
+        WebviewUrl::App("index.html".into()),
+    )
+    .title(MAIN_WINDOW_TITLE)
+    .inner_size(MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT)
+    .center();
+
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone())?;
     }
+
+    builder.build()
 }
 
 fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
