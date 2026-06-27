@@ -88,6 +88,18 @@ pub struct MirrorOption {
     pub url: String,
 }
 
+/// 迁移缓存时需要同步写入配置文件的单个 XML key 定义
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct XmlWriteKey {
+    /// XML `<add key="...">` 中的 key 属性值，如 "globalPackagesFolder"
+    pub key: String,
+    /// 可选路径后缀（相对于迁移目标根目录）。
+    /// None  → 直接使用目标根目录
+    /// Some("packages") → 目标根目录/packages
+    #[serde(default)]
+    pub value_suffix: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CacheConfigSource {
     pub parser_type: String,
@@ -100,6 +112,9 @@ pub struct CacheConfigSource {
     pub replacements: HashMap<String, String>,
     #[serde(default)]
     pub suffix: Option<String>,
+    /// 迁移缓存时需要写回配置文件的 key 列表（目前支持 XML 格式）
+    #[serde(default)]
+    pub write_keys: Option<Vec<XmlWriteKey>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -110,6 +125,14 @@ pub struct DataDirDef {
     pub default_path: String,
     #[serde(default)]
     pub env_var: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub supports_direct: bool,
+    #[serde(default)]
+    pub auto_create: Option<bool>,
+    #[serde(default)]
+    pub required_for_start: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -121,6 +144,10 @@ pub struct DataDirStatus {
     pub is_link: bool,
     pub real_target: String,
     pub exists: bool,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 /// 包管理器定义（嵌套在项目内，如 Node.js 下 of npm/yarn/pnpm）
@@ -266,10 +293,28 @@ pub struct ProjectDef {
     pub log_dir: Option<String>,
     /// 配置文件路径
     pub config_file: Option<String>,
+    /// 配置文件候选路径（支持 {install_root} / {home}）
+    #[serde(default)]
+    pub config_file_candidates: Vec<String>,
     /// 启动命令
     pub start_cmd: Option<String>,
     /// 停止命令
     pub stop_cmd: Option<String>,
+    /// 服务进程可执行文件名列表（不含 .exe 也可）
+    #[serde(default)]
+    pub service_process_exes: Vec<String>,
+    /// Windows 服务名正则列表（用于 sc query 兜底探测）
+    #[serde(default)]
+    pub service_names: Vec<String>,
+    /// 启动模式: "wait" | "detached"
+    #[serde(default)]
+    pub service_start_mode: Option<String>,
+    /// 是否允许停止失败后强制杀进程
+    #[serde(default)]
+    pub service_allow_force_kill: bool,
+    /// 是否自动创建服务数据/日志目录
+    #[serde(default)]
+    pub service_auto_create_dirs: bool,
 
     /// Version detection command (e.g. "node --version", "go version")
     #[serde(default)]
@@ -376,6 +421,18 @@ pub struct ServiceStatus {
     pub data_dir: String,
     /// 日志目录
     pub log_dir: String,
+    /// 状态: running | stopped | not_installed | port_conflict
+    #[serde(default)]
+    pub status: Option<String>,
+    /// 进程名
+    #[serde(default)]
+    pub process_name: Option<String>,
+    /// 安装根目录
+    #[serde(default)]
+    pub install_root: Option<String>,
+    /// 配置文件路径
+    #[serde(default)]
+    pub config_file: Option<String>,
 }
 
 /// 项目运行时状态（实时扫描结果）

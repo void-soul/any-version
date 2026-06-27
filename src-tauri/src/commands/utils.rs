@@ -175,3 +175,80 @@ pub fn cache_detect_evidence_dynamic(
         )
     }
 }
+
+/// 在 XML 配置文件中原地替换指定 key 的 value 属性值。
+///
+/// 匹配形如：`<add key="KEY" value="OLD_VALUE" />`
+/// 或：`<add key="KEY" value="OLD_VALUE"/>`
+/// 将 value 替换为 `new_value`，其余内容保持不变。
+///
+/// 如果文件不存在或 key 不存在，则静默跳过（不报错）。
+pub fn write_xml_config_key(config_path: &str, key: &str, new_value: &str) -> Result<(), String> {
+    let path = std::path::Path::new(config_path);
+    if !path.exists() {
+        return Ok(()); // 文件不存在，静默跳过
+    }
+
+    let content = fs::read_to_string(path).map_err(|e| format!("读取 {} 失败: {}", config_path, e))?;
+
+    // 构造匹配目标 key 的正则，替换其 value 属性
+    let pattern = format!(
+        r#"(<add\s+key\s*=\s*"{}"\s+value\s*=\s*")[^"]*(")"#,
+        regex::escape(key)
+    );
+    let re = regex::Regex::new(&pattern).map_err(|e| e.to_string())?;
+
+    if !re.is_match(&content) {
+        return Ok(()); // key 不存在，静默跳过
+    }
+
+    let new_content = re.replace_all(&content, |caps: &regex::Captures| {
+        format!("{}{}{}", &caps[1], new_value, &caps[2])
+    }).to_string();
+
+    if new_content != content {
+        fs::write(path, new_content).map_err(|e| format!("写入 {} 失败: {}", config_path, e))?;
+    }
+
+    Ok(())
+}
+
+/// 根据 PackageManagerDef 中的 `cache_config_source.write_keys` 定义，
+/// 批量将迁移后的目标路径写回对应的配置文件。
+///
+/// `base_path`：迁移目标的根目录（junction 指向的目录）。
+/// 每个 write_key 的实际值 = base_path / value_suffix（或直接 base_path）。
+pub fn apply_cache_config_writes(pm: &crate::commands::project::types::PackageManagerDef, base_path: &str) {
+    let source = match &pm.cache_config_source {
+        Some(s) => s,
+        None => return,
+    };
+    let write_keys = match &source.write_keys {
+        Some(k) if !k.is_empty() => k,
+        _ => return,
+    };
+
+    let user_home = expand_home("{home}");
+
+    // 找到第一个存在的配置文件路径
+    let config_path = source.paths.iter()
+        .map(|p| p.replace("{home}", &user_home))
+        .find(|p| std::path::Path::new(p).exists());
+
+    let config_path = match config_path {
+        Some(p) => p,
+        None => return, // 配置文件不存在，跳过
+    };
+
+    for wk in write_keys {
+        let value = match &wk.value_suffix {
+            Some(suffix) => std::path::Path::new(base_path)
+                .join(suffix)
+                .to_string_lossy()
+                .to_string(),
+            None => base_path.to_string(),
+        };
+        let _ = write_xml_config_key(&config_path, &wk.key, &value);
+    }
+}
+

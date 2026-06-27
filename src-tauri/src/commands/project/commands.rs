@@ -1042,7 +1042,18 @@ pub fn migrate_pkg_storage(
     let delete_old = delete_old_first.unwrap_or(false);
     crate::commands::cache::migrate_pkg_storage_impl(
         &app_handle, &src_path, &new_path, &storage_kind, delete_old,
-    )
+    )?;
+
+    // 迁移完成后，同步更新配置文件中的缓存路径（如 NuGet.Config）
+    if storage_kind == "cache" {
+        if let Some(def) = super::registry::find_by_id(&project_id) {
+            if let Some(pm) = def.package_managers.iter().find(|p| p.id == pm_id) {
+                crate::commands::utils::apply_cache_config_writes(pm, &new_path);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// 指向模式下设置缓存目录。
@@ -1201,11 +1212,13 @@ pub fn project_set_cache_path(
         }
     }
 
+    // 设置完成后，同步更新配置文件中的缓存路径（如 NuGet.Config）
+    crate::commands::utils::apply_cache_config_writes(pm, &new_path);
+
     Ok(())
 }
 
 
-/// 指向模式下处理旧文件 — 在修改配置指向新路径前，处理旧目录中的文件。
 /// - action: "move" 拷贝到新路径后删除旧文件，"delete" 直接删除旧文件，"keep" 不做操作。
 #[tauri::command]
 pub fn handle_point_storage_files(
@@ -1352,6 +1365,46 @@ pub fn delete_data_dir(project_id: String, path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+pub fn project_set_data_dir(project_id: String, dir_id: String, new_path: String) -> Result<(), String> {
+    use crate::commands::config::{load_config, save_config};
+    use super::registry;
+
+    let def = registry::find_by_id(&project_id)
+        .ok_or_else(|| format!("未找到项目: {}", project_id))?;
+    if !def.data_dirs.iter().any(|d| d.id == dir_id) {
+        return Err(format!("项目 {} 未定义数据目录: {}", project_id, dir_id));
+    }
+
+    let status = scanner::get_project_status(&project_id)?;
+    if let Some(svc_status) = status.service_status {
+        if svc_status.running {
+            return Err("服务正在运行中，请先停止服务后再修改数据/日志路径。".to_string());
+        }
+    }
+
+    let mut config = load_config();
+    if new_path.trim().is_empty() {
+        if let Some(paths) = config.custom_data_paths.get_mut(&project_id) {
+            paths.remove(&dir_id);
+            if paths.is_empty() {
+                config.custom_data_paths.remove(&project_id);
+            }
+        }
+    } else {
+        let p = std::path::Path::new(&new_path);
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("无法创建父目录: {}", e))?;
+        }
+        config
+            .custom_data_paths
+            .entry(project_id)
+            .or_default()
+            .insert(dir_id, new_path);
+    }
+
+    save_config(&config)
+}
 #[tauri::command]
 pub fn project_set_custom_path(id: String, path: String) -> Result<(), String> {
     use crate::commands::config::{load_config, save_config};

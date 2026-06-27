@@ -45,9 +45,8 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: 安装 yarn 并安装前端依赖
+      - name: 安装前端依赖
         run: |
-          npm install -g yarn
           yarn install --frozen-lockfile
 
       - name: 解析版本标签

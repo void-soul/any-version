@@ -705,7 +705,22 @@
         "pkg_list_cmd": null,
         "pkg_list_format": null,
         "pkg_upgrade_cmd_template": null,
-        "pkg_homepage_template": "https://www.nuget.org/packages/{pkg}"
+        "pkg_homepage_template": "https://www.nuget.org/packages/{pkg}",
+        "cache_config_source": {
+          "parser_type": "xml",
+          "env_vars": ["NUGET_PACKAGES"],
+          "paths": [
+            "{home}\\AppData\\Roaming\\NuGet\\NuGet.Config"
+          ],
+          "keys": [
+            "<add\\s+key\\s*=\\s*\"globalPackagesFolder\"\\s+value\\s*=\\s*\"([^\"]+)\""
+          ],
+          "write_keys": [
+            { "key": "globalPackagesFolder", "value_suffix": "packages" },
+            { "key": "httpCachePath",        "value_suffix": "v3-cache" },
+            { "key": "pluginsCachePath",     "value_suffix": "plugins-cache" }
+          ]
+        }
       }
     ]
   },
@@ -1634,6 +1649,589 @@
         "proxy_set_cmd_template": "powershell -Command \"`$u='{url}'; [Environment]::SetEnvironmentVariable('http_proxy', `$u, 'User'); [Environment]::SetEnvironmentVariable('https_proxy', `$u, 'User')\"",
         "mirror_options": null,
         "mirror_cmd_template": null
+      }
+    ]
+  },
+  {
+    "id": "mysql",
+    "display_name": "MySQL",
+    "category": "service",
+    "official_website": "https://www.mysql.com",
+    "simple_mode": true,
+    "env_vars": [],
+    "bin_dirs": [
+      "bin"
+    ],
+    "has_cache": false,
+    "cache_detect_cmd": null,
+    "cache_default_path": null,
+    "has_mirror": false,
+    "mirror_options": null,
+    "has_pkg": false,
+    "pkg_manager": null,
+    "pkg_homepage_template": null,
+    "is_service": true,
+    "default_port": 3306,
+    "data_dir": null,
+    "log_dir": null,
+    "package_managers": [],
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "MySQL\\MySQL Server",
+          "exe_name": "mysqld.exe"
+        },
+        "source_label": "Program Files",
+        "priority": 20,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "fixed_path",
+          "path": "C:\\Program Files\\MySQL\\MySQL Server 8.4\\bin",
+          "exe_name": "mysqld.exe"
+        },
+        "source_label": "Program Files",
+        "priority": 30,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "fixed_path",
+          "path": "C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin",
+          "exe_name": "mysqld.exe"
+        },
+        "source_label": "Program Files",
+        "priority": 31,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "",
+          "exe_name": "mysqld.exe"
+        },
+        "source_label": "系统 PATH",
+        "priority": 90,
+        "root_offset": 1
+      }
+    ],
+    "config_file": "my.ini",
+    "config_file_candidates": [
+      "C:\\ProgramData\\MySQL\\MySQL Server 8.4\\my.ini",
+      "C:\\ProgramData\\MySQL\\MySQL Server 8.0\\my.ini",
+      "{install_root}\\my.ini",
+      "{install_root}\\my.cnf"
+    ],
+    "start_cmd": "\"{install_root}\\bin\\mysqld.exe\" --console --port={port} --datadir=\"{data_dir}\"",
+    "stop_cmd": null,
+    "service_process_exes": [
+      "mysqld"
+    ],
+    "service_names": [
+      "^MySQL\\d*$",
+      "^MariaDB.*$"
+    ],
+    "service_start_mode": "detached",
+    "service_allow_force_kill": false,
+    "service_auto_create_dirs": false,
+    "version_cmd": "mysqld --version",
+    "version_exe": "mysqld",
+    "data_dirs": [
+      {
+        "id": "data",
+        "display_name": "MySQL 数据目录",
+        "kind": "data",
+        "possible_paths": [
+          "C:\\ProgramData\\MySQL\\MySQL Server 8.4\\Data",
+          "C:\\ProgramData\\MySQL\\MySQL Server 8.0\\Data",
+          "{install_root}\\data"
+        ],
+        "default_path": "{install_root}\\data",
+        "supports_direct": true,
+        "auto_create": false,
+        "required_for_start": true
+      },
+      {
+        "id": "log",
+        "display_name": "MySQL 日志目录",
+        "kind": "log",
+        "possible_paths": [
+          "C:\\ProgramData\\MySQL\\MySQL Server 8.4\\Data",
+          "C:\\ProgramData\\MySQL\\MySQL Server 8.0\\Data",
+          "{install_root}\\logs"
+        ],
+        "default_path": "{install_root}\\logs",
+        "supports_direct": true,
+        "auto_create": true,
+        "required_for_start": false
+      }
+    ]
+  },
+  {
+    "id": "redis",
+    "display_name": "Redis",
+    "category": "service",
+    "official_website": "https://redis.io",
+    "simple_mode": true,
+    "env_vars": [],
+    "bin_dirs": [
+      ""
+    ],
+    "has_cache": false,
+    "cache_detect_cmd": null,
+    "cache_default_path": null,
+    "has_mirror": false,
+    "mirror_options": null,
+    "has_pkg": false,
+    "pkg_manager": null,
+    "pkg_homepage_template": null,
+    "is_service": true,
+    "default_port": 6379,
+    "data_dir": null,
+    "log_dir": null,
+    "package_managers": [],
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "Redis",
+          "exe_name": "redis-server.exe"
+        },
+        "source_label": "系统 PATH",
+        "priority": 40,
+        "root_offset": 0
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "Memurai",
+          "exe_name": "memurai.exe"
+        },
+        "source_label": "Memurai",
+        "priority": 40,
+        "root_offset": 0
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "scoop\\apps\\redis",
+          "exe_name": "redis-server.exe"
+        },
+        "source_label": "Scoop",
+        "priority": 45,
+        "root_offset": 0
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "chocolatey\\lib\\redis-64",
+          "exe_name": "redis-server.exe"
+        },
+        "source_label": "Chocolatey",
+        "priority": 45,
+        "root_offset": 0
+      },
+      {
+        "pattern": {
+          "type": "fixed_path",
+          "path": "C:\\Program Files\\Redis",
+          "exe_name": "redis-server.exe"
+        },
+        "source_label": "Program Files",
+        "priority": 50,
+        "root_offset": 0
+      },
+      {
+        "pattern": {
+          "type": "fixed_path",
+          "path": "C:\\Program Files\\Memurai",
+          "exe_name": "memurai.exe"
+        },
+        "source_label": "Memurai",
+        "priority": 50,
+        "root_offset": 0
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "",
+          "exe_name": "redis-server.exe"
+        },
+        "source_label": "系统 PATH",
+        "priority": 90,
+        "root_offset": 0
+      }
+    ],
+    "config_file": "redis.windows.conf",
+    "config_file_candidates": [
+      "{install_root}\\redis.windows.conf",
+      "{install_root}\\redis.conf"
+    ],
+    "start_cmd": "\"{install_root}\\redis-server.exe\" \"{config_file}\" --port {port} --dir \"{data_dir}\" --logfile \"{log_dir}\\redis.log\"",
+    "stop_cmd": "\"{install_root}\\redis-cli.exe\" -p {port} shutdown nosave",
+    "service_process_exes": [
+      "redis-server",
+      "redisService",
+      "memurai"
+    ],
+    "service_names": [
+      "^Redis$",
+      "^Redis-Service$",
+      "^Memurai(-\\d+)?$"
+    ],
+    "service_start_mode": "detached",
+    "service_allow_force_kill": false,
+    "service_auto_create_dirs": true,
+    "version_cmd": "redis-server --version",
+    "version_exe": "redis-server",
+    "data_dirs": [
+      {
+        "id": "data",
+        "display_name": "Redis 数据目录",
+        "kind": "data",
+        "possible_paths": [
+          "{install_root}\\data"
+        ],
+        "default_path": "{install_root}\\data",
+        "supports_direct": true,
+        "auto_create": true,
+        "required_for_start": false
+      },
+      {
+        "id": "log",
+        "display_name": "Redis 日志目录",
+        "kind": "log",
+        "possible_paths": [
+          "{install_root}\\logs",
+          "{install_root}\\log"
+        ],
+        "default_path": "{install_root}\\logs",
+        "supports_direct": true,
+        "auto_create": true,
+        "required_for_start": false
+      }
+    ]
+  },
+  {
+    "id": "nginx",
+    "display_name": "Nginx",
+    "category": "service",
+    "official_website": "https://nginx.org",
+    "simple_mode": true,
+    "env_vars": [],
+    "bin_dirs": [
+      ""
+    ],
+    "has_cache": false,
+    "cache_detect_cmd": null,
+    "cache_default_path": null,
+    "has_mirror": false,
+    "mirror_options": null,
+    "has_pkg": false,
+    "pkg_manager": null,
+    "pkg_homepage_template": null,
+    "is_service": true,
+    "default_port": 80,
+    "data_dir": null,
+    "log_dir": "logs",
+    "package_managers": [],
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "nginx",
+          "exe_name": "nginx.exe"
+        },
+        "source_label": "系统 PATH",
+        "priority": 40,
+        "root_offset": 0
+      },
+      {
+        "pattern": {
+          "type": "fixed_path",
+          "path": "C:\\nginx",
+          "exe_name": "nginx.exe"
+        },
+        "source_label": "C:\\nginx",
+        "priority": 50,
+        "root_offset": 0
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "",
+          "exe_name": "nginx.exe"
+        },
+        "source_label": "系统 PATH",
+        "priority": 90,
+        "root_offset": 0
+      }
+    ],
+    "config_file": "conf\\nginx.conf",
+    "config_file_candidates": [
+      "{install_root}\\conf\\nginx.conf"
+    ],
+    "start_cmd": "\"{install_root}\\nginx.exe\" -c \"{config_file}\" -p \"{install_root}\"",
+    "stop_cmd": "\"{install_root}\\nginx.exe\" -s quit -c \"{config_file}\" -p \"{install_root}\"",
+    "service_process_exes": [
+      "nginx"
+    ],
+    "service_names": [],
+    "service_start_mode": "wait",
+    "service_allow_force_kill": false,
+    "service_auto_create_dirs": true,
+    "version_cmd": "nginx -v",
+    "version_exe": "nginx",
+    "data_dirs": [
+      {
+        "id": "log",
+        "display_name": "Nginx 日志目录",
+        "kind": "log",
+        "possible_paths": [
+          "{install_root}\\logs"
+        ],
+        "default_path": "{install_root}\\logs",
+        "supports_direct": true,
+        "auto_create": true,
+        "required_for_start": false
+      },
+      {
+        "id": "config",
+        "display_name": "Nginx 配置目录",
+        "kind": "config",
+        "possible_paths": [
+          "{install_root}\\conf"
+        ],
+        "default_path": "{install_root}\\conf",
+        "supports_direct": false,
+        "auto_create": false,
+        "required_for_start": true
+      }
+    ]
+  },
+  {
+    "id": "mongodb",
+    "display_name": "MongoDB",
+    "category": "service",
+    "official_website": "https://www.mongodb.com",
+    "simple_mode": true,
+    "env_vars": [],
+    "bin_dirs": [
+      "bin"
+    ],
+    "has_cache": false,
+    "cache_detect_cmd": null,
+    "cache_default_path": null,
+    "has_mirror": false,
+    "mirror_options": null,
+    "has_pkg": false,
+    "pkg_manager": null,
+    "pkg_homepage_template": null,
+    "is_service": true,
+    "default_port": 27017,
+    "data_dir": null,
+    "log_dir": null,
+    "package_managers": [],
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "MongoDB\\Server",
+          "exe_name": "mongod.exe"
+        },
+        "source_label": "Program Files",
+        "priority": 20,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "fixed_path",
+          "path": "C:\\Program Files\\MongoDB\\Server\\8.0\\bin",
+          "exe_name": "mongod.exe"
+        },
+        "source_label": "Program Files",
+        "priority": 30,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "fixed_path",
+          "path": "C:\\Program Files\\MongoDB\\Server\\7.0\\bin",
+          "exe_name": "mongod.exe"
+        },
+        "source_label": "Program Files",
+        "priority": 31,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "",
+          "exe_name": "mongod.exe"
+        },
+        "source_label": "系统 PATH",
+        "priority": 90,
+        "root_offset": 1
+      }
+    ],
+    "config_file": "mongod.cfg",
+    "config_file_candidates": [
+      "{install_root}\\bin\\mongod.cfg",
+      "{install_root}\\mongod.cfg"
+    ],
+    "start_cmd": "\"{install_root}\\bin\\mongod.exe\" --dbpath \"{data_dir}\" --logpath \"{log_dir}\\mongod.log\" --logappend --port {port}",
+    "stop_cmd": null,
+    "service_process_exes": [
+      "mongod"
+    ],
+    "service_names": [
+      "^MongoDB.*$"
+    ],
+    "service_start_mode": "detached",
+    "service_allow_force_kill": false,
+    "service_auto_create_dirs": true,
+    "version_cmd": "mongod --version",
+    "version_exe": "mongod",
+    "data_dirs": [
+      {
+        "id": "data",
+        "display_name": "MongoDB 数据目录",
+        "kind": "data",
+        "possible_paths": [
+          "C:\\data\\db",
+          "{install_root}\\data\\db"
+        ],
+        "default_path": "{install_root}\\data\\db",
+        "supports_direct": true,
+        "auto_create": true,
+        "required_for_start": true
+      },
+      {
+        "id": "log",
+        "display_name": "MongoDB 日志目录",
+        "kind": "log",
+        "possible_paths": [
+          "C:\\data\\log",
+          "{install_root}\\log",
+          "{install_root}\\logs"
+        ],
+        "default_path": "{install_root}\\log",
+        "supports_direct": true,
+        "auto_create": true,
+        "required_for_start": false
+      }
+    ]
+  },
+  {
+    "id": "postgresql",
+    "display_name": "PostgreSQL",
+    "category": "service",
+    "official_website": "https://www.postgresql.org",
+    "simple_mode": true,
+    "env_vars": [],
+    "bin_dirs": [
+      "bin"
+    ],
+    "has_cache": false,
+    "cache_detect_cmd": null,
+    "cache_default_path": null,
+    "has_mirror": false,
+    "mirror_options": null,
+    "has_pkg": false,
+    "pkg_manager": null,
+    "pkg_homepage_template": null,
+    "is_service": true,
+    "default_port": 5432,
+    "data_dir": null,
+    "log_dir": null,
+    "package_managers": [],
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "PostgreSQL",
+          "exe_name": "postgres.exe"
+        },
+        "source_label": "Program Files",
+        "priority": 20,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "fixed_path",
+          "path": "C:\\Program Files\\PostgreSQL\\17\\bin",
+          "exe_name": "postgres.exe"
+        },
+        "source_label": "Program Files",
+        "priority": 30,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "fixed_path",
+          "path": "C:\\Program Files\\PostgreSQL\\16\\bin",
+          "exe_name": "postgres.exe"
+        },
+        "source_label": "Program Files",
+        "priority": 31,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "",
+          "exe_name": "postgres.exe"
+        },
+        "source_label": "系统 PATH",
+        "priority": 90,
+        "root_offset": 1
+      }
+    ],
+    "config_file": "postgresql.conf",
+    "config_file_candidates": [
+      "{install_root}\\data\\postgresql.conf"
+    ],
+    "start_cmd": "\"{install_root}\\bin\\pg_ctl.exe\" start -D \"{data_dir}\" -l \"{log_dir}\\postgresql.log\" -o \"-p {port}\"",
+    "stop_cmd": "\"{install_root}\\bin\\pg_ctl.exe\" stop -D \"{data_dir}\" -m fast",
+    "service_process_exes": [
+      "postgres"
+    ],
+    "service_names": [
+      "^postgresql(-x64)?-\\d+$",
+      "^postgrespro-.*-\\d+$"
+    ],
+    "service_start_mode": "wait",
+    "service_allow_force_kill": false,
+    "service_auto_create_dirs": false,
+    "version_cmd": "postgres --version",
+    "version_exe": "postgres",
+    "data_dirs": [
+      {
+        "id": "data",
+        "display_name": "PostgreSQL 数据目录",
+        "kind": "data",
+        "possible_paths": [
+          "{install_root}\\data"
+        ],
+        "default_path": "{install_root}\\data",
+        "supports_direct": true,
+        "auto_create": false,
+        "required_for_start": true
+      },
+      {
+        "id": "log",
+        "display_name": "PostgreSQL 日志目录",
+        "kind": "log",
+        "possible_paths": [
+          "{install_root}\\log",
+          "{install_root}\\logs"
+        ],
+        "default_path": "{install_root}\\log",
+        "supports_direct": true,
+        "auto_create": true,
+        "required_for_start": false
       }
     ]
   }

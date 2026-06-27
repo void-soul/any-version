@@ -23,6 +23,7 @@ import {
   WifiOff,
   X,
   Wrench,
+  Info,
 } from "lucide-react";
 import type { ProjectStatus, ProjectDef, EnvVarStatus, ServiceStatus, PackageManagerDef } from "./types";
 
@@ -518,6 +519,10 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
     );
   }
 
+  const status = svc.status || (svc.running ? "running" : "stopped");
+  const hasConflict = status === "port_conflict";
+  const notInstalled = status === "not_installed";
+  const canToggle = !serviceCtrlLoading && !hasConflict && !notInstalled;
 
   return (
     <div className="space-y-4">
@@ -526,6 +531,20 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
           <Activity className="w-4 h-4 text-blue-400" />
           <h4 className="text-xs font-semibold text-white">本地服务控制台</h4>
         </div>
+
+        {hasConflict && (
+          <div className="p-3 rounded-xl border border-amber-500/20 bg-amber-500/10 text-[12px] text-amber-200 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+            <span>端口 {svc.port || def?.default_port || "未知"} 已被 {svc.process_name || "其他进程"} 占用。为避免误停外部进程，已禁用启动/停止操作。</span>
+          </div>
+        )}
+
+        {notInstalled && (
+          <div className="p-3 rounded-xl border border-slate-500/20 bg-slate-500/10 text-[12px] text-slate-300 flex items-start gap-2">
+            <Info className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
+            <span>未检测到安装目录。请在项目标题栏点击“手动指定目录”，选择已安装的服务根目录。</span>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
           <div className="p-3 bg-black/20 rounded-xl border border-white/5 space-y-1.5">
@@ -536,6 +555,10 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
                   运行中 {svc.pid ? `(PID: ${svc.pid})` : ""}
                 </span>
+              ) : hasConflict ? (
+                <span className="px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">端口冲突</span>
+              ) : notInstalled ? (
+                <span className="px-2.5 py-1 rounded-lg bg-slate-500/10 text-slate-400 border border-white/5 font-semibold">未配置</span>
               ) : (
                 <span className="px-2.5 py-1 rounded-lg bg-slate-500/10 text-slate-400 border border-white/5 font-semibold">已停止</span>
               )}
@@ -546,15 +569,15 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
             <span className="text-[13px] text-slate-400 font-semibold uppercase tracking-wider block">运行参数</span>
             <div className="text-slate-300 font-mono space-y-0.5">
               <p>端口: {svc.port || def?.default_port || "无"}</p>
-              <p>版本: {project.active_version || "未启用"}</p>
+              <p>进程: {svc.process_name || "未检测到"}</p>
             </div>
           </div>
 
           <div className="p-3 bg-black/20 rounded-xl border border-white/5 flex items-center justify-center gap-2">
             <button
               onClick={onServiceToggle}
-              disabled={serviceCtrlLoading}
-              className={`px-4 py-2 ${svc.running ? "bg-red-600 hover:bg-red-500" : "bg-emerald-600 hover:bg-emerald-500"} disabled:opacity-50 text-white font-semibold rounded-xl text-xs cursor-pointer shadow-md transition-all flex items-center gap-1`}
+              disabled={!canToggle}
+              className={`px-4 py-2 ${svc.running ? "bg-red-600 hover:bg-red-500" : "bg-emerald-600 hover:bg-emerald-500"} disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-xl text-xs cursor-pointer shadow-md transition-all flex items-center gap-1`}
             >
               {serviceCtrlLoading ? "操作中..." : svc.running ? "停止服务" : "启动服务"}
             </button>
@@ -562,20 +585,28 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs pt-2">
+          {svc.install_root && (
+            <div className="p-3 bg-black/20 rounded-xl border border-white/5">
+              <span className="text-[13px] text-slate-400 font-semibold block">安装目录</span>
+              <p className="font-mono text-slate-300 truncate mt-1" title={svc.install_root}>{svc.install_root}</p>
+            </div>
+          )}
+          {svc.config_file && (
+            <div className="p-3 bg-black/20 rounded-xl border border-white/5">
+              <span className="text-[13px] text-slate-400 font-semibold block">配置文件</span>
+              <p className="font-mono text-slate-300 truncate mt-1" title={svc.config_file}>{svc.config_file}</p>
+            </div>
+          )}
           {svc.data_dir && (
             <div className="p-3 bg-black/20 rounded-xl border border-white/5">
-              <div className="min-w-0 flex-1">
-                <span className="text-[13px] text-slate-400 font-semibold block">数据目录</span>
-                <p className="font-mono text-slate-300 truncate mt-1">{svc.data_dir}</p>
-              </div>
+              <span className="text-[13px] text-slate-400 font-semibold block">数据目录</span>
+              <p className="font-mono text-slate-300 truncate mt-1" title={svc.data_dir}>{svc.data_dir}</p>
             </div>
           )}
           {svc.log_dir && (
             <div className="p-3 bg-black/20 rounded-xl border border-white/5">
-              <div className="min-w-0 flex-1">
-                <span className="text-[13px] text-slate-400 font-semibold block">日志目录</span>
-                <p className="font-mono text-slate-300 truncate mt-1">{svc.log_dir}</p>
-              </div>
+              <span className="text-[13px] text-slate-400 font-semibold block">日志目录</span>
+              <p className="font-mono text-slate-300 truncate mt-1" title={svc.log_dir}>{svc.log_dir}</p>
             </div>
           )}
         </div>
@@ -2112,9 +2143,11 @@ export function PackageManagerTab({
 // ═══════════════════════════════════════
 //  数据目录管理
 // ═══════════════════════════════════════
-export function DataDirsTab({ project, onRefresh }: { project: ProjectStatus; onRefresh: () => Promise<void> }) {
+export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatus; def?: ProjectDef | null; onRefresh: () => Promise<void> }) {
   const [migratingId, setMigratingId] = useState<string | null>(null);
+  const [directId, setDirectId] = useState<string | null>(null);
   const [newPath, setNewPath] = useState("");
+  const [directFileAction, setDirectFileAction] = useState<"move" | "delete" | "keep">("keep");
   const [loading, setLoading] = useState(false);
   const [migrateProgress, setMigrateProgress] = useState<{ stage: string; current: number; total: number; file_name: string } | null>(null);
 
@@ -2176,6 +2209,44 @@ export function DataDirsTab({ project, onRefresh }: { project: ProjectStatus; on
     }
   };
 
+  const handleSetDirect = async (dirId: string, oldPath: string, exists: boolean) => {
+    if (!newPath) {
+      alert("请先选择或输入新的指向路径");
+      return;
+    }
+    if (newPath.toLowerCase().startsWith("c:")) {
+      if (!confirm("警告：目标路径仍在 C 盘下，这无法解决 C 盘空间问题。确定继续？")) {
+        return;
+      }
+    }
+    setLoading(true);
+    setMigrateProgress(null);
+    try {
+      if (exists && directFileAction !== "keep") {
+        await invoke("handle_point_storage_files", {
+          oldPath,
+          newPath,
+          action: directFileAction,
+        });
+      }
+      await invoke("project_set_data_dir", {
+        projectId: project.id,
+        dirId,
+        newPath,
+      });
+      alert("路径指向已保存。该设置会在 AnyVersion 启动服务时生效。");
+      setDirectId(null);
+      setNewPath("");
+      setDirectFileAction("keep");
+      await onRefresh();
+    } catch (e: unknown) {
+      alert("设置指向失败: " + e);
+    } finally {
+      setLoading(false);
+      setMigrateProgress(null);
+    }
+  };
+
   const handleDelete = async (path: string) => {
     if (!confirm(`警告：该操作将永久删除以下目录及其全部数据：\n${path}\n\n该操作不可撤销，确定继续？`)) {
       return;
@@ -2214,6 +2285,9 @@ export function DataDirsTab({ project, onRefresh }: { project: ProjectStatus; on
           <div className="space-y-4">
             {dataDirs.map((dir) => {
               const isMigrating = migratingId === dir.id;
+              const isDirecting = directId === dir.id;
+              const dirDef = def?.data_dirs?.find((d) => d.id === dir.id);
+              const supportsDirect = !!dirDef?.supports_direct;
               return (
                 <div key={dir.id + "_" + dir.path} className="p-4 bg-black/20 rounded-xl border border-white/5 space-y-3 animate-fadeIn">
                   <div className="flex items-start justify-between">
@@ -2246,7 +2320,7 @@ export function DataDirsTab({ project, onRefresh }: { project: ProjectStatus; on
                   </div>
 
                   {/* 操作按钮区 */}
-                  {dir.exists && !isMigrating && (
+                  {dir.exists && !isMigrating && !isDirecting && (
                     <div className="flex items-center gap-2 pt-1 border-t border-white/5">
                       {!dir.is_link && (
                         <button
@@ -2266,6 +2340,19 @@ export function DataDirsTab({ project, onRefresh }: { project: ProjectStatus; on
                           <FolderSync className="w-3.5 h-3.5" /> 迁移数据
                         </button>
                       )}
+                      {supportsDirect && (
+                        <button
+                          onClick={() => {
+                            setDirectId(dir.id);
+                            setMigratingId(null);
+                            setDirectFileAction("keep");
+                            setNewPath("");
+                          }}
+                          className="px-3 py-1.5 bg-purple-600/70 hover:bg-purple-600 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
+                        >
+                          <Link className="w-3.5 h-3.5" /> 指向路径
+                        </button>
+                      )}
                       <button
                         onClick={() => handleDelete(dir.path)}
                         className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
@@ -2276,16 +2363,18 @@ export function DataDirsTab({ project, onRefresh }: { project: ProjectStatus; on
                   )}
 
                   {/* 迁移进行中 / 迁移配置区 */}
-                  {isMigrating && (
-                    <div className="p-3 bg-white/5 rounded-xl border border-white/5 space-y-3 mt-2 animate-fadeIn">
+                  {isDirecting && (
+                    <div className="p-3 bg-purple-500/5 rounded-xl border border-purple-500/20 space-y-3 mt-2 animate-fadeIn">
                       <div className="flex items-center justify-between">
-                        <span className="text-[12px] text-slate-300 font-semibold">
-                          数据迁移设置 (C 盘 ➔ 非 C 盘)
-                        </span>
+                        <div>
+                          <span className="text-[12px] text-purple-200 font-semibold">启动参数指向设置</span>
+                          <p className="text-[11px] text-slate-500 mt-0.5">该设置只影响通过 AnyVersion 启动的服务，不会改写原生服务配置。</p>
+                        </div>
                         <button
                           onClick={() => {
-                            setMigratingId(null);
+                            setDirectId(null);
                             setNewPath("");
+                            setDirectFileAction("keep");
                           }}
                           disabled={loading}
                           className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer"
@@ -2295,25 +2384,8 @@ export function DataDirsTab({ project, onRefresh }: { project: ProjectStatus; on
                       </div>
 
                       {loading ? (
-                        <div className="space-y-2 py-2">
-                          <div className="flex items-center gap-2 text-[12px] text-blue-300 font-medium">
-                            <Loader className="w-3.5 h-3.5 animate-spin" />
-                            <span>{migrateProgress?.stage || "正在准备迁移..."}</span>
-                          </div>
-                          {migrateProgress && migrateProgress.total > 0 && (
-                            <div className="space-y-1">
-                              <div className="flex items-center justify-between text-[10px] text-slate-500">
-                                <span className="truncate max-w-[200px]">{migrateProgress.file_name}</span>
-                                <span>{migrateProgress.current} / {migrateProgress.total}</span>
-                              </div>
-                              <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
-                                <div
-                                  className="h-full bg-blue-500 rounded-full transition-all"
-                                  style={{ width: `${(migrateProgress.current / migrateProgress.total) * 100}%` }}
-                                />
-                              </div>
-                            </div>
-                          )}
+                        <div className="flex items-center gap-2 text-[12px] text-purple-200 font-medium py-2">
+                          <Loader className="w-3.5 h-3.5 animate-spin" /> 正在保存指向设置...
                         </div>
                       ) : (
                         <div className="space-y-2.5">
@@ -2323,7 +2395,7 @@ export function DataDirsTab({ project, onRefresh }: { project: ProjectStatus; on
                               value={newPath}
                               onChange={(e) => setNewPath(e.target.value)}
                               className="flex-1 glass-input px-3 py-1.5 text-[12px] font-mono"
-                              placeholder="例如 D:\AnyVersionData\mysql_data"
+                              placeholder="例如 D:\\AnyVersionData\\service-data"
                             />
                             <button
                               onClick={browseFolder}
@@ -2332,12 +2404,27 @@ export function DataDirsTab({ project, onRefresh }: { project: ProjectStatus; on
                               <FolderOpen className="w-3.5 h-3.5" /> 浏览
                             </button>
                           </div>
+                          {dir.exists && (
+                            <div className="flex items-center gap-3 text-[11px] text-slate-400">
+                              <span>旧文件处理:</span>
+                              {(["keep", "move", "delete"] as const).map((action) => (
+                                <label key={action} className="flex items-center gap-1 cursor-pointer">
+                                  <input
+                                    type="radio"
+                                    checked={directFileAction === action}
+                                    onChange={() => setDirectFileAction(action)}
+                                  />
+                                  {action === "keep" ? "保留" : action === "move" ? "移动" : "删除"}
+                                </label>
+                              ))}
+                            </div>
+                          )}
                           <div className="flex gap-2 justify-end">
                             <button
-                              onClick={() => handleMigrate(dir.id, dir.path)}
-                              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[12px] font-semibold cursor-pointer"
+                              onClick={() => handleSetDirect(dir.id, dir.path, dir.exists)}
+                              className="px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-[12px] font-semibold cursor-pointer"
                             >
-                              开始迁移
+                              保存指向
                             </button>
                           </div>
                         </div>

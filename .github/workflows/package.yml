@@ -18,31 +18,28 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: 配置 Git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - name: 更新版本号
         run: |
-          VERSION="${{ github.event.inputs.version }}"
-          echo "更新版本号为: v${VERSION}"
-
-          # 更新 Cargo.toml
-          sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" src-tauri/Cargo.toml
-
-          # 更新 tauri.conf.json
-          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" src-tauri/tauri.conf.json
-
-          # 更新 package.json
-          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" package.json
+          node scripts/bump-version.js "${{ github.event.inputs.version }}"
 
       - name: 提交版本变更
         run: |
           git add src-tauri/Cargo.toml src-tauri/tauri.conf.json package.json
           git commit -m "chore: bump version to v${{ github.event.inputs.version }}"
-          git push origin main
+          git push origin HEAD
 
       - name: 创建 Tag
         run: |

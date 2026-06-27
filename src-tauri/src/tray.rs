@@ -14,6 +14,8 @@ const ID_SHOW: &str = "show";
 const ID_QUIT: &str = "quit";
 const ID_EMPTY: &str = "__empty";
 const ID_SWITCH_PREFIX: &str = "switch::";
+const ID_SERVICE_START_PREFIX: &str = "service-start::";
+const ID_SERVICE_STOP_PREFIX: &str = "service-stop::";
 
 pub fn build_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let menu = build_menu(app)?;
@@ -41,6 +43,22 @@ pub fn build_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                         if crate::commands::project::versions::project_use_version_inner(project_id, version).is_ok() {
                             let _ = rebuild_tray_menu(app);
                         }
+                    }
+                }
+                other if other.starts_with(ID_SERVICE_START_PREFIX) => {
+                    if let Some(service_id) = other.strip_prefix(ID_SERVICE_START_PREFIX) {
+                        if let Err(error) = crate::commands::service::start_service_inner(service_id.to_string(), None) {
+                            eprintln!("failed to start service {service_id}: {error}");
+                        }
+                        let _ = rebuild_tray_menu(app);
+                    }
+                }
+                other if other.starts_with(ID_SERVICE_STOP_PREFIX) => {
+                    if let Some(service_id) = other.strip_prefix(ID_SERVICE_STOP_PREFIX) {
+                        if let Err(error) = crate::commands::service::stop_service_inner(service_id.to_string()) {
+                            eprintln!("failed to stop service {service_id}: {error}");
+                        }
+                        let _ = rebuild_tray_menu(app);
                     }
                 }
                 _ => {}
@@ -154,6 +172,66 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             .enabled(false)
             .build(app)?;
         builder = builder.item(&empty);
+    }
+
+    // 服务：仅显示「已托管 + 已检出 install_root」的服务项，平铺到顶层（不再用「服务」外层包装）
+    let mut any_service = false;
+    for def in &registry {
+        if def.category != crate::commands::project::types::ProjectCategory::Service && !def.is_service {
+            continue;
+        }
+        if !config.managed_items.contains(&def.id) {
+            continue;
+        }
+
+        let status = crate::commands::service::service_status_for_def(def);
+        let status_text = status.status.as_deref().unwrap_or(if status.running { "running" } else { "stopped" });
+        if status_text == "not_installed" {
+            continue;
+        }
+        if !any_service {
+            builder = builder.separator();
+            any_service = true;
+        }
+
+        let port_text = status.port.map(|p| format!(" :{}", p)).unwrap_or_default();
+        let title = match status_text {
+            "running" => format!("{} · 运行中{}", def.display_name, port_text),
+            "port_conflict" => format!("{} · 端口冲突{}", def.display_name, port_text),
+            _ => format!("{} · 已停止{}", def.display_name, port_text),
+        };
+
+        let mut service_submenu = SubmenuBuilder::new(app, title);
+        let status_item = MenuItemBuilder::with_id(
+            &format!("service-status::{}", def.id),
+            match status_text {
+                "running" => "状态：运行中",
+                "port_conflict" => "状态：端口被其他进程占用",
+                _ => "状态：已停止",
+            },
+        )
+        .enabled(false)
+        .build(app)?;
+        service_submenu = service_submenu.item(&status_item);
+
+        if status.running {
+            let item = MenuItemBuilder::with_id(
+                &format!("{}{}", ID_SERVICE_STOP_PREFIX, def.id),
+                "停止服务",
+            )
+            .build(app)?;
+            service_submenu = service_submenu.item(&item);
+        } else if status_text == "stopped" {
+            let item = MenuItemBuilder::with_id(
+                &format!("{}{}", ID_SERVICE_START_PREFIX, def.id),
+                "启动服务",
+            )
+            .build(app)?;
+            service_submenu = service_submenu.item(&item);
+        }
+
+        let service_submenu = service_submenu.build()?;
+        builder = builder.item(&service_submenu);
     }
 
     let quit_item = MenuItemBuilder::with_id(ID_QUIT, "退出 AnyVersion").build(app)?;

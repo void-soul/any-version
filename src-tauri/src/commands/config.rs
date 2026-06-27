@@ -12,6 +12,8 @@ pub struct Config {
     pub simple_managed_items: std::collections::HashSet<String>,
     #[serde(default)]
     pub custom_install_paths: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub custom_data_paths: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     pub original_envs: std::collections::HashMap<String, String>,
     pub original_paths: std::collections::HashMap<String, Vec<String>>,
 }
@@ -53,6 +55,7 @@ pub fn load_config() -> Config {
         managed_items: std::collections::HashSet::new(),
         simple_managed_items: std::collections::HashSet::new(),
         custom_install_paths: std::collections::HashMap::new(),
+        custom_data_paths: std::collections::HashMap::new(),
         original_envs: std::collections::HashMap::new(),
         original_paths: std::collections::HashMap::new(),
     };

@@ -420,25 +420,39 @@ export default function ProjectDetailPanel({
   const handleServiceToggle = useCallback(async () => {
     if (!pid || !ui.detail?.status?.service_status) return;
     const running = ui.detail.status.service_status.running;
+    const simpleService = ui.detail.def.simple_mode || ui.detail.status.is_simple_managed;
     patch(pid, { serviceCtrlLoading: true });
     try {
       if (running) {
-        await invoke("stop_service", { name: pid });
+        try {
+          await invoke("stop_service", { name: pid });
+        } catch (stopErr) {
+          const msg = String(stopErr);
+          const confirmed = window.confirm(
+            `安全停止失败：\n${msg}\n\n是否强制终止 ${pid} 服务进程？`
+          );
+          if (!confirmed) throw stopErr;
+          await invoke("force_stop_service", { name: pid });
+        }
       } else {
-        if (!ui.detail.status.active_version) {
+        if (!simpleService && !ui.detail.status.active_version) {
           alert("请先启用一个版本，然后才能启动服务");
           patch(pid, { serviceCtrlLoading: false });
           return;
         }
-        await invoke("start_service", { name: pid, version: ui.detail.status.active_version });
+        await invoke("start_service", {
+          name: pid,
+          version: simpleService ? null : ui.detail.status.active_version,
+        });
       }
+      await invoke("refresh_tray_menu");
       await refreshSingle(pid);
     } catch (e: unknown) {
       alert("服务操作失败: " + e);
     } finally {
       patch(pid, { serviceCtrlLoading: false });
     }
-  }, [pid, ui.detail, patch, loadDetail, onRefresh]);
+  }, [pid, ui.detail, patch, refreshSingle]);
 
   const handleMigrateCache = useCallback(async () => {
     if (!pid) return;
@@ -759,7 +773,7 @@ export default function ProjectDetailPanel({
                 {activeTab === "versions" && <VersionsTab {...subTabProps} />}
                 {activeTab === "envvars" && <EnvVarsTab {...subTabProps} />}
                 {activeTab === "services" && <ServicesTab {...subTabProps} />}
-                {activeTab === "data_dirs" && <DataDirsTab project={status} onRefresh={async () => { if (pid) await loadDetail(pid); }} />}
+                {activeTab === "data_dirs" && <DataDirsTab project={status} def={def} onRefresh={async () => { if (pid) await loadDetail(pid); }} />}
                 {activeTab === "legacy" && <LegacyTab projectId={pid!} />}
                 {/* 动态包管理器子页面 —— key 保证每个 PM 独立且切换时不重新挂载 */}
                 {pmTabs.map(pt => {

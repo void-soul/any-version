@@ -28,6 +28,10 @@ export interface ServiceStatus {
   pid: number | null;
   data_dir: string;
   log_dir: string;
+  status?: "running" | "stopped" | "not_installed" | "port_conflict" | string | null;
+  process_name?: string | null;
+  install_root?: string | null;
+  config_file?: string | null;
 }
 
 export interface PackageManagerDef {
@@ -66,6 +70,8 @@ export interface DataDirStatus {
   is_link: boolean;
   real_target: string;
   exists: boolean;
+  kind?: "data" | "log" | "config" | "cache" | string | null;
+  source?: string | null;
 }
 
 export interface ProjectStatus {
@@ -95,6 +101,18 @@ export interface UserConfigurableVar {
   source?: string;
 }
 
+export interface DataDirDef {
+  id: string;
+  display_name: string;
+  possible_paths: string[];
+  default_path: string;
+  env_var?: string;
+  kind?: "data" | "log" | "config" | "cache" | string | null;
+  supports_direct?: boolean;
+  auto_create?: boolean | null;
+  required_for_start?: boolean;
+}
+
 export interface ProjectDef {
   id: string;
   display_name: string;
@@ -111,13 +129,12 @@ export interface ProjectDef {
   default_port: number | null;
   package_managers: PackageManagerDef[];
   user_configurable_vars?: UserConfigurableVar[];
-  data_dirs?: Array<{
-    id: string;
-    display_name: string;
-    possible_paths: string[];
-    default_path: string;
-    env_var?: string;
-  }>;
+  data_dirs?: DataDirDef[];
+  service_process_exes?: string[];
+  config_file_candidates?: string[];
+  service_start_mode?: "wait" | "detached" | string | null;
+  service_allow_force_kill?: boolean;
+  service_auto_create_dirs?: boolean;
   // ... 其他字段
   [key: string]: unknown;
 }
