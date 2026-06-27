@@ -1,10 +1,14 @@
 import { readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 
-const version = process.argv[2];
+let version = process.argv[2];
+
+if (version && version.startsWith('v')) {
+  version = version.slice(1);
+}
 
 if (!version || !/^\d+\.\d+\.\d+/.test(version)) {
-  console.error('用法: node scripts/bump-version.js <x.y.z>');
+  console.error('用法: node scripts/bump-version.js <x.y.z> 或 <vx.y.z>');
   process.exit(1);
 }
 

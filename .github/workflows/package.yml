@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '新版本号 (如 1.0.4，不需要 v 前缀)'
+        description: '新版本号 (如 1.0.4 或 v1.0.4，支持带或不带 v 前缀)'
         required: true
 
 permissions:
