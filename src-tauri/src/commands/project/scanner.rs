@@ -582,7 +582,7 @@ fn build_data_dirs_status(def: &ProjectDef, active_install_root: Option<&str>) -
 
         if exists {
             if let Ok(metadata) = fs::symlink_metadata(path) {
-                if metadata.file_type().is_symlink() || metadata.file_type().is_dir() {
+                if metadata.file_type().is_symlink() {
                     if let Ok(eval_path) = fs::read_link(path) {
                         is_link = true;
                         real_target = eval_path.to_string_lossy().to_string();

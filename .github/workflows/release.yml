@@ -71,8 +71,7 @@ jobs:
 
             ## 下载说明
             - `.msi` / `.exe`：Windows 安装包，双击即可安装。
-
-            本版本由 GitHub Actions 自动构建发布。
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           includeUpdaterJson: false
+          generateReleaseNotes: true

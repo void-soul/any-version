@@ -2925,8 +2925,8 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
               <FileText className="w-4 h-4 text-blue-400" />
               <div>
                 <h4 className="text-xs font-semibold text-white">配置文件可视化编辑</h4>
-                <p className="text-[10px] text-slate-500 mt-0.5" title={configPath}>
-                  正在编辑: {configPath.split("\\").pop()}
+                <p className="text-[10px] text-slate-500 mt-0.5 font-mono select-all break-all" title={configPath}>
+                  正在编辑: {configPath}
                 </p>
               </div>
             </div>

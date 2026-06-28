@@ -194,7 +194,7 @@ pub fn get_caches_list() -> Result<Vec<CacheInfo>, String> {
                 let mut real_target = String::new();
                 
                 if let Ok(metadata) = fs::symlink_metadata(clean_path) {
-                    if metadata.file_type().is_symlink() || metadata.file_type().is_dir() {
+                    if metadata.file_type().is_symlink() {
                         if let Ok(eval_path) = fs::read_link(clean_path) {
                             is_link = true;
                             real_target = eval_path.to_string_lossy().to_string();
