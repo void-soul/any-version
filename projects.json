@@ -2312,6 +2312,36 @@
       },
       {
         "pattern": {
+          "type": "fixed_path",
+          "path": "C:\\Qt",
+          "exe_name": "qmake.exe"
+        },
+        "source_label": "C:\\Qt",
+        "priority": 30,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "fixed_path",
+          "path": "D:\\Qt",
+          "exe_name": "qmake.exe"
+        },
+        "source_label": "D:\\Qt",
+        "priority": 31,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "fixed_path",
+          "path": "E:\\Qt",
+          "exe_name": "qmake.exe"
+        },
+        "source_label": "E:\\Qt",
+        "priority": 32,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
           "type": "path_contains",
           "path_key": "Qt",
           "exe_name": "qmake.exe"

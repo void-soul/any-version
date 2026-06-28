@@ -246,10 +246,38 @@ fn resolve_from_env_bin(env_var: &str, bin_sub: &str, exe_name: &str) -> Option<
 fn resolve_from_fixed(fixed: &str, exe_name: &str) -> Option<PathBuf> {
     let path = Path::new(fixed);
     if path.join(exe_name).exists() {
-        Some(path.to_path_buf())
-    } else {
-        None
+        return Some(path.to_path_buf());
     }
+    if path.join("bin").join(exe_name).exists() {
+        return Some(path.join("bin"));
+    }
+
+    // 特殊处理 Qt 目录：扫描 C:\Qt\<version>\<compiler>\bin\<exe_name>
+    let fixed_lower = fixed.to_lowercase();
+    if path.exists() && (fixed_lower.ends_with("qt") || fixed_lower.ends_with("qt\\") || fixed_lower.ends_with("qt/")) {
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let p1 = entry.path();
+                if p1.is_dir() {
+                    // 例如 C:\Qt\6.8.3
+                    if let Ok(sub_entries) = std::fs::read_dir(p1) {
+                        for sub_entry in sub_entries.filter_map(|e| e.ok()) {
+                            let p2 = sub_entry.path();
+                            if p2.is_dir() {
+                                // 例如 C:\Qt\6.8.3\msvc2022_64
+                                let bin = p2.join("bin");
+                                if bin.join(exe_name).exists() {
+                                    return Some(bin);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }
 
 /// 从父目录环境变量展开，按模式查找
