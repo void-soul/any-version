@@ -24,6 +24,8 @@ import {
   X,
   Wrench,
   Info,
+  Save,
+  FileText,
 } from "lucide-react";
 import type { ProjectStatus, ProjectDef, EnvVarStatus, ServiceStatus, PackageManagerDef } from "./types";
 
@@ -1931,35 +1933,48 @@ export function PackageManagerTab({
             <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">缓存</span>
           </div>
           {cacheInfo ? (
-            <div className="p-3 bg-black/20 rounded-xl border border-white/5 space-y-3">
-              {/* 缓存状态 — 格式: xxx（读取自 ccc）→ yyy */}
-              <div className="space-y-1">
-                <p className="text-[12px] font-mono text-slate-300 break-all leading-relaxed">
-                  <span className="text-slate-300">{cacheInfo.path}</span>
-                  <span className="mx-1 px-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[11px] inline-flex items-center gap-0.5">{cacheInfo.detect_source}</span>
-                  {cacheInfo.real_target ? (
-                    <>
-                      <span className="mx-1 px-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[11px] inline-flex items-center gap-0.5"> 链接到(junction) </span>
-                      <span className="text-[11px] font-mono text-slate-300">{cacheInfo.real_target}</span>
-                      <span className="ml-1 px-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[11px] inline-flex items-center gap-0.5">
-                        {cacheInfo.size}
+            <div className="p-4 bg-black/20 rounded-xl border border-white/5 space-y-3">
+              <div className="flex items-start justify-between">
+                <div className="space-y-1 flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {cacheInfo.detect_source && (
+                      <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[10px] inline-flex items-center font-mono">
+                        {cacheInfo.detect_source}
                       </span>
-                    </>
-                  ) : (
-                    <span className="ml-1 text-[13px] text-slate-500">{cacheInfo.size}</span>
+                    )}
+                    {cacheInfo.real_target ? (
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] inline-flex items-center font-semibold">
+                        已迁移 (Junction)
+                      </span>
+                    ) : (
+                      <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 text-[10px] inline-flex items-center">
+                        默认路径
+                      </span>
+                    )}
+                  </div>
+                  <p className="font-mono text-[12px] text-slate-400 break-all">{cacheInfo.path}</p>
+                  {cacheInfo.real_target && (
+                    <p className="font-mono text-[11px] text-slate-500 break-all">
+                      ↳ 实际指向: {cacheInfo.real_target}
+                    </p>
                   )}
-                </p>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className="text-slate-300 font-mono text-[13px] font-semibold bg-white/5 px-2.5 py-1 rounded-lg">
+                    {cacheInfo.size}
+                  </span>
+                </div>
               </div>
 
               {/* 操作行 */}
               <div className="pt-2 border-t border-white/5 flex items-center gap-2">
                 <button onClick={() => openWorkflow("cache")} disabled={workflowType !== null}
-                  className="px-2.5 py-1 bg-amber-600/80 hover:bg-amber-600 disabled:opacity-40 text-white rounded text-[11px] font-semibold cursor-pointer flex items-center gap-1 flex-shrink-0 transition-colors">
-                  <FolderSync className="w-3 h-3" />开始变更
+                  className="px-3 py-1.5 bg-amber-600/80 hover:bg-amber-600 disabled:opacity-40 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all">
+                  <FolderSync className="w-3.5 h-3.5" />开始变更
                 </button>
                 <button onClick={handleCleanCache} disabled={cleaningCache || workflowType !== null}
-                  className="px-2.5 py-1 bg-red-600/80 hover:bg-red-600 disabled:opacity-40 text-white rounded text-[11px] font-semibold cursor-pointer flex items-center gap-1 flex-shrink-0 transition-colors">
-                  <Trash2 className="w-3 h-3" />{cleaningCache ? "清理中" : "清理缓存"}
+                  className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 disabled:opacity-40 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all">
+                  <Trash2 className="w-3.5 h-3.5" />{cleaningCache ? "清理中" : "清理缓存"}
                 </button>
               </div>
               {cleanProgress && (
@@ -1995,25 +2010,39 @@ export function PackageManagerTab({
             <h4 className="text-xs font-semibold text-white">数据管理</h4>
             <span className="text-[11px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20">数据</span>
           </div>
-          <div className="p-3 bg-black/20 rounded-xl border border-white/5 space-y-3">
+          <div className="p-4 bg-black/20 rounded-xl border border-white/5 space-y-3">
             {/* 数据状态 */}
             {dataInfo ? (
-              <div className="space-y-1">
-                <p className="text-[12px] font-mono text-slate-300 break-all leading-relaxed">
-                  <span className="text-slate-300">{dataInfo.path}</span>
-                  <span className="mx-1 px-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[11px] inline-flex items-center gap-0.5">{dataInfo.detect_source}</span>
-                  {dataInfo.real_target ? (
-                    <>
-                      <span className="mx-1 px-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[11px] inline-flex items-center gap-0.5"> 链接到(junction) </span>
-                      <span className="text-[11px] font-mono text-slate-300">{dataInfo.real_target}</span>
-                      <span className="ml-1 px-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[11px] inline-flex items-center gap-0.5">
-                        {dataInfo.size}
+              <div className="flex items-start justify-between">
+                <div className="space-y-1 flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {dataInfo.detect_source && (
+                      <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[10px] inline-flex items-center font-mono">
+                        {dataInfo.detect_source}
                       </span>
-                    </>
-                  ) : (
-                    <span className="ml-1 text-[13px] text-slate-500">{dataInfo.size}</span>
+                    )}
+                    {dataInfo.real_target ? (
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] inline-flex items-center font-semibold">
+                        已迁移 (Junction)
+                      </span>
+                    ) : (
+                      <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 text-[10px] inline-flex items-center">
+                        默认路径
+                      </span>
+                    )}
+                  </div>
+                  <p className="font-mono text-[12px] text-slate-400 break-all">{dataInfo.path}</p>
+                  {dataInfo.real_target && (
+                    <p className="font-mono text-[11px] text-slate-500 break-all">
+                      ↳ 实际指向: {dataInfo.real_target}
+                    </p>
                   )}
-                </p>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className="text-slate-300 font-mono text-[13px] font-semibold bg-white/5 px-2.5 py-1 rounded-lg">
+                    {dataInfo.size}
+                  </span>
+                </div>
               </div>
             ) : (
               <div className="space-y-1">
@@ -2029,10 +2058,10 @@ export function PackageManagerTab({
             <p className="text-[11px] text-red-400/70">⚠ 数据文件必须拷贝后迁移，不可直接删除（保证安全性）。</p>
 
             {/* 操作行 */}
-            <div className="pt-2 border-t border-white/5">
+            <div className="pt-2 border-t border-white/5 flex items-center gap-2">
               <button onClick={() => openWorkflow("data")} disabled={workflowType !== null}
-                className="px-2.5 py-1 bg-red-600/80 hover:bg-red-600 disabled:opacity-40 text-white rounded text-[11px] font-semibold cursor-pointer flex items-center gap-1 transition-colors">
-                <FolderSync className="w-3 h-3" />{dataInfo ? "开始迁移" : "设置数据目录"}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-colors">
+                <FolderSync className="w-3.5 h-3.5" />{dataInfo ? "开始迁移" : "设置数据目录"}
               </button>
             </div>
 
@@ -2144,21 +2173,26 @@ export function PackageManagerTab({
 //  数据目录管理
 // ═══════════════════════════════════════
 export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatus; def?: ProjectDef | null; onRefresh: () => Promise<void> }) {
-  const [migratingId, setMigratingId] = useState<string | null>(null);
-  const [directId, setDirectId] = useState<string | null>(null);
-  const [newPath, setNewPath] = useState("");
-  const [directFileAction, setDirectFileAction] = useState<"move" | "delete" | "keep">("keep");
-  const [loading, setLoading] = useState(false);
-  const [migrateProgress, setMigrateProgress] = useState<{ stage: string; current: number; total: number; file_name: string } | null>(null);
+  // 当前正在变更的目录 ID
+  const [workflowDirId, setWorkflowDirId] = useState<string | null>(null);
+  // steps: 'method' | 'paths' | 'confirm' | 'executing' | 'done'
+  const [workflowStep, setWorkflowStep] = useState<"method" | "paths" | "confirm" | "executing" | "done">("method");
+  const [workflowMethod, setWorkflowMethod] = useState<"junction" | "point">("junction");
+  const [workflowLinkPath, setWorkflowLinkPath] = useState("");
+  const [workflowActualPath, setWorkflowActualPath] = useState("");
+  const [workflowPointPath, setWorkflowPointPath] = useState("");
+  const [workflowFileAction, setWorkflowFileAction] = useState<"move" | "keep">("keep");
+  const [workflowExecuting, setWorkflowExecuting] = useState(false);
+  const [workflowProgress, setWorkflowProgress] = useState<{ stage: string; current: number; total: number; file_name: string } | null>(null);
 
   // 监听迁移进度
   useEffect(() => {
     let unlisten: (() => void) | null = null;
-    if (loading) {
+    if (workflowExecuting) {
       listen<{ stage: string; current: number; total: number; file_name: string }>(
         "migrate-storage-progress",
         (event) => {
-          setMigrateProgress(event.payload);
+          setWorkflowProgress(event.payload);
         }
       ).then((u) => {
         unlisten = u;
@@ -2167,83 +2201,110 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
     return () => {
       if (unlisten) unlisten();
     };
-  }, [loading]);
+  }, [workflowExecuting]);
 
-  const browseFolder = async () => {
+  const closeWorkflow = () => {
+    setWorkflowDirId(null);
+    setWorkflowStep("method");
+    setWorkflowLinkPath("");
+    setWorkflowActualPath("");
+    setWorkflowPointPath("");
+    setWorkflowFileAction("keep");
+    setWorkflowExecuting(false);
+    setWorkflowProgress(null);
+  };
+
+  const openWorkflow = (dir: any) => {
+    closeWorkflow();
+    setWorkflowDirId(dir.id);
+    setWorkflowStep("method");
+    setWorkflowLinkPath(dir.path);
+    if (dir.is_link && dir.real_target) {
+      setWorkflowActualPath(dir.real_target);
+    } else {
+      const drive = dir.path.match(/^([A-Za-z]):\\/);
+      if (drive && drive[1].toUpperCase() === "C") {
+        const suffix = dir.path.substring(2); // Remove "C:"
+        setWorkflowActualPath(`D:\\AnyVersionData\\${project.id}${suffix}`);
+      } else {
+        setWorkflowActualPath("");
+      }
+    }
+    setWorkflowPointPath(dir.is_link ? "" : dir.path);
+    setWorkflowFileAction("keep");
+    setWorkflowExecuting(false);
+    setWorkflowProgress(null);
+  };
+
+  const workflowNext = () => {
+    if (workflowStep === "method") {
+      setWorkflowStep("paths");
+    } else if (workflowStep === "paths") {
+      setWorkflowStep("confirm");
+    }
+  };
+
+  const workflowPrev = () => {
+    if (workflowStep === "paths") {
+      setWorkflowStep("method");
+    } else if (workflowStep === "confirm") {
+      setWorkflowStep("paths");
+    }
+  };
+
+  const browseWorkflowPath = async (setter: (v: string) => void) => {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({ directory: true, title: "选择数据迁移目标目录" });
-      if (selected) setNewPath(selected as string);
+      const selected = await open({ directory: true, title: "选择文件夹" });
+      if (selected) setter(selected as string);
     } catch {
       alert("文件夹选择器不可用，请手动输入路径。");
     }
   };
 
-  const handleMigrate = async (dirId: string, origPath: string) => {
-    if (!newPath) {
-      alert("请先选择或输入迁移目标路径");
+  const executeWorkflow = async (dirId: string, oldPath: string, exists: boolean) => {
+    if (workflowMethod === "junction" && !workflowActualPath) {
+      alert("请指定目标路径");
       return;
     }
-    if (newPath.toLowerCase().startsWith("c:")) {
-      if (!confirm("警告：目标路径仍在 C 盘下，这无法解决 C 盘空间问题。确定继续？")) {
-        return;
-      }
+    if (workflowMethod === "point" && !workflowPointPath) {
+      alert("请指定指向路径");
+      return;
     }
-    setLoading(true);
-    setMigrateProgress(null);
-    try {
-      await invoke("migrate_data_dir", {
-        projectId: project.id,
-        origPath,
-        newPath,
-      });
-      alert("数据迁移成功！已自动建立 Junction 目录链接。");
-      setMigratingId(null);
-      setNewPath("");
-      await onRefresh();
-    } catch (e: unknown) {
-      alert("迁移失败: " + e);
-    } finally {
-      setLoading(false);
-      setMigrateProgress(null);
-    }
-  };
 
-  const handleSetDirect = async (dirId: string, oldPath: string, exists: boolean) => {
-    if (!newPath) {
-      alert("请先选择或输入新的指向路径");
-      return;
-    }
-    if (newPath.toLowerCase().startsWith("c:")) {
-      if (!confirm("警告：目标路径仍在 C 盘下，这无法解决 C 盘空间问题。确定继续？")) {
-        return;
-      }
-    }
-    setLoading(true);
-    setMigrateProgress(null);
+    setWorkflowStep("executing");
+    setWorkflowExecuting(true);
+    setWorkflowProgress(null);
+
     try {
-      if (exists && directFileAction !== "keep") {
-        await invoke("handle_point_storage_files", {
-          oldPath,
-          newPath,
-          action: directFileAction,
+      if (workflowMethod === "junction") {
+        await invoke("migrate_data_dir", {
+          projectId: project.id,
+          origPath: workflowLinkPath,
+          newPath: workflowActualPath,
+        });
+      } else {
+        if (exists && workflowFileAction === "move") {
+          await invoke("handle_point_storage_files", {
+            oldPath,
+            newPath: workflowPointPath,
+            action: "move",
+          });
+        }
+        await invoke("project_set_data_dir", {
+          projectId: project.id,
+          dirId,
+          newPath: workflowPointPath,
         });
       }
-      await invoke("project_set_data_dir", {
-        projectId: project.id,
-        dirId,
-        newPath,
-      });
-      alert("路径指向已保存。该设置会在 AnyVersion 启动服务时生效。");
-      setDirectId(null);
-      setNewPath("");
-      setDirectFileAction("keep");
+      setWorkflowStep("done");
       await onRefresh();
-    } catch (e: unknown) {
-      alert("设置指向失败: " + e);
+    } catch (e: any) {
+      alert(`操作失败: ${e}`);
+      setWorkflowStep("confirm");
     } finally {
-      setLoading(false);
-      setMigrateProgress(null);
+      setWorkflowExecuting(false);
+      setWorkflowProgress(null);
     }
   };
 
@@ -2266,6 +2327,311 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
     }
   };
 
+  const renderWorkflow = (dir: any) => {
+    const accentBg = "bg-red-500/10";
+    const accentBorder = "border-red-500/20";
+    const accentText = "text-red-400";
+    const btnBg = "bg-red-600 hover:bg-red-500";
+    const progressBarColor = "bg-red-500/60";
+
+    const stepLabels = {
+      method: "选择方式",
+      paths: "配置路径",
+      confirm: "确认预览",
+      executing: "执行中",
+      done: "已完成",
+    };
+
+    const totalSteps = 4;
+    const dirDef = def?.data_dirs?.find((d) => d.id === dir.id);
+    const supportsDirect = !!dirDef?.supports_direct;
+
+    // ── Step: 选择方式 ──
+    if (workflowStep === "method") {
+      return (
+        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+          <div className="flex items-center justify-between">
+            <span className={`text-[12px] font-semibold ${accentText}`}>
+              变更存储配置 · Step 1/{totalSteps} · {stepLabels.method}
+            </span>
+            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">✕ 取消</button>
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-[12px] text-slate-300">请选择变更方式：</p>
+            <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${workflowMethod === "junction"
+              ? `${accentBorder} bg-white/5`
+              : "border-white/5 hover:bg-white/[0.02]"
+              }`}>
+              <input type="radio" name="wf_method" value="junction" checked={workflowMethod === "junction"}
+                onChange={() => setWorkflowMethod("junction")} className="mt-0.5" />
+              <div>
+                <span className="text-[12px] font-semibold text-slate-200">A. Junction 链接</span>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  创建一个目录链接，将目录迁移并指向新位置。文件实际存储在新位置，原路径通过链接访问。
+                </p>
+              </div>
+            </label>
+            {supportsDirect && (
+              <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${workflowMethod === "point"
+                ? `${accentBorder} bg-white/5`
+                : "border-white/5 hover:bg-white/[0.02]"
+                }`}>
+                <input type="radio" name="wf_method" value="point" checked={workflowMethod === "point"}
+                  onChange={() => setWorkflowMethod("point")} className="mt-0.5" />
+                <div>
+                  <span className="text-[12px] font-semibold text-purple-300">B. 指向配置</span>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    直接修改 {project.display_name} 的启动路径参数，使其指向新目录。
+                  </p>
+                </div>
+              </label>
+            )}
+          </div>
+          <div className="flex justify-end">
+            <button onClick={() => {
+              if (!supportsDirect) {
+                setWorkflowMethod("junction");
+              }
+              setWorkflowStep("paths");
+            }}
+              className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors`}>
+              下一步 →
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Step: 配置路径 ──
+    if (workflowStep === "paths") {
+      return (
+        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+          <div className="flex items-center justify-between">
+            <span className={`text-[12px] font-semibold ${accentText}`}>
+              变更存储配置 · Step 2/{totalSteps} · {stepLabels.paths}
+            </span>
+            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">✕ 取消</button>
+          </div>
+
+          {workflowMethod === "junction" ? (
+            <>
+              <p className="text-[11px] text-slate-400">
+                <span className="font-semibold text-slate-300">Junction 链接模式</span> — ① 形式路径（链接所在位置）→ ② 实际路径（数据存放位置）
+              </p>
+              <div className="space-y-1.5">
+                <div>
+                  <label className="text-[11px] text-slate-500 block mb-0.5">① 形式路径（链接创建位置，即原始路径）</label>
+                  <div className="flex items-center gap-1">
+                    <input type="text" value={workflowLinkPath} onChange={(e) => setWorkflowLinkPath(e.target.value)}
+                      className="flex-1 glass-input px-1.5 py-1 text-[11px] font-mono" placeholder="数据源路径" />
+                    <button onClick={() => browseWorkflowPath(setWorkflowLinkPath)}
+                      className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
+                      <FolderOpen className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[11px] text-slate-500 block mb-0.5">② 实际路径（数据真实存放位置，建议选非 C 盘）</label>
+                  <div className="flex items-center gap-1">
+                    <input type="text" value={workflowActualPath} onChange={(e) => setWorkflowActualPath(e.target.value)}
+                      className="flex-1 glass-input px-1.5 py-1 text-[11px] font-mono" placeholder="目标路径" />
+                    <button onClick={() => browseWorkflowPath(setWorkflowActualPath)}
+                      className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
+                      <FolderOpen className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-[11px] text-slate-400">
+                <span className="font-semibold text-purple-300">指向配置模式</span> — 直接修改 {project.display_name} 启动参数指向新路径
+              </p>
+              <div className="space-y-1.5">
+                <div>
+                  <label className="text-[11px] text-slate-500 block mb-0.5">指向路径（服务读取的数据目录）</label>
+                  <div className="flex items-center gap-1">
+                    <input type="text" value={workflowPointPath} onChange={(e) => setWorkflowPointPath(e.target.value)}
+                      className="flex-1 glass-input px-1.5 py-1 text-[11px] font-mono"
+                      placeholder="新指向路径" />
+                    <button onClick={() => browseWorkflowPath(setWorkflowPointPath)}
+                      className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
+                      <FolderOpen className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* 旧文件处理方式（仅 Pointing 模式下） */}
+                {dir.exists && (
+                  <div className="pt-1 space-y-1">
+                    <p className="text-[12px] text-slate-400 font-semibold">旧文件处理方式：</p>
+                    <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-blue-500/30 bg-blue-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
+                      <input type="radio" name="wf_file_action" value="move" checked={workflowFileAction === "move"}
+                        onChange={() => setWorkflowFileAction("move")} className="mt-0.5" />
+                      <div>
+                        <span className="text-[12px] font-semibold text-blue-300">移动旧文件到新目录</span>
+                        <p className="text-[10px] text-slate-500 mt-0.5">将现有文件整体复制到新位置。保留所有已有数据。</p>
+                      </div>
+                    </label>
+                    <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "keep" ? "border-slate-500/30 bg-slate-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
+                      <input type="radio" name="wf_file_action" value="keep" checked={workflowFileAction === "keep"}
+                        onChange={() => setWorkflowFileAction("keep")} className="mt-0.5" />
+                      <div>
+                        <span className="text-[12px] font-semibold text-slate-300">不做改动</span>
+                        <p className="text-[10px] text-slate-500 mt-0.5">仅配置指向新路径，旧目录中的文件保持原样不动。</p>
+                      </div>
+                    </label>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          <div className="flex justify-between">
+            <button onClick={workflowPrev}
+              className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[11px] font-semibold cursor-pointer transition-colors">
+              ← 上一步
+            </button>
+            <button onClick={workflowNext}
+              disabled={workflowMethod === "junction"
+                ? (!workflowLinkPath || !workflowActualPath || workflowLinkPath === workflowActualPath)
+                : !workflowPointPath}
+              className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed`}>
+              预览 →
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Step: 确认预览 ──
+    if (workflowStep === "confirm") {
+      const pathsSame = workflowMethod === "junction"
+        && workflowLinkPath.toLowerCase().replace(/[\\/]+$/, "")
+        === workflowActualPath.toLowerCase().replace(/[\\/]+$/, "");
+      return (
+        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+          <div className="flex items-center justify-between">
+            <span className={`text-[12px] font-semibold ${accentText}`}>
+              变更存储配置 · Step 3/{totalSteps} · {stepLabels.confirm}
+            </span>
+            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">✕ 取消</button>
+          </div>
+
+          <div className="p-3 bg-black/20 rounded-lg border border-white/5 space-y-2">
+            <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">操作预览</p>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 text-[12px]">
+                <span className={`px-1.5 py-0.5 rounded text-[11px] font-semibold ${workflowMethod === "junction" ? "bg-blue-500/10 text-blue-400" : "bg-purple-500/10 text-purple-400"
+                  }`}>
+                  {workflowMethod === "junction" ? "Junction 链接" : "直接指向"}
+                </span>
+                {workflowMethod === "junction" ? (
+                  <div className="font-mono text-slate-300 space-y-0.5 text-[11px]">
+                    <p className="flex items-center gap-1">
+                      <span className="text-slate-500 flex-shrink-0">原始路径：</span>
+                      <span className="break-all">{workflowLinkPath}</span>
+                    </p>
+                    <p className="flex items-center gap-1">
+                      <span className="text-blue-400 flex-shrink-0">↓ 链接到</span>
+                      <span className="text-blue-300 break-all">{workflowActualPath}</span>
+                    </p>
+                  </div>
+                ) : (
+                  <p className="font-mono text-slate-300 text-[11px] break-all">
+                    配置指向：{workflowPointPath}
+                  </p>
+                )}
+              </div>
+              {workflowMethod === "point" && dir.exists && (
+                <div className="flex items-center gap-2 text-[12px]">
+                  <span className="text-slate-500">旧文件处理：</span>
+                  <span className={workflowFileAction === "move" ? "text-blue-400 font-semibold" : "text-slate-400"}>
+                    {workflowFileAction === "move" ? "📦 移动到新目录" : "📌 不做改动"}
+                  </span>
+                </div>
+              )}
+              {workflowMethod === "junction" && (
+                <div className="flex items-center gap-2 text-[12px]">
+                  <span className="text-slate-500">文件迁移：</span>
+                  <span className="text-blue-400 font-semibold">
+                    {pathsSame ? "📌 直接建立链接" : "📦 移动文件并建立链接"}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex justify-between">
+            <button onClick={workflowPrev}
+              className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[11px] font-semibold cursor-pointer transition-colors">
+              ← 上一步
+            </button>
+            <button onClick={() => executeWorkflow(dir.id, dir.path, dir.exists)} disabled={workflowExecuting}
+              className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors disabled:opacity-40`}>
+              确认执行
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Step: 执行中 ──
+    if (workflowStep === "executing") {
+      return (
+        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+          <div className="flex items-center gap-2">
+            <Loader className="w-3.5 h-3.5 animate-spin text-blue-400" />
+            <span className={`text-[12px] font-semibold ${accentText}`}>
+              正在执行 · {workflowProgress?.stage || "准备中..."}
+            </span>
+          </div>
+          {workflowProgress && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] text-slate-400">
+                <span>{workflowProgress.stage}</span>
+                <span className="font-mono">{workflowProgress.current}/{workflowProgress.total}</span>
+              </div>
+              <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                <div
+                  className={`h-full ${progressBarColor} rounded-full transition-all duration-200`}
+                  style={{ width: `${workflowProgress.total > 0 ? (workflowProgress.current / workflowProgress.total) * 100 : 0}%` }}
+                />
+              </div>
+              {workflowProgress.file_name && (
+                <p className="text-[11px] text-slate-500 truncate font-mono">{workflowProgress.file_name}</p>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── Step: 完成 ──
+    if (workflowStep === "done") {
+      return (
+        <div className={`mt-3 p-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-3 animate-fadeIn`}>
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 text-emerald-400" />
+            <span className="text-[12px] font-semibold text-emerald-300">操作成功！</span>
+          </div>
+          <p className="text-[11px] text-emerald-400/70">
+            存储路径已成功变更，现状已更新。
+          </p>
+          <div className="flex justify-end">
+            <button onClick={closeWorkflow}
+              className="px-3 py-1 bg-emerald-600/50 hover:bg-emerald-600 text-white rounded text-[11px] font-semibold cursor-pointer transition-colors">
+              关闭
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
   const dataDirs = project.data_dirs_status || [];
 
   return (
@@ -2275,7 +2641,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
           <HardDrive className="w-5 h-5 text-blue-400" />
           <div>
             <h4 className="text-sm font-semibold text-white">数据文件与数据残留管理</h4>
-            <p className="text-[11px] text-slate-500 mt-0.5">扫描、迁移主数据文件或清除残留的旧版本数据以节省 C 盘空间。</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">扫描、迁移主数据文件或清除残留 of 旧版本数据以节省 C 盘空间。</p>
           </div>
         </div>
 
@@ -2284,10 +2650,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
         ) : (
           <div className="space-y-4">
             {dataDirs.map((dir) => {
-              const isMigrating = migratingId === dir.id;
-              const isDirecting = directId === dir.id;
-              const dirDef = def?.data_dirs?.find((d) => d.id === dir.id);
-              const supportsDirect = !!dirDef?.supports_direct;
+              const isWorkflowActive = workflowDirId === dir.id;
               return (
                 <div key={dir.id + "_" + dir.path} className="p-4 bg-black/20 rounded-xl border border-white/5 space-y-3 animate-fadeIn">
                   <div className="flex items-start justify-between">
@@ -2320,39 +2683,14 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                   </div>
 
                   {/* 操作按钮区 */}
-                  {dir.exists && !isMigrating && !isDirecting && (
+                  {dir.exists && !isWorkflowActive && (
                     <div className="flex items-center gap-2 pt-1 border-t border-white/5">
-                      {!dir.is_link && (
-                        <button
-                          onClick={() => {
-                            setMigratingId(dir.id);
-                            // 预设建议目标路径
-                            const driveMatch = dir.path.match(/^([A-Za-z]):\\/);
-                            if (driveMatch && driveMatch[1].toUpperCase() === "C") {
-                              const suffix = dir.path.substring(2); // Remove "C:"
-                              setNewPath(`D:\\AnyVersionData\\${project.id}${suffix}`);
-                            } else {
-                              setNewPath("");
-                            }
-                          }}
-                          className="px-3 py-1.5 bg-blue-600/80 hover:bg-blue-600 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
-                        >
-                          <FolderSync className="w-3.5 h-3.5" /> 迁移数据
-                        </button>
-                      )}
-                      {supportsDirect && (
-                        <button
-                          onClick={() => {
-                            setDirectId(dir.id);
-                            setMigratingId(null);
-                            setDirectFileAction("keep");
-                            setNewPath("");
-                          }}
-                          className="px-3 py-1.5 bg-purple-600/70 hover:bg-purple-600 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
-                        >
-                          <Link className="w-3.5 h-3.5" /> 指向路径
-                        </button>
-                      )}
+                      <button
+                        onClick={() => openWorkflow(dir)}
+                        className="px-3 py-1.5 bg-blue-600/80 hover:bg-blue-600 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
+                      >
+                        <FolderSync className="w-3.5 h-3.5" /> 开始变更
+                      </button>
                       <button
                         onClick={() => handleDelete(dir.path)}
                         className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
@@ -2362,75 +2700,8 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                     </div>
                   )}
 
-                  {/* 迁移进行中 / 迁移配置区 */}
-                  {isDirecting && (
-                    <div className="p-3 bg-purple-500/5 rounded-xl border border-purple-500/20 space-y-3 mt-2 animate-fadeIn">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className="text-[12px] text-purple-200 font-semibold">启动参数指向设置</span>
-                          <p className="text-[11px] text-slate-500 mt-0.5">该设置只影响通过 AnyVersion 启动的服务，不会改写原生服务配置。</p>
-                        </div>
-                        <button
-                          onClick={() => {
-                            setDirectId(null);
-                            setNewPath("");
-                            setDirectFileAction("keep");
-                          }}
-                          disabled={loading}
-                          className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer"
-                        >
-                          取消
-                        </button>
-                      </div>
-
-                      {loading ? (
-                        <div className="flex items-center gap-2 text-[12px] text-purple-200 font-medium py-2">
-                          <Loader className="w-3.5 h-3.5 animate-spin" /> 正在保存指向设置...
-                        </div>
-                      ) : (
-                        <div className="space-y-2.5">
-                          <div className="flex gap-2">
-                            <input
-                              type="text"
-                              value={newPath}
-                              onChange={(e) => setNewPath(e.target.value)}
-                              className="flex-1 glass-input px-3 py-1.5 text-[12px] font-mono"
-                              placeholder="例如 D:\\AnyVersionData\\service-data"
-                            />
-                            <button
-                              onClick={browseFolder}
-                              className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-[12px] border border-white/5 cursor-pointer flex items-center gap-1"
-                            >
-                              <FolderOpen className="w-3.5 h-3.5" /> 浏览
-                            </button>
-                          </div>
-                          {dir.exists && (
-                            <div className="flex items-center gap-3 text-[11px] text-slate-400">
-                              <span>旧文件处理:</span>
-                              {(["keep", "move", "delete"] as const).map((action) => (
-                                <label key={action} className="flex items-center gap-1 cursor-pointer">
-                                  <input
-                                    type="radio"
-                                    checked={directFileAction === action}
-                                    onChange={() => setDirectFileAction(action)}
-                                  />
-                                  {action === "keep" ? "保留" : action === "move" ? "移动" : "删除"}
-                                </label>
-                              ))}
-                            </div>
-                          )}
-                          <div className="flex gap-2 justify-end">
-                            <button
-                              onClick={() => handleSetDirect(dir.id, dir.path, dir.exists)}
-                              className="px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-[12px] font-semibold cursor-pointer"
-                            >
-                              保存指向
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  {/* 变更工作流面板 */}
+                  {isWorkflowActive && renderWorkflow(dir)}
                 </div>
               );
             })}
@@ -2440,4 +2711,130 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
     </div>
   );
 }
+
+// ═══════════════════════════════════════
+//  服务参数与配置文件可视化配置
+// ═══════════════════════════════════════
+export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus; def: ProjectDef | null; onRefresh: () => Promise<void> }) {
+  const [configContent, setConfigContent] = useState<string>("");
+  const [loadingConfig, setLoadingConfig] = useState(false);
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const svc: ServiceStatus | null = project.service_status ?? null;
+  const configPath = svc?.config_file ?? null;
+  const port = svc?.port || def?.default_port || null;
+
+  // 加载配置文件内容
+  const loadConfigContent = async () => {
+    if (!configPath) return;
+    setLoadingConfig(true);
+    setErrorMessage(null);
+    try {
+      const content = await invoke<string>("read_service_config", { name: project.id });
+      setConfigContent(content);
+    } catch (e: any) {
+      setErrorMessage(e.toString());
+    } finally {
+      setLoadingConfig(false);
+    }
+  };
+
+  useEffect(() => {
+    loadConfigContent();
+  }, [project.id, configPath]);
+
+  const handleSaveConfig = async () => {
+    setSavingConfig(true);
+    try {
+      await invoke("write_service_config", { name: project.id, content: configContent });
+      alert("配置文件已保存成功！");
+      await onRefresh();
+    } catch (e: any) {
+      alert("保存失败: " + e);
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* 1. 运行参数显示 */}
+      {port && (
+        <div className="glass-panel border border-white/5 rounded-2xl p-5 bg-white/2 space-y-4">
+          <div className="flex items-center gap-2 border-b border-white/5 pb-3">
+            <Wrench className="w-4 h-4 text-blue-400" />
+            <h4 className="text-xs font-semibold text-white">服务运行时参数</h4>
+          </div>
+
+          <div className="flex items-center justify-between p-3 bg-black/20 rounded-xl border border-white/5">
+            <div>
+              <span className="text-[13px] text-slate-400 font-semibold block">服务监听端口</span>
+              <span className="text-[11px] text-slate-500 mt-0.5">该参数已通过配置文件解析，如需更改请在下方编辑配置文件。</span>
+            </div>
+            <span className="text-slate-300 font-mono text-[13px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 px-3 py-1 rounded-lg">
+              {port}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* 2. 配置文件可视化编辑 */}
+      {configPath && (
+        <div className="glass-panel border border-white/5 rounded-2xl p-5 bg-white/2 space-y-4">
+          <div className="flex items-center justify-between border-b border-white/5 pb-3">
+            <div className="flex items-center gap-2">
+              <FileText className="w-4 h-4 text-blue-400" />
+              <div>
+                <h4 className="text-xs font-semibold text-white">配置文件可视化编辑</h4>
+                <p className="text-[10px] text-slate-500 mt-0.5" title={configPath}>
+                  正在编辑: {configPath.split("\\").pop()}
+                </p>
+              </div>
+            </div>
+            {!loadingConfig && !errorMessage && (
+              <button
+                onClick={handleSaveConfig}
+                disabled={savingConfig}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1 transition-all"
+              >
+                {savingConfig ? <Loader className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                保存配置
+              </button>
+            )}
+          </div>
+
+          {loadingConfig ? (
+            <div className="flex items-center justify-center gap-2 text-xs text-slate-400 py-12">
+              <Loader className="w-4 h-4 animate-spin text-blue-400" /> 正在读取配置文件...
+            </div>
+          ) : errorMessage ? (
+            <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-xs rounded-xl space-y-2">
+              <p>无法加载配置文件: {errorMessage}</p>
+              <button
+                onClick={loadConfigContent}
+                className="px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/5 text-slate-300 rounded text-[11px] cursor-pointer"
+              >
+                重试加载
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <textarea
+                value={configContent}
+                onChange={(e) => setConfigContent(e.target.value)}
+                className="w-full h-80 glass-input p-3 text-[13px] font-mono leading-relaxed resize-y focus:outline-none"
+                placeholder="# 在此处输入配置参数..."
+              />
+              <p className="text-[11px] text-slate-500">
+                提示：修改配置后需要手动重启服务才会生效。
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 

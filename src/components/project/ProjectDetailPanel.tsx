@@ -26,9 +26,10 @@ import {
   PackageManagerTab,
   LegacyTab,
   DataDirsTab,
+  ConfigTab,
 } from "./ProjectSubTabs";
 
-type SubTab = "versions" | "envvars" | "services" | string;
+type SubTab = "versions" | "envvars" | "services" | "config" | string;
 
 const baseTabLabels: Record<string, string> = {
   versions: "版本管理",
@@ -36,6 +37,7 @@ const baseTabLabels: Record<string, string> = {
   legacy: "旧版数据",
   services: "服务管理",
   data_dirs: "数据管理",
+  config: "参数配置",
 };
 
 interface ProjectUIState {
@@ -520,21 +522,20 @@ export default function ProjectDetailPanel({
 
   // 构建动态 Tab 列表：基础 tabs + 每个包管理器一个独立 tab
   const availableTabs: SubTab[] = [];
-  if (status.is_simple_managed || def?.simple_mode) {
-    if (def?.category === "service" || def?.is_service) {
-      availableTabs.push("services");
-    }
+  if (def?.category === "service" || def?.is_service) {
+    availableTabs.push("services");
     if (def?.data_dirs && def.data_dirs.length > 0) {
       availableTabs.push("data_dirs");
     }
+    if (!status.is_simple_managed && !def?.simple_mode) {
+      availableTabs.push("versions");
+    }
+    availableTabs.push("config");
   } else {
-    if (def?.category === "service" || def?.is_service) {
-      availableTabs.push("services");
+    if (status.is_simple_managed || def?.simple_mode) {
       if (def?.data_dirs && def.data_dirs.length > 0) {
         availableTabs.push("data_dirs");
       }
-      availableTabs.push("envvars");
-      availableTabs.push("versions");
     } else {
       availableTabs.push("versions");
       availableTabs.push("envvars");
@@ -549,7 +550,7 @@ export default function ProjectDetailPanel({
       pmTabs.push({ id: `pm:${pm.id}`, label: pm.display_name });
     }
   }
-  if (hasLegacy && !status.is_simple_managed && !def?.simple_mode) {
+  if (hasLegacy && !status.is_simple_managed && !def?.simple_mode && !(def?.category === "service" || def?.is_service)) {
     availableTabs.push("legacy");
   }
 
@@ -775,6 +776,7 @@ export default function ProjectDetailPanel({
                 {activeTab === "services" && <ServicesTab {...subTabProps} />}
                 {activeTab === "data_dirs" && <DataDirsTab project={status} def={def} onRefresh={async () => { if (pid) await loadDetail(pid); }} />}
                 {activeTab === "legacy" && <LegacyTab projectId={pid!} />}
+                {activeTab === "config" && <ConfigTab project={status} def={def} onRefresh={async () => { if (pid) await loadDetail(pid); }} />}
                 {/* 动态包管理器子页面 —— key 保证每个 PM 独立且切换时不重新挂载 */}
                 {pmTabs.map(pt => {
                   const pmId = pt.id.replace("pm:", "");

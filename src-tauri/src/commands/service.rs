@@ -634,7 +634,15 @@ fn render_command(template: &str, runtime: &ServiceRuntime) -> String {
 
 fn run_service_command(cmd_str: &str, current_dir: Option<&Path>, detached: bool) -> Result<(), String> {
     let mut command = super::hidden_cmd::hidden_cmd("cmd");
-    command.args(&["/c", cmd_str]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.raw_arg(format!("/c \"{}\"", cmd_str));
+    }
+    #[cfg(not(windows))]
+    {
+        command.args(&["/c", cmd_str]);
+    }
     if let Some(dir) = current_dir {
         command.current_dir(dir);
     }
@@ -836,3 +844,52 @@ pub(crate) fn force_stop_service_inner(name: String) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[tauri::command]
+pub fn read_service_config(name: String) -> Result<String, String> {
+    use super::project::registry;
+    use crate::commands::config::load_config;
+
+    let def = registry::find_by_id(&name)
+        .ok_or_else(|| format!("未找到服务定义: {}", name))?;
+    if !is_service_project(&def) {
+        return Err(format!("{} 不是服务项目", name));
+    }
+
+    let config = load_config();
+    let install_root = detect_install_root(&def, &config, None)?;
+    let config_file = resolve_config_file(&def, install_root.as_deref())
+        .ok_or_else(|| "未找到配置文件。请确保已启用版本或指定了安装目录。".to_string())?;
+
+    if !config_file.exists() {
+        return Err(format!("配置文件不存在: {}", config_file.display()));
+    }
+
+    std::fs::read_to_string(&config_file)
+        .map_err(|e| format!("读取配置文件失败: {}", e))
+}
+
+#[tauri::command]
+pub fn write_service_config(name: String, content: String) -> Result<(), String> {
+    use super::project::registry;
+    use crate::commands::config::load_config;
+
+    let def = registry::find_by_id(&name)
+        .ok_or_else(|| format!("未找到服务定义: {}", name))?;
+    if !is_service_project(&def) {
+        return Err(format!("{} 不是服务项目", name));
+    }
+
+    let config = load_config();
+    let install_root = detect_install_root(&def, &config, None)?;
+    let config_file = resolve_config_file(&def, install_root.as_deref())
+        .ok_or_else(|| "未找到配置文件。请确保已启用版本或指定了安装目录。".to_string())?;
+
+    if let Some(parent) = config_file.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    std::fs::write(&config_file, content)
+        .map_err(|e| format!("写入配置文件失败: {}", e))
+}
+

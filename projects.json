@@ -1657,7 +1657,7 @@
     "display_name": "MySQL",
     "category": "service",
     "official_website": "https://www.mysql.com",
-    "simple_mode": true,
+    "simple_mode": false,
     "env_vars": [],
     "bin_dirs": [
       "bin"
@@ -1738,6 +1738,21 @@
     "service_auto_create_dirs": false,
     "version_cmd": "mysqld --version",
     "version_exe": "mysqld",
+    "download_file_ext": "zip",
+    "version_url_prefix_map": {
+      "8.4.": "https://cdn.mysql.com/Downloads/MySQL-8.4/mysql-{version}-winx64.zip",
+      "8.0.": "https://cdn.mysql.com/Downloads/MySQL-8.0/mysql-{version}-winx64.zip",
+      "5.7.": "https://cdn.mysql.com/Downloads/MySQL-5.7/mysql-{version}-winx64.zip"
+    },
+    "remote_versions_config": {
+      "type": "static",
+      "versions": ["8.4.0", "8.0.37", "8.0.36", "8.0.35", "5.7.44", "5.7.43"]
+    },
+    "post_install": {
+      "generate_config": true,
+      "config_template": "[mysqld]\nbasedir={basedir}\ndatadir={datadir}\nport=3306\nsql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES\n",
+      "init_command": "bin/mysqld.exe --initialize-insecure"
+    },
     "data_dirs": [
       {
         "id": "data",
@@ -1774,7 +1789,7 @@
     "display_name": "Redis",
     "category": "service",
     "official_website": "https://redis.io",
-    "simple_mode": true,
+    "simple_mode": false,
     "env_vars": [],
     "bin_dirs": [
       ""
@@ -1886,6 +1901,17 @@
     "service_auto_create_dirs": true,
     "version_cmd": "redis-server --version",
     "version_exe": "redis-server",
+    "download_file_ext": "zip",
+    "version_url_prefix_map": {
+      "7.": "https://github.com/zkqiang/redis-windows/releases/download/win-{version}/Redis-x64-{version}.zip",
+      "5.": "https://github.com/tporadowski/redis/releases/download/v{version}/Redis-x64-{version}.zip",
+      "4.": "https://github.com/tporadowski/redis/releases/download/v{version}/Redis-x64-{version}.zip",
+      "3.": "https://github.com/MSOpenTech/redis/releases/download/win-{version}/Redis-x64-{version}.zip"
+    },
+    "remote_versions_config": {
+      "type": "static",
+      "versions": ["7.2.4", "7.0.15", "5.0.14.1", "5.0.14", "5.0.10", "3.2.100"]
+    },
     "data_dirs": [
       {
         "id": "data",
@@ -1919,7 +1945,7 @@
     "display_name": "Nginx",
     "category": "service",
     "official_website": "https://nginx.org",
-    "simple_mode": true,
+    "simple_mode": false,
     "env_vars": [],
     "bin_dirs": [
       ""
@@ -1984,6 +2010,12 @@
     "service_auto_create_dirs": true,
     "version_cmd": "nginx -v",
     "version_exe": "nginx",
+    "download_url_template": "https://nginx.org/download/nginx-{version}.zip",
+    "download_file_ext": "zip",
+    "remote_versions_config": {
+      "type": "static",
+      "versions": ["1.27.0", "1.26.2", "1.26.1", "1.26.0", "1.25.5", "1.24.0", "1.22.1", "1.20.2"]
+    },
     "data_dirs": [
       {
         "id": "log",
@@ -2016,7 +2048,7 @@
     "display_name": "MongoDB",
     "category": "service",
     "official_website": "https://www.mongodb.com",
-    "simple_mode": true,
+    "simple_mode": false,
     "env_vars": [],
     "bin_dirs": [
       "bin"
@@ -2094,6 +2126,12 @@
     "service_auto_create_dirs": true,
     "version_cmd": "mongod --version",
     "version_exe": "mongod",
+    "download_url_template": "https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-{version}.zip",
+    "download_file_ext": "zip",
+    "remote_versions_config": {
+      "type": "static",
+      "versions": ["8.0.0", "7.0.12", "7.0.5", "6.0.16", "6.0.5", "5.0.28"]
+    },
     "data_dirs": [
       {
         "id": "data",
@@ -2129,7 +2167,7 @@
     "display_name": "PostgreSQL",
     "category": "service",
     "official_website": "https://www.postgresql.org",
-    "simple_mode": true,
+    "simple_mode": false,
     "env_vars": [],
     "bin_dirs": [
       "bin"
@@ -2207,6 +2245,15 @@
     "service_auto_create_dirs": false,
     "version_cmd": "postgres --version",
     "version_exe": "postgres",
+    "download_url_template": "https://sbp.enterprisedb.com/get/dbbinaries/postgresql-{version}-1-windows-x64-binaries.zip",
+    "download_file_ext": "zip",
+    "remote_versions_config": {
+      "type": "static",
+      "versions": ["17.0", "16.4", "16.2", "15.8", "15.6", "14.13", "13.16"]
+    },
+    "post_install": {
+      "init_command": "bin/initdb.exe -D data -U postgres --locale=C --encoding=UTF8"
+    },
     "data_dirs": [
       {
         "id": "data",
@@ -2234,5 +2281,66 @@
         "required_for_start": false
       }
     ]
+  },
+  {
+    "id": "qt",
+    "display_name": "Qt",
+    "category": "tool",
+    "official_website": "https://www.qt.io",
+    "env_vars": [
+      {
+        "name": "QTDIR",
+        "desc": "Qt 安装根目录（特定版本及编译器，例如 6.5.3\\msvc2019_64）",
+        "check_type": "path",
+        "tier": "core"
+      }
+    ],
+    "bin_dirs": [
+      "bin"
+    ],
+    "find_rules": [
+      {
+        "pattern": {
+          "type": "env_bin",
+          "env_var": "QTDIR",
+          "bin_sub": "bin",
+          "exe_name": "qmake.exe"
+        },
+        "source_label": "QTDIR",
+        "priority": 10,
+        "root_offset": 1
+      },
+      {
+        "pattern": {
+          "type": "path_contains",
+          "path_key": "Qt",
+          "exe_name": "qmake.exe"
+        },
+        "source_label": "系统 PATH",
+        "priority": 90,
+        "root_offset": 1
+      }
+    ],
+    "has_cache": false,
+    "cache_detect_cmd": null,
+    "cache_default_path": null,
+    "has_mirror": false,
+    "mirror_options": null,
+    "has_pkg": false,
+    "pkg_manager": null,
+    "pkg_homepage_template": null,
+    "is_service": false,
+    "default_port": null,
+    "version_cmd": "qmake -query QT_VERSION",
+    "version_exe": "qmake",
+    "version_parse_regex": "(\\d+\\.\\d+\\.\\d+)",
+    "package_managers": [],
+    "remote_versions_url": "https://endoflife.date/api/qt.json",
+    "remote_versions_config": {
+      "type": "json_api",
+      "response_type": "array",
+      "version_field": "latest",
+      "max_count": 0
+    }
   }
 ]

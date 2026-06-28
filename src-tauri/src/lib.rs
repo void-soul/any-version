@@ -189,6 +189,8 @@ pub fn run() {
             commands::service::start_service,
             commands::service::stop_service,
             commands::service::force_stop_service,
+            commands::service::read_service_config,
+            commands::service::write_service_config,
             commands::project::commands::project_list,
             commands::project::commands::project_status,
             commands::project::commands::project_detail,
