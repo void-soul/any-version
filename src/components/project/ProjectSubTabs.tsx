@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import Editor from "@monaco-editor/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -2715,6 +2716,12 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
 // ═══════════════════════════════════════
 //  服务参数与配置文件可视化配置
 // ═══════════════════════════════════════
+const globalRegistered = {
+  nginxCompletions: false,
+  iniCompletions: false,
+  yamlCompletions: false
+};
+
 export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus; def: ProjectDef | null; onRefresh: () => Promise<void> }) {
   const [configContent, setConfigContent] = useState<string>("");
   const [loadingConfig, setLoadingConfig] = useState(false);
@@ -2754,6 +2761,137 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
       alert("保存失败: " + e);
     } finally {
       setSavingConfig(false);
+    }
+  };
+
+  // Map project ID to language mode in Monaco
+  const getEditorLanguage = (projectId: string): string => {
+    switch (projectId) {
+      case "mysql":
+      case "redis":
+      case "postgresql":
+        return "ini";
+      case "mongodb":
+        return "yaml";
+      case "nginx":
+        return "nginx";
+      default:
+        return "ini";
+    }
+  };
+
+  const handleEditorDidMount = (editor: any, monaco: any) => {
+    // 1. Register Nginx language if not registered
+    const languages = monaco.languages.getLanguages();
+    if (!languages.some((lang: any) => lang.id === 'nginx')) {
+      monaco.languages.register({ id: 'nginx' });
+      monaco.languages.setMonarchTokensProvider('nginx', {
+        keywords: [
+          'http', 'server', 'location', 'listen', 'server_name', 'root', 'index',
+          'proxy_pass', 'proxy_set_header', 'try_files', 'rewrite', 'error_page',
+          'ssl_certificate', 'ssl_certificate_key', 'ssl_protocols', 'ssl_ciphers',
+          'access_log', 'error_log', 'client_max_body_size', 'keepalive_timeout',
+          'gzip', 'gzip_types', 'upstream', 'events', 'worker_processes', 'include',
+          'default_type', 'sendfile', 'tcp_nopush', 'tcp_nodelay'
+        ],
+        tokenizer: {
+          root: [
+            [/[a-zA-Z_]\w*/, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }],
+            [/[{}]/, 'delimiter.bracket'],
+            [/[;]/, 'delimiter'],
+            [/#.*$/, 'comment'],
+            [/"([^"\\]|\\.)*"/, 'string'],
+            [/'([^'\\]|\\.)*'/, 'string'],
+            [/\d+/, 'number']
+          ]
+        }
+      });
+    }
+
+    // 2. Register autocompletions for all configuration files to improve the experience!
+    
+    // Nginx autocompletions
+    if (!globalRegistered.nginxCompletions) {
+      monaco.languages.registerCompletionItemProvider('nginx', {
+        provideCompletionItems: (model: any, position: any) => {
+          const suggestions = [
+            { label: 'server', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'server {\n\tlisten ${1:80};\n\tserver_name ${2:localhost};\n\tlocation / {\n\t\troot ${3:html};\n\t\tindex ${4:index.html};\n\t}\n}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Server block' },
+            { label: 'location', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'location ${1:/} {\n\t${2:proxy_pass http://localhost:8080;}\n}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Location block' },
+            { label: 'listen', kind: monaco.languages.CompletionItemKind.Property, insertText: 'listen ${1:80};', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Listen port' },
+            { label: 'server_name', kind: monaco.languages.CompletionItemKind.Property, insertText: 'server_name ${1:localhost};', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Server name' },
+            { label: 'root', kind: monaco.languages.CompletionItemKind.Property, insertText: 'root ${1:html};', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Root directory' },
+            { label: 'proxy_pass', kind: monaco.languages.CompletionItemKind.Property, insertText: 'proxy_pass ${1:http://localhost:8080};', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Proxy pass target' },
+            { label: 'gzip', kind: monaco.languages.CompletionItemKind.Property, insertText: 'gzip ${1:on};', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Gzip compression' },
+            { label: 'client_max_body_size', kind: monaco.languages.CompletionItemKind.Property, insertText: 'client_max_body_size ${1:50m};', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Max upload size' }
+          ];
+          return { suggestions };
+        }
+      });
+      globalRegistered.nginxCompletions = true;
+    }
+
+    // ini autocompletions (MySQL, Redis, PostgreSQL)
+    if (!globalRegistered.iniCompletions) {
+      monaco.languages.registerCompletionItemProvider('ini', {
+        provideCompletionItems: (model: any, position: any) => {
+          const text = model.getValue();
+          const suggestions = [];
+
+          if (text.includes('[mysqld]') || text.includes('character-set-server') || text.includes('default-storage-engine')) {
+            // MySQL completions
+            suggestions.push(
+              { label: 'port', kind: monaco.languages.CompletionItemKind.Property, insertText: 'port = ${1:3306}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'MySQL Port number' },
+              { label: 'max_connections', kind: monaco.languages.CompletionItemKind.Property, insertText: 'max_connections = ${1:151}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Max client connections' },
+              { label: 'character-set-server', kind: monaco.languages.CompletionItemKind.Property, insertText: 'character-set-server = ${1:utf8mb4}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Server default charset' },
+              { label: 'default-storage-engine', kind: monaco.languages.CompletionItemKind.Property, insertText: 'default-storage-engine = INNODB', detail: 'Default database engine' },
+              { label: 'innodb_buffer_pool_size', kind: monaco.languages.CompletionItemKind.Property, insertText: 'innodb_buffer_pool_size = ${1:256M}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'InnoDB buffer pool size' },
+              { label: 'sql_mode', kind: monaco.languages.CompletionItemKind.Property, insertText: 'sql_mode = STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION', detail: 'SQL syntax modes' }
+            );
+          } else if (text.includes('requirepass') || text.includes('appendonly') || text.includes('maxmemory') || text.includes('redis')) {
+            // Redis completions
+            suggestions.push(
+              { label: 'port', kind: monaco.languages.CompletionItemKind.Property, insertText: 'port ${1:6379}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Redis Port' },
+              { label: 'bind', kind: monaco.languages.CompletionItemKind.Property, insertText: 'bind 127.0.0.1', detail: 'IP binding' },
+              { label: 'requirepass', kind: monaco.languages.CompletionItemKind.Property, insertText: 'requirepass ${1:password}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Redis password authentication' },
+              { label: 'maxmemory', kind: monaco.languages.CompletionItemKind.Property, insertText: 'maxmemory ${1:512mb}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Max memory limit' },
+              { label: 'maxmemory-policy', kind: monaco.languages.CompletionItemKind.Property, insertText: 'maxmemory-policy volatile-lru', detail: 'Eviction policy' },
+              { label: 'appendonly', kind: monaco.languages.CompletionItemKind.Property, insertText: 'appendonly yes', detail: 'AOF logging enablement' }
+            );
+          } else if (text.includes('shared_buffers') || text.includes('listen_addresses') || text.includes('logging_collector') || text.includes('postgresql')) {
+            // PostgreSQL completions
+            suggestions.push(
+              { label: 'port', kind: monaco.languages.CompletionItemKind.Property, insertText: 'port = ${1:5432}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'PostgreSQL Port' },
+              { label: 'listen_addresses', kind: monaco.languages.CompletionItemKind.Property, insertText: 'listen_addresses = \'${1:*}\'', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Listen addresses' },
+              { label: 'max_connections', kind: monaco.languages.CompletionItemKind.Property, insertText: 'max_connections = ${1:100}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Max DB connections' },
+              { label: 'shared_buffers', kind: monaco.languages.CompletionItemKind.Property, insertText: 'shared_buffers = ${1:128MB}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Shared buffer pool size' },
+              { label: 'logging_collector', kind: monaco.languages.CompletionItemKind.Property, insertText: 'logging_collector = on', detail: 'Enable log collector' }
+            );
+          }
+          return { suggestions };
+        }
+      });
+      globalRegistered.iniCompletions = true;
+    }
+
+    // yaml autocompletions (MongoDB)
+    if (!globalRegistered.yamlCompletions) {
+      monaco.languages.registerCompletionItemProvider('yaml', {
+        provideCompletionItems: (model: any, position: any) => {
+          const text = model.getValue();
+          const suggestions = [];
+          if (text.includes('dbPath') || text.includes('bindIp') || text.includes('systemLog') || text.includes('mongod')) {
+            // MongoDB yaml completions
+            suggestions.push(
+              { label: 'storage.dbPath', kind: monaco.languages.CompletionItemKind.Property, insertText: 'storage:\n  dbPath: ${1:path}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'DB files path' },
+              { label: 'net.port', kind: monaco.languages.CompletionItemKind.Property, insertText: 'net:\n  port: ${1:27017}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'MongoDB listen port' },
+              { label: 'net.bindIp', kind: monaco.languages.CompletionItemKind.Property, insertText: '  bindIp: 127.0.0.1', detail: 'IP bind list' },
+              { label: 'security.authorization', kind: monaco.languages.CompletionItemKind.Property, insertText: 'security:\n  authorization: enabled', detail: 'Enable MongoDB client auth' }
+            );
+          }
+          return { suggestions };
+        }
+      });
+      globalRegistered.yamlCompletions = true;
     }
   };
 
@@ -2820,14 +2958,28 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
             </div>
           ) : (
             <div className="space-y-3">
-              <textarea
-                value={configContent}
-                onChange={(e) => setConfigContent(e.target.value)}
-                className="w-full h-80 glass-input p-3 text-[13px] font-mono leading-relaxed resize-y focus:outline-none"
-                placeholder="# 在此处输入配置参数..."
-              />
+              <div className="border border-white/5 rounded-xl overflow-hidden h-80 bg-[#1e1e1e]">
+                <Editor
+                  height="100%"
+                  language={getEditorLanguage(project.id)}
+                  value={configContent}
+                  onChange={(val) => setConfigContent(val || "")}
+                  theme="vs-dark"
+                  onMount={handleEditorDidMount}
+                  options={{
+                    minimap: { enabled: false },
+                    fontSize: 13,
+                    fontFamily: "Fira Code, Courier New, monospace",
+                    automaticLayout: true,
+                    lineNumbers: "on",
+                    scrollBeyondLastLine: false,
+                    wordWrap: "on",
+                    padding: { top: 12, bottom: 12 }
+                  }}
+                />
+              </div>
               <p className="text-[11px] text-slate-500">
-                提示：修改配置后需要手动重启服务才会生效。
+                提示：支持智能代码高亮与自动补全提示。修改配置后需要手动重启服务才会生效。
               </p>
             </div>
           )}

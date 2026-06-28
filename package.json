@@ -1,7 +1,7 @@
 {
   "name": "tauri-app",
   "private": true,
-  "version": "2.3.0",
+  "version": "2.3.1",
   "type": "module",
   "scripts": {
     "start": "tauri dev",
@@ -12,14 +12,15 @@
     "bump": "node scripts/bump-version.js"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
     "@tailwindcss/vite": "^4.3.1",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "lucide-react": "^1.21.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "tailwindcss": "^4.3.1",
-    "@tauri-apps/plugin-dialog": "^2"
+    "tailwindcss": "^4.3.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
