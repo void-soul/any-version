@@ -228,17 +228,6 @@ pub fn remove_from_user_path(paths: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-pub fn configure_npm_prefix(link_dir: &str) -> Result<(), String> {
-    set_registry_env("NPM_CONFIG_PREFIX", link_dir)?;
-    std::env::set_var("NPM_CONFIG_PREFIX", link_dir);
-    Ok(())
-}
-
-pub fn clear_npm_prefix() -> Result<(), String> {
-    set_registry_env("NPM_CONFIG_PREFIX", "")?;
-    std::env::remove_var("NPM_CONFIG_PREFIX");
-    Ok(())
-}
 
 /// 自动配置 SDK 相关环境变量（注册表驱动）。
 /// 新增 SDK 时只需在 projects.json 中定义 env_vars，此函数自动生效。
@@ -285,9 +274,6 @@ pub fn configure_sdk_env_vars(sdk_id: &str, link_dir: &str, _version_dir: &str) 
     // 自动将可执行目录添加到用户 PATH 变量中
     let bin_paths = crate::commands::project::scanner::get_bin_paths(sdk_id, link_dir);
     let _ = add_to_user_path(&bin_paths);
-    if sdk_id == "nodejs" {
-        let _ = configure_npm_prefix(link_dir);
-    }
 
     Ok(())
 }
@@ -318,9 +304,6 @@ pub fn remove_sdk_env_vars(sdk_id: &str) -> Result<(), String> {
     let link_str = junction_path.to_string_lossy().to_string();
     let bin_paths = crate::commands::project::scanner::get_bin_paths(sdk_id, &link_str);
     let _ = remove_from_user_path(&bin_paths);
-    if sdk_id == "nodejs" {
-        let _ = clear_npm_prefix();
-    }
 
     Ok(())
 }

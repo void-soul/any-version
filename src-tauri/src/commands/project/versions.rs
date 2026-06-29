@@ -107,12 +107,33 @@ fn save_version_cache(project_id: &str, versions: &[String]) -> u64 {
 /// - `force = true` ：强制联网刷新，刷新后写入缓存
 #[tauri::command]
 pub async fn project_list_remote_versions(id: String, force: bool) -> Result<RemoteVersionsResult, String> {
+    let def = super::registry::find_by_id(&id)
+        .ok_or_else(|| format!("未找到项目: {}", id))?;
+
+    let exclude_patterns: Vec<regex::Regex> = def.remote_versions_config.as_ref()
+        .and_then(|config| config.get("exclude_version_patterns"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .filter_map(|re_str| regex::Regex::new(re_str).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let filter_versions = |mut vers: Vec<String>| -> Vec<String> {
+        if !exclude_patterns.is_empty() {
+            vers.retain(|v| {
+                !exclude_patterns.iter().any(|re| re.is_match(v))
+            });
+        }
+        vers
+    };
+
     // 非强制刷新时优先读缓存
     if !force {
         if let Some(mut cache) = load_version_cache(&id) {
-            if id == "python" {
-                cache.versions.retain(|v| is_valid_python_binary_version(v));
-            }
+            cache.versions = filter_versions(cache.versions);
             return Ok(RemoteVersionsResult {
                 versions: cache.versions,
                 updated_at: cache.updated_at,
@@ -122,7 +143,8 @@ pub async fn project_list_remote_versions(id: String, force: bool) -> Result<Rem
     }
 
     // 联网获取
-    let versions = fetch_remote_versions_inner(&id).await?;
+    let mut versions = fetch_remote_versions_inner(&id).await?;
+    versions = filter_versions(versions);
     let updated_at = save_version_cache(&id, &versions);
 
     Ok(RemoteVersionsResult { versions, updated_at, from_cache: false })
@@ -159,23 +181,6 @@ async fn fetch_remote_versions_inner(id: &str) -> Result<Vec<String>, String> {
     }
 }
 
-
-fn is_valid_python_binary_version(ver: &str) -> bool {
-    let parts: Vec<&str> = ver.split('.').collect();
-    if parts.len() >= 3 {
-        let major = parts[0].parse::<i32>().unwrap_or(0);
-        let minor = parts[1].parse::<i32>().unwrap_or(0);
-        let patch = parts[2].split(|c: char| !c.is_numeric()).next().unwrap_or("0").parse::<i32>().unwrap_or(0);
-        if major == 3 {
-            if minor == 7 && patch > 9 { return false; }
-            if minor == 8 && patch > 10 { return false; }
-            if minor == 9 && patch > 13 { return false; }
-            if minor == 10 && patch > 11 { return false; }
-            if minor == 11 && patch > 9 { return false; }
-        }
-    }
-    true
-}
 
 async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, url_override: Option<&str>) -> Result<Vec<String>, String> {
     let url = if let Some(u) = url_override {
@@ -286,9 +291,6 @@ async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, ur
 
             let mut ver = apply_transform(&raw_version, version_transform);
 
-            if url.contains("python.org") && !is_valid_python_binary_version(&ver) {
-                continue;
-            }
 
             if let Some(ef) = extra_field {
                 if let Some(extra_val) = item.get(ef) {

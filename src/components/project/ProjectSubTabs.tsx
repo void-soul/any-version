@@ -1899,7 +1899,7 @@ export function PackageManagerTab({
       run: async () => {
         if (pm.version_cmd) {
           try {
-            const out = await invoke<string>("run_cmd_capture", { cmd: pm.version_cmd });
+            const out = await invoke<string>("run_cmd_capture", { cmd: pm.version_cmd, projectId });
             setInstalled(true);
             setVersion(out.trim());
             cachedData.installed = true;
@@ -1920,7 +1920,7 @@ export function PackageManagerTab({
         label: `正在检查 ${pm.display_name} 最新版本...`,
         run: async () => {
           try {
-            const out = await invoke<string>("run_cmd_capture", { cmd: pm.latest_version_cmd! });
+            const out = await invoke<string>("run_cmd_capture", { cmd: pm.latest_version_cmd!, projectId });
             setLatestVersion(out.trim());
             cachedData.latestVersion = out.trim();
           } catch {
@@ -1975,7 +1975,7 @@ export function PackageManagerTab({
         label: `正在检测 ${pm.display_name} 代理配置...`,
         run: async () => {
           try {
-            const out = await invoke<string>("run_cmd_capture", { cmd: pm.proxy_detect_cmd });
+            const out = await invoke<string>("run_cmd_capture", { cmd: pm.proxy_detect_cmd, projectId });
             const v = out.trim();
             if (v && v !== "null" && v !== "undefined") {
               setProxyDetected(v);
@@ -1995,7 +1995,7 @@ export function PackageManagerTab({
           try {
             if (pm.mirror_detect_cmd || pm.mirror_cmd_template) {
               const getCmd = pm.mirror_detect_cmd ?? pm.mirror_cmd_template!.replace("set ", "get ").replace("{url}", "");
-              const out = await invoke<string>("run_cmd_capture", { cmd: getCmd });
+              const out = await invoke<string>("run_cmd_capture", { cmd: getCmd, projectId });
               const v = out.trim();
               if (v && v !== "null" && v !== "undefined") {
                 setCurrentMirror(v);
@@ -2089,7 +2089,7 @@ export function PackageManagerTab({
     setInstalling(true);
     setInstallProgress(true);
     try {
-      await invoke("run_cmd_capture", { cmd: pm.install_cmd });
+      await invoke("run_cmd_capture", { cmd: pm.install_cmd, projectId });
       await runDetection();
     } catch (e: unknown) {
       alert(`安装 ${pm.display_name} 失败: ${e}`);
@@ -2105,7 +2105,7 @@ export function PackageManagerTab({
     setUpgrading(true);
     setInstallProgress(true);
     try {
-      await invoke("run_cmd_capture", { cmd: pm.install_cmd });
+      await invoke("run_cmd_capture", { cmd: pm.install_cmd, projectId });
       await runDetection();
     } catch (e: unknown) {
       alert(`升级 ${pm.display_name} 失败: ${e}`);
@@ -2134,7 +2134,7 @@ export function PackageManagerTab({
     try {
       if (pm.mirror_cmd_template) {
         const cmd = pm.mirror_cmd_template.replace("{url}", url);
-        await invoke("run_cmd_capture", { cmd });
+        await invoke("run_cmd_capture", { cmd, projectId });
       } else {
         await invoke("set_mirror", { tool: pm.id, mirrorType });
       }
@@ -2179,16 +2179,13 @@ export function PackageManagerTab({
     try {
       if (proxyInput.trim()) {
         const cmd = pm.proxy_set_cmd_template.replace("{url}", proxyInput.trim());
-        await invoke("run_cmd_capture", { cmd });
+        await invoke("run_cmd_capture", { cmd, projectId });
       } else {
-        // 清空代理：npm/yarn 用 delete，我们也用 set 命令模板传空值解决
-        // 实际上 npm config delete proxy 更合适
-        if (pm.id === "npm") {
-          await invoke("run_cmd_capture", { cmd: "npm config delete proxy" });
-          await invoke("run_cmd_capture", { cmd: "npm config delete https-proxy" });
+        if ((pm as any).proxy_clear_cmd) {
+          await invoke("run_cmd_capture", { cmd: (pm as any).proxy_clear_cmd, projectId });
         } else {
           const cmd = pm.proxy_set_cmd_template.replace("{url}", "");
-          await invoke("run_cmd_capture", { cmd });
+          await invoke("run_cmd_capture", { cmd, projectId });
         }
       }
       setProxyDetected(proxyInput.trim() || null);

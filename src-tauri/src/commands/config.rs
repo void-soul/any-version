@@ -334,10 +334,6 @@ pub fn do_migrate_storage(
                             let _ = crate::commands::env::set_registry_env(&var_info.name, &value);
                             result.updated_env_vars.push(format!("{} => {}", var_info.name, value));
                         }
-                        if item_id == "nodejs" {
-                            let _ = crate::commands::env::configure_npm_prefix(&link_dir);
-                            result.updated_env_vars.push(format!("NPM_CONFIG_PREFIX => {}", link_dir));
-                        }
                     }
                 }
             }

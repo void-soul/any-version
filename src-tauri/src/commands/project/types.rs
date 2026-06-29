@@ -86,6 +86,9 @@ pub struct MirrorOption {
     pub name: String,
     /// 镜像 URL
     pub url: String,
+    /// Custom configuration content to write to mirror_config_file
+    #[serde(default)]
+    pub config_content: Option<String>,
 }
 
 /// 迁移缓存时需要同步写入配置文件的单个 XML key 定义
@@ -233,6 +236,21 @@ pub struct PackageManagerDef {
     /// Custom configuration-file based cache resolver config.
     #[serde(default)]
     pub cache_config_source: Option<CacheConfigSource>,
+    /// Run package manager via runtime args (e.g. ["-m", "pip"])
+    #[serde(default)]
+    pub run_via_runtime_args: Option<Vec<String>>,
+    /// Proxy clear command (e.g. "npm config delete proxy")
+    #[serde(default)]
+    pub proxy_clear_cmd: Option<String>,
+    /// Configuration file path for mirror (e.g., "{home}/.m2/settings.xml")
+    #[serde(default)]
+    pub mirror_config_file: Option<String>,
+    /// Regex to parse current mirror from config file
+    #[serde(default)]
+    pub mirror_detect_file_regex: Option<String>,
+    /// Description of mirror config file/method shown in frontend
+    #[serde(default)]
+    pub mirror_config_desc: Option<String>,
 }
 
 

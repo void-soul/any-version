@@ -200,9 +200,7 @@ pub fn project_manage(app: tauri::AppHandle, id: String, is_simple: Option<bool>
     if !bin_paths.is_empty() {
         let _ = add_to_user_path(&bin_paths);
     }
-    if id == "nodejs" {
-        let _ = crate::commands::env::configure_npm_prefix(&link_str);
-    }
+
 
     // 6. 同步当前进程环境变量，使子进程（如 run_cmd_capture）能立即使用新值
     crate::sync_process_path();
@@ -313,9 +311,7 @@ pub fn project_unmanage(app: tauri::AppHandle, id: String) -> Result<(), String>
     if !bin_paths.is_empty() {
         let _ = remove_from_user_path(&bin_paths);
     }
-    if id == "nodejs" {
-        let _ = crate::commands::env::clear_npm_prefix();
-    }
+
 
     // 3. 还原原始环境变量
     for var_def in &def.env_vars {
@@ -522,9 +518,9 @@ pub fn project_preview_unmanage(id: String) -> Result<ManagePreview, String> {
     })
 }
 
-async fn install_pip_internal() -> Result<String, String> {
+async fn install_pip_internal(project_id: &str) -> Result<String, String> {
     let config = crate::commands::config::load_config();
-    let link_dir = std::path::PathBuf::from(&config.links_dir).join("python");
+    let link_dir = std::path::PathBuf::from(&config.links_dir).join(project_id);
     if !link_dir.exists() {
         return Err("未找到 Python 链接目录，请先安装或启用 Python 版本。".to_string());
     }
@@ -692,30 +688,47 @@ fn resolve_custom_exe(cmd: &str, config: &crate::commands::config::Config) -> St
 
 /// 执行 shell 命令并捕获输出（用于包管理器版本检测、镜像切换等）
 #[tauri::command]
-pub fn run_cmd_capture(cmd: String) -> Result<String, String> {
+pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String, String> {
     if cmd == "install_pip" {
         return tauri::async_runtime::block_on(async {
-            install_pip_internal().await
+            install_pip_internal(project_id.as_deref().unwrap_or("python")).await
         });
     }
 
     let config = crate::commands::config::load_config();
     let mut resolved_cmd = resolve_custom_exe(&cmd, &config);
 
-    // 将 pip 命令转换为使用本地 active python 运行，以确保多版本/绿色版隔离且正确
-    if resolved_cmd == "pip" || resolved_cmd.starts_with("pip ") {
-        let link_dir = std::path::PathBuf::from(&config.links_dir).join("python");
-        let active_py = if cfg!(windows) {
-            link_dir.join("python.exe")
-        } else {
-            link_dir.join("python")
-        };
-        if active_py.exists() {
-            let py_str = format!("\"{}\" -m pip", active_py.to_string_lossy());
-            if resolved_cmd == "pip" {
-                resolved_cmd = py_str;
-            } else {
-                resolved_cmd = resolved_cmd.replacen("pip", &py_str, 1);
+    // Generic resolution of package manager command execution (like pip run via python)
+    let registry = super::registry::registry();
+    for proj in &registry {
+        for pm in &proj.package_managers {
+            if let Some(ref run_args) = pm.run_via_runtime_args {
+                let pm_prefix = format!("{} ", pm.id);
+                if resolved_cmd == pm.id || resolved_cmd.starts_with(&pm_prefix) {
+                    let link_dir = std::path::PathBuf::from(&config.links_dir).join(&proj.id);
+                    let runtime_exe_name = proj.version_exe.as_deref().unwrap_or(&proj.id);
+                    let active_runtime = if cfg!(windows) {
+                        if !runtime_exe_name.ends_with(".exe") {
+                            link_dir.join(format!("{}.exe", runtime_exe_name))
+                        } else {
+                            link_dir.join(runtime_exe_name)
+                        }
+                    } else {
+                        link_dir.join(runtime_exe_name)
+                    };
+                    if active_runtime.exists() {
+                        let pm_run_str = format!(
+                            "\"{}\" {}",
+                            active_runtime.to_string_lossy(),
+                            run_args.join(" ")
+                        );
+                        if resolved_cmd == pm.id {
+                            resolved_cmd = pm_run_str;
+                        } else {
+                            resolved_cmd = resolved_cmd.replacen(&pm.id, &pm_run_str, 1);
+                        }
+                    }
+                }
             }
         }
     }
@@ -912,7 +925,7 @@ fn resolve_pkg_storage_path_dynamic(
         resolved_path = resolve_custom_cache_path(pm).unwrap_or_default();
         if resolved_path.is_empty() {
             if let Some(ref cmd) = pm.cache_detect_cmd {
-                if let Ok(out) = run_cmd_capture(cmd.clone()) {
+                if let Ok(out) = run_cmd_capture(cmd.clone(), Some(project_id.to_string())) {
                     let trimmed = out.trim();
                     if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("undefined") && !trimmed.eq_ignore_ascii_case("null") {
                         resolved_path = trimmed.to_string();
@@ -936,7 +949,7 @@ fn resolve_pkg_storage_path_dynamic(
         }
     } else if storage_kind == "data" {
         if let Some(ref cmd) = pm.data_detect_cmd {
-            if let Ok(out) = run_cmd_capture(cmd.clone()) {
+            if let Ok(out) = run_cmd_capture(cmd.clone(), Some(project_id.to_string())) {
                 let trimmed = out.trim();
                 if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("undefined") && !trimmed.eq_ignore_ascii_case("null") {
                     resolved_path = trimmed.to_string();
@@ -1193,7 +1206,7 @@ pub fn project_set_cache_path(
 
     if let Some(ref tpl) = pm.cache_set_cmd_template {
         let cmd = tpl.replace("{path}", &new_path);
-        if let Err(e) = run_cmd_capture(cmd) {
+        if let Err(e) = run_cmd_capture(cmd, Some(project_id.clone())) {
             // 如果命令执行失败
             if hkcu_deleted {
                 // 如果之前删除了 HKCU 环境变量，且命令执行失败，则需要恢复/设置 HKCU 环境变量作为兜底

@@ -42,20 +42,27 @@ struct PipOutdated {
     latest_version: String,
 }
 
-// Function to find package manager path
-fn find_pm_executable(pm_id: &str, project_id: &str) -> String {
+pub fn find_pm_executable(pm_id: &str, project_id: &str) -> String {
     let config = load_config();
     let link_dir = PathBuf::from(&config.links_dir).join(project_id);
     
-    // Check if Python pip is used - we call Python -m pip
-    if pm_id == "pip" {
-        let active_py = if cfg!(windows) {
-            link_dir.join("python.exe")
-        } else {
-            link_dir.join("python")
-        };
-        if active_py.exists() {
-            return format!("\"{}\" -m pip", active_py.to_string_lossy());
+    if let Some(project) = registry::find_by_id(project_id) {
+        if let Some(pm) = project.package_managers.iter().find(|m| m.id == pm_id) {
+            if let Some(ref run_args) = pm.run_via_runtime_args {
+                let runtime_exe_name = project.version_exe.as_deref().unwrap_or(project_id);
+                let active_runtime = if cfg!(windows) {
+                    if !runtime_exe_name.ends_with(".exe") {
+                        link_dir.join(format!("{}.exe", runtime_exe_name))
+                    } else {
+                        link_dir.join(runtime_exe_name)
+                    }
+                } else {
+                    link_dir.join(runtime_exe_name)
+                };
+                if active_runtime.exists() {
+                    return format!("\"{}\" {}", active_runtime.to_string_lossy(), run_args.join(" "));
+                }
+            }
         }
     }
 
@@ -71,7 +78,7 @@ fn find_pm_executable(pm_id: &str, project_id: &str) -> String {
     }
 }
 
-fn execute_command_string(cmd_str: &str) -> Result<String, String> {
+pub fn execute_command_string(cmd_str: &str) -> Result<String, String> {
     // Correctly split command string respecting quotes (like "C:\path to python\python.exe" -m pip list)
     let parts = if cmd_str.contains('"') {
         let mut result = Vec::new();

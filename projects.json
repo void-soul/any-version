@@ -4,7 +4,14 @@
     "display_name": "Node.js",
     "category": "language",
     "official_website": "https://nodejs.org",
-    "env_vars": [],
+    "env_vars": [
+      {
+        "name": "NPM_CONFIG_PREFIX",
+        "desc": "npm 全局包及二进制文件安装根路径",
+        "check_type": "path",
+        "tier": "package"
+      }
+    ],
     "bin_dirs": [
       ""
     ],
@@ -213,6 +220,7 @@
         "data_set_cmd_template": null,
         "proxy_detect_cmd": "npm config get proxy",
         "proxy_set_cmd_template": "npm config set proxy {url}",
+        "proxy_clear_cmd": "npm config delete proxy && npm config delete https-proxy",
         "pkg_list_cmd": "npm list -g --depth=0 --json",
         "pkg_list_format": "npm_json",
         "pkg_upgrade_cmd_template": "npm install -g {pkg}@latest",
@@ -220,6 +228,8 @@
         "pkg_outdated_cmd": "npm outdated -g --json",
         "pkg_outdated_format": "npm_outdated_json",
         "mirror_cmd_template": "npm config set registry {url}",
+        "mirror_detect_cmd": "npm config get registry",
+        "mirror_config_desc": "npm 全局配置 (~\\.npmrc 或通过 npm config set 修改)",
         "mirror_options": [
           {
             "mirror_type": "official",
@@ -252,6 +262,8 @@
         "pkg_upgrade_cmd_template": "yarn global upgrade {pkg}",
         "pkg_homepage_template": "https://www.npmjs.com/package/{pkg}",
         "mirror_cmd_template": "yarn config set registry {url}",
+        "mirror_detect_cmd": "yarn config get registry",
+        "mirror_config_desc": "Yarn 全局配置 (~\\.yarnrc 或通过 yarn config set 修改)",
         "mirror_options": [
           {
             "mirror_type": "official",
@@ -272,7 +284,8 @@
         "data_env_var": null,
         "data_set_cmd_template": null,
         "proxy_detect_cmd": "yarn config get proxy",
-        "proxy_set_cmd_template": "yarn config set proxy {url}"
+        "proxy_set_cmd_template": "yarn config set proxy {url}",
+        "proxy_clear_cmd": "yarn config delete proxy && yarn config delete https-proxy"
       },
       {
         "id": "pnpm",
@@ -288,6 +301,8 @@
         "pkg_upgrade_cmd_template": "pnpm update -g {pkg}",
         "pkg_homepage_template": "https://www.npmjs.com/package/{pkg}",
         "mirror_cmd_template": "pnpm config set registry {url}",
+        "mirror_detect_cmd": "pnpm config get registry",
+        "mirror_config_desc": "pnpm 全局配置 (通过 pnpm config set 修改)",
         "mirror_options": [
           {
             "mirror_type": "official",
@@ -308,7 +323,8 @@
         "data_env_var": null,
         "data_set_cmd_template": null,
         "proxy_detect_cmd": "pnpm config get proxy",
-        "proxy_set_cmd_template": "pnpm config set proxy {url}"
+        "proxy_set_cmd_template": "pnpm config set proxy {url}",
+        "proxy_clear_cmd": "pnpm config delete proxy"
       }
     ],
     "download_file_ext": "zip",
@@ -617,7 +633,14 @@
       "filter_field": "version",
       "filter_value": 3,
       "reverse": true,
-      "max_count": 60
+      "max_count": 60,
+      "exclude_version_patterns": [
+        "^3\\.7\\.(1[0-9]|[2-9]\\d|\\d{3,})$",
+        "^3\\.8\\.(1[1-9]|[2-9]\\d|\\d{3,})$",
+        "^3\\.9\\.(1[4-9]|[2-9]\\d|\\d{3,})$",
+        "^3\\.10\\.(1[2-9]|[2-9]\\d|\\d{3,})$",
+        "^3\\.11\\.(1[0-9]|[2-9]\\d|\\d{3,})$"
+      ]
     },
     "package_managers": [
       {
@@ -627,6 +650,7 @@
         "install_cmd": "install_pip",
         "version_cmd": "pip --version",
         "version_exe": "pip",
+        "run_via_runtime_args": ["-m", "pip"],
         "cache_detect_cmd": null,
         "cache_default_path": "{home}\\AppData\\Local\\pip\\Cache",
         "cache_env_var": "PIP_CACHE_DIR",
@@ -642,7 +666,30 @@
         "pkg_upgrade_cmd_template": "pip install --upgrade {pkg}",
         "pkg_homepage_template": "https://pypi.org/project/{pkg}/",
         "pkg_outdated_cmd": "pip list --outdated --format=json",
-        "pkg_outdated_format": "pip_outdated_json"
+        "pkg_outdated_format": "pip_outdated_json",
+        "mirror_config_file": "{appdata}\\pip\\pip.ini",
+        "mirror_detect_file_regex": "(?i)index-url\\s*=\\s*([^\\r\\n]+)",
+        "mirror_config_desc": "%APPDATA%\\pip\\pip.ini（或 PIP_INDEX_URL 环境变量）",
+        "mirror_options": [
+          {
+            "mirror_type": "official",
+            "name": "官方源",
+            "url": "https://pypi.org/simple",
+            "config_content": null
+          },
+          {
+            "mirror_type": "aliyun",
+            "name": "阿里云",
+            "url": "https://mirrors.aliyun.com/pypi/simple/",
+            "config_content": "[global]\nindex-url = https://mirrors.aliyun.com/pypi/simple/\ntrusted-host = mirrors.aliyun.com\n"
+          },
+          {
+            "mirror_type": "tsinghua",
+            "name": "清华大学",
+            "url": "https://pypi.tuna.tsinghua.edu.cn/simple",
+            "config_content": "[global]\nindex-url = https://pypi.tuna.tsinghua.edu.cn/simple\ntrusted-host = pypi.tuna.tsinghua.edu.cn\n"
+          }
+        ]
       }
     ],
     "conflict_managers": [
@@ -877,7 +924,23 @@
         "proxy_set_cmd_template": null,
         "pkg_list_cmd": null,
         "mirror_cmd_template": null,
-        "mirror_options": null,
+        "mirror_config_file": "{home}\\.m2\\settings.xml",
+        "mirror_detect_file_regex": "<url>([^<]+)</url>",
+        "mirror_config_desc": "%USERPROFILE%\\.m2\\settings.xml（Maven 全局 settings）",
+        "mirror_options": [
+          {
+            "mirror_type": "official",
+            "name": "官方源",
+            "url": "https://repo.maven.apache.org/maven2",
+            "config_content": null
+          },
+          {
+            "mirror_type": "aliyun",
+            "name": "阿里云",
+            "url": "https://maven.aliyun.com/repository/public",
+            "config_content": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<settings xmlns=\"http://maven.apache.org/SETTINGS/1.0.0\"\n          xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n          xsi:schemaLocation=\"http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd\">\n  <mirrors>\n    <mirror>\n      <id>aliyunmaven</id>\n      <mirrorOf>central</mirrorOf>\n      <name>aliyun maven</name>\n      <url>https://maven.aliyun.com/repository/public</url>\n    </mirror>\n  </mirrors>\n</settings>"
+          }
+        ],
         "cache_config_source": {
           "parser_type": "xml",
           "paths": [
@@ -1112,7 +1175,15 @@
         "data_set_cmd_template": null,
         "proxy_detect_cmd": "go env GOPROXY",
         "proxy_set_cmd_template": "go env -w GOPROXY={url}",
+        "mirror_cmd_template": "go env -w GOPROXY={url}",
+        "mirror_detect_cmd": "go env GOPROXY",
+        "mirror_config_desc": "通过 go env -w 修改 GOPROXY（Go 模块代理地址）",
         "mirror_options": [
+          {
+            "mirror_type": "official",
+            "name": "官方源 (GOPROXY)",
+            "url": "https://proxy.golang.org,direct"
+          },
           {
             "mirror_type": "goproxy.cn",
             "name": "七牛云 GOPROXY",
@@ -1270,21 +1341,27 @@
         "pkg_list_cmd": null,
         "pkg_homepage_template": "https://crates.io/crates/{pkg}",
         "mirror_cmd_template": null,
+        "mirror_config_file": "{home}\\.cargo\\config.toml",
+        "mirror_detect_file_regex": "registry\\s*=\\s*\"([^\"]+)\"",
+        "mirror_config_desc": "%USERPROFILE%\\.cargo\\config.toml（Cargo 镜像源配置）",
         "mirror_options": [
           {
             "mirror_type": "official",
             "name": "官方源 (crates.io)",
-            "url": "https://github.com/rust-lang/crates.io-index"
+            "url": "https://github.com/rust-lang/crates.io-index",
+            "config_content": null
           },
           {
             "mirror_type": "rsproxy",
             "name": "Rsproxy 镜像",
-            "url": "https://rsproxy.cn"
+            "url": "https://rsproxy.cn",
+            "config_content": "[source.crates-io]\nreplace-with = 'rsproxy'\n\n[source.rsproxy]\nregistry = \"https://rsproxy.cn/crates.io-index\"\n\n[source.rsproxy-sparse]\nregistry = \"sparse+https://rsproxy.cn/index/\"\n\n[net]\ngit-fetch-with-cli = true\n"
           },
           {
             "mirror_type": "tsinghua",
             "name": "清华大学镜像",
-            "url": "https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index"
+            "url": "https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index",
+            "config_content": "[source.crates-io]\nreplace-with = 'tsinghua'\n\n[source.tsinghua]\nregistry = \"https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index\"\n"
           }
         ]
       }
@@ -1588,7 +1665,7 @@
   {
     "id": "qt",
     "display_name": "Qt",
-    "category": "tool",
+    "category": "language",
     "official_website": "https://www.qt.io",
     "env_vars": [
       {

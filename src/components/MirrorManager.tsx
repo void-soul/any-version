@@ -9,28 +9,19 @@ import {
   Info
 } from "lucide-react";
 
-interface MirrorInfo {
-  tool: string;
-  current: string;
-  mirror_name: string;
+interface MirrorOption {
+  mirror_type: string;
+  name: string;
+  url: string;
 }
 
-/** 返回切换该工具镜像时会修改的配置文件路径，用于透明展示给用户 */
-function mirrorConfigFile(tool: string): string {
-  switch (tool) {
-    case "npm":
-      return "npm 全局配置 (~/.npmrc 或通过 npm config set 修改)";
-    case "pip":
-      return "%APPDATA%\\pip\\pip.ini（或 PIP_INDEX_URL 环境变量）";
-    case "maven":
-      return "%USERPROFILE%\\.m2\\settings.xml（Maven 全局 settings）";
-    case "go":
-      return "通过 go env -w 修改 GOPROXY（Go 模块代理地址）";
-    case "rust":
-      return "%USERPROFILE%\\.cargo\\config.toml（Cargo 镜像源配置）";
-    default:
-      return "";
-  }
+interface MirrorInfo {
+  tool: string;
+  display_name: string;
+  current: string;
+  mirror_name: string;
+  options: MirrorOption[];
+  config_file_desc?: string;
 }
 
 export default function MirrorManager() {
@@ -66,42 +57,6 @@ export default function MirrorManager() {
     }
   };
 
-  const getOptionsForTool = (tool: string) => {
-    switch (tool) {
-      case "npm":
-        return [
-          { type: "official", name: "官方源 (Official)" },
-          { type: "aliyun", name: "阿里云 (Aliyun)" },
-          { type: "tencent", name: "腾讯云 (Tencent)" },
-        ];
-      case "pip":
-        return [
-          { type: "official", name: "官方源 (PyPI)" },
-          { type: "aliyun", name: "阿里云 (Aliyun)" },
-          { type: "tsinghua", name: "清华大学 (Tsinghua)" },
-        ];
-      case "maven":
-        return [
-          { type: "official", name: "官方源 (Maven Central)" },
-          { type: "aliyun", name: "阿里云 (Aliyun)" },
-        ];
-      case "go":
-        return [
-          { type: "official", name: "官方源 (GOPROXY)" },
-          { type: "aliyun", name: "阿里云 (Aliyun)" },
-          { type: "goproxy", name: "七牛云 (Goproxy.cn)" },
-        ];
-      case "rust":
-        return [
-          { type: "official", name: "官方源 (crates.io)" },
-          { type: "rsproxy", name: "Rsproxy 镜像 (推荐)" },
-          { type: "tsinghua", name: "清华大学 (Tsinghua)" },
-        ];
-      default:
-        return [];
-    }
-  };
-
   return (
     <div className="flex-1 p-8 overflow-y-auto space-y-6 h-screen select-none">
       {/* Header */}
@@ -125,7 +80,6 @@ export default function MirrorManager() {
       <div className="grid grid-cols-1 gap-6">
         {mirrors.map((m) => {
           const isToggling = togglingTool === m.tool;
-          const options = getOptionsForTool(m.tool);
           
           return (
             <div 
@@ -135,7 +89,7 @@ export default function MirrorManager() {
               {/* Left side: details */}
               <div className="space-y-1.5 flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <h3 className="text-xs font-semibold text-white uppercase">{m.tool} 镜像加速</h3>
+                  <h3 className="text-xs font-semibold text-white uppercase">{m.display_name} 镜像加速</h3>
                   <span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[9px] font-mono">
                     {m.mirror_name}
                   </span>
@@ -143,24 +97,23 @@ export default function MirrorManager() {
                 <p className="font-mono text-[10px] text-slate-400 break-all">
                   当前代理源: {m.current}
                 </p>
-                <p className="text-[9px] text-slate-500 flex items-center gap-1 mt-1">
-                  <Info className="w-3 h-3" />
-                  配置写入: <span className="font-mono">{mirrorConfigFile(m.tool)}</span>
-                </p>
+                {m.config_file_desc && (
+                  <p className="text-[9px] text-slate-500 flex items-center gap-1 mt-1">
+                    <Info className="w-3 h-3" />
+                    配置写入: <span className="font-mono">{m.config_file_desc}</span>
+                  </p>
+                )}
               </div>
 
               {/* Right side: quick switch buttons */}
               <div className="flex items-center gap-2 flex-wrap">
-                {options.map((opt) => {
-                  const isCurrent = m.mirror_name.toLowerCase().includes(opt.type.toLowerCase()) 
-                    || (opt.type === "official" && m.mirror_name.toLowerCase() === "official")
-                    || (opt.type === "goproxy" && m.mirror_name.toLowerCase().includes("goproxy"))
-                    || (opt.type === "rsproxy" && m.mirror_name.toLowerCase().includes("rsproxy"));
+                {m.options.map((opt) => {
+                  const isCurrent = m.mirror_name === opt.name || m.current === opt.url;
 
                   return (
                     <button
-                      key={opt.type}
-                      onClick={() => handleSetMirror(m.tool, opt.type)}
+                      key={opt.mirror_type}
+                      onClick={() => handleSetMirror(m.tool, opt.mirror_type)}
                       disabled={isToggling}
                       className={`px-3.5 py-2 rounded-lg text-xs font-medium cursor-pointer transition-all ${
                         isCurrent 
