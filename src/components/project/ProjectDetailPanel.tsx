@@ -144,6 +144,11 @@ export default function ProjectDetailPanel({
   // 旧版数据（托管前的备份）相关状态 —— 必须在条件 return 之前声明
   const [hasLegacy, setHasLegacy] = useState(false);
   const [legacyLoaded, setLegacyLoaded] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(true);
+
+  useEffect(() => {
+    invoke<boolean>("is_admin").then(setIsAdmin).catch(() => setIsAdmin(true));
+  }, []);
 
   const patch = useCallback((id: string, partial: Partial<ProjectUIState>) => {
     setUiMap((prev) => ({ ...prev, [id]: { ...(prev[id] ?? EMPTY_UI), ...partial } }));
@@ -423,6 +428,14 @@ export default function ProjectDetailPanel({
     if (!pid || !ui.detail?.status?.service_status) return;
     const running = ui.detail.status.service_status.running;
     const simpleService = ui.detail.def.simple_mode || ui.detail.status.is_simple_managed;
+
+    if (!isAdmin && Array.isArray(ui.detail.def.service_names) && ui.detail.def.service_names.length > 0) {
+      const confirmed = window.confirm(
+        `操作 Windows 系统服务需要管理员权限。当前程序未以管理员身份运行，操作可能会因“拒绝访问（系统错误 5）”而失败。\n\n是否继续？`
+      );
+      if (!confirmed) return;
+    }
+
     patch(pid, { serviceCtrlLoading: true });
     try {
       if (running) {
@@ -454,7 +467,7 @@ export default function ProjectDetailPanel({
     } finally {
       patch(pid, { serviceCtrlLoading: false });
     }
-  }, [pid, ui.detail, patch, refreshSingle]);
+  }, [pid, ui.detail, patch, refreshSingle, isAdmin]);
 
   const handleMigrateCache = useCallback(async () => {
     if (!pid) return;

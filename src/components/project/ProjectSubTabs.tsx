@@ -262,8 +262,467 @@ export function VersionsTab({
 // ═══════════════════════════════════════
 //  环境变量
 // ═══════════════════════════════════════
-export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, isOperating, repairingEnv, onRepairEnv }: SubTabProps) {
+export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, isOperating, repairingEnv, onRepairEnv, onRefresh }: SubTabProps) {
   const vars: EnvVarStatus[] = project.env_vars_status ?? [];
+  const [isAdmin, setIsAdmin] = useState(true);
+
+  useEffect(() => {
+    invoke<boolean>("is_admin").then(setIsAdmin).catch(() => setIsAdmin(true));
+  }, []);
+
+  // 冲突版本管理器状态与操作
+  const [conflictManagers, setConflictManagers] = useState<any[]>([]);
+  const [loadingConflicts, setLoadingConflicts] = useState(false);
+  const [operatingManagerId, setOperatingManagerId] = useState<string | null>(null);
+
+  // ── 统一工作流状态机（冲突管理器路径变更） ──
+  const [workflowManagerId, setWorkflowManagerId] = useState<string | null>(null);
+  const [workflowStep, setWorkflowStep] = useState<"method" | "paths" | "confirm" | "executing" | "done">("method");
+  const [workflowMethod, setWorkflowMethod] = useState<"junction" | "point">("junction");
+  const [workflowLinkPath, setWorkflowLinkPath] = useState("");
+  const [workflowActualPath, setWorkflowActualPath] = useState("");
+  const [workflowPointPath, setWorkflowPointPath] = useState("");
+  const [workflowFileAction, setWorkflowFileAction] = useState<"delete" | "move" | "keep">("keep");
+  const [workflowExecuting, setWorkflowExecuting] = useState(false);
+  const [workflowProgress, setWorkflowProgress] = useState<{ stage: string; current: number; total: number; file_name: string } | null>(null);
+
+  const loadConflictManagers = async () => {
+    if (!project.id || !def || !def.conflict_managers || def.conflict_managers.length === 0) {
+      setConflictManagers([]);
+      return;
+    }
+    setLoadingConflicts(true);
+    try {
+      const list = await invoke<any[]>("get_conflict_managers_status", { sdkId: project.id });
+      setConflictManagers(list);
+    } catch (e) {
+      console.error("加载冲突管理器状态失败:", e);
+    } finally {
+      setLoadingConflicts(false);
+    }
+  };
+
+  useEffect(() => {
+    loadConflictManagers();
+  }, [project.id, def]);
+
+  // 打开工作流
+  const openWorkflow = (mgr: any) => {
+    setWorkflowManagerId(mgr.id);
+    setWorkflowStep("method");
+    setWorkflowMethod("junction");
+    setWorkflowLinkPath(mgr.cache_path || "");
+    setWorkflowPointPath(mgr.cache_path || "");
+    setWorkflowFileAction("keep");
+    setWorkflowExecuting(false);
+    setWorkflowProgress(null);
+
+    // 预设默认迁移目标路径
+    const drive = mgr.cache_path?.match(/^([A-Za-z]):\\/);
+    if (drive && drive[1].toUpperCase() === "C") {
+      setWorkflowActualPath(`D:\\any-version-caches\\${mgr.id}`);
+    } else {
+      setWorkflowActualPath(mgr.cache_path || "");
+    }
+  };
+
+  // 关闭工作流
+  const closeWorkflow = () => {
+    setWorkflowManagerId(null);
+  };
+
+  const workflowNext = () => {
+    if (workflowStep === "method") {
+      setWorkflowStep("paths");
+    } else if (workflowStep === "paths") {
+      setWorkflowStep("confirm");
+    } else if (workflowStep === "confirm") {
+      executeWorkflow();
+    }
+  };
+
+  const workflowPrev = () => {
+    if (workflowStep === "paths") {
+      setWorkflowStep("method");
+    } else if (workflowStep === "confirm") {
+      setWorkflowStep("paths");
+    }
+  };
+
+  const browseWorkflowPath = async (setter: (v: string) => void) => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({ directory: true, title: "选择文件夹" });
+      if (selected) setter(selected as string);
+    } catch {
+      alert("文件夹选择器不可用，请手动输入路径。");
+    }
+  };
+
+  const executeWorkflow = async () => {
+    if (!workflowManagerId) return;
+
+    if (!isAdmin) {
+      const confirmed = window.confirm(
+        `迁移缓存路径涉及创建系统级软链接 (Symlink/Junction)，这需要 Windows 管理员权限。\n当前 Any Version 未以管理员身份运行，操作可能会因“拒绝访问”而失败。\n\n是否继续？`
+      );
+      if (!confirmed) return;
+    }
+
+    // 检查是否向同一目录移动文件
+    const pathsSame = workflowMethod === "junction"
+      && workflowLinkPath.toLowerCase().replace(/[\\/]+$/, "")
+      === workflowActualPath.toLowerCase().replace(/[\\/]+$/, "");
+
+    if (workflowFileAction === "move" && pathsSame) {
+      if (!confirm("源路径和目标路径相同，无需移动文件。将直接创建链接，继续？")) {
+        return;
+      }
+    }
+
+    setWorkflowStep("executing");
+    setWorkflowExecuting(true);
+    setWorkflowProgress(null);
+
+    const unlisten = await listen<{ stage: string; current: number; total: number; file_name: string }>(
+      "migrate-storage-progress",
+      (event) => setWorkflowProgress(event.payload)
+    );
+
+    try {
+      if (workflowMethod === "junction") {
+        await invoke("handle_conflict_manager_action", {
+          sdkId: project.id,
+          managerId: workflowManagerId,
+          action: "migrate",
+          targetPath: workflowActualPath
+        });
+      } else {
+        await invoke("handle_conflict_manager_action", {
+          sdkId: project.id,
+          managerId: workflowManagerId,
+          action: "point",
+          targetPath: workflowPointPath
+        });
+      }
+
+      await loadConflictManagers();
+      onRefresh();
+      setWorkflowStep("done");
+    } catch (e: unknown) {
+      alert(`操作失败: ${e}`);
+      setWorkflowStep("confirm");
+    } finally {
+      unlisten();
+      setWorkflowExecuting(false);
+      setWorkflowProgress(null);
+    }
+  };
+
+  const handleConflictAction = async (managerId: string, action: string) => {
+    if (!isAdmin) {
+      const confirmed = window.confirm(
+        `操作系统冲突版本管理器 [${managerId}] 的状态需要 Windows 管理员权限。\n当前 Any Version 未以管理员身份运行，操作可能会因“拒绝访问”而失败。\n\n是否继续？`
+      );
+      if (!confirmed) return;
+    }
+    setOperatingManagerId(managerId);
+    try {
+      await invoke("handle_conflict_manager_action", {
+        sdkId: project.id,
+        managerId,
+        action,
+        targetPath: null
+      });
+      alert("操作成功！");
+      await loadConflictManagers();
+      onRefresh();
+    } catch (e: any) {
+      alert(`操作失败: ${e}`);
+    } finally {
+      setOperatingManagerId(null);
+    }
+  };
+
+  const renderConflictWorkflow = (mgr: any) => {
+    const accentBg = "bg-amber-500/10";
+    const accentBorder = "border-amber-500/20";
+    const accentText = "text-amber-400";
+    const btnBg = "bg-amber-600 hover:bg-amber-500";
+    const progressBarColor = "bg-amber-500/60";
+
+    const stepLabels: Record<string, string> = {
+      method: "选择方式",
+      paths: "配置路径",
+      confirm: "确认预览",
+      executing: "执行中",
+      done: "已完成",
+    };
+
+    const totalSteps = 4;
+
+    // ── Step: 选择方式 ──
+    if (workflowStep === "method") {
+      return (
+        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+          <div className="flex items-center justify-between">
+            <span className={`text-[12px] font-semibold ${accentText}`}>
+              变更缓存配置 · Step 1/{totalSteps} · {stepLabels.method}
+            </span>
+            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">✕ 取消</button>
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-[12px] text-slate-300">请选择变更方式：</p>
+            <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${workflowMethod === "junction"
+              ? `${accentBorder} bg-white/5`
+              : "border-white/5 hover:bg-white/[0.02]"
+              }`}>
+              <input type="radio" name="wf_method" value="junction" checked={workflowMethod === "junction"}
+                onChange={() => setWorkflowMethod("junction")} className="mt-0.5" />
+              <div>
+                <span className="text-[12px] font-semibold text-slate-200">A. Junction 链接</span>
+                <p className="text-[13px] text-slate-500 mt-0.5">
+                  创建一个目录链接，将缓存目录指向新位置。文件实际存储在新位置，原位置通过链接访问。
+                </p>
+              </div>
+            </label>
+            <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${workflowMethod === "point"
+              ? `${accentBorder} bg-white/5`
+              : "border-white/5 hover:bg-white/[0.02]"
+              }`}>
+              <input type="radio" name="wf_method" value="point" checked={workflowMethod === "point"}
+                onChange={() => setWorkflowMethod("point")} className="mt-0.5" />
+              <div>
+                <span className="text-[12px] font-semibold text-purple-300">B. 指向配置</span>
+                <p className="text-[13px] text-slate-500 mt-0.5">
+                  直接修改该控制器的环境变量，更改缓存目录路径。不改动已有文件。
+                </p>
+              </div>
+            </label>
+          </div>
+          <div className="flex justify-end">
+            <button onClick={workflowNext}
+              className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors`}>
+              下一步 →
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Step: 配置路径 ──
+    if (workflowStep === "paths") {
+      return (
+        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+          <div className="flex items-center justify-between">
+            <span className={`text-[12px] font-semibold ${accentText}`}>
+              变更缓存配置 · Step 2/{totalSteps} · {stepLabels.paths}
+            </span>
+            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">✕ 取消</button>
+          </div>
+
+          {workflowMethod === "junction" ? (
+            <>
+              <p className="text-[11px] text-slate-400">
+                <span className="font-semibold text-slate-300">Junction 链接模式</span> — ① 形式路径（链接所在位置）→ ② 实际路径（数据存放位置）
+              </p>
+              <div className="space-y-1.5">
+                <div>
+                  <label className="text-[13px] text-slate-500 block mb-0.5">① 形式路径（链接创建位置，即原始默认路径）</label>
+                  <div className="flex items-center gap-1">
+                    <input type="text" value={workflowLinkPath} onChange={(e) => setWorkflowLinkPath(e.target.value)}
+                      className="flex-1 glass-input px-1.5 py-1 text-[12px] font-mono" placeholder="缓存源路径" />
+                    <button onClick={() => browseWorkflowPath(setWorkflowLinkPath)}
+                      className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
+                      <FolderOpen className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[13px] text-slate-500 block mb-0.5">② 实际路径（数据真实存放位置，建议选非 C 盘）</label>
+                  <div className="flex items-center gap-1">
+                    <input type="text" value={workflowActualPath} onChange={(e) => setWorkflowActualPath(e.target.value)}
+                      className="flex-1 glass-input px-1.5 py-1 text-[12px] font-mono" placeholder={`目标路径（如 D:\\any-version-caches\\${mgr.id}）`} />
+                    <button onClick={() => browseWorkflowPath(setWorkflowActualPath)}
+                      className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
+                      <FolderOpen className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-[11px] text-slate-400">
+                <span className="font-semibold text-purple-300">指向配置模式</span> — 直接修改对应的环境变量，指向新路径
+              </p>
+              <div>
+                <label className="text-[13px] text-slate-500 block mb-0.5">指向路径（设置该管理器的缓存根目录）</label>
+                <div className="flex items-center gap-1">
+                  <input type="text" value={workflowPointPath} onChange={(e) => setWorkflowPointPath(e.target.value)}
+                    className="flex-1 glass-input px-1.5 py-1 text-[12px] font-mono"
+                    placeholder={mgr.cache_path || "新路径"} />
+                  <button onClick={() => browseWorkflowPath(setWorkflowPointPath)}
+                    className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
+                    <FolderOpen className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* 旧文件处理方式（本卡片默认为移动/保留） */}
+          <div className="pt-1 space-y-1">
+            <p className="text-[13px] text-slate-400 font-semibold">旧文件处理方式：</p>
+            <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-blue-500/30 bg-blue-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
+              <input type="radio" name="wf_file_action" value="move" checked={workflowFileAction === "move"}
+                onChange={() => setWorkflowFileAction("move")} className="mt-0.5" />
+              <div>
+                <span className="text-[13px] font-semibold text-blue-300">移动旧文件到新目录</span>
+                <p className="text-[11px] text-slate-500 mt-0.5">将现有文件整体复制到新位置，完成后{workflowMethod === "junction" ? "创建链接" : "修改环境变量"}。保留所有已有工具链。</p>
+              </div>
+            </label>
+            <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "keep" ? "border-slate-500/30 bg-slate-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
+              <input type="radio" name="wf_file_action" value="keep" checked={workflowFileAction === "keep"}
+                onChange={() => setWorkflowFileAction("keep")} className="mt-0.5" />
+              <div>
+                <span className="text-[13px] font-semibold text-slate-300">不做改动</span>
+                <p className="text-[11px] text-slate-500 mt-0.5">仅{workflowMethod === "junction" ? "创建链接指向新目录" : "修改环境变量"}，旧目录中的文件保持原样不动。</p>
+              </div>
+            </label>
+          </div>
+
+          <div className="flex justify-between">
+            <button onClick={workflowPrev}
+              className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[11px] font-semibold cursor-pointer transition-colors">
+              ← 上一步
+            </button>
+            <button onClick={workflowNext}
+              disabled={workflowMethod === "junction"
+                ? (!workflowLinkPath || !workflowActualPath || workflowLinkPath === workflowActualPath)
+                : !workflowPointPath}
+              className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed`}>
+              预览 →
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Step: 确认预览 ──
+    if (workflowStep === "confirm") {
+      return (
+        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+          <div className="flex items-center justify-between">
+            <span className={`text-[12px] font-semibold ${accentText}`}>
+              变更缓存配置 · Step 3/{totalSteps} · {stepLabels.confirm}
+            </span>
+            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">✕ 取消</button>
+          </div>
+
+          <div className="p-3 bg-black/20 rounded-lg border border-white/5 space-y-2">
+            <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">操作预览</p>
+            <div className="text-[12px] text-slate-300 space-y-1 font-mono">
+              {workflowMethod === "junction" ? (
+                <>
+                  <div><span className="text-slate-500">模式:</span> Junction 链接 (软链接)</div>
+                  <div className="break-all"><span className="text-slate-500">形式路径:</span> {workflowLinkPath}</div>
+                  <div className="break-all"><span className="text-slate-500">实际路径:</span> {workflowActualPath}</div>
+                </>
+              ) : (
+                <>
+                  <div><span className="text-slate-500">模式:</span> 指向配置 (重定向环境变量)</div>
+                  <div className="break-all"><span className="text-slate-500">目标路径:</span> {workflowPointPath}</div>
+                </>
+              )}
+              <div><span className="text-slate-500">旧文件处理:</span> {workflowFileAction === "move" ? "复制移动到新路径" : "保持不动"}</div>
+            </div>
+          </div>
+
+          <div className="flex justify-between">
+            <button onClick={workflowPrev}
+              className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[11px] font-semibold cursor-pointer transition-colors">
+              ← 上一步
+            </button>
+            <button onClick={executeWorkflow}
+              className={`px-4 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors flex items-center gap-1`}>
+              <CheckCircle className="w-3 h-3" />
+              确认并执行
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Step: 执行中 ──
+    if (workflowStep === "executing") {
+      const progressPercent = workflowProgress && workflowProgress.total > 0
+        ? Math.round((workflowProgress.current / workflowProgress.total) * 100)
+        : 0;
+
+      return (
+        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+          <div className="flex items-center justify-between">
+            <span className={`text-[12px] font-semibold ${accentText}`}>
+              变更缓存配置 · Step 4/{totalSteps} · {stepLabels.executing}
+            </span>
+          </div>
+
+          <div className="p-3 bg-black/20 rounded-lg border border-white/5 space-y-3">
+            <div className="flex items-center justify-between text-xs text-slate-300">
+              <span>{workflowProgress?.stage || "正在执行操作..."}</span>
+              <span className="font-mono">{progressPercent}%</span>
+            </div>
+
+            {/* 进度条 */}
+            <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden border border-white/5">
+              <div className={`${progressBarColor} h-2 rounded-full transition-all duration-300`} style={{ width: `${progressPercent}%` }}></div>
+            </div>
+
+            {workflowProgress && (
+              <div className="text-[11px] text-slate-500 font-mono space-y-0.5">
+                <div className="truncate">文件: {workflowProgress.file_name || "无"}</div>
+                <div>进度: {workflowProgress.current} / {workflowProgress.total}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ── Step: 已完成 ──
+    if (workflowStep === "done") {
+      return (
+        <div className={`mt-3 p-3 rounded-xl border border-emerald-500/20 bg-emerald-500/10 space-y-3 animate-fadeIn`}>
+          <div className="flex items-center justify-between">
+            <span className="text-[12px] font-semibold text-emerald-400">
+              变更缓存配置 · {stepLabels.done}
+            </span>
+          </div>
+
+          <div className="p-3 bg-black/20 rounded-lg border border-white/5 space-y-1">
+            <p className="text-[12px] text-emerald-300 font-semibold flex items-center gap-1">
+              <CheckCircle className="w-3.5 h-3.5" />
+              缓存路径变更操作已顺利完成！
+            </p>
+            <p className="text-[11px] text-slate-500 mt-1">相关目录的 Junction 映射及环境变量配置已成功更新。</p>
+          </div>
+
+          <div className="flex justify-end">
+            <button onClick={closeWorkflow}
+              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-semibold cursor-pointer transition-colors">
+              关闭向导
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+
+
 
   // 高级模式：显示用户可配置的运行时环境变量
   const [advanced, setAdvanced] = useState(false);
@@ -322,6 +781,15 @@ export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, i
 
   return (
     <div className="space-y-5">
+      {!isAdmin && (
+        <div className="flex items-start gap-2.5 p-3 rounded-xl border border-amber-500/20 bg-amber-500/10 text-[12.5px] text-amber-200">
+          <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+          <span>
+            <strong>权限提示：</strong>修改系统环境变量、校准 PATH 或操作冲突版本管理器需要 Windows 管理员权限。当前程序未以管理员身份运行，操作可能会因“拒绝访问（系统错误 5）”而失败。若遇到操作报错，请尝试右键以管理员身份启动 Any Version。
+          </span>
+        </div>
+      )}
+
       {/* 路径类环境变量（系统管理，不可修改） */}
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-3">
@@ -332,7 +800,10 @@ export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, i
           </div>
           {onRepairEnv && (
             <button
-              onClick={onRepairEnv}
+              onClick={() => {
+                if (!isAdmin && !window.confirm("修复系统环境变量和 PATH 需要 Windows 管理员权限。当前未以管理员身份运行，操作可能会因“拒绝访问”而失败。是否继续？")) return;
+                onRepairEnv();
+              }}
               disabled={isOperating || repairingEnv}
               title="重新将环境变量和 PATH 校准到 AnyVersion links 路径"
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed text-amber-300 border border-amber-500/20 text-[13px] font-semibold cursor-pointer transition-all whitespace-nowrap"
@@ -498,6 +969,173 @@ export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, i
           </div>
         )}
       </div>
+
+      {/* 冲突版本管理器检测与管控 (Exclusive Mode) */}
+      {def && def.conflict_managers && def.conflict_managers.length > 0 && (
+        <div className="border-t border-white/5 pt-5 space-y-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400" />
+              <h4 className="text-xs font-semibold text-slate-300">系统冲突版本管理器检测</h4>
+            </div>
+            <p className="text-[13px] text-slate-500 mt-0.5">
+              检测到本机系统上存在以下可能会与 AnyVersion 产生冲突的官方或第三方版本管理器。推荐通过禁用它们的环境变量或将其缓存迁移，以实现 AnyVersion 独占。
+            </p>
+          </div>
+
+          {loadingConflicts ? (
+            <div className="flex items-center gap-2 text-[13px] text-slate-400 py-2">
+              <Loader className="w-3.5 h-3.5 animate-spin text-blue-400" />正在扫描本地环境...
+            </div>
+          ) : conflictManagers.length === 0 ? (
+            <p className="text-[13px] text-slate-500">未检测到任何冲突管理器配置。</p>
+          ) : (
+            <div className="space-y-4">
+              {conflictManagers.map((mgr) => {
+                const isOperatingMgr = operatingManagerId === mgr.id;
+                
+                // 判断是否是 Junction (通过路径是否被 Any Version 管控路径重定向)
+                const isJunction = mgr.cache_path && mgr.cache_path.toLowerCase().includes("links\\");
+                
+                // 获取对应环境变量作为展示依据
+                const primaryEnv = mgr.id === "rustup" ? "RUSTUP_HOME" : mgr.id === "nvm-windows" ? "NVM_HOME" : "PYENV_ROOT";
+                const hasEnvConfigured = mgr.env_vars_status[primaryEnv] ? true : false;
+                
+                return (
+                  <div key={mgr.id} className="glass-panel border border-white/5 rounded-2xl p-4 bg-white/1 space-y-4">
+                    {/* 顶部标题与状态 */}
+                    <div className="flex items-center justify-between pb-2 border-b border-white/3">
+                      <span className="text-[14px] font-semibold text-slate-200">{mgr.display_name}</span>
+                      {mgr.is_disabled ? (
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px] font-semibold">已停用/独占</span>
+                      ) : mgr.installed ? (
+                        <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[11px] font-semibold animate-pulse">已激活 (潜在冲突)</span>
+                      ) : (
+                        <span className="px-1.5 py-0.5 rounded bg-white/5 text-slate-500 border border-white/5 text-[11px] font-semibold">未检测到运行</span>
+                      )}
+                    </div>
+
+                    {/* 1. 缓存目录管理区域 */}
+                    {mgr.cache_path && (
+                      <div className="p-3 bg-white/2 rounded-xl border border-white/5 space-y-3">
+                        <div className="flex items-center gap-1.5">
+                          <HardDrive className="w-3.5 h-3.5 text-blue-400" />
+                          <span className="text-[12px] font-semibold text-slate-300">缓存与工具链目录管理</span>
+                        </div>
+                        
+                        {/* 路径与大小状态 */}
+                        <div className="flex items-start justify-between text-[12px] p-2.5 bg-black/20 rounded-lg border border-white/3">
+                          <div className="space-y-1 flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {hasEnvConfigured ? (
+                                <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[10px] inline-flex items-center font-mono">
+                                  已配置环境变量
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 text-[10px] inline-flex items-center">
+                                  未配置环境变量
+                                </span>
+                              )}
+                              
+                              {isJunction ? (
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] inline-flex items-center font-semibold">
+                                  已迁移 (Junction)
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 text-[10px] inline-flex items-center">
+                                  默认路径
+                                </span>
+                              )}
+                            </div>
+                            <p className="font-mono text-[12px] text-slate-300 break-all mt-1">{mgr.cache_path}</p>
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                            <span className="text-slate-300 font-mono text-[12px] font-semibold bg-white/5 px-2 py-0.5 rounded-md border border-white/5">
+                              {mgr.cache_size}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* 缓存操作按钮 */}
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleConflictAction(mgr.id, "clean")}
+                            disabled={isOperating || isOperatingMgr || workflowManagerId !== null}
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all font-semibold text-[11px]"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            清理缓存
+                          </button>
+
+                          <button
+                            onClick={() => openWorkflow(mgr)}
+                            disabled={isOperating || isOperatingMgr || workflowManagerId !== null}
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 font-semibold text-[11px] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            <FolderSync className="w-3 h-3" />
+                            开始变更 (迁移/指向)
+                          </button>
+                        </div>
+
+                        {/* 缓存变更的统一分步引导工作流面板 */}
+                        {workflowManagerId === mgr.id && renderConflictWorkflow(mgr)}
+                      </div>
+                    )}
+
+                    {/* 2. 冲突规避与停用区域 */}
+                    <div className="p-3 bg-white/2 rounded-xl border border-white/5 space-y-3">
+                      <div className="flex items-center gap-1.5">
+                        <Wrench className="w-3.5 h-3.5 text-amber-400" />
+                        <span className="text-[12px] font-semibold text-slate-300">冲突环境变量与 PATH 管理</span>
+                      </div>
+
+                      <div className="text-[12px] text-slate-400 space-y-1.5 bg-black/20 p-2.5 rounded-lg border border-white/3">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                          <span className="text-slate-500">注册表变量：</span>
+                          {Object.entries(mgr.env_vars_status).map(([key, val]) => (
+                            <span key={key} className="font-mono text-[11px] bg-white/3 px-1.5 py-0.5 rounded border border-white/5">
+                              {key}={val ? <span className="text-slate-300 break-all select-text">"{val as string}"</span> : <span className="text-slate-600 font-sans text-[10px]">未设置</span>}
+                            </span>
+                          ))}
+                        </div>
+                        {mgr.path_status.length > 0 ? (
+                          <div className="pt-1">
+                            <span className="text-slate-500">在 PATH 中检测到冲突路径：</span>
+                            {mgr.path_status.map((p: string) => (
+                              <div key={p} className="font-mono text-[11px] text-amber-300/80 break-all select-text ml-4 mt-0.5">• {p}</div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-emerald-400/80 font-semibold text-[11px] pt-1">✓ 在系统 PATH 中未检测到冲突路径</div>
+                        )}
+                      </div>
+
+                      {!mgr.is_disabled ? (
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleConflictAction(mgr.id, "disable")}
+                            disabled={isOperating || isOperatingMgr}
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 text-orange-300 border border-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all font-semibold text-[11px]"
+                            title="注销环境变量并从系统的 PATH 中剔除它们，使该工具彻底退出生效以排除冲突"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            一键停用 (解绑 PATH & 清理环境变量)
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="text-[12px] text-emerald-400 font-semibold flex items-center gap-1 bg-emerald-500/5 p-2 rounded-lg border border-emerald-500/10">
+                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                          已完全解除与本机的冲突。AnyVersion 对此项目的版本拥有独占控制权。
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -506,9 +1144,12 @@ export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, i
 //  服务管理
 // ═══════════════════════════════════════
 export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle, activeSubTab, onActiveSubTabChange }: SubTabProps) {
+  const [isAdmin, setIsAdmin] = useState(true);
+
   // 当切换到 services 标签页时通知父组件
   useEffect(() => {
     onActiveSubTabChange?.("services");
+    invoke<boolean>("is_admin").then(setIsAdmin).catch(() => setIsAdmin(true));
   }, []);
 
   const svc: ServiceStatus | null = project.service_status ?? null;
@@ -529,6 +1170,15 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
 
   return (
     <div className="space-y-4">
+      {!isAdmin && def && Array.isArray(def.service_names) && def.service_names.length > 0 && (
+        <div className="flex items-start gap-2.5 p-3 rounded-xl border border-amber-500/20 bg-amber-500/10 text-[12.5px] text-amber-200 animate-fadeIn">
+          <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+          <span>
+            <strong>系统服务权限提示：</strong>检测到该项目在本地注册了 Windows 系统服务（如 {String(def.display_name)}）。启动或停止系统服务需要 Windows 管理员权限。当前程序未以管理员身份运行，操作可能会因“拒绝访问（系统错误 5）”而失败。若遇到报错，请尝试右键以管理员身份启动 Any Version。
+          </span>
+        </div>
+      )}
+
       <div className="glass-panel border border-white/5 rounded-2xl p-5 bg-white/2 space-y-4">
         <div className="flex items-center gap-2 border-b border-white/5 pb-3">
           <Activity className="w-4 h-4 text-blue-400" />
@@ -926,7 +1576,21 @@ export function LegacyTab({ projectId }: { projectId: string }) {
 //  包管理器独立子页面
 //  每个包管理器（npm/yarn/pnpm）都有自己的管理页，包含：
 //  版本检测、缓存管理、镜像配置、代理设置、全局包管理
-// ═══════════════════════════════════════
+// ═══════════════════════════════════════// 统一声明全局包管理器检测状态缓存，以防止切换项目时重复检测
+const pmDetectionCache: Record<string, {
+  installed: boolean;
+  version: string | null;
+  latestVersion: string | null;
+  cacheInfo: any;
+  dataInfo: any;
+  proxyDetected: string | null;
+  proxyInput: string;
+  currentMirror: string | null;
+  packages: any[];
+  gitRepoStatus: any;
+  timestamp: number;
+}> = {};
+
 export function PackageManagerTab({ 
   projectId, 
   pm, 
@@ -942,25 +1606,54 @@ export function PackageManagerTab({
   installSource?: string | null; 
   projectDef?: ProjectDef | null;
 }) {
+  const cachedKey = `${projectId}:${pm.id}`;
+  const cachedData = pmDetectionCache[cachedKey];
+  const isCached = cachedData && (Date.now() - cachedData.timestamp < 5 * 60 * 1000);
+
   const [checking, setChecking] = useState(false);
   const [detectStep, setDetectStep] = useState("");
-  const [installed, setInstalled] = useState(false);
-  const [version, setVersion] = useState<string | null>(null);
+  const [installed, setInstalled] = useState(isCached ? cachedData.installed : false);
+  const [version, setVersion] = useState<string | null>(isCached ? cachedData.version : null);
   const [installing, setInstalling] = useState(false);
   const [installProgress, setInstallProgress] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
-  const [latestVersion, setLatestVersion] = useState<string | null>(null);
+  const [latestVersion, setLatestVersion] = useState<string | null>(isCached ? cachedData.latestVersion : null);
 
   // Git repo states (通用 is_git_repo 驱动)
-  const [gitRepoStatus, setGitRepoStatus] = useState<any>(null);
+  const [gitRepoStatus, setGitRepoStatus] = useState<any>(isCached ? cachedData.gitRepoStatus : null);
   const [checkingGitRepo, setCheckingGitRepo] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(false);
   const [updatingGitRepo, setUpdatingGitRepo] = useState(false);
 
   // 缓存 & 数据存储管理
   type ParentLink = { parent_path: string; parent_target: string; child_rel: string };
-  const [cacheInfo, setCacheInfo] = useState<{ path: string; size: string; is_link: boolean; real_target: string; parent_link: ParentLink | null; detect_source: string } | null>(null);
-  const [dataInfo, setDataInfo] = useState<{ path: string; size: string; is_link: boolean; real_target: string; detect_source: string } | null>(null);
+  const [cacheInfo, setCacheInfo] = useState<any>(isCached ? cachedData.cacheInfo : null);
+  const [dataInfo, setDataInfo] = useState<any>(isCached ? cachedData.dataInfo : null);
+
+  const updatePmCache = (data: Partial<typeof pmDetectionCache[string]>) => {
+    const key = `${projectId}:${pm.id}`;
+    if (!pmDetectionCache[key]) {
+      pmDetectionCache[key] = {
+        installed: false,
+        version: null,
+        latestVersion: null,
+        cacheInfo: null,
+        dataInfo: null,
+        proxyDetected: null,
+        proxyInput: "",
+        currentMirror: null,
+        packages: [],
+        gitRepoStatus: null,
+        timestamp: 0
+      };
+    }
+    pmDetectionCache[key] = {
+      ...pmDetectionCache[key],
+      ...data,
+      timestamp: Date.now()
+    };
+  };
+
   // 清理
   const [cleaningCache, setCleaningCache] = useState(false);
   const [cleanProgress, setCleanProgress] = useState<{ stage: string; current: number; total: number; file_name: string } | null>(null);
@@ -1129,25 +1822,38 @@ export function PackageManagerTab({
 
   // 镜像
   const [switchingMirror, setSwitchingMirror] = useState<string | null>(null);
-  const [currentMirror, setCurrentMirror] = useState<string | null>(null);
+  const [currentMirror, setCurrentMirror] = useState<string | null>(isCached ? cachedData.currentMirror : null);
 
   // 代理
-  const [proxyDetected, setProxyDetected] = useState<string | null>(null);
-  const [proxyInput, setProxyInput] = useState("");
+  const [proxyDetected, setProxyDetected] = useState<string | null>(isCached ? cachedData.proxyDetected : null);
+  const [proxyInput, setProxyInput] = useState(isCached ? cachedData.proxyInput : "");
   const [settingProxy, setSettingProxy] = useState(false);
 
   // 全局包
-  const [packages, setPackages] = useState<Array<{ name: string; current_version: string; latest_version: string; status: string; homepage: string }>>([]);
+  const [packages, setPackages] = useState<Array<{ name: string; current_version: string; latest_version: string; status: string; homepage: string }>>(isCached ? cachedData.packages : []);
   const [loadingPackages, setLoadingPackages] = useState(false);
   const [upgradingPkg, setUpgradingPkg] = useState<string | null>(null);
 
   // 首次检测
-  const [hasChecked, setHasChecked] = useState(false);
+  const [hasChecked, setHasChecked] = useState(isCached);
 
   const runDetection = async () => {
     setChecking(true);
     const steps: Array<{ label: string; run: () => Promise<void> }> = [];
     setDetectStep(`正在检测 ${pm.display_name}...`);
+
+    const cachedData: any = {
+      installed: false,
+      version: null,
+      latestVersion: null,
+      cacheInfo: null,
+      dataInfo: null,
+      proxyDetected: null,
+      proxyInput: "",
+      currentMirror: null,
+      gitRepoStatus: null
+    };
+
 
     // Step 0: git repo (is_git_repo) bootstrap & update status
     if (projectDef?.is_git_repo && installRoot) {
@@ -1160,6 +1866,7 @@ export function PackageManagerTab({
             setCheckingGitRepo(true);
             const status = await invoke<any>("check_git_repo_status", { path: installRoot, exeName, bootstrapCmd });
             setGitRepoStatus(status);
+            cachedData.gitRepoStatus = status;
 
             // 自动初始化逻辑：符合 git 仓库且没有可执行文件，则自动执行初始化脚本
             if (status.is_git && !status.has_exe && !bootstrapping && bootstrapCmd) {
@@ -1170,6 +1877,7 @@ export function PackageManagerTab({
                 // 初始化成功后，重新获取状态
                 const newStatus = await invoke<any>("check_git_repo_status", { path: installRoot, exeName, bootstrapCmd });
                 setGitRepoStatus(newStatus);
+                cachedData.gitRepoStatus = newStatus;
               } catch (err) {
                 alert(`自动初始化 ${pm.display_name} 失败: ${err}`);
               } finally {
@@ -1194,9 +1902,13 @@ export function PackageManagerTab({
             const out = await invoke<string>("run_cmd_capture", { cmd: pm.version_cmd });
             setInstalled(true);
             setVersion(out.trim());
+            cachedData.installed = true;
+            cachedData.version = out.trim();
           } catch {
             setInstalled(false);
             setVersion(null);
+            cachedData.installed = false;
+            cachedData.version = null;
           }
         }
       },
@@ -1210,8 +1922,10 @@ export function PackageManagerTab({
           try {
             const out = await invoke<string>("run_cmd_capture", { cmd: pm.latest_version_cmd! });
             setLatestVersion(out.trim());
+            cachedData.latestVersion = out.trim();
           } catch {
             setLatestVersion(null);
+            cachedData.latestVersion = null;
           }
         },
       });
@@ -1228,7 +1942,9 @@ export function PackageManagerTab({
               pmId: pm.id,
               storageKind: "cache"
             });
-            setCacheInfo({ ...info, detect_source: pm.cache_detect_cmd || pm.cache_env_var || pm.cache_default_path || "" });
+            const newInfo = { ...info, detect_source: pm.cache_detect_cmd || pm.cache_env_var || pm.cache_default_path || "" };
+            setCacheInfo(newInfo);
+            cachedData.cacheInfo = newInfo;
           } catch { /* ignore */ }
         },
       });
@@ -1245,7 +1961,9 @@ export function PackageManagerTab({
               pmId: pm.id,
               storageKind: "data"
             });
-            setDataInfo({ path: info.path, size: info.size, is_link: info.is_link, real_target: info.real_target, detect_source: pm.data_detect_cmd || pm.data_env_var || pm.data_default_path || "" });
+            const newInfo = { path: info.path, size: info.size, is_link: info.is_link, real_target: info.real_target, detect_source: pm.data_detect_cmd || pm.data_env_var || pm.data_default_path || "" };
+            setDataInfo(newInfo);
+            cachedData.dataInfo = newInfo;
           } catch { /* ignore */ }
         },
       });
@@ -1262,6 +1980,8 @@ export function PackageManagerTab({
             if (v && v !== "null" && v !== "undefined") {
               setProxyDetected(v);
               setProxyInput(v);
+              cachedData.proxyDetected = v;
+              cachedData.proxyInput = v;
             }
           } catch { /* ignore */ }
         },
@@ -1279,14 +1999,17 @@ export function PackageManagerTab({
               const v = out.trim();
               if (v && v !== "null" && v !== "undefined") {
                 setCurrentMirror(v);
+                cachedData.currentMirror = v;
               } else {
                 setCurrentMirror(null);
+                cachedData.currentMirror = null;
               }
             } else {
               const list = await invoke<Array<{ tool: string; current: string; mirror_name: string }>>("get_mirrors_list");
               const entry = list.find(m => m.tool.toLowerCase() === pm.id.toLowerCase() || (pm.id === "cargo" && m.tool === "rust"));
               if (entry) {
                 setCurrentMirror(entry.current);
+                cachedData.currentMirror = entry.current;
               }
             }
           } catch { /* ignore */ }
@@ -1303,14 +2026,62 @@ export function PackageManagerTab({
     setDetectStep("");
     setChecking(false);
     setHasChecked(true);
+
+    // 将本次扫描完成的数据整体写入全局缓存 map
+    updatePmCache({
+      installed: cachedData.installed,
+      version: cachedData.version,
+      latestVersion: cachedData.latestVersion,
+      cacheInfo: cachedData.cacheInfo,
+      dataInfo: cachedData.dataInfo,
+      proxyDetected: cachedData.proxyDetected,
+      proxyInput: cachedData.proxyInput,
+      currentMirror: cachedData.currentMirror,
+      gitRepoStatus: cachedData.gitRepoStatus
+    });
   };
 
-  // 懒加载 —— hidden 为 true 时跳过检测，等 tab 切换到此 PM 时才触发
+  // 统一的初始化、缓存读取与懒加载检测逻辑（合并以消除 React 异步状态竞态条件）
   useEffect(() => {
-    if (!hasChecked && !checking && !hidden) {
-      runDetection();
+    const key = `${projectId}:${pm.id}`;
+    const cached = pmDetectionCache[key];
+    
+    // 检查缓存是否存在，且有效期在 5 分钟内
+    if (cached && Date.now() - cached.timestamp < 5 * 60 * 1000) {
+      setInstalled(cached.installed);
+      setVersion(cached.version);
+      setLatestVersion(cached.latestVersion);
+      setCacheInfo(cached.cacheInfo);
+      setDataInfo(cached.dataInfo);
+      setProxyDetected(cached.proxyDetected);
+      setProxyInput(cached.proxyInput);
+      setCurrentMirror(cached.currentMirror);
+      setPackages(cached.packages);
+      setGitRepoStatus(cached.gitRepoStatus);
+      
+      setHasChecked(true);
+      setChecking(false);
+    } else {
+      // 缓存过期或不存在，清空状态并按需触发检测
+      setInstalled(false);
+      setVersion(null);
+      setLatestVersion(null);
+      setCacheInfo(null);
+      setDataInfo(null);
+      setProxyDetected(null);
+      setProxyInput("");
+      setCurrentMirror(null);
+      setPackages([]);
+      setGitRepoStatus(null);
+      
+      setHasChecked(false);
+      setChecking(false);
+
+      if (!hidden) {
+        runDetection();
+      }
     }
-  }, [pm.id, hidden]);
+  }, [projectId, pm.id, hidden]);
 
   // 安装
   const handleInstall = async () => {
@@ -1368,6 +2139,7 @@ export function PackageManagerTab({
         await invoke("set_mirror", { tool: pm.id, mirrorType });
       }
       setCurrentMirror(url || null);
+      updatePmCache({ currentMirror: url || null });
     } catch (e: unknown) {
       alert(`切换镜像失败: ${e}`);
     } finally {
@@ -1420,6 +2192,7 @@ export function PackageManagerTab({
         }
       }
       setProxyDetected(proxyInput.trim() || null);
+      updatePmCache({ proxyDetected: proxyInput.trim() || null, proxyInput: proxyInput.trim() });
     } catch (e: unknown) {
       alert(`设置代理失败: ${e}`);
     } finally {
@@ -1434,6 +2207,7 @@ export function PackageManagerTab({
     try {
       const list = await invoke<Array<{ name: string; current_version: string; latest_version: string; status: string; homepage: string }>>("get_global_packages", { sdkName: pm.id });
       setPackages(list);
+      updatePmCache({ packages: list });
     } catch { /* ignore */ } finally {
       setLoadingPackages(false);
     }

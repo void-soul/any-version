@@ -236,6 +236,40 @@ pub struct PackageManagerDef {
 }
 
 
+/// 冲突的版本管理器定义
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ConflictManagerDef {
+    /// 唯一标识，如 "nvm-windows", "pyenv-win", "rustup"
+    pub id: String,
+    /// 显示名称
+    pub display_name: String,
+    /// 相关的环境变量列表
+    #[serde(default)]
+    pub env_vars: Vec<String>,
+    /// 相关的 PATH 路径关键字匹配（不区分大小写）
+    #[serde(default)]
+    pub path_keywords: Vec<String>,
+    /// 可执行文件名（用于检测是否安装），如 "nvm.exe", "pyenv.bat", "rustup.exe"
+    #[serde(default)]
+    pub exe_name: Option<String>,
+    /// 默认的缓存或工具链存放目录
+    #[serde(default)]
+    pub cache_default_path: Option<String>,
+}
+
+/// 冲突的版本管理器状态
+#[derive(Serialize, Clone, Debug)]
+pub struct ConflictManagerStatus {
+    pub id: String,
+    pub display_name: String,
+    pub installed: bool,
+    pub env_vars_status: std::collections::HashMap<String, Option<String>>,
+    pub path_status: Vec<String>,
+    pub cache_path: String,
+    pub cache_size: String,
+    pub is_disabled: bool,
+}
+
 /// 项目定义（存储在 projects.json）
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ProjectDef {
@@ -372,6 +406,9 @@ pub struct ProjectDef {
     /// 数据目录定义列表
     #[serde(default)]
     pub data_dirs: Vec<DataDirDef>,
+    /// 冲突的版本管理器定义列表
+    #[serde(default)]
+    pub conflict_managers: Vec<ConflictManagerDef>,
 }
 
 /// 环境变量运行时状态

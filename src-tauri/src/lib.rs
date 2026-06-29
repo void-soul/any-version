@@ -170,6 +170,7 @@ pub fn run() {
             commands::env::get_user_configurable_vars,
             commands::env::set_user_configurable_var,
             commands::env::delete_user_configurable_var,
+            commands::env::is_admin,
             commands::env::create_env_backup,
             commands::env::list_env_backups,
             commands::env::delete_env_backup,
@@ -219,6 +220,8 @@ pub fn run() {
             commands::project::versions::project_uninstall_version,
             commands::project::versions::project_use_version,
             tray::refresh_tray_menu,
+            commands::conflict::get_conflict_managers_status,
+            commands::conflict::handle_conflict_manager_action,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

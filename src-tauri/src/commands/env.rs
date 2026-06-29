@@ -635,3 +635,22 @@ pub fn restore_env_backup(id: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+pub fn is_admin() -> bool {
+    #[cfg(windows)]
+    {
+        use winreg::enums::*;
+        use winreg::RegKey;
+        
+        // 尝试以写权限打开 HKEY_LOCAL_MACHINE\SOFTWARE（只有提权的管理员才能成功打开）
+        RegKey::predef(HKEY_LOCAL_MACHINE)
+            .open_subkey_with_flags("SOFTWARE", KEY_WRITE)
+            .is_ok()
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
+}
+
+

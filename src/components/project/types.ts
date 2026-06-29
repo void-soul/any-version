@@ -113,6 +113,15 @@ export interface DataDirDef {
   required_for_start?: boolean;
 }
 
+export interface ConflictManagerDef {
+  id: string;
+  display_name: string;
+  env_vars: string[];
+  path_keywords: string[];
+  exe_name?: string | null;
+  cache_default_path?: string | null;
+}
+
 export interface ProjectDef {
   id: string;
   display_name: string;
@@ -135,6 +144,7 @@ export interface ProjectDef {
   service_start_mode?: "wait" | "detached" | string | null;
   service_allow_force_kill?: boolean;
   service_auto_create_dirs?: boolean;
+  conflict_managers?: ConflictManagerDef[];
   // ... 其他字段
   [key: string]: unknown;
 }

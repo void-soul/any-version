@@ -286,6 +286,7 @@ fn exe_path_by_pid(pid: u32) -> Option<String> {
 
 /// 通过 sc query 获取与该服务定义匹配的 Windows 服务，并解析 BINARY_PATH_NAME。
 /// 返回的 PathBuf 是服务 EXE 所在目录（去掉 EXE 文件名）。
+#[allow(dead_code)]
 fn detect_service_install_via_sc(def: &ProjectDef) -> Option<PathBuf> {
     if def.service_names.is_empty() {
         return None;
@@ -325,6 +326,7 @@ fn detect_service_install_via_sc(def: &ProjectDef) -> Option<PathBuf> {
     None
 }
 
+#[allow(dead_code)]
 fn sc_service_install_root(service: &str) -> Option<PathBuf> {
     let output = super::hidden_cmd::hidden_cmd("sc")
         .args(&["qc", service])
@@ -383,11 +385,6 @@ fn detect_install_root(def: &ProjectDef, config: &Config, version: Option<&str>)
     let (_, local_root) = super::project::scanner::detect_install_source(def);
     if let Some(root) = local_root {
         return Ok(Some(PathBuf::from(root)));
-    }
-
-    // find_rules 未命中时，兜底用 sc query 解析 BINARY_PATH_NAME
-    if let Some(root) = detect_service_install_via_sc(def) {
-        return Ok(Some(root));
     }
 
     Ok(None)
@@ -640,46 +637,32 @@ pub(crate) fn resolve_data_dir(
 }
 
 pub(crate) fn service_status_for_def(def: &ProjectDef) -> ServiceStatus {
-    let mut runtime = resolve_service_runtime(def, None).ok();
-    let mut install_root = runtime.as_ref().and_then(|r| r.install_root.clone());
-    let processes = service_processes(def);
+    let runtime = resolve_service_runtime(def, None).ok();
+    let install_root = runtime.as_ref().and_then(|r| r.install_root.clone());
+    let all_processes = service_processes(def);
 
-    // 进程兜底：find_rules / sc 都未给出 install_root 时，把运行中进程的 EXE 目录视作安装根
-    if install_root.is_none() {
-        if let Some(exe) = processes
-            .iter()
-            .find_map(|p| p.exe_path.as_ref().and_then(|s| Path::new(s).parent().map(|p| p.to_path_buf())))
-        {
-            // 用兜底 install_root 重跑 runtime（数据目录/配置文件/端口都能跟着对齐）
-            let config = load_config();
-            let config_file = resolve_config_file(def, Some(exe.as_path()));
-            let port = resolve_port(def, config_file.as_deref());
-            let mut data_dirs = Vec::new();
-            for dir_def in &def.data_dirs {
-                data_dirs.push(resolve_data_dir(def, dir_def, &config, Some(exe.as_path())));
-            }
-            let data_dir = data_dirs
-                .iter()
-                .find(|d| d.kind.as_deref().unwrap_or("data") == "data")
-                .or_else(|| data_dirs.first())
-                .map(|d| d.path.clone())
-                .unwrap_or_default();
-            let log_dir = data_dirs
-                .iter()
-                .find(|d| d.kind.as_deref() == Some("log"))
-                .map(|d| d.path.clone())
-                .unwrap_or_default();
-            install_root = Some(exe.clone());
-            runtime = Some(ServiceRuntime {
-                install_root: Some(exe),
-                config_file,
-                port,
-                data_dirs,
-                data_dir,
-                log_dir,
-            });
-        }
-    }
+    // 只有路径属于本 Any Version 实例的 install_root，才是我们真正的服务进程
+    let processes: Vec<ProcessInfo> = if let Some(ref root) = install_root {
+        let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.clone());
+        all_processes
+            .into_iter()
+            .filter(|p| {
+                if let Some(ref exe_path_str) = p.exe_path {
+                    let exe_path = Path::new(exe_path_str);
+                    if let Ok(canonical_exe) = fs::canonicalize(exe_path) {
+                        canonical_exe.starts_with(&canonical_root)
+                    } else {
+                        exe_path.starts_with(root)
+                    }
+                } else {
+                    false
+                }
+            })
+            .collect()
+    } else {
+        // 如果没有已启用的安装目录，则不能把别人的进程当作我们的进程
+        Vec::new()
+    };
 
     let port = runtime.as_ref().and_then(|r| r.port).or(def.default_port);
 
@@ -695,12 +678,23 @@ pub(crate) fn service_status_for_def(def: &ProjectDef) -> ServiceStatus {
         process_name = Some(process.name.clone());
     } else if let Some(port) = port {
         if let Some(owner) = find_port_owner_simple(&port.to_string()) {
-            let owner_matches = process_matches_def(&owner.process_name, def);
+            let mut owner_is_ours = false;
             if let Ok(owner_pid) = owner.pid.parse::<u32>() {
                 pid = Some(owner_pid);
+                if let Some(ref root) = install_root {
+                    if let Some(exe_path_str) = exe_path_by_pid(owner_pid) {
+                        let exe_path = Path::new(&exe_path_str);
+                        let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.clone());
+                        if let Ok(canonical_exe) = fs::canonicalize(exe_path) {
+                            owner_is_ours = canonical_exe.starts_with(&canonical_root);
+                        } else {
+                            owner_is_ours = exe_path.starts_with(root);
+                        }
+                    }
+                }
             }
             process_name = Some(owner.process_name.clone());
-            if owner_matches {
+            if owner_is_ours {
                 running = true;
                 status = "running".to_string();
             } else {
@@ -727,16 +721,53 @@ pub(crate) fn service_status_for_def(def: &ProjectDef) -> ServiceStatus {
 
 fn render_command(template: &str, runtime: &ServiceRuntime) -> String {
     let install_root = runtime.install_root.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-    let config_file = runtime.config_file.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-    let port = runtime.port.map(|p| p.to_string()).unwrap_or_default();
+    
+    // 将路径参数（如配置文件、数据目录、日志目录）自动转换为相对于 install_root 的相对路径，
+    // 以完美解决 MSYS2 编译环境（如 Redis 7.x）下无法正确解析 Windows 反斜杠绝对路径的 Fatal Bug，
+    // 同时也让命令行表现得更加精炼规范。
+    let to_relative = |abs_path: &str| -> String {
+        if abs_path.is_empty() {
+            return String::new();
+        }
+        if let Some(ref root) = runtime.install_root {
+            let path = Path::new(abs_path);
+            if let Ok(rel) = path.strip_prefix(root) {
+                let rel_str = rel.to_string_lossy().to_string();
+                if rel_str.is_empty() {
+                    ".".to_string()
+                } else {
+                    rel_str
+                }
+            } else {
+                abs_path.to_string()
+            }
+        } else {
+            abs_path.to_string()
+        }
+    };
 
-    template
+    let config_file_abs = runtime.config_file.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    let config_file = to_relative(&config_file_abs);
+    let port = runtime.port.map(|p| p.to_string()).unwrap_or_default();
+    let data_dir = to_relative(&runtime.data_dir);
+    let log_dir = to_relative(&runtime.log_dir);
+
+    let mut result = template
         .replace("{dir}", &install_root)
         .replace("{install_root}", &install_root)
-        .replace("{config_file}", &config_file)
         .replace("{port}", &port)
-        .replace("{data_dir}", &runtime.data_dir)
-        .replace("{log_dir}", &runtime.log_dir)
+        .replace("{data_dir}", &data_dir)
+        .replace("{log_dir}", &log_dir);
+
+    // 如果 config_file 为空，双引号包裹的 "{config_file}" 占位符也应整体剔除（不能留下 ""，否则会导致程序闪退报错）
+    if config_file.is_empty() {
+        result = result.replace("\"{config_file}\"", "");
+        result = result.replace("{config_file}", "");
+    } else {
+        result = result.replace("{config_file}", &config_file);
+    }
+
+    result
 }
 
 fn run_service_command(cmd_str: &str, current_dir: Option<&Path>, detached: bool) -> Result<(), String> {
@@ -870,6 +901,19 @@ pub(crate) fn stop_service_inner(name: String) -> Result<(), String> {
         return Err(format!("服务 {} 未运行", name));
     }
 
+    // 检测是否作为 Windows 系统服务在运行，如果是则直接提示并阻断，不主动接管停止
+    #[cfg(windows)]
+    {
+        if !def.service_names.is_empty() {
+            if let Some(active_service_name) = find_running_system_service(&def) {
+                return Err(format!(
+                    "检测到 {} 当前正作为 Windows 系统服务（服务名: {}）在后台运行。\n为了保障系统安全性，Any Version 不会主动操作 Windows 系统服务。请你先在 Windows 服务管理器 (services.msc) 中手动停止该服务。",
+                    def.display_name, active_service_name
+                ));
+            }
+        }
+    }
+
     let runtime = resolve_service_runtime(&def, None)?;
     let install_root = runtime.install_root.clone();
     let mut stop_error = None;
@@ -999,4 +1043,42 @@ pub fn write_service_config(name: String, content: String) -> Result<(), String>
     std::fs::write(&config_file, content)
         .map_err(|e| format!("写入配置文件失败: {}", e))
 }
+
+#[cfg(windows)]
+fn find_running_system_service(def: &ProjectDef) -> Option<String> {
+    if def.service_names.is_empty() {
+        return None;
+    }
+    let patterns: Vec<regex::Regex> = def
+        .service_names
+        .iter()
+        .filter_map(|p| regex::RegexBuilder::new(p).case_insensitive(true).build().ok())
+        .collect();
+    if patterns.is_empty() {
+        return None;
+    }
+
+    let output = super::hidden_cmd::hidden_cmd("sc")
+        .args(&["query", "type=", "service", "state=", "all"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+
+    let mut current_service_name = String::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("SERVICE_NAME:") {
+            current_service_name = rest.trim().to_string();
+        } else if let Some(rest) = line.strip_prefix("STATE") {
+            let state_val = rest.trim_start_matches(':').trim();
+            if state_val.contains("RUNNING") && !current_service_name.is_empty() {
+                if patterns.iter().any(|re| re.is_match(&current_service_name)) {
+                    return Some(current_service_name);
+                }
+            }
+        }
+    }
+    None
+}
+
 

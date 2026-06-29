@@ -10,3 +10,5 @@ pub mod service;
 pub mod project;
 pub mod hidden_cmd;
 pub mod utils;
+pub mod conflict;
+
