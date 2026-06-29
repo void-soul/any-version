@@ -149,6 +149,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(commands::http_server::HttpServerState::default())
         .setup(|app| {
             tray::build_tray(app.handle())?;
             Ok(())
@@ -164,6 +165,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::config::get_config,
             commands::config::update_config,
+            commands::config::get_project_menu_config,
+            commands::config::update_project_menu_config,
+            commands::http_server::start_http_server,
+            commands::http_server::stop_http_server,
+            commands::http_server::get_running_http_servers,
+            commands::img_base64::image_to_base64,
+            commands::img_base64::save_base64_image,
             commands::config::delete_old_storage_dirs,
             commands::config::get_app_version,
             commands::env::toggle_item_management,

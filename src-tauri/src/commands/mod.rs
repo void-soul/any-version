@@ -11,4 +11,6 @@ pub mod project;
 pub mod hidden_cmd;
 pub mod utils;
 pub mod conflict;
+pub mod http_server;
+pub mod img_base64;
 

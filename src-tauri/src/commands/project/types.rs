@@ -522,6 +522,10 @@ pub struct ProjectStatus {
     /// 数据目录状态列表
     #[serde(default)]
     pub data_dirs_status: Vec<DataDirStatus>,
+    /// 是否在右键菜单中显示版本控制
+    pub show_version: bool,
+    /// 是否在右键菜单中显示服务控制
+    pub show_service: bool,
 }
 
 /// 项目详情（比 Status 多出定义信息）

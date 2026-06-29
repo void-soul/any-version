@@ -650,7 +650,10 @@
         "install_cmd": "install_pip",
         "version_cmd": "pip --version",
         "version_exe": "pip",
-        "run_via_runtime_args": ["-m", "pip"],
+        "run_via_runtime_args": [
+          "-m",
+          "pip"
+        ],
         "cache_detect_cmd": null,
         "cache_default_path": "{home}\\AppData\\Local\\pip\\Cache",
         "cache_env_var": "PIP_CACHE_DIR",

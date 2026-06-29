@@ -89,6 +89,8 @@ export interface ProjectStatus {
   cache_status: CacheStatus | null;
   service_status: ServiceStatus | null;
   data_dirs_status?: DataDirStatus[];
+  show_version?: boolean;
+  show_service?: boolean;
 }
 
 export interface UserConfigurableVar {

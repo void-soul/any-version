@@ -145,6 +145,11 @@ export default function ProjectDetailPanel({
   const [hasLegacy, setHasLegacy] = useState(false);
   const [legacyLoaded, setLegacyLoaded] = useState(false);
   const [isAdmin, setIsAdmin] = useState(true);
+  const [showMenuConfig, setShowMenuConfig] = useState(false);
+
+  useEffect(() => {
+    setShowMenuConfig(false);
+  }, [pid]);
 
   useEffect(() => {
     invoke<boolean>("is_admin").then(setIsAdmin).catch(() => setIsAdmin(true));
@@ -695,17 +700,91 @@ export default function ProjectDetailPanel({
               )}
             </div>
           </div>
-          <button
-            onClick={async () => { if (pid) { await loadDetail(pid); await onRefresh(); } }}
-            disabled={ui.detailLoading}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-[10px] border border-white/5 cursor-pointer"
-          >
-            <RefreshCw className={`w-3 h-3 ${ui.detailLoading ? "animate-spin" : ""}`} /> {"刷新"}
-          </button>
+          <div className="flex items-center gap-2">
+            {status.managed && (
+              <button
+                onClick={() => setShowMenuConfig(!showMenuConfig)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] border cursor-pointer transition-all ${
+                  showMenuConfig 
+                    ? "bg-blue-600 border-blue-500 text-white" 
+                    : "bg-white/5 border-white/5 text-slate-300 hover:bg-white/10"
+                }`}
+                title="托盘右键菜单显示配置"
+              >
+                <Settings className="w-3 h-3" /> {"托盘配置"}
+              </button>
+            )}
+            <button
+              onClick={async () => { if (pid) { await loadDetail(pid); await onRefresh(); } }}
+              disabled={ui.detailLoading}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-[10px] border border-white/5 cursor-pointer"
+            >
+              <RefreshCw className={`w-3 h-3 ${ui.detailLoading ? "animate-spin" : ""}`} /> {"刷新"}
+            </button>
+          </div>
         </div>
 
-
       </div>
+
+      {showMenuConfig && status.managed && (
+        <div className="mx-5 mt-4 p-4 glass-panel border border-white/5 rounded-2xl bg-white/2 space-y-3 animate-fadeIn flex-shrink-0">
+          <div className="flex items-center justify-between border-b border-white/5 pb-2">
+            <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+              <Settings className="w-3.5 h-3.5 text-blue-400" />
+              右键托盘菜单显示配置
+            </span>
+            <button 
+              onClick={() => setShowMenuConfig(false)}
+              className="text-[10px] text-slate-400 hover:text-slate-200 cursor-pointer"
+            >
+              关闭
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-6 py-1">
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 select-none">
+              <input
+                type="checkbox"
+                checked={status.show_version !== false}
+                onChange={async (e) => {
+                  if (pid) {
+                    await invoke("update_project_menu_config", {
+                      id: pid,
+                      showVersion: e.target.checked,
+                      showService: status.show_service !== false,
+                    });
+                    await refreshSingle(pid);
+                  }
+                }}
+                className="rounded border-white/10 bg-black/40 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+              />
+              显示版本切换控制
+            </label>
+            {(def?.category === "service" || def?.is_service) && (
+              <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 select-none">
+                <input
+                  type="checkbox"
+                  checked={status.show_service !== false}
+                  onChange={async (e) => {
+                    if (pid) {
+                      await invoke("update_project_menu_config", {
+                        id: pid,
+                        showVersion: status.show_version !== false,
+                        showService: e.target.checked,
+                      });
+                      await refreshSingle(pid);
+                    }
+                  }}
+                  className="rounded border-white/10 bg-black/40 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+                />
+                显示服务启动/停止控制
+              </label>
+            )}
+          </div>
+          <p className="text-[10px] text-slate-500 leading-normal">
+            提示：此配置将决定该项目是否在系统托盘右键菜单中显示。如果不显示，可以在此处重新开启。
+          </p>
+        </div>
+      )}
 
       {!status.managed ? (
         <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-4">

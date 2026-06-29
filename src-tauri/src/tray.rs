@@ -138,6 +138,11 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             continue;
         }
 
+        let show_version = config.project_menu_configs.get(id).map_or(true, |c| c.show_version);
+        if !show_version {
+            continue;
+        }
+
         let mut versions = scan_installed_versions(&versions_dir.join(id));
         if versions.is_empty() {
             continue;
@@ -181,6 +186,11 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             continue;
         }
         if !config.managed_items.contains(&def.id) {
+            continue;
+        }
+
+        let show_service = config.project_menu_configs.get(&def.id).map_or(true, |c| c.show_service);
+        if !show_service {
             continue;
         }
 

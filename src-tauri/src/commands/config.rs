@@ -4,6 +4,18 @@ use serde::{Serialize, Deserialize};
 use tauri::Emitter;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ProjectMenuConfig {
+    #[serde(default = "default_true")]
+    pub show_version: bool,
+    #[serde(default = "default_true")]
+    pub show_service: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
     pub versions_dir: String,
     pub links_dir: String,
@@ -14,6 +26,8 @@ pub struct Config {
     pub custom_install_paths: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub custom_data_paths: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    pub project_menu_configs: std::collections::HashMap<String, ProjectMenuConfig>,
     pub original_envs: std::collections::HashMap<String, String>,
     pub original_paths: std::collections::HashMap<String, Vec<String>>,
 }
@@ -56,6 +70,7 @@ pub fn load_config() -> Config {
         simple_managed_items: std::collections::HashSet::new(),
         custom_install_paths: std::collections::HashMap::new(),
         custom_data_paths: std::collections::HashMap::new(),
+        project_menu_configs: std::collections::HashMap::new(),
         original_envs: std::collections::HashMap::new(),
         original_paths: std::collections::HashMap::new(),
     };
@@ -487,3 +502,25 @@ pub fn update_config(app_handle: tauri::AppHandle, versions_dir: String, links_d
 
     Ok(result)
 }
+
+#[tauri::command]
+pub fn get_project_menu_config(id: String) -> Result<ProjectMenuConfig, String> {
+    let config = load_config();
+    Ok(config.project_menu_configs.get(&id).cloned().unwrap_or_else(|| ProjectMenuConfig {
+        show_version: true,
+        show_service: true,
+    }))
+}
+
+#[tauri::command]
+pub fn update_project_menu_config(app_handle: tauri::AppHandle, id: String, show_version: bool, show_service: bool) -> Result<(), String> {
+    let mut config = load_config();
+    config.project_menu_configs.insert(id, ProjectMenuConfig {
+        show_version,
+        show_service,
+    });
+    save_config(&config)?;
+    let _ = crate::tray::rebuild_tray_menu(&app_handle);
+    Ok(())
+}
+

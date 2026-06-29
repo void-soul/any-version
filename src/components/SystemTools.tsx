@@ -1,38 +1,63 @@
 import React, { useState } from "react";
 import PortScanner from "./PortScanner";
-import { Network, Database } from "lucide-react";
 import EnvBackupManager from "./EnvBackupManager";
+import HttpServer from "./HttpServer";
+import ImageBase64 from "./ImageBase64";
+import { 
+  Network, 
+  Database, 
+  Server, 
+  Image 
+} from "lucide-react";
+
+type TabKey = "ports" | "backups" | "httpServer" | "imageBase64";
 
 export default function SystemTools() {
-  const [activeTab, setActiveTab] = useState<"ports" | "backups">("ports");
+  const [activeTab, setActiveTab] = useState<TabKey>("ports");
+
+  const tabs = [
+    { key: "ports" as const, label: "端口排查", icon: Network },
+    { key: "backups" as const, label: "环境备份", icon: Database },
+    { key: "httpServer" as const, label: "HTTP 服务", icon: Server },
+    { key: "imageBase64" as const, label: "图片 Base64", icon: Image },
+  ];
 
   return (
     <div className="flex-1 overflow-hidden flex flex-col select-none">
-      <div className="px-6 pt-2 pb-3 flex items-center gap-2 flex-shrink-0 border-b border-white/5">
-        {[
-          { key: "ports" as const, label: "端口排查", icon: Network },
-          { key: "backups" as const, label: "环境备份", icon: Database },
-        ].map(({ key, label, icon: Icon }) => (
+      {/* 顶部 Tab 栏 */}
+      <div className="px-6 pt-2 pb-3 flex items-center gap-2 flex-shrink-0 border-b border-white/5 overflow-x-auto whitespace-nowrap scrollbar-none">
+        {tabs.map(({ key, label, icon: Icon }) => (
           <button
             key={key}
             onClick={() => setActiveTab(key)}
-            className={`px-3 py-1.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${activeTab === key ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
-              }`}
+            className={`px-3 py-1.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+              activeTab === key 
+                ? "bg-blue-600 text-white shadow-md shadow-blue-500/10" 
+                : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+            }`}
           >
-            <Icon className="w-3 h-3" />
+            <Icon className="w-3.5 h-3.5" />
             {label}
           </button>
         ))}
       </div>
 
+      {/* 内容区域 */}
       <div className="flex-1 min-h-0 relative">
-        <div className={`absolute inset-0 flex flex-col min-h-0 px-6 py-4 ${activeTab === "ports" ? "" : "hidden"}`}>
-          <div className="flex-1 min-h-0 overflow-y-auto pr-1">
-            <div className="max-w-3xl"><PortScanner /></div>
-          </div>
+        <div className={`absolute inset-0 flex flex-col min-h-0 px-6 py-4 overflow-y-auto ${activeTab === "ports" ? "" : "hidden"}`}>
+          <div className="max-w-3xl"><PortScanner /></div>
         </div>
+        
         <div className={`absolute inset-0 flex flex-col min-h-0 px-6 py-4 ${activeTab === "backups" ? "" : "hidden"}`}>
           <EnvBackupManager />
+        </div>
+
+        <div className={`absolute inset-0 flex flex-col min-h-0 px-6 py-4 overflow-y-auto ${activeTab === "httpServer" ? "" : "hidden"}`}>
+          <div className="max-w-4xl mx-auto w-full"><HttpServer /></div>
+        </div>
+
+        <div className={`absolute inset-0 flex flex-col min-h-0 px-6 py-4 overflow-y-auto ${activeTab === "imageBase64" ? "" : "hidden"}`}>
+          <div className="max-w-5xl mx-auto w-full"><ImageBase64 /></div>
         </div>
       </div>
     </div>

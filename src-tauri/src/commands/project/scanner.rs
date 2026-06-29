@@ -258,6 +258,11 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
         None
     };
 
+    // 右键菜单配置
+    let menu_config = config.project_menu_configs.get(id);
+    let show_version = menu_config.map_or(true, |c| c.show_version);
+    let show_service = menu_config.map_or(true, |c| c.show_service);
+
     Ok(ProjectStatus {
         id: def.id.clone(),
         display_name: def.display_name.clone(),
@@ -273,6 +278,8 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
         cache_status,
         service_status,
         data_dirs_status,
+        show_version,
+        show_service,
     })
 }
 
