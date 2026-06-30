@@ -526,6 +526,7 @@ pub struct ProjectStatus {
     pub show_version: bool,
     /// 是否在右键菜单中显示服务控制
     pub show_service: bool,
+    pub delegation: crate::commands::config::ProjectDelegation,
 }
 
 /// 项目详情（比 Status 多出定义信息）

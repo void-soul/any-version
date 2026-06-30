@@ -15,6 +15,26 @@ fn default_true() -> bool {
     true
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ProjectDelegation {
+    #[serde(default)]
+    pub env_vars: std::collections::HashSet<String>,
+    #[serde(default)]
+    pub path_vars: std::collections::HashSet<String>,
+    #[serde(default = "default_false")]
+    pub version_control: bool,
+    #[serde(default = "default_false")]
+    pub create_symlink: bool,
+    #[serde(default = "default_false")]
+    pub manage_install_dir: bool,
+    #[serde(default = "default_false")]
+    pub manage_data_dir: bool,
+}
+
+fn default_false() -> bool {
+    false
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
     pub versions_dir: String,
@@ -28,6 +48,10 @@ pub struct Config {
     pub custom_data_paths: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     #[serde(default)]
     pub project_menu_configs: std::collections::HashMap<String, ProjectMenuConfig>,
+    #[serde(default)]
+    pub project_delegations: std::collections::HashMap<String, ProjectDelegation>,
+    #[serde(default)]
+    pub active_versions: std::collections::HashMap<String, String>,
     pub original_envs: std::collections::HashMap<String, String>,
     pub original_paths: std::collections::HashMap<String, Vec<String>>,
 }
@@ -71,6 +95,8 @@ pub fn load_config() -> Config {
         custom_install_paths: std::collections::HashMap::new(),
         custom_data_paths: std::collections::HashMap::new(),
         project_menu_configs: std::collections::HashMap::new(),
+        project_delegations: std::collections::HashMap::new(),
+        active_versions: std::collections::HashMap::new(),
         original_envs: std::collections::HashMap::new(),
         original_paths: std::collections::HashMap::new(),
     };

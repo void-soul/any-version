@@ -26,205 +26,191 @@ pub fn project_detail(id: String) -> Result<ProjectDetail, String> {
 
 /// 预览托管操作步骤
 #[tauri::command]
-pub fn project_preview_manage(id: String, is_simple: Option<bool>) -> Result<ManagePreview, String> {
-    scanner::preview_manage(&id, is_simple)
+pub fn project_preview_manage(id: String, delegation: crate::commands::config::ProjectDelegation) -> Result<ManagePreview, String> {
+    scanner::preview_manage(&id, delegation)
 }
 
 /// 托管项目（将项目纳入 AnyVersion 管理）
-///
-/// 执行步骤：
-/// 1. 备份当前环境变量
-/// 2. 清理 PATH 中的外部条目
-/// 3. 设置项目环境变量（指向 AnyVersion 管理目录）
-/// 4. 添加 bin 路径到 PATH
-/// 5. 将项目 ID 添加 to managed_items
-/// 6. 保存配置和管理备份
 #[tauri::command]
-pub fn project_manage(app: tauri::AppHandle, id: String, is_simple: Option<bool>) -> Result<(), String> {
-    use crate::commands::config::load_config;
+pub fn project_manage(app: tauri::AppHandle, id: String, delegation: crate::commands::config::ProjectDelegation) -> Result<(), String> {
+    use crate::commands::config::{load_config, save_config};
     use crate::commands::env::{get_registry_env_any, set_registry_env, add_to_user_path};
     use super::registry;
+    use std::path::Path;
 
     let def = registry::find_by_id(&id)
         .ok_or_else(|| format!("未找到项目: {}", id))?;
 
     let mut config = load_config();
 
-    let use_simple = is_simple.unwrap_or(def.simple_mode);
-
-    if use_simple {
-        // 如果已托管，直接返回
-        if config.managed_items.contains(id.as_str()) {
-            return Ok(());
-        }
-        config.managed_items.insert(id.clone());
-        config.simple_managed_items.insert(id.clone());
-        crate::commands::config::save_config(&config)?;
-        let _ = crate::tray::rebuild_tray_menu(&app);
-        return Ok(());
-    }
-
-    // 1. 备份当前环境变量
+    // 1. 备份勾选的环境变量
     for var_def in &def.env_vars {
-        // Only backup core + package tier vars
         if let Some(tier) = &var_def.tier {
             if *tier == super::types::EnvVarTier::Compat { continue; }
         }
-        if let Some((val, _)) = get_registry_env_any(&var_def.name) {
-            if !val.to_lowercase().contains(&config.links_dir.to_lowercase()) {
-                config.original_envs.entry(var_def.name.clone()).or_insert(val);
+        if delegation.env_vars.contains(&var_def.name) {
+            if let Some((val, _)) = get_registry_env_any(&var_def.name) {
+                if !val.to_lowercase().contains(&config.links_dir.to_lowercase()) {
+                    config.original_envs.entry(var_def.name.clone()).or_insert(val);
+                }
             }
         }
     }
 
-    // 2. 清理 PATH 中的外部条目
-    use std::path::Path;
-    if let Some(user_path) = crate::commands::env::get_registry_env("PATH") {
-        let parts = std::env::split_paths(&user_path)
-            .map(|p| p.to_string_lossy().to_string())
-            .collect::<Vec<_>>();
+    // 2. 处理 PATH 变量中勾选的目录
+    if let Some(ref dirs) = def.bin_dirs {
+        let has_path_delegated = dirs.iter().any(|d| delegation.path_vars.contains(d));
 
-        let mut matched_entries = Vec::new();
-        let mut remaining_entries = Vec::new();
+        if has_path_delegated {
+            if let Some(user_path) = crate::commands::env::get_registry_env("PATH") {
+                let parts = std::env::split_paths(&user_path)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .collect::<Vec<_>>();
 
-        for p_str in parts {
-            if p_str.is_empty() {
-                continue;
-            }
-            let p_lower = p_str.to_lowercase();
+                let mut matched_entries = Vec::new();
+                let mut remaining_entries = Vec::new();
 
-            if !p_lower.contains(&config.links_dir.to_lowercase()) {
-                let mut matches = false;
-                for rule in &def.find_rules {
-                    match &rule.pattern {
-                        super::types::ResolvePattern::PathContains { path_key, exe_name } => {
-                            if p_lower.contains(&path_key.to_lowercase()) {
-                                let mut exists = false;
-                                let mut check_names = vec![exe_name.clone()];
-                                #[cfg(windows)]
-                                {
-                                    let exe_lower = exe_name.to_lowercase();
-                                    if !exe_lower.ends_with(".exe") && !exe_lower.ends_with(".cmd") && !exe_lower.ends_with(".bat") {
-                                        check_names.push(format!("{}.exe", exe_name));
-                                        check_names.push(format!("{}.cmd", exe_name));
-                                        check_names.push(format!("{}.bat", exe_name));
+                for p_str in parts {
+                    if p_str.is_empty() { continue; }
+                    let p_lower = p_str.to_lowercase();
+
+                    if !p_lower.contains(&config.links_dir.to_lowercase()) {
+                        let mut matches = false;
+                        for rule in &def.find_rules {
+                            match &rule.pattern {
+                                super::types::ResolvePattern::PathContains { path_key, exe_name } => {
+                                    if p_lower.contains(&path_key.to_lowercase()) {
+                                        let mut exists = false;
+                                        let mut check_names = vec![exe_name.clone()];
+                                        #[cfg(windows)]
+                                        {
+                                            let exe_lower = exe_name.to_lowercase();
+                                            if !exe_lower.ends_with(".exe") && !exe_lower.ends_with(".cmd") && !exe_lower.ends_with(".bat") {
+                                                check_names.push(format!("{}.exe", exe_name));
+                                                check_names.push(format!("{}.cmd", exe_name));
+                                                check_names.push(format!("{}.bat", exe_name));
+                                            }
+                                        }
+                                        for name in check_names {
+                                            if Path::new(&p_str).join(&name).exists() {
+                                                exists = true;
+                                                break;
+                                            }
+                                        }
+                                        if exists {
+                                            matches = true;
+                                            break;
+                                        }
                                     }
                                 }
-                                for name in check_names {
-                                    if Path::new(&p_str).join(&name).exists() {
-                                        exists = true;
-                                        break;
+                                super::types::ResolvePattern::FixedPath { path: fixed_path, exe_name } => {
+                                    if p_lower.contains(&fixed_path.to_lowercase()) {
+                                        let mut exists = false;
+                                        let mut check_names = vec![exe_name.clone()];
+                                        #[cfg(windows)]
+                                        {
+                                            let exe_lower = exe_name.to_lowercase();
+                                            if !exe_lower.ends_with(".exe") && !exe_lower.ends_with(".cmd") && !exe_lower.ends_with(".bat") {
+                                                check_names.push(format!("{}.exe", exe_name));
+                                                check_names.push(format!("{}.cmd", exe_name));
+                                                check_names.push(format!("{}.bat", exe_name));
+                                            }
+                                        }
+                                        for name in check_names {
+                                            if Path::new(&p_str).join(&name).exists() {
+                                                exists = true;
+                                                break;
+                                            }
+                                        }
+                                        if exists {
+                                            matches = true;
+                                            break;
+                                        }
                                     }
                                 }
-                                if exists {
-                                    matches = true;
-                                    break;
-                                }
+                                _ => {}
                             }
                         }
-                        super::types::ResolvePattern::FixedPath { path: fixed_path, exe_name } => {
-                            if p_lower.contains(&fixed_path.to_lowercase()) {
-                                let mut exists = false;
-                                let mut check_names = vec![exe_name.clone()];
-                                #[cfg(windows)]
-                                {
-                                    let exe_lower = exe_name.to_lowercase();
-                                    if !exe_lower.ends_with(".exe") && !exe_lower.ends_with(".cmd") && !exe_lower.ends_with(".bat") {
-                                        check_names.push(format!("{}.exe", exe_name));
-                                        check_names.push(format!("{}.cmd", exe_name));
-                                        check_names.push(format!("{}.bat", exe_name));
-                                    }
-                                }
-                                for name in check_names {
-                                    if Path::new(&p_str).join(&name).exists() {
-                                        exists = true;
-                                        break;
-                                    }
-                                }
-                                if exists {
-                                    matches = true;
-                                    break;
-                                }
-                            }
+                        if matches {
+                            matched_entries.push(p_str.clone());
+                            continue;
                         }
-                        _ => {}
                     }
+                    remaining_entries.push(p_str);
                 }
-                if matches {
-                    matched_entries.push(p_str.clone());
-                    continue;
+
+                if !matched_entries.is_empty() {
+                    config.original_paths.entry(id.clone()).or_insert_with(Vec::new).extend(matched_entries);
+                    let new_path = std::env::join_paths(remaining_entries.iter().map(Path::new))
+                        .map_err(|e| e.to_string())?
+                        .to_string_lossy()
+                        .to_string();
+                    set_registry_env("PATH", &new_path)?;
                 }
             }
-            remaining_entries.push(p_str);
-        }
-
-        if !matched_entries.is_empty() {
-            config.original_paths.entry(id.clone()).or_insert_with(Vec::new).extend(matched_entries);
-
-            let new_path = std::env::join_paths(remaining_entries.iter().map(Path::new))
-                .map_err(|e| e.to_string())?
-                .to_string_lossy()
-                .to_string();
-            set_registry_env("PATH", &new_path)?;
         }
     }
 
-    // 3. 添加到 managed_items
+    // 3. 保存配置
     config.managed_items.insert(id.clone());
-    config.simple_managed_items.remove(&id);
-    crate::commands::config::save_config(&config)?;
+    if !delegation.version_control {
+        config.simple_managed_items.insert(id.clone());
+    } else {
+        config.simple_managed_items.remove(&id);
+    }
+    config.project_delegations.insert(id.clone(), delegation.clone());
+    save_config(&config)?;
 
-    // 4. 设置项目环境变量（仅语言本身的变量，包管理器变量独立管理）
+    // 4. 设置被勾选的项目环境变量
     let link_dir = Path::new(&config.links_dir).join(&id);
     let link_str = link_dir.to_string_lossy().to_string();
-    for var_def in &def.env_vars {
-        // Skip compat/discovery tier vars - only manage core + package + clear
-        if let Some(tier) = &var_def.tier {
-            if *tier == super::types::EnvVarTier::Compat { continue; }
-            if *tier == super::types::EnvVarTier::Clear {
-                let _ = set_registry_env(&var_def.name, "");
-                continue;
-            }
-        }
-        // 值策略由 EnvVarDef.sub_dir 驱动
-        let value = if let Some(ref sub) = var_def.sub_dir {
-            format!("{}\\{}", link_str, sub)
-        } else {
-            link_str.clone()
-        };
-        let _ = set_registry_env(&var_def.name, &value);
-    }
 
-    // 5. 添加 bin 路径到 PATH
-    let bin_paths = scanner::get_bin_paths(&def.id, &link_str);
-    if !bin_paths.is_empty() {
-        let _ = add_to_user_path(&bin_paths);
-    }
-
-
-    // 6. 同步当前进程环境变量，使子进程（如 run_cmd_capture）能立即使用新值
-    crate::sync_process_path();
-    // 同步所有项目环境变量到当前进程
     for var_def in &def.env_vars {
         if let Some(tier) = &var_def.tier {
             if *tier == super::types::EnvVarTier::Compat { continue; }
             if *tier == super::types::EnvVarTier::Clear {
-                std::env::remove_var(&var_def.name);
+                if delegation.env_vars.contains(&var_def.name) {
+                    let _ = set_registry_env(&var_def.name, "");
+                }
                 continue;
             }
         }
-        let value = if let Some(ref sub) = var_def.sub_dir {
-            format!("{}\\{}", link_str, sub)
-        } else {
-            link_str.clone()
-        };
-        std::env::set_var(&var_def.name, &value);
+        if delegation.env_vars.contains(&var_def.name) {
+            let value = if let Some(ref sub) = var_def.sub_dir {
+                format!("{}\\{}", link_str, sub)
+            } else {
+                link_str.clone()
+            };
+            let _ = set_registry_env(&var_def.name, &value);
+            std::env::set_var(&var_def.name, &value);
+        }
     }
 
-    // 7. 备份旧版数据到独立备份目录（便于用户查看和管理）
+    // 5. 添加被勾选的 bin 路径到 PATH
+    if let Some(ref dirs) = def.bin_dirs {
+        let mut add_paths = Vec::new();
+        for bin_dir in dirs {
+            if delegation.path_vars.contains(bin_dir) {
+                let path_val = if bin_dir.is_empty() {
+                    link_str.clone()
+                } else {
+                    format!("{}\\{}", link_str, bin_dir)
+                };
+                add_paths.push(path_val);
+            }
+        }
+        if !add_paths.is_empty() {
+            let _ = add_to_user_path(&add_paths);
+        }
+    }
+
+    // 6. 保存旧版数据备份
     save_manage_backup(&id, &def, &config);
 
+    // 7. 同步当前进程环境 & 重建托盘
+    crate::sync_process_path();
     let _ = crate::tray::rebuild_tray_menu(&app);
+
     Ok(())
 }
 
@@ -242,7 +228,8 @@ pub fn project_repair_env_vars(id: String) -> Result<(), String> {
     if !config.managed_items.contains(id.as_str()) {
         return Err("该项目尚未托管".to_string());
     }
-    if def.simple_mode || config.simple_managed_items.contains(&id) {
+    let delegation = scanner::get_project_delegation(&config, &id, &def);
+    if !delegation.version_control {
         return Err("简单托管项目不需要修复版本环境变量".to_string());
     }
 
@@ -261,71 +248,64 @@ pub fn project_repair_env_vars(id: String) -> Result<(), String> {
     Ok(())
 }
 
-/// 取消托管项目（从 AnyVersion 管理中移除）
-///
-/// 执行步骤：
-/// 1. 移除项目环境变量
-/// 2. 从 PATH 中移除 AnyVersion 添加的条目
-/// 3. 还原原始环境变量
-/// 4. 还原原始 PATH 条目
-/// 5. 从 managed_items 中移除
-/// 6. 保存配置
+/// 取消托管项目（从 AnyVersion 管理中还原并移除）
 #[tauri::command]
 pub fn project_unmanage(app: tauri::AppHandle, id: String) -> Result<(), String> {
-    use crate::commands::config::load_config;
+    use crate::commands::config::{load_config, save_config};
     use crate::commands::env::{set_registry_env, remove_from_user_path, add_to_user_path};
     use super::registry;
+    use std::path::Path;
 
     let def = registry::find_by_id(&id)
         .ok_or_else(|| format!("未找到项目: {}", id))?;
 
     let mut config = load_config();
+    let delegation = scanner::get_project_delegation(&config, &id, &def);
 
-    let is_simple = def.simple_mode || config.simple_managed_items.contains(&id);
-
-    if is_simple {
-        // 如果未托管，直接返回
-        if !config.managed_items.contains(id.as_str()) {
-            return Ok(());
-        }
-        config.managed_items.remove(&id);
-        config.simple_managed_items.remove(&id);
-        crate::commands::config::save_config(&config)?;
-        let _ = crate::tray::rebuild_tray_menu(&app);
-        return Ok(());
-    }
-
-    // 1. 移除项目环境变量（包管理器专属变量如 NPM_CONFIG_PREFIX 由代码单独处理）
+    // 1. 移除被托管的项目环境变量
     for var_def in &def.env_vars {
-        // Skip compat/discovery tier vars - we did not set them
         if let Some(tier) = &var_def.tier {
             if *tier == super::types::EnvVarTier::Compat { continue; }
         }
-        let _ = set_registry_env(&var_def.name, "");
+        if delegation.env_vars.contains(&var_def.name) {
+            let _ = set_registry_env(&var_def.name, "");
+        }
     }
 
-    // 2. 从 PATH 中移除 AnyVersion 添加的条目
-    let link_dir = std::path::Path::new(&config.links_dir).join(&id);
+    // 2. 从 PATH 中移除 AnyVersion 添加 of 条目
+    let link_dir = Path::new(&config.links_dir).join(&id);
     let link_str = link_dir.to_string_lossy().to_string();
-    let bin_paths = scanner::get_bin_paths(&def.id, &link_str);
-    if !bin_paths.is_empty() {
-        let _ = remove_from_user_path(&bin_paths);
-    }
 
+    if let Some(ref dirs) = def.bin_dirs {
+        let mut remove_paths = Vec::new();
+        for bin_dir in dirs {
+            if delegation.path_vars.contains(bin_dir) {
+                let path_val = if bin_dir.is_empty() {
+                    link_str.clone()
+                } else {
+                    format!("{}\\{}", link_str, bin_dir)
+                };
+                remove_paths.push(path_val);
+            }
+        }
+        if !remove_paths.is_empty() {
+            let _ = remove_from_user_path(&remove_paths);
+        }
+    }
 
     // 3. 还原原始环境变量
     for var_def in &def.env_vars {
-        // Skip compat/discovery tier vars - we did not set them
         if let Some(tier) = &var_def.tier {
             if *tier == super::types::EnvVarTier::Compat { continue; }
         }
-        if let Some(orig_val) = config.original_envs.remove(&var_def.name) {
-            let _ = set_registry_env(&var_def.name, &orig_val);
-            std::env::set_var(&var_def.name, &orig_val);
-        } else {
-            // 如果没有备份（原来就没设置），则确保从当前进程和注册表中清除它
-            let _ = set_registry_env(&var_def.name, "");
-            std::env::remove_var(&var_def.name);
+        if delegation.env_vars.contains(&var_def.name) {
+            if let Some(orig_val) = config.original_envs.remove(&var_def.name) {
+                let _ = set_registry_env(&var_def.name, &orig_val);
+                std::env::set_var(&var_def.name, &orig_val);
+            } else {
+                let _ = set_registry_env(&var_def.name, "");
+                std::env::remove_var(&var_def.name);
+            }
         }
     }
 
@@ -334,15 +314,17 @@ pub fn project_unmanage(app: tauri::AppHandle, id: String) -> Result<(), String>
         let _ = add_to_user_path(&orig_paths);
     }
 
-    // 5. 从 managed_items 中移除
+    // 5. 从 managed_items and project_delegations and active_versions 中移除
     config.managed_items.remove(&id);
     config.simple_managed_items.remove(&id);
-    crate::commands::config::save_config(&config)?;
+    config.project_delegations.remove(&id);
+    config.active_versions.remove(&id);
+    save_config(&config)?;
 
-    // 6. 同步当前进程环境变量
+    // 6. 同步进程环境并重建菜单
     crate::sync_process_path();
-
     let _ = crate::tray::rebuild_tray_menu(&app);
+
     Ok(())
 }
 

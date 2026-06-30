@@ -37,8 +37,8 @@ pub fn sync_process_path() {
             } else {
                 // 检查是否匹配任何已托管项目的查找规则，若匹配则将其过滤掉以防进程命令劫持（例如过滤掉旧版 D:\tool\go\bin\go.exe）
                 let mut matches_managed_rule = false;
-                for managed_id in &config.managed_items {
-                    if config.simple_managed_items.contains(managed_id) {
+                for (managed_id, del) in &config.project_delegations {
+                    if del.path_vars.is_empty() {
                         continue;
                     }
                     if let Some(def) = commands::project::registry::find_by_id(managed_id) {
@@ -122,9 +122,10 @@ fn cleanup_legacy_env_vars() {
     let defs = registry::registry();
 
     for def in &defs {
-        let is_managed = config.managed_items.contains(&def.id);
+        let delegation = config.project_delegations.get(&def.id);
         for var_def in &def.env_vars {
-            let should_not_exist = !is_managed || var_def.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Compat);
+            let env_managed = delegation.map_or(false, |d| d.env_vars.contains(&var_def.name));
+            let should_not_exist = !env_managed || var_def.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Compat);
             if should_not_exist {
                 if let Some(val) = get_registry_env(&var_def.name) {
                     if val.to_lowercase().contains(&links_dir_lower) {

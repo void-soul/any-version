@@ -131,10 +131,9 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     for def in &registry {
         let id = &def.id;
-        let fully_managed = config.managed_items.contains(id)
-            && !config.simple_managed_items.contains(id)
-            && !def.simple_mode;
-        if !fully_managed {
+        let delegation = crate::commands::project::scanner::get_project_delegation(&config, id, def);
+        let show_vc = delegation.version_control;
+        if !show_vc {
             continue;
         }
 
@@ -149,7 +148,8 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         }
         any_managed = true;
 
-        let active = resolve_active_version(&links_dir.join(id));
+        let active = resolve_active_version(&links_dir.join(id))
+            .or_else(|| config.active_versions.get(id).cloned());
         let title = format!(
             "{} ({})",
             def.display_name,

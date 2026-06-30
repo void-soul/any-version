@@ -182,6 +182,26 @@ async fn fetch_remote_versions_inner(id: &str) -> Result<Vec<String>, String> {
 }
 
 
+fn parse_version_to_key(v: &str) -> Vec<u64> {
+    let mut parts = Vec::new();
+    let mut current = 0u64;
+    let mut has_digit = false;
+    for c in v.chars() {
+        if c.is_ascii_digit() {
+            current = current * 10 + (c as u64 - '0' as u64);
+            has_digit = true;
+        } else if has_digit {
+            parts.push(current);
+            current = 0;
+            has_digit = false;
+        }
+    }
+    if has_digit {
+        parts.push(current);
+    }
+    parts
+}
+
 async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, url_override: Option<&str>) -> Result<Vec<String>, String> {
     let url = if let Some(u) = url_override {
         u
@@ -190,13 +210,13 @@ async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, ur
     } else {
         return Err("缺少 url 配置".to_string());
     };
-    let max_count = config.get("max_count").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
     let response_type = config.get("response_type").and_then(|v| v.as_str()).unwrap_or("array");
     let version_field = config.get("version_field").and_then(|v| v.as_str()).unwrap_or("version");
     let version_transform = config.get("version_transform").and_then(|v| v.as_str()).unwrap_or("");
     let filter_field = config.get("filter_field").and_then(|v| v.as_str());
     let filter_value = config.get("filter_value");
     let filter_contains_not = config.get("filter_contains_not").and_then(|v| v.as_str());
+    let sort_by_version = config.get("sort_by_version").and_then(|v| v.as_bool()).unwrap_or(false);
     let reverse = config.get("reverse").and_then(|v| v.as_bool()).unwrap_or(false);
     let extra_field = config.get("extra_field").and_then(|v| v.as_str());
 
@@ -314,11 +334,15 @@ async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, ur
             versions.push(ver);
         }
 
-        if reverse { versions.reverse(); }
-        // max_count=0 表示不截取，展示全部版本
-        if max_count > 0 {
-            versions.truncate(max_count);
+        if sort_by_version {
+            versions.sort_by(|a, b| {
+                let key_a = parse_version_to_key(a);
+                let key_b = parse_version_to_key(b);
+                key_a.cmp(&key_b)
+            });
         }
+
+        if reverse { versions.reverse(); }
         return Ok(versions);
     }
 
@@ -623,14 +647,24 @@ pub fn project_uninstall_version(app: AppHandle, id: String, version: String) ->
 
 /// 切换到指定版本（创建 junction 指向目标版本目录）
 fn project_use_version_impl(id: String, version: String) -> Result<(), String> {
-    let config = load_config();
+    use crate::commands::config::{load_config, save_config};
+    let mut config = load_config();
     let dest_dir = Path::new(&config.versions_dir).join(&id).join(&version);
     if !dest_dir.exists() {
         return Err(format!("版本 {} 的 {} 未安装", version, id));
     }
 
-    let junction_path = Path::new(&config.links_dir).join(&id);
-    crate::commands::cache::create_junction(&junction_path, &dest_dir)?;
+    let def = super::registry::find_by_id(&id)
+        .ok_or_else(|| format!("未找到项目: {}", id))?;
+    let delegation = super::scanner::get_project_delegation(&config, &id, &def);
+
+    if delegation.create_symlink {
+        let junction_path = Path::new(&config.links_dir).join(&id);
+        crate::commands::cache::create_junction(&junction_path, &dest_dir)?;
+    }
+
+    config.active_versions.insert(id, version);
+    save_config(&config)?;
 
     Ok(())
 }

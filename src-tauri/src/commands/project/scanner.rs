@@ -56,7 +56,7 @@ pub fn get_project_detail(id: &str) -> Result<ProjectDetail, String> {
 }
 
 /// 预览托管操作步骤
-pub fn preview_manage(id: &str, is_simple: Option<bool>) -> Result<ManagePreview, String> {
+pub fn preview_manage(id: &str, delegation: crate::commands::config::ProjectDelegation) -> Result<ManagePreview, String> {
     let def = registry::find_by_id(id)
         .ok_or_else(|| format!("未找到项目: {}", id))?;
 
@@ -65,22 +65,6 @@ pub fn preview_manage(id: &str, is_simple: Option<bool>) -> Result<ManagePreview
     // 检测本地安装
     let (local_install_root, local_install_source) = detect_install_source(&def);
     let has_local = local_install_root.is_some();
-
-    let use_simple = is_simple.unwrap_or(def.simple_mode);
-
-    if use_simple {
-        steps.push(ManageStep {
-            action: "simple_manage".to_string(),
-            description: "启用简单托管模式：AnyVersion 将管理缓存目录、代理和镜像配置，不控制其版本，不修改核心环境变量。".to_string(),
-            target: id.to_string(),
-        });
-        return Ok(ManagePreview {
-            steps,
-            has_local_install: has_local,
-            local_install_root,
-            local_install_source,
-        });
-    }
 
     if has_local {
         steps.push(ManageStep {
@@ -92,21 +76,33 @@ pub fn preview_manage(id: &str, is_simple: Option<bool>) -> Result<ManagePreview
         });
     }
 
-    // 步骤 1: 备份当前环境变量
-    let env_count = def.env_vars.len();
-    if env_count > 0 {
+    // 1. 备份环境变量
+    let backup_vars: Vec<&str> = def.env_vars.iter()
+        .filter(|v| v.tier.as_ref().map_or(true, |t| *t != EnvVarTier::Compat))
+        .filter(|v| delegation.env_vars.contains(&v.name))
+        .map(|v| v.name.as_str())
+        .collect();
+
+    if !backup_vars.is_empty() {
         steps.push(ManageStep {
             action: "backup_env".to_string(),
-            description: format!("备份 {} 个环境变量的当前值", env_count),
-            target: def.env_vars.iter().map(|v| v.name.as_str()).collect::<Vec<_>>().join(", "),
+            description: format!("备份 {} 个环境变量的当前值", backup_vars.len()),
+            target: backup_vars.join(", "),
         });
     }
 
-    // 步骤 2: 清理外部 PATH 条目
+    // 2. 清理外部 PATH 条目
     let config = load_config();
     let links_dir = Path::new(&config.links_dir);
     let link_dir = links_dir.join(&id);
-    if link_dir.exists() {
+    
+    let has_path_delegated = if let Some(ref dirs) = def.bin_dirs {
+        dirs.iter().any(|d| delegation.path_vars.contains(d))
+    } else {
+        false
+    };
+
+    if has_path_delegated {
         steps.push(ManageStep {
             action: "clean_path".to_string(),
             description: "清理 PATH 中的外部 SDK 条目，替换为 AnyVersion 管理路径".to_string(),
@@ -114,9 +110,12 @@ pub fn preview_manage(id: &str, is_simple: Option<bool>) -> Result<ManagePreview
         });
     }
 
-    // 步骤 3: 设置环境变量
+    // 3. 设置环境变量
     for var in &def.env_vars {
         if var.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Compat) {
+            continue;
+        }
+        if !delegation.env_vars.contains(&var.name) {
             continue;
         }
         if var.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Clear) {
@@ -140,17 +139,34 @@ pub fn preview_manage(id: &str, is_simple: Option<bool>) -> Result<ManagePreview
         });
     }
 
-    // 步骤 4: 添加 PATH
-    let bin_paths = get_bin_paths(&def.id, &link_dir.to_string_lossy());
-    for bp in &bin_paths {
+    // 4. 添加 PATH
+    if let Some(ref dirs) = def.bin_dirs {
+        for bin_dir in dirs {
+            if delegation.path_vars.contains(bin_dir) {
+                let link_bin_path = if bin_dir.is_empty() {
+                    link_dir.to_string_lossy().to_string()
+                } else {
+                    format!("{}\\{}", link_dir.to_string_lossy(), bin_dir)
+                };
+                steps.push(ManageStep {
+                    action: "add_path".to_string(),
+                    description: format!("将 {} 添加到用户 PATH", link_bin_path),
+                    target: link_bin_path,
+                });
+            }
+        }
+    }
+
+    // 5. 目录联接
+    if delegation.create_symlink {
         steps.push(ManageStep {
-            action: "add_path".to_string(),
-            description: format!("将 {} 添加到用户 PATH", bp),
-            target: bp.clone(),
+            action: "create_junction".to_string(),
+            description: "创建稳定目录联接/映射软链接以接管版本切换".to_string(),
+            target: link_dir.to_string_lossy().to_string(),
         });
     }
 
-    // 步骤 5: 缓存管理
+    // 6. 缓存管理
     if def.has_cache {
         steps.push(ManageStep {
             action: "manage_cache".to_string(),
@@ -159,7 +175,7 @@ pub fn preview_manage(id: &str, is_simple: Option<bool>) -> Result<ManagePreview
         });
     }
 
-    // 步骤 6: 镜像配置
+    // 7. 镜像配置
     if def.has_mirror {
         steps.push(ManageStep {
             action: "configure_mirror".to_string(),
@@ -180,6 +196,51 @@ pub fn preview_manage(id: &str, is_simple: Option<bool>) -> Result<ManagePreview
 //  内部实现
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+pub fn get_project_delegation(config: &crate::commands::config::Config, id: &str, def: &ProjectDef) -> crate::commands::config::ProjectDelegation {
+    if let Some(del) = config.project_delegations.get(id) {
+        return del.clone();
+    }
+    
+    // Migration fallback
+    if config.managed_items.contains(id) {
+        let is_simple = config.simple_managed_items.contains(id) || def.simple_mode;
+        if is_simple {
+            crate::commands::config::ProjectDelegation {
+                env_vars: std::collections::HashSet::new(),
+                path_vars: std::collections::HashSet::new(),
+                version_control: false,
+                create_symlink: false,
+                manage_install_dir: true,
+                manage_data_dir: true,
+            }
+        } else {
+            let mut envs = std::collections::HashSet::new();
+            for var in &def.env_vars {
+                if let Some(ref tier) = var.tier {
+                    if *tier == super::types::EnvVarTier::Compat { continue; }
+                }
+                envs.insert(var.name.clone());
+            }
+            let mut paths = std::collections::HashSet::new();
+            if let Some(ref dirs) = def.bin_dirs {
+                for p in dirs {
+                    paths.insert(p.clone());
+                }
+            }
+            crate::commands::config::ProjectDelegation {
+                env_vars: envs,
+                path_vars: paths,
+                version_control: true,
+                create_symlink: true,
+                manage_install_dir: true,
+                manage_data_dir: true,
+            }
+        }
+    } else {
+        crate::commands::config::ProjectDelegation::default()
+    }
+}
+
 /// 构建单个项目的运行时状态
 fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Config) -> Result<ProjectStatus, String> {
     let id = &def.id;
@@ -189,13 +250,16 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
     // 扫描已安装版本
     let installed_versions = scan_installed_versions(&versions_dir);
 
-    // 检测激活版本（通过 junction link 解析）
+    // 检测激活版本（通过 junction link 解析，或从配置中的 active_versions 中获取作为 fallback）
     let junction_path = links_dir.join(id);
-    let active_version = resolve_active_version(&junction_path);
+    let active_version = resolve_active_version(&junction_path)
+        .or_else(|| config.active_versions.get(id).cloned());
+
+    let delegation = get_project_delegation(config, id, def);
 
     // 是否被 AnyVersion 托管
     let managed = config.managed_items.contains(id.as_str());
-    let is_simple_managed = def.simple_mode || config.simple_managed_items.contains(id.as_str());
+    let is_simple_managed = !delegation.version_control;
 
     // 安装来源检测（使用 sdk_resolver）—— 仅在未托管或简单托管时报告，完全托管后在"旧版数据"选项卡展示
     let (install_source, install_root) = if managed && !is_simple_managed {
@@ -218,7 +282,7 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
     }
 
     // 二次验证：未托管且不是手动指定路径的项目，通过 version_exe 在 PATH 中确认可执行文件真实存在
-    // 防止残留的版本目录/junction 或无效的 find_rules 匹配导致误判为"已安装"
+    // 防止残留的版本目录/junction 或无效 Graves 规则匹配导致误判为"已安装"
     if installed && !managed && install_source.as_deref() != Some("手动指定") {
         if let Some(ref exe) = def.version_exe {
             let found = which_in_path(exe);
@@ -239,9 +303,18 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
         None
     };
 
-    // 解析当前实际的安装根路径 (AnyVersion 托管链接 或 外部检测路径)
+    // 解析当前实际的安装根路径 (AnyVersion 托管链接，或已激活的下载版本目录，或 外部检测路径)
     let active_install_root = if junction_path.exists() || junction_path.is_symlink() {
         Some(junction_path.to_string_lossy().to_string())
+    } else if let Some(ref ver) = active_version {
+        let ver_path = Path::new(&config.versions_dir).join(id).join(ver);
+        if ver_path.exists() {
+            Some(ver_path.to_string_lossy().to_string())
+        } else if let Some(ref root) = install_root {
+            Some(root.clone())
+        } else {
+            None
+        }
     } else if let Some(ref root) = install_root {
         Some(root.clone())
     } else {
@@ -280,6 +353,7 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
         data_dirs_status,
         show_version,
         show_service,
+        delegation,
     })
 }
 

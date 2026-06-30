@@ -334,8 +334,7 @@
       "version_field": "version",
       "version_transform": "trim_prefix:v",
       "extra_field": "lts",
-      "extra_format": "lts_label",
-      "max_count": 0
+      "extra_format": "lts_label"
     },
     "version_cmd": "node --version",
     "version_exe": "node",
@@ -633,14 +632,14 @@
       "filter_field": "version",
       "filter_value": 3,
       "reverse": true,
-      "max_count": 60,
       "exclude_version_patterns": [
         "^3\\.7\\.(1[0-9]|[2-9]\\d|\\d{3,})$",
         "^3\\.8\\.(1[1-9]|[2-9]\\d|\\d{3,})$",
         "^3\\.9\\.(1[4-9]|[2-9]\\d|\\d{3,})$",
         "^3\\.10\\.(1[2-9]|[2-9]\\d|\\d{3,})$",
         "^3\\.11\\.(1[0-9]|[2-9]\\d|\\d{3,})$"
-      ]
+      ],
+      "sort_by_version": true
     },
     "package_managers": [
       {
@@ -776,8 +775,7 @@
       "array_field": "releases-index",
       "version_field": "latest-sdk",
       "filter_contains_not": "preview",
-      "reverse": true,
-      "max_count": 0
+      "reverse": true
     },
     "package_managers": [
       {
@@ -1010,8 +1008,7 @@
       "response_type": "array",
       "version_field": "version",
       "filter_field": "final",
-      "filter_value": true,
-      "max_count": 0
+      "filter_value": true
     },
     "package_managers": [
       {
@@ -1157,8 +1154,7 @@
       "version_field": "version",
       "version_transform": "trim_prefix:go",
       "filter_field": "stable",
-      "filter_value": true,
-      "max_count": 60
+      "filter_value": true
     },
     "package_managers": [
       {
@@ -1456,8 +1452,7 @@
       "array_field": "releases",
       "version_field": "version",
       "filter_field": "channel",
-      "filter_value": "stable",
-      "max_count": 60
+      "filter_value": "stable"
     },
     "package_managers": [
       {
@@ -1548,8 +1543,7 @@
       "response_type": "object_with_array",
       "array_field": "versions",
       "version_field": "",
-      "version_transform": "trim_prefix:v",
-      "max_count": 60
+      "version_transform": "trim_prefix:v"
     },
     "package_managers": [
       {
@@ -1640,8 +1634,7 @@
       "type": "json_api",
       "response_type": "object_with_array",
       "array_field": "versions",
-      "version_field": "version",
-      "max_count": 60
+      "version_field": "version"
     },
     "package_managers": [
       {
@@ -1758,8 +1751,7 @@
     "remote_versions_config": {
       "type": "json_api",
       "response_type": "array",
-      "version_field": "latest",
-      "max_count": 0
+      "version_field": "latest"
     }
   },
   {

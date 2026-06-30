@@ -16,6 +16,7 @@ import type {
   ProjectDetail,
   ProjectDef,
   ManagePreview,
+  ProjectDelegation,
 } from "./types";
 import { categoryLabel } from "./types";
 import type { SubTabProps } from "./ProjectSubTabs";
@@ -146,6 +147,7 @@ export default function ProjectDetailPanel({
   const [legacyLoaded, setLegacyLoaded] = useState(false);
   const [isAdmin, setIsAdmin] = useState(true);
   const [showMenuConfig, setShowMenuConfig] = useState(false);
+  const [localDelegation, setLocalDelegation] = useState<ProjectDelegation | null>(null);
 
   useEffect(() => {
     setShowMenuConfig(false);
@@ -381,29 +383,51 @@ export default function ProjectDetailPanel({
     }
   }, [pid, patch, refreshSingle]);
 
-  const handlePreviewManage = useCallback(async (isSimple: boolean) => {
-    if (!pid) return;
-    patch(pid, { isSimpleManage: isSimple });
+  const handlePreviewManage = useCallback(async () => {
+    if (!pid || !ui.detail) return;
+    const def = ui.detail.def;
+    const initialDelegation: ProjectDelegation = {
+      env_vars: def.env_vars.filter(v => v.tier !== "compat").map(v => v.name),
+      path_vars: def.bin_dirs || [],
+      version_control: def.download_url_template || def.is_git_repo ? true : false,
+      create_symlink: true,
+      manage_install_dir: true,
+      manage_data_dir: true,
+    };
+    patch(pid, { isSimpleManage: false });
     try {
-      const preview = await invoke<ManagePreview>("project_preview_manage", { id: pid, isSimple });
+      const preview = await invoke<ManagePreview>("project_preview_manage", { id: pid, delegation: initialDelegation });
+      setLocalDelegation(initialDelegation);
       patch(pid, { managePreview: preview, showManagePreview: true });
-    } catch {
-      patch(pid, { managePreview: null, showManagePreview: true });
+    } catch (e: unknown) {
+      alert(String(e));
     }
-  }, [pid, patch]);
+  }, [pid, ui.detail, patch]);
+
+  const handleCheckboxChange = useCallback(async (updated: Partial<ProjectDelegation>) => {
+    if (!pid || !localDelegation) return;
+    const next = { ...localDelegation, ...updated };
+    setLocalDelegation(next);
+    try {
+      const preview = await invoke<ManagePreview>("project_preview_manage", { id: pid, delegation: next });
+      patch(pid, { managePreview: preview });
+    } catch (e) {
+      console.error("Preview manage error:", e);
+    }
+  }, [pid, localDelegation, patch]);
 
   const handleManage = useCallback(async () => {
-    if (!pid) return;
+    if (!pid || !localDelegation) return;
     patch(pid, { managing: true });
     try {
-      await invoke("project_manage", { id: pid, isSimple: ui.isSimpleManage });
+      await invoke("project_manage", { id: pid, delegation: localDelegation });
       patch(pid, { showManagePreview: false, managePreview: null, managing: false });
       await refreshSingle(pid);
     } catch (e: unknown) {
       alert("托管操作失败: " + e);
       patch(pid, { managing: false });
     }
-  }, [pid, patch, ui.isSimpleManage, loadDetail, onRefresh]);
+  }, [pid, patch, localDelegation, refreshSingle]);
 
   const handlePreviewUnmanage = useCallback(async () => {
     if (!pid) return;
@@ -540,24 +564,24 @@ export default function ProjectDetailPanel({
 
   // 构建动态 Tab 列表：基础 tabs + 每个包管理器一个独立 tab
   const availableTabs: SubTab[] = [];
+  const delegation = status.delegation;
+
   if (def?.category === "service" || def?.is_service) {
     availableTabs.push("services");
-    if (def?.data_dirs && def.data_dirs.length > 0) {
-      availableTabs.push("data_dirs");
-    }
-    if (!status.is_simple_managed && !def?.simple_mode) {
-      availableTabs.push("versions");
-    }
     availableTabs.push("config");
-  } else {
-    if (status.is_simple_managed || def?.simple_mode) {
-      if (def?.data_dirs && def.data_dirs.length > 0) {
-        availableTabs.push("data_dirs");
-      }
-    } else {
-      availableTabs.push("versions");
-      availableTabs.push("envvars");
-    }
+  }
+
+  const hasVersionSupport = def?.download_url_template || def?.is_git_repo;
+  if (hasVersionSupport && (!status.managed || delegation?.version_control)) {
+    availableTabs.push("versions");
+  }
+
+  if (def?.env_vars && def.env_vars.length > 0 && (!status.managed || (delegation?.env_vars && delegation.env_vars.length > 0))) {
+    availableTabs.push("envvars");
+  }
+
+  if (def?.data_dirs && def.data_dirs.length > 0 && (!status.managed || delegation?.manage_data_dir)) {
+    availableTabs.push("data_dirs");
   }
 
   // 包管理器 tabs：每个 PM 一个独立子页面，用 "pm:" 前缀标识
@@ -786,21 +810,7 @@ export default function ProjectDetailPanel({
         </div>
       )}
 
-      {!status.managed ? (
-        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-4">
-          <div className="w-16 h-16 rounded-full bg-slate-600/10 flex items-center justify-center">
-            <ShieldCheck className="w-8 h-8 text-slate-500" />
-          </div>
-          <div>
-            <p className="text-sm font-medium text-slate-300">{"该项目尚未被 AnyVersion 托管"}</p>
-            <p className="text-[11px] text-slate-500 mt-1 max-w-sm">
-              {status.installed
-                ? "检测到本地已有安装，托管后可统一管理版本、环境变量和缓存。"
-                : "托管后将自动配置环境变量，可通过此界面一键安装和切换版本。"}
-            </p>
-          </div>
-        </div>
-      ) : (status.is_simple_managed || def?.simple_mode) && !status.install_root ? (
+      {status.managed && (status.is_simple_managed || def?.simple_mode) && !status.install_root ? (
         <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-4">
           <div className="w-16 h-16 rounded-full bg-blue-600/10 flex items-center justify-center">
             <Settings className="w-8 h-8 text-blue-500" />
@@ -820,6 +830,17 @@ export default function ProjectDetailPanel({
         </div>
       ) : (
         <>
+          {!status.managed && (
+            <div className="mx-5 mt-4 p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-start gap-2.5 text-xs text-blue-300">
+              <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-slate-200">{"此项目尚未开启托管"}</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  {"AnyVersion 尚未为此项目接管系统环境变量或目录链接。你可以直接在下方“版本列表”中下载和使用版本。如果需要，可在底部点击“托管此项目”开启。"}
+                </p>
+              </div>
+            </div>
+          )}
           {availableTabs.length > 1 && (
             <div className="flex bg-white/5 border border-white/5 rounded-xl p-0.5 mx-5 mt-4 flex-shrink-0">
               {availableTabs.map((tab) => (
@@ -912,126 +933,204 @@ export default function ProjectDetailPanel({
           };
 
           return (
-            <div className={`mb-4 p-4 rounded-xl space-y-3 animate-fadeIn ${isUnmanage ? "bg-red-600/5 border border-red-500/15" : "bg-blue-600/5 border border-blue-500/15"}`}>
+            <div className={`mb-4 p-4 rounded-xl space-y-4 animate-fadeIn ${isUnmanage ? "bg-red-600/5 border border-red-500/15" : "bg-blue-600/5 border border-blue-500/15"}`}>
               <h4 className={`text-xs font-semibold flex items-center gap-1.5 ${isUnmanage ? "text-red-300" : "text-blue-300"}`}>
                 <Info className="w-3.5 h-3.5" />
-                {isUnmanage ? "取消托管预览 - 将要执行以下操作" : "托管操作预览 - 将要执行以下操作"}
+                {isUnmanage ? "取消托管预览 - 将要执行以下操作" : "托管配置选项 - 自定义要托管的功能范围"}
               </h4>
 
-              {!isUnmanage ? (
-                ui.isSimpleManage ? (
-                  <>
-                    {preview?.steps?.map((step, idx) => (
-                      <div key={idx} className="flex items-start gap-2 text-[11px]">
-                        <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">
-                          {idx + 1}
-                        </span>
-                        <div className="min-w-0">
-                          <span className="text-slate-200 font-medium">{step.description}</span>
-                          {step.target && (
-                            <p className="font-mono text-[10px] text-slate-500 mt-0.5 whitespace-pre-wrap break-all">{step.target}</p>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </>
-                ) : (
-                  <>
-                    {backupVars.length > 0 && (
-                      <div className="flex items-start gap-2 text-[11px]">
-                        <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">1</span>
-                        <div>
-                          <span className="text-slate-200 font-medium">{"备份并清除冲突环境变量"}</span>
-                          <p className="text-slate-400 mt-0.5">
-                            {clearVars.length > 0 ? (
-                              <>
-                                {"将备份以下冲突环境变量的当前值并将其从系统中删除"}: <span className="font-mono text-[10px] text-red-300 font-semibold">{clearVars.map(v => v.name).join(", ")}</span>
-                                {backupVars.filter(v => v.tier !== "clear").length > 0 && (
-                                  <>
-                                    <br />
-                                    {"仅备份但不删除的环境变量"}: <span className="font-mono text-[10px] text-blue-300">{backupVars.filter(v => v.tier !== "clear").map(v => v.name).join(", ")}</span>
-                                  </>
-                                )}
-                              </>
-                            ) : (
-                              <>
-                                {"将备份以下环境变量的当前值"}: <span className="font-mono text-[10px] text-blue-300">{backupVars.map(v => v.name).join(", ")}</span>
-                              </>
-                            )}
-                          </p>
+              {!isUnmanage && localDelegation && (
+                <div className="p-3 bg-white/5 border border-white/10 rounded-xl space-y-3">
+                  <span className="text-[11px] font-semibold text-slate-300 block">选择需要托管的功能选项：</span>
+                  
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    {/* 1. 环境变量 */}
+                    {envVars.length > 0 && (
+                      <div className="space-y-1.5 p-2 bg-black/25 border border-white/5 rounded-lg col-span-2">
+                        <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
+                          <input
+                            type="checkbox"
+                            className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                            checked={localDelegation.env_vars.length === envVars.filter(v => v.tier !== "compat").length}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              const updatedEnvVars = checked 
+                                ? envVars.filter(v => v.tier !== "compat").map(v => v.name) 
+                                : [];
+                              handleCheckboxChange({ env_vars: updatedEnvVars });
+                            }}
+                          />
+                          <span>接管系统环境变量 ({envVars.filter(v => v.tier !== "compat").length})</span>
+                        </label>
+                        <div className="pl-6 grid grid-cols-2 gap-2 mt-1">
+                          {envVars.filter(v => v.tier !== "compat").map(v => (
+                            <label key={v.name} className="flex items-center gap-2 cursor-pointer text-[10px] text-slate-400 hover:text-slate-200">
+                              <input
+                                type="checkbox"
+                                className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                                checked={localDelegation.env_vars.includes(v.name)}
+                                onChange={(e) => {
+                                  const updated = e.target.checked
+                                    ? [...localDelegation.env_vars, v.name]
+                                    : localDelegation.env_vars.filter((x: string) => x !== v.name);
+                                  handleCheckboxChange({ env_vars: updated });
+                                }}
+                              />
+                              <span className="font-mono truncate">{v.name}</span>
+                            </label>
+                          ))}
                         </div>
                       </div>
                     )}
 
-                    <div className="flex items-start gap-2 text-[11px]">
-                      <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">{backupVars.length > 0 ? "2" : "1"}</span>
-                      <div>
-                        <span className="text-slate-200 font-medium">{"创建目录联接"}</span>
-                        <p className="font-mono text-[10px] text-blue-300 mt-0.5">{linkPath} → {versionsDir}\{pid}\VERSION</p>
+                    {/* 2. PATH 变量 */}
+                    {def?.bin_dirs && def.bin_dirs.length > 0 && (
+                      <div className="space-y-1.5 p-2 bg-black/25 border border-white/5 rounded-lg col-span-2">
+                        <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
+                          <input
+                            type="checkbox"
+                            className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                            checked={localDelegation.path_vars.length === def.bin_dirs.length}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              const updatedPaths = checked ? [...def.bin_dirs] : [];
+                              handleCheckboxChange({ path_vars: updatedPaths });
+                            }}
+                          />
+                          <span>加入系统 PATH 目录 ({def.bin_dirs.length})</span>
+                        </label>
+                        <div className="pl-6 grid grid-cols-2 gap-2 mt-1">
+                          {def.bin_dirs.map(binDir => (
+                            <label key={binDir} className="flex items-center gap-2 cursor-pointer text-[10px] text-slate-400 hover:text-slate-200">
+                              <input
+                                type="checkbox"
+                                className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                                checked={localDelegation.path_vars.includes(binDir)}
+                                onChange={(e) => {
+                                  const updated = e.target.checked
+                                    ? [...localDelegation.path_vars, binDir]
+                                    : localDelegation.path_vars.filter((x: string) => x !== binDir);
+                                  handleCheckboxChange({ path_vars: updated });
+                                }}
+                              />
+                              <span className="truncate">{binDir === "" ? "项目主目录 (bin)" : `子目录: ${binDir}`}</span>
+                            </label>
+                          ))}
+                        </div>
                       </div>
-                    </div>
+                    )}
 
-                    {(manageVars.length > 0 || clearVars.length > 0) && (
-                      <div className="flex items-start gap-2 text-[11px]">
-                        <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">{backupVars.length > 0 ? "3" : "2"}</span>
-                        <div>
-                          <span className="text-slate-200 font-medium">{"更新注册表环境变量"}</span>
-                          <div className="space-y-1 mt-0.5">
-                            {manageVars.length > 0 && (
-                              <p className="text-slate-400">
-                                {"设置托管变量 (指向 AnyVersion)"}: <span className="font-mono text-[10px] text-blue-300">{manageVars.map((v: { name: string }) => v.name).join(", ")} → {linkPath}</span>
-                              </p>
-                            )}
-                            {clearVars.length > 0 && (
-                              <p className="text-slate-400">
-                                <span className="text-red-400 font-semibold">{"清空冲突变量 (后续交由 AnyVersion 管理)"}</span>: <span className="font-mono text-[10px] text-red-300">{clearVars.map((v: { name: string }) => v.name).join(", ")}</span>
-                              </p>
-                            )}
+                    {/* 3. 版本控制 */}
+                    {(def?.download_url_template || def?.is_git_repo) && (
+                      <div className="p-2 bg-black/25 border border-white/5 rounded-lg flex items-center">
+                        <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
+                          <input
+                            type="checkbox"
+                            className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                            checked={localDelegation.version_control}
+                            onChange={(e) => {
+                              handleCheckboxChange({ version_control: e.target.checked });
+                            }}
+                          />
+                          <div className="flex flex-col">
+                            <span>版本控制与下载</span>
+                            <span className="text-[9px] text-slate-400 font-normal">允许在 AnyVersion 内下载多版本</span>
                           </div>
-                        </div>
+                        </label>
                       </div>
                     )}
 
-                    {preview && preview.steps.filter((s) => s.action === "add_path" || s.action === "clean_path").map((step, idx) => (
-                      <div key={idx} className="flex items-start gap-2 text-[11px]">
-                        <span className="w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5">{4 + idx}</span>
-                        <div>
-                          <span className="text-slate-200 font-medium">{step.description}</span>
-                          {step.target && <p className="font-mono text-[10px] text-slate-500 mt-0.5">{step.target}</p>}
+                    {/* 4. 创建链接 */}
+                    <div className="p-2 bg-black/25 border border-white/5 rounded-lg flex items-center">
+                      <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
+                        <input
+                          type="checkbox"
+                          className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                          checked={localDelegation.create_symlink}
+                          onChange={(e) => {
+                            handleCheckboxChange({ create_symlink: e.target.checked });
+                          }}
+                        />
+                        <div className="flex flex-col">
+                          <span>创建目录链接 (Junction)</span>
+                          <span className="text-[9px] text-slate-400 font-normal">从映射路径切换到当前激活版本</span>
                         </div>
-                      </div>
-                    ))}
-
-                    {preview?.has_local_install && (
-                      <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-[10px]">
-                        <span className="text-emerald-300 font-medium">检测到本地已安装版本</span>
-                        {preview.local_install_root && (
-                          <p className="text-slate-400 mt-0.5">路径: {preview.local_install_root}</p>
-                        )}
-                        {preview.local_install_source && (
-                          <p className="text-slate-500">来源: {preview.local_install_source}</p>
-                        )}
-                        <p className="text-amber-400/80 mt-1">托管后可在版本管理中扫描并注册本地版本</p>
-                      </div>
-                    )}
-                  </>
-                )
-              ) : (
-                <>
-                  {preview?.steps?.map((step, idx) => (
-                    <div key={idx} className="flex items-start gap-2 text-[11px]">
-                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5 ${stepColorMap[step.action] || "bg-slate-600/20 text-slate-400"}`}>
-                        {idx + 1}
-                      </span>
-                      <div className="min-w-0">
-                        <span className="text-slate-200 font-medium">{step.description}</span>
-                        {step.target && (
-                          <p className="font-mono text-[10px] text-slate-500 mt-0.5 whitespace-pre-wrap break-all">{step.target}</p>
-                        )}
-                      </div>
+                      </label>
                     </div>
-                  ))}
-                </>
+
+                    {/* 5. 管理安装目录 */}
+                    <div className="p-2 bg-black/25 border border-white/5 rounded-lg flex items-center">
+                      <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
+                        <input
+                          type="checkbox"
+                          className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                          checked={localDelegation.manage_install_dir}
+                          onChange={(e) => {
+                            handleCheckboxChange({ manage_install_dir: e.target.checked });
+                          }}
+                        />
+                        <div className="flex flex-col">
+                          <span>管理本地安装目录</span>
+                          <span className="text-[9px] text-slate-400 font-normal">支持注册本地已下载的 SDK 路径</span>
+                        </div>
+                      </label>
+                    </div>
+
+                    {/* 6. 管理数据目录 */}
+                    {def?.data_dirs && def.data_dirs.length > 0 && (
+                      <div className="p-2 bg-black/25 border border-white/5 rounded-lg flex items-center">
+                        <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
+                          <input
+                            type="checkbox"
+                            className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                            checked={localDelegation.manage_data_dir}
+                            onChange={(e) => {
+                              handleCheckboxChange({ manage_data_dir: e.target.checked });
+                            }}
+                          />
+                          <div className="flex flex-col">
+                            <span>重定向数据目录</span>
+                            <span className="text-[9px] text-slate-400 font-normal">分离并重定向工作/日志/数据路径</span>
+                          </div>
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 动态步骤预览 */}
+              <div className="space-y-2">
+                <span className="text-xs font-semibold text-slate-300 block">将要执行的操作步骤：</span>
+                {preview?.steps?.map((step, idx) => (
+                  <div key={idx} className="flex items-start gap-2 text-[11px]">
+                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5 ${stepColorMap[step.action] || "bg-blue-600/20 text-blue-400"}`}>
+                      {idx + 1}
+                    </span>
+                    <div className="min-w-0">
+                      <span className="text-slate-200 font-medium">{step.description}</span>
+                      {step.target && (
+                        <p className="font-mono text-[10px] text-slate-500 mt-0.5 whitespace-pre-wrap break-all">{step.target}</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {(!preview?.steps || preview.steps.length === 0) && (
+                  <p className="text-[11px] text-slate-500 italic pl-1">暂无需要执行的托管步骤（请勾选上方选项）</p>
+                )}
+              </div>
+
+              {preview?.has_local_install && (
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-[10px]">
+                  <span className="text-emerald-300 font-medium">检测到本地已安装版本</span>
+                  {preview.local_install_root && (
+                    <p className="text-slate-400 mt-0.5">路径: {preview.local_install_root}</p>
+                  )}
+                  {preview.local_install_source && (
+                    <p className="text-slate-500">来源: {preview.local_install_source}</p>
+                  )}
+                  <p className="text-amber-400/80 mt-1">托管后可在版本管理中扫描并注册本地版本</p>
+                </div>
               )}
 
               {!(ui.isSimpleManage || status.is_simple_managed) && (
@@ -1079,20 +1178,9 @@ export default function ProjectDetailPanel({
                 {ui.unmanaging ? "取消托管中..." : "取消托管"}
               </button>
             ) : (
-              def?.simple_mode ? (
-                <button onClick={() => handlePreviewManage(true)} disabled={ui.managing} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]">
-                  {ui.managing ? "托管中..." : "托管此项目"}
-                </button>
-              ) : (
-                <>
-                  <button onClick={() => handlePreviewManage(true)} disabled={ui.managing} className="px-4 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98]">
-                    {"简单托管"}
-                  </button>
-                  <button onClick={() => handlePreviewManage(false)} disabled={ui.managing} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]">
-                    {ui.managing ? "托管中..." : "完全托管"}
-                  </button>
-                </>
-              )
+              <button onClick={() => handlePreviewManage()} disabled={ui.managing} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]">
+                {ui.managing ? "托管中..." : "托管此项目"}
+              </button>
             )}
           </div>
         </div>

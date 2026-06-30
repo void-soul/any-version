@@ -356,11 +356,10 @@ fn sc_service_install_root(service: &str) -> Option<PathBuf> {
 }
 
 fn detect_install_root(def: &ProjectDef, config: &Config, version: Option<&str>) -> Result<Option<PathBuf>, String> {
-    let fully_managed = config.managed_items.contains(&def.id)
-        && !config.simple_managed_items.contains(&def.id)
-        && !def.simple_mode;
+    let delegation = crate::commands::project::scanner::get_project_delegation(config, &def.id, def);
+    let use_symlink = delegation.create_symlink;
 
-    if fully_managed {
+    if use_symlink {
         if let Some(version) = version.filter(|v| !v.trim().is_empty()) {
             let version_dir = PathBuf::from(&config.versions_dir).join(&def.id).join(version);
             if !version_dir.exists() {

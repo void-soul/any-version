@@ -74,6 +74,15 @@ export interface DataDirStatus {
   source?: string | null;
 }
 
+export interface ProjectDelegation {
+  env_vars: string[];
+  path_vars: string[];
+  version_control: boolean;
+  create_symlink: boolean;
+  manage_install_dir: boolean;
+  manage_data_dir: boolean;
+}
+
 export interface ProjectStatus {
   id: string;
   display_name: string;
@@ -91,6 +100,7 @@ export interface ProjectStatus {
   data_dirs_status?: DataDirStatus[];
   show_version?: boolean;
   show_service?: boolean;
+  delegation: ProjectDelegation;
 }
 
 export interface UserConfigurableVar {
@@ -133,6 +143,7 @@ export interface ProjectDef {
   is_git_repo?: boolean;
   bootstrap_cmd?: string;
   env_vars: Array<{ name: string; desc: string; check_type: string; tier?: "core" | "package" | "compat" | "clear" }>;
+  bin_dirs: string[];
   has_cache: boolean;
   has_mirror: boolean;
   has_pkg: boolean;
