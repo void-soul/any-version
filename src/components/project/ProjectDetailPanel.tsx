@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
+import RssReader from "../RssReader";
 import {
   ExternalLink,
   ShieldCheck,
@@ -549,12 +550,8 @@ export default function ProjectDetailPanel({
 
   if (!pid || !project) {
     return (
-      <div className="h-full flex items-center justify-center border-l border-white/5 text-slate-500 select-none">
-        <div className="text-center space-y-3">
-          <Settings className="w-12 h-12 mx-auto text-slate-600" />
-          <p className="text-xs font-medium text-slate-400">{"请从左侧选择一个项目"}</p>
-          <p className="text-[10px] text-slate-600">{"选中后此处将展示该项目的详细信息与管理功能。"}</p>
-        </div>
+      <div className="h-full flex flex-col min-h-0 border-l border-white/5">
+        <RssReader />
       </div>
     );
   }

@@ -54,6 +54,10 @@ pub struct Config {
     pub active_versions: std::collections::HashMap<String, String>,
     pub original_envs: std::collections::HashMap<String, String>,
     pub original_paths: std::collections::HashMap<String, Vec<String>>,
+    #[serde(default)]
+    pub rss_sources: Vec<String>,
+    #[serde(default)]
+    pub has_run_before: bool,
 }
 
 pub fn get_base_dir() -> PathBuf {
@@ -99,6 +103,11 @@ pub fn load_config() -> Config {
         active_versions: std::collections::HashMap::new(),
         original_envs: std::collections::HashMap::new(),
         original_paths: std::collections::HashMap::new(),
+        rss_sources: vec![
+            "https://36kr.com/feed".to_string(),
+            "http://www.ruanyifeng.com/blog/atom.xml".to_string(),
+        ],
+        has_run_before: false,
     };
     let _ = fs::create_dir_all(&base_dir);
     let _ = save_config(&default_config);
@@ -548,5 +557,59 @@ pub fn update_project_menu_config(app_handle: tauri::AppHandle, id: String, show
     save_config(&config)?;
     let _ = crate::tray::rebuild_tray_menu(&app_handle);
     Ok(())
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RssConfig {
+    pub rss_sources: Vec<String>,
+    pub is_first_launch: bool,
+}
+
+#[tauri::command]
+pub fn get_rss_config() -> Result<RssConfig, String> {
+    let mut config = load_config();
+    let is_first_launch = !config.has_run_before;
+    if is_first_launch {
+        config.has_run_before = true;
+        if config.rss_sources.is_empty() {
+            config.rss_sources = vec![
+                "https://36kr.com/feed".to_string(),
+                "http://www.ruanyifeng.com/blog/atom.xml".to_string(),
+            ];
+        }
+        save_config(&config)?;
+    }
+    Ok(RssConfig {
+        rss_sources: config.rss_sources.clone(),
+        is_first_launch,
+    })
+}
+
+#[tauri::command]
+pub fn set_rss_sources(sources: Vec<String>) -> Result<(), String> {
+    let mut config = load_config();
+    config.rss_sources = sources;
+    save_config(&config)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn fetch_rss_feed(url: String) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    
+    let response = client.get(&url)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .send()
+        .await
+        .map_err(|e| format!("请求失败: {}", e))?;
+        
+    let text = response.text()
+        .await
+        .map_err(|e| format!("读取内容失败: {}", e))?;
+        
+    Ok(text)
 }
 

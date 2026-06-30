@@ -99,6 +99,7 @@ fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
 
     let _ = window.show();
     let _ = window.unminimize();
+    let _ = window.set_decorations(false);
     let _ = window.set_focus();
 }
 
@@ -110,6 +111,7 @@ fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::We
     )
     .title(MAIN_WINDOW_TITLE)
     .inner_size(MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT)
+    .decorations(false)
     .center();
 
     if let Some(icon) = app.default_window_icon() {

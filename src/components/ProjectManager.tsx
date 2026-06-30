@@ -4,9 +4,13 @@ import type { ProjectStatus, ProjectCategory } from "./project/types";
 import ProjectListPanel from "./project/ProjectListPanel";
 import ProjectDetailPanel from "./project/ProjectDetailPanel";
 
-export default function ProjectManager() {
+interface ProjectManagerProps {
+  selectedId: string | null;
+  onSelectId: (id: string | null) => void;
+}
+
+export default function ProjectManager({ selectedId, onSelectId }: ProjectManagerProps) {
   const [projects, setProjects] = useState<ProjectStatus[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ProjectCategory | "all">("all");
@@ -84,7 +88,7 @@ export default function ProjectManager() {
           <ProjectListPanel
             projects={projects}
             selectedId={selectedId}
-            onSelect={(p) => setSelectedId(p.id)}
+            onSelect={(p) => onSelectId(p.id)}
             search={search}
             onSearchChange={setSearch}
             filter={filter}

@@ -1,25 +1,41 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import PortScanner from "./PortScanner";
 import EnvBackupManager from "./EnvBackupManager";
 import HttpServer from "./HttpServer";
 import ImageBase64 from "./ImageBase64";
+import PathEnvManager from "./PathEnvManager";
+import RssReader from "./RssReader";
 import { 
   Network, 
   Database, 
   Server, 
-  Image 
+  Image,
+  ListOrdered,
+  Rss
 } from "lucide-react";
 
-type TabKey = "ports" | "backups" | "httpServer" | "imageBase64";
+export type SystemToolsTabKey = "ports" | "backups" | "httpServer" | "imageBase64" | "pathEnv" | "rss";
 
-export default function SystemTools() {
-  const [activeTab, setActiveTab] = useState<TabKey>("ports");
+interface SystemToolsProps {
+  defaultTab?: SystemToolsTabKey;
+}
+
+export default function SystemTools({ defaultTab = "ports" }: SystemToolsProps) {
+  const [activeTab, setActiveTab] = useState<SystemToolsTabKey>(defaultTab);
+
+  useEffect(() => {
+    if (defaultTab) {
+      setActiveTab(defaultTab);
+    }
+  }, [defaultTab]);
 
   const tabs = [
     { key: "ports" as const, label: "端口排查", icon: Network },
     { key: "backups" as const, label: "环境备份", icon: Database },
     { key: "httpServer" as const, label: "HTTP 服务", icon: Server },
     { key: "imageBase64" as const, label: "图片 Base64", icon: Image },
+    { key: "pathEnv" as const, label: "PATH 变量排列", icon: ListOrdered },
+    { key: "rss" as const, label: "资讯", icon: Rss },
   ];
 
   return (
@@ -58,6 +74,14 @@ export default function SystemTools() {
 
         <div className={`absolute inset-0 flex flex-col min-h-0 px-6 py-4 overflow-y-auto ${activeTab === "imageBase64" ? "" : "hidden"}`}>
           <div className="max-w-5xl mx-auto w-full"><ImageBase64 /></div>
+        </div>
+
+        <div className={`absolute inset-0 flex flex-col min-h-0 px-6 py-4 ${activeTab === "pathEnv" ? "" : "hidden"}`}>
+          <PathEnvManager />
+        </div>
+
+        <div className={`absolute inset-0 flex flex-col min-h-0 px-6 py-4 ${activeTab === "rss" ? "" : "hidden"}`}>
+          <RssReader />
         </div>
       </div>
     </div>

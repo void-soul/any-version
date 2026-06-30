@@ -42,6 +42,19 @@ struct PipOutdated {
     latest_version: String,
 }
 
+fn resolve_real_path(path: &std::path::Path) -> String {
+    if let Ok(real_path) = std::fs::canonicalize(path) {
+        let real_path_str = real_path.to_string_lossy().to_string();
+        if real_path_str.starts_with("\\\\?\\") {
+            real_path_str[4..].to_string()
+        } else {
+            real_path_str
+        }
+    } else {
+        path.to_string_lossy().to_string()
+    }
+}
+
 pub fn find_pm_executable(pm_id: &str, project_id: &str) -> String {
     let config = load_config();
     let link_dir = PathBuf::from(&config.links_dir).join(project_id);
@@ -60,7 +73,7 @@ pub fn find_pm_executable(pm_id: &str, project_id: &str) -> String {
                     link_dir.join(runtime_exe_name)
                 };
                 if active_runtime.exists() {
-                    return format!("\"{}\" {}", active_runtime.to_string_lossy(), run_args.join(" "));
+                    return format!("\"{}\" {}", resolve_real_path(&active_runtime), run_args.join(" "));
                 }
             }
         }
@@ -72,7 +85,7 @@ pub fn find_pm_executable(pm_id: &str, project_id: &str) -> String {
         link_dir.join(pm_id)
     };
     if active_exe.exists() {
-        active_exe.to_string_lossy().to_string()
+        resolve_real_path(&active_exe)
     } else {
         pm_id.to_string()
     }
