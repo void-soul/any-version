@@ -1,6 +1,8 @@
 pub mod commands;
 mod tray;
 
+use tauri::Manager;
+
 /// 同步注册表中的完整 PATH 到当前进程，并确保 AnyVersion 托管路径具有最高优先级。
 /// 解决 windows_subsystem="windows" 模式下进程 PATH 不包含用户 PATH 的问题。
 pub fn sync_process_path() {
@@ -148,6 +150,13 @@ pub fn run() {
     sync_process_path();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(commands::http_server::HttpServerState::default())
