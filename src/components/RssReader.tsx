@@ -137,6 +137,39 @@ export default function RssReader() {
   const [testStatus, setTestStatus] = useState<Record<string, "testing" | "success" | "error">>({});
   const [configMessage, setConfigMessage] = useState<string | null>(null);
 
+  // Deleted articles state (stores article links as unique identifiers)
+  const [deletedLinks, setDeletedLinks] = useState<Set<string>>(new Set());
+
+  // Load deleted links from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem("rss_deleted_links");
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          setDeletedLinks(new Set(parsed));
+        }
+      } catch (e) {
+        console.error("解析已读 RSS 链接失败:", e);
+      }
+    }
+  }, []);
+
+  // Handle deleting an article
+  const handleDeleteArticle = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Stop click from propagating to the article card (which opens the article)
+    const newDeleted = new Set(deletedLinks);
+    newDeleted.add(id);
+    setDeletedLinks(newDeleted);
+    localStorage.setItem("rss_deleted_links", JSON.stringify(Array.from(newDeleted)));
+  };
+
+  // Clear all deleted links (restore deleted articles)
+  const handleRestoreArticles = () => {
+    setDeletedLinks(new Set());
+    localStorage.removeItem("rss_deleted_links");
+  };
+
   // Load config & sources
   const loadRssConfig = async () => {
     try {
@@ -232,6 +265,10 @@ export default function RssReader() {
   const filteredArticles = useMemo(() => {
     const now = new Date();
     return articles.filter((article) => {
+      // 过滤掉已删除（已读）的资讯
+      const articleId = article.link || article.title;
+      if (deletedLinks.has(articleId)) return false;
+
       if (dateFilter === "all") return true;
       if (!article.pubDate) return false;
 
@@ -255,7 +292,7 @@ export default function RssReader() {
       }
       return true;
     });
-  }, [articles, dateFilter, customStartDate, customEndDate]);
+  }, [articles, dateFilter, customStartDate, customEndDate, deletedLinks]);
 
   // Article open helper
   const handleOpenArticle = async (url: string) => {
@@ -392,23 +429,36 @@ export default function RssReader() {
           ))}
         </div>
 
-        {dateFilter === "custom" && (
-          <div className="flex items-center gap-1 text-[10px]">
-            <input
-              type="date"
-              value={customStartDate}
-              onChange={(e) => setCustomStartDate(e.target.value)}
-              className="bg-slate-900 border border-white/10 rounded-md px-2 py-0.5 text-slate-300 focus:outline-none"
-            />
-            <span className="text-slate-600">至</span>
-            <input
-              type="date"
-              value={customEndDate}
-              onChange={(e) => setCustomEndDate(e.target.value)}
-              className="bg-slate-900 border border-white/10 rounded-md px-2 py-0.5 text-slate-300 focus:outline-none"
-            />
-          </div>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {dateFilter === "custom" && (
+            <div className="flex items-center gap-1 text-[10px]">
+              <input
+                type="date"
+                value={customStartDate}
+                onChange={(e) => setCustomStartDate(e.target.value)}
+                className="bg-slate-900 border border-white/10 rounded-md px-2 py-0.5 text-slate-300 focus:outline-none"
+              />
+              <span className="text-slate-600">至</span>
+              <input
+                type="date"
+                value={customEndDate}
+                onChange={(e) => setCustomEndDate(e.target.value)}
+                className="bg-slate-900 border border-white/10 rounded-md px-2 py-0.5 text-slate-300 focus:outline-none"
+              />
+            </div>
+          )}
+
+          {deletedLinks.size > 0 && (
+            <button
+              onClick={handleRestoreArticles}
+              className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-blue-500/10 text-blue-400 hover:text-blue-300 hover:bg-blue-500/20 border border-blue-500/20 transition-all cursor-pointer flex items-center gap-1"
+              title="恢复所有已删除（已读过）的资讯"
+            >
+              <RefreshCw className="w-3 h-3" />
+              恢复已读 ({deletedLinks.size})
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 错误提示 */}
@@ -435,41 +485,53 @@ export default function RssReader() {
             </span>
           </div>
         ) : (
-          filteredArticles.map((article, idx) => (
-            <div
-              key={`${article.link}-${idx}`}
-              onClick={() => handleOpenArticle(article.link)}
-              className="p-3.5 rounded-xl border border-white/5 bg-slate-900/30 hover:border-blue-500/30 hover:bg-slate-900/50 transition-all duration-200 cursor-pointer group flex flex-col gap-2 relative overflow-hidden"
-            >
-              {/* 光晕装饰效果 */}
-              <div className="absolute right-0 top-0 w-24 h-24 bg-blue-500/5 blur-2xl rounded-full group-hover:bg-blue-500/10 transition-all pointer-events-none" />
+          filteredArticles.map((article, idx) => {
+            const articleId = article.link || article.title;
+            return (
+              <div
+                key={`${articleId}-${idx}`}
+                onClick={() => handleOpenArticle(article.link)}
+                className="p-3.5 rounded-xl border border-white/5 bg-slate-900/30 hover:border-blue-500/30 hover:bg-slate-900/50 transition-all duration-200 cursor-pointer group flex flex-col gap-2 relative overflow-hidden"
+              >
+                {/* 光晕装饰效果 */}
+                <div className="absolute right-0 top-0 w-24 h-24 bg-blue-500/5 blur-2xl rounded-full group-hover:bg-blue-500/10 transition-all pointer-events-none" />
 
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="px-1.5 py-0.5 bg-orange-500/10 border border-orange-500/20 text-orange-400 text-[8px] font-bold rounded-md flex items-center gap-0.5">
-                    <TrendingUp className="w-2.5 h-2.5" />
-                    {article.source}
-                  </span>
-                  <span className="text-[9.5px] text-slate-500 flex items-center gap-1">
-                    <Calendar className="w-3 h-3" />
-                    {formatDate(article.pubDate)}
-                  </span>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-1.5 py-0.5 bg-orange-500/10 border border-orange-500/20 text-orange-400 text-[8px] font-bold rounded-md flex items-center gap-0.5">
+                      <TrendingUp className="w-2.5 h-2.5" />
+                      {article.source}
+                    </span>
+                    <span className="text-[9.5px] text-slate-500 flex items-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      {formatDate(article.pubDate)}
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={(e) => handleDeleteArticle(articleId, e)}
+                      className="p-1 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all duration-200 cursor-pointer"
+                      title="删除此条资讯 (标记为已读)"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                    <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-400 transition-all" />
+                  </div>
                 </div>
-                
-                <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-400 transition-all flex-shrink-0" />
+
+                <h3 className="text-xs font-bold text-slate-200 group-hover:text-white transition-all leading-relaxed">
+                  {article.title}
+                </h3>
+
+                {article.summary && (
+                  <p className="text-[10px] text-slate-400 leading-relaxed font-sans line-clamp-2">
+                    {article.summary}
+                  </p>
+                )}
               </div>
-
-              <h3 className="text-xs font-bold text-slate-200 group-hover:text-white transition-all leading-relaxed">
-                {article.title}
-              </h3>
-
-              {article.summary && (
-                <p className="text-[10px] text-slate-400 leading-relaxed font-sans line-clamp-2">
-                  {article.summary}
-                </p>
-              )}
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
