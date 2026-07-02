@@ -668,6 +668,50 @@ fn resolve_custom_exe(cmd: &str, config: &crate::commands::config::Config) -> St
     cmd.to_string()
 }
 
+/// 在系统中查找运行时可执行文件（PATH 或已检测到的安装路径）
+fn find_system_runtime(project_id: &str, exe_name: &str) -> Option<std::path::PathBuf> {
+    let mut check_names = vec![exe_name.to_string()];
+    #[cfg(windows)]
+    {
+        let exe_lower = exe_name.to_lowercase();
+        if !exe_lower.ends_with(".exe") && !exe_lower.ends_with(".cmd") && !exe_lower.ends_with(".bat") {
+            check_names.push(format!("{}.exe", exe_name));
+        }
+    }
+
+    // 1. 在 PATH 中查找
+    if let Ok(paths) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            for name in &check_names {
+                let full = dir.join(name);
+                if full.exists() {
+                    return Some(full);
+                }
+            }
+        }
+    }
+
+    // 2. 通过 find_rules 检测到的安装路径中查找
+    if let Some(def) = super::registry::find_by_id(project_id) {
+        if let Some(ref install_root) = super::scanner::detect_install_source(&def).1 {
+            let root = std::path::Path::new(install_root);
+            for name in &check_names {
+                let candidate = root.join(name);
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+                // 也检查 Scripts 子目录（Windows 上常见）
+                let candidate_scripts = root.join("Scripts").join(name);
+                if candidate_scripts.exists() {
+                    return Some(candidate_scripts);
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// 执行 shell 命令并捕获输出（用于包管理器版本检测、镜像切换等）
 #[tauri::command]
 pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String, String> {
@@ -680,7 +724,8 @@ pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String
     let config = crate::commands::config::load_config();
     let mut resolved_cmd = resolve_custom_exe(&cmd, &config);
 
-    // Generic resolution of package manager command execution (like pip run via python)
+    // Generic resolution: 仅对 AnyVersion 托管的项目，将 `pip xxx` 替换为 `"python.exe" -m pip xxx`
+    // 非托管项目保持原命令（如 `pip --version`），直接尝试执行，失败时再 fallback
     let registry = super::registry::registry();
     for proj in &registry {
         for pm in &proj.package_managers {
@@ -689,7 +734,7 @@ pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String
                 if resolved_cmd == pm.id || resolved_cmd.starts_with(&pm_prefix) {
                     let link_dir = std::path::PathBuf::from(&config.links_dir).join(&proj.id);
                     let runtime_exe_name = proj.version_exe.as_deref().unwrap_or(&proj.id);
-                    let active_runtime = if cfg!(windows) {
+                    let link_runtime = if cfg!(windows) {
                         if !runtime_exe_name.ends_with(".exe") {
                             link_dir.join(format!("{}.exe", runtime_exe_name))
                         } else {
@@ -698,10 +743,11 @@ pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String
                     } else {
                         link_dir.join(runtime_exe_name)
                     };
-                    if active_runtime.exists() {
+                    // 仅当 links_dir 中存在运行时时才替换（AnyVersion 托管场景）
+                    if link_runtime.exists() {
                         let pm_run_str = format!(
                             "\"{}\" {}",
-                            active_runtime.to_string_lossy(),
+                            link_runtime.to_string_lossy(),
                             run_args.join(" ")
                         );
                         if resolved_cmd == pm.id {
@@ -761,16 +807,89 @@ pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String
         command.env("NPM_CONFIG_PREFIX", &prefix);
     }
 
+    eprintln!("[run_cmd_capture] cmd={}, resolved_cmd={}", cmd, resolved_cmd);
+
     let output = command
         .output()
         .map_err(|e| format!("执行命令失败: {}", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().trim_matches('"').trim_matches('\'').trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    eprintln!("[run_cmd_capture] status={}, stdout=[{}], stderr=[{}]", output.status.success(), stdout, stderr);
 
     if output.status.success() {
-        Ok(stdout)
-    } else if !stderr.is_empty() {
+        return Ok(stdout);
+    }
+
+    // 命令执行失败，依次尝试两种回退方式：
+    // 1. 直接执行原命令（如 pip --version），适用于 pip 在 PATH 中但不在 AnyVersion 托管 python 中的场景
+    // 2. 通过 find_system_runtime 找到运行时再执行（如 python -m pip --version）
+    let original_cmd = resolve_custom_exe(&cmd, &config);
+    if resolved_cmd != original_cmd {
+        // 转换后的命令失败了，先尝试原命令直接执行
+        let mut direct = super::super::hidden_cmd::hidden_cmd("cmd");
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            direct.raw_arg(&format!("/c \"chcp 65001 >nul && {}\"", original_cmd));
+        }
+        if let Ok(prefix) = std::env::var("NPM_CONFIG_PREFIX") {
+            direct.env("NPM_CONFIG_PREFIX", &prefix);
+        }
+        if let Ok(out) = direct.output() {
+            if out.status.success() {
+                let stdout = String::from_utf8_lossy(&out.stdout).trim().trim_matches('"').trim_matches('\'').trim().to_string();
+                eprintln!("[run_cmd_capture] fallback: 直接执行原命令成功, stdout=[{}]", stdout);
+                return Ok(stdout);
+            }
+        }
+    }
+    // 原命令也失败了，尝试通过 find_system_runtime 找到运行时再执行
+    for proj in &registry {
+        for pm in &proj.package_managers {
+            if let Some(ref run_args) = pm.run_via_runtime_args {
+                let pm_prefix = format!("{} ", pm.id);
+                if cmd == pm.id || cmd.starts_with(&pm_prefix) {
+                    let runtime_exe_name = proj.version_exe.as_deref().unwrap_or(&proj.id);
+                    if let Some(runtime_path) = find_system_runtime(&proj.id, runtime_exe_name) {
+                        // 避免重复使用已失败的同一路径
+                        if runtime_path.to_string_lossy().to_lowercase() == config.links_dir.to_lowercase() {
+                            continue;
+                        }
+                        let pm_run_str = format!(
+                            "\"{}\" {}",
+                            runtime_path.to_string_lossy(),
+                            run_args.join(" ")
+                        );
+                        let fallback_cmd = if cmd == pm.id {
+                            pm_run_str
+                        } else {
+                            cmd.replacen(&pm.id, &pm_run_str, 1)
+                        };
+                        let mut fallback = super::super::hidden_cmd::hidden_cmd("cmd");
+                        #[cfg(windows)]
+                        {
+                            use std::os::windows::process::CommandExt;
+                            fallback.raw_arg(&format!("/c \"chcp 65001 >nul && {}\"", fallback_cmd));
+                        }
+                        if let Ok(prefix) = std::env::var("NPM_CONFIG_PREFIX") {
+                            fallback.env("NPM_CONFIG_PREFIX", &prefix);
+                        }
+                        if let Ok(out) = fallback.output() {
+                            if out.status.success() {
+                                let stdout = String::from_utf8_lossy(&out.stdout).trim().trim_matches('"').trim_matches('\'').trim().to_string();
+                                eprintln!("[run_cmd_capture] fallback: find_system_runtime 成功, stdout=[{}]", stdout);
+                                return Ok(stdout);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
         Err(stderr)
     } else {
         Err(format!("命令执行失败 (exit code: {})", output.status.code().unwrap_or(-1)))

@@ -1,6 +1,6 @@
 [package]
 name = "any-version"
-version = "2.4.7"
+version = "2.4.8"
 description = "Windows Multi-Language Dev Environment Version Manager"
 authors = ["AnyVersion Team"]
 edition = "2021"
