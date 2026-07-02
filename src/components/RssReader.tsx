@@ -13,7 +13,9 @@ import {
   AlertTriangle,
   CheckCircle,
   HelpCircle,
-  TrendingUp
+  TrendingUp,
+  Bookmark,
+  BookmarkCheck
 } from "lucide-react";
 
 interface RssArticle {
@@ -137,20 +139,38 @@ export default function RssReader() {
   const [testStatus, setTestStatus] = useState<Record<string, "testing" | "success" | "error">>({});
   const [configMessage, setConfigMessage] = useState<string | null>(null);
 
+  // Current view: "feed" = all articles, "favorites" = bookmarked
+  const [view, setView] = useState<"feed" | "favorites">("feed");
+
   // Deleted articles state (stores article links as unique identifiers)
   const [deletedLinks, setDeletedLinks] = useState<Set<string>>(new Set());
 
-  // Load deleted links from localStorage on mount
+  // Favorites state — stores full RssArticle objects keyed by articleId
+  const [favorites, setFavorites] = useState<Map<string, RssArticle>>(new Map());
+
+  // Load deleted links and favorites from localStorage on mount
   useEffect(() => {
     const stored = localStorage.getItem("rss_deleted_links");
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          setDeletedLinks(new Set(parsed));
-        }
+        if (Array.isArray(parsed)) setDeletedLinks(new Set(parsed));
       } catch (e) {
         console.error("解析已读 RSS 链接失败:", e);
+      }
+    }
+    const favStored = localStorage.getItem("rss_favorites");
+    if (favStored) {
+      try {
+        const parsed: [string, RssArticle][] = JSON.parse(favStored);
+        if (Array.isArray(parsed)) {
+          const restored = new Map<string, RssArticle>(
+            parsed.map(([id, a]) => [id, { ...a, pubDate: a.pubDate ? new Date(a.pubDate as any) : null }])
+          );
+          setFavorites(restored);
+        }
+      } catch (e) {
+        console.error("解析收藏 RSS 数据失败:", e);
       }
     }
   }, []);
@@ -168,6 +188,29 @@ export default function RssReader() {
   const handleRestoreArticles = () => {
     setDeletedLinks(new Set());
     localStorage.removeItem("rss_deleted_links");
+  };
+
+  // Toggle favorite
+  const handleToggleFavorite = (article: RssArticle, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const id = article.link || article.title;
+    const next = new Map(favorites);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.set(id, article);
+    }
+    setFavorites(next);
+    localStorage.setItem("rss_favorites", JSON.stringify(Array.from(next.entries())));
+  };
+
+  // Remove a favorite (from favorites view)
+  const handleRemoveFavorite = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const next = new Map(favorites);
+    next.delete(id);
+    setFavorites(next);
+    localStorage.setItem("rss_favorites", JSON.stringify(Array.from(next.entries())));
   };
 
   // Load config & sources
@@ -369,7 +412,7 @@ export default function RssReader() {
     <div className="flex-grow flex flex-col min-h-0 bg-slate-950/20 text-slate-100 rounded-xl overflow-hidden border border-white/5">
       {/* 顶部工具条 */}
       <div className="p-4 border-b border-white/5 bg-slate-900/40 backdrop-blur-md flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <div className="p-1.5 rounded-lg bg-orange-500/10 border border-orange-500/20 text-orange-400">
             <Rss className="w-4 h-4" />
           </div>
@@ -377,12 +420,38 @@ export default function RssReader() {
             <h2 className="text-sm font-bold text-slate-200">订阅资讯中心</h2>
             <p className="text-[10px] text-slate-400 mt-0.5">获取您配置的 RSS/Atom 资讯列表，保持与最新开发动态同步。</p>
           </div>
+          {/* View tabs */}
+          <div className="flex items-center gap-0.5 ml-2 bg-slate-900/60 border border-white/5 rounded-lg p-0.5">
+            <button
+              onClick={() => setView("feed")}
+              className={`px-2.5 py-1 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+                view === "feed" ? "bg-slate-700 text-slate-100" : "text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              <Rss className="w-3 h-3" />
+              全部资讯
+            </button>
+            <button
+              onClick={() => setView("favorites")}
+              className={`px-2.5 py-1 rounded-md text-[10px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                view === "favorites" ? "bg-amber-500/20 text-amber-300" : "text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              <Bookmark className="w-3 h-3" />
+              我的收藏
+              {favorites.size > 0 && (
+                <span className={`text-[9px] font-bold px-1 rounded ${
+                  view === "favorites" ? "bg-amber-500/30 text-amber-300" : "bg-white/10 text-slate-400"
+                }`}>{favorites.size}</span>
+              )}
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
           <button
             onClick={() => fetchAllFeeds(sources, true)}
-            disabled={loading}
+            disabled={loading || view === "favorites"}
             className="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-[10px] font-semibold text-slate-300 hover:text-white hover:bg-white/10 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
@@ -402,7 +471,8 @@ export default function RssReader() {
         </div>
       </div>
 
-      {/* 筛选过滤条 */}
+      {/* 筛选过滤条 —— 仅在普通资讯视图下展示 */}
+      {view === "feed" && (
       <div className="px-4 py-2 bg-slate-900/10 border-b border-white/5 flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-[10px] text-slate-500 font-semibold flex items-center gap-1 mr-1">
@@ -460,6 +530,7 @@ export default function RssReader() {
           )}
         </div>
       </div>
+      )}
 
       {/* 错误提示 */}
       {error && (
@@ -471,67 +542,137 @@ export default function RssReader() {
 
       {/* 内容主体 */}
       <div className="flex-grow min-h-0 overflow-y-auto p-4 space-y-3">
-        {loading ? (
-          <div className="h-48 flex flex-col items-center justify-center text-slate-500">
-            <RefreshCw className="w-8 h-8 animate-spin mb-2 text-blue-500" />
-            <span className="text-[11px]">正在解析并抓取资讯列表中，请稍候...</span>
-          </div>
-        ) : filteredArticles.length === 0 ? (
-          <div className="h-64 border border-dashed border-white/5 rounded-2xl flex flex-col items-center justify-center text-slate-500 p-8 text-center bg-white/[0.01]">
-            <Rss className="w-10 h-10 text-slate-700 mb-2 animate-pulse" />
-            <span className="text-xs font-bold text-slate-400">暂无资讯数据</span>
-            <span className="text-[10px] text-slate-600 mt-1 max-w-[280px]">
-              没有匹配到当前的日期过滤条件，或是当前订阅源中没有文章。您也可以点击右上角“配置源”添加其他 RSS 源。
-            </span>
-          </div>
-        ) : (
-          filteredArticles.map((article, idx) => {
-            const articleId = article.link || article.title;
-            return (
-              <div
-                key={`${articleId}-${idx}`}
-                onClick={() => handleOpenArticle(article.link)}
-                className="p-3.5 rounded-xl border border-white/5 bg-slate-900/30 hover:border-blue-500/30 hover:bg-slate-900/50 transition-all duration-200 cursor-pointer group flex flex-col gap-2 relative overflow-hidden"
-              >
-                {/* 光晕装饰效果 */}
-                <div className="absolute right-0 top-0 w-24 h-24 bg-blue-500/5 blur-2xl rounded-full group-hover:bg-blue-500/10 transition-all pointer-events-none" />
 
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="px-1.5 py-0.5 bg-orange-500/10 border border-orange-500/20 text-orange-400 text-[8px] font-bold rounded-md flex items-center gap-0.5">
-                      <TrendingUp className="w-2.5 h-2.5" />
-                      {article.source}
-                    </span>
-                    <span className="text-[9.5px] text-slate-500 flex items-center gap-1">
-                      <Calendar className="w-3 h-3" />
-                      {formatDate(article.pubDate)}
-                    </span>
+        {/* ── 收藏视图 ── */}
+        {view === "favorites" ? (
+          favorites.size === 0 ? (
+            <div className="h-64 border border-dashed border-white/5 rounded-2xl flex flex-col items-center justify-center text-slate-500 p-8 text-center bg-white/[0.01]">
+              <Bookmark className="w-10 h-10 text-slate-700 mb-3" />
+              <span className="text-xs font-bold text-slate-400">暂无收藏</span>
+              <span className="text-[10px] text-slate-600 mt-1 max-w-[260px]">
+                在资讯列表中悬停卡片，点击右上角的 <BookmarkCheck className="w-3 h-3 inline mx-0.5" /> 即可收藏感兴趣的文章。
+              </span>
+            </div>
+          ) : (
+            Array.from(favorites.values()).map((article, idx) => {
+              const articleId = article.link || article.title;
+              return (
+                <div
+                  key={`fav-${articleId}-${idx}`}
+                  onClick={() => handleOpenArticle(article.link)}
+                  className="p-3.5 rounded-xl border border-amber-500/20 bg-amber-500/5 hover:border-amber-400/40 hover:bg-amber-500/10 transition-all duration-200 cursor-pointer group flex flex-col gap-2 relative overflow-hidden"
+                >
+                  <div className="absolute right-0 top-0 w-24 h-24 bg-amber-500/5 blur-2xl rounded-full group-hover:bg-amber-500/10 transition-all pointer-events-none" />
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="px-1.5 py-0.5 bg-orange-500/10 border border-orange-500/20 text-orange-400 text-[8px] font-bold rounded-md flex items-center gap-0.5">
+                        <TrendingUp className="w-2.5 h-2.5" />
+                        {article.source}
+                      </span>
+                      <span className="text-[9.5px] text-slate-500 flex items-center gap-1">
+                        <Calendar className="w-3 h-3" />
+                        {formatDate(article.pubDate)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        onClick={(e) => handleRemoveFavorite(articleId, e)}
+                        className="p-1 rounded-md text-amber-500/50 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all duration-200 cursor-pointer"
+                        title="移除收藏"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                      <BookmarkCheck className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+                      <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-amber-400 transition-all" />
+                    </div>
                   </div>
-                  
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <button
-                      onClick={(e) => handleDeleteArticle(articleId, e)}
-                      className="p-1 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all duration-200 cursor-pointer"
-                      title="删除此条资讯 (标记为已读)"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                    <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-400 transition-all" />
-                  </div>
+                  <h3 className="text-xs font-bold text-slate-200 group-hover:text-white transition-all leading-relaxed">
+                    {article.title}
+                  </h3>
+                  {article.summary && (
+                    <p className="text-[10px] text-slate-400 leading-relaxed font-sans line-clamp-2">
+                      {article.summary}
+                    </p>
+                  )}
                 </div>
-
-                <h3 className="text-xs font-bold text-slate-200 group-hover:text-white transition-all leading-relaxed">
-                  {article.title}
-                </h3>
-
-                {article.summary && (
-                  <p className="text-[10px] text-slate-400 leading-relaxed font-sans line-clamp-2">
-                    {article.summary}
-                  </p>
-                )}
-              </div>
-            );
-          })
+              );
+            })
+          )
+        ) : (
+          /* ── 普通资讯视图 ── */
+          loading ? (
+            <div className="h-48 flex flex-col items-center justify-center text-slate-500">
+              <RefreshCw className="w-8 h-8 animate-spin mb-2 text-blue-500" />
+              <span className="text-[11px]">正在解析并抓取资讯列表中，请稍候...</span>
+            </div>
+          ) : filteredArticles.length === 0 ? (
+            <div className="h-64 border border-dashed border-white/5 rounded-2xl flex flex-col items-center justify-center text-slate-500 p-8 text-center bg-white/[0.01]">
+              <Rss className="w-10 h-10 text-slate-700 mb-2 animate-pulse" />
+              <span className="text-xs font-bold text-slate-400">暂无资讯数据</span>
+              <span className="text-[10px] text-slate-600 mt-1 max-w-[280px]">
+                没有匹配到当前的日期过滤条件，或是当前订阅源中没有文章。您也可以点击右上角“配置源”添加其他 RSS 源。
+              </span>
+            </div>
+          ) : (
+            filteredArticles.map((article, idx) => {
+              const articleId = article.link || article.title;
+              const isFavorited = favorites.has(articleId);
+              return (
+                <div
+                  key={`${articleId}-${idx}`}
+                  onClick={() => handleOpenArticle(article.link)}
+                  className="p-3.5 rounded-xl border border-white/5 bg-slate-900/30 hover:border-blue-500/30 hover:bg-slate-900/50 transition-all duration-200 cursor-pointer group flex flex-col gap-2 relative overflow-hidden"
+                >
+                  {/* 光晕装饰效果 */}
+                  <div className="absolute right-0 top-0 w-24 h-24 bg-blue-500/5 blur-2xl rounded-full group-hover:bg-blue-500/10 transition-all pointer-events-none" />
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="px-1.5 py-0.5 bg-orange-500/10 border border-orange-500/20 text-orange-400 text-[8px] font-bold rounded-md flex items-center gap-0.5">
+                        <TrendingUp className="w-2.5 h-2.5" />
+                        {article.source}
+                      </span>
+                      <span className="text-[9.5px] text-slate-500 flex items-center gap-1">
+                        <Calendar className="w-3 h-3" />
+                        {formatDate(article.pubDate)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {/* 收藏按钮：已收藏时常驻，未收藏时 hover 显示 */}
+                      <button
+                        onClick={(e) => handleToggleFavorite(article, e)}
+                        className={`p-1 rounded-md transition-all duration-200 cursor-pointer ${
+                          isFavorited
+                            ? "text-amber-400 hover:text-amber-300 hover:bg-amber-500/10"
+                            : "text-slate-500 hover:text-amber-400 hover:bg-amber-500/10 opacity-0 group-hover:opacity-100"
+                        }`}
+                        title={isFavorited ? "取消收藏" : "收藏此文章"}
+                      >
+                        {isFavorited
+                          ? <BookmarkCheck className="w-3.5 h-3.5" />
+                          : <Bookmark className="w-3.5 h-3.5" />}
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteArticle(articleId, e)}
+                        className="p-1 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all duration-200 cursor-pointer"
+                        title="删除此条资讯 (标记为已读)"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                      <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-400 transition-all" />
+                    </div>
+                  </div>
+                  <h3 className="text-xs font-bold text-slate-200 group-hover:text-white transition-all leading-relaxed">
+                    {article.title}
+                  </h3>
+                  {article.summary && (
+                    <p className="text-[10px] text-slate-400 leading-relaxed font-sans line-clamp-2">
+                      {article.summary}
+                    </p>
+                  )}
+                </div>
+              );
+            })
+          )
         )}
       </div>
 
