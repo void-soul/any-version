@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -9,7 +9,8 @@ import {
   Box,
   HelpCircle,
   TrendingUp,
-  ExternalLink
+  ExternalLink,
+  Rocket
 } from "lucide-react";
 
 interface PackageInfo {
@@ -25,7 +26,10 @@ export default function PkgManager() {
   const [packages, setPackages] = useState<PackageInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [upgradingName, setUpgradingName] = useState<string | null>(null);
+  const [upgradingAll, setUpgradingAll] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const outdatedCount = useMemo(() => packages.filter(p => p.status === "outdated").length, [packages]);
 
   const fetchPackages = async (sdk: "nodejs" | "python") => {
     setLoading(true);
@@ -56,6 +60,24 @@ export default function PkgManager() {
       setErrorMsg(`升级 ${pkgName} 失败: ${e}`);
     } finally {
       setUpgradingName(null);
+    }
+  };
+
+  const handleUpgradeAll = async () => {
+    if (!confirm(`确定要升级全部 ${outdatedCount} 个过期包吗？`)) return;
+    setUpgradingAll(true);
+    setErrorMsg(null);
+    try {
+      const results = await invoke<Array<{ name: string; success: boolean; error: string | null }>>("upgrade_all_global_packages", { sdkName: activeSdk });
+      const failed = results.filter(r => !r.success);
+      if (failed.length > 0) {
+        setErrorMsg(`部分包升级失败：${failed.map(f => `${f.name}(${f.error})`).join("、")}`);
+      }
+      await fetchPackages(activeSdk);
+    } catch (e: any) {
+      setErrorMsg(`批量升级失败: ${e}`);
+    } finally {
+      setUpgradingAll(false);
     }
   };
 
@@ -105,6 +127,17 @@ export default function PkgManager() {
               Python (Pip)
             </button>
           </div>
+
+          {outdatedCount > 0 && (
+            <button
+              onClick={handleUpgradeAll}
+              disabled={upgradingAll || loading}
+              className="flex items-center gap-2 px-3.5 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all shadow-lg shadow-amber-500/10"
+            >
+              <Rocket className={`w-3.5 h-3.5 ${upgradingAll ? "animate-pulse" : ""}`} />
+              {upgradingAll ? "升级中..." : `全部升级 (${outdatedCount})`}
+            </button>
+          )}
 
           <button
             onClick={() => fetchPackages(activeSdk)}

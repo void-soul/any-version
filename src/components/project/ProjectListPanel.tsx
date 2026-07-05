@@ -103,6 +103,7 @@ export default function ProjectListPanel({
                     <span className={`flex-shrink-0 px-1 py-px rounded text-[7px] font-semibold border ${
                       p.category === "language" ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
                         : p.category === "tool" ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                        : p.category === "ai_tool" ? "bg-violet-500/10 text-violet-400 border-violet-500/20"
                         : "bg-purple-500/10 text-purple-400 border-purple-500/20"
                     }`}>
                       {categoryLabel(p.category)}

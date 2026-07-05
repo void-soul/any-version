@@ -2,7 +2,7 @@
 // AnyVersion 项目管理 - TypeScript 类型定义
 // ============================================================
 
-export type ProjectCategory = "language" | "tool" | "service";
+export type ProjectCategory = "language" | "tool" | "service" | "ai_tool";
 
 export interface EnvVarStatus {
   name: string;
@@ -186,6 +186,8 @@ export function categoryLabel(cat: ProjectCategory): string {
       return "工具";
     case "service":
       return "服务";
+    case "ai_tool":
+      return "AI";
     default:
       return cat;
   }

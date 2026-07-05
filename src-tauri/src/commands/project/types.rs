@@ -12,6 +12,8 @@ pub enum ProjectCategory {
     Language,
     Tool,
     Service,
+    #[serde(rename = "ai_tool")]
+    AiTool,
 }
 
 /// 环境变量定义

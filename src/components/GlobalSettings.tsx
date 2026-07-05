@@ -20,6 +20,14 @@ interface Config {
   links_dir: string;
 }
 
+interface AiConfig {
+  providers: any[];
+  active_provider: string | null;
+  active_model: string | null;
+  proxy_port: number;
+  default_project_path: string;
+}
+
 interface MigrateResult {
   moved_versions: boolean;
   moved_links: boolean;
@@ -55,6 +63,10 @@ export default function GlobalSettings() {
   const [progress, setProgress] = useState<MigrateProgress | null>(null);
   const [deletingOldDirs, setDeletingOldDirs] = useState(false);
   const [deletedOldDirs, setDeletedOldDirs] = useState<string[] | null>(null);
+  const [aiConfig, setAiConfig] = useState<AiConfig | null>(null);
+  const [aiDefaultPath, setAiDefaultPath] = useState("");
+  const [savingAi, setSavingAi] = useState(false);
+  const [aiSaved, setAiSaved] = useState(false);
 
   const fetchConfig = async () => {
     setLoading(true);
@@ -81,9 +93,37 @@ export default function GlobalSettings() {
     }
   };
 
+  const fetchAiConfig = async () => {
+    try {
+      const cfg = await invoke<AiConfig>("get_ai_config");
+      setAiConfig(cfg);
+      setAiDefaultPath(cfg.default_project_path || "");
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleSaveAiConfig = async () => {
+    if (!aiConfig) return;
+    setSavingAi(true);
+    setAiSaved(false);
+    try {
+      const updated: AiConfig = { ...aiConfig, default_project_path: aiDefaultPath };
+      await invoke("save_ai_config", { config: updated });
+      setAiConfig(updated);
+      setAiSaved(true);
+      setTimeout(() => setAiSaved(false), 2000);
+    } catch (e: any) {
+      alert(`保存失败: ${e}`);
+    } finally {
+      setSavingAi(false);
+    }
+  };
+
   useEffect(() => {
     fetchConfig();
     fetchVersion();
+    fetchAiConfig();
   }, []);
 
   const pathsChanged = (): boolean => {
@@ -189,16 +229,12 @@ export default function GlobalSettings() {
   };
 
   return (
-    <div className="flex-1 p-8 overflow-y-auto space-y-6 h-full select-none max-w-3xl mx-auto">
+    <div className="flex-1 p-8 space-y-6 select-none max-w-3xl mx-auto">
       {/* Header */}
-      <div>
-        <h2 className="text-xl font-semibold text-white tracking-wide">设置</h2>
-        <p className="text-xs text-slate-400 mt-1">配置工作目录、版本检查与应用升级</p>
-      </div>
 
       <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-6">
         <div className="flex items-center gap-2 pb-3 border-b border-white/5">
-          <FolderKanban className="w-4 h-4 text-blue-400" />
+          <FolderKanban className="w-4 h-4 text-red-400" />
           <h3 className="text-xs font-semibold text-white">AnyVersion 工作目录说明</h3>
         </div>
 
@@ -210,7 +246,7 @@ export default function GlobalSettings() {
 
         {loading ? (
           <div className="text-xs text-slate-400 py-6 flex items-center gap-2">
-            <RefreshCw className="w-4 h-4 animate-spin text-blue-400" />
+            <RefreshCw className="w-4 h-4 animate-spin text-red-400" />
             正在读取系统配置...
           </div>
         ) : (
@@ -284,20 +320,20 @@ export default function GlobalSettings() {
 
             {/* 迁移进度条 */}
             {progress && (
-              <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl space-y-2 animate-fadeIn">
+              <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl space-y-2 animate-fadeIn">
                 <div className="flex items-center justify-between text-[10px]">
-                  <span className="text-blue-300 font-semibold flex items-center gap-1.5">
+                  <span className="text-red-300 font-semibold flex items-center gap-1.5">
                     <Loader2 className="w-3 h-3 animate-spin" />
                     {progress.stage}
                   </span>
                   {progress.total > 0 && (
-                    <span className="text-blue-400 font-mono">{progress.current}/{progress.total}</span>
+                    <span className="text-red-400 font-mono">{progress.current}/{progress.total}</span>
                   )}
                 </div>
                 {progress.total > 0 && (
-                  <div className="w-full bg-blue-500/20 rounded-full h-1.5 overflow-hidden">
+                  <div className="w-full bg-red-500/20 rounded-full h-1.5 overflow-hidden">
                     <div
-                      className="bg-blue-400 h-full rounded-full transition-all duration-300"
+                      className="bg-red-400 h-full rounded-full transition-all duration-300"
                       style={{ width: `${Math.round((progress.current / progress.total) * 100)}%` }}
                     />
                   </div>
@@ -370,7 +406,7 @@ export default function GlobalSettings() {
               <button
                 onClick={handleSaveClick}
                 disabled={saving || !versionsDir || !linksDir}
-                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/10 cursor-pointer transition-all flex items-center gap-1.5"
+                className="px-6 py-2.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-red-500/10 cursor-pointer transition-all flex items-center gap-1.5"
               >
                 <Save className="w-3.5 h-3.5" />
                 {saving ? "正在保存..." : "保存配置"}
@@ -384,7 +420,7 @@ export default function GlobalSettings() {
       <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-white/5">
           <div className="flex items-center gap-2">
-            <RefreshCw className="w-4 h-4 text-blue-400" />
+            <RefreshCw className="w-4 h-4 text-red-400" />
             <h3 className="text-xs font-semibold text-white">版本检查与升级</h3>
           </div>
           <button
@@ -431,6 +467,49 @@ export default function GlobalSettings() {
         )}
       </div>
 
+      {/* AI 配置 */}
+      <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-4">
+        <div className="flex items-center gap-2 pb-3 border-b border-white/5">
+          <FolderKanban className="w-4 h-4 text-red-400" />
+          <h3 className="text-xs font-semibold text-white">AI 配置</h3>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-[10px] text-slate-500 uppercase font-semibold">AI 默认项目目录</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={aiDefaultPath}
+              onChange={(e) => setAiDefaultPath(e.target.value)}
+              className="flex-1 glass-input px-3.5 py-2.5 text-xs font-mono"
+              placeholder="e.g. C:\Users\Admin\projects"
+            />
+            <button onClick={() => handleBrowseFolder(setAiDefaultPath)} className="p-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-lg border border-white/5 cursor-pointer transition-all flex-shrink-0" title="选择文件夹">
+              <FolderOpen className="w-4 h-4" />
+            </button>
+          </div>
+          <p className="text-[9px] text-slate-500">启动 AI 工具时的默认工作目录。</p>
+        </div>
+
+        <div className="flex items-center justify-between pt-4 border-t border-white/5">
+          <div>
+            {aiSaved && (
+              <span className="text-xs font-medium text-emerald-400 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4" />
+                已保存
+              </span>
+            )}
+          </div>
+          <button
+            onClick={handleSaveAiConfig}
+            disabled={savingAi || !aiConfig}
+            className="px-6 py-2.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-red-500/10 cursor-pointer transition-all flex items-center gap-1.5"
+          >
+            <Save className="w-3.5 h-3.5" />
+            {savingAi ? "保存中..." : "保存"}
+          </button>
+        </div>
+      </div>
 
     </div>
   );

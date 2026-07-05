@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod proxy;
 mod tray;
 
 use tauri::Manager;
@@ -207,6 +208,7 @@ pub fn run() {
             commands::port::get_reserved_ports,
             commands::pkg::get_global_packages,
             commands::pkg::upgrade_global_package,
+            commands::pkg::upgrade_all_global_packages,
             commands::mirror::get_mirrors_list,
             commands::mirror::set_mirror,
             commands::service::get_running_services,
@@ -245,6 +247,15 @@ pub fn run() {
             tray::refresh_tray_menu,
             commands::conflict::get_conflict_managers_status,
             commands::conflict::handle_conflict_manager_action,
+            commands::ai::get_ai_config,
+            commands::ai::save_ai_config,
+            commands::ai::detect_ai_tools,
+            commands::ai::test_model_connection,
+            commands::ai::launch_ai_tool,
+            commands::ai::get_ai_sessions,
+            commands::ai::remove_ai_session,
+            commands::ai::start_proxy,
+            commands::ai::detect_terminals,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

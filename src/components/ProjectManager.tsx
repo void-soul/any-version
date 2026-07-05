@@ -72,6 +72,13 @@ export default function ProjectManager({ selectedId, onSelectId }: ProjectManage
 
   useEffect(() => { fetchProjects(); }, []);
 
+  // 自动选中第一个项目
+  useEffect(() => {
+    if (projects.length > 0 && !selectedId) {
+      onSelectId(projects[0].id);
+    }
+  }, [projects, selectedId, onSelectId]);
+
   const selectedProject = projects.find((p) => p.id === selectedId) ?? null;
 
   return (

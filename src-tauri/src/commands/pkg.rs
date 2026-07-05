@@ -329,7 +329,44 @@ pub fn upgrade_global_package(sdk_name: String, pkg_name: String) -> Result<(), 
 
     let final_cmd = resolved_upgrade_template.replace("{pkg}", pkg_name.trim());
     let _output = execute_command_string(&final_cmd)?;
-    
+
     // Simple check: if command executed without panic or tauri error, consider success
     Ok(())
+}
+
+/// 升级全部过期的全局包，返回每个包的升级结果
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct UpgradeResult {
+    pub name: String,
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub fn upgrade_all_global_packages(sdk_name: String) -> Result<Vec<UpgradeResult>, String> {
+    let packages = get_global_packages(sdk_name.clone())?;
+    let outdated: Vec<&PackageInfo> = packages.iter().filter(|p| p.status == "outdated").collect();
+
+    if outdated.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut results = Vec::new();
+    for pkg in &outdated {
+        let result = match upgrade_global_package(sdk_name.clone(), pkg.name.clone()) {
+            Ok(()) => UpgradeResult {
+                name: pkg.name.clone(),
+                success: true,
+                error: None,
+            },
+            Err(e) => UpgradeResult {
+                name: pkg.name.clone(),
+                success: false,
+                error: Some(e),
+            },
+        };
+        results.push(result);
+    }
+
+    Ok(results)
 }
