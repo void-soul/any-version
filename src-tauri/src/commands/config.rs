@@ -596,20 +596,21 @@ pub fn set_rss_sources(sources: Vec<String>) -> Result<(), String> {
 #[tauri::command]
 pub async fn fetch_rss_feed(url: String) -> Result<String, String> {
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(8))
+        .connect_timeout(std::time::Duration::from_secs(3))
         .build()
         .map_err(|e| e.to_string())?;
-    
+
     let response = client.get(&url)
         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .send()
         .await
         .map_err(|e| format!("请求失败: {}", e))?;
-        
+
     let text = response.text()
         .await
         .map_err(|e| format!("读取内容失败: {}", e))?;
-        
+
     Ok(text)
 }
 

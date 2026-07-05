@@ -1,85 +1,83 @@
-# CLAUDE.md
+已完成的核心功能
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+  1. 导航重构
+  - 顶部栏：Logo + SDK/AI 主功能胶囊 + 资讯/工具/设置辅助胶囊
+  - 5 个独立页面，各有主题色（蓝/紫/橙/绿/红）
 
-## Project Overview
+  2. AI 助手模块（4 个顶级功能）
 
-AnyVersion is a **Windows multi-language development environment version manager** built with Tauri 2 (Rust backend) + React 19 (TypeScript frontend). It manages SDK versions (Node.js, Java, Python, Go, etc.) — installing, switching, and cleaning up environment variables, caches, mirrors, and services.
+  ┌──────────┬───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │   功能   │                                                                   说明                                                                    │
+  ├──────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 模型配置 │ Provider CRUD（20+ 预设含供应商/中转站）、API Key、双 URL（OpenAI+Anthropic）、测速、代理开关、模型别名映射（下拉选择）、自动获取模型列表 │
+  ├──────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 工具启动 │ 左右分栏，左侧 12 个工具列表，右侧选模型→会话→目录→终端→启动                                                                              │
+  ├──────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 用量统计 │ Token 统计（输入/输出/总计）、按工具/模型/日期分组、柱状图                                                                                │
+  ├──────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 技能管理 │ 本地安装 + skills.sh 市场搜索/安装 + 按工具部署                                                                                           │
+  └──────────┴───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
-## Build & Dev Commands
+  3. 代理系统
+  - Anthropic ↔ OpenAI 协议转换
+  - 模型别名映射（sonnet/opus/haiku/fable → 实际模型）
+  - Cache Injector、Thinking Optimizer/Rectifier/Budget Rectifier、Media Sanitizer、DeepSeek 规范化
+  - Claude Code settings.json 写入
 
-| Command | Description |
-|---------|-------------|
-| `pnpm install` | Install frontend dependencies |
-| `pnpm dev` | Start Vite dev server (port 9999) |
-| `pnpm tauri dev` | Full Tauri dev mode (auto-starts Vite on :9999) |
-| `pnpm build` | Build frontend (tsc + vite build) |
-| `pnpm tauri build` | Build production installer |
-| `pnpm bump <x.y.z>` | Bump version across package.json, Cargo.toml, tauri.conf.json |
+  4. 其他
+  - SDK 页面自动选中首个项目
+  - 全局包管理器"全部升级"按钮
+  - pip 检测修复（通过 cmd /c 执行 .cmd 文件）
+  - 新增 uv 作为 Python 包管理器
+  - 资讯页独立化、滚动条修复
 
-**Dev workflow**: Run `pnpm dev` in one terminal, then `pnpm tauri dev` in another (or just `pnpm tauri dev` which chains them).
+  后端 Rust 文件
 
-## Architecture
+  ┌──────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────┐
+  │             文件             │                                       职责                                        │
+  ├──────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ commands/ai.rs               │ AI 配置、工具检测(12个)、会话扫描、工具启动、用量统计、Skills 管理、skills.sh API │
+  ├──────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ commands/pkg.rs              │ 全局包管理、批量升级                                                              │
+  ├──────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ commands/project/commands.rs │ run_cmd_capture（pip 修复）                                                       │
+  ├──────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ proxy/server.rs              │ Axum 代理服务器                                                                   │
+  ├──────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ proxy/transform.rs           │ Anthropic↔OpenAI 转换、流式 SSE、模型别名                                         │
+  ├──────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ proxy/optimizers.rs          │ 6 个优化器/整流器                                                                 │
+  ├──────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ proxy/types.rs               │ ProxyConfig（含 rectifier/optimizer 开关）                                        │
+  ├──────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ proxy/sse.rs                 │ SSE 解析工具                                                                      │
+  └──────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────┘
 
-### Two-Layer Structure
+  前端文件
 
-- **`src/`** — React/TypeScript frontend (Vite + Tailwind CSS 4)
-- **`src-tauri/`** — Rust backend (Tauri 2 plugin architecture)
+  ┌─────────────────────┬─────────────────────────────────────────────────┐
+  │        文件         │                      职责                       │
+  ├─────────────────────┼─────────────────────────────────────────────────┤
+  │ App.tsx             │ 5 页导航、capsule 布局                          │
+  ├─────────────────────┼─────────────────────────────────────────────────┤
+  │ ai/AiPanel.tsx      │ AI 模块左侧菜单（4 tab）                        │
+  ├─────────────────────┼─────────────────────────────────────────────────┤
+  │ ai/ModelConfig.tsx  │ Provider 管理、弹框编辑、别名下拉、自动获取模型 │
+  ├─────────────────────┼─────────────────────────────────────────────────┤
+  │ ai/ToolLauncher.tsx │ 工具列表+右侧配置+升级+启动                     │
+  ├─────────────────────┼─────────────────────────────────────────────────┤
+  │ ai/UsageStats.tsx   │ 用量统计仪表盘                                  │
+  ├─────────────────────┼─────────────────────────────────────────────────┤
+  │ ai/SkillManager.tsx │ 技能安装/卸载/部署 + skills.sh 发现             │
+  ├─────────────────────┼─────────────────────────────────────────────────┤
+  │ RssReader.tsx       │ 独立资讯页（单行工具条）                        │
+  ├─────────────────────┼─────────────────────────────────────────────────┤
+  │ SystemTools.tsx     │ 左侧菜单布局                                    │
+  ├─────────────────────┼─────────────────────────────────────────────────┤
+  │ GlobalSettings.tsx  │ 设置页（含 AI 默认目录 + 整流器/优化器开关）    │
+  └─────────────────────┴─────────────────────────────────────────────────┘
 
-Communication is exclusively via Tauri's `invoke()` command system. The frontend never touches the filesystem or registry directly; all system operations are Rust commands invoked through `@tauri-apps/api/core`.
+  技术栈
 
-### Key Architectural Concepts
-
-**`projects.json`** — Runtime manifest at repo root defining every SDK/tool the app can manage (Node.js, Java, Go, Python, databases, etc.). This is bundled into the app as a Tauri resource. The schema is documented in `docs/projects-json-schema.md`. Each entry (`ProjectDef`) contains version detection commands, download URL templates, find rules for PATH discovery, env vars to manage, cache/mirror configs, and optional inner package managers (e.g., npm/yarn/pnpm inside Node.js).
-
-**Config persistence** — User config lives at `%USERPROFILE%\.any-version\config.json` (the `Config` struct in `commands/config.rs`). It tracks: managed items, active versions, delegations, PATH modifications, and original env backups for restoration.
-
-**Symlink/Junction-based version switching** — Rather than modifying PATH repeatedly, the app installs versions to `versions_dir/<project>/<version>/` and creates Windows junctions in `links_dir/<project>/` pointing to the active version. PATH only needs the links directory once.
-
-**Escalation architecture** — Many operations (registry writes, service management, env var changes) require admin rights. The Rust backend handles privilege escalation via Windows UAC prompts when needed.
-
-### Rust Module Breakdown (`src-tauri/src/commands/`)
-
-| Module | Responsibility |
-|--------|---------------|
-| `config.rs` | App config load/save, RSS |
-| `env.rs` | Windows registry env vars (HKCU/HKLM), PATH management |
-| `project/` | Core domain: registry loading, scanning, version management, commands |
-| `project/types.rs` | All data types (ProjectDef, ProjectStatus, delegation, etc.) |
-| `project/registry.rs` | Loads `projects.json` from bundled resource or disk |
-| `project/scanner.rs` | Scans system for installed versions via find_rules |
-| `project/versions.rs` | Install/switch/uninstall versions |
-| `project/commands.rs` | Tauri command handlers for project operations |
-| `service.rs` | Windows service start/stop/force-kill |
-| `port.rs` | Port scanning, process killing |
-| `cache.rs` | Cache directory size/migration |
-| `mirror.rs` | Registry/mirror configuration |
-| `pkg.rs` | Global package management (npm/pip/yarn) |
-| `conflict.rs` | Detection of other version managers (nvm, pyenv, rustup) |
-| `hidden_cmd.rs` | Hidden/special commands |
-| `hosts.rs` | System hosts file editing |
-| `http_server.rs` | Built-in HTTP server for tool features |
-| `img_base64.rs` | Image Base64 conversion |
-| `sdk_resolver.rs` | SDK version resolution logic |
-| `utils.rs` | Shared utilities |
-
-### Frontend Structure (`src/`)
-
-- `App.tsx` — Top-level tab navigation (Projects / Tools / Settings) with custom window controls
-- `components/project/` — Main feature: `ProjectManager`, `ProjectListPanel`, `ProjectDetailPanel`, `ProjectSubTabs`
-- Other components map to tools: `CacheManager`, `MirrorManager`, `PkgManager`, `EnvBackupManager`, `PortScanner`, `PathEnvManager`, `RssReader`, `SystemTools`, `GlobalSettings`, `HttpServer`, `ImageBase64`, `TsPlayground`, `JsonUrlTools`
-
-### Why `sync_process_path()` exists (`lib.rs`)
-
-Windows apps with `windows_subsystem = "windows"` don't inherit the user PATH from the registry. The startup code manually rebuilds the process PATH from registry values (system + user) + current env, filtering out unmanaged installs that would shadow the managed junctions.
-
-### Version Bumping
-
-Use the script: `pnpm bump 2.4.7` (or `pnpm bump v2.4.7`). It updates all three version files atomically. Never edit version strings by hand.
-
-## Platform Constraints
-
-- **Windows-only** — Deep integration with Windows Registry (`winreg`), junction points, UAC, and Windows services
-- The app uses a **borderless custom window** (`decorations: false`) with drag-region handling in React
-- Single-instance enforcement via `tauri-plugin-single-instance`
-- System tray for quick version switching without opening the main window
+  - 后端: Rust + Tauri 2 + Axum + reqwest + serde_json + chrono
+  - 前端: React 19 + TypeScript + Tailwind CSS 4 + Vite

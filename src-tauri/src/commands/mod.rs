@@ -14,4 +14,5 @@ pub mod conflict;
 pub mod http_server;
 pub mod img_base64;
 pub mod ai;
+pub mod tool_version;
 

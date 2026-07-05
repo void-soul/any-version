@@ -100,7 +100,7 @@ export default function App() {
         <div className={activePage === "ai" ? "h-full w-full" : "hidden"}>
           <AiPanel />
         </div>
-        <div className={activePage === "news" ? "h-full w-full" : "hidden"}>
+        <div className={activePage === "news" ? "h-full w-full flex flex-col" : "hidden"}>
           <RssReader />
         </div>
         <div className={activePage === "tools" ? "h-full w-full flex flex-col" : "hidden"}>

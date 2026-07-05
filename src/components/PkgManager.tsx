@@ -3,14 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowUpCircle,
-  CheckCircle,
   RefreshCw,
   Terminal,
   Box,
-  HelpCircle,
   TrendingUp,
   ExternalLink,
-  Rocket
+  Rocket,
 } from "lucide-react";
 
 interface PackageInfo {
@@ -21,15 +19,25 @@ interface PackageInfo {
   homepage: string;
 }
 
+const SDK_OPTIONS: { id: string; label: string; icon: React.ReactNode }[] = [
+  { id: "nodejs", label: "Node.js (NPM)", icon: <Box className="w-3.5 h-3.5" /> },
+  { id: "python", label: "Python (Pip)", icon: <TrendingUp className="w-3.5 h-3.5" /> },
+];
+
 export default function PkgManager() {
   const [activeSdk, setActiveSdk] = useState<"nodejs" | "python">("nodejs");
+
+  // Package state
   const [packages, setPackages] = useState<PackageInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [upgradingName, setUpgradingName] = useState<string | null>(null);
   const [upgradingAll, setUpgradingAll] = useState(false);
+
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const outdatedCount = useMemo(() => packages.filter(p => p.status === "outdated").length, [packages]);
+
+  // ─── Package functions ───────────────────────────────
 
   const fetchPackages = async (sdk: "nodejs" | "python") => {
     setLoading(true);
@@ -68,7 +76,10 @@ export default function PkgManager() {
     setUpgradingAll(true);
     setErrorMsg(null);
     try {
-      const results = await invoke<Array<{ name: string; success: boolean; error: string | null }>>("upgrade_all_global_packages", { sdkName: activeSdk });
+      const results = await invoke<Array<{ name: string; success: boolean; error: string | null }>>(
+        "upgrade_all_global_packages",
+        { sdkName: activeSdk }
+      );
       const failed = results.filter(r => !r.success);
       if (failed.length > 0) {
         setErrorMsg(`部分包升级失败：${failed.map(f => `${f.name}(${f.error})`).join("、")}`);
@@ -102,30 +113,28 @@ export default function PkgManager() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-white tracking-wide">全局包管理</h2>
-          <p className="text-xs text-slate-400 mt-1">列出并升级当前已安装的全局 NPM 包或 Pip 包依赖版本。点击包名即可在浏览器打开它的官网，查看文档与源代码。</p>
+          <p className="text-xs text-slate-400 mt-1">
+            列出并升级当前已安装的全局 NPM 包或 Pip 包依赖版本。
+          </p>
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Toggle SDK */}
+          {/* SDK Toggle */}
           <div className="flex bg-white/5 border border-white/5 rounded-xl p-0.5">
-            <button
-              onClick={() => setActiveSdk("nodejs")}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                activeSdk === "nodejs" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              <Box className="w-3.5 h-3.5" />
-              Node.js (NPM)
-            </button>
-            <button
-              onClick={() => setActiveSdk("python")}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                activeSdk === "python" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              <TrendingUp className="w-3.5 h-3.5" />
-              Python (Pip)
-            </button>
+            {SDK_OPTIONS.map(opt => (
+              <button
+                key={opt.id}
+                onClick={() => setActiveSdk(opt.id as "nodejs" | "python")}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  activeSdk === opt.id
+                    ? "bg-blue-600 text-white"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                {opt.icon}
+                {opt.label}
+              </button>
+            ))}
           </div>
 
           {outdatedCount > 0 && (
@@ -150,6 +159,7 @@ export default function PkgManager() {
         </div>
       </div>
 
+      {/* Error Message */}
       {errorMsg && (
         <div className="p-3.5 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-xs flex items-center gap-1.5 font-medium">
           <Terminal className="w-4 h-4 text-red-400" />
@@ -185,13 +195,10 @@ export default function PkgManager() {
                   </td>
                 </tr>
               ) : (
-                packages.map((pkg) => {
+                packages.map(pkg => {
                   const isUpgrading = upgradingName === pkg.name;
                   return (
-                    <tr 
-                      key={pkg.name}
-                      className="hover:bg-white/2 text-slate-300"
-                    >
+                    <tr key={pkg.name} className="hover:bg-white/2 text-slate-300">
                       <td className="p-4 font-semibold text-slate-200">
                         <button
                           onClick={() => openUrl(pkg.homepage)}
