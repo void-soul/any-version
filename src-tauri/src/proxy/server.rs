@@ -346,9 +346,21 @@ async fn messages_handler(
     // 转换请求体：Anthropic → OpenAI
     let openai_body = transform::anthropic_to_openai(&optimized_body, &config.target_model, aliases.as_ref());
 
+    // Anthropic 直通模式下也需要应用模型别名映射
+    let anthropic_body = if !config.model_aliases.is_empty() {
+        let mut body = optimized_body.clone();
+        if let Some(model) = body.get("model").and_then(|v| v.as_str()) {
+            let mapped = transform::map_model_name(model, aliases.as_ref().unwrap());
+            body["model"] = Value::String(mapped);
+        }
+        body
+    } else {
+        optimized_body.clone()
+    };
+
     // 构建请求
     let send_body: &Value = if !config.upstream_anthropic_url.is_empty() {
-        &optimized_body
+        &anthropic_body
     } else {
         &openai_body
     };
@@ -417,8 +429,19 @@ async fn messages_handler(
         if let Some(rectified) = retry {
             let rectified_openai =
                 transform::anthropic_to_openai(&rectified, &config.target_model, aliases.as_ref());
+            // Anthropic 直通模式下也需要应用模型别名映射
+            let rectified_anthropic = if !config.model_aliases.is_empty() {
+                let mut body = rectified.clone();
+                if let Some(model) = body.get("model").and_then(|v| v.as_str()) {
+                    let mapped = transform::map_model_name(model, aliases.as_ref().unwrap());
+                    body["model"] = Value::String(mapped);
+                }
+                body
+            } else {
+                rectified.clone()
+            };
             let retry_body: &Value = if !config.upstream_anthropic_url.is_empty() {
-                &rectified
+                &rectified_anthropic
             } else {
                 &rectified_openai
             };

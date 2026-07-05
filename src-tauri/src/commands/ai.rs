@@ -1702,6 +1702,21 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                 }
             }
         }
+
+        // 非代理模式下，写入模型别名到 ~/.claude/settings.json
+        // Claude Code 只从 settings.json 读取 ANTHROPIC_DEFAULT_*_MODEL，不读环境变量
+        if !needs_proxy
+            && tool_def.api_protocol == "anthropic"
+            && !p.model_aliases.is_empty()
+        {
+            if let Err(e) = write_claude_model_aliases(
+                &p.model_aliases,
+                p.default_model.as_ref(),
+                req.one_m_context,
+            ) {
+                eprintln!("[any-version] 写入 Claude settings.json 失败: {}", e);
+            }
+        }
     }
 
     // 获取终端 exe
@@ -1893,6 +1908,73 @@ fn find_terminal(id: &str, name: &str, exe_names: &[&str]) -> Option<TerminalInf
 fn is_ext_terminal(terminal_exe: &str) -> bool {
     let lower = terminal_exe.to_lowercase();
     lower.contains("wezterm") || lower.contains("alacritty") || lower.contains("tabby")
+}
+
+/// 写入模型别名到 ~/.claude/settings.json，让 Claude Code 读取
+/// Claude Code 只从 settings.json 读模型映射，不会从环境变量读取
+fn write_claude_model_aliases(
+    aliases: &HashMap<String, String>,
+    default_model: Option<&String>,
+    one_m_context: bool,
+) -> Result<(), String> {
+    let home = PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default());
+    let home = if home.as_os_str().is_empty() {
+        PathBuf::from(std::env::var("HOME").unwrap_or_default())
+    } else {
+        home
+    };
+    if home.as_os_str().is_empty() {
+        return Err("无法找到用户主目录".to_string());
+    }
+    let settings_path = home.join(".claude").join("settings.json");
+
+    // 读取现有 settings.json（如果存在）
+    let mut settings: JsonValue = if settings_path.exists() {
+        let content = fs::read_to_string(&settings_path)
+            .map_err(|e| format!("读取 settings.json 失败: {}", e))?;
+        serde_json::from_str(&content)
+            .unwrap_or(serde_json::json!({}))
+    } else {
+        // 确保 .claude 目录存在
+        fs::create_dir_all(home.join(".claude"))
+            .map_err(|e| format!("创建 .claude 目录失败: {}", e))?;
+        serde_json::json!({})
+    };
+
+    for (role, mapped) in aliases {
+        let env_key = match role.to_lowercase().as_str() {
+            "sonnet" => "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "opus" => "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "haiku" => "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "fable" => "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            _ => continue,
+        };
+        let effective = if one_m_context && role.to_lowercase() != "haiku" {
+            format!("{}[1m]", mapped)
+        } else {
+            mapped.clone()
+        };
+        settings[env_key] = JsonValue::String(effective);
+    }
+
+    // 设置默认模型（ANTHROPIC_MODEL），如果不存在
+    if let Some(dm) = default_model {
+        if !settings.as_object().map_or(false, |o| o.contains_key("ANTHROPIC_MODEL")) {
+            let effective = if one_m_context {
+                format!("{}[1m]", dm)
+            } else {
+                dm.clone()
+            };
+            settings["ANTHROPIC_MODEL"] = JsonValue::String(effective);
+        }
+    }
+
+    let content = serde_json::to_string_pretty(&settings)
+        .map_err(|e| format!("序列化 settings.json 失败: {}", e))?;
+    fs::write(&settings_path, content)
+        .map_err(|e| format!("写入 settings.json 失败: {}", e))?;
+
+    Ok(())
 }
 
 fn get_terminal_exe(terminal_id: &str) -> String {
