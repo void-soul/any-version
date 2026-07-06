@@ -32,8 +32,13 @@ interface AiProvider {
   anthropic_use_proxy: boolean;
   google_enabled: boolean;
   google_url: string;
-  model_aliases: Record<string, string>;
-  default_model: string | null;
+  // ═══ 协议分组模型别名映射 ═══
+  anthropic_model_aliases: Record<string, string>;
+  anthropic_default_model: string | null;
+  openai_model_aliases: Record<string, string>;
+  openai_default_model: string | null;
+  google_model_aliases: Record<string, string>;
+  google_default_model: string | null;
   models: ModelEntry[];
   active_model_id: string | null;
 }
@@ -48,52 +53,17 @@ interface AiConfig {
 type Preset = {
   id: string; name: string; category: string;
   website: string; openai_url: string; anthropic_url: string;
-  google_url?: string;
+  google_url: string;
 };
-
-const PROVIDER_PRESETS: Preset[] = [
-  { id: "openai", name: "OpenAI", category: "provider", website: "https://openai.com", openai_url: "https://api.openai.com/v1", anthropic_url: "" },
-  { id: "anthropic", name: "Anthropic", category: "provider", website: "https://www.anthropic.com", openai_url: "", anthropic_url: "https://api.anthropic.com" },
-  { id: "deepseek", name: "DeepSeek", category: "provider", website: "https://deepseek.com", openai_url: "https://api.deepseek.com", anthropic_url: "https://api.deepseek.com/anthropic" },
-  { id: "volcengine", name: "火山引擎", category: "provider", website: "https://www.volcengine.com", openai_url: "https://ark.cn-beijing.volces.com/api/coding/v3", anthropic_url: "https://ark.cn-beijing.volces.com/api/coding" },
-  { id: "qwen", name: "阿里百炼 Qwen", category: "provider", website: "https://bailian.aliyun.com", openai_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", anthropic_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic" },
-  { id: "kimi", name: "Kimi 月之暗面", category: "provider", website: "https://kimi.moonshot.cn", openai_url: "https://api.moonshot.cn/v1", anthropic_url: "https://api.moonshot.cn/anthropic" },
-  { id: "glm", name: "GLM 智谱", category: "provider", website: "https://open.bigmodel.cn", openai_url: "https://open.bigmodel.cn/api/coding/paas/v4", anthropic_url: "https://open.bigmodel.cn/api/anthropic" },
-  { id: "hunyuan", name: "腾讯混元", category: "provider", website: "https://hunyuan.tencent.com", openai_url: "https://api.lkeap.cloud.tencent.com/plan/v3", anthropic_url: "https://api.lkeap.cloud.tencent.com/plan/anthropic" },
-  { id: "ernie", name: "百度千帆", category: "provider", website: "https://qianfan.cloud.baidu.com", openai_url: "https://qianfan.baidubce.com/v2/coding", anthropic_url: "https://qianfan.baidubce.com/anthropic/coding" },
-  { id: "stepfun", name: "阶跃星辰", category: "provider", website: "https://stepfun.com", openai_url: "https://api.stepfun.com/v1", anthropic_url: "https://api.stepfun.com" },
-  { id: "minimax", name: "MiniMax", category: "provider", website: "https://minimax.io", openai_url: "https://api.minimax.io/v1", anthropic_url: "https://api.minimax.io/anthropic" },
-  { id: "xiaomi", name: "小米 MiMo", category: "provider", website: "https://mimo.xiaomi.com", openai_url: "https://token-plan-cn.xiaomimimo.com/v1", anthropic_url: "https://token-plan-cn.xiaomimimo.com/anthropic" },
-  { id: "google", name: "Google Gemini", category: "provider", website: "https://gemini.google.com", openai_url: "https://generativelanguage.googleapis.com/v1beta/openai", anthropic_url: "" },
-  { id: "xai", name: "xAI Grok", category: "provider", website: "https://x.ai", openai_url: "https://api.x.ai/v1", anthropic_url: "" },
-  { id: "mistral", name: "Mistral AI", category: "provider", website: "https://mistral.ai", openai_url: "https://api.mistral.ai/v1", anthropic_url: "" },
-  { id: "groq", name: "Groq", category: "provider", website: "https://groq.com", openai_url: "https://api.groq.com/openai/v1", anthropic_url: "" },
-  { id: "nvidia", name: "NVIDIA", category: "provider", website: "https://build.nvidia.com", openai_url: "https://integrate.api.nvidia.com/v1", anthropic_url: "" },
-  { id: "agnes", name: "Agnes AI", category: "provider", website: "https://agnes-ai.com", openai_url: "https://apihub.agnes-ai.com/v1", anthropic_url: "" },
-  { id: "siliconflow", name: "SiliconFlow", category: "provider", website: "https://siliconflow.cn", openai_url: "https://api.siliconflow.cn/v1", anthropic_url: "" },
-  { id: "longcat", name: "美团 LongCat", category: "provider", website: "https://longcat.chat", openai_url: "https://api.longcat.chat/openai", anthropic_url: "https://api.longcat.chat/anthropic" },
-  { id: "sensenova", name: "商汤日日新", category: "provider", website: "https://platform.sensenova.cn", openai_url: "https://token.sensenova.cn/v1", anthropic_url: "https://token.sensenova.cn/v1/messages" },
-];
-
-const RELAY_PRESETS: Preset[] = [
-  { id: "openrouter", name: "OpenRouter", category: "relay", website: "https://openrouter.ai", openai_url: "https://openrouter.ai/api/v1", anthropic_url: "" },
-  { id: "worldrouter", name: "WorldRouter", category: "relay", website: "https://worldrouter.ai", openai_url: "https://inference-api.worldrouter.ai/v1", anthropic_url: "https://inference-api.worldrouter.ai" },
-  { id: "bai", name: "B.ai", category: "relay", website: "https://theb.ai", openai_url: "https://api.theb.ai/v1", anthropic_url: "" },
-  { id: "nekocode", name: "NekoCode", category: "relay", website: "https://nekocode.ai", openai_url: "", anthropic_url: "https://nekocode.ai" },
-  { id: "code0", name: "Code0.ai", category: "relay", website: "https://code0.ai", openai_url: "https://code0.ai/v1", anthropic_url: "https://code0.ai" },
-  { id: "amux", name: "Amux", category: "relay", website: "https://amux.ai", openai_url: "", anthropic_url: "https://api.amux.ai" },
-  { id: "teamorouter", name: "TeamoRouter", category: "relay", website: "https://teamorouter.com", openai_url: "", anthropic_url: "https://api.teamorouter.com" },
-  { id: "zetaapi", name: "ZetaAPI", category: "relay", website: "https://zetaapi.ai", openai_url: "", anthropic_url: "https://api.zetaapi.ai" },
-  { id: "fennoai", name: "FennoAI", category: "relay", website: "https://api.fenno.ai", openai_url: "", anthropic_url: "https://api.fenno.ai" },
-  { id: "qiniu", name: "七牛云", category: "relay", website: "https://s.qiniu.com/nMvAvy", openai_url: "https://api.qnaigc.com/v1", anthropic_url: "https://api.qnaigc.com" },
-];
 
 const EMPTY_PROVIDER: AiProvider = {
   id: "", name: "", category: "provider", api_key: "", website: "",
   openai_enabled: false, openai_url: "", openai_use_proxy: false,
   anthropic_enabled: false, anthropic_url: "", anthropic_use_proxy: false,
   google_enabled: false, google_url: "",
-  model_aliases: {}, default_model: null,
+  anthropic_model_aliases: {}, anthropic_default_model: null,
+  openai_model_aliases: {}, openai_default_model: null,
+  google_model_aliases: {}, google_default_model: null,
   models: [], active_model_id: null,
 };
 
@@ -102,6 +72,7 @@ export default function ModelConfig() {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showAddMenu, setShowAddMenu] = useState(false);
+  const [presets, setPresets] = useState<Preset[]>([]);
 
   // 弹框状态
   const [showModal, setShowModal] = useState(false);
@@ -121,8 +92,12 @@ export default function ModelConfig() {
 
   const loadConfig = useCallback(async () => {
     try {
-      const data = await invoke<AiConfig>("get_ai_config");
+      const [data, presetData] = await Promise.all([
+        invoke<AiConfig>("get_ai_config"),
+        invoke<Preset[]>("get_provider_presets"),
+      ]);
       setConfig(data);
+      setPresets(presetData);
     } catch {
       setConfig({ providers: [], active_provider: null, active_model: null, proxy_port: 15721, default_project_path: "" });
     } finally { setLoading(false); }
@@ -305,7 +280,7 @@ export default function ModelConfig() {
         {showAddMenu && (
           <div className="absolute top-full left-0 mt-1 w-72 bg-slate-900 border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden max-h-[70vh] overflow-y-auto">
             <div className="px-3 pt-2.5 pb-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider">供应商</div>
-            {PROVIDER_PRESETS.map((p) => (
+            {presets.filter(p => p.category === "provider").map((p) => (
               <button key={p.id} onClick={() => openAddModal(p)} disabled={config?.providers.some(x => x.id === p.id)}
                 className="w-full px-3.5 py-2 text-left text-[11px] text-slate-300 hover:bg-white/5 hover:text-white flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-all">
                 <Globe className="w-3.5 h-3.5 text-slate-500" />{p.name}
@@ -317,7 +292,7 @@ export default function ModelConfig() {
             </button>
             <div className="border-t border-white/5 mx-3 my-1" />
             <div className="px-3 pt-1 pb-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider">中转站</div>
-            {RELAY_PRESETS.map((p) => (
+            {presets.filter(p => p.category === "relay").map((p) => (
               <button key={p.id} onClick={() => openAddModal(p)} disabled={config?.providers.some(x => x.id === p.id)}
                 className="w-full px-3.5 py-2 text-left text-[11px] text-slate-300 hover:bg-white/5 hover:text-white flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-all">
                 <Server className="w-3.5 h-3.5 text-slate-500" />{p.name}
@@ -519,28 +494,31 @@ export default function ModelConfig() {
                 )}
               </div>
 
-              {/* Model Aliases — 将 Claude 的模型角色关键词映射到实际模型 */}
-              {(form.openai_use_proxy || form.anthropic_enabled) && (
-                <div className="p-3 rounded-lg bg-slate-900/50 border border-white/5 space-y-2">
-                  <label className="text-[10px] text-slate-300 font-semibold block">模型别名映射</label>
+              {/* ─── 模型别名映射：按协议分组 ─── */}
+              {/* Anthropic 协议别名（role → model） */}
+              {((form.anthropic_enabled || form.openai_use_proxy) && form.anthropic_enabled) && (
+                <div className="p-3 rounded-lg bg-slate-900/50 border border-amber-500/20 space-y-2">
+                  <label className="text-[10px] text-amber-300 font-semibold block">Anthropic 模型映射</label>
                   <p className="text-[9px] text-slate-600">
-                    {form.openai_use_proxy || form.anthropic_use_proxy
-                      ? "代理模式：Claude Code 发送 claude-sonnet-4 等模型名时，代理将其映射为你选择的实际上游模型"
-                      : "直连模式：通过 ANTHROPIC_DEFAULT_XXX_MODEL 环境变量，让 Anthropic SDK 自动将角色关键词映射到指定模型"}
+                    {form.anthropic_use_proxy
+                      ? "代理模式：Claude Code 发送 claude-sonnet-4 等模型名时，代理自动映射"
+                      : form.openai_use_proxy
+                      ? "代理模式（OpenAI→Anthropic）：模型名映射"
+                      : "直连模式：通过 ANTHROPIC_DEFAULT_XXX_MODEL 环境变量，Anthropic SDK 自动将角色映射到指定模型"}
                   </p>
                   {["sonnet", "opus", "haiku", "fable"].map(key => (
                     <div key={key} className="flex items-center gap-2">
                       <span className="text-[10px] text-slate-400 font-mono w-16 flex-shrink-0">{key}</span>
                       <span className="text-[9px] text-slate-600 flex-shrink-0">→</span>
                       <select
-                        value={form.model_aliases?.[key] || ""}
+                        value={form.anthropic_model_aliases?.[key] || ""}
                         onChange={e => {
-                          const next = { ...(form.model_aliases || {}) };
+                          const next = { ...(form.anthropic_model_aliases || {}) };
                           if (e.target.value) next[key] = e.target.value;
                           else delete next[key];
-                          setForm({ ...form, model_aliases: next });
+                          setForm({ ...form, anthropic_model_aliases: next });
                         }}
-                        className="flex-1 bg-slate-900 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500"
+                        className="flex-1 bg-slate-900 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-amber-500"
                       >
                         <option value="">不映射</option>
                         {modelsText.split("\n").filter(l => l.trim()).map(m => (
@@ -553,9 +531,9 @@ export default function ModelConfig() {
                     <span className="text-[10px] text-slate-400 font-mono w-16 flex-shrink-0">默认</span>
                     <span className="text-[9px] text-slate-600 flex-shrink-0">→</span>
                     <select
-                      value={form.default_model || ""}
-                      onChange={e => setForm({ ...form, default_model: e.target.value || null })}
-                      className="flex-1 bg-slate-900 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500"
+                      value={form.anthropic_default_model || ""}
+                      onChange={e => setForm({ ...form, anthropic_default_model: e.target.value || null })}
+                      className="flex-1 bg-slate-900 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-amber-500"
                     >
                       <option value="">不设置</option>
                       {modelsText.split("\n").filter(l => l.trim()).map(m => (
@@ -566,7 +544,15 @@ export default function ModelConfig() {
                 </div>
               )}
 
-              {/* Models Textarea */}
+              {/* OpenAI 协议别名（未来扩展） */}
+              {form.openai_enabled && !form.openai_use_proxy && (
+                <div className="p-3 rounded-lg bg-slate-900/50 border border-blue-500/20 space-y-2">
+                  <label className="text-[10px] text-blue-300 font-semibold block">OpenAI 模型映射</label>
+                  <p className="text-[9px] text-slate-600">预留：未来 OpenAI 协议工具的角色映射（当前暂未生效）</p>
+                </div>
+              )}
+
+              {/* Google 协议别名（未来扩展） */}
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-[10px] text-slate-500 font-semibold">

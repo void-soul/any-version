@@ -1,0 +1,16 @@
+{
+  "name": "Deveco Code",
+  "category": "CLI Code",
+  "apiProtocol": ["none"],
+  "command": "deveco",
+  "startCommand": "deveco",
+  "detectCmd": "deveco --version",
+  "installCmd": "npm install -g @deveco/deveco-code",
+  "paths": {
+    "win32": [
+      "%APPDATA%/npm/deveco.cmd",
+      "%USERPROFILE%/scoop/shims/deveco.cmd",
+      "%LOCALAPPDATA%/pnpm/deveco.cmd"
+    ]
+  }
+}

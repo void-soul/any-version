@@ -1,0 +1,20 @@
+{
+  "id": "grok",
+  "displayName": "Grok Build",
+  "category": "cli-code",
+  "website": "https://x.ai",
+  "apiProtocol": "openai",
+  "supportModel": true,
+  "modelArg": "-m",
+  "supportFallbackModel": false,
+  "resumeCmd": null,
+  "continueCmd": null,
+  "cacheDirs": [".grok"],
+  "pkgManager": null,
+  "pkgName": null,
+  "configFile": null,
+  "sessions": {
+    "type": "none"
+  },
+  "skillsDir": "~/.grok/skills"
+}

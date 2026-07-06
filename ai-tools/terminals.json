@@ -1,0 +1,17 @@
+{
+  "description": "Terminals configuration for AI tool launching",
+  "terminals": {
+    "cmd": { "name": "命令提示符", "exeNames": ["cmd.exe"], "exePath": "cmd.exe", "always": true },
+    "powershell": { "name": "PowerShell", "exeNames": ["powershell.exe"] },
+    "wt": { "name": "Windows Terminal", "exeNames": ["wt.exe"] },
+    "pwsh": { "name": "PowerShell Core", "exeNames": ["pwsh.exe"] },
+    "wezterm": { "name": "WezTerm", "exeNames": ["wezterm.exe", "wezterm-gui.exe"], "launchArgs": ["start", "--", "cmd", "/k"] },
+    "alacritty": { "name": "Alacritty", "exeNames": ["alacritty.exe"], "launchArgs": ["-e", "cmd", "/k"] },
+    "tabby": { "name": "Tabby", "exeNames": ["tabby.exe"], "launchArgs": ["-e", "cmd", "/k"] }
+  },
+  "proxySettings": {
+    "defaultPort": 15721,
+    "listenAddress": "127.0.0.1",
+    "timeoutSeconds": 300
+  }
+}

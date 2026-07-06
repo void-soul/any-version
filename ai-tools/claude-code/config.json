@@ -1,0 +1,38 @@
+{
+  "id": "claude-code",
+  "displayName": "Claude Code",
+  "category": "cli-code",
+  "website": "https://claude.ai/code",
+  "apiProtocol": "anthropic",
+  "supportModel": true,
+  "modelArg": "-m",
+  "supportFallbackModel": true,
+  "fallbackModelArg": "--fallback-model",
+  "supportOneMContext": true,
+  "resumeCmd": "claude --resume {session_id}",
+  "continueCmd": "claude --continue",
+  "cacheDirs": [".claude"],
+  "pkgManager": "npm",
+  "pkgName": "@anthropic-ai/claude-code",
+  "configFile": {
+    "path": "~/.claude/settings.json",
+    "format": "json",
+    "write": {
+      "env.ANTHROPIC_MODEL": "model",
+      "env.ANTHROPIC_SMALL_FAST_MODEL": "model",
+      "env.ANTHROPIC_DEFAULT_SONNET_MODEL": "model",
+      "env.ANTHROPIC_DEFAULT_OPUS_MODEL": "model",
+      "env.ANTHROPIC_DEFAULT_HAIKU_MODEL": "model",
+      "env.ANTHROPIC_BASE_URL": "baseUrl",
+      "env.ANTHROPIC_AUTH_TOKEN": "apiKey",
+      "env.ANTHROPIC_API_KEY": "",
+      "env.API_TIMEOUT_MS": "3000000",
+      "env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+    }
+  },
+  "sessions": {
+    "type": "claude_projects",
+    "dirs": ["~/.claude/projects"]
+  },
+  "skillsDir": "~/.claude/skills"
+}

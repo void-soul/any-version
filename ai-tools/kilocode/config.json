@@ -1,0 +1,21 @@
+{
+  "id": "kilocode",
+  "displayName": "Kilo Code",
+  "category": "cli-code",
+  "website": "https://kilocode.ai",
+  "apiProtocol": "both",
+  "supportModel": true,
+  "modelArg": "-m",
+  "supportFallbackModel": false,
+  "resumeCmd": "kilo --session {session_id}",
+  "continueCmd": "kilo --continue",
+  "cacheDirs": [".kilocode"],
+  "pkgManager": "npm",
+  "pkgName": "@kilocode/cli",
+  "configFile": null,
+  "sessions": {
+    "type": "claude_projects",
+    "dirs": ["~/.kilocode/projects"]
+  },
+  "skillsDir": "~/.kilocode/skills"
+}

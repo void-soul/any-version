@@ -44,8 +44,12 @@ interface AiProvider {
   anthropic_use_proxy: boolean;
   google_enabled: boolean;
   google_url: string;
-  model_aliases: Record<string, string>;
-  default_model: string | null;
+  anthropic_model_aliases: Record<string, string>;
+  anthropic_default_model: string | null;
+  openai_model_aliases: Record<string, string>;
+  openai_default_model: string | null;
+  google_model_aliases: Record<string, string>;
+  google_default_model: string | null;
   models: { id: string; name: string }[];
 }
 
@@ -69,6 +73,8 @@ interface DetectedAiTool {
   website: string;
   api_protocol: string;
   supports_model: boolean;
+  support_one_m_context: boolean;
+  model_arg: string | null;
   supports_fallback_model: boolean;
   fallback_model_arg: string | null;
   resume_cmd: string | null;
@@ -212,6 +218,25 @@ export default function ToolLauncher() {
       .then(setSessions).catch(() => setSessions([]));
   }, [selectedTool]);
 
+  // ── 按协议获取有效别名 ──
+  const getEffectiveAliases = useCallback((p: AiProvider, protocol: string): Record<string, string> => {
+    if (protocol === 'anthropic' || protocol === 'both') {
+      return p.anthropic_model_aliases || {};
+    }
+    if (protocol === 'openai') return p.openai_model_aliases || {};
+    if (protocol === 'google') return p.google_model_aliases || {};
+    return {};
+  }, []);
+
+  const getEffectiveDefaultModel = useCallback((p: AiProvider, protocol: string): string | null => {
+    if (protocol === 'anthropic' || protocol === 'both') {
+      return p.anthropic_default_model;
+    }
+    if (protocol === 'openai') return p.openai_default_model;
+    if (protocol === 'google') return p.google_default_model;
+    return null;
+  }, []);
+
   // ── 模型选项分两组 ──
   // 有别名映射的供应商（一键选择，无需挑模型）
   const aliasedProviders = React.useMemo(() => {
@@ -224,9 +249,9 @@ export default function ToolLauncher() {
         (protocol === "anthropic" && (p.anthropic_enabled || p.anthropic_use_proxy)) ||
         (protocol === "openai" && (p.openai_enabled || p.openai_use_proxy)) ||
         (protocol === "google" && (p.google_enabled || !!p.google_url));
-      return include && Object.keys(p.model_aliases || {}).length > 0;
+      return include && Object.keys(getEffectiveAliases(p, protocol)).length > 0;
     });
-  }, [config, selectedTool]);
+  }, [config, selectedTool, getEffectiveAliases]);
 
   // 无别名映射的供应商（需要选具体模型），可折叠
   const modelGroups = React.useMemo(() => {
@@ -241,24 +266,27 @@ export default function ToolLauncher() {
         (protocol === "openai" && (p.openai_enabled || p.openai_use_proxy)) ||
         (protocol === "google" && (p.google_enabled || !!p.google_url));
       // 有别名的不在此列
-      if (!include || p.models.length === 0 || Object.keys(p.model_aliases || {}).length > 0) continue;
+      if (!include || p.models.length === 0 || Object.keys(getEffectiveAliases(p, protocol)).length > 0) continue;
       groups.push({ provider_name: p.name, provider_id: p.id, models: p.models });
     }
     return groups;
-  }, [config, selectedTool]);
+  }, [config, selectedTool, getEffectiveAliases]);
 
   // 当前选中 Provider 的别名映射信息
   const selectedProviderAliases = React.useMemo(() => {
-    if (!config || !selectedModelProvider) return null;
+    if (!config || !selectedModelProvider || !selectedTool) return null;
     const provider = config.providers.find(p => p.id === selectedModelProvider);
-    if (!provider || Object.keys(provider.model_aliases || {}).length === 0) return null;
+    if (!provider) return null;
+    const protocol = selectedTool.api_protocol;
+    const aliases = getEffectiveAliases(provider, protocol);
+    if (Object.keys(aliases).length === 0) return null;
     return {
-      aliases: provider.model_aliases,
+      aliases,
       name: provider.name,
       usesProxy: provider.openai_use_proxy || provider.anthropic_use_proxy,
-      defaultModel: provider.default_model,
+      defaultModel: getEffectiveDefaultModel(provider, protocol),
     };
-  }, [config, selectedModelProvider]);
+  }, [config, selectedModelProvider, selectedTool, getEffectiveAliases, getEffectiveDefaultModel]);
 
   // 全部兼容模型（含别名供应商），用于 Fallback 选择 — 按供应商分组
   const fallbackGroups = React.useMemo(() => {
@@ -309,7 +337,7 @@ export default function ToolLauncher() {
           session_id: selectedSession?.session_id || null,
           session_mode: sessionMode,
           terminal_id: selectedTerminal,
-          one_m_context: selectedTool.id === "claude-code" ? oneMContext : false,
+          one_m_context: selectedTool.support_one_m_context ? oneMContext : false,
         },
       });
       setLaunchResult({ ok: result.success, msg: result.message });
@@ -690,14 +718,14 @@ export default function ToolLauncher() {
                                 {isSelected && (
                                   <div className="px-3 pb-2 border-t border-violet-500/10 pt-2">
                                     <div className="flex flex-wrap gap-1">
-                                      {Object.entries(p.model_aliases).map(([role, m]) => (
+                                      {Object.entries(getEffectiveAliases(p, selectedTool.api_protocol)).map(([role, m]) => (
                                         <span key={role} className="text-[8px] bg-violet-500/15 text-violet-300 px-1.5 py-0.5 rounded font-mono">
                                           {role} → {m}
                                         </span>
                                       ))}
-                                      {p.default_model && (
+                                      {getEffectiveDefaultModel(p, selectedTool.api_protocol) && (
                                         <span className="text-[8px] bg-slate-500/15 text-slate-400 px-1.5 py-0.5 rounded font-mono">
-                                          默认: {p.default_model}
+                                          默认: {getEffectiveDefaultModel(p, selectedTool.api_protocol)}
                                         </span>
                                       )}
                                     </div>
@@ -856,8 +884,8 @@ export default function ToolLauncher() {
                   </div>
                 )}
 
-                {/* 1M Context Toggle — Claude Code 专用 */}
-                {selectedTool.supports_model && selectedTool.id === "claude-code" && (
+                {/* 1M Context Toggle — 由 config.json 的 supportOneMContext 字段驱动 */}
+                {selectedTool.supports_model && selectedTool.support_one_m_context && (
                   <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-900/30 border border-white/5">
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] font-semibold text-slate-300">1M Context</span>

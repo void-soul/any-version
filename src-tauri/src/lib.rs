@@ -259,6 +259,7 @@ pub fn run() {
             commands::ai::toggle_skill_tool,
             commands::ai::get_skill_files,
             commands::ai::install_skill_from_source,
+            commands::ai::get_provider_presets,
             commands::ai::detect_ai_tools,
             commands::ai::check_ai_tool_versions,
             commands::ai::scan_existing_skills,

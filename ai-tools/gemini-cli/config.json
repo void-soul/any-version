@@ -1,0 +1,21 @@
+{
+  "id": "gemini-cli",
+  "displayName": "Gemini CLI",
+  "category": "cli-code",
+  "website": "https://gemini.google.com",
+  "apiProtocol": "google",
+  "supportModel": true,
+  "modelArg": "-m",
+  "supportFallbackModel": false,
+  "resumeCmd": "gemini --resume {session_id}",
+  "continueCmd": "gemini --resume latest",
+  "cacheDirs": [".gemini"],
+  "pkgManager": "npm",
+  "pkgName": "@google/gemini-cli",
+  "configFile": null,
+  "sessions": {
+    "type": "claude_projects",
+    "dirs": ["~/.gemini/projects"]
+  },
+  "skillsDir": "~/.gemini/skills"
+}

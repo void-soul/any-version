@@ -1,0 +1,16 @@
+{
+  "name": "Gemini CLI",
+  "category": "CLI Code",
+  "apiProtocol": ["google"],
+  "command": "gemini",
+  "startCommand": "gemini",
+  "detectCmd": "gemini --version",
+  "installCmd": "npm install -g @google/gemini-cli",
+  "paths": {
+    "win32": [
+      "%APPDATA%/npm/gemini.cmd",
+      "%USERPROFILE%/scoop/shims/gemini.cmd",
+      "%LOCALAPPDATA%/pnpm/gemini.cmd"
+    ]
+  }
+}

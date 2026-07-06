@@ -1,0 +1,21 @@
+{
+  "id": "codex-cli",
+  "displayName": "Codex CLI",
+  "category": "cli-code",
+  "website": "https://github.com/openai/codex",
+  "apiProtocol": "openai",
+  "supportModel": true,
+  "modelArg": "-m",
+  "supportFallbackModel": false,
+  "resumeCmd": null,
+  "continueCmd": "codex resume --last",
+  "cacheDirs": [".codex"],
+  "pkgManager": "npm",
+  "pkgName": "@openai/codex",
+  "configFile": null,
+  "sessions": {
+    "type": "jsonl",
+    "dirs": ["~/.codex/sessions.jsonl"]
+  },
+  "skillsDir": "~/.codex/skills"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "Qwen Code",
+  "category": "CLI Code",
+  "apiProtocol": ["openai"],
+  "command": "qwen",
+  "startCommand": "qwen",
+  "detectCmd": "qwen --version",
+  "installCmd": "npm install -g @qwen-code/qwen-code",
+  "paths": {
+    "win32": [
+      "%APPDATA%/npm/qwen.cmd",
+      "%USERPROFILE%/scoop/shims/qwen.cmd",
+      "%LOCALAPPDATA%/pnpm/qwen.cmd"
+    ]
+  }
+}

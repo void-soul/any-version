@@ -7,6 +7,7 @@ use std::process::Stdio;
 use tauri::AppHandle;
 use tauri::Emitter;
 
+use super::ai_registry::{registry, AiToolDefDto, ToolConfig, PathConfig};
 use super::config::get_base_dir;
 use crate::commands::tool_version::is_newer;
 use super::hidden_cmd;
@@ -133,15 +134,30 @@ pub struct AiProvider {
     #[serde(default)]
     pub google_url: String,
 
-    // ─── 模型别名映射（代理模式下使用）───
-    /// 角色关键词 → 实际模型 ID 映射
-    /// 例如: {"sonnet": "deepseek-v4-pro", "opus": "claude-opus-4-8"}
-    /// Claude Code 发送 claude-sonnet-4 时，代理将其映射为 deepseek-v4-pro
+    // ─── 模型别名映射（按协议分组）───
+    /// Anthropic 协议：角色关键词 → 实际模型 ID
+    /// 例如: {"sonnet": "nvidia/llama-4-maverick"}
+    /// Claude Code 发送 claude-sonnet-4 时，代理/环境变量将其映射到指定模型
+    /// `alias = "model_aliases"` 保证旧配置文件的字段兼容
+    #[serde(alias = "model_aliases", default)]
+    pub anthropic_model_aliases: std::collections::HashMap<String, String>,
+    /// Anthropic 协议的默认模型（当角色无匹配时使用）
+    #[serde(alias = "default_model", default)]
+    pub anthropic_default_model: Option<String>,
+
+    /// OpenAI 协议的模型别名映射（未来扩展）
     #[serde(default)]
-    pub model_aliases: std::collections::HashMap<String, String>,
-    /// 默认模型（当别名无匹配时使用）
+    pub openai_model_aliases: std::collections::HashMap<String, String>,
+    /// OpenAI 协议的默认模型（未来扩展）
     #[serde(default)]
-    pub default_model: Option<String>,
+    pub openai_default_model: Option<String>,
+
+    /// Google 协议的模型别名映射（未来扩展）
+    #[serde(default)]
+    pub google_model_aliases: std::collections::HashMap<String, String>,
+    /// Google 协议的默认模型（未来扩展）
+    #[serde(default)]
+    pub google_default_model: Option<String>,
 
     pub models: Vec<ModelEntry>,
     pub active_model_id: Option<String>,
@@ -341,279 +357,65 @@ fn save_sessions_to_file(sessions: &AiSessionsFile) -> Result<(), String> {
     fs::write(path, data).map_err(|e| e.to_string())
 }
 
+// ─── Provider 预设（从 providers.json 加载）───
+
+/// 获取所有 Provider/Relay 预设（从 ai-tools/providers.json 加载）
+#[tauri::command]
+pub fn get_provider_presets() -> Result<Vec<super::ai_registry::ProviderPresetDto>, String> {
+    Ok(registry().providers().iter().map(|p| super::ai_registry::ProviderPresetDto {
+        id: p.id.clone(),
+        name: p.name.clone(),
+        category: p.category.clone(),
+        website: p.website.clone(),
+        openai_url: p.openai_url.clone(),
+        anthropic_url: p.anthropic_url.clone(),
+        google_url: p.google_url.clone(),
+    }).collect())
+}
+
 // ─── AI 工具检测 ───
 
-/// AI 工具定义（参考 EchoBird 的工具检测模式）
-#[derive(Clone)]
-struct AiToolDef {
-    id: &'static str,
-    display_name: &'static str,
-    detect_cmd: &'static str,
-    install_cmd: &'static str,
-    website: &'static str,
-    api_protocol: &'static str,
-    supports_model: bool,
-    /// 是否支持双模型（高级模型 + 低级/fallback 模型）
-    supports_fallback_model: bool,
-    /// fallback 模型的 CLI 参数名（如 "--fallback-model" / "--light-model"）
-    fallback_model_arg: Option<&'static str>,
-    resume_cmd: Option<&'static str>,
-    continue_cmd: Option<&'static str>,
-    /// 缓存/数据目录（相对于 HOME，支持 ~ 占位符）
-    cache_dirs: &'static [&'static str],
-    /// 工具分类：cli-code / desktop / ide / utility
-    category: &'static str,
-    /// 包管理器类型：Some("npm") / Some("pip") / None（仅 PATH 检测）
-    pkg_manager: Option<&'static str>,
-    /// npm/pip 包名（用于 PM 查询版本），None 时自动从 install_cmd 解析
-    pkg_name: Option<&'static str>,
-}
+/// AI 工具定义现在从 ai-tools/ 目录的 JSON 配置文件加载
+/// 通过 ai_registry::registry() 访问，不再硬编码。
+/// 新增工具只需在 ai-tools/ 下添加 config.json + paths.json。
 
-/// const fn 辅助：在函数调用位置触发 unsized coercion，避免 const/static 上下文中的类型推断问题
-const fn slice<T>(s: &[T]) -> &[T] {
-    s
-}
-
-/// 所有支持的 AI 工具定义（参考 EchoBird）
-const AI_TOOLS: &[AiToolDef] = slice(&[
-    // ─── CLI 编程 Agent ───
-    AiToolDef {
-        id: "claude-code",
-        display_name: "Claude Code",
-        detect_cmd: "claude --version",
-        install_cmd: "npm install -g @anthropic-ai/claude-code",
-        website: "https://claude.ai/code",
-        api_protocol: "anthropic",
-        supports_model: true,
-        supports_fallback_model: true,
-        fallback_model_arg: Some("--fallback-model"),
-        resume_cmd: Some("claude --resume {session_id}"),
-        continue_cmd: Some("claude --continue"),
-        cache_dirs: slice(&[".claude"]),
-        category: "cli-code",
-        pkg_manager: Some("npm"),
-        pkg_name: Some("@anthropic-ai/claude-code"),
-    },
-    AiToolDef {
-        id: "codex-cli",
-        display_name: "Codex CLI",
-        detect_cmd: "codex --version",
-        install_cmd: "npm install -g @openai/codex@latest",
-        website: "https://github.com/openai/codex",
-        api_protocol: "openai",
-        supports_model: true,
-        supports_fallback_model: true,
-        fallback_model_arg: Some("--light-model"),
-        resume_cmd: None,
-        continue_cmd: Some("codex resume --last"),
-        cache_dirs: slice(&[".codex"]),
-        category: "cli-code",
-        pkg_manager: Some("npm"),
-        pkg_name: Some("@openai/codex"),
-    },
-    AiToolDef {
-        id: "aider",
-        display_name: "Aider",
-        detect_cmd: "aider --version",
-        install_cmd: "pip install aider-chat",
-        website: "https://aider.chat",
-        api_protocol: "both",
-        supports_model: true,
-        supports_fallback_model: true,
-        fallback_model_arg: Some("--weak-model"),
-        resume_cmd: None,
-        continue_cmd: None,
-        cache_dirs: slice(&[".aider", ".aider.cache"]),
-        category: "cli-code",
-        pkg_manager: Some("pip"),
-        pkg_name: Some("aider-chat"),
-    },
-    AiToolDef {
-        id: "opencode",
-        display_name: "OpenCode",
-        detect_cmd: "opencode --version",
-        install_cmd: "npm install -g opencode-ai",
-        website: "https://opencode.ai",
-        api_protocol: "openai",
-        supports_model: true,
-        supports_fallback_model: false,
-        fallback_model_arg: None,
-        resume_cmd: Some("opencode -s {session_id}"),
-        continue_cmd: None,
-        cache_dirs: slice(&[".opencode"]),
-        category: "cli-code",
-        pkg_manager: Some("npm"),
-        pkg_name: Some("opencode-ai"),
-    },
-    AiToolDef {
-        id: "pi",
-        display_name: "Pi Coding Agent",
-        detect_cmd: "pi --version",
-        install_cmd: "npm install -g @earendil-works/pi-coding-agent",
-        website: "https://pi.dev",
-        api_protocol: "openai",
-        supports_model: true,
-        supports_fallback_model: false,
-        fallback_model_arg: None,
-        resume_cmd: None,
-        continue_cmd: None,
-        cache_dirs: slice(&[".pi-agent"]),
-        category: "cli-code",
-        pkg_manager: Some("npm"),
-        pkg_name: Some("@earendil-works/pi-coding-agent"),
-    },
-    AiToolDef {
-        id: "mimocode",
-        display_name: "MiMo Code",
-        detect_cmd: "mimo --version",
-        install_cmd: "npm install -g @mimo-ai/cli",
-        website: "https://mimo.xiaomi.com/zh/mimocode/config-files",
-        api_protocol: "openai",
-        supports_model: true,
-        supports_fallback_model: true,
-        fallback_model_arg: Some("--small-model"),
-        resume_cmd: None,
-        continue_cmd: None,
-        cache_dirs: slice(&[".local/share/mimocode"]),
-        category: "cli-code",
-        pkg_manager: Some("npm"),
-        pkg_name: Some("@mimo-ai/cli"),
-    },
-    AiToolDef {
-        id: "qwencode",
-        display_name: "Qwen Code",
-        detect_cmd: "qwen --version",
-        install_cmd: "npm install -g @qwen-code/qwen-code",
-        website: "https://github.com/QwenLM/qwen-code",
-        api_protocol: "openai",
-        supports_model: true,
-        supports_fallback_model: false,
-        fallback_model_arg: None,
-        resume_cmd: None,
-        continue_cmd: None,
-        cache_dirs: slice(&[".qwen-code", ".qwen"]),
-        category: "cli-code",
-        pkg_manager: Some("npm"),
-        pkg_name: Some("@qwen-code/qwen-code"),
-    },
-    AiToolDef {
-        id: "grok",
-        display_name: "Grok Build",
-        detect_cmd: "grok --version",
-        install_cmd: "curl -fsSL https://x.ai/cli | bash",
-        website: "https://x.ai",
-        api_protocol: "openai",
-        supports_model: true,
-        supports_fallback_model: false,
-        fallback_model_arg: None,
-        resume_cmd: None,
-        continue_cmd: None,
-        cache_dirs: slice(&[".grok"]),
-        category: "cli-code",
-        pkg_manager: None,
-        pkg_name: None,
-    },
-    AiToolDef {
-        id: "deveco",
-        display_name: "Deveco Code",
-        detect_cmd: "deveco --version",
-        install_cmd: "npm install -g @deveco/deveco-code",
-        website: "https://deveco.dev",
-        api_protocol: "none",
-        supports_model: false,
-        supports_fallback_model: false,
-        fallback_model_arg: None,
-        resume_cmd: None,
-        continue_cmd: None,
-        cache_dirs: slice(&[".deveco"]),
-        category: "cli-code",
-        pkg_manager: Some("npm"),
-        pkg_name: Some("@deveco/deveco-code"),
-    },
-    AiToolDef {
-        id: "gemini-cli",
-        display_name: "Gemini CLI",
-        detect_cmd: "gemini --version",
-        install_cmd: "npm install -g @google/gemini-cli",
-        website: "https://gemini.google.com",
-        api_protocol: "google",
-        supports_model: true,
-        supports_fallback_model: false,
-        fallback_model_arg: None,
-        resume_cmd: Some("gemini --resume {session_id}"),
-        continue_cmd: Some("gemini --resume latest"),
-        cache_dirs: slice(&[".gemini"]),
-        category: "cli-code",
-        pkg_manager: Some("npm"),
-        pkg_name: Some("@google/gemini-cli"),
-    },
-    AiToolDef {
-        id: "kilocode",
-        display_name: "Kilo Code",
-        detect_cmd: "kilo --version",
-        install_cmd: "npm install -g @kilocode/cli",
-        website: "https://kilocode.ai",
-        api_protocol: "both",
-        supports_model: true,
-        supports_fallback_model: false,
-        fallback_model_arg: None,
-        resume_cmd: Some("kilo --session {session_id}"),
-        continue_cmd: Some("kilo --continue"),
-        cache_dirs: slice(&[".kilocode"]),
-        category: "cli-code",
-        pkg_manager: Some("npm"),
-        pkg_name: Some("@kilocode/cli"),
-    },
-]);
-
-#[derive(Serialize, Clone, Debug)]
-pub struct DetectedAiTool {
-    pub id: String,
-    pub display_name: String,
-    pub installed: bool,
-    pub version: Option<String>,
-    pub latest_version_cmd: Option<String>,
-    pub install_cmd: String,
-    pub upgrade_cmd: String,
-    pub website: String,
-    pub api_protocol: String,
-    pub supports_model: bool,
-    pub supports_fallback_model: bool,
-    pub fallback_model_arg: Option<String>,
-    pub resume_cmd: Option<String>,
-    pub continue_cmd: Option<String>,
-    pub cache_dirs: Vec<String>,
-    pub category: String,
-}
+// 为了向后兼容，保留 DetectedAiTool 类型，但它是 AiToolDefDto 的别名
+pub type DetectedAiTool = AiToolDefDto;
 
 /// 检测单个 AI 工具：按 PM 类型查询版本，或回退到 detect_cmd + PATH
-fn detect_single_tool(def: &AiToolDef) -> DetectedAiTool {
-    eprintln!("[detect] ========== {} ({}) ==========", def.display_name, def.id);
+fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool {
+    eprintln!("[detect] ========== {} ({}) ==========", config.display_name, config.id);
 
-    let upgrade_cmd = def.install_cmd.to_string();
+    let upgrade_cmd = match config.pkg_manager.as_deref() {
+        Some("npm") => format!("npm install -g {}@latest", config.pkg_name.as_deref().unwrap_or(&config.id)),
+        Some("pip") => format!("pip install --upgrade {}", config.pkg_name.as_deref().unwrap_or(&config.id)),
+        _ => paths.install_cmd.clone(),
+    };
 
-    let not_found = DetectedAiTool {
-        id: def.id.to_string(),
-        display_name: def.display_name.to_string(),
+    let not_found = AiToolDefDto {
+        id: config.id.clone(),
+        display_name: config.display_name.clone(),
         installed: false,
         version: None,
         latest_version_cmd: None,
-        install_cmd: def.install_cmd.to_string(),
+        install_cmd: paths.install_cmd.clone(),
         upgrade_cmd,
-        website: def.website.to_string(),
-        api_protocol: def.api_protocol.to_string(),
-        supports_model: def.supports_model,
-        supports_fallback_model: def.supports_fallback_model,
-        fallback_model_arg: def.fallback_model_arg.map(|s| s.to_string()),
-        resume_cmd: def.resume_cmd.map(|s| s.to_string()),
-        continue_cmd: def.continue_cmd.map(|s| s.to_string()),
-        cache_dirs: def.cache_dirs.iter().map(|s| s.to_string()).collect(),
-        category: def.category.to_string(),
+        website: config.website.clone(),
+        api_protocol: config.api_protocol.clone(),
+        supports_model: config.support_model,
+        model_arg: config.model_arg.clone(),
+        supports_fallback_model: config.support_fallback_model,
+        fallback_model_arg: config.fallback_model_arg.clone(),
+        resume_cmd: config.resume_cmd.clone(),
+        continue_cmd: config.continue_cmd.clone(),
+        cache_dirs: config.cache_dirs.clone(),
+        category: config.category.clone(),
+        support_one_m_context: config.support_one_m_context,
     };
 
     // 策略 1：按 PM 类型精准查询版本
-    if let Some(pm) = def.pkg_manager {
-        if let Some(pkg) = def.pkg_name {
+    if let Some(pm) = config.pkg_manager.as_deref() {
+        if let Some(pkg) = config.pkg_name.as_deref() {
             eprintln!("[detect]   [策略 1] PM={}, pkg={}", pm, pkg);
             if let Some(ver) = detect_via_pm(pm, pkg) {
                 eprintln!("[detect]   [策略 1] ✓ 成功 → version={}", ver);
@@ -629,8 +431,9 @@ fn detect_single_tool(def: &AiToolDef) -> DetectedAiTool {
     }
 
     // 策略 2：回退到 detect_cmd（调用工具自身的 --version）
-    eprintln!("[detect]   [策略 2] detect_cmd=\"{}\"", def.detect_cmd);
-    if let Some(ver) = detect_via_cmd(def.detect_cmd) {
+    let detect_cmd = &paths.detect_cmd;
+    eprintln!("[detect]   [策略 2] detect_cmd=\"{}\"", detect_cmd);
+    if let Some(ver) = detect_via_cmd(detect_cmd) {
         eprintln!("[detect]   [策略 2] ✓ 成功 → version={}", ver);
         return DetectedAiTool {
             installed: true,
@@ -833,16 +636,27 @@ fn trimmed_first_line(s: &str, max_len: usize) -> &str {
 
 #[tauri::command]
 pub async fn detect_ai_tools() -> Result<Vec<DetectedAiTool>, String> {
-    let mut handles = Vec::with_capacity(AI_TOOLS.len());
-    for def in AI_TOOLS {
-        let handle = tokio::task::spawn_blocking(move || detect_single_tool(def));
+    let tools_reg = registry();
+    let tool_ids: Vec<String> = tools_reg.tool_ids().into_iter().map(|s| s.clone()).collect();
+    let mut handles = Vec::with_capacity(tool_ids.len());
+    for id in &tool_ids {
+        let id = id.clone();
+        let handle = tokio::task::spawn_blocking(move || {
+            let reg = registry();
+            let (config, paths) = match reg.get_tool(&id) {
+                Some(t) => (t.0.clone(), t.1.clone()),
+                None => return None,
+            };
+            Some(detect_single_tool(&config, &paths))
+        });
         handles.push(handle);
     }
 
     let mut results = Vec::with_capacity(handles.len());
     for handle in handles {
         match handle.await {
-            Ok(result) => results.push(result),
+            Ok(Some(result)) => results.push(result),
+            Ok(None) => {},
             Err(e) => eprintln!("[detect_ai_tools] task join error: {}", e),
         }
     }
@@ -862,17 +676,29 @@ pub struct AiToolVersionStatus {
 /// 检查所有 AI 工具的最新版本（npm/pip 在线查询）
 #[tauri::command]
 pub async fn check_ai_tool_versions() -> Result<Vec<AiToolVersionStatus>, String> {
-    // 先并行获取所有 AI 工具的当前版本
-    let mut handles = Vec::with_capacity(AI_TOOLS.len());
-    for def in AI_TOOLS {
-        let handle = tokio::task::spawn_blocking(move || (def.id, def.display_name, detect_single_tool(def)));
+    let tools_reg = registry();
+    let tool_ids: Vec<String> = tools_reg.tool_ids().into_iter().map(|s| s.clone()).collect();
+
+    let mut handles = Vec::with_capacity(tool_ids.len());
+    for id in &tool_ids {
+        let id = id.clone();
+        let handle = tokio::task::spawn_blocking(move || {
+            let reg = registry();
+            let (config, paths) = match reg.get_tool(&id) {
+                Some(t) => (t.0.clone(), t.1.clone()),
+                None => return None,
+            };
+            let result = detect_single_tool(&config, &paths);
+            Some((id, config.display_name.clone(), result))
+        });
         handles.push(handle);
     }
 
-    let mut tools: Vec<(&str, &str, DetectedAiTool)> = Vec::new();
+    let mut tools: Vec<(String, String, DetectedAiTool)> = Vec::new();
     for handle in handles {
         match handle.await {
-            Ok((id, name, result)) => tools.push((id, name, result)),
+            Ok(Some((id, name, result))) => tools.push((id, name, result)),
+            Ok(None) => {},
             Err(e) => eprintln!("[ai_ver] task join error: {}", e),
         }
     }
@@ -880,19 +706,19 @@ pub async fn check_ai_tool_versions() -> Result<Vec<AiToolVersionStatus>, String
     // 只对已安装且有 pkg_manager 的工具查最新版本
     let mut results = Vec::new();
     for (id, name, tool) in &tools {
-        let def = AI_TOOLS.iter().find(|d| d.id == *id);
-        let pkg_manager = def.and_then(|d| d.pkg_manager);
-        let pkg_name = def.and_then(|d| d.pkg_name);
+        let tools_reg = registry();
+        let pkg_manager = tools_reg.get_tool_config(id).and_then(|c| c.pkg_manager.clone());
+        let pkg_name = tools_reg.get_tool_config(id).and_then(|c| c.pkg_name.clone());
 
         let latest = if tool.installed && pkg_manager.is_some() {
-            match pkg_manager.unwrap() {
+            match pkg_manager.as_deref().unwrap() {
                 "npm" => {
-                    if let Some(n) = pkg_name {
+                    if let Some(n) = &pkg_name {
                         fetch_npm_latest_version(n).await
                     } else { None }
                 }
                 "pip" => {
-                    if let Some(n) = pkg_name {
+                    if let Some(n) = &pkg_name {
                         fetch_pypi_latest_version(n).await
                     } else { None }
                 }
@@ -1405,101 +1231,9 @@ pub async fn install_skill_from_source(source: String) -> Result<(), String> {
 #[tauri::command]
 pub fn scan_existing_skills() -> Result<Vec<ScannedSkill>, String> {
     let mut results: Vec<ScannedSkill> = Vec::new();
-    let home = PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default());
-    let home = if home.as_os_str().is_empty() {
-        PathBuf::from(std::env::var("HOME").unwrap_or_default())
-    } else {
-        home
-    };
-    let config_home = std::env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| home.join(".config"));
 
-    // 扫描所有已知的技能目录（参考 skills.sh agents.ts 的完整 globalSkillsDir）
-    // 注意：使用 universal .agents/skills 的工具不会重复列（列了也不会多扫）
-    let scan_dirs: Vec<(PathBuf, &str)> = vec![
-        // ── 通用 skill 目录（skills.sh 官方规范目录）──
-        (home.join(".agents").join("skills"), ".agents"),
-        // ── 有独立 skills 目录的工具（globalSkillsDir ≠ .agents/skills）──
-        (home.join(".claude").join("skills"), ".claude"),
-        (home.join(".codex").join("skills"), ".codex"),
-        (home.join(".gemini").join("skills"), ".gemini"),
-        (home.join(".kilocode").join("skills"), ".kilocode"),
-        (home.join(".aider").join("skills"), ".aider"),
-        // OpenCode（支持 ~/.opencode/skills 和 XDG opencode/skills）
-        (home.join(".opencode").join("skills"), ".opencode"),
-        (config_home.join("opencode").join("skills"), "opencode"),
-        // Cursor
-        (home.join(".cursor").join("skills"), ".cursor"),
-        // GitHub Copilot
-        (home.join(".copilot").join("skills"), ".copilot"),
-        // Firebender
-        (home.join(".firebender").join("skills"), ".firebender"),
-        // Cline
-        (home.join(".cline").join("skills"), ".cline"),
-        // Augment
-        (home.join(".augment").join("skills"), ".augment"),
-        // Windsurf（特殊路径 .codeium/windsurf/skills）
-        (home.join(".codeium").join("windsurf").join("skills"), ".codeium/windsurf"),
-        // Qwen Code
-        (home.join(".qwen").join("skills"), ".qwen"),
-        // Goose（XDG 规范）
-        (config_home.join("goose").join("skills"), "goose"),
-        // Continue
-        (home.join(".continue").join("skills"), ".continue"),
-        // CodeBuddy
-        (home.join(".codebuddy").join("skills"), ".codebuddy"),
-        // Roo Code
-        (home.join(".roo").join("skills"), ".roo"),
-        // Pi（特殊子目录 agent/skills）
-        (home.join(".pi").join("agent").join("skills"), ".pi/agent"),
-        // Tabnine CLI（特殊子目录 agent/skills）
-        (home.join(".tabnine").join("agent").join("skills"), ".tabnine/agent"),
-        // Cortex Code（嵌套路径 .snowflake/cortex/skills）
-        (home.join(".snowflake").join("cortex").join("skills"), ".snowflake/cortex"),
-        // Devin（XDG 规范）
-        (config_home.join("devin").join("skills"), "devin"),
-        // Warp（虽然 universal，也扫一次 .warp 以防用户手动放）
-        (home.join(".warp").join("skills"), ".warp"),
-        // MiMo Code
-        (home.join(".mimocode").join("skills"), ".mimocode"),
-        // Neovate
-        (home.join(".neovate").join("skills"), ".neovate"),
-        // Bob
-        (home.join(".bob").join("skills"), ".bob"),
-        // Junie
-        (home.join(".junie").join("skills"), ".junie"),
-        // Trae
-        (home.join(".trae").join("skills"), ".trae"),
-        // Trae CN
-        (home.join(".trae-cn").join("skills"), ".trae-cn"),
-        // Kode
-        (home.join(".kode").join("skills"), ".kode"),
-        // Lingma
-        (home.join(".lingma").join("skills"), ".lingma"),
-        // CodeArts Agent
-        (home.join(".codeartsdoer").join("skills"), ".codeartsdoer"),
-        // Reasonix
-        (home.join(".reasonix").join("skills"), ".reasonix"),
-        // Rovo Dev
-        (home.join(".rovodev").join("skills"), ".rovodev"),
-        // ForgeCode
-        (home.join(".forge").join("skills"), ".forge"),
-        // Autohand Code
-        (home.join(".autohand").join("skills"), ".autohand"),
-        // Codemaker
-        (home.join(".codemaker").join("skills"), ".codemaker"),
-        // Code Studio
-        (home.join(".codestudio").join("skills"), ".codestudio"),
-        // Terramind
-        (home.join(".terramind").join("skills"), ".terramind"),
-        // Zencoder / Zenflow
-        (home.join(".zencoder").join("skills"), ".zencoder"),
-        // Grok
-        (home.join(".grok").join("skills"), ".grok"),
-        // Deveco
-        (home.join(".deveco").join("skills"), ".deveco"),
-    ];
+    // 从 skills-scan.json 驱动扫描目录列表
+    let scan_dirs = registry().get_skill_scan_dirs();
 
     let mut seen = std::collections::HashSet::new();
     for (base_dir, location_label) in &scan_dirs {
@@ -1600,24 +1334,26 @@ pub async fn test_model_connection(
 #[tauri::command]
 pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Value, String> {
     let config = load_ai_config();
-    let tool_def = AI_TOOLS.iter().find(|t| t.id == req.tool_id).ok_or("未知工具")?;
+    let tool_config = registry().get_tool_config(&req.tool_id).ok_or("未知工具")?.clone();
+    let tool_paths = registry().get_path_config(&req.tool_id).ok_or("未知工具")?.clone();
     let provider = req.provider_id.as_ref().and_then(|pid| config.providers.iter().find(|p| &p.id == pid));
 
     // 确定是否需要启动代理
     let needs_proxy = provider.map_or(false, |p| p.openai_use_proxy || p.anthropic_use_proxy);
     if needs_proxy {
         if let Some(p) = provider {
+            let proxy_settings = &registry().terminals().proxy_settings;
             let proxy_config = crate::proxy::types::ProxyConfig {
-                listen_address: "127.0.0.1".to_string(),
+                listen_address: proxy_settings.listen_address.clone(),
                 listen_port: config.proxy_port,
                 upstream_base_url: p.openai_url.clone(),
                 upstream_api_key: p.api_key.clone(),
                 upstream_anthropic_url: p.anthropic_url.clone(),
                 upstream_protocol: if p.openai_use_proxy { "openai" } else { "anthropic" }.to_string(),
                 target_model: req.model_id.clone().unwrap_or_default(),
-                timeout_secs: 300,
-                model_aliases: p.model_aliases.clone(),
-                default_model: p.default_model.clone(),
+                timeout_secs: proxy_settings.timeout_seconds as u64,
+                model_aliases: p.anthropic_model_aliases.clone(),
+                default_model: p.anthropic_default_model.clone(),
                 rectifier_enabled: config.rectifier.enabled,
                 rectifier_thinking_signature: config.rectifier.thinking_signature,
                 rectifier_thinking_budget: config.rectifier.thinking_budget,
@@ -1627,13 +1363,11 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                 optimizer_thinking: config.optimizer.thinking_optimizer,
                 optimizer_deepseek: config.optimizer.deepseek_normalize,
             };
-            // spawn 到独立 task 运行，避免 axum::serve() 阻塞主流程
             tokio::spawn(async move {
                 if let Err(e) = crate::proxy::server::start_proxy_server(proxy_config).await {
                     eprintln!("[proxy] 代理服务器错误: {}", e);
                 }
             });
-            // 给代理一点时间绑定端口
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
     }
@@ -1657,8 +1391,8 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
             if !p.anthropic_url.is_empty() { env_vars.push(("ANTHROPIC_BASE_URL".to_string(), p.anthropic_url.clone())); }
             if !p.anthropic_url.is_empty() { env_vars.push(("ANTHROPIC_AUTH_TOKEN".to_string(), p.api_key.clone())); }
         }
-        // Google 协议（Gemini CLI）：GEMINI_API_KEY + GOOGLE_GEMINI_BASE_URL
-        if tool_def.api_protocol == "google" {
+        // Google 协议：GEMINI_API_KEY + GOOGLE_GEMINI_BASE_URL
+        if tool_config.api_protocol == "google" {
             env_vars.push(("GEMINI_API_KEY".to_string(), p.api_key.clone()));
             if !p.google_url.is_empty() {
                 env_vars.push(("GOOGLE_GEMINI_BASE_URL".to_string(), p.google_url.clone()));
@@ -1666,16 +1400,31 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
         }
 
         if let Some(ref model) = req.model_id {
-            let effective_model = if req.one_m_context {
+            let effective_model = if req.one_m_context && tool_config.support_one_m_context {
                 format!("{}[1m]", model)
             } else {
                 model.clone()
             };
             env_vars.push(("ANTHROPIC_MODEL".to_string(), effective_model));
         }
-        // 非代理模式下也设置角色模型映射（参考 cc-switch model_mapper）
-        if !needs_proxy && !p.model_aliases.is_empty() {
-            for (role, mapped) in &p.model_aliases {
+        // 协议别名
+        let effective_aliases: &HashMap<String, String> = if tool_config.api_protocol == "anthropic" || tool_config.api_protocol == "both" {
+            &p.anthropic_model_aliases
+        } else if tool_config.api_protocol == "openai" {
+            &p.openai_model_aliases
+        } else {
+            &p.google_model_aliases
+        };
+        let effective_default: &Option<String> = if tool_config.api_protocol == "anthropic" || tool_config.api_protocol == "both" {
+            &p.anthropic_default_model
+        } else if tool_config.api_protocol == "openai" {
+            &p.openai_default_model
+        } else {
+            &p.google_default_model
+        };
+
+        if !needs_proxy && !effective_aliases.is_empty() {
+            for (role, mapped) in effective_aliases {
                 let env_key = match role.to_lowercase().as_str() {
                     "sonnet" => "ANTHROPIC_DEFAULT_SONNET_MODEL",
                     "opus" => "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -1683,17 +1432,16 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                     "fable" => "ANTHROPIC_DEFAULT_FABLE_MODEL",
                     _ => continue,
                 };
-                // 1M context: append [1m] to sonnet/opus but NOT haiku
-                let effective_mapped = if req.one_m_context && role.to_lowercase() != "haiku" {
+                let effective_mapped = if req.one_m_context && tool_config.support_one_m_context && role.to_lowercase() != "haiku" {
                     format!("{}[1m]", mapped)
                 } else {
                     mapped.clone()
                 };
                 env_vars.push((env_key.to_string(), effective_mapped));
             }
-            if let Some(ref default_model) = p.default_model {
+            if let Some(ref default_model) = effective_default {
                 if !env_vars.iter().any(|(k, _)| k == "ANTHROPIC_MODEL") {
-                    let effective_default = if req.one_m_context {
+                    let effective_default = if req.one_m_context && tool_config.support_one_m_context {
                         format!("{}[1m]", default_model)
                     } else {
                         default_model.clone()
@@ -1703,38 +1451,67 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
             }
         }
 
-        // 非代理模式下，写入模型别名到 ~/.claude/settings.json
-        // Claude Code 只从 settings.json 读取 ANTHROPIC_DEFAULT_*_MODEL，不读环境变量
+        // 写入工具的配置文件（由 config.json 的 configFile 字段驱动）
         if !needs_proxy
-            && tool_def.api_protocol == "anthropic"
-            && !p.model_aliases.is_empty()
+            && (tool_config.api_protocol == "anthropic" || tool_config.api_protocol == "both")
+            && !p.anthropic_model_aliases.is_empty()
         {
-            if let Err(e) = write_claude_model_aliases(
-                &p.model_aliases,
-                p.default_model.as_ref(),
+            if let Err(e) = write_tool_config_from_spec(
+                &req.tool_id,
+                &tool_config,
+                req.model_id.as_deref(),
+                Some(&p.anthropic_url),
+                &p.anthropic_url,
+                &p.api_key,
                 req.one_m_context,
             ) {
-                eprintln!("[any-version] 写入 Claude settings.json 失败: {}", e);
+                eprintln!("[any-version] 写入工具配置失败: {}", e);
             }
         }
     }
 
-    // 获取终端 exe
-    let terminal_exe = get_terminal_exe(&req.terminal_id);
+    // 写入工具特定的配置文件（从 config.json 的 configFile 字段驱动）
+    if let Some(ref model_id) = req.model_id {
+        if let Some(ref p) = provider {
+            let upstream_url = if !p.openai_url.is_empty() {
+                &p.openai_url
+            } else {
+                &p.anthropic_url
+            };
+            if !upstream_url.is_empty() && !p.api_key.is_empty() {
+                if let Err(e) = write_tool_config_from_spec(
+                    &req.tool_id,
+                    &tool_config,
+                    Some(model_id),
+                    Some(upstream_url),
+                    upstream_url,
+                    &p.api_key,
+                    req.one_m_context,
+                ) {
+                    eprintln!("[any-version] 写入工具配置失败: {}", e);
+                }
+            }
+        }
+    }
 
-    // 从 detect_cmd 提取真实可执行文件名（例如 "claude --version" → "claude"）
-    let tool_exe = tool_def.detect_cmd
+    // 获取终端 exe（从 JSON 配置）
+    let terminal_exe = get_terminal_exe_cfg(&req.terminal_id);
+
+    // 从 detect_cmd 提取真实可执行文件名（用于 prefix stripping）
+    let tool_exe = tool_paths.detect_cmd
         .split_whitespace()
         .next()
-        .unwrap_or(tool_def.id)
+        .unwrap_or(&tool_config.id)
         .to_string();
 
-    // resume / continue 参数：resume_cmd / continue_cmd 包含可执行文件名，
-    // 需剥离前缀以免与 tool_exe 重复（例如 "claude --resume {sid}" → "--resume {sid}"）
+    // 启动命令（来自 startCommand，可能包含默认参数如 "mimo ."）
+    let start_cmd = tool_paths.start_command.clone();
+
+    // resume / continue 参数
     let exe_prefix = format!("{} ", &tool_exe);
     let extra_args = if req.session_mode == "resume" {
         req.session_id.as_ref().and_then(|sid| {
-            tool_def.resume_cmd.map(|s| {
+            tool_config.resume_cmd.as_ref().map(|s| {
                 s.replace("{session_id}", sid)
                     .strip_prefix(&exe_prefix)
                     .unwrap_or(&s.replace("{session_id}", sid))
@@ -1742,72 +1519,95 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
             })
         }).unwrap_or_default()
     } else if req.session_mode == "continue" {
-        tool_def.continue_cmd.map(|s| {
+        tool_config.continue_cmd.as_ref().map(|s| {
             s.strip_prefix(&exe_prefix).unwrap_or(s).to_string()
         }).unwrap_or_default()
     } else {
         String::new()
     };
 
-    // fallback 模型参数
-    let fallback_arg = if tool_def.supports_fallback_model {
-        req.fallback_model_id.as_ref().and_then(|fm| {
-            tool_def.fallback_model_arg.map(|arg| format!("{} {}", arg, fm))
+    // 主模型 CLI 参数
+    let model_arg_str = if tool_config.support_model {
+        req.model_id.as_ref().and_then(|m| {
+            tool_config.model_arg.as_ref().map(|arg| {
+                let model_ref: String = if let Some(ref fmt) = tool_config.model_format {
+                    let prefix = fmt.prefix.as_deref().unwrap_or("");
+                    if fmt.extract_last {
+                        let model_name = m.split('/').next_back().unwrap_or(m.as_str());
+                        format!("{}{}", prefix, model_name)
+                    } else {
+                        format!("{}{}", prefix, m)
+                    }
+                } else {
+                    m.clone()
+                };
+                let effective = if req.one_m_context && tool_config.support_one_m_context && !model_ref.contains("[1m]") {
+                    format!("{}[1m]", model_ref)
+                } else {
+                    model_ref.to_string()
+                };
+                format!("{} {}", arg, effective)
+            })
         }).unwrap_or_default()
     } else {
         String::new()
     };
 
-    // 工具命令行参数（去掉前导空格）
-    let tool_args = [extra_args.as_str(), fallback_arg.as_str()]
+    // fallback 模型参数
+    let fallback_arg = if tool_config.support_fallback_model {
+        req.fallback_model_id.as_ref().and_then(|fm| {
+            tool_config.fallback_model_arg.as_ref().map(|arg| format!("{} {}", arg, fm))
+        }).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let tool_args = [extra_args.as_str(), model_arg_str.as_str(), fallback_arg.as_str()]
         .iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join(" ");
 
     let mut cmd = hidden_cmd::hidden_cmd(&terminal_exe);
     cmd.current_dir(&req.project_path);
 
-    // 设置环境变量
     for (k, v) in &env_vars {
         cmd.env(k, v);
     }
-    // 若设置了 ANTHROPIC_AUTH_TOKEN（自定义 Provider），清除 ANTHROPIC_API_KEY
-    // 避免 Claude Code 同时看到两个 auth 变量报 "Both ANTHROPIC_AUTH_TOKEN and ANTHROPIC_API_KEY set" 警告
     if env_vars.iter().any(|(k, _)| k == "ANTHROPIC_AUTH_TOKEN") {
         cmd.env_remove("ANTHROPIC_API_KEY");
     }
 
-    // 将工具参数拆分空格，作为独立 arg 传到底层进程（避免 && 等被外层 shell 解析）
     let tool_arg_parts: Vec<&str> = extra_args
         .split_whitespace()
+        .chain(model_arg_str.split_whitespace())
         .chain(fallback_arg.split_whitespace())
         .filter(|s| !s.is_empty())
         .collect();
 
+    // start_command 拆分为多个参数（如 "mimo ." → ["mimo", "."]）
+    let start_cmd_parts: Vec<&str> = start_cmd.split_whitespace().collect();
+
     if terminal_exe.to_lowercase().contains("cmd") {
-        // CMD：start /d 设目录避免 && 被外层 cmd 解析
         cmd.arg("/c").arg("start").arg("/d").arg(&req.project_path)
-           .arg("cmd").arg("/k").arg(&tool_exe);
+           .arg("cmd").arg("/k");
+        for p in &start_cmd_parts { cmd.arg(p); }
         for a in &tool_arg_parts { cmd.arg(a); }
     } else if terminal_exe.to_lowercase().contains("wt") {
-        // Windows Terminal：-d 设目录
-        cmd.arg("-d").arg(&req.project_path).arg("cmd").arg("/k").arg(&tool_exe);
+        cmd.arg("-d").arg(&req.project_path).arg("cmd").arg("/k");
+        for p in &start_cmd_parts { cmd.arg(p); }
         for a in &tool_arg_parts { cmd.arg(a); }
-    } else if is_ext_terminal(&terminal_exe) {
-        // WezTerm / Alacritty / Tabby
-        let launcher: &[&str] = if terminal_exe.to_lowercase().contains("wezterm") {
-            &["start", "--", "cmd", "/k"]  // wezterm 必须用 --
-        } else {
-            &["-e", "cmd", "/k"]           // alacritty/tabby 不用 --
-        };
-        for s in launcher { cmd.arg(*s); }
-        cmd.arg(&tool_exe);
+    } else if is_ext_terminal(&req.terminal_id) {
+        let launch_args = registry().terminals().terminals.get(&req.terminal_id)
+            .and_then(|t| t.launch_args.as_ref())
+            .map(|a| a.iter().map(|s| s.as_str()).collect::<Vec<_>>())
+            .unwrap_or_else(|| vec!["-e", "cmd", "/k"]);
+        for s in &launch_args { cmd.arg(*s); }
+        for p in &start_cmd_parts { cmd.arg(p); }
         for a in &tool_arg_parts { cmd.arg(a); }
     } else {
-        // PowerShell / pwsh：使用 Set-Location 替代 cd
         let escaped_path = req.project_path.replace('\'', "''");
         let run_cmd = if tool_args.is_empty() {
-            format!("Set-Location -LiteralPath '{}'; {}", escaped_path, &tool_exe)
+            format!("Set-Location -LiteralPath '{}'; {}", escaped_path, &start_cmd)
         } else {
-            format!("Set-Location -LiteralPath '{}'; {} {}", escaped_path, &tool_exe, &tool_args)
+            format!("Set-Location -LiteralPath '{}'; {} {}", escaped_path, &start_cmd, &tool_args)
         };
         cmd.args(["-NoExit", "-Command", &run_cmd]);
     }
@@ -1833,6 +1633,156 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
         "success": true,
         "message": "启动成功".to_string(),
     }))
+}
+
+/// 根据工具 config.json 中的 configFile 字段，自动写入工具配置文件
+fn write_tool_config_from_spec(
+    tool_id: &str,
+    tool_config: &ToolConfig,
+    model_id: Option<&str>,
+    base_url: Option<&str>,
+    fallback_url: &str,
+    api_key: &str,
+    _one_m_context: bool,
+) -> Result<(), String> {
+    // 如果有 configFile 定义，使用声明式方式写入
+    if let Some(ref _cfg) = tool_config.config_file {
+        return write_tool_config_generic(tool_config, model_id, base_url.unwrap_or(fallback_url), api_key);
+    }
+    // Fallback: claude-code 配置通过 settings.json write 映射处理
+    if tool_id == "claude-code" {
+        return Ok(());
+    }
+    Ok(())
+}
+
+/// 通用工具配置文件写入：根据 config.json 的 configFile.write 映射写入
+fn write_tool_config_generic(
+    tool_config: &ToolConfig,
+    model_id: Option<&str>,
+    base_url: &str,
+    api_key: &str,
+) -> Result<(), String> {
+    let cfg = match &tool_config.config_file {
+        Some(c) => c,
+        None => return Ok(()),
+    };
+
+    let write_map = match &cfg.write {
+        Some(w) => w,
+        None => return Ok(()),
+    };
+
+    // 解析路径（~ → HOME）
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let resolved_path = if cfg.path.starts_with("~/") {
+        home.join(&cfg.path[2..])
+    } else {
+        PathBuf::from(&cfg.path)
+    };
+
+    // 确保父目录存在
+    if let Some(parent) = resolved_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+
+    // 读取或创建 JSON 文档
+    let mut doc: serde_json::Map<String, JsonValue> = if resolved_path.exists() {
+        match fs::read_to_string(&resolved_path) {
+            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+            Err(_) => serde_json::Map::new(),
+        }
+    } else {
+        serde_json::Map::new()
+    };
+
+    let model = model_id.unwrap_or("");
+    let model_name = model.split('/').next_back().unwrap_or(model);
+
+    // 遍历 write 映射，设置值
+    for (path, value_template) in write_map {
+        let value = match value_template.as_str() {
+            "model" => model.to_string(),
+            "modelName" => model_name.to_string(),
+            "baseUrl" => base_url.to_string(),
+            "apiKey" => api_key.to_string(),
+            "" => String::new(), // 清空 key
+            other => other.to_string(), // 字面值
+        };
+        set_json_path(&mut doc, path, &value, &tool_config);
+    }
+
+    let content = serde_json::to_string_pretty(&doc)
+        .map_err(|e| format!("序列化配置失败: {}", e))?;
+    fs::write(&resolved_path, content)
+        .map_err(|e| format!("写入 {} 失败: {}", resolved_path.display(), e))
+}
+
+/// 根据点分路径设置 JSON 文档中的值，处理嵌套对象和特殊值
+fn set_json_path(doc: &mut serde_json::Map<String, JsonValue>, path: &str, value: &str, tool_config: &ToolConfig) {
+    // 特殊处理：MiMo Code 需要 npm schema 字段
+    if let Some(ref schema) = tool_config.config_file.as_ref().and_then(|c| c.schema.as_ref()) {
+        if !doc.contains_key("$schema") {
+            doc.insert("$schema".to_string(), serde_json::json!(schema));
+        }
+    }
+
+    let parts: Vec<&str> = path.split('.').collect();
+    if parts.is_empty() {
+        return;
+    }
+
+    // 使用 serde_json Value 的 pointer_mut 来导航嵌套路径
+    let pointer_path: String = parts.iter()
+        .fold(String::new(), |acc, p| format!("{}/{}", acc, p));
+
+    // 将 doc 包装为 Value 以使用 pointer API
+    let mut root = serde_json::Value::Object(std::mem::take(doc));
+
+    // 确保所有中间路径存在
+    for i in 0..parts.len().saturating_sub(1) {
+        let sub_path: String = parts[..=i].iter()
+            .fold(String::new(), |acc, p| format!("{}/{}", acc, p));
+        if root.pointer(&sub_path).is_none() || !root.pointer(&sub_path).unwrap().is_object() {
+            let parent_path: String = if i == 0 {
+                String::new()
+            } else {
+                parts[..i].iter().fold(String::new(), |acc, p| format!("{}/{}", acc, p))
+            };
+            let new_obj = serde_json::json!({ parts[i]: {} });
+            if parent_path.is_empty() {
+                root = new_obj;
+            } else if let Some(parent) = root.pointer_mut(&parent_path) {
+                parent[parts[i]] = serde_json::json!({});
+            }
+        }
+    }
+
+    // 设置最终值
+    if let Some(target) = root.pointer_mut(&pointer_path) {
+        *target = serde_json::Value::String(value.to_string());
+    } else {
+        // 路径不存在时创建
+        let parent_path: String = if parts.len() == 1 {
+            String::new()
+        } else {
+            parts[..parts.len()-1].iter().fold(String::new(), |acc, p| format!("{}/{}", acc, p))
+        };
+        if parent_path.is_empty() {
+            root[parts[0]] = serde_json::Value::String(value.to_string());
+        } else if let Some(parent) = root.pointer_mut(&parent_path) {
+            parent[parts.last().unwrap()] = serde_json::Value::String(value.to_string());
+        }
+    }
+
+    // 转换回 Map
+    *doc = match root {
+        serde_json::Value::Object(m) => m,
+        _ => serde_json::Map::new(),
+    };
 }
 
 // ─── AI 会话管理 ───
@@ -1868,8 +1818,8 @@ pub async fn start_proxy(port: u16) -> Result<(), String> {
         upstream_protocol: if provider.openai_use_proxy { "openai" } else { "anthropic" }.to_string(),
         target_model: String::new(),
         timeout_secs: 300,
-        model_aliases: provider.model_aliases.clone(),
-        default_model: provider.default_model.clone(),
+        model_aliases: provider.anthropic_model_aliases.clone(),
+        default_model: provider.anthropic_default_model.clone(),
         rectifier_enabled: config.rectifier.enabled,
         rectifier_thinking_signature: config.rectifier.thinking_signature,
         rectifier_thinking_budget: config.rectifier.thinking_budget,
@@ -1905,107 +1855,29 @@ fn find_terminal(id: &str, name: &str, exe_names: &[&str]) -> Option<TerminalInf
     None
 }
 
-fn is_ext_terminal(terminal_exe: &str) -> bool {
-    let lower = terminal_exe.to_lowercase();
-    lower.contains("wezterm") || lower.contains("alacritty") || lower.contains("tabby")
+/// 判断终端是否"外部终端"（带 launch_args 的即为外部终端，如 wezterm/alacritty/tabby）
+fn is_ext_terminal(terminal_id: &str) -> bool {
+    registry().terminals().terminals.get(terminal_id)
+        .and_then(|t| t.launch_args.as_ref())
+        .is_some()
 }
 
-/// 写入模型别名到 ~/.claude/settings.json，让 Claude Code 读取
-/// Claude Code 只从 settings.json 读模型映射，不会从环境变量读取
-fn write_claude_model_aliases(
-    aliases: &HashMap<String, String>,
-    default_model: Option<&String>,
-    one_m_context: bool,
-) -> Result<(), String> {
-    let home = PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default());
-    let home = if home.as_os_str().is_empty() {
-        PathBuf::from(std::env::var("HOME").unwrap_or_default())
-    } else {
-        home
-    };
-    if home.as_os_str().is_empty() {
-        return Err("无法找到用户主目录".to_string());
-    }
-    let settings_path = home.join(".claude").join("settings.json");
-
-    // 读取现有 settings.json（如果存在）
-    let mut settings: JsonValue = if settings_path.exists() {
-        let content = fs::read_to_string(&settings_path)
-            .map_err(|e| format!("读取 settings.json 失败: {}", e))?;
-        serde_json::from_str(&content)
-            .unwrap_or(serde_json::json!({}))
-    } else {
-        // 确保 .claude 目录存在
-        fs::create_dir_all(home.join(".claude"))
-            .map_err(|e| format!("创建 .claude 目录失败: {}", e))?;
-        serde_json::json!({})
-    };
-
-    for (role, mapped) in aliases {
-        let env_key = match role.to_lowercase().as_str() {
-            "sonnet" => "ANTHROPIC_DEFAULT_SONNET_MODEL",
-            "opus" => "ANTHROPIC_DEFAULT_OPUS_MODEL",
-            "haiku" => "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-            "fable" => "ANTHROPIC_DEFAULT_FABLE_MODEL",
-            _ => continue,
-        };
-        let effective = if one_m_context && role.to_lowercase() != "haiku" {
-            format!("{}[1m]", mapped)
-        } else {
-            mapped.clone()
-        };
-        settings[env_key] = JsonValue::String(effective);
-    }
-
-    // 设置默认模型（ANTHROPIC_MODEL），如果不存在
-    if let Some(dm) = default_model {
-        if !settings.as_object().map_or(false, |o| o.contains_key("ANTHROPIC_MODEL")) {
-            let effective = if one_m_context {
-                format!("{}[1m]", dm)
-            } else {
-                dm.clone()
-            };
-            settings["ANTHROPIC_MODEL"] = JsonValue::String(effective);
-        }
-    }
-
-    let content = serde_json::to_string_pretty(&settings)
-        .map_err(|e| format!("序列化 settings.json 失败: {}", e))?;
-    fs::write(&settings_path, content)
-        .map_err(|e| format!("写入 settings.json 失败: {}", e))?;
-
-    Ok(())
-}
-
-fn get_terminal_exe(terminal_id: &str) -> String {
-    match terminal_id {
-        "powershell" => "powershell.exe".to_string(),
-        "wt" => "wt.exe".to_string(),
-        "pwsh" => "pwsh.exe".to_string(),
-        "wezterm" => "wezterm.exe".to_string(),
-        "alacritty" => "alacritty.exe".to_string(),
-        "tabby" => "tabby.exe".to_string(),
-        _ => "cmd.exe".to_string(),
-    }
+/// 从 terminals.json 配置获取终端 exe 名称
+fn get_terminal_exe_cfg(terminal_id: &str) -> String {
+    registry().terminals().terminals.get(terminal_id)
+        .and_then(|t| t.exe_names.first())
+        .map(|s| s.clone())
+        .unwrap_or_else(|| "cmd.exe".to_string())
 }
 
 #[tauri::command]
 pub fn detect_terminals() -> Result<Vec<TerminalInfo>, String> {
     let mut terminals = Vec::new();
 
-    // 检测各终端
-    let checks: Vec<(&str, &str, &[&str])> = vec![
-        ("cmd", "命令提示符", &["cmd.exe"] as &[&str]),
-        ("powershell", "PowerShell", &["powershell.exe"]),
-        ("wt", "Windows Terminal", &["wt.exe"]),
-        ("pwsh", "PowerShell Core", &["pwsh.exe"]),
-        ("wezterm", "WezTerm", &["wezterm.exe", "wezterm-gui.exe"]),
-        ("alacritty", "Alacritty", &["alacritty.exe"]),
-        ("tabby", "Tabby", &["tabby.exe"]),
-    ];
-
-    for (id, name, exe_names) in &checks {
-        if let Some(term) = find_terminal(id, name, exe_names) {
+    // 从 terminals.json 驱动终端检测
+    for (id, def) in registry().terminal_defs() {
+        let exe_names: Vec<&str> = def.exe_names.iter().map(|s| s.as_str()).collect();
+        if let Some(term) = find_terminal(id, &def.name, &exe_names) {
             terminals.push(term);
         }
     }
@@ -2024,74 +1896,64 @@ pub fn detect_terminals() -> Result<Vec<TerminalInfo>, String> {
 
 // ─── 工具会话扫描 ───
 
-/// 扫描工具会话（使用增强版解析，参考 EchoBird + cc-switch）
+/// 扫描工具会话（由 config.json 的 sessions 字段驱动）
 #[tauri::command]
 pub fn scan_tool_sessions(tool_id: String) -> Result<Vec<ToolSession>, String> {
     let mut sessions = Vec::new();
     let home = PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default());
-    // 跨平台兼容：Linux/macOS 用 HOME
     let home = if home.as_os_str().is_empty() {
         PathBuf::from(std::env::var("HOME").unwrap_or_default())
     } else {
         home
     };
+    let config_home = std::env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home.join(".config"));
 
-    match tool_id.as_str() {
-        "claude-code" => {
-            let projects_dir = home.join(".claude").join("projects");
-            if projects_dir.exists() {
-                scan_claude_sessions_enhanced(&projects_dir, &mut sessions);
-            }
+    // 从 registry 获取工具配置
+    let session_def = match registry().get_tool_config(&tool_id).and_then(|c| c.sessions.as_ref()) {
+        Some(def) => def,
+        None => return Ok(sessions),
+    };
+
+    for dir_pattern in &session_def.dirs {
+        // 解析路径中的 ~ 和 XDG_CONFIG_HOME
+        let dir = if dir_pattern.starts_with("~/.config/") {
+            let relative = dir_pattern.strip_prefix("~/.config/").unwrap_or("");
+            config_home.join(relative)
+        } else if dir_pattern.starts_with("~/") {
+            home.join(&dir_pattern[2..])
+        } else {
+            PathBuf::from(dir_pattern)
+        };
+
+        if !dir.exists() {
+            continue;
         }
-        "codex-cli" => {
-            let sessions_file = home.join(".codex").join("sessions.jsonl");
-            if sessions_file.exists() {
-                scan_codex_sessions(&sessions_file, &mut sessions);
-            }
-        }
-        "gemini-cli" => {
-            let projects_dir = home.join(".gemini").join("projects");
-            if projects_dir.exists() {
-                scan_claude_sessions_enhanced(&projects_dir, &mut sessions);
-            }
-        }
-        "kilocode" => {
-            let projects_dir = home.join(".kilocode").join("projects");
-            if projects_dir.exists() {
-                scan_claude_sessions_enhanced(&projects_dir, &mut sessions);
-            }
-        }
-        "opencode" => {
-            // OpenCode sessions: 参考 EchoBird，configDir 在 ~/.config/opencode 或 ~/.opencode
-            let config_home = std::env::var("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| home.join(".config"));
-            let candidate_dirs = vec![
-                config_home.join("opencode"),
-                home.join(".opencode"),
-            ];
-            for dir in &candidate_dirs {
-                if dir.exists() {
-                    scan_opencode_sessions(dir, &mut sessions);
+
+        match session_def.scan_type.as_str() {
+            "claude_projects" => {
+                let projects_dir = dir.join("projects");
+                if projects_dir.exists() {
+                    scan_claude_sessions_enhanced(&projects_dir, &mut sessions);
                 }
             }
-        }
-        "mimocode" => {
-            // MiMo Code sessions: ~/.config/mimocode（参考 EchoBird tools/mimocode/paths.json）
-            let config_home = std::env::var("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| home.join(".config"));
-            let candidate_dirs = vec![
-                config_home.join("mimocode"),
-                home.join(".mimo-code"),
-            ];
-            for dir in &candidate_dirs {
-                if dir.exists() {
-                    scan_mimocode_sessions(dir, &mut sessions);
+            "jsonl" => {
+                if dir.is_file() {
+                    scan_codex_sessions(&dir, &mut sessions);
+                } else {
+                    // 也可能是目录，找 sessions.jsonl
+                    let f = dir.join("sessions.jsonl");
+                    if f.exists() {
+                        scan_codex_sessions(&f, &mut sessions);
+                    }
                 }
             }
+            "opencode_style" => {
+                scan_opencode_sessions(&dir, &mut sessions);
+            }
+            _ => {}
         }
-        _ => {}
     }
 
     sessions.sort_by(|a, b| b.last_used.cmp(&a.last_used));
@@ -2172,22 +2034,6 @@ fn scan_opencode_sessions(opencode_dir: &PathBuf, sessions: &mut Vec<ToolSession
                 }
             }
         }
-    }
-}
-
-/// 扫描 MiMo Code sessions（参考 EchoBird）
-fn scan_mimocode_sessions(mimocode_dir: &PathBuf, sessions: &mut Vec<ToolSession>) {
-    // MiMo Code 通常采用 Claude Code 兼容的 session 存储格式
-    let projects_dir = mimocode_dir.join("projects");
-    if projects_dir.exists() {
-        scan_claude_sessions_enhanced(&projects_dir, sessions);
-        return;
-    }
-
-    // 或者 sessions/ 子目录
-    let session_dir = mimocode_dir.join("sessions");
-    if session_dir.exists() {
-        scan_opencode_sessions(&session_dir, sessions);
     }
 }
 
@@ -2346,9 +2192,11 @@ fn extract_message_text(msg: &serde_json::Value) -> String {
 
 #[tauri::command]
 pub async fn upgrade_ai_tool(tool_id: String) -> Result<String, String> {
-    let tool_def = AI_TOOLS.iter().find(|t| t.id == tool_id).ok_or("未知工具")?;
+    let reg = registry();
+    let (_, paths) = reg.get_tool(&tool_id).ok_or("未知工具")?;
+    let install_cmd = &paths.install_cmd;
     let output = tokio::process::Command::new("cmd")
-        .args(["/c", tool_def.install_cmd])
+        .args(["/c", install_cmd])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .output()
@@ -2383,12 +2231,12 @@ pub fn get_ai_tool_cache_info() -> Result<Vec<AiToolCacheInfo>, String> {
     let home = PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default());
     let mut results = Vec::new();
 
-    for def in AI_TOOLS {
-        for cache_dir in def.cache_dirs {
+    for (tool_id, (config, _)) in registry().tool_iter() {
+        for cache_dir in &config.cache_dirs {
             let full_path = home.join(cache_dir);
             if !full_path.exists() {
                 results.push(AiToolCacheInfo {
-                    tool_id: def.id.to_string(),
+                    tool_id: tool_id.to_string(),
                     dir_name: cache_dir.to_string(),
                     full_path: full_path.to_string_lossy().to_string(),
                     size: "0 B".to_string(),
@@ -2415,7 +2263,7 @@ pub fn get_ai_tool_cache_info() -> Result<Vec<AiToolCacheInfo>, String> {
             let size_str = format_bytes(size_bytes);
 
             results.push(AiToolCacheInfo {
-                tool_id: def.id.to_string(),
+                tool_id: tool_id.to_string(),
                 dir_name: cache_dir.to_string(),
                 full_path: full_path.to_string_lossy().to_string(),
                 size: size_str,
@@ -2527,16 +2375,6 @@ fn do_migrate_skills(
     skills: &[Skill],
     app_handle: Option<&tauri::AppHandle>,
 ) -> SkillMigrateResult {
-    let home = PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default());
-    let home = if home.as_os_str().is_empty() {
-        PathBuf::from(std::env::var("HOME").unwrap_or_default())
-    } else {
-        home
-    };
-    let config_home = std::env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| home.join(".config"));
-
     let old_path = PathBuf::from(old_dir);
     let new_path = PathBuf::from(new_dir);
 
@@ -2603,22 +2441,9 @@ fn do_migrate_skills(
         if !skill.enabled_tools.is_empty() {
             emit_progress("重建链接", i + 1, total, &skill.name);
 
-            let tool_skill_dirs: Vec<(&str, PathBuf)> = skill.enabled_tools.iter().map(|t| {
-                let dir = match t.as_str() {
-                    "claude-code" => home.join(".claude").join("skills").join(skill_id),
-                    "codex-cli" => home.join(".codex").join("skills").join(skill_id),
-                    "gemini-cli" => home.join(".gemini").join("skills").join(skill_id),
-                    "kilocode" => home.join(".kilocode").join("skills").join(skill_id),
-                    "aider" => home.join(".aider").join("skills").join(skill_id),
-                    "opencode" => config_home.join("opencode").join("skills").join(skill_id),
-                    "pi" => home.join(".pi").join("agent").join("skills").join(skill_id),
-                    "qwencode" => home.join(".qwen").join("skills").join(skill_id),
-                    "mimocode" => home.join(".mimocode").join("skills").join(skill_id),
-                    "grok" => home.join(".grok").join("skills").join(skill_id),
-                    "deveco" => home.join(".deveco").join("skills").join(skill_id),
-                    _ => home.join(format!(".{}", t)).join("skills").join(skill_id),
-                };
-                (t.as_str(), dir)
+            // 由 registry JSON 配置驱动的路径映射
+            let tool_skill_dirs: Vec<(String, PathBuf)> = skill.enabled_tools.iter().map(|t| {
+                (t.clone(), registry().resolve_skill_junction_target(t, skill_id))
             }).collect();
 
             for (_tool_id, tool_dir) in &tool_skill_dirs {
@@ -2731,15 +2556,6 @@ fn install_skill_with_junctions(src_dir: String, target_tools: &[String]) -> Res
     };
 
     let id = name.to_lowercase().replace(' ', "-");
-    let home = PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default());
-    let home = if home.as_os_str().is_empty() {
-        PathBuf::from(std::env::var("HOME").unwrap_or_default())
-    } else {
-        home
-    };
-    let config_home = std::env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| home.join(".config"));
 
     // 1. 复制到核心 skill 仓库 ~/.agents/skills/<id>/
     let canonical_dir = skills_dir().join(&id);
@@ -2748,31 +2564,9 @@ fn install_skill_with_junctions(src_dir: String, target_tools: &[String]) -> Res
     }
     copy_dir_recursive(&src, &canonical_dir)?;
 
-    // 2. 为每个目标工具创建 JUNCTION
-    // 路径映射参考 skills.sh agents.ts 的 globalSkillsDir
-    let tool_skill_dirs: Vec<(&str, PathBuf)> = target_tools.iter().map(|t| {
-        let dir = match t.as_str() {
-            "claude-code" => home.join(".claude").join("skills").join(&id),
-            "codex-cli" => home.join(".codex").join("skills").join(&id),
-            "gemini-cli" => home.join(".gemini").join("skills").join(&id),
-            "kilocode" => home.join(".kilocode").join("skills").join(&id),
-            "aider" => home.join(".aider").join("skills").join(&id),
-            // OpenCode 遵循 XDG 规范
-            "opencode" => config_home.join("opencode").join("skills").join(&id),
-            // Pi 特殊子目录 agent/skills
-            "pi" => home.join(".pi").join("agent").join("skills").join(&id),
-            // Qwen Code 使用 .qwen/skills
-            "qwencode" => home.join(".qwen").join("skills").join(&id),
-            // MiMo Code 使用 .mimocode/skills
-            "mimocode" => home.join(".mimocode").join("skills").join(&id),
-            // Grok
-            "grok" => home.join(".grok").join("skills").join(&id),
-            // Deveco
-            "deveco" => home.join(".deveco").join("skills").join(&id),
-            // 泛化 fallback：~/.{tool}/skills/{id}
-            _ => return (t.as_str(), home.join(format!(".{}", t)).join("skills").join(&id)),
-        };
-        (t.as_str(), dir)
+    // 2. 为每个目标工具创建 JUNCTION（路径由 registry JSON 配置驱动）
+    let tool_skill_dirs: Vec<(String, PathBuf)> = target_tools.iter().map(|t| {
+        (t.clone(), registry().resolve_skill_junction_target(t, &id))
     }).collect();
 
     let mut enabled_tools: Vec<String> = Vec::new();
@@ -2794,7 +2588,7 @@ fn install_skill_with_junctions(src_dir: String, target_tools: &[String]) -> Res
         if let Err(e) = create_ai_junction(tool_dir, &canonical_dir) {
             eprintln!("[install_skill] JUNCTION 失败 for {}: {}", tool_id, e);
         } else {
-            enabled_tools.push(tool_id.to_string());
+            enabled_tools.push(tool_id.clone());
         }
     }
 

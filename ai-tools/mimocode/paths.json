@@ -1,0 +1,16 @@
+{
+  "name": "MiMo Code",
+  "category": "CLI Code",
+  "apiProtocol": ["openai"],
+  "command": "mimo",
+  "startCommand": "mimo .",
+  "detectCmd": "mimo --version",
+  "installCmd": "npm install -g @mimo-ai/cli",
+  "paths": {
+    "win32": [
+      "%APPDATA%/npm/mimo.cmd",
+      "%USERPROFILE%/scoop/shims/mimo.cmd",
+      "%LOCALAPPDATA%/pnpm/mimo.cmd"
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "Pi Coding Agent",
+  "category": "CLI Code",
+  "apiProtocol": ["openai"],
+  "command": "pi",
+  "startCommand": "pi",
+  "detectCmd": "pi --version",
+  "installCmd": "npm install -g @earendil-works/pi-coding-agent",
+  "paths": {
+    "win32": [
+      "%APPDATA%/npm/pi.cmd",
+      "%USERPROFILE%/scoop/shims/pi.cmd",
+      "%LOCALAPPDATA%/pnpm/pi.cmd"
+    ]
+  }
+}

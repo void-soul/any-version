@@ -1,0 +1,36 @@
+{
+  "id": "opencode",
+  "displayName": "OpenCode",
+  "category": "cli-code",
+  "website": "https://opencode.ai",
+  "apiProtocol": "openai",
+  "supportModel": true,
+  "modelArg": "-m",
+  "supportFallbackModel": false,
+  "resumeCmd": "opencode -s {session_id}",
+  "continueCmd": null,
+  "cacheDirs": [".opencode"],
+  "pkgManager": "npm",
+  "pkgName": "opencode-ai",
+  "configFile": {
+    "path": "~/.config/opencode/opencode.jsonc",
+    "format": "jsonc",
+    "write": {
+      "providers.anyversion.name": "anyversion",
+      "providers.anyversion.type": "openai-compatible",
+      "providers.anyversion.options.baseURL": "baseUrl",
+      "providers.anyversion.options.apiKey": "apiKey",
+      "defaultModel": "model"
+    }
+  },
+  "modelFormat": {
+    "prefix": "anyversion/",
+    "extractLast": true
+  },
+  "sessions": {
+    "type": "opencode_style",
+    "dirs": ["~/.config/opencode", "~/.opencode"]
+  },
+  "skillsDir": "~/.opencode/skills",
+  "skillsDirXdg": "~/.config/opencode/skills"
+}

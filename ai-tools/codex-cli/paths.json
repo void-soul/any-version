@@ -1,0 +1,16 @@
+{
+  "name": "Codex CLI",
+  "category": "CLI Code",
+  "apiProtocol": ["openai"],
+  "command": "codex",
+  "startCommand": "codex",
+  "detectCmd": "codex --version",
+  "installCmd": "npm install -g @openai/codex@latest",
+  "paths": {
+    "win32": [
+      "%APPDATA%/npm/codex.cmd",
+      "%USERPROFILE%/scoop/shims/codex.cmd",
+      "%LOCALAPPDATA%/pnpm/codex.cmd"
+    ]
+  }
+}

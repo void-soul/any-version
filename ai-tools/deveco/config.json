@@ -1,0 +1,20 @@
+{
+  "id": "deveco",
+  "displayName": "Deveco Code",
+  "category": "cli-code",
+  "website": "https://deveco.dev",
+  "apiProtocol": "none",
+  "supportModel": false,
+  "modelArg": null,
+  "supportFallbackModel": false,
+  "resumeCmd": null,
+  "continueCmd": null,
+  "cacheDirs": [".deveco"],
+  "pkgManager": "npm",
+  "pkgName": "@deveco/deveco-code",
+  "configFile": null,
+  "sessions": {
+    "type": "none"
+  },
+  "skillsDir": "~/.deveco/skills"
+}

@@ -1,0 +1,20 @@
+{
+  "id": "qwencode",
+  "displayName": "Qwen Code",
+  "category": "cli-code",
+  "website": "https://github.com/QwenLM/qwen-code",
+  "apiProtocol": "openai",
+  "supportModel": true,
+  "modelArg": "-m",
+  "supportFallbackModel": false,
+  "resumeCmd": null,
+  "continueCmd": null,
+  "cacheDirs": [".qwen-code", ".qwen"],
+  "pkgManager": "npm",
+  "pkgName": "@qwen-code/qwen-code",
+  "configFile": null,
+  "sessions": {
+    "type": "none"
+  },
+  "skillsDir": "~/.qwen/skills"
+}
