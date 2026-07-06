@@ -5,8 +5,9 @@
 
 use super::{optimizers, sse, transform, types::ProxyConfig};
 use axum::{
+    body::Body,
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{sse::Event, IntoResponse, Response, Sse},
     routing::{get, post},
     Json, Router,
@@ -81,11 +82,17 @@ pub async fn start_proxy_server(config: ProxyConfig) -> Result<(), String> {
         stats: Arc::new(RwLock::new(ProxyStats::default())),
     };
 
-    let app = Router::new()
-        .route("/health", get(health_handler))
-        .route("/v1/messages", post(messages_handler))
-        .route("/v1/messages/count_tokens", post(count_tokens_handler))
-        .with_state(state.clone());
+    // 按协议暴露路由：OpenAI 协议代理只处理 /v1/chat/completions（透传），
+    // Anthropic 协议代理处理 /v1/messages（转换/直通）。双端口各自独立。
+    let mut app = Router::new().route("/health", get(health_handler));
+    if config.upstream_protocol == "openai" {
+        app = app.route("/v1/chat/completions", post(chat_completions_handler));
+    } else {
+        app = app
+            .route("/v1/messages", post(messages_handler))
+            .route("/v1/messages/count_tokens", post(count_tokens_handler));
+    }
+    let app = app.with_state(state.clone());
 
     let addr: std::net::SocketAddr = format!("{}:{}", config.listen_address, config.listen_port)
         .parse()
@@ -137,6 +144,124 @@ async fn count_tokens_handler(Json(body): Json<Value>) -> Json<Value> {
     Json(json!({
         "input_tokens": (text_len / 4).max(1)
     }))
+}
+
+/// POST /v1/chat/completions — OpenAI 协议代理（透传 + 模型别名映射）
+///
+/// 原样转发 OpenAI Chat Completions 请求到上游 `upstream_base_url`，
+/// 仅做模型别名映射（openai_model_aliases），不做 Anthropic↔OpenAI 转换。
+/// 响应（流式/非流式）按原样转发，并记录用量。
+async fn chat_completions_handler(
+    State(state): State<ProxyState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    {
+        let mut stats = state.stats.write().await;
+        stats.total_requests += 1;
+    }
+
+    let config = state.config.read().await.clone();
+    let is_stream = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let request_model = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    // 应用 OpenAI 模型别名映射（供应商只识别自己的模型名）
+    let aliases = if config.model_aliases.is_empty() {
+        None
+    } else {
+        Some(transform::ModelAliases {
+            default_model: config.default_model.clone(),
+            role_map: config.model_aliases.clone(),
+        })
+    };
+    let mut send_body = body.clone();
+    if let Some(a) = aliases.as_ref() {
+        if let Some(m) = send_body.get("model").and_then(|v| v.as_str()) {
+            let mapped = transform::map_model_name(m, a);
+            send_body["model"] = Value::String(mapped);
+        }
+    }
+
+    let upstream_url = format!(
+        "{}/chat/completions",
+        config.upstream_base_url.trim_end_matches('/')
+    );
+
+    let mut req = state
+        .client
+        .post(&upstream_url)
+        .header("Authorization", format!("Bearer {}", config.upstream_api_key))
+        .json(&send_body);
+    if let Some(ct) = headers.get(header::CONTENT_TYPE) {
+        if let Ok(v) = ct.to_str() {
+            req = req.header(header::CONTENT_TYPE, v);
+        }
+    }
+
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            let mut stats = state.stats.write().await;
+            stats.failed_requests += 1;
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({
+                    "error": { "message": format!("上游请求失败: {}", e) }
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let status = resp.status();
+    let content_type = resp.headers().get(header::CONTENT_TYPE).cloned();
+    let bytes = match resp.bytes().await {
+        Ok(b) => b,
+        Err(_) => {
+            let mut stats = state.stats.write().await;
+            stats.failed_requests += 1;
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({
+                    "error": { "message": "读取上游响应失败" }
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    // 记录用量（非流式时解析 OpenAI usage）
+    if !is_stream {
+        if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
+            if let Some(u) = v.get("usage") {
+                let in_t = u.get("prompt_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
+                let out_t = u
+                    .get("completion_tokens")
+                    .and_then(|x| x.as_u64())
+                    .unwrap_or(0);
+                if in_t > 0 || out_t > 0 {
+                    record_proxy_usage(&request_model, in_t, out_t);
+                }
+            }
+        }
+        let mut stats = state.stats.write().await;
+        stats.success_requests += 1;
+    }
+
+    // 原样转发响应（流式 SSE / 非流式 JSON）
+    let mut out = Response::new(Body::from(bytes));
+    *out.status_mut() = status;
+    if let Some(ct) = content_type {
+        out.headers_mut().insert(header::CONTENT_TYPE, ct);
+    }
+    out
 }
 
 /// 构建上游请求（复用于初始请求和重试）
@@ -306,10 +431,14 @@ async fn messages_handler(
 
     // 确定上游 URL 和认证方式
     let (upstream_url, auth_header_name) = if !config.upstream_anthropic_url.is_empty() {
-        let url = format!(
-            "{}/messages",
-            config.upstream_anthropic_url.trim_end_matches('/')
-        );
+        // 对 /messages 后缀幂等：供应商 anthropic_url 可能已含 /v1/messages，
+        // 避免拼成 /v1/messages/messages 双后缀。
+        let base = config.upstream_anthropic_url.trim_end_matches('/');
+        let url = if base.ends_with("/messages") {
+            base.to_string()
+        } else {
+            format!("{}/messages", base)
+        };
         (url, "x-api-key")
     } else {
         let url = format!(

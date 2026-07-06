@@ -49,42 +49,81 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
         None => eprintln!("  ✗ 未找到，将使用官方默认模型"),
     }
 
-    // 确定是否需要启动代理
-    let needs_proxy = provider.map_or(false, |p| p.openai_use_proxy || p.anthropic_use_proxy);
-    eprintln!("\n[proxy] needs_proxy={} (openai_use_proxy={}, anthropic_use_proxy={})",
-        needs_proxy,
-        provider.map_or(false, |p| p.openai_use_proxy),
-        provider.map_or(false, |p| p.anthropic_use_proxy));
-    if needs_proxy {
-        if let Some(p) = provider {
+    // 确定各协议是否需要启动代理（双端口：
+    //   P1 Anthropic 代理 = config.proxy_port，处理 /v1/messages
+    //   P2 OpenAI 代理   = config.proxy_port + 1，处理 /v1/chat/completions
+    // 两个协议可独立启用，互不影响。
+    let anthropic_use_proxy = provider.map_or(false, |p| p.anthropic_use_proxy);
+    let openai_use_proxy = provider.map_or(false, |p| p.openai_use_proxy);
+    eprintln!("\n[proxy] anthropic_use_proxy={}, openai_use_proxy={}", anthropic_use_proxy, openai_use_proxy);
+
+    if let Some(p) = provider {
+        if !p.api_key.is_empty() {
             let proxy_settings = &registry().terminals().proxy_settings;
-            let proxy_config = crate::proxy::types::ProxyConfig {
-                listen_address: proxy_settings.listen_address.clone(),
-                listen_port: config.proxy_port,
-                upstream_base_url: p.openai_url.clone(),
-                upstream_api_key: p.api_key.clone(),
-                upstream_anthropic_url: p.anthropic_url.clone(),
-                upstream_protocol: if p.openai_use_proxy { "openai" } else { "anthropic" }.to_string(),
-                target_model: req.model_id.clone().unwrap_or_default(),
-                timeout_secs: proxy_settings.timeout_seconds as u64,
-                model_aliases: p.anthropic_model_aliases.clone(),
-                default_model: p.anthropic_default_model.clone(),
-                rectifier_enabled: config.rectifier.enabled,
-                rectifier_thinking_signature: config.rectifier.thinking_signature,
-                rectifier_thinking_budget: config.rectifier.thinking_budget,
-                rectifier_media_fallback: config.rectifier.media_fallback,
-                optimizer_enabled: config.optimizer.enabled,
-                optimizer_cache_injection: config.optimizer.cache_injection,
-                optimizer_thinking: config.optimizer.thinking_optimizer,
-                optimizer_deepseek: config.optimizer.deepseek_normalize,
-            };
-            eprintln!("[proxy] ✓ 启动本地代理服务器 -> 127.0.0.1:{} (protocol={})", config.proxy_port, proxy_config.upstream_protocol);
-            tokio::spawn(async move {
-                if let Err(e) = crate::proxy::server::start_proxy_server(proxy_config).await {
-                    eprintln!("[proxy] 代理服务器错误: {}", e);
-                }
-            });
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let timeout = proxy_settings.timeout_seconds as u64;
+
+            // ── P1: Anthropic 代理（config.proxy_port）──
+            if anthropic_use_proxy {
+                let proxy_config = crate::proxy::types::ProxyConfig {
+                    listen_address: proxy_settings.listen_address.clone(),
+                    listen_port: config.proxy_port,
+                    upstream_base_url: p.openai_url.clone(),
+                    upstream_api_key: p.api_key.clone(),
+                    upstream_anthropic_url: p.anthropic_url.clone(),
+                    upstream_protocol: "anthropic".to_string(),
+                    target_model: req.model_id.clone().unwrap_or_default(),
+                    timeout_secs: timeout,
+                    model_aliases: p.anthropic_model_aliases.clone(),
+                    default_model: p.anthropic_default_model.clone(),
+                    rectifier_enabled: config.rectifier.enabled,
+                    rectifier_thinking_signature: config.rectifier.thinking_signature,
+                    rectifier_thinking_budget: config.rectifier.thinking_budget,
+                    rectifier_media_fallback: config.rectifier.media_fallback,
+                    optimizer_enabled: config.optimizer.enabled,
+                    optimizer_cache_injection: config.optimizer.cache_injection,
+                    optimizer_thinking: config.optimizer.thinking_optimizer,
+                    optimizer_deepseek: config.optimizer.deepseek_normalize,
+                };
+                eprintln!("[proxy] ✓ 启动 Anthropic 代理 -> 127.0.0.1:{}", config.proxy_port);
+                tokio::spawn(async move {
+                    if let Err(e) = crate::proxy::server::start_proxy_server(proxy_config).await {
+                        eprintln!("[proxy] Anthropic 代理错误: {}", e);
+                    }
+                });
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            }
+
+            // ── P2: OpenAI 代理（config.proxy_port + 1）──
+            if openai_use_proxy {
+                let proxy_config = crate::proxy::types::ProxyConfig {
+                    listen_address: proxy_settings.listen_address.clone(),
+                    listen_port: config.proxy_port + 1,
+                    upstream_base_url: p.openai_url.clone(),
+                    upstream_api_key: p.api_key.clone(),
+                    upstream_anthropic_url: String::new(),
+                    upstream_protocol: "openai".to_string(),
+                    target_model: String::new(),
+                    timeout_secs: timeout,
+                    model_aliases: p.openai_model_aliases.clone(),
+                    default_model: p.openai_default_model.clone(),
+                    // OpenAI 透传无需 Anthropic 整流器/优化器
+                    rectifier_enabled: false,
+                    rectifier_thinking_signature: false,
+                    rectifier_thinking_budget: false,
+                    rectifier_media_fallback: false,
+                    optimizer_enabled: false,
+                    optimizer_cache_injection: false,
+                    optimizer_thinking: false,
+                    optimizer_deepseek: false,
+                };
+                eprintln!("[proxy] ✓ 启动 OpenAI 代理 -> 127.0.0.1:{}", config.proxy_port + 1);
+                tokio::spawn(async move {
+                    if let Err(e) = crate::proxy::server::start_proxy_server(proxy_config).await {
+                        eprintln!("[proxy] OpenAI 代理错误: {}", e);
+                    }
+                });
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            }
         }
     }
 
@@ -114,12 +153,13 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                         else { &p.openai_url }
                     }
                 };
-                // 使用代理时，baseUrl 指向本地代理（127.0.0.1:proxy_port），否则写真实上游 URL。
-                // 以前这步只靠 env 注入，现在改为直接写进配置文件。
-                let effective_base_url: String = if needs_proxy {
-                    format!("http://127.0.0.1:{}", config.proxy_port)
-                } else {
-                    upstream_url.to_string()
+                // 使用代理时，baseUrl 指向对应协议的本地代理端口：
+                //   anthropic/both 协议 → P1 (proxy_port)，openai 协议 → P2 (proxy_port+1)；
+                //   未启用对应协议代理时写真实上游 URL。以前这步只靠 env 注入，现直接写配置文件。
+                let effective_base_url: String = match tool_config.api_protocol.as_str() {
+                    "openai" if openai_use_proxy => format!("http://127.0.0.1:{}", config.proxy_port + 1),
+                    "anthropic" | "both" if anthropic_use_proxy => format!("http://127.0.0.1:{}", config.proxy_port),
+                    _ => upstream_url.to_string(),
                 };
                 // 根据工具协议选择对应的模型别名和默认模型
                 let effective_aliases: &HashMap<String, String> = if tool_config.api_protocol == "anthropic" || tool_config.api_protocol == "both" {
@@ -137,9 +177,9 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                     &p.google_default_model
                 };
                 if !upstream_url.is_empty() {
-                    // 代理模式：anthropic/both 协议工具走本地代理时，配置文件中只写 baseUrl，
-                    // 模型/别名保持原版由代理按请求模型转发（非 Anthropic 官方供应商需先配 anthropic_model_aliases）。
-                    let proxy_mode = needs_proxy
+                    // 代理模式：仅当 anthropic_use_proxy 且工具为 anthropic/both 协议时生效，
+                    // 配置文件中只写 baseUrl，模型/别名保持原版由代理按请求模型转发。
+                    let proxy_mode = anthropic_use_proxy
                         && (tool_config.api_protocol == "anthropic" || tool_config.api_protocol == "both");
                     eprintln!("[config_file] 写入参数:");
                     eprintln!("[config_file]   tool_id: {}", req.tool_id);
@@ -579,10 +619,58 @@ fn write_json_config(
     for (p, v) in writes {
         set_json_path(&mut doc, p, v);
     }
+
+    // 清除本工具管理的、但本次未写入的残留键。
+    // 合并写入不会删除旧键，导致切换供应商/模型后旧模型字段（如其它供应商的
+    // ANTHROPIC_DEFAULT_*_MODEL、已弃用的 ANTHROPIC_SMALL_FAST_MODEL、历史遗留的
+    // 顶层 model）残留在配置里，干扰本次启动。这里移除受管前缀中不在本次写入集合内的键。
+    cleanup_managed_model_keys(&mut doc, writes);
+
     let content = serde_json::to_string_pretty(&doc)
         .map_err(|e| format!("序列化配置失败: {}", e))?;
     fs::write(path, content)
         .map_err(|e| format!("写入 {} 失败: {}", path.display(), e))
+}
+
+/// 移除本工具管理的、但本次未写入的残留模型键。
+///
+/// - `env` 下以 `ANTHROPIC_MODEL` / `ANTHROPIC_DEFAULT_` / `ANTHROPIC_SMALL_FAST_MODEL`
+///   开头的键，若不在本次写入集合内，则删除（避免旧供应商/旧模型字段残留）。
+/// - 顶层 `model` 字段本应用从不写入（历史版本残留），一律清除以免干扰 Claude Code 的模型解析。
+fn cleanup_managed_model_keys(doc: &mut serde_json::Value, writes: &[(String, String)]) {
+    let managed_prefixes = ["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_", "ANTHROPIC_SMALL_FAST_MODEL"];
+    let current_env_keys: std::collections::HashSet<String> = writes
+        .iter()
+        .filter_map(|(p, _)| p.strip_prefix("env.").map(|k| k.to_string()))
+        .collect();
+
+    if let Some(env_obj) = doc.get_mut("env").and_then(|v| v.as_object_mut()) {
+        let stale: Vec<String> = env_obj
+            .keys()
+            .filter(|k| {
+                managed_prefixes.iter().any(|p| k.starts_with(p))
+                    && !current_env_keys.contains(*k)
+            })
+            .cloned()
+            .collect();
+        for k in stale {
+            env_obj.remove(&k);
+            eprintln!("[config_file] cleanup stale env.{}", k);
+        }
+    }
+
+    // 顶层 model 字段：仅当本次未写入时才清除。
+    // 说明：claude-code 从不写顶层 model（只用 env.ANTHROPIC_MODEL），旧版本残留的
+    // 顶层 model（如 "fable"）会干扰模型解析，需清除；但 opencode/mimocode/deveco 等
+    // 工具本就写顶层 model，必须保留——故以"是否在本次写入集合内"为判据。
+    let writes_top_model = writes.iter().any(|(p, _)| p == "model");
+    if !writes_top_model {
+        if let Some(obj) = doc.as_object_mut() {
+            if obj.remove("model").is_some() {
+                eprintln!("[config_file] cleanup stale top-level model");
+            }
+        }
+    }
 }
 
 /// 写入 TOML 配置文件（行式：保留其他行/注释，仅更新或追加顶层 key）
