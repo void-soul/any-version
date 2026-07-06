@@ -5,14 +5,22 @@
   "website": "https://gemini.google.com",
   "apiProtocol": "google",
   "supportModel": true,
-  "modelArg": "-m",
   "supportFallbackModel": false,
+
   "resumeCmd": "gemini --resume {session_id}",
   "continueCmd": "gemini --resume latest",
   "cacheDirs": [".gemini"],
   "pkgManager": "npm",
   "pkgName": "@google/gemini-cli",
-  "configFile": null,
+  "configFile": {
+    "path": "~/.gemini/settings.json",
+    "format": "json",
+    "write": {
+      "model.name": "model",
+      "env.GEMINI_API_KEY": "apiKey",
+      "env.GOOGLE_GEMINI_BASE_URL": "baseUrl"
+    }
+  },
   "sessions": {
     "type": "claude_projects",
     "dirs": ["~/.gemini/projects"]

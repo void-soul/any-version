@@ -5,9 +5,8 @@
   "website": "https://mimo.xiaomi.com/zh/mimocode/config-files",
   "apiProtocol": "openai",
   "supportModel": true,
-  "modelArg": "-m",
   "supportFallbackModel": true,
-  "fallbackModelArg": "--small-model",
+
   "resumeCmd": null,
   "continueCmd": null,
   "cacheDirs": [".local/share/mimocode"],
@@ -17,8 +16,10 @@
     "path": "~/.config/mimocode/mimocode.json",
     "format": "json",
     "schema": "https://mimo.xiaomi.com/mimocode/config.json",
-    "write": {
-      "provider.anyversion.options.baseURL": "baseUrl",
+      "write": {
+        "provider.anyversion.npm": "@ai-sdk/openai-compatible",
+        "provider.anyversion.name": "anyversion",
+        "provider.anyversion.options.baseURL": "baseUrl",
       "provider.anyversion.options.apiKey": "apiKey",
       "model": "model",
       "small_model": "fallbackModel"

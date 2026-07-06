@@ -5,14 +5,22 @@
   "website": "https://github.com/openai/codex",
   "apiProtocol": "openai",
   "supportModel": true,
-  "modelArg": "-m",
   "supportFallbackModel": false,
+
   "resumeCmd": null,
   "continueCmd": "codex resume --last",
   "cacheDirs": [".codex"],
   "pkgManager": "npm",
   "pkgName": "@openai/codex",
-  "configFile": null,
+  "configFile": {
+    "path": "~/.codex/config.toml",
+    "format": "toml",
+    "write": {
+      "model": "model",
+      "openai_api_key": "apiKey",
+      "openai_base_url": "baseUrl"
+    }
+  },
   "sessions": {
     "type": "jsonl",
     "dirs": ["~/.codex/sessions.jsonl"]

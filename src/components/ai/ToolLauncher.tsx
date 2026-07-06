@@ -61,6 +61,19 @@ interface AiConfig {
   default_project_path: string;
 }
 
+interface LastLaunchConfig {
+  provider_id: string | null;
+  provider_name: string | null;
+  model_id: string | null;
+  fallback_model_id: string | null;
+  fallback_provider_id: string | null;
+  use_official_model: boolean;
+  terminal_id: string;
+  one_m_context: boolean;
+  project_path: string;
+  last_launched_at: string;
+}
+
 interface DetectedAiTool {
   id: string;
   display_name: string;
@@ -74,9 +87,7 @@ interface DetectedAiTool {
   api_protocol: string;
   supports_model: boolean;
   support_one_m_context: boolean;
-  model_arg: string | null;
   supports_fallback_model: boolean;
-  fallback_model_arg: string | null;
   resume_cmd: string | null;
   continue_cmd: string | null;
   cache_dirs: string[];
@@ -158,6 +169,9 @@ export default function ToolLauncher() {
   const [migratingCache, setMigratingCache] = useState<string | null>(null);
   const [cleaningCache, setCleaningCache] = useState<string | null>(null);
 
+  // 各工具的上次启动方式记录
+  const [lastLaunchConfigs, setLastLaunchConfigs] = useState<Record<string, LastLaunchConfig>>({});
+
   const selectedTool = tools.find(t => t.id === selectedToolId) || null;
 
   // 检测工具版本（使用后端 check_all_tool_versions + check_ai_tool_versions）
@@ -186,15 +200,17 @@ export default function ToolLauncher() {
 
   const loadData = useCallback(async () => {
     try {
-      const [t, c, term] = await Promise.all([
+      const [t, c, term, lcs] = await Promise.all([
         invoke<DetectedAiTool[]>("detect_ai_tools").catch(() => []),
         invoke<AiConfig>("get_ai_config").catch(() => ({ providers: [], active_provider: null, active_model: null, proxy_port: 15721, default_project_path: "" })),
         invoke<TerminalInfo[]>("detect_terminals").catch(() => []),
+        invoke<Record<string, LastLaunchConfig>>("get_all_last_launch_configs").catch(() => ({})),
       ]);
       setTools(t);
       setConfig(c);
       setTerminals(term);
       setProjectPath(c.default_project_path || "");
+      setLastLaunchConfigs(lcs);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, []);
@@ -344,6 +360,22 @@ export default function ToolLauncher() {
       if (result.success) {
         const updated = await invoke<ToolSession[]>("scan_tool_sessions", { toolId: selectedTool.id }).catch(() => []);
         setSessions(updated);
+        // 保存本次启动配置
+        const providerName = config?.providers.find(p => p.id === selectedModelProvider)?.name || null;
+        const lc: LastLaunchConfig = {
+          provider_id: useOfficialModel ? null : (selectedModelProvider || null),
+          provider_name: providerName,
+          model_id: useOfficialModel ? null : (selectedModel || null),
+          fallback_model_id: useOfficialModel ? null : (selectedFallbackModel || null),
+          fallback_provider_id: useOfficialModel ? null : (selectedFallbackProvider || null),
+          use_official_model: useOfficialModel,
+          terminal_id: selectedTerminal,
+          one_m_context: selectedTool.support_one_m_context ? oneMContext : false,
+          project_path: sessionMode === "resume" && selectedSession ? selectedSession.project_path : projectPath,
+          last_launched_at: new Date().toISOString(),
+        };
+        await invoke("save_last_launch_config", { toolId: selectedTool.id, config: lc }).catch(() => {});
+        setLastLaunchConfigs(prev => ({ ...prev, [selectedTool.id]: lc }));
       }
     } catch (e: any) {
       setLaunchResult({ ok: false, msg: String(e) });
@@ -487,10 +519,13 @@ export default function ToolLauncher() {
           return (
             <button
               key={tool.id}
-              onClick={() => {
+              onClick={async () => {
                 setSelectedToolId(tool.id);
+                // 重置默认值
                 setSelectedModel("");
                 setSelectedModelProvider("");
+                setSelectedFallbackModel("");
+                setSelectedFallbackProvider("");
                 setExpandedModelGroups(new Set());
                 setExpandedFallbackGroups(new Set());
                 setSessionMode("new");
@@ -498,7 +533,28 @@ export default function ToolLauncher() {
                 setShowSessionPicker(false);
                 setLaunchResult(null);
                 setShowCacheManager(false);
+                setOneMContext(false);
+                setSelectedTerminal("cmd");
                 setUseOfficialModel(tool.api_protocol === "none");
+                // 加载上次启动配置并恢复 UI 状态
+                try {
+                  const last = await invoke<LastLaunchConfig | null>("get_last_launch_config", { toolId: tool.id });
+                  if (last) {
+                    setLastLaunchConfigs(prev => ({ ...prev, [tool.id]: last }));
+                    if (last.use_official_model) {
+                      setUseOfficialModel(true);
+                    } else {
+                      if (last.provider_id) setSelectedModelProvider(last.provider_id);
+                      if (last.model_id) setSelectedModel(last.model_id);
+                      if (last.fallback_model_id) setSelectedFallbackModel(last.fallback_model_id);
+                      if (last.fallback_provider_id) setSelectedFallbackProvider(last.fallback_provider_id);
+                    }
+                    if (last.terminal_id && last.terminal_id !== "cmd") setSelectedTerminal(last.terminal_id);
+                    if (last.one_m_context) setOneMContext(true);
+                    if (last.project_path) setProjectPath(last.project_path);
+                  }
+                } catch { /* 无历史记录 */
+                }
               }}
               className={`w-full px-3 py-2.5 rounded-lg text-left transition-all cursor-pointer ${
                 selectedToolId === tool.id
@@ -525,6 +581,14 @@ export default function ToolLauncher() {
                   </span>
                 ) : (
                   <span className="text-[9px] text-slate-600">未安装</span>
+                )}
+                {lastLaunchConfigs[tool.id] && tool.installed && (
+                  <span className={`text-[9px] truncate max-w-[80px] ${selectedToolId === tool.id ? "text-violet-300/70" : "text-slate-600"}`}>
+                    {lastLaunchConfigs[tool.id].use_official_model
+                      ? "官方"
+                      : (lastLaunchConfigs[tool.id].provider_name || lastLaunchConfigs[tool.id].provider_id || "")}
+                    {(lastLaunchConfigs[tool.id].fallback_model_id && !lastLaunchConfigs[tool.id].use_official_model) ? " ※" : ""}
+                  </span>
                 )}
               </div>
             </button>
@@ -628,12 +692,17 @@ export default function ToolLauncher() {
                                 <div className="flex items-center gap-2">
                                   <span className="text-[10px] text-slate-300 font-mono truncate">{cache.dir_name}</span>
                                   {cache.is_junction && (
-                                    <span className="text-[8px] text-blue-400 bg-blue-500/10 px-1 rounded" title={`Junction → ${cache.junction_target}`}>JUNCTION</span>
+                                    <span className="text-[8px] text-blue-400 bg-blue-500/10 px-1 rounded">JUNCTION</span>
                                   )}
                                 </div>
                                 <div className="text-[9px] text-slate-500 font-mono truncate mt-0.5" title={cache.full_path}>
                                   {cache.exists ? cache.full_path : "不存在"}
                                 </div>
+                                {cache.is_junction && cache.junction_target && (
+                                  <div className="text-[8px] text-blue-400/70 font-mono truncate mt-0.5" title={cache.junction_target}>
+                                    ↳ {cache.junction_target}
+                                  </div>
+                                )}
                                 <div className="text-[8px] text-slate-600 mt-0.5">{cache.exists ? cache.size : "0 B"}</div>
                               </div>
                               {cache.exists && (
@@ -928,7 +997,7 @@ export default function ToolLauncher() {
                       className={`px-3 py-1.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-all ${
                         sessionMode === "new" ? "bg-violet-600 text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"
                       }`}>
-                      <Plus className="w-3 h-3" /> 新建会话
+                      使用新会话
                     </button>
                     {sessions.length > 0 && (
                       <button onClick={() => { setSessionMode("resume"); setShowSessionPicker(!showSessionPicker); setSelectedSession(null); }}

@@ -5,23 +5,23 @@
   "website": "https://opencode.ai",
   "apiProtocol": "openai",
   "supportModel": true,
-  "modelArg": "-m",
   "supportFallbackModel": false,
+
   "resumeCmd": "opencode -s {session_id}",
   "continueCmd": null,
   "cacheDirs": [".opencode"],
   "pkgManager": "npm",
   "pkgName": "opencode-ai",
   "configFile": {
-    "path": "~/.config/opencode/opencode.jsonc",
+    "path": "~/.config/opencode/opencode.json",
     "format": "jsonc",
-    "write": {
-      "providers.anyversion.name": "anyversion",
-      "providers.anyversion.type": "openai-compatible",
-      "providers.anyversion.options.baseURL": "baseUrl",
-      "providers.anyversion.options.apiKey": "apiKey",
-      "defaultModel": "model"
-    }
+      "write": {
+        "provider.anyversion.name": "anyversion",
+        "provider.anyversion.npm": "@ai-sdk/openai-compatible",
+        "provider.anyversion.options.baseURL": "baseUrl",
+        "provider.anyversion.options.apiKey": "apiKey",
+        "model": "model"
+      }
   },
   "modelFormat": {
     "prefix": "anyversion/",

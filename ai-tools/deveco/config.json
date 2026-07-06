@@ -3,18 +3,35 @@
   "displayName": "Deveco Code",
   "category": "cli-code",
   "website": "https://deveco.dev",
-  "apiProtocol": "none",
-  "supportModel": false,
-  "modelArg": null,
-  "supportFallbackModel": false,
-  "resumeCmd": null,
+  "apiProtocol": "openai",
+  "supportModel": true,
+  "supportFallbackModel": true,
+
+  "resumeCmd": "deveco -s {session_id}",
   "continueCmd": null,
-  "cacheDirs": [".deveco"],
+  "cacheDirs": [".deveco", ".config/deveco"],
   "pkgManager": "npm",
   "pkgName": "@deveco/deveco-code",
-  "configFile": null,
+  "configFile": {
+    "path": "~/.config/deveco/opencode.json",
+    "format": "jsonc",
+    "schema": "https://opencode.ai/config.json",
+      "write": {
+        "provider.anyversion.npm": "@ai-sdk/openai-compatible",
+        "provider.anyversion.name": "anyversion",
+        "model": "model",
+      "small_model": "fallbackModel",
+      "provider.anyversion.options.baseURL": "baseUrl",
+      "provider.anyversion.options.apiKey": "apiKey"
+    }
+  },
+  "modelFormat": {
+    "prefix": "anyversion/",
+    "extractLast": true
+  },
   "sessions": {
-    "type": "none"
+    "type": "opencode_style",
+    "dirs": ["~/.config/deveco", "~/.deveco"]
   },
   "skillsDir": "~/.deveco/skills"
 }

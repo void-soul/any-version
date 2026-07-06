@@ -17,38 +17,75 @@ pub struct ModelAliases {
 
 /// 将 Claude 模型名映射到实际上游模型名。
 ///
-/// 映射逻辑（参考 cc-switch）：
+/// 映射逻辑：
 /// 1. 剥离 `[1M]`/`[1m]` 后缀
-/// 2. 按角色关键词匹配（haiku/opus/sonnet/fable）
-/// 3. 无匹配时使用 default_model
-/// 4. 无配置时原样返回
+/// 2. 优先：role_map 中存在与官方全名完全一致的 key（精确匹配，最高优先级，
+///    允许 provider 直接以官方完整模型名为键配置映射）
+/// 3. 内置解析表：官方模型系列/别名 → role（sonnet/opus/haiku/fable 及 best 等），
+///    再查 role_map 中对应 role 的映射
+/// 4. 无角色匹配时使用 default_model
+/// 5. 无配置时原样返回
 pub fn map_model_name(request_model: &str, aliases: &ModelAliases) -> String {
-    // 1. 剥离 [1M] 后缀
+    // 1. 剥离 [1M]/[1m] 后缀
     let cleaned = request_model
         .replace("[1M]", "")
         .replace("[1m]", "")
         .trim()
         .to_string();
-
     let lower = cleaned.to_lowercase();
 
-    // 2. 角色关键词匹配
-    let role_keywords = ["haiku", "opus", "sonnet", "fable"];
-    for keyword in &role_keywords {
-        if lower.contains(keyword) {
-            if let Some(mapped) = aliases.role_map.get(*keyword) {
-                return mapped.clone();
-            }
+    // 2. 优先：role_map 中存在与官方全名完全一致的 key（精确匹配）
+    //    支持 provider 以官方完整模型名（如 claude-sonnet-4-20250514）为键配置映射
+    if let Some(mapped) = aliases.role_map.get(&lower).or_else(|| aliases.role_map.get(&cleaned)) {
+        return mapped.clone();
+    }
+
+    // 3. 内置解析表：官方模型系列/别名 → role，再查 role_map 中对应 role
+    if let Some(role) = resolve_role(&cleaned) {
+        if let Some(mapped) = aliases.role_map.get(role) {
+            return mapped.clone();
         }
     }
 
-    // 3. 默认模型
+    // 4. 默认模型
     if let Some(ref default) = aliases.default_model {
         return default.clone();
     }
 
-    // 4. 原样返回
+    // 5. 原样返回
     cleaned
+}
+
+/// 内置「官方模型名/别名 → role」解析表。
+///
+/// 覆盖 claude-sonnet-4-*、claude-opus-4-*、claude-haiku-4-*、claude-fable-5-*
+/// 各版本，以及 Claude Code 内部别名（best/opusplan 等），统一归并为
+/// `sonnet` / `opus` / `haiku` / `fable` 四个标准 role，再交由 `role_map` 映射。
+fn resolve_role(model: &str) -> Option<&'static str> {
+    let lower = model.to_lowercase();
+
+    // Claude Code 内部别名（不含 sonnet/opus/haiku/fable 关键词）
+    match lower.as_str() {
+        "best" => return Some("opus"),     // Claude Code 的 "best" 解析为最强模型
+        "opusplan" => return Some("opus"), // "plan mode" 专用 opus 别名
+        _ => {}
+    }
+
+    // 官方模型系列（关键词归并，大小写不敏感）
+    if lower.contains("sonnet") {
+        return Some("sonnet");
+    }
+    if lower.contains("opus") {
+        return Some("opus");
+    }
+    if lower.contains("haiku") {
+        return Some("haiku");
+    }
+    if lower.contains("fable") {
+        return Some("fable");
+    }
+
+    None
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

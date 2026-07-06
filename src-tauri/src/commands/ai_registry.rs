@@ -18,9 +18,7 @@ pub struct ToolConfig {
     pub website: String,
     pub api_protocol: String,
     pub support_model: bool,
-    pub model_arg: Option<String>,
     pub support_fallback_model: bool,
-    pub fallback_model_arg: Option<String>,
     #[serde(default)]
     pub support_one_m_context: bool,
     pub resume_cmd: Option<String>,
@@ -74,6 +72,7 @@ pub struct PathConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderPreset {
     pub id: String,
     pub name: String,
@@ -150,9 +149,7 @@ pub struct AiToolDefDto {
     pub website: String,
     pub api_protocol: String,
     pub supports_model: bool,
-    pub model_arg: Option<String>,
     pub supports_fallback_model: bool,
-    pub fallback_model_arg: Option<String>,
     pub resume_cmd: Option<String>,
     pub continue_cmd: Option<String>,
     pub cache_dirs: Vec<String>,
@@ -398,9 +395,7 @@ impl AiToolRegistry {
             website: config.website.clone(),
             api_protocol: config.api_protocol.clone(),
             supports_model: config.support_model,
-            model_arg: config.model_arg.clone(),
             supports_fallback_model: config.support_fallback_model,
-            fallback_model_arg: config.fallback_model_arg.clone(),
             resume_cmd: config.resume_cmd.clone(),
             continue_cmd: config.continue_cmd.clone(),
             cache_dirs: config.cache_dirs.clone(),
