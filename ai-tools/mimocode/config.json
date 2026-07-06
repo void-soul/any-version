@@ -16,14 +16,12 @@
   "configFile": {
     "path": "~/.config/mimocode/mimocode.json",
     "format": "json",
-    "schema": "https://mimo.xiaomi.com/config.json",
+    "schema": "https://mimo.xiaomi.com/mimocode/config.json",
     "write": {
-      "providers.anyversion.name": "anyversion",
-      "providers.anyversion.type": "openai-compatible",
-      "providers.anyversion.options.baseURL": "baseUrl",
-      "providers.anyversion.options.apiKey": "apiKey",
-      "providers.anyversion.npm": "@ai-sdk/openai-compatible",
-      "defaultModel": "model"
+      "provider.anyversion.options.baseURL": "baseUrl",
+      "provider.anyversion.options.apiKey": "apiKey",
+      "model": "model",
+      "small_model": "fallbackModel"
     }
   },
   "modelFormat": {

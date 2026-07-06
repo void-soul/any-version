@@ -1463,6 +1463,7 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                 Some(&p.anthropic_url),
                 &p.anthropic_url,
                 &p.api_key,
+                None,
                 req.one_m_context,
             ) {
                 eprintln!("[any-version] 写入工具配置失败: {}", e);
@@ -1486,6 +1487,7 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                     Some(upstream_url),
                     upstream_url,
                     &p.api_key,
+                    req.fallback_model_id.as_deref(),
                     req.one_m_context,
                 ) {
                     eprintln!("[any-version] 写入工具配置失败: {}", e);
@@ -1527,7 +1529,8 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
     };
 
     // 主模型 CLI 参数
-    let model_arg_str = if tool_config.support_model {
+    // 如果工具有 configFile 定义，模型信息已通过配置文件传递，不需要 CLI 参数（对齐 EchoBird 行为）
+    let model_arg_str = if tool_config.support_model && tool_config.config_file.is_none() {
         req.model_id.as_ref().and_then(|m| {
             tool_config.model_arg.as_ref().map(|arg| {
                 let model_ref: String = if let Some(ref fmt) = tool_config.model_format {
@@ -1553,8 +1556,8 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
         String::new()
     };
 
-    // fallback 模型参数
-    let fallback_arg = if tool_config.support_fallback_model {
+    // fallback 模型参数（同样，有 configFile 的工具不需要 CLI fallback 参数）
+    let fallback_arg = if tool_config.support_fallback_model && tool_config.config_file.is_none() {
         req.fallback_model_id.as_ref().and_then(|fm| {
             tool_config.fallback_model_arg.as_ref().map(|arg| format!("{} {}", arg, fm))
         }).unwrap_or_default()
@@ -1643,11 +1646,12 @@ fn write_tool_config_from_spec(
     base_url: Option<&str>,
     fallback_url: &str,
     api_key: &str,
+    fallback_model_id: Option<&str>,
     _one_m_context: bool,
 ) -> Result<(), String> {
     // 如果有 configFile 定义，使用声明式方式写入
     if let Some(ref _cfg) = tool_config.config_file {
-        return write_tool_config_generic(tool_config, model_id, base_url.unwrap_or(fallback_url), api_key);
+        return write_tool_config_generic(tool_config, model_id, base_url.unwrap_or(fallback_url), api_key, fallback_model_id);
     }
     // Fallback: claude-code 配置通过 settings.json write 映射处理
     if tool_id == "claude-code" {
@@ -1662,6 +1666,7 @@ fn write_tool_config_generic(
     model_id: Option<&str>,
     base_url: &str,
     api_key: &str,
+    fallback_model_id: Option<&str>,
 ) -> Result<(), String> {
     let cfg = match &tool_config.config_file {
         Some(c) => c,
@@ -1699,14 +1704,43 @@ fn write_tool_config_generic(
         serde_json::Map::new()
     };
 
-    let model = model_id.unwrap_or("");
-    let model_name = model.split('/').next_back().unwrap_or(model);
+    let model_raw = model_id.unwrap_or("");
+    // 格式化模型名（应用 modelFormat）
+    let model = if let Some(ref fmt) = tool_config.model_format {
+        let prefix = fmt.prefix.as_deref().unwrap_or("");
+        if fmt.extract_last {
+            let name = model_raw.split('/').next_back().unwrap_or(model_raw);
+            format!("{}{}", prefix, name)
+        } else {
+            format!("{}{}", prefix, model_raw)
+        }
+    } else {
+        model_raw.to_string()
+    };
+    let model_name = model.split('/').next_back().unwrap_or(&model).to_string();
+
+    // 格式化 fallback 模型名（应用 modelFormat）
+    let fallback_model = fallback_model_id.and_then(|fm| {
+        if fm.is_empty() { return None; }
+        if let Some(ref fmt) = tool_config.model_format {
+            let prefix = fmt.prefix.as_deref().unwrap_or("");
+            if fmt.extract_last {
+                let name = fm.split('/').next_back().unwrap_or(fm);
+                Some(format!("{}{}", prefix, name))
+            } else {
+                Some(format!("{}{}", prefix, fm))
+            }
+        } else {
+            Some(fm.to_string())
+        }
+    });
 
     // 遍历 write 映射，设置值
     for (path, value_template) in write_map {
         let value = match value_template.as_str() {
             "model" => model.to_string(),
             "modelName" => model_name.to_string(),
+            "fallbackModel" => fallback_model.clone().unwrap_or_default(),
             "baseUrl" => base_url.to_string(),
             "apiKey" => api_key.to_string(),
             "" => String::new(), // 清空 key

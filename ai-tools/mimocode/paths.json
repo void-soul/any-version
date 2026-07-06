@@ -3,7 +3,7 @@
   "category": "CLI Code",
   "apiProtocol": ["openai"],
   "command": "mimo",
-  "startCommand": "mimo .",
+  "startCommand": "mimo",
   "detectCmd": "mimo --version",
   "installCmd": "npm install -g @mimo-ai/cli",
   "paths": {
