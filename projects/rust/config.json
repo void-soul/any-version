@@ -1,0 +1,41 @@
+{
+  "id": "rust",
+  "display_name": "Rust",
+  "category": "language",
+  "official_website": "https://www.rust-lang.org",
+  "bin_dirs": [
+    "bin",
+    "cargo\\bin"
+  ],
+  "has_cache": true,
+  "cache_detect_cmd": null,
+  "cache_default_path": "{home}\\.cargo\\registry\\cache",
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": false,
+  "default_port": null,
+  "download_url_template": "https://static.rust-lang.org/dist/rust-{version}-x86_64-pc-windows-msvc.tar.gz",
+  "download_file_ext": "tar.gz",
+  "merge_extracted_subdirs": true,
+  "version_cmd": "rustc --version",
+  "version_exe": "rustc",
+  "version_parse_regex": "rustc (\\d+\\.\\d+(?:\\.\\d+)*)",
+  "conflict_managers": [
+    {
+      "id": "rustup",
+      "display_name": "Rustup",
+      "env_vars": [
+        "RUSTUP_HOME",
+        "RUSTUP_TOOLCHAIN"
+      ],
+      "path_keywords": [
+        ".cargo\\bin"
+      ],
+      "exe_name": "rustup.exe",
+      "cache_default_path": "{home}\\.rustup"
+    }
+  ]
+}

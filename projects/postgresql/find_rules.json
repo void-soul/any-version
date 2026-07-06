@@ -1,0 +1,42 @@
+[
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "PostgreSQL",
+      "exe_name": "postgres.exe"
+    },
+    "source_label": "Program Files",
+    "priority": 20,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "C:\\Program Files\\PostgreSQL\\17\\bin",
+      "exe_name": "postgres.exe"
+    },
+    "source_label": "Program Files",
+    "priority": 30,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "C:\\Program Files\\PostgreSQL\\16\\bin",
+      "exe_name": "postgres.exe"
+    },
+    "source_label": "Program Files",
+    "priority": 31,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "postgres.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 1
+  }
+]

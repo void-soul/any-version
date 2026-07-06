@@ -1,0 +1,30 @@
+{
+  "id": "deno",
+  "display_name": "Deno",
+  "category": "language",
+  "official_website": "https://deno.com",
+  "bin_dirs": [
+    ""
+  ],
+  "has_cache": false,
+  "cache_detect_cmd": null,
+  "cache_default_path": null,
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": false,
+  "default_port": null,
+  "data_dir": null,
+  "log_dir": null,
+  "config_file": null,
+  "start_cmd": null,
+  "stop_cmd": null,
+  "download_url_template": "https://github.com/denoland/deno/releases/download/v{version}/deno-x86_64-pc-windows-msvc.zip",
+  "download_file_ext": "zip",
+  "version_cmd": "deno --version",
+  "version_exe": "deno",
+  "version_parse_regex": "deno (\\d+\\.\\d+\\.\\d+)",
+  "remote_versions_url": "https://cdn.deno.land/deno/meta/versions.json"
+}

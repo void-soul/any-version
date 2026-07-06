@@ -54,7 +54,13 @@ fn dirs_next() -> Option<std::path::PathBuf> {
         .or_else(|_| std::env::var("HOME"))
         .ok()
         .map(std::path::PathBuf::from)
-    }
+        }
+
+/// 打印代理网络请求日志（统一前缀，不打印任何敏感头/密钥）
+fn log_proxy(msg: &str) {
+    let ts = chrono::Local::now().format("%H:%M:%S%.3f");
+    println!("[proxy] {} {}", ts, msg);
+}
 
 /// 代理服务器共享状态
 #[derive(Clone)]
@@ -160,6 +166,7 @@ async fn chat_completions_handler(
         let mut stats = state.stats.write().await;
         stats.total_requests += 1;
     }
+    let start = std::time::Instant::now();
 
     let config = state.config.read().await.clone();
     let is_stream = body
@@ -171,6 +178,11 @@ async fn chat_completions_handler(
         .and_then(|v| v.as_str())
         .unwrap_or("unknown")
         .to_string();
+
+    log_proxy(&format!(
+        "← IN   /v1/chat/completions  model={} stream={}",
+        request_model, is_stream
+    ));
 
     // 应用 OpenAI 模型别名映射（供应商只识别自己的模型名）
     let aliases = if config.model_aliases.is_empty() {
@@ -194,6 +206,12 @@ async fn chat_completions_handler(
         config.upstream_base_url.trim_end_matches('/')
     );
 
+    let out_model = send_body.get("model").and_then(|v| v.as_str()).unwrap_or(&request_model);
+    log_proxy(&format!(
+        "→ OUT  POST {} model={}",
+        upstream_url, out_model
+    ));
+
     let mut req = state
         .client
         .post(&upstream_url)
@@ -210,6 +228,10 @@ async fn chat_completions_handler(
         Err(e) => {
             let mut stats = state.stats.write().await;
             stats.failed_requests += 1;
+            log_proxy(&format!(
+                "✗ OUT  POST {} 请求失败: {}  ({}ms)",
+                upstream_url, e, start.elapsed().as_millis()
+            ));
             return (
                 StatusCode::BAD_GATEWAY,
                 Json(json!({
@@ -221,12 +243,18 @@ async fn chat_completions_handler(
     };
 
     let status = resp.status();
+    log_proxy(&format!(
+        "← UPSTREAM {}  ({}ms)",
+        status.as_u16(),
+        start.elapsed().as_millis()
+    ));
     let content_type = resp.headers().get(header::CONTENT_TYPE).cloned();
     let bytes = match resp.bytes().await {
         Ok(b) => b,
         Err(_) => {
             let mut stats = state.stats.write().await;
             stats.failed_requests += 1;
+            log_proxy("✗ 读取上游响应体失败");
             return (
                 StatusCode::BAD_GATEWAY,
                 Json(json!({
@@ -420,6 +448,7 @@ async fn messages_handler(
         let mut stats = state.stats.write().await;
         stats.total_requests += 1;
     }
+    let start = std::time::Instant::now();
 
     let config = state.config.read().await.clone();
     let is_stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -428,6 +457,11 @@ async fn messages_handler(
         .and_then(|v| v.as_str())
         .unwrap_or("unknown")
         .to_string();
+
+    log_proxy(&format!(
+        "← IN   /v1/messages  model={} stream={}",
+        request_model, is_stream
+    ));
 
     // 确定上游 URL 和认证方式
     let (upstream_url, auth_header_name) = if !config.upstream_anthropic_url.is_empty() {
@@ -447,6 +481,11 @@ async fn messages_handler(
         );
         (url, "Authorization")
     };
+
+    log_proxy(&format!(
+        "→ OUT  POST {} auth={}",
+        upstream_url, auth_header_name
+    ));
 
     // 应用请求优化（在 Anthropic 格式上操作）
     let mut optimized_body = body.clone();
@@ -508,6 +547,10 @@ async fn messages_handler(
         Err(e) => {
             let mut stats = state.stats.write().await;
             stats.failed_requests += 1;
+            log_proxy(&format!(
+                "✗ OUT  POST {} 请求失败: {}  ({}ms)",
+                upstream_url, e, start.elapsed().as_millis()
+            ));
             return (
                 StatusCode::BAD_GATEWAY,
                 Json(json!({
@@ -523,9 +566,19 @@ async fn messages_handler(
     };
 
     let status = upstream_resp.status();
+    log_proxy(&format!(
+        "← UPSTREAM {}  ({}ms)",
+        status.as_u16(),
+        start.elapsed().as_millis()
+    ));
 
     if !status.is_success() {
         let error_body = upstream_resp.text().await.unwrap_or_default();
+        log_proxy(&format!(
+            "✗ UPSTREAM {} error: {}",
+            status.as_u16(),
+            error_body.chars().take(300).collect::<String>()
+        ));
 
         // 尝试修正 thinking 相关错误并重试
         let retry = if config.rectifier_enabled && config.rectifier_thinking_signature
@@ -584,6 +637,10 @@ async fn messages_handler(
             );
             if let Ok(retry_resp) = retry_req.send().await {
                 if retry_resp.status().is_success() {
+                    log_proxy(&format!(
+                        "↻ retry succeeded after rectify  ({}ms)",
+                        start.elapsed().as_millis()
+                    ));
                     return process_successful_response(
                         retry_resp,
                         &state,

@@ -64,7 +64,6 @@ impl Default for OptimizerConfig {
 pub struct AiConfig {
     pub providers: Vec<AiProvider>,
     pub active_provider: Option<String>,
-    pub active_model: Option<String>,
     /// 全局代理端口
     #[serde(default = "default_proxy_port")]
     pub proxy_port: u16,

@@ -230,7 +230,7 @@ pub fn remove_from_user_path(paths: &[String]) -> Result<(), String> {
 
 
 /// 自动配置 SDK 相关环境变量（注册表驱动）。
-/// 新增 SDK 时只需在 projects.json 中定义 env_vars，此函数自动生效。
+/// 新增 SDK 时只需在 projects/<id>/config.json 中定义 env_vars，此函数自动生效。
 ///
 /// 设计原则：
 ///   - 所有 *_HOME 类变量指向 link_dir（版本切换只需重定向 junction）

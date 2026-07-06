@@ -42,7 +42,6 @@ pub(crate) fn load_ai_config() -> AiConfig {
     AiConfig {
         providers: Vec::new(),
         active_provider: None,
-        active_model: None,
         proxy_port: 15721,
         default_project_path: String::new(),
         skills_dir: String::new(),

@@ -1,0 +1,30 @@
+{
+  "id": "vcpkg",
+  "display_name": "vcpkg",
+  "category": "tool",
+  "official_website": "https://github.com/microsoft/vcpkg",
+  "simple_mode": true,
+  "is_git_repo": true,
+  "bootstrap_cmd": "bootstrap-vcpkg.bat",
+  "bin_dirs": [
+    ""
+  ],
+  "has_cache": true,
+  "cache_detect_cmd": null,
+  "cache_default_path": "{home}\\AppData\\Local\\vcpkg\\downloads",
+  "has_mirror": true,
+  "mirror_options": [
+    {
+      "mirror_type": "sjtu",
+      "name": "上海交通大学 vcpkg 镜像",
+      "url": "clear;x-azurl=https://mirror.sjtu.edu.cn/vcpkg"
+    }
+  ],
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": false,
+  "default_port": null,
+  "version_cmd": "vcpkg --version",
+  "version_exe": "vcpkg"
+}

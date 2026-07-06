@@ -1,0 +1,12 @@
+[
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "maven",
+      "exe_name": "mvn.cmd"
+    },
+    "source_label": "Maven",
+    "priority": 50,
+    "root_offset": 1
+  }
+]

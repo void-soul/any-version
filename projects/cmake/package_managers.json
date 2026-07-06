@@ -1,0 +1,22 @@
+[
+  {
+    "id": "cmake",
+    "display_name": "CMake",
+    "built_in": true,
+    "install_cmd": null,
+    "version_cmd": "cmake --version",
+    "version_exe": "cmake",
+    "cache_detect_cmd": null,
+    "cache_default_path": "{home}\\.ccache",
+    "cache_env_var": "CCACHE_DIR",
+    "cache_set_cmd_template": null,
+    "data_detect_cmd": null,
+    "data_default_path": null,
+    "data_env_var": null,
+    "data_set_cmd_template": null,
+    "proxy_detect_cmd": "powershell -Command \"[Environment]::GetEnvironmentVariable('http_proxy','User')\"",
+    "proxy_set_cmd_template": "powershell -Command \"`$u='{url}'; [Environment]::SetEnvironmentVariable('http_proxy', `$u, 'User'); [Environment]::SetEnvironmentVariable('https_proxy', `$u, 'User')\"",
+    "mirror_options": null,
+    "mirror_cmd_template": null
+  }
+]

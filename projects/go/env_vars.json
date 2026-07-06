@@ -1,0 +1,32 @@
+[
+  {
+    "name": "GOROOT",
+    "desc": "Go SDK 安装根目录",
+    "check_type": "path",
+    "tier": "core"
+  },
+  {
+    "name": "GOPATH",
+    "desc": "Go 工作区目录",
+    "check_type": "path",
+    "tier": "clear"
+  },
+  {
+    "name": "GOBIN",
+    "desc": "Go 二进制安装目录",
+    "check_type": "path",
+    "tier": "clear"
+  },
+  {
+    "name": "GOCACHE",
+    "desc": "Go 编译缓存目录",
+    "check_type": "path",
+    "tier": "clear"
+  },
+  {
+    "name": "GOMODCACHE",
+    "desc": "Go 模块下载缓存目录",
+    "check_type": "path",
+    "tier": "clear"
+  }
+]

@@ -23,7 +23,6 @@ interface Config {
 interface AiConfig {
   providers: any[];
   active_provider: string | null;
-  active_model: string | null;
   proxy_port: number;
   default_project_path: string;
   rectifier: {

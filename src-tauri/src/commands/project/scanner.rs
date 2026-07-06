@@ -592,7 +592,7 @@ fn build_service_status(def: &ProjectDef) -> Option<ServiceStatus> {
 }
 
 /// 获取 SDK 的可执行目录列表（用于 PATH 管理）
-/// 优先使用 projects.json 中由 Scoop 更新或手动定义的 bin_dirs 字段
+/// 优先使用 projects/<id>/config.json 中由 Scoop 更新或手动定义的 bin_dirs 字段
 pub fn get_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
     // ── 优先从 ProjectDef.bin_dirs 读取 ──
     if let Some(def) = registry::find_by_id(sdk_id) {

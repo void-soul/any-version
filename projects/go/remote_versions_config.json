@@ -1,0 +1,9 @@
+{
+  "type": "json_api",
+  "url": "https://go.dev/dl/?mode=json&include=all",
+  "response_type": "array",
+  "version_field": "version",
+  "version_transform": "trim_prefix:go",
+  "filter_field": "stable",
+  "filter_value": true
+}

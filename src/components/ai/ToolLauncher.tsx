@@ -56,7 +56,6 @@ interface AiProvider {
 interface AiConfig {
   providers: AiProvider[];
   active_provider: string | null;
-  active_model: string | null;
   proxy_port: number;
   default_project_path: string;
 }
@@ -202,7 +201,7 @@ export default function ToolLauncher() {
     try {
       const [t, c, term, lcs] = await Promise.all([
         invoke<DetectedAiTool[]>("detect_ai_tools").catch(() => []),
-        invoke<AiConfig>("get_ai_config").catch(() => ({ providers: [], active_provider: null, active_model: null, proxy_port: 15721, default_project_path: "" })),
+        invoke<AiConfig>("get_ai_config").catch(() => ({ providers: [], active_provider: null, proxy_port: 15721, default_project_path: "" })),
         invoke<TerminalInfo[]>("detect_terminals").catch(() => []),
         invoke<Record<string, LastLaunchConfig>>("get_all_last_launch_configs").catch(() => ({})),
       ]);

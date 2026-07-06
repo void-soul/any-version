@@ -1,0 +1,14 @@
+[
+  {
+    "name": "PYTHONHOME",
+    "desc": "Python 安装根目录",
+    "check_type": "path",
+    "tier": "compat"
+  },
+  {
+    "name": "PYTHONPATH",
+    "desc": "Python 模块搜索路径",
+    "check_type": "path",
+    "tier": "compat"
+  }
+]

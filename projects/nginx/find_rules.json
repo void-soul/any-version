@@ -1,0 +1,32 @@
+[
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "nginx",
+      "exe_name": "nginx.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 40,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "C:\\nginx",
+      "exe_name": "nginx.exe"
+    },
+    "source_label": "C:\\nginx",
+    "priority": 50,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "nginx.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 0
+  }
+]

@@ -1,0 +1,23 @@
+[
+  {
+    "pattern": {
+      "type": "env_bin",
+      "env_var": "VCPKG_ROOT",
+      "bin_sub": "",
+      "exe_name": "vcpkg.exe"
+    },
+    "source_label": "VCPKG_ROOT",
+    "priority": 10,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "vcpkg.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 0
+  }
+]

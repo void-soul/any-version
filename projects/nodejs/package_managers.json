@@ -1,0 +1,125 @@
+[
+  {
+    "id": "npm",
+    "display_name": "npm",
+    "built_in": true,
+    "install_cmd": null,
+    "version_cmd": "npm --version",
+    "version_exe": "npm",
+    "cache_detect_cmd": "npm config get cache",
+    "cache_default_path": "{home}\\AppData\\Local\\npm-cache",
+    "cache_env_var": "NPM_CONFIG_CACHE",
+    "cache_set_cmd_template": "npm config set cache \"{path}\"",
+    "data_detect_cmd": null,
+    "data_default_path": null,
+    "data_env_var": null,
+    "data_set_cmd_template": null,
+    "proxy_detect_cmd": "npm config get proxy",
+    "proxy_set_cmd_template": "npm config set proxy {url}",
+    "proxy_clear_cmd": "npm config delete proxy && npm config delete https-proxy",
+    "pkg_list_cmd": "npm list -g --depth=0 --json",
+    "pkg_list_format": "npm_json",
+    "pkg_upgrade_cmd_template": "npm install -g {pkg}@latest",
+    "pkg_homepage_template": "https://www.npmjs.com/package/{pkg}",
+    "pkg_outdated_cmd": "npm outdated -g --json",
+    "pkg_outdated_format": "npm_outdated_json",
+    "mirror_cmd_template": "npm config set registry {url}",
+    "mirror_detect_cmd": "npm config get registry",
+    "mirror_config_desc": "npm 全局配置 (~\\.npmrc 或通过 npm config set 修改)",
+    "mirror_options": [
+      {
+        "mirror_type": "official",
+        "name": "官方源",
+        "url": "https://registry.npmjs.org/"
+      },
+      {
+        "mirror_type": "aliyun",
+        "name": "阿里云/淘宝镜像",
+        "url": "https://registry.npmmirror.com/"
+      },
+      {
+        "mirror_type": "tencent",
+        "name": "腾讯云镜像",
+        "url": "https://mirrors.cloud.tencent.com/npm/"
+      }
+    ]
+  },
+  {
+    "id": "yarn",
+    "display_name": "Yarn",
+    "install_cmd": "npm install -g yarn",
+    "upgrade_cmd": null,
+    "latest_version_cmd": "npm view yarn version",
+    "version_cmd": "yarn --version",
+    "version_exe": "yarn",
+    "cache_detect_cmd": "yarn cache dir",
+    "pkg_list_cmd": "yarn global list --json",
+    "pkg_list_format": "yarn_json",
+    "pkg_upgrade_cmd_template": "yarn global upgrade {pkg}",
+    "pkg_homepage_template": "https://www.npmjs.com/package/{pkg}",
+    "mirror_cmd_template": "yarn config set registry {url}",
+    "mirror_detect_cmd": "yarn config get registry",
+    "mirror_config_desc": "Yarn 全局配置 (~\\.yarnrc 或通过 yarn config set 修改)",
+    "mirror_options": [
+      {
+        "mirror_type": "official",
+        "name": "官方源",
+        "url": "https://registry.yarnpkg.com/"
+      },
+      {
+        "mirror_type": "aliyun",
+        "name": "阿里云",
+        "url": "https://registry.npmmirror.com/"
+      }
+    ],
+    "cache_default_path": "{home}\\.cache\\yarn",
+    "cache_env_var": "YARN_CACHE_FOLDER",
+    "cache_set_cmd_template": "yarn config set cache-folder \"{path}\"",
+    "data_detect_cmd": null,
+    "data_default_path": null,
+    "data_env_var": null,
+    "data_set_cmd_template": null,
+    "proxy_detect_cmd": "yarn config get proxy",
+    "proxy_set_cmd_template": "yarn config set proxy {url}",
+    "proxy_clear_cmd": "yarn config delete proxy && yarn config delete https-proxy"
+  },
+  {
+    "id": "pnpm",
+    "display_name": "pnpm",
+    "install_cmd": "npm install -g pnpm",
+    "upgrade_cmd": null,
+    "latest_version_cmd": "npm view pnpm version",
+    "version_cmd": "pnpm --version",
+    "version_exe": "pnpm",
+    "cache_detect_cmd": "pnpm store path",
+    "pkg_list_cmd": "pnpm list -g --depth=0 --json",
+    "pkg_list_format": "pnpm_json",
+    "pkg_upgrade_cmd_template": "pnpm update -g {pkg}",
+    "pkg_homepage_template": "https://www.npmjs.com/package/{pkg}",
+    "mirror_cmd_template": "pnpm config set registry {url}",
+    "mirror_detect_cmd": "pnpm config get registry",
+    "mirror_config_desc": "pnpm 全局配置 (通过 pnpm config set 修改)",
+    "mirror_options": [
+      {
+        "mirror_type": "official",
+        "name": "官方源",
+        "url": "https://registry.npmjs.org/"
+      },
+      {
+        "mirror_type": "aliyun",
+        "name": "阿里云",
+        "url": "https://registry.npmmirror.com/"
+      }
+    ],
+    "cache_default_path": "{home}\\.local\\share\\pnpm\\store",
+    "cache_env_var": "PNPM_STORE_DIR",
+    "cache_set_cmd_template": "pnpm config set store-dir \"{path}\"",
+    "data_detect_cmd": null,
+    "data_default_path": null,
+    "data_env_var": null,
+    "data_set_cmd_template": null,
+    "proxy_detect_cmd": "pnpm config get proxy",
+    "proxy_set_cmd_template": "pnpm config set proxy {url}",
+    "proxy_clear_cmd": "pnpm config delete proxy"
+  }
+]

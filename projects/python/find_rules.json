@@ -1,0 +1,32 @@
+[
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "uv\\python",
+      "exe_name": "python.exe"
+    },
+    "source_label": "uv",
+    "priority": 60,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "python",
+      "exe_name": "python.exe"
+    },
+    "source_label": "Python",
+    "priority": 50,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "python.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 0
+  }
+]

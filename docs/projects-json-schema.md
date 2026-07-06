@@ -1,6 +1,17 @@
-# projects.json Schema 文档
+# projects Schema 文档
 
-> 本文档详细说明了 `projects.json` 运行时定义清单中所有字段的含义和用法。
+> 本文档详细说明了 SDK 运行时定义清单中所有字段的含义和用法。
+>
+> 定义现已拆分为目录结构：`projects/<id>/config.json`（每个 SDK 一个子目录，
+> 目录名即 SDK id）。新增 SDK 只需在 `projects/` 下添加子目录与 `config.json`，
+> 无需改动 Rust 代码。加载器同时兼容旧版单文件 `projects.json`。
+>
+> 为保持单文件可读性，四个复杂字段已进一步拆分为同级文件，加载时按文件优先覆盖
+> `config.json` 内联值：
+> - `env_vars.json`：`env_vars`（环境变量列表）
+> - `find_rules.json`：`find_rules`（路径解析规则）
+> - `package_managers.json`：`package_managers`（包管理器列表）
+> - `remote_versions_config.json`：`remote_versions_config`（远程版本配置，任意 JSON 值）
 
 ---
 

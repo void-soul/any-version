@@ -1,0 +1,144 @@
+{
+  "id": "nodejs",
+  "display_name": "Node.js",
+  "category": "language",
+  "official_website": "https://nodejs.org",
+  "bin_dirs": [
+    ""
+  ],
+  "has_cache": false,
+  "cache_detect_cmd": null,
+  "cache_default_path": null,
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": false,
+  "default_port": null,
+  "data_dir": null,
+  "log_dir": null,
+  "config_file": null,
+  "start_cmd": null,
+  "stop_cmd": null,
+  "download_url_template": "https://nodejs.org/dist/v{version}/node-v{version}-win-x64.zip",
+  "remote_versions_url": "https://nodejs.org/dist/index.json",
+  "user_configurable_vars": [
+    {
+      "name": "NODE_OPTIONS",
+      "desc": "传递 V8 / Node CLI 标志，无需改启动脚本",
+      "placeholder": "--max-old-space-size=4096 --inspect=0.0.0.0:9229"
+    },
+    {
+      "name": "NODE_ENV",
+      "desc": "运行环境标识，大量库据此切换行为（压缩、缓存、日志等）",
+      "placeholder": "development",
+      "options": [
+        "development",
+        "production",
+        "test"
+      ]
+    },
+    {
+      "name": "NODE_NO_WARNINGS",
+      "desc": "设为 1 静默所有进程警告",
+      "placeholder": "1",
+      "type": "boolean"
+    },
+    {
+      "name": "NODE_DEBUG",
+      "desc": "启用内置模块调试输出（, 分隔模块名）",
+      "placeholder": "http,net,fs"
+    },
+    {
+      "name": "DEBUG",
+      "desc": "debug 库通配符过滤，生态系统广泛支持",
+      "placeholder": "app:*"
+    },
+    {
+      "name": "NODE_V8_COVERAGE",
+      "desc": "输出 V8 代码覆盖率 JSON 到指定目录",
+      "placeholder": "./coverage"
+    },
+    {
+      "name": "NODE_EXTRA_CA_CERTS",
+      "desc": "追加可信 CA 证书文件 (PEM)",
+      "placeholder": "/path/to/ca.pem"
+    },
+    {
+      "name": "UV_THREADPOOL_SIZE",
+      "desc": "libuv 线程池大小，影响文件 I/O / DNS 并发（默认 4，上限 1024）",
+      "placeholder": "16"
+    },
+    {
+      "name": "FORCE_COLOR",
+      "desc": "强制启用彩色输出（chalk 等库使用）",
+      "placeholder": "1",
+      "type": "boolean"
+    },
+    {
+      "name": "NO_COLOR",
+      "desc": "标准约定：设此变量禁用所有颜色输出",
+      "placeholder": "1",
+      "type": "boolean"
+    },
+    {
+      "name": "NODE_TLS_REJECT_UNAUTHORIZED",
+      "desc": "设 0 禁用 TLS 证书校验（仅开发用）",
+      "placeholder": "0",
+      "type": "boolean"
+    },
+    {
+      "name": "NODE_COMPILE_CACHE",
+      "desc": "Node 22+ 字节码编译缓存目录，加速冷启动",
+      "placeholder": "./.node-cache"
+    },
+    {
+      "name": "HTTP_PROXY",
+      "desc": "出站 HTTP 代理（需配合代理库生效）",
+      "placeholder": "http://127.0.0.1:7890"
+    },
+    {
+      "name": "HTTPS_PROXY",
+      "desc": "出站 HTTPS 代理",
+      "placeholder": "http://127.0.0.1:7890"
+    },
+    {
+      "name": "NO_PROXY",
+      "desc": "不走代理的域名/IP（, 分隔）",
+      "placeholder": "localhost,127.0.0.1"
+    }
+  ],
+  "download_file_ext": "zip",
+  "version_cmd": "node --version",
+  "version_exe": "node",
+  "version_parse_regex": "v?(\\d+\\.\\d+\\.\\d+)",
+  "conflict_managers": [
+    {
+      "id": "nvm-windows",
+      "display_name": "nvm-windows",
+      "env_vars": [
+        "NVM_HOME",
+        "NVM_SYMLINK"
+      ],
+      "path_keywords": [
+        "\\nvm"
+      ],
+      "exe_name": "nvm.exe",
+      "cache_default_path": "{home}\\AppData\\Roaming\\nvm"
+    },
+    {
+      "id": "fnm",
+      "display_name": "fnm",
+      "env_vars": [
+        "FNM_DIR"
+      ],
+      "path_keywords": [
+        "\\fnm",
+        "fnm_multishell"
+      ],
+      "exe_name": "fnm.exe",
+      "cache_default_path": "{home}\\AppData\\Local\\fnm"
+    }
+  ]
+}

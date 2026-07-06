@@ -290,7 +290,7 @@ pub struct ConflictManagerStatus {
     pub is_disabled: bool,
 }
 
-/// 项目定义（存储在 projects.json）
+/// 项目定义（存储于 projects/ 目录下各 <id>/config.json）
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ProjectDef {
     /// 唯一标识
@@ -310,9 +310,11 @@ pub struct ProjectDef {
     #[serde(default)]
     pub user_configurable_vars: Vec<UserConfigurableVar>,
 
-    /// 关联的环境变量
+    /// 关联的环境变量（可拆分到 env_vars.json 加载）
+    #[serde(default)]
     pub env_vars: Vec<EnvVarDef>,
-    /// 路径解析规则
+    /// 路径解析规则（可拆分到 find_rules.json 加载）
+    #[serde(default)]
     pub find_rules: Vec<FindRule>,
 
     /// 是否有缓存管理

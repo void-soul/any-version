@@ -1,0 +1,7 @@
+{
+  "type": "json_api",
+  "response_type": "object_with_array",
+  "array_field": "versions",
+  "version_field": "openjdk_version",
+  "version_label": "Eclipse Temurin ·"
+}

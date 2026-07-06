@@ -1,0 +1,16 @@
+[
+  {
+    "name": "CARGO_HOME",
+    "desc": "Cargo 工具及包缓存根目录",
+    "check_type": "path",
+    "tier": "core",
+    "sub_dir": "cargo"
+  },
+  {
+    "name": "RUSTUP_HOME",
+    "desc": "Rustup 工具链与组件缓存根目录",
+    "check_type": "path",
+    "tier": "core",
+    "sub_dir": "rustup"
+  }
+]

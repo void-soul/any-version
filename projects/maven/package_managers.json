@@ -1,0 +1,53 @@
+[
+  {
+    "id": "maven",
+    "display_name": "Maven",
+    "built_in": true,
+    "install_cmd": null,
+    "version_cmd": "mvn -v",
+    "version_exe": "mvn",
+    "cache_detect_cmd": null,
+    "cache_default_path": "{home}\\.m2\\repository",
+    "cache_env_var": null,
+    "cache_set_cmd_template": "modify_xml",
+    "data_detect_cmd": null,
+    "data_default_path": null,
+    "data_env_var": null,
+    "data_set_cmd_template": null,
+    "proxy_detect_cmd": null,
+    "proxy_set_cmd_template": null,
+    "pkg_list_cmd": null,
+    "mirror_cmd_template": null,
+    "mirror_config_file": "{home}\\.m2\\settings.xml",
+    "mirror_detect_file_regex": "<url>([^<]+)</url>",
+    "mirror_config_desc": "%USERPROFILE%\\.m2\\settings.xml（Maven 全局 settings）",
+    "mirror_options": [
+      {
+        "mirror_type": "official",
+        "name": "官方源",
+        "url": "https://repo.maven.apache.org/maven2",
+        "config_content": null
+      },
+      {
+        "mirror_type": "aliyun",
+        "name": "阿里云",
+        "url": "https://maven.aliyun.com/repository/public",
+        "config_content": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<settings xmlns=\"http://maven.apache.org/SETTINGS/1.0.0\"\n          xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n          xsi:schemaLocation=\"http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd\">\n  <mirrors>\n    <mirror>\n      <id>aliyunmaven</id>\n      <mirrorOf>central</mirrorOf>\n      <name>aliyun maven</name>\n      <url>https://maven.aliyun.com/repository/public</url>\n    </mirror>\n  </mirrors>\n</settings>"
+      }
+    ],
+    "cache_config_source": {
+      "parser_type": "xml",
+      "paths": [
+        "{home}\\.m2\\settings.xml",
+        "{MAVEN_HOME}\\conf\\settings.xml",
+        "{links_dir}\\maven\\conf\\settings.xml"
+      ],
+      "keys": [
+        "<localRepository>\\s*([^<]+?)\\s*</localRepository>"
+      ],
+      "replacements": {
+        "${user.home}": "{home}"
+      }
+    }
+  }
+]

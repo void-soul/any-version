@@ -1,0 +1,8 @@
+[
+  {
+    "name": "DENO_DIR",
+    "desc": "Deno 缓存与数据目录",
+    "check_type": "path",
+    "tier": "clear"
+  }
+]

@@ -1,0 +1,123 @@
+[
+  {
+    "pattern": {
+      "type": "env_bin",
+      "env_var": "JAVA_HOME",
+      "bin_sub": "bin",
+      "exe_name": "java.exe"
+    },
+    "source_label": "JAVA_HOME",
+    "priority": 10,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "scoop\\apps\\",
+      "exe_name": "java.exe"
+    },
+    "source_label": "Scoop",
+    "priority": 40,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "Eclipse Adoptium",
+      "exe_name": "java.exe"
+    },
+    "source_label": "Eclipse Temurin",
+    "priority": 30,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "Amazon Corretto",
+      "exe_name": "java.exe"
+    },
+    "source_label": "Amazon Corretto",
+    "priority": 30,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "C:\\Program Files\\Java\\jdk-21\\bin",
+      "exe_name": "java.exe"
+    },
+    "source_label": "Oracle JDK (Program Files)",
+    "priority": 50,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "C:\\Program Files\\Java\\jdk-17\\bin",
+      "exe_name": "java.exe"
+    },
+    "source_label": "Oracle JDK (Program Files)",
+    "priority": 51,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "C:\\Program Files\\Java\\jdk-11\\bin",
+      "exe_name": "java.exe"
+    },
+    "source_label": "Oracle JDK (Program Files)",
+    "priority": 52,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "C:\\Program Files\\Java\\jdk-1.8\\bin",
+      "exe_name": "java.exe"
+    },
+    "source_label": "Oracle JDK (Program Files)",
+    "priority": 53,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "C:\\Program Files\\Microsoft\\jdk-21\\bin",
+      "exe_name": "java.exe"
+    },
+    "source_label": "Microsoft OpenJDK",
+    "priority": 50,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "C:\\msys64\\mingw64\\bin",
+      "exe_name": "java.exe"
+    },
+    "source_label": "MSYS2",
+    "priority": 70,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "\\java\\",
+      "exe_name": "java.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 80,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "java.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 0
+  }
+]

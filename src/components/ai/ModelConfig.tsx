@@ -45,7 +45,6 @@ interface AiProvider {
 interface AiConfig {
   providers: AiProvider[];
   active_provider: string | null;
-  active_model: string | null;
   proxy_port: number;
   default_project_path: string;
 }
@@ -99,7 +98,7 @@ export default function ModelConfig() {
       setConfig(data);
       setPresets(presetData);
     } catch {
-      setConfig({ providers: [], active_provider: null, active_model: null, proxy_port: 15721, default_project_path: "" });
+      setConfig({ providers: [], active_provider: null, proxy_port: 15721, default_project_path: "" });
     } finally { setLoading(false); }
   }, []);
 
@@ -187,18 +186,17 @@ export default function ModelConfig() {
       ...config,
       providers: config.providers.filter(p => p.id !== id),
       active_provider: config.active_provider === id ? null : config.active_provider,
-      active_model: config.active_provider === id ? null : config.active_model,
     };
     saveConfig(next);
     setDeleteTarget(null);
     if (expandedId === id) setExpandedId(null);
   };
 
-  // ─── 设为当前 ───
+  // ─── 设为当前供应商（仅标记，不设置默认模型）───
 
-  const handleSetActive = (providerId: string, modelId: string) => {
+  const handleSetActiveProvider = (providerId: string) => {
     if (!config) return;
-    saveConfig({ ...config, active_provider: providerId, active_model: modelId });
+    saveConfig({ ...config, active_provider: providerId });
   };
 
   // ─── 自动获取模型列表 ───
@@ -255,23 +253,6 @@ export default function ModelConfig() {
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-4">
-      {/* Active Model Banner */}
-      {config?.active_provider && config.active_model && (() => {
-        const ap = config.providers.find(p => p.id === config.active_provider);
-        const am = ap?.models.find(m => m.id === config.active_model);
-        return ap ? (
-          <div className="p-3.5 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center gap-3">
-            <CheckCircle className="w-4 h-4 text-violet-400 flex-shrink-0" />
-            <div className="text-xs">
-              <span className="text-slate-400">当前模型：</span>
-              <span className="text-violet-300 font-bold ml-1">{ap.name}</span>
-              <span className="text-slate-500 mx-1">/</span>
-              <span className="text-white font-semibold">{am?.name || config.active_model}</span>
-            </div>
-          </div>
-        ) : null;
-      })()}
-
       {/* Add Button */}
       <div className="relative">
         <button onClick={() => setShowAddMenu(!showAddMenu)} className="px-3.5 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-lg shadow-violet-500/10">
@@ -340,14 +321,18 @@ export default function ModelConfig() {
                   {/* 代理协议：胶囊形式 */}
                   {provider.anthropic_use_proxy && <span className="px-1.5 py-0.5 rounded-full text-[8px] font-bold bg-pink-500/15 text-pink-300">代理 → Anthropic</span>}
                   {provider.openai_use_proxy && <span className="px-1.5 py-0.5 rounded-full text-[8px] font-bold bg-pink-500/15 text-pink-300">代理 → OpenAI</span>}
-                  {isActive && <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-violet-500/20 text-violet-300">当前</span>}
                 </div>
               </div>
               <div className="flex items-center gap-1.5 flex-shrink-0">
                 <button onClick={(e) => { e.stopPropagation(); handleTest(provider); }} disabled={testing === provider.id || !provider.api_key}
-                  className="px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-[10px] text-slate-400 hover:text-white disabled:opacity-40 cursor-pointer transition-all flex items-center gap-1">
+                  className="px-2 py-1 rounded-md  hover:bg-white/10 text-[10px] text-slate-400 hover:text-white disabled:opacity-40 cursor-pointer transition-all flex items-center gap-1">
                   <Zap className={`w-3 h-3 ${testing === provider.id ? "animate-pulse text-yellow-400" : ""}`} />
-                  {testing === provider.id ? "测试中" : "测速"}
+                  {/* {testing === provider.id ? "测试中" : "测速"} */}
+                </button>
+                <button onClick={(e) => { e.stopPropagation(); handleSetActiveProvider(provider.id); }}
+                  className={`px-2 py-1 rounded-md text-[10px] cursor-pointer transition-all ${isActive ? "text-violet-400 bg-violet-500/10" : "text-slate-500 hover:text-violet-300 hover:bg-white/5"}`}
+                  title="设为当前供应商">
+                  {isActive ? "当前" : "设为当前"}
                 </button>
                 <button onClick={(e) => { e.stopPropagation(); openEditModal(provider); }}
                   className="p-1 rounded-md text-slate-600 hover:text-blue-400 hover:bg-blue-500/10 cursor-pointer transition-all" title="编辑">
@@ -379,20 +364,12 @@ export default function ModelConfig() {
                 </div>
                 {provider.models.length === 0 ? (
                   <div className="text-[10px] text-slate-600 py-2 text-center">暂无模型，点击卡片右上角编辑</div>
-                ) : provider.models.map((model) => {
-                  const isModelActive = isActive && config.active_model === model.id;
-                  return (
-                    <button key={model.id} onClick={(e) => { e.stopPropagation(); handleSetActive(provider.id, model.id); }}
-                      className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[10px] text-left transition-all cursor-pointer ${
-                        isModelActive ? "bg-violet-500/10 border border-violet-500/20" : "bg-white/[0.02] border border-transparent hover:bg-white/5"
-                      }`}>
-                      <span className={`font-mono ${isModelActive ? "text-violet-300 font-bold" : "text-slate-300"}`}>
-                        {model.id}
-                      </span>
-                      {isModelActive && <CheckCircle className="w-3 h-3 text-violet-400 ml-auto" />}
-                    </button>
-                  );
-                })}
+                ) : provider.models.map((model) => (
+                  <div key={model.id}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[10px] bg-white/[0.02] border border-transparent">
+                    <span className="font-mono text-slate-300">{model.id}</span>
+                  </div>
+                ))}
               </div>
             )}
           </div>
