@@ -30,6 +30,11 @@ pub fn load_registry() -> Vec<ProjectDef> {
     let base_dir = crate::commands::config::get_base_dir();
     let mut search_dirs: Vec<std::path::PathBuf> = Vec::new();
 
+    // 优先在 Tauri 2 打包后的官方资源目录下查找
+    if let Some(res_dir) = crate::commands::utils::get_resource_dir() {
+        search_dirs.push(res_dir);
+    }
+
     // 1. exe 同目录及向上 5 层
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {

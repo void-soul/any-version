@@ -1,21 +1,7 @@
-use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Stdio;
-use std::time::Duration;
-use tauri::AppHandle;
-use tauri::Emitter;
-use crate::commands::ai_registry::{registry, AiToolDefDto, ToolConfig, PathConfig};
-use crate::commands::config::get_base_dir;
-use crate::commands::tool_version::is_newer;
-use crate::commands::hidden_cmd;
-use crate::commands::cache::{get_dir_size, format_bytes, create_junction, migrate_pkg_storage_impl, clean_pkg_cache_impl};
-use super::models::*;
-
-use std::collections::HashSet;
-use tokio::task;
+use super::models::{ToolSession, AiSessionsFile};
+use crate::commands::ai_registry::registry;
 use super::config::{load_sessions, save_sessions_to_file};
 
 // ─── AI 会话管理 ───
@@ -91,6 +77,9 @@ pub fn scan_tool_sessions(tool_id: String) -> Result<Vec<ToolSession>, String> {
             "opencode_style" => {
                 scan_opencode_sessions(&dir, &mut sessions);
             }
+            "mimocode_style" => {
+                scan_mimocode_sessions(&dir, &mut sessions);
+            }
             _ => {}
         }
     }
@@ -135,13 +124,8 @@ fn scan_opencode_sessions(opencode_dir: &PathBuf, sessions: &mut Vec<ToolSession
     // 尝试 SQLite 数据库
     let db_path = scan_dir.join("sessions.db");
     if db_path.exists() {
-        // 简单读取 SQLite（启发式，非严格 SQL）
-        if let Ok(data) = fs::read(&db_path) {
-            // 读取包含 "CREATE TABLE" 确认是 SQLite
-            if data.starts_with(b"SQLite format 3\0") {
-                eprintln!("[scan_opencode] 发现 SQLite 数据，跳过（需要 rusqlite）");
-            }
-        }
+        // 使用 rusqlite 精准查询会话列表
+        scan_opencode_sqlite(&db_path, sessions);
     }
 
     // 遍历文件系统查找 session 文件
@@ -176,6 +160,88 @@ fn scan_opencode_sessions(opencode_dir: &PathBuf, sessions: &mut Vec<ToolSession
                         summary,
                         resume_cmd: None,
                     });
+                }
+            }
+        }
+    }
+}
+
+/// 使用 rusqlite 查询 OpenCode 的 sessions.db 数据库
+fn scan_opencode_sqlite(db_path: &PathBuf, sessions: &mut Vec<ToolSession>) {
+    let conn = match rusqlite::Connection::open(db_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[scan_opencode_sqlite] 打开数据库失败: {}", e);
+            return;
+        }
+    };
+
+    // 尝试查询 sessions 表（OpenCode 使用 session 表结构）
+    let query = "SELECT id, COALESCE(summary, ''), COALESCE(updatedAt, ''), COALESCE(cwd, '') FROM session ORDER BY updatedAt DESC LIMIT 200";
+    let mut stmt = match conn.prepare(query) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[scan_opencode_sqlite] 预处理查询失败: {} (尝试其他表结构)", e);
+            // 尝试备用查询（不同版本的表结构）
+            let alt_query = "SELECT id, COALESCE(summary, ''), COALESCE(updated_at, ''), COALESCE(cwd, '') FROM sessions ORDER BY updated_at DESC LIMIT 200";
+            match conn.prepare(alt_query) {
+                Ok(s) => s,
+                Err(_) => return,
+            }
+        }
+    };
+
+    let rows = stmt.query_map([], |row| {
+        let id: String = row.get(0)?;
+        let summary: String = row.get(1)?;
+        let updated_at: String = row.get(2)?;
+        let cwd: String = row.get(3)?;
+        Ok((id, summary, updated_at, cwd))
+    });
+
+    if let Ok(rows) = rows {
+        for row in rows {
+            if let Ok((id, summary, updated_at, cwd)) = row {
+                if !id.is_empty() {
+                    sessions.push(ToolSession {
+                        session_id: id,
+                        project_path: cwd,
+                        last_used: updated_at,
+                        summary: if summary.is_empty() { None } else { Some(summary.chars().take(200).collect()) },
+                        resume_cmd: None,
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// 扫描 MiMo Code 风格的会话（类似 opencode_style，但可能有不同的文件结构）
+fn scan_mimocode_sessions(mimocode_dir: &PathBuf, sessions: &mut Vec<ToolSession>) {
+    // MiMo Code 可能在 sessions/ 子目录存储
+    let session_dir = mimocode_dir.join("sessions");
+    let scan_dir = if session_dir.exists() { session_dir } else { mimocode_dir.clone() };
+
+    // 尝试 SQLite 数据库
+    let db_path = scan_dir.join("sessions.db");
+    if db_path.exists() {
+        scan_opencode_sqlite(&db_path, sessions);
+    }
+
+    // 也遍历文件系统查找 session 文件
+    if let Ok(entries) = walk_dir_for_sessions(&scan_dir, 3) {
+        for (path, modified, _size) in entries {
+            let content = match fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            // 尝试 JSONL 格式
+            if path.extension().map_or(false, |e| e == "jsonl") {
+                parse_jsonl_session(&content, sessions);
+            } else if path.extension().map_or(false, |e| e == "json") {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                    extract_session_from_value(&val, &path, sessions, &modified);
                 }
             }
         }

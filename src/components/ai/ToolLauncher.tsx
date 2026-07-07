@@ -32,90 +32,15 @@ import {
   Shield,
   Cpu,
 } from "lucide-react";
-
-interface AiProvider {
-  id: string;
-  name: string;
-  openai_enabled: boolean;
-  openai_url: string;
-  openai_use_proxy: boolean;
-  anthropic_enabled: boolean;
-  anthropic_url: string;
-  anthropic_use_proxy: boolean;
-  google_enabled: boolean;
-  google_url: string;
-  anthropic_model_aliases: Record<string, string>;
-  anthropic_default_model: string | null;
-  openai_model_aliases: Record<string, string>;
-  openai_default_model: string | null;
-  google_model_aliases: Record<string, string>;
-  google_default_model: string | null;
-  models: { id: string; name: string }[];
-}
-
-interface AiConfig {
-  providers: AiProvider[];
-  active_provider: string | null;
-  proxy_port: number;
-  default_project_path: string;
-}
-
-interface LastLaunchConfig {
-  provider_id: string | null;
-  provider_name: string | null;
-  model_id: string | null;
-  fallback_model_id: string | null;
-  fallback_provider_id: string | null;
-  use_official_model: boolean;
-  terminal_id: string;
-  one_m_context: boolean;
-  project_path: string;
-  last_launched_at: string;
-}
-
-interface DetectedAiTool {
-  id: string;
-  display_name: string;
-  installed: boolean;
-  version: string | null;
-  latest_version_cmd?: string;
-  latest_version?: string | null;
-  install_cmd: string;
-  upgrade_cmd: string;
-  website: string;
-  api_protocol: string;
-  supports_model: boolean;
-  support_one_m_context: boolean;
-  supports_fallback_model: boolean;
-  resume_cmd: string | null;
-  continue_cmd: string | null;
-  cache_dirs: string[];
-  category: string;
-}
-
-interface AiToolCacheInfo {
-  tool_id: string;
-  dir_name: string;
-  full_path: string;
-  size: string;
-  size_bytes: number;
-  is_junction: boolean;
-  junction_target: string;
-  exists: boolean;
-}
-
-interface ToolSession {
-  session_id: string;
-  project_path: string;
-  last_used: string;
-  summary: string | null;
-}
-
-interface TerminalInfo {
-  id: string;
-  name: string;
-  exe_path: string;
-}
+import type {
+  AiProvider,
+  AiConfig,
+  LastLaunchConfig,
+  DetectedAiTool,
+  AiToolCacheInfo,
+  ToolSession,
+  TerminalInfo,
+} from "./types";
 
 const PROTOCOL_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
@@ -173,6 +98,12 @@ export default function ToolLauncher() {
 
   const selectedTool = tools.find(t => t.id === selectedToolId) || null;
 
+  // 缓存当前选中工具的缓存信息（避免重复 filter）
+  const selectedToolCaches = React.useMemo(() => {
+    if (!selectedToolId) return [];
+    return cacheInfos.filter(c => c.tool_id === selectedToolId);
+  }, [cacheInfos, selectedToolId]);
+
   // 检测工具版本（使用后端 check_all_tool_versions + check_ai_tool_versions）
   const checkVersions = useCallback(async () => {
     setCheckingVersions(true);
@@ -201,7 +132,7 @@ export default function ToolLauncher() {
     try {
       const [t, c, term, lcs] = await Promise.all([
         invoke<DetectedAiTool[]>("detect_ai_tools").catch(() => []),
-        invoke<AiConfig>("get_ai_config").catch(() => ({ providers: [], active_provider: null, proxy_port: 15721, default_project_path: "" })),
+        invoke<AiConfig>("get_ai_config").catch(() => ({ providers: [], active_provider: null, proxy_port: 15721, default_project_path: "", rectifier: { enabled: false, thinking_signature: false, thinking_budget: false, media_fallback: false }, optimizer: { enabled: false, cache_injection: false, thinking_optimizer: false, deepseek_normalize: false }, skills_dir: "" })),
         invoke<TerminalInfo[]>("detect_terminals").catch(() => []),
         invoke<Record<string, LastLaunchConfig>>("get_all_last_launch_configs").catch(() => ({})),
       ]);
@@ -669,8 +600,8 @@ export default function ToolLauncher() {
                     <div className="flex items-center gap-2">
                       <HardDrive className="w-3.5 h-3.5" />
                       <span className="font-semibold">缓存管理</span>
-                      {cacheInfos.filter(c => c.tool_id === selectedTool.id).length > 0 && (
-                        <span className="text-[8px] text-slate-500">({cacheInfos.filter(c => c.tool_id === selectedTool.id).length} 个缓存目录)</span>
+                      {selectedToolCaches.length > 0 && (
+                        <span className="text-[8px] text-slate-500">({selectedToolCaches.length} 个缓存目录)</span>
                       )}
                     </div>
                     <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showCacheManager ? "rotate-180" : ""}`} />
@@ -681,10 +612,10 @@ export default function ToolLauncher() {
                       <div className="max-h-56 overflow-y-auto divide-y divide-white/[0.03]">
                         {cacheInfos.length === 0 ? (
                           <div className="px-3 py-4 text-[10px] text-slate-600 text-center">加载中...</div>
-                        ) : cacheInfos.filter(c => c.tool_id === selectedTool.id).length === 0 ? (
+                        ) : selectedToolCaches.length === 0 ? (
                           <div className="px-3 py-4 text-[10px] text-slate-600 text-center">此工具无缓存目录</div>
                         ) : (
-                          cacheInfos.filter(c => c.tool_id === selectedTool.id).map(cache => (
+                          selectedToolCaches.map(cache => (
                             <div key={`${cache.tool_id}:${cache.dir_name}`} className="px-3 py-2 flex items-center gap-3">
                               <HardDrive className="w-3 h-3 text-slate-600 flex-shrink-0" />
                               <div className="flex-1 min-w-0">

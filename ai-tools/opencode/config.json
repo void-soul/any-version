@@ -20,6 +20,7 @@
         "provider.anyversion.npm": "@ai-sdk/openai-compatible",
         "provider.anyversion.options.baseURL": "baseUrl",
         "provider.anyversion.options.apiKey": "apiKey",
+        "provider.anyversion.models.{model_name}.name": "modelName",
         "model": "model"
       }
   },

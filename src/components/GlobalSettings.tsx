@@ -20,25 +20,7 @@ interface Config {
   links_dir: string;
 }
 
-interface AiConfig {
-  providers: any[];
-  active_provider: string | null;
-  proxy_port: number;
-  default_project_path: string;
-  rectifier: {
-    enabled: boolean;
-    thinking_signature: boolean;
-    thinking_budget: boolean;
-    media_fallback: boolean;
-  };
-  optimizer: {
-    enabled: boolean;
-    cache_injection: boolean;
-    thinking_optimizer: boolean;
-    deepseek_normalize: boolean;
-  };
-  skills_dir: string;
-}
+import type { AiConfig } from "./ai/types";
 
 interface MigrateResult {
   moved_versions: boolean;

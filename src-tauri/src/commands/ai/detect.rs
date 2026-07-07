@@ -1,20 +1,16 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
-use std::process::Stdio;
-use std::time::Duration;
-use tauri::AppHandle;
-use tauri::Emitter;
+use std::sync::OnceLock;
 use crate::commands::ai_registry::{registry, AiToolDefDto, ToolConfig, PathConfig};
-use crate::commands::config::get_base_dir;
 use crate::commands::tool_version::is_newer;
 use crate::commands::hidden_cmd;
-use crate::commands::cache::{get_dir_size, format_bytes, create_junction, migrate_pkg_storage_impl, clean_pkg_cache_impl};
-use super::models::*;
+use crate::commands::utils::{find_in_path, get_http_client};
 
 use super::config::DetectedAiTool;
+
+/// 全局缓存的 semver 提取正则表达式（避免每次调用都重新编译）
+static SEMVER_RE: OnceLock<regex::Regex> = OnceLock::new();
 
 fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool {
     eprintln!("[detect] ========== {} ({}) ==========", config.display_name, config.id);
@@ -87,9 +83,9 @@ fn detect_via_pm(pm: &str, pkg_name: &str) -> Option<String> {
             eprintln!("[detect]     npm cmd: npm {}", npm_args.join(" "));
             let (stdout, stderr) = run_cmd_output_full("cmd", &["/c", "npm", "ls", pkg_name, "-g", "--depth=0", "--json"]);
             let stdout = stdout?;
-            eprintln!("[detect]     npm stdout: {}", &stdout[..stdout.len().min(500)]);
+            eprintln!("[detect]     npm stdout: {}", safe_slice(&stdout, 500));
             if !stderr.is_empty() {
-                eprintln!("[detect]     npm stderr: {}", &stderr[..stderr.len().min(500)]);
+                eprintln!("[detect]     npm stderr: {}", safe_slice(&stderr, 500));
             }
             // 解析 JSON：{"dependencies": {"@scope/pkg": {"version": "1.2.3"}}}
             match serde_json::from_str::<JsonValue>(&stdout) {
@@ -125,9 +121,9 @@ fn detect_via_pm(pm: &str, pkg_name: &str) -> Option<String> {
             eprintln!("[detect]     pip cmd: pip {}", pip_args.join(" "));
             let (stdout, stderr) = run_cmd_output_full("cmd", &["/c", "pip", "show", pkg_name]);
             let stdout = stdout?;
-            eprintln!("[detect]     pip stdout: {}", &stdout[..stdout.len().min(300)]);
+            eprintln!("[detect]     pip stdout: {}", safe_slice(&stdout, 300));
             if !stderr.is_empty() {
-                eprintln!("[detect]     pip stderr: {}", &stderr[..stderr.len().min(300)]);
+                eprintln!("[detect]     pip stderr: {}", safe_slice(&stderr, 300));
             }
             // 输出包含 "Version: 1.2.3" 行
             for line in stdout.lines() {
@@ -152,7 +148,7 @@ fn detect_via_cmd(detect_cmd: &str) -> Option<String> {
     }
 
     // 先在 PATH 中找可执行文件
-    let exe = find_in_path(parts[0])?;
+    let exe = find_in_path_local(parts[0])?;
     eprintln!("[detect]     find_in_path({}) → {:?}", parts[0], exe);
 
     let output = {
@@ -197,38 +193,15 @@ fn detect_via_cmd(detect_cmd: &str) -> Option<String> {
 }
 
 /// 在 PATH 中查找可执行文件的绝对路径
-fn find_in_path(exe_name: &str) -> Option<PathBuf> {
-    // Windows 下补齐 .exe/.cmd/.bat 后缀
-    let names: Vec<String> = {
-        let lower = exe_name.to_lowercase();
-        if lower.ends_with(".exe") || lower.ends_with(".cmd") || lower.ends_with(".bat") {
-            vec![exe_name.to_string()]
-        } else {
-            vec![
-                exe_name.to_string(),
-                format!("{}.exe", exe_name),
-                format!("{}.cmd", exe_name),
-            ]
-        }
-    };
-
-    if let Ok(path_var) = std::env::var("PATH") {
-        for dir in std::env::split_paths(&path_var) {
-            for name in &names {
-                let full = dir.join(name);
-                if full.is_file() {
-                    return Some(full);
-                }
-            }
-        }
-    }
-    eprintln!("[detect]     find_in_path FAILED for {:?} searching variants {:?}", exe_name, names);
-    None
+fn find_in_path_local(exe_name: &str) -> Option<PathBuf> {
+    find_in_path(exe_name)
 }
 
 /// 从字符串中提取 semver 版本号（如 1.2.3, 0.45.0-alpha）
 fn extract_semver(text: &str) -> Option<String> {
-    let re = regex::Regex::new(r"(\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?)").ok()?;
+    let re = SEMVER_RE.get_or_init(|| {
+        regex::Regex::new(r"(\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?)").unwrap_or_else(|_| regex::Regex::new(r"\d+\.\d+\.\d+").unwrap())
+    });
     re.captures(text)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
@@ -256,13 +229,21 @@ fn run_cmd_output_full(exe: &str, args: &[&str]) -> (Option<String>, String) {
     }
 }
 
+/// 安全截取字符串，避免在 UTF-8 字符边界中间切片导致 Panic
+fn safe_slice(s: &str, max_len: usize) -> &str {
+    if s.len() <= max_len {
+        return s;
+    }
+    let mut end = max_len;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 fn trimmed_first_line(s: &str, max_len: usize) -> &str {
     let line = s.lines().next().unwrap_or(s);
-    if line.len() > max_len {
-        &line[..max_len]
-    } else {
-        line
-    }
+    safe_slice(line, max_len)
 }
 
 #[tauri::command]
@@ -334,30 +315,39 @@ pub async fn check_ai_tool_versions() -> Result<Vec<AiToolVersionStatus>, String
         }
     }
 
-    // 只对已安装且有 pkg_manager 的工具查最新版本
-    let mut results = Vec::new();
+    // 只对已安装且有 pkg_manager 的工具查最新版本——并发请求
+    let mut version_tasks = Vec::new();
     for (id, name, tool) in &tools {
         let tools_reg = registry();
         let pkg_manager = tools_reg.get_tool_config(id).and_then(|c| c.pkg_manager.clone());
         let pkg_name = tools_reg.get_tool_config(id).and_then(|c| c.pkg_name.clone());
 
-        let latest = if tool.installed && pkg_manager.is_some() {
-            match pkg_manager.as_deref().unwrap() {
-                "npm" => {
-                    if let Some(n) = &pkg_name {
-                        fetch_npm_latest_version(n).await
-                    } else { None }
-                }
-                "pip" => {
-                    if let Some(n) = &pkg_name {
-                        fetch_pypi_latest_version(n).await
-                    } else { None }
-                }
-                _ => None,
-            }
-        } else {
-            None
-        };
+        if tool.installed && pkg_manager.is_some() {
+            let id = id.clone();
+            let name = name.clone();
+            let pm = pkg_manager.unwrap();
+            let pn = pkg_name.unwrap_or_default();
+            version_tasks.push(tokio::spawn(async move {
+                let latest = match pm.as_str() {
+                    "npm" => fetch_npm_latest_version(&pn).await,
+                    "pip" => fetch_pypi_latest_version(&pn).await,
+                    _ => None,
+                };
+                (id, name, latest)
+            }));
+        }
+    }
+
+    let mut latest_map: std::collections::HashMap<String, Option<String>> = std::collections::HashMap::new();
+    for task in version_tasks {
+        if let Ok((id, _name, latest)) = task.await {
+            latest_map.insert(id, latest);
+        }
+    }
+
+    let mut results = Vec::new();
+    for (id, name, tool) in &tools {
+        let latest = latest_map.get(id).cloned().flatten();
 
         let status = match (&tool.version, &latest) {
             (None, _) => "not_installed".to_string(),
@@ -388,19 +378,7 @@ pub async fn check_ai_tool_versions() -> Result<Vec<AiToolVersionStatus>, String
 
 /// 查询 npm registry 获取最新版本号
 async fn fetch_npm_latest_version(package: &str) -> Option<String> {
-    let client = match reqwest::Client::builder()
-        .user_agent("Any-Version-Manager")
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("[ai_ver] npm client build error: {}", e);
-            return None;
-        }
-    };
-
+    let client = get_http_client();
     let url = format!("https://registry.npmjs.org/{}/latest", package);
     eprintln!("[ai_ver] npm fetch: {}", url);
 
@@ -432,19 +410,7 @@ async fn fetch_npm_latest_version(package: &str) -> Option<String> {
 
 /// 查询 PyPI 获取最新版本号
 async fn fetch_pypi_latest_version(package: &str) -> Option<String> {
-    let client = match reqwest::Client::builder()
-        .user_agent("Any-Version-Manager")
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("[ai_ver] pypi client build error: {}", e);
-            return None;
-        }
-    };
-
+    let client = get_http_client();
     let url = format!("https://pypi.org/pypi/{}/json", package);
     eprintln!("[ai_ver] pypi fetch: {}", url);
 

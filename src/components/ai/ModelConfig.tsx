@@ -16,38 +16,7 @@ import {
   Settings2,
   ExternalLink,
 } from "lucide-react";
-
-interface ModelEntry { id: string; name: string; }
-interface AiProvider {
-  id: string;
-  name: string;
-  category: string;
-  api_key: string;
-  website: string;
-  openai_enabled: boolean;
-  openai_url: string;
-  openai_use_proxy: boolean;
-  anthropic_enabled: boolean;
-  anthropic_url: string;
-  anthropic_use_proxy: boolean;
-  google_enabled: boolean;
-  google_url: string;
-  // ═══ 协议分组模型别名映射 ═══
-  anthropic_model_aliases: Record<string, string>;
-  anthropic_default_model: string | null;
-  openai_model_aliases: Record<string, string>;
-  openai_default_model: string | null;
-  google_model_aliases: Record<string, string>;
-  google_default_model: string | null;
-  models: ModelEntry[];
-  active_model_id: string | null;
-}
-interface AiConfig {
-  providers: AiProvider[];
-  active_provider: string | null;
-  proxy_port: number;
-  default_project_path: string;
-}
+import type { ModelEntry, AiProvider, AiConfig } from "./types";
 
 type Preset = {
   id: string; name: string; category: string;
@@ -98,7 +67,7 @@ export default function ModelConfig() {
       setConfig(data);
       setPresets(presetData);
     } catch {
-      setConfig({ providers: [], active_provider: null, proxy_port: 15721, default_project_path: "" });
+      setConfig({ providers: [], active_provider: null, proxy_port: 15721, default_project_path: "", rectifier: { enabled: false, thinking_signature: false, thinking_budget: false, media_fallback: false }, optimizer: { enabled: false, cache_injection: false, thinking_optimizer: false, deepseek_normalize: false }, skills_dir: "" });
     } finally { setLoading(false); }
   }, []);
 

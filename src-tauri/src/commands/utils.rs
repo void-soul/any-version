@@ -1,15 +1,68 @@
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::fs;
+use std::sync::OnceLock;
 use super::project::types::PackageManagerDef;
+
+/// 获取用户主目录（统一入口，避免各模块重复实现）
+pub fn get_home_dir() -> PathBuf {
+    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    let home = if home.is_empty() {
+        std::env::var("HOME").unwrap_or_default()
+    } else {
+        home
+    };
+    if home.is_empty() {
+        PathBuf::from(".")
+    } else {
+        PathBuf::from(home)
+    }
+}
+
+/// 获取全局共享的 HTTP Client 单例，避免每次请求都重建连接池
+pub fn get_http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .user_agent("Any-Version-Manager")
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    })
+}
+
+/// 在 PATH 中查找可执行文件的绝对路径（Windows 自动补齐 .exe/.cmd/.bat 后缀）
+pub fn find_in_path(exe_name: &str) -> Option<PathBuf> {
+    let names: Vec<String> = {
+        let lower = exe_name.to_lowercase();
+        if lower.ends_with(".exe") || lower.ends_with(".cmd") || lower.ends_with(".bat") {
+            vec![exe_name.to_string()]
+        } else {
+            vec![
+                exe_name.to_string(),
+                format!("{}.exe", exe_name),
+                format!("{}.cmd", exe_name),
+            ]
+        }
+    };
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            for name in &names {
+                let full = dir.join(name);
+                if full.is_file() {
+                    return Some(full);
+                }
+            }
+        }
+    }
+    None
+}
 
 /// Expand {home} placeholder in path strings
 pub fn expand_home(path: &str) -> String {
     if path.contains("{home}") {
-        let home = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .unwrap_or_default();
-        path.replace("{home}", &home)
+        path.replace("{home}", &get_home_dir().to_string_lossy())
     } else {
         path.to_string()
     }
@@ -121,28 +174,7 @@ pub fn get_cmd_output(cmd: &str, args: &[&str]) -> String {
 
 /// Search for an executable in PATH (Windows compatible with .exe/.cmd/.bat)
 pub fn is_exe_in_path(name: &str) -> bool {
-    let exe = if cfg!(windows) {
-        format!("{}.exe", name)
-    } else {
-        name.to_string()
-    };
-    let cmd = if cfg!(windows) {
-        format!("{}.cmd", name)
-    } else {
-        String::new()
-    };
-
-    if let Ok(paths) = std::env::var("PATH") {
-        for dir in std::env::split_paths(&paths) {
-            if dir.join(&exe).exists() {
-                return true;
-            }
-            if !cmd.is_empty() && dir.join(&cmd).exists() {
-                return true;
-            }
-        }
-    }
-    false
+    find_in_path(name).is_some()
 }
 
 /// Dynamic description builder for package manager caches
@@ -250,5 +282,17 @@ pub fn apply_cache_config_writes(pm: &crate::commands::project::types::PackageMa
         };
         let _ = write_xml_config_key(&config_path, &wk.key, &value);
     }
+}
+
+static RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// 设置打包环境下的静态资源目录
+pub fn set_resource_dir(path: PathBuf) {
+    let _ = RESOURCE_DIR.set(path);
+}
+
+/// 获取打包环境下的静态资源目录
+pub fn get_resource_dir() -> Option<PathBuf> {
+    RESOURCE_DIR.get().cloned()
 }
 

@@ -1,18 +1,9 @@
-use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
-use std::collections::HashMap;
+use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Stdio;
-use std::time::Duration;
 use tauri::AppHandle;
-use tauri::Emitter;
-use crate::commands::ai_registry::{registry, AiToolDefDto, ToolConfig, PathConfig};
-use crate::commands::config::get_base_dir;
-use crate::commands::tool_version::is_newer;
-use crate::commands::hidden_cmd;
-use crate::commands::cache::{get_dir_size, format_bytes, create_junction, migrate_pkg_storage_impl, clean_pkg_cache_impl};
-use super::models::*;
+use crate::commands::ai_registry::registry;
+use crate::commands::cache::{get_dir_size, format_bytes, migrate_pkg_storage_impl};
 
 
 // ─── AI 工具缓存管理 ───
@@ -101,10 +92,10 @@ pub fn migrate_ai_tool_cache(
         return Err("原路径与目标路径相同".to_string());
     }
 
-    // 禁止直接指向 C 盘：必须迁移到非 C 盘以释放 C 盘空间
-    if new_path.to_lowercase().starts_with("c:") {
-        return Err("AI 工具缓存只能迁移到非 C 盘（例如 D:\\...），禁止直接指向 C 盘目录".to_string());
-    }
+    // 移除 C 盘硬编码限制：允许用户迁移到任意盘符，仅在 UI 上做非强制性提醒
+    // if new_path.to_lowercase().starts_with("c:") {
+    //     return Err("AI 工具缓存只能迁移到非 C 盘（例如 D:\\...），禁止直接指向 C 盘目录".to_string());
+    // }
 
     let orig_path_str = orig_path.to_string_lossy().to_string();
     let target_path_str = target_path.to_string_lossy().to_string();

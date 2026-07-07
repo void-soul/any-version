@@ -1,23 +1,12 @@
-use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Stdio;
-use std::time::Duration;
-use tauri::AppHandle;
-use tauri::Emitter;
-use crate::commands::ai_registry::{registry, AiToolDefDto, ToolConfig, PathConfig};
-use crate::commands::config::get_base_dir;
-use crate::commands::tool_version::is_newer;
+use crate::commands::ai_registry::{registry, ToolConfig};
 use crate::commands::hidden_cmd;
-use crate::commands::cache::{get_dir_size, format_bytes, create_junction, migrate_pkg_storage_impl, clean_pkg_cache_impl};
 use super::models::*;
 
 use super::config::{load_ai_config, load_last_launch_configs, save_last_launch_configs, load_sessions, save_sessions_to_file};
 use super::terminal::{get_terminal_exe_cfg, is_ext_terminal};
-use crate::proxy::types::ProxyConfig;
-use crate::proxy::server::start_proxy_server;
 
 // ─── 启动 AI 工具 ───
 
@@ -90,7 +79,7 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                         eprintln!("[proxy] Anthropic 代理错误: {}", e);
                     }
                 });
-                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                wait_for_proxy_ready(&proxy_settings.listen_address, config.proxy_port).await;
             }
 
             // ── P2: OpenAI 代理（config.proxy_port + 1）──
@@ -122,17 +111,13 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                         eprintln!("[proxy] OpenAI 代理错误: {}", e);
                     }
                 });
-                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                wait_for_proxy_ready(&proxy_settings.listen_address, config.proxy_port + 1).await;
             }
         }
     }
 
     eprintln!("\n──────────────────────────────────────────────────────────────");
-    eprintln!(" 注：不再注入环境变量，模型/baseUrl/apiKey 全部写入工具配置文件（configFile），");
-    eprintln!("     便于对照各工具官方文档核对每一项配置。");
-    eprintln!("──────────────────────────────────────────────────────────────");
-    eprintln!("\n──────────────────────────────────────────────────────────────");
-    eprintln!(" Step 2: 写入工具配置文件");
+    eprintln!(" Step 2: 写入工具配置文件（含 env.* 前缀的环境变量注入）");
     eprintln!("──────────────────────────────────────────────────────────────");
 
     // 写入工具的配置文件（由 config.json 的 configFile 字段驱动）
@@ -230,8 +215,6 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
     eprintln!("\n──────────────────────────────────────────────────────────────");
     eprintln!(" Step 3: 构建 CLI 参数");
     eprintln!("──────────────────────────────────────────────────────────────");
-    eprintln!(" Step 3: 构建 CLI 参数");
-    eprintln!("──────────────────────────────────────────────────────────────");
 
     // 获取终端 exe（从 JSON 配置）
     let terminal_exe = get_terminal_exe_cfg(&req.terminal_id);
@@ -314,10 +297,39 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
     }
 
     eprintln!("\n──────────────────────────────────────────────────────────────");
-    eprintln!(" Step 4: spawn 子进程");
+    eprintln!(" Step 4: spawn 子进程（注入 env.* 环境变量）");
     eprintln!("──────────────────────────────────────────────────────────────");
     eprintln!("[spawn] 工作目录: {:?}", req.project_path);
-    eprintln!("[spawn] 配置来源: 工具配置文件（configFile），未注入任何环境变量");
+    eprintln!("[spawn] 配置来源: 工具配置文件（configFile） + env.* 环境变量注入");
+
+    // 从 config_file 的 write 映射中提取 env.* 前缀的键，作为环境变量注入到子进程
+    if let Some(ref cf) = tool_config.config_file {
+        if let Some(ref write_map) = cf.write {
+            if let Some(ref p) = provider {
+                let effective_base_url = match tool_config.api_protocol.as_str() {
+                    "openai" if openai_use_proxy => format!("http://127.0.0.1:{}", config.proxy_port + 1),
+                    "anthropic" | "both" if anthropic_use_proxy => format!("http://127.0.0.1:{}", config.proxy_port),
+                    _ => p.openai_url.clone(),
+                };
+                let model = req.model_id.as_deref().unwrap_or("");
+                for (path, value_template) in write_map {
+                    if path.starts_with("env.") {
+                        let env_key = &path[4..];
+                        let env_value = match value_template.as_str() {
+                            "apiKey" => p.api_key.clone(),
+                            "baseUrl" => effective_base_url.clone(),
+                            "model" | "modelName" => model.to_string(),
+                            other => other.to_string(),
+                        };
+                        if !env_value.is_empty() {
+                            eprintln!("[spawn] env {} = {}", env_key, mask_secret(&env_value));
+                            cmd.env(env_key, env_value);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     cmd.spawn().map_err(|e| format!("启动失败: {}", e))?;
 
@@ -511,17 +523,19 @@ fn write_tool_config_generic(
     });
 
     for (path, value_template) in write_map {
+        // 动态键名替换：{model_name} → 实际模型名
+        let resolved_path = path.replace("{model_name}", &model_name);
         // 代理模式：只写连接参数（baseUrl/apiKey 等），模型相关字段保持原版，
         // 由本地代理按请求中的官方模型名转发到供应商对应模型。
         if proxy_mode
             && matches!(value_template.as_str(), "model" | "modelName" | "fallbackModel")
         {
-            eprintln!("[config_file] skip {} (proxy_mode, 模型由代理解析)", path);
+            eprintln!("[config_file] skip {} (proxy_mode, 模型由代理解析)", resolved_path);
             continue;
         }
         let value = match value_template.as_str() {
             "model" | "modelName" | "fallbackModel" if !has_model => {
-                eprintln!("[config_file] skip {} (no model)", path);
+                eprintln!("[config_file] skip {} (no model)", resolved_path);
                 continue;
             },
             "model" => {
@@ -543,12 +557,19 @@ fn write_tool_config_generic(
             "modelName" => model_name.clone(),
             "fallbackModel" => fallback_model.clone().unwrap_or_default(),
             "baseUrl" => base_url.to_string(),
-            "apiKey" => api_key.to_string(),
+            "apiKey" => {
+                // API Key 为空时不写入配置文件，避免写入空字符串被解析器判定为非法凭证
+                if api_key.is_empty() {
+                    eprintln!("[config_file] skip {} (empty apiKey, 不写入)", resolved_path);
+                    continue;
+                }
+                api_key.to_string()
+            },
             "" => String::new(),
             other => other.to_string(),
         };
-        eprintln!("[config_file] set {} = {}", path, mask_secret(&value));
-        writes.push((path.clone(), value));
+        eprintln!("[config_file] set {} = {}", resolved_path, mask_secret(&value));
+        writes.push((resolved_path, value));
     }
 
     // Provider 模型别名映射（sonnet/haiku/opus/fable → 实际模型名）。
@@ -581,7 +602,7 @@ fn write_tool_config_generic(
     eprintln!("[config_file] 目标路径: {} (format={})", resolved_path.display(), cfg.format);
     match cfg.format.as_str() {
         "toml" => write_toml_config(&resolved_path, &existing, &writes)?,
-        _ => write_json_config(&resolved_path, &existing, &writes, cfg.schema.as_deref())?,
+        _ => write_json_config(&resolved_path, &existing, &writes, cfg.schema.as_deref(), tool_config)?,
     }
     eprintln!("[config_file] ✓ 已写入配置到 {}", resolved_path.display());
     Ok(())
@@ -604,6 +625,7 @@ fn write_json_config(
     existing: &str,
     writes: &[(String, String)],
     schema: Option<&str>,
+    tool_config: &ToolConfig,
 ) -> Result<(), String> {
     let mut doc: serde_json::Value = if existing.trim().is_empty() {
         serde_json::json!({})
@@ -624,7 +646,11 @@ fn write_json_config(
     // 合并写入不会删除旧键，导致切换供应商/模型后旧模型字段（如其它供应商的
     // ANTHROPIC_DEFAULT_*_MODEL、已弃用的 ANTHROPIC_SMALL_FAST_MODEL、历史遗留的
     // 顶层 model）残留在配置里，干扰本次启动。这里移除受管前缀中不在本次写入集合内的键。
-    cleanup_managed_model_keys(&mut doc, writes);
+    // 注意：清理逻辑仅在 Anthropic 系列协议下执行，避免误清除非 Anthropic 协议工具的 env 设置。
+    let is_anthropic = tool_config.api_protocol == "anthropic" || tool_config.api_protocol == "both";
+    if is_anthropic {
+        cleanup_managed_model_keys(&mut doc, writes);
+    }
 
     let content = serde_json::to_string_pretty(&doc)
         .map_err(|e| format!("序列化配置失败: {}", e))?;
@@ -673,7 +699,7 @@ fn cleanup_managed_model_keys(doc: &mut serde_json::Value, writes: &[(String, St
     }
 }
 
-/// 写入 TOML 配置文件（行式：保留其他行/注释，仅更新或追加顶层 key）
+/// 写入 TOML 配置文件（支持顶层 key 和 dotted keys 如 `model_providers.x.base_url`）
 fn write_toml_config(
     path: &PathBuf,
     existing: &str,
@@ -681,17 +707,35 @@ fn write_toml_config(
 ) -> Result<(), String> {
     let mut lines: Vec<String> = existing.lines().map(|l| l.to_string()).collect();
     let mut updated: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // 过滤掉 env.* 前缀的键（这些键通过环境变量注入，不写入 TOML 文件）
+    let toml_writes: Vec<&(String, String)> = writes
+        .iter()
+        .filter(|(p, _)| !p.starts_with("env."))
+        .collect();
+
+    // 更新已存在的行（仅顶层 key）
     for line in lines.iter_mut() {
         if let Some((k, _)) = parse_toml_kv(line) {
-            if let Some((_, v)) = writes.iter().find(|(p, _)| p == &k && !p.contains('.')) {
+            if let Some((_, v)) = toml_writes.iter().find(|(p, _)| p == &k && !p.contains('.')) {
                 *line = format!("{} = \"{}\"", k, v);
                 updated.insert(k);
             }
         }
     }
-    for (p, v) in writes {
+    // 追加新的顶层 key
+    for (p, v) in &toml_writes {
         if !p.contains('.') && !updated.contains(p) {
             lines.push(format!("{} = \"{}\"", p, v));
+            updated.insert(p.clone());
+        }
+    }
+    // 追加 dotted keys（如 model_providers.anyversion.base_url = "..."）
+    // 简单策略：直接在文件末尾追加，重复的键由工具自身的 TOML 解析器去重处理
+    for (p, v) in &toml_writes {
+        if p.contains('.') && !updated.contains(p) {
+            lines.push(format!("{} = \"{}\"", p, v));
+            updated.insert(p.clone());
         }
     }
     let content = lines.join("\n");
@@ -729,4 +773,22 @@ fn set_json_path(doc: &mut serde_json::Value, path: &str, value: &str) {
         }
         cur = cur.as_object_mut().unwrap().get_mut(*p).unwrap();
     }
+}
+
+/// 轮询代理服务器的 /health 端点，等待代理就绪。
+/// 最多重试 15 次（每次 200ms），总计最多 3 秒。
+async fn wait_for_proxy_ready(listen_address: &str, port: u16) {
+    let health_url = format!("http://{}:{}/health", listen_address, port);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(500))
+        .build()
+        .unwrap_or_default();
+    for i in 0..15u32 {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        if client.get(&health_url).send().await.is_ok() {
+            eprintln!("[proxy] ✓ 代理就绪 (尝试 {} 次)", i + 1);
+            return;
+        }
+    }
+    eprintln!("[proxy] ⚠ 代理未在 3 秒内就绪，继续启动（可能稍后可用）");
 }

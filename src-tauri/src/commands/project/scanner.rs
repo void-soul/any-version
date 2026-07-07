@@ -27,7 +27,21 @@ pub fn list_projects() -> Result<Vec<ProjectStatus>, String> {
     let mut results = Vec::with_capacity(defs.len());
 
     for def in &defs {
-        let status = build_project_status(def, &config)?;
+        let status = build_project_status(def, &config, false)?;
+        results.push(status);
+    }
+
+    Ok(results)
+}
+
+/// 快速列出项目状态（跳过缓存大小计算，用于前端列表初次加载）
+pub fn list_projects_fast() -> Result<Vec<ProjectStatus>, String> {
+    let defs = registry::registry();
+    let config = load_config();
+    let mut results = Vec::with_capacity(defs.len());
+
+    for def in &defs {
+        let status = build_project_status(def, &config, true)?;
         results.push(status);
     }
 
@@ -39,7 +53,7 @@ pub fn get_project_status(id: &str) -> Result<ProjectStatus, String> {
     let def = registry::find_by_id(id)
         .ok_or_else(|| format!("未找到项目: {}", id))?;
     let config = load_config();
-    build_project_status(&def, &config)
+    build_project_status(&def, &config, false)
 }
 
 /// 获取项目详情（定义 + 状态）
@@ -47,7 +61,7 @@ pub fn get_project_detail(id: &str) -> Result<ProjectDetail, String> {
     let def = registry::find_by_id(id)
         .ok_or_else(|| format!("未找到项目: {}", id))?;
     let config = load_config();
-    let status = build_project_status(&def, &config)?;
+    let status = build_project_status(&def, &config, false)?;
 
     Ok(ProjectDetail {
         def,
@@ -242,7 +256,7 @@ pub fn get_project_delegation(config: &crate::commands::config::Config, id: &str
 }
 
 /// 构建单个项目的运行时状态
-fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Config) -> Result<ProjectStatus, String> {
+fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Config, skip_cache: bool) -> Result<ProjectStatus, String> {
     let id = &def.id;
     let versions_dir = Path::new(&config.versions_dir).join(id);
     let links_dir = Path::new(&config.links_dir);
@@ -296,8 +310,8 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
     // 环境变量状态
     let env_vars_status = build_env_vars_status(def, &config.links_dir, config, managed && !is_simple_managed);
 
-    // 缓存状态
-    let cache_status = if def.has_cache {
+    // 缓存状态（主列表加载时跳过缓存大小计算以提升性能）
+    let cache_status = if def.has_cache && !skip_cache {
         build_cache_status(def)
     } else {
         None

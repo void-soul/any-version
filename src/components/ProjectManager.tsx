@@ -15,6 +15,10 @@ export default function ProjectManager({ selectedId, onSelectId }: ProjectManage
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ProjectCategory | "all">("all");
 
+  // 跟踪已懒加载完整状态的项目 ID（避免重复请求 / 无限循环）
+  const enrichedIds = useRef<Set<string>>(new Set());
+  // 标记当前列表是否为快速加载（跳过了缓存大小计算）
+  const isFastLoaded = useRef(false);
 
   // 左右分栏拖拽
   const [leftWidth, setLeftWidth] = useState(300);
@@ -48,11 +52,19 @@ export default function ProjectManager({ selectedId, onSelectId }: ProjectManage
     };
   }, [dragging]);
 
-  const fetchProjects = useCallback(async (silent = false) => {
+  const fetchProjects = useCallback(async (silent = false, fast = false) => {
     if (!silent) setLoading(true);
     try {
-      const list = await invoke<ProjectStatus[]>("project_list");
+      const cmd = fast ? "project_list_fast" : "project_list";
+      const list = await invoke<ProjectStatus[]>(cmd);
       setProjects(list);
+      isFastLoaded.current = fast;
+      if (!fast) {
+        // 完整加载后所有项目已有完整数据，清空 enriched 集合
+        enrichedIds.current = new Set(list.map(p => p.id));
+      } else {
+        enrichedIds.current = new Set();
+      }
     } catch (e) {
       console.error("Failed to load projects:", e);
     } finally {
@@ -60,7 +72,7 @@ export default function ProjectManager({ selectedId, onSelectId }: ProjectManage
     }
   }, []);
 
-  // 增量更新单个项目（不重新加载整个列表）
+  // 增量更新单个项目（不重新加载整个列表，包含缓存大小等完整信息）
   const updateProject = useCallback(async (id: string) => {
     try {
       const updated = await invoke<ProjectStatus>("project_status", { id });
@@ -70,7 +82,16 @@ export default function ProjectManager({ selectedId, onSelectId }: ProjectManage
     }
   }, []);
 
-  useEffect(() => { fetchProjects(); }, []);
+  // 初次加载使用快速模式（跳过缓存大小计算），提升列表加载速度
+  useEffect(() => { fetchProjects(false, true); }, []);
+
+  // 选中项目时懒加载完整状态（包括缓存大小），仅快速加载模式下触发
+  useEffect(() => {
+    if (!selectedId || !isFastLoaded.current) return;
+    if (enrichedIds.current.has(selectedId)) return;
+    enrichedIds.current.add(selectedId);
+    updateProject(selectedId);
+  }, [selectedId, updateProject]);
 
   // 自动选中第一个项目
   useEffect(() => {
@@ -101,7 +122,7 @@ export default function ProjectManager({ selectedId, onSelectId }: ProjectManage
             filter={filter}
             onFilterChange={setFilter}
             loading={loading}
-            onRefresh={() => fetchProjects()}
+            onRefresh={() => fetchProjects(false, false)}
           />
         </div>
 
@@ -123,7 +144,7 @@ export default function ProjectManager({ selectedId, onSelectId }: ProjectManage
         <div className="flex-1 h-full min-w-[200px] rounded-xl border border-white/5 overflow-hidden bg-white/[0.01]">
           <ProjectDetailPanel
             project={selectedProject}
-            onRefresh={async () => { await fetchProjects(); }}
+            onRefresh={async () => { await fetchProjects(false, false); }}
             onProjectUpdate={updateProject}
           />
         </div>

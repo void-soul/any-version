@@ -56,20 +56,27 @@ pub fn map_model_name(request_model: &str, aliases: &ModelAliases) -> String {
     cleaned
 }
 
+/// Claude Code 内部别名映射表（可从外部配置文件覆盖）
+/// key = Claude Code 发送的别名，value = 归并后的标准 role
+const CLAUDE_INTERNAL_ALIASES: &[(&str, &str)] = &[
+    ("best", "opus"),     // Claude Code 的 "best" 解析为最强模型
+    ("opusplan", "opus"), // "plan mode" 专用 opus 别名
+];
+
 /// 内置「官方模型名/别名 → role」解析表。
 ///
 /// 覆盖 claude-sonnet-4-*、claude-opus-4-*、claude-haiku-4-*、claude-fable-5-*
 /// 各版本，以及 Claude Code 内部别名（best/opusplan 等），统一归并为
 /// `sonnet` / `opus` / `haiku` / `fable` 四个标准 role，再交由 `role_map` 映射。
 fn resolve_role(model: &str) -> Option<&'static str> {
-    let lower = model.to_lowercase();
+let lower = model.to_lowercase();
 
-    // Claude Code 内部别名（不含 sonnet/opus/haiku/fable 关键词）
-    match lower.as_str() {
-        "best" => return Some("opus"),     // Claude Code 的 "best" 解析为最强模型
-        "opusplan" => return Some("opus"), // "plan mode" 专用 opus 别名
-        _ => {}
+// Claude Code 内部别名（不含 sonnet/opus/haiku/fable 关键词）
+for (alias, role) in CLAUDE_INTERNAL_ALIASES {
+    if lower == *alias {
+        return Some(role);
     }
+}
 
     // 官方模型系列（关键词归并，大小写不敏感）
     if lower.contains("sonnet") {
@@ -86,6 +93,14 @@ fn resolve_role(model: &str) -> Option<&'static str> {
     }
 
     None
+}
+
+/// 需要拦截的工具名列表（不转发到上游的工具定义）
+const BLOCKED_TOOL_NAMES: &[&str] = &["BatchTool"];
+
+/// 检查工具名是否在拦截列表中
+fn is_blocked_tool_name(name: &str) -> bool {
+    BLOCKED_TOOL_NAMES.iter().any(|&blocked| blocked == name)
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -164,7 +179,8 @@ pub fn anthropic_to_openai(body: &Value, target_model: &str, aliases: Option<&Mo
     if let Some(tools) = body.get("tools").and_then(|v| v.as_array()) {
         let openai_tools: Vec<Value> = tools
             .iter()
-            .filter(|t| t.get("name").and_then(|v| v.as_str()) != Some("BatchTool"))
+            .filter(|t| t.get("name").and_then(|v| v.as_str()) != Some("BatchTool") &&
+              !is_blocked_tool_name(t.get("name").and_then(|v| v.as_str()).unwrap_or("")))
             .map(|t| {
                 json!({
                     "type": "function",

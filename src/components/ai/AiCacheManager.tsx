@@ -10,23 +10,7 @@ import {
   RefreshCw,
   CheckCircle,
 } from "lucide-react";
-
-interface DetectedAiTool {
-  id: string;
-  display_name: string;
-  installed: boolean;
-}
-
-interface AiToolCacheInfo {
-  tool_id: string;
-  dir_name: string;
-  full_path: string;
-  size: string;
-  size_bytes: number;
-  is_junction: boolean;
-  junction_target: string;
-  exists: boolean;
-}
+import type { DetectedAiTool, AiToolCacheInfo } from "./types";
 
 export default function AiCacheManager() {
   const [cacheInfos, setCacheInfos] = useState<AiToolCacheInfo[]>([]);

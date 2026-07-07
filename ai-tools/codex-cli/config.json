@@ -17,8 +17,11 @@
     "format": "toml",
     "write": {
       "model": "model",
-      "openai_api_key": "apiKey",
-      "openai_base_url": "baseUrl"
+      "model_provider": "anyversion",
+      "model_providers.anyversion.name": "AnyVersion",
+      "model_providers.anyversion.base_url": "baseUrl",
+      "model_providers.anyversion.env_key": "OPENAI_API_KEY",
+      "env.OPENAI_API_KEY": "apiKey"
     }
   },
   "sessions": {

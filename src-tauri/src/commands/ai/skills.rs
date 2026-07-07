@@ -1,20 +1,13 @@
-use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
-use std::collections::HashMap;
+use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::time::Duration;
-use tauri::AppHandle;
 use tauri::Emitter;
-use crate::commands::ai_registry::{registry, AiToolDefDto, ToolConfig, PathConfig};
+use crate::commands::ai_registry::registry;
 use crate::commands::config::get_base_dir;
-use crate::commands::tool_version::is_newer;
-use crate::commands::hidden_cmd;
-use crate::commands::cache::{get_dir_size, format_bytes, create_junction, migrate_pkg_storage_impl, clean_pkg_cache_impl};
+use crate::commands::cache::create_junction;
 use super::models::*;
 
-use std::collections::HashSet;
 
 fn skills_path() -> PathBuf {
     get_base_dir().join("skills.json")

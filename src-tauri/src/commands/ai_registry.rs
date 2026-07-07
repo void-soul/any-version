@@ -274,9 +274,14 @@ impl AiToolRegistry {
     }
 
     fn find_registry_dir() -> PathBuf {
-        // 开发模式：相对于可执行文件查找
         let mut candidates = Vec::new();
 
+        // 优先在 Tauri 2 打包后的官方资源目录下查找
+        if let Some(res_dir) = crate::commands::utils::get_resource_dir() {
+            candidates.push(res_dir.join("ai-tools"));
+        }
+
+        // 开发模式：相对于可执行文件查找
         if let Ok(exe) = std::env::current_exe() {
             if let Some(parent) = exe.parent() {
                 let p = parent.join("ai-tools");
@@ -474,18 +479,7 @@ impl AiToolRegistry {
     // ─── 工具函数 ───
 
     fn get_home() -> PathBuf {
-        let home = std::env::var("USERPROFILE").unwrap_or_default();
-        let home = if home.is_empty() {
-            std::env::var("HOME").unwrap_or_default()
-        } else {
-            home
-        };
-        if home.is_empty() {
-            eprintln!("[ai_registry] 警告：无法获取 HOME 目录");
-            PathBuf::from(".")
-        } else {
-            PathBuf::from(home)
-        }
+        crate::commands::utils::get_home_dir()
     }
 
     fn resolve_path(path: &str, home: &PathBuf) -> PathBuf {
@@ -514,25 +508,41 @@ impl AiToolRegistry {
 
 // ─── 全局单例 ───
 
-use std::sync::OnceLock;
+use std::sync::RwLock;
 
-static REGISTRY: OnceLock<AiToolRegistry> = OnceLock::new();
+static REGISTRY: RwLock<Option<&'static AiToolRegistry>> = RwLock::new(None);
 
 /// 获取全局注册表单例（首次调用时从磁盘加载）
 pub fn registry() -> &'static AiToolRegistry {
-    REGISTRY.get_or_init(|| AiToolRegistry::load())
-}
-
-/// 强制重新加载（用于开发时热重载，生产环境不需要）
-pub fn reload_registry() -> &'static AiToolRegistry {
-    let reg = AiToolRegistry::load();
-    // OnceLock 只能 set 一次，所以这里用另一个方法
-    // 生产环境一般不需要热重载
-    match REGISTRY.set(reg) {
-        Ok(_) => {},
-        Err(_) => {
-            // 已经被设置过，返回现有的
+    {
+        let r = REGISTRY.read().unwrap();
+        if let Some(reg) = *r {
+            return reg;
         }
     }
-    REGISTRY.get().unwrap()
+    let mut w = REGISTRY.write().unwrap();
+    if w.is_none() {
+        let reg = Box::leak(Box::new(AiToolRegistry::load()));
+        *w = Some(reg);
+    }
+    w.unwrap()
+}
+
+/// 强制重新加载（用于开发时热重载）
+/// 写入最新的注册表，获取最新的实例
+pub fn reload_registry() -> &'static AiToolRegistry {
+    let mut w = REGISTRY.write().unwrap();
+    let reg = Box::leak(Box::new(AiToolRegistry::load()));
+    *w = Some(reg);
+    reg
+}
+
+/// Tauri 命令：强制重新加载 AI 工具注册表（热重载）
+/// 在前端修改 ai-tools/ 配置后调用此命令可使更改立即生效
+#[tauri::command]
+pub fn reload_ai_registry() -> Result<usize, String> {
+    let reg = reload_registry();
+    let count = reg.tool_ids().len();
+    eprintln!("[ai_registry] 热重载完成: {} 个工具", count);
+    Ok(count)
 }

@@ -17,44 +17,12 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// 记录使用量到文件（从代理层自动提取 token 信息）
+/// 记录使用量到 SQLite 数据库（线程安全，并发写入不丢失）
 fn record_proxy_usage(model: &str, input_tokens: u64, output_tokens: u64) {
-    let usage_dir = dirs_next().unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
-        .join(".any-version");
-    let _ = std::fs::create_dir_all(&usage_dir);
-    let usage_path = usage_dir.join("ai_usage.json");
-
-    let mut records: Vec<Value> = Vec::new();
-    if usage_path.exists() {
-        if let Ok(data) = std::fs::read_to_string(&usage_path) {
-            if let Ok(val) = serde_json::from_str::<Value>(&data) {
-                if let Some(arr) = val.get("records").and_then(|v| v.as_array()) {
-                    records = arr.clone();
-                }
-            }
-        }
+    if let Err(e) = crate::commands::ai::usage::log_usage_db("proxy", model, None, input_tokens, output_tokens) {
+        eprintln!("[proxy] 记录用量失败: {}", e);
     }
-
-    let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
-    records.push(json!({
-        "tool_id": "proxy",
-        "model": model,
-        "provider": null,
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "timestamp": now,
-    }));
-
-    let data = json!({"records": records});
-    let _ = std::fs::write(&usage_path, serde_json::to_string_pretty(&data).unwrap_or_default());
 }
-
-fn dirs_next() -> Option<std::path::PathBuf> {
-    std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .ok()
-        .map(std::path::PathBuf::from)
-        }
 
 /// 打印代理网络请求日志（统一前缀，不打印任何敏感头/密钥）
 fn log_proxy(msg: &str) {
@@ -100,15 +68,26 @@ pub async fn start_proxy_server(config: ProxyConfig) -> Result<(), String> {
     }
     let app = app.with_state(state.clone());
 
-    let addr: std::net::SocketAddr = format!("{}:{}", config.listen_address, config.listen_port)
-        .parse()
-        .map_err(|e: std::net::AddrParseError| e.to_string())?;
-
-    println!("[proxy] 启动代理服务器: {}", addr);
-
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .map_err(|e| format!("绑定代理端口失败: {}", e))?;
+    // 端口冲突自动重试：最多尝试 3 个递增端口
+    let mut port = config.listen_port;
+    let listener = loop {
+        let try_addr: std::net::SocketAddr = format!("{}:{}", config.listen_address, port)
+            .parse()
+            .map_err(|e: std::net::AddrParseError| e.to_string())?;
+        match tokio::net::TcpListener::bind(try_addr).await {
+            Ok(l) => {
+                println!("[proxy] 启动代理服务器: {}", try_addr);
+                break l;
+            }
+            Err(e) => {
+                eprintln!("[proxy] 端口 {} 绑定失败: {}, 尝试 {}", port, e, port + 1);
+                port += 1;
+                if port > config.listen_port + 3 {
+                    return Err(format!("绑定代理端口失败（已尝试 4 个端口）: {}", e));
+                }
+            }
+        }
+    };
 
     axum::serve(listener, app)
         .await

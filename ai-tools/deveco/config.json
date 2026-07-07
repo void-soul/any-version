@@ -22,7 +22,8 @@
         "model": "model",
       "small_model": "fallbackModel",
       "provider.anyversion.options.baseURL": "baseUrl",
-      "provider.anyversion.options.apiKey": "apiKey"
+      "provider.anyversion.options.apiKey": "apiKey",
+      "provider.anyversion.models.{model_name}.name": "modelName"
     }
   },
   "modelFormat": {

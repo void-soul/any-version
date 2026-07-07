@@ -8,20 +8,42 @@ use super::scanner;
 
 /// 获取所有项目列表及运行时状态
 #[tauri::command]
-pub fn project_list() -> Result<Vec<ProjectStatus>, String> {
-    scanner::list_projects()
+pub async fn project_list() -> Result<Vec<ProjectStatus>, String> {
+    tokio::task::spawn_blocking(|| {
+        scanner::list_projects()
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {}", e))?
+}
+
+/// 快速获取项目列表（跳过缓存大小计算，用于前端初次加载）
+#[tauri::command]
+pub async fn project_list_fast() -> Result<Vec<ProjectStatus>, String> {
+    tokio::task::spawn_blocking(|| {
+        scanner::list_projects_fast()
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {}", e))?
 }
 
 /// 获取单个项目运行时状态
 #[tauri::command]
-pub fn project_status(id: String) -> Result<ProjectStatus, String> {
-    scanner::get_project_status(&id)
+pub async fn project_status(id: String) -> Result<ProjectStatus, String> {
+    tokio::task::spawn_blocking(move || {
+        scanner::get_project_status(&id)
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {}", e))?
 }
 
 /// 获取项目详情（定义 + 状态）
 #[tauri::command]
-pub fn project_detail(id: String) -> Result<ProjectDetail, String> {
-    scanner::get_project_detail(&id)
+pub async fn project_detail(id: String) -> Result<ProjectDetail, String> {
+    tokio::task::spawn_blocking(move || {
+        scanner::get_project_detail(&id)
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {}", e))?
 }
 
 /// 预览托管操作步骤

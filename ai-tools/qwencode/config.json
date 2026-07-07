@@ -17,6 +17,7 @@
     "format": "json",
     "write": {
       "model.name": "model",
+      "security.auth.selectedType": "openai",
       "env.OPENAI_API_KEY": "apiKey",
       "env.OPENAI_BASE_URL": "baseUrl"
     }

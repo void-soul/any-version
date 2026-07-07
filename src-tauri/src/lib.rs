@@ -162,6 +162,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(commands::http_server::HttpServerState::default())
         .setup(|app| {
+            if let Ok(res_dir) = app.path().resource_dir() {
+                crate::commands::utils::set_resource_dir(res_dir);
+            }
             tray::build_tray(app.handle())?;
             Ok(())
         })
@@ -218,6 +221,7 @@ pub fn run() {
             commands::service::read_service_config,
             commands::service::write_service_config,
             commands::project::commands::project_list,
+            commands::project::commands::project_list_fast,
             commands::project::commands::project_status,
             commands::project::commands::project_detail,
             commands::project::commands::project_preview_manage,
@@ -282,6 +286,7 @@ pub fn run() {
             commands::ai::cache::open_ai_tool_cache_dir_path,
             commands::ai::skills::install_skill_from_online,
             commands::ai::sessions::scan_tool_sessions_parallel,
+            commands::ai_registry::reload_ai_registry,
             commands::ai::tool_paths::get_tool_path_override_file,
             commands::tool_version::check_all_tool_versions,
             commands::tool_version::check_tool_version,

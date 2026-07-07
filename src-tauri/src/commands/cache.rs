@@ -20,16 +20,6 @@ pub struct CacheInfo {
     pub detect_content: String,
 }
 
-pub fn is_installed(cli: &str) -> bool {
-    super::hidden_cmd::hidden_cmd("cmd")
-        .args(&["/c", "where", cli])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
 pub fn get_dir_size(path: &Path) -> u64 {
     let mut total_size = 0;
     for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
