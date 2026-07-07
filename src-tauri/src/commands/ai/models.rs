@@ -179,6 +179,8 @@ pub struct ToolSession {
     pub project_path: String,
     pub last_used: String,
     pub summary: Option<String>,
+    /// 恢复命令（已填入 session_id 的实际可执行命令，如 "opencode -s abc123"）
+    pub resume_cmd: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

@@ -152,19 +152,34 @@ export default function ModelConfig() {
     return null;
   };
 
-  const handleModalConfirm = () => {
+  const handleModalConfirm = async () => {
     const err = validateForm();
     if (err) { setFormError(err); return; }
 
     if (!config) return;
 
     // 解析模型文本：每行一个 model id
-    const models: ModelEntry[] = modelsText
+    const manualModels: ModelEntry[] = modelsText
       .split("\n")
       .map(line => line.trim())
       .filter(line => line.length > 0)
       .map(line => ({ id: line, name: line }));
 
+    // 新建供应商时，如果用户未手动录入模型，自动从 API 获取模型列表
+    let autoModels: ModelEntry[] = [];
+    if (modalMode === "add" && manualModels.length === 0) {
+      const url = form.openai_url || form.anthropic_url || form.google_url || "";
+      if (url && form.api_key) {
+        try {
+          const fetched: string[] = await invoke("fetch_provider_models", { baseUrl: url, apiKey: form.api_key });
+          autoModels = fetched.map(id => ({ id, name: id }));
+        } catch {
+          // 自动获取失败不阻塞保存，用户后续可手动点"自动获取"
+        }
+      }
+    }
+
+    const models = autoModels.length > 0 ? autoModels : manualModels;
     const saved = { ...form, models };
 
     let next: AiConfig;

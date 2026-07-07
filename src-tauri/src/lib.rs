@@ -282,6 +282,7 @@ pub fn run() {
             commands::ai::cache::open_ai_tool_cache_dir_path,
             commands::ai::skills::install_skill_from_online,
             commands::ai::sessions::scan_tool_sessions_parallel,
+            commands::ai::tool_paths::get_tool_path_override_file,
             commands::tool_version::check_all_tool_versions,
             commands::tool_version::check_tool_version,
             commands::tool_version::upgrade_tool,

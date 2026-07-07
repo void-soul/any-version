@@ -12,6 +12,7 @@ pub mod terminal;
 pub mod sessions;
 pub mod cache;
 pub mod tools;
+pub mod tool_paths;
 
 pub use models::*;
 pub use config::*;
@@ -24,3 +25,4 @@ pub use terminal::*;
 pub use sessions::*;
 pub use cache::*;
 pub use tools::*;
+pub use tool_paths::*;

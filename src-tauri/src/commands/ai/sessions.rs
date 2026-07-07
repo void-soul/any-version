@@ -96,6 +96,10 @@ pub fn scan_tool_sessions(tool_id: String) -> Result<Vec<ToolSession>, String> {
     }
 
     sessions.sort_by(|a, b| b.last_used.cmp(&a.last_used));
+
+    // 为每个 session 填充 resume_cmd（从工具配置的模板 + session_id 拼接）
+    fill_resume_cmds(&mut sessions, &tool_id);
+
     Ok(sessions)
 }
 
@@ -114,6 +118,7 @@ fn scan_codex_sessions(file_path: &PathBuf, sessions: &mut Vec<ToolSession>) {
                         project_path,
                         last_used,
                         summary,
+                        resume_cmd: None,
                     });
                 }
             }
@@ -169,6 +174,7 @@ fn scan_opencode_sessions(opencode_dir: &PathBuf, sessions: &mut Vec<ToolSession
                         project_path: path.parent().unwrap_or(&path).to_string_lossy().to_string(),
                         last_used: modified.clone(),
                         summary,
+                        resume_cmd: None,
                     });
                 }
             }
@@ -277,6 +283,7 @@ fn parse_jsonl_session(content: &str, sessions: &mut Vec<ToolSession>) {
             project_path,
             last_used,
             summary: summary.or(title),
+            resume_cmd: None,
         });
     }
 }
@@ -308,6 +315,7 @@ fn extract_session_from_value(val: &serde_json::Value, _path: &PathBuf, sessions
         project_path,
         last_used,
         summary,
+        resume_cmd: None,
     });
 }
 
@@ -493,6 +501,7 @@ fn scan_claude_sessions_enhanced(dir: &PathBuf, sessions: &mut Vec<ToolSession>)
                 project_path,
                 last_used,
                 summary: summary.or(title),
+                resume_cmd: None,
             });
         }
     }
@@ -518,4 +527,24 @@ fn extract_msg_content(msg: &serde_json::Value) -> String {
         }
     }
     String::new()
+}
+
+/// 为扫描到的会话填充 resume_cmd（由工具配置的 resume_cmd 模板 + session_id 拼接）
+///
+/// 模板中的 `{session_id}` 占位符会被替换为实际 session_id。
+/// 例如: `opencode -s {session_id}` → `opencode -s abc-123-def`
+fn fill_resume_cmds(sessions: &mut Vec<ToolSession>, tool_id: &str) {
+    let resume_template = match registry().get_tool_config(tool_id).and_then(|c| c.resume_cmd.as_deref()) {
+        Some(cmd) if !cmd.is_empty() => cmd.to_string(),
+        _ => return,
+    };
+
+    for session in sessions.iter_mut() {
+        if session.resume_cmd.is_some() {
+            continue; // 已填充，跳过
+        }
+        session.resume_cmd = Some(
+            resume_template.replace("{session_id}", &session.session_id)
+        );
+    }
 }
