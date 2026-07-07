@@ -84,68 +84,139 @@ fn default_proxy_port() -> u16 {
     15721
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ProtocolConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub use_proxy: bool,
+    #[serde(default)]
+    pub model_aliases: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub default_model: Option<String>,
+}
+
+#[derive(Serialize, Clone, Debug)]
 pub struct AiProvider {
     pub id: String,
     pub name: String,
-    #[serde(default = "default_provider_category")]
     pub category: String, // "provider" | "relay"
     pub api_key: String,
-    /// 官方网站 URL
-    #[serde(default)]
     pub website: String,
-
-    // ─── OpenAI 协议 ───
-    #[serde(default)]
-    pub openai_enabled: bool,
-    #[serde(default)]
-    pub openai_url: String,
-    /// 启用转换代理：将 Anthropic 请求转换为 OpenAI 请求
-    #[serde(default)]
-    pub openai_use_proxy: bool,
-
-    // ─── Anthropic 协议 ───
-    #[serde(default)]
-    pub anthropic_enabled: bool,
-    #[serde(default)]
-    pub anthropic_url: String,
-    /// 启用转换代理：将 OpenAI 请求转换为 Anthropic 请求
-    #[serde(default)]
-    pub anthropic_use_proxy: bool,
-
-    // ─── Google 协议（Gemini CLI）───
-    #[serde(default)]
-    pub google_enabled: bool,
-    #[serde(default)]
-    pub google_url: String,
-
-    // ─── 模型别名映射（按协议分组）───
-    /// Anthropic 协议：角色关键词 → 实际模型 ID
-    /// 例如: {"sonnet": "nvidia/llama-4-maverick"}
-    /// Claude Code 发送 claude-sonnet-4 时，代理/环境变量将其映射到指定模型
-    /// `alias = "model_aliases"` 保证旧配置文件的字段兼容
-    #[serde(alias = "model_aliases", default)]
-    pub anthropic_model_aliases: std::collections::HashMap<String, String>,
-    /// Anthropic 协议的默认模型（当角色无匹配时使用）
-    #[serde(alias = "default_model", default)]
-    pub anthropic_default_model: Option<String>,
-
-    /// OpenAI 协议的模型别名映射（未来扩展）
-    #[serde(default)]
-    pub openai_model_aliases: std::collections::HashMap<String, String>,
-    /// OpenAI 协议的默认模型（未来扩展）
-    #[serde(default)]
-    pub openai_default_model: Option<String>,
-
-    /// Google 协议的模型别名映射（未来扩展）
-    #[serde(default)]
-    pub google_model_aliases: std::collections::HashMap<String, String>,
-    /// Google 协议的默认模型（未来扩展）
-    #[serde(default)]
-    pub google_default_model: Option<String>,
-
+    pub protocols: std::collections::HashMap<String, ProtocolConfig>,
     pub models: Vec<ModelEntry>,
     pub active_model_id: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for AiProvider {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Helper {
+            id: String,
+            name: String,
+            #[serde(default = "default_provider_category")]
+            category: String,
+            api_key: String,
+            #[serde(default)]
+            website: String,
+            #[serde(default)]
+            protocols: Option<std::collections::HashMap<String, ProtocolConfig>>,
+            
+            // Old fields for migration:
+            #[serde(default)]
+            openai_enabled: bool,
+            #[serde(default)]
+            openai_url: String,
+            #[serde(default)]
+            openai_use_proxy: bool,
+            #[serde(default)]
+            openai_model_aliases: std::collections::HashMap<String, String>,
+            #[serde(default)]
+            openai_default_model: Option<String>,
+
+            #[serde(default)]
+            anthropic_enabled: bool,
+            #[serde(default)]
+            anthropic_url: String,
+            #[serde(default)]
+            anthropic_use_proxy: bool,
+            #[serde(default)]
+            anthropic_model_aliases: std::collections::HashMap<String, String>,
+            #[serde(default)]
+            anthropic_default_model: Option<String>,
+
+            #[serde(default)]
+            google_enabled: bool,
+            #[serde(default)]
+            google_url: String,
+            #[serde(default)]
+            google_model_aliases: std::collections::HashMap<String, String>,
+            #[serde(default)]
+            google_default_model: Option<String>,
+
+            models: Vec<ModelEntry>,
+            active_model_id: Option<String>,
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+        
+        let protocols = if let Some(mut protos) = helper.protocols {
+            if !protos.contains_key("openai") {
+                protos.insert("openai".to_string(), ProtocolConfig::default());
+            }
+            if !protos.contains_key("anthropic") {
+                protos.insert("anthropic".to_string(), ProtocolConfig::default());
+            }
+            if !protos.contains_key("google") {
+                protos.insert("google".to_string(), ProtocolConfig::default());
+            }
+            protos
+        } else {
+            let mut protos = std::collections::HashMap::new();
+            
+            protos.insert("openai".to_string(), ProtocolConfig {
+                enabled: helper.openai_enabled,
+                url: helper.openai_url,
+                use_proxy: helper.openai_use_proxy,
+                model_aliases: helper.openai_model_aliases,
+                default_model: helper.openai_default_model,
+            });
+
+            protos.insert("anthropic".to_string(), ProtocolConfig {
+                enabled: helper.anthropic_enabled,
+                url: helper.anthropic_url,
+                use_proxy: helper.anthropic_use_proxy,
+                model_aliases: helper.anthropic_model_aliases,
+                default_model: helper.anthropic_default_model,
+            });
+
+            protos.insert("google".to_string(), ProtocolConfig {
+                enabled: helper.google_enabled,
+                url: helper.google_url,
+                use_proxy: false,
+                model_aliases: helper.google_model_aliases,
+                default_model: helper.google_default_model,
+            });
+
+            protos
+        };
+
+        Ok(AiProvider {
+            id: helper.id,
+            name: helper.name,
+            category: helper.category,
+            api_key: helper.api_key,
+            website: helper.website,
+            protocols,
+            models: helper.models,
+            active_model_id: helper.active_model_id,
+        })
+    }
 }
 
 fn default_provider_category() -> String {

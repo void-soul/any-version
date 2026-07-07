@@ -6,27 +6,21 @@ export interface ModelEntry {
   name: string;
 }
 
+export interface ProtocolConfig {
+  enabled: boolean;
+  url: string;
+  use_proxy: boolean;
+  model_aliases: Record<string, string>;
+  default_model: string | null;
+}
+
 export interface AiProvider {
   id: string;
   name: string;
   category: string;
   api_key: string;
   website: string;
-  openai_enabled: boolean;
-  openai_url: string;
-  openai_use_proxy: boolean;
-  anthropic_enabled: boolean;
-  anthropic_url: string;
-  anthropic_use_proxy: boolean;
-  google_enabled: boolean;
-  google_url: string;
-  // ═══ 协议分组模型别名映射 ═══
-  anthropic_model_aliases: Record<string, string>;
-  anthropic_default_model: string | null;
-  openai_model_aliases: Record<string, string>;
-  openai_default_model: string | null;
-  google_model_aliases: Record<string, string>;
-  google_default_model: string | null;
+  protocols: Record<string, ProtocolConfig>;
   models: ModelEntry[];
   active_model_id: string | null;
 }

@@ -58,7 +58,11 @@ pub fn scan_tool_sessions(tool_id: String) -> Result<Vec<ToolSession>, String> {
 
         match session_def.scan_type.as_str() {
             "claude_projects" => {
-                let projects_dir = dir.join("projects");
+                let projects_dir = if dir.ends_with("projects") {
+                    dir.clone()
+                } else {
+                    dir.join("projects")
+                };
                 if projects_dir.exists() {
                     scan_claude_sessions_enhanced(&projects_dir, &mut sessions);
                 }
@@ -472,8 +476,8 @@ fn scan_claude_sessions_enhanced(dir: &PathBuf, sessions: &mut Vec<ToolSession>)
             continue;
         }
 
-        // 同时兼容旧格式：UUID 子目录里的 jsonl 文件
-        if path.is_dir() && name.len() > 8 && name.contains('-') {
+        // 每个子目录都代表一个项目的工作空间
+        if path.is_dir() {
             if let Ok(sub_entries) = fs::read_dir(&path) {
                 for sub in sub_entries.flatten() {
                     let sp = sub.path();

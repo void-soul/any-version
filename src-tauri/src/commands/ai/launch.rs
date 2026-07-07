@@ -34,16 +34,16 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
 
     eprintln!("\n[provider] provider_id={:?}", req.provider_id);
     match provider {
-        Some(p) => eprintln!("  ✓ 找到: name={}, anthropic_url={}, openai_url={}", p.name, p.anthropic_url, p.openai_url),
+        Some(p) => eprintln!("  ✓ 找到: name={}", p.name),
         None => eprintln!("  ✗ 未找到，将使用官方默认模型"),
     }
 
-    // 确定各协议是否需要启动代理（双端口：
-    //   P1 Anthropic 代理 = config.proxy_port，处理 /v1/messages
-    //   P2 OpenAI 代理   = config.proxy_port + 1，处理 /v1/chat/completions
-    // 两个协议可独立启用，互不影响。
-    let anthropic_use_proxy = provider.map_or(false, |p| p.anthropic_use_proxy);
-    let openai_use_proxy = provider.map_or(false, |p| p.openai_use_proxy);
+    let anthropic_cfg = provider.and_then(|p| p.protocols.get("anthropic"));
+    let openai_cfg = provider.and_then(|p| p.protocols.get("openai"));
+    let google_cfg = provider.and_then(|p| p.protocols.get("google"));
+
+    let anthropic_use_proxy = anthropic_cfg.map_or(false, |c| c.use_proxy);
+    let openai_use_proxy = openai_cfg.map_or(false, |c| c.use_proxy);
     eprintln!("\n[proxy] anthropic_use_proxy={}, openai_use_proxy={}", anthropic_use_proxy, openai_use_proxy);
 
     if let Some(p) = provider {
@@ -53,17 +53,22 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
 
             // ── P1: Anthropic 代理（config.proxy_port）──
             if anthropic_use_proxy {
+                let openai_url = openai_cfg.map(|c| c.url.clone()).unwrap_or_default();
+                let anthropic_url = anthropic_cfg.map(|c| c.url.clone()).unwrap_or_default();
+                let model_aliases = anthropic_cfg.map(|c| c.model_aliases.clone()).unwrap_or_default();
+                let default_model = anthropic_cfg.and_then(|c| c.default_model.clone());
+
                 let proxy_config = crate::proxy::types::ProxyConfig {
                     listen_address: proxy_settings.listen_address.clone(),
                     listen_port: config.proxy_port,
-                    upstream_base_url: p.openai_url.clone(),
+                    upstream_base_url: openai_url,
                     upstream_api_key: p.api_key.clone(),
-                    upstream_anthropic_url: p.anthropic_url.clone(),
+                    upstream_anthropic_url: anthropic_url,
                     upstream_protocol: "anthropic".to_string(),
                     target_model: req.model_id.clone().unwrap_or_default(),
                     timeout_secs: timeout,
-                    model_aliases: p.anthropic_model_aliases.clone(),
-                    default_model: p.anthropic_default_model.clone(),
+                    model_aliases,
+                    default_model,
                     rectifier_enabled: config.rectifier.enabled,
                     rectifier_thinking_signature: config.rectifier.thinking_signature,
                     rectifier_thinking_budget: config.rectifier.thinking_budget,
@@ -84,17 +89,21 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
 
             // ── P2: OpenAI 代理（config.proxy_port + 1）──
             if openai_use_proxy {
+                let openai_url = openai_cfg.map(|c| c.url.clone()).unwrap_or_default();
+                let model_aliases = openai_cfg.map(|c| c.model_aliases.clone()).unwrap_or_default();
+                let default_model = openai_cfg.and_then(|c| c.default_model.clone());
+
                 let proxy_config = crate::proxy::types::ProxyConfig {
                     listen_address: proxy_settings.listen_address.clone(),
                     listen_port: config.proxy_port + 1,
-                    upstream_base_url: p.openai_url.clone(),
+                    upstream_base_url: openai_url,
                     upstream_api_key: p.api_key.clone(),
                     upstream_anthropic_url: String::new(),
                     upstream_protocol: "openai".to_string(),
                     target_model: String::new(),
                     timeout_secs: timeout,
-                    model_aliases: p.openai_model_aliases.clone(),
-                    default_model: p.openai_default_model.clone(),
+                    model_aliases,
+                    default_model,
                     // OpenAI 透传无需 Anthropic 整流器/优化器
                     rectifier_enabled: false,
                     rectifier_thinking_signature: false,
@@ -125,17 +134,21 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
     if tool_config.config_file.is_some() {
         if let Some(ref p) = provider {
             if !p.api_key.is_empty() {
+                let openai_url = openai_cfg.map(|c| c.url.as_str()).unwrap_or_default();
+                let anthropic_url = anthropic_cfg.map(|c| c.url.as_str()).unwrap_or_default();
+                let _google_url = google_cfg.map(|c| c.url.as_str()).unwrap_or_default();
+
                 // 根据工具协议选择对应的上游 URL
                 // 关键：代理供应商（anthropic_use_proxy=true）的 anthropic_url 可能为空，
                 // 实际 API 端点在 openai_url。这里做 fallback 确保写入不会因为空 URL 被跳过。
                 let upstream_url = match tool_config.api_protocol.as_str() {
                     "openai" => {
-                        if !p.openai_url.is_empty() { &p.openai_url }
-                        else { &p.anthropic_url }
+                        if !openai_url.is_empty() { openai_url }
+                        else { anthropic_url }
                     }
                     _ => {
-                        if !p.anthropic_url.is_empty() { &p.anthropic_url }
-                        else { &p.openai_url }
+                        if !anthropic_url.is_empty() { anthropic_url }
+                        else { openai_url }
                     }
                 };
                 // 使用代理时，baseUrl 指向对应协议的本地代理端口：
@@ -146,21 +159,24 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                     "anthropic" | "both" if anthropic_use_proxy => format!("http://127.0.0.1:{}", config.proxy_port),
                     _ => upstream_url.to_string(),
                 };
+                
                 // 根据工具协议选择对应的模型别名和默认模型
-                let effective_aliases: &HashMap<String, String> = if tool_config.api_protocol == "anthropic" || tool_config.api_protocol == "both" {
-                    &p.anthropic_model_aliases
-                } else if tool_config.api_protocol == "openai" {
-                    &p.openai_model_aliases
-                } else {
-                    &p.google_model_aliases
+                let fallback_map = std::collections::HashMap::new();
+                let (effective_aliases, effective_default): (&HashMap<String, String>, &Option<String>) = match tool_config.api_protocol.as_str() {
+                    "openai" => {
+                        let cfg = p.protocols.get("openai");
+                        (cfg.map(|c| &c.model_aliases).unwrap_or(&fallback_map), cfg.map(|c| &c.default_model).unwrap_or(&None))
+                    }
+                    "google" => {
+                        let cfg = p.protocols.get("google");
+                        (cfg.map(|c| &c.model_aliases).unwrap_or(&fallback_map), cfg.map(|c| &c.default_model).unwrap_or(&None))
+                    }
+                    _ => {
+                        let cfg = p.protocols.get("anthropic");
+                        (cfg.map(|c| &c.model_aliases).unwrap_or(&fallback_map), cfg.map(|c| &c.default_model).unwrap_or(&None))
+                    }
                 };
-                let effective_default: &Option<String> = if tool_config.api_protocol == "anthropic" || tool_config.api_protocol == "both" {
-                    &p.anthropic_default_model
-                } else if tool_config.api_protocol == "openai" {
-                    &p.openai_default_model
-                } else {
-                    &p.google_default_model
-                };
+
                 if !upstream_url.is_empty() {
                     // 代理模式：仅当 anthropic_use_proxy 且工具为 anthropic/both 协议时生效，
                     // 配置文件中只写 baseUrl，模型/别名保持原版由代理按请求模型转发。
@@ -309,7 +325,10 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                 let effective_base_url = match tool_config.api_protocol.as_str() {
                     "openai" if openai_use_proxy => format!("http://127.0.0.1:{}", config.proxy_port + 1),
                     "anthropic" | "both" if anthropic_use_proxy => format!("http://127.0.0.1:{}", config.proxy_port),
-                    _ => p.openai_url.clone(),
+                    "openai" => p.protocols.get("openai").map(|c| c.url.clone()).unwrap_or_default(),
+                    _ => p.protocols.get("anthropic").map(|c| c.url.clone()).unwrap_or_else(|| {
+                        p.protocols.get("openai").map(|c| c.url.clone()).unwrap_or_default()
+                    }),
                 };
                 let model = req.model_id.as_deref().unwrap_or("");
                 for (path, value_template) in write_map {

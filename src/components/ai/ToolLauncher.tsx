@@ -166,21 +166,27 @@ export default function ToolLauncher() {
 
   // ── 按协议获取有效别名 ──
   const getEffectiveAliases = useCallback((p: AiProvider, protocol: string): Record<string, string> => {
-    if (protocol === 'anthropic' || protocol === 'both') {
-      return p.anthropic_model_aliases || {};
-    }
-    if (protocol === 'openai') return p.openai_model_aliases || {};
-    if (protocol === 'google') return p.google_model_aliases || {};
-    return {};
+    const protoKey = protocol === 'both' ? 'anthropic' : protocol;
+    const protoCfg = p.protocols?.[protoKey];
+    return protoCfg?.model_aliases || {};
   }, []);
 
   const getEffectiveDefaultModel = useCallback((p: AiProvider, protocol: string): string | null => {
-    if (protocol === 'anthropic' || protocol === 'both') {
-      return p.anthropic_default_model;
+    const protoKey = protocol === 'both' ? 'anthropic' : protocol;
+    const protoCfg = p.protocols?.[protoKey];
+    return protoCfg?.default_model || null;
+  }, []);
+
+  const isProtocolSupported = useCallback((p: AiProvider, protocol: string): boolean => {
+    if (protocol === "both") {
+      return !!(
+        (p.protocols?.anthropic?.enabled || p.protocols?.anthropic?.use_proxy) ||
+        (p.protocols?.openai?.enabled || p.protocols?.openai?.use_proxy)
+      );
     }
-    if (protocol === 'openai') return p.openai_default_model;
-    if (protocol === 'google') return p.google_default_model;
-    return null;
+    const cfg = p.protocols?.[protocol];
+    if (!cfg) return false;
+    return cfg.enabled || cfg.use_proxy || !!cfg.url;
   }, []);
 
   // ── 模型选项分两组 ──
@@ -190,14 +196,10 @@ export default function ToolLauncher() {
     const protocol = selectedTool.api_protocol;
     if (protocol === "none" || !selectedTool.supports_model) return [];
     return config.providers.filter(p => {
-      const include =
-        protocol === "both" ||
-        (protocol === "anthropic" && (p.anthropic_enabled || p.anthropic_use_proxy)) ||
-        (protocol === "openai" && (p.openai_enabled || p.openai_use_proxy)) ||
-        (protocol === "google" && (p.google_enabled || !!p.google_url));
+      const include = isProtocolSupported(p, protocol);
       return include && Object.keys(getEffectiveAliases(p, protocol)).length > 0;
     });
-  }, [config, selectedTool, getEffectiveAliases]);
+  }, [config, selectedTool, getEffectiveAliases, isProtocolSupported]);
 
   // 无别名映射的供应商（需要选具体模型），可折叠
   const modelGroups = React.useMemo(() => {
@@ -206,17 +208,13 @@ export default function ToolLauncher() {
     if (protocol === "none" || !selectedTool.supports_model) return [];
     const groups: { provider_name: string; provider_id: string; models: { id: string }[] }[] = [];
     for (const p of config.providers) {
-      const include =
-        protocol === "both" ||
-        (protocol === "anthropic" && (p.anthropic_enabled || p.anthropic_use_proxy)) ||
-        (protocol === "openai" && (p.openai_enabled || p.openai_use_proxy)) ||
-        (protocol === "google" && (p.google_enabled || !!p.google_url));
+      const include = isProtocolSupported(p, protocol);
       // 有别名的不在此列
       if (!include || p.models.length === 0 || Object.keys(getEffectiveAliases(p, protocol)).length > 0) continue;
       groups.push({ provider_name: p.name, provider_id: p.id, models: p.models });
     }
     return groups;
-  }, [config, selectedTool, getEffectiveAliases]);
+  }, [config, selectedTool, getEffectiveAliases, isProtocolSupported]);
 
   // 当前选中 Provider 的别名映射信息
   const selectedProviderAliases = React.useMemo(() => {
@@ -229,7 +227,7 @@ export default function ToolLauncher() {
     return {
       aliases,
       name: provider.name,
-      usesProxy: provider.openai_use_proxy || provider.anthropic_use_proxy,
+      usesProxy: !!(provider.protocols?.[protocol === 'both' ? 'anthropic' : protocol]?.use_proxy),
       defaultModel: getEffectiveDefaultModel(provider, protocol),
     };
   }, [config, selectedModelProvider, selectedTool, getEffectiveAliases, getEffectiveDefaultModel]);
@@ -241,11 +239,7 @@ export default function ToolLauncher() {
     if (protocol === "none" || !selectedTool.supports_fallback_model) return [];
     const groups: { provider_name: string; provider_id: string; models: { id: string }[] }[] = [];
     for (const p of config.providers) {
-      const include =
-        protocol === "both" ||
-        (protocol === "anthropic" && (p.anthropic_enabled || p.anthropic_use_proxy)) ||
-        (protocol === "openai" && (p.openai_enabled || p.openai_use_proxy)) ||
-        (protocol === "google" && (p.google_enabled || !!p.google_url));
+      const include = isProtocolSupported(p, protocol);
       if (!include || p.models.length === 0) continue;
       // 过滤掉当前已选模型
       const filteredModels = selectedModel ? p.models.filter(m => m.id !== selectedModel) : p.models;
@@ -253,7 +247,7 @@ export default function ToolLauncher() {
       groups.push({ provider_name: p.name, provider_id: p.id, models: filteredModels });
     }
     return groups;
-  }, [config, selectedTool, selectedModel]);
+  }, [config, selectedTool, selectedModel, isProtocolSupported]);
 
   // fallback 的折叠状态
   const [expandedFallbackGroups, setExpandedFallbackGroups] = useState<Set<string>>(new Set());
@@ -729,7 +723,7 @@ export default function ToolLauncher() {
                                       )}
                                     </div>
                                     <p className="text-[9px] text-violet-300/70 mt-1.5 leading-relaxed">
-                                      {p.openai_use_proxy || p.anthropic_use_proxy
+                                      {Object.values(p.protocols || {}).some(c => c.use_proxy)
                                         ? "代理模式：工具发出的模型请求由代理按映射自动路由"
                                         : "直连模式：通过环境变量按角色关键词映射模型"}
                                     </p>
