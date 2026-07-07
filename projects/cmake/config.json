@@ -3,9 +3,9 @@
   "display_name": "CMake",
   "category": "tool",
   "official_website": "https://cmake.org",
-  "simple_mode": true,
+  "simple_mode": false,
   "bin_dirs": [
-    ""
+    "bin"
   ],
   "has_cache": true,
   "cache_detect_cmd": null,
@@ -17,6 +17,18 @@
   "pkg_homepage_template": null,
   "is_service": false,
   "default_port": null,
+  "download_url_template": "https://github.com/Kitware/CMake/releases/download/v{version}/cmake-{version}-windows-x86_64.zip",
+  "download_file_ext": "zip",
+  "extract_subdir": "cmake-{version}-windows-x86_64",
   "version_cmd": "cmake --version",
-  "version_exe": "cmake"
+  "version_exe": "cmake",
+  "version_parse_regex": "cmake version (\\d+\\.\\d+(?:\\.\\d+)*)",
+  "remote_versions_url": "https://api.github.com/repos/Kitware/CMake/releases",
+  "remote_versions_config": {
+    "type": "json_api",
+    "response_type": "array",
+    "version_field": "tag_name",
+    "version_transform": "trim_prefix:v",
+    "filter_contains_not": "rc"
+  }
 }

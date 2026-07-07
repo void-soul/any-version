@@ -466,8 +466,16 @@ fn apply_transform(version: &str, transform: &str) -> String {
 #[tauri::command]
 pub async fn project_install_version(app: AppHandle, id: String, version: String) -> Result<(), String> {
     // 预检：项目和下载信息
-    let _def = super::registry::find_by_id(&id)
+    let config = load_config();
+    if !config.managed_items.contains(&id) {
+        return Err("项目尚未开启托管，无法下载/安装版本".to_string());
+    }
+    let def = super::registry::find_by_id(&id)
         .ok_or_else(|| format!("未找到项目: {}", id))?;
+    let delegation = super::scanner::get_project_delegation(&config, &id, &def);
+    if !delegation.version_control {
+        return Err("项目尚未开启“版本控制与下载”功能，无法下载/安装版本".to_string());
+    }
     let dl_info = get_download_url(&id, &version)?;
 
     let id_task = id.clone();
@@ -623,6 +631,15 @@ pub fn project_cancel_install(id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn project_uninstall_version(app: AppHandle, id: String, version: String) -> Result<(), String> {
     let config = load_config();
+    if !config.managed_items.contains(&id) {
+        return Err("项目尚未开启托管，无法卸载版本".to_string());
+    }
+    let def = super::registry::find_by_id(&id)
+        .ok_or_else(|| format!("未找到项目: {}", id))?;
+    let delegation = super::scanner::get_project_delegation(&config, &id, &def);
+    if !delegation.version_control {
+        return Err("项目尚未开启“版本控制与下载”功能，无法卸载版本".to_string());
+    }
     let dest_dir = Path::new(&config.versions_dir).join(&id).join(&version);
     if !dest_dir.exists() {
         return Err(format!("版本 {} 的 {} 未安装", version, id));
@@ -649,6 +666,15 @@ pub fn project_uninstall_version(app: AppHandle, id: String, version: String) ->
 fn project_use_version_impl(id: String, version: String) -> Result<(), String> {
     use crate::commands::config::{load_config, save_config};
     let mut config = load_config();
+    if !config.managed_items.contains(&id) {
+        return Err("项目尚未开启托管，无法切换版本".to_string());
+    }
+    let def = super::registry::find_by_id(&id)
+        .ok_or_else(|| format!("未找到项目: {}", id))?;
+    let delegation = super::scanner::get_project_delegation(&config, &id, &def);
+    if !delegation.version_control {
+        return Err("项目尚未开启“版本控制与下载”功能，无法切换版本".to_string());
+    }
     let dest_dir = Path::new(&config.versions_dir).join(&id).join(&version);
     if !dest_dir.exists() {
         return Err(format!("版本 {} 的 {} 未安装", version, id));
@@ -998,7 +1024,12 @@ fn get_download_url(project_id: &str, version: &str) -> Result<DownloadInfo, Str
                     .replace("{ver}", &ver)
                     .replace("{version}", &version_url)
                     .replace("{majorVersion}", major_version);
-                return Ok(DownloadInfo { url, file_ext, extract_subdir: def.extract_subdir.clone() });
+                let extract_subdir = def.extract_subdir.as_ref().map(|s| {
+                    s.replace("{version}", &version_url)
+                     .replace("{ver}", &ver)
+                     .replace("{majorVersion}", major_version)
+                });
+                return Ok(DownloadInfo { url, file_ext, extract_subdir });
             }
         }
     }
@@ -1011,7 +1042,11 @@ fn get_download_url(project_id: &str, version: &str) -> Result<DownloadInfo, Str
                 let url = template
                     .replace("{version}", &version_url)
                     .replace("{majorVersion}", major_version);
-                return Ok(DownloadInfo { url, file_ext, extract_subdir: def.extract_subdir.clone() });
+                let extract_subdir = def.extract_subdir.as_ref().map(|s| {
+                    s.replace("{version}", &version_url)
+                     .replace("{majorVersion}", major_version)
+                });
+                return Ok(DownloadInfo { url, file_ext, extract_subdir });
             }
         }
     }
@@ -1022,7 +1057,11 @@ fn get_download_url(project_id: &str, version: &str) -> Result<DownloadInfo, Str
         let url = template
             .replace("{version}", &version_url)
             .replace("{majorVersion}", major_version);
-        return Ok(DownloadInfo { url, file_ext, extract_subdir: def.extract_subdir.clone() });
+        let extract_subdir = def.extract_subdir.as_ref().map(|s| {
+            s.replace("{version}", &version_url)
+             .replace("{majorVersion}", major_version)
+        });
+        return Ok(DownloadInfo { url, file_ext, extract_subdir });
     }
 
     Err(format!("未配置下载地址: {}", project_id))

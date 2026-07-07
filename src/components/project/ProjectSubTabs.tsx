@@ -221,17 +221,30 @@ export function VersionsTab({
                     {!isActive && (
                       <button
                         onClick={() => onUse(v)}
-                        disabled={isOperating}
+                        disabled={isOperating || !project.managed || !project.delegation?.version_control}
                         className="p-1.5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-slate-400 hover:text-slate-200 text-[13px] cursor-pointer transition-all flex items-center gap-0.5"
+                        title={
+                          !project.managed 
+                            ? "请先开启托管以启用此版本" 
+                            : !project.delegation?.version_control 
+                            ? "请先在参数配置中开启“版本控制与下载”以启用此版本" 
+                            : "启用此版本"
+                        }
                       >
                         <Check className="w-3.5 h-3.5" /> 启用
                       </button>
                     )}
                     <button
                       onClick={() => onUninstall(v)}
-                      disabled={isOperating}
+                      disabled={isOperating || !project.managed || !project.delegation?.version_control}
                       className="p-1.5 hover:bg-red-500/10 hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-slate-500 cursor-pointer transition-all"
-                      title="卸载此版本"
+                      title={
+                        !project.managed 
+                          ? "请先开启托管以卸载此版本" 
+                          : !project.delegation?.version_control 
+                          ? "请先在参数配置中开启“版本控制与下载”以卸载此版本" 
+                          : "卸载此版本"
+                      }
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -252,6 +265,12 @@ export function VersionsTab({
         onInstall={onInstall}
         versionsUpdatedAt={versionsUpdatedAt}
         onRefresh={onRefreshRemoteVersions}
+        disabled={!project.managed || !project.delegation?.version_control}
+        disabledReason={
+          !project.managed 
+            ? "项目尚未开启托管，请在底部开启托管后再进行在线安装。" 
+            : "项目尚未开启“版本控制与下载”功能，请在右侧“参数配置”中开启后重试。"
+        }
       />
 
 
@@ -1279,6 +1298,8 @@ function RemoteVersionSelector({
   onInstall,
   versionsUpdatedAt,
   onRefresh,
+  disabled = false,
+  disabledReason = "",
 }: {
   remoteVersions: string[];
   loadingRemote: boolean;
@@ -1287,6 +1308,8 @@ function RemoteVersionSelector({
   onInstall: (version: string) => void;
   versionsUpdatedAt?: number | null;
   onRefresh?: () => void;
+  disabled?: boolean;
+  disabledReason?: string;
 }) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
@@ -1347,8 +1370,8 @@ function RemoteVersionSelector({
           {onRefresh && (
             <button
               onClick={onRefresh}
-              disabled={loadingRemote || !!installingVersion}
-              title="刷新版本列表"
+              disabled={disabled || loadingRemote || !!installingVersion}
+              title={disabled ? disabledReason : "刷新版本列表"}
               className="flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300 rounded-lg text-[11px] border border-white/8 cursor-pointer transition-all"
             >
               <RefreshCw className={`w-3 h-3 ${loadingRemote ? "animate-spin text-blue-400" : ""}`} />
@@ -1365,6 +1388,12 @@ function RemoteVersionSelector({
         </div>
       ) : (
         <div className="space-y-2">
+          {disabled && disabledReason && (
+            <div className="p-3 rounded-xl border border-amber-500/15 bg-amber-500/5 text-amber-400 text-[11px] mb-2 leading-relaxed flex items-center gap-1.5 animate-fadeIn">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>{disabledReason}</span>
+            </div>
+          )}
           <div ref={containerRef} className="relative">
             <div className="flex items-center gap-3">
               <div className="relative flex-1">
@@ -1372,9 +1401,10 @@ function RemoteVersionSelector({
                 <input
                   type="text"
                   value={search}
+                  disabled={disabled}
                   onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
                   onFocus={() => setOpen(true)}
-                  placeholder="输入关键词过滤版本，例如 18、LTS..."
+                  placeholder={disabled ? disabledReason : "输入关键词过滤版本，例如 18、LTS..."}
                   className="w-full glass-input pl-9 pr-9 py-2 text-xs"
                 />
                 {search && (
@@ -1388,7 +1418,8 @@ function RemoteVersionSelector({
               </div>
               <button
                 onClick={handleInstall}
-                disabled={installingVersion !== null || isOperating || !search.trim() || !remoteVersions.includes(search.trim())}
+                disabled={disabled || installingVersion !== null || isOperating || !search.trim() || !remoteVersions.includes(search.trim())}
+                title={disabled ? disabledReason : "一键安装"}
                 className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-md shadow-blue-500/10 cursor-pointer transition-all flex items-center gap-1.5"
               >
                 <Download className="w-3.5 h-3.5" />

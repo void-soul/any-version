@@ -3,9 +3,7 @@
   "display_name": "vcpkg",
   "category": "tool",
   "official_website": "https://github.com/microsoft/vcpkg",
-  "simple_mode": true,
-  "is_git_repo": true,
-  "bootstrap_cmd": "bootstrap-vcpkg.bat",
+  "simple_mode": false,
   "bin_dirs": [
     ""
   ],
@@ -25,6 +23,19 @@
   "pkg_homepage_template": null,
   "is_service": false,
   "default_port": null,
+  "download_url_template": "https://github.com/microsoft/vcpkg/archive/refs/tags/{version}.zip",
+  "download_file_ext": "zip",
+  "extract_subdir": "vcpkg-{version}",
+  "post_install": {
+    "init_command": "bootstrap-vcpkg.bat"
+  },
   "version_cmd": "vcpkg --version",
-  "version_exe": "vcpkg"
+  "version_exe": "vcpkg",
+  "version_parse_regex": "(\\d{4}[-.]\\d{2}[-.]\\d{2})",
+  "remote_versions_url": "https://api.github.com/repos/microsoft/vcpkg/releases",
+  "remote_versions_config": {
+    "type": "json_api",
+    "response_type": "array",
+    "version_field": "tag_name"
+  }
 }
