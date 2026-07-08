@@ -685,3 +685,372 @@ impl StreamConverter {
         events
     }
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  OpenAI → Anthropic Request & Response Translation
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// 将 OpenAI Chat Completions 请求体转换为 Anthropic Messages 请求体
+pub fn openai_to_anthropic(body: &Value, target_model: &str, aliases: Option<&ModelAliases>) -> Value {
+    let mut messages = Vec::new();
+    let mut system_text = String::new();
+
+    let request_model = body.get("model").and_then(|v| v.as_str()).unwrap_or(target_model);
+    let resolved_model = if let Some(a) = aliases {
+        map_model_name(request_model, a)
+    } else {
+        target_model.to_string()
+    };
+
+    if let Some(msgs) = body.get("messages").and_then(|v| v.as_array()) {
+        for msg in msgs {
+            let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+            let content = msg.get("content");
+            if role == "system" {
+                if let Some(c) = content {
+                    let text = match c {
+                        Value::String(s) => s.clone(),
+                        Value::Array(arr) => arr
+                            .iter()
+                            .filter_map(|part| {
+                                if part.get("type").and_then(|v| v.as_str()) == Some("text") {
+                                    part.get("text").and_then(|v| v.as_str()).map(String::from)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        _ => String::new(),
+                    };
+                    if !system_text.is_empty() {
+                        system_text.push_str("\n");
+                    }
+                    system_text.push_str(&text);
+                }
+            } else {
+                let anthropic_role = if role == "assistant" { "assistant" } else { "user" };
+                if let Some(c) = content {
+                    let converted_content = match c {
+                        Value::String(s) => json!(s),
+                        Value::Array(arr) => {
+                            let parts: Vec<Value> = arr
+                                .iter()
+                                .map(|part| {
+                                    let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+                                    if part_type == "image_url" {
+                                        if let Some(url) = part.get("image_url").and_then(|v| v.get("url").and_then(|u| u.as_str())) {
+                                            if url.starts_with("data:") {
+                                                if let Some(comma_idx) = url.find(',') {
+                                                    let media_type = url[5..comma_idx].split(';').next().unwrap_or("image/jpeg");
+                                                    let base64_data = &url[comma_idx + 1..];
+                                                    return json!({
+                                                        "type": "image",
+                                                        "source": {
+                                                            "type": "base64",
+                                                            "media_type": media_type,
+                                                            "data": base64_data
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                    json!({
+                                        "type": "text",
+                                        "text": part.get("text").unwrap_or(&json!(""))
+                                    })
+                                })
+                                .collect();
+                            json!(parts)
+                        }
+                        _ => json!(""),
+                    };
+                    messages.push(json!({
+                        "role": anthropic_role,
+                        "content": converted_content
+                    }));
+                }
+            }
+        }
+    }
+
+    let mut anthropic = json!({
+        "model": resolved_model,
+        "messages": messages,
+    });
+
+    if !system_text.is_empty() {
+        anthropic["system"] = json!(system_text);
+    }
+
+    let max_tokens = body.get("max_completion_tokens")
+        .or_else(|| body.get("max_tokens"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(4096);
+    anthropic["max_tokens"] = json!(max_tokens);
+
+    if let Some(temp) = body.get("temperature").and_then(|v| v.as_f64()) {
+        anthropic["temperature"] = json!(temp);
+    }
+    if let Some(top_p) = body.get("top_p").and_then(|v| v.as_f64()) {
+        anthropic["top_p"] = json!(top_p);
+    }
+    if let Some(stream) = body.get("stream").and_then(|v| v.as_bool()) {
+        anthropic["stream"] = json!(stream);
+    }
+
+    // tools 转换
+    if let Some(tools) = body.get("tools").and_then(|v| v.as_array()) {
+        let anthropic_tools: Vec<Value> = tools
+            .iter()
+            .filter_map(|t| {
+                if t.get("type").and_then(|v| v.as_str()) == Some("function") {
+                    if let Some(func) = t.get("function") {
+                        return Some(json!({
+                            "name": func.get("name").unwrap_or(&json!("")),
+                            "description": func.get("description").unwrap_or(&json!("")),
+                            "input_schema": func.get("parameters").unwrap_or(&json!({}))
+                        }));
+                    }
+                }
+                None
+            })
+            .collect();
+        if !anthropic_tools.is_empty() {
+            anthropic["tools"] = json!(anthropic_tools);
+        }
+    }
+
+    anthropic
+}
+
+/// 将 Anthropic Messages 响应转换为 OpenAI Chat Completions 响应
+pub fn anthropic_response_to_openai(anthropic_resp: &Value, request_model: &str) -> Value {
+    let content = anthropic_resp.get("content").and_then(|v| v.as_array());
+    let stop_reason = anthropic_resp.get("stop_reason").and_then(|v| v.as_str()).unwrap_or("end_turn");
+
+    let finish_reason = match stop_reason {
+        "end_turn" => "stop",
+        "max_tokens" => "length",
+        "tool_use" => "tool_calls",
+        _ => "stop",
+    };
+
+    let mut message_content = String::new();
+    let mut tool_calls = Vec::new();
+
+    if let Some(parts) = content {
+        for part in parts {
+            let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+            if part_type == "text" {
+                if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                    message_content.push_str(text);
+                }
+            } else if part_type == "tool_use" {
+                let id = part.get("id").cloned().unwrap_or(json!(""));
+                let name = part.get("name").cloned().unwrap_or(json!(""));
+                let input = part.get("input").cloned().unwrap_or(json!({}));
+                let args_str = serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_string());
+                tool_calls.push(json!({
+                    "id": id,
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": args_str
+                    }
+                }));
+            }
+        }
+    }
+
+    let mut message = json!({
+        "role": "assistant"
+    });
+    if !message_content.is_empty() {
+        message["content"] = json!(message_content);
+    } else {
+        message["content"] = Value::Null;
+    }
+    if !tool_calls.is_empty() {
+        message["tool_calls"] = json!(tool_calls);
+    }
+
+    let usage = anthropic_resp.get("usage");
+    let input_tokens = usage.and_then(|u| u.get("input_tokens").and_then(|v| v.as_u64())).unwrap_or(0);
+    let output_tokens = usage.and_then(|u| u.get("output_tokens").and_then(|v| v.as_u64())).unwrap_or(0);
+
+    json!({
+        "id": format!("chatcmpl-{}", anthropic_resp.get("id").and_then(|v| v.as_str()).unwrap_or("0")),
+        "object": "chat.completion",
+        "created": chrono::Utc::now().timestamp(),
+        "model": request_model,
+        "choices": [
+            {
+                "index": 0,
+                "message": message,
+                "logprobs": null,
+                "finish_reason": finish_reason
+            }
+        ],
+        "usage": {
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens
+        }
+    })
+}
+
+/// Anthropic SSE 流式 chunk 转换为 OpenAI chunk 转换器
+pub struct AnthropicToOpenaiStreamConverter {
+    id: String,
+    model: String,
+    _started: bool,
+    input_tokens: u64,
+    output_tokens: u64,
+}
+
+impl AnthropicToOpenaiStreamConverter {
+    pub fn new(model: String) -> Self {
+        Self {
+            id: format!("chatcmpl-{}", chrono::Utc::now().timestamp_millis()),
+            model,
+            _started: false,
+            input_tokens: 0,
+            output_tokens: 0,
+        }
+    }
+
+    pub fn convert_event(&mut self, event_type: &str, data: &Value) -> Option<String> {
+        match event_type {
+            "message_start" => {
+                if let Some(msg) = data.get("message") {
+                    if let Some(usage) = msg.get("usage") {
+                        self.input_tokens = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    }
+                }
+                None
+            }
+            "content_block_delta" => {
+                if let Some(delta) = data.get("delta") {
+                    let delta_type = delta.get("type").and_then(|v| v.as_str()).unwrap_or("text_delta");
+                    let mut choice_delta = json!({});
+
+                    if delta_type == "text_delta" {
+                        if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                            choice_delta["content"] = json!(text);
+                        }
+                    } else if delta_type == "input_json_delta" {
+                        if let Some(partial) = delta.get("partial_json").and_then(|v| v.as_str()) {
+                            let idx = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                            choice_delta["tool_calls"] = json!([{
+                                "index": idx,
+                                "function": {
+                                    "arguments": partial
+                                }
+                            }]);
+                        }
+                    }
+
+                    let chunk = json!({
+                        "id": self.id,
+                        "object": "chat.completion.chunk",
+                        "created": chrono::Utc::now().timestamp(),
+                        "model": self.model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": choice_delta,
+                                "logprobs": null,
+                                "finish_reason": null
+                            }
+                        ]
+                    });
+                    Some(format!("data: {}\n\n", serde_json::to_string(&chunk).unwrap()))
+                } else {
+                    None
+                }
+            }
+            "content_block_start" => {
+                if let Some(block) = data.get("content_block") {
+                    let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                    if block_type == "tool_use" {
+                        let idx = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                        let tool_id = block.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                        let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        let chunk = json!({
+                            "id": self.id,
+                            "object": "chat.completion.chunk",
+                            "created": chrono::Utc::now().timestamp(),
+                            "model": self.model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {
+                                        "tool_calls": [{
+                                            "index": idx,
+                                            "id": tool_id,
+                                            "type": "function",
+                                            "function": {
+                                                "name": name,
+                                                "arguments": ""
+                                            }
+                                        }]
+                                    },
+                                    "logprobs": null,
+                                    "finish_reason": null
+                                }
+                            ]
+                        });
+                        return Some(format!("data: {}\n\n", serde_json::to_string(&chunk).unwrap()));
+                    }
+                }
+                None
+            }
+            "message_delta" => {
+                if let Some(usage) = data.get("usage") {
+                    self.output_tokens = usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                }
+                let stop_reason = data.get("delta").and_then(|d| d.get("stop_reason").and_then(|v| v.as_str())).unwrap_or("end_turn");
+                let finish_reason = match stop_reason {
+                    "end_turn" => "stop",
+                    "max_tokens" => "length",
+                    "tool_use" => "tool_calls",
+                    _ => "stop",
+                };
+                let chunk = json!({
+                    "id": self.id,
+                    "object": "chat.completion.chunk",
+                    "created": chrono::Utc::now().timestamp(),
+                    "model": self.model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {},
+                            "logprobs": null,
+                            "finish_reason": finish_reason
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": self.input_tokens,
+                        "completion_tokens": self.output_tokens,
+                        "total_tokens": self.input_tokens + self.output_tokens
+                    }
+                });
+                Some(format!("data: {}\n\n", serde_json::to_string(&chunk).unwrap()))
+            }
+            "message_stop" => {
+                Some("data: [DONE]\n\n".to_string())
+            }
+            _ => None
+        }
+    }
+
+    pub fn usage(&self) -> (u64, u64) {
+        (self.input_tokens, self.output_tokens)
+    }
+
+    pub fn model_name(&self) -> &str {
+        &self.model
+    }
+}

@@ -163,27 +163,44 @@ async fn chat_completions_handler(
         request_model, is_stream
     ));
 
-    // 应用 OpenAI 模型别名映射（供应商只识别自己的模型名）
-    let aliases = if config.model_aliases.is_empty() {
-        None
-    } else {
-        Some(transform::ModelAliases {
-            default_model: config.default_model.clone(),
-            role_map: config.model_aliases.clone(),
-        })
-    };
-    let mut send_body = body.clone();
-    if let Some(a) = aliases.as_ref() {
-        if let Some(m) = send_body.get("model").and_then(|v| v.as_str()) {
-            let mapped = transform::map_model_name(m, a);
-            send_body["model"] = Value::String(mapped);
-        }
-    }
+    // Check if we need to translate OpenAI -> Anthropic
+    let is_translate = config.upstream_base_url.is_empty() && !config.upstream_anthropic_url.is_empty();
 
-    let upstream_url = format!(
-        "{}/chat/completions",
-        config.upstream_base_url.trim_end_matches('/')
-    );
+    let (upstream_url, send_body, auth_header_name) = if is_translate {
+        let base = config.upstream_anthropic_url.trim_end_matches('/');
+        let url = if base.ends_with("/messages") {
+            base.to_string()
+        } else {
+            format!("{}/messages", base)
+        };
+        let aliases = if config.model_aliases.is_empty() {
+            None
+        } else {
+            Some(transform::ModelAliases {
+                default_model: config.default_model.clone(),
+                role_map: config.model_aliases.clone(),
+            })
+        };
+        let translated = transform::openai_to_anthropic(&body, "claude-3-5-sonnet-latest", aliases.as_ref());
+        (url, translated, "x-api-key")
+    } else {
+        let url = format!(
+            "{}/chat/completions",
+            config.upstream_base_url.trim_end_matches('/')
+        );
+        let mut mutated = body.clone();
+        if !config.model_aliases.is_empty() {
+            let aliases = Some(transform::ModelAliases {
+                default_model: config.default_model.clone(),
+                role_map: config.model_aliases.clone(),
+            });
+            if let Some(m) = mutated.get("model").and_then(|v| v.as_str()) {
+                let mapped = transform::map_model_name(m, aliases.as_ref().unwrap());
+                mutated["model"] = Value::String(mapped);
+            }
+        }
+        (url, mutated, "Authorization")
+    };
 
     let out_model = send_body.get("model").and_then(|v| v.as_str()).unwrap_or(&request_model);
     log_proxy(&format!(
@@ -191,11 +208,17 @@ async fn chat_completions_handler(
         upstream_url, out_model
     ));
 
-    let mut req = state
-        .client
-        .post(&upstream_url)
-        .header("Authorization", format!("Bearer {}", config.upstream_api_key))
-        .json(&send_body);
+    let mut req = state.client.post(&upstream_url);
+    if auth_header_name == "x-api-key" {
+        req = req
+            .header("x-api-key", &config.upstream_api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&send_body);
+    } else {
+        req = req
+            .header("Authorization", format!("Bearer {}", config.upstream_api_key))
+            .json(&send_body);
+    }
     if let Some(ct) = headers.get(header::CONTENT_TYPE) {
         if let Ok(v) = ct.to_str() {
             req = req.header(header::CONTENT_TYPE, v);
@@ -228,6 +251,97 @@ async fn chat_completions_handler(
         start.elapsed().as_millis()
     ));
     let content_type = resp.headers().get(header::CONTENT_TYPE).cloned();
+
+    // If translating, translate the response back to OpenAI format
+    if is_translate {
+        if is_stream {
+            let stream = resp.bytes_stream();
+            let mut converter = transform::AnthropicToOpenaiStreamConverter::new(request_model.clone());
+            let stats = state.stats.clone();
+
+            let sse_stream = async_stream::stream! {
+                let mut buffer = String::new();
+                use futures_util::StreamExt;
+
+                tokio::pin!(stream);
+                while let Some(chunk_result) = stream.next().await {
+                    let chunk = match chunk_result {
+                        Ok(c) => c,
+                        Err(e) => {
+                            yield Ok::<_, Infallible>(Event::default().data(format!("{{\"error\":\"{}\"}}", e)));
+                            break;
+                        }
+                    };
+
+                    buffer = sse::append_utf8_safe(&buffer, &chunk);
+
+                    while let Some((block, remainder)) = sse::take_sse_block(&buffer) {
+                        buffer = remainder.to_string();
+
+                        if let Some(event_type) = sse::extract_sse_event(&block) {
+                            if let Some(data_str) = sse::extract_sse_data(&block) {
+                                if let Ok(chunk_json) = serde_json::from_str::<Value>(&data_str) {
+                                    if let Some(event_str) = converter.convert_event(&event_type, &chunk_json) {
+                                        let mut event = Event::default();
+                                        for line in event_str.lines() {
+                                            if let Some(rest) = line.strip_prefix("data:") {
+                                                event = event.data(rest.trim());
+                                            }
+                                        }
+                                        yield Ok::<_, Infallible>(event);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 流结束后记录用量
+                let (input_tokens, output_tokens) = converter.usage();
+                if input_tokens > 0 || output_tokens > 0 {
+                    record_proxy_usage(converter.model_name(), input_tokens, output_tokens);
+                }
+
+                let mut s = stats.write().await;
+                s.success_requests += 1;
+            };
+
+            return Sse::new(sse_stream).into_response();
+        }
+
+        // 非流式响应
+        let anthropic_resp: Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                let mut stats = state.stats.write().await;
+                stats.failed_requests += 1;
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({
+                        "error": { "message": format!("解析上游响应失败: {}", e) }
+                    })),
+                )
+                    .into_response();
+            }
+        };
+
+        let openai_resp = transform::anthropic_response_to_openai(&anthropic_resp, &request_model);
+
+        // 自动记录 token 使用量
+        if let Some(u) = openai_resp.get("usage") {
+            let in_t = u.get("prompt_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
+            let out_t = u.get("completion_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
+            if in_t > 0 || out_t > 0 {
+                record_proxy_usage(&request_model, in_t, out_t);
+            }
+        }
+
+        let mut stats = state.stats.write().await;
+        stats.success_requests += 1;
+
+        return Json(openai_resp).into_response();
+    }
+
     let bytes = match resp.bytes().await {
         Ok(b) => b,
         Err(_) => {

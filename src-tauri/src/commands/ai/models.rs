@@ -84,7 +84,8 @@ fn default_proxy_port() -> u16 {
     15721
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+// ─── 旧版 ProtocolConfig（仅用于反序列化迁移，不再在新代码中使用）───
+#[derive(Deserialize, Clone, Debug, Default)]
 pub struct ProtocolConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -98,6 +99,10 @@ pub struct ProtocolConfig {
     pub default_model: Option<String>,
 }
 
+/// AI 供应商 / 中转站配置（简化版）
+///
+/// 只关注供应商本身的特征：协议端点 URL、API Key、模型列表、模型别名映射。
+/// 代理是否启用由工具启动逻辑决定（工具启动时代理必开），不再在此配置。
 #[derive(Serialize, Clone, Debug)]
 pub struct AiProvider {
     pub id: String,
@@ -105,7 +110,22 @@ pub struct AiProvider {
     pub category: String, // "provider" | "relay"
     pub api_key: String,
     pub website: String,
-    pub protocols: std::collections::HashMap<String, ProtocolConfig>,
+    /// OpenAI 协议端点 URL（空 = 不支持）
+    #[serde(default)]
+    pub openai_url: String,
+    /// Anthropic 协议端点 URL（空 = 不支持）
+    #[serde(default)]
+    pub anthropic_url: String,
+    /// Google 协议端点 URL（空 = 不支持）
+    #[serde(default)]
+    pub google_url: String,
+    /// 模型别名映射：角色关键词 → 实际模型 ID
+    /// 例如 {"sonnet": "deepseek-v4-pro", "opus": "claude-opus-4-8"}
+    #[serde(default)]
+    pub model_aliases: std::collections::HashMap<String, String>,
+    /// 默认模型（当别名无匹配时使用）
+    #[serde(default)]
+    pub default_model: Option<String>,
     pub models: Vec<ModelEntry>,
     pub active_model_id: Option<String>,
 }
@@ -116,6 +136,7 @@ impl<'de> Deserialize<'de> for AiProvider {
         D: serde::Deserializer<'de>,
     {
         #[derive(Deserialize)]
+        #[allow(dead_code)]
         struct Helper {
             id: String,
             name: String,
@@ -124,14 +145,30 @@ impl<'de> Deserialize<'de> for AiProvider {
             api_key: String,
             #[serde(default)]
             website: String,
+            models: Vec<ModelEntry>,
+            #[serde(default)]
+            active_model_id: Option<String>,
+
+            // ─── 新格式：扁平字段 ───
+            #[serde(default)]
+            openai_url: Option<String>,
+            #[serde(default)]
+            anthropic_url: Option<String>,
+            #[serde(default)]
+            google_url: Option<String>,
+            #[serde(default)]
+            model_aliases: Option<std::collections::HashMap<String, String>>,
+            #[serde(default)]
+            default_model: Option<String>,
+
+            // ─── 旧格式 v2：protocols HashMap ───
             #[serde(default)]
             protocols: Option<std::collections::HashMap<String, ProtocolConfig>>,
-            
-            // Old fields for migration:
+
+            // ─── 旧格式 v1：扁平带后缀字段 ───
             #[serde(default)]
             openai_enabled: bool,
-            #[serde(default)]
-            openai_url: String,
+            // openai_url 已在上面 Option 声明（复用）
             #[serde(default)]
             openai_use_proxy: bool,
             #[serde(default)]
@@ -141,8 +178,7 @@ impl<'de> Deserialize<'de> for AiProvider {
 
             #[serde(default)]
             anthropic_enabled: bool,
-            #[serde(default)]
-            anthropic_url: String,
+            // anthropic_url 已在上面 Option 声明（复用）
             #[serde(default)]
             anthropic_use_proxy: bool,
             #[serde(default)]
@@ -152,69 +188,70 @@ impl<'de> Deserialize<'de> for AiProvider {
 
             #[serde(default)]
             google_enabled: bool,
-            #[serde(default)]
-            google_url: String,
+            // google_url 已在上面 Option 声明（复用）
             #[serde(default)]
             google_model_aliases: std::collections::HashMap<String, String>,
             #[serde(default)]
             google_default_model: Option<String>,
-
-            models: Vec<ModelEntry>,
-            active_model_id: Option<String>,
         }
 
-        let helper = Helper::deserialize(deserializer)?;
-        
-        let protocols = if let Some(mut protos) = helper.protocols {
-            if !protos.contains_key("openai") {
-                protos.insert("openai".to_string(), ProtocolConfig::default());
-            }
-            if !protos.contains_key("anthropic") {
-                protos.insert("anthropic".to_string(), ProtocolConfig::default());
-            }
-            if !protos.contains_key("google") {
-                protos.insert("google".to_string(), ProtocolConfig::default());
-            }
-            protos
-        } else {
-            let mut protos = std::collections::HashMap::new();
-            
-            protos.insert("openai".to_string(), ProtocolConfig {
-                enabled: helper.openai_enabled,
-                url: helper.openai_url,
-                use_proxy: helper.openai_use_proxy,
-                model_aliases: helper.openai_model_aliases,
-                default_model: helper.openai_default_model,
-            });
+        let h = Helper::deserialize(deserializer)?;
 
-            protos.insert("anthropic".to_string(), ProtocolConfig {
-                enabled: helper.anthropic_enabled,
-                url: helper.anthropic_url,
-                use_proxy: helper.anthropic_use_proxy,
-                model_aliases: helper.anthropic_model_aliases,
-                default_model: helper.anthropic_default_model,
-            });
+        // 优先使用新格式扁平字段，缺失时从 protocols/旧字段迁移
+        let (openai_url, anthropic_url, google_url, model_aliases, default_model) =
+            if let Some(protos) = &h.protocols {
+                // 从 protocols HashMap 迁移
+                let oai = protos.get("openai");
+                let ant = protos.get("anthropic");
+                let goo = protos.get("google");
+                let url = |p: Option<&ProtocolConfig>| p.map(|c| c.url.clone()).unwrap_or_default();
+                let aliases = |p: Option<&ProtocolConfig>| p.map(|c| c.model_aliases.clone()).unwrap_or_default();
+                let dm = |p: Option<&ProtocolConfig>| p.and_then(|c| c.default_model.clone());
 
-            protos.insert("google".to_string(), ProtocolConfig {
-                enabled: helper.google_enabled,
-                url: helper.google_url,
-                use_proxy: false,
-                model_aliases: helper.google_model_aliases,
-                default_model: helper.google_default_model,
-            });
+                // model_aliases 优先用 anthropic 的（主要场景），否则用 openai 的
+                let ma = {
+                    let a = aliases(ant);
+                    if !a.is_empty() { a } else { aliases(oai) }
+                };
+                // default_model 优先 anthropic，否则 openai
+                let dm_val = dm(ant).or_else(|| dm(oai));
 
-            protos
-        };
+                (
+                    h.openai_url.clone().unwrap_or_else(|| url(oai)),
+                    h.anthropic_url.clone().unwrap_or_else(|| url(ant)),
+                    h.google_url.clone().unwrap_or_else(|| url(goo)),
+                    h.model_aliases.clone().unwrap_or(ma),
+                    h.default_model.clone().or(dm_val),
+                )
+            } else {
+                // 从旧格式 v1 扁平字段迁移（或直接使用新格式）
+                (
+                    h.openai_url.unwrap_or_default(),
+                    h.anthropic_url.unwrap_or_default(),
+                    h.google_url.unwrap_or_default(),
+                    h.model_aliases.unwrap_or_else(|| {
+                        // 优先 anthropic aliases，否则 openai
+                        let a = h.anthropic_model_aliases.clone();
+                        if !a.is_empty() { a } else { h.openai_model_aliases.clone() }
+                    }),
+                    h.default_model.or(h.anthropic_default_model.clone())
+                        .or(h.openai_default_model.clone()),
+                )
+            };
 
         Ok(AiProvider {
-            id: helper.id,
-            name: helper.name,
-            category: helper.category,
-            api_key: helper.api_key,
-            website: helper.website,
-            protocols,
-            models: helper.models,
-            active_model_id: helper.active_model_id,
+            id: h.id,
+            name: h.name,
+            category: h.category,
+            api_key: h.api_key,
+            website: h.website,
+            openai_url,
+            anthropic_url,
+            google_url,
+            model_aliases,
+            default_model,
+            models: h.models,
+            active_model_id: h.active_model_id,
         })
     }
 }

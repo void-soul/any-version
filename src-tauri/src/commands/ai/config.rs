@@ -26,81 +26,23 @@ pub(crate) fn load_ai_config() -> AiConfig {
     let path = ai_config_path();
     if path.exists() {
         if let Ok(data) = fs::read_to_string(&path) {
-            // 首先解析为通用 Value 进行迁移检查
-            if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&data) {
-                let mut migrated = false;
-                if let Some(providers) = value.get_mut("providers").and_then(|p| p.as_array_mut()) {
-                    for provider in providers {
-                        if provider.get("protocols").is_none() {
-                            let mut protocols = serde_json::Map::new();
-
-                            // 1. openai
-                            let mut openai = serde_json::Map::new();
-                            openai.insert("enabled".to_string(), provider.get("openai_enabled").cloned().unwrap_or(serde_json::Value::Bool(false)));
-                            openai.insert("url".to_string(), provider.get("openai_url").cloned().unwrap_or(serde_json::Value::String(String::new())));
-                            openai.insert("use_proxy".to_string(), provider.get("openai_use_proxy").cloned().unwrap_or(serde_json::Value::Bool(false)));
-                            openai.insert("model_aliases".to_string(), provider.get("openai_model_aliases").cloned().unwrap_or(serde_json::Value::Object(serde_json::Map::new())));
-                            openai.insert("default_model".to_string(), provider.get("openai_default_model").cloned().unwrap_or(serde_json::Value::Null));
-                            protocols.insert("openai".to_string(), serde_json::Value::Object(openai));
-
-                            // 2. anthropic
-                            let mut anthropic = serde_json::Map::new();
-                            anthropic.insert("enabled".to_string(), provider.get("anthropic_enabled").cloned().unwrap_or(serde_json::Value::Bool(false)));
-                            anthropic.insert("url".to_string(), provider.get("anthropic_url").cloned().unwrap_or(serde_json::Value::String(String::new())));
-                            anthropic.insert("use_proxy".to_string(), provider.get("anthropic_use_proxy").cloned().unwrap_or(serde_json::Value::Bool(false)));
-                            let aliases = provider.get("anthropic_model_aliases")
-                                .or_else(|| provider.get("model_aliases"))
-                                .cloned()
-                                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-                            anthropic.insert("model_aliases".to_string(), aliases);
-                            let default_model = provider.get("anthropic_default_model")
-                                .or_else(|| provider.get("default_model"))
-                                .cloned()
-                                .unwrap_or(serde_json::Value::Null);
-                            anthropic.insert("default_model".to_string(), default_model);
-                            protocols.insert("anthropic".to_string(), serde_json::Value::Object(anthropic));
-
-                            // 3. google
-                            let mut google = serde_json::Map::new();
-                            google.insert("enabled".to_string(), provider.get("google_enabled").cloned().unwrap_or(serde_json::Value::Bool(false)));
-                            google.insert("url".to_string(), provider.get("google_url").cloned().unwrap_or(serde_json::Value::String(String::new())));
-                            google.insert("use_proxy".to_string(), serde_json::Value::Bool(false));
-                            google.insert("model_aliases".to_string(), provider.get("google_model_aliases").cloned().unwrap_or(serde_json::Value::Object(serde_json::Map::new())));
-                            google.insert("default_model".to_string(), provider.get("google_default_model").cloned().unwrap_or(serde_json::Value::Null));
-                            protocols.insert("google".to_string(), serde_json::Value::Object(google));
-
-                            if let Some(obj) = provider.as_object_mut() {
-                                obj.insert("protocols".to_string(), serde_json::Value::Object(protocols));
-                                // 移除旧字段
-                                obj.remove("openai_enabled");
-                                obj.remove("openai_url");
-                                obj.remove("openai_use_proxy");
-                                obj.remove("openai_model_aliases");
-                                obj.remove("openai_default_model");
-                                obj.remove("anthropic_enabled");
-                                obj.remove("anthropic_url");
-                                obj.remove("anthropic_use_proxy");
-                                obj.remove("anthropic_model_aliases");
-                                obj.remove("anthropic_default_model");
-                                obj.remove("model_aliases");
-                                obj.remove("default_model");
-                                obj.remove("google_enabled");
-                                obj.remove("google_url");
-                                obj.remove("google_model_aliases");
-                                obj.remove("google_default_model");
-                            }
-                            migrated = true;
-                        }
-                    }
-                }
-
-                if let Ok(config) = serde_json::from_value::<AiConfig>(value) {
-                    if migrated {
+            // AiProvider 的自定义 Deserialize 已内置迁移逻辑：
+            // 自动将旧版 protocols HashMap / 旧版扁平字段转换为新版扁平 URL 结构。
+            if let Ok(config) = serde_json::from_str::<AiConfig>(&data) {
+                // 检测是否需要迁移（旧格式 → 新格式），若需要则回写
+                if let Ok(raw) = serde_json::from_str::<serde_json::Value>(&data) {
+                    let needs_migrate = raw.get("providers")
+                        .and_then(|p| p.as_array())
+                        .map(|arr| arr.iter().any(|p| p.get("protocols").is_some()
+                            || p.get("openai_enabled").is_some()
+                            || p.get("anthropic_use_proxy").is_some()))
+                        .unwrap_or(false);
+                    if needs_migrate {
                         let _ = save_ai_config_to_file(&config);
-                        eprintln!("[config] ✓ 已成功迁移 ai_config.json 至 protocols 嵌套模式");
+                        eprintln!("[config] ✓ 已迁移 ai_config.json 至扁平 URL 格式");
                     }
-                    return config;
                 }
+                return config;
             }
         }
     }
@@ -268,6 +210,7 @@ mod tests {
 
     #[test]
     fn test_migrate_old_provider_json() {
+        // 测试从旧版扁平字段格式迁移
         let old_json = r#"{
             "providers": [
                 {
@@ -280,7 +223,7 @@ mod tests {
                     "openai_url": "https://api.longcat.com/v1",
                     "openai_use_proxy": false,
                     "anthropic_enabled": true,
-                    "anthropic_url": "https://api.longcat.com/v1",
+                    "anthropic_url": "https://api.longcat.com/anthropic",
                     "anthropic_use_proxy": true,
                     "google_enabled": false,
                     "google_url": "",
@@ -299,18 +242,8 @@ mod tests {
             "active_provider": "longcat",
             "proxy_port": 15721,
             "default_project_path": "",
-            "rectifier": {
-                "enabled": false,
-                "thinking_signature": false,
-                "thinking_budget": false,
-                "media_fallback": false
-            },
-            "optimizer": {
-                "enabled": false,
-                "cache_injection": false,
-                "thinking_optimizer": false,
-                "deepseek_normalize": false
-            },
+            "rectifier": {"enabled": false, "thinking_signature": false, "thinking_budget": false, "media_fallback": false},
+            "optimizer": {"enabled": false, "cache_injection": false, "thinking_optimizer": false, "deepseek_normalize": false},
             "skills_dir": ""
         }"#;
 
@@ -319,20 +252,83 @@ mod tests {
         let p = &config.providers[0];
         assert_eq!(p.id, "longcat");
         assert_eq!(p.api_key, "test_key");
-        
-        let anthropic = p.protocols.get("anthropic").expect("Should have anthropic protocol config");
-        assert!(anthropic.enabled);
-        assert_eq!(anthropic.url, "https://api.longcat.com/v1");
-        assert!(anthropic.use_proxy);
-        assert_eq!(anthropic.default_model.as_deref(), Some("gpt-4o"));
-        assert_eq!(anthropic.model_aliases.get("fable").map(|s| s.as_str()), Some("gpt-4o"));
+        assert_eq!(p.openai_url, "https://api.longcat.com/v1");
+        assert_eq!(p.anthropic_url, "https://api.longcat.com/anthropic");
+        assert_eq!(p.google_url, "");
+        assert_eq!(p.default_model.as_deref(), Some("gpt-4o"));
+        assert_eq!(p.model_aliases.get("fable").map(|s| s.as_str()), Some("gpt-4o"));
+    }
 
-        let openai = p.protocols.get("openai").expect("Should have openai protocol config");
-        assert!(openai.enabled);
-        assert_eq!(openai.url, "https://api.longcat.com/v1");
-        assert!(!openai.use_proxy);
+    #[test]
+    fn test_migrate_protocols_format() {
+        // 测试从 protocols HashMap 格式迁移
+        let protocols_json = r#"{
+            "providers": [
+                {
+                    "id": "deepseek",
+                    "name": "DeepSeek",
+                    "category": "provider",
+                    "api_key": "sk-test",
+                    "website": "",
+                    "protocols": {
+                        "openai": {"enabled": true, "url": "https://api.deepseek.com", "use_proxy": false, "model_aliases": {}, "default_model": null},
+                        "anthropic": {"enabled": true, "url": "https://api.deepseek.com/anthropic", "use_proxy": true, "model_aliases": {"sonnet": "deepseek-chat"}, "default_model": "deepseek-chat"},
+                        "google": {"enabled": false, "url": "", "use_proxy": false, "model_aliases": {}, "default_model": null}
+                    },
+                    "models": [],
+                    "active_model_id": null
+                }
+            ],
+            "active_provider": "deepseek",
+            "proxy_port": 15721,
+            "default_project_path": "",
+            "rectifier": {"enabled": true, "thinking_signature": true, "thinking_budget": true, "media_fallback": true},
+            "optimizer": {"enabled": true, "cache_injection": true, "thinking_optimizer": true, "deepseek_normalize": true},
+            "skills_dir": ""
+        }"#;
 
-        let google = p.protocols.get("google").expect("Should have google protocol config");
-        assert!(!google.enabled);
+        let config: AiConfig = serde_json::from_str(protocols_json).expect("Should deserialize & migrate protocols format");
+        assert_eq!(config.providers.len(), 1);
+        let p = &config.providers[0];
+        assert_eq!(p.openai_url, "https://api.deepseek.com");
+        assert_eq!(p.anthropic_url, "https://api.deepseek.com/anthropic");
+        assert_eq!(p.model_aliases.get("sonnet").map(|s| s.as_str()), Some("deepseek-chat"));
+        assert_eq!(p.default_model.as_deref(), Some("deepseek-chat"));
+    }
+
+    #[test]
+    fn test_new_flat_format() {
+        // 测试新格式直接反序列化
+        let new_json = r#"{
+            "providers": [
+                {
+                    "id": "openai",
+                    "name": "OpenAI",
+                    "category": "provider",
+                    "api_key": "sk-test",
+                    "website": "https://openai.com",
+                    "openai_url": "https://api.openai.com/v1",
+                    "anthropic_url": "",
+                    "google_url": "",
+                    "model_aliases": {},
+                    "default_model": null,
+                    "models": [{"id": "gpt-4o", "name": "gpt-4o"}],
+                    "active_model_id": null
+                }
+            ],
+            "active_provider": "openai",
+            "proxy_port": 15721,
+            "default_project_path": "",
+            "rectifier": {"enabled": true, "thinking_signature": true, "thinking_budget": true, "media_fallback": true},
+            "optimizer": {"enabled": true, "cache_injection": true, "thinking_optimizer": true, "deepseek_normalize": true},
+            "skills_dir": ""
+        }"#;
+
+        let config: AiConfig = serde_json::from_str(new_json).expect("Should deserialize new flat format");
+        assert_eq!(config.providers.len(), 1);
+        let p = &config.providers[0];
+        assert_eq!(p.openai_url, "https://api.openai.com/v1");
+        assert_eq!(p.anthropic_url, "");
+        assert_eq!(p.models.len(), 1);
     }
 }

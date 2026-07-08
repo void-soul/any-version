@@ -164,30 +164,24 @@ export default function ToolLauncher() {
       .then(setSessions).catch(() => setSessions([]));
   }, [selectedTool]);
 
-  // ── 按协议获取有效别名 ──
-  const getEffectiveAliases = useCallback((p: AiProvider, protocol: string): Record<string, string> => {
-    const protoKey = protocol === 'both' ? 'anthropic' : protocol;
-    const protoCfg = p.protocols?.[protoKey];
-    return protoCfg?.model_aliases || {};
-  }, []);
+// ── 获取模型别名 ──
+const getEffectiveAliases = useCallback((p: AiProvider, _protocol: string): Record<string, string> => {
+return p.model_aliases || {};
+}, []);
 
-  const getEffectiveDefaultModel = useCallback((p: AiProvider, protocol: string): string | null => {
-    const protoKey = protocol === 'both' ? 'anthropic' : protocol;
-    const protoCfg = p.protocols?.[protoKey];
-    return protoCfg?.default_model || null;
-  }, []);
+const getEffectiveDefaultModel = useCallback((p: AiProvider, _protocol: string): string | null => {
+return p.default_model || null;
+}, []);
 
-  const isProtocolSupported = useCallback((p: AiProvider, protocol: string): boolean => {
-    if (protocol === "both") {
-      return !!(
-        (p.protocols?.anthropic?.enabled || p.protocols?.anthropic?.use_proxy) ||
-        (p.protocols?.openai?.enabled || p.protocols?.openai?.use_proxy)
-      );
-    }
-    const cfg = p.protocols?.[protocol];
-    if (!cfg) return false;
-    return cfg.enabled || cfg.use_proxy || !!cfg.url;
-  }, []);
+const isProtocolSupported = useCallback((p: AiProvider, protocol: string): boolean => {
+if (protocol === "both") {
+return !!p.anthropic_url || !!p.openai_url;
+}
+if (protocol === "anthropic") return !!p.anthropic_url || !!p.openai_url;
+if (protocol === "openai") return !!p.openai_url || !!p.anthropic_url;
+if (protocol === "google") return !!p.google_url;
+return false;
+}, []);
 
   // ── 模型选项分两组 ──
   // 有别名映射的供应商（一键选择，无需挑模型）
@@ -224,12 +218,12 @@ export default function ToolLauncher() {
     const protocol = selectedTool.api_protocol;
     const aliases = getEffectiveAliases(provider, protocol);
     if (Object.keys(aliases).length === 0) return null;
-    return {
-      aliases,
-      name: provider.name,
-      usesProxy: !!(provider.protocols?.[protocol === 'both' ? 'anthropic' : protocol]?.use_proxy),
-      defaultModel: getEffectiveDefaultModel(provider, protocol),
-    };
+return {
+aliases,
+name: provider.name,
+usesProxy: true,
+defaultModel: getEffectiveDefaultModel(provider, protocol),
+};
   }, [config, selectedModelProvider, selectedTool, getEffectiveAliases, getEffectiveDefaultModel]);
 
   // 全部兼容模型（含别名供应商），用于 Fallback 选择 — 按供应商分组
@@ -722,11 +716,9 @@ export default function ToolLauncher() {
                                         </span>
                                       )}
                                     </div>
-                                    <p className="text-[9px] text-violet-300/70 mt-1.5 leading-relaxed">
-                                      {Object.values(p.protocols || {}).some(c => c.use_proxy)
-                                        ? "代理模式：工具发出的模型请求由代理按映射自动路由"
-                                        : "直连模式：通过环境变量按角色关键词映射模型"}
-                                    </p>
+<p className="text-[9px] text-violet-300/70 mt-1.5 leading-relaxed">
+代理模式：工具发出的模型请求由代理按映射自动路由
+</p>
                                   </div>
                                 )}
                               </button>

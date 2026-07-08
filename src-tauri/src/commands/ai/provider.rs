@@ -80,63 +80,58 @@ pub async fn test_model_connection(
 pub async fn start_proxy(port: u16) -> Result<(), String> {
     let config = load_ai_config();
     let provider = config.providers.iter().find(|p| {
-        p.protocols.values().any(|c| c.use_proxy)
+        !p.api_key.is_empty() && (!p.openai_url.is_empty() || !p.anthropic_url.is_empty())
     })
-    .ok_or("没有配置了代理的 Provider")?;
+    .ok_or("没有配置了 API URL 的 Provider")?;
 
     // Anthropic 代理（P1: port）
-    if let Some(cfg) = provider.protocols.get("anthropic") {
-        if cfg.use_proxy {
-            let openai_url = provider.protocols.get("openai").map(|c| c.url.clone()).unwrap_or_default();
-            let proxy_config = crate::proxy::types::ProxyConfig {
-                listen_address: "127.0.0.1".to_string(),
-                listen_port: port,
-                upstream_base_url: openai_url,
-                upstream_api_key: provider.api_key.clone(),
-                upstream_anthropic_url: cfg.url.clone(),
-                upstream_protocol: "anthropic".to_string(),
-                target_model: String::new(),
-                timeout_secs: 300,
-                model_aliases: cfg.model_aliases.clone(),
-                default_model: cfg.default_model.clone(),
-                rectifier_enabled: config.rectifier.enabled,
-                rectifier_thinking_signature: config.rectifier.thinking_signature,
-                rectifier_thinking_budget: config.rectifier.thinking_budget,
-                rectifier_media_fallback: config.rectifier.media_fallback,
-                optimizer_enabled: config.optimizer.enabled,
-                optimizer_cache_injection: config.optimizer.cache_injection,
-                optimizer_thinking: config.optimizer.thinking_optimizer,
-                optimizer_deepseek: config.optimizer.deepseek_normalize,
-            };
-            crate::proxy::server::start_proxy_server(proxy_config).await?;
-        }
+    if !provider.anthropic_url.is_empty() || !provider.openai_url.is_empty() {
+        let proxy_config = crate::proxy::types::ProxyConfig {
+            listen_address: "127.0.0.1".to_string(),
+            listen_port: port,
+            upstream_base_url: provider.openai_url.clone(),
+            upstream_api_key: provider.api_key.clone(),
+            upstream_anthropic_url: provider.anthropic_url.clone(),
+            upstream_protocol: "anthropic".to_string(),
+            target_model: String::new(),
+            timeout_secs: 300,
+            model_aliases: provider.model_aliases.clone(),
+            default_model: provider.default_model.clone(),
+            rectifier_enabled: config.rectifier.enabled,
+            rectifier_thinking_signature: config.rectifier.thinking_signature,
+            rectifier_thinking_budget: config.rectifier.thinking_budget,
+            rectifier_media_fallback: config.rectifier.media_fallback,
+            optimizer_enabled: config.optimizer.enabled,
+            optimizer_cache_injection: config.optimizer.cache_injection,
+            optimizer_thinking: config.optimizer.thinking_optimizer,
+            optimizer_deepseek: config.optimizer.deepseek_normalize,
+        };
+        crate::proxy::server::start_proxy_server(proxy_config).await?;
     }
 
     // OpenAI 代理（P2: port + 1）
-    if let Some(cfg) = provider.protocols.get("openai") {
-        if cfg.use_proxy {
-            let proxy_config = crate::proxy::types::ProxyConfig {
-                listen_address: "127.0.0.1".to_string(),
-                listen_port: port + 1,
-                upstream_base_url: cfg.url.clone(),
-                upstream_api_key: provider.api_key.clone(),
-                upstream_anthropic_url: String::new(),
-                upstream_protocol: "openai".to_string(),
-                target_model: String::new(),
-                timeout_secs: 300,
-                model_aliases: cfg.model_aliases.clone(),
-                default_model: cfg.default_model.clone(),
-                rectifier_enabled: false,
-                rectifier_thinking_signature: false,
-                rectifier_thinking_budget: false,
-                rectifier_media_fallback: false,
-                optimizer_enabled: false,
-                optimizer_cache_injection: false,
-                optimizer_thinking: false,
-                optimizer_deepseek: false,
-            };
-            crate::proxy::server::start_proxy_server(proxy_config).await?;
-        }
+    if !provider.openai_url.is_empty() || !provider.anthropic_url.is_empty() {
+        let proxy_config = crate::proxy::types::ProxyConfig {
+            listen_address: "127.0.0.1".to_string(),
+            listen_port: port + 1,
+            upstream_base_url: provider.openai_url.clone(),
+            upstream_api_key: provider.api_key.clone(),
+            upstream_anthropic_url: provider.anthropic_url.clone(),
+            upstream_protocol: "openai".to_string(),
+            target_model: String::new(),
+            timeout_secs: 300,
+            model_aliases: provider.model_aliases.clone(),
+            default_model: provider.default_model.clone(),
+            rectifier_enabled: config.rectifier.enabled,
+            rectifier_thinking_signature: config.rectifier.thinking_signature,
+            rectifier_thinking_budget: config.rectifier.thinking_budget,
+            rectifier_media_fallback: config.rectifier.media_fallback,
+            optimizer_enabled: config.optimizer.enabled,
+            optimizer_cache_injection: config.optimizer.cache_injection,
+            optimizer_thinking: config.optimizer.thinking_optimizer,
+            optimizer_deepseek: config.optimizer.deepseek_normalize,
+        };
+        crate::proxy::server::start_proxy_server(proxy_config).await?;
     }
 
     Ok(())

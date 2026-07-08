@@ -6,21 +6,17 @@ export interface ModelEntry {
   name: string;
 }
 
-export interface ProtocolConfig {
-  enabled: boolean;
-  url: string;
-  use_proxy: boolean;
-  model_aliases: Record<string, string>;
-  default_model: string | null;
-}
-
 export interface AiProvider {
   id: string;
   name: string;
   category: string;
   api_key: string;
   website: string;
-  protocols: Record<string, ProtocolConfig>;
+  openai_url: string;
+  anthropic_url: string;
+  google_url: string;
+  model_aliases: Record<string, string>;
+  default_model: string | null;
   models: ModelEntry[];
   active_model_id: string | null;
 }
