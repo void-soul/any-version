@@ -3568,6 +3568,13 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
 
   // Map project ID to language mode in Monaco
   const getEditorLanguage = (projectId: string): string => {
+    if (configPath) {
+      const lowerPath = configPath.toLowerCase();
+      if (lowerPath.endsWith(".toml")) return "toml";
+      if (lowerPath.endsWith(".yaml") || lowerPath.endsWith(".yml")) return "yaml";
+      if (lowerPath.endsWith(".json")) return "json";
+      if (lowerPath.endsWith(".conf") || lowerPath.endsWith(".nginx")) return "nginx";
+    }
     switch (projectId) {
       case "mysql":
       case "redis":
@@ -3577,6 +3584,9 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
         return "yaml";
       case "nginx":
         return "nginx";
+      case "frps":
+      case "frpc":
+        return "toml";
       default:
         return "ini";
     }

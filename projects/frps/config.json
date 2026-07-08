@@ -1,0 +1,63 @@
+{
+  "id": "frps",
+  "display_name": "FRP Server",
+  "category": "service",
+  "official_website": "https://github.com/fatedier/frp",
+  "simple_mode": false,
+  "bin_dirs": [
+    ""
+  ],
+  "has_cache": false,
+  "cache_detect_cmd": null,
+  "cache_default_path": null,
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": true,
+  "default_port": 7000,
+  "data_dir": null,
+  "log_dir": null,
+  "config_file": "frps.toml",
+  "config_file_candidates": [
+    "{install_root}\\frps.toml",
+    "{install_root}\\frps.ini"
+  ],
+  "start_cmd": "\"{install_root}\\frps.exe\" -c \"{config_file}\"",
+  "stop_cmd": null,
+  "service_process_exes": [
+    "frps"
+  ],
+  "service_names": [],
+  "service_start_mode": "detached",
+  "service_allow_force_kill": true,
+  "service_auto_create_dirs": true,
+  "version_cmd": "frps --version",
+  "version_exe": "frps",
+  "download_url_template": "https://github.com/fatedier/frp/releases/download/v{version}/frp_{version}_windows_amd64.zip",
+  "download_file_ext": "zip",
+  "extract_subdir": "frp_{version}_windows_amd64",
+  "remote_versions_url": "https://api.github.com/repos/fatedier/frp/releases",
+  "remote_versions_config": {
+    "type": "json_api",
+    "response_type": "array",
+    "version_field": "tag_name",
+    "version_transform": "trim_prefix:v",
+    "filter_contains_not": "rc"
+  },
+  "data_dirs": [
+    {
+      "id": "config",
+      "display_name": "FRP Server 配置目录",
+      "kind": "config",
+      "possible_paths": [
+        "{install_root}"
+      ],
+      "default_path": "{install_root}",
+      "supports_direct": false,
+      "auto_create": false,
+      "required_for_start": true
+    }
+  ]
+}
