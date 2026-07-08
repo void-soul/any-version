@@ -139,7 +139,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             continue;
         }
 
-        let show_version = config.project_menu_configs.get(id).map_or(true, |c| c.show_version);
+        let show_version = config.project_menu_configs.get(id).is_none_or(|c| c.show_version);
         if !show_version {
             continue;
         }
@@ -191,7 +191,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             continue;
         }
 
-        let show_service = config.project_menu_configs.get(&def.id).map_or(true, |c| c.show_service);
+        let show_service = config.project_menu_configs.get(&def.id).is_none_or(|c| c.show_service);
         if !show_service {
             continue;
         }
@@ -215,7 +215,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
         let mut service_submenu = SubmenuBuilder::new(app, title);
         let status_item = MenuItemBuilder::with_id(
-            &format!("service-status::{}", def.id),
+            format!("service-status::{}", def.id),
             match status_text {
                 "running" => "状态：运行中",
                 "port_conflict" => "状态：端口被其他进程占用",
@@ -228,14 +228,14 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
         if status.running {
             let item = MenuItemBuilder::with_id(
-                &format!("{}{}", ID_SERVICE_STOP_PREFIX, def.id),
+                format!("{}{}", ID_SERVICE_STOP_PREFIX, def.id),
                 "停止服务",
             )
             .build(app)?;
             service_submenu = service_submenu.item(&item);
         } else if status_text == "stopped" {
             let item = MenuItemBuilder::with_id(
-                &format!("{}{}", ID_SERVICE_START_PREFIX, def.id),
+                format!("{}{}", ID_SERVICE_START_PREFIX, def.id),
                 "启动服务",
             )
             .build(app)?;

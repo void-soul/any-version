@@ -393,6 +393,8 @@ export default function ProjectDetailPanel({
       create_symlink: true,
       manage_install_dir: true,
       manage_data_dir: true,
+      manage_cache_dir: true,
+      manage_optional_tools: def.package_managers?.filter(p => !p.built_in).map(p => p.id) || [],
     };
     patch(pid, { isSimpleManage: false });
     try {
@@ -893,6 +895,13 @@ export default function ProjectDetailPanel({
                   const pmId = pt.id.replace("pm:", "");
                   const pmDef = def?.package_managers?.find(p => p.id === pmId);
                   if (!pmDef) return null;
+
+                  // 如果项目已托管，且该工具不是内置工具（如 python 的 uv），则只有勾选管理该工具时才显示其 Tab
+                  if (status.managed && !pmDef.built_in) {
+                    const isManaged = status.delegation?.manage_optional_tools?.includes(pmId);
+                    if (!isManaged) return null;
+                  }
+
                   return (
                     <PackageManagerTab 
                       key={pt.id} 
@@ -901,6 +910,8 @@ export default function ProjectDetailPanel({
                       hidden={activeTab !== pt.id} 
                       installRoot={status.install_root}
                       installSource={status.install_source}
+                      projectStatus={status}
+                      projectDef={def}
                     />
                   );
                 })}
@@ -1093,6 +1104,50 @@ export default function ProjectDetailPanel({
                         </label>
                       </div>
                     )}
+
+                    {/* 7. 管理缓存目录 */}
+                    {def?.has_cache && (
+                      <div className="p-2 bg-black/25 border border-white/5 rounded-lg flex items-center">
+                        <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
+                          <input
+                            type="checkbox"
+                            className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                            checked={localDelegation.manage_cache_dir}
+                            onChange={(e) => {
+                              handleCheckboxChange({ manage_cache_dir: e.target.checked });
+                            }}
+                          />
+                          <div className="flex flex-col">
+                            <span>重定向缓存目录</span>
+                            <span className="text-[9px] text-slate-400 font-normal">分离并重定向第三方依赖/下载缓存</span>
+                          </div>
+                        </label>
+                      </div>
+                    )}
+
+                    {/* 8. 管理附带的工具 */}
+                    {def?.package_managers?.filter(p => !p.built_in).map(pm => (
+                      <div key={pm.id} className="p-2 bg-black/25 border border-white/5 rounded-lg flex items-center">
+                        <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
+                          <input
+                            type="checkbox"
+                            className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                            checked={localDelegation.manage_optional_tools.includes(pm.id)}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              const updated = checked
+                                ? [...localDelegation.manage_optional_tools, pm.id]
+                                : localDelegation.manage_optional_tools.filter((x: string) => x !== pm.id);
+                              handleCheckboxChange({ manage_optional_tools: updated });
+                            }}
+                          />
+                          <div className="flex flex-col">
+                            <span>管理附带工具 ({pm.display_name})</span>
+                            <span className="text-[9px] text-slate-400 font-normal">管理并在选项卡中展示 {pm.display_name} 状态</span>
+                          </div>
+                        </label>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

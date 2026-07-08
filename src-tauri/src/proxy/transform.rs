@@ -100,7 +100,7 @@ const BLOCKED_TOOL_NAMES: &[&str] = &["BatchTool"];
 
 /// 检查工具名是否在拦截列表中
 fn is_blocked_tool_name(name: &str) -> bool {
-    BLOCKED_TOOL_NAMES.iter().any(|&blocked| blocked == name)
+    BLOCKED_TOOL_NAMES.contains(&name)
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

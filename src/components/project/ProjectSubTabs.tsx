@@ -29,8 +29,9 @@ import {
   FileText,
 } from "lucide-react";
 import type { ProjectStatus, ProjectDef, EnvVarStatus, ServiceStatus, PackageManagerDef } from "./types";
+import { PackageManagerTab as PackageManagerTabModular } from "./tabs/PackageManagerTab";
 
-// ── 共享的子标签页 Props ──
+// ── 共享 detour Props ──
 export interface SubTabProps {
   project: ProjectStatus;
   def: ProjectDef | null;
@@ -1189,11 +1190,11 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
 
   return (
     <div className="space-y-4">
-      {!isAdmin && def && Array.isArray(def.service_names) && def.service_names.length > 0 && (
+      {!isAdmin && svc?.system_service_name && (
         <div className="flex items-start gap-2.5 p-3 rounded-xl border border-amber-500/20 bg-amber-500/10 text-[12.5px] text-amber-200 animate-fadeIn">
           <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
           <span>
-            <strong>系统服务权限提示：</strong>检测到该项目在本地注册了 Windows 系统服务（如 {String(def.display_name)}）。启动或停止系统服务需要 Windows 管理员权限。当前程序未以管理员身份运行，操作可能会因“拒绝访问（系统错误 5）”而失败。若遇到报错，请尝试右键以管理员身份启动 Any Version。
+            <strong>系统服务权限提示：</strong>检测到该项目在本地注册了 Windows 系统服务（服务名: {svc.system_service_name}）。启动或停止系统服务需要 Windows 管理员权限。当前程序未以管理员身份运行，操作可能会因“拒绝访问（系统错误 5）”而失败。若遇到报错，请尝试右键以管理员身份启动 Any Version。
           </span>
         </div>
       )}
@@ -1622,13 +1623,26 @@ const pmDetectionCache: Record<string, {
   timestamp: number;
 }> = {};
 
-export function PackageManagerTab({ 
+export function PackageManagerTab(props: {
+  projectId: string;
+  pm: PackageManagerDef;
+  hidden?: boolean;
+  installRoot?: string | null;
+  installSource?: string | null;
+  projectDef?: ProjectDef | null;
+  projectStatus?: ProjectStatus | null;
+}) {
+  return <PackageManagerTabModular {...props} />;
+}
+
+function PackageManagerTabDeprecated({ 
   projectId, 
   pm, 
   hidden, 
   installRoot, 
   installSource,
-  projectDef
+  projectDef,
+  projectStatus
 }: { 
   projectId: string; 
   pm: PackageManagerDef; 
@@ -1636,6 +1650,7 @@ export function PackageManagerTab({
   installRoot?: string | null; 
   installSource?: string | null; 
   projectDef?: ProjectDef | null;
+  projectStatus?: ProjectStatus | null;
 }) {
   const cachedKey = `${projectId}:${pm.id}`;
   const cachedData = pmDetectionCache[cachedKey];
@@ -2578,6 +2593,14 @@ export function PackageManagerTab({
 
   return (
     <div className="space-y-5">
+      {projectStatus && !projectStatus.managed && (
+        <div className="flex items-start gap-2.5 p-3 rounded-xl border border-blue-500/20 bg-blue-500/10 text-[12.5px] text-blue-200 animate-fadeIn">
+          <Info className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+          <span>
+            <strong>只读模式提示：</strong>当前项目未开启托管。缓存路径、数据目录及附带工具等参数仅支持查看，不能执行修改、配置、迁移或清理操作。若需修改，请先在当前页下方开启【托管项目】。
+          </span>
+        </div>
+      )}
       {/* 头部状态栏 */}
       <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2">
         <div className="flex items-center justify-between">
@@ -2608,7 +2631,7 @@ export function PackageManagerTab({
             {installed && !pm.built_in && pm.install_cmd && (
               <>
                 {latestVersion && version && versionGt(latestVersion, version) ? (
-                  <button onClick={handleUpgrade} disabled={upgrading || installing} className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1.5">
+                  <button onClick={handleUpgrade} disabled={!projectStatus?.managed || upgrading || installing} className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1.5" title={!projectStatus?.managed ? "请先托管项目" : ""}>
                     <Download className="w-3.5 h-3.5" />{upgrading ? "升级中..." : `升级至 ${latestVersion}`}
                   </button>
                 ) : latestVersion && version && !versionGt(latestVersion, version) ? (
@@ -2617,7 +2640,7 @@ export function PackageManagerTab({
               </>
             )}
             {!installed && pm.install_cmd && (
-              <button onClick={handleInstall} disabled={installing || upgrading} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1.5">
+              <button onClick={handleInstall} disabled={!projectStatus?.managed || installing || upgrading} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1.5" title={!projectStatus?.managed ? "请先托管项目" : ""}>
                 <Download className="w-3.5 h-3.5" />{installing ? "安装中..." : "安装"}
               </button>
             )}
@@ -2771,12 +2794,12 @@ export function PackageManagerTab({
 
               {/* 操作行 */}
               <div className="pt-2 border-t border-white/5 flex items-center gap-2">
-                <button onClick={() => openWorkflow("cache")} disabled={workflowType !== null}
-                  className="px-3 py-1.5 bg-amber-600/80 hover:bg-amber-600 disabled:opacity-40 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all">
+                <button onClick={() => openWorkflow("cache")} disabled={!projectStatus?.managed || workflowType !== null}
+                  className="px-3 py-1.5 bg-amber-600/80 hover:bg-amber-600 disabled:opacity-40 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all" title={!projectStatus?.managed ? "请先托管项目" : ""}>
                   <FolderSync className="w-3.5 h-3.5" />开始变更
                 </button>
-                <button onClick={handleCleanCache} disabled={cleaningCache || workflowType !== null}
-                  className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 disabled:opacity-40 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all">
+                <button onClick={handleCleanCache} disabled={!projectStatus?.managed || cleaningCache || workflowType !== null}
+                  className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 disabled:opacity-40 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all" title={!projectStatus?.managed ? "请先托管项目" : ""}>
                   <Trash2 className="w-3.5 h-3.5" />{cleaningCache ? "清理中" : "清理缓存"}
                 </button>
               </div>
@@ -2862,8 +2885,8 @@ export function PackageManagerTab({
 
             {/* 操作行 */}
             <div className="pt-2 border-t border-white/5 flex items-center gap-2">
-              <button onClick={() => openWorkflow("data")} disabled={workflowType !== null}
-                className="px-3 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-colors">
+              <button onClick={() => openWorkflow("data")} disabled={!projectStatus?.managed || workflowType !== null}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-colors" title={!projectStatus?.managed ? "请先托管项目" : ""}>
                 <FolderSync className="w-3.5 h-3.5" />{dataInfo ? "开始迁移" : "设置数据目录"}
               </button>
             </div>
@@ -2888,9 +2911,9 @@ export function PackageManagerTab({
             {pm.mirror_options.map((opt) => {
               const isCurrent = opt.url === "" ? !currentMirror : currentMirror === opt.url;
               return (
-                <button key={opt.mirror_type} onClick={() => handleSwitchMirror(opt.url, opt.mirror_type)} disabled={switchingMirror !== null || isCurrent}
+                <button key={opt.mirror_type} onClick={() => handleSwitchMirror(opt.url, opt.mirror_type)} disabled={!projectStatus?.managed || switchingMirror !== null || isCurrent}
                   className={`flex items-center justify-between px-3 py-2 rounded-lg text-[13px] font-medium cursor-pointer transition-all border
-                    ${isCurrent ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300" : "bg-black/20 border-white/5 text-slate-300 hover:bg-white/5"}`}>
+                    ${isCurrent ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300" : "bg-black/20 border-white/5 text-slate-300 hover:bg-white/5"}`} title={!projectStatus?.managed ? "请先托管项目" : ""}>
                   <span>{opt.name}</span>
                   <div className="flex items-center gap-1.5 ml-auto">
                     <span className={`text-[12px] ${isCurrent ? "text-emerald-400" : "text-slate-500"} font-mono`}>
@@ -2917,10 +2940,10 @@ export function PackageManagerTab({
             <p className="font-mono text-[13px] text-slate-300 truncate" title={proxyDetected}>当前代理: {proxyDetected}</p>
           )}
           <div className="flex items-center gap-1.5">
-            <input type="text" value={proxyInput} onChange={(e) => setProxyInput(e.target.value)}
-              className="flex-1 glass-input px-3 py-1.5 text-[13px] font-mono" placeholder="http://proxy.example.com:8080" />
-            <button onClick={handleSetProxy} disabled={settingProxy}
-              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-[13px] font-semibold cursor-pointer flex-shrink-0">
+            <input type="text" value={proxyInput} onChange={(e) => setProxyInput(e.target.value)} disabled={!projectStatus?.managed}
+              className="flex-1 glass-input px-3 py-1.5 text-[13px] font-mono disabled:opacity-50 disabled:cursor-not-allowed" placeholder="http://proxy.example.com:8080" />
+            <button onClick={handleSetProxy} disabled={!projectStatus?.managed || settingProxy}
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-[13px] font-semibold cursor-pointer flex-shrink-0" title={!projectStatus?.managed ? "请先托管项目" : ""}>
               {settingProxy ? "设置中..." : proxyInput ? "设置代理" : "清除代理"}
             </button>
           </div>
@@ -2958,7 +2981,7 @@ export function PackageManagerTab({
                       <td className="p-2 font-mono text-slate-400">{p.latest_version}</td>
                       <td className="p-2">{p.status === "outdated" ? <span className="text-[11px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">可升级</span> : <span className="text-[11px] px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">最新</span>}</td>
                       <td className="p-2 text-center">
-                        {p.status === "outdated" && <button onClick={() => handleUpgradePackage(p.name)} disabled={upgradingPkg === p.name} className="px-2 py-0.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-[11px] font-semibold cursor-pointer">{upgradingPkg === p.name ? "升级中" : "升级"}</button>}
+                        {p.status === "outdated" && <button onClick={() => handleUpgradePackage(p.name)} disabled={!projectStatus?.managed || upgradingPkg === p.name} className="px-2 py-0.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-[11px] font-semibold cursor-pointer" title={!projectStatus?.managed ? "请先托管项目" : ""}>{upgradingPkg === p.name ? "升级中" : "升级"}</button>}
                       </td>
                     </tr>
                   ))}

@@ -715,6 +715,7 @@ pub(crate) fn service_status_for_def(def: &ProjectDef) -> ServiceStatus {
             .as_ref()
             .and_then(|r| r.config_file.as_ref())
             .map(|p| p.to_string_lossy().to_string()),
+        system_service_name: find_registered_system_service(def),
     }
 }
 
@@ -1077,6 +1078,43 @@ fn find_running_system_service(def: &ProjectDef) -> Option<String> {
             }
         }
     }
+    None
+}
+
+#[cfg(windows)]
+fn find_registered_system_service(def: &ProjectDef) -> Option<String> {
+    if def.service_names.is_empty() {
+        return None;
+    }
+    let patterns: Vec<regex::Regex> = def
+        .service_names
+        .iter()
+        .filter_map(|p| regex::RegexBuilder::new(p).case_insensitive(true).build().ok())
+        .collect();
+    if patterns.is_empty() {
+        return None;
+    }
+
+    let output = super::hidden_cmd::hidden_cmd("sc")
+        .args(&["query", "type=", "service", "state=", "all"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("SERVICE_NAME:") {
+            let name = rest.trim().to_string();
+            if patterns.iter().any(|re| re.is_match(&name)) {
+                return Some(name);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn find_registered_system_service(_def: &ProjectDef) -> Option<String> {
     None
 }
 

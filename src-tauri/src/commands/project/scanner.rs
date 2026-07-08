@@ -226,6 +226,8 @@ pub fn get_project_delegation(config: &crate::commands::config::Config, id: &str
                 create_symlink: false,
                 manage_install_dir: true,
                 manage_data_dir: true,
+                manage_cache_dir: true,
+                manage_optional_tools: std::collections::HashSet::new(),
             }
         } else {
             let mut envs = std::collections::HashSet::new();
@@ -241,6 +243,12 @@ pub fn get_project_delegation(config: &crate::commands::config::Config, id: &str
                     paths.insert(p.clone());
                 }
             }
+            let mut optional_tools = std::collections::HashSet::new();
+            for pm in &def.package_managers {
+                if !pm.built_in {
+                    optional_tools.insert(pm.id.clone());
+                }
+            }
             crate::commands::config::ProjectDelegation {
                 env_vars: envs,
                 path_vars: paths,
@@ -248,6 +256,8 @@ pub fn get_project_delegation(config: &crate::commands::config::Config, id: &str
                 create_symlink: true,
                 manage_install_dir: true,
                 manage_data_dir: true,
+                manage_cache_dir: true,
+                manage_optional_tools: optional_tools,
             }
         }
     } else {

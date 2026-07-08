@@ -156,16 +156,17 @@ pub fn fix_thinking_budget(body: &mut Value) {
         if thinking.get("type").and_then(|v| v.as_str()) == Some("adaptive") {
             return; // adaptive 没有固定预算，跳过
         }
-        thinking.as_object_mut().map(|o| {
+        if let Some(o) = thinking.as_object_mut() {
             o.insert("type".into(), json!("enabled"));
             o.insert("budget_tokens".into(), json!(32000));
-        });
+        }
     }
     // 确保 max_tokens 足够大
     if let Some(max_tokens) = body.get("max_tokens").and_then(|v| v.as_u64()) {
         if max_tokens < 32001 {
-            body.as_object_mut()
-                .map(|o| o.insert("max_tokens".into(), json!(64000)));
+            if let Some(o) = body.as_object_mut() {
+                o.insert("max_tokens".into(), json!(64000));
+            }
         }
     }
 }
@@ -210,14 +211,16 @@ pub fn normalize_deepseek_thinking(body: &mut Value, upstream_url: &str) {
 
                 // 从所有 thinking 块中剥离签名
                 for block in content.iter_mut() {
-                    block.as_object_mut().map(|o| o.remove("signature"));
+                    if let Some(o) = block.as_object_mut() {
+                        o.remove("signature");
+                    }
                     // 将 redacted_thinking 转换为普通 thinking
                     if block.get("type").and_then(|v| v.as_str()) == Some("redacted_thinking")
                     {
-                        block.as_object_mut().map(|o| {
+                        if let Some(o) = block.as_object_mut() {
                             o.insert("type".into(), json!("thinking"));
                             o.insert("thinking".into(), json!("[redacted]"));
-                        });
+                        }
                     }
                 }
 
@@ -232,9 +235,9 @@ pub fn normalize_deepseek_thinking(body: &mut Value, upstream_url: &str) {
     // 当 thinking 被禁用时移除 effort 参数
     if let Some(thinking) = body.get("thinking") {
         if thinking.get("type").and_then(|v| v.as_str()) == Some("disabled") {
-            body.as_object_mut().map(|o| {
+            if let Some(o) = body.as_object_mut() {
                 o.remove("output_config");
-            });
+            }
         }
     }
 }
@@ -327,10 +330,10 @@ pub fn optimize_thinking(body: &mut Value) {
         || normalized.contains("fable");
 
     if is_adaptive {
-        body.as_object_mut().map(|o| {
+        if let Some(o) = body.as_object_mut() {
             o.insert("thinking".into(), json!({"type": "adaptive"}));
             o.insert("output_config".into(), json!({"effort": "max"}));
-        });
+        }
         // Append beta header
         if let Some(betas) = body
             .get_mut("anthropic_beta")
@@ -343,9 +346,9 @@ pub fn optimize_thinking(body: &mut Value) {
                 betas.push(json!("context-1m-2025-08-07"));
             }
         } else {
-            body.as_object_mut().map(|o| {
+            if let Some(o) = body.as_object_mut() {
                 o.insert("anthropic_beta".into(), json!(["context-1m-2025-08-07"]));
-            });
+            }
         }
         return;
     }
@@ -362,7 +365,7 @@ pub fn optimize_thinking(body: &mut Value) {
         .unwrap_or(0);
 
     if current_budget < max_tokens.saturating_sub(1) {
-        body.as_object_mut().map(|o| {
+        if let Some(o) = body.as_object_mut() {
             o.insert(
                 "thinking".into(),
                 json!({
@@ -370,7 +373,7 @@ pub fn optimize_thinking(body: &mut Value) {
                     "budget_tokens": max_tokens - 1
                 }),
             );
-        });
+        }
     }
 
     // Append interleaved-thinking beta for legacy models
@@ -379,8 +382,8 @@ pub fn optimize_thinking(body: &mut Value) {
             betas.push(json!("interleaved-thinking-2025-05-14"));
         }
     } else {
-        body.as_object_mut().map(|o| {
+        if let Some(o) = body.as_object_mut() {
             o.insert("anthropic_beta".into(), json!(["interleaved-thinking-2025-05-14"]));
-        });
+        }
     }
 }

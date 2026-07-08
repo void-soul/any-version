@@ -492,6 +492,9 @@ pub struct ServiceStatus {
     /// 配置文件路径
     #[serde(default)]
     pub config_file: Option<String>,
+    /// 在 Windows 注册的系统服务名称
+    #[serde(default)]
+    pub system_service_name: Option<String>,
 }
 
 /// 项目运行时状态（实时扫描结果）

@@ -67,8 +67,8 @@ pub fn sync_process_path() {
                                         }
                                     }
                                 }
-                                commands::project::types::ResolvePattern::FixedPath { path: fixed_path, exe_name } => {
-                                    if p_lower.contains(&fixed_path.to_lowercase()) {
+                                commands::project::types::ResolvePattern::FixedPath { path: fixed_path, exe_name }
+                                    if p_lower.contains(&fixed_path.to_lowercase()) => {
                                         let mut check_names = vec![exe_name.clone()];
                                         #[cfg(windows)]
                                         {
@@ -86,7 +86,6 @@ pub fn sync_process_path() {
                                             }
                                         }
                                     }
-                                }
                                 _ => {}
                             }
                             if matches_managed_rule { break; }
@@ -127,8 +126,8 @@ fn cleanup_legacy_env_vars() {
     for def in &defs {
         let delegation = config.project_delegations.get(&def.id);
         for var_def in &def.env_vars {
-            let env_managed = delegation.map_or(false, |d| d.env_vars.contains(&var_def.name));
-            let should_not_exist = !env_managed || var_def.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Compat);
+            let env_managed = delegation.is_some_and(|d| d.env_vars.contains(&var_def.name));
+            let should_not_exist = !env_managed || var_def.tier.as_ref().is_some_and(|t| *t == EnvVarTier::Compat);
             if should_not_exist {
                 if let Some(val) = get_registry_env(&var_def.name) {
                     if val.to_lowercase().contains(&links_dir_lower) {

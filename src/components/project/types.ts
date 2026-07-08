@@ -32,6 +32,7 @@ export interface ServiceStatus {
   process_name?: string | null;
   install_root?: string | null;
   config_file?: string | null;
+  system_service_name?: string | null;
 }
 
 export interface PackageManagerDef {
@@ -81,6 +82,8 @@ export interface ProjectDelegation {
   create_symlink: boolean;
   manage_install_dir: boolean;
   manage_data_dir: boolean;
+  manage_cache_dir: boolean;
+  manage_optional_tools: string[];
 }
 
 export interface ProjectStatus {

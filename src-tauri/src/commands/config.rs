@@ -29,6 +29,10 @@ pub struct ProjectDelegation {
     pub manage_install_dir: bool,
     #[serde(default = "default_false")]
     pub manage_data_dir: bool,
+    #[serde(default = "default_false")]
+    pub manage_cache_dir: bool,
+    #[serde(default)]
+    pub manage_optional_tools: std::collections::HashSet<String>,
 }
 
 fn default_false() -> bool {

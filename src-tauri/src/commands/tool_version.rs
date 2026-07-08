@@ -163,7 +163,7 @@ fn detect_current_version(def: &ProjectDef) -> Option<String> {
         let mut cmd = crate::commands::hidden_cmd::hidden_cmd(candidate);
         // Clear env vars that might interfere
         for var_def in &def.env_vars {
-            if let Err(_) = std::env::var(&var_def.name) {
+            if std::env::var(&var_def.name).is_err() {
                 cmd.env_remove(&var_def.name);
             }
         }
@@ -234,7 +234,7 @@ async fn fetch_latest_version(def: &ProjectDef) -> Result<Option<String>, String
                 .unwrap_or("version");
             fetch_url_latest(url, field).await
         }
-        "from_list" | _ => {
+        _ => {
             fetch_latest_from_version_list(def).await
         }
     }
