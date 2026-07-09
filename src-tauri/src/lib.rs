@@ -280,6 +280,8 @@ pub fn run() {
             commands::ai::mcp::delete_mcp_server,
             commands::ai::mcp::toggle_mcp_tool,
             commands::ai::mcp::get_mcp_tools,
+            commands::ai::mcp::get_discovered_mcp,
+            commands::ai::mcp::adopt_mcp_server,
             commands::ai::provider::test_model_connection,
             commands::ai::launch::launch_ai_tool,
             commands::ai::config::get_last_launch_config,

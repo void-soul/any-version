@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use serde_json::{Map, Value};
@@ -28,8 +28,25 @@ pub struct McpServer {
     pub enabled: bool,
     /// 已部署到的工具 id 列表
     pub enabled_tools: Vec<String>,
-    pub description: Option<String>,
-    pub install_method: String,
+  pub description: Option<String>,
+  pub install_method: String,
+}
+
+/// 从工具配置中发现、但尚未由 AnyVersion 托管的 MCP 服务器
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredMcp {
+  pub tool_id: String,
+  pub name: String,
+  pub transport: String,
+  pub command: String,
+  pub args: Vec<String>,
+  pub env: HashMap<String, String>,
+  pub cwd: Option<String>,
+  pub url: String,
+  pub headers: HashMap<String, String>,
+  /// 同名服务器是否已在 AnyVersion 托管（已托管则无需纳入）
+  pub already_managed: bool,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -138,6 +155,146 @@ pub fn toggle_mcp_tool(id: String, tool_id: String, enabled: bool) -> Result<(),
     }
     save_store(&store)?;
     deploy_all()
+}
+
+/// 从各工具中心配置中发现已配置、但 AnyVersion 尚未托管的 MCP 服务器。
+/// 类比技能管理的「问题检测 / 纳入管理」：先把散落在工具里的服务器找出来，再统一纳管。
+#[tauri::command]
+pub fn get_discovered_mcp() -> Result<Vec<DiscoveredMcp>, String> {
+    let store = load_store();
+    let reg = registry();
+    let mut out: Vec<DiscoveredMcp> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for tool_id in reg.mcp_tool_ids() {
+        let Some((path, _format)) = reg.get_tool_mcp_config(&tool_id) else { continue };
+        if !path.exists() { continue; }
+        let Ok(text) = fs::read_to_string(&path) else { continue };
+        let Ok(val) = serde_json::from_str::<Value>(&text) else { continue };
+        if !val.is_object() { continue; }
+        let mcp_key = if reg.get_tool_mcp_config(&tool_id).map(|(_, f)| f == "opencode").unwrap_or(false) { "mcp" } else { "mcpServers" };
+        let Some(servers) = val.get(mcp_key).and_then(|m| m.as_object()) else { continue };
+        for (name, entry) in servers {
+            if !entry.is_object() { continue; }
+            let raw = reverse_translate(name, entry);
+            let already = store.servers.iter().any(|s| s.name == *name);
+            let key = format!("{}:{}", tool_id, name);
+            if seen.contains(&key) { continue; }
+            seen.insert(key.clone());
+            out.push(DiscoveredMcp {
+                tool_id: tool_id.clone(),
+                name: raw.name,
+                transport: raw.transport,
+                command: raw.command,
+                args: raw.args,
+                env: raw.env,
+                cwd: raw.cwd,
+                url: raw.url,
+                headers: raw.headers,
+                already_managed: already,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// 将一个在工具配置中发现的服务器纳入 AnyVersion 托管：
+/// 写入托管仓库（默认启用、仅部署到发现它的工具），并触发重新部署。
+#[tauri::command]
+pub fn adopt_mcp_server(tool_id: String, name: String) -> Result<(), String> {
+    let reg = registry();
+    let (path, _format) = reg.get_tool_mcp_config(&tool_id).ok_or("找不到工具配置")?;
+    let text = fs::read_to_string(&path).map_err(|e| format!("读取工具配置失败: {}", e))?;
+    let val = serde_json::from_str::<Value>(&text).map_err(|e| format!("解析工具配置失败: {}", e))?;
+    let mcp_key = if reg.get_tool_mcp_config(&tool_id).map(|(_, f)| f == "opencode").unwrap_or(false) { "mcp" } else { "mcpServers" };
+    let entry = val
+        .get(mcp_key)
+        .and_then(|m| m.get(&name))
+        .cloned()
+        .ok_or("未在工具配置中找到该服务器")?;
+    let raw = reverse_translate(&name, &entry);
+    let id = normalize_id(&name);
+    let mut store = load_store();
+    store.servers.retain(|s| s.id != id);
+    store.servers.push(McpServer {
+        id: id.clone(),
+        name: name.clone(),
+        transport: raw.transport,
+        command: raw.command,
+        args: raw.args,
+        env: raw.env,
+        cwd: raw.cwd,
+        url: raw.url,
+        headers: raw.headers,
+        enabled: true,
+        enabled_tools: vec![tool_id.clone()],
+        description: None,
+        install_method: "adopted".to_string(),
+    });
+    save_store(&store)?;
+    deploy_all()
+}
+
+/// 把各工具配置里的服务器片段反解析为规范化字段（覆盖 claude / opencode / gemini / qwen 等格式）
+fn reverse_translate(name: &str, entry: &Value) -> DiscoveredMcp {
+    let obj = match entry.as_object() {
+        Some(o) => o,
+        None => return DiscoveredMcp {
+            tool_id: String::new(), name: name.to_string(), transport: "stdio".into(),
+            command: String::new(), args: vec![], env: HashMap::new(), cwd: None,
+            url: String::new(), headers: HashMap::new(), already_managed: false,
+        },
+    };
+    let get = |k: &str| obj.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    let transport = if obj.contains_key("url") || obj.contains_key("httpUrl") {
+        if get("type") == "sse" { "sse".to_string() } else { "http".to_string() }
+    } else {
+        "stdio".to_string()
+    };
+
+    let (command, mut args) = if let Some(c) = obj.get("command") {
+        if let Some(s) = c.as_str() {
+            (s.to_string(), vec![])
+        } else if let Some(arr) = c.as_array() {
+            let cmd = arr.first().and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let a: Vec<String> = arr.iter().skip(1).filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+            (cmd, a)
+        } else {
+            (String::new(), vec![])
+        }
+    } else {
+        (String::new(), vec![])
+    };
+    if args.is_empty() {
+        if let Some(v) = obj.get("args") {
+            if let Ok(a) = serde_json::from_value::<Vec<String>>(v.clone()) {
+                args = a;
+            }
+        }
+    }
+
+    let env = obj.get("env").or_else(|| obj.get("environment"))
+        .and_then(|v| serde_json::from_value::<HashMap<String, String>>(v.clone()).ok())
+        .unwrap_or_default();
+    let headers = obj.get("headers")
+        .and_then(|v| serde_json::from_value::<HashMap<String, String>>(v.clone()).ok())
+        .unwrap_or_default();
+    let url = get("url");
+    let url = if url.is_empty() { get("httpUrl") } else { url };
+    let cwd = obj.get("cwd").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    DiscoveredMcp {
+        tool_id: String::new(),
+        name: name.to_string(),
+        transport,
+        command,
+        args,
+        env,
+        cwd,
+        url,
+        headers,
+        already_managed: false,
+    }
 }
 
 /// 可部署 MCP 的工具列表（由 mcp-config.json 驱动），复用技能工具信息结构

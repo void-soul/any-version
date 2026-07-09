@@ -10,6 +10,7 @@ import {
   Link2,
   Check,
   X,
+  Search,
 } from "lucide-react";
 
 interface McpServer {
@@ -31,6 +32,19 @@ interface McpServer {
 interface McpToolInfo {
   id: string;
   label: string;
+}
+
+interface DiscoveredMcp {
+  toolId: string;
+  name: string;
+  transport: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  cwd: string | null;
+  url: string;
+  headers: Record<string, string>;
+  alreadyManaged: boolean;
 }
 
 // 将 "KEY=VALUE" 多行文本解析为对象
@@ -62,6 +76,7 @@ const TRANSPORT_LABEL: Record<string, string> = {
 export default function McpManager() {
   const [servers, setServers] = useState<McpServer[]>([]);
   const [mcpTools, setMcpTools] = useState<McpToolInfo[]>([]);
+  const [discovered, setDiscovered] = useState<DiscoveredMcp[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -83,12 +98,14 @@ export default function McpManager() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [srv, tools] = await Promise.all([
+      const [srv, tools, disc] = await Promise.all([
         invoke<McpServer[]>("get_mcp_servers"),
         invoke<McpToolInfo[]>("get_mcp_tools"),
+        invoke<DiscoveredMcp[]>("get_discovered_mcp"),
       ]);
       setServers(srv);
       setMcpTools(tools);
+      setDiscovered(disc.filter((d) => !d.alreadyManaged));
     } catch (e) {
       console.error(e);
     } finally {
@@ -175,6 +192,13 @@ export default function McpManager() {
       await invoke("delete_mcp_server", { id });
       await load();
     } catch (e: any) { alert(`删除失败: ${e}`); }
+  };
+
+  const handleAdopt = async (d: DiscoveredMcp) => {
+    try {
+      await invoke("adopt_mcp_server", { toolId: d.toolId, name: d.name });
+      await load();
+    } catch (e: any) { alert(`纳入管理失败: ${e}`); }
   };
 
   const handleToggle = async (id: string, toolId: string, current: boolean) => {
@@ -432,6 +456,36 @@ export default function McpManager() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* 发现：工具配置里已有、但尚未由 AnyVersion 托管的服务器 */}
+      {discovered.length > 0 && (
+        <div className="p-3 rounded-xl bg-amber-500/5 border border-amber-500/20 space-y-2">
+          <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-300">
+            <Search className="w-3.5 h-3.5" /> 发现 {discovered.length} 个工具内已有的 MCP 服务器
+            <span className="text-[9px] font-normal text-slate-500 ml-1">（纳入后可统一部署到多工具）</span>
+          </div>
+          <div className="space-y-1.5">
+            {discovered.map((d) => (
+              <div key={`${d.toolId}:${d.name}`} className="flex items-center gap-2 rounded-lg bg-slate-900/40 border border-white/5 px-2.5 py-1.5">
+                <Plug className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+                <span className="text-[10px] font-bold text-slate-200 font-mono truncate">{d.name}</span>
+                <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 flex-shrink-0">
+                  {TRANSPORT_LABEL[d.transport] || d.transport}
+                </span>
+                <span className="text-[9px] text-slate-500 truncate flex-1">
+                  {mcpTools.find((t) => t.id === d.toolId)?.label ?? d.toolId}
+                </span>
+                <button
+                  onClick={() => handleAdopt(d)}
+                  className="px-2 py-1 rounded-md text-[9px] font-semibold bg-amber-600 hover:bg-amber-500 text-white cursor-pointer transition-all flex items-center gap-1 flex-shrink-0"
+                >
+                  <Link2 className="w-2.5 h-2.5" /> 纳入管理
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
