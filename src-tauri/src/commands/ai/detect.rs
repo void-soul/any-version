@@ -38,6 +38,12 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
         cache_dirs: config.cache_dirs.clone(),
         category: config.category.clone(),
         support_one_m_context: config.support_one_m_context,
+        supports_openai: config.supports_openai,
+        supports_anthropic: config.supports_anthropic,
+        supports_google: config.supports_google,
+        builtin_models: config.builtin_models.clone(),
+        supports_optimizer: config.supports_optimizer,
+        supports_rectifier: config.supports_rectifier,
     };
 
     // 策略 1：按 PM 类型精准查询版本

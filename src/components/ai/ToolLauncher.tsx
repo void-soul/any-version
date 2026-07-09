@@ -50,6 +50,73 @@ const PROTOCOL_LABELS: Record<string, string> = {
   none: "仅支持官方模型",
 };
 
+/// 由供应商已配置的协议 URL 推导出站协议：若供应商支持工具原生协议则同协议直连，
+/// 否则取供应商首个支持的协议（由代理做协议转换）。
+function getOutboundProtocol(tool: DetectedAiTool | null, provider: AiProvider | null): string {
+  if (!tool || !provider) return "openai";
+  const inbound = tool.supports_anthropic ? "anthropic" : tool.supports_google ? "google" : "openai";
+  const supported: string[] = [];
+  if (provider.openai_url) supported.push("openai");
+  if (provider.anthropic_url) supported.push("anthropic");
+  if (provider.google_url) supported.push("google");
+  if (supported.includes(inbound)) return inbound;
+  return supported[0] || "openai";
+}
+
+/// 渲染供应商已配置协议的徽标（与模型配置页一致）
+function providerProtocolBadges(p: AiProvider | null | undefined) {
+  if (!p) return null;
+  const items: { key: string; label: string; cls: string }[] = [];
+  if (p.openai_url) items.push({ key: "openai", label: "OpenAI", cls: "bg-blue-500/20 text-blue-300" });
+  if (p.anthropic_url) items.push({ key: "anthropic", label: "Anthropic", cls: "bg-amber-500/20 text-amber-300" });
+  if (p.google_url) items.push({ key: "google", label: "Google", cls: "bg-green-500/20 text-green-300" });
+  return items.map(i => (
+    <span key={i.key} className={`text-[8px] text-slate-600 px-1.5 py-0.5 rounded ${i.cls}`}>{i.label}</span>
+  ));
+}
+
+/// 计算代理启动信息条所需数据（与后端 launch.rs 逻辑对齐）。
+/// 无 Provider / 官方模式 / 不支持模型 时不启动代理，返回 null。
+function getProxyInfo(
+  tool: DetectedAiTool | null,
+  provider: AiProvider | null,
+  useOfficial: boolean,
+  selectedModel: string,
+  masqueradeModel: string,
+  fallbackModel: string,
+  fallbackMasqueradeModel: string,
+): {
+  inbound: string;
+  outbound: string;
+  converted: boolean;
+  aliasEntries: [string, string][];
+} | null {
+  if (!tool || !tool.installed || !tool.supports_model || useOfficial || !provider) {
+    return null;
+  }
+  // 入站协议：工具支持的协议（anthropic 优先，其次 google，否则 openai）
+  const inbound = tool.supports_anthropic
+    ? "anthropic"
+    : tool.supports_google
+    ? "google"
+    : "openai";
+  // 出站协议：根据供应商已配置的协议 URL 推导（同协议优先，否则转换）
+  const outbound = getOutboundProtocol(tool, provider);
+  // 伪装映射 C → B（主模型 + fallback 小模型）
+  const aliasEntries: [string, string][] = [];
+  if (masqueradeModel) aliasEntries.push([masqueradeModel, selectedModel || ""]);
+  if (fallbackModel) {
+    const claimedFb = fallbackMasqueradeModel || fallbackModel;
+    aliasEntries.push([claimedFb, fallbackModel]);
+  }
+  return {
+    inbound,
+    outbound,
+    converted: inbound !== outbound,
+    aliasEntries,
+  };
+}
+
 export default function ToolLauncher() {
   const [tools, setTools] = useState<DetectedAiTool[]>([]);
   const [config, setConfig] = useState<AiConfig | null>(null);
@@ -73,6 +140,18 @@ export default function ToolLauncher() {
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
 
   const [oneMContext, setOneMContext] = useState(false);
+  // 伪装模型名（"" 表示不伪装，直接使用所选取的供应商模型）
+  const [masqueradeModel, setMasqueradeModel] = useState("");
+  // 代理增强能力开关（由工具能力 + 全局配置共同决定是否实际生效）
+  const [optimizerEnabled, setOptimizerEnabled] = useState(true);
+  const [rectifierEnabled, setRectifierEnabled] = useState(true);
+  // 整流器 / 优化器各策略（默认沿用全局配置 AiConfig.rectifier / optimizer）
+  const [rectifierStrategies, setRectifierStrategies] = useState({
+    thinking_signature: true, thinking_budget: true, media_fallback: true, protocol_mismatch: true,
+  });
+  const [optimizerStrategies, setOptimizerStrategies] = useState({
+    cache_injection: true, thinking_optimizer: true, deepseek_normalize: true,
+  });
 
   const [launching, setLaunching] = useState(false);
   const [launchResult, setLaunchResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -84,6 +163,8 @@ export default function ToolLauncher() {
   // 双模型（高级 + fallback 低级）
   const [selectedFallbackModel, setSelectedFallbackModel] = useState("");
   const [selectedFallbackProvider, setSelectedFallbackProvider] = useState("");
+  // fallback 模型的伪装声明名（"" 表示不伪装，直接使用所选取的供应商模型）
+  const [fallbackMasqueradeModel, setFallbackMasqueradeModel] = useState("");
   // 官方模型选择（对于 api_protocol="none" 或用户主动选择官方模型）
   const [useOfficialModel, setUseOfficialModel] = useState(false);
 
@@ -132,7 +213,7 @@ export default function ToolLauncher() {
     try {
       const [t, c, term, lcs] = await Promise.all([
         invoke<DetectedAiTool[]>("detect_ai_tools").catch(() => []),
-        invoke<AiConfig>("get_ai_config").catch(() => ({ providers: [], active_provider: null, proxy_port: 15721, default_project_path: "", rectifier: { enabled: false, thinking_signature: false, thinking_budget: false, media_fallback: false }, optimizer: { enabled: false, cache_injection: false, thinking_optimizer: false, deepseek_normalize: false }, skills_dir: "" })),
+        invoke<AiConfig>("get_ai_config").catch(() => ({ providers: [], active_provider: null, proxy_port: 15721, default_project_path: "", rectifier: { enabled: false, thinking_signature: false, thinking_budget: false, media_fallback: false, protocol_mismatch: false }, optimizer: { enabled: false, cache_injection: false, thinking_optimizer: false, deepseek_normalize: false }, skills_dir: "" })),
         invoke<TerminalInfo[]>("detect_terminals").catch(() => []),
         invoke<Record<string, LastLaunchConfig>>("get_all_last_launch_configs").catch(() => ({})),
       ]);
@@ -141,6 +222,20 @@ export default function ToolLauncher() {
       setTerminals(term);
       setProjectPath(c.default_project_path || "");
       setLastLaunchConfigs(lcs);
+      // 启动页代理增强策略默认沿用全局配置
+      setOptimizerEnabled(c.optimizer?.enabled !== false);
+      setRectifierEnabled(c.rectifier?.enabled !== false);
+      setOptimizerStrategies({
+        cache_injection: c.optimizer?.cache_injection !== false,
+        thinking_optimizer: c.optimizer?.thinking_optimizer !== false,
+        deepseek_normalize: c.optimizer?.deepseek_normalize !== false,
+      });
+      setRectifierStrategies({
+        thinking_signature: c.rectifier?.thinking_signature !== false,
+        thinking_budget: c.rectifier?.thinking_budget !== false,
+        media_fallback: c.rectifier?.media_fallback !== false,
+        protocol_mismatch: c.rectifier?.protocol_mismatch !== false,
+      });
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, []);
@@ -164,84 +259,33 @@ export default function ToolLauncher() {
       .then(setSessions).catch(() => setSessions([]));
   }, [selectedTool]);
 
-// ── 获取模型别名 ──
-const getEffectiveAliases = useCallback((p: AiProvider, _protocol: string): Record<string, string> => {
-return p.model_aliases || {};
-}, []);
-
-const getEffectiveDefaultModel = useCallback((p: AiProvider, _protocol: string): string | null => {
-return p.default_model || null;
-}, []);
-
-const isProtocolSupported = useCallback((p: AiProvider, protocol: string): boolean => {
-if (protocol === "both") {
-return !!p.anthropic_url || !!p.openai_url;
-}
-if (protocol === "anthropic") return !!p.anthropic_url || !!p.openai_url;
-if (protocol === "openai") return !!p.openai_url || !!p.anthropic_url;
-if (protocol === "google") return !!p.google_url;
-return false;
-}, []);
-
-  // ── 模型选项分两组 ──
-  // 有别名映射的供应商（一键选择，无需挑模型）
-  const aliasedProviders = React.useMemo(() => {
+  // ── 模型供应商（统一列表）──
+  // 新设计下代理会自动做协议转换，因此 ANY 提供模型列表的供应商都可选；
+  // 协议差异由代理的入站/出站转换负责。这里合并为单一列表（按供应商分组）。
+  const eligibleProviders = React.useMemo(() => {
     if (!config || !selectedTool) return [];
-    const protocol = selectedTool.api_protocol;
-    if (protocol === "none" || !selectedTool.supports_model) return [];
-    return config.providers.filter(p => {
-      const include = isProtocolSupported(p, protocol);
-      return include && Object.keys(getEffectiveAliases(p, protocol)).length > 0;
-    });
-  }, [config, selectedTool, getEffectiveAliases, isProtocolSupported]);
-
-  // 无别名映射的供应商（需要选具体模型），可折叠
-  const modelGroups = React.useMemo(() => {
-    if (!config || !selectedTool) return [];
-    const protocol = selectedTool.api_protocol;
-    if (protocol === "none" || !selectedTool.supports_model) return [];
+    if (!selectedTool.supports_model) return [];
     const groups: { provider_name: string; provider_id: string; models: { id: string }[] }[] = [];
     for (const p of config.providers) {
-      const include = isProtocolSupported(p, protocol);
-      // 有别名的不在此列
-      if (!include || p.models.length === 0 || Object.keys(getEffectiveAliases(p, protocol)).length > 0) continue;
+      if (p.models.length === 0) continue;
       groups.push({ provider_name: p.name, provider_id: p.id, models: p.models });
     }
     return groups;
-  }, [config, selectedTool, getEffectiveAliases, isProtocolSupported]);
+  }, [config, selectedTool]);
 
-  // 当前选中 Provider 的别名映射信息
-  const selectedProviderAliases = React.useMemo(() => {
-    if (!config || !selectedModelProvider || !selectedTool) return null;
-    const provider = config.providers.find(p => p.id === selectedModelProvider);
-    if (!provider) return null;
-    const protocol = selectedTool.api_protocol;
-    const aliases = getEffectiveAliases(provider, protocol);
-    if (Object.keys(aliases).length === 0) return null;
-return {
-aliases,
-name: provider.name,
-usesProxy: true,
-defaultModel: getEffectiveDefaultModel(provider, protocol),
-};
-  }, [config, selectedModelProvider, selectedTool, getEffectiveAliases, getEffectiveDefaultModel]);
-
-  // 全部兼容模型（含别名供应商），用于 Fallback 选择 — 按供应商分组
+  // 全部模型（含任意供应商），用于 Fallback 选择 — 按供应商分组
   const fallbackGroups = React.useMemo(() => {
     if (!config || !selectedTool) return [];
-    const protocol = selectedTool.api_protocol;
-    if (protocol === "none" || !selectedTool.supports_fallback_model) return [];
+    if (!selectedTool.supports_fallback_model) return [];
     const groups: { provider_name: string; provider_id: string; models: { id: string }[] }[] = [];
     for (const p of config.providers) {
-      const include = isProtocolSupported(p, protocol);
-      if (!include || p.models.length === 0) continue;
-      // 过滤掉当前已选模型
+      if (p.models.length === 0) continue;
       const filteredModels = selectedModel ? p.models.filter(m => m.id !== selectedModel) : p.models;
       if (filteredModels.length === 0) continue;
       groups.push({ provider_name: p.name, provider_id: p.id, models: filteredModels });
     }
     return groups;
-  }, [config, selectedTool, selectedModel, isProtocolSupported]);
+  }, [config, selectedTool, selectedModel]);
 
   // fallback 的折叠状态
   const [expandedFallbackGroups, setExpandedFallbackGroups] = useState<Set<string>>(new Set());
@@ -268,10 +312,21 @@ defaultModel: getEffectiveDefaultModel(provider, protocol),
           model_id: useOfficialModel ? null : (selectedModel || null),
           provider_id: useOfficialModel ? null : (selectedModelProvider || null),
           fallback_model_id: useOfficialModel ? null : (selectedFallbackModel || null),
+          fallback_masquerade_model: useOfficialModel ? null : (fallbackMasqueradeModel || null),
           session_id: selectedSession?.session_id || null,
           session_mode: sessionMode,
           terminal_id: selectedTerminal,
           one_m_context: selectedTool.support_one_m_context ? oneMContext : false,
+          masquerade_model: useOfficialModel ? null : (masqueradeModel || null),
+          optimizer_enabled: useOfficialModel ? null : optimizerEnabled,
+          rectifier_enabled: useOfficialModel ? null : rectifierEnabled,
+          optimizer_cache_injection: useOfficialModel ? null : optimizerStrategies.cache_injection,
+          optimizer_thinking: useOfficialModel ? null : optimizerStrategies.thinking_optimizer,
+          optimizer_deepseek: useOfficialModel ? null : optimizerStrategies.deepseek_normalize,
+          rectifier_thinking_signature: useOfficialModel ? null : rectifierStrategies.thinking_signature,
+          rectifier_thinking_budget: useOfficialModel ? null : rectifierStrategies.thinking_budget,
+          rectifier_media_fallback: useOfficialModel ? null : rectifierStrategies.media_fallback,
+          rectifier_protocol_mismatch: useOfficialModel ? null : rectifierStrategies.protocol_mismatch,
         },
       });
       setLaunchResult({ ok: result.success, msg: result.message });
@@ -286,9 +341,13 @@ defaultModel: getEffectiveDefaultModel(provider, protocol),
           model_id: useOfficialModel ? null : (selectedModel || null),
           fallback_model_id: useOfficialModel ? null : (selectedFallbackModel || null),
           fallback_provider_id: useOfficialModel ? null : (selectedFallbackProvider || null),
+          fallback_masquerade_model: useOfficialModel ? null : (fallbackMasqueradeModel || null),
           use_official_model: useOfficialModel,
           terminal_id: selectedTerminal,
           one_m_context: selectedTool.support_one_m_context ? oneMContext : false,
+          masquerade_model: useOfficialModel ? null : (masqueradeModel || null),
+          optimizer_enabled: useOfficialModel ? null : optimizerEnabled,
+          rectifier_enabled: useOfficialModel ? null : rectifierEnabled,
           project_path: sessionMode === "resume" && selectedSession ? selectedSession.project_path : projectPath,
           last_launched_at: new Date().toISOString(),
         };
@@ -444,6 +503,7 @@ defaultModel: getEffectiveDefaultModel(provider, protocol),
                 setSelectedModelProvider("");
                 setSelectedFallbackModel("");
                 setSelectedFallbackProvider("");
+                setFallbackMasqueradeModel("");
                 setExpandedModelGroups(new Set());
                 setExpandedFallbackGroups(new Set());
                 setSessionMode("new");
@@ -452,6 +512,20 @@ defaultModel: getEffectiveDefaultModel(provider, protocol),
                 setLaunchResult(null);
                 setShowCacheManager(false);
                 setOneMContext(false);
+                setMasqueradeModel("");
+                setOptimizerEnabled(config?.optimizer?.enabled !== false);
+                setRectifierEnabled(config?.rectifier?.enabled !== false);
+                setOptimizerStrategies({
+                  cache_injection: config?.optimizer?.cache_injection !== false,
+                  thinking_optimizer: config?.optimizer?.thinking_optimizer !== false,
+                  deepseek_normalize: config?.optimizer?.deepseek_normalize !== false,
+                });
+                setRectifierStrategies({
+                  thinking_signature: config?.rectifier?.thinking_signature !== false,
+                  thinking_budget: config?.rectifier?.thinking_budget !== false,
+                  media_fallback: config?.rectifier?.media_fallback !== false,
+                  protocol_mismatch: config?.rectifier?.protocol_mismatch !== false,
+                });
                 setSelectedTerminal("cmd");
                 setUseOfficialModel(tool.api_protocol === "none");
                 // 加载上次启动配置并恢复 UI 状态
@@ -466,9 +540,13 @@ defaultModel: getEffectiveDefaultModel(provider, protocol),
                       if (last.model_id) setSelectedModel(last.model_id);
                       if (last.fallback_model_id) setSelectedFallbackModel(last.fallback_model_id);
                       if (last.fallback_provider_id) setSelectedFallbackProvider(last.fallback_provider_id);
+                      if (last.fallback_masquerade_model) setFallbackMasqueradeModel(last.fallback_masquerade_model);
                     }
                     if (last.terminal_id && last.terminal_id !== "cmd") setSelectedTerminal(last.terminal_id);
                     if (last.one_m_context) setOneMContext(true);
+                    if (last.masquerade_model) setMasqueradeModel(last.masquerade_model);
+                    if (last.optimizer_enabled !== null && last.optimizer_enabled !== undefined) setOptimizerEnabled(last.optimizer_enabled);
+                    if (last.rectifier_enabled !== null && last.rectifier_enabled !== undefined) setRectifierEnabled(last.rectifier_enabled);
                     if (last.project_path) setProjectPath(last.project_path);
                   }
                 } catch { /* 无历史记录 */
@@ -673,74 +751,16 @@ defaultModel: getEffectiveDefaultModel(provider, protocol),
                 )}
 
                 {/* ─── 模型选择 ─── */}
-                {selectedTool.supports_model && selectedTool.api_protocol !== "none" && !useOfficialModel && (
+                {selectedTool.supports_model && !useOfficialModel && (
                   <div>
-                    {/* 映射供应商 — 一键选择，无需挑模型 */}
-                    {aliasedProviders.length > 0 && (
-                      <div className="mb-3">
-                        <label className="text-xs font-bold text-slate-300 mb-1.5 block">映射供应商</label>
-                        <p className="text-[9px] text-slate-500 mb-2">别名映射已配置，选择供应商即可自动路由模型</p>
-                        <div className="space-y-1.5">
-                          {aliasedProviders.map(p => {
-                            const isSelected = selectedModelProvider === p.id;
-                            return (
-                              <button key={p.id}
-                                onClick={() => {
-                                  if (isSelected) { setSelectedModelProvider(""); setSelectedModel(""); }
-                                  else { setSelectedModelProvider(p.id); setSelectedModel(""); }
-                                }}
-                                className={`w-full text-left rounded-lg border transition-all cursor-pointer ${
-                                  isSelected
-                                    ? "border-violet-500/30 bg-violet-500/10"
-                                    : "border-white/5 bg-slate-900/30 hover:border-white/10 hover:bg-slate-900/50"
-                                }`}
-                              >
-                                <div className="px-3 py-2 flex items-center justify-between">
-                                  <div className="flex items-center gap-2">
-                                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isSelected ? "bg-violet-400" : "bg-slate-700"}`} />
-                                    <span className={`text-[11px] font-semibold ${isSelected ? "text-violet-200" : "text-slate-300"}`}>{p.name}</span>
-                                  </div>
-                                  <ChevronRight className={`w-3.5 h-3.5 text-slate-500 transition-transform ${isSelected ? "rotate-90" : ""}`} />
-                                </div>
-                                {isSelected && (
-                                  <div className="px-3 pb-2 border-t border-violet-500/10 pt-2">
-                                    <div className="flex flex-wrap gap-1">
-                                      {Object.entries(getEffectiveAliases(p, selectedTool.api_protocol)).map(([role, m]) => (
-                                        <span key={role} className="text-[8px] bg-violet-500/15 text-violet-300 px-1.5 py-0.5 rounded font-mono">
-                                          {role} → {m}
-                                        </span>
-                                      ))}
-                                      {getEffectiveDefaultModel(p, selectedTool.api_protocol) && (
-                                        <span className="text-[8px] bg-slate-500/15 text-slate-400 px-1.5 py-0.5 rounded font-mono">
-                                          默认: {getEffectiveDefaultModel(p, selectedTool.api_protocol)}
-                                        </span>
-                                      )}
-                                    </div>
-<p className="text-[9px] text-violet-300/70 mt-1.5 leading-relaxed">
-代理模式：工具发出的模型请求由代理按映射自动路由
-</p>
-                                  </div>
-                                )}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* 模型供应商 — 可折叠，需选具体模型 */}
-                    {modelGroups.length > 0 && (
+                    {/* 模型供应商 — 统一列表（代理自动转换协议，任意供应商可选） */}
+                    {eligibleProviders.length > 0 && (
                       <div>
-                        <label className="text-xs font-bold text-slate-300 mb-1.5 block">
-                          {aliasedProviders.length > 0 ? "模型供应商" : "模型"}
-                        </label>
-                        {aliasedProviders.length > 0 && (
-                          <p className="text-[9px] text-slate-500 mb-2">未配置别名映射的供应商，需要选择具体模型</p>
-                        )}
+                        <label className="text-xs font-bold text-slate-300 mb-1.5 block">模型供应商</label>
                         <div className="rounded-lg border border-white/5 bg-slate-900/30">
-                          {modelGroups.map(group => {
+                          {eligibleProviders.map(group => {
+                            const isSelected = selectedModelProvider === group.provider_id;
                             const expanded = expandedModelGroups.has(group.provider_id);
-                            const selectedInGroup = selectedModelProvider === group.provider_id && selectedModel !== "";
                             return (
                               <div key={group.provider_id}>
                                 <button
@@ -751,34 +771,32 @@ defaultModel: getEffectiveDefaultModel(provider, protocol),
                                   }}
                                   className="w-full flex items-center justify-between px-3 py-2 text-[10px] hover:bg-white/[0.02] cursor-pointer transition-all"
                                 >
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-2 min-w-0">
                                     <ChevronRight className={`w-3 h-3 text-slate-500 transition-transform ${expanded ? "rotate-90" : ""}`} />
                                     <span className="font-semibold text-slate-400">{group.provider_name}</span>
                                     <span className="text-[8px] text-slate-600">{group.models.length} 个模型</span>
+                                    {providerProtocolBadges(config?.providers.find(p => p.id === group.provider_id))}
                                   </div>
-                                  {selectedInGroup && (
+                                  {isSelected && selectedModel && (
                                     <span className="text-[9px] text-violet-400 font-mono truncate ml-2">{selectedModel}</span>
-                                  )}
-                                  {!selectedInGroup && selectedModelProvider === group.provider_id && selectedModel === "" && (
-                                    <span className="text-[9px] text-slate-600">已选</span>
                                   )}
                                 </button>
                                 {expanded && (
                                   <div className="border-t border-white/[0.03]">
                                     {group.models.map(m => {
-                                      const isSelected = selectedModel === m.id && selectedModelProvider === group.provider_id;
+                                      const isSelModel = selectedModel === m.id && selectedModelProvider === group.provider_id;
                                       return (
                                         <button key={`${group.provider_id}:${m.id}`}
                                           onClick={() => {
-                                            if (isSelected) { setSelectedModel(""); setSelectedModelProvider(""); }
+                                            if (isSelModel) { setSelectedModel(""); setSelectedModelProvider(""); }
                                             else { setSelectedModel(m.id); setSelectedModelProvider(group.provider_id); }
                                           }}
                                           className={`w-full text-left px-5 py-1.5 text-[11px] transition-all cursor-pointer flex items-center gap-2 ${
-                                            isSelected
+                                            isSelModel
                                               ? "bg-violet-500/10 text-violet-300 font-semibold"
                                               : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
                                           }`}>
-                                          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: isSelected ? "#a78bfa" : "#334155" }} />
+                                          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: isSelModel ? "#a78bfa" : "#334155" }} />
                                           <span className="font-mono">{m.id}</span>
                                         </button>
                                       );
@@ -789,17 +807,32 @@ defaultModel: getEffectiveDefaultModel(provider, protocol),
                             );
                           })}
                         </div>
-                        {selectedModel && !selectedProviderAliases && (
-                          <div className="mt-1 text-[10px] text-violet-400">已选: <span className="font-mono">{selectedModel}</span></div>
+                        {selectedModel && (
+                          <div className="mt-1 text-[10px] text-violet-400">已选: <span className="font-mono">{selectedModel}</span> <span className="text-slate-500">（{config?.providers.find(p => p.id === selectedModelProvider)?.name}）</span></div>
                         )}
                       </div>
                     )}
 
                     {/* 没有可用的供应商/模型时的警告 */}
-                    {aliasedProviders.length === 0 && modelGroups.length === 0 && (
+                    {eligibleProviders.length === 0 && (
                       <div className="p-3 rounded-xl border border-amber-500/20 bg-amber-500/5 text-[10px] text-amber-400 flex items-center gap-2">
                         <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                        <span>没有兼容的模型，请在模型配置中添加支持 {PROTOCOL_LABELS[selectedTool.api_protocol]} 协议的 Provider</span>
+                        <span>没有可用的模型，请在模型配置中添加 Provider</span>
+                      </div>
+                    )}
+
+                    {/* 模型伪装（仅当工具内置模型名列表非空） */}
+                    {selectedModel && selectedTool.builtin_models.length > 0 && (
+                      <div className="mt-3">
+                        <label className="text-xs font-bold text-slate-300 mb-1.5 block">伪装模型名称 <span className="text-[9px] text-slate-500 font-normal">（可选）</span></label>
+                        <p className="text-[9px] text-slate-500 mb-1.5">让工具以为自己调用以下内置模型，代理实际转发到 <span className="font-mono text-slate-400">{selectedModel}</span></p>
+                        <select value={masqueradeModel} onChange={e => setMasqueradeModel(e.target.value)}
+                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-500">
+                          <option value="">不伪装（直接使用 {selectedModel}）</option>
+                          {selectedTool.builtin_models.map(c => (
+                            <option key={c} value={c}>{c}</option>
+                          ))}
+                        </select>
                       </div>
                     )}
                   </div>
@@ -863,8 +896,21 @@ defaultModel: getEffectiveDefaultModel(provider, protocol),
                         );
                       })}
                     </div>
+                    {selectedFallbackModel && selectedTool.builtin_models.length > 0 && (
+                      <div className="mt-3">
+                        <label className="text-[11px] font-bold text-slate-300 mb-1.5 block">Fallback 伪装名称 <span className="text-[9px] text-slate-500 font-normal">（可选）</span></label>
+                        <p className="text-[9px] text-slate-500 mb-1.5">让工具以为 fallback 调用以下内置模型，代理实际转发到 <span className="font-mono text-slate-400">{selectedFallbackModel}</span></p>
+                        <select value={fallbackMasqueradeModel} onChange={e => setFallbackMasqueradeModel(e.target.value)}
+                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-500">
+                          <option value="">不伪装（直接使用 {selectedFallbackModel}）</option>
+                          {selectedTool.builtin_models.map(c => (
+                            <option key={c} value={c}>{c}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                     {selectedFallbackModel && (
-                      <div className="mt-1 text-[10px] text-amber-400">Fallback: <span className="font-mono">{selectedFallbackModel}</span></div>
+                      <div className="mt-1 text-[10px] text-amber-400">Fallback: <span className="font-mono">{selectedFallbackModel}</span>{fallbackMasqueradeModel && <>(伪装为 <span className="font-mono">{fallbackMasqueradeModel}</span>)</>}</div>
                     )}
                   </div>
                 )}
@@ -882,6 +928,81 @@ defaultModel: getEffectiveDefaultModel(provider, protocol),
                     >
                       {oneMContext ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
                     </button>
+                  </div>
+                )}
+
+                {/* 代理增强能力（优化器 / 整流器）— 默认沿用全局配置，可在此按启动覆盖 */}
+                {selectedTool.supports_model && !useOfficialModel && (selectedTool.supports_optimizer || selectedTool.supports_rectifier) && (
+                  <div className="space-y-2">
+                    {selectedTool.supports_optimizer && (
+                      <div className="rounded-lg bg-slate-900/30 border border-white/5 overflow-hidden">
+                        <div className="flex items-center justify-between p-2.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-semibold text-slate-300">请求优化器</span>
+                            <span className="text-[8px] text-slate-500 hidden sm:inline">缓存注入 / 思考优化 / DeepSeek 归一</span>
+                          </div>
+                          <button onClick={() => setOptimizerEnabled(!optimizerEnabled)}
+                            className={`p-1 rounded-md cursor-pointer transition-all ${optimizerEnabled ? "text-violet-400" : "text-slate-600 hover:text-slate-400"}`}>
+                            {optimizerEnabled ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
+                          </button>
+                        </div>
+                        {optimizerEnabled && (
+                          <div className="px-3 pb-2.5 space-y-1.5 border-t border-white/5 pt-2">
+                            {[
+                              { key: "cache_injection" as const, label: "Prompt 缓存注入", desc: "注入 cache_control 断点降低 API 费用" },
+                              { key: "thinking_optimizer" as const, label: "Thinking 参数优化", desc: "按模型自适应配置 thinking 参数" },
+                              { key: "deepseek_normalize" as const, label: "DeepSeek 兼容", desc: "为 DeepSeek/Moonshot 等端点规范化 thinking 块" },
+                            ].map(item => (
+                              <label key={item.key} className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={optimizerStrategies[item.key]}
+                                  onChange={() => setOptimizerStrategies(prev => ({ ...prev, [item.key]: !prev[item.key] }))}
+                                  className="accent-violet-500"
+                                />
+                                <span className="text-[10px] text-slate-300">{item.label}</span>
+                                <span className="text-[9px] text-slate-600">{item.desc}</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {selectedTool.supports_rectifier && (
+                      <div className="rounded-lg bg-slate-900/30 border border-white/5 overflow-hidden">
+                        <div className="flex items-center justify-between p-2.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-semibold text-slate-300">协议整流器</span>
+                            <span className="text-[8px] text-slate-500 hidden sm:inline">抹平协议差异</span>
+                          </div>
+                          <button onClick={() => setRectifierEnabled(!rectifierEnabled)}
+                            className={`p-1 rounded-md cursor-pointer transition-all ${rectifierEnabled ? "text-violet-400" : "text-slate-600 hover:text-slate-400"}`}>
+                            {rectifierEnabled ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
+                          </button>
+                        </div>
+                        {rectifierEnabled && (
+                          <div className="px-3 pb-2.5 space-y-1.5 border-t border-white/5 pt-2">
+                            {[
+                              { key: "thinking_signature" as const, label: "Thinking 签名修复", desc: "thinking block 签名无效时自动剥离并重试" },
+                              { key: "thinking_budget" as const, label: "Thinking 预算修复", desc: "budget_tokens 太小时自动修正为 32000" },
+                              { key: "media_fallback" as const, label: "图片降级", desc: "上游不支持图片时自动替换为文本标记" },
+                              { key: "protocol_mismatch" as const, label: "协议不匹配修复", desc: "协议转换后残留专有字段被上游拒绝时自动剥离并重试" },
+                            ].map(item => (
+                              <label key={item.key} className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={rectifierStrategies[item.key]}
+                                  onChange={() => setRectifierStrategies(prev => ({ ...prev, [item.key]: !prev[item.key] }))}
+                                  className="accent-violet-500"
+                                />
+                                <span className="text-[10px] text-slate-300">{item.label}</span>
+                                <span className="text-[9px] text-slate-600">{item.desc}</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1059,6 +1180,52 @@ defaultModel: getEffectiveDefaultModel(provider, protocol),
                     </select>
                   </div>
                 )}
+
+                {/* 代理启动信息条（入站→出站 / 统计 / 伪装） */}
+                {(() => {
+                  const proxyInfo = getProxyInfo(
+                    selectedTool,
+                    selectedModelProvider ? config?.providers.find(p => p.id === selectedModelProvider) ?? null : null,
+                    useOfficialModel,
+                    selectedModel,
+                    masqueradeModel,
+                    selectedFallbackModel,
+                    fallbackMasqueradeModel,
+                  );
+                  if (!proxyInfo) return null;
+                  return (
+                    <div className="p-2.5 rounded-lg bg-violet-500/5 border border-violet-500/15 text-[10px] flex flex-col gap-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Shield className="w-3.5 h-3.5 text-violet-400 flex-shrink-0" />
+                        <span className="text-slate-300">
+                          入站 <span className="font-semibold text-violet-300">{PROTOCOL_LABELS[proxyInfo.inbound]}</span>
+                          <span className="mx-1 text-slate-500">→</span>
+                          出站 <span className="font-semibold text-violet-300">{PROTOCOL_LABELS[proxyInfo.outbound]}</span>
+                        </span>
+                        {proxyInfo.converted ? (
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[9px] font-semibold">自动转换</span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[9px] font-semibold">同协议直连</span>
+                        )}
+                        <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300 text-[9px] font-semibold">统计已开启</span>
+                        {selectedTool.supports_optimizer && optimizerEnabled && config?.optimizer.enabled && (
+                          <span className="px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 text-[9px] font-semibold">优化器</span>
+                        )}
+                        {selectedTool.supports_rectifier && rectifierEnabled && config?.rectifier.enabled && (
+                          <span className="px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 text-[9px] font-semibold">整流器</span>
+                        )}
+                      </div>
+                      {proxyInfo.aliasEntries.length > 0 && (
+                        <div className="flex items-center gap-1.5 flex-wrap text-slate-400">
+                          <span className="text-slate-500">伪装:</span>
+                          {proxyInfo.aliasEntries.map(([k, v]) => (
+                            <span key={k} className="font-mono text-[9px] bg-slate-700/40 px-1.5 py-0.5 rounded">{k} → {v}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* 启动按钮 */}
                 <button onClick={handleLaunch} disabled={launching || !canLaunch}

@@ -8,6 +8,19 @@ use super::models::*;
 use super::config::{load_ai_config, load_last_launch_configs, save_last_launch_configs, load_sessions, save_sessions_to_file};
 use super::terminal::{get_terminal_exe_cfg, is_ext_terminal};
 
+/// 选择出站协议：若供应商支持工具「原生协议」，则同协议直连（不转换）；
+/// 否则取供应商首个支持的协议（由代理做协议转换）。
+/// 供应商未配置任何协议端点 URL 时返回 None。
+fn pick_outbound_protocol(native: &str, provider: &AiProvider) -> Option<String> {
+    if provider.supported_protocols().contains(&native.to_string()) {
+        return Some(native.to_string());
+    }
+    if !provider.openai_url.is_empty() { return Some("openai".to_string()); }
+    if !provider.anthropic_url.is_empty() { return Some("anthropic".to_string()); }
+    if !provider.google_url.is_empty() { return Some("google".to_string()); }
+    None
+}
+
 // ─── 启动 AI 工具 ───
 
 #[tauri::command]
@@ -38,85 +51,113 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
         None => eprintln!("  ✗ 未找到，将使用官方默认模型"),
     }
 
-    // ─── Step 1: 启动代理（强制开启）───
-    // 代理始终启动，用于：统计用量、应用全局整流器/优化器、协议转换、模型别名映射。
-    // 根据工具的 api_protocol 决定启动哪种代理：
-    //   anthropic/both → Anthropic 代理（P1: proxy_port）
-    //   openai/both   → OpenAI 代理（P2: proxy_port + 1）
-    //   google/none   → 不启动代理
-    let tool_protocol = tool_config.api_protocol.as_str();
-    let needs_anthropic_proxy = tool_protocol == "anthropic" || tool_protocol == "both";
-    let needs_openai_proxy = tool_protocol == "openai" || tool_protocol == "both";
+    // ─── Step 1: 启动代理（强制开启，每工具独立实例 + 自由端口）───
+    // 代理始终启动，用于：统计用量、应用全局整流器/优化器、协议转换、模型伪装映射。
+    // 每次启动绑定一个由 OS 分配的空闲端口，避免多工具并行端口冲突。
+    // 入站协议 = 工具支持的协议（inbound_protocols，全部注册路由）；
+    // 出站协议 = 供应商实际支持的协议（由已配置的协议 URL 推导）；
+    // 工具原生协议不被供应商支持时，代理自动做协议转换（强制开启）。
+    let inbound_protocols = tool_config.inbound_protocols();
+    let primary_inbound = tool_config.native_protocol();
 
-    eprintln!("\n[proxy] tool_protocol={}, needs_anthropic={}, needs_openai={}",
-        tool_protocol, needs_anthropic_proxy, needs_openai_proxy);
+    eprintln!("\n[proxy] inbound_protocols={:?}, primary={}", inbound_protocols, primary_inbound);
 
+    // 根据供应商已配置的协议 URL 选择出站协议：优先工具原生协议（同协议直连），
+    // 否则取供应商首个支持的协议（由代理做协议转换）。
+    let chosen_outbound = provider
+        .as_ref()
+        .and_then(|p| pick_outbound_protocol(&primary_inbound, p))
+        .unwrap_or_default();
+
+    let mut proxy_port: u16 = 0;
     if let Some(p) = provider {
-        if !p.api_key.is_empty() && (needs_anthropic_proxy || needs_openai_proxy) {
+        if !p.api_key.is_empty() && !chosen_outbound.is_empty() {
+            let outbound_protocol = chosen_outbound.clone();
+            let upstream_base_url = p.url_for(&outbound_protocol);
             let proxy_settings = &registry().terminals().proxy_settings;
             let timeout = proxy_settings.timeout_seconds as u64;
 
-            // ── P1: Anthropic 代理（proxy_port）──
-            if needs_anthropic_proxy && (!p.anthropic_url.is_empty() || !p.openai_url.is_empty()) {
-                let proxy_config = crate::proxy::types::ProxyConfig {
-                    listen_address: proxy_settings.listen_address.clone(),
-                    listen_port: config.proxy_port,
-                    upstream_base_url: p.openai_url.clone(),
-                    upstream_api_key: p.api_key.clone(),
-                    upstream_anthropic_url: p.anthropic_url.clone(),
-                    upstream_protocol: "anthropic".to_string(),
-                    target_model: req.model_id.clone().unwrap_or_default(),
-                    timeout_secs: timeout,
-                    model_aliases: p.model_aliases.clone(),
-                    default_model: p.default_model.clone(),
-                    rectifier_enabled: config.rectifier.enabled,
-                    rectifier_thinking_signature: config.rectifier.thinking_signature,
-                    rectifier_thinking_budget: config.rectifier.thinking_budget,
-                    rectifier_media_fallback: config.rectifier.media_fallback,
-                    optimizer_enabled: config.optimizer.enabled,
-                    optimizer_cache_injection: config.optimizer.cache_injection,
-                    optimizer_thinking: config.optimizer.thinking_optimizer,
-                    optimizer_deepseek: config.optimizer.deepseek_normalize,
-                };
-                eprintln!("[proxy] ✓ 启动 Anthropic 代理 -> 127.0.0.1:{}", config.proxy_port);
-                tokio::spawn(async move {
-                    if let Err(e) = crate::proxy::server::start_proxy_server(proxy_config).await {
-                        eprintln!("[proxy] Anthropic 代理错误: {}", e);
-                    }
-                });
-                wait_for_proxy_ready(&proxy_settings.listen_address, config.proxy_port).await;
+            let conversion_mode = crate::proxy::types::derive_conversion_mode(&primary_inbound, &outbound_protocol);
+
+            // 模型伪装：声明名 C（来自 tool.builtin_models）→ 实际模型 B（所选取模型）
+            // masquerade_model 为空表示不伪装，工具直接以 B 名义请求。
+            let target_model = req.model_id.clone().unwrap_or_default();
+            let mut model_aliases: HashMap<String, String> = HashMap::new();
+            if let Some(ref c) = req.masquerade_model {
+                let c_norm = c.replace("[1m]", "").replace("[1M]", "").trim().to_string();
+                if !c_norm.is_empty() && c_norm != target_model {
+                    model_aliases.insert(c_norm, target_model.clone());
+                }
             }
 
-            // ── P2: OpenAI 代理（proxy_port + 1）──
-            if needs_openai_proxy && (!p.openai_url.is_empty() || !p.anthropic_url.is_empty()) {
-                let proxy_config = crate::proxy::types::ProxyConfig {
-                    listen_address: proxy_settings.listen_address.clone(),
-                    listen_port: config.proxy_port + 1,
-                    upstream_base_url: p.openai_url.clone(),
-                    upstream_api_key: p.api_key.clone(),
-                    upstream_anthropic_url: p.anthropic_url.clone(),
-                    upstream_protocol: "openai".to_string(),
-                    target_model: String::new(),
-                    timeout_secs: timeout,
-                    model_aliases: p.model_aliases.clone(),
-                    default_model: p.default_model.clone(),
-                    // OpenAI 透传也启用整流器/优化器（用于统计用量 + 协议转换）
-                    rectifier_enabled: config.rectifier.enabled,
-                    rectifier_thinking_signature: config.rectifier.thinking_signature,
-                    rectifier_thinking_budget: config.rectifier.thinking_budget,
-                    rectifier_media_fallback: config.rectifier.media_fallback,
-                    optimizer_enabled: config.optimizer.enabled,
-                    optimizer_cache_injection: config.optimizer.cache_injection,
-                    optimizer_thinking: config.optimizer.thinking_optimizer,
-                    optimizer_deepseek: config.optimizer.deepseek_normalize,
-                };
-                eprintln!("[proxy] ✓ 启动 OpenAI 代理 -> 127.0.0.1:{}", config.proxy_port + 1);
-                tokio::spawn(async move {
-                    if let Err(e) = crate::proxy::server::start_proxy_server(proxy_config).await {
-                        eprintln!("[proxy] OpenAI 代理错误: {}", e);
+            // fallback/小模型伪装映射：声明名 C_small → 实际模型 B_small。
+            // 即使不伪装（C_small == B_small）也必须写入 identity 映射，
+            // 否则代理会将小模型请求误回退到 default_model（主模型 B）。
+            // fallback_model_id 为空时不写入——小模型是可选的。
+            // 注意：查找键必须是「工具实际发出的模型名」：若配置了 modelFormat 前缀，
+            // 工具发出的是带前缀的（如 anyversion/gpt-4o-mini），需与写入配置一致。
+            if let Some(ref fb) = req.fallback_model_id {
+                if !fb.is_empty() {
+                    let claimed_requested = match &req.fallback_masquerade_model {
+                        Some(c) if !c.is_empty() => c.clone(),
+                        _ => format_model_name(fb, &tool_config),
+                    };
+                    let claimed_norm = claimed_requested.replace("[1m]", "").replace("[1M]", "").trim().to_string();
+                    if !claimed_norm.is_empty() {
+                        // 值 = 发给上游的实际供应商模型（原始 id，不带工具前缀）
+                        model_aliases.insert(claimed_norm, fb.clone());
                     }
-                });
-                wait_for_proxy_ready(&proxy_settings.listen_address, config.proxy_port + 1).await;
+                }
+            }
+
+            // 优化器 / 整流器：工具支持时可由启动请求开关覆盖，否则继承全局配置
+            let optimizer_on = tool_config.supports_optimizer
+                && req.optimizer_enabled.unwrap_or(true)
+                && config.optimizer.enabled;
+            let rectifier_on = tool_config.supports_rectifier
+                && req.rectifier_enabled.unwrap_or(true)
+                && config.rectifier.enabled;
+
+            // 绑定空闲端口（OS 分配，避免冲突）
+            match crate::proxy::server::bind_free_port(&proxy_settings.listen_address) {
+                Ok((port, listener)) => {
+                    proxy_port = port;
+                    let listen_addr = proxy_settings.listen_address.clone();
+                    let proxy_config = crate::proxy::types::ProxyConfig {
+                        listen_address: listen_addr,
+                        listen_port: port,
+                        inbound_protocols: inbound_protocols.clone(),
+                        outbound_protocol: outbound_protocol.clone(),
+                        conversion_mode,
+                        upstream_api_key: p.api_key.clone(),
+                        upstream_base_url: upstream_base_url.clone(),
+                        target_model,
+                        timeout_secs: timeout,
+                        model_aliases,
+                        default_model: req.model_id.clone(),
+                        tool_id: req.tool_id.clone(),
+                        provider_id: p.id.clone(),
+                        rectifier_enabled: rectifier_on,
+                        rectifier_thinking_signature: req.rectifier_thinking_signature.unwrap_or(config.rectifier.thinking_signature),
+                        rectifier_thinking_budget: req.rectifier_thinking_budget.unwrap_or(config.rectifier.thinking_budget),
+                        rectifier_media_fallback: req.rectifier_media_fallback.unwrap_or(config.rectifier.media_fallback),
+                        rectifier_protocol_mismatch: req.rectifier_protocol_mismatch.unwrap_or(config.rectifier.protocol_mismatch),
+                        optimizer_enabled: optimizer_on,
+                        optimizer_cache_injection: req.optimizer_cache_injection.unwrap_or(config.optimizer.cache_injection),
+                        optimizer_thinking: req.optimizer_thinking.unwrap_or(config.optimizer.thinking_optimizer),
+                        optimizer_deepseek: req.optimizer_deepseek.unwrap_or(config.optimizer.deepseek_normalize),
+                    };
+                    eprintln!("[proxy] ✓ 启动代理 -> 127.0.0.1:{}  ({} -> {})", port, primary_inbound, outbound_protocol);
+                    tokio::spawn(async move {
+                        if let Err(e) = crate::proxy::server::serve_proxy(proxy_config, listener).await {
+                            eprintln!("[proxy] 代理错误: {}", e);
+                        }
+                    });
+                    wait_for_proxy_ready(&proxy_settings.listen_address, port).await;
+                }
+                Err(e) => {
+                    eprintln!("[proxy] ✗ 绑定空闲端口失败: {}", e);
+                }
             }
         }
     }
@@ -130,40 +171,25 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
     if tool_config.config_file.is_some() {
         if let Some(ref p) = provider {
             if !p.api_key.is_empty() {
-                // 确定上游 URL（用于日志和 fallback）
-                let upstream_url = match tool_config.api_protocol.as_str() {
-                    "openai" => {
-                        if !p.openai_url.is_empty() { &p.openai_url }
-                        else { &p.anthropic_url }
-                    }
-                    "google" => &p.google_url,
-                    _ => {
-                        if !p.anthropic_url.is_empty() { &p.anthropic_url }
-                        else { &p.openai_url }
-                    }
+                // 上游 URL（fallback 用）：取供应商当前出站协议对应的端点 URL。
+                let upstream_url = p.url_for(&chosen_outbound);
+
+                // baseUrl 始终指向本次启动的本地代理端口（所有协议统一指向代理）。
+                // 未启动代理（无 Provider/Key）时回退到供应商 base_url。
+                let effective_base_url: String = if proxy_port != 0 {
+                    format!("http://127.0.0.1:{}", proxy_port)
+                } else {
+                    upstream_url.clone()
                 };
 
-                // baseUrl 始终指向本地代理端口：
-                //   anthropic/both 协议 → P1 (proxy_port)
-                //   openai 协议         → P2 (proxy_port+1)
-                //   google/none 协议    → 真实上游 URL（不走代理）
-                let effective_base_url: String = match tool_config.api_protocol.as_str() {
-                    "openai" => format!("http://127.0.0.1:{}", config.proxy_port + 1),
-                    "anthropic" | "both" => format!("http://127.0.0.1:{}", config.proxy_port),
-                    _ => upstream_url.to_string(),
-                };
+                // 声明模型名 C（工具以为自己调用的模型）：
+                // 若配置了伪装则是 masquerade_model，否则直接是所选取的供应商模型 B。
+                let claimed_model = req.masquerade_model.clone()
+                    .filter(|c| !c.is_empty())
+                    .or_else(|| req.model_id.clone());
 
-                // 模型别名和默认模型从供应商统一字段读取
-                let effective_aliases = &p.model_aliases;
-                let effective_default = &p.default_model;
-
-                // 代理模式：anthropic/both/openai 协议且供应商有对应 URL 时为 true
-                // 代理模式下，配置文件只写 baseUrl + apiKey，模型/别名保持原版由代理按请求模型转发。
-                let proxy_mode = match tool_config.api_protocol.as_str() {
-                    "anthropic" | "both" => !p.anthropic_url.is_empty() || !p.openai_url.is_empty(),
-                    "openai" => !p.openai_url.is_empty() || !p.anthropic_url.is_empty(),
-                    _ => false,
-                };
+                // 代理模式：本次启动了本地代理（统计 + 转换 + 伪装映射）时为 true。
+                let proxy_mode = proxy_port != 0;
 
                 if !upstream_url.is_empty() || proxy_mode {
                     eprintln!("[config_file] 写入参数:");
@@ -172,20 +198,20 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                     eprintln!("[config_file]   protocol: {}", tool_config.api_protocol);
                     eprintln!("[config_file]   upstream_url: {}", upstream_url);
                     eprintln!("[config_file]   effective_base_url: {}", effective_base_url);
-                    eprintln!("[config_file]   model_id: {:?}", req.model_id);
+                    eprintln!("[config_file]   model_id(B): {:?}", req.model_id);
+                    eprintln!("[config_file]   claimed_model(C): {:?}", claimed_model);
                     eprintln!("[config_file]   proxy_mode: {}", proxy_mode);
-                    eprintln!("[config_file]   alias_count: {}, default_model: {:?}", effective_aliases.len(), effective_default);
                     match write_tool_config_from_spec(
                         &req.tool_id,
                         &tool_config,
                         req.model_id.as_deref(),
+                        claimed_model.as_deref(),
                         Some(&effective_base_url),
                         &effective_base_url,
                         &p.api_key,
                         req.fallback_model_id.as_deref(),
+                        req.fallback_masquerade_model.as_deref(),
                         req.one_m_context,
-                        effective_aliases,
-                        effective_default.as_deref(),
                         proxy_mode,
                     ) {
                         Ok(_) => {
@@ -306,14 +332,18 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
     if let Some(ref cf) = tool_config.config_file {
         if let Some(ref write_map) = cf.write {
             if let Some(ref p) = provider {
-                // env 注入的 baseUrl 始终指向本地代理端口
-                let effective_base_url = match tool_config.api_protocol.as_str() {
-                    "openai" => format!("http://127.0.0.1:{}", config.proxy_port + 1),
-                    "anthropic" | "both" => format!("http://127.0.0.1:{}", config.proxy_port),
-                    "google" => p.google_url.clone(),
-                    _ => p.anthropic_url.clone(),
+                // env 注入的 baseUrl 始终指向本次启动的本地代理端口（未启动则回退供应商 base_url）
+                let upstream_fallback = p.url_for(&chosen_outbound);
+                let effective_base_url = if proxy_port != 0 {
+                    format!("http://127.0.0.1:{}", proxy_port)
+                } else {
+                    upstream_fallback.clone()
                 };
-                let model = req.model_id.as_deref().unwrap_or("");
+                // env 注入的 model：声明名 C（伪装优先，否则所选取模型 B）
+                let model = req.masquerade_model.clone()
+                    .filter(|c| !c.is_empty())
+                    .or_else(|| req.model_id.clone())
+                    .unwrap_or_default();
                 for (path, value_template) in write_map {
                     if path.starts_with("env.") {
                         let env_key = &path[4..];
@@ -371,10 +401,14 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
         model_id: lc_model_id,
         fallback_model_id: lc_fallback_model_id,
         fallback_provider_id: None,
+        fallback_masquerade_model: req.fallback_masquerade_model.clone(),
         use_official_model: is_official,
         terminal_id: req.terminal_id.clone(),
         one_m_context: req.one_m_context,
         project_path: lc_project_path,
+        masquerade_model: req.masquerade_model.clone(),
+        optimizer_enabled: req.optimizer_enabled,
+        rectifier_enabled: req.rectifier_enabled,
         last_launched_at: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
     };
     let mut configs = load_last_launch_configs();
@@ -400,21 +434,25 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
 /// 根据工具 config.json 中的 configFile 字段，自动写入工具配置文件。
 /// 不注入任何环境变量，全部参数（模型 / baseUrl / apiKey / 别名）都写进配置文件，
 /// 便于对照各工具官方文档逐项核对。
+///
+/// - `model_id`：实际模型 B（供应商模型）。
+/// - `claimed_model`：声明模型名 C（工具以为自己调用的模型；伪装时 = masquerade_model，
+///   否则 = B）。配置文件中的 `model` 字段写入 C，由本地代理按 masquerade 映射 C → B。
 fn write_tool_config_from_spec(
     tool_id: &str,
     tool_config: &ToolConfig,
     model_id: Option<&str>,
+    claimed_model: Option<&str>,
     base_url: Option<&str>,
     fallback_url: &str,
     api_key: &str,
     fallback_model_id: Option<&str>,
+    fallback_masquerade_model: Option<&str>,
     one_m_context: bool,
-    model_aliases: &HashMap<String, String>,
-    default_model: Option<&str>,
     proxy_mode: bool,
 ) -> Result<(), String> {
     if let Some(ref _cfg) = tool_config.config_file {
-        return write_tool_config_generic(tool_config, model_id, base_url.unwrap_or(fallback_url), api_key, fallback_model_id, model_aliases, default_model, one_m_context, proxy_mode);
+        return write_tool_config_generic(tool_config, model_id, claimed_model, base_url.unwrap_or(fallback_url), api_key, fallback_model_id, fallback_masquerade_model, one_m_context, proxy_mode);
     }
     // 无 configFile 定义的工具完全依赖 CLI 参数，无需写配置
     let _ = tool_id;
@@ -446,40 +484,23 @@ fn format_model_name_with_ctx(raw: &str, tool_config: &ToolConfig, one_m: bool) 
     s
 }
 
-/// 反查 `anthropic_model_aliases`（role → 供应商模型），找出选中供应商模型对应的
-/// 角色别名（sonnet/opus/haiku/fable）。用于将 `ANTHROPIC_MODEL` 写成角色别名，
-/// 而不是供应商模型名（后者会被 Claude Code 原样发往上游而被拒）。
-fn role_for_model(model_id: Option<&str>, aliases: &HashMap<String, String>) -> Option<String> {
-    let target = model_id?
-        .replace("[1m]", "")
-        .replace("[1M]", "")
-        .trim()
-        .to_lowercase();
-    for (role, mapped) in aliases {
-        let m = mapped
-            .replace("[1m]", "")
-            .replace("[1M]", "")
-            .trim()
-            .to_lowercase();
-        if m == target {
-            return Some(role.clone());
-        }
-    }
-    None
-}
-
 /// 通用工具配置文件写入：根据 config.json 的 configFile.write 映射写入。
 /// 支持 json / jsonc（serde_json）与 toml（行式）两种格式。
+///
+/// `model` 字段写入**声明模型名 C**（claimed_model，回退到实际模型 B），交由本地代理
+/// 按 masquerade 映射 C → B 转发到上游。代理模式下不再跳过模型字段——工具必须以 C
+/// 发起请求，代理才能正确改写。模型伪装（C → B 的具体映射）由启动时代理动态持有，
+/// 这里不再写 ANTHROPIC_DEFAULT_* 之类的别名环境变量。
 fn write_tool_config_generic(
     tool_config: &ToolConfig,
     model_id: Option<&str>,
+    claimed_model: Option<&str>,
     base_url: &str,
     api_key: &str,
     fallback_model_id: Option<&str>,
-    model_aliases: &HashMap<String, String>,
-    default_model: Option<&str>,
+    fallback_masquerade_model: Option<&str>,
     one_m_context: bool,
-    proxy_mode: bool,
+    _proxy_mode: bool,
 ) -> Result<(), String> {
     let cfg = match &tool_config.config_file {
         Some(c) => c,
@@ -513,51 +534,39 @@ fn write_tool_config_generic(
 
     // 组装待写入的 (路径, 值) 列表
     let mut writes: Vec<(String, String)> = Vec::new();
-    let effective_model_id = model_id.or(default_model);
+    // 声明模型名 C 优先；否则回退到实际模型 B
+    let effective_model_id = claimed_model.or(model_id);
     let has_model = effective_model_id.is_some();
     let model = effective_model_id
         .map(|m| format_model_name_with_ctx(m, tool_config, apply_one_m))
         .unwrap_or_default();
     let model_name = model.split('/').next_back().unwrap_or(&model).to_string();
-    let fallback_model = fallback_model_id.and_then(|fm| {
+    // fallback/小模型：声明名（伪装优先，否则实际模型 B）。无 fallback 时为 None。
+    let fallback_claimed = fallback_model_id.and_then(|fm| {
         if fm.is_empty() { return None; }
-        Some(format_model_name(fm, tool_config))
+        match fallback_masquerade_model {
+            Some(c) if !c.is_empty() => Some(c.to_string()),
+            _ => Some(format_model_name(fm, tool_config)),
+        }
     });
 
     for (path, value_template) in write_map {
         // 动态键名替换：{model_name} → 实际模型名
         let resolved_path = path.replace("{model_name}", &model_name);
-        // 代理模式：只写连接参数（baseUrl/apiKey 等），模型相关字段保持原版，
-        // 由本地代理按请求中的官方模型名转发到供应商对应模型。
-        if proxy_mode
-            && matches!(value_template.as_str(), "model" | "modelName" | "fallbackModel")
-        {
-            eprintln!("[config_file] skip {} (proxy_mode, 模型由代理解析)", resolved_path);
-            continue;
-        }
         let value = match value_template.as_str() {
-            "model" | "modelName" | "fallbackModel" if !has_model => {
+            "model" | "modelName" if !has_model => {
                 eprintln!("[config_file] skip {} (no model)", resolved_path);
                 continue;
             },
-            "model" => {
-                // anthropic/both 协议：ANTHROPIC_MODEL 必须是 Claude 角色别名
-                // （sonnet/opus/haiku/fable）或完整 Claude 模型名，不能是供应商模型名
-                // （官方 model-config.md：ANTHROPIC_MODEL=<alias|name>，且值会原样发给上游）。
-                // 反查 anthropic_model_aliases，把选中的供应商模型改写为对应 role 别名，
-                // 由 ANTHROPIC_DEFAULT_<ROLE>_MODEL / 代理按角色映射到供应商模型。
-                if tool_config.api_protocol == "anthropic" || tool_config.api_protocol == "both" {
-                    if let Some(role) = role_for_model(effective_model_id, model_aliases) {
-                        role
-                    } else {
-                        model.clone()
-                    }
-                } else {
-                    model.clone()
+            "model" => model.clone(),
+            "modelName" => model_name.clone(),
+            "fallbackModel" => match &fallback_claimed {
+                Some(v) => v.clone(),
+                None => {
+                    eprintln!("[config_file] skip {} (no fallback model)", resolved_path);
+                    continue;
                 }
             },
-            "modelName" => model_name.clone(),
-            "fallbackModel" => fallback_model.clone().unwrap_or_default(),
             "baseUrl" => base_url.to_string(),
             "apiKey" => {
                 // API Key 为空时不写入配置文件，避免写入空字符串被解析器判定为非法凭证
@@ -573,27 +582,6 @@ fn write_tool_config_generic(
         eprintln!("[config_file] set {} = {}", resolved_path, mask_secret(&value));
         writes.push((resolved_path, value));
     }
-
-    // Provider 模型别名映射（sonnet/haiku/opus/fable → 实际模型名）。
-    // 代理模式下不写入：模型保持官方原版，由代理按请求模型转发。
-    if !proxy_mode {
-    for (role, mapped_model) in model_aliases {
-        let env_key = match role.to_lowercase().as_str() {
-            "sonnet" => "ANTHROPIC_DEFAULT_SONNET_MODEL",
-            "opus" => "ANTHROPIC_DEFAULT_OPUS_MODEL",
-            "haiku" => "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-            "fable" => "ANTHROPIC_DEFAULT_FABLE_MODEL",
-            _ => {
-                eprintln!("[config_file] alias {} → {} (未识别的 role，跳过)", role, mapped_model);
-                continue;
-            },
-        };
-        let one_m_alias = apply_one_m && role.to_lowercase() != "haiku";
-        let formatted = format_model_name_with_ctx(mapped_model, tool_config, one_m_alias);
-        eprintln!("[config_file] set env.{} = {} (alias {} → {})", env_key, mask_secret(&formatted), role, mapped_model);
-        writes.push((format!("env.{}", env_key), formatted));
-    }
-    } // end if !proxy_mode
 
     let existing = if resolved_path.exists() {
         fs::read_to_string(&resolved_path).unwrap_or_default()
@@ -660,13 +648,16 @@ fn write_json_config(
         .map_err(|e| format!("写入 {} 失败: {}", path.display(), e))
 }
 
-/// 移除本工具管理的、但本次未写入的残留模型键。
+/// 移除本工具管理的、但本次未写入的残留键。
 ///
 /// - `env` 下以 `ANTHROPIC_MODEL` / `ANTHROPIC_DEFAULT_` / `ANTHROPIC_SMALL_FAST_MODEL`
-///   开头的键，若不在本次写入集合内，则删除（避免旧供应商/旧模型字段残留）。
+///   开头的模型键，若不在本次写入集合内，则删除（避免旧供应商/旧模型字段残留）。
+/// - `env.ANTHROPIC_AUTH_TOKEN`：当配置只写 `ANTHROPIC_API_KEY`（API Key 代理模式）时，
+///   若旧版本曾写入 `ANTHROPIC_AUTH_TOKEN`，需清除以免与 `ANTHROPIC_API_KEY` 冲突导致
+///   Claude Code 报 "Both ANTHROPIC_AUTH_TOKEN and ANTHROPIC_API_KEY set"。
 /// - 顶层 `model` 字段本应用从不写入（历史版本残留），一律清除以免干扰 Claude Code 的模型解析。
 fn cleanup_managed_model_keys(doc: &mut serde_json::Value, writes: &[(String, String)]) {
-    let managed_prefixes = ["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_", "ANTHROPIC_SMALL_FAST_MODEL"];
+    let managed_prefixes = ["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_", "ANTHROPIC_SMALL_FAST_MODEL", "ANTHROPIC_AUTH_TOKEN"];
     let current_env_keys: std::collections::HashSet<String> = writes
         .iter()
         .filter_map(|(p, _)| p.strip_prefix("env.").map(|k| k.to_string()))

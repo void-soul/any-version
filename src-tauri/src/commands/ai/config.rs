@@ -5,7 +5,7 @@ use tauri::Emitter;
 use crate::commands::ai_registry::{registry, AiToolDefDto};
 use crate::commands::config::get_base_dir;
 use super::models::*;
-use super::skills::{normalize_path, load_skills, do_migrate_skills, save_skills};
+use super::skills::{normalize_path, load_skills, do_migrate_skills, save_skills, resolve_skills_dir};
 
 
 fn ai_config_path() -> PathBuf {
@@ -135,35 +135,34 @@ pub fn get_ai_config() -> Result<AiConfig, String> {
 #[tauri::command]
 pub async fn save_ai_config(app: AppHandle, config: AiConfig) -> Result<serde_json::Value, String> {
     let old_config = load_ai_config();
-    let old_dir = old_config.skills_dir.clone();
-    let new_dir = config.skills_dir.clone();
+    // 解析为实际路径（空字符串 → 默认 ~/.any-version/skills），使默认目录与新目录间的迁移也能正确触发
+    let old_resolved = resolve_skills_dir(&old_config.skills_dir);
+    let new_resolved = resolve_skills_dir(&config.skills_dir);
 
     // 先保存新配置
     save_ai_config_to_file(&config)?;
 
     // 检测 skill 目录是否变更，执行迁移
     let mut skill_migrated = false;
-    if !new_dir.is_empty() && normalize_path(&old_dir) != normalize_path(&new_dir) {
+    if normalize_path(&old_resolved.to_string_lossy()) != normalize_path(&new_resolved.to_string_lossy()) {
         let skills_file = load_skills();
-        if !skills_file.skills.is_empty() && !old_dir.is_empty() {
+        if !skills_file.skills.is_empty() {
             // Clone 需要移入闭包的值
-            let old_dir_mv = old_dir.clone();
-            let new_dir_mv = new_dir.clone();
+            let old_str = old_resolved.to_string_lossy().to_string();
+            let new_str = new_resolved.to_string_lossy().to_string();
             let skills_list = skills_file.skills.clone();
             let app_handle = app.clone();
             let result = tokio::task::spawn_blocking(move || {
-                do_migrate_skills(&old_dir_mv, &new_dir_mv, &skills_list, Some(&app_handle))
+                do_migrate_skills(&old_str, &new_str, &skills_list, Some(&app_handle))
             }).await.map_err(|e| e.to_string())?;
             skill_migrated = result.moved_count > 0 || result.rebuilt_junctions > 0;
 
             // 更新 skills.json 中的 directory 路径
             let mut updated_skills = skills_file;
-            let old_skills_dir = PathBuf::from(&old_dir);
-            let new_skills_dir = PathBuf::from(&new_dir);
             for skill in &mut updated_skills.skills {
                 let old_path = PathBuf::from(&skill.directory);
-                if let Ok(rel) = old_path.strip_prefix(&old_skills_dir) {
-                    skill.directory = new_skills_dir.join(rel).to_string_lossy().to_string();
+                if let Ok(rel) = old_path.strip_prefix(&old_resolved) {
+                    skill.directory = new_resolved.join(rel).to_string_lossy().to_string();
                 }
             }
             save_skills(&updated_skills)?;
@@ -252,11 +251,10 @@ mod tests {
         let p = &config.providers[0];
         assert_eq!(p.id, "longcat");
         assert_eq!(p.api_key, "test_key");
+        // 旧格式 v1 扁平字段：openai_url / anthropic_url 直接读取，default_model 已丢弃
         assert_eq!(p.openai_url, "https://api.longcat.com/v1");
         assert_eq!(p.anthropic_url, "https://api.longcat.com/anthropic");
         assert_eq!(p.google_url, "");
-        assert_eq!(p.default_model.as_deref(), Some("gpt-4o"));
-        assert_eq!(p.model_aliases.get("fable").map(|s| s.as_str()), Some("gpt-4o"));
     }
 
     #[test]
@@ -290,15 +288,15 @@ mod tests {
         let config: AiConfig = serde_json::from_str(protocols_json).expect("Should deserialize & migrate protocols format");
         assert_eq!(config.providers.len(), 1);
         let p = &config.providers[0];
+        // protocols 格式逐协议填入对应 URL 字段
         assert_eq!(p.openai_url, "https://api.deepseek.com");
         assert_eq!(p.anthropic_url, "https://api.deepseek.com/anthropic");
-        assert_eq!(p.model_aliases.get("sonnet").map(|s| s.as_str()), Some("deepseek-chat"));
-        assert_eq!(p.default_model.as_deref(), Some("deepseek-chat"));
+        assert_eq!(p.google_url, "");
     }
 
     #[test]
     fn test_new_flat_format() {
-        // 测试新格式直接反序列化
+        // 测试新格式直接反序列化（纯供应商：单一协议 + base_url）
         let new_json = r#"{
             "providers": [
                 {
@@ -307,10 +305,8 @@ mod tests {
                     "category": "provider",
                     "api_key": "sk-test",
                     "website": "https://openai.com",
-                    "openai_url": "https://api.openai.com/v1",
-                    "anthropic_url": "",
-                    "google_url": "",
-                    "model_aliases": {},
+                    "base_url": "https://api.openai.com/v1",
+                    "protocol": "openai",
                     "default_model": null,
                     "models": [{"id": "gpt-4o", "name": "gpt-4o"}],
                     "active_model_id": null
@@ -327,8 +323,10 @@ mod tests {
         let config: AiConfig = serde_json::from_str(new_json).expect("Should deserialize new flat format");
         assert_eq!(config.providers.len(), 1);
         let p = &config.providers[0];
+        // 旧格式 v3：单一 base_url + protocol 折叠为对应协议 URL
         assert_eq!(p.openai_url, "https://api.openai.com/v1");
         assert_eq!(p.anthropic_url, "");
+        assert_eq!(p.google_url, "");
         assert_eq!(p.models.len(), 1);
     }
 }

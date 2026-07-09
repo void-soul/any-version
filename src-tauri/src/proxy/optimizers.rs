@@ -7,8 +7,12 @@
 //! 4. DeepSeek Thinking Normalization — 为 DeepSeek 兼容端点规范化 thinking 块
 //! 5. Media Sanitizer — 遇到不支持图片的错误时替换图片块并重试
 //! 6. Thinking Optimizer — 根据模型类型主动优化 thinking 参数
+//!
+//! 整改后：优化器与整流器都在「出站协议 P_out 形态」上操作（按 outbound_protocol 分派），
+//! 而非仅在 Anthropic 形态上操作，从而实现协议无关的能力复用。
 
 use serde_json::{json, Value};
+use super::types::ProxyConfig;
 
 const MAX_CACHE_BREAKPOINTS: usize = 4;
 
@@ -242,6 +246,37 @@ pub fn normalize_deepseek_thinking(body: &mut Value, upstream_url: &str) {
     }
 }
 
+/// OpenAI 形态的 DeepSeek 规范化（对应 Anthropic 形态的 `normalize_deepseek_thinking`）。
+/// 在 P_out=openai 时调用：Anthropic→OpenAI 转换后 thinking 已表达为 `reasoning_content`，
+/// 这里处理 DeepSeek 兼容端点的特有约束：
+/// - 防御性移除 Anthropic 残留的 `signature` 字段
+/// - 若 assistant 消息带 `tool_calls` 但缺少 `reasoning_content`，注入占位，
+///   避免 DeepSeek 报「tool_use 前必须存在 thinking」类错误
+pub fn normalize_deepseek_thinking_openai(body: &mut Value, upstream_url: &str) {
+    if !is_deepseek_url(upstream_url) {
+        return;
+    }
+    if let Some(messages) = body.get_mut("messages").and_then(|v| v.as_array_mut()) {
+        for msg in messages.iter_mut() {
+            if msg.get("role").and_then(|v| v.as_str()) != Some("assistant") {
+                continue;
+            }
+            if let Some(o) = msg.as_object_mut() {
+                // OpenAI 形态无 signature 概念，但转换可能残留，防御性移除
+                o.remove("signature");
+                let has_tool_calls = o
+                    .get("tool_calls")
+                    .map(|v| v.as_array().map(|a| !a.is_empty()).unwrap_or(false))
+                    .unwrap_or(false);
+                let has_reasoning = o.contains_key("reasoning_content");
+                if has_tool_calls && !has_reasoning {
+                    o.insert("reasoning_content".into(), json!("tool call"));
+                }
+            }
+        }
+    }
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  5. Media Sanitizer
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -384,6 +419,197 @@ pub fn optimize_thinking(body: &mut Value) {
     } else {
         if let Some(o) = body.as_object_mut() {
             o.insert("anthropic_beta".into(), json!(["interleaved-thinking-2025-05-14"]));
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  7. Thinking Optimizer（OpenAI / Google 形态）
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// OpenAI 形态 thinking 优化：对支持 reasoning 的模型设置 `reasoning_effort`。
+pub fn optimize_thinking_openai(body: &mut Value) {
+    let model = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+    // o1 / o3 / o4 系列支持 reasoning_effort
+    let supports = model.contains("o1")
+        || model.contains("o3")
+        || model.contains("o4")
+        || model.contains("reasoning");
+    if supports {
+        if let Some(o) = body.as_object_mut() {
+            o.insert("reasoning_effort".into(), json!("high"));
+        }
+    }
+}
+
+/// Google 形态 thinking 优化：在 `generationConfig.thinkingConfig` 中开启动态思考。
+pub fn optimize_thinking_google(body: &mut Value) {
+    if let Some(gc) = body.get_mut("generationConfig") {
+        if let Some(o) = gc.as_object_mut() {
+            // thinkingBudget=0 表示由模型动态决定（Gemini 2.5+）
+            o.insert(
+                "thinkingConfig".into(),
+                json!({"thinkingBudget": 0, "includeThoughts": true}),
+            );
+        }
+    } else if let Some(o) = body.as_object_mut() {
+        o.insert(
+            "generationConfig".into(),
+            json!({"thinkingConfig": {"thinkingBudget": 0, "includeThoughts": true}}),
+        );
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  协议感知分派（在 P_out 形态上操作）
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// 按出站协议应用优化器（在 P_out 形态上操作）。
+pub fn apply_optimizers(body: &mut Value, outbound_protocol: &str, config: &ProxyConfig) {
+    if !config.optimizer_enabled {
+        return;
+    }
+    match outbound_protocol {
+        "anthropic" => {
+            if config.optimizer_cache_injection {
+                inject_cache_breakpoints(body);
+            }
+            if config.optimizer_deepseek {
+                normalize_deepseek_thinking(body, &config.upstream_base_url);
+            }
+            if config.optimizer_thinking {
+                optimize_thinking(body);
+            }
+        }
+        "openai" => {
+            // OpenAI 无 cache_control 概念，跳过 cache injection
+            if config.optimizer_deepseek {
+                normalize_deepseek_thinking_openai(body, &config.upstream_base_url);
+            }
+            if config.optimizer_thinking {
+                optimize_thinking_openai(body);
+            }
+        }
+        "google" => {
+            if config.optimizer_thinking {
+                optimize_thinking_google(body);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 预防式整流：在转发前对 P_out 形态做高概率修正。
+pub fn apply_preventive_rectifiers(body: &mut Value, outbound_protocol: &str, config: &ProxyConfig) {
+    if !config.rectifier_enabled {
+        return;
+    }
+    match outbound_protocol {
+        "anthropic" => {
+            // thinking signature 几乎必然触发的场景：预防式剥离历史 thinking + signature
+            if config.rectifier_thinking_signature {
+                strip_thinking_blocks(body);
+            }
+        }
+        "openai" | "google" => {
+            // 这两个协议没有 Anthropic 的 thinking signature 概念，无需预防式剥离
+        }
+        _ => {}
+    }
+}
+
+/// 反应式整流：上游报错后尝试修正一次。
+/// 返回 Some(修正后 body) 表示可以重试，None 表示无法修正。
+pub fn try_reactive_rectify(
+    status: u16,
+    error_body: &str,
+    body: &Value,
+    config: &ProxyConfig,
+    outbound_protocol: &str,
+) -> Option<Value> {
+    if !config.rectifier_enabled {
+        return None;
+    }
+
+    if config.rectifier_thinking_budget && is_thinking_budget_error(status, error_body) {
+        let mut fixed = body.clone();
+        fix_thinking_budget(&mut fixed);
+        return Some(fixed);
+    }
+
+    if config.rectifier_media_fallback && is_unsupported_image_error(status, error_body) {
+        let mut media_body = body.clone();
+        if replace_image_blocks(&mut media_body) > 0 {
+            return Some(media_body);
+        }
+    }
+
+    // 协议不匹配整流：转换后仍残留的协议专有字段被上游拒绝
+    if config.rectifier_protocol_mismatch && is_unknown_field_error(status, error_body) {
+        let mut cleaned = body.clone();
+        strip_unknown_fields(&mut cleaned, outbound_protocol);
+        return Some(cleaned);
+    }
+
+    None
+}
+
+/// 检测上游错误是否指示「未知字段 / 不被支持的字段」。
+pub fn is_unknown_field_error(status: u16, body: &str) -> bool {
+    if status != 400 && status != 422 && status != 404 {
+        return false;
+    }
+    let lower = body.to_lowercase();
+    lower.contains("unknown field")
+        || lower.contains("additional properties")
+        || lower.contains("additionalproperties")
+        || lower.contains("extraneous")
+        || lower.contains("unexpected field")
+        || lower.contains("not allowed")
+        || lower.contains("unknown parameter")
+        || lower.contains("unsupported parameter")
+        || lower.contains("schema")
+}
+
+/// 协议专有字段集合（Anthropic 形态中常见、但 OpenAI/Google 上游不认识的字段）。
+/// 仅在出站协议 ≠ anthropic 时由 `strip_unknown_fields` 移除。
+const ANTHROPIC_ONLY_FIELDS: &[&str] = &[
+    "thinking",
+    "container",
+    "mcp_servers",
+    "service_tier",
+    "anthropic_version",
+    "anthropic-beta",
+    "metadata",
+    "top_k",
+    "cache_control",
+];
+
+/// 剥离协议专有字段：当出站协议不是 anthropic 时，移除 `ANTHROPIC_ONLY_FIELDS`
+/// 中转换后仍残留的 Anthropic 专有字段（被 OpenAI/Google 上游拒绝）。
+/// 多入站协议下无法在反应式整流阶段确定具体入站，直接以出站协议判定即可
+/// （若出站为 anthropic 则不剥离；其余情况剥离无害，因非 anthropic 字段本就不存在）。
+pub fn strip_unknown_fields(body: &mut Value, outbound_protocol: &str) {
+    if outbound_protocol == "anthropic" {
+        return;
+    }
+    if let Some(o) = body.as_object_mut() {
+        for f in ANTHROPIC_ONLY_FIELDS {
+            o.remove(*f);
+        }
+    }
+    // 同时清理 messages 内 content 块残留的 cache_control
+    if let Some(messages) = body.get_mut("messages").and_then(|v| v.as_array_mut()) {
+        for msg in messages.iter_mut() {
+            if let Some(content) = msg.get_mut("content").and_then(|v| v.as_array_mut()) {
+                for block in content.iter_mut() {
+                    block.as_object_mut().map(|o| o.remove("cache_control"));
+                }
+            }
         }
     }
 }

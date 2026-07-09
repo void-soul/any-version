@@ -5,7 +5,14 @@
   "website": "https://github.com/QwenLM/qwen-code",
   "apiProtocol": "openai",
   "supportModel": true,
-  "supportFallbackModel": false,
+  "supportFallbackModel": true,
+
+  "supportsOpenai": true,
+  "supportsAnthropic": false,
+  "supportsGoogle": false,
+  "builtinModels": [],
+  "supportsOptimizer": true,
+  "supportsRectifier": true,
 
   "resumeCmd": null,
   "continueCmd": null,
@@ -15,11 +22,13 @@
   "configFile": {
     "path": "~/.qwen/settings.json",
     "format": "json",
-    "write": {
+      "write": {
       "model.name": "model",
       "security.auth.selectedType": "openai",
       "env.OPENAI_API_KEY": "apiKey",
-      "env.OPENAI_BASE_URL": "baseUrl"
+      "env.OPENAI_BASE_URL": "baseUrl",
+      "fastModel": "fallbackModel",
+      "modelFallbacks": "fallbackModel"
     }
   },
   "sessions": {

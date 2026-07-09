@@ -1,5 +1,5 @@
 {
-  "description": "Skills scan directories for each tool. Used by scan_existing_skills.",
+  "description": "Skills scan directories for each tool. baseSkillsDir is skills.sh's repo (~/.agents/skills) — used as a discoverable foreign source, NOT AnyVersion's store. AnyVersion's own skill store comes from the global setting AiConfig.skills_dir (default ~/.any-version/skills).",
   "baseSkillsDir": "~/.agents/skills",
   "toolSkillsDirs": {
     "claude-code": ["~/.claude/skills"],

@@ -585,9 +585,16 @@ export default function ProjectDetailPanel({
   }
 
   // 包管理器 tabs：每个 PM 一个独立子页面，用 "pm:" 前缀标识
+  // 过滤逻辑必须与下方内容渲染（line ~899）保持一致：
+  // 已托管项目下，非内置工具只有在 manage_optional_tools 中才显示 Tab，
+  // 否则 Tab 按钮可见但内容为 null → 空白页面
   const pmTabs: Array<{ id: string; label: string }> = [];
   if (def?.package_managers && def.package_managers.length > 0) {
     for (const pm of def.package_managers) {
+      if (status.managed && !pm.built_in) {
+        const isManaged = delegation?.manage_optional_tools?.includes(pm.id);
+        if (!isManaged) continue;
+      }
       availableTabs.push(`pm:${pm.id}`);
       pmTabs.push({ id: `pm:${pm.id}`, label: pm.display_name });
     }

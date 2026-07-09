@@ -513,94 +513,6 @@ export default function GlobalSettings() {
           <p className="text-[9px] text-slate-500">启动 AI 工具时的默认工作目录。</p>
         </div>
 
-        {/* 代理整流器 */}
-        <div className="space-y-2 pt-3 border-t border-white/5">
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-[10px] text-slate-300 uppercase font-semibold">代理整流器</label>
-              <p className="text-[9px] text-slate-600 mt-0.5">上游 API 报错时自动修复并重试</p>
-            </div>
-            <button
-              onClick={() => {
-                if (!aiConfig) return;
-                const next = { ...aiConfig, rectifier: { ...aiConfig.rectifier, enabled: !aiConfig.rectifier.enabled } };
-                setAiConfig(next);
-              }}
-              className={`relative w-9 h-5 rounded-full transition-all cursor-pointer ${aiConfig?.rectifier?.enabled !== false ? "bg-red-600" : "bg-slate-700"}`}
-            >
-              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${aiConfig?.rectifier?.enabled !== false ? "left-[18px]" : "left-0.5"}`} />
-            </button>
-          </div>
-          {aiConfig?.rectifier?.enabled !== false && (
-            <div className="pl-1 space-y-1.5">
-              {[
-                { key: "thinking_signature" as const, label: "Thinking 签名修复", desc: "thinking block 签名无效时自动剥离并重试" },
-                { key: "thinking_budget" as const, label: "Thinking 预算修复", desc: "budget_tokens 太小时自动修正为 32000" },
-                { key: "media_fallback" as const, label: "图片降级", desc: "上游不支持图片时自动替换为文本标记" },
-              ].map(item => (
-                <label key={item.key} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={aiConfig?.rectifier?.[item.key] !== false}
-                    onChange={() => {
-                      if (!aiConfig) return;
-                      const next = { ...aiConfig, rectifier: { ...aiConfig.rectifier, [item.key]: !aiConfig.rectifier[item.key] } };
-                      setAiConfig(next);
-                    }}
-                    className="accent-red-500"
-                  />
-                  <span className="text-[10px] text-slate-300">{item.label}</span>
-                  <span className="text-[9px] text-slate-600">{item.desc}</span>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* 代理优化器 */}
-        <div className="space-y-2 pt-3 border-t border-white/5">
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-[10px] text-slate-300 uppercase font-semibold">代理优化器</label>
-              <p className="text-[9px] text-slate-600 mt-0.5">请求发出前主动优化参数</p>
-            </div>
-            <button
-              onClick={() => {
-                if (!aiConfig) return;
-                const next = { ...aiConfig, optimizer: { ...aiConfig.optimizer, enabled: !aiConfig.optimizer.enabled } };
-                setAiConfig(next);
-              }}
-              className={`relative w-9 h-5 rounded-full transition-all cursor-pointer ${aiConfig?.optimizer?.enabled !== false ? "bg-red-600" : "bg-slate-700"}`}
-            >
-              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${aiConfig?.optimizer?.enabled !== false ? "left-[18px]" : "left-0.5"}`} />
-            </button>
-          </div>
-          {aiConfig?.optimizer?.enabled !== false && (
-            <div className="pl-1 space-y-1.5">
-              {[
-                { key: "cache_injection" as const, label: "Prompt 缓存注入", desc: "自动注入 cache_control 断点降低 API 费用" },
-                { key: "thinking_optimizer" as const, label: "Thinking 参数优化", desc: "按模型自动配置 thinking 参数（Opus/Sonnet 自适应）" },
-                { key: "deepseek_normalize" as const, label: "DeepSeek 兼容", desc: "为 DeepSeek/Moonshot 等端点规范化 thinking 块" },
-              ].map(item => (
-                <label key={item.key} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={aiConfig?.optimizer?.[item.key] !== false}
-                    onChange={() => {
-                      if (!aiConfig) return;
-                      const next = { ...aiConfig, optimizer: { ...aiConfig.optimizer, [item.key]: !aiConfig.optimizer[item.key] } };
-                      setAiConfig(next);
-                    }}
-                    className="accent-red-500"
-                  />
-                  <span className="text-[10px] text-slate-300">{item.label}</span>
-                  <span className="text-[9px] text-slate-600">{item.desc}</span>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
-
         {/* 技能市场配置 */}
         <div className="space-y-2 pt-3 border-t border-white/5">
           <div>
@@ -615,7 +527,7 @@ export default function GlobalSettings() {
                 value={aiSkillsDir}
                 onChange={(e) => setAiSkillsDir(e.target.value)}
                 className="flex-1 bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-red-500"
-                placeholder="默认: ~/.agents/skills"
+                placeholder="默认: ~/.any-version/skills"
               />
               <button onClick={() => handleBrowseFolder(setAiSkillsDir)} className="p-1.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-md border border-white/5 cursor-pointer transition-all flex-shrink-0" title="选择文件夹">
                 <FolderOpen className="w-3.5 h-3.5" />

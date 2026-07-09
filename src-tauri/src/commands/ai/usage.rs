@@ -117,14 +117,16 @@ pub fn get_usage_summary_db() -> Result<UsageSummary, String> {
     // by_tool
     let mut by_tool: Vec<UsageByTool> = Vec::new();
     let mut stmt = conn
-        .prepare("SELECT tool_id, COUNT(*), SUM(input_tokens + output_tokens) FROM ai_usage GROUP BY tool_id ORDER BY SUM(input_tokens + output_tokens) DESC")
+        .prepare("SELECT tool_id, COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(input_tokens + output_tokens),0) FROM ai_usage GROUP BY tool_id ORDER BY SUM(input_tokens + output_tokens) DESC")
         .map_err(|e| format!("预处理 by_tool 失败: {}", e))?;
     let tool_iter = stmt
         .query_map([], |row| {
             Ok(UsageByTool {
                 tool_id: row.get(0)?,
                 request_count: row.get::<_, i64>(1)? as u64,
-                total_tokens: row.get::<_, i64>(2)? as u64,
+                input_tokens: row.get::<_, i64>(2)? as u64,
+                output_tokens: row.get::<_, i64>(3)? as u64,
+                total_tokens: row.get::<_, i64>(4)? as u64,
             })
         })
         .map_err(|e| format!("查询 by_tool 失败: {}", e))?;
@@ -137,7 +139,7 @@ pub fn get_usage_summary_db() -> Result<UsageSummary, String> {
     // by_model
     let mut by_model: Vec<UsageByModel> = Vec::new();
     let mut stmt = conn
-        .prepare("SELECT model, COALESCE(provider, ''), COUNT(*), SUM(input_tokens + output_tokens) FROM ai_usage GROUP BY model, provider ORDER BY SUM(input_tokens + output_tokens) DESC")
+        .prepare("SELECT model, COALESCE(provider, ''), COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(input_tokens + output_tokens),0) FROM ai_usage GROUP BY model, provider ORDER BY SUM(input_tokens + output_tokens) DESC")
         .map_err(|e| format!("预处理 by_model 失败: {}", e))?;
     let model_iter = stmt
         .query_map([], |row| {
@@ -145,7 +147,9 @@ pub fn get_usage_summary_db() -> Result<UsageSummary, String> {
                 model: row.get(0)?,
                 provider: row.get(1)?,
                 request_count: row.get::<_, i64>(2)? as u64,
-                total_tokens: row.get::<_, i64>(3)? as u64,
+                input_tokens: row.get::<_, i64>(3)? as u64,
+                output_tokens: row.get::<_, i64>(4)? as u64,
+                total_tokens: row.get::<_, i64>(5)? as u64,
             })
         })
         .map_err(|e| format!("查询 by_model 失败: {}", e))?;
@@ -155,17 +159,41 @@ pub fn get_usage_summary_db() -> Result<UsageSummary, String> {
         }
     }
 
-    // daily
+    // by_provider
+    let mut by_provider: Vec<UsageByProvider> = Vec::new();
+    let mut stmt = conn
+        .prepare("SELECT COALESCE(provider, ''), COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(input_tokens + output_tokens),0) FROM ai_usage GROUP BY provider ORDER BY SUM(input_tokens + output_tokens) DESC")
+        .map_err(|e| format!("预处理 by_provider 失败: {}", e))?;
+    let provider_iter = stmt
+        .query_map([], |row| {
+            Ok(UsageByProvider {
+                provider: row.get(0)?,
+                request_count: row.get::<_, i64>(1)? as u64,
+                input_tokens: row.get::<_, i64>(2)? as u64,
+                output_tokens: row.get::<_, i64>(3)? as u64,
+                total_tokens: row.get::<_, i64>(4)? as u64,
+            })
+        })
+        .map_err(|e| format!("查询 by_provider 失败: {}", e))?;
+    for p in provider_iter {
+        if let Ok(p) = p {
+            by_provider.push(p);
+        }
+    }
+
+    // daily（最近）
     let mut daily: Vec<UsageDaily> = Vec::new();
     let mut stmt = conn
-        .prepare("SELECT substr(timestamp, 1, 10) as date, COUNT(*), SUM(input_tokens + output_tokens) FROM ai_usage GROUP BY date ORDER BY date ASC")
+        .prepare("SELECT substr(timestamp, 1, 10) as date, COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(input_tokens + output_tokens),0) FROM ai_usage GROUP BY date ORDER BY date ASC")
         .map_err(|e| format!("预处理 daily 失败: {}", e))?;
     let daily_iter = stmt
         .query_map([], |row| {
             Ok(UsageDaily {
                 date: row.get(0)?,
                 request_count: row.get::<_, i64>(1)? as u64,
-                total_tokens: row.get::<_, i64>(2)? as u64,
+                input_tokens: row.get::<_, i64>(2)? as u64,
+                output_tokens: row.get::<_, i64>(3)? as u64,
+                total_tokens: row.get::<_, i64>(4)? as u64,
             })
         })
         .map_err(|e| format!("查询 daily 失败: {}", e))?;
@@ -182,7 +210,8 @@ pub fn get_usage_summary_db() -> Result<UsageSummary, String> {
         total_tokens: total_input + total_output,
         by_tool,
         by_model,
-        daily,
+        by_provider,
+        recent: daily,
     })
 }
 

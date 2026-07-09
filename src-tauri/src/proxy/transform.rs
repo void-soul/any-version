@@ -1053,4 +1053,14 @@ impl AnthropicToOpenaiStreamConverter {
     pub fn model_name(&self) -> &str {
         &self.model
     }
+
+    /// 兼容统一管线：把上游 Anthropic SSE `data:` 块（含 `type` 字段）转换为 OpenAI SSE 行向量。
+    pub fn convert_chunk(&mut self, chunk: &Value) -> Vec<String> {
+        if let Some(et) = chunk.get("type").and_then(|v| v.as_str()) {
+            if let Some(s) = self.convert_event(et, chunk) {
+                return vec![s];
+            }
+        }
+        Vec::new()
+    }
 }

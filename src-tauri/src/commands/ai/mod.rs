@@ -5,6 +5,7 @@ pub mod models;
 pub mod config;
 pub mod detect;
 pub mod skills;
+pub mod mcp;
 pub mod usage;
 pub mod provider;
 pub mod launch;

@@ -7,6 +7,13 @@
   "supportModel": true,
   "supportFallbackModel": false,
 
+  "supportsOpenai": false,
+  "supportsAnthropic": false,
+  "supportsGoogle": true,
+  "builtinModels": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+  "supportsOptimizer": true,
+  "supportsRectifier": true,
+
   "resumeCmd": "gemini --resume {session_id}",
   "continueCmd": "gemini --resume latest",
   "cacheDirs": [".gemini"],

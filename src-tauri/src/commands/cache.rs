@@ -1,10 +1,20 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use serde::{Serialize, Deserialize};
 use walkdir::WalkDir;
 use tauri::Emitter;
 
-use super::config::MigrateProgress;
+use super::config::{get_base_dir, MigrateProgress};
+
+/// 把技能相关调试日志同时写入文件，便于在打包运行时排查（终端 stderr 不可见）。
+pub(crate) fn skill_debug_log(line: &str) {
+    let path = get_base_dir().join("skill-debug.log");
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+        use std::io::Write;
+        let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        let _ = writeln!(f, "[{}] {}", ts, line);
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CacheInfo {
@@ -55,7 +65,36 @@ pub fn format_bytes(bytes: u64) -> String {
     format!("{:.2} {}", (bytes as f64) / (div as f64), suffix)
 }
 
+/// Windows 的 mklink 无法解析混用 `/` 与 `\` 的路径，统一成反斜杠。
+/// 例如 resolve_path 由 skills-scan.json 的 "~/.trae-cn/skills" 生成
+/// "C:\Users\...\ .trae-cn/skills"，其中的 `/` 不会被 Path::join 转换，
+/// 直接喂给 mklink 会报“无效的参数”。其余平台原样返回。
+fn normalize_separators(p: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        PathBuf::from(p.to_string_lossy().replace('/', "\\"))
+    }
+    #[cfg(not(windows))]
+    {
+        p.to_path_buf()
+    }
+}
+
 pub fn create_junction(link_path: &Path, target_path: &Path) -> Result<(), String> {
+    // 归一化分隔符（Windows 上 mklink 只能吃反斜杠），避免混合分隔符导致“无效的参数”。
+    let link_norm = normalize_separators(link_path);
+    let target_norm = normalize_separators(target_path);
+    let link_path = link_norm.as_path();
+    let target_path = target_norm.as_path();
+
+    // mklink /J 的目标必须是绝对路径：相对目标会以链接父目录解析而失败。
+    let target_abs = if target_path.is_absolute() {
+        target_path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_default()
+            .join(target_path)
+    };
     if link_path.exists() || link_path.is_symlink() {
         // Junctions are directory reparse points on Windows.
         // fs::remove_dir removes the junction itself without deleting target contents.
@@ -69,19 +108,39 @@ pub fn create_junction(link_path: &Path, target_path: &Path) -> Result<(), Strin
     if let Some(parent) = link_path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    fs::create_dir_all(target_path).map_err(|e| e.to_string())?;
+    fs::create_dir_all(&target_abs).map_err(|e| e.to_string())?;
+    let link_str = link_path.to_string_lossy().to_string();
+    let target_str = target_abs.to_string_lossy().to_string();
+    let pre = format!(
+        "create_junction: cmd /c mklink /J \"{}\" \"{}\" | link_exists={} target_exists={}",
+        link_str,
+        target_str,
+        link_path.exists(),
+        target_abs.exists()
+    );
+    eprintln!("[skill] {}", pre);
+    skill_debug_log(&pre);
     let output = super::hidden_cmd::hidden_cmd("cmd")
-        .args(&[
-            "/c",
-            "mklink",
-            "/J",
-            &link_path.to_string_lossy(),
-            &target_path.to_string_lossy(),
-        ])
+        .args(&["/c", "mklink", "/J", &link_str, &target_str])
         .output()
         .map_err(|e| e.to_string())?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let post = format!(
+        "create_junction: status={:?} stdout=\"{}\" stderr=\"{}\"",
+        output.status.code(),
+        stdout,
+        stderr
+    );
+    eprintln!("[skill] {}", post);
+    skill_debug_log(&post);
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+        let err = format!(
+            "创建 junction 失败: stdout={} stderr={} (link=\"{}\", target=\"{}\")",
+            stdout, stderr, link_str, target_str
+        );
+        skill_debug_log(&err);
+        return Err(err);
     }
     Ok(())
 }

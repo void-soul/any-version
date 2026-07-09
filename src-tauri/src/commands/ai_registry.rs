@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use super::ai::skills::skills_dir;
 
 // ─── JSON 类型定义 ───
 
@@ -16,11 +17,30 @@ pub struct ToolConfig {
     pub display_name: String,
     pub category: String,
     pub website: String,
+    /// 工具「原生」协议（兼容旧逻辑：one_m 后缀、配置清理判定）。
+    /// 新逻辑以 supports_openai/anthropic/google 三标志为准。
     pub api_protocol: String,
     pub support_model: bool,
     pub support_fallback_model: bool,
     #[serde(default)]
     pub support_one_m_context: bool,
+    /// 工具支持的入站协议（代理为这些协议都注册路由）。
+    #[serde(default)]
+    pub supports_openai: bool,
+    #[serde(default)]
+    pub supports_anthropic: bool,
+    #[serde(default)]
+    pub supports_google: bool,
+    /// 内置模型名称列表（伪装模型名的预设值 C）。
+    /// 非空时用户可把所选取的供应商模型 B「伪装」成其中某项 C。
+    #[serde(default)]
+    pub builtin_models: Vec<String>,
+    /// 该工具是否支持请求优化（启动页可开关）
+    #[serde(default)]
+    pub supports_optimizer: bool,
+    /// 该工具是否支持抹平协议差异（整流器，启动页可开关）
+    #[serde(default)]
+    pub supports_rectifier: bool,
     pub resume_cmd: Option<String>,
     pub continue_cmd: Option<String>,
     pub cache_dirs: Vec<String>,
@@ -31,6 +51,33 @@ pub struct ToolConfig {
     pub sessions: Option<SessionScanDef>,
     pub skills_dir: Option<String>,
     pub skills_dir_xdg: Option<String>,
+}
+
+impl ToolConfig {
+    /// 工具支持的入站协议列表（用于代理为每种协议注册路由）。
+    /// 若三个标志都为空（旧配置），按 `api_protocol` 回退推导。
+    pub fn inbound_protocols(&self) -> Vec<String> {
+        let mut v = Vec::new();
+        if self.supports_openai { v.push("openai".to_string()); }
+        if self.supports_anthropic { v.push("anthropic".to_string()); }
+        if self.supports_google { v.push("google".to_string()); }
+        if v.is_empty() {
+            // 旧配置兜底：both → anthropic
+            match self.api_protocol.as_str() {
+                "anthropic" | "both" => v.push("anthropic".to_string()),
+                "google" => v.push("google".to_string()),
+                _ => v.push("openai".to_string()),
+            }
+        }
+        v
+    }
+
+    /// 工具的「原生」协议：用于协议转换消息展示与 one_m 后缀判定。
+    pub fn native_protocol(&self) -> String {
+        if self.supports_anthropic { "anthropic".to_string() }
+        else if self.supports_google { "google".to_string() }
+        else { "openai".to_string() }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +137,22 @@ pub struct SkillsScanConfig {
     pub description: String,
     pub base_skills_dir: String,
     pub tool_skills_dirs: HashMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpToolConfig {
+    /// 该工具的中心 MCP 配置文件路径（支持 ~ 与 %VAR%）
+    pub config_path: String,
+    /// 配置格式：`claude`(Claude Code) | `gemini`(Qwen/Gemini) | `opencode`(OpenCode 系)
+    pub format: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct McpConfig {
+    pub description: String,
+    pub tools: HashMap<String, McpToolConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +218,15 @@ pub struct AiToolDefDto {
     pub cache_dirs: Vec<String>,
     pub category: String,
     pub support_one_m_context: bool,
+    /// 工具支持的入站协议
+    pub supports_openai: bool,
+    pub supports_anthropic: bool,
+    pub supports_google: bool,
+    /// 内置模型名（伪装预设）
+    pub builtin_models: Vec<String>,
+    /// 是否支持请求优化 / 整流器（启动页可开关）
+    pub supports_optimizer: bool,
+    pub supports_rectifier: bool,
 }
 
 // ─── 注册表 ───
@@ -164,6 +236,7 @@ pub struct AiToolRegistry {
     tools: HashMap<String, (ToolConfig, PathConfig)>,
     providers: Vec<ProviderPreset>,
     skills_scan: SkillsScanConfig,
+    mcp: McpConfig,
     terminals: TerminalsConfig,
 }
 
@@ -248,6 +321,17 @@ impl AiToolRegistry {
             }
         });
 
+        // 加载 mcp-config.json
+        let mcp = Self::load_json::<McpConfig>(
+            &registry_dir.join("mcp-config.json"),
+        ).unwrap_or_else(|_| {
+            eprintln!("[ai_registry] 无法加载 mcp-config.json，使用默认配置");
+            McpConfig {
+                description: String::new(),
+                tools: HashMap::new(),
+            }
+        });
+
         // 加载 terminals.json
         let terminals = Self::load_json::<TerminalsConfig>(
             &registry_dir.join("terminals.json"),
@@ -270,7 +354,7 @@ impl AiToolRegistry {
             providers.len()
         );
 
-        Self { tools, providers, skills_scan, terminals }
+        Self { tools, providers, skills_scan, mcp, terminals }
     }
 
     fn find_registry_dir() -> PathBuf {
@@ -369,6 +453,31 @@ impl AiToolRegistry {
         &self.skills_scan
     }
 
+    pub fn mcp(&self) -> &McpConfig {
+        &self.mcp
+    }
+
+    /// 返回可部署 MCP 的工具 id 列表（来自 mcp-config.json）
+    pub fn mcp_tool_ids(&self) -> Vec<String> {
+        self.mcp.tools.keys().cloned().collect()
+    }
+
+    /// 解析某工具的 MCP 中心配置文件路径与格式
+    pub fn get_tool_mcp_config(&self, tool_id: &str) -> Option<(PathBuf, String)> {
+        let home = Self::get_home();
+        let config_home = std::env::var("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| home.join(".config"));
+        let entry = self.mcp.tools.get(tool_id)?;
+        let resolved = if entry.config_path.starts_with("~/.config/") {
+            let relative = entry.config_path.strip_prefix("~/.config/").unwrap_or("").trim_start_matches('/');
+            config_home.join(relative)
+        } else {
+            Self::resolve_path(&entry.config_path, &home)
+        };
+        Some((resolved, entry.format.clone()))
+    }
+
     pub fn terminals(&self) -> &TerminalsConfig {
         &self.terminals
     }
@@ -406,6 +515,12 @@ impl AiToolRegistry {
             cache_dirs: config.cache_dirs.clone(),
             category: config.category.clone(),
             support_one_m_context: config.support_one_m_context,
+            supports_openai: config.supports_openai,
+            supports_anthropic: config.supports_anthropic,
+            supports_google: config.supports_google,
+            builtin_models: config.builtin_models.clone(),
+            supports_optimizer: config.supports_optimizer,
+            supports_rectifier: config.supports_rectifier,
         }
     }
 
@@ -420,9 +535,15 @@ impl AiToolRegistry {
 
         let mut dirs: Vec<(PathBuf, String)> = Vec::new();
 
-        // 通用目录
-        let base_dir = Self::resolve_path(&self.skills_scan.base_skills_dir, &home);
-        dirs.push((base_dir, ".agents".to_string()));
+        // AnyVersion 自身技能仓库（配置驱动，默认 ~/.any-version/skills）：作为托管仓库，
+        // 在工具扫描循环中被跳过（仅用于判定 in_store / managed）。
+        let av_store = skills_dir();
+        dirs.push((av_store, "any-version".to_string()));
+
+        // skills.sh 仓库（~/.agents/skills）：作为「可发现的外来技能来源」（非 AnyVersion 托管仓库）。
+        // 用户可把其中的技能「整理」导入到 AnyVersion 目录。注意它与 AnyVersion 自身仓库无关。
+        let sh_store = Self::resolve_path(&self.skills_scan.base_skills_dir, &home);
+        dirs.push((sh_store, "skills.sh".to_string()));
 
         // 各工具独有的技能目录
         for (tool_id, tool_dirs) in &self.skills_scan.tool_skills_dirs {

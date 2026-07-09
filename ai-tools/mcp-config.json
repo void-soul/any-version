@@ -1,0 +1,11 @@
+{
+  "description": "MCP 服务器部署配置：每个工具的中心 MCP 配置文件路径(configPath)与格式(format)。format 取值：claude(Claude Code)、gemini(Qwen Code/Gemini CLI)、opencode(OpenCode 系)。修改后在前端点「刷新」或重启应用生效。",
+  "tools": {
+    "claude-code": { "configPath": "~/.claude.json", "format": "claude" },
+    "gemini-cli": { "configPath": "~/.gemini/settings.json", "format": "gemini" },
+    "qwencode": { "configPath": "~/.qwen/settings.json", "format": "gemini" },
+    "opencode": { "configPath": "~/.config/opencode/opencode.json", "format": "opencode" },
+    "mimocode": { "configPath": "~/.mimocode/opencode.json", "format": "opencode" },
+    "deveco": { "configPath": "~/.deveco/opencode.json", "format": "opencode" }
+  }
+}

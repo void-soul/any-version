@@ -3,15 +3,17 @@ import ModelConfig from "./ModelConfig";
 import ToolLauncher from "./ToolLauncher";
 import UsageStats from "./UsageStats";
 import SkillManager from "./SkillManager";
-import { Settings2, Rocket, BarChart3, Puzzle } from "lucide-react";
+import McpManager from "./McpManager";
+import { Settings2, Rocket, BarChart3, Puzzle, Plug } from "lucide-react";
 
-type AiSubTab = "model" | "launcher" | "usage" | "skills";
+type AiSubTab = "model" | "launcher" | "usage" | "skills" | "mcp";
 
 const TABS = [
   { key: "model" as AiSubTab, label: "模型配置", icon: Settings2 },
   { key: "launcher" as AiSubTab, label: "工具启动", icon: Rocket },
   { key: "usage" as AiSubTab, label: "用量统计", icon: BarChart3 },
   { key: "skills" as AiSubTab, label: "技能管理", icon: Puzzle },
+  { key: "mcp" as AiSubTab, label: "MCP 管理", icon: Plug },
 ];
 
 export default function AiPanel() {
@@ -50,6 +52,9 @@ export default function AiPanel() {
         </div>
         <div className={activeTab === "skills" ? "h-full" : "hidden"}>
           <SkillManager />
+        </div>
+        <div className={activeTab === "mcp" ? "h-full" : "hidden"}>
+          <McpManager />
         </div>
       </div>
     </div>

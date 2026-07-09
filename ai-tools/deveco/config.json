@@ -7,6 +7,13 @@
   "supportModel": true,
   "supportFallbackModel": true,
 
+  "supportsOpenai": true,
+  "supportsAnthropic": false,
+  "supportsGoogle": false,
+  "builtinModels": [],
+  "supportsOptimizer": true,
+  "supportsRectifier": true,
+
   "resumeCmd": "deveco -s {session_id}",
   "continueCmd": null,
   "cacheDirs": [".deveco", ".config/deveco"],

@@ -12,13 +12,25 @@ export interface AiProvider {
   category: string;
   api_key: string;
   website: string;
+  /** OpenAI 协议端点 URL（空字符串表示供应商不支持该协议） */
+  openai_url: string;
+  /** Anthropic 协议端点 URL（空字符串表示供应商不支持该协议） */
+  anthropic_url: string;
+  /** Google 协议端点 URL（空字符串表示供应商不支持该协议） */
+  google_url: string;
+  models: ModelEntry[];
+  active_model_id: string | null;
+}
+
+export interface ProviderPreset {
+  id: string;
+  name: string;
+  category: string;
+  website: string;
+  /** 预设支持的所有协议端点（catalog 用，实例化时择一） */
   openai_url: string;
   anthropic_url: string;
   google_url: string;
-  model_aliases: Record<string, string>;
-  default_model: string | null;
-  models: ModelEntry[];
-  active_model_id: string | null;
 }
 
 export interface AiConfig {
@@ -31,6 +43,7 @@ export interface AiConfig {
     thinking_signature: boolean;
     thinking_budget: boolean;
     media_fallback: boolean;
+    protocol_mismatch: boolean;
   };
   optimizer: {
     enabled: boolean;
@@ -59,6 +72,12 @@ export interface DetectedAiTool {
   continue_cmd: string | null;
   cache_dirs: string[];
   category: string;
+  supports_openai: boolean;
+  supports_anthropic: boolean;
+  supports_google: boolean;
+  builtin_models: string[];
+  supports_optimizer: boolean;
+  supports_rectifier: boolean;
 }
 
 export interface AiToolCacheInfo {
@@ -91,9 +110,17 @@ export interface LastLaunchConfig {
   model_id: string | null;
   fallback_model_id: string | null;
   fallback_provider_id: string | null;
+  /** fallback/小模型的伪装声明名 C，空表示不伪装 */
+  fallback_masquerade_model: string | null;
   use_official_model: boolean;
   terminal_id: string;
   one_m_context: boolean;
   project_path: string;
+  /** 模型伪装：工具以为自己调用的模型名 C，空表示不伪装 */
+  masquerade_model: string | null;
+  /** 本次启动是否启用优化器 */
+  optimizer_enabled: boolean | null;
+  /** 本次启动是否启用整流器 */
+  rectifier_enabled: boolean | null;
   last_launched_at: string;
 }

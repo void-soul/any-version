@@ -40,15 +40,11 @@ pub async fn fetch_provider_models(base_url: String, api_key: String) -> Result<
 
 #[tauri::command]
 pub async fn test_model_connection(
-    openai_url: Option<String>,
-    anthropic_url: Option<String>,
+    base_url: String,
+    protocol: String,
     api_key: String,
 ) -> Result<serde_json::Value, String> {
-    let url = openai_url
-        .filter(|u| !u.is_empty())
-        .or_else(|| anthropic_url.filter(|u| !u.is_empty()))
-        .unwrap_or_default();
-
+    let url = base_url.trim().to_string();
     if url.is_empty() {
         return Err("未提供 API URL".to_string());
     }
@@ -57,13 +53,23 @@ pub async fn test_model_connection(
     let client = reqwest::Client::new();
     let start = std::time::Instant::now();
 
-    let resp = client
-        .get(&test_url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .timeout(std::time::Duration::from_secs(15))
-        .send()
-        .await
-        .map_err(|e| format!("连接失败: {}", e))?;
+    // Google 端点用 x-goog-api-key 鉴权
+    let resp = if protocol == "google" {
+        client
+            .get(&test_url)
+            .header("x-goog-api-key", &api_key)
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await
+    } else {
+        client
+            .get(&test_url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await
+    }
+    .map_err(|e| format!("连接失败: {}", e))?;
 
     let latency_ms = start.elapsed().as_millis() as u64;
     let status = resp.status();
@@ -80,59 +86,40 @@ pub async fn test_model_connection(
 pub async fn start_proxy(port: u16) -> Result<(), String> {
     let config = load_ai_config();
     let provider = config.providers.iter().find(|p| {
-        !p.api_key.is_empty() && (!p.openai_url.is_empty() || !p.anthropic_url.is_empty())
+        !p.api_key.is_empty() && !p.supported_protocols().is_empty()
     })
     .ok_or("没有配置了 API URL 的 Provider")?;
 
-    // Anthropic 代理（P1: port）
-    if !provider.anthropic_url.is_empty() || !provider.openai_url.is_empty() {
-        let proxy_config = crate::proxy::types::ProxyConfig {
-            listen_address: "127.0.0.1".to_string(),
-            listen_port: port,
-            upstream_base_url: provider.openai_url.clone(),
-            upstream_api_key: provider.api_key.clone(),
-            upstream_anthropic_url: provider.anthropic_url.clone(),
-            upstream_protocol: "anthropic".to_string(),
-            target_model: String::new(),
-            timeout_secs: 300,
-            model_aliases: provider.model_aliases.clone(),
-            default_model: provider.default_model.clone(),
-            rectifier_enabled: config.rectifier.enabled,
-            rectifier_thinking_signature: config.rectifier.thinking_signature,
-            rectifier_thinking_budget: config.rectifier.thinking_budget,
-            rectifier_media_fallback: config.rectifier.media_fallback,
-            optimizer_enabled: config.optimizer.enabled,
-            optimizer_cache_injection: config.optimizer.cache_injection,
-            optimizer_thinking: config.optimizer.thinking_optimizer,
-            optimizer_deepseek: config.optimizer.deepseek_normalize,
-        };
-        crate::proxy::server::start_proxy_server(proxy_config).await?;
-    }
+    // 手动启动（无工具上下文）：入站 = 出站 = 供应商首个支持的协议（同协议直连）
+    let outbound_protocol = provider.primary_protocol();
+    let inbound = outbound_protocol.clone();
+    let outbound = outbound_protocol.clone();
+    let conversion_mode = crate::proxy::types::derive_conversion_mode(&inbound, &outbound);
 
-    // OpenAI 代理（P2: port + 1）
-    if !provider.openai_url.is_empty() || !provider.anthropic_url.is_empty() {
-        let proxy_config = crate::proxy::types::ProxyConfig {
-            listen_address: "127.0.0.1".to_string(),
-            listen_port: port + 1,
-            upstream_base_url: provider.openai_url.clone(),
-            upstream_api_key: provider.api_key.clone(),
-            upstream_anthropic_url: provider.anthropic_url.clone(),
-            upstream_protocol: "openai".to_string(),
-            target_model: String::new(),
-            timeout_secs: 300,
-            model_aliases: provider.model_aliases.clone(),
-            default_model: provider.default_model.clone(),
-            rectifier_enabled: config.rectifier.enabled,
-            rectifier_thinking_signature: config.rectifier.thinking_signature,
-            rectifier_thinking_budget: config.rectifier.thinking_budget,
-            rectifier_media_fallback: config.rectifier.media_fallback,
-            optimizer_enabled: config.optimizer.enabled,
-            optimizer_cache_injection: config.optimizer.cache_injection,
-            optimizer_thinking: config.optimizer.thinking_optimizer,
-            optimizer_deepseek: config.optimizer.deepseek_normalize,
-        };
-        crate::proxy::server::start_proxy_server(proxy_config).await?;
-    }
-
+    let proxy_config = crate::proxy::types::ProxyConfig {
+        listen_address: "127.0.0.1".to_string(),
+        listen_port: port,
+        inbound_protocols: vec![inbound],
+        outbound_protocol: outbound,
+        conversion_mode,
+        upstream_api_key: provider.api_key.clone(),
+        upstream_base_url: provider.url_for(&outbound_protocol),
+        target_model: String::new(),
+        timeout_secs: 300,
+        model_aliases: std::collections::HashMap::new(),
+        default_model: None,
+        tool_id: String::new(),
+        provider_id: provider.id.clone(),
+        rectifier_enabled: config.rectifier.enabled,
+        rectifier_thinking_signature: config.rectifier.thinking_signature,
+        rectifier_thinking_budget: config.rectifier.thinking_budget,
+        rectifier_media_fallback: config.rectifier.media_fallback,
+        rectifier_protocol_mismatch: config.rectifier.protocol_mismatch,
+        optimizer_enabled: config.optimizer.enabled,
+        optimizer_cache_injection: config.optimizer.cache_injection,
+        optimizer_thinking: config.optimizer.thinking_optimizer,
+        optimizer_deepseek: config.optimizer.deepseek_normalize,
+    };
+    crate::proxy::server::start_proxy_server(proxy_config).await?;
     Ok(())
 }

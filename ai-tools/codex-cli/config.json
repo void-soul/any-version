@@ -7,6 +7,13 @@
   "supportModel": true,
   "supportFallbackModel": false,
 
+  "supportsOpenai": true,
+  "supportsAnthropic": false,
+  "supportsGoogle": false,
+  "builtinModels": [],
+  "supportsOptimizer": true,
+  "supportsRectifier": true,
+
   "resumeCmd": null,
   "continueCmd": "codex resume --last",
   "cacheDirs": [".codex"],

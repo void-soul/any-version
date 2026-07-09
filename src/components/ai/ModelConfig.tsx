@@ -27,9 +27,13 @@ type Preset = {
 const EMPTY_PROVIDER: AiProvider = {
   id: "", name: "", category: "provider", api_key: "", website: "",
   openai_url: "", anthropic_url: "", google_url: "",
-  model_aliases: {}, default_model: null,
   models: [], active_model_id: null,
 };
+
+/// 从预设（可能含多个协议端点）取出全部协议 URL
+function presetUrls(p: Preset): { openai_url: string; anthropic_url: string; google_url: string } {
+  return { openai_url: p.openai_url, anthropic_url: p.anthropic_url, google_url: p.google_url };
+}
 
 export default function ModelConfig() {
   const [config, setConfig] = useState<AiConfig | null>(null);
@@ -63,7 +67,7 @@ export default function ModelConfig() {
       setConfig(data);
       setPresets(presetData);
     } catch {
-      setConfig({ providers: [], active_provider: null, proxy_port: 15721, default_project_path: "", rectifier: { enabled: false, thinking_signature: false, thinking_budget: false, media_fallback: false }, optimizer: { enabled: false, cache_injection: false, thinking_optimizer: false, deepseek_normalize: false }, skills_dir: "" });
+      setConfig({ providers: [], active_provider: null, proxy_port: 15721, default_project_path: "", rectifier: { enabled: false, thinking_signature: false, thinking_budget: false, media_fallback: false, protocol_mismatch: false }, optimizer: { enabled: false, cache_injection: false, thinking_optimizer: false, deepseek_normalize: false }, skills_dir: "" });
     } finally { setLoading(false); }
   }, []);
 
@@ -78,15 +82,16 @@ export default function ModelConfig() {
 
   const openAddModal = (preset?: Preset) => {
     setModalMode("add");
+    const urls = preset ? presetUrls(preset) : { openai_url: "", anthropic_url: "", google_url: "" };
     setForm({
       ...EMPTY_PROVIDER,
       id: preset?.id || `custom_${Date.now()}`,
       name: preset?.name || "",
       category: preset?.category || "provider",
       website: preset?.website || "",
-      openai_url: preset?.openai_url || "",
-      anthropic_url: preset?.anthropic_url || "",
-      google_url: preset?.google_url || "",
+      openai_url: urls.openai_url,
+      anthropic_url: urls.anthropic_url,
+      google_url: urls.google_url,
     });
     setModelsText("");
     setFormError(null);
@@ -105,9 +110,8 @@ export default function ModelConfig() {
 
   const validateForm = (): string | null => {
     if (!form.name.trim()) return "名称不能为空";
-    if (!form.openai_url.trim() && !form.anthropic_url.trim() && !form.google_url.trim()) {
-      return "至少填写一个协议端点 URL（OpenAI / Anthropic / Google）";
-    }
+    if (!form.openai_url.trim() && !form.anthropic_url.trim() && !form.google_url.trim())
+      return "请至少填写一个协议端点 URL";
     if (!form.api_key.trim()) return "API Key 不能为空";
     return null;
   };
@@ -177,8 +181,9 @@ export default function ModelConfig() {
   // ─── 自动获取模型列表 ───
 
   const handleFetchModels = async () => {
-    if (!form.openai_url && !form.anthropic_url && !form.google_url) {
-      setFormError("请先填写至少一个 URL");
+    const url = form.openai_url || form.anthropic_url || form.google_url || "";
+    if (!url) {
+      setFormError("请先填写任一协议端点 URL");
       return;
     }
     if (!form.api_key) {
@@ -188,7 +193,6 @@ export default function ModelConfig() {
     setFetchingModels(true);
     setFormError(null);
     try {
-      const url = form.openai_url || form.anthropic_url || form.google_url;
       const models = await invoke<string[]>("fetch_provider_models", {
         baseUrl: url,
         apiKey: form.api_key,
@@ -211,9 +215,11 @@ export default function ModelConfig() {
     setTesting(provider.id);
     setTestResult(null);
     try {
+      const testUrl = provider.openai_url || provider.anthropic_url || provider.google_url || "";
+      const testProtocol = provider.openai_url ? "openai" : provider.anthropic_url ? "anthropic" : "google";
       const result = await invoke<{ success: boolean; message: string; latency_ms: number }>("test_model_connection", {
-        openaiUrl: provider.openai_url || null,
-        anthropicUrl: provider.anthropic_url || null,
+        baseUrl: testUrl,
+        protocol: testProtocol,
         apiKey: provider.api_key,
       });
       setTestResult({ id: provider.id, ok: result.success, msg: result.message });
@@ -289,14 +295,20 @@ export default function ModelConfig() {
                   <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${provider.category === "relay" ? "bg-cyan-500/15 text-cyan-400" : "bg-emerald-500/15 text-emerald-400"}`}>
                     {provider.category === "relay" ? "中转站" : "供应商"}
                   </span>
-                  {/* 协议标签 */}
-                  {provider.openai_url && <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-blue-500/20 text-blue-300">OpenAI</span>}
-                  {provider.anthropic_url && <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-300">Anthropic</span>}
-                  {provider.google_url && <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-green-500/20 text-green-300">Google</span>}
+                  {/* 协议标签：每个已配置的协议端点一个徽标 */}
+                  {(() => {
+                    const protos: { key: string; label: string; cls: string }[] = [];
+                    if (provider.openai_url) protos.push({ key: "openai", label: "OpenAI", cls: "bg-blue-500/20 text-blue-300" });
+                    if (provider.anthropic_url) protos.push({ key: "anthropic", label: "Anthropic", cls: "bg-amber-500/20 text-amber-300" });
+                    if (provider.google_url) protos.push({ key: "google", label: "Google", cls: "bg-green-500/20 text-green-300" });
+                    return protos.map(p => (
+                      <span key={p.key} className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${p.cls}`}>{p.label}</span>
+                    ));
+                  })()}
                 </div>
               </div>
               <div className="flex items-center gap-1.5 flex-shrink-0">
-                <button onClick={(e) => { e.stopPropagation(); handleTest(provider); }} disabled={testing === provider.id || !provider.api_key}
+                <button onClick={(e) => { e.stopPropagation(); handleTest(provider); }} disabled={testing === provider.id || !provider.api_key || (!provider.openai_url && !provider.anthropic_url && !provider.google_url)}
                   className="px-2 py-1 rounded-md  hover:bg-white/10 text-[10px] text-slate-400 hover:text-white disabled:opacity-40 cursor-pointer transition-all flex items-center gap-1">
                   <Zap className={`w-3 h-3 ${testing === provider.id ? "animate-pulse text-yellow-400" : ""}`} />
                 </button>
@@ -380,80 +392,30 @@ export default function ModelConfig() {
                   className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500" />
               </div>
 
-              {/* 协议端点 URL */}
+              {/* 协议端点 URL（每个支持的协议一个地址） */}
               <div className="p-3 rounded-lg bg-slate-900/50 border border-white/5 space-y-3">
-                <label className="text-[10px] text-slate-400 font-semibold block">协议端点 URL</label>
-                <p className="text-[9px] text-slate-600">填写供应商支持的协议端点，留空表示不支持。工具启动时代理必开，自动处理协议转换和模型映射。</p>
+                <label className="text-[10px] text-slate-400 font-semibold block">协议端点</label>
+                <p className="text-[9px] text-slate-600">为每个支持的协议填写端点 URL。工具启动时代理必开，根据已配置的 URL 判断供应商支持的协议，并据此决定是否做协议转换与模型伪装。</p>
 
-                {/* OpenAI URL */}
                 <div className="space-y-1">
-                  <label className="text-[9px] text-blue-300 font-semibold block">OpenAI 协议端点</label>
+                  <label className="text-[9px] text-blue-300 font-semibold block">OpenAI 协议地址</label>
                   <input value={form.openai_url} onChange={e => setForm({ ...form, openai_url: e.target.value })}
                     placeholder="https://api.openai.com/v1"
                     className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500" />
                 </div>
 
-                {/* Anthropic URL */}
                 <div className="space-y-1">
-                  <label className="text-[9px] text-amber-300 font-semibold block">Anthropic 协议端点（用于 Claude Code 等）</label>
+                  <label className="text-[9px] text-amber-300 font-semibold block">Anthropic 协议地址</label>
                   <input value={form.anthropic_url} onChange={e => setForm({ ...form, anthropic_url: e.target.value })}
                     placeholder="https://api.anthropic.com"
                     className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-amber-500" />
                 </div>
 
-                {/* Google URL */}
                 <div className="space-y-1">
-                  <label className="text-[9px] text-green-300 font-semibold block">Google 协议端点（用于 Gemini CLI）</label>
+                  <label className="text-[9px] text-green-300 font-semibold block">Google 协议地址</label>
                   <input value={form.google_url} onChange={e => setForm({ ...form, google_url: e.target.value })}
-                    placeholder="留空使用官方端点，或填写自定义 URL"
+                    placeholder="https://generativelanguage.googleapis.com"
                     className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-green-500" />
-                </div>
-              </div>
-
-              {/* ─── 模型别名映射 ─── */}
-              <div className="p-3 rounded-lg bg-slate-900/50 border border-amber-500/20 space-y-2">
-                <label className="text-[10px] text-amber-300 font-semibold block">模型映射</label>
-                <p className="text-[9px] text-slate-600">
-                  代理启动后，Claude Code 发送的模型名（如 claude-sonnet-4）会被代理自动映射到供应商的实际模型。
-                </p>
-                {["sonnet", "opus", "haiku", "fable"].map(key => (
-                  <div key={key} className="flex items-center gap-2">
-                    <span className="text-[10px] text-slate-400 font-mono w-16 flex-shrink-0">{key}</span>
-                    <span className="text-[9px] text-slate-600 flex-shrink-0">→</span>
-                    <select
-                      value={form.model_aliases?.[key] || ""}
-                      onChange={e => {
-                        const next = { ...form };
-                        const nextAliases = { ...(next.model_aliases || {}) };
-                        if (e.target.value) nextAliases[key] = e.target.value;
-                        else delete nextAliases[key];
-                        next.model_aliases = nextAliases;
-                        setForm(next);
-                      }}
-                      className="flex-1 bg-slate-900 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-amber-500"
-                    >
-                      <option value="">不映射</option>
-                      {modelsText.split("\n").filter(l => l.trim()).map(m => (
-                        <option key={m.trim()} value={m.trim()}>{m.trim()}</option>
-                      ))}
-                    </select>
-                  </div>
-                ))}
-                <div className="flex items-center gap-2 pt-1 border-t border-white/5">
-                  <span className="text-[10px] text-slate-400 font-mono w-16 flex-shrink-0">默认</span>
-                  <span className="text-[9px] text-slate-600 flex-shrink-0">→</span>
-                  <select
-                    value={form.default_model || ""}
-                    onChange={e => {
-                      setForm({ ...form, default_model: e.target.value || null });
-                    }}
-                    className="flex-1 bg-slate-900 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-amber-500"
-                  >
-                    <option value="">不设置</option>
-                    {modelsText.split("\n").filter(l => l.trim()).map(m => (
-                      <option key={m.trim()} value={m.trim()}>{m.trim()}</option>
-                    ))}
-                  </select>
                 </div>
               </div>
 
@@ -465,7 +427,7 @@ export default function ModelConfig() {
                   </label>
                   <button
                     onClick={handleFetchModels}
-                    disabled={fetchingModels || (!form.openai_url && !form.anthropic_url) || !form.api_key}
+                    disabled={fetchingModels || (!form.openai_url && !form.anthropic_url && !form.google_url) || !form.api_key}
                     className="px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-[9px] font-semibold text-emerald-400 cursor-pointer transition-all flex items-center gap-0.5 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <RefreshCw className={`w-3 h-3 ${fetchingModels ? "animate-spin" : ""}`} />

@@ -5,7 +5,14 @@
   "website": "https://opencode.ai",
   "apiProtocol": "openai",
   "supportModel": true,
-  "supportFallbackModel": false,
+  "supportFallbackModel": true,
+
+  "supportsOpenai": true,
+  "supportsAnthropic": false,
+  "supportsGoogle": false,
+  "builtinModels": [],
+  "supportsOptimizer": true,
+  "supportsRectifier": true,
 
   "resumeCmd": "opencode -s {session_id}",
   "continueCmd": null,
@@ -21,7 +28,8 @@
         "provider.anyversion.options.baseURL": "baseUrl",
         "provider.anyversion.options.apiKey": "apiKey",
         "provider.anyversion.models.{model_name}.name": "modelName",
-        "model": "model"
+        "model": "model",
+        "small_model": "fallbackModel"
       }
   },
   "modelFormat": {
