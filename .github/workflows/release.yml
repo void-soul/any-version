@@ -84,6 +84,12 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # The NSIS toolchain (`makensis`) is NOT preinstalled on windows-latest.
+      # Tauri bundles both .msi (WiX) and .exe (NSIS) on Windows, so without
+      # NSIS the `tauri build` step fails before any installer is produced.
+      - name: Install NSIS (required for the .exe bundle)
+        run: choco install nsis -y
+
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
         env:
