@@ -1,6 +1,6 @@
 [package]
 name = "any-version"
-version = "3.0.0"
+version = "3.0.1"
 description = "Windows Multi-Language Dev Environment Version Manager"
 authors = ["AnyVersion Team"]
 edition = "2021"
@@ -17,6 +17,8 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 serde = { version = "1.0", features = ["derive"] }
 regex = "1.10"
 serde_json = "1.0"

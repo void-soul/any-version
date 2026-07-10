@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Opt into Node.js 24 runner for all JavaScript-based actions before the
+# forced switch at the platform level (mirrors EchoBird's forward-compat opt-in).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # tsc (type check) + vite build — also validates the frontend bundles.
+      - name: Build frontend
+        run: pnpm run build
+
+  rust:
+    # Skip on Dependabot PRs: they only bump action/dependency versions
+    # (config-only, no Rust diff), and the frontend job still runs.
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Pinned to 1.93 to stop new clippy lints in every Rust release from
+      # spuriously breaking CI. Bump deliberately when adopting new lints;
+      # mirror the change in release.yml so the build matrix stays in lockstep.
+      - uses: dtolnay/rust-toolchain@1.93
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v5
+        with:
+          path: src-tauri/target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      # NOTE: `cargo fmt --check` and `cargo clippy` are currently SOFT gates
+      # (continue-on-error) because the codebase has pre-existing format diffs
+      # and ~119 clippy warnings. Once `cargo fmt` + `cargo clippy --fix` are
+      # applied, flip these to hard gates (clippy with `-- -D warnings`) like
+      # EchoBird does. The hard gate below is `cargo test` (compile + unit tests).
+      - name: Format check
+        run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
+        continue-on-error: true
+
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
+        continue-on-error: true
+
+      - name: Test
+        run: cargo test --manifest-path src-tauri/Cargo.toml

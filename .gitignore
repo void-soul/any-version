@@ -25,3 +25,7 @@ dist-ssr
 
 # Auto-recovered editor fragments
 src-tauri/src/commands/recovered_*.rs
+
+# Tauri updater signing keys (NEVER commit the private key)
+src-tauri/keypair/
+*.key

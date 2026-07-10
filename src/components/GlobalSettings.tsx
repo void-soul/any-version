@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { 
   FolderKanban, 
   Save, 
@@ -61,6 +63,9 @@ export default function GlobalSettings() {
   const [updateBody, setUpdateBody] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState("");
+  // "plugin" = 来自 tauri-plugin-updater（可应用内下载安装）；"github" = 兜底（仅打开下载页）
+  const [updateSource, setUpdateSource] = useState<"plugin" | "github" | null>(null);
+  const [installing, setInstalling] = useState(false);
   const [progress, setProgress] = useState<MigrateProgress | null>(null);
   const [deletingOldDirs, setDeletingOldDirs] = useState(false);
   const [deletedOldDirs, setDeletedOldDirs] = useState<string[] | null>(null);
@@ -213,7 +218,24 @@ export default function GlobalSettings() {
     setCheckingUpdate(true);
     setUpdateError(null);
     setLatestVersion(null);
+    setUpdateSource(null);
     try {
+      // 1) 优先走 Tauri 官方更新器：可应用内下载 + 安装 + 重启
+      try {
+        const update = await check();
+        if (update) {
+          setLatestVersion(update.version);
+          setUpdateBody(update.body ?? null);
+          setUpdateSource("plugin");
+          return;
+        }
+        alert("当前已是最新版本！");
+        return;
+      } catch (pluginErr) {
+        // 插件未配置 / 网络异常时，降级为 GitHub API 通知（仅打开下载页）
+        console.warn("[updater] plugin check failed, fallback to GitHub API:", pluginErr);
+      }
+      // 2) 兜底：GitHub REST 通知
       const resp = await fetch("https://api.github.com/repos/void-soul/any-version/releases/latest", {
         headers: { "Accept": "application/vnd.github.v3+json" }
       });
@@ -224,8 +246,8 @@ export default function GlobalSettings() {
       if (tag && tag !== currentVer) {
         setLatestVersion(tag);
         setUpdateBody(data.body ?? null);
+        setUpdateSource("github");
       } else {
-        setLatestVersion(null);
         setUpdateError(null);
         alert("当前已是最新版本！");
       }
@@ -233,6 +255,29 @@ export default function GlobalSettings() {
       setUpdateError(e.message || "检查更新失败");
     } finally {
       setCheckingUpdate(false);
+    }
+  };
+
+  // 应用内下载并安装更新，完成后重启
+  const handleInstallUpdate = async () => {
+    try {
+      setInstalling(true);
+      setUpdateError(null);
+      const update = await check();
+      if (!update) {
+        setInstalling(false);
+        return;
+      }
+      await update.downloadAndInstall((event) => {
+        // event: { event: 'Started'|'Progress'|'Finished', data: {...} }
+        if (event.event === "Finished") {
+          // 下载完成，准备重启
+        }
+      });
+      await relaunch();
+    } catch (e: any) {
+      setUpdateError(e.message || "更新安装失败");
+      setInstalling(false);
     }
   };
 
@@ -474,13 +519,24 @@ export default function GlobalSettings() {
                 <span className="text-[10px] text-slate-400">({updateBody.substring(0, 80)}...)</span>
               )}
             </div>
-            <button
-              onClick={handleDownloadUpdate}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5"
-            >
-              <ExternalLink className="w-3 h-3" />
-              前往下载页面
-            </button>
+            {updateSource === "plugin" ? (
+              <button
+                onClick={handleInstallUpdate}
+                disabled={installing}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5 disabled:opacity-60"
+              >
+                <Loader2 className={`w-3 h-3 ${installing ? "animate-spin" : ""}`} />
+                {installing ? "正在下载并安装..." : "下载并安装更新"}
+              </button>
+            ) : (
+              <button
+                onClick={handleDownloadUpdate}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5"
+              >
+                <ExternalLink className="w-3 h-3" />
+                前往下载页面
+              </button>
+            )}
           </div>
         )}
 

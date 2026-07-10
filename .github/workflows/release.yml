@@ -1,13 +1,5 @@
-name: Release 发布构建
+name: Release
 
-# 触发方式：当推送一个以 v 开头的标签（如 v1.0.1、v1.2.0）时，
-# 自动编译 Windows 安装包并发布到 GitHub Releases。
-#
-# 使用方法（在本地仓库执行）：
-#   git tag v1.0.1
-#   git push origin v1.0.1
-#
-# 也可以在 GitHub 网页的 Actions 页面手动触发（workflow_dispatch）。
 on:
   push:
     tags:
@@ -19,59 +11,128 @@ on:
         required: true
         default: 'v0.0.0-test'
 
-# GITHUB_TOKEN 需要写入权限才能创建 Release。
-permissions:
-  contents: write
+# Opt into Node.js 24 runner for all JavaScript-based actions (see ci.yml).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # Create the GitHub release ONCE, up front, so the build job below uploads to
+  # the SAME release object. If we passed `tagName`/`releaseDraft` to tauri-action
+  # directly, a parallel matrix would each fail to "find" the draft release and
+  # CREATE its own — producing duplicate drafts with assets split across them.
+  # (AnyVersion is Windows-only today, but this pattern keeps it race-free and
+  #  ready if more platforms are added later.)
+  create-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.release_id }}
+    steps:
+      - name: Create (or reuse) the draft release
+        id: create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          ID=$(gh api --paginate "repos/${REPO}/releases" \
+            --jq "[.[] | select(.tag_name == \"${TAG}\" and .draft == true)][0].id // empty")
+          if [ -z "$ID" ]; then
+            ID=$(gh api -X POST "repos/${REPO}/releases" \
+              -f tag_name="${TAG}" \
+              -f name="AnyVersion ${TAG}" \
+              -f body="See the assets to download and install this version." \
+              -F draft=true -F prerelease=false --jq '.id')
+            echo "created draft release $ID"
+          else
+            echo "reusing existing draft release $ID"
+          fi
+          echo "release_id=$ID" >> "$GITHUB_OUTPUT"
+
   release:
-    name: 构建并发布 (Windows)
+    needs: create-release
+    permissions:
+      contents: write
     runs-on: windows-latest
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
-      - name: 安装 Node.js
-        uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v4
         with:
-          node-version: 20
-          cache: yarn
+          version: 9
 
-      - name: 安装 Rust 工具链
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          # Pinned to 22 to match ci.yml (setup-node@v6 + node-version: lts/*
+          # can misbehave on Node 24 runners).
+          node-version: 22
+          cache: 'pnpm'
 
-      - name: 缓存 Rust 依赖 (加速构建)
+      # Pinned to 1.93 — see comment in ci.yml. Keep both files in lockstep.
+      - name: Install Rust 1.93 (pinned)
+        uses: dtolnay/rust-toolchain@1.93
+
+      - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: './src-tauri -> target'
 
-      - name: 安装前端依赖
-        run: |
-          yarn install --frozen-lockfile
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
 
-      - name: 解析版本标签
-        id: tagname
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "value=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: 编译 Tauri 应用并发布 Release
+      - name: Build the app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 更新签名密钥（私钥内容 + 密码），用于生成 .sig 与 latest.json
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ steps.tagname.outputs.value }}
-          releaseName: 'AnyVersion ${{ steps.tagname.outputs.value }}'
-          releaseBody: |
-            AnyVersion 开发环境管理器 ${{ steps.tagname.outputs.value }}
-
-            ## 下载说明
-            - `.msi` / `.exe`：Windows 安装包，双击即可安装。
-          releaseDraft: true
+          # Upload to the single draft created by `create-release` above.
+          # Using releaseId (instead of tagName/releaseDraft) makes tauri-action
+          # upload to the EXISTING release rather than create its own — this is
+          # what removes the duplicate-draft race. The release stays a draft
+          # until the operator flips it public via `gh release edit <tag> --draft=false`.
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: ''
+          # 生成带签名的更新产物（.sig）并上传 latest.json 到 release，
+          # 供 tauri-plugin-updater 的 endpoints 拉取。
+          includeUpdaterJson: true
           prerelease: false
-          includeUpdaterJson: false
-          generateReleaseNotes: true
+
+  rename-assets:
+    # Tauri's bundler uses inconsistent filenames (no platform label, locale
+    # suffix, etc.). Rename every asset on the release in place via the GitHub
+    # API — non-destructive, no re-upload.
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Rename release assets with platform labels
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VER="${TAG#v}"
+          # `gh api releases/tags/${TAG}` does NOT return draft releases, so we
+          # list all releases and filter for this tag ourselves.
+          gh api --paginate "repos/${REPO}/releases" \
+            --jq ".[] | select(.tag_name == \"${TAG}\") | .assets[] | \"\(.id)\t\(.name)\"" \
+          | while IFS=$'\t' read -r ID NAME; do
+              case "$NAME" in
+                *_x64*.exe|*_x64*-setup.exe) NEW="AnyVersion_${VER}_x64-setup.exe" ;;
+                *_x64*.msi)                    NEW="AnyVersion_${VER}_x64.msi" ;;
+                *)                             NEW="" ;;
+              esac
+              if [ -n "$NEW" ] && [ "$NEW" != "$NAME" ]; then
+                echo "rename: $NAME  ->  $NEW"
+                gh api -X PATCH "repos/${REPO}/releases/assets/${ID}" -f name="$NEW" --jq '.name'
+              fi
+            done
