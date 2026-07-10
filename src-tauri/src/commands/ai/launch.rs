@@ -3,6 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use crate::commands::ai_registry::{registry, ToolConfig};
 use crate::commands::hidden_cmd;
+use crate::proxy::types::ModelRoute;
 use super::models::*;
 
 use super::config::{load_ai_config, load_last_launch_configs, save_last_launch_configs, load_sessions, save_sessions_to_file};
@@ -110,6 +111,30 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                 }
             }
 
+            // 跨供应商路由：按实际模型名 → 其所属供应商的端点+key。
+            // 大模型路由到大供应商；辅助/小模型路由到其自身供应商（fallback_provider_id）。
+            // 代理在 build_upstream_url / build_upstream_request 中据此选择上游，查不到则回退全局上游。
+            let mut model_routes: HashMap<String, ModelRoute> = HashMap::new();
+            if let Some(ref mid) = req.model_id {
+                if !mid.is_empty() {
+                    model_routes.insert(mid.clone(), ModelRoute {
+                        base_url: p.url_for(&chosen_outbound),
+                        api_key: p.api_key.clone(),
+                    });
+                }
+            }
+            if let Some(ref fb) = req.fallback_model_id {
+                if !fb.is_empty() {
+                    if let Some(fp) = req.fallback_provider_id.as_ref()
+                        .and_then(|pid| config.providers.iter().find(|pr| &pr.id == pid)) {
+                        model_routes.insert(fb.clone(), ModelRoute {
+                            base_url: fp.url_for(&chosen_outbound),
+                            api_key: fp.api_key.clone(),
+                        });
+                    }
+                }
+            }
+
             // 优化器 / 整流器：工具支持时可由启动请求开关覆盖，否则继承全局配置
             let optimizer_on = tool_config.supports_optimizer
                 && req.optimizer_enabled.unwrap_or(true)
@@ -131,6 +156,7 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                         conversion_mode,
                         upstream_api_key: p.api_key.clone(),
                         upstream_base_url: upstream_base_url.clone(),
+                        model_routes,
                         target_model,
                         timeout_secs: timeout,
                         model_aliases,

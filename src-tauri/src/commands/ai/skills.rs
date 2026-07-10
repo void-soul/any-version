@@ -145,6 +145,19 @@ pub struct SkillToolInfo {
 /// 解析 SKILL.md 元数据。
 ///
 /// 遵循 skills.sh 规范：优先读取 YAML frontmatter 中的 `name` / `description`；
+/// 去掉字符串首尾成对的引号（" 或 '），用于解析 frontmatter 中带引号或不带引号的值。
+/// `name: "imagegen"` 与 `name: imagegen` 都会被解析为 `imagegen`。
+fn strip_quotes(s: &str) -> String {
+    let t = s.trim();
+    if t.len() < 2 {
+        return t.to_string();
+    }
+    match (t.chars().next(), t.chars().last()) {
+        (Some('"'), Some('"')) | (Some('\''), Some('\'')) => t[1..t.len() - 1].to_string(),
+        _ => t.to_string(),
+    }
+}
+
 /// 若文件不以 `---` 开头（无 frontmatter），则回退为「首行 `# 标题` 作为描述、文件夹名作为名称」的旧行为，
 /// 以兼容未带 frontmatter 的技能包。
 fn parse_skill_md(content: &str, folder_name: &str) -> (String, String) {
@@ -158,14 +171,14 @@ fn parse_skill_md(content: &str, folder_name: &str) -> (String, String) {
                 let line = line.trim();
                 if name.is_none() {
                     if let Some(v) = line.strip_prefix("name:") {
-                        name = Some(v.trim().to_string());
+                        name = Some(strip_quotes(v));
                         if desc.is_some() { break; }
                         continue;
                     }
                 }
                 if desc.is_none() {
                     if let Some(v) = line.strip_prefix("description:") {
-                        desc = Some(v.trim().to_string());
+                        desc = Some(strip_quotes(v));
                         if name.is_some() { break; }
                     }
                 }

@@ -524,6 +524,9 @@ pub struct LaunchAiToolRequest {
     pub provider_id: Option<String>,
     /// fallback/light 模型（低级任务用）
     pub fallback_model_id: Option<String>,
+    /// fallback/light 模型所属供应商 id（可为空；空 = 与大类模型同供应商）
+    #[serde(default)]
+    pub fallback_provider_id: Option<String>,
     /// fallback/light 模型的伪装声明名 C（可为空；空 = 不伪装，直接以实际供应商模型 B 名义请求）
     #[serde(default)]
     pub fallback_masquerade_model: Option<String>,

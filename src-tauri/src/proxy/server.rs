@@ -282,7 +282,7 @@ async fn process_request(
             o.insert("stream".into(), json!(true));
         }
     }
-    let (upstream_url, auth_name) = build_upstream_url(&config, &outbound, &actual_model, is_stream);
+    let (upstream_url, auth_name, route_api_key) = build_upstream_url(&config, &outbound, &actual_model, is_stream);
     if upstream_url.is_empty() {
         let mut stats = state.stats.write().await;
         stats.failed_requests += 1;
@@ -295,7 +295,7 @@ async fn process_request(
 
     log_proxy(&format!("→ OUT  POST {} auth={}", upstream_url, auth_name));
 
-    let req = build_upstream_request(&state.client, &config, headers, &upstream_url, &auth_name, &out_body);
+    let req = build_upstream_request(&state.client, &config, headers, &upstream_url, &auth_name, &route_api_key, &out_body);
     let upstream_resp = match req.send().await {
         Ok(r) => r,
         Err(e) => {
@@ -323,7 +323,7 @@ async fn process_request(
 
         // ⑦ 反应式整流：修正后重试一次
         if let Some(rectified) = optimizers::try_reactive_rectify(status.as_u16(), &error_body, &out_body, &config, &outbound) {
-            let retry_req = build_upstream_request(&state.client, &config, headers, &upstream_url, &auth_name, &rectified);
+            let retry_req = build_upstream_request(&state.client, &config, headers, &upstream_url, &auth_name, &route_api_key, &rectified);
             if let Ok(retry_resp) = retry_req.send().await {
                 if retry_resp.status().is_success() {
                     log_proxy(&format!("↻ retry succeeded after rectify  ({}ms)", start.elapsed().as_millis()));
@@ -739,9 +739,15 @@ fn extract_stream_usage(inbound: &str, cj: &Value) -> (u64, u64) {
 }
 
 /// ⑥ 构建上游 URL 与鉴权头名称。
-fn build_upstream_url(config: &ProxyConfig, outbound: &str, model: &str, is_stream: bool) -> (String, String) {
-    let base = config.upstream_base_url.trim_end_matches('/');
-    match outbound {
+/// 按实际模型名 B 查 `model_routes`：命中则用该模型所属供应商的端点与 key，
+/// 否则回退到全局 upstream_base_url / upstream_api_key（大模型供应商）。
+/// 返回 (url, auth_header_name, api_key)。
+fn build_upstream_url(config: &ProxyConfig, outbound: &str, model: &str, is_stream: bool) -> (String, String, String) {
+    let (base, api_key) = config.model_routes.get(model)
+        .map(|r| (r.base_url.clone(), r.api_key.clone()))
+        .unwrap_or_else(|| (config.upstream_base_url.clone(), config.upstream_api_key.clone()));
+    let base = base.trim_end_matches('/');
+    let (url, auth_name) = match outbound {
         "anthropic" => {
             let url = if base.ends_with("/messages") {
                 base.to_string()
@@ -763,32 +769,35 @@ fn build_upstream_url(config: &ProxyConfig, outbound: &str, model: &str, is_stre
             (url, "x-goog-api-key".to_string())
         }
         _ => (String::new(), "Authorization".to_string()),
-    }
+    };
+    (url, auth_name, api_key)
 }
 
 /// 构建上游请求（携带对应鉴权头）。
+/// `api_key`：由 `build_upstream_url` 按模型路由表解析得到的供应商 key。
 fn build_upstream_request(
     client: &reqwest::Client,
-    config: &ProxyConfig,
+    _config: &ProxyConfig,
     headers: &HeaderMap,
     upstream_url: &str,
     auth_name: &str,
+    api_key: &str,
     body: &Value,
 ) -> reqwest::RequestBuilder {
     let mut req = client.post(upstream_url);
     match auth_name {
         "x-api-key" => {
             req = req
-                .header("x-api-key", &config.upstream_api_key)
+                .header("x-api-key", api_key)
                 .header("anthropic-version", "2023-06-01")
                 .json(body);
         }
         "x-goog-api-key" => {
-            req = req.header("x-goog-api-key", &config.upstream_api_key).json(body);
+            req = req.header("x-goog-api-key", api_key).json(body);
         }
         _ => {
             req = req
-                .header("Authorization", format!("Bearer {}", config.upstream_api_key))
+                .header("Authorization", format!("Bearer {}", api_key))
                 .json(body);
         }
     }

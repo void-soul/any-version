@@ -30,6 +30,12 @@ pub struct ProxyConfig {
     #[serde(default, alias = "upstream_openai_url")]
     pub upstream_base_url: String,
 
+    /// 跨供应商路由：实际模型名 B → 该模型所属供应商的上游端点 + key。
+    /// 命中时用其端点/key，否则回退到全局 upstream_base_url / upstream_api_key。
+    /// 用于支持「大模型」与「辅助模型」分属不同供应商的场景。
+    #[serde(default)]
+    pub model_routes: HashMap<String, ModelRoute>,
+
     /// 目标模型 ID（请求体写入的"实际模型 B"）
     pub target_model: String,
     /// 请求超时（秒）
@@ -72,6 +78,13 @@ pub struct ProxyConfig {
     pub optimizer_deepseek: bool,
 }
 
+/// 单个模型的供应商路由（跨供应商支持）：该模型实际所属供应商的上游端点与 key。
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct ModelRoute {
+    pub base_url: String,
+    pub api_key: String,
+}
+
 impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
@@ -82,6 +95,7 @@ impl Default for ProxyConfig {
             conversion_mode: "none".to_string(),
             upstream_api_key: String::new(),
             upstream_base_url: "https://api.openai.com/v1".to_string(),
+            model_routes: HashMap::new(),
             target_model: "gpt-4o".to_string(),
             timeout_secs: 300,
             model_aliases: HashMap::new(),
