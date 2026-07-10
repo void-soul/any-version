@@ -37,7 +37,10 @@ jobs:
     # Skip on Dependabot PRs: they only bump action/dependency versions
     # (config-only, no Rust diff), and the frontend job still runs.
     if: github.actor != 'dependabot[bot]'
-    runs-on: ubuntu-latest
+    # any-version is Windows-only (depends on `winreg`, etc.), so the crate
+    # does not compile on Linux. Run the Rust job on Windows to match the
+    # release environment — otherwise `cargo test` fails to link (exit 101).
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
 
