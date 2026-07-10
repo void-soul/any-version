@@ -824,15 +824,17 @@ export default function ToolLauncher() {
                     {/* 模型伪装（仅当工具内置模型名列表非空） */}
                     {selectedModel && selectedTool.builtin_models.length > 0 && (
                       <div className="mt-3">
-                        <label className="text-xs font-bold text-slate-300 mb-1.5 block">伪装模型名称 <span className="text-[9px] text-slate-500 font-normal">（可选）</span></label>
-                        <p className="text-[9px] text-slate-500 mb-1.5">让工具以为自己调用以下内置模型，代理实际转发到 <span className="font-mono text-slate-400">{selectedModel}</span></p>
-                        <select value={masqueradeModel} onChange={e => setMasqueradeModel(e.target.value)}
-                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-500">
-                          <option value="">不伪装（直接使用 {selectedModel}）</option>
+                        <label className="text-xs font-bold text-slate-300 mb-1.5 block">伪装模型名称 <span className="text-[9px] text-slate-500 font-normal">（可选，可手动输入）</span></label>
+                        <p className="text-[9px] text-slate-500 mb-1.5">让工具以为自己调用以下内置模型，代理实际转发到 <span className="font-mono text-slate-400">{selectedModel}</span>。列表仅为建议，可直接输入任意模型名。</p>
+                        <input type="text" list={`masq-list-${selectedTool.id}`} value={masqueradeModel}
+                          onChange={e => setMasqueradeModel(e.target.value)}
+                          placeholder={`不伪装（直接使用 ${selectedModel}）`}
+                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500" />
+                        <datalist id={`masq-list-${selectedTool.id}`}>
                           {selectedTool.builtin_models.map(c => (
-                            <option key={c} value={c}>{c}</option>
+                            <option key={c} value={c} />
                           ))}
-                        </select>
+                        </datalist>
                       </div>
                     )}
                   </div>
@@ -898,15 +900,17 @@ export default function ToolLauncher() {
                     </div>
                     {selectedFallbackModel && selectedTool.builtin_models.length > 0 && (
                       <div className="mt-3">
-                        <label className="text-[11px] font-bold text-slate-300 mb-1.5 block">Fallback 伪装名称 <span className="text-[9px] text-slate-500 font-normal">（可选）</span></label>
-                        <p className="text-[9px] text-slate-500 mb-1.5">让工具以为 fallback 调用以下内置模型，代理实际转发到 <span className="font-mono text-slate-400">{selectedFallbackModel}</span></p>
-                        <select value={fallbackMasqueradeModel} onChange={e => setFallbackMasqueradeModel(e.target.value)}
-                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-500">
-                          <option value="">不伪装（直接使用 {selectedFallbackModel}）</option>
+                        <label className="text-[11px] font-bold text-slate-300 mb-1.5 block">Fallback 伪装名称 <span className="text-[9px] text-slate-500 font-normal">（可选，可手动输入）</span></label>
+                        <p className="text-[9px] text-slate-500 mb-1.5">让工具以为 fallback 调用以下内置模型，代理实际转发到 <span className="font-mono text-slate-400">{selectedFallbackModel}</span>。列表仅为建议，可直接输入任意模型名。</p>
+                        <input type="text" list={`fb-masq-list-${selectedTool.id}`} value={fallbackMasqueradeModel}
+                          onChange={e => setFallbackMasqueradeModel(e.target.value)}
+                          placeholder={`不伪装（直接使用 ${selectedFallbackModel}）`}
+                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500" />
+                        <datalist id={`fb-masq-list-${selectedTool.id}`}>
                           {selectedTool.builtin_models.map(c => (
-                            <option key={c} value={c}>{c}</option>
+                            <option key={c} value={c} />
                           ))}
-                        </select>
+                        </datalist>
                       </div>
                     )}
                     {selectedFallbackModel && (
