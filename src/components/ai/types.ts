@@ -115,6 +115,8 @@ export interface LastLaunchConfig {
   use_official_model: boolean;
   terminal_id: string;
   one_m_context: boolean;
+  /** fallback/小模型是否同样追加 [1m] */
+  fallback_one_m_context: boolean;
   project_path: string;
   /** 模型伪装：工具以为自己调用的模型名 C，空表示不伪装 */
   masquerade_model: string | null;

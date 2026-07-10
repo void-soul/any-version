@@ -536,6 +536,9 @@ pub struct LaunchAiToolRequest {
     /// Claude Code relay-only: append [1m] to model id for 1M context window
     #[serde(default)]
     pub one_m_context: bool,
+    /// fallback/light 模型是否同样追加 [1m]（可与主模型独立勾选）
+    #[serde(default)]
+    pub fallback_one_m_context: bool,
     /// 模型伪装：工具「以为自己调用的模型名」C（`tool.builtin_models` 中的一项）。
     /// 为空表示不作伪装，工具直接以所选取的供应商模型 B 名义请求。
     /// 代理将把请求中的 C 改写为实际模型 B（masquerade C → B）。
@@ -590,6 +593,9 @@ pub struct LastLaunchConfig {
     pub use_official_model: bool,
     pub terminal_id: String,
     pub one_m_context: bool,
+    /// fallback/light 模型是否同样追加 [1m]
+    #[serde(default)]
+    pub fallback_one_m_context: bool,
     pub project_path: String,
     /// 模型伪装：工具「以为自己调用的模型名」C（tool.builtinModels 中的一项），空表示不伪装
     #[serde(default)]

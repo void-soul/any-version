@@ -140,6 +140,8 @@ export default function ToolLauncher() {
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
 
   const [oneMContext, setOneMContext] = useState(false);
+  // fallback 模型是否同样追加 [1m]（可与主模型独立勾选）
+  const [fallbackOneMContext, setFallbackOneMContext] = useState(false);
   // 伪装模型名（"" 表示不伪装，直接使用所选取的供应商模型）
   const [masqueradeModel, setMasqueradeModel] = useState("");
   // 代理增强能力开关（由工具能力 + 全局配置共同决定是否实际生效）
@@ -317,6 +319,7 @@ export default function ToolLauncher() {
           session_mode: sessionMode,
           terminal_id: selectedTerminal,
           one_m_context: selectedTool.support_one_m_context ? oneMContext : false,
+          fallback_one_m_context: selectedTool.support_one_m_context ? (selectedFallbackModel ? fallbackOneMContext : false) : false,
           masquerade_model: useOfficialModel ? null : (masqueradeModel || null),
           optimizer_enabled: useOfficialModel ? null : optimizerEnabled,
           rectifier_enabled: useOfficialModel ? null : rectifierEnabled,
@@ -345,6 +348,7 @@ export default function ToolLauncher() {
           use_official_model: useOfficialModel,
           terminal_id: selectedTerminal,
           one_m_context: selectedTool.support_one_m_context ? oneMContext : false,
+          fallback_one_m_context: selectedTool.support_one_m_context ? (selectedFallbackModel ? fallbackOneMContext : false) : false,
           masquerade_model: useOfficialModel ? null : (masqueradeModel || null),
           optimizer_enabled: useOfficialModel ? null : optimizerEnabled,
           rectifier_enabled: useOfficialModel ? null : rectifierEnabled,
@@ -512,6 +516,7 @@ export default function ToolLauncher() {
                 setLaunchResult(null);
                 setShowCacheManager(false);
                 setOneMContext(false);
+                setFallbackOneMContext(false);
                 setMasqueradeModel("");
                 setOptimizerEnabled(config?.optimizer?.enabled !== false);
                 setRectifierEnabled(config?.rectifier?.enabled !== false);
@@ -544,6 +549,7 @@ export default function ToolLauncher() {
                     }
                     if (last.terminal_id && last.terminal_id !== "cmd") setSelectedTerminal(last.terminal_id);
                     if (last.one_m_context) setOneMContext(true);
+                    if (last.fallback_one_m_context) setFallbackOneMContext(true);
                     if (last.masquerade_model) setMasqueradeModel(last.masquerade_model);
                     if (last.optimizer_enabled !== null && last.optimizer_enabled !== undefined) setOptimizerEnabled(last.optimizer_enabled);
                     if (last.rectifier_enabled !== null && last.rectifier_enabled !== undefined) setRectifierEnabled(last.rectifier_enabled);
@@ -849,7 +855,7 @@ export default function ToolLauncher() {
                     </label>
                     <div className="rounded-lg border border-white/5 bg-slate-900/30 overflow-hidden">
                       <div className="px-3 py-1.5 text-[9px] text-slate-600 font-mono cursor-pointer hover:bg-white/[0.05] border-b border-white/[0.03]"
-                        onClick={() => { setSelectedFallbackModel(""); setSelectedFallbackProvider(""); }}>
+                        onClick={() => { setSelectedFallbackModel(""); setSelectedFallbackProvider(""); setFallbackOneMContext(false); }}>
                         不使用 fallback 模型
                       </div>
                       {fallbackGroups.map(group => {
@@ -881,7 +887,7 @@ export default function ToolLauncher() {
                                   return (
                                     <button key={`fb:${group.provider_id}:${m.id}`}
                                       onClick={() => {
-                                        if (isSelected) { setSelectedFallbackModel(""); setSelectedFallbackProvider(""); }
+                                        if (isSelected) { setSelectedFallbackModel(""); setSelectedFallbackProvider(""); setFallbackOneMContext(false); }
                                         else { setSelectedFallbackModel(m.id); setSelectedFallbackProvider(group.provider_id); }
                                       }}
                                       className={`w-full text-left px-5 py-1.5 text-[10px] transition-all cursor-pointer flex items-center gap-2 ${
@@ -914,7 +920,16 @@ export default function ToolLauncher() {
                       </div>
                     )}
                     {selectedFallbackModel && (
-                      <div className="mt-1 text-[10px] text-amber-400">Fallback: <span className="font-mono">{selectedFallbackModel}</span>{fallbackMasqueradeModel && <>(伪装为 <span className="font-mono">{fallbackMasqueradeModel}</span>)</>}</div>
+                      <>
+                        {selectedTool.support_one_m_context && (
+                          <label className="flex items-center gap-2 mt-2 text-[10px] text-slate-400 cursor-pointer select-none">
+                            <input type="checkbox" checked={fallbackOneMContext} onChange={e => setFallbackOneMContext(e.target.checked)}
+                              className="accent-violet-500" />
+                            为 Fallback 模型追加 [1m]（1M 上下文，独立勾选）
+                          </label>
+                        )}
+                        <div className="mt-1 text-[10px] text-amber-400">Fallback: <span className="font-mono">{selectedFallbackModel}{fallbackOneMContext ? "[1m]" : ""}</span>{fallbackMasqueradeModel && <>(伪装为 <span className="font-mono">{fallbackMasqueradeModel}{fallbackOneMContext ? "[1m]" : ""}</span>)</>}</div>
+                      </>
                     )}
                   </div>
                 )}

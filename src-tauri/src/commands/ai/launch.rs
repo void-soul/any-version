@@ -238,6 +238,7 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                         req.fallback_model_id.as_deref(),
                         req.fallback_masquerade_model.as_deref(),
                         req.one_m_context,
+                        req.fallback_one_m_context,
                         proxy_mode,
                     ) {
                         Ok(_) => {
@@ -431,6 +432,7 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
         use_official_model: is_official,
         terminal_id: req.terminal_id.clone(),
         one_m_context: req.one_m_context,
+        fallback_one_m_context: req.fallback_one_m_context,
         project_path: lc_project_path,
         masquerade_model: req.masquerade_model.clone(),
         optimizer_enabled: req.optimizer_enabled,
@@ -475,10 +477,11 @@ fn write_tool_config_from_spec(
     fallback_model_id: Option<&str>,
     fallback_masquerade_model: Option<&str>,
     one_m_context: bool,
+    fallback_one_m_context: bool,
     proxy_mode: bool,
 ) -> Result<(), String> {
     if let Some(ref _cfg) = tool_config.config_file {
-        return write_tool_config_generic(tool_config, model_id, claimed_model, base_url.unwrap_or(fallback_url), api_key, fallback_model_id, fallback_masquerade_model, one_m_context, proxy_mode);
+        return write_tool_config_generic(tool_config, model_id, claimed_model, base_url.unwrap_or(fallback_url), api_key, fallback_model_id, fallback_masquerade_model, one_m_context, fallback_one_m_context, proxy_mode);
     }
     // 无 configFile 定义的工具完全依赖 CLI 参数，无需写配置
     let _ = tool_id;
@@ -526,6 +529,7 @@ fn write_tool_config_generic(
     fallback_model_id: Option<&str>,
     fallback_masquerade_model: Option<&str>,
     one_m_context: bool,
+    fallback_one_m_context: bool,
     _proxy_mode: bool,
 ) -> Result<(), String> {
     let cfg = match &tool_config.config_file {
@@ -557,6 +561,10 @@ fn write_tool_config_generic(
     let apply_one_m = one_m_context
         && tool_config.support_one_m_context
         && (tool_config.api_protocol == "anthropic" || tool_config.api_protocol == "both");
+    // fallback/小模型可独立勾选 1M
+    let apply_one_m_fb = fallback_one_m_context
+        && tool_config.support_one_m_context
+        && (tool_config.api_protocol == "anthropic" || tool_config.api_protocol == "both");
 
     // 组装待写入的 (路径, 值) 列表
     let mut writes: Vec<(String, String)> = Vec::new();
@@ -571,8 +579,8 @@ fn write_tool_config_generic(
     let fallback_claimed = fallback_model_id.and_then(|fm| {
         if fm.is_empty() { return None; }
         match fallback_masquerade_model {
-            Some(c) if !c.is_empty() => Some(c.to_string()),
-            _ => Some(format_model_name(fm, tool_config)),
+            Some(c) if !c.is_empty() => Some(format_model_name_with_ctx(c, tool_config, apply_one_m_fb)),
+            _ => Some(format_model_name_with_ctx(fm, tool_config, apply_one_m_fb)),
         }
     });
 
