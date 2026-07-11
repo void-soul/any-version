@@ -26,8 +26,13 @@ interface RssArticle {
   source: string;
 }
 
+interface RssSource {
+  url: string;
+  name: string;
+}
+
 interface RssConfig {
-  rss_sources: string[];
+  sources: RssSource[];
   is_first_launch: boolean;
 }
 
@@ -38,7 +43,7 @@ function stripHtml(html: string): string {
   return text.slice(0, 180).trim() + (text.length > 180 ? "..." : "");
 }
 
-function parseRssXml(xmlStr: string, feedUrl: string): RssArticle[] {
+function parseRssXml(xmlStr: string, feedUrl: string, customName?: string): RssArticle[] {
   const parser = new DOMParser();
   const xmlDoc = parser.parseFromString(xmlStr, "text/xml");
   
@@ -48,11 +53,15 @@ function parseRssXml(xmlStr: string, feedUrl: string): RssArticle[] {
     throw new Error("XML 解析失败，非合法的 RSS 格式");
   }
 
-  // Find feed title
+  // 优先使用用户自定义名称，否则回退到 feed 标题
   let feedTitle = "未定义源";
-  const titleNode = xmlDoc.querySelector("channel > title, feed > title");
-  if (titleNode) {
-    feedTitle = titleNode.textContent || "未定义源";
+  if (customName && customName.trim()) {
+    feedTitle = customName.trim();
+  } else {
+    const titleNode = xmlDoc.querySelector("channel > title, feed > title");
+    if (titleNode) {
+      feedTitle = titleNode.textContent || "未定义源";
+    }
   }
 
   const articles: RssArticle[] = [];
@@ -122,7 +131,7 @@ function parseRssXml(xmlStr: string, feedUrl: string): RssArticle[] {
 }
 
 export default function RssReader() {
-  const [sources, setSources] = useState<string[]>([]);
+  const [sources, setSources] = useState<RssSource[]>([]);
   const [articles, setArticles] = useState<RssArticle[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -132,10 +141,14 @@ export default function RssReader() {
   const [customStartDate, setCustomStartDate] = useState<string>("");
   const [customEndDate, setCustomEndDate] = useState<string>("");
 
+  // Source name filter ("" = 全部来源)
+  const [sourceFilter, setSourceFilter] = useState<string>("");
+
   // Configuration modal state
   const [showConfig, setShowConfig] = useState<boolean>(false);
-  const [editSources, setEditSources] = useState<string[]>([]);
+  const [editSources, setEditSources] = useState<RssSource[]>([]);
   const [newSourceUrl, setNewSourceUrl] = useState<string>("");
+  const [newSourceName, setNewSourceName] = useState<string>("");
   const [testStatus, setTestStatus] = useState<Record<string, "testing" | "success" | "error">>({});
   const [configMessage, setConfigMessage] = useState<string | null>(null);
 
@@ -217,9 +230,9 @@ export default function RssReader() {
   const loadRssConfig = async () => {
     try {
       const res = await invoke<RssConfig>("get_rss_config");
-      setSources(res.rss_sources);
-      setEditSources(res.rss_sources);
-      return res.rss_sources;
+      setSources(res.sources);
+      setEditSources(res.sources);
+      return res.sources;
     } catch (err: any) {
       setError(`加载 RSS 配置失败: ${err.message || err}`);
       return [];
@@ -227,8 +240,8 @@ export default function RssReader() {
   };
 
   // Fetch articles from all sources
-  const fetchAllFeeds = async (feedUrls: string[], force = false) => {
-    if (feedUrls.length === 0) {
+  const fetchAllFeeds = async (feedSources: RssSource[], force = false) => {
+    if (feedSources.length === 0) {
       setArticles([]);
       setError("未配置 RSS 订阅源，点击右上角设置配置订阅源。");
       return;
@@ -242,7 +255,7 @@ export default function RssReader() {
     const cacheDuration = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
     await Promise.all(
-      feedUrls.map(async (url) => {
+      feedSources.map(async ({ url, name }) => {
         try {
           let xmlText = "";
           let useCache = false;
@@ -270,11 +283,11 @@ export default function RssReader() {
             }));
           }
 
-          const parsed = parseRssXml(xmlText, url);
+          const parsed = parseRssXml(xmlText, url, name);
           allArticles.push(...parsed);
         } catch (err: any) {
           console.error(`Fetch feed error for ${url}:`, err);
-          errors.push(`${url}: ${err.message || err}`);
+          errors.push(`${name || url}: ${err.message || err}`);
         }
       })
     );
@@ -297,12 +310,21 @@ export default function RssReader() {
   };
 
   useEffect(() => {
-    loadRssConfig().then((urls) => {
-      if (urls.length > 0) {
-        fetchAllFeeds(urls, false);
+    loadRssConfig().then((list) => {
+      if (list.length > 0) {
+        fetchAllFeeds(list, false);
       }
     });
   }, []);
+
+  // 当前资讯中出现的所有来源名称（用于按名称筛选）
+  const availableSources = useMemo(() => {
+    const set = new Set<string>();
+    articles.forEach((a) => {
+      if (a.source) set.add(a.source);
+    });
+    return Array.from(set).sort();
+  }, [articles]);
 
   // Filtered articles
   const filteredArticles = useMemo(() => {
@@ -311,6 +333,9 @@ export default function RssReader() {
       // 过滤掉已删除（已读）的资讯
       const articleId = article.link || article.title;
       if (deletedLinks.has(articleId)) return false;
+
+      // 按来源名称筛选
+      if (sourceFilter && article.source !== sourceFilter) return false;
 
       if (dateFilter === "all") return true;
       if (!article.pubDate) return false;
@@ -335,7 +360,7 @@ export default function RssReader() {
       }
       return true;
     });
-  }, [articles, dateFilter, customStartDate, customEndDate, deletedLinks]);
+  }, [articles, dateFilter, customStartDate, customEndDate, deletedLinks, sourceFilter]);
 
   // Article open helper
   const handleOpenArticle = async (url: string) => {
@@ -367,18 +392,24 @@ export default function RssReader() {
   const handleAddSource = () => {
     const trimmed = newSourceUrl.trim();
     if (!trimmed) return;
-    if (editSources.includes(trimmed)) {
+    if (editSources.some((s) => s.url === trimmed)) {
       setConfigMessage("该订阅源已在列表中");
       return;
     }
-    setEditSources([...editSources, trimmed]);
+    setEditSources([...editSources, { url: trimmed, name: newSourceName.trim() }]);
     setNewSourceUrl("");
+    setNewSourceName("");
     setConfigMessage(null);
+  };
+
+  // Update a source name in the edit list
+  const handleUpdateSourceName = (url: string, name: string) => {
+    setEditSources(editSources.map((s) => (s.url === url ? { ...s, name } : s)));
   };
 
   // Remove source from edit list
   const handleRemoveSource = (url: string) => {
-    setEditSources(editSources.filter((s) => s !== url));
+    setEditSources(editSources.filter((s) => s.url !== url));
     const newStatus = { ...testStatus };
     delete newStatus[url];
     setTestStatus(newStatus);
@@ -387,11 +418,16 @@ export default function RssReader() {
   // Save config
   const handleSaveConfig = async () => {
     try {
-      await invoke("set_rss_sources", { sources: editSources });
-      setSources(editSources);
+      const cleaned = editSources.map((s) => ({ url: s.url, name: s.name.trim() }));
+      await invoke("set_rss_sources", { sources: cleaned });
+      setSources(cleaned);
+      // 若当前来源筛选项已不存在，则重置
+      if (sourceFilter && !cleaned.some((s) => s.name === sourceFilter)) {
+        setSourceFilter("");
+      }
       setShowConfig(false);
       setConfigMessage(null);
-      fetchAllFeeds(editSources);
+      fetchAllFeeds(cleaned);
     } catch (err: any) {
       setConfigMessage(`保存失败: ${err.message || err}`);
     }
@@ -462,6 +498,26 @@ export default function RssReader() {
         </button>
 
         <div className="w-px h-3 bg-white/10" />
+
+        {/* 来源筛选 —— 仅资讯视图且存在多个来源时 */}
+        {view === "feed" && availableSources.length > 0 && (
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <Rss className="w-3 h-3 text-slate-500" />
+            <select
+              value={sourceFilter}
+              onChange={(e) => setSourceFilter(e.target.value)}
+              className="bg-slate-900 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-300 focus:outline-none focus:border-orange-500 cursor-pointer max-w-[140px]"
+              title="按来源名称筛选"
+            >
+              <option value="">全部来源</option>
+              {availableSources.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {view === "feed" && availableSources.length > 0 && <div className="w-px h-3 bg-white/10" />}
 
         {/* 过滤时间 —— 仅资讯视图 */}
         {view === "feed" && (
@@ -693,7 +749,14 @@ export default function RssReader() {
               <div className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="添加新的 RSS 订阅源 URL（例如：https://36kr.com/feed）"
+                  placeholder="来源名称（可选，如：36氪）"
+                  value={newSourceName}
+                  onChange={(e) => setNewSourceName(e.target.value)}
+                  className="w-[130px] flex-shrink-0 bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-[10.5px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                />
+                <input
+                  type="text"
+                  placeholder="RSS 订阅源 URL（例如：https://36kr.com/feed）"
                   value={newSourceUrl}
                   onChange={(e) => setNewSourceUrl(e.target.value)}
                   className="flex-1 bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-[10.5px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
@@ -727,14 +790,23 @@ export default function RssReader() {
               {editSources.length === 0 ? (
                 <div className="py-8 text-center text-[10.5px] text-slate-600">无订阅源，请在上方添加新的订阅地址。</div>
               ) : (
-                editSources.map((url) => {
+                editSources.map(({ url, name }) => {
                   const status = testStatus[url];
                   return (
                     <div 
                       key={url}
                       className="p-2.5 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between gap-3 text-[10px]"
                     >
-                      <span className="font-mono text-slate-300 break-all truncate max-w-[320px] select-all" title={url}>{url}</span>
+                      <div className="flex flex-col gap-1 min-w-0 flex-1">
+                        <input
+                          type="text"
+                          value={name}
+                          placeholder="来源名称（留空则用 feed 标题）"
+                          onChange={(e) => handleUpdateSourceName(url, e.target.value)}
+                          className="w-full max-w-[200px] bg-slate-900 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                        />
+                        <span className="font-mono text-slate-400 break-all truncate max-w-[320px] select-all" title={url}>{url}</span>
+                      </div>
                       
                       <div className="flex items-center gap-2 flex-shrink-0">
                         {status === "testing" && (

@@ -60,6 +60,9 @@ pub struct Config {
     pub original_paths: std::collections::HashMap<String, Vec<String>>,
     #[serde(default)]
     pub rss_sources: Vec<String>,
+    /// RSS 订阅源自定义名称：url -> name。为空时前端回退使用 feed 标题。
+    #[serde(default)]
+    pub rss_source_names: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub has_run_before: bool,
 }
@@ -111,6 +114,7 @@ pub fn load_config() -> Config {
             "https://36kr.com/feed".to_string(),
             "http://www.ruanyifeng.com/blog/atom.xml".to_string(),
         ],
+        rss_source_names: default_rss_source_names(),
         has_run_before: false,
     };
     let _ = fs::create_dir_all(&base_dir);
@@ -563,10 +567,41 @@ pub fn update_project_menu_config(app_handle: tauri::AppHandle, id: String, show
     Ok(())
 }
 
+/// 单个 RSS 订阅源（含自定义名称）
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RssSourceDto {
+    pub url: String,
+    #[serde(default)]
+    pub name: String,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RssConfig {
-    pub rss_sources: Vec<String>,
+    pub sources: Vec<RssSourceDto>,
     pub is_first_launch: bool,
+}
+
+/// 内置默认 RSS 源的名称映射
+fn default_rss_source_names() -> std::collections::HashMap<String, String> {
+    let mut m = std::collections::HashMap::new();
+    m.insert("https://36kr.com/feed".to_string(), "36氪".to_string());
+    m.insert(
+        "http://www.ruanyifeng.com/blog/atom.xml".to_string(),
+        "阮一峰的网络日志".to_string(),
+    );
+    m
+}
+
+/// 将 config 中的 url 列表与名称映射合并为带名称的源列表
+fn build_rss_sources(config: &Config) -> Vec<RssSourceDto> {
+    config
+        .rss_sources
+        .iter()
+        .map(|url| RssSourceDto {
+            url: url.clone(),
+            name: config.rss_source_names.get(url).cloned().unwrap_or_default(),
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -581,18 +616,26 @@ pub fn get_rss_config() -> Result<RssConfig, String> {
                 "http://www.ruanyifeng.com/blog/atom.xml".to_string(),
             ];
         }
+        if config.rss_source_names.is_empty() {
+            config.rss_source_names = default_rss_source_names();
+        }
         save_config(&config)?;
     }
     Ok(RssConfig {
-        rss_sources: config.rss_sources.clone(),
+        sources: build_rss_sources(&config),
         is_first_launch,
     })
 }
 
 #[tauri::command]
-pub fn set_rss_sources(sources: Vec<String>) -> Result<(), String> {
+pub fn set_rss_sources(sources: Vec<RssSourceDto>) -> Result<(), String> {
     let mut config = load_config();
-    config.rss_sources = sources;
+    config.rss_sources = sources.iter().map(|s| s.url.clone()).collect();
+    config.rss_source_names = sources
+        .into_iter()
+        .filter(|s| !s.name.trim().is_empty())
+        .map(|s| (s.url, s.name.trim().to_string()))
+        .collect();
     save_config(&config)?;
     Ok(())
 }

@@ -357,27 +357,27 @@ impl AiToolRegistry {
         Self { tools, providers, skills_scan, mcp, terminals }
     }
 
+    /// 查找 ai-tools 注册表目录。
+    /// 搜索策略与 projects 注册表（project/registry.rs::load_registry）保持一致：
+    /// 依次在「资源目录 / exe 同目录及向上 5 层 / 当前工作目录 / 用户配置目录」中查找
+    /// `ai-tools` 或 `_up_/ai-tools`（Tauri 打包时 `../ai-tools` 的 `..` 会被映射为 `_up_` 前缀）。
     fn find_registry_dir() -> PathBuf {
-        let mut candidates = Vec::new();
+        let mut search_dirs: Vec<PathBuf> = Vec::new();
 
         // 优先在 Tauri 2 打包后的官方资源目录下查找
         if let Some(res_dir) = crate::commands::utils::get_resource_dir() {
-            candidates.push(res_dir.join("ai-tools"));
+            search_dirs.push(res_dir);
         }
 
-        // 开发模式：相对于可执行文件查找
+        // exe 同目录及向上 5 层
         if let Ok(exe) = std::env::current_exe() {
-            if let Some(parent) = exe.parent() {
-                let p = parent.join("ai-tools");
-                candidates.push(p);
-                // 向上查找 (Tauri dev: src-tauri)
-                for up in 1..=5 {
-                    let up_path = parent
-                        .parent()
-                        .and_then(|_| (0..up).fold(Some(parent), |acc, _| acc?.parent()))
-                        .map(|p| p.join("ai-tools"));
-                    if let Some(p) = up_path {
-                        candidates.push(p);
+            if let Some(exe_dir) = exe.parent() {
+                search_dirs.push(exe_dir.to_path_buf());
+                let mut dir = exe_dir.to_path_buf();
+                for _ in 0..5 {
+                    if let Some(parent) = dir.parent() {
+                        dir = parent.to_path_buf();
+                        search_dirs.push(dir.clone());
                     }
                 }
             }
@@ -385,27 +385,25 @@ impl AiToolRegistry {
 
         // 当前工作目录
         if let Ok(cwd) = std::env::current_dir() {
-            candidates.push(cwd.join("ai-tools"));
-            candidates.push(cwd.join("..").join("ai-tools"));
+            search_dirs.push(cwd);
         }
 
-        // 用户目录
-        if let Ok(home) = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-        {
-            candidates.push(PathBuf::from(&home).join(".any-version").join("ai-tools"));
-        }
+        // 用户配置目录（~/.any-version）
+        search_dirs.push(crate::commands::config::get_base_dir());
 
-        for c in &candidates {
-            if c.exists() && c.is_dir() {
-                eprintln!("[ai_registry] 找到 ai-tools 目录: {}", c.display());
-                return c.clone();
+        // 每个候选目录下查找 ai-tools 目录（含 Tauri 打包时的 `_up_` 前缀布局）
+        for dir in &search_dirs {
+            for candidate in [dir.join("_up_").join("ai-tools"), dir.join("ai-tools")] {
+                if candidate.exists() && candidate.is_dir() {
+                    eprintln!("[ai_registry] 找到 ai-tools 目录: {}", candidate.display());
+                    return candidate;
+                }
             }
         }
 
-        // Fallback: 使用当前目录
+        // Fallback: 使用默认路径
         eprintln!("[ai_registry] 未找到 ai-tools 目录，使用默认路径");
-        candidates.first().cloned().unwrap_or_else(|| PathBuf::from("ai-tools"))
+        search_dirs.first().cloned().unwrap_or_else(|| PathBuf::from("ai-tools"))
     }
 
     fn load_json<T: serde::de::DeserializeOwned>(path: &PathBuf) -> Result<T, String> {
