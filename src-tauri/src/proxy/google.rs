@@ -1001,7 +1001,7 @@ impl GoogleToOpenaiStreamConverter {
         (self.input_tokens, self.output_tokens)
     }
 
-    pub fn convert_chunk(&mut self, chunk: &Value) -> Option<String> {
+    pub fn convert_chunk(&mut self, chunk: &Value) -> Vec<String> {
         if let Some(um) = chunk.get("usageMetadata") {
             self.input_tokens = um.get("promptTokenCount").and_then(|v| v.as_u64()).unwrap_or(self.input_tokens);
             let cand = um.get("candidatesTokenCount").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -1059,6 +1059,6 @@ impl GoogleToOpenaiStreamConverter {
                 "finish_reason": finish_reason
             }]
         });
-        Some(format!("data: {}\n\n", serde_json::to_string(&chunk_out).unwrap()))
+        vec![format!("data: {}\n\n", serde_json::to_string(&chunk_out).unwrap())]
     }
 }
