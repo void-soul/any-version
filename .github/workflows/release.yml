@@ -43,7 +43,7 @@ jobs:
             ID=$(gh api -X POST "repos/${REPO}/releases" \
               -f tag_name="${TAG}" \
               -f name="AnyVersion ${TAG}" \
-              -f body="See the assets to download and install this version." \
+              -F generate_release_notes=true \
               -F draft=true -F prerelease=false --jq '.id')
             echo "created draft release $ID"
           else
