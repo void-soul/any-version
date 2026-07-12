@@ -2,6 +2,9 @@ use serde::{Serialize, Deserialize};
 use std::path::PathBuf;
 use crate::commands::config::load_config;
 use crate::commands::project::registry;
+use crate::commands::tool_version::is_newer;
+use futures_util::future;
+use tokio::task;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct PackageInfo {
@@ -130,7 +133,7 @@ pub fn execute_command_string(cmd_str: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn get_global_packages(sdk_name: String) -> Result<Vec<PackageInfo>, String> {
+pub async fn get_global_packages(sdk_name: String) -> Result<Vec<PackageInfo>, String> {
     let (project, pm) = registry::registry().into_iter()
         .find_map(|p| {
             if p.id.eq_ignore_ascii_case(&sdk_name) {
@@ -192,20 +195,48 @@ pub fn get_global_packages(sdk_name: String) -> Result<Vec<PackageInfo>, String>
                 let json_slice = &stdout[start_idx..];
                 if let Ok(parsed) = serde_json::from_str::<NpmList>(json_slice) {
                     if let Some(deps) = parsed.dependencies {
+                        // npm 全局 `outdated -g` 对全局包不可靠（常返回空 {}），
+                        // 因此不再依赖它来判定新版本。改用 `npm view <pkg> version`
+                        // 逐个查询 registry 上的最新版本（走用户已配置的镜像/代理）。
+                        let npm_exe = find_pm_executable(&pm.id, &project.id);
+                        let mut tasks = Vec::new();
                         for (name, dep) in deps {
                             let current = dep.version.unwrap_or_else(|| "unknown".to_string());
-                            let mut latest = current.clone();
-                            let mut status = "latest".to_string();
-                            if let Some(lv) = outdated_map.get(&name.to_lowercase()) {
-                                latest = lv.clone();
-                                status = "outdated".to_string();
-                            }
+                            let npm_exe_clone = npm_exe.clone();
+                            let name_clone = name.clone();
+                            tasks.push(async move {
+                                let mut latest = current.clone();
+                                let mut status = "latest".to_string();
+                                // 联网查询该包在 registry 上的最新版本
+                                let view_cmd = format!("{} view {} version", npm_exe_clone, name_clone);
+                                if let Ok(out) = task::spawn_blocking({
+                                    let cmd = view_cmd.clone();
+                                    move || execute_command_string(&cmd).unwrap_or_default()
+                                }).await
+                                {
+                                    let v = out.trim().trim_matches('"').to_string();
+                                    if !v.is_empty() && v != "unknown" && v != current {
+                                        latest = v.clone();
+                                        status = if is_newer(&v, &current) {
+                                            "outdated"
+                                        } else {
+                                            "latest"
+                                        }
+                                        .to_string();
+                                    }
+                                }
+                                (name_clone, current, latest, status)
+                            });
+                        }
+                        let results = future::join_all(tasks).await;
+                        for (name, current, latest, status) in results {
+                            let homepage = homepage_template.replace("{pkg}", &name);
                             list.push(PackageInfo {
-                                name: name.clone(),
+                                name,
                                 current_version: current,
                                 latest_version: latest,
                                 status,
-                                homepage: homepage_template.replace("{pkg}", &name),
+                                homepage,
                             });
                         }
                     }
@@ -343,8 +374,8 @@ pub struct UpgradeResult {
 }
 
 #[tauri::command]
-pub fn upgrade_all_global_packages(sdk_name: String) -> Result<Vec<UpgradeResult>, String> {
-    let packages = get_global_packages(sdk_name.clone())?;
+pub async fn upgrade_all_global_packages(sdk_name: String) -> Result<Vec<UpgradeResult>, String> {
+    let packages = get_global_packages(sdk_name.clone()).await?;
     let outdated: Vec<&PackageInfo> = packages.iter().filter(|p| p.status == "outdated").collect();
 
     if outdated.is_empty() {
