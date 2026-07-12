@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
 import { 
   FolderKanban, 
   Save, 
@@ -14,7 +15,8 @@ import {
   AlertTriangle,
   Trash2,
   Loader2,
-  FileText
+  FileText,
+  Power
 } from "lucide-react";
 
 interface Config {
@@ -76,6 +78,9 @@ export default function GlobalSettings() {
   const [aiSaved, setAiSaved] = useState(false);
   const [skillProgress, setSkillProgress] = useState<SkillMigrateProgress | null>(null);
   const [skillMigrated, setSkillMigrated] = useState(false);
+  // 开机自启：反映操作系统真实注册状态（打开设置页时查询）
+  const [autostartOn, setAutostartOn] = useState(false);
+  const [autostartBusy, setAutostartBusy] = useState(false);
 
   const fetchConfig = async () => {
     setLoading(true);
@@ -147,10 +152,39 @@ export default function GlobalSettings() {
     }
   };
 
+  const fetchAutostart = async () => {
+    try {
+      setAutostartOn(await isAutostartEnabled());
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleToggleAutostart = async () => {
+    if (autostartBusy) return;
+    setAutostartBusy(true);
+    try {
+      if (autostartOn) {
+        await disableAutostart();
+        setAutostartOn(false);
+      } else {
+        await enableAutostart();
+        setAutostartOn(true);
+      }
+    } catch (e: any) {
+      alert(`设置开机自启失败: ${e}`);
+      // 失败后以系统真实状态为准
+      await fetchAutostart();
+    } finally {
+      setAutostartBusy(false);
+    }
+  };
+
   useEffect(() => {
     fetchConfig();
     fetchVersion();
     fetchAiConfig();
+    fetchAutostart();
   }, []);
 
   const pathsChanged = (): boolean => {
@@ -543,6 +577,37 @@ export default function GlobalSettings() {
         {latestVersion === null && !checkingUpdate && !updateError && (
           <p className="text-[10px] text-slate-500">点击「检查更新」查看是否有新版本可用。</p>
         )}
+      </div>
+
+      {/* 应用行为 */}
+      <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-4">
+        <div className="flex items-center gap-2 pb-3 border-b border-white/5">
+          <Power className="w-4 h-4 text-red-400" />
+          <h3 className="text-xs font-semibold text-white">应用行为</h3>
+        </div>
+
+        <div className="flex items-center justify-between">
+          <div className="space-y-0.5">
+            <p className="text-xs font-medium text-slate-200">开机自启</p>
+            <p className="text-[9px] text-slate-500">系统启动时自动运行 AnyVersion，并静默驻留到系统托盘。</p>
+          </div>
+          <button
+            onClick={handleToggleAutostart}
+            disabled={autostartBusy}
+            role="switch"
+            aria-checked={autostartOn}
+            className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
+              autostartOn ? "bg-red-600" : "bg-white/10"
+            }`}
+            title={autostartOn ? "已开启开机自启" : "已关闭开机自启"}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                autostartOn ? "translate-x-4" : "translate-x-0.5"
+              }`}
+            />
+          </button>
+        </div>
       </div>
 
       {/* AI 配置 */}

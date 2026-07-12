@@ -105,6 +105,29 @@ pub struct SessionScanDef {
     pub dirs: Vec<String>,
 }
 
+/// 非标准安装路径的检测提示。各字段仅在对应平台上生效。
+/// 用于 GUI/桌面应用在 paths.json 硬编码路径之外的检测：
+/// Windows 扫描注册表 Uninstall 键、macOS 查找 /Applications、Linux 扫描 .desktop。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallHints {
+    /// Windows: 匹配注册表 `DisplayName`（精确、大小写不敏感）。
+    #[serde(default)]
+    pub windows_display_names: Vec<String>,
+    /// Windows: 前缀匹配（用于 DisplayName 内嵌版本号的应用，如 "WorkBuddy 4.24.2"）。
+    #[serde(default)]
+    pub windows_display_name_prefixes: Vec<String>,
+    /// Windows: 可选的 `Publisher` 过滤（消歧义）。
+    #[serde(default)]
+    pub windows_publisher: Option<String>,
+    /// macOS: 要搜索的 `.app` 名称（在 /Applications 与 ~/Applications 下查找）。
+    #[serde(default)]
+    pub macos_app_name: Option<String>,
+    /// Linux: 匹配 .desktop 文件 `Name=` 的名称列表。
+    #[serde(default)]
+    pub linux_desktop_names: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PathConfig {
@@ -116,6 +139,13 @@ pub struct PathConfig {
     pub detect_cmd: String,
     pub install_cmd: String,
     pub paths: HashMap<String, Vec<String>>,
+    /// MSIX/Store 应用启动 URI（如 "shell:AppsFolder\\Claude_...!Claude"），
+    /// 用于没有普通 .exe 路径的应用启动与检测。
+    #[serde(default)]
+    pub launch_uri: Option<String>,
+    /// 非标准安装路径的检测提示（注册表 / Applications / .desktop）。
+    #[serde(default)]
+    pub install_hints: Option<InstallHints>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -227,6 +257,10 @@ pub struct AiToolDefDto {
     /// 是否支持请求优化 / 整流器（启动页可开关）
     pub supports_optimizer: bool,
     pub supports_rectifier: bool,
+    /// MSIX/Store 启动 URI（无普通 exe 时使用）
+    pub launch_uri: Option<String>,
+    /// 检测到的可执行文件路径（GUI/桌面应用启动用）
+    pub detected_path: Option<String>,
 }
 
 // ─── 注册表 ───
@@ -519,6 +553,8 @@ impl AiToolRegistry {
             builtin_models: config.builtin_models.clone(),
             supports_optimizer: config.supports_optimizer,
             supports_rectifier: config.supports_rectifier,
+            launch_uri: paths.launch_uri.clone(),
+            detected_path: None,
         }
     }
 

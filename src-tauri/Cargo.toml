@@ -18,6 +18,10 @@ tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
+# 开机自启（launch-at-login）。注册时带 `--minimized` 参数，
+# 开机自启时静默启动到托盘（见 lib.rs setup 中对该参数的处理）。
+# 暴露 JS 侧 enable/disable/isEnabled，需要 autostart:default 权限。
+tauri-plugin-autostart = "2"
 tauri-plugin-process = "2"
 serde = { version = "1.0", features = ["derive"] }
 regex = "1.10"

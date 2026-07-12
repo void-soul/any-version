@@ -161,12 +161,27 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // 开机自启：注册时带 `--minimized`，开机自启时静默启动到托盘。
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--minimized"]),
+        ))
         .manage(commands::http_server::HttpServerState::default())
         .setup(|app| {
             if let Ok(res_dir) = app.path().resource_dir() {
                 crate::commands::utils::set_resource_dir(res_dir);
             }
             tray::build_tray(app.handle())?;
+
+            // 窗口在 tauri.conf.json 中设为 visible:false。
+            // 普通启动时主动显示；带 `--minimized`（开机自启）时保持隐藏在托盘。
+            let start_minimized = std::env::args().any(|a| a == "--minimized");
+            if !start_minimized {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
+            }
             Ok(())
         })
         .on_window_event(|window, event| {

@@ -22,42 +22,15 @@ fn pick_outbound_protocol(native: &str, provider: &AiProvider) -> Option<String>
     None
 }
 
-// ─── 启动 AI 工具 ───
-
-#[tauri::command]
-pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Value, String> {
-    eprintln!("══════════════════════════════════════════════════════════════");
-    eprintln!("                    启动 AI 工具");
-    eprintln!("══════════════════════════════════════════════════════════════");
-
-    let config = load_ai_config();
-    let tool_config = registry().get_tool_config(&req.tool_id).ok_or("未知工具")?.clone();
-    let tool_paths = registry().get_path_config(&req.tool_id).ok_or("未知工具")?.clone();
-    let provider = req.provider_id.as_ref().and_then(|pid| config.providers.iter().find(|p| &p.id == pid));
-
-    eprintln!("\n[request] ▼ LaunchAiToolRequest 入参");
-    eprintln!("  tool_id:          {:?}", req.tool_id);
-    eprintln!("  project_path:     {:?}", req.project_path);
-    eprintln!("  provider_id:      {:?}", req.provider_id);
-    eprintln!("  model_id:         {:?}", req.model_id);
-    eprintln!("  fallback_model_id:{:?}", req.fallback_model_id);
-    eprintln!("  session_mode:     {:?}", req.session_mode);
-    eprintln!("  session_id:       {:?}", req.session_id);
-    eprintln!("  terminal_id:      {:?}", req.terminal_id);
-    eprintln!("  one_m_context:    {:?}", req.one_m_context);
-
-    eprintln!("\n[provider] provider_id={:?}", req.provider_id);
-    match provider {
-        Some(p) => eprintln!("  ✓ 找到: name={}", p.name),
-        None => eprintln!("  ✗ 未找到，将使用官方默认模型"),
-    }
-
-    // ─── Step 1: 启动代理（强制开启，每工具独立实例 + 自由端口）───
-    // 代理始终启动，用于：统计用量、应用全局整流器/优化器、协议转换、模型伪装映射。
-    // 每次启动绑定一个由 OS 分配的空闲端口，避免多工具并行端口冲突。
-    // 入站协议 = 工具支持的协议（inbound_protocols，全部注册路由）；
-    // 出站协议 = 供应商实际支持的协议（由已配置的协议 URL 推导）；
-    // 工具原生协议不被供应商支持时，代理自动做协议转换（强制开启）。
+/// 为指定工具启动一个本地代理（按需、空闲端口、后台 spawn）。
+/// CLI 工具与 GUI/桌面应用共用：返回监听端口；若未配置 Provider/Key、
+/// 无可用出站协议或绑定失败，则返回 0（调用方应回退普通逻辑）。
+async fn start_tool_proxy(
+    tool_config: &ToolConfig,
+    provider: Option<&AiProvider>,
+    config: &AiConfig,
+    req: &LaunchAiToolRequest,
+) -> u16 {
     let inbound_protocols = tool_config.inbound_protocols();
     let primary_inbound = tool_config.native_protocol();
 
@@ -80,8 +53,7 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
 
             let conversion_mode = crate::proxy::types::derive_conversion_mode(&primary_inbound, &outbound_protocol);
 
-            // 模型伪装：声明名 C（来自 tool.builtin_models）→ 实际模型 B（所选取模型）
-            // masquerade_model 为空表示不伪装，工具直接以 B 名义请求。
+            // 模型伪装：声明名 C → 实际模型 B；masquerade_model 为空表示不伪装。
             let target_model = req.model_id.clone().unwrap_or_default();
             let mut model_aliases: HashMap<String, String> = HashMap::new();
             if let Some(ref c) = req.masquerade_model {
@@ -92,11 +64,6 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
             }
 
             // fallback/小模型伪装映射：声明名 C_small → 实际模型 B_small。
-            // 即使不伪装（C_small == B_small）也必须写入 identity 映射，
-            // 否则代理会将小模型请求误回退到 default_model（主模型 B）。
-            // fallback_model_id 为空时不写入——小模型是可选的。
-            // 注意：查找键必须是「工具实际发出的模型名」：若配置了 modelFormat 前缀，
-            // 工具发出的是带前缀的（如 anyversion/gpt-4o-mini），需与写入配置一致。
             if let Some(ref fb) = req.fallback_model_id {
                 if !fb.is_empty() {
                     let claimed_requested = match &req.fallback_masquerade_model {
@@ -105,15 +72,12 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                     };
                     let claimed_norm = claimed_requested.replace("[1m]", "").replace("[1M]", "").trim().to_string();
                     if !claimed_norm.is_empty() {
-                        // 值 = 发给上游的实际供应商模型（原始 id，不带工具前缀）
                         model_aliases.insert(claimed_norm, fb.clone());
                     }
                 }
             }
 
             // 跨供应商路由：按实际模型名 → 其所属供应商的端点+key。
-            // 大模型路由到大供应商；辅助/小模型路由到其自身供应商（fallback_provider_id）。
-            // 代理在 build_upstream_url / build_upstream_request 中据此选择上游，查不到则回退全局上游。
             let mut model_routes: HashMap<String, ModelRoute> = HashMap::new();
             if let Some(ref mid) = req.model_id {
                 if !mid.is_empty() {
@@ -187,6 +151,48 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
             }
         }
     }
+    proxy_port
+}
+
+// ─── 启动 AI 工具 ───
+
+#[tauri::command]
+pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Value, String> {
+    eprintln!("══════════════════════════════════════════════════════════════");
+    eprintln!("                    启动 AI 工具");
+    eprintln!("══════════════════════════════════════════════════════════════");
+
+    let config = load_ai_config();
+    let tool_config = registry().get_tool_config(&req.tool_id).ok_or("未知工具")?.clone();
+    let tool_paths = registry().get_path_config(&req.tool_id).ok_or("未知工具")?.clone();
+    let provider = req.provider_id.as_ref().and_then(|pid| config.providers.iter().find(|p| &p.id == pid));
+
+    eprintln!("\n[request] ▼ LaunchAiToolRequest 入参");
+    eprintln!("  tool_id:          {:?}", req.tool_id);
+    eprintln!("  project_path:     {:?}", req.project_path);
+    eprintln!("  provider_id:      {:?}", req.provider_id);
+    eprintln!("  model_id:         {:?}", req.model_id);
+    eprintln!("  fallback_model_id:{:?}", req.fallback_model_id);
+    eprintln!("  session_mode:     {:?}", req.session_mode);
+    eprintln!("  session_id:       {:?}", req.session_id);
+    eprintln!("  terminal_id:      {:?}", req.terminal_id);
+    eprintln!("  one_m_context:    {:?}", req.one_m_context);
+
+    eprintln!("\n[provider] provider_id={:?}", req.provider_id);
+    match provider {
+        Some(p) => eprintln!("  ✓ 找到: name={}", p.name),
+        None => eprintln!("  ✗ 未找到，将使用官方默认模型"),
+    }
+
+    // ─── Step 1: 启动代理（强制开启，每工具独立实例 + 自由端口）───
+    // 抽成 start_tool_proxy 复用：CLI 工具与 GUI/桌面应用共用同一套按需代理。
+    let proxy_port = start_tool_proxy(&tool_config, provider, &config, &req).await;
+
+    // 出站协议（供 Step 2 写配置文件使用；与 start_tool_proxy 内部推导一致）
+    let chosen_outbound = provider
+        .as_ref()
+        .and_then(|p| pick_outbound_protocol(&tool_config.native_protocol(), p))
+        .unwrap_or_default();
 
     eprintln!("\n──────────────────────────────────────────────────────────────");
     eprintln!(" Step 2: 写入工具配置文件（含 env.* 前缀的环境变量注入）");
@@ -819,3 +825,5 @@ async fn wait_for_proxy_ready(listen_address: &str, port: u16) {
     }
     eprintln!("[proxy] ⚠ 代理未在 3 秒内就绪，继续启动（可能稍后可用）");
 }
+
+

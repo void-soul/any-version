@@ -78,6 +78,10 @@ export interface DetectedAiTool {
   builtin_models: string[];
   supports_optimizer: boolean;
   supports_rectifier: boolean;
+  /** MSIX/Store 启动 URI（无普通 exe 时使用） */
+  launch_uri: string | null;
+  /** 检测到的可执行文件路径（GUI/桌面应用启动用） */
+  detected_path: string | null;
 }
 
 export interface AiToolCacheInfo {

@@ -44,6 +44,8 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
         builtin_models: config.builtin_models.clone(),
         supports_optimizer: config.supports_optimizer,
         supports_rectifier: config.supports_rectifier,
+        launch_uri: paths.launch_uri.clone(),
+        detected_path: None,
     };
 
     // 策略 1：按 PM 类型精准查询版本

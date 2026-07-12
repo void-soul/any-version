@@ -9,11 +9,11 @@ import { Settings2, Rocket, BarChart3, Puzzle, Plug } from "lucide-react";
 type AiSubTab = "model" | "launcher" | "usage" | "skills" | "mcp";
 
 const TABS = [
-  { key: "model" as AiSubTab, label: "模型配置", icon: Settings2 },
-  { key: "launcher" as AiSubTab, label: "工具启动", icon: Rocket },
-  { key: "usage" as AiSubTab, label: "用量统计", icon: BarChart3 },
-  { key: "skills" as AiSubTab, label: "技能管理", icon: Puzzle },
-  { key: "mcp" as AiSubTab, label: "MCP 管理", icon: Plug },
+  { key: "model" as AiSubTab, label: "模型", icon: Settings2 },
+  { key: "launcher" as AiSubTab, label: "工具", icon: Rocket },
+  { key: "skills" as AiSubTab, label: "技能", icon: Puzzle },
+  { key: "mcp" as AiSubTab, label: "MCP", icon: Plug },
+  { key: "usage" as AiSubTab, label: "用量", icon: BarChart3 }
 ];
 
 export default function AiPanel() {
@@ -22,7 +22,7 @@ export default function AiPanel() {
   return (
     <div className="h-full flex min-h-0 select-none">
       {/* 左侧竖向菜单 */}
-      <div className="w-40 flex-shrink-0 border-r border-white/5 py-3 px-2 space-y-0.5 overflow-y-auto">
+      <div className="w-25 flex-shrink-0 border-r border-white/5 py-3 px-2 space-y-0.5 overflow-y-auto">
         {TABS.map(({ key, label, icon: Icon }) => (
           <button
             key={key}

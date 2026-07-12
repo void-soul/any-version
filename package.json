@@ -15,6 +15,7 @@
     "@monaco-editor/react": "^4.7.0",
     "@tailwindcss/vite": "^4.3.1",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-autostart": "^2.5.1",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-process": "^2",

@@ -657,8 +657,8 @@ export default function ToolLauncher() {
               )}
             </div>
 
-            {/* 仅已安装工具显示以下配置 */}
-            {selectedTool.installed && (
+            {/* CLI 工具配置面板 */}
+            {selectedTool.installed && selectedTool.supports_model && (
               <>
                 {/* 缓存路径（当前工具） */}
                 <div>
