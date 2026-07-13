@@ -25,12 +25,12 @@ fn pick_outbound_protocol(native: &str, provider: &AiProvider) -> Option<String>
 /// 为指定工具启动一个本地代理（按需、空闲端口、后台 spawn）。
 /// CLI 工具与 GUI/桌面应用共用：返回监听端口；若未配置 Provider/Key、
 /// 无可用出站协议或绑定失败，则返回 0（调用方应回退普通逻辑）。
-async fn start_tool_proxy(
+pub(crate) async fn start_tool_proxy(
     tool_config: &ToolConfig,
     provider: Option<&AiProvider>,
     config: &AiConfig,
     req: &LaunchAiToolRequest,
-) -> u16 {
+) -> (u16, Option<tokio::task::AbortHandle>) {
     let inbound_protocols = tool_config.inbound_protocols();
     let primary_inbound = tool_config.native_protocol();
 
@@ -44,6 +44,7 @@ async fn start_tool_proxy(
         .unwrap_or_default();
 
     let mut proxy_port: u16 = 0;
+    let mut abort_handle: Option<tokio::task::AbortHandle> = None;
     if let Some(p) = provider {
         if !p.api_key.is_empty() && !chosen_outbound.is_empty() {
             let outbound_protocol = chosen_outbound.clone();
@@ -138,11 +139,12 @@ async fn start_tool_proxy(
                         optimizer_deepseek: req.optimizer_deepseek.unwrap_or(config.optimizer.deepseek_normalize),
                     };
                     eprintln!("[proxy] ✓ 启动代理 -> 127.0.0.1:{}  ({} -> {})", port, primary_inbound, outbound_protocol);
-                    tokio::spawn(async move {
+                    let handle = tokio::spawn(async move {
                         if let Err(e) = crate::proxy::server::serve_proxy(proxy_config, listener).await {
                             eprintln!("[proxy] 代理错误: {}", e);
                         }
                     });
+                    abort_handle = Some(handle.abort_handle());
                     wait_for_proxy_ready(&proxy_settings.listen_address, port).await;
                 }
                 Err(e) => {
@@ -151,8 +153,9 @@ async fn start_tool_proxy(
             }
         }
     }
-    proxy_port
+    (proxy_port, abort_handle)
 }
+
 
 // ─── 启动 AI 工具 ───
 
@@ -186,7 +189,7 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
 
     // ─── Step 1: 启动代理（强制开启，每工具独立实例 + 自由端口）───
     // 抽成 start_tool_proxy 复用：CLI 工具与 GUI/桌面应用共用同一套按需代理。
-    let proxy_port = start_tool_proxy(&tool_config, provider, &config, &req).await;
+    let (proxy_port, _proxy_abort) = start_tool_proxy(&tool_config, provider, &config, &req).await;
 
     // 出站协议（供 Step 2 写配置文件使用；与 start_tool_proxy 内部推导一致）
     let chosen_outbound = provider
@@ -362,37 +365,23 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
     eprintln!("[spawn] 配置来源: 工具配置文件（configFile） + env.* 环境变量注入");
 
     // 从 config_file 的 write 映射中提取 env.* 前缀的键，作为环境变量注入到子进程
-    if let Some(ref cf) = tool_config.config_file {
-        if let Some(ref write_map) = cf.write {
-            if let Some(ref p) = provider {
-                // env 注入的 baseUrl 始终指向本次启动的本地代理端口（未启动则回退供应商 base_url）
-                let upstream_fallback = p.url_for(&chosen_outbound);
-                let effective_base_url = if proxy_port != 0 {
-                    format!("http://127.0.0.1:{}", proxy_port)
-                } else {
-                    upstream_fallback.clone()
-                };
-                // env 注入的 model：声明名 C（伪装优先，否则所选取模型 B）
-                let model = req.masquerade_model.clone()
-                    .filter(|c| !c.is_empty())
-                    .or_else(|| req.model_id.clone())
-                    .unwrap_or_default();
-                for (path, value_template) in write_map {
-                    if path.starts_with("env.") {
-                        let env_key = &path[4..];
-                        let env_value = match value_template.as_str() {
-                            "apiKey" => p.api_key.clone(),
-                            "baseUrl" => effective_base_url.clone(),
-                            "model" | "modelName" => model.to_string(),
-                            other => other.to_string(),
-                        };
-                        if !env_value.is_empty() {
-                            eprintln!("[spawn] env {} = {}", env_key, mask_secret(&env_value));
-                            cmd.env(env_key, env_value);
-                        }
-                    }
-                }
-            }
+    if let Some(ref p) = provider {
+        // env 注入的 baseUrl 始终指向本次启动的本地代理端口（未启动则回退供应商 base_url）
+        let upstream_fallback = p.url_for(&chosen_outbound);
+        let effective_base_url = if proxy_port != 0 {
+            format!("http://127.0.0.1:{}", proxy_port)
+        } else {
+            upstream_fallback.clone()
+        };
+        // env 注入的 model：声明名 C（伪装优先，否则所选取模型 B）
+        let model = req.masquerade_model.clone()
+            .filter(|c| !c.is_empty())
+            .or_else(|| req.model_id.clone())
+            .unwrap_or_default();
+        let envs = build_env_vars(&tool_config, &p.api_key, &effective_base_url, &model);
+        for (k, v) in &envs {
+            eprintln!("[spawn] env {} = {}", k, mask_secret(v));
+            cmd.env(k, v);
         }
     }
 
@@ -472,7 +461,7 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
 /// - `model_id`：实际模型 B（供应商模型）。
 /// - `claimed_model`：声明模型名 C（工具以为自己调用的模型；伪装时 = masquerade_model，
 ///   否则 = B）。配置文件中的 `model` 字段写入 C，由本地代理按 masquerade 映射 C → B。
-fn write_tool_config_from_spec(
+pub(crate) fn write_tool_config_from_spec(
     tool_id: &str,
     tool_config: &ToolConfig,
     model_id: Option<&str>,
@@ -486,16 +475,44 @@ fn write_tool_config_from_spec(
     fallback_one_m_context: bool,
     proxy_mode: bool,
 ) -> Result<(), String> {
-    if let Some(ref _cfg) = tool_config.config_file {
-        return write_tool_config_generic(tool_config, model_id, claimed_model, base_url.unwrap_or(fallback_url), api_key, fallback_model_id, fallback_masquerade_model, one_m_context, fallback_one_m_context, proxy_mode);
-    }
-    // 无 configFile 定义的工具完全依赖 CLI 参数，无需写配置
+    // write_tool_config_generic 内部会检查 config_file 是否存在，无 configFile 时直接返回 Ok(())
     let _ = tool_id;
-    Ok(())
+    write_tool_config_generic(tool_config, model_id, claimed_model, base_url.unwrap_or(fallback_url), api_key, fallback_model_id, fallback_masquerade_model, one_m_context, fallback_one_m_context, proxy_mode)
+}
+
+/// 从 config_file.write 映射中提取 env.* 前缀的键，构建环境变量 HashMap。
+/// 值模板匹配：apiKey → api_key, baseUrl → base_url, model/modelName → model, 其他 → 字面值。
+/// 空值不注入。供 launch_ai_tool 和 collab dispatch_to_tool 共用。
+pub(crate) fn build_env_vars(
+    tool_config: &ToolConfig,
+    api_key: &str,
+    base_url: &str,
+    model: &str,
+) -> HashMap<String, String> {
+    let mut envs = HashMap::new();
+    if let Some(ref cf) = tool_config.config_file {
+        if let Some(ref write_map) = cf.write {
+            for (path, value_template) in write_map {
+                if path.starts_with("env.") {
+                    let env_key = &path[4..];
+                    let env_value = match value_template.as_str() {
+                        "apiKey" => api_key.to_string(),
+                        "baseUrl" => base_url.to_string(),
+                        "model" | "modelName" => model.to_string(),
+                        other => other.to_string(),
+                    };
+                    if !env_value.is_empty() {
+                        envs.insert(env_key.to_string(), env_value);
+                    }
+                }
+            }
+        }
+    }
+    envs
 }
 
 /// 根据 modelFormat 配置格式化模型名
-fn format_model_name(raw: &str, tool_config: &ToolConfig) -> String {
+pub(crate) fn format_model_name(raw: &str, tool_config: &ToolConfig) -> String {
     if raw.is_empty() { return String::new(); }
     if let Some(ref fmt) = tool_config.model_format {
         let prefix = fmt.prefix.as_deref().unwrap_or("");
@@ -639,7 +656,7 @@ fn write_tool_config_generic(
 }
 
 /// 掩码打印含密钥的值
-fn mask_secret(v: &str) -> String {
+pub(crate) fn mask_secret(v: &str) -> String {
     if v.is_empty() {
         String::new()
     } else if v.len() <= 12 {

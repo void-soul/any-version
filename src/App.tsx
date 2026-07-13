@@ -16,6 +16,18 @@ export default function App() {
   const [defaultToolsTab, setDefaultToolsTab] = useState<"ports" | "backups" | "httpServer" | "imageBase64" | "pathEnv">("ports");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
 
+  // 懒挂载：仅渲染至少被访问过一次的页面，避免启动时全部组件同时初始化
+  const [mountedPages, setMountedPages] = useState<Set<PageId>>(new Set(["news"]));
+  const switchPage = (page: PageId) => {
+    setActivePage(page);
+    setMountedPages((prev) => {
+      if (prev.has(page)) return prev;
+      const next = new Set(prev);
+      next.add(page);
+      return next;
+    });
+  };
+
   useEffect(() => {
     const initApp = async () => {
       try {
@@ -49,7 +61,7 @@ export default function App() {
             ]).map((item) => (
               <button
                 key={item.id}
-                onClick={() => setActivePage(item.id)}
+                onClick={() => switchPage(item.id)}
                 className={`px-3 py-1.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
                   activePage === item.id
                     ? `${item.color} text-white`
@@ -94,21 +106,31 @@ export default function App() {
 
       {/* content */}
       <div className="flex-grow flex flex-col min-h-0 relative">
-        <div className={activePage === "sdk" ? "h-full w-full" : "hidden"}>
-          <ProjectManager selectedId={selectedProjectId} onSelectId={setSelectedProjectId} />
-        </div>
-        <div className={activePage === "ai" ? "h-full w-full" : "hidden"}>
-          <AiPanel />
-        </div>
-        <div className={activePage === "news" ? "h-full w-full flex flex-col" : "hidden"}>
-          <RssReader />
-        </div>
-        <div className={activePage === "tools" ? "h-full w-full flex flex-col" : "hidden"}>
-          <SystemTools defaultTab={defaultToolsTab} />
-        </div>
-        <div className={activePage === "settings" ? "h-full w-full flex flex-col overflow-y-auto" : "hidden"}>
-          <GlobalSettings />
-        </div>
+        {mountedPages.has("sdk") && (
+          <div className={activePage === "sdk" ? "h-full w-full" : "hidden"}>
+            <ProjectManager selectedId={selectedProjectId} onSelectId={setSelectedProjectId} />
+          </div>
+        )}
+        {mountedPages.has("ai") && (
+          <div className={activePage === "ai" ? "h-full w-full" : "hidden"}>
+            <AiPanel />
+          </div>
+        )}
+        {mountedPages.has("news") && (
+          <div className={activePage === "news" ? "h-full w-full flex flex-col" : "hidden"}>
+            <RssReader />
+          </div>
+        )}
+        {mountedPages.has("tools") && (
+          <div className={activePage === "tools" ? "h-full w-full flex flex-col" : "hidden"}>
+            <SystemTools defaultTab={defaultToolsTab} />
+          </div>
+        )}
+        {mountedPages.has("settings") && (
+          <div className={activePage === "settings" ? "h-full w-full flex flex-col overflow-y-auto" : "hidden"}>
+            <GlobalSettings />
+          </div>
+        )}
       </div>
     </div>
   );

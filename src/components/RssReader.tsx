@@ -12,7 +12,6 @@ import {
   Calendar,
   AlertTriangle,
   CheckCircle,
-  HelpCircle,
   TrendingUp,
   Bookmark,
   BookmarkCheck
@@ -249,10 +248,12 @@ export default function RssReader() {
 
     setLoading(true);
     setError(null);
-    const allArticles: RssArticle[] = [];
-    const errors: string[] = [];
     const now = Date.now();
     const cacheDuration = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+    // ── Phase 1: 获取所有 XML（并行网络 I/O，不阻塞主线程） ──
+    const feedData: { source: RssSource; xml: string }[] = [];
+    const errors: string[] = [];
 
     await Promise.all(
       feedSources.map(async ({ url, name }) => {
@@ -283,14 +284,26 @@ export default function RssReader() {
             }));
           }
 
-          const parsed = parseRssXml(xmlText, url, name);
-          allArticles.push(...parsed);
+          feedData.push({ source: { url, name }, xml: xmlText });
         } catch (err: any) {
           console.error(`Fetch feed error for ${url}:`, err);
           errors.push(`${name || url}: ${err.message || err}`);
         }
       })
     );
+
+    // ── Phase 2: 逐源解析，每个源之间 yield 事件循环，避免主线程长时间阻塞 ──
+    const allArticles: RssArticle[] = [];
+    for (const { source, xml } of feedData) {
+      try {
+        const parsed = parseRssXml(xml, source.url, source.name);
+        allArticles.push(...parsed);
+      } catch (err: any) {
+        errors.push(`${source.name || source.url}: ${err.message || err}`);
+      }
+      // 让出主线程，允许 UI 更新
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
 
     // Sort articles by published date descending
     allArticles.sort((a, b) => {
@@ -309,11 +322,21 @@ export default function RssReader() {
     }
   };
 
+  // 延迟初始化：让 UI 先完成首帧渲染，再开始抓取/解析 RSS
   useEffect(() => {
-    loadRssConfig().then((list) => {
-      if (list.length > 0) {
-        fetchAllFeeds(list, false);
+    const schedule = (cb: () => void) => {
+      if ("requestIdleCallback" in window) {
+        (window as any).requestIdleCallback(cb, { timeout: 2000 });
+      } else {
+        setTimeout(cb, 100);
       }
+    };
+    schedule(() => {
+      loadRssConfig().then((list) => {
+        if (list.length > 0) {
+          fetchAllFeeds(list, false);
+        }
+      });
     });
   }, []);
 

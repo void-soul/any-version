@@ -1,6 +1,8 @@
 {
   "id": "codex-cli",
   "displayName": "Codex CLI",
+  "avatar": "⚡",
+  "nickname": "Codex",
   "category": "cli-code",
   "website": "https://github.com/openai/codex",
   "apiProtocol": "openai",
@@ -16,6 +18,10 @@
 
   "resumeCmd": null,
   "continueCmd": "codex resume --last",
+  "dispatchCmd": "codex exec --json --full-auto \"{prompt}\"",
+  "dispatchResumeCmd": "codex exec --json --full-auto resume {session_id} \"{prompt}\"",
+  "runner": "codex-json",
+  "promptMode": "arg",
   "cacheDirs": [".codex"],
   "pkgManager": "npm",
   "pkgName": "@openai/codex",

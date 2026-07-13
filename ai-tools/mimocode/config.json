@@ -1,6 +1,8 @@
 {
   "id": "mimocode",
   "displayName": "MiMo Code",
+  "avatar": "🎯",
+  "nickname": "MiMo",
   "category": "cli-code",
   "website": "https://mimo.xiaomi.com/zh/mimocode/config-files",
   "apiProtocol": "openai",
@@ -16,6 +18,10 @@
 
   "resumeCmd": null,
   "continueCmd": null,
+  "dispatchCmd": "mimo run --format json \"{prompt}\"",
+  "dispatchResumeCmd": "mimo run --format json -s {session_id} \"{prompt}\"",
+  "runner": "opencode-json",
+  "promptMode": "arg",
   "cacheDirs": [".local/share/mimocode"],
   "pkgManager": "npm",
   "pkgName": "@mimo-ai/cli",

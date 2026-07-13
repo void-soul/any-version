@@ -57,6 +57,10 @@ export interface AiConfig {
 export interface DetectedAiTool {
   id: string;
   display_name: string;
+  /** 协作模式头像（emoji 或单字符） */
+  avatar: string | null;
+  /** 协作模式昵称覆盖 */
+  nickname: string | null;
   installed: boolean;
   version: string | null;
   latest_version_cmd?: string;
@@ -106,6 +110,101 @@ export interface TerminalInfo {
   id: string;
   name: string;
   exe_path: string;
+}
+
+// ─── 协作线程（群聊式多工具合作）───
+
+export interface CollabReference {
+  source_message_id: string;
+  source_sender_name: string;
+  excerpt: string;
+}
+
+export interface CollabFileRef {
+  path: string;
+}
+
+export interface CollabDispatch {
+  tool_id: string;
+  session_id: string;
+  model: string | null;
+}
+
+export interface CollabMessage {
+  id: string;
+  room_id: string;
+  /** "user" 或工具 id */
+  sender: string;
+  sender_name: string;
+  content: string;
+  references: CollabReference[];
+  files: CollabFileRef[];
+  dispatch: CollabDispatch | null;
+  reply_to: string | null;
+  /** 工具消息状态："running" | "done" | "error" */
+  status: string | null;
+  created_at: string;
+}
+
+export interface CollabRoom {
+  id: string;
+  name: string;
+  project_path: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CollabRoomPage {
+  rooms: CollabRoom[];
+  has_more: boolean;
+  total: number;
+}
+
+/** 后端流式推送：增量文本 */
+export interface CollabDeltaPayload {
+  room_id: string;
+  msg_id: string;
+  delta: string;
+}
+
+/** 后端流式推送：活动状态（思考中/调用工具等） */
+export interface CollabActivityPayload {
+  room_id: string;
+  msg_id: string;
+  activity: string;
+}
+
+/** 后端推送：工具询问用户选择 */
+export interface CollabPromptPayload {
+  room_id: string;
+  msg_id: string;
+  question: string;
+  options: string[];
+}
+
+/** 后端流式推送：某条消息收尾（含 done/error 状态） */
+export interface CollabMsgUpdatedPayload {
+  room_id: string;
+  message: CollabMessage;
+}
+
+/** 协作派发高级协议参数（与工具启动页 LaunchAiToolRequest 对齐） */
+export interface CollabDispatchOptions {
+  masquerade_model: string | null;
+  fallback_model_id: string | null;
+  fallback_provider_id: string | null;
+  fallback_masquerade_model: string | null;
+  one_m_context: boolean;
+  fallback_one_m_context: boolean;
+  optimizer_enabled: boolean | null;
+  rectifier_enabled: boolean | null;
+  optimizer_cache_injection: boolean | null;
+  optimizer_thinking: boolean | null;
+  optimizer_deepseek: boolean | null;
+  rectifier_thinking_signature: boolean | null;
+  rectifier_thinking_budget: boolean | null;
+  rectifier_media_fallback: boolean | null;
+  rectifier_protocol_mismatch: boolean | null;
 }
 
 export interface LastLaunchConfig {

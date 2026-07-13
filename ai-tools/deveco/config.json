@@ -1,6 +1,8 @@
 {
   "id": "deveco",
   "displayName": "Deveco Code",
+  "avatar": "🔧",
+  "nickname": "Deveco",
   "category": "cli-code",
   "website": "https://deveco.dev",
   "apiProtocol": "openai",
@@ -16,6 +18,10 @@
 
   "resumeCmd": "deveco -s {session_id}",
   "continueCmd": null,
+  "dispatchCmd": "deveco run --format json \"{prompt}\"",
+  "dispatchResumeCmd": "deveco run --format json -s {session_id} \"{prompt}\"",
+  "runner": "opencode-json",
+  "promptMode": "arg",
   "cacheDirs": [".deveco", ".config/deveco"],
   "pkgManager": "npm",
   "pkgName": "@deveco/deveco-code",

@@ -24,6 +24,8 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
     let not_found = AiToolDefDto {
         id: config.id.clone(),
         display_name: config.display_name.clone(),
+        avatar: config.avatar.clone(),
+        nickname: config.nickname.clone(),
         installed: false,
         version: None,
         latest_version_cmd: None,

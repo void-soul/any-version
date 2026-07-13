@@ -15,6 +15,12 @@ use super::ai::skills::skills_dir;
 pub struct ToolConfig {
     pub id: String,
     pub display_name: String,
+    /// 协作模式中显示的头像（emoji 或文字，如 "🤖"）。为空时由前端按 id 回退。
+    #[serde(default)]
+    pub avatar: Option<String>,
+    /// 协作模式中显示的昵称覆盖（为空时使用 display_name）。
+    #[serde(default)]
+    pub nickname: Option<String>,
     pub category: String,
     pub website: String,
     /// 工具「原生」协议（兼容旧逻辑：one_m 后缀、配置清理判定）。
@@ -50,6 +56,21 @@ pub struct ToolConfig {
     pub model_format: Option<ModelFormatDef>,
     pub sessions: Option<SessionScanDef>,
     pub skills_dir: Option<String>,
+    /// 非交互派发命令模板（协作模式）：`{prompt_file}` 占位符会被替换为提示词文件路径（已加引号）。
+    #[serde(default)]
+    pub dispatch_cmd: Option<String>,
+    /// 续聊派发命令模板：同一房间内对同一工具的后续派发走此模板（如 claude --continue），实现上下文连续。
+    #[serde(default)]
+    pub dispatch_continue_cmd: Option<String>,
+    /// 续聊派发命令模板（带 {session_id} 占位，按工具原生会话 id 精确恢复上下文）。
+    #[serde(default)]
+    pub dispatch_resume_cmd: Option<String>,
+    /// 派发运行模式："stream-json"(claude) / "codex-json"(codex) / "opencode-json"(opencode)，省略则一次性读取输出（兜底）。
+    #[serde(default)]
+    pub runner: Option<String>,
+    /// 提示词传入方式："file"(--input-file 占位) / "stdin"(子进程 stdin 喂临时文件) / "arg"(`{prompt}` 内联)，省略默认 file。
+    #[serde(default)]
+    pub prompt_mode: Option<String>,
     pub skills_dir_xdg: Option<String>,
 }
 
@@ -234,6 +255,10 @@ pub struct ProviderPresetDto {
 pub struct AiToolDefDto {
     pub id: String,
     pub display_name: String,
+    #[serde(default)]
+    pub avatar: Option<String>,
+    #[serde(default)]
+    pub nickname: Option<String>,
     pub installed: bool,
     pub version: Option<String>,
     pub latest_version_cmd: Option<String>,
@@ -522,7 +547,6 @@ impl AiToolRegistry {
 
     /// 将 ToolConfig 转换为前端使用的 AiToolDefDto
     pub fn to_dto(config: &ToolConfig, paths: &PathConfig, installed: bool, version: Option<String>) -> AiToolDefDto {
-        let _cmd = &paths.command;
         let pkg_name = config.pkg_name.as_deref().unwrap_or(&config.id);
         let upgrade_cmd = match config.pkg_manager.as_deref() {
             Some("npm") => format!("npm install -g {}@latest", pkg_name),
@@ -533,6 +557,8 @@ impl AiToolRegistry {
         AiToolDefDto {
             id: config.id.clone(),
             display_name: config.display_name.clone(),
+            avatar: config.avatar.clone(),
+            nickname: config.nickname.clone(),
             installed,
             version,
             latest_version_cmd: None,

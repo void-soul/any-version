@@ -516,7 +516,7 @@ pub struct TerminalInfo {
     pub exe_path: String,
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug, Default)]
 pub struct LaunchAiToolRequest {
     pub tool_id: String,
     pub project_path: String,

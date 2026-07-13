@@ -1,6 +1,8 @@
 {
   "id": "opencode",
   "displayName": "OpenCode",
+  "avatar": "🔓",
+  "nickname": "OpenCode",
   "category": "cli-code",
   "website": "https://opencode.ai",
   "apiProtocol": "openai",
@@ -16,6 +18,10 @@
 
   "resumeCmd": "opencode -s {session_id}",
   "continueCmd": null,
+  "dispatchCmd": "opencode run --format json \"{prompt}\"",
+  "dispatchResumeCmd": "opencode run --format json -s {session_id} \"{prompt}\"",
+  "runner": "opencode-json",
+  "promptMode": "arg",
   "cacheDirs": [".opencode"],
   "pkgManager": "npm",
   "pkgName": "opencode-ai",

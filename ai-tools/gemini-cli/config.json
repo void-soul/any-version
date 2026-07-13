@@ -1,6 +1,8 @@
 {
   "id": "gemini-cli",
   "displayName": "Gemini CLI",
+  "avatar": "♊",
+  "nickname": "Gemini",
   "category": "cli-code",
   "website": "https://gemini.google.com",
   "apiProtocol": "google",
@@ -16,6 +18,11 @@
 
   "resumeCmd": "gemini --resume {session_id}",
   "continueCmd": "gemini --resume latest",
+  "dispatchCmd": "gemini -p \"{prompt}\" --yolo -o stream-json",
+  "dispatchResumeCmd": "gemini -p \"{prompt}\" --yolo -o stream-json -r {session_id}",
+  "dispatchContinueCmd": "gemini -p \"{prompt}\" --yolo -o stream-json -r latest",
+  "runner": "gemini-json",
+  "promptMode": "arg",
   "cacheDirs": [".gemini"],
   "pkgManager": "npm",
   "pkgName": "@google/gemini-cli",

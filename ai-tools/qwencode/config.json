@@ -1,6 +1,8 @@
 {
   "id": "qwencode",
   "displayName": "Qwen Code",
+  "avatar": "❓",
+  "nickname": "Qwen",
   "category": "cli-code",
   "website": "https://github.com/QwenLM/qwen-code",
   "apiProtocol": "openai",
@@ -16,6 +18,10 @@
 
   "resumeCmd": null,
   "continueCmd": null,
+  "dispatchCmd": "qwen -p \"{prompt}\" -o stream-json",
+  "dispatchResumeCmd": "qwen -p \"{prompt}\" -o stream-json -r {session_id}",
+  "runner": "gemini-json",
+  "promptMode": "arg",
   "cacheDirs": [".qwen-code", ".qwen"],
   "pkgManager": "npm",
   "pkgName": "@qwen-code/qwen-code",

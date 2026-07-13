@@ -309,6 +309,14 @@ pub fn run() {
             commands::ai::provider::start_proxy,
             commands::ai::terminal::detect_terminals,
             commands::ai::sessions::scan_tool_sessions,
+            commands::ai::collab::collab_create_room,
+            commands::ai::collab::collab_list_rooms,
+            commands::ai::collab::collab_get_messages,
+            commands::ai::collab::collab_delete_room,
+            commands::ai::collab::collab_send_message,
+            commands::ai::collab::collab_cancel_dispatch,
+            commands::ai::collab::collab_reset_session,
+            commands::ai::collab::collab_respond_prompt,
             commands::ai::tools::upgrade_ai_tool,
             commands::ai::cache::get_ai_tool_cache_info,
             commands::ai::cache::migrate_ai_tool_cache,
@@ -329,6 +337,9 @@ pub fn run() {
             if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
                 if code.is_none() {
                     api.prevent_exit();
+                } else {
+                    // 应用退出时清理所有常驻代理
+                    commands::ai::collab::stop_all_room_proxies();
                 }
             }
         });
