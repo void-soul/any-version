@@ -11,7 +11,7 @@ use tauri::Emitter;
 use crate::commands::ai_registry::registry;
 use crate::commands::config::get_base_dir;
 use super::models::*;
-use super::launch::start_tool_proxy;
+use super::launch::start_tool_proxy_with_collab;
 
 // ─── 协作线程数据模型 ───
 
@@ -35,6 +35,18 @@ pub struct CollabDispatch {
     pub tool_id: String,
     pub session_id: String,
     pub model: Option<String>,
+}
+
+/// 上下文快照：压缩旧会话后生成的摘要，用于在新会话中恢复上下文
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ContextSnapshot {
+    pub id: String,
+    pub room_id: String,
+    pub tool_id: String,
+    pub summary: String,
+    pub old_session_id: String,
+    pub message_count: usize,
+    pub created_at: String,
 }
 
 /// 线程中的一条消息
@@ -75,6 +87,9 @@ pub struct CollabStore {
     pub messages: HashMap<String, Vec<CollabMessage>>,
     /// 房间+工具 → 是否已有会话（用于续聊判断）
     pub tool_sessions: HashMap<String, String>,
+    /// 房间+工具 → 上下文快照（压缩后生成，新会话首次派发时注入）
+    #[serde(default)]
+    pub context_snapshots: HashMap<String, ContextSnapshot>,
 }
 
 // ─── 持久化 ───
@@ -119,6 +134,7 @@ fn now_str() -> String {
 
 #[tauri::command]
 pub fn collab_create_room(name: String, project_path: String) -> Result<CollabRoom, String> {
+    eprintln!("[collab] 创建房间: name={}, project={}", name, project_path);
     let mut store = load_store();
     let ts = now_str();
     let room = CollabRoom {
@@ -130,6 +146,7 @@ pub fn collab_create_room(name: String, project_path: String) -> Result<CollabRo
     };
     store.rooms.push(room.clone());
     save_store(&store)?;
+    eprintln!("[collab] 房间已创建: id={}, name={}", room.id, room.name);
     Ok(room)
 }
 
@@ -162,15 +179,24 @@ pub fn collab_get_messages(room_id: String) -> Result<Vec<CollabMessage>, String
 
 #[tauri::command]
 pub fn collab_delete_room(room_id: String) -> Result<(), String> {
+    eprintln!("[collab] 删除房间: id={}", room_id);
     let mut store = load_store();
+    let msg_count = store.messages.get(&room_id).map(|m| m.len()).unwrap_or(0);
     store.rooms.retain(|r| r.id != room_id);
     store.messages.remove(&room_id);
+    eprintln!("[collab] 房间已删除: id={}, 消息数={}", room_id, msg_count);
     // 清理该房间相关的工具会话标记
     let keys: Vec<String> = store.tool_sessions.keys()
         .filter(|k| k.starts_with(&format!("{}::", room_id)))
         .cloned()
         .collect();
     for k in keys { store.tool_sessions.remove(&k); }
+    // 清理该房间相关的上下文快照
+    let snap_keys: Vec<String> = store.context_snapshots.keys()
+        .filter(|k| k.starts_with(&format!("{}::", room_id)))
+        .cloned()
+        .collect();
+    for k in snap_keys { store.context_snapshots.remove(&k); }
     // 停止该房间相关的所有常驻代理
     stop_room_proxies(&room_id);
     save_store(&store)
@@ -227,8 +253,11 @@ pub async fn collab_send_message(
     provider_id: Option<String>,
     options: Option<CollabDispatchOptions>,
 ) -> Result<Vec<CollabMessage>, String> {
+    eprintln!("[collab] ▶ 发送消息: room={}, tool={}, model={:?}, provider={:?}, content_len={}, refs={}, files={}",
+        room_id, tool_id, model_id, provider_id, content.len(), references.len(), files.len());
     let mut store = load_store();
     if !store.rooms.iter().any(|r| r.id == room_id) {
+        eprintln!("[collab] ✗ 房间不存在: {}", room_id);
         return Err("会话不存在".to_string());
     }
 
@@ -256,9 +285,15 @@ pub async fn collab_send_message(
     if !tool_id.trim().is_empty() {
         let tool_config = match registry().get_tool_config(&tool_id) {
             Some(c) => c.clone(),
-            None => return Err(format!("未知工具：{}", tool_id)),
+            None => {
+                eprintln!("[collab] ✗ 未知工具: {}", tool_id);
+                return Err(format!("未知工具：{}", tool_id));
+            }
         };
+        eprintln!("[collab] 工具配置: id={}, display={}, runner={:?}, promptMode={:?}",
+            tool_id, tool_config.display_name, tool_config.runner, tool_config.prompt_mode);
         let placeholder_id = new_id();
+        eprintln!("[collab] 占位消息 id={} → {}", placeholder_id, tool_config.display_name);
         let placeholder = CollabMessage {
             id: placeholder_id.clone(),
             room_id: room_id.clone(),
@@ -300,9 +335,11 @@ pub async fn collab_send_message(
     if !tool_id.trim().is_empty() {
         let active = ACTIVE_DISPATCHES.get_or_init(|| Mutex::new(HashSet::new()));
         if active.lock().unwrap().contains(&dispatch_key) {
+            eprintln!("[collab] ✗ 防并发拦截: {} 正在处理中", dispatch_key);
             return Err("该工具正在处理上一条消息，请等待完成".to_string());
         }
         active.lock().unwrap().insert(dispatch_key.clone());
+        eprintln!("[collab] ✓ 防并发标记: {}", dispatch_key);
     }
 
     // 保存（含用户消息 + 占位消息）后，再启动后台派发
@@ -314,7 +351,9 @@ pub async fn collab_send_message(
         let app_clone = app.clone();
         let cleanup_key = dispatch_key.clone();
         tauri::async_runtime::spawn(async move {
+            eprintln!("[collab] 后台派发启动: room={}, tool={}, placeholder={}", rt_room, rt_tool, rt_placeholder_id);
             let prompt = build_prompt(&rt_content, &rt_refs, &rt_files);
+            eprintln!("[collab] 提示词构建完成: len={}, refs={}, files={}", prompt.len(), rt_refs.len(), rt_files.len());
             dispatch_to_tool(
                 &app_clone,
                 rt_room,
@@ -428,6 +467,9 @@ const DISPATCH_TIMEOUT_SECS: u64 = 1800;
 /// 活动派发追踪：防止同一房间+工具的并发派发（TOCTOU 竞态防护）
 static ACTIVE_DISPATCHES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
+/// 压缩回调：dispatch_to_tool 完成后通过 oneshot 通知 collab_compact_session
+static COMPACT_CALLBACKS: OnceLock<Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>> = OnceLock::new();
+
 /// Prompt 响应控制：子进程的 stdin 句柄 + 待响应标记
 struct PromptCtrl {
     stdin: Arc<Mutex<Option<ChildStdin>>>,
@@ -478,7 +520,7 @@ fn emit_prompt(
     question: &str,
     options: Vec<String>,
 ) {
-    eprintln!("[collab] prompt 检测到: {}", question);
+    eprintln!("[collab] ⚠ Prompt 检测到: question='{}', options={:?}, msg={}", question, options, msg_id);
     // 记录 pending 状态
     if let Some(map) = PROMPT_STATE.get() {
         let g = map.lock().unwrap();
@@ -504,25 +546,21 @@ fn write_stdin_response(msg_id: &str, response: &str) -> bool {
     if let Some(map) = PROMPT_STATE.get() {
         let g = map.lock().unwrap();
         if let Some(ctrl) = g.get(msg_id) {
-            // 先检查 stdin 是否可用，不可用则清除 pending 并返回 false
-            let stdin_guard = ctrl.stdin.lock().unwrap();
-            if stdin_guard.is_none() {
-                *ctrl.pending.lock().unwrap() = None;
-                return false;
-            }
             // 清除 pending 状态（无论写入结果如何，不再重试）
             *ctrl.pending.lock().unwrap() = None;
-            // 重新获取 stdin 可变引用并写入
-            drop(stdin_guard);
+            // 在同一把锁内检查并写入 stdin，避免 TOCTOU 竞态
             let mut guard = ctrl.stdin.lock().unwrap();
             if let Some(ref mut stdin) = *guard {
                 let _ = stdin.write_all(format!("{}\n", response).as_bytes());
                 let _ = stdin.flush();
-                eprintln!("[collab] prompt 已响应: {}", response);
+                eprintln!("[collab] ✓ prompt 已响应: response='{}', msg={}", response, msg_id);
                 return true;
             }
+            eprintln!("[collab] ⚠ stdin 已关闭，无法响应: msg={}", msg_id);
+            return false;
         }
     }
+    eprintln!("[collab] ⚠ 未找到 prompt 状态: msg={}", msg_id);
     false
 }
 
@@ -549,6 +587,7 @@ async fn ensure_room_proxy(
     provider_id: Option<&str>,
     model_id: Option<&str>,
     options: &CollabDispatchOptions,
+    app_handle: &tauri::AppHandle,
 ) -> (u16, String, String) {
     let key = room_proxy_key(room_id, tool_id);
     let map = ROOM_PROXIES.get_or_init(|| Mutex::new(HashMap::new()));
@@ -562,14 +601,18 @@ async fn ensure_room_proxy(
             let config = super::config::load_ai_config();
             let provider = provider_id.and_then(|pid| config.providers.iter().find(|p| p.id == pid));
             let api_key = provider.map(|p| p.api_key.clone()).unwrap_or_default();
-            eprintln!("[collab] 复用常驻代理 port={}", port);
+            eprintln!("[collab] 复用常驻代理: key={}, port={}", key, port);
             return (port, base_url, api_key);
         }
     }
+    eprintln!("[collab] 首次创建代理: key={}, tool={}, provider={:?}, model={:?}", key, tool_id, provider_id, model_id);
 
     // 2. 首次：启动代理 + 写配置文件
     let config = super::config::load_ai_config();
     let provider = provider_id.and_then(|pid| config.providers.iter().find(|p| p.id == pid));
+    if provider.is_none() {
+        eprintln!("[collab] ⚠ 未找到 provider: {:?}", provider_id);
+    }
 
     let req = LaunchAiToolRequest {
         tool_id: tool_id.to_string(),
@@ -593,7 +636,12 @@ async fn ensure_room_proxy(
         ..Default::default()
     };
 
-    let (port, abort_handle) = start_tool_proxy(tool_config, provider, &config, &req).await;
+    let (port, abort_handle) = start_tool_proxy_with_collab(
+        tool_config, provider, &config, &req,
+        Some(app_handle.clone()),
+        Some(room_id.to_string()),
+    ).await;
+    eprintln!("[collab] 代理启动结果: port={}, has_abort={}", port, abort_handle.is_some());
     let base_url = if port != 0 {
         format!("http://127.0.0.1:{}", port)
     } else {
@@ -610,11 +658,9 @@ async fn ensure_room_proxy(
                     .filter(|c| !c.is_empty())
                     .or_else(|| model_id.map(|s| s.to_string()));
                 if let Err(e) = super::launch::write_tool_config_from_spec(
-                    tool_id,
                     tool_config,
                     model_id,
                     claimed_model.as_deref(),
-                    Some(&base_url),
                     &base_url,
                     &p.api_key,
                     options.fallback_model_id.as_deref(),
@@ -988,9 +1034,12 @@ async fn dispatch_to_tool(
     provider_id: Option<String>,
     options: CollabDispatchOptions,
 ) {
+    eprintln!("[collab] ═══ 派发开始 ═══ tool={}, room={}, placeholder={}, prompt_len={}, model={:?}, provider={:?}",
+        tool_id, room_id, placeholder_id, prompt.len(), model_id, provider_id);
     let tool_config = match registry().get_tool_config(&tool_id) {
         Some(c) => c.clone(),
         None => {
+            eprintln!("[collab] ✗ 未知工具: {}", tool_id);
             finalize_message(app, &room_id, &placeholder_id, "error", "⚠ 未知工具".to_string(), None, None);
             return;
         }
@@ -998,8 +1047,26 @@ async fn dispatch_to_tool(
 
     // 会话绑定：已有 id 则续聊（不再开新会话）
     let session_key = format!("{}::{}", room_id, tool_id);
-    let existing_sid = load_store().tool_sessions.get(&session_key).cloned();
+    // 单次 load_store 同时取出会话 id 与上下文快照，避免重复全量解析 collab.json
+    let store = load_store();
+    let existing_sid = store.tool_sessions.get(&session_key).cloned();
     let has_session = existing_sid.is_some();
+    let snapshot = if !has_session {
+        store.context_snapshots.get(&session_key).cloned()
+    } else {
+        None
+    };
+    eprintln!("[collab] 会话状态: has_session={}, existing_sid={:?}", has_session, existing_sid);
+
+    // ─── 上下文快照注入：新会话首次派发时，将压缩摘要注入提示词 ───
+    let prompt = if let Some(s) = snapshot {
+        format!(
+            "--- 上下文快照（来自上一会话的压缩摘要）---\n\n{}\n\n--- 以上为上下文快照，请基于此继续工作 ---\n\n--- 当前任务 ---\n\n{}",
+            s.summary, prompt
+        )
+    } else {
+        prompt
+    };
 
     let tmp_dir = get_base_dir().join("collab_tmp");
     let _ = fs::create_dir_all(&tmp_dir);
@@ -1021,7 +1088,11 @@ async fn dispatch_to_tool(
         provider_id.as_deref(),
         model_id.as_deref(),
         &options,
+        app,
     ).await;
+
+    // 注册当前 msg_id 到全局表（供常驻代理 emit 事件和缓存文本时查询）
+    crate::proxy::server::set_collab_msg_id(&room_id, &tool_id, placeholder_id.clone());
 
     // 加载 provider 用于 env 注入
     let config = super::config::load_ai_config();
@@ -1037,11 +1108,14 @@ async fn dispatch_to_tool(
     let tmpl = match tmpl {
         Some(t) => t,
         None => {
+            eprintln!("[collab] ✗ 未配置派发命令: tool={}, has_session={}", tool_config.display_name, has_session);
             let _ = fs::remove_file(&prompt_path);
+            crate::proxy::server::clear_collab_msg_id(&room_id, &tool_id);
             finalize_message(app, &room_id, &placeholder_id, "error", format!("⚠ 工具 {} 未配置派发命令", tool_config.display_name), None, None);
             return;
         }
     };
+    eprintln!("[collab] 模板选择: has_session={}, tmpl_len={}", has_session, tmpl.len());
 
     let prompt_str = prompt_path.to_string_lossy().replace('\\', "/");
     let quoted = format!("\"{}\"", prompt_str);
@@ -1056,7 +1130,6 @@ async fn dispatch_to_tool(
     if cmd.contains("{prompt}") {
         cmd = cmd.replace("{prompt}", &escape_cmd_arg(&prompt));
     }
-
     // ─── 环境变量注入：从 config_file.write 中的 env.* 键注入（与正常启动一致） ───
     let model_for_env = options.masquerade_model.clone()
         .filter(|c| !c.is_empty())
@@ -1067,13 +1140,16 @@ async fn dispatch_to_tool(
     } else {
         HashMap::new()
     };
+    eprintln!("[collab] 命令构建: use_stdin={}, prompt_mode={:?}, env_vars={}", use_stdin, prompt_mode, envs.len());
+    eprintln!("[collab] 环境变量: {:?}", envs.keys().collect::<Vec<_>>());
     // 兜底：若工具无 config_file 定义，仍按协议注入基础 env vars
     if envs.is_empty() {
         match tool_config.native_protocol().as_str() {
             "anthropic" => {
                 envs.insert("ANTHROPIC_BASE_URL".to_string(), base_url.clone());
                 envs.insert("ANTHROPIC_API_KEY".to_string(), api_key.clone());
-                if let Some(m) = model_id.as_deref() { envs.insert("ANTHROPIC_MODEL".to_string(), m.to_string()); }
+                // 与 build_env_vars 保持一致：伪装优先，否则所选取模型，避免两条路径注入的 model 名不同
+                if !model_for_env.is_empty() { envs.insert("ANTHROPIC_MODEL".to_string(), model_for_env.clone()); }
             }
             "google" => {
                 envs.insert("GOOGLE_API_BASE_URL".to_string(), base_url.clone());
@@ -1086,7 +1162,8 @@ async fn dispatch_to_tool(
         }
     }
 
-    eprintln!("[collab] 派发 {} → cmd: {}", tool_config.display_name, cmd);
+    eprintln!("[collab] ▶ 派发 {} → cmd: {}", tool_config.display_name, cmd);
+    eprintln!("[collab] ▶ 工作目录: {}", project_path);
     let mut command = if cfg!(windows) { Command::new("cmd") } else { Command::new("sh") };
     if cfg!(windows) {
         command.args(["/c", &cmd]);
@@ -1097,7 +1174,7 @@ async fn dispatch_to_tool(
         .current_dir(&project_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // 提示词传入方式：stdin 模式把临时文件作为子进程 stdin；否则用 piped（支持交互式应答）
+    // 提示词传入方式：stdin 模式把临时文件作为子进程 stdin；否则用 null（避免工具检测到管道 stdin 后阻塞读取）
     let mut child_stdin_opt: Option<ChildStdin> = None;
     if use_stdin {
         match fs::File::open(&prompt_path) {
@@ -1109,16 +1186,21 @@ async fn dispatch_to_tool(
             }
         }
     } else {
-        command.stdin(Stdio::piped());
+        command.stdin(Stdio::null());
     }
     for (k, v) in &envs {
         command.env(k, v);
     }
 
     let mut child = match command.spawn() {
-        Ok(c) => c,
+        Ok(c) => {
+            eprintln!("[collab] ✓ 子进程已启动: pid={}", c.id());
+            c
+        }
         Err(e) => {
+            eprintln!("[collab] ✗ 启动失败: {}", e);
             let _ = fs::remove_file(&prompt_path);
+            crate::proxy::server::clear_collab_msg_id(&room_id, &tool_id);
             finalize_message(app, &room_id, &placeholder_id, "error", format!("⚠ 启动工具失败: {}", e), None, None);
             return;
         }
@@ -1128,6 +1210,7 @@ async fn dispatch_to_tool(
         Some(s) => s,
         None => {
             let _ = fs::remove_file(&prompt_path);
+            crate::proxy::server::clear_collab_msg_id(&room_id, &tool_id);
             finalize_message(app, &room_id, &placeholder_id, "error", "⚠ 无法读取工具输出".to_string(), None, None);
             return;
         }
@@ -1224,6 +1307,7 @@ async fn dispatch_to_tool(
     let mut err_msg: Option<String> = None;
     let mut raw_lines: Vec<String> = Vec::new(); // 用于 JSON 解析失败时回退显示原始输出
     let is_json_runner = runner == "stream-json" || runner == "codex-json" || runner == "opencode-json" || runner == "gemini-json";
+    eprintln!("[collab] ▶ 读取循环开始: runner={}, is_json={}, timeout={}s", runner, is_json_runner, DISPATCH_TIMEOUT_SECS);
 
     loop {
         if cancel.load(Ordering::SeqCst) {
@@ -1261,6 +1345,7 @@ async fn dispatch_to_tool(
                         if let Some(s) = sid { captured_sid = Some(s); }
                         match ev {
                             StreamEvent::Delta(d) => {
+                                eprintln!("[collab] ▸ Delta: len={}", d.len());
                                 accumulated.push_str(&d);
                                 let _ = app.emit(
                                     "collab:delta",
@@ -1268,12 +1353,14 @@ async fn dispatch_to_tool(
                                 );
                             }
                             StreamEvent::Activity(a) => {
+                                eprintln!("[collab] ▸ Activity: {}", a);
                                 let _ = app.emit(
                                     "collab:activity",
                                     CollabActivityPayload { room_id: room_id.clone(), msg_id: placeholder_id.clone(), activity: a },
                                 );
                             }
                             StreamEvent::Result(t) => {
+                                eprintln!("[collab] ▸ Result: len={}, non_empty={}", t.len(), !t.is_empty());
                                 // 仅当收尾文本非空才覆盖（避免空 result 抹掉已流式内容）
                                 if !t.is_empty() { accumulated = t; }
                             }
@@ -1281,7 +1368,7 @@ async fn dispatch_to_tool(
                         }
                     } else {
                         // JSON 解析失败，作为原始文本兜底
-                        eprintln!("[collab] JSON 解析失败: {}", l.chars().take(200).collect::<String>());
+                        eprintln!("[collab] ⚠ JSON 解析失败 (runner={}): {}", runner, l.chars().take(200).collect::<String>());
                     }
                 } else {
                     // 非 JSON runner：检测 prompt
@@ -1308,6 +1395,8 @@ async fn dispatch_to_tool(
     if let Some(h) = stderr_handle { let _ = h.join(); }
 
     let _ = fs::remove_file(&prompt_path);
+    eprintln!("[collab] 派发循环结束: accumulated_len={}, captured_sid={:?}, err={:?}, raw_lines={}",
+        accumulated.len(), captured_sid, err_msg.is_some(), raw_lines.len());
     // 代理为房间级常驻，不在每条消息结束时停止
     if let Some(map) = DISPATCH_STATE.get() {
         map.lock().unwrap().remove(&placeholder_id);
@@ -1319,15 +1408,34 @@ async fn dispatch_to_tool(
 
     // 获取 stderr 内容
     let stderr_content = stderr_buf.lock().unwrap().clone();
+    if !stderr_content.is_empty() {
+        eprintln!("[collab] stderr 总量: {} 字节", stderr_content.len());
+    }
+
+    let had_error = err_msg.is_some();
+    let mut compact_result: Option<String> = None;
 
     match err_msg {
         Some(e) => {
+            eprintln!("[collab] ═══ 派发结束(错误) ═══ placeholder={}, err={}", placeholder_id, e);
             finalize_message(app, &room_id, &placeholder_id, "error", e, None, None);
         }
         None => {
             let mut content = accumulated.trim().to_string();
+            eprintln!("[collab] 派发完成: content_len={}, is_json={}, raw_lines={}, stderr_len={}",
+                content.len(), is_json_runner, raw_lines.len(), stderr_content.len());
+            // ── 代理回退：stdout 无内容时，使用代理缓存的响应文本 ──
+            if content.is_empty() || content == "(无输出)" {
+                if let Some(proxy_text) = crate::proxy::server::take_proxy_text(&placeholder_id) {
+                    eprintln!("[collab] ✓ 代理回退: 使用代理响应文本 (len={})", proxy_text.len());
+                    if !proxy_text.is_empty() {
+                        content = proxy_text;
+                    }
+                }
+            }
             // JSON runner 但无解析结果 → 回退显示原始 stdout + stderr
             if content.is_empty() && is_json_runner && !raw_lines.is_empty() {
+                eprintln!("[collab] ⚠ JSON runner 无解析结果，回退原始输出 ({} 行)", raw_lines.len());
                 content = format!("⚠ 未解析到有效内容，原始输出：\n{}", raw_lines.join("\n"));
                 if !stderr_content.is_empty() {
                     content.push_str(&format!("\n\n--- stderr ---\n{}", stderr_content.trim()));
@@ -1342,6 +1450,9 @@ async fn dispatch_to_tool(
             }
             // 合并 session 绑定写入 finalize_message，避免额外的 load_store + save_store 循环
             let session_update = captured_sid.as_ref().map(|sid| (session_key.clone(), sid.clone()));
+            eprintln!("[collab] ═══ 派发结束(成功) ═══ placeholder={}, content_len={}, sid={:?}, session_update={}",
+                placeholder_id, content.len(), captured_sid, session_update.is_some());
+            compact_result = Some(content.clone());
             finalize_message(
                 app,
                 &room_id,
@@ -1353,11 +1464,30 @@ async fn dispatch_to_tool(
             );
         }
     }
+
+    // ─── 压缩回调：通知 collab_compact_session 命令 ───
+    if let Some(map) = COMPACT_CALLBACKS.get() {
+        if let Some(sender) = map.lock().unwrap().remove(&placeholder_id) {
+            let _ = sender.send(compact_result.unwrap_or_default());
+        }
+    }
+    // ─── 快照清理：新会话成功创建后清除已注入的快照（避免重复注入） ───
+    if !had_error && captured_sid.is_some() {
+        let mut store = load_store();
+        if store.context_snapshots.remove(&session_key).is_some() {
+            let _ = save_store(&store);
+        }
+    }
+    // 清理全局 msg_id 注册
+    crate::proxy::server::clear_collab_msg_id(&room_id, &tool_id);
+    // 清理代理文本缓存（防止内存泄漏：工具有 stdout 输出时代理文本不会被消费）
+    let _ = crate::proxy::server::take_proxy_text(&placeholder_id);
 }
 
 /// 用户取消正在进行的派发
 #[tauri::command]
 pub fn collab_cancel_dispatch(msg_id: String) -> Result<(), String> {
+    eprintln!("[collab] 用户取消派发: msg_id={}", msg_id);
     let ctrl = if let Some(map) = DISPATCH_STATE.get() {
         map.lock().unwrap().get(&msg_id).cloned()
     } else {
@@ -1366,25 +1496,219 @@ pub fn collab_cancel_dispatch(msg_id: String) -> Result<(), String> {
     if let Some(ctrl) = ctrl {
         ctrl.cancel.store(true, Ordering::SeqCst);
         kill_tree(&ctrl.child);
+        eprintln!("[collab] ✓ 已发送取消信号并杀进程树");
+    } else {
+        eprintln!("[collab] ⚠ 未找到派发状态: {}", msg_id);
     }
     Ok(())
+}
+
+/// 压缩上下文：向当前工具会话发送摘要请求，获取总结后保存为快照并重置会话
+#[tauri::command]
+pub async fn collab_compact_session(
+    app: tauri::AppHandle,
+    room_id: String,
+    tool_id: String,
+    project_path: String,
+    model_id: Option<String>,
+    provider_id: Option<String>,
+    options: Option<CollabDispatchOptions>,
+) -> Result<Option<ContextSnapshot>, String> {
+    let session_key = format!("{}::{}", room_id, tool_id);
+
+    // 1. 检查是否有活跃会话
+    let store = load_store();
+    let existing_sid = store.tool_sessions.get(&session_key)
+        .cloned()
+        .ok_or_else(|| "没有活跃会话可压缩".to_string())?;
+    let message_count = store.messages.get(&room_id)
+        .map(|msgs| msgs.len())
+        .unwrap_or(0);
+
+    // 2. 防止并发派发
+    let dispatch_key = session_key.clone();
+    let active = ACTIVE_DISPATCHES.get_or_init(|| Mutex::new(HashSet::new()));
+    if active.lock().unwrap().contains(&dispatch_key) {
+        return Err("该工具正在处理上一条消息，请等待完成".to_string());
+    }
+    active.lock().unwrap().insert(dispatch_key.clone());
+
+    // 3. 获取工具配置
+    let tool_config = match registry().get_tool_config(&tool_id) {
+        Some(c) => c.clone(),
+        None => {
+            active.lock().unwrap().remove(&dispatch_key);
+            return Err(format!("未知工具：{}", tool_id));
+        }
+    };
+
+    // 4. 构建压缩提示词
+    let compact_prompt = r"请总结当前会话的全部关键信息，生成一份上下文快照。这份快照将用于在新会话中无缝继续当前工作。
+
+请务必包含以下内容（用 Markdown 格式）：
+
+## 已完成的工作
+- 已修改/创建的文件清单
+- 已实现的功能和修复的问题
+
+## 当前任务状态
+- 正在进行的任务及其进度
+- 遇到的阻碍和解决方案
+
+## 关键决策
+- 重要的技术选择和架构决定
+- 项目约定和编码规范
+
+## 待办事项
+- 尚未完成的工作
+- 下一步计划和优先级
+
+## 重要上下文
+- 任何对新会话继续工作有必要的信息（环境配置、特殊参数等）
+
+请直接输出总结内容，不要询问确认。";
+
+    // 5. 创建占位消息（可见的“压缩中”消息）
+    let placeholder_id = new_id();
+    let placeholder = CollabMessage {
+        id: placeholder_id.clone(),
+        room_id: room_id.clone(),
+        sender: tool_id.clone(),
+        sender_name: tool_config.display_name.clone(),
+        content: String::new(),
+        references: vec![],
+        files: vec![],
+        dispatch: Some(CollabDispatch {
+            tool_id: tool_id.clone(),
+            session_id: existing_sid.clone(),
+            model: model_id.clone(),
+        }),
+        reply_to: None,
+        status: Some("running".to_string()),
+        created_at: now_str(),
+    };
+
+    // 6. 保存占位消息
+    let mut store = load_store();
+    if let Some(msgs) = store.messages.get_mut(&room_id) {
+        msgs.push(placeholder.clone());
+    }
+    if let Some(room) = store.rooms.iter_mut().find(|r| r.id == room_id) {
+        room.updated_at = now_str();
+    }
+    save_store(&store)?;
+
+    // 7. 推送占位消息到前端（实时显示“压缩中”状态）
+    let _ = app.emit("collab:compact-started", &placeholder);
+
+    // 8. 注册压缩回调
+    let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+    {
+        let map = COMPACT_CALLBACKS.get_or_init(|| Mutex::new(HashMap::new()));
+        map.lock().unwrap().insert(placeholder_id.clone(), tx);
+    }
+
+    // 9. 后台派发压缩请求
+    let app_clone = app.clone();
+    let rt_room = room_id.clone();
+    let rt_tool = tool_id.clone();
+    let rt_project = project_path.clone();
+    let rt_options = options.clone().unwrap_or_default();
+    let rt_model = model_id.clone();
+    let rt_provider = provider_id.clone();
+    let rt_placeholder_id = placeholder_id.clone();
+
+    tauri::async_runtime::spawn(async move {
+        dispatch_to_tool(
+            &app_clone,
+            rt_room,
+            rt_tool,
+            rt_project,
+            compact_prompt.to_string(),
+            rt_placeholder_id,
+            rt_model,
+            rt_provider,
+            rt_options,
+        ).await;
+    });
+
+    // 10. 等待压缩完成
+    let summary_result = rx.await;
+
+    // 无论成功与否，清理活动派发标记
+    if let Some(active) = ACTIVE_DISPATCHES.get() {
+        active.lock().unwrap().remove(&dispatch_key);
+    }
+
+    let summary = match summary_result {
+        Ok(s) => s,
+        Err(_) => return Err("压缩过程异常中断".to_string()),
+    };
+
+    // 11. 检查压缩结果
+    if summary.is_empty() || summary.starts_with("⚠") {
+        return Ok(None);
+    }
+
+    // 12. 保存快照 + 重置会话
+    let snapshot = ContextSnapshot {
+        id: new_id(),
+        room_id: room_id.clone(),
+        tool_id: tool_id.clone(),
+        summary: summary.clone(),
+        old_session_id: existing_sid,
+        message_count,
+        created_at: now_str(),
+    };
+
+    let mut store = load_store();
+    store.context_snapshots.insert(session_key, snapshot.clone());
+    store.tool_sessions.remove(&format!("{}::{}", room_id, tool_id));
+    save_store(&store)?;
+
+    // 13. 停止常驻代理（下次派发时重建）
+    stop_room_proxy(&room_id, &tool_id);
+
+    // 14. 推送压缩完成事件
+    let _ = app.emit("collab:compacted", serde_json::json!({
+        "room_id": room_id,
+        "tool_id": tool_id,
+        "snapshot": &snapshot,
+    }));
+
+    eprintln!("[collab] 上下文压缩完成: {} 条消息 → 快照 {} 字符",
+        message_count, summary.len());
+
+    Ok(Some(snapshot))
+}
+
+/// 查询某房间+工具的上下文快照是否存在
+#[tauri::command]
+pub fn collab_get_snapshot(room_id: String, tool_id: String) -> Option<ContextSnapshot> {
+    load_store().context_snapshots.get(&format!("{}::{}", room_id, tool_id)).cloned()
 }
 
 /// 重置某工具在某会话中的续聊上下文（删除绑定的 session id）
 #[tauri::command]
 pub fn collab_reset_session(room_id: String, tool_id: String) -> Result<(), String> {
+    eprintln!("[collab] 重置会话: room={}, tool={}", room_id, tool_id);
     let mut store = load_store();
     store.tool_sessions.remove(&format!("{}::{}", room_id, tool_id));
+    // 同时清除上下文快照
+    store.context_snapshots.remove(&format!("{}::{}", room_id, tool_id));
     save_store(&store)?;
     // 同时停止并清理常驻代理，下次派发时重建
     stop_room_proxy(&room_id, &tool_id);
+    eprintln!("[collab] ✓ 会话已重置: room={}, tool={}", room_id, tool_id);
     Ok(())
 }
 
 /// 用户响应工具的交互式询问
 #[tauri::command]
 pub fn collab_respond_prompt(msg_id: String, response: String) -> Result<(), String> {
+    eprintln!("[collab] 用户响应 prompt: msg_id={}, response={}", msg_id, response);
     if !write_stdin_response(&msg_id, &response) {
+        eprintln!("[collab] ⚠ 响应失败: msg_id={}", msg_id);
         return Err("无待响应的询问或工具不支持交互".to_string());
     }
     Ok(())

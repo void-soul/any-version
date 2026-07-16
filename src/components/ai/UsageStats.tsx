@@ -48,6 +48,54 @@ function formatFull(n: number): string {
   return n.toLocaleString("en-US");
 }
 
+function SortHeader({
+  k,
+  children,
+  align,
+  sortKey,
+  asc,
+  onSort,
+}: {
+  k: SortKey;
+  children: React.ReactNode;
+  align?: string;
+  sortKey: SortKey;
+  asc: boolean;
+  onSort: (k: SortKey) => void;
+}) {
+  return (
+    <th
+      onClick={() => onSort(k)}
+      className={`px-2 py-1.5 text-[9px] font-semibold text-slate-500 cursor-pointer select-none hover:text-slate-300 whitespace-nowrap ${align || "text-right"}`}
+      title="点击排序"
+    >
+      <span className="inline-flex items-center gap-0.5">
+        {children}
+        {sortKey === k && (asc ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />)}
+      </span>
+    </th>
+  );
+}
+
+// 自动刷新间隔（抄自 cc-switch 98ccde00）：0 表示关闭自动刷新
+const DEFAULT_REFRESH_INTERVAL_MS = 30000;
+const REFRESH_INTERVAL_OPTIONS_MS = [0, 5000, 10000, 30000, 60000] as const;
+type RefreshIntervalOption = (typeof REFRESH_INTERVAL_OPTIONS_MS)[number];
+const REFRESH_INTERVAL_LABEL: Record<number, string> = {
+  0: "关闭",
+  5000: "5 秒",
+  10000: "10 秒",
+  30000: "30 秒",
+  60000: "60 秒",
+};
+const LS_REFRESH_KEY = "usage_refresh_interval_ms";
+
+function normalizeInterval(value: number | null | undefined): number {
+  return (REFRESH_INTERVAL_OPTIONS_MS as readonly number[]).includes(value ?? -1)
+    ? (value as number)
+    : DEFAULT_REFRESH_INTERVAL_MS;
+}
+
 interface SectionStyle {
   iconClass: string;
   softClass: string;
@@ -90,25 +138,12 @@ function SortableTable({
     return copy;
   }, [rows, sortKey, asc, maxRows]);
 
-  const maxTotal = Math.max(...rows.map(r => r.total), 1);
+  const maxTotal = useMemo(() => Math.max(...rows.map(r => r.total), 1), [rows]);
 
   const setSort = (k: SortKey) => {
     if (sortKey === k) setAsc(!asc);
     else { setSortKey(k); setAsc(false); }
   };
-
-  const Th = ({ k, children, align }: { k: SortKey; children: React.ReactNode; align?: string }) => (
-    <th
-      onClick={() => setSort(k)}
-      className={`px-2 py-1.5 text-[9px] font-semibold text-slate-500 cursor-pointer select-none hover:text-slate-300 whitespace-nowrap ${align || "text-right"}`}
-      title="点击排序"
-    >
-      <span className="inline-flex items-center gap-0.5">
-        {children}
-        {sortKey === k && (asc ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />)}
-      </span>
-    </th>
-  );
 
   if (rows.length === 0) {
     return (
@@ -140,10 +175,10 @@ function SortableTable({
           <tr className="text-slate-500">
             <th className="w-4" />
             <th className="px-2 py-1 text-[9px] font-semibold text-left">{nameHeader}</th>
-            <Th k="requests">请求</Th>
-            <Th k="input">输入</Th>
-            <Th k="output">输出</Th>
-            <Th k="total">总计</Th>
+            <SortHeader k="requests" sortKey={sortKey} asc={asc} onSort={setSort}>请求</SortHeader>
+            <SortHeader k="input" sortKey={sortKey} asc={asc} onSort={setSort}>输入</SortHeader>
+            <SortHeader k="output" sortKey={sortKey} asc={asc} onSort={setSort}>输出</SortHeader>
+            <SortHeader k="total" sortKey={sortKey} asc={asc} onSort={setSort}>总计</SortHeader>
           </tr>
         </thead>
         <tbody>
@@ -176,6 +211,14 @@ function SortableTable({
 export default function UsageStats() {
   const [summary, setSummary] = useState<UsageSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshIntervalMs, setRefreshIntervalMs] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(LS_REFRESH_KEY);
+      return normalizeInterval(saved ? Number(saved) : undefined);
+    } catch {
+      return DEFAULT_REFRESH_INTERVAL_MS;
+    }
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -190,6 +233,23 @@ export default function UsageStats() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // 自动刷新：间隔 > 0 时定时拉取；切走页面 / 关闭后由 cleanup 取消
+  useEffect(() => {
+    if (refreshIntervalMs <= 0) return;
+    const id = setInterval(() => { load(); }, refreshIntervalMs);
+    return () => clearInterval(id);
+  }, [refreshIntervalMs, load]);
+
+  const changeRefreshInterval = (next: number) => {
+    const normalized = normalizeInterval(next);
+    setRefreshIntervalMs(normalized);
+    try {
+      localStorage.setItem(LS_REFRESH_KEY, String(normalized));
+    } catch {
+      /* localStorage 不可用时静默降级为本次会话生效 */
+    }
+  };
 
   const handleClear = async () => {
     if (!confirm("确定要清空所有用量统计数据吗？")) return;
@@ -248,7 +308,21 @@ export default function UsageStats() {
           <Activity className="w-4 h-4 text-violet-400" />
           <h3 className="text-sm font-bold text-white">用量统计</h3>
         </div>
-        <div className="flex gap-1.5">
+        <div className="flex gap-1.5 items-center">
+          <div className="flex items-center gap-1 pr-1 text-slate-500" title="自动刷新间隔">
+            <Clock className="w-3 h-3" />
+            <select
+              value={refreshIntervalMs}
+              onChange={(e) => changeRefreshInterval(Number(e.target.value))}
+              className="bg-white/5 border border-white/10 rounded-lg text-[10px] text-slate-300 px-1.5 py-1 cursor-pointer hover:text-white hover:bg-white/10 transition-all focus:outline-none"
+            >
+              {REFRESH_INTERVAL_OPTIONS_MS.map((ms) => (
+                <option key={ms} value={ms} className="bg-[#0e1220] text-slate-200">
+                  {REFRESH_INTERVAL_LABEL[ms as RefreshIntervalOption]}
+                </option>
+              ))}
+            </select>
+          </div>
           <button onClick={load} disabled={loading}
             className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-50">
             <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} /> 刷新

@@ -187,7 +187,7 @@ pub fn anthropic_to_openai(body: &Value, target_model: &str, aliases: Option<&Mo
                     "function": {
                         "name": t.get("name").unwrap_or(&json!("")),
                         "description": t.get("description").unwrap_or(&json!("")),
-                        "parameters": t.get("input_schema").unwrap_or(&json!({}))
+                        "parameters": super::normalize_function_parameters(t.get("input_schema"))
                     }
                 })
             })
@@ -810,7 +810,7 @@ pub fn openai_to_anthropic(body: &Value, target_model: &str, aliases: Option<&Mo
                         return Some(json!({
                             "name": func.get("name").unwrap_or(&json!("")),
                             "description": func.get("description").unwrap_or(&json!("")),
-                            "input_schema": func.get("parameters").unwrap_or(&json!({}))
+                            "input_schema": super::normalize_function_parameters(func.get("parameters"))
                         }));
                     }
                 }

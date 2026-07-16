@@ -207,6 +207,70 @@ export interface CollabDispatchOptions {
   rectifier_protocol_mismatch: boolean | null;
 }
 
+/** 上下文快照：压缩旧会话后生成的摘要 */
+export interface ContextSnapshot {
+  id: string;
+  room_id: string;
+  tool_id: string;
+  summary: string;
+  old_session_id: string;
+  message_count: number;
+  created_at: string;
+}
+
+/** 后端推送：压缩开始（占位消息） */
+export interface CollabCompactStartedPayload {
+  room_id: string;
+  message: CollabMessage;
+}
+
+/** 后端推送：压缩完成 */
+export interface CollabCompactedPayload {
+  room_id: string;
+  tool_id: string;
+  snapshot: ContextSnapshot | null;
+}
+
+/** 代理层推送：请求到达 */
+export interface ProxyRequestPayload {
+  room_id: string;
+  msg_id: string;
+  model: string;
+  messages: number;
+  stream: boolean;
+}
+
+/** 代理层推送：上游响应开始 */
+export interface ProxyResponseStartPayload {
+  room_id: string;
+  msg_id: string;
+  status: number;
+  elapsed_ms: number;
+}
+
+/** 代理层推送：流式文本增量 */
+export interface ProxyDeltaPayload {
+  room_id: string;
+  msg_id: string;
+  delta: string;
+}
+
+/** 代理层推送：响应完成 */
+export interface ProxyCompletePayload {
+  room_id: string;
+  msg_id: string;
+  text: string;
+  elapsed_ms: number;
+}
+
+/** 代理层推送：错误 */
+export interface ProxyErrorPayload {
+  room_id: string;
+  msg_id: string;
+  status: number;
+  error: string;
+}
+
 export interface LastLaunchConfig {
   provider_id: string | null;
   provider_name: string | null;

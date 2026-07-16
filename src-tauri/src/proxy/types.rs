@@ -76,6 +76,12 @@ pub struct ProxyConfig {
     pub optimizer_thinking: bool,
     #[serde(default)]
     pub optimizer_deepseek: bool,
+
+    // ─── 协作上下文（可选，协作派发时设置，用于代理 → 前端事件推送）───
+    #[serde(skip)]
+    pub app_handle: Option<tauri::AppHandle>,
+    #[serde(skip)]
+    pub collab_room_id: Option<String>,
 }
 
 /// 单个模型的供应商路由（跨供应商支持）：该模型实际所属供应商的上游端点与 key。
@@ -111,20 +117,10 @@ impl Default for ProxyConfig {
             optimizer_cache_injection: true,
             optimizer_thinking: true,
             optimizer_deepseek: true,
+            app_handle: None,
+            collab_room_id: None,
         }
     }
-}
-
-/// 代理服务器运行状态
-#[derive(Clone, Debug, Serialize, Default)]
-pub struct ProxyStatus {
-    pub running: bool,
-    pub address: String,
-    pub port: u16,
-    pub active_connections: u64,
-    pub total_requests: u64,
-    pub success_requests: u64,
-    pub failed_requests: u64,
 }
 
 /// 根据入站/出站协议推导转换模式字符串

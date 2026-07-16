@@ -317,6 +317,8 @@ pub fn run() {
             commands::ai::collab::collab_cancel_dispatch,
             commands::ai::collab::collab_reset_session,
             commands::ai::collab::collab_respond_prompt,
+            commands::ai::collab::collab_compact_session,
+            commands::ai::collab::collab_get_snapshot,
             commands::ai::tools::upgrade_ai_tool,
             commands::ai::cache::get_ai_tool_cache_info,
             commands::ai::cache::migrate_ai_tool_cache,

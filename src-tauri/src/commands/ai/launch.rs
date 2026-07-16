@@ -31,6 +31,18 @@ pub(crate) async fn start_tool_proxy(
     config: &AiConfig,
     req: &LaunchAiToolRequest,
 ) -> (u16, Option<tokio::task::AbortHandle>) {
+    start_tool_proxy_with_collab(tool_config, provider, config, req, None, None).await
+}
+
+/// 带协作上下文的代理启动（collab 调用时传入 app_handle / room_id）
+pub(crate) async fn start_tool_proxy_with_collab(
+    tool_config: &ToolConfig,
+    provider: Option<&AiProvider>,
+    config: &AiConfig,
+    req: &LaunchAiToolRequest,
+    app_handle: Option<tauri::AppHandle>,
+    collab_room_id: Option<String>,
+) -> (u16, Option<tokio::task::AbortHandle>) {
     let inbound_protocols = tool_config.inbound_protocols();
     let primary_inbound = tool_config.native_protocol();
 
@@ -137,6 +149,8 @@ pub(crate) async fn start_tool_proxy(
                         optimizer_cache_injection: req.optimizer_cache_injection.unwrap_or(config.optimizer.cache_injection),
                         optimizer_thinking: req.optimizer_thinking.unwrap_or(config.optimizer.thinking_optimizer),
                         optimizer_deepseek: req.optimizer_deepseek.unwrap_or(config.optimizer.deepseek_normalize),
+                        app_handle: app_handle.clone(),
+                        collab_room_id: collab_room_id.clone(),
                     };
                     eprintln!("[proxy] ✓ 启动代理 -> 127.0.0.1:{}  ({} -> {})", port, primary_inbound, outbound_protocol);
                     let handle = tokio::spawn(async move {
@@ -237,11 +251,9 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                     eprintln!("[config_file]   claimed_model(C): {:?}", claimed_model);
                     eprintln!("[config_file]   proxy_mode: {}", proxy_mode);
                     match write_tool_config_from_spec(
-                        &req.tool_id,
                         &tool_config,
                         req.model_id.as_deref(),
                         claimed_model.as_deref(),
-                        Some(&effective_base_url),
                         &effective_base_url,
                         &p.api_key,
                         req.fallback_model_id.as_deref(),
@@ -462,12 +474,10 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
 /// - `claimed_model`：声明模型名 C（工具以为自己调用的模型；伪装时 = masquerade_model，
 ///   否则 = B）。配置文件中的 `model` 字段写入 C，由本地代理按 masquerade 映射 C → B。
 pub(crate) fn write_tool_config_from_spec(
-    tool_id: &str,
     tool_config: &ToolConfig,
     model_id: Option<&str>,
     claimed_model: Option<&str>,
-    base_url: Option<&str>,
-    fallback_url: &str,
+    base_url: &str,
     api_key: &str,
     fallback_model_id: Option<&str>,
     fallback_masquerade_model: Option<&str>,
@@ -476,8 +486,7 @@ pub(crate) fn write_tool_config_from_spec(
     proxy_mode: bool,
 ) -> Result<(), String> {
     // write_tool_config_generic 内部会检查 config_file 是否存在，无 configFile 时直接返回 Ok(())
-    let _ = tool_id;
-    write_tool_config_generic(tool_config, model_id, claimed_model, base_url.unwrap_or(fallback_url), api_key, fallback_model_id, fallback_masquerade_model, one_m_context, fallback_one_m_context, proxy_mode)
+    write_tool_config_generic(tool_config, model_id, claimed_model, base_url, api_key, fallback_model_id, fallback_masquerade_model, one_m_context, fallback_one_m_context, proxy_mode)
 }
 
 /// 从 config_file.write 映射中提取 env.* 前缀的键，构建环境变量 HashMap。
@@ -795,7 +804,11 @@ fn write_toml_config(
 
 /// 解析 TOML 顶层 `key = "value"` 行
 fn parse_toml_kv(line: &str) -> Option<(String, String)> {
-    let re = regex::Regex::new(r#"^\s*([A-Za-z_][\w-]*)\s*=\s*"(.*)"\s*$"#).ok()?;
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r#"^\s*([A-Za-z_][\w-]*)\s*=\s*"(.*)"\s*$"#).unwrap()
+    });
     let caps = re.captures(line)?;
     Some((caps.get(1)?.as_str().to_string(), caps.get(2)?.as_str().to_string()))
 }

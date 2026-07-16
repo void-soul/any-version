@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -18,6 +18,10 @@ import {
   RotateCcw,
   Settings,
   ChevronDown,
+  Archive,
+  Pencil,
+  Check,
+  X,
 } from "lucide-react";
 import type {
   CollabRoom as CollabRoomT,
@@ -32,6 +36,13 @@ import type {
   CollabPromptPayload,
   CollabMsgUpdatedPayload,
   CollabDispatchOptions,
+  ContextSnapshot,
+  CollabCompactedPayload,
+  ProxyRequestPayload,
+  ProxyResponseStartPayload,
+  ProxyDeltaPayload,
+  ProxyCompletePayload,
+  ProxyErrorPayload,
 } from "./types";
 
 // 工具配色（与房间内身份强绑定）
@@ -49,12 +60,80 @@ function senderColor(sender: string): string {
   return TOOL_COLORS[sender] || "bg-slate-500";
 }
 
-/// 从工具列表中查找头像和昵称
-function getToolAvatar(tools: DetectedAiTool[], toolId: string): string | null {
+// ─── 人类化状态文案 ───
+// 运行中（思考/工作）的随机短语池
+const THINKING_PHRASES = [
+  "正在思考…",
+  "正在分析…",
+  "让我想想…",
+  "正在整理思路…",
+  "正在组织语言…",
+  "正在查阅资料…",
+  "正在编写代码…",
+  "正在检查细节…",
+  "正在推理…",
+  "正在构思方案…",
+];
+// 错误时的随机短语池
+const ERROR_PHRASES = [
+  "出了点小问题",
+  "遇到了一些困难",
+  "好像哪里不对",
+  "需要一点帮助",
+  "处理时遇到了障碍",
+  "出了点意外",
+];
+/// 随机选择一个短语
+function pickRandom(arr: string[]): string {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+/// 轮换短语的自定义 Hook：每隔 intervalMs 毫秒随机切换一个短语
+function useRotatingPhrase(phrases: string[], active: boolean, intervalMs = 4000): string {
+  const [idx, setIdx] = useState(() => Math.floor(Math.random() * phrases.length));
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(() => {
+      setIdx(Math.floor(Math.random() * phrases.length));
+    }, intervalMs);
+    return () => clearInterval(timer);
+  }, [active, phrases.length, intervalMs]);
+  return phrases[idx] || phrases[0] || "";
+}
+
+// ─── 自定义昵称/头像持久化 ───
+const CUSTOM_NAMES_KEY = "any-version:custom-tool-names";
+
+type CustomToolName = { avatar?: string; nickname?: string };
+
+function loadCustomNames(): Record<string, CustomToolName> {
+  try {
+    const raw = localStorage.getItem(CUSTOM_NAMES_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveCustomNames(map: Record<string, CustomToolName>) {
+  try {
+    localStorage.setItem(CUSTOM_NAMES_KEY, JSON.stringify(map));
+  } catch {
+    /* ignore */
+  }
+}
+
+/// 获取有效头像：自定义 > 配置 > null
+function getToolAvatar(tools: DetectedAiTool[], toolId: string, customMap?: Record<string, CustomToolName>): string | null {
+  const custom = customMap?.[toolId];
+  if (custom?.avatar) return custom.avatar;
   const t = tools.find((x) => x.id === toolId);
   return t?.avatar ?? null;
 }
-function getToolNickname(tools: DetectedAiTool[], toolId: string): string | null {
+/// 获取有效昵称：自定义 > 配置 > display_name
+function getToolNickname(tools: DetectedAiTool[], toolId: string, customMap?: Record<string, CustomToolName>): string | null {
+  const custom = customMap?.[toolId];
+  if (custom?.nickname) return custom.nickname;
   const t = tools.find((x) => x.id === toolId);
   return t?.nickname ?? null;
 }
@@ -84,8 +163,18 @@ export default function CollabRoom() {
   const [newName, setNewName] = useState("");
   const [newProject, setNewProject] = useState("");
   const [busy, setBusy] = useState(false);
+  const [compacting, setCompacting] = useState(false);
+  const [hasSnapshot, setHasSnapshot] = useState(false);
   const [activityMap, setActivityMap] = useState<Record<string, string>>({});
   const [promptMap, setPromptMap] = useState<Record<string, { question: string; options: string[] }>>({});
+  // 代理层状态：实时显示 LLM 响应进度（即使工具 stdout 未输出）
+  const [proxyMap, setProxyMap] = useState<Record<string, { text: string; status: string; elapsed?: number }>>({});
+  // 自定义工具昵称/头像（localStorage 持久化）
+  const [customNames, setCustomNames] = useState<Record<string, CustomToolName>>({});
+  // 正在编辑昵称/头像的工具 id
+  const [editingToolId, setEditingToolId] = useState<string | null>(null);
+  const [editAvatar, setEditAvatar] = useState("");
+  const [editNickname, setEditNickname] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // 流式事件相关 ref
@@ -158,12 +247,80 @@ export default function CollabRoom() {
           delete next[p.message.id];
           return next;
         });
+        setProxyMap((prev) => {
+          const next = { ...prev };
+          delete next[p.message.id];
+          return next;
+        });
         if (p.message.status && p.message.status !== "running") {
           setBusy(false);
         }
       });
       unlistenFns.push(unUpdated);
       if (cancelled) { unUpdated(); return; }
+      const unCompactStarted = await listen<CollabMessage>("collab:compact-started", (e) => {
+        const msg = e.payload;
+        if (msg.room_id !== activeRoomIdRef.current) return;
+        runningMsgIdRef.current = msg.id;
+        runningMsgIdxRef.current = -1;
+        finalizedIdsRef.current.delete(msg.id);
+        setMessages((prev) => [...prev, msg]);
+        setBusy(true);
+      });
+      unlistenFns.push(unCompactStarted);
+      if (cancelled) { unCompactStarted(); return; }
+      const unCompacted = await listen<CollabCompactedPayload>("collab:compacted", (e) => {
+        const p = e.payload;
+        if (p.room_id !== activeRoomIdRef.current) return;
+        setHasSnapshot(!!p.snapshot);
+      });
+      unlistenFns.push(unCompacted);
+      if (cancelled) { unCompacted(); return; }
+      // ── 代理层事件 ──
+      const unProxyReq = await listen<ProxyRequestPayload>("collab:proxy-request", (e) => {
+        const p = e.payload;
+        if (p.room_id !== activeRoomIdRef.current) return;
+        setProxyMap((prev) => ({ ...prev, [p.msg_id]: { text: "", status: "requesting" } }));
+        setActivityMap((prev) => ({ ...prev, [p.msg_id]: `代理请求: ${p.model} (${p.messages}条消息${p.stream ? ", 流式" : ""})` }));
+      });
+      unlistenFns.push(unProxyReq);
+      if (cancelled) { unProxyReq(); return; }
+      const unProxyStart = await listen<ProxyResponseStartPayload>("collab:proxy-response-start", (e) => {
+        const p = e.payload;
+        if (p.room_id !== activeRoomIdRef.current) return;
+        setProxyMap((prev) => ({ ...prev, [p.msg_id]: { text: prev[p.msg_id]?.text || "", status: `UPSTREAM ${p.status}` } }));
+        setActivityMap((prev) => ({ ...prev, [p.msg_id]: `上游响应 ${p.status} (${p.elapsed_ms}ms)` }));
+      });
+      unlistenFns.push(unProxyStart);
+      if (cancelled) { unProxyStart(); return; }
+      const unProxyDelta = await listen<ProxyDeltaPayload>("collab:proxy-delta", (e) => {
+        const p = e.payload;
+        if (p.room_id !== activeRoomIdRef.current) return;
+        setProxyMap((prev) => {
+          const cur = prev[p.msg_id] || { text: "", status: "streaming" };
+          const text = cur.text + p.delta;
+          const preview = text.slice(-60);
+          return { ...prev, [p.msg_id]: { text, status: `streaming: ${preview}` } };
+        });
+      });
+      unlistenFns.push(unProxyDelta);
+      if (cancelled) { unProxyDelta(); return; }
+      const unProxyComplete = await listen<ProxyCompletePayload>("collab:proxy-complete", (e) => {
+        const p = e.payload;
+        if (p.room_id !== activeRoomIdRef.current) return;
+        setProxyMap((prev) => ({ ...prev, [p.msg_id]: { text: p.text, status: "complete", elapsed: p.elapsed_ms } }));
+        setActivityMap((prev) => ({ ...prev, [p.msg_id]: `代理已收到完整响应 (${p.text.length}字, ${p.elapsed_ms}ms)` }));
+      });
+      unlistenFns.push(unProxyComplete);
+      if (cancelled) { unProxyComplete(); return; }
+      const unProxyError = await listen<ProxyErrorPayload>("collab:proxy-error", (e) => {
+        const p = e.payload;
+        if (p.room_id !== activeRoomIdRef.current) return;
+        setProxyMap((prev) => ({ ...prev, [p.msg_id]: { text: "", status: `error: ${p.status}` } }));
+        setActivityMap((prev) => ({ ...prev, [p.msg_id]: `代理错误 ${p.status}: ${p.error.slice(0, 100)}` }));
+      });
+      unlistenFns.push(unProxyError);
+      if (cancelled) { unProxyError(); return; }
     };
     setup();
     return () => {
@@ -202,24 +359,40 @@ export default function CollabRoom() {
         setModelId(p?.active_model_id || p?.models[0]?.id || "");
       })
       .catch(() => {});
+    setCustomNames(loadCustomNames());
   }, []);
 
   // 切换房间时加载消息并重置状态
   useEffect(() => {
     setBusy(false);
+    setCompacting(false);
     setActivityMap({});
     setPromptMap({});
+    setProxyMap({});
     runningMsgIdRef.current = null;
     runningMsgIdxRef.current = -1;
     finalizedIdsRef.current = new Set();
     if (!activeRoom) {
       setMessages([]);
+      setHasSnapshot(false);
       return;
     }
     invoke<CollabMessage[]>("collab_get_messages", { roomId: activeRoom.id })
       .then(setMessages)
       .catch(() => setMessages([]));
   }, [activeRoom]);
+
+  // 检查快照状态（切换房间或工具时）
+  useEffect(() => {
+    if (!activeRoom || !selectedTool) {
+      setHasSnapshot(false);
+      return;
+    }
+    invoke<ContextSnapshot | null>("collab_get_snapshot", {
+      roomId: activeRoom.id,
+      toolId: selectedTool,
+    }).then((snap) => setHasSnapshot(!!snap)).catch(() => setHasSnapshot(false));
+  }, [activeRoom, selectedTool]);
 
   // E: 新消息自动滚动到底（用 requestAnimationFrame 节流，避免高频 delta 时卡顿）
   const scrollRafRef = useRef<number | null>(null);
@@ -359,15 +532,16 @@ export default function CollabRoom() {
 
   const buildDispatchOptions = (): CollabDispatchOptions => {
     const selectedToolObj = tools.find((t) => t.id === selectedTool);
+    const supportsModel = selectedToolObj?.supports_model ?? false;
     return {
-      masquerade_model: masqueradeModel || null,
+      masquerade_model: supportsModel ? (masqueradeModel || null) : null,
       fallback_model_id: null,
       fallback_provider_id: null,
       fallback_masquerade_model: null,
-      one_m_context: selectedToolObj?.support_one_m_context ? oneMContext : false,
+      one_m_context: supportsModel && selectedToolObj?.support_one_m_context ? oneMContext : false,
       fallback_one_m_context: false,
-      optimizer_enabled: selectedToolObj?.supports_optimizer ? optimizerEnabled : null,
-      rectifier_enabled: selectedToolObj?.supports_rectifier ? rectifierEnabled : null,
+      optimizer_enabled: supportsModel && selectedToolObj?.supports_optimizer ? optimizerEnabled : null,
+      rectifier_enabled: supportsModel && selectedToolObj?.supports_rectifier ? rectifierEnabled : null,
       optimizer_cache_injection: null,
       optimizer_thinking: null,
       optimizer_deepseek: null,
@@ -380,13 +554,18 @@ export default function CollabRoom() {
 
   const send = async () => {
     if (!activeRoom) return;
-    if (busy) return;
+    if (busy || compacting) return;
     if (!content.trim() && references.length === 0 && files.length === 0) return;
     if (!selectedTool) {
       alert("请先 @ 一个工具来接手任务");
       return;
     }
     setBusy(true);
+    // 不支持模型设置的工具不传模型/供应商
+    const toolObj = tools.find((t) => t.id === selectedTool);
+    const supportsModel = toolObj?.supports_model ?? false;
+    const effectiveModelId = supportsModel ? (modelId || null) : null;
+    const effectiveProviderId = supportsModel ? (providerId || null) : null;
     try {
       const result = await invoke<CollabMessage[]>("collab_send_message", {
         roomId: activeRoom.id,
@@ -395,8 +574,8 @@ export default function CollabRoom() {
         references,
         files,
         toolId: selectedTool,
-        modelId: modelId || null,
-        providerId: providerId || null,
+        modelId: effectiveModelId,
+        providerId: effectiveProviderId,
         options: buildDispatchOptions(),
       });
       const placeholder = result.find((m) => m.sender !== "user");
@@ -424,9 +603,67 @@ export default function CollabRoom() {
     if (!activeRoom || !selectedTool) return;
     if (!window.confirm("重置该工具在此会话中的续聊上下文？下次发送将开启全新会话。")) return;
     await invoke("collab_reset_session", { roomId: activeRoom.id, toolId: selectedTool }).catch(() => {});
+    setHasSnapshot(false);
   };
 
+  const compact = async () => {
+    if (!activeRoom || !selectedTool) return;
+    if (!window.confirm("压缩上下文？将请求 AI 总结当前会话并开启新会话。")) return;
+    setCompacting(true);
+    // 不支持模型设置的工具不传模型/供应商
+    const toolObj = tools.find((t) => t.id === selectedTool);
+    const supportsModel = toolObj?.supports_model ?? false;
+    const effectiveModelId = supportsModel ? (modelId || null) : null;
+    const effectiveProviderId = supportsModel ? (providerId || null) : null;
+    try {
+      const snapshot = await invoke<ContextSnapshot | null>("collab_compact_session", {
+        roomId: activeRoom.id,
+        toolId: selectedTool,
+        projectPath: activeRoom.project_path,
+        modelId: effectiveModelId,
+        providerId: effectiveProviderId,
+        options: buildDispatchOptions(),
+      });
+      if (snapshot) {
+        setHasSnapshot(true);
+      }
+    } catch (e: unknown) {
+      alert(`压缩失败: ${e}`);
+    } finally {
+      setCompacting(false);
+    }
+  };
+
+  // ─── 自定义昵称/头像保存 ───
+  const startEditTool = (toolId: string) => {
+    const t = tools.find((x) => x.id === toolId);
+    const custom = customNames[toolId];
+    setEditAvatar(custom?.avatar ?? t?.avatar ?? "");
+    setEditNickname(custom?.nickname ?? t?.nickname ?? t?.display_name ?? "");
+    setEditingToolId(toolId);
+  };
+  const saveEditTool = () => {
+    if (!editingToolId) return;
+    const next = { ...customNames };
+    const t = tools.find((x) => x.id === editingToolId);
+    // 仅保存与配置不同的值
+    const entry: CustomToolName = {};
+    if (editAvatar.trim() && editAvatar.trim() !== (t?.avatar ?? "")) entry.avatar = editAvatar.trim();
+    if (editNickname.trim() && editNickname.trim() !== (t?.nickname ?? t?.display_name ?? "")) entry.nickname = editNickname.trim();
+    if (Object.keys(entry).length > 0) {
+      next[editingToolId] = entry;
+    } else {
+      delete next[editingToolId];
+    }
+    setCustomNames(next);
+    saveCustomNames(next);
+    setEditingToolId(null);
+  };
+  const cancelEditTool = () => setEditingToolId(null);
+
   const activeProvider = providers.find((p) => p.id === providerId);
+  const selectedToolObj = tools.find((t) => t.id === selectedTool);
+  const showModelSettings = !!selectedToolObj && selectedToolObj.supports_model;
 
   return (
     <div className="h-full flex min-h-0 select-none text-slate-100">
@@ -538,9 +775,11 @@ export default function CollabRoom() {
                   key={m.id}
                   m={m}
                   tools={tools}
+                  customNames={customNames}
                   onQuote={quoteMessage}
                   activity={activityMap[m.id]}
                   prompt={promptMap[m.id]}
+                  proxy={proxyMap[m.id]}
                   onRespond={(response) => {
                     invoke("collab_respond_prompt", { msgId: m.id, response }).catch(() => {});
                     setPromptMap((prev) => {
@@ -565,52 +804,115 @@ export default function CollabRoom() {
                 <span className="text-[9px] text-slate-500 mr-1">@工具</span>
                 {tools.filter((t) => t.installed).map((t) => {
                   const on = selectedTool === t.id;
+                  const avatar = getToolAvatar(tools, t.id, customNames);
+                  const nickname = getToolNickname(tools, t.id, customNames) || t.display_name;
                   return (
-                    <button
-                      key={t.id}
-                      onClick={() => setSelectedTool(on ? "" : t.id)}
-                      className={`px-2 py-0.5 rounded-full text-[9px] font-semibold transition-all cursor-pointer ${
-                        on
-                          ? "bg-violet-600 text-white"
-                          : "text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-white/10"
-                      }`}
-                    >
-                      {t.avatar ? `${t.avatar} ` : ""}{t.nickname || t.display_name}
-                    </button>
+                    <div key={t.id} className="relative flex items-center">
+                      <button
+                        onClick={() => setSelectedTool(on ? "" : t.id)}
+                        className={`px-2 py-0.5 rounded-full text-[9px] font-semibold transition-all cursor-pointer ${
+                          on
+                            ? "bg-violet-600 text-white"
+                            : "text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-white/10"
+                        }`}
+                      >
+                        {avatar ? `${avatar} ` : ""}{nickname}
+                      </button>
+                      {/* 编辑昵称/头像按钮 */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startEditTool(t.id);
+                        }}
+                        className="ml-0.5 p-0.5 rounded text-slate-500 hover:text-violet-300 hover:bg-white/10 cursor-pointer opacity-60 hover:opacity-100"
+                        title="设置昵称/头像"
+                      >
+                        <Pencil className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
                   );
                 })}
               </div>
 
-              {/* 模型/供应商 */}
-              <div className="flex flex-wrap gap-2 items-center">
-                <select
-                  value={providerId}
-                  onChange={(e) => onProviderChange(e.target.value)}
-                  className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500"
-                >
-                  {providers.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={modelId}
-                  onChange={(e) => setModelId(e.target.value)}
-                  className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500"
-                >
-                  {activeProvider?.models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {/* 编辑昵称/头像弹框 */}
+              {editingToolId && (
+                <div className="rounded-lg border border-violet-500/30 bg-slate-900/80 p-2.5 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px] font-bold text-violet-300">设置</span>
+                    <span className="text-[9px] text-slate-500">{tools.find((x) => x.id === editingToolId)?.display_name}</span>
+                  </div>
+                  <div className="flex gap-2 items-center">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[9px] text-slate-500 w-8">头像</span>
+                      <input
+                        value={editAvatar}
+                        onChange={(e) => setEditAvatar(e.target.value)}
+                        placeholder="emoji"
+                        maxLength={4}
+                        className="w-12 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-[10px] text-center text-slate-200 focus:outline-none focus:border-violet-500"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-1">
+                      <span className="text-[9px] text-slate-500 w-8">昵称</span>
+                      <input
+                        value={editNickname}
+                        onChange={(e) => setEditNickname(e.target.value)}
+                        placeholder="昵称"
+                        className="flex-1 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500"
+                      />
+                    </div>
+                    <button
+                      onClick={saveEditTool}
+                      className="p-1 rounded bg-violet-600 hover:bg-violet-500 text-white cursor-pointer"
+                      title="保存"
+                    >
+                      <Check className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={cancelEditTool}
+                      className="p-1 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer"
+                      title="取消"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 模型/供应商（仅支持模型设置的工具显示） */}
+              {(() => {
+                if (!showModelSettings) return null;
+                return (
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <select
+                      value={providerId}
+                      onChange={(e) => onProviderChange(e.target.value)}
+                      className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500"
+                    >
+                      {providers.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={modelId}
+                      onChange={(e) => setModelId(e.target.value)}
+                      className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500"
+                    >
+                      {activeProvider?.models.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })()}
 
               {/* 高级协议设置（与工具启动页对齐） */}
-              {selectedTool && (() => {
-                const tool = tools.find((t) => t.id === selectedTool);
-                if (!tool || !tool.supports_model) return null;
+              {showModelSettings && (() => {
+                const tool = selectedToolObj!;
                 return (
                   <div className="rounded-lg border border-white/5 bg-slate-900/30 overflow-hidden">
                     <button
@@ -735,6 +1037,14 @@ export default function CollabRoom() {
                   </button>
                 )}
                 <button
+                  onClick={compact}
+                  disabled={!selectedTool || busy || compacting}
+                  title="压缩上下文（生成摘要并开启新会话）"
+                  className="px-2 py-2 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-40 text-slate-300 text-[10px] cursor-pointer"
+                >
+                  {compacting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Archive className="w-3.5 h-3.5" />}
+                </button>
+                <button
                   onClick={resetSession}
                   disabled={!selectedTool}
                   title="重置当前工具续聊上下文"
@@ -746,6 +1056,12 @@ export default function CollabRoom() {
               <p className="text-[8px] text-slate-500">
                 同一会话内重复 @ 同一工具会绑定其原生会话 id 自动「续聊」，上下文连续；点 ⟳ 可重置。
               </p>
+              {hasSnapshot && (
+                <p className="text-[8px] text-cyan-400 flex items-center gap-1">
+                  <Archive className="w-2.5 h-2.5" />
+                  已有上下文快照，下次发送将自动注入新会话
+                </p>
+              )}
             </div>
           </>
         )}
@@ -755,32 +1071,96 @@ export default function CollabRoom() {
 }
 
 // ─── 单条消息渲染 ───
+function PromptResponse({
+  prompt,
+  onRespond,
+}: {
+  prompt: { question: string; options: string[] };
+  onRespond: (response: string) => void;
+}) {
+  const [customResponse, setCustomResponse] = useState("");
+  return (
+    <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 space-y-2">
+      <div className="flex items-start gap-1.5">
+        <span className="text-amber-400 text-[10px] font-bold mt-0.5">⚠ 询问</span>
+        <span className="text-[10px] text-slate-300 whitespace-pre-wrap break-words flex-1">
+          {prompt.question}
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-1.5 items-center">
+        {prompt.options.map((opt) => (
+          <button
+            key={opt}
+            onClick={() => onRespond(opt)}
+            className="px-2.5 py-1 rounded-md bg-amber-600/80 hover:bg-amber-500 text-white text-[10px] font-semibold transition-colors cursor-pointer"
+          >
+            {opt}
+          </button>
+        ))}
+        <input
+          value={customResponse}
+          onChange={(e) => setCustomResponse(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && customResponse.trim()) {
+              onRespond(customResponse.trim());
+              setCustomResponse("");
+            }
+          }}
+          placeholder="自定义回复…"
+          className="flex-1 min-w-[80px] bg-slate-800 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-amber-500"
+        />
+        {customResponse.trim() && (
+          <button
+            onClick={() => {
+              onRespond(customResponse.trim());
+              setCustomResponse("");
+            }}
+            className="px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-200 text-[10px] cursor-pointer"
+          >
+            发送
+          </button>
+        )}
+      </div>
+      <p className="text-[8px] text-slate-500">120 秒无响应将自动选 y</p>
+    </div>
+  );
+}
+
 function MessageView({
   m,
   tools,
+  customNames,
   onQuote,
   activity,
   prompt,
+  proxy,
   onRespond,
 }: {
   m: CollabMessage;
   tools: DetectedAiTool[];
+  customNames?: Record<string, CustomToolName>;
   onQuote: (m: CollabMessage) => void;
   activity?: string;
   prompt?: { question: string; options: string[] };
+  proxy?: { text: string; status: string; elapsed?: number };
   onRespond: (response: string) => void;
 }) {
   const isUser = m.sender === "user";
   const color = senderColor(m.sender);
   const running = m.status === "running";
+  const isError = m.status === "error";
   const isTool = !isUser;
-  const [customResponse, setCustomResponse] = useState("");
+
+  // 轮换思维短语（仅 running 状态时轮换）
+  const thinkingPhrase = useRotatingPhrase(THINKING_PHRASES, running && !m.content, 4000);
+  // 错误短语（仅 error 状态时使用，不轮换）
+  const errorPhrase = useMemo(() => pickRandom(ERROR_PHRASES), [m.id, isError]);
 
   // 头像：优先用工具配置的 emoji avatar，回退到图标
-  const avatar = isTool ? getToolAvatar(tools, m.sender) : null;
+  const avatar = isTool ? getToolAvatar(tools, m.sender, customNames) : null;
   // 昵称：优先用工具配置的 nickname，回退到 sender_name
   const displayName = isTool
-    ? (getToolNickname(tools, m.sender) ?? m.sender_name)
+    ? (getToolNickname(tools, m.sender, customNames) ?? m.sender_name)
     : m.sender_name;
 
   return (
@@ -842,15 +1222,24 @@ function MessageView({
               ? "bg-blue-500/10 border border-blue-500/20 whitespace-pre-wrap"
               : running
               ? "bg-slate-800/40 border border-white/5 text-slate-400"
+              : isError
+              ? "bg-red-500/5 border border-red-500/20"
               : "bg-slate-800/60 border border-white/5"
           }`}
         >
           {running && !m.content ? (
             <span className="flex items-center gap-1.5 text-slate-400">
-              <Loader2 className="w-3 h-3 animate-spin" /> 处理中…
+              <Loader2 className="w-3 h-3 animate-spin" /> {thinkingPhrase}
             </span>
           ) : isUser ? (
             m.content || <span className="text-slate-600">（空）</span>
+          ) : isError ? (
+            <div className="flex items-center gap-1.5 text-red-400">
+              <span className="text-[10px]">⚠ {errorPhrase}：</span>
+              <span className="flex-1">
+                <MarkdownRenderer content={m.content} />
+              </span>
+            </div>
           ) : (
             <MarkdownRenderer content={m.content} />
           )}
@@ -867,6 +1256,30 @@ function MessageView({
           </div>
         )}
 
+        {/* 代理层实时状态：当 stdout 无输出但代理已收到响应时显示 */}
+        {running && !m.content && proxy && proxy.status !== "complete" && (
+          <div className="mt-1.5 rounded-md border border-cyan-500/20 bg-cyan-500/5 px-2 py-1 text-[9px] text-cyan-300/80">
+            <span className="flex items-center gap-1">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-60"></span>
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500"></span>
+              </span>
+              代理: {proxy.status}
+            </span>
+          </div>
+        )}
+        {running && !m.content && proxy?.status === "complete" && proxy.text && (
+          <div className="mt-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2 py-1.5 text-[9px] text-emerald-300/80">
+            <div className="flex items-center gap-1 mb-1">
+              <Zap className="w-2.5 h-2.5" />
+              <span>代理已收到 LLM 响应 ({proxy.text.length}字{proxy.elapsed ? `, ${proxy.elapsed}ms` : ""})，等待工具处理…</span>
+            </div>
+            <div className="text-[8px] text-slate-400 max-h-24 overflow-y-auto whitespace-pre-wrap break-words">
+              {proxy.text.slice(0, 200)}{proxy.text.length > 200 ? "…" : ""}
+            </div>
+          </div>
+        )}
+
         {/* 有内容后仍在运行时显示当前活动（工具调用等） */}
         {running && m.content && activity && (
           <div className="mt-1 flex items-center gap-1 text-[8px] text-slate-500">
@@ -876,51 +1289,8 @@ function MessageView({
         )}
 
         {/* 交互式询问：工具需要用户做出选择 */}
-        {prompt && (
-          <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 space-y-2">
-            <div className="flex items-start gap-1.5">
-              <span className="text-amber-400 text-[10px] font-bold mt-0.5">⚠ 询问</span>
-              <span className="text-[10px] text-slate-300 whitespace-pre-wrap break-words flex-1">
-                {prompt.question}
-              </span>
-            </div>
-            <div className="flex flex-wrap gap-1.5 items-center">
-              {prompt.options.map((opt) => (
-                <button
-                  key={opt}
-                  onClick={() => onRespond(opt)}
-                  className="px-2.5 py-1 rounded-md bg-amber-600/80 hover:bg-amber-500 text-white text-[10px] font-semibold transition-colors cursor-pointer"
-                >
-                  {opt}
-                </button>
-              ))}
-              <input
-                value={customResponse}
-                onChange={(e) => setCustomResponse(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && customResponse.trim()) {
-                    onRespond(customResponse.trim());
-                    setCustomResponse("");
-                  }
-                }}
-                placeholder="自定义回复…"
-                className="flex-1 min-w-[80px] bg-slate-800 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-amber-500"
-              />
-              {customResponse.trim() && (
-                <button
-                  onClick={() => {
-                    onRespond(customResponse.trim());
-                    setCustomResponse("");
-                  }}
-                  className="px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-200 text-[10px] cursor-pointer"
-                >
-                  发送
-                </button>
-              )}
-            </div>
-            <p className="text-[8px] text-slate-500">120 秒无响应将自动选 y</p>
-          </div>
-        )}
+        {prompt && <PromptResponse prompt={prompt} onRespond={onRespond} />}
+
 
         {/* 回链 + 引用按钮 */}
         <div className="flex items-center gap-3 mt-1">

@@ -6,7 +6,7 @@ import AiPanel from "./components/ai/AiPanel";
 import RssReader from "./components/RssReader";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Wrench, Settings, X, Minus, Square, Rss, Cpu, Bot } from "lucide-react";
+import { Wrench, Settings, X, Minus, Square, Rss, Cpu, Bot, ChevronsDown } from "lucide-react";
 import "./App.css";
 
 type PageId = "sdk" | "ai" | "news" | "tools" | "settings";
@@ -80,6 +80,13 @@ export default function App() {
 
         {/* Right: Window Controls */}
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => { getCurrentWindow().hide().catch(() => {}); }}
+            className="p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded transition-all cursor-pointer"
+            title="收起到托盘（保留窗口状态）"
+          >
+            <ChevronsDown className="w-3.5 h-3.5" />
+          </button>
           <button
             onClick={() => getCurrentWindow().minimize()}
             className="p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded transition-all cursor-pointer"

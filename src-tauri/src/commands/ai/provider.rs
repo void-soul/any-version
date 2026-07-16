@@ -120,6 +120,8 @@ pub async fn start_proxy(port: u16) -> Result<(), String> {
         optimizer_thinking: config.optimizer.thinking_optimizer,
         optimizer_deepseek: config.optimizer.deepseek_normalize,
         model_routes: std::collections::HashMap::new(),
+        app_handle: None,
+        collab_room_id: None,
     };
     crate::proxy::server::start_proxy_server(proxy_config).await?;
     Ok(())

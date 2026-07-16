@@ -21,8 +21,10 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::convert::Infallible;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
 use std::time::Instant;
+use tauri::Emitter;
 use tokio::sync::RwLock;
 
 /// 记录使用量到 SQLite 数据库（线程安全）。携带真实 tool_id / provider_id。
@@ -38,12 +40,169 @@ fn log_proxy(msg: &str) {
     println!("[proxy] {} {}", ts, msg);
 }
 
+/// 向前端 emit 协作代理事件（仅在协作上下文存在时发送）
+fn emit_proxy_event(state: &ProxyState, event: &str, payload: Value) {
+    if let (Some(app), Some(room_id)) = (&state.app_handle, &state.collab_room_id) {
+        // 从全局表获取当前 msg_id（支持代理复用，动态更新）
+        if let Some(msg_id) = get_collab_msg_id(room_id, &state.tool_id) {
+            let mut full_payload = payload;
+            if let Some(obj) = full_payload.as_object_mut() {
+                obj.insert("room_id".into(), json!(room_id));
+                obj.insert("msg_id".into(), json!(msg_id));
+            }
+            let _ = app.emit(event, full_payload);
+        }
+    }
+}
+
+// ─── 协作代理响应文本缓存（供 collab dispatch_to_tool 回退使用）───
+/// msg_id → 代理提取的完整响应文本
+static PROXY_TEXT: OnceLock<std::sync::Mutex<HashMap<String, String>>> = OnceLock::new();
+
+// ─── 协作上下文：room_id::tool_id → 当前 msg_id（支持代理复用时动态更新）───
+static COLLAB_MSG_ID: OnceLock<std::sync::Mutex<HashMap<String, String>>> = OnceLock::new();
+
+/// collab dispatch_to_tool 开始时设置当前 msg_id
+pub fn set_collab_msg_id(room_id: &str, tool_id: &str, msg_id: String) {
+    let key = format!("{}::{}", room_id, tool_id);
+    let map = COLLAB_MSG_ID.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    map.lock().unwrap().insert(key, msg_id);
+}
+
+/// collab dispatch_to_tool 结束时清除
+pub fn clear_collab_msg_id(room_id: &str, tool_id: &str) {
+    let key = format!("{}::{}", room_id, tool_id);
+    if let Some(map) = COLLAB_MSG_ID.get() {
+        map.lock().unwrap().remove(&key);
+    }
+}
+
+/// 代理层运行时查询当前 msg_id（优先于 ProxyState 中的静态 msg_id）
+fn get_collab_msg_id(room_id: &str, tool_id: &str) -> Option<String> {
+    let key = format!("{}::{}", room_id, tool_id);
+    COLLAB_MSG_ID.get()?.lock().unwrap().get(&key).cloned()
+}
+
+/// 代理层在响应完成时存储文本（使用当前 msg_id）
+fn store_proxy_text_for(state: &ProxyState, text: &str) {
+    if let Some(room_id) = &state.collab_room_id {
+        store_proxy_text_with(room_id, &state.tool_id, text);
+    }
+}
+
+/// 流式路径中使用（不需要 state 引用）
+fn store_proxy_text_with(room_id: &str, tool_id: &str, text: &str) {
+    if let Some(msg_id) = get_collab_msg_id(room_id, tool_id) {
+        let map = PROXY_TEXT.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+        map.lock().unwrap().insert(msg_id.clone(), text.to_string());
+        eprintln!("[proxy] ✓ 代理响应已缓存: msg={}, text_len={}", msg_id, text.len());
+    }
+}
+
+/// collab dispatch_to_tool 回退取用代理文本（取后删除）
+pub fn take_proxy_text(msg_id: &str) -> Option<String> {
+    PROXY_TEXT.get()?.lock().unwrap().remove(msg_id)
+}
+
+/// 从入站协议形态的 SSE chunk 中提取文本增量
+fn extract_inbound_delta_text(inbound: &str, cj: &Value) -> Option<String> {
+    match inbound {
+        "openai" => {
+            // OpenAI: choices[0].delta.content
+            cj.get("choices")
+                .and_then(|c| c.as_array())
+                .and_then(|a| a.first())
+                .and_then(|c| c.get("delta"))
+                .and_then(|d| d.get("content"))
+                .and_then(|t| t.as_str())
+                .map(|s| s.to_string())
+        }
+        "anthropic" => {
+            // Anthropic: content_block_delta.delta.text
+            match cj.get("type").and_then(|t| t.as_str()) {
+                Some("content_block_delta") => {
+                    cj.get("delta")
+                        .and_then(|d| d.get("text"))
+                        .and_then(|t| t.as_str())
+                        .map(|s| s.to_string())
+                }
+                _ => None,
+            }
+        }
+        "google" => {
+            // Google: candidates[0].content.parts[*].text
+            cj.get("candidates")
+                .and_then(|c| c.as_array())
+                .and_then(|a| a.first())
+                .and_then(|c| c.get("content"))
+                .and_then(|c| c.get("parts"))
+                .and_then(|p| p.as_array())
+                .and_then(|parts| {
+                    let texts: Vec<String> = parts.iter()
+                        .filter_map(|p| p.get("text").and_then(|t| t.as_str()).map(|s| s.to_string()))
+                        .collect();
+                    if texts.is_empty() { None } else { Some(texts.join("")) }
+                })
+        }
+        _ => None,
+    }
+}
+
+/// 从入站协议形态的非流式响应中提取完整文本
+fn extract_inbound_full_text(inbound: &str, resp: &Value) -> String {
+    match inbound {
+        "openai" => {
+            resp.get("choices")
+                .and_then(|c| c.as_array())
+                .and_then(|a| a.first())
+                .and_then(|c| c.get("message"))
+                .and_then(|m| m.get("content"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string()
+        }
+        "anthropic" => {
+            resp.get("content")
+                .and_then(|c| c.as_array())
+                .map(|parts| {
+                    parts.iter()
+                        .filter_map(|p| {
+                            if p.get("type").and_then(|t| t.as_str()) == Some("text") {
+                                p.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                            } else { None }
+                        })
+                        .collect::<Vec<_>>().join("")
+                })
+                .unwrap_or_default()
+        }
+        "google" => {
+            resp.get("candidates")
+                .and_then(|c| c.as_array())
+                .and_then(|a| a.first())
+                .and_then(|c| c.get("content"))
+                .and_then(|c| c.get("parts"))
+                .and_then(|p| p.as_array())
+                .map(|parts| {
+                    parts.iter()
+                        .filter_map(|p| p.get("text").and_then(|t| t.as_str()).map(|s| s.to_string()))
+                        .collect::<Vec<_>>().join("")
+                })
+                .unwrap_or_default()
+        }
+        _ => String::new(),
+    }
+}
+
 /// 代理服务器共享状态
 #[derive(Clone)]
 pub struct ProxyState {
     pub config: Arc<RwLock<ProxyConfig>>,
     pub client: reqwest::Client,
     pub stats: Arc<RwLock<ProxyStats>>,
+    /// 协作上下文（可选）：设置后代理会向前端 emit 事件
+    pub app_handle: Option<tauri::AppHandle>,
+    pub collab_room_id: Option<String>,
+    pub tool_id: String,
 }
 
 #[derive(Default)]
@@ -74,6 +233,9 @@ pub async fn serve_proxy(config: ProxyConfig, listener: std::net::TcpListener) -
             .build()
             .map_err(|e| e.to_string())?,
         stats: Arc::new(RwLock::new(ProxyStats::default())),
+        app_handle: config.app_handle.clone(),
+        collab_room_id: config.collab_room_id.clone(),
+        tool_id: config.tool_id.clone(),
     };
 
     let mut app = Router::new().route("/health", get(health_handler));
@@ -256,6 +418,36 @@ async fn process_request(
         inbound, claimed_model, outbound, config.conversion_mode
     ));
 
+    // ─── 详细请求日志 ───
+    let is_stream = if inbound == "google" {
+        google_is_stream
+    } else {
+        body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false)
+    };
+    let msg_count = body.get("messages").and_then(|m| m.as_array()).map(|a| a.len()).unwrap_or(0);
+    let first_msg_preview = body.get("messages")
+        .and_then(|m| m.as_array())
+        .and_then(|a| a.last())
+        .and_then(|m| {
+            m.get("content").and_then(|c| {
+                match c {
+                    Value::String(s) => Some(s.as_str()),
+                    Value::Array(parts) => parts.iter().find_map(|p| p.get("text").and_then(|t| t.as_str())),
+                    _ => None,
+                }
+            })
+        })
+        .unwrap_or("");
+    let preview: String = first_msg_preview.chars().take(80).collect();
+    log_proxy(&format!("  请求详情: messages={}, stream={}, preview=\"{}\"", msg_count, is_stream, preview));
+
+    // ─── emit collab:proxy-request ───
+    emit_proxy_event(&state, "collab:proxy-request", json!({
+        "model": claimed_model,
+        "messages": msg_count,
+        "stream": is_stream,
+    }));
+
     // ② 模型伪装：C → B（替换 body.model，google 入站不写 body）
     let actual_model = apply_masquerade(inbound, &mut body, &claimed_model, aliases.as_ref());
 
@@ -269,11 +461,6 @@ async fn process_request(
     optimizers::apply_preventive_rectifiers(&mut out_body, &outbound, &config);
 
     // ⑥ 转发
-    let is_stream = if inbound == "google" {
-        google_is_stream
-    } else {
-        body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false)
-    };
     // 出站为 OpenAI / Anthropic 时，确保请求体带 stream 字段：
     // Google 入站（流式靠 URL 判定）以及跨协议转换后的 body 可能未写入 `stream`，
     // 而 OpenAI / Anthropic 上游依赖 body 中的 stream 字段决定是否流式返回。
@@ -294,6 +481,7 @@ async fn process_request(
     }
 
     log_proxy(&format!("→ OUT  POST {} auth={}", upstream_url, auth_name));
+    log_proxy(&format!("  出站体: model={}, stream={}", actual_model, is_stream));
 
     let req = build_upstream_request(&state.client, &config, headers, &upstream_url, &auth_name, &route_api_key, &out_body);
     let upstream_resp = match req.send().await {
@@ -313,6 +501,12 @@ async fn process_request(
     let status = upstream_resp.status();
     log_proxy(&format!("← UPSTREAM {}  ({}ms)", status.as_u16(), start.elapsed().as_millis()));
 
+    // ─── emit collab:proxy-response-start ───
+    emit_proxy_event(&state, "collab:proxy-response-start", json!({
+        "status": status.as_u16(),
+        "elapsed_ms": start.elapsed().as_millis(),
+    }));
+
     if !status.is_success() {
         let error_body = upstream_resp.text().await.unwrap_or_default();
         log_proxy(&format!(
@@ -320,6 +514,12 @@ async fn process_request(
             status.as_u16(),
             error_body.chars().take(300).collect::<String>()
         ));
+
+        // ─── emit collab:proxy-error ───
+        emit_proxy_event(&state, "collab:proxy-error", json!({
+            "status": status.as_u16(),
+            "error": error_body.chars().take(500).collect::<String>(),
+        }));
 
         // ⑦ 反应式整流：修正后重试一次
         if let Some(rectified) = optimizers::try_reactive_rectify(status.as_u16(), &error_body, &out_body, &config, &outbound) {
@@ -359,6 +559,7 @@ async fn process_response(
     actual_model: &str,
     is_stream: bool,
 ) -> Response {
+    let start = Instant::now();
     if is_stream {
         return stream_response(state, upstream_resp, config, inbound, outbound, claimed_model, actual_model).await;
     }
@@ -385,6 +586,28 @@ async fn process_response(
 
     // ⑩ 统计落库（记录实际模型 B，而非声明名 C）
     record_usage_from_response(state, config, inbound, &in_resp, actual_model);
+
+    // ─── 提取并日志/emit 响应文本 ───
+    let full_text = extract_inbound_full_text(inbound, &in_resp);
+    let text_preview: String = full_text.chars().take(100).collect();
+    log_proxy(&format!("✓ 非流式响应: text_len={}, preview=\"{}\"", full_text.len(), text_preview));
+    if !full_text.is_empty() {
+        emit_proxy_event(state, "collab:proxy-delta", json!({
+            "delta": full_text,
+        }));
+        emit_proxy_event(state, "collab:proxy-complete", json!({
+            "text": full_text,
+            "elapsed_ms": start.elapsed().as_millis(),
+        }));
+        // 存入代理文本缓存（供 collab 回退）
+        store_proxy_text_for(state, &full_text);
+    } else {
+        emit_proxy_event(state, "collab:proxy-complete", json!({
+            "text": "",
+            "elapsed_ms": start.elapsed().as_millis(),
+        }));
+        store_proxy_text_for(state, "");
+    }
 
     let mut stats = state.stats.write().await;
     stats.success_requests += 1;
@@ -428,12 +651,18 @@ async fn stream_response(
         let act = actual.clone();
         let proto = inbound.to_string();
         let stream = upstream_resp.bytes_stream();
+        // 协作上下文（用于 emit 事件）
+        let collab_ctx = (state.app_handle.clone(), state.collab_room_id.clone());
+        let collab_tool_id = state.tool_id.clone();
         let sse = async_stream::stream! {
             use futures_util::StreamExt;
             tokio::pin!(stream);
             let mut buffer = String::new();
             let mut acc_in: u64 = 0;
             let mut acc_out: u64 = 0;
+            let mut acc_text = String::new();
+            let mut chunk_count: u64 = 0;
+            let stream_start = Instant::now();
             while let Some(r) = stream.next().await {
                 let chunk = match r {
                     Ok(c) => c,
@@ -452,11 +681,46 @@ async fn stream_response(
                                 let (i, o) = extract_stream_usage(&proto, &cj);
                                 if i > 0 { acc_in = i; }
                                 if o > 0 { acc_out = o; }
+                                // 提取文本增量
+                                if let Some(text) = extract_inbound_delta_text(&proto, &cj) {
+                                    if !text.is_empty() {
+                                        chunk_count += 1;
+                                        acc_text.push_str(&text);
+                                        if chunk_count <= 5 {
+                                            let preview: String = text.chars().take(50).collect();
+                                            log_proxy(&format!("  ▸ SSE chunk #{}: text=\"{}\" (len={})", chunk_count, preview, text.len()));
+                                        }
+                                        // emit collab:proxy-delta
+                                        if let (Some(app), Some(rid)) = &collab_ctx {
+                                            if let Some(mid) = get_collab_msg_id(rid, &collab_tool_id) {
+                                                let _ = app.emit("collab:proxy-delta", json!({
+                                                    "room_id": rid, "msg_id": mid, "delta": text,
+                                                }));
+                                            }
+                                        }
+                                    }
+                                }
                             }
+                        } else {
+                            log_proxy("  ▸ SSE [DONE]");
                         }
                     }
                 }
                 yield Ok::<_, std::io::Error>(chunk);
+            }
+            log_proxy(&format!("✓ 流式完成: {} chunks, {} chars text, {}ms",
+                chunk_count, acc_text.len(), stream_start.elapsed().as_millis()));
+            // emit collab:proxy-complete
+            if let (Some(app), Some(rid)) = &collab_ctx {
+                if let Some(mid) = get_collab_msg_id(rid, &collab_tool_id) {
+                    let _ = app.emit("collab:proxy-complete", json!({
+                        "room_id": rid, "msg_id": mid,
+                        "text": acc_text,
+                        "elapsed_ms": stream_start.elapsed().as_millis(),
+                    }));
+                }
+                // 存入代理文本缓存（供 collab 回退）
+                store_proxy_text_with(rid, &collab_tool_id, &acc_text);
             }
             if acc_in > 0 || acc_out > 0 {
                 record_proxy_usage(&tid, &pid, &act, acc_in, acc_out);
@@ -478,11 +742,18 @@ async fn stream_response(
             let mut conv = $conv;
             let stats = state.stats.clone();
             let (tid, pid, cm) = (tool_id.clone(), provider_id.clone(), actual.clone());
+            // 协作上下文（用于 emit 事件）
+            let collab_ctx = (state.app_handle.clone(), state.collab_room_id.clone());
+            let collab_tool_id = state.tool_id.clone();
+            let out_proto = outbound.to_string();
             let stream = upstream_resp.bytes_stream();
             let sse = async_stream::stream! {
                 use futures_util::StreamExt;
                 let mut buffer = String::new();
                 tokio::pin!(stream);
+                let mut acc_text = String::new();
+                let mut chunk_count: u64 = 0;
+                let stream_start = Instant::now();
                 while let Some(r) = stream.next().await {
                     let chunk = match r {
                         Ok(c) => c,
@@ -503,6 +774,25 @@ async fn stream_response(
                             continue;
                         }
                         if let Ok(cj) = serde_json::from_str::<Value>(&data_str) {
+                            // 从出站协议形态的 chunk 提取文本
+                            if let Some(text) = extract_inbound_delta_text(&out_proto, &cj) {
+                                if !text.is_empty() {
+                                    chunk_count += 1;
+                                    acc_text.push_str(&text);
+                                    if chunk_count <= 5 {
+                                        let preview: String = text.chars().take(50).collect();
+                                        log_proxy(&format!("  ▸ SSE chunk #{}: text=\"{}\" (len={})", chunk_count, preview, text.len()));
+                                    }
+                                    // emit collab:proxy-delta
+                                    if let (Some(app), Some(rid)) = &collab_ctx {
+                                        if let Some(mid) = get_collab_msg_id(rid, &collab_tool_id) {
+                                            let _ = app.emit("collab:proxy-delta", json!({
+                                                "room_id": rid, "msg_id": mid, "delta": text,
+                                            }));
+                                        }
+                                    }
+                                }
+                            }
                             for ev in conv.convert_chunk(&cj) {
                                 let mut event = Event::default();
                                 for line in ev.lines() {
@@ -516,6 +806,20 @@ async fn stream_response(
                             }
                         }
                     }
+                }
+                log_proxy(&format!("✓ 跨协议流式完成: {} chunks, {} chars text, {}ms",
+                    chunk_count, acc_text.len(), stream_start.elapsed().as_millis()));
+                // emit collab:proxy-complete
+                if let (Some(app), Some(rid)) = &collab_ctx {
+                    if let Some(mid) = get_collab_msg_id(rid, &collab_tool_id) {
+                        let _ = app.emit("collab:proxy-complete", json!({
+                            "room_id": rid, "msg_id": mid,
+                            "text": acc_text,
+                            "elapsed_ms": stream_start.elapsed().as_millis(),
+                        }));
+                    }
+                    // 存入代理文本缓存（供 collab 回退）
+                    store_proxy_text_with(rid, &collab_tool_id, &acc_text);
                 }
                 let (in_t, out_t) = conv.usage();
                 if in_t > 0 || out_t > 0 {

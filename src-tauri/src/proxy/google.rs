@@ -63,7 +63,7 @@ fn function_declarations_from_anthropic(tools: &Value) -> Vec<Value> {
             Some(json!({
                 "name": t.get("name").cloned().unwrap_or(json!("")),
                 "description": t.get("description").cloned().unwrap_or(json!("")),
-                "parameters": t.get("input_schema").cloned().unwrap_or(json!({}))
+                "parameters": super::normalize_function_parameters(t.get("input_schema"))
             }))
         }).collect()
     }).unwrap_or_default()
@@ -75,7 +75,7 @@ fn function_declarations_from_openai(tools: &Value) -> Vec<Value> {
             t.get("function").map(|f| json!({
                 "name": f.get("name").cloned().unwrap_or(json!("")),
                 "description": f.get("description").cloned().unwrap_or(json!("")),
-                "parameters": f.get("parameters").cloned().unwrap_or(json!({}))
+                "parameters": super::normalize_function_parameters(f.get("parameters"))
             }))
         }).collect()
     }).unwrap_or_default()
@@ -399,7 +399,7 @@ pub fn google_to_anthropic(body: &Value, model: &str) -> Value {
             arr.iter().map(|f| json!({
                 "name": f.get("name").cloned().unwrap_or(json!("")),
                 "description": f.get("description").cloned().unwrap_or(json!("")),
-                "input_schema": f.get("parameters").cloned().unwrap_or(json!({}))
+                "input_schema": super::normalize_function_parameters(f.get("parameters"))
             })).collect()
         }).unwrap_or_default();
         if !atools.is_empty() {
@@ -467,7 +467,7 @@ pub fn google_to_openai(body: &Value, model: &str) -> Value {
             arr.iter().map(|f| json!({"type": "function", "function": {
                 "name": f.get("name").cloned().unwrap_or(json!("")),
                 "description": f.get("description").cloned().unwrap_or(json!("")),
-                "parameters": f.get("parameters").cloned().unwrap_or(json!({}))
+                "parameters": super::normalize_function_parameters(f.get("parameters"))
             }})).collect()
         }).unwrap_or_default();
         if !ot.is_empty() {
