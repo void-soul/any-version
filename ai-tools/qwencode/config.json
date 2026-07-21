@@ -18,10 +18,10 @@
 
   "resumeCmd": null,
   "continueCmd": null,
-  "dispatchCmd": "qwen -p \"{prompt}\" -o stream-json",
-  "dispatchResumeCmd": "qwen -p \"{prompt}\" -o stream-json -r {session_id}",
+  "dispatchCmd": "qwen -o stream-json",
+  "dispatchResumeCmd": "qwen -o stream-json -r {session_id}",
   "runner": "gemini-json",
-  "promptMode": "arg",
+  "promptMode": "stdin",
   "cacheDirs": [".qwen-code", ".qwen"],
   "pkgManager": "npm",
   "pkgName": "@qwen-code/qwen-code",

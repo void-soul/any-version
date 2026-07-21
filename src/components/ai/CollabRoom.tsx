@@ -29,6 +29,7 @@ import type {
   CollabReference,
   CollabFileRef,
   CollabRoomPage,
+  CollabMessagePage,
   AiProvider,
   DetectedAiTool,
   CollabDeltaPayload,
@@ -184,6 +185,8 @@ export default function CollabRoom() {
   const finalizedIdsRef = useRef<Set<string>>(new Set());
   // D: 缓存当前 running 消息在数组中的索引，避免高频 delta 时 O(n) findIndex
   const runningMsgIdxRef = useRef<number>(-1);
+  // 预加载更早消息时抑制自动滚到底部，保持视口位置
+  const suppressAutoScrollRef = useRef(false);
   useEffect(() => {
     activeRoomIdRef.current = activeRoom?.id ?? null;
   }, [activeRoom]);
@@ -334,6 +337,10 @@ export default function CollabRoom() {
   const [hasMore, setHasMore] = useState(false);
   const [roomOffset, setRoomOffset] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  // 消息分页（滚动到顶部加载更早消息）
+  const [msgOffset, setMsgOffset] = useState(0);
+  const [msgHasMore, setMsgHasMore] = useState(false);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
 
   // 初始化：房间 / 工具 / 供应商
   const refreshRooms = () => {
@@ -375,11 +382,25 @@ export default function CollabRoom() {
     if (!activeRoom) {
       setMessages([]);
       setHasSnapshot(false);
+      setMsgOffset(0);
+      setMsgHasMore(false);
       return;
     }
-    invoke<CollabMessage[]>("collab_get_messages", { roomId: activeRoom.id })
-      .then(setMessages)
-      .catch(() => setMessages([]));
+    invoke<CollabMessagePage>("collab_get_messages", {
+      roomId: activeRoom.id,
+      tail: true,
+      limit: PAGE,
+    })
+      .then((page) => {
+        setMessages(page.messages);
+        setMsgOffset(Math.max(0, page.total - page.messages.length));
+        setMsgHasMore(page.has_more);
+      })
+      .catch(() => {
+        setMessages([]);
+        setMsgOffset(0);
+        setMsgHasMore(false);
+      });
   }, [activeRoom]);
 
   // 检查快照状态（切换房间或工具时）
@@ -397,6 +418,10 @@ export default function CollabRoom() {
   // E: 新消息自动滚动到底（用 requestAnimationFrame 节流，避免高频 delta 时卡顿）
   const scrollRafRef = useRef<number | null>(null);
   useEffect(() => {
+    if (suppressAutoScrollRef.current) {
+      suppressAutoScrollRef.current = false;
+      return;
+    }
     if (scrollRafRef.current != null) return;
     scrollRafRef.current = requestAnimationFrame(() => {
       scrollRafRef.current = null;
@@ -468,6 +493,34 @@ export default function CollabRoom() {
   const onRoomsScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 48) loadMoreRooms();
+  };
+
+  // 滚动到消息顶部时加载更早的消息（prepend），保持视口位置不跳动
+  const loadEarlierMessages = async () => {
+    if (!activeRoom || !msgHasMore || loadingEarlier) return;
+    setLoadingEarlier(true);
+    const prevHeight = scrollRef.current?.scrollHeight ?? 0;
+    suppressAutoScrollRef.current = true;
+    try {
+      const next = Math.max(0, msgOffset - PAGE);
+      const page = await invoke<CollabMessagePage>("collab_get_messages", {
+        roomId: activeRoom.id,
+        offset: next,
+        limit: PAGE,
+      });
+      setMessages((ms) => [...page.messages, ...ms]);
+      setMsgOffset(next);
+      setMsgHasMore(page.has_more);
+      requestAnimationFrame(() => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollTop += scrollRef.current.scrollHeight - prevHeight;
+        }
+      });
+    } catch {
+      suppressAutoScrollRef.current = false;
+    } finally {
+      setLoadingEarlier(false);
+    }
   };
 
   // 在输入框输入 @（词首/空格后）自动弹出文件选择，选中即作为附件
@@ -769,7 +822,14 @@ export default function CollabRoom() {
         ) : (
           <>
             {/* 线程 */}
-            <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+            <div
+              ref={scrollRef}
+              className="flex-1 overflow-y-auto px-4 py-3 space-y-3"
+              onScroll={(e) => {
+                const el = e.currentTarget;
+                if (el.scrollTop < 48 && el.scrollHeight > el.clientHeight) loadEarlierMessages();
+              }}
+            >
               {messages.map((m) => (
                 <MessageView
                   key={m.id}

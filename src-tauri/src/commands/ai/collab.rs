@@ -172,9 +172,34 @@ pub fn collab_list_rooms(offset: Option<usize>, limit: Option<usize>) -> Result<
     Ok(CollabRoomPage { rooms: page, has_more, total })
 }
 
+/// 会话消息（分页；按时间正序 oldest→newest）
+#[derive(Serialize)]
+pub struct CollabMessagePage {
+    pub messages: Vec<CollabMessage>,
+    pub has_more: bool,
+    pub total: usize,
+}
+
 #[tauri::command]
-pub fn collab_get_messages(room_id: String) -> Result<Vec<CollabMessage>, String> {
-    Ok(load_store().messages.get(&room_id).cloned().unwrap_or_default())
+pub fn collab_get_messages(
+    room_id: String,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    tail: Option<bool>,
+) -> Result<CollabMessagePage, String> {
+    let all = load_store().messages.get(&room_id).cloned().unwrap_or_default();
+    let total = all.len();
+    let limit = limit.unwrap_or(50).max(1);
+    // tail=true 时返回末尾一页（聊天视口初始加载最新消息）
+    let mut offset = offset.unwrap_or(0);
+    if tail.unwrap_or(false) {
+        offset = total.saturating_sub(limit);
+    }
+    let end = (offset + limit).min(total);
+    let messages = if offset <= total { all[offset..end].to_vec() } else { vec![] };
+    // has_more 表示在已加载的最旧消息之前是否还有更早的消息
+    let has_more = offset > 0;
+    Ok(CollabMessagePage { messages, has_more, total })
 }
 
 #[tauri::command]
@@ -798,7 +823,18 @@ fn parse_codex_json(line: &str) -> Option<(StreamEvent, Option<String>)> {
                 }
                 Some("tool_call") => {
                     let tool = item.get("tool").and_then(|t| t.as_str()).unwrap_or("unknown");
-                    Some((StreamEvent::Activity(format!("使用工具: {}", tool)), sid))
+                    // 保留调用身份（call_id/id），避免同工具多次调用时无法区分（参照 cc-switch #5310）
+                    let call_id = item
+                        .get("call_id")
+                        .and_then(|c| c.as_str())
+                        .or_else(|| item.get("id").and_then(|c| c.as_str()))
+                        .unwrap_or("");
+                    let label = if call_id.is_empty() {
+                        format!("使用工具: {}", tool)
+                    } else {
+                        format!("使用工具: {} (#{})", tool, call_id)
+                    };
+                    Some((StreamEvent::Activity(label), sid))
                 }
                 _ => Some((StreamEvent::Ignore, sid)),
             }
@@ -967,6 +1003,88 @@ fn escape_cmd_arg(s: &str) -> String {
     s.replace('%', "%%").replace('"', "\"\"")
 }
 
+/// 把工具命令模板拆成参数数组（按空白分词，双引号仅作为分组、不被保留）。
+/// 模板中的 {prompt}/{prompt_file}/{session_id} 占位符保留为独立 token，
+/// 交由调用方替换为实际参数，避免整体经 shell 解释。
+fn tokenize_template(tmpl: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut cur = String::new();
+    let mut in_q = false;
+    for ch in tmpl.chars() {
+        if ch == '"' {
+            in_q = !in_q;
+        } else if ch.is_whitespace() && !in_q {
+            if !cur.is_empty() {
+                tokens.push(std::mem::take(&mut cur));
+            }
+        } else {
+            cur.push(ch);
+        }
+    }
+    if !cur.is_empty() {
+        tokens.push(cur);
+    }
+    tokens
+}
+
+/// Windows 上 npm 全局工具通常是 .cmd/.bat 垫片，CreateProcess 无法直接执行，
+/// 必须退回 cmd /c。其余（含 Unix 下带 shebang 的符号链接）可直接 spawn。
+fn is_windows_shell_shim(program: &str) -> bool {
+    #[cfg(windows)] {
+        if program.is_empty() {
+            return false;
+        }
+        if let Some(ext) = std::path::Path::new(program).extension().and_then(|e| e.to_str()) {
+            let e = ext.to_ascii_lowercase();
+            if e == "cmd" || e == "bat" || e == "btm" || e == "ps1" {
+                return true;
+            }
+        }
+        let pathext =
+            std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+        let exts: Vec<String> = pathext
+            .split(';')
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let path = std::env::var("PATH").unwrap_or_default();
+        for dir in path.split(';') {
+            if dir.is_empty() {
+                continue;
+            }
+            let base = std::path::Path::new(dir).join(program);
+            let candidates = if base.extension().is_some() {
+                vec![base.clone()]
+            } else {
+                exts.iter()
+                    .map(|e| {
+                        let mut name = program.to_string();
+                        if !e.starts_with('.') {
+                            name.push('.');
+                        }
+                        name.push_str(e.trim_start_matches('.'));
+                        std::path::Path::new(dir).join(name)
+                    })
+                    .collect()
+            };
+            for c in candidates {
+                if c.is_file() {
+                    if let Some(ext) = c.extension().and_then(|e| e.to_str()) {
+                        let e = ext.to_ascii_lowercase();
+                        return e == "cmd" || e == "bat" || e == "btm" || e == "ps1";
+                    }
+                    return false;
+                }
+            }
+        }
+        false
+    }
+    #[cfg(not(windows))] {
+        let _ = program;
+        false
+    }
+}
+
 /// 杀掉进程树（Windows 用 taskkill /T，否则直接 kill）
 fn kill_tree(child: &Arc<Mutex<Option<Child>>>) {
     if let Some(c) = child.lock().unwrap().as_mut() {
@@ -1122,6 +1240,31 @@ async fn dispatch_to_tool(
     let prompt_mode = tool_config.prompt_mode.clone().unwrap_or_default();
     let use_stdin = prompt_mode == "stdin";
 
+    // argv 直启：把模板拆成参数数组，{prompt}/{prompt_file}/{session_id} 作为独立参数，
+    // 不再整体经 shell 解释，规避命令注入（参考 skills 仓库：never spawn through a shell）
+    // 必须在 tmpl 被 move 进 cmd 之前完成分词。
+    let argv: Vec<String> = {
+        let mut out = Vec::new();
+        for tok in tokenize_template(&tmpl) {
+            match tok.as_str() {
+                "{prompt}" => {
+                    if !use_stdin {
+                        out.push(prompt.clone());
+                    }
+                }
+                "{prompt_file}" => {
+                    out.push(prompt_str.clone());
+                }
+                "{session_id}" => {
+                    out.push(existing_sid.clone().unwrap_or_default());
+                }
+                other => out.push(other.to_string()),
+            }
+        }
+        out
+    };
+
+    // shell 命令串（仅用于 Windows .cmd 垫片回退与日志；提示词经 cmd 转义）
     let mut cmd = tmpl;
     cmd = cmd.replace("{session_id}", existing_sid.as_deref().unwrap_or(""));
     if cmd.contains("{prompt_file}") {
@@ -1163,13 +1306,25 @@ async fn dispatch_to_tool(
     }
 
     eprintln!("[collab] ▶ 派发 {} → cmd: {}", tool_config.display_name, cmd);
+    eprintln!("[collab] ▶ argv: {:?}", argv);
     eprintln!("[collab] ▶ 工作目录: {}", project_path);
-    let mut command = if cfg!(windows) { Command::new("cmd") } else { Command::new("sh") };
-    if cfg!(windows) {
-        command.args(["/c", &cmd]);
+    // 优先直接 spawn 工具二进制（argv 数组，不经 shell，规避注入）。
+    // 仅当 Windows 上工具是 .cmd/.bat 垫片（CreateProcess 无法直接执行）时才退回 cmd /c。
+    let program = argv.first().cloned().unwrap_or_default();
+    let needs_shell = is_windows_shell_shim(&program);
+    let mut command = if needs_shell {
+        let mut c = if cfg!(windows) { Command::new("cmd") } else { Command::new("sh") };
+        if cfg!(windows) {
+            c.args(["/c", &cmd]);
+        } else {
+            c.args(["-c", &cmd]);
+        }
+        c
     } else {
-        command.args(["-c", &cmd]);
-    }
+        let mut c = Command::new(&program);
+        c.args(&argv[1..]);
+        c
+    };
     command
         .current_dir(&project_path)
         .stdout(Stdio::piped())

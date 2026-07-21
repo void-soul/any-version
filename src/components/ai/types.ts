@@ -160,6 +160,12 @@ export interface CollabRoomPage {
   total: number;
 }
 
+export interface CollabMessagePage {
+  messages: CollabMessage[];
+  has_more: boolean;
+  total: number;
+}
+
 /** 后端流式推送：增量文本 */
 export interface CollabDeltaPayload {
   room_id: string;

@@ -1,0 +1,43 @@
+{
+  "agent_states": {
+    "cline": {
+      "agent_id": "cline",
+      "display_name": "Cline",
+      "local_dir": "cline",
+      "description": "开源 VS Code AI 编码助手，支持自动创建文件/命令/任务",
+      "category": "ide-extension",
+      "supports_protocols": [
+        "openai",
+        "anthropic"
+      ],
+      "installed": false,
+      "local_pages": 0,
+      "remote_pages": 36,
+      "local_size_bytes": 0,
+      "last_updated": null,
+      "last_check": "2026-07-19T12:11:28",
+      "update_available": false,
+      "error": "[WinError 123] 文件名、目录名或卷标语法不正确。: 'E:\\\\pro\\\\my\\\\any-version\\\\docs\\\\agent-doc\\\\cline\\\\https:\\\\cline.bot'"
+    },
+    "aider": {
+      "agent_id": "aider",
+      "display_name": "Aider",
+      "local_dir": "aider",
+      "description": "终端 AI 编码工具，支持多模型、自动 git 提交、图片等",
+      "category": "cli-code",
+      "supports_protocols": [
+        "openai",
+        "anthropic"
+      ],
+      "installed": true,
+      "local_pages": 1,
+      "remote_pages": 1,
+      "local_size_bytes": 12586,
+      "last_updated": "2026-07-19T12:18:23",
+      "last_check": "2026-07-19T12:18:23",
+      "update_available": false,
+      "error": null
+    }
+  },
+  "last_global_check": "2026-07-19T12:18:23"
+}
