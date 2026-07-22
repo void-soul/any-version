@@ -1,0 +1,22 @@
+schema_version: 1
+module_path: ""
+title: AnyVersion Tauri 桌面应用（前端 + Rust 后端聚合根）
+scope:
+    - README.md
+    - CLAUDE.md
+    - .gitignore
+    - .npmrc
+    - package.json
+    - pnpm-workspace.yaml
+    - tsconfig.json
+    - tsconfig.node.json
+    - vite.config.ts
+    - index.html
+    - agent-docs-state.json
+    - hello.txt
+    - LICENSE
+    - icon.png
+    - pnpm-lock.yaml
+source_files: []
+depends_on: []
+related_to: []

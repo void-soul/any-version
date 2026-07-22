@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: ai_tools_config
+title: AI 工具与模型供应商配置集
+scope:
+    - ai-tools/
+source_files: []
+depends_on: []
+related_to: []

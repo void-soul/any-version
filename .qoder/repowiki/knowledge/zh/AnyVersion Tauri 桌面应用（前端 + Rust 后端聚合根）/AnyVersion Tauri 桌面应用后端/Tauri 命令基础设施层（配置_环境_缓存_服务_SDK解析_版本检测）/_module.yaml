@@ -1,0 +1,13 @@
+schema_version: 1
+module_path: tauri_backend/commands_infra
+title: Tauri 命令基础设施层（配置/环境/缓存/服务/SDK解析/版本检测）
+scope:
+    - src-tauri/src/commands/config.rs
+    - src-tauri/src/commands/env.rs
+    - src-tauri/src/commands/cache.rs
+    - src-tauri/src/commands/service.rs
+    - src-tauri/src/commands/sdk_resolver.rs
+    - src-tauri/src/commands/tool_version.rs
+source_files: []
+depends_on: []
+related_to: []

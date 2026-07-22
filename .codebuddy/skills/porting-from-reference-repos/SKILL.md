@@ -1,6 +1,6 @@
 ---
 name: porting-from-reference-repos
-description: Use when the user says "抄作业", "check reference repos", "port features", "copy homework", or asks to check what the reference repositories (EchoBird, cc-switch, CodexPlusPlus, skills) have updated and what can be ported to the current project. Also use when the user mentions specific reference repo names and wants to sync features.
+description: Use when the user says "抄作业", "check reference repos", "port features", "copy homework", or asks to check what the reference repositories (EchoBird, cc-switch, CodexPlusPlus) have updated and what can be ported to the current project. Also use when the user mentions specific reference repo names and wants to sync features.
 ---
 
 # Porting from Reference Repos (抄作业)
@@ -16,7 +16,6 @@ Systematically check reference repositories for recent updates, identify valuabl
 | **EchoBird** | `E:\pro\other-sdk\EchoBird` | AI Agent desktop tool | Tauri + Rust + React (TS) |
 | **cc-switch** | `E:\pro\other-sdk\cc-switch` | Model switch/proxy tool | Tauri + Rust + React (TS) |
 | **CodexPlusPlus** | `E:\pro\other-sdk\CodexPlusPlus` | Codex enhancement | — |
-| **skills** | `E:\pro\other-sdk\skills` | Skill scripts | Shell scripts |
 
 **Target project (any-version):** `e:\pro\my\any-version` — also Tauri + Rust + React (TS), shares architecture with EchoBird and cc-switch, making direct porting feasible.
 
@@ -123,7 +122,7 @@ Both must pass with **zero errors** before declaring completion.
 
 ```bash
 # Full discovery cycle (run from any-version root)
-for repo in EchoBird cc-switch CodexPlusPlus skills; do
+for repo in EchoBird cc-switch CodexPlusPlus; do
   echo "=== $repo ==="
   cd "E:\pro\other-sdk\$repo" && git log --oneline -20 | cat
 done

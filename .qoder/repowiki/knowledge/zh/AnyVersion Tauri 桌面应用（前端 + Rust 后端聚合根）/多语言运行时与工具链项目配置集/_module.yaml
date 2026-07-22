@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: project_configs
+title: 多语言运行时与工具链项目配置集
+scope:
+    - projects/
+source_files: []
+depends_on: []
+related_to: []

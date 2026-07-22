@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: react_frontend
+title: AnyVersion Tauri 桌面应用前端（React + Vite）
+scope:
+    - src/
+source_files: []
+depends_on: []
+related_to: []

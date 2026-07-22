@@ -67,6 +67,7 @@ export interface DetectedAiTool {
   latest_version?: string | null;
   install_cmd: string;
   upgrade_cmd: string;
+  uninstall_cmd?: string;
   website: string;
   api_protocol: string;
   supports_model: boolean;

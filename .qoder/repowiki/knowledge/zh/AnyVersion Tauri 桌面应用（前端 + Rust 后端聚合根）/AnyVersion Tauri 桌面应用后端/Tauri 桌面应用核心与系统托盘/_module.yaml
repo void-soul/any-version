@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: tauri_backend/tauri_core
+title: Tauri 桌面应用核心与系统托盘
+scope:
+    - src-tauri/src/lib.rs
+    - src-tauri/src/main.rs
+    - src-tauri/src/tray.rs
+source_files: []
+depends_on: []
+related_to: []

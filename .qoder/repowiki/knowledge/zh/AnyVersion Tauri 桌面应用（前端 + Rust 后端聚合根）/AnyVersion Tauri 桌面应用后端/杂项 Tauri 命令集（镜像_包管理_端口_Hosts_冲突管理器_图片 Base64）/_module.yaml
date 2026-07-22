@@ -1,0 +1,15 @@
+schema_version: 1
+module_path: tauri_backend/commands_misc
+title: 杂项 Tauri 命令集（镜像/包管理/端口/Hosts/冲突管理器/图片 Base64）
+scope:
+    - src-tauri/src/commands/mirror.rs
+    - src-tauri/src/commands/pkg.rs
+    - src-tauri/src/commands/hosts.rs
+    - src-tauri/src/commands/port.rs
+    - src-tauri/src/commands/conflict.rs
+    - src-tauri/src/commands/img_base64.rs
+    - src-tauri/src/commands/hidden_cmd.rs
+    - src-tauri/src/commands/utils.rs
+source_files: []
+depends_on: []
+related_to: []

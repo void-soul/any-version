@@ -159,6 +159,10 @@ export default function ToolLauncher() {
   const [launchResult, setLaunchResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [upgradingTool, setUpgradingTool] = useState<string | null>(null);
   const [upgradeResult, setUpgradeResult] = useState<{ id: string; msg: string } | null>(null);
+  const [installingTool, setInstallingTool] = useState<string | null>(null);
+  const [installResult, setInstallResult] = useState<{ id: string; msg: string } | null>(null);
+  const [uninstallingTool, setUninstallingTool] = useState<string | null>(null);
+  const [uninstallResult, setUninstallResult] = useState<{ id: string; msg: string } | null>(null);
   const [versionStatuses, setVersionStatuses] = useState<Record<string, { latest: string; status: string }>>({});
   const [checkingVersions, setCheckingVersions] = useState(false);
 
@@ -375,6 +379,36 @@ export default function ToolLauncher() {
     } catch (e: any) {
       setUpgradeResult({ id: tool.id, msg: String(e) });
     } finally { setUpgradingTool(null); }
+  };
+
+  const handleInstall = async (tool: DetectedAiTool) => {
+    if (!tool.install_cmd) return;
+    setInstallingTool(tool.id);
+    setInstallResult(null);
+    try {
+      const msg = await invoke<string>("install_ai_tool", { toolId: tool.id });
+      setInstallResult({ id: tool.id, msg });
+      const t = await invoke<DetectedAiTool[]>("detect_ai_tools").catch(() => []);
+      setTools(t);
+      await checkVersions();
+    } catch (e: any) {
+      setInstallResult({ id: tool.id, msg: String(e) });
+    } finally { setInstallingTool(null); }
+  };
+
+  const handleUninstall = async (tool: DetectedAiTool) => {
+    if (!confirm(`确定要从本机卸载 ${tool.display_name} 吗？此操作不可恢复。`)) return;
+    setUninstallingTool(tool.id);
+    setUninstallResult(null);
+    try {
+      const msg = await invoke<string>("uninstall_ai_tool", { toolId: tool.id });
+      setUninstallResult({ id: tool.id, msg });
+      const t = await invoke<DetectedAiTool[]>("detect_ai_tools").catch(() => []);
+      setTools(t);
+      await checkVersions();
+    } catch (e: any) {
+      setUninstallResult({ id: tool.id, msg: String(e) });
+    } finally { setUninstallingTool(null); }
   };
 
   const loadCacheInfos = useCallback(async () => {
@@ -631,6 +665,15 @@ export default function ToolLauncher() {
                               <Download className={`w-3 h-3 ${upgradingTool === selectedTool.id ? "animate-spin" : ""}`} />
                               {upgradingTool === selectedTool.id ? "升级中..." : "升级"}
                             </button>
+                            <button
+                              onClick={() => handleUninstall(selectedTool)}
+                              disabled={uninstallingTool === selectedTool.id}
+                              className="px-2 py-0.5 rounded-md bg-red-500/10 hover:bg-red-500/20 text-[9px] font-semibold text-red-400 cursor-pointer transition-all flex items-center gap-0.5 disabled:opacity-50"
+                              title="从本机卸载"
+                            >
+                              <Trash2 className={`w-3 h-3 ${uninstallingTool === selectedTool.id ? "animate-spin" : ""}`} />
+                              {uninstallingTool === selectedTool.id ? "卸载中..." : "卸载"}
+                            </button>
                           </>
                         )}
                       </>
@@ -649,6 +692,14 @@ export default function ToolLauncher() {
               {!selectedTool.installed && (
                 <div className="mt-3 flex items-center gap-2">
                   <code className="flex-1 text-[10px] text-slate-300 bg-slate-900 rounded px-2 py-1.5 font-mono truncate">{selectedTool.install_cmd}</code>
+                  <button
+                    onClick={() => handleInstall(selectedTool)}
+                    disabled={installingTool === selectedTool.id}
+                    className="px-2 py-1.5 rounded-md bg-violet-500/10 hover:bg-violet-500/20 text-[10px] text-violet-300 hover:text-violet-200 cursor-pointer transition-all flex items-center gap-1 flex-shrink-0 disabled:opacity-50"
+                    title="一键安装"
+                  >
+                    <Download className={`w-3.5 h-3.5 ${installingTool === selectedTool.id ? "animate-spin" : ""}`} />
+                  </button>
                   <button onClick={() => navigator.clipboard.writeText(selectedTool.install_cmd)}
                     className="px-2 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-[10px] text-slate-400 hover:text-white cursor-pointer transition-all flex-shrink-0">
                     <Copy className="w-3.5 h-3.5" />
@@ -1275,6 +1326,24 @@ export default function ToolLauncher() {
               }`}>
                 {upgradeResult.msg.includes("成功") ? <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
                 <span className="whitespace-pre-line">{upgradeResult.msg}</span>
+              </div>
+            )}
+
+            {installResult && installResult.id === selectedTool?.id && (
+              <div className={`p-3 rounded-xl text-xs flex items-start gap-2 ${
+                installResult.msg.includes("成功") ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" : "bg-red-500/10 border border-red-500/20 text-red-400"
+              }`}>
+                {installResult.msg.includes("成功") ? <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
+                <span className="whitespace-pre-line">{installResult.msg}</span>
+              </div>
+            )}
+
+            {uninstallResult && uninstallResult.id === selectedTool?.id && (
+              <div className={`p-3 rounded-xl text-xs flex items-start gap-2 ${
+                uninstallResult.msg.includes("成功") ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" : "bg-red-500/10 border border-red-500/20 text-red-400"
+              }`}>
+                {uninstallResult.msg.includes("成功") ? <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
+                <span className="whitespace-pre-line">{uninstallResult.msg}</span>
               </div>
             )}
           </>

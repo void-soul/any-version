@@ -159,6 +159,8 @@ pub struct PathConfig {
     pub start_command: String,
     pub detect_cmd: String,
     pub install_cmd: String,
+    #[serde(default)]
+    pub uninstall_cmd: Option<String>,
     pub paths: HashMap<String, Vec<String>>,
     /// MSIX/Store 应用启动 URI（如 "shell:AppsFolder\\Claude_...!Claude"），
     /// 用于没有普通 .exe 路径的应用启动与检测。
@@ -264,6 +266,7 @@ pub struct AiToolDefDto {
     pub latest_version_cmd: Option<String>,
     pub install_cmd: String,
     pub upgrade_cmd: String,
+    pub uninstall_cmd: String,
     pub website: String,
     pub api_protocol: String,
     pub supports_model: bool,
@@ -554,6 +557,12 @@ impl AiToolRegistry {
             _ => paths.install_cmd.clone(),
         };
 
+        let uninstall_cmd = match config.pkg_manager.as_deref() {
+            Some("npm") => format!("npm uninstall -g {}", pkg_name),
+            Some("pip") => format!("pip uninstall -y {}", pkg_name),
+            _ => paths.uninstall_cmd.clone().unwrap_or_default(),
+        };
+
         AiToolDefDto {
             id: config.id.clone(),
             display_name: config.display_name.clone(),
@@ -564,6 +573,7 @@ impl AiToolRegistry {
             latest_version_cmd: None,
             install_cmd: paths.install_cmd.clone(),
             upgrade_cmd,
+            uninstall_cmd,
             website: config.website.clone(),
             api_protocol: config.api_protocol.clone(),
             supports_model: config.support_model,

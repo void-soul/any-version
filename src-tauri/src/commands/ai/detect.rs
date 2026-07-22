@@ -31,6 +31,7 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
         latest_version_cmd: None,
         install_cmd: paths.install_cmd.clone(),
         upgrade_cmd,
+        uninstall_cmd: String::new(),
         website: config.website.clone(),
         api_protocol: config.api_protocol.clone(),
         supports_model: config.support_model,

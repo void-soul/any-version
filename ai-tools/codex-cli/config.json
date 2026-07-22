@@ -18,10 +18,10 @@
 
   "resumeCmd": null,
   "continueCmd": "codex resume --last",
-  "dispatchCmd": "codex exec --json --full-auto \"{prompt}\"",
-  "dispatchResumeCmd": "codex exec --json --full-auto resume {session_id} \"{prompt}\"",
+  "dispatchCmd": "codex exec --json --full-auto",
+  "dispatchResumeCmd": "codex exec --json --full-auto resume {session_id}",
   "runner": "codex-json",
-  "promptMode": "arg",
+  "promptMode": "stdin",
   "cacheDirs": [".codex"],
   "pkgManager": "npm",
   "pkgName": "@openai/codex",

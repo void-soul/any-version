@@ -1,0 +1,125 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: main
+nodes_managed: true
+exported_at: "2026-07-22T12:03:35Z"
+modules:
+    "":
+        dir_name: AnyVersion Tauri 桌面应用（前端 + Rust 后端聚合根）
+        title: AnyVersion Tauri 桌面应用（前端 + Rust 后端聚合根）
+        scope:
+            - README.md
+            - CLAUDE.md
+            - .gitignore
+            - .npmrc
+            - package.json
+            - pnpm-workspace.yaml
+            - tsconfig.json
+            - tsconfig.node.json
+            - vite.config.ts
+            - index.html
+            - agent-docs-state.json
+            - hello.txt
+            - LICENSE
+            - icon.png
+            - pnpm-lock.yaml
+        source_files: []
+        children:
+            - ai_tools_config
+            - docs_and_scripts
+            - project_configs
+            - react_frontend
+            - tauri_backend
+        depends_on: []
+        related_to: []
+    ai_tools_config:
+        dir_name: AI 工具与模型供应商配置集
+        title: AI 工具与模型供应商配置集
+        scope:
+            - ai-tools/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    docs_and_scripts:
+        dir_name: Agent 文档聚合与本地镜像工具
+        title: Agent 文档聚合与本地镜像工具
+        scope:
+            - docs/
+            - scripts/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    project_configs:
+        dir_name: 多语言运行时与工具链项目配置集
+        title: 多语言运行时与工具链项目配置集
+        scope:
+            - projects/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    react_frontend:
+        dir_name: AnyVersion Tauri 桌面应用前端（React + Vite）
+        title: AnyVersion Tauri 桌面应用前端（React + Vite）
+        scope:
+            - src/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    tauri_backend:
+        dir_name: AnyVersion Tauri 桌面应用后端
+        title: AnyVersion Tauri 桌面应用后端
+        scope:
+            - src-tauri/
+        source_files: []
+        children:
+            - tauri_backend/commands_infra
+            - tauri_backend/commands_misc
+            - tauri_backend/tauri_core
+        depends_on: []
+        related_to: []
+    tauri_backend/commands_infra:
+        dir_name: Tauri 命令基础设施层（配置_环境_缓存_服务_SDK解析_版本检测）
+        title: Tauri 命令基础设施层（配置/环境/缓存/服务/SDK解析/版本检测）
+        scope:
+            - src-tauri/src/commands/config.rs
+            - src-tauri/src/commands/env.rs
+            - src-tauri/src/commands/cache.rs
+            - src-tauri/src/commands/service.rs
+            - src-tauri/src/commands/sdk_resolver.rs
+            - src-tauri/src/commands/tool_version.rs
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    tauri_backend/commands_misc:
+        dir_name: 杂项 Tauri 命令集（镜像_包管理_端口_Hosts_冲突管理器_图片 Base64）
+        title: 杂项 Tauri 命令集（镜像/包管理/端口/Hosts/冲突管理器/图片 Base64）
+        scope:
+            - src-tauri/src/commands/mirror.rs
+            - src-tauri/src/commands/pkg.rs
+            - src-tauri/src/commands/hosts.rs
+            - src-tauri/src/commands/port.rs
+            - src-tauri/src/commands/conflict.rs
+            - src-tauri/src/commands/img_base64.rs
+            - src-tauri/src/commands/hidden_cmd.rs
+            - src-tauri/src/commands/utils.rs
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    tauri_backend/tauri_core:
+        dir_name: Tauri 桌面应用核心与系统托盘
+        title: Tauri 桌面应用核心与系统托盘
+        scope:
+            - src-tauri/src/lib.rs
+            - src-tauri/src/main.rs
+            - src-tauri/src/tray.rs
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
