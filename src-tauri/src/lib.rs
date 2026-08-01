@@ -537,10 +537,23 @@ pub fn run() {
                 if code.is_none() && !USER_QUIT_REQUESTED.load(Ordering::SeqCst) {
                     api.prevent_exit();
                 } else {
-                    // 应用退出时清理所有常驻代理
-                    commands::ai::collab::stop_all_room_proxies();
-                    // 清理 Mihomo 内核子进程，避免端口残留
-                    commands::mihomo::kill_on_exit(&**app.state::<commands::mihomo::MihomoState>());
+                    // 关键修复：清理逻辑（停常驻代理、kill Mihomo 内核、清系统代理）
+                    // 放到后台线程执行，绝不阻塞主退出路径。否则 set_sys_proxy 等
+                    // 同步 shell 调用偶发卡死会导致进程永远走不到真正退出，表现为
+                    // 「点了托盘退出但程序仍在」。后台线程跑清理，主线程直接强制退出。
+                    let app_handle = app.clone();
+                    std::thread::spawn(move || {
+                        commands::ai::collab::stop_all_room_proxies();
+                        commands::mihomo::kill_on_exit(
+                            &**app_handle.state::<commands::mihomo::MihomoState>(),
+                        );
+                    });
+                    // 给清理线程一个极短的宽限（让 kill 尽快发出），随后强制退出。
+                    // 用 spawn 而非 sleep 在主线程，避免任何阻塞。
+                    std::thread::spawn(|| {
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                        std::process::exit(0);
+                    });
                 }
             }
         });
