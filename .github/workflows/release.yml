@@ -29,6 +29,12 @@ jobs:
     outputs:
       release_id: ${{ steps.create.outputs.release_id }}
     steps:
+      # Need full history + all tags to compute the changelog (git log across tags).
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - name: Create (or reuse) the draft release
         id: create
         env:
@@ -37,13 +43,37 @@ jobs:
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
+          git fetch --tags --force
+
+          # Build the changelog from the previous release tag to this one.
+          PREV=$(git tag --list 'v*' --sort=-v:refname | grep -F -x -v "$TAG" | head -n1)
+          if [ -n "$PREV" ]; then
+            RANGE="${PREV}..${TAG}"
+            HEADER="## 更新内容 (${PREV} → ${TAG})"
+          else
+            RANGE="${TAG}"
+            HEADER="## 更新内容 (${TAG})"
+          fi
+          LOG=$(git log "$RANGE" --pretty=format:'- %s (%h)' --no-merges)
+
+          BODY_FILE=$(mktemp)
+          {
+            echo "$HEADER"
+            echo ""
+            if [ -z "$LOG" ]; then
+              echo "- (无提交记录)"
+            else
+              echo "$LOG"
+            fi
+          } > "$BODY_FILE"
+
           ID=$(gh api --paginate "repos/${REPO}/releases" \
             --jq "[.[] | select(.tag_name == \"${TAG}\" and .draft == true)][0].id // empty")
           if [ -z "$ID" ]; then
             ID=$(gh api -X POST "repos/${REPO}/releases" \
-              -f tag_name="${TAG}" \
-              -f name="AnyVersion ${TAG}" \
-              -F generate_release_notes=true \
+              -F "tag_name=${TAG}" \
+              -F "name=AnyVersion ${TAG}" \
+              -F "body=@${BODY_FILE}" \
               -F draft=true -F prerelease=false --jq '.id')
             echo "created draft release $ID"
           else
