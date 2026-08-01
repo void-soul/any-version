@@ -114,30 +114,9 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      # The NSIS toolchain (`makensis`) is NOT preinstalled on windows-latest.
-      # Tauri bundles both .msi (WiX) and .exe (NSIS) on Windows, so without
-      # NSIS the `tauri build` step fails before any installer is produced.
-      - name: Prepare bin binaries (FFmpeg & MediaMTX)
-        shell: powershell
-        run: |
-          New-Item -ItemType Directory -Force -Path "bin"
-          
-          if (-not (Test-Path "bin/ffmpeg.exe")) {
-            echo "Downloading FFmpeg for release build..."
-            Invoke-WebRequest -Uri "https://github.com/GyanD/codexff/releases/download/7.1/ffmpeg-7.1-full_build.zip" -OutFile "bin/ffmpeg.zip"
-            Expand-Archive -Path "bin/ffmpeg.zip" -DestinationPath "bin/temp_ffmpeg"
-            Get-ChildItem -Path "bin/temp_ffmpeg" -Filter "ffmpeg.exe" -Recurse | Copy-Item -Destination "bin/ffmpeg.exe"
-            Remove-Item -Recurse -Force "bin/temp_ffmpeg", "bin/ffmpeg.zip"
-          }
-
-          if (-not (Test-Path "bin/mediamtx.exe")) {
-            echo "Downloading MediaMTX for release build..."
-            Invoke-WebRequest -Uri "https://github.com/bluenviron/mediamtx/releases/download/v1.19.3/mediamtx_v1.19.3_windows_amd64.zip" -OutFile "bin/mediamtx.zip"
-            Expand-Archive -Path "bin/mediamtx.zip" -DestinationPath "bin"
-            Remove-Item -Force "bin/mediamtx.zip"
-          }
-
-          Get-ChildItem -Path "bin"
+      # 不在 CI 预置 ffmpeg/mediamtx：运行组件（ffmpeg/lego/mediamtx/mihomo）
+      # 改为首次启动由 src-tauri/src/commands/utils.rs 从 ModelScope 按需下载
+      # （见 download_bin_assets）。CI 仅负责构建打包，安装包不再内置运行组件。
 
       - name: Build the app
 
