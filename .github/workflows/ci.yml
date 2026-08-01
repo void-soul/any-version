@@ -22,7 +22,9 @@ jobs:
       - run: pnpm test
 
   backend:
-    runs-on: ubuntu-latest
+    # AnyVersion 是 Windows-only 应用（基于 WebView2），在 Windows runner 上编译检查
+    # 才反映真实产物环境，且 Windows runner 自带 WebView2 / Windows SDK，无需额外安装。
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
