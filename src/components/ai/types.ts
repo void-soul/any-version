@@ -4,6 +4,31 @@
 export interface ModelEntry {
   id: string;
   name: string;
+  /** 用户自定义启动参数模板（与模型绑定），运行时按需渲染让用户选值 */
+  customParams?: ModelCustomParam[];
+}
+
+/**
+ * 模型自定义启动参数（用户定义）。
+ * target='env' 以 envKey 作环境变量注入；target='config' 以 configPath 写入工具配置文件。
+ */
+export interface ModelCustomParam {
+  /** 唯一键（与启动时的取值 key 对应） */
+  key: string;
+  /** UI 显示名 */
+  label: string;
+  /** 控件类型：enum | text | bool */
+  paramType?: string;
+  /** enum 可选值 */
+  options?: string[];
+  /** 默认值 */
+  defaultValue?: string;
+  /** 传递目标：env | config */
+  target?: string;
+  /** env 目标的环境变量名 */
+  envKey?: string;
+  /** config 目标的 JSON 路径 */
+  configPath?: string;
 }
 
 export interface AiProvider {
@@ -242,6 +267,10 @@ export interface CollabDispatchOptions {
   rectifier_thinking_budget: boolean | null;
   rectifier_media_fallback: boolean | null;
   rectifier_protocol_mismatch: boolean | null;
+  /** 模型自定义启动参数模板 */
+  custom_params?: ModelCustomParam[];
+  /** 用户为模型自定义参数选中的取值（key → 值） */
+  custom_param_values?: Record<string, string>;
 }
 
 /** 上下文快照：压缩旧会话后生成的摘要 */
@@ -328,5 +357,7 @@ export interface LastLaunchConfig {
   optimizer_enabled: boolean | null;
   /** 本次启动是否启用整流器 */
   rectifier_enabled: boolean | null;
+  /** 本次启动的自定义参数取值 */
+  custom_param_values?: Record<string, string>;
   last_launched_at: string;
 }

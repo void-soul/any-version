@@ -205,8 +205,12 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
+                    // 关闭主窗口时隐藏而非销毁：窗口实例保留，托盘/单例再次
+                    // "显示主窗口"即可 get_webview_window("main").show() 恢复。
+                    // 若 destroy()，下次 show_main_window 会走 create_main_window
+                    // 重建，Tauri 复用已加载前端 app 时行为不稳定（窗口不显示）。
                     api.prevent_close();
-                    let _ = window.destroy();
+                    let _ = window.hide();
                 }
             }
         })

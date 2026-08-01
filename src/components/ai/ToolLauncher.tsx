@@ -40,6 +40,8 @@ import type {
   AiToolCacheInfo,
   ToolSession,
   TerminalInfo,
+  ModelCustomParam,
+  ModelEntry,
 } from "./types";
 
 const PROTOCOL_LABELS: Record<string, string> = {
@@ -147,6 +149,8 @@ export default function ToolLauncher() {
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState("");
   const [selectedModelProvider, setSelectedModelProvider] = useState("");
+  // 当前模型自定义启动参数的取值（param key → 用户选的值）
+  const [customParamValues, setCustomParamValues] = useState<Record<string, string>>({});
   const [projectPath, setProjectPath] = useState("");
   const [selectedTerminal, setSelectedTerminal] = useState("cmd");
   const [sessionMode, setSessionMode] = useState<"new" | "continue" | "resume">("new");
@@ -204,6 +208,21 @@ export default function ToolLauncher() {
   const [lastLaunchConfigs, setLastLaunchConfigs] = useState<Record<string, LastLaunchConfig>>({});
 
   const selectedTool = tools.find(t => t.id === selectedToolId) || null;
+
+  // 当前选中模型的自定义启动参数模板（来自该模型定义）
+  const currentModelCustomParams = React.useMemo<ModelCustomParam[]>(() => {
+    if (!selectedModelProvider || !selectedModel) return [];
+    return config?.providers
+      .find(p => p.id === selectedModelProvider)?.models
+      .find(m => m.id === selectedModel)?.customParams || [];
+  }, [config, selectedModelProvider, selectedModel]);
+
+  // 切换模型时，将自定义参数取值重置为该模型的默认值
+  const resetCustomParamValues = React.useCallback((params: ModelCustomParam[]) => {
+    const defs: Record<string, string> = {};
+    for (const cp of params) if (cp.defaultValue) defs[cp.key] = cp.defaultValue;
+    setCustomParamValues(defs);
+  }, []);
 
   // 缓存当前选中工具的缓存信息（避免重复 filter）
   const selectedToolCaches = React.useMemo(() => {
@@ -329,7 +348,7 @@ export default function ToolLauncher() {
   const eligibleProviders = React.useMemo(() => {
     if (!config || !selectedTool) return [];
     if (!selectedTool.supports_model) return [];
-    const groups: { provider_name: string; provider_id: string; models: { id: string }[] }[] = [];
+    const groups: { provider_name: string; provider_id: string; models: ModelEntry[] }[] = [];
     for (const p of config.providers) {
       if (p.models.length === 0) continue;
       groups.push({ provider_name: p.name, provider_id: p.id, models: p.models });
@@ -341,7 +360,7 @@ export default function ToolLauncher() {
   const fallbackGroups = React.useMemo(() => {
     if (!config || !selectedTool) return [];
     if (!selectedTool.supports_fallback_model) return [];
-    const groups: { provider_name: string; provider_id: string; models: { id: string }[] }[] = [];
+    const groups: { provider_name: string; provider_id: string; models: ModelEntry[] }[] = [];
     for (const p of config.providers) {
       if (p.models.length === 0) continue;
       const filteredModels = selectedModel ? p.models.filter(m => m.id !== selectedModel) : p.models;
@@ -392,6 +411,8 @@ export default function ToolLauncher() {
           rectifier_thinking_budget: useOfficialModel ? null : rectifierStrategies.thinking_budget,
           rectifier_media_fallback: useOfficialModel ? null : rectifierStrategies.media_fallback,
           rectifier_protocol_mismatch: useOfficialModel ? null : rectifierStrategies.protocol_mismatch,
+          custom_params: useOfficialModel ? [] : currentModelCustomParams,
+          custom_param_values: useOfficialModel ? {} : customParamValues,
         },
       });
       setLaunchResult({ ok: result.success, msg: result.message });
@@ -414,6 +435,7 @@ export default function ToolLauncher() {
           masquerade_model: useOfficialModel ? null : (masqueradeModel || null),
           optimizer_enabled: useOfficialModel ? null : optimizerEnabled,
           rectifier_enabled: useOfficialModel ? null : rectifierEnabled,
+          custom_param_values: useOfficialModel ? {} : customParamValues,
           project_path: sessionMode === "resume" && selectedSession ? selectedSession.project_path : projectPath,
           last_launched_at: new Date().toISOString(),
         };
@@ -652,6 +674,7 @@ export default function ToolLauncher() {
                       }
                       // 再设置 model（React 会批量更新，下次渲染时模型列表已更新）
                       if (last.model_id) setSelectedModel(last.model_id);
+                      if (last.custom_param_values) setCustomParamValues(last.custom_param_values);
                       if (last.fallback_model_id) setSelectedFallbackModel(last.fallback_model_id);
                       if (last.fallback_provider_id) setSelectedFallbackProvider(last.fallback_provider_id);
                       if (last.fallback_masquerade_model) setFallbackMasqueradeModel(last.fallback_masquerade_model);
@@ -1056,8 +1079,8 @@ export default function ToolLauncher() {
                                       return (
                                         <button key={`${group.provider_id}:${m.id}`}
                                           onClick={() => {
-                                            if (isSelModel) { setSelectedModel(""); setSelectedModelProvider(""); }
-                                            else { setSelectedModel(m.id); setSelectedModelProvider(group.provider_id); }
+                                            if (isSelModel) { setSelectedModel(""); setSelectedModelProvider(""); resetCustomParamValues([]); }
+                                            else { setSelectedModel(m.id); setSelectedModelProvider(group.provider_id); resetCustomParamValues(m.customParams || []); }
                                           }}
                                           className={`w-full text-left px-5 py-1.5 text-[11px] transition-all cursor-pointer flex items-center gap-2 ${
                                             isSelModel
@@ -1077,6 +1100,39 @@ export default function ToolLauncher() {
                         </div>
                         {selectedModel && (
                           <div className="mt-1 text-[10px] text-violet-400">已选: <span className="font-mono">{selectedModel}</span> <span className="text-slate-500">（{config?.providers.find(p => p.id === selectedModelProvider)?.name}）</span></div>
+                        )}
+
+                        {/* 模型自定义启动参数（用户定义，运行时渲染为控件） */}
+                        {currentModelCustomParams.length > 0 && (
+                          <div className="mt-3 space-y-2">
+                            <div className="text-[10px] text-slate-500 font-semibold">模型自定义参数</div>
+                            {currentModelCustomParams.map(cp => (
+                              <div key={cp.key} className="flex items-center gap-2">
+                                <label className="text-[10px] text-slate-400 w-28 flex-shrink-0 truncate" title={cp.key}>{cp.label || cp.key}</label>
+                                {cp.paramType === "bool" ? (
+                                  <input type="checkbox" checked={customParamValues[cp.key] !== "false"}
+                                    onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.checked ? "true" : "false" }))}
+                                    className="w-4 h-4 accent-violet-500" />
+                                ) : cp.paramType === "text" ? (
+                                  <input type="text" value={customParamValues[cp.key] || ""}
+                                    onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.value }))}
+                                    placeholder={cp.defaultValue || ""}
+                                    className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500" />
+                                ) : (
+                                  <select value={customParamValues[cp.key] || cp.defaultValue || ""}
+                                    onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.value }))}
+                                    className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500">
+                                    {(cp.options && cp.options.length > 0 ? cp.options : [cp.defaultValue || ""]).filter(Boolean).map(o => (
+                                      <option key={o} value={o}>{o}</option>
+                                    ))}
+                                  </select>
+                                )}
+                                <span className="text-[8px] text-slate-600 font-mono flex-shrink-0 w-16 text-right">
+                                  {cp.target === "config" ? (cp.configPath || "config") : (cp.envKey || "env")}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
                         )}
                       </div>
                     )}

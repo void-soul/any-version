@@ -45,6 +45,7 @@ import type {
   CollabPromptPayload,
   CollabMsgUpdatedPayload,
   CollabDispatchOptions,
+  ModelCustomParam,
   ContextSnapshot,
   CollabCompactedPayload,
   ProxyRequestPayload,
@@ -242,6 +243,23 @@ export default function CollabRoom() {
   const [oneMContext, setOneMContext] = useState(false);
   const [optimizerEnabled, setOptimizerEnabled] = useState(true);
   const [rectifierEnabled, setRectifierEnabled] = useState(true);
+  // 当前模型自定义启动参数的取值（param key → 用户选的值）
+  const [customParamValues, setCustomParamValues] = useState<Record<string, string>>({});
+
+  // 当前选中模型的自定义启动参数模板（来自该模型定义）
+  const currentModelCustomParams = React.useMemo<ModelCustomParam[]>(() => {
+    if (!providerId || !modelId) return [];
+    return providers
+      .find(p => p.id === providerId)?.models
+      .find(m => m.id === modelId)?.customParams || [];
+  }, [providers, providerId, modelId]);
+
+  // 模型变化时把自定义参数取值重置为默认值
+  const resetCustomParamValues = React.useCallback((params: ModelCustomParam[]) => {
+    const defs: Record<string, string> = {};
+    for (const cp of params) if (cp.defaultValue) defs[cp.key] = cp.defaultValue;
+    setCustomParamValues(defs);
+  }, []);
 
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -766,6 +784,8 @@ export default function CollabRoom() {
       rectifier_thinking_budget: null,
       rectifier_media_fallback: null,
       rectifier_protocol_mismatch: null,
+      custom_params: supportsModel ? currentModelCustomParams : [],
+      custom_param_values: supportsModel ? customParamValues : {},
     };
   };
 
@@ -1111,7 +1131,7 @@ export default function CollabRoom() {
                     </select>
                     <select
                       value={modelId}
-                      onChange={(e) => setModelId(e.target.value)}
+                      onChange={(e) => { setModelId(e.target.value); const m = activeProvider?.models.find(x => x.id === e.target.value); resetCustomParamValues(m?.customParams || []); }}
                       className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500"
                     >
                       {activeProvider?.models.map((m) => (
@@ -1140,6 +1160,38 @@ export default function CollabRoom() {
                     </button>
                     {showAdvanced && (
                       <div className="px-2.5 pb-2.5 space-y-1.5">
+                        {/* 模型自定义启动参数（用户定义，运行时渲染为控件） */}
+                        {currentModelCustomParams.length > 0 && (
+                          <div className="space-y-1.5 pt-0.5">
+                            <div className="text-[9px] text-slate-500 font-semibold">模型自定义参数</div>
+                            {currentModelCustomParams.map(cp => (
+                              <div key={cp.key} className="flex items-center gap-2">
+                                <label className="text-[9px] text-slate-400 w-20 flex-shrink-0 truncate" title={cp.key}>{cp.label || cp.key}</label>
+                                {cp.paramType === "bool" ? (
+                                  <input type="checkbox" checked={customParamValues[cp.key] !== "false"}
+                                    onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.checked ? "true" : "false" }))}
+                                    className="w-3.5 h-3.5 accent-violet-500" />
+                                ) : cp.paramType === "text" ? (
+                                  <input type="text" value={customParamValues[cp.key] || ""}
+                                    onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.value }))}
+                                    placeholder={cp.defaultValue || ""}
+                                    className="flex-1 min-w-0 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-[9px] text-slate-200 focus:outline-none focus:border-violet-500" />
+                                ) : (
+                                  <select value={customParamValues[cp.key] || cp.defaultValue || ""}
+                                    onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.value }))}
+                                    className="flex-1 min-w-0 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-[9px] text-slate-200 focus:outline-none focus:border-violet-500">
+                                    {(cp.options && cp.options.length > 0 ? cp.options : [cp.defaultValue || ""]).filter(Boolean).map(o => (
+                                      <option key={o} value={o}>{o}</option>
+                                    ))}
+                                  </select>
+                                )}
+                                <span className="text-[8px] text-slate-600 font-mono flex-shrink-0 w-14 text-right">
+                                  {cp.target === "config" ? (cp.configPath || "config") : (cp.envKey || "env")}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         {/* 模型伪装 */}
                         {tool.builtin_models.length > 0 && (
                           <div className="flex items-center gap-2">

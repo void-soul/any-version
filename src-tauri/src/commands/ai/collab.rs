@@ -915,6 +915,12 @@ pub struct CollabDispatchOptions {
     pub rectifier_media_fallback: Option<bool>,
     #[serde(default)]
     pub rectifier_protocol_mismatch: Option<bool>,
+    /// 模型自定义启动参数模板（决定如何传参）
+    #[serde(default)]
+    pub custom_params: Vec<ModelCustomParam>,
+    /// 用户为模型自定义参数选中的取值（key → 值）
+    #[serde(default)]
+    pub custom_param_values: HashMap<String, String>,
 }
 
 /// 派发轮次：同一发送者在静默窗口内的多条消息合并为一次派发。
@@ -1359,6 +1365,8 @@ async fn ensure_room_proxy(
             optimizer_cache_injection: options.optimizer_cache_injection,
             optimizer_thinking: options.optimizer_thinking,
             optimizer_deepseek: options.optimizer_deepseek,
+            custom_params: options.custom_params.clone(),
+            custom_param_values: options.custom_param_values.clone(),
             ..Default::default()
         };
 
@@ -1399,6 +1407,8 @@ async fn ensure_room_proxy(
                     options.one_m_context,
                     options.fallback_one_m_context,
                     true,
+                    &options.custom_params,
+                    &options.custom_param_values,
                 ) {
                     eprintln!("[collab] ⚠ 写入工具配置文件失败: {}", e);
                 } else {

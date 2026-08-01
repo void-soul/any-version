@@ -16,7 +16,7 @@ import {
   Settings2,
   ExternalLink,
 } from "lucide-react";
-import type { ModelEntry, AiProvider, AiConfig } from "./types";
+import type { ModelEntry, AiProvider, AiConfig, ModelCustomParam } from "./types";
 
 type Preset = {
   id: string; name: string; category: string;
@@ -50,6 +50,27 @@ export default function ModelConfig() {
   // 模型批量录入文本（一行一个 model_id 或 "model_id | 显示名"）
   const [modelsText, setModelsText] = useState("");
   const [fetchingModels, setFetchingModels] = useState(false);
+  // 模型自定义启动参数：model_id → 参数列表（与 form.models 中的 customParams 双向同步）
+  const [modelParams, setModelParams] = useState<Record<string, ModelCustomParam[]>>({});
+
+  // 同步：modelsText 每行一个 model id，保证 modelParams 对每个 id 都有入口（保留已有）
+  useEffect(() => {
+    const ids = modelsText.split("\n").map(l => l.trim()).filter(Boolean);
+    setModelParams(prev => {
+      const next: Record<string, ModelCustomParam[]> = {};
+      let changed = false;
+      for (const id of ids) {
+        if (Object.prototype.hasOwnProperty.call(prev, id)) {
+          next[id] = prev[id];
+        } else {
+          next[id] = [];
+          changed = true;
+        }
+      }
+      if (Object.keys(prev).length !== ids.length) changed = true;
+      return changed ? next : prev;
+    });
+  }, [modelsText]);
 
   // 删除确认
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
@@ -104,6 +125,10 @@ export default function ModelConfig() {
     setForm({ ...provider });
     // 模型列表转为文本：每行一个 id
     setModelsText(provider.models.map(m => m.id).join("\n"));
+    // 初始化每个模型的自定义参数
+    const mp: Record<string, ModelCustomParam[]> = {};
+    for (const m of provider.models) mp[m.id] = m.customParams ? [...m.customParams] : [];
+    setModelParams(mp);
     setFormError(null);
     setShowModal(true);
   };
@@ -116,18 +141,43 @@ export default function ModelConfig() {
     return null;
   };
 
+  // ─── 模型自定义启动参数编辑 ───
+  const addModelParam = (mid: string) => {
+    setModelParams(prev => ({
+      ...prev,
+      [mid]: [...(prev[mid] || []), { key: "", label: "", paramType: "enum", options: [], target: "env", envKey: "" }],
+    }));
+  };
+  const updateModelParam = (mid: string, idx: number, patch: Partial<ModelCustomParam>) => {
+    setModelParams(prev => ({
+      ...prev,
+      [mid]: (prev[mid] || []).map((cp, i) => i === idx ? { ...cp, ...patch } : cp),
+    }));
+  };
+  const removeModelParam = (mid: string, idx: number) => {
+    setModelParams(prev => ({
+      ...prev,
+      [mid]: (prev[mid] || []).filter((_, i) => i !== idx),
+    }));
+  };
+
   const handleModalConfirm = async () => {
     const err = validateForm();
     if (err) { setFormError(err); return; }
 
     if (!config) return;
 
-    // 解析模型文本：每行一个 model id
+    // 解析模型文本：每行一个 model id；保留已存在模型的 customParams
+    const prevById = new Map(form.models.map(m => [m.id, m]));
     const manualModels: ModelEntry[] = modelsText
       .split("\n")
       .map(line => line.trim())
       .filter(line => line.length > 0)
-      .map(line => ({ id: line, name: line }));
+      .map(line => {
+        const prev = prevById.get(line);
+        const custom = modelParams[line] || [];
+        return prev ? { ...prev, customParams: custom } : { id: line, name: line, customParams: custom };
+      });
 
     // 新建供应商时，如果用户未手动录入模型，自动从 API 获取模型列表
     let autoModels: ModelEntry[] = [];
@@ -431,6 +481,71 @@ export default function ModelConfig() {
                   已录入 {modelsText.split("\n").filter(l => l.trim()).length} 个模型
                 </div>
               </div>
+
+              {/* 模型自定义启动参数 */}
+              {modelsText.split("\n").map(l => l.trim()).filter(Boolean).length > 0 && (
+                <div className="rounded-lg border border-white/5 bg-slate-900/30 p-3 space-y-3">
+                  <div className="text-[10px] text-slate-500 font-semibold">
+                    模型自定义启动参数
+                    <span className="text-slate-600 font-normal">（运行时按此渲染控件，让用户选值后传给模型）</span>
+                  </div>
+                  {modelsText.split("\n").map(l => l.trim()).filter(Boolean).map((mid) => (
+                    <div key={mid} className="rounded-md border border-white/5 bg-slate-900/40 p-2.5">
+                      <div className="text-[10px] text-violet-300 font-mono mb-2">{mid}</div>
+                      {(modelParams[mid] || []).map((cp, ci) => (
+                        <div key={ci} className="mb-2 p-2 rounded bg-slate-800/40 border border-white/5 space-y-1.5">
+                          <div className="flex gap-1.5">
+                            <input value={cp.label} onChange={e => updateModelParam(mid, ci, { label: e.target.value })}
+                              placeholder="显示名（如 思考强度）" className="w-37 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500" />
+                            <input value={cp.key} onChange={e => updateModelParam(mid, ci, { key: e.target.value })}
+                              placeholder="参数键" className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-violet-500" />
+                            <button onClick={() => removeModelParam(mid, ci)}
+                              className="shrink-0 w-6 h-6 flex items-center justify-center rounded bg-red-500/10 hover:bg-red-500/20 text-[11px] text-red-400">×</button>
+                          </div>
+                          <div className="flex gap-1.5 items-stretch">
+                            <div className="flex items-center gap-1.5 shrink-0 rounded-md border border-cyan-500/20 bg-cyan-500/5 px-2 py-1">
+                              <div className="flex items-center gap-1 mr-2">
+                                {([["enum","下拉"],["text","文本"],["bool","开关"]] as const).map(([v,l]) => (
+                                  <button key={v} type="button" onClick={() => updateModelParam(mid, ci, { paramType: v })}
+                                    className={`px-2 py-0.5 rounded-full text-[10px] border transition-colors ${cp.paramType === v ? "bg-cyan-500/20 border-cyan-500 text-cyan-200" : "bg-slate-900 border-white/10 text-slate-400 hover:border-white/20"}`}>
+                                    {l}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            {cp.paramType === "enum" && (
+                              <input value={(cp.options || []).join(",")} onChange={e => updateModelParam(mid, ci, { options: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })}
+                                placeholder="可选值(逗号分隔, 如 low,medium,high)" className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-violet-500" />
+                            )}
+                            <input value={cp.defaultValue || ""} onChange={e => updateModelParam(mid, ci, { defaultValue: e.target.value })}
+                              placeholder="默认值" className="w-24 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500" />
+                          </div>
+                          <div className="flex gap-1.5 items-stretch">
+                            <div className="flex items-center gap-1.5 shrink-0 rounded-md border border-amber-500/20 bg-amber-500/5 px-2 py-1">
+                              <div className="flex items-center gap-1">
+                                {([["env","环境变量"],["config","写配置文件"]] as const).map(([v,l]) => (
+                                  <button key={v} type="button" onClick={() => updateModelParam(mid, ci, { target: v })}
+                                    className={`px-2 py-0.5 rounded-full text-[10px] border transition-colors ${cp.target === v ? "bg-amber-500/20 border-amber-500 text-amber-200" : "bg-slate-900 border-white/10 text-slate-400 hover:border-white/20"}`}>
+                                    {l}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            <input value={cp.target === "config" ? (cp.configPath || "") : (cp.envKey || "")}
+                              onChange={e => cp.target === "config"
+                                ? updateModelParam(mid, ci, { configPath: e.target.value })
+                                : updateModelParam(mid, ci, { envKey: e.target.value })}
+                              placeholder={cp.target === "config" ? "config 路径(如 params.reasoning_effort)" : "环境变量名(如 REASONING_EFFORT)"}
+                              className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-violet-500" />
+                          </div>
+                        </div>
+                      ))}
+                      <button onClick={() => addModelParam(mid)}
+                        className="text-[10px] text-violet-400 hover:text-violet-300 cursor-pointer">+ 添加参数</button>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* Error */}
               {formError && (

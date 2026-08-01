@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 
 fn default_true() -> bool { true }
@@ -266,7 +267,51 @@ fn default_provider_category() -> String {
 pub struct ModelEntry {
     pub id: String,
     pub name: String,
+    /// 用户自定义启动参数模板（与模型绑定）。
+    /// 启动时按此渲染控件让用户选值，再经 env 注入或写进工具配置文件传给模型。
+    /// any-version 不维护"哪类模型支持什么参数"，全部由定义者在此声明。
+    #[serde(default)]
+    pub custom_params: Vec<ModelCustomParam>,
 }
+
+/// 模型自定义启动参数（用户定义）。
+///
+/// 决定参数如何传给工具/模型：
+/// - target = "env"：以 `env_key` 作为环境变量名注入子进程（跨工具通用，默认首选）。
+/// - target = "config"：以 `config_path`（点分隔 JSON 路径，如 `params.reasoning_effort`）
+///   写进工具配置文件。
+///
+/// 这与现有工具 config.json 的 `write` 映射中 `env.` 前缀约定一致：
+/// env → build_env_vars 注入；config → write_tool_config_generic 写文件。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelCustomParam {
+    /// 唯一键（与启动时 custom_param_values 的 key 对应）
+    pub key: String,
+    /// UI 显示名（如「思考强度」）
+    pub label: String,
+    /// 控件类型：enum（下拉）/ text（文本框）/ bool（开关）
+    #[serde(default = "default_param_type")]
+    pub param_type: String,
+    /// enum 类型的可选值
+    #[serde(default)]
+    pub options: Vec<String>,
+    /// 默认值（enum 取 options 之一；text 取文本；bool 取 "true"/"false"）
+    #[serde(default)]
+    pub default_value: Option<String>,
+    /// 传递目标：env | config
+    #[serde(default = "default_param_target")]
+    pub target: String,
+    /// target = env 时使用的环境变量名（如 REASONING_EFFORT）
+    #[serde(default)]
+    pub env_key: Option<String>,
+    /// target = config 时写入工具配置文件的 JSON 路径（如 params.reasoning_effort）
+    #[serde(default)]
+    pub config_path: Option<String>,
+}
+
+fn default_param_type() -> String { "enum".to_string() }
+fn default_param_target() -> String { "env".to_string() }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AiSession {
@@ -568,6 +613,14 @@ pub struct LaunchAiToolRequest {
     pub optimizer_thinking: Option<bool>,
     #[serde(default)]
     pub optimizer_deepseek: Option<bool>,
+    /// 用户自定义启动参数取值（key → 选中的值）。空表示用模型默认值。
+    /// 由模型定义里的 ModelCustomParam 决定如何传参（env 注入 / 写配置文件）。
+    #[serde(default)]
+    pub custom_param_values: HashMap<String, String>,
+    /// 模型定义里的自定义参数模板（决定每个 key 如何传参）。前端随启动请求一起传入，
+    /// 后端据此把 custom_param_values 分发到 env 注入或配置文件写入。
+    #[serde(default)]
+    pub custom_params: Vec<ModelCustomParam>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -608,6 +661,9 @@ pub struct LastLaunchConfig {
     /// 本次启动是否启用整流器
     #[serde(default)]
     pub rectifier_enabled: Option<bool>,
+    /// 本次启动的自定义参数取值（key → 用户选的值）。空表示用模型默认值。
+    #[serde(default)]
+    pub custom_param_values: std::collections::HashMap<String, String>,
     pub last_launched_at: String,
 }
 

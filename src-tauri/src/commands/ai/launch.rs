@@ -325,6 +325,8 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                         req.one_m_context,
                         req.fallback_one_m_context,
                         proxy_mode,
+                        &req.custom_params,
+                        &req.custom_param_values,
                     ) {
                         Ok(_) => {
                             eprintln!("[config_file] ✓ 配置文件写入完成");
@@ -487,6 +489,23 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
         }
     }
 
+    // 注入模型自定义的「env 目标」启动参数（与工具 config.json 的 env.* 约定一致）
+    for cp in &req.custom_params {
+        if cp.target != "env" { continue; }
+        let env_key = match &cp.env_key {
+            Some(k) if !k.is_empty() => k.clone(),
+            // 未显式给 env_key 时回退用 key 本身
+            _ => cp.key.clone(),
+        };
+        let value = req.custom_param_values.get(&cp.key)
+            .cloned()
+            .or_else(|| cp.default_value.clone())
+            .unwrap_or_default();
+        if value.is_empty() { continue; }
+        eprintln!("[spawn] custom-env {} = {} (param: {})", env_key, mask_secret(&value), cp.label);
+        cmd.env(env_key, value);
+    }
+
     cmd.spawn().map_err(|e| format!("启动失败: {}", e))?;
 
     eprintln!("[spawn] ✓ 进程已启动");
@@ -534,6 +553,7 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
         masquerade_model: req.masquerade_model.clone(),
         optimizer_enabled: req.optimizer_enabled,
         rectifier_enabled: req.rectifier_enabled,
+        custom_param_values: req.custom_param_values.clone(),
         last_launched_at: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
     };
     let mut configs = load_last_launch_configs();
@@ -574,9 +594,11 @@ pub(crate) fn write_tool_config_from_spec(
     one_m_context: bool,
     fallback_one_m_context: bool,
     proxy_mode: bool,
+    custom_params: &[ModelCustomParam],
+    custom_param_values: &HashMap<String, String>,
 ) -> Result<(), String> {
     // write_tool_config_generic 内部会检查 config_file 是否存在，无 configFile 时直接返回 Ok(())
-    write_tool_config_generic(tool_config, model_id, claimed_model, base_url, api_key, fallback_model_id, fallback_masquerade_model, one_m_context, fallback_one_m_context, proxy_mode)
+    write_tool_config_generic(tool_config, model_id, claimed_model, base_url, api_key, fallback_model_id, fallback_masquerade_model, one_m_context, fallback_one_m_context, proxy_mode, custom_params, custom_param_values)
 }
 
 /// 从 config_file.write 映射中提取 env.* 前缀的键，构建环境变量 HashMap。
@@ -658,6 +680,8 @@ fn write_tool_config_generic(
     one_m_context: bool,
     fallback_one_m_context: bool,
     _proxy_mode: bool,
+    custom_params: &[ModelCustomParam],
+    custom_param_values: &HashMap<String, String>,
 ) -> Result<(), String> {
     let cfg = match &tool_config.config_file {
         Some(c) => c,
@@ -795,6 +819,21 @@ fn write_tool_config_generic(
         };
         eprintln!("[config_file] set {} = {}", resolved_path, log);
         writes.push((resolved_path, value));
+    }
+
+    // 追加模型自定义的「config 目标」启动参数（写入工具配置文件指定 JSON 路径）
+    for cp in custom_params {
+        if cp.target != "config" { continue; }
+        let path = match &cp.config_path {
+            Some(p) if !p.is_empty() => p.clone(),
+            _ => continue, // 未给 config_path 则无法落盘，跳过
+        };
+        let value = custom_param_values.get(&cp.key)
+            .cloned()
+            .or_else(|| cp.default_value.clone())
+            .unwrap_or_default();
+        eprintln!("[config_file] set (custom) {} = {}", path, mask_secret(&value));
+        writes.push((path, serde_json::json!(value)));
     }
 
     let existing = if resolved_path.exists() {

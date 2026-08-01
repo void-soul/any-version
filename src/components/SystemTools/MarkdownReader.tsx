@@ -115,7 +115,9 @@ export default function MarkdownReader() {
         return [...prev, { path, name, content: "", error: null, loading: true }];
       });
 
-      if (rescan) void scanSiblings(path);
+      // 打开文件即刷新左侧同目录列表，保证「文件导航」始终可用
+      // （之前仅 rescan 才扫描，其他打开入口会导致列表为空）。
+      void scanSiblings(path);
       if (existed) return;
 
       try {
@@ -225,13 +227,13 @@ export default function MarkdownReader() {
     if (!active?.content) return [];
     const out: Heading[] = [];
     let inFence = false;
-    for (const line of active.content.split("\n")) {
+    for (const line of active.content.split(/\r?\n/)) {
       if (/^\s*(```|~~~)/.test(line)) {
         inFence = !inFence;
         continue;
       }
       if (inFence) continue;
-      const m = /^(#{1,6})\s+(.*)$/.exec(line);
+      const m = /^(#{1,6})\s+(.*)$/m.exec(line);
       if (m) {
         const text = m[2].replace(/[*_`]/g, "").trim();
         if (text) out.push({ id: slugify(text), text, level: m[1].length });
@@ -498,7 +500,7 @@ export default function MarkdownReader() {
         </div>
 
         {/* 右侧：大纲 */}
-        {active && headings.length > 1 && (
+        {active && headings.length > 0 && (
           <div className="w-48 flex-shrink-0 border-l border-white/5 overflow-y-auto py-2">
             <div className="px-3 pb-1.5 text-[10px] text-slate-500">大纲</div>
             {headings.map((h, i) => (
