@@ -1,7 +1,7 @@
 {
   "name": "tauri-app",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.6",
   "type": "module",
   "scripts": {
     "start": "set ANY_VERSION_PROXY_DEBUG=1 && tauri dev",
