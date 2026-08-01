@@ -78,6 +78,9 @@ export default function OverviewPanel({ info, running, onNavigate }: {
     setBusy(true);
     try {
       if (v && sysProxyEnabled) await toggleSysProxy(false);
+      // 同步 app.tun_enabled（持久化），让运行时 config 生成时据此注入 TUN 网卡名
+      await mihomoApi.setTun(v);
+      // 同步 controled 的 tun.enable（UI 真相源之一）
       await mihomoApi.patchControled({ tun: { enable: v } });
       await mihomoApi.restart();
     } catch (e: any) { setMsg(String(e)); }

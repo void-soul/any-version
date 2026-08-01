@@ -587,19 +587,17 @@ pub fn generate_runtime_config(
         obj.entry(k.to_string()).or_insert(v);
     }
 
-    // 5. TUN：开启时注入 tun 块（除非 controled 已提供）
-    if app.tun_enabled {
-        let has_tun = obj.contains_key("tun");
-        if !has_tun {
-            let mut tun = serde_json::Map::new();
-            tun.insert("enable".into(), Value::Bool(true));
-            tun.insert("stack".into(), Value::String("system".into()));
-            tun.insert("auto-route".into(), Value::Bool(true));
-            tun.insert("auto-detect-interface".into(), Value::Bool(true));
-            obj.insert("tun".into(), Value::Object(tun));
-        }
-        // 5.1 固定 TUN 网卡（wintun 适配器）名称：适配器名在设备创建时确定，
-        //     故每次构建都强制写入 tun.device（用户可在 UI「TUN 网卡名称」自定义）
+    // 5. TUN：若 base 中已存在启用的 tun 块（来自 controled/config 的 tun.enable=true），
+    //    则强制写入网卡名称（wintun 适配器名在设备创建时确定，故每次构建都需覆盖 device）。
+    //    注意：此处以 base 实际是否启用 TUN 为准，而非 app.tun_enabled——
+    //    UI 的 TUN 开关只 patch controled 的 tun.enable，app.tun_enabled 未必同步，
+    //    若以 app.tun_enabled 为守卫会导致自定义的 tun_name 永远不生效。
+    let tun_enabled = obj
+        .get("tun")
+        .and_then(|t| t.get("enable"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if tun_enabled {
         if let Some(Value::Object(tun)) = obj.get_mut("tun") {
             tun.insert("device".into(), Value::String(app.tun_name.clone()));
         }
