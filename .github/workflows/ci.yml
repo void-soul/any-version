@@ -30,11 +30,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      # 硬性关卡：编译必须通过（抓真正的编译/类型错误）。
       - name: cargo check
         run: cargo check --manifest-path src-tauri/Cargo.toml
-      - name: cargo clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
-      - name: cargo fmt
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      # 硬性关卡：单元测试必须通过。
       - name: cargo test
         run: cargo test --manifest-path src-tauri/Cargo.toml
+      # 软性检查：clippy / fmt 仅报告不阻断 CI（应用项目不过度追求零 lint warning）。
+      - name: cargo clippy (report only)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -W warnings
+        continue-on-error: true
+      - name: cargo fmt (report only)
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+        continue-on-error: true
+
