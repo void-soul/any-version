@@ -1,0 +1,26 @@
+{
+  "id": "dotnet",
+  "display_name": ".NET SDK",
+  "category": "language",
+  "official_website": "https://dotnet.microsoft.com",
+  "bin_dirs": [
+    "",
+    "tools"
+  ],
+  "has_cache": false,
+  "cache_detect_cmd": null,
+  "cache_default_path": null,
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": false,
+  "default_port": null,
+  "download_url_template": "https://builds.dotnet.microsoft.com/dotnet/Sdk/{version}/dotnet-sdk-{version}-win-x64.zip",
+  "download_file_ext": "zip",
+  "version_cmd": "dotnet --version",
+  "version_exe": "dotnet",
+  "version_parse_regex": "(\\d+\\.\\d+\\.\\d+)",
+  "remote_versions_url": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/releases-index.json"
+}

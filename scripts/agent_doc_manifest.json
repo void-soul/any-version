@@ -1,0 +1,272 @@
+{
+  "version": "1.2.0",
+  "description": "Agent 文档自动更新清单 — 独立研发辅助工具。每个 Agent 可通过其 llms.txt 索引文件自动拉取所有文档页。",
+  "docsBaseDir": "E:/pro/my/any-version/docs/agent-doc",
+  "agents": [
+    {
+      "id": "claude-code",
+      "displayName": "Claude Code",
+      "category": "cli-code",
+      "priority": 1,
+      "docsSource": {
+        "type": "llms_txt",
+        "indexUrl": "https://code.claude.com/docs/llms.txt",
+        "baseUrl": "https://code.claude.com/docs"
+      },
+      "localDir": "claude-code",
+      "description": "Anthropic 的 CLI 编码代理，支持自动思考、子代理、Hooks、MCP 等",
+      "supportsProtocols": ["anthropic"]
+    },
+    {
+      "id": "codex-cli",
+      "displayName": "Codex CLI",
+      "category": "cli-code",
+      "priority": 2,
+      "docsSource": {
+        "type": "documentation_index",
+        "indexUrl": "https://developers.openai.com/codex/cli/",
+        "baseUrl": "https://developers.openai.com/codex/cli",
+        "pagesUrlTemplate": "https://developers.openai.com/codex/cli/{page}"
+      },
+      "localDir": "codex-cli",
+      "description": "OpenAI 的开源 CLI 编码代理，基于 Rust 实现",
+      "supportsProtocols": ["openai"]
+    },
+    {
+      "id": "gemini-cli",
+      "displayName": "Gemini CLI",
+      "category": "cli-code",
+      "priority": 3,
+      "docsSource": {
+        "type": "documentation_md",
+        "indexUrl": "https://raw.githubusercontent.com/google-gemini/gemini-cli/main/docs/cli/index.md",
+        "baseUrl": "https://gemini.google.com/cli",
+        "pagesUrlTemplate": "https://raw.githubusercontent.com/google-gemini/gemini-cli/main/docs/cli/{page}.md"
+      },
+      "localDir": "gemini-cli",
+      "description": "Google 的 Gemini 命令行代理，支持 MCP、多模态等",
+      "supportsProtocols": ["google"]
+    },
+    {
+      "id": "qwen-code",
+      "displayName": "Qwen Code",
+      "category": "cli-code",
+      "priority": 4,
+      "docsSource": {
+        "type": "documentation_md",
+        "indexUrl": "https://raw.githubusercontent.com/QwenLM/qwen-code/main/README.md",
+        "baseUrl": "https://qwenlm.github.io/qwen-code-docs",
+        "pagesUrlTemplate": "https://raw.githubusercontent.com/QwenLM/qwen-code/main/docs/{page}.md"
+      },
+      "localDir": "qwen-code",
+      "description": "阿里通义千问的编码代理，完全开源、支持多 IDE 集成",
+      "supportsProtocols": ["openai"]
+    },
+    {
+      "id": "opencode",
+      "displayName": "OpenCode",
+      "category": "cli-code",
+      "priority": 5,
+      "docsSource": {
+        "type": "readme_only",
+        "url": "https://raw.githubusercontent.com/opencode-ai/opencode/main/README.md"
+      },
+      "localDir": "opencode",
+      "description": "开源 Go 编写的 AI 编码代理，支持 ACP 协议和插件",
+      "supportsProtocols": ["openai"]
+    },
+    {
+      "id": "hermes-agent",
+      "displayName": "Hermes Agent",
+      "category": "multi-platform",
+      "priority": 6,
+      "docsSource": {
+        "type": "documentation_md",
+        "indexUrl": "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/website/docs/llms.txt",
+        "baseUrl": "https://hermes-agent.nousresearch.com/docs",
+        "pagesUrlTemplate": "https://hermes-agent.nousresearch.com/docs/{page}.md"
+      },
+      "localDir": "hermes-agent",
+      "description": "Nous Research 的持久化 AI Agent，支持多平台网关、技能系统、记忆系统",
+      "supportsProtocols": ["openai", "anthropic", "google"]
+    },
+    {
+      "id": "aider",
+      "displayName": "Aider",
+      "category": "cli-code",
+      "priority": 9,
+      "docsSource": {
+        "type": "readme_only",
+        "url": "https://raw.githubusercontent.com/Aider-AI/aider/main/README.md"
+      },
+      "localDir": "aider",
+      "description": "终端 AI 编码工具，支持多模型、自动 git 提交、图片等",
+      "supportsProtocols": ["openai", "anthropic"]
+    },
+    {
+      "id": "continue",
+      "displayName": "Continue",
+      "category": "ide-extension",
+      "priority": 10,
+      "docsSource": {
+        "type": "llms_txt",
+        "indexUrl": "https://docs.continue.dev/llms.txt",
+        "baseUrl": "https://docs.continue.dev"
+      },
+      "localDir": "continue",
+      "description": "开源 IDE AI 助手，支持 VS Code / JetBrains、可定制上下文",
+      "supportsProtocols": ["openai", "anthropic", "google"]
+    },
+    {
+      "id": "cursor",
+      "displayName": "Cursor",
+      "category": "ide",
+      "priority": 11,
+      "docsSource": {
+        "type": "documentation_scrape",
+        "indexUrl": "https://docs.cursor.com",
+        "baseUrl": "https://docs.cursor.com"
+      },
+      "localDir": "cursor",
+      "description": "AI-first IDE，支持多模型、Composer",
+      "supportsProtocols": ["openai", "anthropic"]
+    },
+    {
+      "id": "kilocode",
+      "displayName": "Kilo Code",
+      "category": "ide-extension",
+      "priority": 12,
+      "docsSource": {
+        "type": "documentation_scrape",
+        "indexUrl": "https://docs.kilocode.ai",
+        "baseUrl": "https://docs.kilocode.ai"
+      },
+      "localDir": "kilocode",
+      "description": "VS Code AI 扩展，支持任务编排、自动修复",
+      "supportsProtocols": ["openai", "anthropic"]
+    },
+    {
+      "id": "roo-code",
+      "displayName": "Roo Code",
+      "category": "ide-extension",
+      "priority": 13,
+      "docsSource": {
+        "type": "readme_only",
+        "url": "https://raw.githubusercontent.com/RooCodeInc/Roo-Code/main/README.md"
+      },
+      "localDir": "roo-code",
+      "description": "VS Code 多模式 AI 助手，支持架构/代码/调试模式",
+      "supportsProtocols": ["openai", "anthropic"]
+    },
+    {
+      "id": "cline",
+      "displayName": "Cline",
+      "category": "ide-extension",
+      "priority": 14,
+      "docsSource": {
+        "type": "llms_txt",
+        "indexUrl": "https://cline.bot/llms.txt",
+        "baseUrl": "https://cline.bot"
+      },
+      "localDir": "cline",
+      "description": "开源 VS Code AI 编码助手，支持自动创建文件/命令/任务",
+      "supportsProtocols": ["openai", "anthropic"]
+    },
+    {
+      "id": "augment",
+      "displayName": "Augment",
+      "category": "ide-extension",
+      "priority": 15,
+      "docsSource": {
+        "type": "llms_txt",
+        "indexUrl": "https://docs.augmentcode.com/llms.txt",
+        "baseUrl": "https://docs.augmentcode.com"
+      },
+      "localDir": "augment",
+      "description": "企业级 AI 编码助手，支持 SOUL 上下文系统",
+      "supportsProtocols": ["openai"]
+    },
+    {
+      "id": "windsurf",
+      "displayName": "Windsurf",
+      "category": "ide",
+      "priority": 16,
+      "docsSource": {
+        "type": "llms_txt",
+        "indexUrl": "https://docs.windsurf.com/llms.txt",
+        "baseUrl": "https://docs.windsurf.com"
+      },
+      "localDir": "windsurf",
+      "description": "Codeium 的 Flow/Agent IDE，支持实时协作",
+      "supportsProtocols": ["openai", "anthropic"]
+    },
+    {
+      "id": "tabnine",
+      "displayName": "Tabnine",
+      "category": "ide-extension",
+      "priority": 17,
+      "docsSource": {
+        "type": "documentation_scrape",
+        "indexUrl": "https://docs.tabnine.com",
+        "baseUrl": "https://docs.tabnine.com"
+      },
+      "localDir": "tabnine",
+      "description": "隐私优先的 AI 代码补全助手，支持本地模型",
+      "supportsProtocols": ["openai"]
+    },
+    {
+      "id": "goose",
+      "displayName": "Goose",
+      "category": "multi-platform",
+      "priority": 18,
+      "docsSource": {
+        "type": "readme_only",
+        "url": "https://raw.githubusercontent.com/block/goose/main/README.md"
+      },
+      "localDir": "goose",
+      "description": "Block 的桌面 AI 助手，支持 MCP 和桌面自动化",
+      "supportsProtocols": ["openai", "anthropic"]
+    },
+    {
+      "id": "junie",
+      "displayName": "Junie",
+      "category": "ide-extension",
+      "priority": 22,
+      "docsSource": {
+        "type": "readme_only",
+        "url": "https://raw.githubusercontent.com/JetBrains/junie/main/README.md"
+      },
+      "localDir": "junie",
+      "description": "JetBrains 的 AI 编码代理，深度 IDE 集成",
+      "supportsProtocols": ["openai", "anthropic"]
+    },
+    {
+      "id": "trae",
+      "displayName": "Trae",
+      "category": "ide",
+      "priority": 23,
+      "docsSource": {
+        "type": "readme_only",
+        "url": "https://raw.githubusercontent.com/trae-ai/trae/main/README.md"
+      },
+      "localDir": "trae",
+      "description": "字节跳动的 AI IDE，支持 Builder/SOLO 模式",
+      "supportsProtocols": ["openai", "anthropic"]
+    },
+    {
+      "id": "lingma",
+      "displayName": "Lingma",
+      "category": "ide-extension",
+      "priority": 24,
+      "docsSource": {
+        "type": "documentation_index",
+        "indexUrl": "https://lingma.aliyun.com/docs/",
+        "baseUrl": "https://lingma.aliyun.com/docs",
+        "pagesUrlTemplate": "https://lingma.aliyun.com/docs/{page}"
+      },
+      "localDir": "lingma",
+      "description": "阿里云羚摩 AI 编码助手，通义千问深度集成",
+      "supportsProtocols": ["openai"]
+    }
+  ]
+}

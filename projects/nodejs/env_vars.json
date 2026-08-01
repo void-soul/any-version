@@ -1,0 +1,8 @@
+[
+  {
+    "name": "NPM_CONFIG_PREFIX",
+    "desc": "npm 全局包及二进制文件安装根路径",
+    "check_type": "path",
+    "tier": "package"
+  }
+]

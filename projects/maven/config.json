@@ -1,0 +1,25 @@
+{
+  "id": "maven",
+  "display_name": "Maven",
+  "category": "tool",
+  "official_website": "https://maven.apache.org",
+  "bin_dirs": [
+    "bin"
+  ],
+  "has_cache": true,
+  "cache_detect_cmd": null,
+  "cache_default_path": "{home}\\.m2\\repository",
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": false,
+  "default_port": null,
+  "download_url_template": "https://archive.apache.org/dist/maven/maven-3/{version}/binaries/apache-maven-{version}-bin.zip",
+  "download_file_ext": "zip",
+  "version_cmd": "mvn -v",
+  "version_exe": "mvn",
+  "version_parse_regex": "Apache Maven (\\d+\\.\\d+\\.\\d+)",
+  "remote_versions_url": null
+}

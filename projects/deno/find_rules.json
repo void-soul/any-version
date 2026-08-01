@@ -1,0 +1,22 @@
+[
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "scoop\\apps\\deno",
+      "exe_name": "deno.exe"
+    },
+    "source_label": "Scoop",
+    "priority": 40,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "deno.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 0
+  }
+]

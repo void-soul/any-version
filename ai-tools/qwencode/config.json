@@ -1,0 +1,46 @@
+{
+  "id": "qwencode",
+  "displayName": "Qwen Code",
+  "avatar": "❓",
+  "nickname": "Qwen",
+  "category": "通义千问",
+  "website": "https://github.com/QwenLM/qwen-code",
+  "apiProtocol": "openai",
+  "supportModel": true,
+  "supportFallbackModel": true,
+
+  "supportsOpenai": true,
+  "supportsAnthropic": false,
+  "supportsGoogle": false,
+  "builtinModels": [],
+  "supportsOptimizer": true,
+  "supportsRectifier": true,
+
+  "resumeCmd": null,
+  "continueCmd": null,
+  "dispatchCmd": "qwen -o stream-json --yolo --model {model}",
+  "dispatchResumeCmd": "qwen -o stream-json --yolo --model {model} -r {session_id}",
+  "runner": "gemini-json",
+  "promptMode": "stdin",
+  "cacheDirs": [".qwen-code", ".qwen"],
+  "pkgManager": "npm",
+  "pkgName": "@qwen-code/qwen-code",
+  "configFile": {
+    "path": "~/.qwen/settings.json",
+    "format": "json",
+      "write": {
+      "model.name": "model",
+      "security.auth.selectedType": "openai",
+      "env.OPENAI_API_KEY": "apiKey",
+      "env.OPENAI_BASE_URL": "baseUrl",
+      "env.OPENAI_MODEL": "model",
+      "env.QWEN_MODEL": "model",
+      "fastModel": "fallbackModel",
+      "modelFallbacks": "fallbackModel"
+    }
+  },
+  "sessions": {
+    "type": "none"
+  },
+  "skillsDir": "~/.qwen/skills"
+}

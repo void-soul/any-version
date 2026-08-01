@@ -1,0 +1,7 @@
+{
+  "type": "json_api",
+  "response_type": "array",
+  "version_field": "version",
+  "filter_field": "final",
+  "filter_value": true
+}

@@ -1,0 +1,11 @@
+# AnyVersion 证书接收端配置示例
+# 复制为 cert-receiver.toml 并修改
+
+listen_addr = "0.0.0.0:9000"
+token = "YOUR_SHARED_TOKEN"
+
+# 证书落盘目录（Windows 路径用双反斜杠或正斜杠）
+output_dir = "C:\\certs"
+
+# 可选：收到证书后执行的脚本（如绑定 IIS / 重载服务）
+# post_script = "powershell -File C:\\certs\\reload.ps1"

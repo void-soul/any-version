@@ -1,0 +1,16 @@
+[package]
+name = "cert-receiver"
+version = "0.1.0"
+edition = "2021"
+description = "AnyVersion 证书管理 - Windows 轻量接收端（接收证书并落盘/触发脚本）"
+
+[[bin]]
+name = "cert-receiver"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"

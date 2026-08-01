@@ -1,0 +1,8 @@
+[
+  {
+    "name": "GRADLE_HOME",
+    "desc": "Gradle 安装根目录",
+    "check_type": "path",
+    "tier": "core"
+  }
+]

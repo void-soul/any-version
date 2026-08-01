@@ -1,0 +1,281 @@
+[
+  {
+    "id": "openai",
+    "name": "OpenAI",
+    "category": "provider",
+    "website": "https://openai.com",
+    "openaiUrl": "https://api.openai.com/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "anthropic",
+    "name": "Anthropic",
+    "category": "provider",
+    "website": "https://www.anthropic.com",
+    "openaiUrl": "",
+    "anthropicUrl": "https://api.anthropic.com",
+    "googleUrl": ""
+  },
+  {
+    "id": "deepseek",
+    "name": "DeepSeek",
+    "category": "provider",
+    "website": "https://deepseek.com",
+    "openaiUrl": "https://api.deepseek.com",
+    "anthropicUrl": "https://api.deepseek.com/anthropic",
+    "googleUrl": ""
+  },
+  {
+    "id": "volcengine",
+    "name": "火山引擎",
+    "category": "provider",
+    "website": "https://www.volcengine.com",
+    "openaiUrl": "https://ark.cn-beijing.volces.com/api/coding/v3",
+    "anthropicUrl": "https://ark.cn-beijing.volces.com/api/coding",
+    "googleUrl": ""
+  },
+  {
+    "id": "qwen",
+    "name": "阿里百炼 Qwen",
+    "category": "provider",
+    "website": "https://bailian.aliyun.com",
+    "openaiUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    "anthropicUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+    "googleUrl": ""
+  },
+  {
+    "id": "kimi",
+    "name": "Kimi 月之暗面",
+    "category": "provider",
+    "website": "https://kimi.moonshot.cn",
+    "openaiUrl": "https://api.moonshot.cn/v1",
+    "anthropicUrl": "https://api.moonshot.cn/anthropic",
+    "googleUrl": ""
+  },
+  {
+    "id": "glm",
+    "name": "GLM 智谱",
+    "category": "provider",
+    "website": "https://open.bigmodel.cn",
+    "openaiUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+    "anthropicUrl": "https://open.bigmodel.cn/api/anthropic",
+    "googleUrl": ""
+  },
+  {
+    "id": "hunyuan",
+    "name": "腾讯混元",
+    "category": "provider",
+    "website": "https://hunyuan.tencent.com",
+    "openaiUrl": "https://api.lkeap.cloud.tencent.com/plan/v3",
+    "anthropicUrl": "https://api.lkeap.cloud.tencent.com/plan/anthropic",
+    "googleUrl": ""
+  },
+  {
+    "id": "ernie",
+    "name": "百度千帆",
+    "category": "provider",
+    "website": "https://qianfan.cloud.baidu.com",
+    "openaiUrl": "https://qianfan.baidubce.com/v2/coding",
+    "anthropicUrl": "https://qianfan.baidubce.com/anthropic/coding",
+    "googleUrl": ""
+  },
+  {
+    "id": "stepfun",
+    "name": "阶跃星辰",
+    "category": "provider",
+    "website": "https://stepfun.com",
+    "openaiUrl": "https://api.stepfun.com/v1",
+    "anthropicUrl": "https://api.stepfun.com",
+    "googleUrl": ""
+  },
+  {
+    "id": "minimax",
+    "name": "MiniMax",
+    "category": "provider",
+    "website": "https://minimax.io",
+    "openaiUrl": "https://api.minimax.io/v1",
+    "anthropicUrl": "https://api.minimax.io/anthropic",
+    "googleUrl": ""
+  },
+  {
+    "id": "xiaomi",
+    "name": "小米 MiMo",
+    "category": "provider",
+    "website": "https://mimo.xiaomi.com",
+    "openaiUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+    "anthropicUrl": "https://token-plan-cn.xiaomimimo.com/anthropic",
+    "googleUrl": ""
+  },
+  {
+    "id": "google",
+    "name": "Google Gemini",
+    "category": "provider",
+    "website": "https://gemini.google.com",
+    "openaiUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "xai",
+    "name": "xAI Grok",
+    "category": "provider",
+    "website": "https://x.ai",
+    "openaiUrl": "https://api.x.ai/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "mistral",
+    "name": "Mistral AI",
+    "category": "provider",
+    "website": "https://mistral.ai",
+    "openaiUrl": "https://api.mistral.ai/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "groq",
+    "name": "Groq",
+    "category": "provider",
+    "website": "https://groq.com",
+    "openaiUrl": "https://api.groq.com/openai/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "nvidia",
+    "name": "NVIDIA",
+    "category": "provider",
+    "website": "https://build.nvidia.com",
+    "openaiUrl": "https://integrate.api.nvidia.com/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "agnes",
+    "name": "Agnes AI",
+    "category": "provider",
+    "website": "https://agnes-ai.com",
+    "openaiUrl": "https://apihub.agnes-ai.com/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "siliconflow",
+    "name": "SiliconFlow",
+    "category": "provider",
+    "website": "https://siliconflow.cn",
+    "openaiUrl": "https://api.siliconflow.cn/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "longcat",
+    "name": "美团 LongCat",
+    "category": "provider",
+    "website": "https://longcat.chat",
+    "openaiUrl": "https://api.longcat.chat/openai",
+    "anthropicUrl": "https://api.longcat.chat/anthropic",
+    "googleUrl": ""
+  },
+  {
+    "id": "sensenova",
+    "name": "商汤日日新",
+    "category": "provider",
+    "website": "https://platform.sensenova.cn",
+    "openaiUrl": "https://token.sensenova.cn/v1",
+    "anthropicUrl": "https://token.sensenova.cn/v1/messages",
+    "googleUrl": ""
+  },
+  {
+    "id": "openrouter",
+    "name": "OpenRouter",
+    "category": "relay",
+    "website": "https://openrouter.ai",
+    "openaiUrl": "https://openrouter.ai/api/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "worldrouter",
+    "name": "WorldRouter",
+    "category": "relay",
+    "website": "https://worldrouter.ai",
+    "openaiUrl": "https://inference-api.worldrouter.ai/v1",
+    "anthropicUrl": "https://inference-api.worldrouter.ai",
+    "googleUrl": ""
+  },
+  {
+    "id": "bai",
+    "name": "B.ai",
+    "category": "relay",
+    "website": "https://theb.ai",
+    "openaiUrl": "https://api.theb.ai/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "nekocode",
+    "name": "NekoCode",
+    "category": "relay",
+    "website": "https://nekocode.ai",
+    "openaiUrl": "",
+    "anthropicUrl": "https://nekocode.ai",
+    "googleUrl": ""
+  },
+  {
+    "id": "code0",
+    "name": "Code0.ai",
+    "category": "relay",
+    "website": "https://code0.ai",
+    "openaiUrl": "https://code0.ai/v1",
+    "anthropicUrl": "https://code0.ai",
+    "googleUrl": ""
+  },
+  {
+    "id": "amux",
+    "name": "Amux",
+    "category": "relay",
+    "website": "https://amux.ai",
+    "openaiUrl": "",
+    "anthropicUrl": "https://api.amux.ai",
+    "googleUrl": ""
+  },
+  {
+    "id": "teamorouter",
+    "name": "TeamoRouter",
+    "category": "relay",
+    "website": "https://teamorouter.com",
+    "openaiUrl": "",
+    "anthropicUrl": "https://api.teamorouter.com",
+    "googleUrl": ""
+  },
+  {
+    "id": "zetaapi",
+    "name": "ZetaAPI",
+    "category": "relay",
+    "website": "https://zetaapi.ai",
+    "openaiUrl": "",
+    "anthropicUrl": "https://api.zetaapi.ai",
+    "googleUrl": ""
+  },
+  {
+    "id": "fennoai",
+    "name": "FennoAI",
+    "category": "relay",
+    "website": "https://api.fenno.ai",
+    "openaiUrl": "",
+    "anthropicUrl": "https://api.fenno.ai",
+    "googleUrl": ""
+  },
+  {
+    "id": "qiniu",
+    "name": "七牛云",
+    "category": "relay",
+    "website": "https://s.qiniu.com/nMvAvy",
+    "openaiUrl": "https://api.qnaigc.com/v1",
+    "anthropicUrl": "https://api.qnaigc.com",
+    "googleUrl": ""
+  }
+]

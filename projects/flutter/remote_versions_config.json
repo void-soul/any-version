@@ -1,0 +1,9 @@
+{
+  "type": "json_api",
+  "url": "https://storage.googleapis.com/flutter_infra_release/releases/releases_windows.json",
+  "response_type": "object_with_array",
+  "array_field": "releases",
+  "version_field": "version",
+  "filter_field": "channel",
+  "filter_value": "stable"
+}

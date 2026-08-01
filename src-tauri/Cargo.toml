@@ -1,0 +1,69 @@
+[package]
+name = "any-version"
+version = "1.0.1"
+description = "Windows Multi-Language Dev Environment Version Manager"
+authors = ["AnyVersion Team"]
+edition = "2021"
+
+[lib]
+name = "tauri_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+# 开机自启（launch-at-login）。注册时带 `--minimized` 参数，
+# 开机自启时静默启动到托盘（见 lib.rs setup 中对该参数的处理）。
+# 暴露 JS 侧 enable/disable/isEnabled，需要 autostart:default 权限。
+tauri-plugin-autostart = "2"
+tauri-plugin-process = "2"
+serde = { version = "1.0", features = ["derive"] }
+regex = "1.10"
+serde_json = "1.0"
+winreg = "0.52"
+walkdir = "2.5"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["macros"] }
+hyper-util = { version = "0.1", features = ["tokio", "client-legacy"] }
+http-body-util = "0.1"
+bytes = "1"
+async-stream = "0.3"
+zip = "2.1"
+tar = "0.4"
+flate2 = "1.0"
+xz2 = "0.1"
+bzip2 = "0.4"
+chrono = "0.4"
+trash = "5.1"
+sysinfo = "0.31"
+futures-util = "0.3"
+md5 = "0.7"
+rusqlite = { version = "0.32", features = ["bundled"] }
+hmac = "0.12"
+sha2 = "0.10"
+sha1 = "0.10"
+base64 = "0.22"
+serde_yaml = "0.9"
+# 凭据加密（AES-256-GCM）
+aes-gcm = "0.10"
+getrandom = "0.2"
+# 无中毒 Mutex
+parking_lot = "0.12"
+# 结构化日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tracing-appender = "0.2"
+# Win32 API：系统代理刷新通知（InternetSetOption）、管理员提权判定
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Networking_WinInet",
+  "Win32_Security",
+  "Win32_System_Threading",
+] }

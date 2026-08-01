@@ -1,0 +1,24 @@
+[
+  {
+    "id": "pub",
+    "display_name": "Pub",
+    "built_in": true,
+    "install_cmd": null,
+    "version_cmd": "flutter --version",
+    "version_exe": "flutter",
+    "cache_detect_cmd": null,
+    "cache_default_path": "{home}\\.pub-cache",
+    "cache_env_var": "PUB_CACHE",
+    "cache_set_cmd_template": null,
+    "data_detect_cmd": null,
+    "data_default_path": null,
+    "data_env_var": null,
+    "data_set_cmd_template": null,
+    "proxy_detect_cmd": null,
+    "proxy_set_cmd_template": null,
+    "pkg_list_cmd": null,
+    "pkg_list_format": null,
+    "pkg_upgrade_cmd_template": null,
+    "pkg_homepage_template": "https://pub.dev/packages/{pkg}"
+  }
+]

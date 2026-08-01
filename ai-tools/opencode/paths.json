@@ -1,0 +1,20 @@
+{
+  "name": "OpenCode",
+  "category": "CLI Code",
+  "apiProtocol": ["openai"],
+  "command": "opencode",
+  "startCommand": "opencode",
+  "detectCmd": "opencode --version",
+  "installCmd": "npm install -g opencode-ai",
+  "paths": {
+    "win32": [
+      "%APPDATA%/npm/opencode.cmd",
+      "%LOCALAPPDATA%/Programs/opencode/opencode.exe",
+      "%USERPROFILE%/scoop/shims/opencode.exe",
+      "%PROGRAMFILES%/opencode/opencode.exe",
+      "%USERPROFILE%/.bun/bin/opencode.exe",
+      "%USERPROFILE%/.opencode/bin/opencode.exe",
+      "%LOCALAPPDATA%/pnpm/opencode.exe"
+    ]
+  }
+}

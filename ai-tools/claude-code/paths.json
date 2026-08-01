@@ -1,0 +1,17 @@
+{
+  "name": "Claude Code",
+  "category": "CLI Code",
+  "apiProtocol": ["anthropic"],
+  "command": "claude",
+  "startCommand": "claude",
+  "detectCmd": "claude --version",
+  "installCmd": "npm install -g @anthropic-ai/claude-code",
+  "paths": {
+    "win32": [
+      "%APPDATA%/npm/claude.cmd",
+      "%USERPROFILE%/scoop/shims/claude.cmd",
+      "%USERPROFILE%/.bun/bin/claude.cmd",
+      "%LOCALAPPDATA%/pnpm/claude.cmd"
+    ]
+  }
+}

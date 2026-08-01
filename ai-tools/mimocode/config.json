@@ -1,0 +1,54 @@
+{
+  "id": "mimocode",
+  "displayName": "MiMo Code",
+  "avatar": "🎯",
+  "nickname": "MiMo",
+  "category": "MiniMax",
+  "website": "https://mimo.xiaomi.com/zh/mimocode/config-files",
+  "apiProtocol": "openai",
+  "supportModel": true,
+  "supportFallbackModel": true,
+
+  "supportsOpenai": true,
+  "supportsAnthropic": false,
+  "supportsGoogle": false,
+  "builtinModels": [],
+  "supportsOptimizer": true,
+  "supportsRectifier": true,
+
+  "resumeCmd": null,
+  "continueCmd": null,
+  "dispatchCmd": "mimo run --format json --dangerously-skip-permissions \"{prompt}\"",
+  "dispatchResumeCmd": "mimo run --format json --dangerously-skip-permissions -s {session_id} \"{prompt}\"",
+  "runner": "opencode-json",
+  "promptMode": "arg",
+  "cacheDirs": [".local/share/mimocode"],
+  "pkgManager": "npm",
+  "pkgName": "@mimo-ai/cli",
+  "configFile": {
+    "path": "~/.config/mimocode/mimocode.json",
+    "format": "json",
+    "schema": "https://mimo.xiaomi.com/mimocode/config.json",
+      "write": {
+        "provider.anyversion.npm": "@ai-sdk/openai-compatible",
+        "provider.anyversion.name": "anyversion",
+        "provider.anyversion.options.baseURL": "baseUrl",
+      "provider.anyversion.options.apiKey": "apiKey",
+      "model": "model",
+      "small_model": "fallbackModel",
+        "provider.anyversion.models.{model_name}.name": "modelName",
+        "provider.anyversion.models.{fallback_model_name}.name": "fallbackModelName",
+        "env.MIMO_MODEL": "model",
+        "env.OPENAI_MODEL": "model"
+      }
+  },
+  "modelFormat": {
+    "prefix": "anyversion/",
+    "extractLast": true
+  },
+  "sessions": {
+    "type": "mimocode_style",
+    "dirs": ["~/.config/mimocode", "~/.mimo-code"]
+  },
+  "skillsDir": "~/.mimocode/skills"
+}

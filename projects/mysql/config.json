@@ -1,0 +1,84 @@
+{
+  "id": "mysql",
+  "display_name": "MySQL",
+  "category": "service",
+  "official_website": "https://www.mysql.com",
+  "simple_mode": false,
+  "bin_dirs": [
+    "bin"
+  ],
+  "has_cache": false,
+  "cache_detect_cmd": null,
+  "cache_default_path": null,
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": true,
+  "default_port": 3306,
+  "data_dir": null,
+  "log_dir": null,
+  "config_file": "my.ini",
+  "config_file_candidates": [
+    "C:\\ProgramData\\MySQL\\MySQL Server 8.4\\my.ini",
+    "C:\\ProgramData\\MySQL\\MySQL Server 8.0\\my.ini",
+    "{install_root}\\my.ini",
+    "{install_root}\\my.cnf"
+  ],
+  "start_cmd": "\"{install_root}\\bin\\mysqld.exe\" --console --port={port} --datadir=\"{data_dir}\"",
+  "stop_cmd": null,
+  "service_process_exes": [
+    "mysqld"
+  ],
+  "service_names": [
+    "^MySQL\\d*$",
+    "^MariaDB.*$"
+  ],
+  "service_start_mode": "detached",
+  "service_allow_force_kill": false,
+  "service_auto_create_dirs": false,
+  "version_cmd": "mysqld --version",
+  "version_exe": "mysqld",
+  "download_file_ext": "zip",
+  "version_url_prefix_map": {
+    "8.4.": "https://cdn.mysql.com/Downloads/MySQL-8.4/mysql-{version}-winx64.zip",
+    "8.0.": "https://cdn.mysql.com/Downloads/MySQL-8.0/mysql-{version}-winx64.zip",
+    "5.7.": "https://cdn.mysql.com/Downloads/MySQL-5.7/mysql-{version}-winx64.zip"
+  },
+  "post_install": {
+    "generate_config": true,
+    "config_template": "[mysqld]\nbasedir={basedir}\ndatadir={datadir}\nport=3306\nsql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES\n",
+    "init_command": "bin/mysqld.exe --initialize-insecure"
+  },
+  "data_dirs": [
+    {
+      "id": "data",
+      "display_name": "MySQL 数据目录",
+      "kind": "data",
+      "possible_paths": [
+        "C:\\ProgramData\\MySQL\\MySQL Server 8.4\\Data",
+        "C:\\ProgramData\\MySQL\\MySQL Server 8.0\\Data",
+        "{install_root}\\data"
+      ],
+      "default_path": "{install_root}\\data",
+      "supports_direct": true,
+      "auto_create": false,
+      "required_for_start": true
+    },
+    {
+      "id": "log",
+      "display_name": "MySQL 日志目录",
+      "kind": "log",
+      "possible_paths": [
+        "C:\\ProgramData\\MySQL\\MySQL Server 8.4\\Data",
+        "C:\\ProgramData\\MySQL\\MySQL Server 8.0\\Data",
+        "{install_root}\\logs"
+      ],
+      "default_path": "{install_root}\\logs",
+      "supports_direct": true,
+      "auto_create": true,
+      "required_for_start": false
+    }
+  ]
+}

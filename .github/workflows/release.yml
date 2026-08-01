@@ -1,0 +1,164 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的版本标签 (例如 v1.0.1)'
+        required: true
+        default: 'v0.0.0-test'
+
+# Opt into Node.js 24 runner for all JavaScript-based actions (see ci.yml).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  # Create the GitHub release ONCE, up front, so the build job below uploads to
+  # the SAME release object. If we passed `tagName`/`releaseDraft` to tauri-action
+  # directly, a parallel matrix would each fail to "find" the draft release and
+  # CREATE its own — producing duplicate drafts with assets split across them.
+  # (AnyVersion is Windows-only today, but this pattern keeps it race-free and
+  #  ready if more platforms are added later.)
+  create-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.release_id }}
+    steps:
+      - name: Create (or reuse) the draft release
+        id: create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          ID=$(gh api --paginate "repos/${REPO}/releases" \
+            --jq "[.[] | select(.tag_name == \"${TAG}\" and .draft == true)][0].id // empty")
+          if [ -z "$ID" ]; then
+            ID=$(gh api -X POST "repos/${REPO}/releases" \
+              -f tag_name="${TAG}" \
+              -f name="AnyVersion ${TAG}" \
+              -F generate_release_notes=true \
+              -F draft=true -F prerelease=false --jq '.id')
+            echo "created draft release $ID"
+          else
+            echo "reusing existing draft release $ID"
+          fi
+          echo "release_id=$ID" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: create-release
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          # Pinned to 22 to match ci.yml (setup-node@v6 + node-version: lts/*
+          # can misbehave on Node 24 runners).
+          node-version: 22
+          cache: 'pnpm'
+
+      # Pinned to 1.93 — see comment in ci.yml. Keep both files in lockstep.
+      - name: Install Rust 1.93 (pinned)
+        uses: dtolnay/rust-toolchain@1.93
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The NSIS toolchain (`makensis`) is NOT preinstalled on windows-latest.
+      # Tauri bundles both .msi (WiX) and .exe (NSIS) on Windows, so without
+      # NSIS the `tauri build` step fails before any installer is produced.
+      - name: Prepare bin binaries (FFmpeg & MediaMTX)
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path "bin"
+          
+          if (-not (Test-Path "bin/ffmpeg.exe")) {
+            echo "Downloading FFmpeg for release build..."
+            Invoke-WebRequest -Uri "https://github.com/GyanD/codexff/releases/download/7.1/ffmpeg-7.1-full_build.zip" -OutFile "bin/ffmpeg.zip"
+            Expand-Archive -Path "bin/ffmpeg.zip" -DestinationPath "bin/temp_ffmpeg"
+            Get-ChildItem -Path "bin/temp_ffmpeg" -Filter "ffmpeg.exe" -Recurse | Copy-Item -Destination "bin/ffmpeg.exe"
+            Remove-Item -Recurse -Force "bin/temp_ffmpeg", "bin/ffmpeg.zip"
+          }
+
+          if (-not (Test-Path "bin/mediamtx.exe")) {
+            echo "Downloading MediaMTX for release build..."
+            Invoke-WebRequest -Uri "https://github.com/bluenviron/mediamtx/releases/download/v1.19.3/mediamtx_v1.19.3_windows_amd64.zip" -OutFile "bin/mediamtx.zip"
+            Expand-Archive -Path "bin/mediamtx.zip" -DestinationPath "bin"
+            Remove-Item -Force "bin/mediamtx.zip"
+          }
+
+          Get-ChildItem -Path "bin"
+
+      - name: Build the app
+
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 更新签名密钥（私钥内容 + 密码），用于生成 .sig 与 latest.json
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          # Upload to the single draft created by `create-release` above.
+          # Using releaseId (instead of tagName/releaseDraft) makes tauri-action
+          # upload to the EXISTING release rather than create its own — this is
+          # what removes the duplicate-draft race. The release stays a draft
+          # until the operator flips it public via `gh release edit <tag> --draft=false`.
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: ''
+          # 生成带签名的更新产物（.sig）并上传 latest.json 到 release，
+          # 供 tauri-plugin-updater 的 endpoints 拉取。
+          includeUpdaterJson: true
+          prerelease: false
+
+  rename-assets:
+    # Tauri's bundler uses inconsistent filenames (no platform label, locale
+    # suffix, etc.). Rename every asset on the release in place via the GitHub
+    # API — non-destructive, no re-upload.
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Rename release assets with platform labels
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VER="${TAG#v}"
+          # `gh api releases/tags/${TAG}` does NOT return draft releases, so we
+          # list all releases and filter for this tag ourselves.
+          gh api --paginate "repos/${REPO}/releases" \
+            --jq ".[] | select(.tag_name == \"${TAG}\") | .assets[] | \"\(.id)\t\(.name)\"" \
+          | while IFS=$'\t' read -r ID NAME; do
+              case "$NAME" in
+                *_x64*.exe|*_x64*-setup.exe) NEW="AnyVersion_${VER}_x64-setup.exe" ;;
+                *_x64*.msi)                    NEW="AnyVersion_${VER}_x64.msi" ;;
+                *)                             NEW="" ;;
+              esac
+              if [ -n "$NEW" ] && [ "$NEW" != "$NAME" ]; then
+                echo "rename: $NAME  ->  $NEW"
+                gh api -X PATCH "repos/${REPO}/releases/assets/${ID}" -f name="$NEW" --jq '.name'
+              fi
+            done

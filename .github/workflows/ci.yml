@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm test
+
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: cargo check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+      - name: cargo clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+      - name: cargo fmt
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - name: cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml

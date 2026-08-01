@@ -1,0 +1,41 @@
+{
+  "id": "python",
+  "display_name": "Python",
+  "category": "language",
+  "official_website": "https://python.org",
+  "bin_dirs": [
+    "",
+    "Scripts"
+  ],
+  "has_cache": false,
+  "cache_detect_cmd": null,
+  "cache_default_path": null,
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": false,
+  "default_port": null,
+  "download_url_template": "https://www.python.org/ftp/python/{version}/python-{version}-embed-amd64.zip",
+  "version_cmd": "python --version",
+  "version_exe": "python",
+  "version_parse_regex": "Python\\s+(\\d+\\.\\d+\\.\\d+)",
+  "conflict_managers": [
+    {
+      "id": "pyenv-win",
+      "display_name": "pyenv-win",
+      "env_vars": [
+        "PYENV",
+        "PYENV_ROOT",
+        "PYENV_HOME"
+      ],
+      "path_keywords": [
+        ".pyenv\\pyenv-win\\bin",
+        ".pyenv\\pyenv-win\\shims"
+      ],
+      "exe_name": "pyenv.bat",
+      "cache_default_path": "{home}\\.pyenv\\pyenv-win\\versions"
+    }
+  ]
+}

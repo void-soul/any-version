@@ -1,0 +1,23 @@
+[
+  {
+    "pattern": {
+      "type": "env_bin",
+      "env_var": "DOTNET_ROOT",
+      "bin_sub": "",
+      "exe_name": "dotnet.exe"
+    },
+    "source_label": "DOTNET_ROOT",
+    "priority": 10,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "C:\\Program Files\\dotnet",
+      "exe_name": "dotnet.exe"
+    },
+    "source_label": "Program Files",
+    "priority": 50,
+    "root_offset": 0
+  }
+]

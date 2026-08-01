@@ -1,0 +1,8 @@
+[
+  {
+    "name": "DOTNET_ROOT",
+    "desc": ".NET 安装根目录",
+    "check_type": "path",
+    "tier": "core"
+  }
+]

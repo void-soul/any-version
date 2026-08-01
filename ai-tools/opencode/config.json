@@ -1,0 +1,54 @@
+{
+  "id": "opencode",
+  "displayName": "OpenCode",
+  "avatar": "🔓",
+  "nickname": "OpenCode",
+  "category": "开源社区",
+  "website": "https://opencode.ai",
+  "apiProtocol": "openai",
+  "supportModel": true,
+  "supportFallbackModel": true,
+
+  "supportsOpenai": true,
+  "supportsAnthropic": false,
+  "supportsGoogle": false,
+  "builtinModels": [],
+  "supportsOptimizer": true,
+  "supportsRectifier": true,
+
+  "resumeCmd": "opencode -s {session_id}",
+  "continueCmd": null,
+  "dispatchCmd": "opencode run --format json --dangerously-skip-permissions \"{prompt}\"",
+  "dispatchResumeCmd": "opencode run --format json --dangerously-skip-permissions -s {session_id} \"{prompt}\"",
+  "runner": "opencode-json",
+  "promptMode": "arg",
+  "cacheDirs": [".opencode"],
+  "pkgManager": "npm",
+  "pkgName": "opencode-ai",
+  "configFile": {
+    "path": "~/.config/opencode/opencode.json",
+    "format": "jsonc",
+      "write": {
+        "provider.anyversion.name": "anyversion",
+        "provider.anyversion.npm": "@ai-sdk/openai-compatible",
+        "provider.anyversion.options.baseURL": "baseUrl",
+        "provider.anyversion.options.apiKey": "apiKey",
+        "provider.anyversion.models.{model_name}.name": "modelName",
+        "provider.anyversion.models.{fallback_model_name}.name": "fallbackModelName",
+        "model": "model",
+        "small_model": "fallbackModel",
+        "env.OPENAI_MODEL": "model",
+        "env.OPENCODE_MODEL": "model"
+      }
+  },
+  "modelFormat": {
+    "prefix": "anyversion/",
+    "extractLast": true
+  },
+  "sessions": {
+    "type": "opencode_style",
+    "dirs": ["~/.config/opencode", "~/.opencode"]
+  },
+  "skillsDir": "~/.opencode/skills",
+  "skillsDirXdg": "~/.config/opencode/skills"
+}

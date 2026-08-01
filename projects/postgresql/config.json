@@ -1,0 +1,82 @@
+{
+  "id": "postgresql",
+  "display_name": "PostgreSQL",
+  "category": "service",
+  "official_website": "https://www.postgresql.org",
+  "simple_mode": false,
+  "bin_dirs": [
+    "bin"
+  ],
+  "has_cache": false,
+  "cache_detect_cmd": null,
+  "cache_default_path": null,
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": true,
+  "default_port": 5432,
+  "data_dir": null,
+  "log_dir": null,
+  "config_file": "postgresql.conf",
+  "config_file_candidates": [
+    "{install_root}\\data\\postgresql.conf"
+  ],
+  "start_cmd": "\"{install_root}\\bin\\pg_ctl.exe\" start -D \"{data_dir}\" -l \"{log_dir}\\postgresql.log\" -o \"-p {port}\"",
+  "stop_cmd": "\"{install_root}\\bin\\pg_ctl.exe\" stop -D \"{data_dir}\" -m fast",
+  "service_process_exes": [
+    "postgres"
+  ],
+  "service_names": [
+    "^postgresql(-x64)?-\\d+$",
+    "^postgrespro-.*-\\d+$"
+  ],
+  "service_start_mode": "detached",
+  "service_allow_force_kill": false,
+  "service_auto_create_dirs": false,
+  "version_cmd": "postgres --version",
+  "version_exe": "postgres",
+  "download_url_template": "https://sbp.enterprisedb.com/get/dbbinaries/postgresql-{version}-1-windows-x64-binaries.zip",
+  "download_file_ext": "zip",
+  "version_url_prefix_map": {
+    "18.": "https://sbp.enterprisedb.com/getfile.jsp?fileid=1260303",
+    "17.": "https://sbp.enterprisedb.com/getfile.jsp?fileid=1260307",
+    "16.": "https://sbp.enterprisedb.com/getfile.jsp?fileid=1260308",
+    "15.": "https://sbp.enterprisedb.com/getfile.jsp?fileid=1260311",
+    "14.": "https://sbp.enterprisedb.com/getfile.jsp?fileid=1260316",
+    "13.": "https://sbp.enterprisedb.com/getfile.jsp?fileid=1259854",
+    "11.": "https://sbp.enterprisedb.com/getfile.jsp?fileid=1258670",
+    "10.": "https://sbp.enterprisedb.com/getfile.jsp?fileid=1258258"
+  },
+  "post_install": {
+    "init_command": "bin/initdb.exe -D data -U postgres --locale=C --encoding=UTF8"
+  },
+  "data_dirs": [
+    {
+      "id": "data",
+      "display_name": "PostgreSQL 数据目录",
+      "kind": "data",
+      "possible_paths": [
+        "{install_root}\\data"
+      ],
+      "default_path": "{install_root}\\data",
+      "supports_direct": true,
+      "auto_create": false,
+      "required_for_start": true
+    },
+    {
+      "id": "log",
+      "display_name": "PostgreSQL 日志目录",
+      "kind": "log",
+      "possible_paths": [
+        "{install_root}\\log",
+        "{install_root}\\logs"
+      ],
+      "default_path": "{install_root}\\log",
+      "supports_direct": true,
+      "auto_create": true,
+      "required_for_start": false
+    }
+  ]
+}

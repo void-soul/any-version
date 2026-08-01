@@ -1,0 +1,46 @@
+{
+  "id": "codex-cli",
+  "displayName": "Codex CLI",
+  "avatar": "⚡",
+  "nickname": "Codex",
+  "category": "OpenAI",
+  "website": "https://github.com/openai/codex",
+  "apiProtocol": "openai",
+  "supportModel": true,
+  "supportFallbackModel": false,
+
+  "supportsOpenai": true,
+  "supportsAnthropic": false,
+  "supportsGoogle": false,
+  "builtinModels": [],
+  "supportsOptimizer": true,
+  "supportsRectifier": true,
+
+  "resumeCmd": null,
+  "continueCmd": "codex resume --last",
+  "dispatchCmd": "codex exec --json --full-auto --model {model}",
+  "dispatchResumeCmd": "codex exec --json --full-auto --model {model} resume {session_id}",
+  "runner": "codex-json",
+  "promptMode": "stdin",
+  "cacheDirs": [".codex"],
+  "pkgManager": "npm",
+  "pkgName": "@openai/codex",
+  "configFile": {
+    "path": "~/.codex/config.toml",
+    "format": "toml",
+    "write": {
+      "model": "model",
+      "model_provider": "anyversion",
+      "model_providers.anyversion.name": "AnyVersion",
+      "model_providers.anyversion.base_url": "baseUrl",
+      "model_providers.anyversion.env_key": "OPENAI_API_KEY",
+      "env.OPENAI_MODEL": "model",
+      "env.CODEX_MODEL": "model"
+    }
+  },
+  "sessions": {
+    "type": "jsonl",
+    "dirs": ["~/.codex/sessions.jsonl"]
+  },
+  "skillsDir": "~/.codex/skills"
+}

@@ -1,0 +1,12 @@
+[
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "gradle",
+      "exe_name": "gradle.bat"
+    },
+    "source_label": "Gradle",
+    "priority": 50,
+    "root_offset": 1
+  }
+]

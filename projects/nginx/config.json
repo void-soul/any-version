@@ -1,0 +1,65 @@
+{
+  "id": "nginx",
+  "display_name": "Nginx",
+  "category": "service",
+  "official_website": "https://nginx.org",
+  "simple_mode": false,
+  "bin_dirs": [
+    ""
+  ],
+  "has_cache": false,
+  "cache_detect_cmd": null,
+  "cache_default_path": null,
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": true,
+  "default_port": 80,
+  "data_dir": null,
+  "log_dir": "logs",
+  "config_file": "conf\\nginx.conf",
+  "config_file_candidates": [
+    "{install_root}\\conf\\nginx.conf"
+  ],
+  "start_cmd": "\"{install_root}\\nginx.exe\" -c \"{config_file}\" -p \"{install_root}\"",
+  "stop_cmd": "\"{install_root}\\nginx.exe\" -s quit -c \"{config_file}\" -p \"{install_root}\"",
+  "service_process_exes": [
+    "nginx"
+  ],
+  "service_names": [],
+  "service_start_mode": "detached",
+  "service_allow_force_kill": false,
+  "service_auto_create_dirs": true,
+  "version_cmd": "nginx -v",
+  "version_exe": "nginx",
+  "download_url_template": "https://nginx.org/download/nginx-{version}.zip",
+  "download_file_ext": "zip",
+  "data_dirs": [
+    {
+      "id": "log",
+      "display_name": "Nginx 日志目录",
+      "kind": "log",
+      "possible_paths": [
+        "{install_root}\\logs"
+      ],
+      "default_path": "{install_root}\\logs",
+      "supports_direct": true,
+      "auto_create": true,
+      "required_for_start": false
+    },
+    {
+      "id": "config",
+      "display_name": "Nginx 配置目录",
+      "kind": "config",
+      "possible_paths": [
+        "{install_root}\\conf"
+      ],
+      "default_path": "{install_root}\\conf",
+      "supports_direct": false,
+      "auto_create": false,
+      "required_for_start": true
+    }
+  ]
+}

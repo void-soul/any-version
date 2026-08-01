@@ -1,0 +1,8 @@
+[
+  {
+    "name": "MAVEN_HOME",
+    "desc": "Maven 安装根目录",
+    "check_type": "path",
+    "tier": "core"
+  }
+]

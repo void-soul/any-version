@@ -1,0 +1,51 @@
+{
+  "id": "pi",
+  "displayName": "Pi Coding Agent",
+  "avatar": "🥧",
+  "nickname": "Pi",
+  "category": "开源社区",
+  "website": "https://github.com/earendil-works/pi-coding-agent",
+  "apiProtocol": "openai",
+  "supportModel": true,
+  "supportFallbackModel": false,
+
+  "supportsOpenai": true,
+  "supportsAnthropic": false,
+  "supportsGoogle": false,
+  "builtinModels": [],
+  "supportsOptimizer": true,
+  "supportsRectifier": true,
+
+  "resumeCmd": null,
+  "continueCmd": null,
+  "dispatchCmd": "pi --provider anyversion --model {model} -p \"{prompt}\"",
+  "dispatchResumeCmd": "pi --provider anyversion --model {model} -p -s {session_id} \"{prompt}\"",
+  "runner": "stream-json",
+  "promptMode": "arg",
+  "cacheDirs": [".pi"],
+  "pkgManager": "npm",
+  "pkgName": "@earendil-works/pi-coding-agent",
+  "configFile": {
+    "path": "~/.pi/agent/models.json",
+    "format": "json",
+    "write": {
+      "providers.anyversion.baseUrl": "baseUrl",
+      "providers.anyversion.api": "openai-completions",
+      "providers.anyversion.apiKey": "apiKey",
+      "providers.anyversion.models": "piModels",
+      "providers.anyversion.compat.supportsDeveloperRole": "boolFalse",
+      "providers.anyversion.compat.supportsReasoningEffort": "boolFalse",
+      "env.PI_MODEL": "model",
+      "env.OPENAI_MODEL": "model"
+    }
+  },
+  "modelFormat": {
+    "prefix": "",
+    "extractLast": true
+  },
+  "sessions": {
+    "type": "pi",
+    "dirs": ["~/.pi/agent/sessions"]
+  },
+  "skillsDir": "~/.pi/agent/skills"
+}

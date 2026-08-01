@@ -1,0 +1,59 @@
+[
+  {
+    "id": "go",
+    "display_name": "Go Modules",
+    "built_in": true,
+    "install_cmd": null,
+    "version_cmd": "go version",
+    "version_exe": "go",
+    "cache_detect_cmd": "go env GOMODCACHE",
+    "cache_default_path": "{home}\\go\\pkg\\mod",
+    "cache_env_var": "GOMODCACHE",
+    "cache_set_cmd_template": "go env -w GOMODCACHE=\"{path}\"",
+    "data_detect_cmd": null,
+    "data_default_path": null,
+    "data_env_var": null,
+    "data_set_cmd_template": null,
+    "proxy_detect_cmd": "go env GOPROXY",
+    "proxy_set_cmd_template": "go env -w GOPROXY={url}",
+    "mirror_cmd_template": "go env -w GOPROXY={url}",
+    "mirror_detect_cmd": "go env GOPROXY",
+    "mirror_config_desc": "通过 go env -w 修改 GOPROXY（Go 模块代理地址）",
+    "mirror_options": [
+      {
+        "mirror_type": "official",
+        "name": "官方源 (GOPROXY)",
+        "url": "https://proxy.golang.org,direct"
+      },
+      {
+        "mirror_type": "goproxy.cn",
+        "name": "七牛云 GOPROXY",
+        "url": "https://goproxy.cn,direct"
+      },
+      {
+        "mirror_type": "aliyun",
+        "name": "阿里云 GOPROXY",
+        "url": "https://mirrors.aliyun.com/goproxy/,direct"
+      }
+    ]
+  },
+  {
+    "id": "go-build",
+    "display_name": "Go Build Cache",
+    "built_in": true,
+    "install_cmd": null,
+    "version_cmd": "go version",
+    "version_exe": "go",
+    "cache_detect_cmd": "go env GOCACHE",
+    "cache_default_path": "{home}\\AppData\\Local\\go-build",
+    "cache_env_var": "GOCACHE",
+    "cache_set_cmd_template": "go env -w GOCACHE=\"{path}\"",
+    "data_detect_cmd": null,
+    "data_default_path": null,
+    "data_env_var": null,
+    "data_set_cmd_template": null,
+    "proxy_detect_cmd": null,
+    "proxy_set_cmd_template": null,
+    "mirror_options": null
+  }
+]

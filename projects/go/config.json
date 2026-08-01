@@ -1,0 +1,35 @@
+{
+  "id": "go",
+  "display_name": "Go",
+  "category": "language",
+  "official_website": "https://go.dev",
+  "bin_dirs": [
+    "bin"
+  ],
+  "has_cache": true,
+  "cache_detect_cmd": null,
+  "cache_default_path": "{home}\\go\\pkg\\mod",
+  "has_mirror": true,
+  "mirror_options": [
+    {
+      "mirror_type": "goproxy.cn",
+      "name": "七牛云 GOPROXY",
+      "url": "https://goproxy.cn,direct"
+    },
+    {
+      "mirror_type": "aliyun",
+      "name": "阿里云 GOPROXY",
+      "url": "https://mirrors.aliyun.com/goproxy/,direct"
+    }
+  ],
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": false,
+  "default_port": null,
+  "download_url_template": "https://go.dev/dl/go{version}.windows-amd64.zip",
+  "download_file_ext": "zip",
+  "version_cmd": "go version",
+  "version_exe": "go",
+  "version_parse_regex": "go version go(\\d+\\.\\d+(?:\\.\\d+)*)"
+}

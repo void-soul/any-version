@@ -1,0 +1,18 @@
+{
+  "type": "json_api",
+  "url": "https://www.python.org/api/v2/downloads/release/?is_published=true&pre_release=false&format=json",
+  "response_type": "array",
+  "version_field": "name",
+  "version_transform": "trim_prefix:Python ",
+  "filter_field": "version",
+  "filter_value": 3,
+  "reverse": true,
+  "exclude_version_patterns": [
+    "^3\\.7\\.(1[0-9]|[2-9]\\d|\\d{3,})$",
+    "^3\\.8\\.(1[1-9]|[2-9]\\d|\\d{3,})$",
+    "^3\\.9\\.(1[4-9]|[2-9]\\d|\\d{3,})$",
+    "^3\\.10\\.(1[2-9]|[2-9]\\d|\\d{3,})$",
+    "^3\\.11\\.(1[0-9]|[2-9]\\d|\\d{3,})$"
+  ],
+  "sort_by_version": true
+}

@@ -1,0 +1,71 @@
+{
+  "id": "mongodb",
+  "display_name": "MongoDB",
+  "category": "service",
+  "official_website": "https://www.mongodb.com",
+  "simple_mode": false,
+  "bin_dirs": [
+    "bin"
+  ],
+  "has_cache": false,
+  "cache_detect_cmd": null,
+  "cache_default_path": null,
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": true,
+  "default_port": 27017,
+  "data_dir": null,
+  "log_dir": null,
+  "config_file": "mongod.cfg",
+  "config_file_candidates": [
+    "{install_root}\\bin\\mongod.cfg",
+    "{install_root}\\mongod.cfg"
+  ],
+  "start_cmd": "\"{install_root}\\bin\\mongod.exe\" --dbpath \"{data_dir}\" --logpath \"{log_dir}\\mongod.log\" --logappend --port {port}",
+  "stop_cmd": null,
+  "service_process_exes": [
+    "mongod"
+  ],
+  "service_names": [
+    "^MongoDB.*$"
+  ],
+  "service_start_mode": "detached",
+  "service_allow_force_kill": false,
+  "service_auto_create_dirs": true,
+  "version_cmd": "mongod --version",
+  "version_exe": "mongod",
+  "download_url_template": "https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-{version}.zip",
+  "download_file_ext": "zip",
+  "data_dirs": [
+    {
+      "id": "data",
+      "display_name": "MongoDB 数据目录",
+      "kind": "data",
+      "possible_paths": [
+        "C:\\data\\db",
+        "{install_root}\\data\\db"
+      ],
+      "default_path": "{install_root}\\data\\db",
+      "supports_direct": true,
+      "auto_create": true,
+      "required_for_start": true
+    },
+    {
+      "id": "log",
+      "display_name": "MongoDB 日志目录",
+      "kind": "log",
+      "possible_paths": [
+        "C:\\data\\log",
+        "{install_root}\\log",
+        "{install_root}\\logs"
+      ],
+      "default_path": "{install_root}\\log",
+      "supports_direct": true,
+      "auto_create": true,
+      "required_for_start": false
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "type": "json_api",
+  "url": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/releases-index.json",
+  "response_type": "object_with_array",
+  "array_field": "releases-index",
+  "version_field": "latest-sdk",
+  "filter_contains_not": "preview",
+  "reverse": true
+}

@@ -1,0 +1,72 @@
+[
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "Redis",
+      "exe_name": "redis-server.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 40,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "Memurai",
+      "exe_name": "memurai.exe"
+    },
+    "source_label": "Memurai",
+    "priority": 40,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "scoop\\apps\\redis",
+      "exe_name": "redis-server.exe"
+    },
+    "source_label": "Scoop",
+    "priority": 45,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "chocolatey\\lib\\redis-64",
+      "exe_name": "redis-server.exe"
+    },
+    "source_label": "Chocolatey",
+    "priority": 45,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "C:\\Program Files\\Redis",
+      "exe_name": "redis-server.exe"
+    },
+    "source_label": "Program Files",
+    "priority": 50,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "C:\\Program Files\\Memurai",
+      "exe_name": "memurai.exe"
+    },
+    "source_label": "Memurai",
+    "priority": 50,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "redis-server.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 0
+  }
+]

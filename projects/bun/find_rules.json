@@ -1,0 +1,32 @@
+[
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "scoop\\apps\\bun",
+      "exe_name": "bun.exe"
+    },
+    "source_label": "Scoop",
+    "priority": 40,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": ".bun\\bin",
+      "exe_name": "bun.exe"
+    },
+    "source_label": "Bun Install",
+    "priority": 50,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "bun.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 0
+  }
+]

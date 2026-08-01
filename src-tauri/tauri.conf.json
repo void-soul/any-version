@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AnyVersion",
+  "version": "1.0.1",
+  "identifier": "com.voidsoul.anyversion",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:9999",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "AnyVersion 开发助理",
+        "width": 1150,
+        "height": 780,
+        "decorations": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": false,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "../ai-tools/*.json",
+      "../ai-tools/*/*.json",
+      "../projects/*/*.json"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "active": false,
+      "endpoints": [
+        "https://github.com/void-soul/any-version/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXkyOEI4ODhCQkMxQTUxREQ0MQ0KUldSQjNWRWF2SXVJaXlZdk1Sd0g0cWRPNXhzU3Z4WGNORzZ5N3pCNDBvRUxxbUY5ditsTjJmZVo="
+    }
+  }
+}

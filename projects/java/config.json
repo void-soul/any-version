@@ -1,0 +1,47 @@
+{
+  "id": "java",
+  "display_name": "Java",
+  "category": "language",
+  "official_website": "https://adoptium.net",
+  "bin_dirs": [
+    "bin"
+  ],
+  "has_cache": false,
+  "cache_detect_cmd": null,
+  "cache_default_path": null,
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": true,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": false,
+  "default_port": null,
+  "data_dir": null,
+  "log_dir": null,
+  "config_file": null,
+  "start_cmd": null,
+  "stop_cmd": null,
+  "download_url_template": "https://api.adoptium.net/v3/binary/version/jdk-{version}/windows/x64/jdk/hotspot/normal/eclipse?project=jdk",
+  "remote_versions_url": "https://api.adoptium.net/v3/info/release_versions?page=0&page_size=50&release_type=ga&project=jdk&version=%5B8%2C%29",
+  "user_configurable_vars": [
+    {
+      "name": "JAVA_TOOL_OPTIONS",
+      "desc": "JVM 启动参数（被所有 JVM 工具读取）",
+      "placeholder": "-Xmx2g -Dfile.encoding=UTF-8"
+    },
+    {
+      "name": "_JAVA_OPTIONS",
+      "desc": "JVM 启动参数（被 OpenJDK/OracleJDK 读取）",
+      "placeholder": "-Xmx2g -Xms512m"
+    },
+    {
+      "name": "JDK_JAVA_OPTIONS",
+      "desc": "JDK 9+ 专用 JVM 选项",
+      "placeholder": "--add-opens java.base/java.lang=ALL-UNNAMED"
+    }
+  ],
+  "download_file_ext": "zip",
+  "version_cmd": "java -version 2>&1",
+  "version_exe": "java",
+  "version_parse_regex": "(\\d+\\.\\d+\\.\\d+)"
+}

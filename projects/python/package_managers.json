@@ -1,0 +1,101 @@
+[
+  {
+    "id": "pip",
+    "display_name": "pip",
+    "built_in": true,
+    "install_cmd": "install_pip",
+    "version_cmd": "pip --version",
+    "version_exe": "pip",
+    "run_via_runtime_args": [
+      "-m",
+      "pip"
+    ],
+    "cache_detect_cmd": null,
+    "cache_default_path": "{home}\\AppData\\Local\\pip\\Cache",
+    "cache_env_var": "PIP_CACHE_DIR",
+    "cache_set_cmd_template": null,
+    "data_detect_cmd": null,
+    "data_default_path": null,
+    "data_env_var": null,
+    "data_set_cmd_template": null,
+    "proxy_detect_cmd": null,
+    "proxy_set_cmd_template": null,
+    "pkg_list_cmd": "pip list --format=json",
+    "pkg_list_format": "pip_json",
+    "pkg_upgrade_cmd_template": "pip install --upgrade {pkg}",
+    "pkg_homepage_template": "https://pypi.org/project/{pkg}/",
+    "pkg_outdated_cmd": "pip list --outdated --format=json",
+    "pkg_outdated_format": "pip_outdated_json",
+    "mirror_config_file": "{appdata}\\pip\\pip.ini",
+    "mirror_detect_file_regex": "(?i)index-url\\s*=\\s*([^\\r\\n]+)",
+    "mirror_config_desc": "%APPDATA%\\pip\\pip.ini（或 PIP_INDEX_URL 环境变量）",
+    "mirror_options": [
+      {
+        "mirror_type": "official",
+        "name": "官方源",
+        "url": "https://pypi.org/simple",
+        "config_content": null
+      },
+      {
+        "mirror_type": "aliyun",
+        "name": "阿里云",
+        "url": "https://mirrors.aliyun.com/pypi/simple/",
+        "config_content": "[global]\nindex-url = https://mirrors.aliyun.com/pypi/simple/\ntrusted-host = mirrors.aliyun.com\n"
+      },
+      {
+        "mirror_type": "tsinghua",
+        "name": "清华大学",
+        "url": "https://pypi.tuna.tsinghua.edu.cn/simple",
+        "config_content": "[global]\nindex-url = https://pypi.tuna.tsinghua.edu.cn/simple\ntrusted-host = pypi.tuna.tsinghua.edu.cn\n"
+      }
+    ]
+  },
+  {
+    "id": "uv",
+    "display_name": "uv",
+    "built_in": false,
+    "install_cmd": "pip install uv",
+    "version_cmd": "uv --version",
+    "version_exe": "uv",
+    "run_via_runtime_args": null,
+    "cache_detect_cmd": "uv cache dir",
+    "cache_default_path": "{home}\\AppData\\Local\\uv\\cache",
+    "cache_env_var": "UV_CACHE_DIR",
+    "cache_set_cmd_template": null,
+    "data_detect_cmd": "uv python dir",
+    "data_default_path": "{home}\\AppData\\Roaming\\uv\\python",
+    "data_env_var": null,
+    "data_set_cmd_template": null,
+    "proxy_detect_cmd": null,
+    "proxy_set_cmd_template": null,
+    "pkg_list_cmd": "uv pip list --format=json",
+    "pkg_list_format": "pip_json",
+    "pkg_upgrade_cmd_template": "uv pip install --upgrade {pkg}",
+    "pkg_homepage_template": "https://pypi.org/project/{pkg}/",
+    "pkg_outdated_cmd": "uv pip list --outdated --format=json",
+    "pkg_outdated_format": "pip_outdated_json",
+    "mirror_config_file": "{home}\\.config\\uv\\uv.toml",
+    "mirror_detect_file_regex": "(?i)index-url\\s*=\\s*\"?([^\"\\r\\n]+)\"?",
+    "mirror_config_desc": "uv.toml（或 UV_INDEX_URL 环境变量）",
+    "mirror_options": [
+      {
+        "mirror_type": "official",
+        "name": "官方源",
+        "url": "https://pypi.org/simple",
+        "config_content": null
+      },
+      {
+        "mirror_type": "aliyun",
+        "name": "阿里云",
+        "url": "https://mirrors.aliyun.com/pypi/simple/",
+        "config_content": "[[index]]\nurl = \"https://mirrors.aliyun.com/pypi/simple/\"\ndefault = true\n"
+      },
+      {
+        "mirror_type": "tsinghua",
+        "name": "清华大学",
+        "url": "https://pypi.tuna.tsinghua.edu.cn/simple",
+        "config_content": "[[index]]\nurl = \"https://pypi.tuna.tsinghua.edu.cn/simple\"\ndefault = true\n"
+      }
+    ]
+  }
+]

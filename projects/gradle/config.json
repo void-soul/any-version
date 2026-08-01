@@ -1,0 +1,25 @@
+{
+  "id": "gradle",
+  "display_name": "Gradle",
+  "category": "tool",
+  "official_website": "https://gradle.org",
+  "bin_dirs": [
+    "bin"
+  ],
+  "has_cache": true,
+  "cache_detect_cmd": null,
+  "cache_default_path": "{home}\\.gradle\\caches",
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": false,
+  "default_port": null,
+  "download_url_template": "https://services.gradle.org/distributions/gradle-{version}-bin.zip",
+  "download_file_ext": "zip",
+  "version_cmd": "gradle -v",
+  "version_exe": "gradle",
+  "version_parse_regex": "Gradle (\\d+\\.\\d+(?:\\.\\d+)*)",
+  "remote_versions_url": "https://services.gradle.org/versions/all"
+}

@@ -1,0 +1,33 @@
+[
+  {
+    "pattern": {
+      "type": "env_bin",
+      "env_var": "FLUTTER_ROOT",
+      "bin_sub": "bin",
+      "exe_name": "flutter.bat"
+    },
+    "source_label": "FLUTTER_ROOT",
+    "priority": 10,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "scoop\\apps\\flutter",
+      "exe_name": "flutter.bat"
+    },
+    "source_label": "Scoop",
+    "priority": 40,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "flutter.bat"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 0
+  }
+]

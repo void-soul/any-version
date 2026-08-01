@@ -1,0 +1,42 @@
+[
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "MongoDB\\Server",
+      "exe_name": "mongod.exe"
+    },
+    "source_label": "Program Files",
+    "priority": 20,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "C:\\Program Files\\MongoDB\\Server\\8.0\\bin",
+      "exe_name": "mongod.exe"
+    },
+    "source_label": "Program Files",
+    "priority": 30,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "C:\\Program Files\\MongoDB\\Server\\7.0\\bin",
+      "exe_name": "mongod.exe"
+    },
+    "source_label": "Program Files",
+    "priority": 31,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "mongod.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 1
+  }
+]

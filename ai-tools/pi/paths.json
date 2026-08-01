@@ -1,0 +1,25 @@
+{
+  "name": "Pi Coding Agent",
+  "category": "CLI Code",
+  "apiProtocol": ["openai"],
+  "command": "pi",
+  "startCommand": "pi --provider anyversion",
+  "detectCmd": "node -e \"try{require.resolve('@earendil-works/pi-coding-agent');console.log('ok')}catch(e){console.log('')}\"",
+  "installCmd": "npm install -g @earendil-works/pi-coding-agent",
+  "paths": {
+    "win32": [
+      "%APPDATA%/npm/pi.cmd",
+      "%USERPROFILE%/scoop/shims/pi.exe",
+      "%USERPROFILE%/.bun/bin/pi.exe",
+      "%LOCALAPPDATA%/pnpm/pi.exe"
+    ],
+    "darwin": [
+      "/usr/local/bin/pi",
+      "~/.bun/bin/pi"
+    ],
+    "linux": [
+      "/usr/local/bin/pi",
+      "~/.bun/bin/pi"
+    ]
+  }
+}

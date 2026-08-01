@@ -1,0 +1,45 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+bin
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.log
+# Auto-recovered editor fragments
+src-tauri/src/commands/recovered_*.rs
+.catpaw
+.claude
+.codebuddy
+.vscode
+.workbuddy
+docs
+QA.md
+CLAUDE.md
+# Tauri updater signing keys (NEVER commit the private key)
+src-tauri/keypair/
+*.key
+.qoder/*
+**/target/*
+tmp_ms.json
+tmp_zip_head.txt
+tmp_bins.txt
+# Temporary certs & downloaded binaries
+*.crt

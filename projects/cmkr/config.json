@@ -1,0 +1,27 @@
+{
+  "id": "cmkr",
+  "display_name": "cmkr",
+  "category": "tool",
+  "official_website": "https://github.com/build-cpp/cmkr",
+  "simple_mode": false,
+  "bin_dirs": [
+    ""
+  ],
+  "has_cache": false,
+  "has_mirror": false,
+  "has_pkg": false,
+  "is_service": false,
+  "default_port": null,
+  "download_url_template": "https://github.com/build-cpp/cmkr/releases/download/v{version}/cmkr-windows.zip",
+  "download_file_ext": "zip",
+  "version_cmd": "cmkr --version",
+  "version_exe": "cmkr",
+  "version_parse_regex": "(\\d+\\.\\d+(?:\\.\\d+)*)",
+  "remote_versions_url": "https://api.github.com/repos/build-cpp/cmkr/releases",
+  "remote_versions_config": {
+    "type": "json_api",
+    "response_type": "array",
+    "version_field": "tag_name",
+    "version_transform": "trim_prefix:v"
+  }
+}

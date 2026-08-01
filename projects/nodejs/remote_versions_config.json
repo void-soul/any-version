@@ -1,0 +1,8 @@
+{
+  "type": "json_api",
+  "response_type": "array",
+  "version_field": "version",
+  "version_transform": "trim_prefix:v",
+  "extra_field": "lts",
+  "extra_format": "lts_label"
+}

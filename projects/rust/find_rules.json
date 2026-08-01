@@ -1,0 +1,33 @@
+[
+  {
+    "pattern": {
+      "type": "env_bin",
+      "env_var": "CARGO_HOME",
+      "bin_sub": "bin",
+      "exe_name": "rustc.exe"
+    },
+    "source_label": "CARGO_HOME",
+    "priority": 10,
+    "root_offset": 2
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "scoop\\apps\\rust",
+      "exe_name": "rustc.exe"
+    },
+    "source_label": "Scoop",
+    "priority": 40,
+    "root_offset": 2
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "rustc.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 0
+  }
+]

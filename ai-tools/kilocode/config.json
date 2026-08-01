@@ -1,0 +1,54 @@
+{
+  "id": "kilocode",
+  "displayName": "Kilo Code",
+  "avatar": "🪁",
+  "nickname": "Kilo",
+  "category": "开源社区",
+  "website": "https://kilo.ai/cli",
+  "apiProtocol": "openai",
+  "supportModel": true,
+  "supportFallbackModel": true,
+
+  "supportsOpenai": true,
+  "supportsAnthropic": false,
+  "supportsGoogle": false,
+  "builtinModels": [],
+  "supportsOptimizer": true,
+  "supportsRectifier": true,
+
+  "resumeCmd": "kilo -s {session_id}",
+  "continueCmd": "kilo -c",
+  "dispatchCmd": "kilo run --format json --dangerously-skip-permissions \"{prompt}\"",
+  "dispatchResumeCmd": "kilo run --format json --dangerously-skip-permissions -s {session_id} \"{prompt}\"",
+  "runner": "opencode-json",
+  "promptMode": "arg",
+  "cacheDirs": [".kilo", ".kilocode"],
+  "pkgManager": "npm",
+  "pkgName": "@kilocode/cli",
+  "configFile": {
+    "path": "~/.config/kilocode/config.json",
+    "format": "jsonc",
+    "write": {
+      "provider.anyversion.name": "anyversion",
+      "provider.anyversion.npm": "@ai-sdk/openai-compatible",
+      "provider.anyversion.options.baseURL": "baseUrl",
+      "provider.anyversion.options.apiKey": "apiKey",
+      "provider.anyversion.models.{model_name}.name": "modelName",
+      "provider.anyversion.models.{fallback_model_name}.name": "fallbackModelName",
+      "model": "model",
+      "small_model": "fallbackModel",
+      "env.KILO_MODEL": "model",
+      "env.OPENAI_MODEL": "model"
+    }
+  },
+  "modelFormat": {
+    "prefix": "anyversion/",
+    "extractLast": true
+  },
+  "sessions": {
+    "type": "opencode_style",
+    "dirs": ["~/.config/kilo", "~/.kilo"]
+  },
+  "skillsDir": "~/.kilocode/skills",
+  "skillsDirXdg": "~/.config/kilo/skills"
+}

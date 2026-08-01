@@ -1,0 +1,46 @@
+{
+  "id": "gemini-cli",
+  "displayName": "Gemini CLI",
+  "avatar": "♊",
+  "nickname": "Gemini",
+  "category": "Google",
+  "website": "https://gemini.google.com",
+  "apiProtocol": "google",
+  "supportModel": true,
+  "supportFallbackModel": false,
+
+  "supportsOpenai": false,
+  "supportsAnthropic": false,
+  "supportsGoogle": true,
+  "builtinModels": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+  "supportsOptimizer": true,
+  "supportsRectifier": true,
+
+  "resumeCmd": "gemini --resume {session_id}",
+  "continueCmd": "gemini --resume latest",
+  "dispatchCmd": "gemini -p \"{prompt}\" --yolo -o stream-json",
+  "dispatchResumeCmd": "gemini -p \"{prompt}\" --yolo -o stream-json -r {session_id}",
+  "dispatchContinueCmd": "gemini -p \"{prompt}\" --yolo -o stream-json -r latest",
+  "runner": "gemini-json",
+  "promptMode": "arg",
+  "cacheDirs": [".gemini"],
+  "pkgManager": "npm",
+  "pkgName": "@google/gemini-cli",
+  "configFile": {
+    "path": "~/.gemini/settings.json",
+    "format": "json",
+    "write": {
+      "model.name": "model",
+      "security.auth.selectedType": "gemini-api-key",
+      "env.GEMINI_API_KEY": "apiKey",
+      "env.GOOGLE_GEMINI_BASE_URL": "baseUrl",
+      "env.GEMINI_MODEL": "model",
+      "env.GOOGLE_GEMINI_MODEL": "model"
+    }
+  },
+  "sessions": {
+    "type": "claude_projects",
+    "dirs": ["~/.gemini/projects"]
+  },
+  "skillsDir": "~/.gemini/skills"
+}
