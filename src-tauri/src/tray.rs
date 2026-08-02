@@ -79,6 +79,13 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 ID_SHOW => show_main_window(app),
                 ID_QUIT => {
                     crate::USER_QUIT_REQUESTED.store(true, Ordering::SeqCst);
+                    // 兜底强杀：即使 app.exit(0) 因后台 async 任务（scheduler/watchdog）
+                    // 卡在 Tauri 内部优雅关闭流程中，也能在短暂宽限后强制退出进程，
+                    // 彻底解决「开启 mihomo 长时间后托盘退出无响应」。
+                    std::thread::spawn(|| {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        std::process::exit(0);
+                    });
                     app.exit(0);
                 }
                 other if other.starts_with(ID_SWITCH_PREFIX) => {

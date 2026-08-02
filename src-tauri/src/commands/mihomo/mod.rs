@@ -43,6 +43,7 @@ pub struct MihomoInner {
     pub data_dir: PathBuf,
     pub stop_flag: Arc<AtomicBool>,
     pub watchdog_running: Arc<AtomicBool>,
+    pub scheduler_running: Arc<AtomicBool>,
     pub runtime_config_str: Mutex<String>,
     pub core_version: Mutex<Option<String>>,
     pub auto_last: Mutex<HashMap<String, u64>>,
@@ -408,6 +409,7 @@ pub fn init_state(app: &AppHandle) -> MihomoState {
         data_dir: data_dir.clone(),
         stop_flag: Arc::new(AtomicBool::new(true)),
         watchdog_running: Arc::new(AtomicBool::new(false)),
+        scheduler_running: Arc::new(AtomicBool::new(false)),
         runtime_config_str: Mutex::new(String::new()),
         core_version: Mutex::new(None),
         auto_last: Mutex::new(HashMap::new()),
@@ -483,9 +485,17 @@ async fn auto_update_profiles(app: &AppHandle, inner: &Arc<MihomoInner>) {
 }
 
 pub fn start_scheduler(_app: AppHandle, inner: Arc<MihomoInner>) {
+    if inner.scheduler_running.load(Ordering::SeqCst) {
+        return;
+    }
+    inner.scheduler_running.store(true, Ordering::SeqCst);
     tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(60)).await;
+            if inner.stop_flag.load(Ordering::SeqCst) {
+                inner.scheduler_running.store(false, Ordering::SeqCst);
+                break;
+            }
             let now = now_secs();
             auto_update_profiles(&_app, &inner).await;
             let profile = inner.current_profile();
@@ -528,6 +538,10 @@ pub fn start_scheduler(_app: AppHandle, inner: Arc<MihomoInner>) {
                     Some(serde_json::json!({"name": id})),
                 )
                 .await;
+            }
+            if inner.stop_flag.load(Ordering::SeqCst) {
+                inner.scheduler_running.store(false, Ordering::SeqCst);
+                break;
             }
         }
     });

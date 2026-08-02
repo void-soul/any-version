@@ -6,7 +6,7 @@
   "scripts": {
     "start": "set ANY_VERSION_PROXY_DEBUG=1 && tauri dev",
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "node scripts/bundle-resources.mjs && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "bump": "node scripts/bump-version.js",

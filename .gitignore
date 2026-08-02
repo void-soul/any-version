@@ -1,6 +1,9 @@
 # Logs
 logs
 *.log
+# 打包期生成的资源副本（由 scripts/bundle-resources.mjs 在 build 前生成，
+# 源为仓库根 ai-tools/ 与 projects/，不应提交到仓库）
+src-tauri/_up_
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

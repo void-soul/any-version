@@ -35,9 +35,9 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "../ai-tools/*.json",
-      "../ai-tools/*/*.json",
-      "../projects/*/*.json"
+      "_up_/ai-tools/*.json",
+      "_up_/ai-tools/*/*.json",
+      "_up_/projects/*/*.json"
     ]
   },
   "plugins": {
