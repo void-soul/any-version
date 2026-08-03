@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod proxy;
 mod tray;
+pub mod exit_log;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
@@ -151,15 +152,22 @@ fn cleanup_legacy_env_vars() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    exit_log::exit_log("=== app 启动 run() ===");
     cleanup_legacy_env_vars();
     sync_process_path();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
+            // 主窗口可能被销毁（见 on_window_event 的 CloseRequested 处理），
+            // 因此优先复用，缺失时经 tray::show_main_window 重建。
+            if app.get_webview_window("main").is_some() {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            } else {
+                crate::tray::show_main_window(app);
             }
         }))
         .plugin(tauri_plugin_opener::init())
@@ -205,12 +213,17 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
-                    // 关闭主窗口时隐藏而非销毁：窗口实例保留，托盘/单例再次
-                    // "显示主窗口"即可 get_webview_window("main").show() 恢复。
-                    // 若 destroy()，下次 show_main_window 会走 create_main_window
-                    // 重建，Tauri 复用已加载前端 app 时行为不稳定（窗口不显示）。
+                    // 关闭主窗口时「销毁」而非「隐藏」。
+                    // 历史实现为 hide()：WebView2 实例长期常驻，在 RTSP/mihomo
+                    // 等高负载长时运行后其渲染/GPU 进程会被系统挂起或崩溃，再次
+                    // show() 即白屏且不可自愈；同时 app.exit() 等待已挂起的
+                    // webview 关闭会导致"无法退出"。
+                    // 改为 destroy()：托盘/单例"显示主窗口"会经 show_main_window
+                    // 走 create_main_window 重建一个全新的 WebView2，从根本上
+                    // 规避死渲染问题（show_main_window 已支持窗口缺失时重建）。
                     api.prevent_close();
-                    let _ = window.hide();
+                    exit_log::exit_log("CloseRequested: destroy 主窗口（释放 WebView2 实例）");
+                    let _ = window.destroy();
                 }
             }
         })
@@ -531,27 +544,40 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
+                let quit = USER_QUIT_REQUESTED.load(Ordering::SeqCst);
+                exit_log::exit_log(&format!(
+                    "ExitRequested fired: code={:?} user_quit_requested={} prevent_exit={}",
+                    code,
+                    quit,
+                    code.is_none() && !quit
+                ));
                 // 用户通过托盘「退出」主动请求时（已带退出码），放行并执行清理。
                 // 仅当「无退出码且用户未主动请求退出」时拦截（即：仅关闭主窗口，
                 // 意图是保留托盘常驻，而非退出整个应用）。
-                if code.is_none() && !USER_QUIT_REQUESTED.load(Ordering::SeqCst) {
+                if code.is_none() && !quit {
                     api.prevent_exit();
+                    exit_log::exit_log("ExitRequested: 拦截退出（仅关主窗口，保留托盘）");
                 } else {
                     // 关键修复：清理逻辑（停常驻代理、kill Mihomo 内核、清系统代理）
                     // 放到后台线程执行，绝不阻塞主退出路径。否则 set_sys_proxy 等
                     // 同步 shell 调用偶发卡死会导致进程永远走不到真正退出，表现为
                     // 「点了托盘退出但程序仍在」。后台线程跑清理，主线程直接强制退出。
+                    exit_log::exit_log("ExitRequested: 进入退出分支，启动清理线程 + 300ms 强杀兜底");
                     let app_handle = app.clone();
                     std::thread::spawn(move || {
+                        exit_log::exit_log("cleanup thread: start (stop_all_room_proxies / kill_on_exit)");
                         commands::ai::collab::stop_all_room_proxies();
+                        exit_log::exit_log("cleanup thread: stop_all_room_proxies done");
                         commands::mihomo::kill_on_exit(
                             &**app_handle.state::<commands::mihomo::MihomoState>(),
                         );
+                        exit_log::exit_log("cleanup thread: kill_on_exit done");
                     });
                     // 给清理线程一个极短的宽限（让 kill 尽快发出），随后强制退出。
                     // 用 spawn 而非 sleep 在主线程，避免任何阻塞。
                     std::thread::spawn(|| {
                         std::thread::sleep(std::time::Duration::from_millis(300));
+                        exit_log::exit_log("force exit: std::process::exit(0) now");
                         std::process::exit(0);
                     });
                 }

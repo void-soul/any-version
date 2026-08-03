@@ -1476,8 +1476,10 @@ fn stop_room_proxies(room_id: &str) {
 
 /// 停止所有常驻代理（应用退出时调用）
 pub fn stop_all_room_proxies() {
+    crate::exit_log::exit_log("cleanup: stop_all_room_proxies 进入");
     if let Some(map) = ROOM_PROXIES.get() {
         let mut g = map.lock();
+        crate::exit_log::exit_log("cleanup: ROOM_PROXIES 锁已获取");
         let count = g.len();
         for (_, entry) in g.drain() {
             entry.abort_handle.abort();
@@ -1485,6 +1487,9 @@ pub fn stop_all_room_proxies() {
         if count > 0 {
             eprintln!("[collab] 已停止所有常驻代理（{} 个）", count);
         }
+        crate::exit_log::exit_log(&format!("cleanup: 已 abort {} 个常驻代理", count));
+    } else {
+        crate::exit_log::exit_log("cleanup: ROOM_PROXIES 未初始化，跳过");
     }
 }
 

@@ -78,15 +78,21 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             match id {
                 ID_SHOW => show_main_window(app),
                 ID_QUIT => {
+                    crate::exit_log::exit_log("tray 退出菜单点击: 开始退出流程");
                     crate::USER_QUIT_REQUESTED.store(true, Ordering::SeqCst);
                     // 兜底强杀：即使 app.exit(0) 因后台 async 任务（scheduler/watchdog）
                     // 卡在 Tauri 内部优雅关闭流程中，也能在短暂宽限后强制退出进程，
                     // 彻底解决「开启 mihomo 长时间后托盘退出无响应」。
                     std::thread::spawn(|| {
                         std::thread::sleep(std::time::Duration::from_millis(500));
+                        crate::exit_log::exit_log("tray 兜底: 500ms 后强制 std::process::exit(0)");
                         std::process::exit(0);
                     });
+                    crate::exit_log::exit_log("tray: 调用 app.exit(0)（同步，可能阻塞直到 runtime 关闭）");
                     app.exit(0);
+                    // 正常情况下 app.exit(0) 不会返回到此处（runtime 已关闭）；
+                    // 若返回说明退出路径异常，记录以便排查。
+                    crate::exit_log::exit_log("tray: app.exit(0) 意外返回（异常）");
                 }
                 other if other.starts_with(ID_SWITCH_PREFIX) => {
                     if let Some((project_id, version)) = parse_switch_id(other) {
@@ -342,7 +348,7 @@ pub fn refresh_tray_menu(app: AppHandle) -> Result<(), String> {
     rebuild_tray_menu(&app).map_err(|e| e.to_string())
 }
 
-fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
+pub(crate) fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
     let window = match app.get_webview_window(MAIN_WINDOW_LABEL) {
         Some(window) => window,
         None => match create_main_window(app) {

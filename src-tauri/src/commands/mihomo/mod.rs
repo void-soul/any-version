@@ -548,6 +548,7 @@ pub fn start_scheduler(_app: AppHandle, inner: Arc<MihomoInner>) {
 }
 
 pub fn kill_on_exit(inner: &MihomoInner) {
+    crate::exit_log::exit_log("cleanup: kill_on_exit 进入");
     // 注意：app_config 是 std::sync::Mutex（非重入）。下面先取出 auto_close 后
     // 立即让 Guard 离开作用域释放锁，否则后续 set_sys_proxy 内部再次 lock 会死锁，
     // 导致 ExitRequested 回调卡死、托盘"退出"无响应（仅在开启了代理自动关闭时触发）。
@@ -555,13 +556,20 @@ pub fn kill_on_exit(inner: &MihomoInner) {
         let g = inner.app_config.lock().unwrap();
         g.auto_close_proxy
     };
+    crate::exit_log::exit_log(&format!("cleanup: auto_close_proxy={}", auto_close));
     if auto_close {
+        crate::exit_log::exit_log("cleanup: 开始 set_sys_proxy(false)（同步 shell，可能卡）");
         // F5 修复：退出时清除系统代理失败应上报（此处为强制退出，保持日志但传播）
         if let Err(e) = set_sys_proxy(inner, false) {
             eprintln!("[mihomo] 退出时清除系统代理失败: {e}");
+            crate::exit_log::exit_log(&format!("cleanup: set_sys_proxy 失败: {e}"));
+        } else {
+            crate::exit_log::exit_log("cleanup: set_sys_proxy 完成");
         }
     }
+    crate::exit_log::exit_log("cleanup: 开始 stop_core");
     stop_core(inner);
+    crate::exit_log::exit_log("cleanup: stop_core 完成");
 }
 
 // ---------- 下载/安装 ----------
