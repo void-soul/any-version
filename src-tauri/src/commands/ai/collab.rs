@@ -1388,32 +1388,32 @@ async fn ensure_room_proxy(
     let api_key = provider.map(|p| p.api_key.clone()).unwrap_or_default();
 
     // 每次派发都重写工具配置文件：普通启动（AI-工具页）可能在两次派发之间
-    // 把共享配置（如 ~/.codex/config.toml）改写指向已关闭的启动代理端口
-    if port != 0 {
-        if let Some(ref p) = provider {
-            if !p.api_key.is_empty() {
-                // 声明模型名 C：伪装优先，否则所选取模型 B
-                let claimed_model = options.masquerade_model.clone()
-                    .filter(|c| !c.is_empty())
-                    .or_else(|| model_id.map(|s| s.to_string()));
-                if let Err(e) = super::launch::write_tool_config_from_spec(
-                    tool_config,
-                    model_id,
-                    claimed_model.as_deref(),
-                    &base_url,
-                    &p.api_key,
-                    options.fallback_model_id.as_deref(),
-                    options.fallback_masquerade_model.as_deref(),
-                    options.one_m_context,
-                    options.fallback_one_m_context,
-                    true,
-                    &options.custom_params,
-                    &options.custom_param_values,
-                ) {
-                    eprintln!("[collab] ⚠ 写入工具配置文件失败: {}", e);
-                } else {
-                    eprintln!("[collab] ✓ 工具配置文件已写入（baseUrl → {}）", base_url);
-                }
+    // 把共享配置（如 ~/.codex/config.toml）改写指向已关闭的启动代理端口。
+    // 即使本地代理未启动（port==0），也写入 provider 上游 URL，避免 stale config
+    // 导致工具始终使用旧模型（如 open-code 忽略自定义 env var，只读配置文件 model 字段）。
+    if let Some(ref p) = provider {
+        if !base_url.is_empty() {
+            // 声明模型名 C：伪装优先，否则所选取模型 B
+            let claimed_model = options.masquerade_model.clone()
+                .filter(|c| !c.is_empty())
+                .or_else(|| model_id.map(|s| s.to_string()));
+            if let Err(e) = super::launch::write_tool_config_from_spec(
+                tool_config,
+                model_id,
+                claimed_model.as_deref(),
+                &base_url,
+                &p.api_key,
+                options.fallback_model_id.as_deref(),
+                options.fallback_masquerade_model.as_deref(),
+                options.one_m_context,
+                options.fallback_one_m_context,
+                true,
+                &options.custom_params,
+                &options.custom_param_values,
+            ) {
+                eprintln!("[collab] ⚠ 写入工具配置文件失败: {}", e);
+            } else {
+                eprintln!("[collab] ✓ 工具配置文件已写入（baseUrl → {}）", base_url);
             }
         }
     }
@@ -1879,7 +1879,9 @@ fn tokenize_template(tmpl: &str) -> Vec<String> {
 /// （os error 193: 不是有效的 Win32 应用程序），因此必须优先选 .cmd/.exe 等可执行的。
 #[cfg(windows)]
 fn resolve_via_where(program: &str) -> Option<String> {
-    let out = std::process::Command::new("cmd")
+    let mut c = std::process::Command::new("cmd");
+    c.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let out = c
         .args(["/c", "where", program])
         .output()
         .ok()?;
@@ -2074,7 +2076,9 @@ fn kill_tree(child: &Arc<Mutex<Option<Child>>>) {
         #[cfg(windows)]
         {
             let pid = c.id();
-            let _ = Command::new("taskkill").args(["/F", "/T", "/PID", &pid.to_string()]).output();
+            let mut tcmd = Command::new("taskkill");
+            tcmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            let _ = tcmd.args(["/F", "/T", "/PID", &pid.to_string()]).output();
         }
         #[cfg(not(windows))]
         {
@@ -2599,6 +2603,7 @@ async fn dispatch_to_tool(
             let full = argv_resolved.iter().map(|a| windows_quote(a)).collect::<Vec<_>>().join(" ");
             let quoted = format!("\"{}\"", full);
             let mut c = Command::new("cmd");
+            c.creation_flags(0x08000000); // CREATE_NO_WINDOW：禁止弹出命令提示符黑框
             c.raw_arg("/d").raw_arg("/s").raw_arg("/c").raw_arg(quoted.as_str());
             c
         }
@@ -2613,6 +2618,8 @@ async fn dispatch_to_tool(
         // 直接 spawn 工具二进制（argv 数组，不经 shell，规避注入）——对齐 cross-spawn 对可执行文件的路径
         let mut c = Command::new(&program);
         c.args(&argv_resolved[1..]);
+        #[cfg(windows)]
+        c.creation_flags(0x08000000); // CREATE_NO_WINDOW：禁止弹出命令提示符黑框
         c
     };
     command

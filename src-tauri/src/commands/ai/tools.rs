@@ -49,7 +49,10 @@ pub async fn install_ai_tool(tool_id: String) -> Result<String, String> {
     let _busy_guard = ToolBusyGuard { id: tool_id.clone() };
     set_tool_busy(&tool_id, "installing");
     let install_cmd = &paths.install_cmd;
-    let output = tokio::process::Command::new("cmd")
+    let mut cmd = tokio::process::Command::new("cmd");
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW：禁止弹出命令提示符黑框
+    let output = cmd
         .args(["/c", install_cmd])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -81,7 +84,10 @@ pub async fn upgrade_ai_tool(tool_id: String) -> Result<String, String> {
         Some("pip") => format!("pip install --upgrade {}", pkg_name),
         _ => paths.install_cmd.clone(),
     };
-    let output = tokio::process::Command::new("cmd")
+    let mut cmd = tokio::process::Command::new("cmd");
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW：禁止弹出命令提示符黑框
+    let output = cmd
         .args(["/c", &upgrade_cmd])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -116,7 +122,10 @@ pub async fn uninstall_ai_tool(tool_id: String) -> Result<String, String> {
             None => return Err("该工具未配置卸载命令".to_string()),
         },
     };
-    let output = tokio::process::Command::new("cmd")
+    let mut cmd = tokio::process::Command::new("cmd");
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW：禁止弹出命令提示符黑框
+    let output = cmd
         .args(["/c", &uninstall_cmd])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())

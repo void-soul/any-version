@@ -700,7 +700,10 @@ pub async fn install_skill_from_source(source: String) -> Result<(), String> {
     let temp_dir = get_base_dir().join("_temp_skill_clone");
     let _ = fs::remove_dir_all(&temp_dir);
 
-    let output = tokio::process::Command::new("git")
+    let mut cmd = tokio::process::Command::new("git");
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let output = cmd
         .args(["clone", "--depth", "1", &repo_url])
         .arg(&temp_dir)
         .stdout(Stdio::null())
@@ -756,7 +759,10 @@ pub async fn install_skill_from_online(
     let _ = fs::remove_dir_all(&temp_dir);
     emit_install_progress(&app, "克隆", 0, 0, "", "正在克隆技能源仓库...");
 
-    let output = tokio::process::Command::new("git")
+    let mut cmd = tokio::process::Command::new("git");
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let output = cmd
         .args(["clone", "--depth", "1", &repo_url])
         .arg(&temp_dir)
         .stdout(Stdio::null())

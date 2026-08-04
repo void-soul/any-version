@@ -19,6 +19,8 @@ use sha1::Sha1;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::sync::Mutex;
 use tauri::Manager;
 
@@ -505,6 +507,8 @@ fn run_lego(cert: &Certificate, cred: &Credential, renew: bool) -> Result<(Strin
     // 全局旗标解析而报 "flag provided but not defined: -email"。
     // 续期在 v5 中没有独立 `renew` 子命令，重新执行 `run` 即可，天数字段为 --renew-days。
     let mut cmd = Command::new(&lego);
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     cmd.arg("run");
     cmd.arg("--email").arg(&cert.email);
     cmd.arg("--accept-tos");
@@ -635,10 +639,16 @@ fn deploy_linux(node: &DeployNode, pems: &(String, String, String)) -> Result<()
     std::fs::write(&tmp_key, &pems.1).map_err(|e| e.to_string())?;
 
     let target = format!("{}@{}", user, host);
-    let scp_cert = Command::new("scp")
+    let mut scp_cert_cmd = Command::new("scp");
+    #[cfg(windows)]
+    scp_cert_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let scp_cert = scp_cert_cmd
         .args(["-P", &port, tmp.to_str().unwrap(), &format!("{}:{}", target, cert_path)])
         .output();
-    let scp_key = Command::new("scp")
+    let mut scp_key_cmd = Command::new("scp");
+    #[cfg(windows)]
+    scp_key_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let scp_key = scp_key_cmd
         .args(["-P", &port, tmp_key.to_str().unwrap(), &format!("{}:{}", target, key_path)])
         .output();
     let _ = std::fs::remove_dir_all(&isolate_dir);
@@ -649,7 +659,10 @@ fn deploy_linux(node: &DeployNode, pems: &(String, String, String)) -> Result<()
         return Err(format!("scp 私钥失败: {}", e));
     }
     if !reload.is_empty() {
-        let _ = Command::new("ssh")
+        let mut ssh_cmd = Command::new("ssh");
+        #[cfg(windows)]
+        ssh_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let _ = ssh_cmd
             .args(["-p", &port, &target, &reload])
             .output();
     }
@@ -1031,7 +1044,10 @@ pub async fn deploy_node_test(id: String) -> Result<String, String> {
             let host = node.config.get("host").cloned().unwrap_or_default();
             let port = node.config.get("port").cloned().unwrap_or_else(|| "22".into());
             let user = node.config.get("user").cloned().unwrap_or_default();
-            let out = Command::new("ssh")
+            let mut ssh_cmd = Command::new("ssh");
+            #[cfg(windows)]
+            ssh_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            let out = ssh_cmd
                 .args(["-p", &port, &format!("{}@{}", user, host), "echo ok"])
                 .output();
             match out {
