@@ -15,6 +15,8 @@ import {
   X,
   Settings2,
   ExternalLink,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import type { ModelEntry, AiProvider, AiConfig, ModelCustomParam } from "./types";
 
@@ -47,6 +49,8 @@ export default function ModelConfig() {
   const [modalMode, setModalMode] = useState<"add" | "edit">("add");
   const [form, setForm] = useState<AiProvider>({ ...EMPTY_PROVIDER });
   const [formError, setFormError] = useState<string | null>(null);
+  // API Key 明文显示开关（仅影响弹框输入框的 type，不影响保存值）
+  const [showApiKey, setShowApiKey] = useState(false);
   // 模型批量录入文本（一行一个 model_id 或 "model_id | 显示名"）
   const [modelsText, setModelsText] = useState("");
   const [fetchingModels, setFetchingModels] = useState(false);
@@ -116,6 +120,7 @@ export default function ModelConfig() {
     });
     setModelsText("");
     setFormError(null);
+    setShowApiKey(false);
     setShowModal(true);
     setShowAddMenu(false);
   };
@@ -130,6 +135,7 @@ export default function ModelConfig() {
     for (const m of provider.models) mp[m.id] = m.customParams ? [...m.customParams] : [];
     setModelParams(mp);
     setFormError(null);
+    setShowApiKey(false);
     setShowModal(true);
   };
 
@@ -424,8 +430,19 @@ export default function ModelConfig() {
               {/* API Key */}
               <div>
                 <label className="text-[10px] text-slate-500 font-semibold block mb-1">API Key</label>
-                <input type="password" value={form.api_key} onChange={e => setForm({ ...form, api_key: e.target.value })} placeholder="sk-..."
-                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500" />
+                <div className="relative">
+                  <input type={showApiKey ? "text" : "password"} value={form.api_key} onChange={e => setForm({ ...form, api_key: e.target.value })} placeholder="sk-..."
+                    className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 pr-9 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500" />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey(v => !v)}
+                    disabled={!form.api_key}
+                    title={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-slate-500 hover:text-slate-200 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-all"
+                  >
+                    {showApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
               </div>
 
               {/* 协议端点 URL（每个支持的协议一个地址） */}

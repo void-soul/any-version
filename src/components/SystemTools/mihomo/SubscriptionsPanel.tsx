@@ -123,7 +123,17 @@ export default function SubscriptionsPanel({
   const load = async () => {
     try {
       const c = await mihomoApi.getProfileConfig();
-      setCfg(c);
+      // 当前选中项以 app_config.current_profile 为准（托盘也是读它）：
+      // ProfileConfig.current 默认恒为 "default"，change_current_profile 不会更新它，
+      // 故这里从 getAppConfig 取真实值覆盖，否则绿色边框永远无法命中。
+      let cur = c.current;
+      try {
+        const ac = await mihomoApi.getAppConfig();
+        if (ac && typeof ac.current_profile === "string" && ac.current_profile) {
+          cur = ac.current_profile;
+        }
+      } catch {}
+      setCfg({ current: cur, items: c.items || [] });
       const o = await mihomoApi.getOverrideConfig().catch(() => ({ items: [] }));
       setOverrides(o?.items || []);
       // 拉取各订阅的可用性/节点数
@@ -373,7 +383,7 @@ export default function SubscriptionsPanel({
               key={it.id}
               onClick={() => doSelect(it)}
               className={`${cardCls} p-3 cursor-pointer transition-all ${
-                cur ? "border-emerald-500/40 bg-emerald-500/[0.06]" : "hover:border-white/20"
+                cur ? "border-emerald-400 ring-1 ring-emerald-400/30 bg-emerald-500/[0.06]" : "hover:border-white/20"
               }`}
             >
               <div className="flex items-start justify-between gap-2">

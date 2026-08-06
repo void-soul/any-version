@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{CheckMenuItemBuilder, Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 
@@ -702,10 +702,11 @@ fn build_mihomo_submenu(app: &AppHandle, cfg: &crate::commands::config::TrayMenu
         sub = sub.separator();
         for (id, label) in [("rule", "规则"), ("global", "全局"), ("direct", "直连")] {
             let checked = snapshot_mode == id;
-            let item = MenuItemBuilder::with_id(
+            let item = CheckMenuItemBuilder::with_id(
                 format!("{}{}", ID_MIHOMO_MODE_PREFIX, id),
-                if checked { format!("✓ {}", label) } else { label.to_string() },
+                label,
             )
+            .checked(checked)
             .enabled(running)
             .build(app)?;
             sub = sub.item(&item);
@@ -713,13 +714,18 @@ fn build_mihomo_submenu(app: &AppHandle, cfg: &crate::commands::config::TrayMenu
     }
 
     if cfg.show_mihomo_profiles && !profiles.is_empty() {
-        let mut psub = SubmenuBuilder::new(app, "订阅");
+        let profile_title = match profiles.iter().find(|(id, _)| id == &current_profile) {
+            Some((_, name)) => format!("订阅 · {}", name),
+            None => "订阅".to_string(),
+        };
+        let mut psub = SubmenuBuilder::new(app, profile_title);
         for (id, name) in profiles {
             let checked = id == current_profile;
-            let item = MenuItemBuilder::with_id(
+            let item = CheckMenuItemBuilder::with_id(
                 format!("{}{}", ID_MIHOMO_PROFILE_PREFIX, id),
-                if checked { format!("✓ {}", name) } else { name },
+                name,
             )
+            .checked(checked)
             .build(app)?;
             psub = psub.item(&item);
         }
@@ -734,10 +740,11 @@ fn build_mihomo_submenu(app: &AppHandle, cfg: &crate::commands::config::TrayMenu
             let mut gsub = SubmenuBuilder::new(app, format!("{} · {}", group, shorten(&now, 18)));
             for node in nodes.iter().take(limit) {
                 let checked = *node == now;
-                let item = MenuItemBuilder::with_id(
+                let item = CheckMenuItemBuilder::with_id(
                     format!("{}{}{}{}", ID_MIHOMO_PROXY_PREFIX, group, PROXY_SEP, node),
-                    if checked { format!("✓ {}", node) } else { node.clone() },
+                    node,
                 )
+                .checked(checked)
                 .build(app)?;
                 gsub = gsub.item(&item);
             }
