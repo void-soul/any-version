@@ -327,6 +327,7 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                         proxy_mode,
                         &req.custom_params,
                         &req.custom_param_values,
+                        req.web_search_enabled,
                     ) {
                         Ok(_) => {
                             eprintln!("[config_file] ✓ 配置文件写入完成");
@@ -596,9 +597,10 @@ pub(crate) fn write_tool_config_from_spec(
     proxy_mode: bool,
     custom_params: &[ModelCustomParam],
     custom_param_values: &HashMap<String, String>,
+    web_search: bool,
 ) -> Result<(), String> {
     // write_tool_config_generic 内部会检查 config_file 是否存在，无 configFile 时直接返回 Ok(())
-    write_tool_config_generic(tool_config, model_id, claimed_model, base_url, api_key, fallback_model_id, fallback_masquerade_model, one_m_context, fallback_one_m_context, proxy_mode, custom_params, custom_param_values)
+    write_tool_config_generic(tool_config, model_id, claimed_model, base_url, api_key, fallback_model_id, fallback_masquerade_model, one_m_context, fallback_one_m_context, proxy_mode, custom_params, custom_param_values, web_search)
 }
 
 /// 从 config_file.write 映射中提取 env.* 前缀的键，构建环境变量 HashMap。
@@ -682,6 +684,7 @@ fn write_tool_config_generic(
     _proxy_mode: bool,
     custom_params: &[ModelCustomParam],
     custom_param_values: &HashMap<String, String>,
+    web_search: bool,
 ) -> Result<(), String> {
     let cfg = match &tool_config.config_file {
         Some(c) => c,
@@ -801,6 +804,16 @@ fn write_tool_config_generic(
             // 布尔字面量（如 pi 的 compat.supportsDeveloperRole=false）
             "boolFalse" => serde_json::json!(false),
             "boolTrue" => serde_json::json!(true),
+            // Codex 的 web_search 开关：开启 → "live"（真实实时检索）；关闭 → 不写该键，
+            // 保留 Codex 默认 "cached"（OpenAI 维护索引，对第三方上游无实际 web 访问）。
+            // 默认关，用户开启才写 live。
+            "webSearchLive" => {
+                if !web_search {
+                    eprintln!("[config_file] skip {} (web_search 未开启)", resolved_path);
+                    continue;
+                }
+                serde_json::json!("live")
+            },
             "apiKey" => {
                 // API Key 为空时不写入配置文件，避免写入空字符串被解析器判定为非法凭证
                 if api_key.is_empty() {

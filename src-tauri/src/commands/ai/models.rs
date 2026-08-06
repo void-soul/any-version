@@ -613,6 +613,10 @@ pub struct LaunchAiToolRequest {
     pub optimizer_thinking: Option<bool>,
     #[serde(default)]
     pub optimizer_deepseek: Option<bool>,
+    /// Codex web_search 开关：开启 → 写 `web_search = "live"`（真实实时检索），
+    /// 关闭 → 不写该键（默认关，保留 Codex 默认 cached）。
+    #[serde(default)]
+    pub web_search_enabled: bool,
     /// 用户自定义启动参数取值（key → 选中的值）。空表示用模型默认值。
     /// 由模型定义里的 ModelCustomParam 决定如何传参（env 注入 / 写配置文件）。
     #[serde(default)]

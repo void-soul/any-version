@@ -178,6 +178,8 @@ export default function ToolLauncher() {
   const [optimizerStrategies, setOptimizerStrategies] = useState({
     cache_injection: true, thinking_optimizer: true, deepseek_normalize: true,
   });
+  // Codex web_search 开关：开启 → 写 config.toml `web_search = "live"`（真实实时检索）
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
 
   const [launching, setLaunching] = useState(false);
   const [launchResult, setLaunchResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -411,6 +413,7 @@ export default function ToolLauncher() {
           rectifier_thinking_budget: useOfficialModel ? null : rectifierStrategies.thinking_budget,
           rectifier_media_fallback: useOfficialModel ? null : rectifierStrategies.media_fallback,
           rectifier_protocol_mismatch: useOfficialModel ? null : rectifierStrategies.protocol_mismatch,
+          web_search_enabled: useOfficialModel ? false : webSearchEnabled,
           custom_params: useOfficialModel ? [] : currentModelCustomParams,
           custom_param_values: useOfficialModel ? {} : customParamValues,
         },
@@ -1265,6 +1268,22 @@ export default function ToolLauncher() {
                     >
                       {oneMContext ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
                     </button>
+                  </div>
+                )}
+
+                {/* Codex web_search：默认关；开启 → 写 config.toml `web_search = "live"` */}
+                {selectedTool.id === "codex-cli" && !useOfficialModel && (
+                  <div className="rounded-lg bg-slate-900/30 border border-white/5 overflow-hidden">
+                    <div className="flex items-center justify-between p-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-semibold text-slate-300">实时网络搜索</span>
+                        <span className="text-[8px] text-slate-500 hidden sm:inline">写入 web_search="live"，让 Codex 真正联网检索（默认关）</span>
+                      </div>
+                      <button onClick={() => setWebSearchEnabled(!webSearchEnabled)}
+                        className={`p-1 rounded-md cursor-pointer transition-all ${webSearchEnabled ? "text-emerald-400" : "text-slate-600 hover:text-slate-400"}`}>
+                        {webSearchEnabled ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
+                      </button>
+                    </div>
                   </div>
                 )}
 

@@ -897,6 +897,9 @@ pub struct CollabDispatchOptions {
     pub one_m_context: bool,
     #[serde(default)]
     pub fallback_one_m_context: bool,
+    /// Codex web_search 开关：true → 写 `web_search = "live"`（真实实时检索）。
+    #[serde(default)]
+    pub web_search: bool,
     #[serde(default)]
     pub optimizer_enabled: Option<bool>,
     #[serde(default)]
@@ -1410,6 +1413,7 @@ async fn ensure_room_proxy(
                 true,
                 &options.custom_params,
                 &options.custom_param_values,
+                options.web_search,
             ) {
                 eprintln!("[collab] ⚠ 写入工具配置文件失败: {}", e);
             } else {

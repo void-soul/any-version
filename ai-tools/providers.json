@@ -189,6 +189,69 @@
     "googleUrl": ""
   },
   {
+    "id": "zai",
+    "name": "Z.ai 智谱国际",
+    "category": "provider",
+    "website": "https://api.z.ai",
+    "openaiUrl": "https://api.z.ai/api/coding/paas/v4",
+    "anthropicUrl": "https://api.z.ai/api/anthropic",
+    "googleUrl": ""
+  },
+  {
+    "id": "byteplus",
+    "name": "BytePlus 字节国际",
+    "category": "provider",
+    "website": "https://www.byteplus.com",
+    "openaiUrl": "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
+    "anthropicUrl": "https://ark.ap-southeast.bytepluses.com/api/coding",
+    "googleUrl": ""
+  },
+  {
+    "id": "cohere",
+    "name": "Cohere",
+    "category": "provider",
+    "website": "https://cohere.com",
+    "openaiUrl": "https://api.cohere.ai/compatibility/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "together",
+    "name": "Together AI",
+    "category": "provider",
+    "website": "https://www.together.ai",
+    "openaiUrl": "https://api.together.xyz/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "perplexity",
+    "name": "Perplexity",
+    "category": "provider",
+    "website": "https://www.perplexity.ai",
+    "openaiUrl": "https://api.perplexity.ai",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "minimax-cn",
+    "name": "MiniMax 国内",
+    "category": "provider",
+    "website": "https://www.minimaxi.com",
+    "openaiUrl": "https://api.minimaxi.com/v1",
+    "anthropicUrl": "https://api.minimaxi.com/anthropic",
+    "googleUrl": ""
+  },
+  {
+    "id": "kimi-global",
+    "name": "Kimi 国际",
+    "category": "provider",
+    "website": "https://platform.kimi.ai",
+    "openaiUrl": "https://api.moonshot.ai/v1",
+    "anthropicUrl": "https://api.moonshot.ai/anthropic",
+    "googleUrl": ""
+  },
+  {
     "id": "openrouter",
     "name": "OpenRouter",
     "category": "relay",
@@ -276,6 +339,15 @@
     "website": "https://s.qiniu.com/nMvAvy",
     "openaiUrl": "https://api.qnaigc.com/v1",
     "anthropicUrl": "https://api.qnaigc.com",
+    "googleUrl": ""
+  },
+  {
+    "id": "ccvibe",
+    "name": "CC Vibe",
+    "category": "relay",
+    "website": "https://echobird.ai/ccvibe",
+    "openaiUrl": "https://cc-vibe.com/v1",
+    "anthropicUrl": "https://cc-vibe.com",
     "googleUrl": ""
   }
 ]
