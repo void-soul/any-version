@@ -465,6 +465,7 @@ pub fn run() {
                 commands::mihomo::mihomo_hot_reload_config,
                 commands::mihomo::mihomo_set_mode,
                 commands::mihomo::mihomo_select_proxy,
+                commands::mihomo::mihomo_save_secondary_proxies,
                 commands::mihomo::mihomo_set_tun,
                 commands::mihomo::mihomo_close_connection,
                 commands::mihomo::mihomo_get_connections,

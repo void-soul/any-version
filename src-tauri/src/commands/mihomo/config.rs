@@ -54,8 +54,15 @@ pub struct AppConfig {
     pub secret: String,
     #[serde(default)]
     pub core_path: Option<String>,
+    /// 一级代理（代理页选中的节点/组名，作为二级代理的 dialer-proxy）
     #[serde(default)]
     pub default_proxy: Option<String>,
+    /// 二级代理列表（家庭 socks5），可多个，各自可增删
+    #[serde(default)]
+    pub secondary_proxies: Vec<SecondaryProxy>,
+    /// 当前启用的二级代理 id（None=未启用）
+    #[serde(default)]
+    pub secondary_active_id: Option<String>,
     pub proxy_cols: u8,
     pub proxy_sort_type: String, // "Default" | "Delay" | "Name"
     pub keep_profile_alive: bool,
@@ -94,6 +101,8 @@ impl Default for AppConfig {
             secret: String::new(),
             core_path: None,
             default_proxy: None,
+            secondary_proxies: Vec::new(),
+            secondary_active_id: None,
             proxy_cols: 6,
             proxy_sort_type: "Default".into(),
             keep_profile_alive: true,
@@ -194,6 +203,24 @@ pub struct SubscriptionUserInfo {
     pub download: u64,
     pub total: u64,
     pub expire: u64,
+}
+
+/// 二级代理（家庭 socks5）节点配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SecondaryProxy {
+    pub id: String,
+    /// 显示名，如「美国1号」
+    pub name: String,
+    /// IP 或域名
+    pub host: String,
+    /// 端口
+    pub port: u16,
+    /// 账号（可选）
+    #[serde(default)]
+    pub username: Option<String>,
+    /// 密码（可选）
+    #[serde(default)]
+    pub password: Option<String>,
 }
 
 impl ProfileItem {

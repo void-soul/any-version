@@ -12,6 +12,7 @@ import LogsPanel from "./mihomo/LogsPanel";
 import TrafficPanel from "./mihomo/TrafficPanel";
 import ResourcesPanel from "./mihomo/ResourcesPanel";
 import OverridesPanel from "./mihomo/OverridesPanel";
+import SecondaryProxiesPanel from "./mihomo/SecondaryProxiesPanel";
 import SysproxyPanel from "./mihomo/SysproxyPanel";
 import NetworkPanel from "./mihomo/NetworkPanel";
 import TunPanel from "./mihomo/TunPanel";
@@ -24,6 +25,7 @@ const TABS = [
   { k: "overview", t: "概览" },
   { k: "profiles", t: "订阅" },
   { k: "proxies", t: "代理" },
+  { k: "secondary", t: "二级代理" },
   { k: "rules", t: "规则" },
   { k: "connections", t: "连接" },
   { k: "logs", t: "日志" },
@@ -184,6 +186,7 @@ export default function Mihomo() {
 
       {tab === "overview" && <OverviewPanel info={info} running={running} onNavigate={setTab} />}
       {tab === "proxies" && <ProxiesPanel running={running} />}
+      {tab === "secondary" && <SecondaryProxiesPanel running={running} />}
       {tab === "profiles" && <SubscriptionsPanel running={running} onNavigate={setTab} />}
       {tab === "rules" && <RulesPanel running={running} onNavigate={setTab} />}
       {tab === "connections" && <ConnectionsPanel info={info} running={running} />}

@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import {
   Download, FolderOpen, FilePlus2, RefreshCw, Trash2, Pencil, FileCode2,
-  ChevronUp, ChevronDown, CheckCircle2, Link2, Clipboard, ScrollText,
+  ChevronUp, ChevronDown, Link2, Clipboard, ScrollText,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
@@ -383,14 +383,13 @@ export default function SubscriptionsPanel({
               key={it.id}
               onClick={() => doSelect(it)}
               className={`${cardCls} p-3 cursor-pointer transition-all ${
-                cur ? "border-emerald-400 ring-1 ring-emerald-400/30 bg-emerald-500/[0.06]" : "hover:border-white/20"
+                cur ? "!border-emerald-500/40 !bg-emerald-500/10" : "hover:border-white/20"
               }`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
-                    {cur && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />}
-                    <span className="text-[13px] font-semibold text-white break-all" title={it.name}>{it.name}</span>
+                    <span className={`text-[13px] font-semibold break-all ${cur ? "text-emerald-300" : "text-white"}`} title={it.name}>{it.name}</span>
                     <span className={tagCls}>{it.url ? "订阅" : "本地"}</span>
                     {st && (
                       <span className={tagCls}>

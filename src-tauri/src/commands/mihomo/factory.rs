@@ -8,6 +8,16 @@ use std::path::Path;
 /// Smart 内核覆写的固定 id（对齐 clash-party SMART_OVERRIDE_ID）
 pub const SMART_OVERRIDE_ID: &str = "smart-core-override";
 
+/// 二级代理（家庭 socks5）节点的命名前缀
+pub const SECONDARY_PREFIX: &str = "二级-";
+/// 收纳全部二级代理节点的 Selector 策略组名
+pub const SECONDARY_GROUP: &str = "二级代理";
+
+/// 根据二级代理配置生成其在 proxies 里的节点名
+fn secondary_node_name(s5: &crate::commands::mihomo::config::SecondaryProxy) -> String {
+    format!("{SECONDARY_PREFIX}{}", s5.name)
+}
+
 /// 去掉 `<key>` 形式的尖括号包裹（对齐 clash-party trimWrap）
 fn trim_wrap(s: &str) -> &str {
     if s.len() >= 2 && s.starts_with('<') && s.ends_with('>') {
@@ -587,6 +597,117 @@ pub fn generate_runtime_config(
         obj.entry(k.to_string()).or_insert(v);
     }
 
+    // 4.1 二级代理：把配置的家庭 socks5 列表注入为 proxies 节点，
+    //     每个命名为「二级-<name>」，并用一个 Selector 策略组「二级代理」收纳全部，
+    //     使其在代理页可见、可被规则选中、受全局/规则/直连模式控制。
+    //     启用的那个二级代理加上 dialer-proxy 指向一级代理（代理页选中的 default_proxy），
+    //     实现「请求 → 一级代理 → 二级代理 → 目标」的链式。
+    {
+        let mut node_names: Vec<String> = vec![];
+        // 收集配置中已有的节点名 + 策略组名，用于校验 dialer-proxy 引用是否存在，
+        // 避免 default_proxy（一级代理）指向已不存在的节点名导致 mihomo 配置校验失败。
+        let mut known_proxy_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        if let Some(Value::Array(ps)) = obj.get("proxies") {
+            for p in ps {
+                if let Some(n) = p.get("name").and_then(|v| v.as_str()) {
+                    known_proxy_names.insert(n.to_string());
+                }
+            }
+        }
+        if let Some(Value::Array(gs)) = obj.get("proxy-groups") {
+            for g in gs {
+                if let Some(n) = g.get("name").and_then(|v| v.as_str()) {
+                    known_proxy_names.insert(n.to_string());
+                }
+            }
+        }
+        for s5 in &app.secondary_proxies {
+            if s5.host.trim().is_empty() || s5.port == 0 {
+                continue;
+            }
+            let node_name = secondary_node_name(s5);
+            node_names.push(node_name.clone());
+            let mut node = serde_json::Map::new();
+            node.insert("name".into(), Value::String(node_name.clone()));
+            node.insert("type".into(), Value::String("socks5".into()));
+            node.insert("server".into(), Value::String(s5.host.trim().to_string()));
+            node.insert("port".into(), Value::Number((s5.port as u64).into()));
+            if let Some(u) = &s5.username {
+                if !u.is_empty() {
+                    node.insert("username".into(), Value::String(u.clone()));
+                }
+            }
+            if let Some(p) = &s5.password {
+                if !p.is_empty() {
+                    node.insert("password".into(), Value::String(p.clone()));
+                }
+            }
+            // 仅启用的二级代理套一级代理（dialer-proxy）
+            let is_active = app.secondary_active_id.as_deref() == Some(s5.id.as_str());
+            if is_active {
+                if let Some(dp) = &app.default_proxy {
+                    if !dp.trim().is_empty()
+                        && known_proxy_names.contains(dp.trim())
+                    {
+                        node.insert("dialer-proxy".into(), Value::String(dp.trim().to_string()));
+                    }
+                }
+            }
+            let proxies = obj
+                .entry("proxies".to_string())
+                .or_insert_with(|| Value::Array(vec![]));
+            let node_val = Value::Object(node);
+            if let Value::Array(arr) = proxies {
+                if let Some(pos) = arr.iter().position(|p| {
+                    p.get("name").and_then(|n| n.as_str()) == Some(node_name.as_str())
+                }) {
+                    arr[pos] = node_val;
+                } else {
+                    arr.insert(0, node_val);
+                }
+            }
+        }
+
+        // 移除已删除的二级代理残留节点（幂等清理）
+        if let Some(Value::Array(arr)) = obj.get_mut("proxies") {
+            arr.retain(|p| {
+                p.get("name")
+                    .and_then(|n| n.as_str())
+                    .map(|n| {
+                        !(n.starts_with(SECONDARY_PREFIX) && !node_names.iter().any(|x| x == n))
+                    })
+                    .unwrap_or(true)
+            });
+        }
+
+        // 注入「二级代理」Selector 策略组（幂等更新，含全部二级节点）。
+        // 注意：无任何二级代理节点时**不注入**空组（mihomo 会因 proxies 为空而报错），
+        // 并移除历史残留的空组，避免配置校验失败。
+        let groups = obj
+            .entry("proxy-groups".to_string())
+            .or_insert_with(|| Value::Array(vec![]));
+        if node_names.is_empty() {
+            if let Value::Array(garr) = groups {
+                garr.retain(|g| g.get("name").and_then(|n| n.as_str()) != Some(SECONDARY_GROUP));
+            }
+        } else {
+            let group_val = serde_json::json!({
+                "name": SECONDARY_GROUP,
+                "type": "select",
+                "proxies": node_names,
+            });
+            if let Value::Array(garr) = groups {
+                if let Some(pos) = garr.iter().position(|g| {
+                    g.get("name").and_then(|n| n.as_str()) == Some(SECONDARY_GROUP)
+                }) {
+                    garr[pos] = group_val;
+                } else {
+                    garr.push(group_val);
+                }
+            }
+        }
+    }
+
     // 5. TUN：若 base 中已存在启用的 tun 块（来自 controled/config 的 tun.enable=true），
     //    则强制写入网卡名称（wintun 适配器名在设备创建时确定，故每次构建都需覆盖 device）。
     //    注意：此处以 base 实际是否启用 TUN 为准，而非 app.tun_enabled——
@@ -658,4 +779,101 @@ pub fn generate_runtime_config(
     }
 
     Ok(GeneratedConfig { runtime, core })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::mihomo::config::SecondaryProxy;
+
+    /// 构造一个含「德国」节点的本地 file profile（模拟真实订阅里的一级代理节点存在）
+    fn file_profile_with_de() -> ProfileItem {
+        let mut p = ProfileItem::default();
+        p.id = "t".into();
+        p.type_ = "file".into();
+        let yaml = r#"
+proxies:
+  - name: 德国
+    type: ss
+    server: de.example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: test
+proxy-groups:
+  - name: Proxy
+    type: select
+    proxies: [德国]
+"#;
+        let dir = std::env::temp_dir().join("mihomo_factory_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let fp = dir.join("de.yaml");
+        std::fs::write(&fp, yaml).unwrap();
+        p.file_path = Some(fp.to_string_lossy().to_string());
+        p
+    }
+
+    fn gen_with(profile: ProfileItem, secondary: Vec<SecondaryProxy>, active_id: Option<&str>) -> Value {
+        let mut app = AppConfig::default();
+        app.secondary_proxies = secondary;
+        app.secondary_active_id = active_id.map(|s| s.to_string());
+        app.default_proxy = Some("德国".into());
+        let overrides = OverrideConfig::default();
+        let data_dir = std::env::temp_dir().join("mihomo_factory_test");
+        let out = generate_runtime_config(&app, &Value::Object(Default::default()), &profile, &overrides, &data_dir).unwrap();
+        serde_yaml::from_str::<Value>(&out.core).unwrap()
+    }
+
+    #[test]
+    fn empty_secondary_proxies_injects_no_empty_group() {
+        let cfg = gen_with(file_profile_with_de(), vec![], None);
+        let groups = cfg.get("proxy-groups").and_then(|g| g.as_array());
+        assert!(
+            groups.map_or(true, |gs| !gs.iter().any(|g| g.get("name").and_then(|n| n.as_str()) == Some(SECONDARY_GROUP))),
+            "空列表不应注入空的「二级代理」组"
+        );
+        let proxies = cfg.get("proxies").and_then(|p| p.as_array()).cloned().unwrap_or_default();
+        assert!(!proxies.iter().any(|p| p.get("name").and_then(|n| n.as_str()).map_or(false, |n| n.starts_with(SECONDARY_PREFIX))));
+    }
+
+    #[test]
+    fn with_secondary_proxy_and_existing_upstream_injects_dialer_proxy() {
+        let mut s5 = SecondaryProxy::default();
+        s5.id = "s1".into();
+        s5.name = "美国1号".into();
+        s5.host = "1.2.3.4".into();
+        s5.port = 1080;
+        let cfg = gen_with(file_profile_with_de(), vec![s5], Some("s1"));
+        // 节点已注入
+        let node_name = format!("{SECONDARY_PREFIX}美国1号");
+        let proxies = cfg.get("proxies").and_then(|p| p.as_array()).cloned().unwrap_or_default();
+        let node = proxies.iter().find(|p| p.get("name").and_then(|n| n.as_str()) == Some(node_name.as_str())).expect("二级节点应被注入");
+        assert_eq!(node.get("type").and_then(|v| v.as_str()), Some("socks5"));
+        // 一级代理「德国」在配置中存在 → 启用节点带 dialer-proxy = 德国
+        assert_eq!(node.get("dialer-proxy").and_then(|v| v.as_str()), Some("德国"));
+        // 组已注入
+        let groups = cfg.get("proxy-groups").and_then(|g| g.as_array()).cloned().unwrap_or_default();
+        let group = groups.iter().find(|g| g.get("name").and_then(|n| n.as_str()) == Some(SECONDARY_GROUP)).expect("应注入「二级代理」组");
+        let members = group.get("proxies").and_then(|m| m.as_array()).map(|a| a.len()).unwrap_or(0);
+        assert_eq!(members, 1);
+    }
+
+    #[test]
+    fn with_secondary_proxy_but_missing_upstream_degrades_to_direct() {
+        // 一级代理「德国」在空订阅里不存在 → 不注入 dialer-proxy（降级直连），避免配置校验失败
+        let mut s5 = SecondaryProxy::default();
+        s5.id = "s1".into();
+        s5.name = "美国1号".into();
+        s5.host = "1.2.3.4".into();
+        s5.port = 1080;
+        let profile = ProfileItem {
+            id: "t".into(),
+            type_: "subscription".into(),
+            ..Default::default()
+        };
+        let cfg = gen_with(profile, vec![s5], Some("s1"));
+        let node_name = format!("{SECONDARY_PREFIX}美国1号");
+        let proxies = cfg.get("proxies").and_then(|p| p.as_array()).cloned().unwrap_or_default();
+        let node = proxies.iter().find(|p| p.get("name").and_then(|n| n.as_str()) == Some(node_name.as_str())).expect("二级节点应被注入");
+        assert!(node.get("dialer-proxy").is_none(), "一级节点不存在时应降级为直连，不注入 dialer-proxy");
+    }
 }

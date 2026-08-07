@@ -160,6 +160,8 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
       setErr(`切换「${proxy}」失败：${String(e).replace(/^Error:\s*/, "")}`);
       return;
     }
+    // 将选中的节点持久化为「一级代理」（供二级代理作为 dialer-proxy 前置）
+    try { await mihomoApi.selectProxy(proxy); } catch {}
     if (autoClose) {
       // 复刻 clash-party：断开经由该组的旧连接
       try {
@@ -351,11 +353,6 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="text-[13px] font-semibold text-white truncate">{g.name}</span>
-                  {g.fixed && (
-                    <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/25">
-                      <Pin className="w-2.5 h-2.5" /> 已固定
-                    </span>
-                  )}
                 </div>
                 <div className="flex items-center gap-1.5 text-[11px] text-slate-400 truncate">
                   <span>{g.type} ·</span>
@@ -370,6 +367,13 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
                 onClick={(e) => { e.stopPropagation(); locate(g); }}
               >
                 <LocateFixed className="w-3.5 h-3.5" />
+              </button>
+              <button
+                className={`p-1.5 rounded-lg hover:bg-white/10 cursor-pointer ${g.fixed ? "text-amber-300" : "text-slate-500"}`}
+                title={g.fixed ? "取消固定（恢复自动选择）" : "当前分组未被手动固定"}
+                onClick={(e) => { e.stopPropagation(); onUnfix(g); }}
+              >
+                <Pin className={`w-3.5 h-3.5 ${g.fixed ? "fill-current" : ""}`} />
               </button>
               <button
                 className="p-1.5 rounded-lg hover:bg-white/10 text-emerald-300 cursor-pointer disabled:opacity-50"
@@ -401,7 +405,6 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
                 <div className={`grid gap-1.5`} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))` }}>
                   {shown.map((p) => {
                     const selected = g.now === p.name;
-                    const isFixed = g.fixed === p.name;
                     const d = lastDelay(p);
                     return (
                       <div
@@ -419,15 +422,6 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
                           <span className={`text-[12px] truncate flex-1 ${selected ? "text-emerald-300 font-semibold" : "text-slate-200"}`}>
                             {p.name}
                           </span>
-                          {isFixed && (
-                            <button
-                              className="p-0.5 rounded hover:bg-white/10 text-amber-300 cursor-pointer"
-                              title="取消固定"
-                              onClick={(e) => { e.stopPropagation(); onUnfix(g); }}
-                            >
-                              <Pin className="w-3 h-3 fill-current" />
-                            </button>
-                          )}
                           <button
                             className={`text-[10px] font-mono flex-shrink-0 cursor-pointer hover:underline ${delayColor(d)}`}
                             title="测试此节点延迟"

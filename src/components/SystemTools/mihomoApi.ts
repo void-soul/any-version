@@ -107,6 +107,9 @@ export const mihomoApi = {
   setMode: (mode: string) =>
     mihomoApi.api("PATCH", "/configs", { mode }),
   selectProxy: (name: string) => invoke("mihomo_select_proxy", { name }),
+  /** 保存整份二级代理列表 + 当前启用项，并热重载 */
+  saveSecondaryProxies: (items: SecondaryProxy[], activeId: string | null) =>
+    invoke("mihomo_save_secondary_proxies", { items, activeId }),
   setTun: (enable: boolean) => invoke("mihomo_set_tun", { enable }),
   closeConnection: (id: string) =>
     mihomoApi.api("DELETE", `/connections/${encodeURIComponent(id)}`),
@@ -291,11 +294,25 @@ export type AppConfig = {
   /** 独立工作目录：每个订阅使用单独的内核工作目录 */
   diff_work_dir?: boolean;
   core_path?: string | null;
+  /** 一级代理（代理页选中的节点/组名，作为二级代理的 dialer-proxy） */
   default_proxy?: string | null;
+  /** 二级代理列表（家庭 socks5），可多个 */
+  secondary_proxies?: SecondaryProxy[];
+  /** 当前启用的二级代理 id */
+  secondary_active_id?: string | null;
   /** 内核 CPU 优先级（Windows PRIORITY_CLASS 名） */
   cpuPriority?: string;
   /** 启动前用 `mihomo -t` 预校验配置 */
   testProfileOnStart?: boolean;
   /** 其余扁平化透传字段 */
   [key: string]: any;
+};
+
+export type SecondaryProxy = {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  username?: string | null;
+  password?: string | null;
 };

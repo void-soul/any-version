@@ -786,6 +786,27 @@ pub fn mihomo_patch_app_config(
     Ok(new_cfg)
 }
 
+// ---- Secondary proxies（二级代理）----
+// 保存整份二级代理列表 + 当前启用项，并热重载配置使链式生效
+#[tauri::command]
+pub async fn mihomo_save_secondary_proxies(
+    app: AppHandle,
+    state: State<'_, MihomoState>,
+    items: Vec<crate::commands::mihomo::config::SecondaryProxy>,
+    active_id: Option<String>,
+) -> Result<(), String> {
+    let mut app_config = state.app_config.lock().unwrap().clone();
+    app_config.secondary_proxies = items;
+    app_config.secondary_active_id = active_id;
+    save_app_config(&state.data_dir, &app_config).map_err(|e| e.to_string())?;
+    *state.app_config.lock().unwrap() = app_config;
+    if !state.stop_flag.load(Ordering::SeqCst) {
+        reload_config(&app, Arc::clone(&*state)).await?;
+    }
+    emit_state(&app, &state);
+    Ok(())
+}
+
 // ---- ControledMihomoConfig ----
 #[tauri::command]
 pub fn mihomo_get_controled_config(state: State<'_, MihomoState>) -> Value {
@@ -1629,16 +1650,24 @@ pub async fn mihomo_set_mode(state: State<'_, MihomoState>, mode: String) -> Res
     Ok(())
 }
 #[tauri::command]
-pub fn mihomo_select_proxy(
+pub async fn mihomo_select_proxy(
     app: AppHandle,
     state: State<'_, MihomoState>,
     name: String,
 ) -> Result<(), String> {
+    let need_reload = {
+        let cfg = state.app_config.lock().unwrap();
+        cfg.secondary_active_id.is_some() && !cfg.secondary_proxies.is_empty()
+    };
     let mut app_config = state.app_config.lock().unwrap().clone();
     app_config.default_proxy = Some(name);
     save_app_config(&state.data_dir, &app_config).ok();
     *state.app_config.lock().unwrap() = app_config;
     emit_state(&app, &state);
+    // 已启用二级代理时，切换一级代理需重新生成配置让 dialer-proxy 跟随新的一级节点
+    if need_reload && !state.stop_flag.load(Ordering::SeqCst) {
+        reload_config(&app, Arc::clone(&*state)).await?;
+    }
     Ok(())
 }
 #[tauri::command]
