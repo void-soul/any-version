@@ -46,3 +46,5 @@ tmp_zip_head.txt
 tmp_bins.txt
 # Temporary certs & downloaded binaries
 *.crt
+/.commit_msg.txt
+/build-log.txt
