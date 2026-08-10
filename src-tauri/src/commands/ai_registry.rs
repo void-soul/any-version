@@ -835,6 +835,7 @@ pub fn update_tool_profile(tool_id: String, avatar: Option<String>, nickname: Op
     let data = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     fs::write(&config_path, data).map_err(|e| e.to_string())?;
 
-    reload_ai_registry();
+    // 配置已写入磁盘；热重载失败不阻断保存（仅影响内存态即时刷新），忽略其返回值。
+    let _ = reload_ai_registry();
     Ok(())
 }

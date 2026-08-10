@@ -734,6 +734,12 @@ fn find_system_runtime(project_id: &str, exe_name: &str) -> Option<std::path::Pa
     None
 }
 
+/// 检测命令字符串是否含 shell 注入元字符（命令分隔符、重定向、变量展开、反引号等）。
+/// 允许引号与路径/参数符号（runtime 替换产生的 "exe" 路径），仅拦截可改变执行语义的危险字符。
+fn contains_shell_injection(s: &str) -> bool {
+    s.chars().any(|c| matches!(c, '&' | '|' | ';' | '<' | '>' | '$' | '`' | '(' | ')'))
+}
+
 /// 执行 shell 命令并捕获输出（用于包管理器版本检测、镜像切换等）
 #[tauri::command]
 pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String, String> {
@@ -745,6 +751,13 @@ pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String
 
     let config = crate::commands::config::load_config();
     let mut resolved_cmd = resolve_custom_exe(&cmd, &config);
+
+    // 运行时防护：拒绝含 shell 命令分隔符/注入元字符的命令（引号与路径符号允许，
+    // 因为 run_via_runtime_args 替换会产生带引号的 exe 路径）。注册表层已做白名单，
+    // 此处为第二道防线，确保任何来源的命令都不会执行注入。
+    if contains_shell_injection(&resolved_cmd) {
+        return Err(format!("拒绝执行含 shell 注入元字符的命令: {}", resolved_cmd));
+    }
 
     // Generic resolution: 仅对 AnyVersion 托管的项目，将 `pip xxx` 替换为 `"python.exe" -m pip xxx`
     // 非托管项目保持原命令（如 `pip --version`），直接尝试执行，失败时再 fallback
@@ -829,6 +842,7 @@ pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String
         command.env("NPM_CONFIG_PREFIX", &prefix);
     }
 
+    // 仅记录命令与状态，绝不打印 stdout/stderr 明文（可能含 token 等敏感信息）。
     eprintln!("[run_cmd_capture] cmd={}, resolved_cmd={}", cmd, resolved_cmd);
 
     // 为外部命令设置超时（默认 5 分钟），防止恶意/错误命令无限挂起。
@@ -846,7 +860,13 @@ pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().trim_matches('"').trim_matches('\'').trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    eprintln!("[run_cmd_capture] status={}, stdout=[{}], stderr=[{}]", output.status.success(), stdout, stderr);
+    // 不打印 stdout/stderr 内容（避免泄露 token 等敏感数据），仅记录长度与状态。
+    eprintln!(
+        "[run_cmd_capture] status={}, stdout_len={}, stderr_len={}",
+        output.status.success(),
+        stdout.len(),
+        stderr.len()
+    );
 
     if output.status.success() {
         return Ok(stdout);

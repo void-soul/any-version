@@ -213,8 +213,11 @@ fn build_state_view(inner: &MihomoInner) -> MihomoStateView {
 pub fn emit_state(app: &AppHandle, inner: &MihomoInner) {
     let view = build_state_view(inner);
     let _ = app.emit("mihomo://state-changed", view);
-    // 托盘里的 Mihomo 子菜单跟随状态刷新
-    let _ = crate::tray::rebuild_tray_menu(app);
+    // 托盘里的 Mihomo 子菜单只提供「启停」开关（见 build_mihomo_submenu），
+    // 仅依赖 running 状态，不依赖订阅/代理/模式等内部动态数据，因此无需在
+    // watchdog 心跳（每 3 秒一次 emit_state）里刷新托盘菜单——避免 set_menu
+    // 反复重建导致 on_menu_event 长时间运行后失效。启停状态由托盘 toggle
+    // 事件处理里的 rebuild_tray_menu 负责更新。
 }
 
 // 兼容性迁移：旧 mihomo.json (MihomoSettings) -> 新模型
@@ -703,6 +706,15 @@ async fn mihomo_api_call(
 #[tauri::command]
 pub async fn mihomo_get_state(state: State<'_, MihomoState>) -> Result<MihomoStateView, String> {
     Ok(build_state_view(&state))
+}
+
+/// 清除内核运行期告警（runtime_warnings）。运行期产生的 TUN/权限类错误会累积显示，
+/// 且只在重启时清空，这里提供手动清除入口。
+#[tauri::command]
+pub fn mihomo_clear_warnings(app: AppHandle, state: State<'_, MihomoState>) -> Result<(), String> {
+    state.runtime_warnings.lock().map_err(|e| e.to_string())?.clear();
+    emit_state(&app, &state);
+    Ok(())
 }
 
 #[tauri::command]

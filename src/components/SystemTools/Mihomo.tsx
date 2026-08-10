@@ -147,6 +147,17 @@ export default function Mihomo() {
       {/* 运行告警（TUN 需要管理员、内核缺失、内核日志里的关键错误） */}
       {Array.isArray(state?.warnings) && state.warnings.length > 0 && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-semibold text-amber-300">运行告警</span>
+            <button
+              onClick={() => act("dismiss", () => mihomoApi.clearWarnings())}
+              disabled={busy === "dismiss"}
+              className="text-amber-300 hover:text-amber-100 text-[11px] font-semibold cursor-pointer disabled:opacity-50"
+              title="清除全部告警"
+            >
+              清除
+            </button>
+          </div>
           {state.warnings.map((w: string, i: number) => (
             <div key={i} className="flex items-start gap-2 text-xs text-amber-200">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-px" />
@@ -168,7 +179,7 @@ export default function Mihomo() {
       )}
 
       {/* 子 Tab 栏 */}
-      <div className="flex items-center gap-1 border-b border-white/5 overflow-x-auto">
+      <div className="flex items-center gap-1 border-b border-white/5 overflow-x-auto overflow-y-hidden">
         {TABS.map((t) => (
           <button
             key={t.k}

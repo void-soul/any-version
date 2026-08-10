@@ -52,8 +52,6 @@ interface SkillMigrateProgress {
 
 /** 托盘右键菜单配置（与后端 TrayMenuConfig 对应） */
 interface TrayMenuConfig {
-  show_http_server: boolean;
-  show_rtsp_server: boolean;
   show_mihomo: boolean;
   show_mihomo_profiles: boolean;
   show_mihomo_proxies: boolean;
@@ -93,8 +91,6 @@ export default function GlobalSettings() {
   const [autostartBusy, setAutostartBusy] = useState(false);
   // 托盘右键菜单配置
   const [trayCfg, setTrayCfg] = useState<TrayMenuConfig>({
-    show_http_server: true,
-    show_rtsp_server: true,
     show_mihomo: true,
     show_mihomo_profiles: true,
     show_mihomo_proxies: true,
@@ -651,8 +647,6 @@ export default function GlobalSettings() {
             <p className="text-[9px] text-slate-500">选择需要在系统托盘右键菜单中显示的快捷开关。</p>
           </div>
           {[
-            ["show_http_server", "HTTP 静态服务开关", "列出运行中的服务并支持一键停止 / 启动上次目录"],
-            ["show_rtsp_server", "RTSP 推流服务开关", "列出运行中的实例并支持一键停止 / 启动上次配置"],
             ["show_mihomo", "Mihomo 子菜单", "内核启停，以及下方的模式 / 订阅 / 节点切换"],
             ["show_mihomo_mode", "· 模式切换（规则 / 全局 / 直连）", ""],
             ["show_mihomo_profiles", "· 订阅切换", ""],

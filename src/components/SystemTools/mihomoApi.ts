@@ -13,6 +13,7 @@ export const mihomoApi = {
   setCorePath: (path: string | null) =>
     invoke("mihomo_set_core_path", { path }),
   closeAllConnections: () => invoke("mihomo_close_all_connections"),
+  clearWarnings: () => invoke("mihomo_clear_warnings"),
 
   // ---- app config ----
   getAppConfig: () => invoke<any>("mihomo_get_app_config"),

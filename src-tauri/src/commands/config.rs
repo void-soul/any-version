@@ -19,10 +19,6 @@ fn default_true() -> bool {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct TrayMenuConfig {
-    /// 显示 HTTP 静态服务开关
-    pub show_http_server: bool,
-    /// 显示 RTSP 推流服务开关
-    pub show_rtsp_server: bool,
     /// 显示 Mihomo 子菜单
     pub show_mihomo: bool,
     /// Mihomo 子菜单里显示订阅切换
@@ -38,8 +34,6 @@ pub struct TrayMenuConfig {
 impl Default for TrayMenuConfig {
     fn default() -> Self {
         Self {
-            show_http_server: true,
-            show_rtsp_server: true,
             show_mihomo: true,
             show_mihomo_profiles: true,
             show_mihomo_proxies: true,

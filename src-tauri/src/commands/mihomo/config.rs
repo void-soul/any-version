@@ -398,18 +398,21 @@ pub fn load_app_config(dir: &Path) -> AppConfig {
 }
 pub fn save_app_config(dir: &Path, c: &AppConfig) -> std::io::Result<()> {
     write_json(&app_config_path(dir), c)
+        .map_err(|e| { eprintln!("[mihomo] 保存 app_config 失败: {}", e); e })
 }
 pub fn load_controled(dir: &Path) -> Value {
     read_json(&controled_path(dir)).unwrap_or(Value::Object(Default::default()))
 }
 pub fn save_controled(dir: &Path, v: &Value) -> std::io::Result<()> {
     write_json(&controled_path(dir), v)
+        .map_err(|e| { eprintln!("[mihomo] 保存 controled 配置失败: {}", e); e })
 }
 pub fn load_profile_config(dir: &Path) -> ProfileConfig {
     read_json(&profile_config_path(dir)).unwrap_or_default()
 }
 pub fn save_profile_config(dir: &Path, c: &ProfileConfig) -> std::io::Result<()> {
     write_json(&profile_config_path(dir), c)
+        .map_err(|e| { eprintln!("[mihomo] 保存 profile_config 失败: {}", e); e })
 }
 pub fn load_override_config(dir: &Path) -> OverrideConfig {
     read_json(&override_config_path(dir)).unwrap_or_default()

@@ -213,17 +213,17 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
-                    // 关闭主窗口时「销毁」而非「隐藏」。
-                    // 历史实现为 hide()：WebView2 实例长期常驻，在 RTSP/mihomo
-                    // 等高负载长时运行后其渲染/GPU 进程会被系统挂起或崩溃，再次
-                    // show() 即白屏且不可自愈；同时 app.exit() 等待已挂起的
-                    // webview 关闭会导致"无法退出"。
-                    // 改为 destroy()：托盘/单例"显示主窗口"会经 show_main_window
-                    // 走 create_main_window 重建一个全新的 WebView2，从根本上
-                    // 规避死渲染问题（show_main_window 已支持窗口缺失时重建）。
+                    // 关闭主窗口时「隐藏」而非「销毁」。
+                    // 历史（1.0.9 dc94e6d）曾改为 destroy() 以规避 WebView2 高负载
+                    // 长时运行后白屏/无法退出的问题，但实测 destroy() 会破坏 Windows
+                    // 托盘原生菜单的事件投递：主窗口销毁后 on_menu_event 不再触发，
+                    // 表现为托盘菜单能弹出、点击却无响应（且重建窗口后仍不恢复）。
+                    // 因此回退为 hide()，保留窗口对象，确保托盘菜单事件正常。
+                    // 白屏问题的兜底：show_main_window 在检测到 WebView2 挂起时会
+                    // 尝试 reload；如需彻底规避可后续引入「定期重建窗口」机制。
                     api.prevent_close();
-                    exit_log::exit_log("CloseRequested: destroy 主窗口（释放 WebView2 实例）");
-                    let _ = window.destroy();
+                    exit_log::exit_log("CloseRequested: hide 主窗口（保留窗口对象，保证托盘菜单事件正常）");
+                    let _ = window.hide();
                 }
             }
         })
@@ -408,6 +408,7 @@ pub fn run() {
 
             // Mihomo 代理
                 commands::mihomo::mihomo_get_state,
+                commands::mihomo::mihomo_clear_warnings,
                 commands::mihomo::mihomo_controller_info,
                 commands::mihomo::mihomo_start,
                 commands::mihomo::mihomo_stop,

@@ -468,7 +468,7 @@ pub struct CacheStatus {
 }
 
 /// 服务状态
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Clone, Debug, Default)]
 pub struct ServiceStatus {
     /// 是否正在运行
     pub running: bool,

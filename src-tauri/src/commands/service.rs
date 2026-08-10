@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 use crate::commands::config::{load_config, Config};
 use crate::commands::project::types::{DataDirDef, ProjectCategory, ProjectDef, ServiceStatus};
@@ -633,6 +635,55 @@ pub(crate) fn resolve_data_dir(
         auto_create: dir_def.auto_create.unwrap_or(def.service_auto_create_dirs),
         required_for_start: dir_def.required_for_start,
     }
+}
+
+/// 服务状态快照缓存。
+///
+/// 关键：`service_status_for_def` 内部会同步执行 `tasklist`/`wmic`/`netstat` 等
+/// 系统命令，这些命令在长时运行后可能变慢甚至挂起。若在托盘菜单构建（主线程
+/// 事件循环）里同步调用，会阻塞整个事件循环，表现为「服务消失 + 所有托盘命令
+/// 无响应」。因此引入后台刷新的快照缓存：主线程只读缓存，shell 调用移入后台线程。
+const SERVICE_STATUS_TTL: Duration = Duration::from_secs(3);
+
+static SERVICE_STATUS_CACHE: Mutex<Option<(Instant, HashMap<String, ServiceStatus>)>> =
+    Mutex::new(None);
+
+/// 刷新指定服务 id 的状态快照（在后台线程调用，内部会跑 tasklist/wmic/netstat）。
+pub(crate) fn refresh_service_status_snapshot(ids: &[String]) -> HashMap<String, ServiceStatus> {
+    let mut map = HashMap::new();
+    let registry = crate::commands::project::registry::registry();
+    for id in ids {
+        if let Some(def) = registry.iter().find(|d| &d.id == id) {
+            map.insert(id.clone(), service_status_for_def(def));
+        }
+    }
+    if let Ok(mut guard) = SERVICE_STATUS_CACHE.lock() {
+        *guard = Some((Instant::now(), map.clone()));
+    }
+    map
+}
+
+/// 读取服务状态快照（不阻塞，不执行任何 shell 命令）。
+/// 命中缓存则返回；缓存过期或缺失则触发一次后台刷新，本轮返回空快照。
+pub(crate) fn service_status_snapshot(managed_ids: &[String]) -> HashMap<String, ServiceStatus> {
+    let fresh = {
+        let guard = SERVICE_STATUS_CACHE.lock().ok();
+        guard
+            .as_ref()
+            .and_then(|g| g.as_ref())
+            .map(|(at, map)| (at.elapsed() < SERVICE_STATUS_TTL, map.clone()))
+            .unwrap_or((false, HashMap::new()))
+    };
+    if fresh.0 {
+        return fresh.1;
+    }
+    // 缓存过期/缺失：后台刷新，本轮返回空（托盘会先渲染无服务状态，稍后 rebuild 补齐）
+    let ids = managed_ids.to_vec();
+    let _ = std::thread::spawn(move || {
+        let _ = refresh_service_status_snapshot(&ids);
+        let _ = crate::tray::rebuild_tray_menu_global();
+    });
+    fresh.1
 }
 
 pub(crate) fn service_status_for_def(def: &ProjectDef) -> ServiceStatus {

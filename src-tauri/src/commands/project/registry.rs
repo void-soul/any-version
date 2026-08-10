@@ -5,6 +5,46 @@ use super::types::{EnvVarDef, FindRule, PackageManagerDef, ProjectDef};
 
 use std::sync::RwLock;
 
+/// 命令字符串白名单字符集。
+/// 允许：字母数字、空格、常见路径与参数符号、以及 `{placeholder}` 模板占位符。
+/// 禁止：任何 shell 元字符（& | ; > < $ ` ( ) 以及引号），以阻止命令注入。
+fn is_safe_cmd(s: &str) -> bool {
+    s.chars().all(|c| {
+        c.is_ascii_alphanumeric()
+            || matches!(
+                c,
+                ' ' | '.' | '/' | '\\' | '-' | '_' | ':' | '{' | '}' | '=' | '@' | '%' | '+'
+            )
+    })
+}
+
+/// 校验一个项目定义内的所有可执行命令字段，防止注册表注入任意 shell 命令。
+/// 遇到含危险字符的命令，记录告警并将该字段置为 None（拒绝执行）。
+fn sanitize_project_cmds(def: &mut ProjectDef) {
+    let check = |field: &str, val: &mut Option<String>| {
+        if let Some(ref s) = val {
+            if !is_safe_cmd(s) {
+                eprintln!(
+                    "[registry] 拒绝危险命令字段 {}.{} = {:?}（含 shell 元字符，疑似注入）",
+                    def.id, field, s
+                );
+                *val = None;
+            }
+        }
+    };
+    check("version_cmd", &mut def.version_cmd);
+    check("cache_detect_cmd", &mut def.cache_detect_cmd);
+    check("cache_default_path", &mut def.cache_default_path);
+    for pm in &mut def.package_managers {
+        check("install_cmd", &mut pm.install_cmd);
+        check("version_cmd", &mut pm.version_cmd);
+        check("cache_detect_cmd", &mut pm.cache_detect_cmd);
+        check("pkg_list_cmd", &mut pm.pkg_list_cmd);
+        check("cache_set_cmd_template", &mut pm.cache_set_cmd_template);
+        check("proxy_clear_cmd", &mut pm.proxy_clear_cmd);
+    }
+}
+
 static REGISTRY_CACHE: RwLock<Option<Vec<ProjectDef>>> = RwLock::new(None);
 
 pub fn registry() -> Vec<ProjectDef> {
@@ -78,7 +118,10 @@ pub fn load_registry() -> Vec<ProjectDef> {
             if path.exists() {
                 match std::fs::read_to_string(&path) {
                     Ok(data) => match serde_json::from_str::<Vec<ProjectDef>>(&data) {
-                        Ok(list) => {
+                        Ok(mut list) => {
+                            for def in &mut list {
+                                sanitize_project_cmds(def);
+                            }
                             if !list.is_empty() {
                                 eprintln!("[registry] 从 projects.json 加载 {} 个项目: {}", list.len(), path.display());
                                 return list;
@@ -119,6 +162,7 @@ fn load_from_dir(dir: &std::path::Path) -> Option<Vec<ProjectDef>> {
             match std::fs::read_to_string(&cfg) {
                 Ok(s) => match serde_json::from_str::<ProjectDef>(&s) {
                     Ok(mut def) => {
+                        sanitize_project_cmds(&mut def);
                         // 从拆分出的独立文件覆盖复杂字段（文件优先于 config.json 内联值）
                         if let Some(v) = read_json_file::<Vec<EnvVarDef>>(&path.join("env_vars.json")) {
                             def.env_vars = v;
