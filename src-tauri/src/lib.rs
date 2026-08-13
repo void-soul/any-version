@@ -567,13 +567,17 @@ pub fn run() {
                     exit_log::exit_log("ExitRequested: 进入退出分支，启动清理线程 + 300ms 强杀兜底");
                     let app_handle = app.clone();
                     std::thread::spawn(move || {
-                        exit_log::exit_log("cleanup thread: start (stop_all_room_proxies / kill_on_exit)");
+                        exit_log::exit_log("cleanup thread: start (stop_all_room_proxies / kill_on_exit / stop_all_rtsp)");
                         commands::ai::collab::stop_all_room_proxies();
                         exit_log::exit_log("cleanup thread: stop_all_room_proxies done");
                         commands::mihomo::kill_on_exit(
                             &**app_handle.state::<commands::mihomo::MihomoState>(),
                         );
                         exit_log::exit_log("cleanup thread: kill_on_exit done");
+                        commands::rtsp_server::stop_all_rtsp_servers_inner(
+                            &app_handle.state::<commands::rtsp_server::RtspServerState>(),
+                        );
+                        exit_log::exit_log("cleanup thread: stop_all_rtsp_servers done");
                     });
                     // 给清理线程一个极短的宽限（让 kill 尽快发出），随后强制退出。
                     // 用 spawn 而非 sleep 在主线程，避免任何阻塞。

@@ -120,7 +120,7 @@ export default function App() {
               { id: "sdk" as PageId, label: "SDK", icon: <Cpu className="w-3 h-3" />, color: "bg-blue-600" },
               { id: "ai" as PageId, label: "AI", icon: <Bot className="w-3 h-3" />, color: "bg-violet-600" },
               { id: "tasks" as PageId, label: "任务", icon: <CalendarCheck className="w-3 h-3" />, color: "bg-amber-500 !text-slate-900" },
-              { id: "tools" as PageId, label: "工具", icon: <Wrench className="w-3 h-3" />, color: "bg-emerald-600" },
+              { id: "tools" as PageId, label: "更多", icon: <Wrench className="w-3 h-3" />, color: "bg-emerald-600" },
               { id: "settings" as PageId, label: "设置", icon: <Settings className="w-3 h-3" />, color: "bg-red-600" },
             ]).map((item) => (
               <button

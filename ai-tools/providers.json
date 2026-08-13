@@ -349,5 +349,23 @@
     "openaiUrl": "https://cc-vibe.com/v1",
     "anthropicUrl": "https://cc-vibe.com",
     "googleUrl": ""
+  },
+  {
+    "id": "jiekou",
+    "name": "JieKou AI",
+    "category": "provider",
+    "website": "https://jiekou.ai/#model-library",
+    "openaiUrl": "https://api.jiekou.ai/openai/v1",
+    "anthropicUrl": "https://api.jiekou.ai/anthropic",
+    "googleUrl": ""
+  },
+  {
+    "id": "ppio",
+    "name": "PPIO",
+    "category": "provider",
+    "website": "https://ppio.com",
+    "openaiUrl": "https://api.ppio.com/openai/v1",
+    "anthropicUrl": "https://api.ppio.com/anthropic",
+    "googleUrl": ""
   }
 ]

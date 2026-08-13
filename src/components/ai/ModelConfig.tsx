@@ -491,7 +491,7 @@ export default function ModelConfig() {
                   value={modelsText}
                   onChange={e => setModelsText(e.target.value)}
                   rows={6}
-                  placeholder={"gpt-4o\ngpt-4o-mini\nclaude-sonnet-4-20250514\ndeepseek-chat"}
+                  placeholder={"gpt-4o\ngpt-4o-mini\nclaude-sonnet-4-20250514\ndeepseek-chat\ndeepseek-v4-pro"}
                   className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500 resize-y leading-5"
                 />
                 <div className="text-[9px] text-slate-600 mt-1">

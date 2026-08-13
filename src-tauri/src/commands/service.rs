@@ -889,7 +889,6 @@ pub fn start_service(app: tauri::AppHandle, name: String, version: Option<String
 
 pub(crate) fn start_service_inner(name: String, version: Option<String>) -> Result<(), String> {
     use super::project::registry;
-
     let def = registry::find_by_id(&name)
         .ok_or_else(|| format!("未找到服务定义: {}", name))?;
     if !is_service_project(&def) {
@@ -925,7 +924,13 @@ pub(crate) fn start_service_inner(name: String, version: Option<String>) -> Resu
     let cmd_str = render_command(start_cmd_template, &runtime);
     let detached = def.service_start_mode.as_deref() == Some("detached");
     run_service_command(&cmd_str, Some(&install_root), detached)?;
-    Ok(())
+
+    // 启动命令已发出（detached 进程在后台初始化；wait 模式则 run_service_command 已阻塞到
+    // 命令结束）。mysqld/redis 等 detached 启动后仍需初始化数据目录、绑定端口，往往比
+    // run_service_command 内部的 800ms 更久才真正 ready。若这里直接返回 Ok，前端立即刷新
+    // 会探测到「端口尚未 LISTENING」而显示成 stopped，造成「启动中→未启动→刷新才 running」的
+    // 闪烁。因此主动轮询等待服务真正就绪后再返回。
+    wait_for_service_running(&def)
 }
 
 #[tauri::command]
@@ -1167,6 +1172,34 @@ fn find_registered_system_service(def: &ProjectDef) -> Option<String> {
 #[cfg(not(windows))]
 fn find_registered_system_service(_def: &ProjectDef) -> Option<String> {
     None
+}
+
+/// 服务进程已在后台启动后，轮询等待其真正就绪（端口 LISTENING / 进程匹配），
+/// 避免 detached 模式下启动慢导致前端刷新到未就绪状态而产生「启动中→停止」闪烁。
+/// 最多等待 `timeout` 秒（默认 15s），每 500ms 探测一次；一旦探测到 running 立即返回 Ok。
+/// 超时后若进程仍存在（pid 非空），仍视为启动成功（端口探测可能尚未稳定或未配置端口）；
+/// 进程也不存在则判定启动失败并返回错误。
+fn wait_for_service_running(def: &ProjectDef) -> Result<(), String> {
+    let timeout = Duration::from_secs(15);
+    let deadline = Instant::now() + timeout;
+    loop {
+        if service_status_for_def(def).running {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    // 超时兜底：端口可能尚未探测到，但进程确实起来了，认为启动成功
+    if service_status_for_def(def).pid.is_some() {
+        return Ok(());
+    }
+    Err(format!(
+        "服务 {} 启动后未在 {} 秒内就绪，请检查日志或端口是否被占用。",
+        def.display_name, timeout.as_secs()
+    ))
 }
 
 

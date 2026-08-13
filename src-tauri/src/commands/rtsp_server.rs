@@ -548,6 +548,12 @@ pub fn stop_rtsp_server(
 pub fn stop_all_rtsp_servers(
     state: State<'_, RtspServerState>,
 ) -> Result<(), String> {
+    stop_all_rtsp_servers_inner(&state);
+    Ok(())
+}
+
+/// 停止所有 RTSP 服务器实例（核心逻辑，供命令与退出清理线程复用）
+pub fn stop_all_rtsp_servers_inner(state: &RtspServerState) {
     let mut guard = state.servers.lock();
     for (id, mut inner) in guard.drain() {
         inner.should_stop.store(true, Ordering::SeqCst);
@@ -557,7 +563,6 @@ pub fn stop_all_rtsp_servers(
         }
         state.last_errors.lock().insert(id, None);
     }
-    Ok(())
 }
 
 /// 获取指定 ID 的 RTSP 服务器状态与日志
