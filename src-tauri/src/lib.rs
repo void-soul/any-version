@@ -541,6 +541,19 @@ pub fn run() {
                 commands::tasks::tasks_list_moves,
                 commands::tasks::tasks_summary,
                 commands::tasks::tasks_day_stats,
+
+                // ---- Node 项目管理器 ----
+                commands::node_manager::npm_list_projects,
+                commands::node_manager::npm_deps,
+                commands::node_manager::npm_status,
+                commands::node_manager::npm_install,
+                commands::node_manager::npm_upgrade,
+                commands::node_manager::npm_start,
+                commands::node_manager::npm_stop,
+                commands::node_manager::npm_open,
+                commands::node_manager::get_node_projects_dir,
+                commands::node_manager::update_node_projects_dir,
+                commands::node_manager::npm_check_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

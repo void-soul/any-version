@@ -40,6 +40,14 @@ pub fn find_in_path(exe_name: &str) -> Option<PathBuf> {
         let lower = exe_name.to_lowercase();
         if lower.ends_with(".exe") || lower.ends_with(".cmd") || lower.ends_with(".bat") {
             vec![exe_name.to_string()]
+        } else if cfg!(target_os = "windows") {
+            // Windows 命令解析优先级：.exe > .cmd > 无扩展名。
+            // 无扩展名通常是给 unix 的 sh 脚本，不能直接执行，故放最后。
+            vec![
+                format!("{}.exe", exe_name),
+                format!("{}.cmd", exe_name),
+                exe_name.to_string(),
+            ]
         } else {
             vec![
                 exe_name.to_string(),

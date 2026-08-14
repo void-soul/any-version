@@ -37,7 +37,8 @@
     "resources": [
       "_up_/ai-tools/*.json",
       "_up_/ai-tools/*/*.json",
-      "_up_/projects/*/*.json"
+      "_up_/projects/*/*.json",
+      "_up_/node-projects/*.json"
     ]
   },
   "plugins": {

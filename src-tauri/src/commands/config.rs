@@ -110,6 +110,10 @@ pub struct Config {
     /// 托盘「启动上次配置」记忆
     #[serde(default)]
     pub last_servers: LastServerConfig,
+    /// 服务类 Node 项目的存储目录（安装 clone / pnpm install 的目标根目录）。
+    /// 默认 ~/.any-version/node-projects，可改到其他盘以节约 C 盘空间。
+    #[serde(default)]
+    pub node_projects_dir: String,
 }
 
 pub fn get_base_dir() -> PathBuf {
@@ -130,6 +134,18 @@ pub fn get_base_dir() -> PathBuf {
     } else {
         path.push(".any-version");
         path
+    }
+}
+
+/// 服务类 Node 项目存储目录（配置可改，空则回退到默认 ~/.any-version/node-projects）。
+pub fn get_node_projects_dir() -> PathBuf {
+    let base_dir = get_base_dir();
+    let configured = load_config().node_projects_dir;
+    let trimmed = configured.trim();
+    if trimmed.is_empty() {
+        base_dir.join("node-projects")
+    } else {
+        PathBuf::from(trimmed)
     }
 }
 
@@ -163,6 +179,7 @@ pub fn load_config() -> Config {
         has_run_before: false,
         tray_menu: TrayMenuConfig::default(),
         last_servers: LastServerConfig::default(),
+        node_projects_dir: base_dir.join("node-projects").to_string_lossy().to_string(),
     };
     let _ = fs::create_dir_all(&base_dir);
     let _ = save_config(&default_config);

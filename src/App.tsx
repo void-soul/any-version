@@ -6,13 +6,14 @@ import AiPanel from "./components/ai/AiPanel";
 import TaskPanel from "./components/tasks/TaskPanel";
 import TaskReminderToast from "./components/tasks/TaskReminderToast";
 import RssReader from "./components/RssReader";
+import NodeManagerPanel from "./components/node/NodeManagerPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Wrench, Settings, X, Minus, Square, Rss, Cpu, Bot, CalendarCheck, Download, AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
+import { Wrench, Settings, X, Minus, Square, Rss, Cpu, Bot, CalendarCheck, Download, AlertTriangle, CheckCircle2, Loader2, Boxes } from "lucide-react";
 import "./App.css";
 
-type PageId = "sdk" | "ai" | "tasks" | "news" | "tools" | "settings";
+type PageId = "sdk" | "ai" | "tasks" | "news" | "tools" | "settings" | "node";
 
 export default function App() {
   const [activePage, setActivePage] = useState<PageId>("news");
@@ -120,6 +121,7 @@ export default function App() {
               { id: "sdk" as PageId, label: "SDK", icon: <Cpu className="w-3 h-3" />, color: "bg-blue-600" },
               { id: "ai" as PageId, label: "AI", icon: <Bot className="w-3 h-3" />, color: "bg-violet-600" },
               { id: "tasks" as PageId, label: "任务", icon: <CalendarCheck className="w-3 h-3" />, color: "bg-amber-500 !text-slate-900" },
+              { id: "node" as PageId, label: "服务", icon: <Boxes className="w-3 h-3" />, color: "bg-cyan-600" },
               { id: "tools" as PageId, label: "更多", icon: <Wrench className="w-3 h-3" />, color: "bg-emerald-600" },
               { id: "settings" as PageId, label: "设置", icon: <Settings className="w-3 h-3" />, color: "bg-red-600" },
             ]).map((item) => (
@@ -183,6 +185,11 @@ export default function App() {
         {mountedPages.has("tasks") && (
           <div className={activePage === "tasks" ? "h-full w-full" : "hidden"}>
             <TaskPanel />
+          </div>
+        )}
+        {mountedPages.has("node") && (
+          <div className={activePage === "node" ? "h-full w-full" : "hidden"}>
+            <NodeManagerPanel />
           </div>
         )}
         {mountedPages.has("news") && (

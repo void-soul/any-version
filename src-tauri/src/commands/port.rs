@@ -289,7 +289,7 @@ pub fn check_port_status(port_str: String) -> Result<PortStatus, String> {
 }
 
 #[tauri::command]
-pub fn kill_port_owner(port_str: String) -> Result<(), String> {
+pub fn kill_port_owner(port_str: String) -> Result<String, String> {
     let port = port_str.parse::<i32>().map_err(|_| "端口号无效".to_string())?;
     let ranges = get_excluded_port_ranges();
     if is_port_reserved(port, &ranges) {
@@ -297,15 +297,38 @@ pub fn kill_port_owner(port_str: String) -> Result<(), String> {
     }
 
     let owner = find_port_owner(&port_str).ok_or_else(|| format!("未找到占用端口 {} 的进程", port_str))?;
+
+    // 先尝试普通权限杀死
     let taskkill_cmd = format!("taskkill /f /pid {}", owner.pid);
     let output = super::hidden_cmd::hidden_cmd("cmd")
         .args(&["/c", &taskkill_cmd])
         .output()
         .map_err(|e| e.to_string())?;
 
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    if output.status.success() {
+        return Ok(format!("成功终止进程 {} (PID: {})", owner.process_name, owner.pid));
     }
 
-    Ok(())
+    // taskkill 失败，检查错误原因
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+
+    // 检测是否是权限不足（拒绝访问）
+    let is_access_denied = stderr.contains("拒绝访问") || stdout.contains("拒绝访问")
+        || stderr.contains("Access is denied") || stdout.contains("Access is denied");
+
+    if is_access_denied {
+        return Err(format!(
+            "权限不足：无法终止进程 {} (PID: {})。该进程可能需要管理员权限才能终止。\n\n解决方案：\n1. 以管理员身份运行 AnyVersion\n2. 或在任务管理器中手动结束该进程\n\n原始错误：{}",
+            owner.process_name, owner.pid, stderr.trim()
+        ));
+    }
+
+    // 其他错误
+    Err(format!(
+        "终止进程失败 (PID: {})。\n进程: {}\n错误: {}",
+        owner.pid,
+        owner.process_name,
+        stderr.trim().chars().take(500).collect::<String>()
+    ))
 }

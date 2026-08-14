@@ -1,6 +1,6 @@
 ﻿use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 fn now_ms() -> u64 {
@@ -35,6 +35,27 @@ static TRAY_MENU_OPEN: AtomicBool = AtomicBool::new(false);
 
 /// 全局保存的 AppHandle，供后台线程（如服务状态快照刷新）触发托盘菜单重建。
 static GLOBAL_APP: OnceLock<AppHandle> = OnceLock::new();
+
+/// 正在启动中的服务 id 集合。用于托盘菜单展示「⋯ 启动中」置灰态并防重复启动。
+static STARTING_SERVICES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn starting_services_contains(id: &str) -> bool {
+    STARTING_SERVICES.lock().map(|g| g.iter().any(|s| s == id)).unwrap_or(false)
+}
+
+fn starting_services_push(id: String) {
+    if let Ok(mut g) = STARTING_SERVICES.lock() {
+        if !g.contains(&id) {
+            g.push(id);
+        }
+    }
+}
+
+fn starting_services_remove(id: &str) {
+    if let Ok(mut g) = STARTING_SERVICES.lock() {
+        g.retain(|s| s != id);
+    }
+}
 
 /// 托盘重建节流。
 ///
@@ -164,10 +185,34 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 }
                 other if other.starts_with(ID_SERVICE_START_PREFIX) => {
                     if let Some(service_id) = other.strip_prefix(ID_SERVICE_START_PREFIX) {
-                        if let Err(error) = crate::commands::service::start_service_inner(service_id.to_string(), None) {
-                            eprintln!("failed to start service {service_id}: {error}");
+                        // 防重复启动：已在启动中则忽略本次点击
+                        if starting_services_contains(service_id) {
+                            crate::exit_log::exit_log(&format!(
+                                "[tray] 服务 {} 正在启动中，忽略重复点击", service_id
+                            ));
+                        } else {
+                            starting_services_push(service_id.to_string());
+                            // 立即重建菜单，把该项显示为「⋯ 启动中」并置灰
+                            let _ = rebuild_tray_menu(app);
+                            let app2 = app.clone();
+                            let sid = service_id.to_string();
+                            // 同步启动函数较耗时（内部轮询等待服务就绪），放到后台线程执行，
+                            // 避免阻塞托盘菜单事件处理；完成后移除启动中状态并重建菜单。
+                            std::thread::spawn(move || {
+                                let result = crate::commands::service::start_service_inner(
+                                    sid.clone(),
+                                    None,
+                                );
+                                if let Err(error) = &result {
+                                    eprintln!("failed to start service {sid}: {error}");
+                                    crate::exit_log::exit_log(&format!(
+                                        "[tray] 服务 {} 启动失败: {}", sid, error
+                                    ));
+                                }
+                                starting_services_remove(&sid);
+                                let _ = rebuild_tray_menu(&app2);
+                            });
                         }
-                        let _ = rebuild_tray_menu(app);
                     }
                 }
                 other if other.starts_with(ID_SERVICE_STOP_PREFIX) => {
@@ -391,7 +436,14 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         } else {
             String::new()
         };
-        let (item_id, label) = if status.running {
+        // 启动中状态：显示「⋯ 启动中」并置灰禁用，防止重复启动
+        let starting = starting_services_contains(&def.id);
+        let (item_id, label) = if starting {
+            (
+                format!("{}{}", ID_SERVICE_START_PREFIX, def.id),
+                format!("⋯ {} · 启动中", def.display_name),
+            )
+        } else if status.running {
             (
                 format!("{}{}", ID_SERVICE_STOP_PREFIX, def.id),
                 format!("■ {} · 停止{}", def.display_name, port_text),
@@ -402,7 +454,9 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                 format!("▶ {} · 启动", def.display_name),
             )
         };
-        let item = MenuItemBuilder::with_id(item_id, label).build(app)?;
+        let item = MenuItemBuilder::with_id(item_id, label)
+            .enabled(!starting)
+            .build(app)?;
         builder = builder.item(&item);
     }
 

@@ -58,8 +58,8 @@ export default function PortScanner() {
     setErrorMsg(null);
     setSuccessMsg(null);
     try {
-      await invoke("kill_port_owner", { portStr: status.port.toString() });
-      setSuccessMsg(`进程 ${status.owner.process_name} 已终止，端口已释放！`);
+      const msg = await invoke<string>("kill_port_owner", { portStr: status.port.toString() });
+      setSuccessMsg(msg);
       const res = await invoke<PortStatus>("check_port_status", { portStr: status.port.toString() });
       setStatus(res);
     } catch (e: any) {

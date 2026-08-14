@@ -22,6 +22,7 @@ import {
 interface Config {
   versions_dir: string;
   links_dir: string;
+  node_projects_dir?: string;
 }
 
 import type { AiConfig } from "./ai/types";
@@ -64,6 +65,8 @@ export default function GlobalSettings() {
   const [linksDir, setLinksDir] = useState("");
   const [oldVersionsDir, setOldVersionsDir] = useState("");
   const [oldLinksDir, setOldLinksDir] = useState("");
+  const [nodeProjectsDir, setNodeProjectsDir] = useState("");
+  const [oldNodeProjectsDir, setOldNodeProjectsDir] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -121,6 +124,15 @@ export default function GlobalSettings() {
       setLinksDir(config.links_dir);
       setOldVersionsDir(config.versions_dir);
       setOldLinksDir(config.links_dir);
+      // 服务类项目存储目录（旧版本 config 可能无此字段，回退取后端默认值）
+      if (config.node_projects_dir) {
+        setNodeProjectsDir(config.node_projects_dir);
+        setOldNodeProjectsDir(config.node_projects_dir);
+      } else {
+        const dir = await invoke<string>("get_node_projects_dir").catch(() => "");
+        setNodeProjectsDir(dir);
+        setOldNodeProjectsDir(dir);
+      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -257,6 +269,36 @@ export default function GlobalSettings() {
     } finally {
       unlisten();
       setProgress(null);
+      setSaving(false);
+    }
+  };
+
+  // 保存「服务类项目存储路径」，路径变化时迁移已有项目目录
+  const handleSaveNodeProjectsDir = async () => {
+    if (!nodeProjectsDir.trim()) {
+      alert("服务类项目存储路径不能为空");
+      return;
+    }
+    const normalize = (s: string) => s.trim().replace(/[\\/]+$/, "");
+    const changed = normalize(nodeProjectsDir) !== normalize(oldNodeProjectsDir);
+    if (!changed) {
+      alert("路径未发生变化");
+      return;
+    }
+    if (!confirm("检测到服务类项目存储路径已更改。\n\n将把旧目录下已安装的项目移动到新目录。\n\n确定继续吗？")) return;
+    setSaving(true);
+    try {
+      const failures = await invoke<string[]>("update_node_projects_dir", { newDir: nodeProjectsDir });
+      if (failures && failures.length) {
+        alert(`部分项目迁移失败：\n${failures.join("\n")}`);
+      } else {
+        alert("服务类项目存储路径已更新，已有项目已迁移完成。");
+      }
+      setSuccess(true);
+      await fetchConfig();
+    } catch (e: any) {
+      alert(`保存失败: ${e}`);
+    } finally {
       setSaving(false);
     }
   };
@@ -415,6 +457,31 @@ export default function GlobalSettings() {
                 </button>
               </div>
               <p className="text-[9px] text-slate-500">此目录存放各个工具的固定快捷链接文件夹（会自动加入系统 PATH），切换版本即是秒级修改其底层指向。</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] text-slate-500 uppercase font-semibold">服务类项目存储路径 (node_projects_dir)</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={nodeProjectsDir}
+                  onChange={(e) => setNodeProjectsDir(e.target.value)}
+                  className="flex-1 glass-input px-3.5 py-2.5 text-xs font-mono"
+                  placeholder="e.g. D:\AnyVersion\node-projects"
+                />
+                <button onClick={() => handleBrowseFolder(setNodeProjectsDir)} className="p-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-lg border border-white/5 cursor-pointer transition-all flex-shrink-0" title="选择文件夹">
+                  <FolderOpen className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={handleSaveNodeProjectsDir}
+                  disabled={saving}
+                  className="px-3.5 py-2.5 bg-cyan-600/80 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold disabled:opacity-50 cursor-pointer transition-all flex-shrink-0"
+                  title="保存并迁移已安装项目"
+                >
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "保存"}
+                </button>
+              </div>
+              <p className="text-[9px] text-slate-500">此目录用于安装/托管「服务」页的 Node 应用（clone + pnpm install 的目标根目录）。设为非系统盘（如 D 盘）可避免占用 C 盘空间。保存时会把已安装项目迁移到新目录。</p>
             </div>
 
             {/* 路径变更确认弹窗 */}

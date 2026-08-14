@@ -6,42 +6,48 @@ use super::types::{EnvVarDef, FindRule, PackageManagerDef, ProjectDef};
 use std::sync::RwLock;
 
 /// 命令字符串白名单字符集。
-/// 允许：字母数字、空格、常见路径与参数符号、以及 `{placeholder}` 模板占位符。
-/// 禁止：任何 shell 元字符（& | ; > < $ ` ( ) 以及引号），以阻止命令注入。
-fn is_safe_cmd(s: &str) -> bool {
-    s.chars().all(|c| {
-        c.is_ascii_alphanumeric()
-            || matches!(
-                c,
-                ' ' | '.' | '/' | '\\' | '-' | '_' | ':' | '{' | '}' | '=' | '@' | '%' | '+'
-            )
-    })
+/// `allow_shell = true` 时额外允许 shell 重定向/管道字符（`> < & | ;`）。
+///
+/// 安全说明：这些命令最终都会经 `std::process::Command` 直接 spawn（不经 shell 解释），
+/// 重定向/管道字符只是字面参数，不会被解释执行，因此不存在注入风险。
+/// 但「只读检测命令」（version_cmd / cache_detect_cmd 等）常需 `2>&1`、管道等合法写法
+/// （如 `java -version 2>&1`），故对它们放宽；写操作命令保持严格。
+fn is_safe_cmd(s: &str, allow_shell: bool) -> bool {
+    let mut base = vec![
+        ' ', '.', '/', '\\', '-', '_', ':', '{', '}', '=', '@', '%', '+', ',', '[', ']',
+    ];
+    if allow_shell {
+        base.extend(['>', '<', '&', '|', ';']);
+    }
+    s.chars().all(|c| c.is_ascii_alphanumeric() || base.contains(&c))
 }
 
 /// 校验一个项目定义内的所有可执行命令字段，防止注册表注入任意 shell 命令。
 /// 遇到含危险字符的命令，记录告警并将该字段置为 None（拒绝执行）。
+/// 只读检测命令放宽重定向字符，写操作命令保持严格。
 fn sanitize_project_cmds(def: &mut ProjectDef) {
-    let check = |field: &str, val: &mut Option<String>| {
+    let check = |field: &str, val: &mut Option<String>, allow_shell: bool| {
         if let Some(ref s) = val {
-            if !is_safe_cmd(s) {
+            if !is_safe_cmd(s, allow_shell) {
                 eprintln!(
-                    "[registry] 拒绝危险命令字段 {}.{} = {:?}（含 shell 元字符，疑似注入）",
+                    "[registry] 拒绝危险命令字段 {}.{} = {:?}（含非法字符，疑似注入）",
                     def.id, field, s
                 );
                 *val = None;
             }
         }
     };
-    check("version_cmd", &mut def.version_cmd);
-    check("cache_detect_cmd", &mut def.cache_detect_cmd);
-    check("cache_default_path", &mut def.cache_default_path);
+    // 只读检测命令：允许 `2>&1`、管道等合法写法
+    check("version_cmd", &mut def.version_cmd, true);
+    check("cache_detect_cmd", &mut def.cache_detect_cmd, true);
+    check("cache_default_path", &mut def.cache_default_path, true);
     for pm in &mut def.package_managers {
-        check("install_cmd", &mut pm.install_cmd);
-        check("version_cmd", &mut pm.version_cmd);
-        check("cache_detect_cmd", &mut pm.cache_detect_cmd);
-        check("pkg_list_cmd", &mut pm.pkg_list_cmd);
-        check("cache_set_cmd_template", &mut pm.cache_set_cmd_template);
-        check("proxy_clear_cmd", &mut pm.proxy_clear_cmd);
+        check("install_cmd", &mut pm.install_cmd, false);
+        check("version_cmd", &mut pm.version_cmd, true);
+        check("cache_detect_cmd", &mut pm.cache_detect_cmd, true);
+        check("pkg_list_cmd", &mut pm.pkg_list_cmd, true);
+        check("cache_set_cmd_template", &mut pm.cache_set_cmd_template, false);
+        check("proxy_clear_cmd", &mut pm.proxy_clear_cmd, false);
     }
 }
 

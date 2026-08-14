@@ -1,0 +1,15 @@
+{
+  "id": "harness",
+  "displayName": "DeepSeek Harness",
+  "repo": "https://github.com/deepseek-ai/deepseek-harness.git",
+  "website": "https://deepseek.com/harness",
+  "icon": "bot",
+  "description": "DeepSeek 官方智能体（Agent）测试框架，核心理念「Everything is a Plugin」",
+  "defaultPort": 3080,
+  "webPath": "http://127.0.0.1:{port}",
+  "nodeRequirement": ">=20",
+  "packageManager": "pnpm",
+  "buildScript": "build",
+  "startCmd": ["dsh", "web"],
+  "managed": true
+}
