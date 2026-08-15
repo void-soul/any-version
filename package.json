@@ -1,7 +1,7 @@
 {
   "name": "tauri-app",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "type": "module",
   "scripts": {
     "start": "set ANY_VERSION_PROXY_DEBUG=1 && tauri dev",
@@ -21,10 +21,10 @@
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
-    "dompurify": "^3.4.12",
+    "dompurify": "^3.4.13",
     "flag-icons": "^7.5.0",
-    "lucide-react": "^1.28.0",
-    "marked": "^18.0.7",
+    "lucide-react": "^1.31.0",
+    "marked": "^18.0.9",
     "monaco-editor": "0.55.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
