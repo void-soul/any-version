@@ -518,7 +518,7 @@ export default function ProjectDetailPanel({
 
   // 服务类项目：静默轮询服务状态，进程意外退出后前端能自动感知，
   // 避免界面仍显示陈旧 PID 导致「停止」误报「未检测到进程」。
-  const _def = uiMap[pid]?.detail?.def;
+  const _def = pid ? uiMap[pid]?.detail?.def : undefined;
   const isServiceProject = !!_def && (_def.is_service || _def.category === "service");
   useEffect(() => {
     if (!pid || !isServiceProject) return;
