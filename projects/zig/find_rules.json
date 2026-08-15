@@ -1,0 +1,22 @@
+[
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "zig.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "zig",
+      "exe_name": "zig.exe"
+    },
+    "source_label": "Zig 安装目录",
+    "priority": 40,
+    "root_offset": 0
+  }
+]

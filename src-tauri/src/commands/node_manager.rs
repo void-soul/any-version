@@ -616,7 +616,7 @@ pub async fn npm_install(app: tauri::AppHandle, project_id: String) -> Result<()
     }
 
     emit_progress(&app, &def.id, "clone", &format!("正在克隆 {} …", def.repo));
-    let base = get_base_dir();
+    let base = crate::commands::config::get_data_dir();
     let parent = dir.parent().unwrap_or(&base);
     let _ = fs::create_dir_all(parent);
     let _ = fs::remove_dir_all(&dir);
@@ -668,6 +668,23 @@ pub async fn npm_upgrade(app: tauri::AppHandle, project_id: String) -> Result<()
     pm_install(&app, &def, &dir)?;
     pm_build(&app, &def, &dir)?;
     emit_progress(&app, &def.id, "done", "升级完成");
+    Ok(())
+}
+
+/// 单独安装依赖（不重新克隆/拉取代码）：执行包管理器 install + 构建脚本。
+/// 用于项目已安装但依赖缺失/损坏时，仅重新安装依赖并打印实时日志。
+#[tauri::command]
+pub async fn npm_install_deps(app: tauri::AppHandle, project_id: String) -> Result<(), String> {
+    let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
+    if !def.installed() {
+        return Err("项目尚未安装，请先「安装」".to_string());
+    }
+    ensure_deps_ready(&def)?;
+
+    let dir = def.managed_dir();
+    pm_install(&app, &def, &dir)?;
+    pm_build(&app, &def, &dir)?;
+    emit_progress(&app, &def.id, "done", "依赖安装完成");
     Ok(())
 }
 

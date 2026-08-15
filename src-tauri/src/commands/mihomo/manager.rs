@@ -42,14 +42,7 @@ fn resolve_base_core_path(app: &AppConfig) -> PathBuf {
     if let Some(p) = crate::commands::utils::bin_tool_path("mihomo") {
         return p;
     }
-    if let Some(manifest) = option_env!("CARGO_MANIFEST_DIR") {
-        if let Some(root) = std::path::Path::new(manifest).parent() {
-            let c = root.join("bin").join("mihomo").join("mihomo.exe");
-            if c.exists() {
-                return c;
-            }
-        }
-    }
+    // 单一路径策略：不再从程序根目录（CARGO_MANIFEST_DIR/bin）读取，统一 data_dir/bin。
     PathBuf::from("mihomo")
 }
 
@@ -82,18 +75,8 @@ pub fn resolve_core_path(app: &AppConfig) -> PathBuf {
     if let Some(p) = crate::commands::utils::bin_tool_path("mihomo") {
         return p;
     }
-    // 3. 开发期兜底：CARGO_MANIFEST_DIR 指向 src-tauri，其上级即项目根，
-    //    bin/mihomo/mihomo.exe 必定在此
-    if let Some(manifest) = option_env!("CARGO_MANIFEST_DIR") {
-        if let Some(root) = std::path::Path::new(manifest).parent() {
-            let c = root.join("bin").join("mihomo").join("mihomo.exe");
-            if c.exists() {
-                eprintln!("[mihomo] resolve_core_path: 命中 CARGO_MANIFEST_DIR 兜底 -> {:?}", c);
-                return c;
-            }
-        }
-    }
-    // 4. 兜底：PATH 上的 mihomo
+    // 单一路径策略：不再从程序根目录（CARGO_MANIFEST_DIR/bin）读取，统一 data_dir/bin。
+    // 兜底：PATH 上的 mihomo
     PathBuf::from("mihomo")
 }
 

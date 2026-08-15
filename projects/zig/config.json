@@ -1,0 +1,38 @@
+{
+  "id": "zig",
+  "display_name": "Zig",
+  "category": "language",
+  "official_website": "https://ziglang.org",
+  "simple_mode": false,
+  "bin_dirs": [
+    ""
+  ],
+  "has_cache": true,
+  "cache_detect_cmd": null,
+  "cache_default_path": null,
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": false,
+  "default_port": null,
+  "version_cmd": "zig version",
+  "version_exe": "zig",
+  "download_file_ext": "zip",
+  "version_url_prefix_map": {
+    "0.14.": "https://ziglang.org/download/{version}/zig-x86_64-windows-{version}.zip",
+    "0.15.": "https://ziglang.org/download/{version}/zig-x86_64-windows-{version}.zip",
+    "0.16.": "https://ziglang.org/download/{version}/zig-x86_64-windows-{version}.zip",
+    "0.17.": "https://ziglang.org/download/{version}/zig-x86_64-windows-{version}.zip",
+    "0.13.": "https://ziglang.org/download/{version}/zig-windows-x86_64-{version}.zip",
+    "0.12.": "https://ziglang.org/download/{version}/zig-windows-x86_64-{version}.zip",
+    "0.11.": "https://ziglang.org/download/{version}/zig-windows-x86_64-{version}.zip",
+    "0.10.": "https://ziglang.org/download/{version}/zig-windows-x86_64-{version}.zip",
+    "0.9.": "https://ziglang.org/download/{version}/zig-windows-x86_64-{version}.zip",
+    "0.8.": "https://ziglang.org/download/{version}/zig-windows-x86_64-{version}.zip",
+    "0.7.": "https://ziglang.org/download/{version}/zig-windows-x86_64-{version}.zip",
+    "0.6.": "https://ziglang.org/download/{version}/zig-windows-x86_64-{version}.zip",
+    "0.5.": "https://ziglang.org/download/{version}/zig-windows-x86_64-{version}.zip"
+  }
+}

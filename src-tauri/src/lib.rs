@@ -187,6 +187,16 @@ pub fn run() {
                 crate::commands::utils::set_resource_dir(res_dir);
             }
             tray::build_tray(app.handle())?;
+            // 启动时兜底重建 SDK 锚点 junction（修复迁移后遗留的普通空目录）
+            {
+                let config = crate::commands::config::load_config();
+                let rebuilt = crate::commands::config::rebuild_sdk_junctions(&config);
+                if !rebuilt.is_empty() {
+                    exit_log::exit_log(&format!(
+                        "[startup] 重建 SDK 锚点 junction: {:?}", rebuilt
+                    ));
+                }
+            }
             commands::cert::start_scheduler(app.handle().clone());
             let mihomo_state = commands::mihomo::init_state(app.handle());
             app.manage(mihomo_state.clone());
@@ -230,6 +240,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::config::get_config,
             commands::config::update_config,
+            commands::config::get_data_dir_cmd,
+            commands::config::get_sdk_dir_cmd,
             commands::config::get_project_menu_config,
             commands::config::update_project_menu_config,
             commands::http_server::start_http_server,
@@ -548,6 +560,7 @@ pub fn run() {
                 commands::node_manager::npm_status,
                 commands::node_manager::npm_install,
                 commands::node_manager::npm_upgrade,
+                commands::node_manager::npm_install_deps,
                 commands::node_manager::npm_start,
                 commands::node_manager::npm_stop,
                 commands::node_manager::npm_open,

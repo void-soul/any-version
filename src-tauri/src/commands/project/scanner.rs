@@ -610,9 +610,15 @@ fn build_cache_status(def: &ProjectDef) -> Option<CacheStatus> {
     })
 }
 
-/// 构建服务状态
+/// 构建服务状态。
+/// 优先读取 service 模块的后台快照（3s TTL），避免每次前端轮询都同步执行
+/// tasklist/wmic/netstat（这些命令长时运行后可能变慢阻塞事件循环）。
+/// 快照缺失（首轮/缓存过期后台刷新中）时回退为同步检测，保证返回真实状态。
 fn build_service_status(def: &ProjectDef) -> Option<ServiceStatus> {
-    Some(crate::commands::service::service_status_for_def(def))
+    let mut snapshot = crate::commands::service::service_status_snapshot(&[def.id.clone()]);
+    snapshot
+        .remove(&def.id)
+        .or_else(|| Some(crate::commands::service::service_status_for_def(def)))
 }
 
 /// 获取 SDK 的可执行目录列表（用于 PATH 管理）

@@ -648,6 +648,14 @@ const SERVICE_STATUS_TTL: Duration = Duration::from_secs(3);
 static SERVICE_STATUS_CACHE: Mutex<Option<(Instant, HashMap<String, ServiceStatus>)>> =
     Mutex::new(None);
 
+/// 失效服务状态快照缓存。在启动/停止/强制终止服务成功后调用，
+/// 确保随后的前端轮询不会读到 TTL 内过期的旧状态（避免状态回跳）。
+pub(crate) fn invalidate_service_status_cache() {
+    if let Ok(mut guard) = SERVICE_STATUS_CACHE.lock() {
+        *guard = None;
+    }
+}
+
 /// 刷新指定服务 id 的状态快照（在后台线程调用，内部会跑 tasklist/wmic/netstat）。
 pub(crate) fn refresh_service_status_snapshot(ids: &[String]) -> HashMap<String, ServiceStatus> {
     let mut map = HashMap::new();
@@ -930,7 +938,10 @@ pub(crate) fn start_service_inner(name: String, version: Option<String>) -> Resu
     // run_service_command 内部的 800ms 更久才真正 ready。若这里直接返回 Ok，前端立即刷新
     // 会探测到「端口尚未 LISTENING」而显示成 stopped，造成「启动中→未启动→刷新才 running」的
     // 闪烁。因此主动轮询等待服务真正就绪后再返回。
-    wait_for_service_running(&def)
+    wait_for_service_running(&def)?;
+    // 启动成功：失效服务状态快照，避免前端轮询读到 TTL 内过期状态。
+    invalidate_service_status_cache();
+    Ok(())
 }
 
 #[tauri::command]
@@ -1004,6 +1015,8 @@ pub(crate) fn stop_service_inner(name: String) -> Result<(), String> {
         }
     }
 
+    // 停止成功：失效服务状态快照，避免前端轮询读到 TTL 内过期状态。
+    invalidate_service_status_cache();
     Ok(())
 }
 
@@ -1049,6 +1062,8 @@ pub(crate) fn force_stop_service_inner(name: String) -> Result<(), String> {
         let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(format!("强制终止进程失败 (PID: {}): {}", pid, err_msg));
     }
+    // 强制终止成功：失效服务状态快照。
+    invalidate_service_status_cache();
     Ok(())
 }
 

@@ -51,6 +51,8 @@ sha2 = "0.10"
 sha1 = "0.10"
 base64 = "0.22"
 serde_yaml = "0.9"
+# 解码 cmd/子进程的 GBK（代码页 936）输出，修复 mklink 等中文输出乱码
+encoding_rs = "0.8"
 # 凭据加密（AES-256-GCM）
 aes-gcm = "0.10"
 getrandom = "0.2"

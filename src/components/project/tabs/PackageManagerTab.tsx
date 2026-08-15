@@ -808,11 +808,13 @@ export function PackageManagerTab({
             {/* 删除旧文件 */}
             <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "delete" ? "border-red-500/30 bg-red-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
               <input type="radio" name="wf_file_action" value="delete" checked={workflowFileAction === "delete"}
-                disabled={isData} className="mt-0.5" />
+                className="mt-0.5" />
               <div>
-                <span className={`text-[13px] font-semibold ${isData ? "text-slate-600" : "text-red-300"}`}>删除旧文件</span>
+                <span className="text-[13px] font-semibold text-red-300">删除旧文件</span>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  {isData ? "数据文件不可直接删除以保证安全性" : "直接删除旧文件。（缓存可从网络重新下载，适合清空重建）"}
+                  {isData
+                    ? "数据会先完整拷贝到新目录，原位置仅保留链接，原文件被安全清理（数据仍在新位置，不会丢失）。"
+                    : "直接删除旧文件。（缓存可从网络重新下载，适合清空重建）"}
                 </p>
               </div>
             </label>
@@ -1267,7 +1269,7 @@ export function PackageManagerTab({
               </div>
             )}
 
-            <p className="text-[11px] text-red-400/70">⚠ 数据文件必须拷贝后迁移，不可直接删除（保证安全性）。</p>
+            <p className="text-[11px] text-red-400/70">⚠ 数据迁移会先完整拷贝到新目录，原位置仅保留链接，保证数据安全。</p>
 
             {/* 操作行 */}
             <div className="pt-2 border-t border-white/5 flex items-center gap-2">

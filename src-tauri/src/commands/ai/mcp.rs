@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use serde_json::{Map, Value};
 use crate::commands::ai_registry::registry;
-use crate::commands::config::get_base_dir;
+use crate::commands::config::get_data_dir;
 use super::skills::SkillToolInfo;
 
 // ─── 数据模型 ───
@@ -56,7 +56,7 @@ struct McpStore {
 }
 
 fn mcp_path() -> PathBuf {
-    get_base_dir().join("mcp.json")
+    get_data_dir().join("mcp.json")
 }
 
 fn load_store() -> McpStore {

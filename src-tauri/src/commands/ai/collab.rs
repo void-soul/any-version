@@ -15,7 +15,7 @@ use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
 use tauri::Emitter;
 use crate::commands::ai_registry::registry;
-use crate::commands::config::get_base_dir;
+use crate::commands::config::get_data_dir;
 use super::models::*;
 use super::launch::start_tool_proxy_with_collab;
 
@@ -713,7 +713,7 @@ fn build_collab_protocol_prompt(_room_id: &str) -> String {
 // ─── 持久化 ───
 
 fn collab_path() -> PathBuf {
-    get_base_dir().join("collab.json")
+    get_data_dir().join("collab.json")
 }
 
 /// collab.json 的 schema 版本；读取即打上当前版本，便于将来迁移
@@ -2423,7 +2423,7 @@ async fn dispatch_to_tool(
         format!("{}\n\n{}", build_collab_protocol_prompt(&room_id), prompt)
     };
 
-    let tmp_dir = get_base_dir().join("collab_tmp");
+    let tmp_dir = get_data_dir().join("collab_tmp");
     let _ = fs::create_dir_all(&tmp_dir);
     let prompt_path = tmp_dir.join(format!(
         "{}_{}.txt",

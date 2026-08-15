@@ -80,8 +80,18 @@ fn default_false() -> bool {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
+    /// 已废弃：SDK 版本库目录（由 `sdk_dir/_versions` 取代）。保留读取兼容。
+    #[serde(default)]
     pub versions_dir: String,
+    /// 已废弃：SDK 链接目录（由 `sdk_dir` 取代）。保留读取兼容。
+    #[serde(default)]
     pub links_dir: String,
+    /// 数据根目录（可改到非系统盘），承载所有可变数据：sdk、node-projects、backup、certs、version_cache、数据库等。
+    #[serde(default)]
+    pub data_dir: String,
+    /// SDK 目录（合并 versions+links）。默认 data_dir/sdk，内部用 `_versions` 存版本库、sdk 根放 junction 锚点。
+    #[serde(default)]
+    pub sdk_dir: String,
     pub managed_items: std::collections::HashSet<String>,
     #[serde(default)]
     pub simple_managed_items: std::collections::HashSet<String>,
@@ -137,16 +147,48 @@ pub fn get_base_dir() -> PathBuf {
     }
 }
 
-/// 服务类 Node 项目存储目录（配置可改，空则回退到默认 ~/.any-version/node-projects）。
-pub fn get_node_projects_dir() -> PathBuf {
+/// 数据根目录（可改，空则回退到默认 ~/.any-version）。
+pub fn get_data_dir() -> PathBuf {
     let base_dir = get_base_dir();
-    let configured = load_config().node_projects_dir;
+    let configured = load_config().data_dir;
     let trimmed = configured.trim();
     if trimmed.is_empty() {
-        base_dir.join("node-projects")
+        base_dir
     } else {
         PathBuf::from(trimmed)
     }
+}
+
+/// SDK 目录（合并 versions+links）。始终为 data_dir/sdk（单一路径策略，不单独配置）。
+pub fn get_sdk_dir() -> PathBuf {
+    get_data_dir().join("sdk")
+}
+
+/// SDK 版本库目录：sdk_dir/_versions。
+pub fn get_sdk_versions_dir() -> PathBuf {
+    get_sdk_dir().join("_versions")
+}
+
+/// SDK 链接（junction 锚点）根目录：即 sdk_dir 本身。
+pub fn get_sdk_link_dir() -> PathBuf {
+    get_sdk_dir()
+}
+
+/// 供前端读取当前数据目录（命令）。
+#[tauri::command]
+pub fn get_data_dir_cmd() -> String {
+    get_data_dir().to_string_lossy().to_string()
+}
+
+/// 供前端读取当前 SDK 目录（命令）。
+#[tauri::command]
+pub fn get_sdk_dir_cmd() -> String {
+    get_sdk_dir().to_string_lossy().to_string()
+}
+
+/// 服务类 Node 项目存储目录。始终为 data_dir/node-projects（单一路径策略，不单独配置）。
+pub fn get_node_projects_dir() -> PathBuf {
+    get_data_dir().join("node-projects")
 }
 
 pub fn load_config() -> Config {
@@ -154,7 +196,8 @@ pub fn load_config() -> Config {
     let config_path = base_dir.join("config.json");
     if config_path.exists() {
         if let Ok(data) = fs::read_to_string(&config_path) {
-            if let Ok(config) = serde_json::from_str::<Config>(&data) {
+            if let Ok(mut config) = serde_json::from_str::<Config>(&data) {
+                fill_legacy_dirs(&mut config, &base_dir);
                 return config;
             }
         }
@@ -162,6 +205,8 @@ pub fn load_config() -> Config {
     let default_config = Config {
         versions_dir: base_dir.join("versions").to_string_lossy().to_string(),
         links_dir: base_dir.join("links").to_string_lossy().to_string(),
+        data_dir: base_dir.to_string_lossy().to_string(),
+        sdk_dir: base_dir.join("sdk").to_string_lossy().to_string(),
         managed_items: std::collections::HashSet::new(),
         simple_managed_items: std::collections::HashSet::new(),
         custom_install_paths: std::collections::HashMap::new(),
@@ -184,6 +229,21 @@ pub fn load_config() -> Config {
     let _ = fs::create_dir_all(&base_dir);
     let _ = save_config(&default_config);
     default_config
+}
+
+/// 用 sdk_dir 派生填充已废弃的 versions_dir/links_dir 字段（最小侵入兼容方案）。
+/// 供所有现有 `config.versions_dir`/`config.links_dir` 引用读取到正确路径。
+fn fill_legacy_dirs(config: &mut Config, base_dir: &Path) {
+    // 单一路径策略：versions_dir / links_dir 已废弃，始终由 data_dir/sdk 派生，
+    // 忽略 config 中任何旧值，确保链接锚点与版本库路径一致。
+    let data = if config.data_dir.trim().is_empty() {
+        base_dir.to_path_buf()
+    } else {
+        PathBuf::from(config.data_dir.trim())
+    };
+    let sdk = data.join("sdk");
+    config.versions_dir = sdk.join("_versions").to_string_lossy().to_string();
+    config.links_dir = sdk.to_string_lossy().to_string();
 }
 
 pub fn save_config(config: &Config) -> Result<(), String> {
@@ -229,7 +289,7 @@ pub struct BackupStore {
 }
 
 fn backup_path() -> PathBuf {
-    get_base_dir().join("backups.json")
+    get_data_dir().join("backups.json")
 }
 
 pub fn load_backups() -> BackupStore {
@@ -412,6 +472,9 @@ pub fn do_migrate_storage(
                         result.recreated_junctions.push(item_id.to_string());
                     }
                 }
+
+                // 兜底：对 active_versions 中记录的所有 SDK，重建锚点 junction
+                result.recreated_junctions.extend(rebuild_sdk_junctions(&config));
 
                 // ── 重写 PATH 环境变量：删除所有旧 links_dir 相关条目，重新写入所有托管 SDK 的路径 ──
                 if let Some(user_path) = crate::commands::env::get_registry_env("PATH") {
@@ -602,36 +665,178 @@ pub fn get_app_version() -> Result<String, String> {
 }
 
 /// 更新配置并自动迁移存储路径。
-/// 如果 versions_dir 或 links_dir 发生变化，自动执行：
-///   1. 将旧目录下的已安装版本文件移动到新目录
-///   2. 更新所有 junction 链接的指向
-///   3. 更新 PATH 环境变量中的旧路径为新路径
+/// 只接收 `data_dir`（单一路径策略）：SDK、Node 服务项目、证书、数据库等
+/// 全部作为 data_dir 的子目录自动派生。
+/// 修改 data_dir 时自动执行：
+///   1. 将 base_dir 下所有可变数据（含 sdk 版本库/链接、node-projects、certs、数据库等）迁移到新 data_dir
+///   2. 重建 junction 指向、更新 PATH 环境变量与 *_HOME 变量
 #[tauri::command]
-pub fn update_config(app_handle: tauri::AppHandle, versions_dir: String, links_dir: String) -> Result<MigrateResult, String> {
+pub fn update_config(app_handle: tauri::AppHandle, data_dir: String) -> Result<MigrateResult, String> {
     let old_config = load_config();
+    // 旧路径（fill_legacy_dirs 已保证非空）
     let old_versions_dir = old_config.versions_dir.clone();
     let old_links_dir = old_config.links_dir.clone();
 
     let mut config = old_config;
+    let base_dir = get_base_dir();
 
+    let new_data_dir = if data_dir.trim().is_empty() {
+        base_dir.clone()
+    } else {
+        PathBuf::from(data_dir.trim())
+    };
+
+    // 新 sdk 两层路径（始终 new_data_dir/sdk）
+    let new_sdk = new_data_dir.join("sdk");
+    let new_versions_dir = new_sdk.join("_versions");
+    let new_links_dir = new_sdk.clone();
+
+    // 1. 迁移 SDK（版本库 + junction + env/PATH）
     let result = do_migrate_storage(
         &old_versions_dir,
-        &versions_dir,
+        &new_versions_dir.to_string_lossy(),
         &old_links_dir,
-        &links_dir,
+        &new_links_dir.to_string_lossy(),
         &config,
         Some(&app_handle),
     );
-
     if !result.errors.is_empty() {
         return Err(result.errors.join("\n"));
     }
 
-    config.versions_dir = versions_dir;
-    config.links_dir = links_dir;
+    config.data_dir = new_data_dir.to_string_lossy().to_string();
+    // 同步填充废弃字段，保证现有引用一致
+    config.versions_dir = new_versions_dir.to_string_lossy().to_string();
+    config.links_dir = new_links_dir.to_string_lossy().to_string();
+
+    // 2. data_dir 变化时，迁移 base_dir 下其余可变数据（含 node-projects）
+    if new_data_dir != base_dir {
+        migrate_data_dir_items(&app_handle, &base_dir, &new_data_dir);
+    }
+
     save_config(&config)?;
 
     Ok(result)
+}
+
+/// 把 base_dir（~/.any-version）下的可变数据文件/目录迁移到 data_dir。
+/// 排除 config.json（数据入口，必须留在 base_dir）以及由 sdk 专用迁移逻辑
+/// （do_migrate_storage）处理的 versions/links/sdk。
+fn migrate_data_dir_items(_app: &tauri::AppHandle, base_dir: &Path, data_dir: &Path) {
+    let dirs = [
+        "node-projects",
+        "backup",
+        "certs",
+        "version_cache",
+        "bin",
+        "collab_tmp",
+        ".tmp",
+        "_temp_skill_clone",
+    ];
+    let files = [
+        "tasks.db",
+        "ai_usage.db",
+        "ai_config.json",
+        "ai_sessions.json",
+        "last_launch_configs.json",
+        "collab.json",
+        "skills.json",
+        "mcp.json",
+        "backups.json",
+        "skill-debug.log",
+    ];
+    for d in dirs {
+        move_item(base_dir, data_dir, d);
+    }
+    for f in files {
+        move_item(base_dir, data_dir, f);
+    }
+}
+
+/// 对 active_versions 中记录的所有 SDK，重建锚点 junction。
+/// 若目标版本存在且锚点不是有效 junction（如迁移后变成的普通空目录），
+/// 统一重建（create_junction 内部会清理普通目录后重建）。
+/// 返回被重建的 id 列表。
+pub fn rebuild_sdk_junctions(config: &Config) -> Vec<String> {
+    let mut rebuilt = Vec::new();
+    let links_dir = get_sdk_link_dir();
+    let versions_dir = get_sdk_versions_dir();
+    for (item_id, version) in &config.active_versions {
+        let link_path = links_dir.join(item_id);
+        let target_path = versions_dir.join(item_id).join(version);
+        if !target_path.exists() {
+            continue;
+        }
+        let needs_rebuild = if link_path.is_symlink() {
+            // 已是 junction，校验指向是否正确
+            fs::canonicalize(&link_path)
+                .map(|c| !c.starts_with(&target_path))
+                .unwrap_or(false)
+        } else {
+            // 非 junction（不存在或普通目录）都需要重建
+            true
+        };
+        if needs_rebuild {
+            let _ = crate::commands::cache::create_junction(&link_path, &target_path);
+            rebuilt.push(item_id.clone());
+        }
+    }
+    rebuilt
+}
+
+/// 把 base_dir 下的单个文件/目录移动到 data_dir（幂等：已存在/不存在则跳过）。
+/// Windows 上 `fs::rename` 不能跨磁盘驱动器，失败时回退为「复制 + 删除」。
+fn move_item(base_dir: &Path, data_dir: &Path, name: &str) {
+    let src = base_dir.join(name);
+    if !src.exists() {
+        return;
+    }
+    let dst = data_dir.join(name);
+    if dst.exists() {
+        return;
+    }
+    if let Some(parent) = dst.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match std::fs::rename(&src, &dst) {
+        Ok(()) => {
+            eprintln!("[config] 已迁移数据项 {} -> {}", src.display(), dst.display());
+        }
+        Err(e) => {
+            // 跨盘（os error 17 ERROR_NOT_SAME_DEVICE）时回退为复制 + 删除
+            eprintln!("[config] rename 迁移 {} 失败({})，尝试复制回退", name, e);
+            if src.is_dir() {
+                if copy_dir_all(&src, &dst).is_ok() {
+                    let _ = std::fs::remove_dir_all(&src);
+                    eprintln!("[config] 已复制迁移目录 {} -> {}", src.display(), dst.display());
+                } else {
+                    eprintln!("[config] 复制迁移目录 {} 失败", name);
+                }
+            } else if std::fs::copy(&src, &dst).is_ok() {
+                let _ = std::fs::remove_file(&src);
+                eprintln!("[config] 已复制迁移文件 {} -> {}", src.display(), dst.display());
+            } else {
+                eprintln!("[config] 复制迁移文件 {} 失败", name);
+            }
+        }
+    }
+}
+
+/// 递归复制目录（用于跨盘迁移回退）。
+fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]

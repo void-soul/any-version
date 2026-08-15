@@ -359,7 +359,7 @@ fn save_manage_backup(
     use std::collections::HashMap;
     use super::scanner;
 
-    let base_dir = crate::commands::config::get_base_dir();
+    let base_dir = crate::commands::config::get_data_dir();
     let backup_dir = base_dir.join("backup");
     if let Err(e) = std::fs::create_dir_all(&backup_dir) {
         eprintln!("[manage_backup] 创建备份目录失败: {}", e);
@@ -961,7 +961,7 @@ pub struct LegacyBackupInfo {
 
 #[tauri::command]
 pub fn get_legacy_backup(id: String) -> Result<Option<LegacyBackupInfo>, String> {
-    let base_dir = crate::commands::config::get_base_dir();
+    let base_dir = crate::commands::config::get_data_dir();
     let backup_dir = base_dir.join("backup");
     if !backup_dir.exists() {
         return Ok(None);

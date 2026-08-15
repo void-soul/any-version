@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use tauri::Emitter;
 use crate::commands::ai_registry::registry;
-use crate::commands::config::get_base_dir;
+use crate::commands::config::get_data_dir;
 use crate::commands::cache::create_junction;
 use super::config::load_ai_config;
 use super::models::*;
@@ -13,7 +13,7 @@ use super::models::*;
 // ─── 基础路径 ───
 
 fn skills_path() -> PathBuf {
-    get_base_dir().join("skills.json")
+    get_data_dir().join("skills.json")
 }
 
 /// 默认技能仓库：`~/.agents/skills`（与 skills.sh 生态对齐）。
@@ -53,7 +53,7 @@ pub(crate) fn resolve_skills_dir(cfg_value: &str) -> PathBuf {
         .replace("%PROGRAMFILES%", &std::env::var("ProgramFiles").unwrap_or_default());
     let mut p = PathBuf::from(resolved);
     if p.is_relative() {
-        p = get_base_dir().join(&p);
+        p = get_data_dir().join(&p);
     }
     p
 }
@@ -697,7 +697,7 @@ pub async fn install_skill_from_source(source: String) -> Result<(), String> {
         return Err("无效的来源格式".to_string());
     };
 
-    let temp_dir = get_base_dir().join("_temp_skill_clone");
+    let temp_dir = get_data_dir().join("_temp_skill_clone");
     let _ = fs::remove_dir_all(&temp_dir);
 
     let mut cmd = tokio::process::Command::new("git");
@@ -755,7 +755,7 @@ pub async fn install_skill_from_online(
     };
 
     // Git clone
-    let temp_dir = get_base_dir().join("_temp_skill_clone");
+    let temp_dir = get_data_dir().join("_temp_skill_clone");
     let _ = fs::remove_dir_all(&temp_dir);
     emit_install_progress(&app, "克隆", 0, 0, "", "正在克隆技能源仓库...");
 
@@ -875,7 +875,7 @@ pub(crate) fn do_migrate_skills(
 /// 一次性迁移：若旧仓库 ~/.any-version/skills 存在且有内容，合并到新仓库
 #[tauri::command]
 pub fn migrate_legacy_skills() -> Result<usize, String> {
-    let old_store = get_base_dir().join("skills");
+    let old_store = get_data_dir().join("skills");
     let new_store = skills_dir();
 
     // 如果旧目录不存在或与新目录相同，无需迁移

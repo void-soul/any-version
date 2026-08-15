@@ -11,7 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use serde::{Serialize, Deserialize};
 use tauri::{AppHandle, Emitter};
-use crate::commands::config::{load_config, get_base_dir};
+use crate::commands::config::{load_config, get_data_dir};
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  数据结构
@@ -33,6 +33,7 @@ pub struct DownloadProgress {
 
 #[derive(Serialize, Clone)]
 struct InstallStepPayload {
+    sdk: String,
     step: String,
 }
 
@@ -73,7 +74,7 @@ pub struct RemoteVersionsResult {
 }
 
 fn version_cache_path(project_id: &str) -> PathBuf {
-    get_base_dir().join("version_cache").join(format!("{}.json", project_id))
+    get_data_dir().join("version_cache").join(format!("{}.json", project_id))
 }
 
 fn load_version_cache(project_id: &str) -> Option<VersionCache> {
@@ -546,7 +547,7 @@ async fn do_install(
         return Err(format!("下载失败: {}", e));
     }
 
-    let _ = app.emit("install-step", InstallStepPayload { step: "解压中".to_string() });
+    let _ = app.emit("install-step", InstallStepPayload { sdk: id.clone(), step: "解压中".to_string() });
 
     // 3. 解压
     let extract_dir = temp_dir.join("extracted");
@@ -604,13 +605,13 @@ async fn do_install(
     }
 
     // 7. 首次安装时自动创建 junction。环境变量在托管/修复时统一配置，版本安装不隐式修改注册表。
-    let _ = app.emit("install-step", InstallStepPayload { step: "创建链接中".to_string() });
+    let _ = app.emit("install-step", InstallStepPayload { sdk: id.clone(), step: "创建链接中".to_string() });
     let junction_path = Path::new(&config.links_dir).join(&id);
     if !junction_path.exists() {
         let _ = crate::commands::cache::create_junction(&junction_path, &dest_dir);
     }
 
-    let _ = app.emit("install-step", InstallStepPayload { step: "完成".to_string() });
+    let _ = app.emit("install-step", InstallStepPayload { sdk: id.clone(), step: "完成".to_string() });
 
     Ok(())
 }
@@ -785,7 +786,7 @@ pub fn detect_version_from_path(project_id: &str, path: &Path) -> Option<String>
 
 /// 创建临时目录，返回 (路径, 清理闭包)
 fn setup_temp_dir(prefix: &str) -> Result<(PathBuf, Box<dyn FnOnce() + Send>), String> {
-    let base_dir = get_base_dir();
+    let base_dir = get_data_dir();
     let temp_root = base_dir.join(".tmp");
     fs::create_dir_all(&temp_root).map_err(|e| e.to_string())?;
 

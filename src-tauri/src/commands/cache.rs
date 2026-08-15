@@ -4,11 +4,11 @@ use serde::{Serialize, Deserialize};
 use walkdir::WalkDir;
 use tauri::Emitter;
 
-use super::config::{get_base_dir, MigrateProgress};
+use super::config::{get_data_dir, MigrateProgress};
 
 /// 把技能相关调试日志同时写入文件，便于在打包运行时排查（终端 stderr 不可见）。
 pub(crate) fn skill_debug_log(line: &str) {
-    let path = get_base_dir().join("skill-debug.log");
+    let path = get_data_dir().join("skill-debug.log");
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&path) {
         use std::io::Write;
         let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
@@ -80,6 +80,25 @@ fn normalize_separators(p: &Path) -> PathBuf {
     }
 }
 
+/// 解码子进程输出：优先按 UTF-8，非法则回退按 GBK（代码页 936）。
+/// 中文 Windows 的 `cmd /c mklink` 输出是 GBK 编码，直接 from_utf8_lossy 会乱码。
+pub fn decode_cp_output(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            #[cfg(windows)]
+            {
+                let (cow, _, _) = encoding_rs::GBK.decode(bytes);
+                cow.into_owned()
+            }
+            #[cfg(not(windows))]
+            {
+                String::from_utf8_lossy(bytes).into_owned()
+            }
+        }
+    }
+}
+
 pub fn create_junction(link_path: &Path, target_path: &Path) -> Result<(), String> {
     // 归一化分隔符（Windows 上 mklink 只能吃反斜杠），避免混合分隔符导致“无效的参数”。
     let link_norm = normalize_separators(link_path);
@@ -124,19 +143,21 @@ pub fn create_junction(link_path: &Path, target_path: &Path) -> Result<(), Strin
         .args(&["/c", "mklink", "/J", &link_str, &target_str])
         .output()
         .map_err(|e| e.to_string())?;
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let stdout = decode_cp_output(&output.stdout);
+    let stderr = decode_cp_output(&output.stderr);
+    // 成功时不打印 mklink 的中文 stdout 提示（不同代码页会乱码），只记录英文状态。
     let post = format!(
-        "create_junction: status={:?} stdout=\"{}\" stderr=\"{}\"",
+        "create_junction: ok={} status={:?} link=\"{}\" -> \"{}\"",
+        output.status.success(),
         output.status.code(),
-        stdout,
-        stderr
+        link_str,
+        target_str
     );
     eprintln!("[skill] {}", post);
     skill_debug_log(&post);
     if !output.status.success() {
         let err = format!(
-            "创建 junction 失败: stdout={} stderr={} (link=\"{}\", target=\"{}\")",
+            "create_junction failed: stdout={} stderr={} (link=\"{}\", target=\"{}\")",
             stdout, stderr, link_str, target_str
         );
         skill_debug_log(&err);

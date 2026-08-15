@@ -3,11 +3,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
-import { 
-  FolderKanban, 
-  Save, 
-  RefreshCw, 
+import {
+  enable as enableAutostart,
+  disable as disableAutostart,
+  isEnabled as isAutostartEnabled,
+} from "@tauri-apps/plugin-autostart";
+import {
+  FolderKanban,
+  Save,
+  RefreshCw,
   Info,
   CheckCircle2,
   ExternalLink,
@@ -16,12 +20,14 @@ import {
   Trash2,
   Loader2,
   FileText,
-  Power
+  Power,
 } from "lucide-react";
 
 interface Config {
-  versions_dir: string;
-  links_dir: string;
+  versions_dir?: string;
+  links_dir?: string;
+  data_dir?: string;
+  sdk_dir?: string;
   node_projects_dir?: string;
 }
 
@@ -61,16 +67,14 @@ interface TrayMenuConfig {
 }
 
 export default function GlobalSettings() {
-  const [versionsDir, setVersionsDir] = useState("");
-  const [linksDir, setLinksDir] = useState("");
-  const [oldVersionsDir, setOldVersionsDir] = useState("");
-  const [oldLinksDir, setOldLinksDir] = useState("");
-  const [nodeProjectsDir, setNodeProjectsDir] = useState("");
-  const [oldNodeProjectsDir, setOldNodeProjectsDir] = useState("");
+  const [dataDir, setDataDir] = useState("");
+  const [oldDataDir, setOldDataDir] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
-  const [migrateResult, setMigrateResult] = useState<MigrateResult | null>(null);
+  const [migrateResult, setMigrateResult] = useState<MigrateResult | null>(
+    null,
+  );
   const [showMigrateConfirm, setShowMigrateConfirm] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
@@ -78,7 +82,9 @@ export default function GlobalSettings() {
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState("");
   // "plugin" = 来自 tauri-plugin-updater（可应用内下载安装）；"github" = 兜底（仅打开下载页）
-  const [updateSource, setUpdateSource] = useState<"plugin" | "github" | null>(null);
+  const [updateSource, setUpdateSource] = useState<"plugin" | "github" | null>(
+    null,
+  );
   const [installing, setInstalling] = useState(false);
   const [progress, setProgress] = useState<MigrateProgress | null>(null);
   const [deletingOldDirs, setDeletingOldDirs] = useState(false);
@@ -87,7 +93,8 @@ export default function GlobalSettings() {
   const [aiDefaultPath, setAiDefaultPath] = useState("");
   const [savingAi, setSavingAi] = useState(false);
   const [aiSaved, setAiSaved] = useState(false);
-  const [skillProgress, setSkillProgress] = useState<SkillMigrateProgress | null>(null);
+  const [skillProgress, setSkillProgress] =
+    useState<SkillMigrateProgress | null>(null);
   const [skillMigrated, setSkillMigrated] = useState(false);
   // 开机自启：反映操作系统真实注册状态（打开设置页时查询）
   const [autostartOn, setAutostartOn] = useState(false);
@@ -120,18 +127,14 @@ export default function GlobalSettings() {
     setSuccess(false);
     try {
       const config = await invoke<Config>("get_config");
-      setVersionsDir(config.versions_dir);
-      setLinksDir(config.links_dir);
-      setOldVersionsDir(config.versions_dir);
-      setOldLinksDir(config.links_dir);
-      // 服务类项目存储目录（旧版本 config 可能无此字段，回退取后端默认值）
-      if (config.node_projects_dir) {
-        setNodeProjectsDir(config.node_projects_dir);
-        setOldNodeProjectsDir(config.node_projects_dir);
+      // 数据目录（旧版本 config 可能无此字段，回退取后端默认值）
+      if (config.data_dir) {
+        setDataDir(config.data_dir);
+        setOldDataDir(config.data_dir);
       } else {
-        const dir = await invoke<string>("get_node_projects_dir").catch(() => "");
-        setNodeProjectsDir(dir);
-        setOldNodeProjectsDir(dir);
+        const dir = await invoke<string>("get_data_dir_cmd").catch(() => "");
+        setDataDir(dir);
+        setOldDataDir(dir);
       }
     } catch (e) {
       console.error(e);
@@ -166,16 +169,22 @@ export default function GlobalSettings() {
     setSkillMigrated(false);
 
     // 监听技能迁移进度
-    const unlisten = await listen<SkillMigrateProgress>("skill-migrate-progress", (event) => {
-      setSkillProgress(event.payload);
-    });
+    const unlisten = await listen<SkillMigrateProgress>(
+      "skill-migrate-progress",
+      (event) => {
+        setSkillProgress(event.payload);
+      },
+    );
 
     try {
       const updated: AiConfig = {
         ...aiConfig,
         default_project_path: aiDefaultPath,
       };
-      const result = await invoke<{ ok: boolean; skill_migrated: boolean }>("save_ai_config", { config: updated });
+      const result = await invoke<{ ok: boolean; skill_migrated: boolean }>(
+        "save_ai_config",
+        { config: updated },
+      );
       setAiConfig(updated);
       setAiSaved(true);
       if (result.skill_migrated) {
@@ -232,12 +241,11 @@ export default function GlobalSettings() {
 
   const pathsChanged = (): boolean => {
     const normalize = (s: string) => s.trim().replace(/[\\/]+$/, "");
-    return normalize(versionsDir) !== normalize(oldVersionsDir) ||
-           normalize(linksDir) !== normalize(oldLinksDir);
+    return normalize(dataDir) !== normalize(oldDataDir);
   };
 
   const handleSaveClick = () => {
-    if (!versionsDir || !linksDir) return;
+    if (!dataDir) return;
     if (pathsChanged()) {
       setShowMigrateConfirm(true);
     } else {
@@ -246,7 +254,7 @@ export default function GlobalSettings() {
   };
 
   const handleSave = async () => {
-    if (!versionsDir || !linksDir) return;
+    if (!dataDir) return;
     setSaving(true);
     setSuccess(false);
     setMigrateResult(null);
@@ -255,12 +263,17 @@ export default function GlobalSettings() {
     setProgress(null);
 
     // 监听进度事件
-    const unlisten = await listen<MigrateProgress>("migrate-progress", (event) => {
-      setProgress(event.payload);
-    });
+    const unlisten = await listen<MigrateProgress>(
+      "migrate-progress",
+      (event) => {
+        setProgress(event.payload);
+      },
+    );
 
     try {
-      const result = await invoke<MigrateResult>("update_config", { versionsDir, linksDir });
+      const result = await invoke<MigrateResult>("update_config", {
+        dataDir: dataDir || oldDataDir,
+      });
       setMigrateResult(result);
       setSuccess(true);
       await fetchConfig();
@@ -273,39 +286,14 @@ export default function GlobalSettings() {
     }
   };
 
-  // 保存「服务类项目存储路径」，路径变化时迁移已有项目目录
-  const handleSaveNodeProjectsDir = async () => {
-    if (!nodeProjectsDir.trim()) {
-      alert("服务类项目存储路径不能为空");
-      return;
-    }
-    const normalize = (s: string) => s.trim().replace(/[\\/]+$/, "");
-    const changed = normalize(nodeProjectsDir) !== normalize(oldNodeProjectsDir);
-    if (!changed) {
-      alert("路径未发生变化");
-      return;
-    }
-    if (!confirm("检测到服务类项目存储路径已更改。\n\n将把旧目录下已安装的项目移动到新目录。\n\n确定继续吗？")) return;
-    setSaving(true);
-    try {
-      const failures = await invoke<string[]>("update_node_projects_dir", { newDir: nodeProjectsDir });
-      if (failures && failures.length) {
-        alert(`部分项目迁移失败：\n${failures.join("\n")}`);
-      } else {
-        alert("服务类项目存储路径已更新，已有项目已迁移完成。");
-      }
-      setSuccess(true);
-      await fetchConfig();
-    } catch (e: any) {
-      alert(`保存失败: ${e}`);
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const handleDeleteOldDirs = async () => {
     if (!migrateResult?.old_dirs_remain?.length) return;
-    if (!confirm(`确定要删除以下旧目录吗？\n\n${migrateResult.old_dirs_remain.join("\n")}\n\n删除后无法恢复！`)) return;
+    if (
+      !confirm(
+        `确定要删除以下旧目录吗？\n\n${migrateResult.old_dirs_remain.join("\n")}\n\n删除后无法恢复！`,
+      )
+    )
+      return;
     setDeletingOldDirs(true);
     try {
       const deleted = await invoke<string[]>("delete_old_storage_dirs", {
@@ -340,12 +328,18 @@ export default function GlobalSettings() {
         return;
       } catch (pluginErr) {
         // 插件未配置 / 网络异常时，降级为 GitHub API 通知（仅打开下载页）
-        console.warn("[updater] plugin check failed, fallback to GitHub API:", pluginErr);
+        console.warn(
+          "[updater] plugin check failed, fallback to GitHub API:",
+          pluginErr,
+        );
       }
       // 2) 兜底：GitHub REST 通知
-      const resp = await fetch("https://api.github.com/repos/void-soul/any-version/releases/latest", {
-        headers: { "Accept": "application/vnd.github.v3+json" }
-      });
+      const resp = await fetch(
+        "https://api.github.com/repos/void-soul/any-version/releases/latest",
+        {
+          headers: { Accept: "application/vnd.github.v3+json" },
+        },
+      );
       if (!resp.ok) throw new Error("检查失败: " + resp.status);
       const data = await resp.json();
       const tag = data.tag_name?.replace(/^v/, "") ?? "";
@@ -399,7 +393,10 @@ export default function GlobalSettings() {
   };
 
   const handleDownloadUpdate = () => {
-    window.open("https://github.com/void-soul/any-version/releases/latest", "_blank");
+    window.open(
+      "https://github.com/void-soul/any-version/releases/latest",
+      "_blank",
+    );
   };
 
   return (
@@ -409,13 +406,27 @@ export default function GlobalSettings() {
       <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-6">
         <div className="flex items-center gap-2 pb-3 border-b border-white/5">
           <FolderKanban className="w-4 h-4 text-red-400" />
-          <h3 className="text-xs font-semibold text-white">AnyVersion 工作目录说明</h3>
+          <h3 className="text-xs font-semibold text-white">
+            AnyVersion 工作目录说明
+          </h3>
         </div>
 
         <div className="p-4 bg-indigo-500/5 border border-indigo-500/15 rounded-xl space-y-2 text-[10px] text-slate-300 leading-relaxed">
-          <p className="font-semibold text-indigo-300 text-[11px]">这两个目录分别做什么？</p>
-          <p>• <span className="font-mono text-slate-200">SDK 存储目录</span>：所有下载的 SDK（如 Node.js、Go、Python）会存放在这里，按「工具名/版本号」归类，例如 <span className="font-mono">versions/nodejs/20.11.1</span>。</p>
-          <p>• <span className="font-mono text-slate-200">链接映射目录</span>：每种工具对应一个固定路径（如 <span className="font-mono">links/nodejs</span>），通过 NTFS 目录联接指向当前激活的版本。切换版本只需改变这个联接的指向，毫秒级完成，不需要改任何环境变量。</p>
+          <p className="font-semibold text-indigo-300 text-[11px]">
+            存储目录说明
+          </p>
+          <p>
+            •{" "}
+            <span className="font-mono text-slate-200">
+              数据目录 (data_dir)
+            </span>
+            ：唯一可配置路径，承载所有可变数据。SDK（合并了原「存储目录 +
+            链接目录」， 内部用 <span className="font-mono">_versions</span>{" "}
+            存多版本库、<span className="font-mono">sdk/</span>
+            根放每种工具的激活锚点）、Node
+            服务项目、证书、缓存、数据库等全部作为其子目录自动派生。
+            设为非系统盘（如 D 盘）可避免占用 C 盘空间。
+          </p>
         </div>
 
         {loading ? (
@@ -426,62 +437,72 @@ export default function GlobalSettings() {
         ) : (
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-[10px] text-slate-500 uppercase font-semibold">SDK 存储目录 (versions_dir)</label>
+              <label className="text-[10px] text-slate-500 uppercase font-semibold">
+                数据目录 (data_dir)
+              </label>
               <div className="flex items-center gap-2">
                 <input
                   type="text"
-                  value={versionsDir}
-                  onChange={(e) => setVersionsDir(e.target.value)}
+                  value={dataDir}
+                  onChange={(e) => setDataDir(e.target.value)}
                   className="flex-1 glass-input px-3.5 py-2.5 text-xs font-mono"
-                  placeholder="e.g. C:\Users\Admin\.any-version\versions"
+                  placeholder="e.g. D:\AnyVersion"
                 />
-                <button onClick={() => handleBrowseFolder(setVersionsDir)} className="p-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-lg border border-white/5 cursor-pointer transition-all flex-shrink-0" title="选择文件夹">
-                  <FolderOpen className="w-4 h-4" />
-                </button>
-              </div>
-              <p className="text-[9px] text-slate-500">此目录存储所有下载和手动安装的 SDK 和本地数据库包文件。</p>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-[10px] text-slate-500 uppercase font-semibold">链接映射目录 (links_dir)</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={linksDir}
-                  onChange={(e) => setLinksDir(e.target.value)}
-                  className="flex-1 glass-input px-3.5 py-2.5 text-xs font-mono"
-                  placeholder="e.g. C:\Users\Admin\.any-version\links"
-                />
-                <button onClick={() => handleBrowseFolder(setLinksDir)} className="p-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-lg border border-white/5 cursor-pointer transition-all flex-shrink-0" title="选择文件夹">
-                  <FolderOpen className="w-4 h-4" />
-                </button>
-              </div>
-              <p className="text-[9px] text-slate-500">此目录存放各个工具的固定快捷链接文件夹（会自动加入系统 PATH），切换版本即是秒级修改其底层指向。</p>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-[10px] text-slate-500 uppercase font-semibold">服务类项目存储路径 (node_projects_dir)</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={nodeProjectsDir}
-                  onChange={(e) => setNodeProjectsDir(e.target.value)}
-                  className="flex-1 glass-input px-3.5 py-2.5 text-xs font-mono"
-                  placeholder="e.g. D:\AnyVersion\node-projects"
-                />
-                <button onClick={() => handleBrowseFolder(setNodeProjectsDir)} className="p-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-lg border border-white/5 cursor-pointer transition-all flex-shrink-0" title="选择文件夹">
-                  <FolderOpen className="w-4 h-4" />
-                </button>
                 <button
-                  onClick={handleSaveNodeProjectsDir}
-                  disabled={saving}
-                  className="px-3.5 py-2.5 bg-cyan-600/80 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold disabled:opacity-50 cursor-pointer transition-all flex-shrink-0"
-                  title="保存并迁移已安装项目"
+                  onClick={() => handleBrowseFolder(setDataDir)}
+                  className="p-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-lg border border-white/5 cursor-pointer transition-all flex-shrink-0"
+                  title="选择文件夹"
                 >
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "保存"}
+                  <FolderOpen className="w-4 h-4" />
                 </button>
               </div>
-              <p className="text-[9px] text-slate-500">此目录用于安装/托管「服务」页的 Node 应用（clone + pnpm install 的目标根目录）。设为非系统盘（如 D 盘）可避免占用 C 盘空间。保存时会把已安装项目迁移到新目录。</p>
+              <p className="text-[9px] text-slate-500">
+                唯一数据根目录（默认 ~/.any-version）。SDK、Node
+                服务项目、证书、缓存、数据库等 全部自动放在它的子目录下（
+                <span className="font-mono">sdk/</span>、
+                <span className="font-mono">node-projects/</span>、
+                <span className="font-mono">certs/</span>、
+                <span className="font-mono">tasks.db</span>{" "}
+                等）。改到非系统盘可节约 C 盘空间。
+              </p>
+            </div>
+
+            {/* 派生路径只读展示 */}
+            <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3 space-y-1.5">
+              <p className="text-[10px] text-slate-500 uppercase font-semibold">
+                自动派生的子目录
+              </p>
+              <div className="text-[10px] font-mono text-slate-400 space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-cyan-400 flex-shrink-0">SDK</span>
+                  <span className="truncate">
+                    {(dataDir || "…").replace(/[\\/]+$/, "")}\sdk
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-emerald-400 flex-shrink-0">
+                    Node 服务
+                  </span>
+                  <span className="truncate">
+                    {(dataDir || "…").replace(/[\\/]+$/, "")}\node-projects
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-amber-400 flex-shrink-0">证书</span>
+                  <span className="truncate">
+                    {(dataDir || "…").replace(/[\\/]+$/, "")}\certs
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400 flex-shrink-0">
+                    缓存/数据库
+                  </span>
+                  <span className="truncate">
+                    {(dataDir || "…").replace(/[\\/]+$/, "")}
+                    \tasks.db、version_cache、backup 等
+                  </span>
+                </div>
+              </div>
             </div>
 
             {/* 路径变更确认弹窗 */}
@@ -493,10 +514,18 @@ export default function GlobalSettings() {
                 </h4>
                 <div className="text-[10px] text-slate-300 space-y-1.5">
                   <p>检测到存储路径已更改，AnyVersion 将执行以下操作：</p>
-                  <p className="text-amber-300">1. 将旧目录下的所有已安装版本文件移动到新目录</p>
-                  <p className="text-amber-300">2. 更新所有 junction 链接的指向</p>
-                  <p className="text-amber-300">3. 更新 PATH 环境变量中的旧路径为新路径</p>
-                  <p className="text-slate-400 mt-1">整个过程无需手动操作，已安装的 SDK 不会丢失。</p>
+                  <p className="text-amber-300">
+                    1. 将旧目录下的所有已安装版本文件移动到新目录
+                  </p>
+                  <p className="text-amber-300">
+                    2. 更新所有 junction 链接的指向
+                  </p>
+                  <p className="text-amber-300">
+                    3. 更新 PATH 环境变量中的旧路径为新路径
+                  </p>
+                  <p className="text-slate-400 mt-1">
+                    整个过程无需手动操作，已安装的 SDK 不会丢失。
+                  </p>
                 </div>
                 <div className="flex items-center gap-2 pt-1">
                   <button
@@ -526,14 +555,18 @@ export default function GlobalSettings() {
                     {progress.stage}
                   </span>
                   {progress.total > 0 && (
-                    <span className="text-red-400 font-mono">{progress.current}/{progress.total}</span>
+                    <span className="text-red-400 font-mono">
+                      {progress.current}/{progress.total}
+                    </span>
                   )}
                 </div>
                 {progress.total > 0 && (
                   <div className="w-full bg-red-500/20 rounded-full h-1.5 overflow-hidden">
                     <div
                       className="bg-red-400 h-full rounded-full transition-all duration-300"
-                      style={{ width: `${Math.round((progress.current / progress.total) * 100)}%` }}
+                      style={{
+                        width: `${Math.round((progress.current / progress.total) * 100)}%`,
+                      }}
                     />
                   </div>
                 )}
@@ -549,17 +582,33 @@ export default function GlobalSettings() {
             {/* 迁移结果展示 */}
             {migrateResult && (
               <div className="p-4 bg-emerald-500/5 border border-emerald-500/15 rounded-xl space-y-2 text-[10px]">
-                <h4 className="text-xs font-semibold text-emerald-400">迁移完成</h4>
-                {migrateResult.moved_versions && <p className="text-slate-300">✓ 版本文件已移动到新目录</p>}
-                {migrateResult.moved_links && <p className="text-slate-300">✓ 链接目录已移动到新目录</p>}
+                <h4 className="text-xs font-semibold text-emerald-400">
+                  迁移完成
+                </h4>
+                {migrateResult.moved_versions && (
+                  <p className="text-slate-300">✓ 版本文件已移动到新目录</p>
+                )}
+                {migrateResult.moved_links && (
+                  <p className="text-slate-300">✓ 链接目录已移动到新目录</p>
+                )}
                 {migrateResult.recreated_junctions.length > 0 && (
-                  <p className="text-slate-300">✓ 已重建 {migrateResult.recreated_junctions.length} 个 junction 链接: {migrateResult.recreated_junctions.join(", ")}</p>
+                  <p className="text-slate-300">
+                    ✓ 已重建 {migrateResult.recreated_junctions.length} 个
+                    junction 链接:{" "}
+                    {migrateResult.recreated_junctions.join(", ")}
+                  </p>
                 )}
                 {migrateResult.updated_env_vars.length > 0 && (
-                  <p className="text-slate-300">✓ 已更新环境变量: {migrateResult.updated_env_vars.join(", ")}</p>
+                  <p className="text-slate-300">
+                    ✓ 已更新环境变量:{" "}
+                    {migrateResult.updated_env_vars.join(", ")}
+                  </p>
                 )}
                 {migrateResult.updated_path_entries.length > 0 && (
-                  <p className="text-slate-300">✓ 已更新 {migrateResult.updated_path_entries.length} 个 PATH 条目</p>
+                  <p className="text-slate-300">
+                    ✓ 已更新 {migrateResult.updated_path_entries.length} 个 PATH
+                    条目
+                  </p>
                 )}
 
                 {/* 旧目录清理提示 */}
@@ -567,10 +616,17 @@ export default function GlobalSettings() {
                   <div className="pt-2 mt-2 border-t border-amber-500/15 space-y-2">
                     <div className="flex items-start gap-1.5 text-amber-300">
                       <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                      <span>以下旧目录仍存在，您可以安全删除以释放磁盘空间：</span>
+                      <span>
+                        以下旧目录仍存在，您可以安全删除以释放磁盘空间：
+                      </span>
                     </div>
                     {migrateResult.old_dirs_remain.map((dir, i) => (
-                      <p key={i} className="font-mono text-[9px] text-slate-400 pl-5">{dir}</p>
+                      <p
+                        key={i}
+                        className="font-mono text-[9px] text-slate-400 pl-5"
+                      >
+                        {dir}
+                      </p>
                     ))}
                     {deletedOldDirs ? (
                       <p className="text-emerald-400 text-[10px] flex items-center gap-1">
@@ -594,17 +650,19 @@ export default function GlobalSettings() {
 
             <div className="flex items-center justify-between pt-4 border-t border-white/5">
               <div>
-                {success && !migrateResult?.moved_versions && !migrateResult?.moved_links && (
-                  <span className="text-xs font-medium text-emerald-400 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4" />
-                    配置已保存
-                  </span>
-                )}
+                {success &&
+                  !migrateResult?.moved_versions &&
+                  !migrateResult?.moved_links && (
+                    <span className="text-xs font-medium text-emerald-400 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4" />
+                      配置已保存
+                    </span>
+                  )}
               </div>
 
               <button
                 onClick={handleSaveClick}
-                disabled={saving || !versionsDir || !linksDir}
+                disabled={saving || !dataDir}
                 className="px-6 py-2.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-red-500/10 cursor-pointer transition-all flex items-center gap-1.5"
               >
                 <Save className="w-3.5 h-3.5" />
@@ -627,14 +685,18 @@ export default function GlobalSettings() {
             disabled={checkingUpdate}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-[10px] border border-white/5 cursor-pointer"
           >
-            <RefreshCw className={`w-3 h-3 ${checkingUpdate ? "animate-spin" : ""}`} />
+            <RefreshCw
+              className={`w-3 h-3 ${checkingUpdate ? "animate-spin" : ""}`}
+            />
             {checkingUpdate ? "检查中..." : "检查更新"}
           </button>
         </div>
 
         <div className="flex items-center gap-3 text-xs">
           <span className="text-slate-400">当前版本:</span>
-          <span className="font-mono text-slate-200 bg-black/20 px-2 py-0.5 rounded">v{appVersion || "1.0.0"}</span>
+          <span className="font-mono text-slate-200 bg-black/20 px-2 py-0.5 rounded">
+            v{appVersion || "1.0.0"}
+          </span>
         </div>
 
         {updateError && (
@@ -646,9 +708,13 @@ export default function GlobalSettings() {
         {latestVersion && (
           <div className="p-4 bg-emerald-500/5 border border-emerald-500/15 rounded-xl space-y-2">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-emerald-300">发现新版本: v{latestVersion}</span>
+              <span className="text-xs font-semibold text-emerald-300">
+                发现新版本: v{latestVersion}
+              </span>
               {updateBody && (
-                <span className="text-[10px] text-slate-400">({updateBody.substring(0, 80)}...)</span>
+                <span className="text-[10px] text-slate-400">
+                  ({updateBody.substring(0, 80)}...)
+                </span>
               )}
             </div>
             {updateSource === "plugin" ? (
@@ -657,7 +723,9 @@ export default function GlobalSettings() {
                 disabled={installing}
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5 disabled:opacity-60"
               >
-                <Loader2 className={`w-3 h-3 ${installing ? "animate-spin" : ""}`} />
+                <Loader2
+                  className={`w-3 h-3 ${installing ? "animate-spin" : ""}`}
+                />
                 {installing ? "正在下载并安装..." : "下载并安装更新"}
               </button>
             ) : (
@@ -673,7 +741,9 @@ export default function GlobalSettings() {
         )}
 
         {latestVersion === null && !checkingUpdate && !updateError && (
-          <p className="text-[10px] text-slate-500">点击「检查更新」查看是否有新版本可用。</p>
+          <p className="text-[10px] text-slate-500">
+            点击「检查更新」查看是否有新版本可用。
+          </p>
         )}
       </div>
 
@@ -687,7 +757,9 @@ export default function GlobalSettings() {
         <div className="flex items-center justify-between">
           <div className="space-y-0.5">
             <p className="text-xs font-medium text-slate-200">开机自启</p>
-            <p className="text-[9px] text-slate-500">系统启动时自动运行 AnyVersion，并静默驻留到系统托盘。</p>
+            <p className="text-[9px] text-slate-500">
+              系统启动时自动运行 AnyVersion，并静默驻留到系统托盘。
+            </p>
           </div>
           <button
             onClick={handleToggleAutostart}
@@ -711,17 +783,27 @@ export default function GlobalSettings() {
         <div className="pt-3 border-t border-white/5 space-y-3">
           <div className="space-y-0.5">
             <p className="text-xs font-medium text-slate-200">托盘右键菜单</p>
-            <p className="text-[9px] text-slate-500">选择需要在系统托盘右键菜单中显示的快捷开关。</p>
+            <p className="text-[9px] text-slate-500">
+              选择需要在系统托盘右键菜单中显示的快捷开关。
+            </p>
           </div>
           {[
-            ["show_mihomo", "Mihomo 子菜单", "内核启停，以及下方的模式 / 订阅 / 节点切换"],
+            [
+              "show_mihomo",
+              "Mihomo 子菜单",
+              "内核启停，以及下方的模式 / 订阅 / 节点切换",
+            ],
             ["show_mihomo_mode", "· 模式切换（规则 / 全局 / 直连）", ""],
             ["show_mihomo_profiles", "· 订阅切换", ""],
             ["show_mihomo_proxies", "· 代理组节点切换", ""],
           ].map(([key, label, desc]) => {
-            const disabled = key.startsWith("show_mihomo_") && !trayCfg.show_mihomo;
+            const disabled =
+              key.startsWith("show_mihomo_") && !trayCfg.show_mihomo;
             return (
-              <div key={key} className={`flex items-center justify-between ${disabled ? "opacity-40" : ""}`}>
+              <div
+                key={key}
+                className={`flex items-center justify-between ${disabled ? "opacity-40" : ""}`}
+              >
                 <div className="space-y-0.5">
                   <p className="text-[11px] text-slate-200">{label}</p>
                   {desc && <p className="text-[9px] text-slate-500">{desc}</p>}
@@ -737,25 +819,37 @@ export default function GlobalSettings() {
                 >
                   <span
                     className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      (trayCfg as any)[key] ? "translate-x-4" : "translate-x-0.5"
+                      (trayCfg as any)[key]
+                        ? "translate-x-4"
+                        : "translate-x-0.5"
                     }`}
                   />
                 </button>
               </div>
             );
           })}
-          <div className={`flex items-center justify-between ${!trayCfg.show_mihomo || !trayCfg.show_mihomo_proxies ? "opacity-40" : ""}`}>
+          <div
+            className={`flex items-center justify-between ${!trayCfg.show_mihomo || !trayCfg.show_mihomo_proxies ? "opacity-40" : ""}`}
+          >
             <div className="space-y-0.5">
               <p className="text-[11px] text-slate-200">· 每组最多列出节点数</p>
-              <p className="text-[9px] text-slate-500">节点过多会让托盘菜单变得很长。</p>
+              <p className="text-[9px] text-slate-500">
+                节点过多会让托盘菜单变得很长。
+              </p>
             </div>
             <input
               type="number"
               min={1}
               max={200}
               value={trayCfg.mihomo_proxy_limit}
-              disabled={!trayCfg.show_mihomo || !trayCfg.show_mihomo_proxies || trayBusy}
-              onChange={(e) => saveTrayCfg({ mihomo_proxy_limit: Math.max(1, Number(e.target.value) || 1) })}
+              disabled={
+                !trayCfg.show_mihomo || !trayCfg.show_mihomo_proxies || trayBusy
+              }
+              onChange={(e) =>
+                saveTrayCfg({
+                  mihomo_proxy_limit: Math.max(1, Number(e.target.value) || 1),
+                })
+              }
               className="w-20 glass-input px-2 py-1 text-xs text-right"
             />
           </div>
@@ -770,7 +864,9 @@ export default function GlobalSettings() {
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-[10px] text-slate-500 uppercase font-semibold">AI 默认项目目录</label>
+          <label className="text-[10px] text-slate-500 uppercase font-semibold">
+            AI 默认项目目录
+          </label>
           <div className="flex items-center gap-2">
             <input
               type="text"
@@ -779,18 +875,29 @@ export default function GlobalSettings() {
               className="flex-1 glass-input px-3.5 py-2.5 text-xs font-mono"
               placeholder="e.g. C:\Users\Admin\projects"
             />
-            <button onClick={() => handleBrowseFolder(setAiDefaultPath)} className="p-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-lg border border-white/5 cursor-pointer transition-all flex-shrink-0" title="选择文件夹">
+            <button
+              onClick={() => handleBrowseFolder(setAiDefaultPath)}
+              className="p-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-lg border border-white/5 cursor-pointer transition-all flex-shrink-0"
+              title="选择文件夹"
+            >
               <FolderOpen className="w-4 h-4" />
             </button>
           </div>
-          <p className="text-[9px] text-slate-500">启动 AI 工具时的默认工作目录。</p>
+          <p className="text-[9px] text-slate-500">
+            启动 AI 工具时的默认工作目录。
+          </p>
         </div>
 
         {/* 技能市场配置 */}
         <div className="space-y-2 pt-3 border-t border-white/5">
           <div>
-            <label className="text-[10px] text-slate-300 uppercase font-semibold">技能市场（skills.sh）</label>
-            <p className="text-[9px] text-slate-600 mt-0.5">作为 skills.sh 的 GUI，技能直接托管在公共仓库（默认 ~/.agents/skills），无需单独配置托管目录。</p>
+            <label className="text-[10px] text-slate-300 uppercase font-semibold">
+              技能市场（skills.sh）
+            </label>
+            <p className="text-[9px] text-slate-600 mt-0.5">
+              作为 skills.sh 的 GUI，技能直接托管在公共仓库（默认
+              ~/.agents/skills），无需单独配置托管目录。
+            </p>
           </div>
 
           {/* 技能迁移进度 */}
@@ -802,19 +909,25 @@ export default function GlobalSettings() {
                   {skillProgress.stage}
                 </span>
                 {skillProgress.total > 0 && (
-                  <span className="text-violet-400 font-mono">{skillProgress.current}/{skillProgress.total}</span>
+                  <span className="text-violet-400 font-mono">
+                    {skillProgress.current}/{skillProgress.total}
+                  </span>
                 )}
               </div>
               {skillProgress.total > 0 && (
                 <div className="w-full bg-violet-500/20 rounded-full h-1 overflow-hidden">
                   <div
                     className="bg-violet-400 h-full rounded-full transition-all duration-300"
-                    style={{ width: `${Math.round((skillProgress.current / skillProgress.total) * 100)}%` }}
+                    style={{
+                      width: `${Math.round((skillProgress.current / skillProgress.total) * 100)}%`,
+                    }}
                   />
                 </div>
               )}
               {skillProgress.skill_name && (
-                <div className="text-[8px] text-slate-400 truncate">{skillProgress.skill_name}</div>
+                <div className="text-[8px] text-slate-400 truncate">
+                  {skillProgress.skill_name}
+                </div>
               )}
             </div>
           )}
@@ -847,7 +960,6 @@ export default function GlobalSettings() {
           </button>
         </div>
       </div>
-
     </div>
   );
 }

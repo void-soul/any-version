@@ -9,6 +9,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Bot,
   Boxes,
+  Package,
   Play,
   Square,
   Download,
@@ -452,7 +453,7 @@ export default function NodeManagerPanel() {
               <Settings2 className="w-4 h-4 text-cyan-400" />
               <h2 className="text-sm font-bold text-white">服务管理</h2>
               <span className="text-[10px] text-slate-500 ml-1">
-                安装 / 升级 / 启动 / 停止
+                安装 / 升级 / 装依赖 / 启动 / 停止
               </span>
               <div className="flex-1" />
               <button
@@ -472,7 +473,8 @@ export default function NodeManagerPanel() {
                 const prog = progress[project.id];
                 const isBusy =
                   busy === `install:${project.id}` ||
-                  busy === `upgrade:${project.id}`;
+                  busy === `upgrade:${project.id}` ||
+                  busy === `install_deps:${project.id}`;
                 const isStarting = busy === `start:${project.id}`;
                 const isStopping = busy === `stop:${project.id}`;
                 return (
@@ -557,9 +559,13 @@ function ProjectCard({
   const running = st?.status === "running";
   const portConflict = st?.status === "port_conflict";
   const isBusy =
-    busy === `install:${project.id}` || busy === `upgrade:${project.id}`;
+    busy === `install:${project.id}` ||
+    busy === `upgrade:${project.id}` ||
+    busy === `install_deps:${project.id}`;
   const canInstallUpgrade = !!d?.allReady && !installed;
   const canUpgrade = !!d?.allReady && !!installed;
+  // 安装依赖：已安装即可单独重装依赖（不依赖 allReady，依赖缺失时可补装）
+  const canInstallDeps = !!installed;
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -758,6 +764,15 @@ function ProjectCard({
           label="升级"
         />
         <ActionButton
+          disabled={!canInstallDeps || isBusy || running}
+          busy={isBusy && busy === `install_deps:${project.id}`}
+          onClick={() => onAction(project, "install_deps")}
+          icon={Package}
+          color="bg-sky-700 hover:bg-sky-600"
+          label="装依赖"
+          title="仅重新安装依赖（不拉取代码），依赖缺失时可单独补装"
+        />
+        <ActionButton
           disabled={!installed || isBusy || running || portConflict}
           busy={isStarting}
           onClick={() => onAction(project, "start")}
@@ -820,6 +835,7 @@ function ActionButton({
   icon: Icon,
   color,
   label,
+  title,
 }: {
   disabled: boolean;
   busy: boolean;
@@ -827,11 +843,13 @@ function ActionButton({
   icon: React.ComponentType<{ className?: string }>;
   color: string;
   label: string;
+  title?: string;
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${color} text-white`}
     >
       {busy ? (

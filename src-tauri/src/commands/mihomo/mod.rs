@@ -1885,26 +1885,13 @@ pub fn mihomo_setup_firewall(state: State<'_, MihomoState>) -> Result<String, St
 /// 打开 UWP 回环豁免工具（Windows 应用/微软商店应用无法走代理时使用）
 #[tauri::command]
 pub fn mihomo_open_uwp_tool() -> Result<String, String> {
-    // 优先使用随包分发的 enableLoopback 工具
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("bin").join("enableLoopback.exe"));
-            candidates.push(dir.join("enableLoopback.exe"));
-        }
-    }
-    if let Ok(root) = std::env::var("CARGO_MANIFEST_DIR") {
-        if let Some(p) = Path::new(&root).parent() {
-            candidates.push(p.join("bin").join("enableLoopback.exe"));
-        }
-    }
-    for c in candidates {
-        if c.exists() {
-            hidden_cmd(&c)
-                .spawn()
-                .map_err(|e| format!("启动 UWP 工具失败: {e}"))?;
-            return Ok("已打开 UWP 回环豁免工具".into());
-        }
+    // 单一路径策略：仅从 data_dir/bin 查找 enableLoopback 工具，不从程序根目录读取。
+    let enable_loopback = crate::commands::utils::get_bin_dir().join("enableLoopback.exe");
+    if enable_loopback.exists() {
+        hidden_cmd(&enable_loopback)
+            .spawn()
+            .map_err(|e| format!("启动 UWP 工具失败: {e}"))?;
+        return Ok("已打开 UWP 回环豁免工具".into());
     }
     // 回退：打开系统自带的 CheckNetIsolation（命令行方式列出 UWP 应用）
     hidden_cmd("cmd")

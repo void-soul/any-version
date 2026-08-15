@@ -1,5 +1,5 @@
 use std::sync::Mutex;
-use crate::commands::config::get_base_dir;
+use crate::commands::config::get_data_dir;
 
 use super::models::*;
 
@@ -11,7 +11,7 @@ static DB_CONN: Mutex<Option<rusqlite::Connection>> = Mutex::new(None);
 
 /// 获取数据库文件路径
 fn db_path() -> std::path::PathBuf {
-    get_base_dir().join("ai_usage.db")
+    get_data_dir().join("ai_usage.db")
 }
 
 /// 初始化数据库（幂等，可在应用启动和首次写入时调用）

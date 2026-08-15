@@ -1,7 +1,7 @@
 //! 证书管理（Q-005）：Let's Encrypt 泛域名证书申请 + 多节点部署 + 应用内调度。
 //!
 //! 架构：
-//! - 数据模型（Certificate / DeployNode / Credential）持久化在 `get_base_dir()/certs/` 下三个 JSON 文件。
+//! - 数据模型（Certificate / DeployNode / Credential）持久化在 `get_data_dir()/certs/` 下三个 JSON 文件。
 //! - ACME 引擎：封装 lego sidecar（`lego --dns <provider> run` / `renew`），DNS-01 由 lego 内置插件完成。
 //! - 部署：qiniu / aliyun / linux / windows 四种节点类型。
 //! - 调度：应用内 tokio 定时器，扫描到期并触发申请/部署。
@@ -150,7 +150,7 @@ fn default_status() -> String {
 // ---------------------------------------------------------------------------
 
 fn certs_dir() -> PathBuf {
-    let mut p = super::config::get_base_dir();
+    let mut p = super::config::get_data_dir();
     p.push("certs");
     p
 }
@@ -191,7 +191,7 @@ const CRED_ENCRYPTION_MARKER: &str = "ENC_V2:";
 /// 获取或生成机器级加密密钥（32 字节）。
 /// 密钥存储在 `~/.any-version/certs/.master_key`，权限由 OS 文件权限保护。
 fn get_or_create_master_key() -> Result<[u8; 32], String> {
-    let key_path = super::config::get_base_dir().join("certs").join(".master_key");
+    let key_path = super::config::get_data_dir().join("certs").join(".master_key");
     if key_path.exists() {
         let encoded = std::fs::read_to_string(&key_path)
             .map_err(|e| format!("读取主密钥失败: {}", e))?;

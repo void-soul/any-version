@@ -99,6 +99,7 @@ dependencies = [
  "bytes",
  "bzip2 0.4.4",
  "chrono",
+ "encoding_rs",
  "flate2",
  "futures-util",
  "getrandom 0.2.17",

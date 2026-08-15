@@ -513,7 +513,7 @@ pub fn create_env_backup(description: String) -> Result<EnvBackup, String> {
         sys_vars,
     };
 
-    let base_dir = crate::commands::config::get_base_dir();
+    let base_dir = crate::commands::config::get_data_dir();
     let backup_dir = base_dir.join("backup");
     fs::create_dir_all(&backup_dir).map_err(|e| e.to_string())?;
     let backup_file = backup_dir.join(format!("env_backup_{}.json", backup.id));
@@ -525,7 +525,7 @@ pub fn create_env_backup(description: String) -> Result<EnvBackup, String> {
 
 #[tauri::command]
 pub fn list_env_backups() -> Result<Vec<EnvBackup>, String> {
-    let base_dir = crate::commands::config::get_base_dir();
+    let base_dir = crate::commands::config::get_data_dir();
     let backup_dir = base_dir.join("backup");
     if !backup_dir.exists() {
         return Ok(Vec::new());
@@ -553,7 +553,7 @@ pub fn list_env_backups() -> Result<Vec<EnvBackup>, String> {
 
 #[tauri::command]
 pub fn delete_env_backup(id: String) -> Result<(), String> {
-    let base_dir = crate::commands::config::get_base_dir();
+    let base_dir = crate::commands::config::get_data_dir();
     let backup_file = base_dir.join("backup").join(format!("env_backup_{}.json", id));
     if backup_file.exists() {
         fs::remove_file(backup_file).map_err(|e| e.to_string())?;
@@ -563,7 +563,7 @@ pub fn delete_env_backup(id: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn restore_env_backup(id: String) -> Result<(), String> {
-    let base_dir = crate::commands::config::get_base_dir();
+    let base_dir = crate::commands::config::get_data_dir();
     let backup_file = base_dir.join("backup").join(format!("env_backup_{}.json", id));
     if !backup_file.exists() {
         return Err("备份文件不存在".to_string());

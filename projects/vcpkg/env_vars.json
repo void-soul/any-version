@@ -1,1 +1,8 @@
-[]
+[
+  {
+    "name": "VCPKG_ROOT",
+    "desc": "vcpkg 安装根目录",
+    "check_type": "path",
+    "tier": "core"
+  }
+]

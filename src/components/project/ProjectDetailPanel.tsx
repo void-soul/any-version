@@ -41,6 +41,18 @@ const baseTabLabels: Record<string, string> = {
   config: "参数配置",
 };
 
+// 判断项目是否支持版本管理（下载多版本 / Git 仓库 / 版本前缀 URL 映射）。
+// mysql 等 SDK 使用 version_url_prefix_map + remote_versions_config 提供版本，
+// 必须纳入判定，否则托管后会被误判为「简单托管」。
+function hasVersionSupportOf(def: ProjectDef | null | undefined): boolean {
+  if (!def) return false;
+  return !!(
+    def.download_url_template ||
+    def.is_git_repo ||
+    def.version_url_prefix_map
+  );
+}
+
 interface ProjectUIState {
   detail: ProjectDetail | null;
   detailLoaded: boolean;
@@ -103,13 +115,13 @@ const EMPTY_UI: ProjectUIState = {
 };
 
 let _onProgress: ((p: { sdk: string; downloaded: number; total: number; pct: number; speed_str: string }) => void) | null = null;
-let _onStep: ((s: string) => void) | null = null;
+let _onStep: ((s: { sdk: string; step: string }) => void) | null = null;
 let _unlistenProgress: (() => void) | null = null;
 let _unlistenStep: (() => void) | null = null;
 
 function ensureListeners(
   onProgress: (p: { sdk: string; downloaded: number; total: number; pct: number; speed_str: string }) => void,
-  onStep: (s: string) => void,
+  onStep: (s: { sdk: string; step: string }) => void,
 ) {
   _onProgress = onProgress;
   _onStep = onStep;
@@ -119,8 +131,8 @@ function ensureListeners(
     }).then((u) => { _unlistenProgress = u; });
   }
   if (!_unlistenStep) {
-    listen<{ step: string }>("install-step", (e) => {
-      _onStep?.(e.payload.step);
+    listen<{ sdk: string; step: string }>("install-step", (e) => {
+      _onStep?.(e.payload);
     }).then((u) => { _unlistenStep = u; });
   }
 }
@@ -165,17 +177,17 @@ export default function ProjectDetailPanel({
   useEffect(() => {
     ensureListeners(
       (payload) => {
-        const cur = eventProjectRef.current;
-        if (cur) patch(cur, { downloadProgress: payload });
+        // 按 sdk 精确定位进度，避免多个并发下载互相覆盖进度条。
+        if (payload?.sdk) patch(payload.sdk, { downloadProgress: payload });
       },
       (step) => {
-        const cur = eventProjectRef.current;
-        if (!cur) return;
-        patch(cur, { installStep: step });
-        if (step === "完成") {
+        // 按 sdk 精确定位安装步骤与完成清理，避免并发安装互相串扰。
+        const sdkId = step?.sdk;
+        if (!sdkId) return;
+        patch(sdkId, { installStep: step.step });
+        if (step.step === "完成") {
           setTimeout(() => {
-            patch(cur, { installingVersion: null, downloadProgress: null, installStep: "" });
-            eventProjectRef.current = null;
+            patch(sdkId, { installingVersion: null, downloadProgress: null, installStep: "" });
           }, 1500);
         }
       },
@@ -393,7 +405,7 @@ export default function ProjectDetailPanel({
     const initialDelegation: ProjectDelegation = {
       env_vars: def.env_vars.filter(v => v.tier !== "compat").map(v => v.name),
       path_vars: def.bin_dirs || [],
-      version_control: def.download_url_template || def.is_git_repo ? true : false,
+      version_control: hasVersionSupportOf(def),
       create_symlink: true,
       manage_install_dir: true,
       manage_data_dir: true,
@@ -504,6 +516,21 @@ export default function ProjectDetailPanel({
     }
   }, [pid, ui.detail, patch, refreshSingle, isAdmin]);
 
+  // 服务类项目：静默轮询服务状态，进程意外退出后前端能自动感知，
+  // 避免界面仍显示陈旧 PID 导致「停止」误报「未检测到进程」。
+  const _def = uiMap[pid]?.detail?.def;
+  const isServiceProject = !!_def && (_def.is_service || _def.category === "service");
+  useEffect(() => {
+    if (!pid || !isServiceProject) return;
+    const poll = () => {
+      invoke<ProjectDetail>("project_detail", { id: pid })
+        .then((d) => patch(pid, { detail: d }))
+        .catch(() => {});
+    };
+    const t = setInterval(poll, 3000);
+    return () => clearInterval(t);
+  }, [pid, isServiceProject, patch]);
+
   const handleMigrateCache = useCallback(async () => {
     if (!pid) return;
     const s = uiMap[pid];
@@ -575,7 +602,7 @@ export default function ProjectDetailPanel({
     availableTabs.push("config");
   }
 
-  const hasVersionSupport = def?.download_url_template || def?.is_git_repo;
+  const hasVersionSupport = hasVersionSupportOf(def);
   if (hasVersionSupport && (!status.managed || delegation?.version_control)) {
     availableTabs.push("versions");
   }
@@ -953,12 +980,29 @@ export default function ProjectDetailPanel({
           };
 
           return (
-            <div className={`mb-4 p-4 rounded-xl space-y-4 animate-fadeIn ${isUnmanage ? "bg-red-600/5 border border-red-500/15" : "bg-blue-600/5 border border-blue-500/15"}`}>
-              <h4 className={`text-xs font-semibold flex items-center gap-1.5 ${isUnmanage ? "text-red-300" : "text-blue-300"}`}>
-                <Info className="w-3.5 h-3.5" />
-                {isUnmanage ? "取消托管预览 - 将要执行以下操作" : "托管配置选项 - 自定义要托管的功能范围"}
-              </h4>
-
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              {/* 遮罩 */}
+              <div
+                className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                onClick={() => patch(pid!, { showManagePreview: false, managePreview: null })}
+              />
+              {/* 弹框 */}
+              <div className={`relative w-full max-w-lg max-h-[82vh] rounded-2xl border shadow-2xl flex flex-col overflow-hidden animate-fadeIn ${isUnmanage ? "bg-[#17181c] border-red-500/25" : "bg-[#17181c] border-blue-500/25"}`}>
+                {/* 头部 */}
+                <div className="flex-shrink-0 px-4 py-3 border-b border-white/10 bg-white/[0.02] flex items-center justify-between">
+                  <h4 className={`text-xs font-semibold flex items-center gap-1.5 ${isUnmanage ? "text-red-300" : "text-blue-300"}`}>
+                    <Info className="w-3.5 h-3.5" />
+                    {isUnmanage ? "取消托管预览" : "托管配置选项"}
+                  </h4>
+                  <button onClick={() => patch(pid!, { showManagePreview: false, managePreview: null })} className="text-slate-500 hover:text-slate-300 cursor-pointer">
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                  </button>
+                </div>
+                {/* 滚动内容区 */}
+                <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+                  {isUnmanage && (
+                    <p className="text-[11px] text-slate-400">将执行以下操作：</p>
+                  )}
               {!isUnmanage && localDelegation && (
                 <div className="p-3 bg-white/5 border border-white/10 rounded-xl space-y-3">
                   <span className="text-[11px] font-semibold text-slate-300 block">选择需要托管的功能选项：</span>
@@ -1041,7 +1085,7 @@ export default function ProjectDetailPanel({
                     )}
 
                     {/* 3. 版本控制 */}
-                    {(def?.download_url_template || def?.is_git_repo) && (
+                    {hasVersionSupportOf(def) && (
                       <div className="p-2 bg-black/25 border border-white/5 rounded-lg flex items-center">
                         <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                           <input
@@ -1210,19 +1254,22 @@ export default function ProjectDetailPanel({
                 </div>
               )}
 
-              <div className="flex items-center gap-2 pt-1">
-                {isUnmanage ? (
-                  <button onClick={handleUnmanage} disabled={ui.unmanaging} className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all">
-                    {ui.unmanaging ? "正在执行..." : "确认取消托管"}
+                </div>
+                {/* 底部固定按钮区 */}
+                <div className="flex-shrink-0 px-4 py-3 border-t border-white/10 bg-white/[0.02] flex items-center gap-2">
+                  {isUnmanage ? (
+                    <button onClick={handleUnmanage} disabled={ui.unmanaging} className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all">
+                      {ui.unmanaging ? "正在执行..." : "确认取消托管"}
+                    </button>
+                  ) : (
+                    <button onClick={() => handleManage()} disabled={ui.managing} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all">
+                      {ui.managing ? "正在执行..." : "确认托管"}
+                    </button>
+                  )}
+                  <button onClick={() => patch(pid!, { showManagePreview: false, managePreview: null })} className="px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs font-medium cursor-pointer border border-white/10">
+                    {"取消"}
                   </button>
-                ) : (
-                  <button onClick={() => handleManage()} disabled={ui.managing} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all">
-                    {ui.managing ? "正在执行..." : "确认托管"}
-                  </button>
-                )}
-                <button onClick={() => patch(pid!, { showManagePreview: false, managePreview: null })} className="px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs font-medium cursor-pointer border border-white/10">
-                  {"取消"}
-                </button>
+                </div>
               </div>
             </div>
           );

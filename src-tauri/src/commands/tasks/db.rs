@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 
-use crate::commands::config::get_base_dir;
+use crate::commands::config::get_data_dir;
 
 /// 全局数据库连接（Mutex 保护，WAL 模式）。
 /// 与 ai_usage.db 保持一致的连接管理风格。
@@ -8,7 +8,7 @@ static DB_CONN: Mutex<Option<rusqlite::Connection>> = Mutex::new(None);
 
 /// 任务数据库文件路径：~/.any-version/tasks.db
 fn db_path() -> std::path::PathBuf {
-    get_base_dir().join("tasks.db")
+    get_data_dir().join("tasks.db")
 }
 
 /// 初始化数据库（幂等）。

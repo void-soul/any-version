@@ -307,54 +307,17 @@ pub fn get_resource_dir() -> Option<PathBuf> {
 }
 
 /// 查找 bin/ 目录下的可执行文件或关联文件（如 ffmpeg.exe, mediamtx.exe, mediamtx.yml 等）
-/// 兼容 Tauri 打包后资源目录中的 _up_/bin/ 与 bin/
+/// 单一路径策略：只在 data_dir/bin 下查找，从程序根目录读取。
 pub fn find_bin_file(filename: &str) -> PathBuf {
-    let mut candidates = Vec::new();
-
-    // 1. 优先在 Tauri 2 打包后的官方资源目录 (resource_dir/_up_/bin 及 resource_dir/bin) 查找
-    if let Some(res_dir) = get_resource_dir() {
-        candidates.push(res_dir.join("_up_").join("bin").join(filename));
-        candidates.push(res_dir.join("bin").join(filename));
-        candidates.push(res_dir.join("..").join("_up_").join("bin").join(filename));
-        candidates.push(res_dir.join("..").join("bin").join(filename));
-    }
-
-    // 2. exe 同目录及向上 5 层
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            candidates.push(exe_dir.join("_up_").join("bin").join(filename));
-            candidates.push(exe_dir.join("bin").join(filename));
-            let mut dir = exe_dir.to_path_buf();
-            for _ in 0..5 {
-                if let Some(parent) = dir.parent() {
-                    dir = parent.to_path_buf();
-                    candidates.push(dir.join("_up_").join("bin").join(filename));
-                    candidates.push(dir.join("bin").join(filename));
-                }
-            }
-        }
-    }
-
-    // 3. 当前工作目录下的 _up_/bin/ 与 bin/
-    if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(cwd.join("_up_").join("bin").join(filename));
-        candidates.push(cwd.join("bin").join(filename));
-        candidates.push(cwd.join("..").join("_up_").join("bin").join(filename));
-        candidates.push(cwd.join("..").join("bin").join(filename));
-    }
-
-    // 4. 用户配置目录 (~/.any-version/bin)
-    let mut base = crate::commands::config::get_base_dir();
+    // 只在 data_dir/bin 下查找
+    let mut base = crate::commands::config::get_data_dir();
     base.push("bin");
-    candidates.push(base.join(filename));
-
-    for path in &candidates {
-        if path.exists() {
-            return path.clone();
-        }
+    let candidate = base.join(filename);
+    if candidate.exists() {
+        return candidate;
     }
 
-    // 5. PATH 系统路径查找
+    // PATH 系统路径查找
     if let Some(path_exe) = find_in_path(filename) {
         return path_exe;
     }
@@ -363,112 +326,20 @@ pub fn find_bin_file(filename: &str) -> PathBuf {
 }
 
 /// 查找项目 bin/ 目录（存放 ffmpeg.exe、mediamtx.exe、mihomo.exe 等可执行文件）
-/// 返回第一个已存在的 bin 目录；若都找不到则回退到相对 "bin"
+/// 单一路径策略：始终返回 data_dir/bin，从程序根目录读取。
 pub fn get_bin_dir() -> PathBuf {
-    let mut candidates = Vec::new();
-
-    if let Some(res_dir) = get_resource_dir() {
-        candidates.push(res_dir.join("_up_").join("bin"));
-        candidates.push(res_dir.join("bin"));
-        candidates.push(res_dir.join("..").join("_up_").join("bin"));
-        candidates.push(res_dir.join("..").join("bin"));
-    }
-
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            candidates.push(exe_dir.join("_up_").join("bin"));
-            candidates.push(exe_dir.join("bin"));
-            let mut dir = exe_dir.to_path_buf();
-            for _ in 0..5 {
-                if let Some(parent) = dir.parent() {
-                    dir = parent.to_path_buf();
-                    candidates.push(dir.join("_up_").join("bin"));
-                    candidates.push(dir.join("bin"));
-                }
-            }
-        }
-    }
-
-    if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(cwd.join("_up_").join("bin"));
-        candidates.push(cwd.join("bin"));
-        candidates.push(cwd.join("..").join("_up_").join("bin"));
-        candidates.push(cwd.join("..").join("bin"));
-    }
-
-    let mut base = crate::commands::config::get_base_dir();
+    let mut base = crate::commands::config::get_data_dir();
     base.push("bin");
-    candidates.push(base);
-
-    for d in &candidates {
-        if d.is_dir() {
-            return d.clone();
-        }
-    }
-
-    PathBuf::from("bin")
+    base
 }
 
-/// 获取所有可能存在 bin 目录的基路径列表（包含 _up_/bin 与 bin）
+/// 获取所有可能存在 bin 目录的基路径列表。
+/// 单一路径策略：运行组件（ffmpeg/lego/mediamtx/mihomo）统一存放于
+/// data_dir/bin，永远不从程序根目录（资源目录/exe 同级/cwd/仓库根）读取。
 pub fn get_bin_search_dirs() -> Vec<PathBuf> {
-    let mut search_dirs = Vec::new();
-
-    if let Some(res_dir) = get_resource_dir() {
-        search_dirs.push(res_dir.join("_up_").join("bin"));
-        search_dirs.push(res_dir.join("bin"));
-        search_dirs.push(res_dir.join("..").join("_up_").join("bin"));
-        search_dirs.push(res_dir.join("..").join("bin"));
-    }
-
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            search_dirs.push(exe_dir.join("_up_").join("bin"));
-            search_dirs.push(exe_dir.join("bin"));
-            let mut dir = exe_dir.to_path_buf();
-            for _ in 0..5 {
-                if let Some(parent) = dir.parent() {
-                    dir = parent.to_path_buf();
-                    search_dirs.push(dir.join("_up_").join("bin"));
-                    search_dirs.push(dir.join("bin"));
-                }
-            }
-        }
-    }
-
-    if let Ok(cwd) = std::env::current_dir() {
-        search_dirs.push(cwd.join("_up_").join("bin"));
-        search_dirs.push(cwd.join("bin"));
-        search_dirs.push(cwd.join("..").join("_up_").join("bin"));
-        search_dirs.push(cwd.join("..").join("bin"));
-    }
-
-    let mut base = crate::commands::config::get_base_dir();
+    let mut base = crate::commands::config::get_data_dir();
     base.push("bin");
-    search_dirs.push(base);
-
-    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
-        let mut p = PathBuf::from(manifest);
-        p.pop();
-        p.push("bin");
-        search_dirs.push(p);
-    }
-
-    let mut unique = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for d in search_dirs {
-        let norm = d.to_string_lossy().replace('\\', "/");
-        // 排除 Tauri 打包资源的 _up_/bin 缓存（上次打包 resources 残留，
-        // 会误判为「已安装」导致下载对话框永不弹出）。
-        // 注意：不要排除 target/debug/bin、target/release/bin——
-        // 开发态的 bin 资产就解压在 exe 同级（target/debug/bin）下，必须保留。
-        if norm.contains("/_up_/bin") {
-            continue;
-        }
-        if seen.insert(d.clone()) {
-            unique.push(d);
-        }
-    }
-    unique
+    vec![base]
 }
 
 /// 在所有候选 bin 目录中查找指定可执行文件，返回第一个存在的完整路径。
@@ -551,22 +422,12 @@ fn has_exe_recursive(dir: &Path, depth: u8) -> bool {
     false
 }
 
-/// 解析运行组件的安装目录：优先复用已存在的 bin 目录（开发态仓库根 bin/），
-/// 否则回退到 exe 同目录的 bin/（打包态首次运行新建）。
+/// 解析运行组件的安装目录。
+/// 单一路径策略：始终返回 data_dir/bin，从程序根目录读取。
 pub fn resolve_bin_install_dir() -> PathBuf {
-    for d in get_bin_search_dirs() {
-        if d.is_dir() {
-            return d;
-        }
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let p = dir.join("bin");
-            let _ = std::fs::create_dir_all(&p);
-            return p;
-        }
-    }
-    PathBuf::from("bin")
+    let mut base = crate::commands::config::get_data_dir();
+    base.push("bin");
+    base
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -790,18 +651,12 @@ pub fn sync_mihomo_geo(app: &tauri::AppHandle) {
             let _ = std::writeln!(f, "[{ts}] {line}");
         }
     };
-    // 源目录优先级：
-    // 1) 打包态 exe 同级 bin/mihomo（安装目录，必定含 geo 文件）——
-    //    最可靠，不依赖多目录猜测。
-    // 2) 回退到 bin_tool_path 的探测结果。
+    // 源目录：单一路径策略，仅从 data_dir/bin/mihomo 读取（bin_tool_path 定位到的 exe 的上级目录）。
     let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            candidates.push(exe_dir.join("bin").join("mihomo"));
-        }
-    }
     if let Some(p) = bin_tool_path("mihomo") {
-        candidates.push(p);
+        if let Some(dir) = p.parent() {
+            candidates.push(dir.to_path_buf());
+        }
     }
     // 取第一个确实存在 geo 文件的源目录
     let Some(bin_mihomo) = candidates.into_iter().find(|d| {

@@ -3,21 +3,21 @@ use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri::Emitter;
 use crate::commands::ai_registry::{registry, AiToolDefDto};
-use crate::commands::config::get_base_dir;
+use crate::commands::config::get_data_dir;
 use super::models::*;
 use super::skills::{normalize_path, load_skills, do_migrate_skills, save_skills, resolve_skills_dir};
 
 
 fn ai_config_path() -> PathBuf {
-    get_base_dir().join("ai_config.json")
+    get_data_dir().join("ai_config.json")
 }
 
 fn ai_sessions_path() -> PathBuf {
-    get_base_dir().join("ai_sessions.json")
+    get_data_dir().join("ai_sessions.json")
 }
 
 fn last_launch_configs_path() -> PathBuf {
-    get_base_dir().join("last_launch_configs.json")
+    get_data_dir().join("last_launch_configs.json")
 }
 
 // ─── 读写 ───
