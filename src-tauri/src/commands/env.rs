@@ -236,6 +236,24 @@ pub fn remove_from_user_path(paths: &[String]) -> Result<(), String> {
 ///   - 所有 *_HOME 类变量指向 link_dir（版本切换只需重定向 junction）
 ///   - CARGO_HOME / RUSTUP_HOME 指向 link_dir 下的子目录
 ///   - ANDROID_SDK_HOME 指向 link_dir 下的 .android 子目录
+/// 计算某 SDK 环境变量的目标值，并（对 sub_dir 类型）确保目录真实存在。
+///
+/// - 带 `sub_dir` 的变量（如 CARGO_HOME/RUSTUP_HOME）锚定到**持久化数据目录**
+///   `get_data_dir()/<sdk_id>/<sub_dir>`，而非工具链 junction 之下。
+///   原因：link_dir 是指向某个具体版本工具链的 junction，版本目录内并不包含
+///   cargo/rustup 的缓存数据；若把 *_HOME 指向 junction 下的子目录，该目录不会存在，
+///   导致 cargo/rustup 启动时因找不到 HOME 而失败。
+/// - 不带 sub_dir 的变量直接用 link_dir（版本切换只需重定向 junction）。
+pub fn sdk_env_var_value(sdk_id: &str, link_dir: &str, var_info: &super::project::types::EnvVarDef) -> String {
+    if let Some(ref sub) = var_info.sub_dir {
+        let home = crate::commands::config::get_data_dir().join(sdk_id).join(sub);
+        let _ = std::fs::create_dir_all(&home);
+        home.to_string_lossy().to_string()
+    } else {
+        link_dir.to_string()
+    }
+}
+
 pub fn configure_sdk_env_vars(sdk_id: &str, link_dir: &str, _version_dir: &str) -> Result<(), String> {
     use super::project::registry;
 
@@ -261,14 +279,9 @@ pub fn configure_sdk_env_vars(sdk_id: &str, link_dir: &str, _version_dir: &str) 
             }
         }
 
-        let var_name = &var_info.name;
-        // 值策略由 EnvVarDef.sub_dir 驱动：有 sub_dir 则拼接触到 link_dir 后，否则直接用 link_dir
-        let value = if let Some(ref sub) = var_info.sub_dir {
-            format!("{}\\{}", link_dir, sub)
-        } else {
-            link_dir.to_string()
-        };
-        let _ = set_registry_env(var_name, &value);
+        // 值策略由 EnvVarDef.sub_dir 驱动（详见 sdk_env_var_value）。
+        let value = sdk_env_var_value(sdk_id, link_dir, var_info);
+        let _ = set_registry_env(&var_info.name, &value);
     }
 
     // 自动将可执行目录添加到用户 PATH 变量中

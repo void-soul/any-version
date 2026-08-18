@@ -535,11 +535,7 @@ pub fn do_migrate_storage(
                                 result.updated_env_vars.push(format!("{} => <清空>", var_info.name));
                                 continue;
                             }
-                            let value = if let Some(ref sub) = var_info.sub_dir {
-                                format!("{}\\{}", link_dir, sub)
-                            } else {
-                                link_dir.clone()
-                            };
+                            let value = crate::commands::env::sdk_env_var_value(item_id, &link_dir, var_info);
                             let _ = crate::commands::env::set_registry_env(&var_info.name, &value);
                             result.updated_env_vars.push(format!("{} => {}", var_info.name, value));
                         }

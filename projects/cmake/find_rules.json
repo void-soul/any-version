@@ -2,11 +2,11 @@
   {
     "pattern": {
       "type": "path_contains",
-      "path_key": "",
+      "path_key": "cmake",
       "exe_name": "cmake.exe"
     },
     "source_label": "系统 PATH",
     "priority": 90,
-    "root_offset": 0
+    "root_offset": 1
   }
 ]

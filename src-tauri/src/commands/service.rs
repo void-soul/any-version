@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Mutex;
+use tauri::Emitter;
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 use crate::commands::config::{load_config, Config};
@@ -890,8 +891,10 @@ pub fn get_running_services() -> Result<Vec<ServiceInfo>, String> {
 
 #[tauri::command]
 pub fn start_service(app: tauri::AppHandle, name: String, version: Option<String>) -> Result<(), String> {
-    start_service_inner(name, version)?;
+    start_service_inner(name.clone(), version)?;
     let _ = crate::tray::rebuild_tray_menu(&app);
+    // 主动通知前端服务状态变化，避免依赖 3s 轮询的缓存空窗导致刷新不及时。
+    let _ = app.emit("service-status-changed", &name);
     Ok(())
 }
 
@@ -946,8 +949,9 @@ pub(crate) fn start_service_inner(name: String, version: Option<String>) -> Resu
 
 #[tauri::command]
 pub fn stop_service(app: tauri::AppHandle, name: String) -> Result<(), String> {
-    stop_service_inner(name)?;
+    stop_service_inner(name.clone())?;
     let _ = crate::tray::rebuild_tray_menu(&app);
+    let _ = app.emit("service-status-changed", &name);
     Ok(())
 }
 
@@ -1024,8 +1028,9 @@ pub(crate) fn stop_service_inner(name: String) -> Result<(), String> {
 /// 严格校验进程名属于服务定义，避免误杀；不再受 service_allow_force_kill 限制。
 #[tauri::command]
 pub fn force_stop_service(app: tauri::AppHandle, name: String) -> Result<(), String> {
-    force_stop_service_inner(name)?;
+    force_stop_service_inner(name.clone())?;
     let _ = crate::tray::rebuild_tray_menu(&app);
+    let _ = app.emit("service-status-changed", &name);
     Ok(())
 }
 

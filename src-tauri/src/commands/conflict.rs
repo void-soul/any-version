@@ -51,11 +51,22 @@ pub fn get_conflict_managers_status(sdk_id: String) -> Result<Vec<ConflictManage
         }
         
         // 4. 获取缓存目录与空间大小
-        let cache_path = if let Some(ref raw_path) = def.cache_default_path {
-            expand_home(raw_path)
-        } else {
-            String::new()
-        };
+        // 以「缓存位置对应的环境变量」为唯一真源（如 rustup 的 RUSTUP_HOME、
+        // nvm 的 NVM_HOME），当前值优先取自注册表；未配置时才回退到默认路径
+        // cache_default_path（如 {home}\.rustup）。避免环境变量区与缓存路径区脱节。
+        let mut cache_path = String::new();
+        if let Some(ref env_var) = def.cache_env_var {
+            if let Some(val) = env_vars_status.get(env_var).cloned().flatten() {
+                if !val.trim().is_empty() {
+                    cache_path = val;
+                }
+            }
+        }
+        if cache_path.is_empty() {
+            if let Some(ref raw_path) = def.cache_default_path {
+                cache_path = expand_home(raw_path);
+            }
+        }
         
         let cache_size = if !cache_path.is_empty() && Path::new(&cache_path).exists() {
             let size = get_dir_size(Path::new(&cache_path));
@@ -85,6 +96,24 @@ pub fn get_conflict_managers_status(sdk_id: String) -> Result<Vec<ConflictManage
     Ok(status_list)
 }
 
+/// 解析冲突管理器的当前缓存路径：
+/// 优先使用缓存位置对应环境变量（cache_env_var，如 RUSTUP_HOME）的注册表当前值，
+/// 未配置时回退到 cache_default_path（如 {home}\.rustup）。
+/// 保证缓存路径区与「修复环境变量」校准的环境变量值保持一致（唯一真源）。
+fn resolve_conflict_cache_path(def: &crate::commands::project::types::ConflictManagerDef) -> String {
+    if let Some(ref env_var) = def.cache_env_var {
+        if let Some((val, _)) = get_registry_env_any(env_var) {
+            if !val.trim().is_empty() {
+                return val;
+            }
+        }
+    }
+    if let Some(ref raw_path) = def.cache_default_path {
+        return expand_home(raw_path);
+    }
+    String::new()
+}
+
 #[tauri::command]
 pub fn handle_conflict_manager_action(
     app_handle: tauri::AppHandle,
@@ -101,34 +130,44 @@ pub fn handle_conflict_manager_action(
         
     match action.as_str() {
         "clean" => {
-            if let Some(ref raw_path) = def.cache_default_path {
-                let cache_path = expand_home(raw_path);
-                if Path::new(&cache_path).exists() {
-                    clean_pkg_cache_impl(&app_handle, &cache_path)?;
-                }
+            let cache_path = resolve_conflict_cache_path(def);
+            if !cache_path.is_empty() && Path::new(&cache_path).exists() {
+                clean_pkg_cache_impl(&app_handle, &cache_path)?;
             }
         }
         "migrate" => {
             let new_path = target_path.ok_or_else(|| "迁移操作缺少 target_path 参数".to_string())?;
-            if let Some(ref raw_path) = def.cache_default_path {
-                let cache_path = expand_home(raw_path);
-                migrate_pkg_storage_impl(
-                    &app_handle,
-                    &cache_path,
-                    &new_path,
-                    "cache",
-                    false,
-                )?;
-            } else {
-                return Err("该冲突管理器未配置默认缓存路径，无法迁移".to_string());
+            let cache_path = resolve_conflict_cache_path(def);
+            if cache_path.is_empty() {
+                return Err("该冲突管理器未配置缓存路径，无法迁移".to_string());
             }
+            migrate_pkg_storage_impl(
+                &app_handle,
+                &cache_path,
+                &new_path,
+                "cache",
+                false,
+            )?;
+            // 迁移（Junction 模式）后，把缓存位置环境变量同步到新路径，
+            // 使「修复环境变量」之外的路由（环境变量区）也能感知实际缓存位置。
+            // 注意：migrate 会先在原路径建 junction 指向 new_path，故把环境变量指向
+            // 实际目录 new_path（而非 junction 的原路径），避免环境变量区与实际存储脱节。
+            if let Some(ref env_var) = def.cache_env_var {
+                set_registry_env(env_var, &new_path)?;
+                std::env::set_var(env_var, &new_path);
+            }
+            broadcast_setting_change();
         }
         "point" => {
             let new_path = target_path.ok_or_else(|| "指向操作缺少 target_path 参数".to_string())?;
-            // 将环境变量全部在注册表中重定向到 new_path
-            for var in &def.env_vars {
-                set_registry_env(var, &new_path)?;
-                std::env::set_var(var, &new_path);
+            // 仅将缓存位置相关的环境变量重定向到 new_path，而不是全部 env_vars。
+            // 例如 rustup 的 env_vars 含 RUSTUP_HOME 与 RUSTUP_TOOLCHAIN，
+            // 后者是工具链名而非目录路径，若被写入目录路径会导致 rustup 异常。
+            let loc_var = def.cache_env_var.clone()
+                .or_else(|| def.env_vars.first().cloned());
+            if let Some(var) = loc_var {
+                set_registry_env(&var, &new_path)?;
+                std::env::set_var(&var, &new_path);
             }
             broadcast_setting_change();
         }

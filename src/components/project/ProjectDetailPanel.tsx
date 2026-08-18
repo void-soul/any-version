@@ -531,6 +531,19 @@ export default function ProjectDetailPanel({
     return () => clearInterval(t);
   }, [pid, isServiceProject, patch]);
 
+  // 后端在启动/停止/强制终止服务成功后主动 emit 该事件，前端即时刷新，
+  // 不再等待 3s 轮询的缓存空窗，避免 redis/mysql 等启动较慢的服务状态更新不及时。
+  useEffect(() => {
+    if (!pid) return;
+    let unlisten: (() => void) | undefined;
+    listen<string>("service-status-changed", (e) => {
+      if (e.payload === pid) {
+        refreshSingle(pid);
+      }
+    }).then((u) => { unlisten = u; });
+    return () => unlisten?.();
+  }, [pid, refreshSingle]);
+
   const handleMigrateCache = useCallback(async () => {
     if (!pid) return;
     const s = uiMap[pid];

@@ -217,6 +217,95 @@ pub fn copy_dir_all_with_progress(
     Ok(())
 }
 
+/// 移动目录（保留进度事件）。
+/// 优先对每条目使用 `fs::rename`（同盘原子移动，只改目录项、不读写文件内容，
+/// 不受源文件「只读/系统」属性或进程锁定影响，避免 `fs::copy` 在 Windows 上
+/// 报 os error 5「拒绝访问」）。仅当条目跨盘 rename 失败时才回退到 copy。
+/// 目录本身逐层 rename，最终源目录被清空后可被调用方删除。
+pub fn move_dir_with_progress(
+    app_handle: &tauri::AppHandle,
+    src: impl AsRef<Path>,
+    dst: impl AsRef<Path>,
+) -> std::io::Result<()> {
+    let src = src.as_ref();
+    let dst = dst.as_ref();
+    let total = WalkDir::new(src).follow_links(false).into_iter().filter_map(|e| e.ok()).count();
+    let mut current = 0usize;
+
+    fs::create_dir_all(dst)?;
+
+    // 先 rename 整个顶层（若 src 与 dst 同盘且 src 非 junction，rename 可一次性完成）
+    if let Err(_) = fs::rename(src, dst) {
+        // rename 失败（跨盘或 src 正在被占用），退化为逐条目移动：先建目标骨架，再逐文件 rename/copy
+        for entry in WalkDir::new(src).follow_links(false) {
+            let entry = entry?;
+            let rel = entry.path().strip_prefix(src).unwrap_or(entry.path());
+            let dest = dst.join(rel);
+
+            if entry.file_type().is_dir() {
+                fs::create_dir_all(&dest)?;
+            } else {
+                current += 1;
+                let name = entry.file_name().to_string_lossy().to_string();
+                let _ = app_handle.emit("migrate-storage-progress", MigrateStorageProgress {
+                    stage: "移动文件中".to_string(),
+                    current,
+                    total,
+                    file_name: name,
+                });
+                if let Err(_) = fs::rename(entry.path(), &dest) {
+                    // 跨盘或 rename 失败：回退 copy，再删源文件
+                    fs::copy(entry.path(), &dest)?;
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+        // 逐条目移动后删除已清空的源目录结构
+        remove_dir_all_forced(src)?;
+    } else {
+        let _ = app_handle.emit("migrate-storage-progress", MigrateStorageProgress {
+            stage: "移动文件中".to_string(),
+            current: total,
+            total,
+            file_name: String::new(),
+        });
+    }
+
+    Ok(())
+}
+
+/// 强制删除目录：先用标准 `fs::remove_dir_all`，若因只读/系统属性文件或进程锁定
+/// 报 os error 5（拒绝访问）而失败，则用 `cmd /c rmdir /s /q` 兜底（rmdir 会忽略只读属性）。
+pub fn remove_dir_all_forced(path: impl AsRef<Path>) -> std::io::Result<()> {
+    let path = path.as_ref();
+    if !path.exists() {
+        return Ok(());
+    }
+    match fs::remove_dir_all(path) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            // 仅在确属权限/拒绝访问类错误时走 rmdir 兜底，避免掩盖其它真实错误
+            let is_access_denied = e.raw_os_error() == Some(5)
+                || e.kind() == std::io::ErrorKind::PermissionDenied;
+            if !is_access_denied {
+                return Err(e);
+            }
+            let p = path.to_string_lossy().to_string();
+            let output = super::hidden_cmd::hidden_cmd("cmd")
+                .args(&["/c", "rmdir", "/s", "/q", &p])
+                .output();
+            match output {
+                Ok(o) if o.status.success() => Ok(()),
+                Ok(o) => Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("rmdir 兜底失败: {}", String::from_utf8_lossy(&o.stderr)),
+                )),
+                Err(cmd_err) => Err(cmd_err),
+            }
+        }
+    }
+}
+
 #[tauri::command]
 pub fn get_caches_list() -> Result<Vec<CacheInfo>, String> {
     use super::project::registry;
@@ -413,42 +502,24 @@ pub fn migrate_pkg_storage_impl(
             file_name: String::new(),
         });
     } else {
-        // 慢路径：先拷贝再建 junction（适用于 data 或 cache 但用户选择迁移）
+        // 慢路径：移动到新目录再建 junction（适用于 data 或 cache 但用户选择迁移）
+        // 优先用 rename（同盘原子移动，不涉及文件读写，避开只读/系统属性与进程锁定导致的 os error 5），
+        // 仅跨盘时 fallback 到带进度的 copy。复制/移动完成后删除原始目录（os error 5 用 rmdir 兜底）。
         let total = WalkDir::new(orig).follow_links(false).into_iter().filter_map(|e| e.ok()).count();
-        let mut current = 0usize;
-
         let _ = app_handle.emit("migrate-storage-progress", MigrateStorageProgress {
-            stage: "开始拷贝".to_string(),
+            stage: "移动文件中".to_string(),
             current: 0,
             total,
             file_name: String::new(),
         });
 
-        fs::create_dir_all(target).map_err(|e| format!("创建目标目录失败: {}", e))?;
+        move_dir_with_progress(app_handle, orig, target)
+            .map_err(|e| format!("移动文件失败: {}", e))?;
 
-        for entry in WalkDir::new(orig).follow_links(false) {
-            let entry = entry.map_err(|e| format!("遍历目录失败: {}", e))?;
-            let rel = entry.path().strip_prefix(orig).unwrap_or(entry.path());
-            let dest = target.join(rel);
-
-            if entry.file_type().is_dir() {
-                fs::create_dir_all(&dest).map_err(|e| format!("创建子目录失败: {}", e))?;
-            } else {
-                current += 1;
-                let name = entry.file_name().to_string_lossy().to_string();
-                let _ = app_handle.emit("migrate-storage-progress", MigrateStorageProgress {
-                    stage: "拷贝中".to_string(),
-                    current,
-                    total,
-                    file_name: name,
-                });
-                fs::copy(entry.path(), &dest).map_err(|e| format!("拷贝文件失败: {}", e))?;
-            }
-        }
-
-        // 拷贝完成后删除原始目录
+        // 移动完成后删除原始目录（rename 方式已清空，rmdir 兜底处理残留只读/锁定文件）
         if !is_symlink && orig.exists() {
-            fs::remove_dir_all(orig).map_err(|e| format!("删除原始目录失败: {}", e))?;
+            remove_dir_all_forced(orig)
+                .map_err(|e| format!("删除原始目录失败: {}", e))?;
         }
 
         create_junction(orig, target)?;

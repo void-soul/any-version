@@ -357,16 +357,14 @@ fn migrate_legacy(dir: &Path, app: &mut AppConfig, profiles: &mut ProfileConfig)
     let _ = std::fs::rename(&old, dir.join("mihomo.json.bak"));
 }
 
-pub fn init_state(app: &AppHandle) -> MihomoState {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("mihomo");
+pub fn init_state() -> MihomoState {
+    // 数据目录跟随全局设置（config.data_dir，可改到非系统盘），而非 AppData。
+    // 这样 mihomo 的全部数据（配置/geo/日志/订阅）都落在用户维护的数据目录下。
+    let data_dir = crate::commands::config::get_data_dir().join("mihomo");
     std::fs::create_dir_all(&data_dir).ok();
     // 兜底：若压缩包已提前解压，先同步一次 geo 文件到 data_dir。
     // 主同步在 download_bin_assets 解压完成后调用 sync_mihomo_geo 完成。
-    crate::commands::utils::sync_mihomo_geo(app);
+    crate::commands::utils::sync_mihomo_geo();
     let mut app_config = load_app_config(&data_dir);
     let controled_config = load_controled(&data_dir);
     let mut profile_config = load_profile_config(&data_dir);

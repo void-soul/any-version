@@ -808,7 +808,7 @@ export function PackageManagerTab({
             {/* 删除旧文件 */}
             <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "delete" ? "border-red-500/30 bg-red-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
               <input type="radio" name="wf_file_action" value="delete" checked={workflowFileAction === "delete"}
-                className="mt-0.5" />
+                onChange={() => setWorkflowFileAction("delete")} className="mt-0.5" />
               <div>
                 <span className="text-[13px] font-semibold text-red-300">删除旧文件</span>
                 <p className="text-[11px] text-slate-500 mt-0.5">

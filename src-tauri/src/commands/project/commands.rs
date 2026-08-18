@@ -198,11 +198,7 @@ pub fn project_manage(app: tauri::AppHandle, id: String, delegation: crate::comm
             }
         }
         if delegation.env_vars.contains(&var_def.name) {
-            let value = if let Some(ref sub) = var_def.sub_dir {
-                format!("{}\\{}", link_str, sub)
-            } else {
-                link_str.clone()
-            };
+            let value = crate::commands::env::sdk_env_var_value(&id, &link_str, var_def);
             let _ = set_registry_env(&var_def.name, &value);
             std::env::set_var(&var_def.name, &value);
         }
@@ -682,6 +678,33 @@ fn resolve_custom_exe(cmd: &str, config: &crate::commands::config::Config) -> St
                             let rest = &cmd[first_word.len()..];
                             return format!("{}{}", resolved_first, rest);
                         }
+                    }
+                }
+            } else if let Some(pm) = proj.package_managers.iter().find(|m| {
+                m.id == first_word || m.version_exe.as_deref() == Some(first_word)
+            }) {
+                // pm 级可执行（如 rust 项目下的 cargo）：补全到 links_dir/{proj.id} 下各 bin 目录。
+                // 这样 pm 的 version_cmd（如 "cargo --version"）在未被注入全局 PATH 时也能解析到正确 exe。
+                let exe = pm.version_exe.as_deref().unwrap_or(first_word);
+                let link_dir = std::path::Path::new(&config.links_dir).join(&proj.id);
+                let bin_dirs: Vec<String> = proj.bin_dirs.clone().unwrap_or_else(|| vec!["bin".to_string(), String::new()]);
+                let exe_lower = exe.to_lowercase();
+                let has_ext = exe_lower.ends_with(".exe") || exe_lower.ends_with(".cmd") || exe_lower.ends_with(".bat");
+                let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+                for bin_dir in &bin_dirs {
+                    let base = if bin_dir.is_empty() { link_dir.clone() } else { link_dir.join(bin_dir) };
+                    if has_ext {
+                        candidates.push(base.join(exe));
+                    } else {
+                        candidates.push(base.join(format!("{}.exe", exe)));
+                        candidates.push(base.join(exe));
+                    }
+                }
+                for candidate in candidates {
+                    if candidate.exists() {
+                        let resolved_first = format!("\"{}\"", candidate.to_string_lossy());
+                        let rest = &cmd[first_word.len()..];
+                        return format!("{}{}", resolved_first, rest);
                     }
                 }
             }
@@ -1408,10 +1431,11 @@ pub fn handle_point_storage_files(
             file_name: String::new(),
         });
     } else if action == "move" {
-        crate::commands::cache::copy_dir_all_with_progress(
-            old, std::path::Path::new(&new_path), Some(&app_handle),
+        crate::commands::cache::move_dir_with_progress(
+            &app_handle, old, std::path::Path::new(&new_path),
         ).map_err(|e| e.to_string())?;
-        std::fs::remove_dir_all(old).map_err(|e| format!("删除旧文件失败: {}", e))?;
+        crate::commands::cache::remove_dir_all_forced(old)
+            .map_err(|e| format!("删除旧文件失败: {}", e))?;
         let _ = app_handle.emit("migrate-storage-progress", crate::commands::cache::MigrateStorageProgress {
             stage: "已完成移动".to_string(),
             current: 1,

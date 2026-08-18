@@ -177,6 +177,7 @@ async fn fetch_remote_versions_inner(id: &str) -> Result<Vec<String>, String> {
             Ok(versions)
         }
         "json_api" => fetch_json_api(&client, config, def.remote_versions_url.as_deref()).await,
+        "toml_channel" => fetch_toml_channel(&client, config, def.remote_versions_url.as_deref()).await,
         "multi_source" => fetch_multi_source(&client, config).await,
         _ => Err(format!("不支持的远程版本类型: {}", config_type)),
     }
@@ -201,6 +202,76 @@ fn parse_version_to_key(v: &str) -> Vec<u64> {
         parts.push(current);
     }
     parts
+}
+
+/// 从 Rust 官方 channel manifest（TOML）读取最新 stable 版本号。
+/// 适用于官方只提供单条 stable 清单、无完整 JSON 版本列表的场景。
+/// 配置项：
+/// - url            : channel manifest 地址（默认 channel-rust-stable.toml）
+/// - static_versions：可选，追加的历史版本列表（合并进结果，便于安装旧版）
+async fn fetch_toml_channel(client: &reqwest::Client, config: &serde_json::Value, url_override: Option<&str>) -> Result<Vec<String>, String> {
+    let url = if let Some(u) = url_override {
+        u.to_string()
+    } else if let Some(u) = config.get("url").and_then(|v| v.as_str()) {
+        u.to_string()
+    } else {
+        "https://static.rust-lang.org/dist/channel-rust-stable.toml".to_string()
+    };
+
+    // 带重试的请求（最多 3 次，指数退避）
+    let mut last_error = String::new();
+    let mut text = String::new();
+    for attempt in 0..3 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(1 << (attempt - 1))).await;
+        }
+        match client.get(&url).send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                if !status.is_success() {
+                    last_error = format!("HTTP {} ({}), 可能是网络问题", status.as_u16(), status.canonical_reason().unwrap_or("未知"));
+                    continue;
+                }
+                match resp.text().await {
+                    Ok(t) => { text = t; break; }
+                    Err(e) => { last_error = format!("读取响应体失败: {}", e); continue; }
+                }
+            }
+            Err(e) => { last_error = format!("网络请求失败: {}", e); continue; }
+        }
+    }
+    if text.is_empty() {
+        return Err(format!("获取 channel manifest 失败: {}", last_error));
+    }
+
+    // 提取 [pkg.rust] 段内的 version = "x.y.z"，取空格前的纯版本号
+    let re = regex::Regex::new("(?s)\\[pkg\\.rust][^\\[]*?version\\s*=\\s*\\\"(\\d+\\.\\d+(?:\\.\\d+)*)\\\"")
+        .map_err(|e| format!("正则编译失败: {}", e))?;
+    let mut versions: Vec<String> = Vec::new();
+    if let Some(cap) = re.captures(&text) {
+        versions.push(cap.get(1).unwrap().as_str().to_string());
+    } else {
+        return Err("无法从 channel manifest 解析 [pkg.rust].version".to_string());
+    }
+
+    // 合并配置中的历史版本列表（可选），去重
+    if let Some(arr) = config.get("static_versions").and_then(|v| v.as_array()) {
+        for v in arr {
+            if let Some(s) = v.as_str() {
+                if !versions.iter().any(|x| x == s) {
+                    versions.push(s.to_string());
+                }
+            }
+        }
+    }
+
+    // 按版本号降序，最新 stable 排在最前
+    versions.sort_by(|a, b| {
+        let key_a = parse_version_to_key(a);
+        let key_b = parse_version_to_key(b);
+        key_b.cmp(&key_a)
+    });
+    Ok(versions)
 }
 
 async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, url_override: Option<&str>) -> Result<Vec<String>, String> {
@@ -588,11 +659,20 @@ async fn do_install(
     if let Some(ref post_install) = def.post_install {
         if post_install.get("generate_config").and_then(|v| v.as_bool()).unwrap_or(false) {
             if let Some(tpl) = post_install.get("config_template").and_then(|v| v.as_str()) {
-                let ini_path = dest_dir.join("my.ini");
+                // 配置文件名取 def.config_file（如 mongod.cfg），回退 my.ini 以保持旧行为
+                let config_filename = def.config_file.clone().unwrap_or_else(|| "my.ini".to_string());
+                let ini_path = dest_dir.join(&config_filename);
                 let data_dir = dest_dir.join("data");
+                let log_dir = dest_dir.join("log");
+                let port = def.default_port.unwrap_or(0).to_string();
+                let install_root_str = dest_dir.to_string_lossy().replace("\\", "/");
                 let content = tpl
-                    .replace("{basedir}", &dest_dir.to_string_lossy().replace("\\", "/"))
-                    .replace("{datadir}", &data_dir.to_string_lossy().replace("\\", "/"));
+                    .replace("{install_root}", &install_root_str)
+                    .replace("{basedir}", &install_root_str)
+                    .replace("{datadir}", &data_dir.to_string_lossy().replace("\\", "/"))
+                    .replace("{data_dir}", &data_dir.to_string_lossy().replace("\\", "/"))
+                    .replace("{log_dir}", &log_dir.to_string_lossy().replace("\\", "/"))
+                    .replace("{port}", &port);
                 let _ = fs::write(&ini_path, content);
             }
         }
@@ -649,7 +729,7 @@ pub fn project_uninstall_version(app: AppHandle, id: String, version: String) ->
     // 如果当前正在使用该版本，先断开 junction
     let junction_path = Path::new(&config.links_dir).join(&id);
     let active_dir = fs::canonicalize(&junction_path)
-        .map(|p| p.to_string_lossy().to_string().trim_start_matches(r"\\?\").to_string().to_lowercase())
+        .map(|p| p.to_string_lossy().to_string().trim_start_matches("\\\\?\\").to_string().to_lowercase())
         .unwrap_or_default();
     let dest_dir_clean = dest_dir.to_string_lossy().to_string().to_lowercase();
 

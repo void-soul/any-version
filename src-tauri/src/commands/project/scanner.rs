@@ -141,11 +141,7 @@ pub fn preview_manage(id: &str, delegation: crate::commands::config::ProjectDele
             continue;
         }
         let link_str = links_dir.join(&id).to_string_lossy().to_string();
-        let value = if let Some(ref sub) = var.sub_dir {
-            format!("{}\\{}", link_str, sub)
-        } else {
-            link_str.clone()
-        };
+        let value = crate::commands::env::sdk_env_var_value(&id, &link_str, var);
         steps.push(ManageStep {
             action: "set_env".to_string(),
             description: format!("设置环境变量 {} = {}", var.name, value),

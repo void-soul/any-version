@@ -156,20 +156,31 @@ pub fn run() {
     cleanup_legacy_env_vars();
     sync_process_path();
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // 主窗口可能被销毁（见 on_window_event 的 CloseRequested 处理），
-            // 因此优先复用，缺失时经 tray::show_main_window 重建。
-            if app.get_webview_window("main").is_some() {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
-                }
-            } else {
-                crate::tray::show_main_window(app);
+    let builder = tauri::Builder::default();
+
+    // 单一实例约束：仅在非开发环境生效，便于开发时并行启动多个实例调试。
+    // debug_assertions 在 `tauri dev`（debug 构建）下为真，release 构建为假。
+    // 注意：使用影子绑定（shadowing）而非 `let mut` + 重复赋值，
+    // 否则 debug 构建下单一实例插件分支被排除后 builder 未初始化，
+    // 会导致 `builder.plugin(...)` 接收未初始化值而被推断为 `()`，编译失败。
+    #[cfg(not(debug_assertions))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        // 主窗口可能被销毁（见 on_window_event 的 CloseRequested 处理），
+        // 因此优先复用，缺失时经 tray::show_main_window 重建。
+        if app.get_webview_window("main").is_some() {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
             }
-        }))
+        } else {
+            crate::tray::show_main_window(app);
+        }
+    }));
+    #[cfg(debug_assertions)]
+    let builder = builder;
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -198,7 +209,7 @@ pub fn run() {
                 }
             }
             commands::cert::start_scheduler(app.handle().clone());
-            let mihomo_state = commands::mihomo::init_state(app.handle());
+            let mihomo_state = commands::mihomo::init_state();
             app.manage(mihomo_state.clone());
             commands::mihomo::start_scheduler(app.handle().clone(), mihomo_state.clone());
             if mihomo_state.app_config.lock().unwrap().auto_start_core {

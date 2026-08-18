@@ -39,6 +39,11 @@
   "version_exe": "mongod",
   "download_url_template": "https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-{version}.zip",
   "download_file_ext": "zip",
+  "post_install": {
+    "generate_config": true,
+    "config_template": "storage:\n  dbPath: {datadir}\nsystemLog:\n  destination: file\n  path: {log_dir}/mongod.log\n  logAppend: true\nnet:\n  port: {port}\n  bindIp: 127.0.0.1\n",
+    "init_command": "bin/mongod.exe --dbpath data --logpath log/mongod.log --logappend --port 27017"
+  },
   "data_dirs": [
     {
       "id": "data",

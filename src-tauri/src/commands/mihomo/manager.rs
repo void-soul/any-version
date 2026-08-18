@@ -306,7 +306,7 @@ pub async fn launch_core(app: &AppHandle, inner: Arc<MihomoInner>) -> Result<(),
     // 启动核心前，确保 geo 数据文件已同步到 data_dir。
     // 核心会读取 data_dir 下的 country.mmdb/geoip.metadb 等，缺失会联网下载
     // MMDB（国内常超时）。这里再保险一次，避免任何时机遗漏导致启动失败。
-    crate::commands::utils::sync_mihomo_geo(app);
+    crate::commands::utils::sync_mihomo_geo();
 
     // 按当前内核变体创建/移除 Smart 覆写（对齐 clash-party startCore 内的 manageSmartOverride）
     super::smart::manage_smart_override(&inner);

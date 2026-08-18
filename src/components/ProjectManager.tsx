@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { ProjectStatus, ProjectCategory } from "./project/types";
 import ProjectListPanel from "./project/ProjectListPanel";
 import ProjectDetailPanel from "./project/ProjectDetailPanel";
@@ -84,6 +85,16 @@ export default function ProjectManager({ selectedId, onSelectId }: ProjectManage
 
   // 初次加载使用快速模式（跳过缓存大小计算），提升列表加载速度
   useEffect(() => { fetchProjects(false, true); }, []);
+
+  // 后端在任意服务类 SDK 启动/停止/强制终止成功后 emit 该事件，
+  // 前端即时单项目刷新（不重排整列），保证 redis/mysql 等所有服务状态实时更新。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<string>("service-status-changed", (e) => {
+      updateProject(e.payload);
+    }).then((u) => { unlisten = u; });
+    return () => unlisten?.();
+  }, [updateProject]);
 
   // 选中项目时懒加载完整状态（包括缓存大小），仅快速加载模式下触发
   useEffect(() => {

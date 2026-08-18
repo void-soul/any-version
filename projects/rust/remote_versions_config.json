@@ -1,6 +1,8 @@
 {
-  "type": "static",
-  "versions": [
+  "type": "toml_channel",
+  "url": "https://static.rust-lang.org/dist/channel-rust-stable.toml",
+  "static_versions": [
+    "1.85.1",
     "1.85.0",
     "1.84.1",
     "1.84.0",

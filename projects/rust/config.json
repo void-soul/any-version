@@ -35,7 +35,8 @@
         ".cargo\\bin"
       ],
       "exe_name": "rustup.exe",
-      "cache_default_path": "{home}\\.rustup"
+      "cache_default_path": "{home}\\.rustup",
+      "cache_env_var": "RUSTUP_HOME"
     }
   ]
 }

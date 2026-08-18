@@ -275,6 +275,10 @@ pub struct ConflictManagerDef {
     /// 默认的缓存或工具链存放目录
     #[serde(default)]
     pub cache_default_path: Option<String>,
+    /// 缓存位置对应的环境变量（指向新路径时只设置它，而非全部 env_vars）。
+    /// 缺省时回退到首个 env_vars 条目（保持 nvm 等旧行为）。
+    #[serde(default)]
+    pub cache_env_var: Option<String>,
 }
 
 /// 冲突的版本管理器状态

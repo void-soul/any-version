@@ -561,7 +561,7 @@ pub async fn download_bin_assets(app: tauri::AppHandle) -> Result<(), String> {
     // （country.mmdb / geoip.metadb / geoip.dat / geosite.dat）同步到
     // mihomo 的数据目录（AppData/Roaming/com.voidsoul.anyversion/mihomo），
     // 避免核心启动因 data_dir 缺文件而联网下载 MMDB（国内常超时）。
-    sync_mihomo_geo(&app);
+    sync_mihomo_geo();
 
     // 3) 清理临时文件
     let _ = std::fs::remove_file(&tmp_zip);
@@ -630,11 +630,9 @@ fn format_speed(bytes_per_sec: f64) -> String {
 /// 齐全则跳过。mihomo 核心启动时会读取 data_dir 下的 country.mmdb /
 /// geoip.metadb 等，若缺失会联网去 GitHub 下载 MMDB（国内常超时导致启动失败）。
 /// 内核启动前调用本函数即可保证 data_dir 有可用副本，绝不联网。
-pub fn sync_mihomo_geo(app: &tauri::AppHandle) {
-    let data_dir = match app.path().app_data_dir() {
-        Ok(d) => d.join("mihomo"),
-        Err(_) => return,
-    };
+pub fn sync_mihomo_geo() {
+    // 数据目录跟随全局设置（config.data_dir），与 mihomo::init_state 保持一致。
+    let data_dir = crate::commands::config::get_data_dir().join("mihomo");
     if std::fs::create_dir_all(&data_dir).is_err() {
         return;
     }
