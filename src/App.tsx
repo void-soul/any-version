@@ -9,13 +9,14 @@ import RssReader from "./components/RssReader";
 import NodeManagerPanel from "./components/node/NodeManagerPanel";
 import Mihomo from "./components/SystemTools/Mihomo";
 import CertManager from "./components/SystemTools/CertManager";
+import LauncherPanel from "./components/launcher/LauncherPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Wrench, Settings, X, Minus, Square, Rss, Cpu, Bot, CalendarCheck, Download, AlertTriangle, CheckCircle2, Loader2, Boxes, Waypoints, ShieldCheck } from "lucide-react";
+import { Wrench, Settings, X, Minus, Square, Rss, Cpu, Bot, CalendarCheck, Download, AlertTriangle, CheckCircle2, Loader2, Boxes, Waypoints, ShieldCheck, Rocket } from "lucide-react";
 import "./App.css";
 
-type PageId = "sdk" | "ai" | "tasks" | "node" | "mihomo" | "cert" | "news" | "tools" | "settings";
+type PageId = "launcher" | "sdk" | "ai" | "tasks" | "node" | "mihomo" | "cert" | "news" | "tools" | "settings";
 
 export default function App() {
   const [activePage, setActivePage] = useState<PageId>("news");
@@ -72,6 +73,11 @@ export default function App() {
       }
       // 启动后延迟弹出今日待办提醒一次（等窗口稳定）
       setTimeout(() => setShowReminder(true), 900);
+
+      // 监听全局热键唤醒启动器切换
+      listen("launcher-toggle", () => {
+        switchPage("launcher");
+      });
     };
     initApp();
   }, []);
@@ -119,6 +125,7 @@ export default function App() {
 
           <div className="flex items-center gap-0.5 bg-white/5 border border-white/5 rounded-lg p-0.5">
             {([
+              { id: "launcher" as PageId, label: "启动", icon: <Rocket className="w-3 h-3" />, color: "bg-purple-600" },
               { id: "news" as PageId, label: "资讯", icon: <Rss className="w-3 h-3" />, color: "bg-orange-600" },
               { id: "sdk" as PageId, label: "SDK", icon: <Cpu className="w-3 h-3" />, color: "bg-blue-600" },
               { id: "ai" as PageId, label: "AI", icon: <Bot className="w-3 h-3" />, color: "bg-violet-600" },
@@ -176,6 +183,11 @@ export default function App() {
 
       {/* content */}
       <div className="flex-grow flex flex-col min-h-0 relative">
+        {mountedPages.has("launcher") && (
+          <div className={activePage === "launcher" ? "h-full w-full flex flex-col" : "hidden"}>
+            <LauncherPanel />
+          </div>
+        )}
         {mountedPages.has("sdk") && (
           <div className={activePage === "sdk" ? "h-full w-full" : "hidden"}>
             <ProjectManager selectedId={selectedProjectId} onSelectId={setSelectedProjectId} />

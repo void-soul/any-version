@@ -62,10 +62,20 @@ parking_lot = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 tracing-appender = "0.2"
-# Win32 API：系统代理刷新通知（InternetSetOption）、管理员提权判定
+# 图像处理（用于从 exe/ico 提取高清图标并转为 Base64 PNG）
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "jpeg"] }
+# Win32 API：系统代理刷新通知、管理员提权判定、启动器原生交互（图标提取/ShellExecute/快捷键/系统指令）
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
   "Win32_Networking_WinInet",
   "Win32_Security",
   "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Shell",
+  "Win32_Graphics_Gdi",
+  "Win32_System_Com",
+  "Win32_Storage_FileSystem",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_System_LibraryLoader",
+  "Win32_System_SystemInformation",
 ] }

@@ -275,6 +275,14 @@ pub fn run() {
                 let _ = crate::tray::rebuild_tray_menu(&h);
             });
 
+            // 初始化启动器数据库与默认全局热键
+            let _ = commands::launcher::db::init_db();
+            if let Ok(setting) = commands::launcher::db::get_settings() {
+                if !setting.show_hide_shortcut_key.trim().is_empty() {
+                    let _ = commands::launcher::windows::register_global_hotkey(app.handle().clone(), &setting.show_hide_shortcut_key);
+                }
+            }
+
             // 窗口在 tauri.conf.json 中设为 visible:false。
             // 普通启动时主动显示；带 `--minimized`（开机自启）时保持隐藏在托盘。
             let start_minimized = std::env::args().any(|a| a == "--minimized");
@@ -635,6 +643,34 @@ pub fn run() {
                 commands::node_manager::get_node_projects_dir,
                 commands::node_manager::update_node_projects_dir,
                 commands::node_manager::npm_check_update,
+
+                // ---- 启动器模块（复刻 DawnLauncher） ----
+                commands::launcher::commands::launcher_get_classifications,
+                commands::launcher::commands::launcher_save_classification,
+                commands::launcher::commands::launcher_delete_classification,
+                commands::launcher::commands::launcher_reorder_classifications,
+                commands::launcher::commands::launcher_get_items,
+                commands::launcher::commands::launcher_get_all_items,
+                commands::launcher::commands::launcher_save_item,
+                commands::launcher::commands::launcher_batch_add_items,
+                commands::launcher::commands::launcher_delete_item,
+                commands::launcher::commands::launcher_reorder_items,
+                commands::launcher::commands::launcher_execute_item,
+                commands::launcher::commands::launcher_execute_raw,
+                commands::launcher::commands::launcher_execute_system_command,
+                commands::launcher::commands::launcher_open_file_location,
+                commands::launcher::commands::launcher_extract_icon,
+                commands::launcher::commands::launcher_resolve_shortcut,
+                commands::launcher::commands::launcher_fetch_url_info,
+                commands::launcher::commands::launcher_scan_start_menu,
+                commands::launcher::commands::launcher_scan_appx,
+                commands::launcher::commands::launcher_scan_folder,
+                commands::launcher::commands::launcher_get_settings,
+                commands::launcher::commands::launcher_save_settings,
+                commands::launcher::commands::launcher_register_hotkey,
+                commands::launcher::commands::launcher_import_browser_bookmarks,
+                commands::launcher::commands::launcher_export_backup,
+                commands::launcher::commands::launcher_import_backup,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

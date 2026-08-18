@@ -22,4 +22,5 @@ pub mod file_io;
 pub mod mihomo;
 pub mod tasks;
 pub mod node_manager;
+pub mod launcher;
 
