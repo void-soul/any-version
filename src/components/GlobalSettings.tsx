@@ -21,6 +21,13 @@ import {
   Loader2,
   FileText,
   Power,
+  Rocket,
+  Zap,
+  Server,
+  Database,
+  Waypoints,
+  Video,
+  Globe,
 } from "lucide-react";
 
 interface Config {
@@ -32,6 +39,7 @@ interface Config {
 }
 
 import type { AiConfig } from "./ai/types";
+import type { ProjectStatus } from "./project/types";
 
 interface MigrateResult {
   moved_versions: boolean;
@@ -99,6 +107,38 @@ export default function GlobalSettings() {
   // 开机自启：反映操作系统真实注册状态（打开设置页时查询）
   const [autostartOn, setAutostartOn] = useState(false);
   const [autostartBusy, setAutostartBusy] = useState(false);
+  // 服务自启配置
+  const [autoStartServices, setAutoStartServices] = useState<string[]>([]);
+  const [sdkProjects, setSdkProjects] = useState<ProjectStatus[]>([]);
+  const [autoStartBusyMap, setAutoStartBusyMap] = useState<Record<string, boolean>>({});
+
+  const fetchAutoStartServices = async () => {
+    try {
+      const [list, projects] = await Promise.all([
+        invoke<string[]>("get_auto_start_services"),
+        invoke<ProjectStatus[]>("project_list_fast"),
+      ]);
+      setAutoStartServices(list || []);
+      setSdkProjects(projects || []);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleToggleAutoStartService = async (serviceId: string, enabled: boolean) => {
+    setAutoStartBusyMap((prev) => ({ ...prev, [serviceId]: true }));
+    try {
+      await invoke("set_auto_start_service", { serviceId, enabled });
+      setAutoStartServices((prev) =>
+        enabled ? [...prev.filter((id) => id !== serviceId), serviceId] : prev.filter((id) => id !== serviceId)
+      );
+    } catch (e: any) {
+      alert(`设置服务自启失败: ${e}`);
+    } finally {
+      setAutoStartBusyMap((prev) => ({ ...prev, [serviceId]: false }));
+    }
+  };
+
   // 托盘右键菜单配置
   const [trayCfg, setTrayCfg] = useState<TrayMenuConfig>({
     show_mihomo: true,
@@ -234,6 +274,7 @@ export default function GlobalSettings() {
     fetchVersion();
     fetchAiConfig();
     fetchAutostart();
+    fetchAutoStartServices();
     invoke<TrayMenuConfig>("get_tray_menu_config")
       .then(setTrayCfg)
       .catch(() => {});
@@ -853,6 +894,167 @@ export default function GlobalSettings() {
               className="w-20 glass-input px-2 py-1 text-xs text-right"
             />
           </div>
+        </div>
+      </div>
+
+      {/* 服务自启管理 */}
+      <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b border-white/5">
+          <div className="flex items-center gap-2">
+            <Rocket className="w-4 h-4 text-red-400" />
+            <div>
+              <h3 className="text-xs font-semibold text-white">服务自启管理</h3>
+              <p className="text-[9px] text-slate-500 mt-0.5">
+                在打开 AnyVersion 时自动拉起已勾选的服务（与开机自启协同，开机即可就绪）
+              </p>
+            </div>
+          </div>
+          <span className="text-[10px] text-slate-400 bg-white/5 px-2 py-0.5 rounded-full border border-white/5">
+            已启用 {autoStartServices.length} 个自启服务
+          </span>
+        </div>
+
+        <div className="space-y-3">
+          {(() => {
+            // 系统级核心常驻服务
+            const builtinServices = [
+              {
+                id: "mihomo",
+                name: "Mihomo 代理服务",
+                tag: "网络代理",
+                tagColor: "bg-indigo-500/10 text-indigo-400 border-indigo-500/20",
+                icon: Waypoints,
+                desc: "启动软件时自动运行 Mihomo 核心代理",
+              },
+              {
+                id: "rtsp",
+                name: "RTSP 媒体服务",
+                tag: "流媒体",
+                tagColor: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+                icon: Video,
+                desc: "启动软件时自动按上次配置开启推流",
+              },
+            ];
+
+            // 动态从 SDK 模块中筛选已托管且已安装（或已配置本地路径）的服务
+            const activeSdkServices = sdkProjects
+              .filter((p) => {
+                const isSvc = p.category === "service" || (p as any).is_service;
+                const isInstalled = (p.installed_versions && p.installed_versions.length > 0) || !!p.install_root;
+                return isSvc && p.managed && isInstalled;
+              })
+              .map((p) => {
+                let icon = Server;
+                let tag = "后台服务";
+                let tagColor = "bg-cyan-500/10 text-cyan-400 border-cyan-500/20";
+                let desc = `自动启动本地 ${p.display_name} 服务`;
+
+                if (["mysql", "mongodb", "postgresql"].includes(p.id)) {
+                  icon = Database;
+                  tag = "数据库";
+                  tagColor = "bg-blue-500/10 text-blue-400 border-blue-500/20";
+                  desc = `自动启动本地 ${p.display_name} 数据库服务`;
+                } else if (p.id === "redis") {
+                  icon = Zap;
+                  tag = "中间件";
+                  tagColor = "bg-rose-500/10 text-rose-400 border-rose-500/20";
+                  desc = "自动启动本地 Redis 内存数据库服务";
+                } else if (p.id === "nginx") {
+                  icon = Globe;
+                  tag = "Web 服务";
+                  tagColor = "bg-green-500/10 text-green-400 border-green-500/20";
+                  desc = "自动启动本地 Nginx 反向代理与 Web 服务";
+                } else if (p.id === "frpc" || p.id === "frps") {
+                  icon = Server;
+                  tag = "内网穿透";
+                  tagColor = "bg-amber-500/10 text-amber-400 border-amber-500/20";
+                  desc = `自动启动 FRP ${p.id.toUpperCase()} 穿透服务`;
+                }
+
+                return {
+                  id: p.id,
+                  name: `${p.display_name} 服务`,
+                  tag,
+                  tagColor,
+                  icon,
+                  desc,
+                };
+              });
+
+            const displayServices = [...builtinServices, ...activeSdkServices];
+
+            return (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                  {displayServices.map(({ id, name, tag, tagColor, icon: Icon, desc }) => {
+                    const isEnabled = autoStartServices.includes(id);
+                    const isBusy = !!autoStartBusyMap[id];
+
+                    return (
+                      <div
+                        key={id}
+                        className={`p-3 rounded-xl border transition-all flex items-center justify-between gap-3 ${
+                          isEnabled
+                            ? "bg-white/[0.04] border-white/10 shadow-sm"
+                            : "bg-black/20 border-white/5 opacity-80 hover:opacity-100"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div
+                            className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                              isEnabled
+                                ? "bg-red-500/15 text-red-400 border border-red-500/20"
+                                : "bg-white/5 text-slate-400 border border-white/5"
+                            }`}
+                          >
+                            <Icon className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-semibold text-slate-200 truncate">
+                                {name}
+                              </span>
+                              <span
+                                className={`text-[9px] px-1.5 py-0.2 rounded border font-medium ${tagColor}`}
+                              >
+                                {tag}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-slate-500 truncate mt-0.5">
+                              {desc}
+                            </p>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => handleToggleAutoStartService(id, !isEnabled)}
+                          disabled={isBusy}
+                          role="switch"
+                          aria-checked={isEnabled}
+                          className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
+                            isEnabled ? "bg-red-600" : "bg-white/10"
+                          }`}
+                          title={isEnabled ? "已启用自启" : "已禁用自启"}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                              isEnabled ? "translate-x-4" : "translate-x-0.5"
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {activeSdkServices.length === 0 && (
+                  <p className="text-[10px] text-slate-500 italic mt-2">
+                    💡 提示：在「SDK」模块中安装并托管 MySQL、Redis、MongoDB、Nginx 等服务后，将自动在此处显示自启开关。
+                  </p>
+                )}
+              </>
+            );
+          })()}
         </div>
       </div>
 

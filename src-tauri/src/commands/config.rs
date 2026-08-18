@@ -124,6 +124,9 @@ pub struct Config {
     /// 默认 ~/.any-version/node-projects，可改到其他盘以节约 C 盘空间。
     #[serde(default)]
     pub node_projects_dir: String,
+    /// 软件启动时自动拉起的服务 ID 列表，如 ["mihomo", "rtsp", "mysql", "redis", "mongodb"]
+    #[serde(default)]
+    pub auto_start_services: std::collections::HashSet<String>,
 }
 
 pub fn get_base_dir() -> PathBuf {
@@ -225,6 +228,7 @@ pub fn load_config() -> Config {
         tray_menu: TrayMenuConfig::default(),
         last_servers: LastServerConfig::default(),
         node_projects_dir: base_dir.join("node-projects").to_string_lossy().to_string(),
+        auto_start_services: std::collections::HashSet::new(),
     };
     let _ = fs::create_dir_all(&base_dir);
     let _ = save_config(&default_config);
@@ -954,5 +958,24 @@ pub async fn fetch_rss_feed(url: String) -> Result<String, String> {
         .map_err(|e| format!("读取内容失败: {}", e))?;
 
     Ok(text)
+}
+
+#[tauri::command]
+pub fn get_auto_start_services() -> Vec<String> {
+    let config = load_config();
+    let mut list: Vec<String> = config.auto_start_services.into_iter().collect();
+    list.sort();
+    list
+}
+
+#[tauri::command]
+pub fn set_auto_start_service(service_id: String, enabled: bool) -> Result<(), String> {
+    let mut config = load_config();
+    if enabled {
+        config.auto_start_services.insert(service_id);
+    } else {
+        config.auto_start_services.remove(&service_id);
+    }
+    save_config(&config)
 }
 

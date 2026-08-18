@@ -4,7 +4,7 @@
   "version": "1.2.1",
   "type": "module",
   "scripts": {
-    "start": "set ANY_VERSION_PROXY_DEBUG=1 && tauri dev",
+    "start": "node scripts/bundle-resources.mjs && set ANY_VERSION_PROXY_DEBUG=1 && tauri dev",
     "dev": "vite",
     "build": "node scripts/bundle-resources.mjs && tsc && vite build",
     "preview": "vite preview",

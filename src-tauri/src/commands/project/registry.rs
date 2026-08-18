@@ -105,7 +105,7 @@ pub fn load_registry() -> Vec<ProjectDef> {
 
     // 4. 优先从 projects/ 目录加载（每个子目录一个 config.json，零代码扩展）
     for dir in &search_dirs {
-        for candidate in [dir.join("_up_").join("projects"), dir.join("projects")] {
+        for candidate in [dir.join("projects"), dir.join("_up_").join("projects")] {
             if let Some(list) = load_from_dir(&candidate) {
                 if !list.is_empty() {
                     eprintln!("[registry] 从目录加载 {} 个项目: {}", list.len(), candidate.display());

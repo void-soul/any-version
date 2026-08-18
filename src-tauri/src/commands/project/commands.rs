@@ -332,11 +332,12 @@ pub fn project_unmanage(app: tauri::AppHandle, id: String) -> Result<(), String>
         let _ = add_to_user_path(&orig_paths);
     }
 
-    // 5. 从 managed_items and project_delegations and active_versions 中移除
+    // 5. 从 managed_items and project_delegations and active_versions and auto_start_services 中移除
     config.managed_items.remove(&id);
     config.simple_managed_items.remove(&id);
     config.project_delegations.remove(&id);
     config.active_versions.remove(&id);
+    config.auto_start_services.remove(&id);
     save_config(&config)?;
 
     // 6. 同步进程环境并重建菜单

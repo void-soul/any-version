@@ -160,9 +160,13 @@ export default function ProjectDetailPanel({
   const [isAdmin, setIsAdmin] = useState(true);
   const [showMenuConfig, setShowMenuConfig] = useState(false);
   const [localDelegation, setLocalDelegation] = useState<ProjectDelegation | null>(null);
+  const [autoStartServices, setAutoStartServices] = useState<string[]>([]);
 
   useEffect(() => {
     setShowMenuConfig(false);
+    invoke<string[]>("get_auto_start_services")
+      .then((list) => setAutoStartServices(list || []))
+      .catch(() => {});
   }, [pid]);
 
   useEffect(() => {
@@ -835,28 +839,49 @@ export default function ProjectDetailPanel({
               显示版本切换控制
             </label>
             {(def?.category === "service" || def?.is_service) && (
-              <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 select-none">
-                <input
-                  type="checkbox"
-                  checked={status.show_service !== false}
-                  onChange={async (e) => {
-                    if (pid) {
-                      await invoke("update_project_menu_config", {
-                        id: pid,
-                        showVersion: status.show_version !== false,
-                        showService: e.target.checked,
-                      });
-                      await refreshSingle(pid);
-                    }
-                  }}
-                  className="rounded border-white/10 bg-black/40 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
-                />
-                显示服务启动/停止控制
-              </label>
+              <>
+                <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 select-none">
+                  <input
+                    type="checkbox"
+                    checked={status.show_service !== false}
+                    onChange={async (e) => {
+                      if (pid) {
+                        await invoke("update_project_menu_config", {
+                          id: pid,
+                          showVersion: status.show_version !== false,
+                          showService: e.target.checked,
+                        });
+                        await refreshSingle(pid);
+                      }
+                    }}
+                    className="rounded border-white/10 bg-black/40 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+                  />
+                  显示服务启动/停止控制
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 select-none">
+                  <input
+                    type="checkbox"
+                    checked={pid ? autoStartServices.includes(pid) : false}
+                    onChange={async (e) => {
+                      if (pid) {
+                        const enabled = e.target.checked;
+                        await invoke("set_auto_start_service", { serviceId: pid, enabled });
+                        setAutoStartServices((prev) =>
+                          enabled ? [...prev.filter((id) => id !== pid), pid] : prev.filter((id) => id !== pid)
+                        );
+                      }
+                    }}
+                    className="rounded border-white/10 bg-black/40 text-red-500 focus:ring-red-500 w-3.5 h-3.5 cursor-pointer"
+                  />
+                  <span className={pid && autoStartServices.includes(pid) ? "text-red-400 font-semibold" : ""}>
+                    软件启动时自动运行此服务
+                  </span>
+                </label>
+              </>
             )}
           </div>
           <p className="text-[10px] text-slate-500 leading-normal">
-            提示：此配置将决定该项目是否在系统托盘右键菜单中显示。如果不显示，可以在此处重新开启。
+            提示：此配置将决定该项目在托盘菜单中的展示以及是否随 AnyVersion 启动自动在后台拉起。
           </p>
         </div>
       )}

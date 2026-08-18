@@ -4,7 +4,7 @@ mod tray;
 pub mod exit_log;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::Manager;
+use tauri::{Manager, Emitter};
 
 /// 用户通过托盘「退出」主动请求退出。置位后，即便 Tauri 在窗口销毁流程中
 /// 发出 code=None 的 ExitRequested，也不应拦截真正的退出意图。
@@ -212,13 +212,68 @@ pub fn run() {
             let mihomo_state = commands::mihomo::init_state();
             app.manage(mihomo_state.clone());
             commands::mihomo::start_scheduler(app.handle().clone(), mihomo_state.clone());
-            if mihomo_state.app_config.lock().unwrap().auto_start_core {
-                let s = mihomo_state.clone();
-                let h = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    let _ = commands::mihomo::launch_core(&h, s).await;
-                });
-            }
+
+            // 统一服务自启编排 (Mihomo 代理 / RTSP 流媒体 / SDK 数据库与中间件服务)
+            let h = app.handle().clone();
+            let s_mihomo = mihomo_state.clone();
+            let config_clone = crate::commands::config::load_config();
+            tauri::async_runtime::spawn(async move {
+                let auto_start_services = config_clone.auto_start_services.clone();
+
+                // 1. Mihomo 代理自启 (兼顾 auto_start_core 与 auto_start_services.contains("mihomo"))
+                let mihomo_enabled = auto_start_services.contains("mihomo")
+                    || s_mihomo.app_config.lock().map(|c| c.auto_start_core).unwrap_or(false);
+                if mihomo_enabled {
+                    exit_log::exit_log("[autostart] 正在自启 Mihomo 代理服务...");
+                    let _ = commands::mihomo::launch_core(&h, s_mihomo).await;
+                }
+
+                // 2. RTSP 推流服务自启
+                if auto_start_services.contains("rtsp") {
+                    if let Some(rtsp_state) = h.try_state::<commands::rtsp_server::RtspServerState>() {
+                        exit_log::exit_log("[autostart] 正在自启 RTSP 推流服务...");
+                        let rtsp_config: commands::rtsp_server::RtspConfig = config_clone
+                            .last_servers
+                            .rtsp
+                            .and_then(|v| serde_json::from_value(v).ok())
+                            .unwrap_or_else(|| commands::rtsp_server::RtspConfig {
+                                id: Some("rtsp-auto".to_string()),
+                                source_type: "testsrc".to_string(),
+                                camera_name: None,
+                                file_path: None,
+                                port: 8554,
+                                path_name: "live".to_string(),
+                                allow_lan: false,
+                                loop_file: true,
+                                include_audio: false,
+                                audio_device: None,
+                                resolution: Some("1280x720".to_string()),
+                                fps: Some(30),
+                                transport: Some("tcp".to_string()),
+                                video_codec: Some("h264".to_string()),
+                                gpu_accel: Some("cpu".to_string()),
+                            });
+                        let _ = commands::rtsp_server::start_rtsp_server(h.clone(), rtsp_state, rtsp_config);
+                    }
+                }
+
+                // 3. SDK 后台服务自启 (MySQL / Redis / MongoDB / PostgreSQL / Nginx / FRPC / FRPS 等)
+                for svc_id in &auto_start_services {
+                    if svc_id == "mihomo" || svc_id == "rtsp" {
+                        continue;
+                    }
+                    exit_log::exit_log(&format!("[autostart] 正在自启 SDK 服务: {}", svc_id));
+                    if let Err(e) = commands::service::start_service_inner(svc_id.clone(), None) {
+                        exit_log::exit_log(&format!("[autostart] 自启服务 {} 失败: {}", svc_id, e));
+                    } else {
+                        exit_log::exit_log(&format!("[autostart] 自启服务 {} 成功", svc_id));
+                        let _ = h.emit("service-status-changed", svc_id);
+                    }
+                }
+
+                // 刷新托盘菜单
+                let _ = crate::tray::rebuild_tray_menu(&h);
+            });
 
             // 窗口在 tauri.conf.json 中设为 visible:false。
             // 普通启动时主动显示；带 `--minimized`（开机自启）时保持隐藏在托盘。
@@ -253,6 +308,8 @@ pub fn run() {
             commands::config::update_config,
             commands::config::get_data_dir_cmd,
             commands::config::get_sdk_dir_cmd,
+            commands::config::get_auto_start_services,
+            commands::config::set_auto_start_service,
             commands::config::get_project_menu_config,
             commands::config::update_project_menu_config,
             commands::http_server::start_http_server,

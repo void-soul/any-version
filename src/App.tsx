@@ -7,13 +7,15 @@ import TaskPanel from "./components/tasks/TaskPanel";
 import TaskReminderToast from "./components/tasks/TaskReminderToast";
 import RssReader from "./components/RssReader";
 import NodeManagerPanel from "./components/node/NodeManagerPanel";
+import Mihomo from "./components/SystemTools/Mihomo";
+import CertManager from "./components/SystemTools/CertManager";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Wrench, Settings, X, Minus, Square, Rss, Cpu, Bot, CalendarCheck, Download, AlertTriangle, CheckCircle2, Loader2, Boxes } from "lucide-react";
+import { Wrench, Settings, X, Minus, Square, Rss, Cpu, Bot, CalendarCheck, Download, AlertTriangle, CheckCircle2, Loader2, Boxes, Waypoints, ShieldCheck } from "lucide-react";
 import "./App.css";
 
-type PageId = "sdk" | "ai" | "tasks" | "news" | "tools" | "settings" | "node";
+type PageId = "sdk" | "ai" | "tasks" | "node" | "mihomo" | "cert" | "news" | "tools" | "settings";
 
 export default function App() {
   const [activePage, setActivePage] = useState<PageId>("news");
@@ -122,6 +124,8 @@ export default function App() {
               { id: "ai" as PageId, label: "AI", icon: <Bot className="w-3 h-3" />, color: "bg-violet-600" },
               { id: "tasks" as PageId, label: "任务", icon: <CalendarCheck className="w-3 h-3" />, color: "bg-amber-500 !text-slate-900" },
               { id: "node" as PageId, label: "服务", icon: <Boxes className="w-3 h-3" />, color: "bg-cyan-600" },
+              { id: "mihomo" as PageId, label: "代理", icon: <Waypoints className="w-3 h-3" />, color: "bg-indigo-600" },
+              { id: "cert" as PageId, label: "证书", icon: <ShieldCheck className="w-3 h-3" />, color: "bg-teal-600" },
               { id: "tools" as PageId, label: "更多", icon: <Wrench className="w-3 h-3" />, color: "bg-emerald-600" },
               { id: "settings" as PageId, label: "设置", icon: <Settings className="w-3 h-3" />, color: "bg-red-600" },
             ]).map((item) => (
@@ -190,6 +194,16 @@ export default function App() {
         {mountedPages.has("node") && (
           <div className={activePage === "node" ? "h-full w-full" : "hidden"}>
             <NodeManagerPanel />
+          </div>
+        )}
+        {mountedPages.has("mihomo") && (
+          <div className={activePage === "mihomo" ? "h-full w-full flex flex-col" : "hidden"}>
+            <Mihomo />
+          </div>
+        )}
+        {mountedPages.has("cert") && (
+          <div className={activePage === "cert" ? "h-full w-full flex flex-col" : "hidden"}>
+            <CertManager />
           </div>
         )}
         {mountedPages.has("news") && (

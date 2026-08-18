@@ -5,11 +5,9 @@ import HttpServer from "./HttpServer";
 import ImageBase64 from "./ImageBase64";
 import PathEnvManager from "./PathEnvManager";
 import LogViewer from "./LogViewer";
-import CertManager from "./SystemTools/CertManager";
 import RtspServer from "./SystemTools/RtspServer";
 import JsonBrowser from "./SystemTools/JsonBrowser";
 import MarkdownReader from "./SystemTools/MarkdownReader";
-import Mihomo from "./SystemTools/Mihomo";
 import {
   Network,
   Database,
@@ -17,11 +15,9 @@ import {
   Image,
   ListOrdered,
   ScrollText,
-  ShieldCheck,
   Video,
   Braces,
   BookOpen,
-  Waypoints,
 } from "lucide-react";
 
 export type SystemToolsTabKey =
@@ -32,10 +28,8 @@ export type SystemToolsTabKey =
   | "imageBase64"
   | "pathEnv"
   | "logViewer"
-  | "certManager"
   | "jsonBrowser"
-  | "markdownReader"
-  | "mihomo";
+  | "markdownReader";
 
 interface SystemToolsProps {
   defaultTab?: SystemToolsTabKey;
@@ -49,10 +43,8 @@ const TABS = [
   { key: "imageBase64" as const, label: "图片 Base64", icon: Image },
   { key: "pathEnv" as const, label: "PATH 变量", icon: ListOrdered },
   { key: "logViewer" as const, label: "日志查看", icon: ScrollText },
-  { key: "certManager" as const, label: "证书管理", icon: ShieldCheck },
   { key: "jsonBrowser" as const, label: "JSON 浏览", icon: Braces },
   { key: "markdownReader" as const, label: "Markdown 阅读", icon: BookOpen },
-  { key: "mihomo" as const, label: "Mihomo 代理", icon: Waypoints },
 ];
 
 
@@ -108,17 +100,11 @@ export default function SystemTools({ defaultTab = "ports" }: SystemToolsProps) 
         <div className={activeTab === "logViewer" ? "h-full" : "hidden"}>
           <LogViewer />
         </div>
-        <div className={activeTab === "certManager" ? "h-full" : "hidden"}>
-          <CertManager />
-        </div>
         <div className={activeTab === "jsonBrowser" ? "h-full" : "hidden"}>
           <JsonBrowser />
         </div>
         <div className={activeTab === "markdownReader" ? "h-full" : "hidden"}>
           <MarkdownReader />
-        </div>
-        <div className={activeTab === "mihomo" ? "h-full" : "hidden"}>
-          <Mihomo />
         </div>
       </div>
     </div>

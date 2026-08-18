@@ -739,6 +739,17 @@ pub fn project_uninstall_version(app: AppHandle, id: String, version: String) ->
 
     fs::remove_dir_all(&dest_dir).map_err(|e| e.to_string())?;
 
+    // 若无剩余已安装版本且无自定义路径，自动从自启列表中清除
+    let versions_parent = Path::new(&config.versions_dir).join(&id);
+    let has_remaining = versions_parent.read_dir().map(|mut it| it.next().is_some()).unwrap_or(false);
+    if !has_remaining && !config.custom_install_paths.contains_key(&id) {
+        use crate::commands::config::save_config;
+        let mut cfg = load_config();
+        if cfg.auto_start_services.remove(&id) {
+            let _ = save_config(&cfg);
+        }
+    }
+
     let _ = crate::tray::rebuild_tray_menu(&app);
     Ok(())
 }
