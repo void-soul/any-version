@@ -27,7 +27,7 @@
     "{install_root}\\my.cnf"
   ],
   "start_cmd": "\"{install_root}\\bin\\mysqld.exe\" --console --port={port} --datadir=\"{data_dir}\"",
-  "stop_cmd": null,
+  "stop_cmd": "\"{install_root}\\bin\\mysqladmin.exe\" -u root --port={port} shutdown",
   "service_process_exes": [
     "mysqld"
   ],

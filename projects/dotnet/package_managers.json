@@ -4,7 +4,7 @@
     "display_name": "NuGet",
     "built_in": true,
     "install_cmd": null,
-    "version_cmd": "dotnet nuget --version",
+    "version_cmd": "dotnet --version",
     "version_exe": "dotnet",
     "cache_detect_cmd": null,
     "cache_default_path": "{home}\\.nuget\\packages",

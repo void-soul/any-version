@@ -25,7 +25,7 @@
     "{install_root}\\mongod.cfg"
   ],
   "start_cmd": "\"{install_root}\\bin\\mongod.exe\" --dbpath \"{data_dir}\" --logpath \"{log_dir}\\mongod.log\" --logappend --port {port}",
-  "stop_cmd": null,
+  "stop_cmd": "\"{install_root}\\bin\\mongod.exe\" --shutdown --dbpath \"{data_dir}\"",
   "service_process_exes": [
     "mongod"
   ],

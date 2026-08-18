@@ -37,7 +37,6 @@
   "service_auto_create_dirs": false,
   "version_cmd": "postgres --version",
   "version_exe": "postgres",
-  "download_url_template": "https://sbp.enterprisedb.com/get/dbbinaries/postgresql-{version}-1-windows-x64-binaries.zip",
   "download_file_ext": "zip",
   "version_url_prefix_map": {
     "18.": "https://sbp.enterprisedb.com/getfile.jsp?fileid=1260303",
