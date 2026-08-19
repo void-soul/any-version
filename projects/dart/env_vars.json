@@ -1,0 +1,20 @@
+[
+  {
+    "name": "DART_HOME",
+    "desc": "Dart SDK 安装根目录",
+    "check_type": "path",
+    "tier": "core"
+  },
+  {
+    "name": "DART_SDK",
+    "desc": "Dart SDK 兼容环境变量",
+    "check_type": "path",
+    "tier": "compat"
+  },
+  {
+    "name": "PUB_HOSTED_URL",
+    "desc": "Pub 包管理器镜像源",
+    "check_type": "nonempty",
+    "tier": "package"
+  }
+]

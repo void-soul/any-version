@@ -12,7 +12,7 @@ fn now_ms() -> u64 {
 
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, Runtime, Webview, WebviewUrl, WebviewWindowBuilder};
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const MAIN_WINDOW_TITLE: &str = "AnyVersion 开发助理";
@@ -312,10 +312,24 @@ pub(crate) fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
         },
     };
 
+    focus_main_window(&window);
+}
+
+/// 显示并聚焦主窗口，且显式聚焦 WebView2 内容。
+/// 仅调用 window.set_focus() 只聚焦顶层窗口 HWND，键盘事件仍可能不进入 WebView2，
+/// 表现为「输入框光标闪烁但敲不进字」。必须在窗口显示后额外调用 webview.set_focus()。
+pub(crate) fn focus_main_window<R: Runtime>(window: &tauri::WebviewWindow<R>) {
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_decorations(false);
+    // 1) 激活顶层窗口
     let _ = window.set_focus();
+    // 2) 关键：聚焦 WebView2 内容，让键盘事件进入页面
+    let webview: &Webview<R> = window.as_ref();
+    let _ = webview.set_focus();
+    // 3) 通知前端切到「启动」（Launcher）模块：应用启动、从托盘恢复、全局快捷键唤起时，
+    //    一律打开「启动」模块而不是其它模块（咨询/资讯等）。
+    let _ = window.emit("launcher-toggle", ());
 }
 
 fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::WebviewWindow<R>> {

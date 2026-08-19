@@ -776,10 +776,16 @@ pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String
     let config = crate::commands::config::load_config();
     let mut resolved_cmd = resolve_custom_exe(&cmd, &config);
 
-    // 运行时防护：拒绝含 shell 命令分隔符/注入元字符的命令（引号与路径符号允许，
+    // PowerShell 命令直接调用 powershell.exe，避免 cmd /c 的引号嵌套问题
+    let is_powershell = cfg!(windows) && {
+        let lower = resolved_cmd.trim_start().to_lowercase();
+        lower.starts_with("powershell ") || lower.starts_with("powershell.exe ")
+    };
+
+    // 运行时防护：非 PowerShell 的 cmd 命令拒绝含 shell 命令分隔符/注入元字符的命令（引号与路径符号允许，
     // 因为 run_via_runtime_args 替换会产生带引号的 exe 路径）。注册表层已做白名单，
     // 此处为第二道防线，确保任何来源的命令都不会执行注入。
-    if contains_shell_injection(&resolved_cmd) {
+    if !is_powershell && contains_shell_injection(&resolved_cmd) {
         return Err(format!("拒绝执行含 shell 注入元字符的命令: {}", resolved_cmd));
     }
 
@@ -819,12 +825,6 @@ pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String
             }
         }
     }
-
-    // PowerShell 命令直接调用 powershell.exe，避免 cmd /c 的引号嵌套问题
-    let is_powershell = cfg!(windows) && {
-        let lower = resolved_cmd.trim_start().to_lowercase();
-        lower.starts_with("powershell ") || lower.starts_with("powershell.exe ")
-    };
 
     let mut command = if is_powershell {
         // 解析 "powershell -Command ..." 结构，提取脚本内容

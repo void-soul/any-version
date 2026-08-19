@@ -1,0 +1,64 @@
+[
+  {
+    "pattern": {
+      "type": "env_bin",
+      "env_var": "DART_HOME",
+      "bin_sub": "bin",
+      "exe_name": "dart.exe"
+    },
+    "source_label": "DART_HOME",
+    "priority": 10,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "env_bin",
+      "env_var": "DART_SDK",
+      "bin_sub": "bin",
+      "exe_name": "dart.exe"
+    },
+    "source_label": "DART_SDK",
+    "priority": 20,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "scoop\\apps\\dart",
+      "exe_name": "dart.exe"
+    },
+    "source_label": "Scoop",
+    "priority": 30,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "chocolatey\\lib\\dart-sdk",
+      "exe_name": "dart.exe"
+    },
+    "source_label": "Chocolatey",
+    "priority": 40,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "flutter\\bin\\cache\\dart-sdk",
+      "exe_name": "dart.exe"
+    },
+    "source_label": "Flutter 内置 Dart",
+    "priority": 50,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "dart.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 0
+  }
+]

@@ -48,3 +48,4 @@ tmp_bins.txt
 *.crt
 /.commit_msg.txt
 /build-log.txt
+.freebuff

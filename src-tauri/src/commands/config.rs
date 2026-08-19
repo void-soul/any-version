@@ -127,6 +127,15 @@ pub struct Config {
     /// 软件启动时自动拉起的服务 ID 列表，如 ["mihomo", "rtsp", "mysql", "redis", "mongodb"]
     #[serde(default)]
     pub auto_start_services: std::collections::HashSet<String>,
+    /// 顶级模块主题色：模块 id -> 主题色 hex（如 launcher -> "#8b5cf6"）
+    #[serde(default)]
+    pub module_theme_colors: std::collections::HashMap<String, String>,
+    /// 全局字体（CSS font-family 名称），空则使用默认字体
+    #[serde(default)]
+    pub global_font: String,
+    /// 导入的自定义字体文件路径（用于 @font-face 注册），空表示未导入
+    #[serde(default)]
+    pub custom_font_path: String,
 }
 
 pub fn get_base_dir() -> PathBuf {
@@ -229,6 +238,9 @@ pub fn load_config() -> Config {
         last_servers: LastServerConfig::default(),
         node_projects_dir: base_dir.join("node-projects").to_string_lossy().to_string(),
         auto_start_services: std::collections::HashSet::new(),
+        module_theme_colors: std::collections::HashMap::new(),
+        global_font: String::new(),
+        custom_font_path: String::new(),
     };
     let _ = fs::create_dir_all(&base_dir);
     let _ = save_config(&default_config);
@@ -977,5 +989,116 @@ pub fn set_auto_start_service(service_id: String, enabled: bool) -> Result<(), S
         config.auto_start_services.remove(&service_id);
     }
     save_config(&config)
+}
+
+// ---- 外观：顶级模块主题色 + 全局字体 ----
+
+/// 供前端读取外观配置（模块主题色 + 全局字体 + 自定义字体）
+#[tauri::command]
+pub fn get_appearance_config() -> AppearanceConfig {
+    let config = load_config();
+    AppearanceConfig {
+        module_theme_colors: config.module_theme_colors,
+        global_font: config.global_font,
+        custom_font_path: config.custom_font_path,
+    }
+}
+
+/// 设置单个顶级模块的主题色（hex，如 #8b5cf6）
+#[tauri::command]
+pub fn set_module_theme_color(module_id: String, color: String) -> Result<(), String> {
+    let mut config = load_config();
+    if color.trim().is_empty() {
+        config.module_theme_colors.remove(&module_id);
+    } else {
+        config.module_theme_colors.insert(module_id, color);
+    }
+    save_config(&config)
+}
+
+/// 设置全局字体（CSS font-family 名称，空=恢复默认）
+#[tauri::command]
+pub fn set_global_font(font: String) -> Result<(), String> {
+    let mut config = load_config();
+    config.global_font = font;
+    save_config(&config)
+}
+
+/// 导入自定义字体文件：把 src 拷贝到数据目录 fonts/，返回字体家族名与目标路径
+#[tauri::command]
+pub fn import_custom_font(src: String) -> Result<CustomFontInfo, String> {
+    let src_path = Path::new(&src);
+    if !src_path.exists() {
+        return Err("字体文件不存在".to_string());
+    }
+    let ext = src_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .filter(|e| matches!(e.as_str(), "ttf" | "otf" | "woff" | "woff2"))
+        .unwrap_or_default();
+    if ext.is_empty() {
+        return Err("仅支持 .ttf / .otf / .woff / .woff2 字体文件".to_string());
+    }
+
+    let fonts_dir = get_data_dir().join("fonts");
+    let _ = fs::create_dir_all(&fonts_dir);
+
+    let file_name = src_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("custom_font")
+        .to_string();
+    // 家族名用文件名去掉扩展名，并替换非法字符
+    let family = file_name
+        .trim_end_matches(&format!(".{ext}"))
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == ' ' { c } else { '_' })
+        .collect::<String>();
+
+    let dest = fonts_dir.join(&file_name);
+    fs::copy(src_path, &dest).map_err(|e| format!("拷贝字体失败: {e}"))?;
+
+    let mut config = load_config();
+    config.custom_font_path = dest.to_string_lossy().to_string();
+    config.global_font = family.clone();
+    save_config(&config)?;
+
+    Ok(CustomFontInfo {
+        family,
+        path: dest.to_string_lossy().to_string(),
+        ext,
+    })
+}
+
+/// 移除自定义字体（恢复默认字体）
+#[tauri::command]
+pub fn clear_custom_font() -> Result<(), String> {
+    let mut config = load_config();
+    if !config.custom_font_path.is_empty() {
+        let p = config.custom_font_path.clone();
+        let _ = fs::remove_file(Path::new(&p));
+    }
+    config.custom_font_path.clear();
+    config.global_font.clear();
+    save_config(&config)
+}
+
+/// 自定义字体信息
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomFontInfo {
+    pub family: String,
+    pub path: String,
+    pub ext: String,
+}
+
+/// 外观配置（模块主题色 + 全局字体）
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct AppearanceConfig {
+    pub module_theme_colors: std::collections::HashMap<String, String>,
+    pub global_font: String,
+    pub custom_font_path: String,
 }
 

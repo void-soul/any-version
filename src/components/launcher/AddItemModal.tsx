@@ -20,6 +20,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Item, ItemData, Classification, MultiItemEntry, ScannedProgram, AppxItem, UrlMetadata, ShortcutInfo } from "./types";
+import CategoryTreeSelect from "./CategoryTreeSelect";
 
 interface AddItemModalProps {
   isOpen: boolean;
@@ -67,16 +68,20 @@ export default function AddItemModal({
   classificationId,
   classifications,
 }: AddItemModalProps) {
-  const [activeTab, setActiveTab] = useState<number>(0); // 0:文件/程序, 1:文件夹, 2:网址, 3:系统, 4:Appx, 5:开始菜单, 6:多项目
-  const [targetClassificationId, setTargetClassificationId] = useState<number>(classificationId);
-  const [name, setName] = useState("");
-  const [target, setTarget] = useState("");
-  const [params, setParams] = useState("");
-  const [startLocation, setStartLocation] = useState("");
-  const [runAsAdmin, setRunAsAdmin] = useState(false);
-  const [icon, setIcon] = useState<string | null>(null);
-  const [htmlIcon, setHtmlIcon] = useState<string | null>(null);
-  const [remark, setRemark] = useState("");
+  const [activeTab, setActiveTab] = useState<number>(
+    editingItem ? (editingItem.itemType === 5 ? 6 : editingItem.itemType) : 0
+  );
+  const [targetClassificationId, setTargetClassificationId] = useState<number>(
+    editingItem ? editingItem.classificationId : classificationId
+  );
+  const [name, setName] = useState(editingItem ? editingItem.name : "");
+  const [target, setTarget] = useState(editingItem?.data?.target || "");
+  const [params, setParams] = useState(editingItem?.data?.params || "");
+  const [startLocation, setStartLocation] = useState(editingItem?.data?.startLocation || "");
+  const [runAsAdmin, setRunAsAdmin] = useState(!!editingItem?.data?.runAsAdmin);
+  const [icon, setIcon] = useState<string | null>(editingItem?.data?.icon || null);
+  const [htmlIcon, setHtmlIcon] = useState<string | null>(editingItem?.data?.htmlIcon || null);
+  const [remark, setRemark] = useState(editingItem?.data?.remark || "");
   const [saving, setSaving] = useState(false);
 
   // 网页网址抓取
@@ -93,40 +98,24 @@ export default function AddItemModal({
   const [appxSearch, setAppxSearch] = useState("");
 
   // 多项目
-  const [multiItems, setMultiItems] = useState<MultiItemEntry[]>([]);
+  const [multiItems, setMultiItems] = useState<MultiItemEntry[]>(editingItem?.data?.multiItems || []);
 
+  // State is already cleanly initialized from props in useState() upon modal mount (via key)
+
+  // 按 Escape 关闭弹窗（暂时注释以测试）
+  /*
   useEffect(() => {
-    if (editingItem) {
-      setTargetClassificationId(editingItem.classificationId);
-      setName(editingItem.name);
-      setTarget(editingItem.data.target || "");
-      setParams(editingItem.data.params || "");
-      setStartLocation(editingItem.data.startLocation || "");
-      setRunAsAdmin(!!editingItem.data.runAsAdmin);
-      setIcon(editingItem.data.icon || null);
-      setHtmlIcon(editingItem.data.htmlIcon || null);
-      setRemark(editingItem.data.remark || "");
-      setMultiItems(editingItem.data.multiItems || []);
-
-      if (editingItem.itemType === 5) {
-        setActiveTab(6);
-      } else {
-        setActiveTab(editingItem.itemType);
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
       }
-    } else {
-      setTargetClassificationId(classificationId);
-      setName("");
-      setTarget("");
-      setParams("");
-      setStartLocation("");
-      setRunAsAdmin(false);
-      setIcon(null);
-      setHtmlIcon(null);
-      setRemark("");
-      setMultiItems([]);
-      setActiveTab(0);
-    }
-  }, [editingItem, classificationId, isOpen]);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, onClose]);
+  */
 
   if (!isOpen) return null;
 
@@ -250,8 +239,6 @@ export default function AddItemModal({
         icon: icon || undefined,
         htmlIcon: htmlIcon || undefined,
         remark: remark.trim() || undefined,
-        openNumber: editingItem?.data.openNumber || 0,
-        lastOpen: editingItem?.data.lastOpen || 0,
         multiItems: finalItemType === 5 ? multiItems : undefined,
       };
 
@@ -274,8 +261,14 @@ export default function AddItemModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 select-none">
-      <div className="bg-[#141927] border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-150">
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[#141927] border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-150 text-slate-100"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-white/[0.02]">
           <div className="flex items-center gap-2.5">
@@ -342,27 +335,25 @@ export default function AddItemModal({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5">所属分类 *</label>
-              <select
+              <CategoryTreeSelect
+                classifications={classifications}
                 value={targetClassificationId}
-                onChange={(e) => setTargetClassificationId(Number(e.target.value))}
-                className="w-full bg-[#1e2436] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 cursor-pointer"
-              >
-                {classifications.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.data.icon ? `${c.data.icon} ` : ""}{c.name}
-                  </option>
-                ))}
-              </select>
+                onChange={setTargetClassificationId}
+                placeholder="选择分类"
+              />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5">项目名称 *</label>
               <input
+                autoFocus
                 type="text"
                 required
+                autoComplete="off"
+                spellCheck={false}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="例如：Visual Studio Code"
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 transition"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text transition"
               />
             </div>
           </div>
@@ -376,10 +367,12 @@ export default function AddItemModal({
                   <input
                     type="text"
                     required
+                    autoComplete="off"
+                    spellCheck={false}
                     value={target}
                     onChange={(e) => setTarget(e.target.value)}
                     placeholder="选择可执行程序、脚本或文档文件"
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                   <button
                     type="button"
@@ -397,20 +390,24 @@ export default function AddItemModal({
                   <label className="block text-xs font-medium text-slate-400 mb-1.5">启动参数 (可选)</label>
                   <input
                     type="text"
+                    autoComplete="off"
+                    spellCheck={false}
                     value={params}
                     onChange={(e) => setParams(e.target.value)}
                     placeholder="例如：--incognito 或 /admin"
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-400 mb-1.5">起始目录 (可选)</label>
                   <input
                     type="text"
+                    autoComplete="off"
+                    spellCheck={false}
                     value={startLocation}
                     onChange={(e) => setStartLocation(e.target.value)}
                     placeholder="运行工作目录"
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                 </div>
               </div>
@@ -425,10 +422,12 @@ export default function AddItemModal({
                 <input
                   type="text"
                   required
+                  autoComplete="off"
+                  spellCheck={false}
                   value={target}
                   onChange={(e) => setTarget(e.target.value)}
                   placeholder="选择或输入本地目录路径"
-                  className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
+                  className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                 />
                 <button
                   type="button"
@@ -451,10 +450,12 @@ export default function AddItemModal({
                   <input
                     type="text"
                     required
+                    autoComplete="off"
+                    spellCheck={false}
                     value={target}
                     onChange={(e) => setTarget(e.target.value)}
                     placeholder="例如：https://github.com 或 https://chatgpt.com"
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                   <button
                     type="button"
@@ -523,10 +524,12 @@ export default function AddItemModal({
                 <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                 <input
                   type="text"
+                  autoComplete="off"
+                  spellCheck={false}
                   value={appxSearch}
                   onChange={(e) => setAppxSearch(e.target.value)}
                   placeholder="搜索已安装的 UWP 应用..."
-                  className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                 />
               </div>
 
@@ -588,10 +591,12 @@ export default function AddItemModal({
                 <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                 <input
                   type="text"
+                  autoComplete="off"
+                  spellCheck={false}
                   value={startMenuSearch}
                   onChange={(e) => setStartMenuSearch(e.target.value)}
                   placeholder="搜索开始菜单软件..."
-                  className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                 />
               </div>
 
@@ -659,25 +664,29 @@ export default function AddItemModal({
                     <span className="text-xs text-slate-500 w-5 text-center">{idx + 1}</span>
                     <input
                       type="text"
+                      autoComplete="off"
+                      spellCheck={false}
                       value={sub.name}
                       onChange={(e) => {
                         const next = [...multiItems];
-                        next[idx].name = e.target.value;
+                        next[idx] = { ...next[idx], name: e.target.value };
                         setMultiItems(next);
                       }}
                       placeholder="子项名称"
-                      className="w-24 bg-black/20 border border-white/10 rounded-lg px-2 py-1 text-xs text-white"
+                      className="w-24 bg-black/20 border border-white/10 rounded-lg px-2 py-1 text-xs text-white select-text"
                     />
                     <input
                       type="text"
+                      autoComplete="off"
+                      spellCheck={false}
                       value={sub.target}
                       onChange={(e) => {
                         const next = [...multiItems];
-                        next[idx].target = e.target.value;
+                        next[idx] = { ...next[idx], target: e.target.value };
                         setMultiItems(next);
                       }}
                       placeholder="目标程序或命令"
-                      className="flex-1 bg-black/20 border border-white/10 rounded-lg px-2 py-1 text-xs text-white"
+                      className="flex-1 bg-black/20 border border-white/10 rounded-lg px-2 py-1 text-xs text-white select-text"
                     />
                     <div className="flex items-center gap-1">
                       <span className="text-[10px] text-slate-400">延时:</span>
@@ -688,10 +697,10 @@ export default function AddItemModal({
                         value={sub.delayMs}
                         onChange={(e) => {
                           const next = [...multiItems];
-                          next[idx].delayMs = Number(e.target.value);
+                          next[idx] = { ...next[idx], delayMs: Number(e.target.value) };
                           setMultiItems(next);
                         }}
-                        className="w-16 bg-black/20 border border-white/10 rounded-lg px-1.5 py-1 text-xs text-white text-center"
+                        className="w-16 bg-black/20 border border-white/10 rounded-lg px-1.5 py-1 text-xs text-white text-center select-text"
                       />
                       <span className="text-[10px] text-slate-500">ms</span>
                     </div>
@@ -701,7 +710,7 @@ export default function AddItemModal({
                         checked={sub.runAsAdmin}
                         onChange={(e) => {
                           const next = [...multiItems];
-                          next[idx].runAsAdmin = e.target.checked;
+                          next[idx] = { ...next[idx], runAsAdmin: e.target.checked };
                           setMultiItems(next);
                         }}
                         className="rounded border-white/10 bg-white/5"
@@ -738,10 +747,12 @@ export default function AddItemModal({
             <div>
               <input
                 type="text"
+                autoComplete="off"
+                spellCheck={false}
                 value={remark}
                 onChange={(e) => setRemark(e.target.value)}
                 placeholder="备注信息 (支持作为搜索关键词)"
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
               />
             </div>
           </div>

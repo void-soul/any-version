@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use std::io::Write;
 use std::sync::OnceLock;
-use tauri::Manager;
 use super::project::types::PackageManagerDef;
 
 /// 获取用户主目录（统一入口，避免各模块重复实现）

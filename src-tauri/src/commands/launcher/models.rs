@@ -36,10 +36,6 @@ pub struct ClassificationData {
     pub item_show_only: String,
     #[serde(default)]
     pub fixed: bool,
-    #[serde(default = "default_aggregate_count")]
-    pub aggregate_item_count: i32,
-    #[serde(default = "default_aggregate_sort")]
-    pub aggregate_sort: String,
     #[serde(default)]
     pub exclude_search: bool,
 }
@@ -47,8 +43,6 @@ pub struct ClassificationData {
 fn default_layout() -> String { "default".to_string() }
 fn default_sort() -> String { "default".to_string() }
 fn default_show_only() -> String { "default".to_string() }
-fn default_aggregate_count() -> i32 { 30 }
-fn default_aggregate_sort() -> String { "openNumber".to_string() }
 
 /// 启动项数据模型
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,12 +87,48 @@ pub struct ItemData {
     #[serde(default)]
     pub fixed_icon: bool,
     #[serde(default)]
-    pub open_number: i64,
-    #[serde(default)]
-    pub last_open: i64,
-    #[serde(default)]
     pub multi_items_time_interval: i64,
     pub multi_items: Option<Vec<MultiItemEntry>>,
+    /// 最近一次检测是否存在（持久化，None=未检测）
+    #[serde(default)]
+    pub exists: Option<bool>,
+    /// 最近一次检测时间（unix 秒），None=未检测
+    #[serde(default)]
+    pub checked_at: Option<i64>,
+}
+
+/// 启动项检测结果
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemCheckResult {
+    pub item_id: i64,
+    pub exists: bool,
+    /// 项目名称（供前端实时显示检测到哪一项）
+    pub name: String,
+    /// 网页类项目检测后自动更新的图标（base64），未变更为 None
+    pub icon: Option<String>,
+    /// 网页类项目检测后自动更新的标题，未变更为 None
+    pub title: Option<String>,
+}
+
+/// 检测进度事件载荷（每检测完一项 emit 一次，实时呈现结果）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckProgress {
+    pub done: usize,
+    pub total: usize,
+    /// 当前刚检测完的项目 id（实时高亮结果）
+    pub item_id: i64,
+    /// 当前刚检测完的项目名称（显示正在检测什么）
+    pub name: String,
+    /// 该项目是否存在
+    pub exists: bool,
+    /// 网页类项目更新后的图标（base64），未变更为 None
+    pub icon: Option<String>,
+    /// 网页类项目更新后的标题，未变更为 None
+    pub title: Option<String>,
+    /// 是否因用户停止而中止
+    pub stopped: bool,
 }
 
 /// 启动器配置
@@ -107,47 +137,81 @@ pub struct ItemData {
 pub struct LauncherSetting {
     #[serde(default = "default_hotkey")]
     pub show_hide_shortcut_key: String,
-    #[serde(default = "default_open_mode")]
-    pub open_mode: String,
+    // ---- 视图设置（全局，应用到所有分类）----
+    /// 项目图标大小（px），默认 32
+    #[serde(default = "default_item_icon_size")]
+    pub item_icon_size: i32,
+    /// 网格列数（0 = 自适应），默认 0
     #[serde(default)]
-    pub open_after_hide: bool,
-    #[serde(default = "default_item_layout")]
-    pub item_layout: String,
-    #[serde(default = "default_column_count")]
-    pub column_count: i32,
-    #[serde(default = "default_density")]
-    pub density: String,
-    #[serde(default = "default_icon_size")]
-    pub icon_size: i32,
-    #[serde(default = "default_name_display")]
-    pub name_display: String,
+    pub item_column_number: i32,
+    /// 卡片密度：compact / cozy / spacious，默认 cozy
+    #[serde(default = "default_card_density")]
+    pub card_density: String,
+    /// 是否显示项目名称，默认 true
+    #[serde(default = "default_show_item_name")]
+    pub show_item_name: bool,
+    /// 是否显示图标背景色块，默认 false
     #[serde(default)]
-    pub default_run_as_admin: bool,
-    #[serde(default = "default_web_search_sources")]
-    pub web_search_sources: Vec<WebSearchSource>,
+    pub icon_background_color: bool,
+    /// 项目文字大小（px），默认 12
+    #[serde(default = "default_item_font_size")]
+    pub item_font_size: i32,
+    /// 项目卡片圆角（px），默认 12
+    #[serde(default = "default_item_radius")]
+    pub item_radius: i32,
+    /// 是否显示项目卡片边框，默认 true
+    #[serde(default = "default_item_border")]
+    pub item_border: bool,
+    /// 分类文字大小（px），默认 12
+    #[serde(default = "default_category_font_size")]
+    pub category_font_size: i32,
+    /// 分类（分组）之间的垂直间距（px），默认 24
+    #[serde(default = "default_category_gap")]
+    pub category_gap: i32,
 }
 
-fn default_hotkey() -> String { "Alt+Space".to_string() }
-fn default_open_mode() -> String { "single_click".to_string() }
-fn default_item_layout() -> String { "tile".to_string() }
-fn default_column_count() -> i32 { 0 }
-fn default_density() -> String { "standard".to_string() }
-fn default_icon_size() -> i32 { 48 }
-fn default_name_display() -> String { "show".to_string() }
+fn default_hotkey() -> String {
+    "Alt+Space".to_string()
+}
+fn default_item_icon_size() -> i32 {
+    32
+}
+fn default_card_density() -> String {
+    "cozy".to_string()
+}
+fn default_show_item_name() -> bool {
+    true
+}
+fn default_item_font_size() -> i32 {
+    12
+}
+fn default_item_radius() -> i32 {
+    12
+}
+fn default_item_border() -> bool {
+    true
+}
+fn default_category_font_size() -> i32 {
+    12
+}
+fn default_category_gap() -> i32 {
+    24
+}
 
 impl Default for LauncherSetting {
     fn default() -> Self {
         Self {
             show_hide_shortcut_key: default_hotkey(),
-            open_mode: default_open_mode(),
-            open_after_hide: false,
-            item_layout: default_item_layout(),
-            column_count: default_column_count(),
-            density: default_density(),
-            icon_size: default_icon_size(),
-            name_display: default_name_display(),
-            default_run_as_admin: false,
-            web_search_sources: default_web_search_sources(),
+            item_icon_size: default_item_icon_size(),
+            item_column_number: 0,
+            card_density: default_card_density(),
+            show_item_name: default_show_item_name(),
+            icon_background_color: false,
+            item_font_size: default_item_font_size(),
+            item_radius: default_item_radius(),
+            item_border: default_item_border(),
+            category_font_size: default_category_font_size(),
+            category_gap: default_category_gap(),
         }
     }
 }
@@ -246,4 +310,12 @@ pub struct ShortcutInfo {
     pub icon_path: Option<String>,
     pub is_dir: bool,
     pub icon_base64: Option<String>,
+}
+
+/// 浏览器书签导入结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserImportResult {
+    pub count: usize,
+    pub category_id: i64,
 }

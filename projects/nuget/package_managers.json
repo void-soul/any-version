@@ -4,8 +4,8 @@
     "display_name": "NuGet",
     "built_in": true,
     "install_cmd": null,
-    "version_cmd": "dotnet --version",
-    "version_exe": "dotnet",
+    "version_cmd": "nuget help",
+    "version_exe": "nuget",
     "cache_detect_cmd": null,
     "cache_default_path": "{home}\\.nuget\\packages",
     "cache_env_var": "NUGET_PACKAGES",
@@ -14,12 +14,33 @@
     "data_default_path": null,
     "data_env_var": null,
     "data_set_cmd_template": null,
-    "proxy_detect_cmd": null,
-    "proxy_set_cmd_template": null,
-    "pkg_list_cmd": null,
+    "proxy_detect_cmd": "nuget config -get http_proxy",
+    "proxy_set_cmd_template": "nuget config -set http_proxy=\"{url}\"",
+    "proxy_clear_cmd": "nuget config -set http_proxy=\"\"",
+    "pkg_list_cmd": "nuget locals all -list",
     "pkg_list_format": null,
     "pkg_upgrade_cmd_template": null,
     "pkg_homepage_template": "https://www.nuget.org/packages/{pkg}",
+    "mirror_cmd_template": "nuget sources update -name \"nuget.org\" -source \"{url}\"",
+    "mirror_detect_cmd": "nuget sources list",
+    "mirror_config_desc": "通过 nuget sources 或 NuGet.Config 修改源地址",
+    "mirror_options": [
+      {
+        "mirror_type": "official",
+        "name": "官方源 (nuget.org)",
+        "url": "https://api.nuget.org/v3/index.json"
+      },
+      {
+        "mirror_type": "huawei",
+        "name": "华为云镜像源",
+        "url": "https://mirrors.huaweicloud.com/repository/nuget/v3/index.json"
+      },
+      {
+        "mirror_type": "tencent",
+        "name": "腾讯云镜像源",
+        "url": "https://mirrors.cloud.tencent.com/nuget/"
+      }
+    ],
     "cache_config_source": {
       "parser_type": "xml",
       "env_vars": [

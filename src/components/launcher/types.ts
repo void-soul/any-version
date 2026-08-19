@@ -16,13 +16,11 @@ export interface ClassificationData {
   associateFolderPath?: string | null;
   associateFolderHiddenItems?: string | null;
   itemLayout?: "default" | "tile" | "list" | "compact" | "icon_only";
-  itemSort?: "default" | "initial" | "openNumber" | "lastOpen";
+  itemSort?: "default" | "initial";
   itemColumnNumber?: number | null;
   itemIconSize?: number | null;
   itemShowOnly?: "default" | "file" | "folder";
   fixed?: boolean;
-  aggregateItemCount?: number;
-  aggregateSort?: "openNumber" | "lastOpen";
   excludeSearch?: boolean;
 }
 
@@ -55,31 +53,38 @@ export interface ItemData {
   remark?: string | null;
   iconBackgroundColor?: boolean;
   fixedIcon?: boolean;
-  openNumber?: number;
-  lastOpen?: number;
   multiItemsTimeInterval?: number;
   multiItems?: MultiItemEntry[];
-}
-
-export interface WebSearchSource {
-  id: string;
-  keyword: string;
-  name: string;
-  url: string;
-  description?: string | null;
+  exists?: boolean | null; // 最近一次检测是否存在（持久化，null=未检测）
+  checkedAt?: number | null; // 最近一次检测时间（unix 秒）
 }
 
 export interface LauncherSetting {
-  showHideShortcutKey: string;
-  openMode: "single_click" | "double_click";
-  openAfterHide: boolean;
-  itemLayout: "tile" | "list" | "compact" | "icon_only";
-  columnCount: number; // 0: 自动自适应, 2..12
-  density: "compact" | "standard" | "relaxed";
-  iconSize: number; // 24 .. 96
-  nameDisplay: "show" | "hide" | "two_lines";
-  defaultRunAsAdmin: boolean;
-  webSearchSources: WebSearchSource[];
+  showHideShortcutKey: string; // 唤起/隐藏主程序界面全局快捷键 (默认 Alt+Space)
+  // ---- 视图设置（全局，应用到所有分类）----
+  itemIconSize?: number; // 项目图标大小 (px)，默认 32
+  itemColumnNumber?: number; // 网格列数 (0=自适应)，默认 0
+  cardDensity?: "compact" | "cozy" | "spacious"; // 卡片密度，默认 cozy
+  showItemName?: boolean; // 是否显示项目名称，默认 true
+  iconBackgroundColor?: boolean; // 是否显示图标背景色块，默认 false
+  itemFontSize?: number; // 项目文字大小 (px)，默认 12
+  itemRadius?: number; // 项目卡片圆角 (px)，默认 12
+  itemBorder?: boolean; // 是否显示项目卡片边框，默认 true
+  categoryFontSize?: number; // 分类文字大小 (px)，默认 12
+  categoryGap?: number; // 分类（分组）之间的垂直间距 (px)，默认 24
+}
+
+export interface ItemCheckResult {
+  itemId: number;
+  exists: boolean;
+  name: string; // 项目名称
+  icon?: string | null; // 网页类检测后自动更新的图标 (base64)，未变更为 null/undefined
+  title?: string | null; // 网页类检测后自动更新的标题
+}
+
+export interface CheckProgress {
+  done: number;
+  total: number;
 }
 
 export interface ScannedProgram {

@@ -169,9 +169,7 @@ pub fn run() {
         // 因此优先复用，缺失时经 tray::show_main_window 重建。
         if app.get_webview_window("main").is_some() {
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
+                crate::tray::focus_main_window(&window);
             }
         } else {
             crate::tray::show_main_window(app);
@@ -275,12 +273,14 @@ pub fn run() {
                 let _ = crate::tray::rebuild_tray_menu(&h);
             });
 
-            // 初始化启动器数据库与默认全局热键
+            // 初始化启动器数据库，并注册「唤起/隐藏主窗口」全局快捷键。
+            // 注意：该快捷键只负责切换窗口显示状态，不拦截普通输入框按键。
             let _ = commands::launcher::db::init_db();
             if let Ok(setting) = commands::launcher::db::get_settings() {
-                if !setting.show_hide_shortcut_key.trim().is_empty() {
-                    let _ = commands::launcher::windows::register_global_hotkey(app.handle().clone(), &setting.show_hide_shortcut_key);
-                }
+                let _ = commands::launcher::windows::register_global_hotkeys(
+                    app.handle().clone(),
+                    &setting.show_hide_shortcut_key,
+                );
             }
 
             // 窗口在 tauri.conf.json 中设为 visible:false。
@@ -288,8 +288,7 @@ pub fn run() {
             let start_minimized = std::env::args().any(|a| a == "--minimized");
             if !start_minimized {
                 if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.set_focus();
+                    crate::tray::focus_main_window(&win);
                 }
             }
             Ok(())
@@ -318,6 +317,11 @@ pub fn run() {
             commands::config::get_sdk_dir_cmd,
             commands::config::get_auto_start_services,
             commands::config::set_auto_start_service,
+            commands::config::get_appearance_config,
+            commands::config::set_module_theme_color,
+            commands::config::set_global_font,
+            commands::config::import_custom_font,
+            commands::config::clear_custom_font,
             commands::config::get_project_menu_config,
             commands::config::update_project_menu_config,
             commands::http_server::start_http_server,
@@ -662,6 +666,8 @@ pub fn run() {
                 commands::launcher::commands::launcher_extract_icon,
                 commands::launcher::commands::launcher_resolve_shortcut,
                 commands::launcher::commands::launcher_fetch_url_info,
+                commands::launcher::commands::launcher_check_items,
+                commands::launcher::commands::launcher_stop_check,
                 commands::launcher::commands::launcher_scan_start_menu,
                 commands::launcher::commands::launcher_scan_appx,
                 commands::launcher::commands::launcher_scan_folder,
@@ -669,8 +675,10 @@ pub fn run() {
                 commands::launcher::commands::launcher_save_settings,
                 commands::launcher::commands::launcher_register_hotkey,
                 commands::launcher::commands::launcher_import_browser_bookmarks,
+                commands::launcher::commands::launcher_process_dropped_paths,
                 commands::launcher::commands::launcher_export_backup,
                 commands::launcher::commands::launcher_import_backup,
+                commands::launcher::commands::launcher_import_backup_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -1,0 +1,11 @@
+{
+  "type": "json_api",
+  "url": "https://storage.googleapis.com/storage/v1/b/dart-archive/o?prefix=channels/stable/release/&delimiter=/",
+  "response_type": "object_with_array",
+  "array_field": "prefixes",
+  "version_field": "",
+  "version_transform": "trim_prefix:channels/stable/release/;trim_suffix:/",
+  "filter_contains_not": "latest",
+  "sort_by_version": true,
+  "reverse": true
+}

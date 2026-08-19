@@ -8,7 +8,7 @@ use std::thread;
 
 use base64::{engine::general_purpose, Engine as _};
 use image::{ImageBuffer, Rgba};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use windows_sys::Win32::Foundation::MAX_PATH;
 use windows_sys::Win32::Graphics::Gdi::{
     CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, SelectObject, BITMAP,
@@ -24,7 +24,7 @@ extern "system" {
     fn ReleaseDC(hwnd: *mut std::ffi::c_void, hdc: HDC) -> i32;
 }
 
-use super::models::{AppxItem, ScannedProgram, ShortcutInfo, UrlMetadata};
+use super::models::{AppxItem, Item, ScannedProgram, ShortcutInfo, UrlMetadata};
 
 /// 将 &str 转为 null-terminated wide string
 pub fn to_wide_chars(s: &str) -> Vec<u16> {
@@ -275,14 +275,24 @@ $sc = $sh.CreateShortcut('{}')
     })
 }
 
-/// 执行文件/命令（支持 open / runas 管理员提权 / explore 资源管理器）
+/// 执行文件/命令（支持 open / runas 管理员提权 / explore 资源管理器 / 任意文件关联程序打开）
 pub fn shell_execute(
     operation: &str,
     file: &str,
     params: &str,
     start_location: Option<&str>,
 ) -> Result<(), String> {
-    let is_dir = operation == "explore" || Path::new(file).is_dir();
+    let p = Path::new(file);
+    let is_dir = operation == "explore" || p.is_dir();
+    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let is_exe = ext == "exe" || ext == "bat" || ext == "cmd" || ext == "ps1" || ext == "com";
+
+    // 只有可执行程序才支持 runas 管理员提权，其它文档/文件夹降级为 open
+    let actual_op = if operation == "runas" && !is_exe {
+        "open"
+    } else {
+        operation
+    };
 
     let work_dir = if let Some(dir) = start_location {
         if !dir.trim().is_empty() {
@@ -294,9 +304,9 @@ pub fn shell_execute(
         get_default_work_dir(file)
     };
 
-    let w_op = to_wide_chars(if is_dir && operation == "explore" { "open" } else { operation });
-    let w_file = to_wide_chars(if is_dir && operation == "explore" { "explorer.exe" } else { file });
-    let dir_param_str = if is_dir && operation == "explore" {
+    let w_op = to_wide_chars(if is_dir && actual_op == "explore" { "open" } else { actual_op });
+    let w_file = to_wide_chars(if is_dir && actual_op == "explore" { "explorer.exe" } else { file });
+    let dir_param_str = if is_dir && actual_op == "explore" {
         format!("\"{}\"", file)
     } else {
         params.to_string()
@@ -305,24 +315,44 @@ pub fn shell_execute(
     let w_dir = to_wide_chars(&work_dir);
 
     unsafe {
+        // 初始化当前线程 COM 接口
+        let _ = windows_sys::Win32::System::Com::CoInitializeEx(
+            std::ptr::null_mut(),
+            windows_sys::Win32::System::Com::COINIT_APARTMENTTHREADED as u32,
+        );
+
         let res = ShellExecuteW(
             std::ptr::null_mut(),
             w_op.as_ptr(),
             w_file.as_ptr(),
             if dir_param_str.is_empty() { std::ptr::null() } else { w_params.as_ptr() },
             if work_dir.is_empty() { std::ptr::null() } else { w_dir.as_ptr() },
-            SW_SHOWDEFAULT as i32,
+            SW_SHOWNORMAL as i32,
         );
+
         if (res as isize) <= 32 {
-            // 尝试备用 Process::Command
-            let mut cmd = std::process::Command::new(file);
-            if !params.trim().is_empty() {
-                cmd.raw_arg(params);
+            if is_exe {
+                let mut cmd = std::process::Command::new(file);
+                if !params.trim().is_empty() {
+                    cmd.raw_arg(params);
+                }
+                if !work_dir.is_empty() {
+                    cmd.current_dir(&work_dir);
+                }
+                cmd.spawn().map_err(|e| format!("启动程序失败 (ShellExecute code {}): {}", res as isize, e))?;
+            } else {
+                // 文档/文本文件/目录通过 cmd /c start 打开系统默认关联程序
+                let mut cmd = std::process::Command::new("cmd.exe");
+                let mut cmd_args = vec!["/c".to_string(), "start".to_string(), "".to_string(), file.to_string()];
+                if !params.trim().is_empty() {
+                    cmd_args.push(params.to_string());
+                }
+                cmd.args(&cmd_args).creation_flags_hidden();
+                if !work_dir.is_empty() {
+                    cmd.current_dir(&work_dir);
+                }
+                cmd.spawn().map_err(|e| format!("打开文件失败 (ShellExecute code {}): {}", res as isize, e))?;
             }
-            if !work_dir.is_empty() {
-                cmd.current_dir(&work_dir);
-            }
-            cmd.spawn().map_err(|e| format!("启动失败 (ShellExecute code {}): {}", res as isize, e))?;
         }
     }
     Ok(())
@@ -582,9 +612,17 @@ pub fn scan_associated_folder(
 
 /// 抓取网页标题和高清 Favicon
 pub async fn fetch_url_metadata(url_str: &str) -> Result<UrlMetadata, String> {
+    fetch_url_metadata_with_timeout(url_str, std::time::Duration::from_secs(6)).await
+}
+
+/// 抓取网页标题和高清 Favicon（可自定义超时，用于检测时使用更短超时）
+pub async fn fetch_url_metadata_with_timeout(
+    url_str: &str,
+    timeout: std::time::Duration,
+) -> Result<UrlMetadata, String> {
     let parsed_url = reqwest::Url::parse(url_str).map_err(|e| format!("无效的网址: {}", e))?;
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(6))
+        .timeout(timeout)
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .build()
         .map_err(|e| e.to_string())?;
@@ -720,10 +758,17 @@ pub fn parse_hotkey(hotkey: &str) -> Option<(u32, u32)> {
 static CURRENT_HOTKEY_THREAD_RUNNING: AtomicBool = AtomicBool::new(false);
 static HOTKEY_THREAD_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
-/// 注册全局快捷键并启动消息循环监听线程
-pub fn register_global_hotkey(app: AppHandle, hotkey_str: &str) -> Result<(), String> {
-    let (modifiers, key_code) = parse_hotkey(hotkey_str)
-        .ok_or_else(|| format!("无效的快捷键格式: {}", hotkey_str))?;
+/// 注册全局快捷键（唤起/隐藏主程序界面）并启动消息循环监听线程。
+/// 按一次唤起主窗口（并切到「启动」模块），再按一次隐藏。
+pub fn register_global_hotkeys(
+    app: AppHandle,
+    show_hide_str: &str,
+) -> Result<(), String> {
+    let main_hotkey = if !show_hide_str.trim().is_empty() {
+        parse_hotkey(show_hide_str)
+    } else {
+        None
+    };
 
     // 如果之前有线程在跑，发送 WM_QUIT 停止
     let old_tid = HOTKEY_THREAD_ID.swap(0, Ordering::SeqCst);
@@ -733,50 +778,74 @@ pub fn register_global_hotkey(app: AppHandle, hotkey_str: &str) -> Result<(), St
         }
     }
 
+    if main_hotkey.is_none() {
+        return Ok(());
+    }
+
     let app_clone = app.clone();
-    let hotkey_name = hotkey_str.to_string();
+    let main_name = show_hide_str.to_string();
 
     thread::spawn(move || {
         CURRENT_HOTKEY_THREAD_RUNNING.store(true, Ordering::SeqCst);
         let tid = unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() };
         HOTKEY_THREAD_ID.store(tid, Ordering::SeqCst);
 
-        const HOTKEY_ID: i32 = 0x9001;
+        const HOTKEY_MAIN_ID: i32 = 0x9001;
+
         unsafe {
-            // 首先尝试附带 MOD_NOREPEAT
-            let mut res = RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID, modifiers | MOD_NOREPEAT, key_code);
-            if res == 0 {
-                // 回退直接注册 modifiers
-                res = RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID, modifiers, key_code);
+            let mut registered_main = false;
+
+            if let Some((modi, key)) = main_hotkey {
+                let mut res = RegisterHotKey(std::ptr::null_mut(), HOTKEY_MAIN_ID, modi | MOD_NOREPEAT, key);
+                if res == 0 {
+                    res = RegisterHotKey(std::ptr::null_mut(), HOTKEY_MAIN_ID, modi, key);
+                }
+                if res != 0 {
+                    registered_main = true;
+                    tracing::info!("成功注册唤起/隐藏主窗口全局热键: {}", main_name);
+                } else {
+                    tracing::warn!("注册唤起/隐藏主窗口全局热键 {} 失败 (可能被占用)", main_name);
+                }
             }
-            if res == 0 {
-                tracing::warn!("注册全局热键 {} 失败 (可能被占用)", hotkey_name);
+
+            if !registered_main {
                 CURRENT_HOTKEY_THREAD_RUNNING.store(false, Ordering::SeqCst);
                 return;
             }
-            tracing::info!("成功注册全局热键: {}", hotkey_name);
 
             let mut msg: MSG = std::mem::zeroed();
             while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
-                if msg.message == WM_HOTKEY && msg.wParam == HOTKEY_ID as usize {
-                    // 热键触发：唤醒并置顶 AnyVersion 主窗口，并通知前端激活 Launcher
-                    if let Some(window) = app_clone.get_webview_window("main") {
-                        let _ = window.unminimize();
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                        let _ = window.emit("launcher-toggle", ());
+                if msg.message == WM_HOTKEY {
+                    if msg.wParam == HOTKEY_MAIN_ID as usize {
+                        if let Some(window) = app_clone.get_webview_window("main") {
+                            // 按一次显示，再按一次隐藏（切换）。
+                            // focus_main_window 内部会 emit "launcher-toggle" 切到「启动」模块。
+                            let is_visible = window.is_visible().unwrap_or(false);
+                            let is_minimized = window.is_minimized().unwrap_or(false);
+                            if is_visible && !is_minimized {
+                                let _ = window.hide();
+                            } else {
+                                crate::tray::focus_main_window(&window);
+                            }
+                        }
                     }
                 }
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
 
-            UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID);
+            if registered_main {
+                UnregisterHotKey(std::ptr::null_mut(), HOTKEY_MAIN_ID);
+            }
         }
         CURRENT_HOTKEY_THREAD_RUNNING.store(false, Ordering::SeqCst);
     });
 
     Ok(())
+}
+
+pub fn register_global_hotkey(app: AppHandle, hotkey_str: &str) -> Result<(), String> {
+    register_global_hotkeys(app, hotkey_str)
 }
 
 /// 辅助扩展：在 Windows 上创建隐藏命令行子进程
@@ -797,9 +866,9 @@ impl CommandExtHidden for std::process::Command {
 }
 
 /// 导入 Edge / Chrome 浏览器收藏夹
-pub fn import_browser_bookmarks(browser: &str, custom_path: Option<&str>) -> Result<usize, String> {
+pub fn import_browser_bookmarks(browser: &str, custom_path: Option<&str>) -> Result<super::models::BrowserImportResult, String> {
     use super::db;
-    use super::models::{Classification, ClassificationData};
+    use super::models::{BrowserImportResult, Classification, ClassificationData};
 
     let path = if let Some(p) = custom_path {
         PathBuf::from(p)
@@ -882,19 +951,21 @@ pub fn import_browser_bookmarks(browser: &str, custom_path: Option<&str>) -> Res
                         item_count: None,
                     };
                     let sub_cls_id = db::save_classification(&sub_cls)?;
-                    import_bookmark_children(children, sub_cls_id, parent_id, &mut imported_count)?;
+                    import_bookmark_children(children, sub_cls_id, &mut imported_count)?;
                 }
             }
         }
     }
 
-    Ok(imported_count)
+    Ok(BrowserImportResult {
+        count: imported_count,
+        category_id: parent_id,
+    })
 }
 
 fn import_bookmark_children(
     children: &[serde_json::Value],
     current_cls_id: i64,
-    parent_cls_id: i64,
     imported_count: &mut usize,
 ) -> Result<(), String> {
     use super::db;
@@ -905,9 +976,10 @@ fn import_bookmark_children(
         let name = node.get("name").and_then(|n| n.as_str()).unwrap_or("未命名").trim();
 
         if node_type == "folder" {
+            // 文件夹挂到当前层级（书签栏/父文件夹）之下，保持层级结构
             let folder_cls = Classification {
                 id: 0,
-                parent_id: Some(parent_cls_id),
+                parent_id: Some(current_cls_id),
                 name: if name.is_empty() { "文件夹" } else { name }.to_string(),
                 classification_type: 0,
                 data: ClassificationData {
@@ -922,7 +994,7 @@ fn import_bookmark_children(
             };
             let new_sub_id = db::save_classification(&folder_cls)?;
             if let Some(sub_children) = node.get("children").and_then(|c| c.as_array()) {
-                import_bookmark_children(sub_children, new_sub_id, parent_cls_id, imported_count)?;
+                import_bookmark_children(sub_children, new_sub_id, imported_count)?;
             }
         } else if node_type == "url" {
             let url = node.get("url").and_then(|u| u.as_str()).unwrap_or("");
@@ -935,8 +1007,6 @@ fn import_bookmark_children(
                     data: ItemData {
                         target: Some(url.to_string()),
                         run_as_admin: false,
-                        open_number: 0,
-                        last_open: 0,
                         ..Default::default()
                     },
                     shortcut_key: None,
@@ -949,4 +1019,143 @@ fn import_bookmark_children(
         }
     }
     Ok(())
+}
+
+/// 处理拖入的文件或目录列表，解析并生成 Item 列表
+pub fn process_dropped_paths(paths: Vec<String>, classification_id: i64) -> Result<Vec<Item>, String> {
+    use super::db;
+    use super::models::{Item, ItemData};
+
+    let mut created_items = Vec::new();
+
+    for path_str in paths {
+        let p = Path::new(&path_str);
+        if !p.exists() {
+            continue;
+        }
+
+        let is_dir = p.is_dir();
+        let file_name = p.file_name().and_then(|n| n.to_str()).unwrap_or(&path_str).to_string();
+        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or(&file_name).to_string();
+        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+
+        let item = if ext == "lnk" {
+            // 快捷方式
+            if let Some(info) = resolve_shortcut(&path_str) {
+                Item {
+                    id: 0,
+                    classification_id,
+                    name: if !info.name.is_empty() { info.name } else { stem },
+                    item_type: if info.is_dir { 1 } else { 0 },
+                    data: ItemData {
+                        target: Some(info.target_path),
+                        params: if !info.arguments.is_empty() { Some(info.arguments) } else { None },
+                        start_location: if !info.working_dir.is_empty() { Some(info.working_dir) } else { None },
+                        run_as_admin: false,
+                        icon: info.icon_base64,
+                        ..Default::default()
+                    },
+                    shortcut_key: None,
+                    global_shortcut_key: false,
+                    order: 0,
+                }
+            } else {
+                let icon = extract_file_icon(&path_str);
+                Item {
+                    id: 0,
+                    classification_id,
+                    name: stem,
+                    item_type: 0,
+                    data: ItemData {
+                        target: Some(path_str.clone()),
+                        run_as_admin: false,
+                        icon,
+                        ..Default::default()
+                    },
+                    shortcut_key: None,
+                    global_shortcut_key: false,
+                    order: 0,
+                }
+            }
+        } else if ext == "url" {
+            // 网页快捷方式 .url 文件
+            let content = std::fs::read_to_string(p).unwrap_or_default();
+            let mut url_target = String::new();
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.to_lowercase().starts_with("url=") {
+                    url_target = trimmed[4..].trim().to_string();
+                    break;
+                }
+            }
+            if url_target.is_empty() {
+                url_target = path_str.clone();
+            }
+            Item {
+                id: 0,
+                classification_id,
+                name: stem,
+                item_type: 2,
+                data: ItemData {
+                    target: Some(url_target),
+                    run_as_admin: false,
+                    ..Default::default()
+                },
+                shortcut_key: None,
+                global_shortcut_key: false,
+                order: 0,
+            }
+        } else if is_dir {
+            // 目录 / 文件夹
+            let icon = extract_file_icon(&path_str);
+            Item {
+                id: 0,
+                classification_id,
+                name: file_name,
+                item_type: 1, // 文件夹
+                data: ItemData {
+                    target: Some(path_str.clone()),
+                    start_location: Some(path_str.clone()),
+                    run_as_admin: false,
+                    icon,
+                    ..Default::default()
+                },
+                shortcut_key: None,
+                global_shortcut_key: false,
+                order: 0,
+            }
+        } else {
+            // 任意文件 / .exe / .bat / .cmd / .ps1 / .pdf / .docx / .png 等
+            let icon = extract_file_icon(&path_str);
+            let display_name = if ext == "exe" || ext == "bat" || ext == "cmd" || ext == "ps1" {
+                stem
+            } else {
+                file_name
+            };
+            let parent_dir = p.parent().map(|parent| parent.to_string_lossy().to_string());
+            Item {
+                id: 0,
+                classification_id,
+                name: display_name,
+                item_type: 0,
+                data: ItemData {
+                    target: Some(path_str.clone()),
+                    start_location: parent_dir,
+                    run_as_admin: false,
+                    icon,
+                    ..Default::default()
+                },
+                shortcut_key: None,
+                global_shortcut_key: false,
+                order: 0,
+            }
+        };
+
+        let item_id = db::save_item(&item)?;
+        let mut saved_item = item;
+        saved_item.id = item_id;
+        created_items.push(saved_item);
+    }
+
+    Ok(created_items)
 }

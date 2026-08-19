@@ -1,0 +1,52 @@
+[
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "{home}\\.nuget",
+      "exe_name": "nuget.exe"
+    },
+    "source_label": "用户目录 .nuget",
+    "priority": 10,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "C:\\Program Files\\NuGet",
+      "exe_name": "nuget.exe"
+    },
+    "source_label": "Program Files NuGet",
+    "priority": 20,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "scoop\\apps\\nuget",
+      "exe_name": "nuget.exe"
+    },
+    "source_label": "Scoop",
+    "priority": 30,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "chocolatey\\lib\\nuget.commandline",
+      "exe_name": "nuget.exe"
+    },
+    "source_label": "Chocolatey",
+    "priority": 31,
+    "root_offset": 2
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "nuget.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 0
+  }
+]

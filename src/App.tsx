@@ -13,13 +13,43 @@ import LauncherPanel from "./components/launcher/LauncherPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Wrench, Settings, X, Minus, Square, Rss, Cpu, Bot, CalendarCheck, Download, AlertTriangle, CheckCircle2, Loader2, Boxes, Waypoints, ShieldCheck, Rocket } from "lucide-react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import "./App.css";
 
 type PageId = "launcher" | "sdk" | "ai" | "tasks" | "node" | "mihomo" | "cert" | "news" | "tools" | "settings";
 
+// 顶级模块默认主题色（可在全局设置里自定义覆盖）
+const MODULE_DEFAULTS: Record<string, { label: string; color: string; dark?: boolean }> = {
+  launcher: { label: "启动", color: "#8b5cf6" }, // purple
+  news: { label: "资讯", color: "#ea580c" }, // orange
+  sdk: { label: "SDK", color: "#2563eb" }, // blue
+  ai: { label: "AI", color: "#7c3aed" }, // violet
+  tasks: { label: "任务", color: "#f59e0b" }, // amber
+  node: { label: "服务", color: "#0891b2" }, // cyan
+  mihomo: { label: "代理", color: "#4f46e5" }, // indigo
+  cert: { label: "证书", color: "#0d9488" }, // teal
+  tools: { label: "更多", color: "#059669" }, // emerald
+  settings: { label: "设置", color: "#dc2626" }, // red
+};
+
+const MODULE_ORDER: PageId[] = ["launcher", "news", "sdk", "ai", "tasks", "node", "mihomo", "cert", "tools", "settings"];
+
+// 自定义字体 @font-face 的全局 CSS 注入
+function buildFontFaceCss(customFontPath: string): string {
+  if (!customFontPath) return "";
+  try {
+    const src = convertFileSrc(customFontPath);
+    return `@font-face{font-family:'AppCustomFont';src:url('${src}') format('woff2'),url('${src}') format('woff'),url('${src}') format('truetype'),url('${src}') format('opentype');font-display:swap;}`;
+  } catch {
+    return "";
+  }
+}
+
 export default function App() {
-  const [activePage, setActivePage] = useState<PageId>("news");
+  // 应用启动默认进入「启动」（Launcher）模块
+  const [activePage, setActivePage] = useState<PageId>("launcher");
   const [defaultToolsTab, setDefaultToolsTab] = useState<"ports" | "backups" | "httpServer" | "imageBase64" | "pathEnv">("ports");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [showReminder, setShowReminder] = useState(false);
@@ -39,8 +69,15 @@ export default function App() {
   }>({ downloaded: 0, total: 0, speed: "", phase: "" });
   const [binError, setBinError] = useState<string | null>(null);
 
+  // 外观：每个顶级模块的主题色 + 全局字体
+  const [appearance, setAppearance] = useState<{
+    moduleThemeColors: Record<string, string>;
+    globalFont: string;
+    customFontPath: string;
+  }>({ moduleThemeColors: {}, globalFont: "", customFontPath: "" });
+
   // 懒挂载：仅渲染至少被访问过一次的页面，避免启动时全部组件同时初始化
-  const [mountedPages, setMountedPages] = useState<Set<PageId>>(new Set(["news"]));
+  const [mountedPages, setMountedPages] = useState<Set<PageId>>(new Set(["launcher"]));
   const switchPage = (page: PageId) => {
     setActivePage(page);
     setMountedPages((prev) => {
@@ -51,12 +88,48 @@ export default function App() {
     });
   };
 
+  // 修复 Windows 上 WebView2 失去/重新获得焦点后键盘无法输入的问题：
+  // 窗口重新获得焦点时显式聚焦 webview 内容（Alt-Tab 回来等场景）。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    const setup = async () => {
+      try {
+        const win = getCurrentWindow();
+        unlisten = await win.onFocusChanged(({ payload: focused }) => {
+          if (focused) {
+            // 延迟到焦点路由稳定后再聚焦，避免被 Windows 后续的焦点恢复覆盖
+            setTimeout(() => {
+              getCurrentWebview().setFocus().catch(() => {});
+            }, 30);
+          }
+        });
+      } catch (e) {
+        console.error("注册窗口焦点监听失败:", e);
+      }
+    };
+    setup();
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
   useEffect(() => {
     const initApp = async () => {
       try {
         await invoke("get_config");
       } catch (e) {
         console.error("Init error:", e);
+      }
+      // 加载外观配置（模块主题色 + 全局字体）
+      try {
+        const ap = await invoke<{
+          moduleThemeColors: Record<string, string>;
+          globalFont: string;
+          customFontPath: string;
+        }>("get_appearance_config");
+        setAppearance(ap);
+      } catch (e) {
+        console.error("Load appearance error:", e);
       }
       // 启动后检测运行组件是否齐全（ffmpeg/lego/mediamtx/mihomo）
       try {
@@ -74,9 +147,22 @@ export default function App() {
       // 启动后延迟弹出今日待办提醒一次（等窗口稳定）
       setTimeout(() => setShowReminder(true), 900);
 
-      // 监听全局热键唤醒启动器切换
+      // 监听全局快捷键唤起主窗口：切到「启动」模块
       listen("launcher-toggle", () => {
         switchPage("launcher");
+      });
+      // 监听外观变更（全局设置里修改模块主题色/字体后实时生效）
+      listen("appearance-updated", async () => {
+        try {
+          const ap = await invoke<{
+            moduleThemeColors: Record<string, string>;
+            globalFont: string;
+            customFontPath: string;
+          }>("get_appearance_config");
+          setAppearance(ap);
+        } catch (e) {
+          console.error("刷新外观失败", e);
+        }
       });
     };
     initApp();
@@ -111,8 +197,19 @@ export default function App() {
     }
   };
 
+  const effectiveFontFamily = appearance.customFontPath
+    ? "'AppCustomFont', system-ui, sans-serif"
+    : appearance.globalFont
+      ? `${appearance.globalFont}, system-ui, sans-serif`
+      : undefined;
+  const fontFaceCss = buildFontFaceCss(appearance.customFontPath);
+
   return (
-    <div className="w-screen h-screen overflow-hidden bg-[#0d111d] text-slate-100 font-sans flex flex-col select-none">
+    <div
+      className="w-screen h-screen overflow-hidden bg-[#0d111d] text-slate-100 flex flex-col"
+      style={{ fontFamily: effectiveFontFamily }}
+    >
+      {fontFaceCss && <style>{fontFaceCss}</style>}
       {/* top bar */}
       <div className="flex-shrink-0 h-11 flex items-center justify-between px-3 border-b border-white/5 bg-[#0e1220]/80 backdrop-blur-md z-50" data-tauri-drag-region>
         {/* Left: Logo + Name + Navigation Capsule */}
@@ -124,31 +221,36 @@ export default function App() {
 
 
           <div className="flex items-center gap-0.5 bg-white/5 border border-white/5 rounded-lg p-0.5">
-            {([
-              { id: "launcher" as PageId, label: "启动", icon: <Rocket className="w-3 h-3" />, color: "bg-purple-600" },
-              { id: "news" as PageId, label: "资讯", icon: <Rss className="w-3 h-3" />, color: "bg-orange-600" },
-              { id: "sdk" as PageId, label: "SDK", icon: <Cpu className="w-3 h-3" />, color: "bg-blue-600" },
-              { id: "ai" as PageId, label: "AI", icon: <Bot className="w-3 h-3" />, color: "bg-violet-600" },
-              { id: "tasks" as PageId, label: "任务", icon: <CalendarCheck className="w-3 h-3" />, color: "bg-amber-500 !text-slate-900" },
-              { id: "node" as PageId, label: "服务", icon: <Boxes className="w-3 h-3" />, color: "bg-cyan-600" },
-              { id: "mihomo" as PageId, label: "代理", icon: <Waypoints className="w-3 h-3" />, color: "bg-indigo-600" },
-              { id: "cert" as PageId, label: "证书", icon: <ShieldCheck className="w-3 h-3" />, color: "bg-teal-600" },
-              { id: "tools" as PageId, label: "更多", icon: <Wrench className="w-3 h-3" />, color: "bg-emerald-600" },
-              { id: "settings" as PageId, label: "设置", icon: <Settings className="w-3 h-3" />, color: "bg-red-600" },
-            ]).map((item) => (
-              <button
-                key={item.id}
-                onClick={() => switchPage(item.id)}
-                className={`px-3 py-1.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
-                  activePage === item.id
-                    ? `${item.color} text-white`
-                    : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
-                }`}
-              >
-                {item.icon}
-                {item.label}
-              </button>
-            ))}
+            {MODULE_ORDER.map((id) => {
+              const cfg = MODULE_DEFAULTS[id];
+              const effectiveColor = appearance.moduleThemeColors[id] || cfg.color;
+              const isActive = activePage === id;
+              return (
+                <button
+                  key={id}
+                  onClick={() => switchPage(id)}
+                  className={`px-3 py-1.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+                    isActive
+                      ? "text-white shadow-sm"
+                      : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+                  }`}
+                  style={isActive ? { backgroundColor: effectiveColor } : undefined}
+                  title={`${cfg.label} (可在全局设置调整主题色)`}
+                >
+                  {id === "launcher" && <Rocket className="w-3 h-3" />}
+                  {id === "news" && <Rss className="w-3 h-3" />}
+                  {id === "sdk" && <Cpu className="w-3 h-3" />}
+                  {id === "ai" && <Bot className="w-3 h-3" />}
+                  {id === "tasks" && <CalendarCheck className="w-3 h-3" />}
+                  {id === "node" && <Boxes className="w-3 h-3" />}
+                  {id === "mihomo" && <Waypoints className="w-3 h-3" />}
+                  {id === "cert" && <ShieldCheck className="w-3 h-3" />}
+                  {id === "tools" && <Wrench className="w-3 h-3" />}
+                  {id === "settings" && <Settings className="w-3 h-3" />}
+                  {cfg.label}
+                </button>
+              );
+            })}
           </div>
         </div>
 

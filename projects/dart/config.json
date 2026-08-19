@@ -1,0 +1,25 @@
+{
+  "id": "dart",
+  "display_name": "Dart",
+  "category": "language",
+  "official_website": "https://dart.dev",
+  "bin_dirs": [
+    "bin"
+  ],
+  "has_cache": false,
+  "cache_detect_cmd": null,
+  "cache_default_path": null,
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": false,
+  "default_port": null,
+  "download_url_template": "https://storage.googleapis.com/dart-archive/channels/stable/release/{version}/sdk/dartsdk-windows-x64-release.zip",
+  "download_file_ext": "zip",
+  "extract_subdir": "dart-sdk",
+  "version_cmd": "dart --version",
+  "version_exe": "dart",
+  "version_parse_regex": "Dart SDK version: (\\d+\\.\\d+(?:\\.\\d+)*)"
+}

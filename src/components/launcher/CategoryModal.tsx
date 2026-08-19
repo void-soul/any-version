@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { X, Folder, Sparkles, Sliders, Hash, Check } from "lucide-react";
+import { X, Folder, Check } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Classification, ClassificationData } from "./types";
+import CategoryTreeSelect from "./CategoryTreeSelect";
 
 interface CategoryModalProps {
   isOpen: boolean;
@@ -26,44 +27,45 @@ export default function CategoryModal({
   parentCategories,
   currentParentId,
 }: CategoryModalProps) {
-  const [name, setName] = useState("");
-  const [parentId, setParentId] = useState<number | null>(null);
-  const [classificationType, setClassificationType] = useState<number>(0);
-  const [icon, setIcon] = useState("📁");
+  const [name, setName] = useState(editingCategory ? editingCategory.name : "");
+  const [parentId, setParentId] = useState<number | null>(
+    editingCategory ? editingCategory.parentId : (currentParentId || null)
+  );
+  const [classificationType, setClassificationType] = useState<number>(
+    editingCategory ? (editingCategory.classificationType || 0) : 0
+  );
+  const [icon, setIcon] = useState(editingCategory?.data?.icon || "📁");
   const [customEmoji, setCustomEmoji] = useState("");
-  const [associateFolderPath, setAssociateFolderPath] = useState("");
-  const [associateFolderHiddenItems, setAssociateFolderHiddenItems] = useState("");
-  const [itemShowOnly, setItemShowOnly] = useState<"default" | "file" | "folder">("default");
-  const [aggregateItemCount, setAggregateItemCount] = useState(30);
-  const [aggregateSort, setAggregateSort] = useState<"openNumber" | "lastOpen">("openNumber");
-  const [excludeSearch, setExcludeSearch] = useState(false);
+  const [associateFolderPath, setAssociateFolderPath] = useState(
+    editingCategory?.data?.associateFolderPath || ""
+  );
+  const [associateFolderHiddenItems, setAssociateFolderHiddenItems] = useState(
+    editingCategory?.data?.associateFolderHiddenItems || ""
+  );
+  const [itemShowOnly, setItemShowOnly] = useState<"default" | "file" | "folder">(
+    editingCategory?.data?.itemShowOnly || "default"
+  );
+  const [excludeSearch, setExcludeSearch] = useState(
+    !!editingCategory?.data?.excludeSearch
+  );
   const [saving, setSaving] = useState(false);
 
+  // State is already cleanly initialized from props in useState() upon modal mount (via key)
+
+  // 按 Escape 关闭弹窗（暂时注释以测试）
+  /*
   useEffect(() => {
-    if (editingCategory) {
-      setName(editingCategory.name);
-      setParentId(editingCategory.parentId);
-      setClassificationType(editingCategory.classificationType);
-      setIcon(editingCategory.data.icon || "📁");
-      setAssociateFolderPath(editingCategory.data.associateFolderPath || "");
-      setAssociateFolderHiddenItems(editingCategory.data.associateFolderHiddenItems || "");
-      setItemShowOnly(editingCategory.data.itemShowOnly || "default");
-      setAggregateItemCount(editingCategory.data.aggregateItemCount || 30);
-      setAggregateSort(editingCategory.data.aggregateSort || "openNumber");
-      setExcludeSearch(!!editingCategory.data.excludeSearch);
-    } else {
-      setName("");
-      setParentId(currentParentId || null);
-      setClassificationType(0);
-      setIcon("📁");
-      setAssociateFolderPath("");
-      setAssociateFolderHiddenItems("");
-      setItemShowOnly("default");
-      setAggregateItemCount(30);
-      setAggregateSort("openNumber");
-      setExcludeSearch(false);
-    }
-  }, [editingCategory, currentParentId, isOpen]);
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, onClose]);
+  */
 
   if (!isOpen) return null;
 
@@ -97,32 +99,38 @@ export default function CategoryModal({
         associateFolderPath: classificationType === 1 ? associateFolderPath : undefined,
         associateFolderHiddenItems: classificationType === 1 ? associateFolderHiddenItems : undefined,
         itemShowOnly: classificationType === 1 ? itemShowOnly : "default",
-        aggregateItemCount: classificationType === 2 ? aggregateItemCount : 30,
-        aggregateSort: classificationType === 2 ? aggregateSort : "openNumber",
         excludeSearch,
       };
 
-      const categoryToSave: Classification = {
+      const category: Classification = {
         id: editingCategory ? editingCategory.id : 0,
         parentId: parentId || null,
         name: name.trim(),
         classificationType,
         data,
-        shortcutKey: editingCategory?.shortcutKey || null,
-        globalShortcutKey: !!editingCategory?.globalShortcutKey,
-        order: editingCategory?.order || 0,
+        shortcutKey: editingCategory ? editingCategory.shortcutKey : null,
+        globalShortcutKey: editingCategory ? editingCategory.globalShortcutKey : false,
+        order: editingCategory ? editingCategory.order : 0,
       };
 
-      await onSave(categoryToSave);
+      await onSave(category);
       onClose();
+    } catch (e) {
+      console.error(e);
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 select-none">
-      <div className="bg-[#141927] border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150">
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[#141927] border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150 text-slate-100"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-white/[0.02]">
           <div className="flex items-center gap-2.5">
@@ -132,6 +140,7 @@ export default function CategoryModal({
             </h3>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
           >
@@ -144,11 +153,10 @@ export default function CategoryModal({
           {/* Classification Type Selector */}
           <div>
             <label className="block text-xs font-medium text-slate-400 mb-1.5">分类类型</label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {[
-                { type: 0, label: "普通分类", desc: "手动管理项目" },
-                { type: 1, label: "关联文件夹", desc: "实时同步本地目录" },
-                { type: 2, label: "聚合分类", desc: "自动统计最常/最近使用" },
+                { type: 0, label: "普通分类", desc: "手动添加和管理项目" },
+                { type: 1, label: "关联文件夹", desc: "实时同步展示本地目录文件" },
               ].map((t) => (
                 <button
                   type="button"
@@ -156,7 +164,6 @@ export default function CategoryModal({
                   onClick={() => {
                     setClassificationType(t.type);
                     if (t.type === 1 && icon === "📁") setIcon("📂");
-                    if (t.type === 2 && icon === "📁") setIcon("🔥");
                   }}
                   className={`p-2.5 rounded-xl border text-left transition cursor-pointer flex flex-col ${
                     classificationType === t.type
@@ -176,30 +183,29 @@ export default function CategoryModal({
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5">分类名称 *</label>
               <input
+                autoFocus
                 type="text"
                 required
+                autoComplete="off"
+                spellCheck={false}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="例如：开发工具"
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 transition"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 transition select-text"
               />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5">父级分类 (可选)</label>
-              <select
-                value={parentId || ""}
-                onChange={(e) => setParentId(e.target.value ? Number(e.target.value) : null)}
-                className="w-full bg-[#1e2436] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 transition cursor-pointer"
-              >
-                <option value="">顶级分类 (无父级)</option>
-                {parentCategories
-                  .filter((c) => !editingCategory || c.id !== editingCategory.id)
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.data.icon ? `${c.data.icon} ` : ""}{c.name}
-                    </option>
-                  ))}
-              </select>
+              <CategoryTreeSelect
+                classifications={parentCategories}
+                value={parentId || 0}
+                onChange={(id) => setParentId(id === 0 ? null : id)}
+                placeholder="选择父级分类"
+                allowNone
+                noneLabel="顶级分类 (无父级)"
+                excludeId={editingCategory ? editingCategory.id : null}
+                hideDescendantsOfExclude
+              />
             </div>
           </div>
 
@@ -212,13 +218,15 @@ export default function CategoryModal({
               </div>
               <input
                 type="text"
+                autoComplete="off"
+                spellCheck={false}
                 value={customEmoji}
                 onChange={(e) => {
                   setCustomEmoji(e.target.value);
                   if (e.target.value) setIcon(e.target.value);
                 }}
                 placeholder="输入任意 Emoji 或字符"
-                className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
+                className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
               />
             </div>
             <div className="flex flex-wrap gap-1.5 p-2 rounded-xl bg-white/[0.02] border border-white/5 max-h-24 overflow-y-auto">
@@ -246,10 +254,12 @@ export default function CategoryModal({
                   <input
                     type="text"
                     required
+                    autoComplete="off"
+                    spellCheck={false}
                     value={associateFolderPath}
                     onChange={(e) => setAssociateFolderPath(e.target.value)}
                     placeholder="选择或输入本地目录路径"
-                    className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
+                    className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                   <button
                     type="button"
@@ -279,40 +289,12 @@ export default function CategoryModal({
                   <label className="block text-xs font-medium text-slate-300 mb-1">隐藏项过滤 (逗号隔开)</label>
                   <input
                     type="text"
+                    autoComplete="off"
+                    spellCheck={false}
                     value={associateFolderHiddenItems}
                     onChange={(e) => setAssociateFolderHiddenItems(e.target.value)}
                     placeholder="如：.git, node_modules, tmp"
-                    className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Type 2: Aggregate Options */}
-          {classificationType === 2 && (
-            <div className="p-3.5 rounded-xl bg-purple-500/5 border border-purple-500/20 space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">排序依据</label>
-                  <select
-                    value={aggregateSort}
-                    onChange={(e: any) => setAggregateSort(e.target.value)}
-                    className="w-full bg-[#1e2436] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none"
-                  >
-                    <option value="openNumber">🔥 按打开次数最多 (高频使用)</option>
-                    <option value="lastOpen">⏱️ 按最后打开时间 (最近使用)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">汇聚显示数量上限</label>
-                  <input
-                    type="number"
-                    min={5}
-                    max={100}
-                    value={aggregateItemCount}
-                    onChange={(e) => setAggregateItemCount(Number(e.target.value))}
-                    className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none"
+                    className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none select-text"
                   />
                 </div>
               </div>

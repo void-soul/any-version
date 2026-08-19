@@ -1,0 +1,40 @@
+{
+  "id": "nuget",
+  "display_name": "NuGet",
+  "category": "tool",
+  "official_website": "https://www.nuget.org",
+  "bin_dirs": [
+    ""
+  ],
+  "has_cache": true,
+  "cache_detect_cmd": null,
+  "cache_default_path": "{home}\\.nuget\\packages",
+  "has_mirror": true,
+  "mirror_options": [
+    {
+      "mirror_type": "official",
+      "name": "官方源 (nuget.org)",
+      "url": "https://api.nuget.org/v3/index.json"
+    },
+    {
+      "mirror_type": "huawei",
+      "name": "华为云镜像源",
+      "url": "https://mirrors.huaweicloud.com/repository/nuget/v3/index.json"
+    },
+    {
+      "mirror_type": "tencent",
+      "name": "腾讯云镜像源",
+      "url": "https://mirrors.cloud.tencent.com/nuget/"
+    }
+  ],
+  "has_pkg": true,
+  "pkg_manager": "nuget",
+  "pkg_homepage_template": "https://www.nuget.org/packages/{pkg}",
+  "is_service": false,
+  "default_port": null,
+  "download_url_template": "https://dist.nuget.org/win-x86-commandline/v{version}/nuget.exe",
+  "download_file_ext": "exe",
+  "version_cmd": "nuget help",
+  "version_exe": "nuget",
+  "version_parse_regex": "NuGet Version:\\s*(\\d+\\.\\d+(?:\\.\\d+)*)"
+}

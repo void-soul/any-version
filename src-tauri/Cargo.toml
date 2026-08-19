@@ -48,6 +48,10 @@ md5 = "0.7"
 rusqlite = { version = "0.32", features = ["bundled"] }
 hmac = "0.12"
 sha2 = "0.10"
+# sqleet / SQLite3MultipleCiphers (chacha20) 加密数据库解密（用于导入 Dawn Launcher Data.db）
+chacha20 = "0.9"
+poly1305 = "0.8"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 sha1 = "0.10"
 base64 = "0.22"
 serde_yaml = "0.9"

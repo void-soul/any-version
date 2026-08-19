@@ -1,0 +1,7 @@
+{
+  "type": "json_api",
+  "url": "https://dist.nuget.org/tools.json",
+  "response_type": "object_with_array",
+  "array_field": "nuget.exe",
+  "version_field": "version"
+}
