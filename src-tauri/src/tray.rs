@@ -16,6 +16,8 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, Webview, WebviewUrl, WebviewWi
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const MAIN_WINDOW_TITLE: &str = "AnyVersion 开发助理";
+/// 前端「启动」模块的 PageId。主全局热键/托盘恢复/程序启动时打开它。
+const LAUNCHER_MODULE: &str = "launcher";
 const MAIN_WINDOW_WIDTH: f64 = 1150.0;
 const MAIN_WINDOW_HEIGHT: f64 = 780.0;
 
@@ -319,6 +321,13 @@ pub(crate) fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
 /// 仅调用 window.set_focus() 只聚焦顶层窗口 HWND，键盘事件仍可能不进入 WebView2，
 /// 表现为「输入框光标闪烁但敲不进字」。必须在窗口显示后额外调用 webview.set_focus()。
 pub(crate) fn focus_main_window<R: Runtime>(window: &tauri::WebviewWindow<R>) {
+    // 默认恢复/唤起时打开「启动」（Launcher）模块（应用启动、托盘恢复、主全局热键）。
+    show_and_open_module(window, LAUNCHER_MODULE);
+}
+
+/// 始终显示主窗口并切到指定顶级模块。
+/// `module` 为前端 PageId（如 "ai"、"mihomo"）；[`LAUNCHER_MODULE`] 表示「启动」模块。
+pub(crate) fn show_and_open_module<R: Runtime>(window: &tauri::WebviewWindow<R>, module: &str) {
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_decorations(false);
@@ -327,9 +336,13 @@ pub(crate) fn focus_main_window<R: Runtime>(window: &tauri::WebviewWindow<R>) {
     // 2) 关键：聚焦 WebView2 内容，让键盘事件进入页面
     let webview: &Webview<R> = window.as_ref();
     let _ = webview.set_focus();
-    // 3) 通知前端切到「启动」（Launcher）模块：应用启动、从托盘恢复、全局快捷键唤起时，
-    //    一律打开「启动」模块而不是其它模块（咨询/资讯等）。
-    let _ = window.emit("launcher-toggle", ());
+    // 3) 通知前端切到目标模块。
+    //    "launcher-toggle" 无参 -> 启动模块；"launcher-open-module" 带模块 id -> 对应模块。
+    if module == LAUNCHER_MODULE {
+        let _ = window.emit("launcher-toggle", ());
+    } else {
+        let _ = window.emit("launcher-open-module", module.to_string());
+    }
 }
 
 fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::WebviewWindow<R>> {

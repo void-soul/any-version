@@ -1,14 +1,16 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
+use std::sync::LazyLock;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::thread;
 
 use base64::{engine::general_purpose, Engine as _};
 use image::{ImageBuffer, Rgba};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use windows_sys::Win32::Foundation::MAX_PATH;
 use windows_sys::Win32::Graphics::Gdi::{
     CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, SelectObject, BITMAP,
@@ -757,58 +759,87 @@ pub fn parse_hotkey(hotkey: &str) -> Option<(u32, u32)> {
 
 static CURRENT_HOTKEY_THREAD_RUNNING: AtomicBool = AtomicBool::new(false);
 static HOTKEY_THREAD_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// 已注册热键的 id 列表，供下次注册前同步卸载（避免旧线程退出竞态导致新热键被误注销）。
+static REGISTERED_HOTKEY_IDS: Mutex<Vec<i32>> = Mutex::new(Vec::new());
+/// 前端当前激活的顶级模块 id（由前端在切换页面时通过 "launcher-active-page" 事件上报）。
+/// 用于模块专属热键的「显示/隐藏」来回切换判定：当窗口已显示且正显示该模块时，按热键则隐藏。
+static CURRENT_PAGE: LazyLock<Mutex<String>> =
+    LazyLock::new(|| Mutex::new(String::from("launcher")));
 
-/// 注册全局快捷键（唤起/隐藏主程序界面）并启动消息循环监听线程。
-/// 按一次唤起主窗口（并切到「启动」模块），再按一次隐藏。
+/// 供前端上报当前激活模块（在 setup 中注册 listen 调用）。
+pub(crate) fn set_current_page(page: &str) {
+    let mut g = CURRENT_PAGE.lock().unwrap();
+    *g = page.to_string();
+}
+
+/// 注册全局快捷键并启动消息循环监听线程。
+///
+/// - `show_hide_str`：主热键（全局切换窗口显示，唤起时打开「启动」模块）。
+/// - `module_hotkeys`：各顶级模块独立热键（module_id -> 热键字符串），按下后唤起窗口并打开对应模块。
+///
+/// 主热键按一次显示、再按一次隐藏；模块热键唤起并切换到该模块（已可见时直接切换，不隐藏）。
 pub fn register_global_hotkeys(
     app: AppHandle,
     show_hide_str: &str,
+    module_hotkeys: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let main_hotkey = if !show_hide_str.trim().is_empty() {
-        parse_hotkey(show_hide_str)
-    } else {
-        None
-    };
-
-    // 如果之前有线程在跑，发送 WM_QUIT 停止
-    let old_tid = HOTKEY_THREAD_ID.swap(0, Ordering::SeqCst);
-    if old_tid != 0 {
-        unsafe {
-            PostThreadMessageW(old_tid, WM_QUIT, 0, 0);
+    // 构造 (id, 目标模块id可选, (mod, key)) 列表。
+    // 主热键固定 id 0x9001（目标 None -> 启动模块）；模块热键从 0x9100 起分配。
+    let mut entries: Vec<(i32, Option<String>, (u32, u32))> = Vec::new();
+    let main_hotkey = parse_hotkey(show_hide_str);
+    if main_hotkey.is_some() {
+        entries.push((0x9001, None, main_hotkey.unwrap()));
+    }
+    let mut mid = 0x9100;
+    for (mod_id, hk) in module_hotkeys.iter() {
+        if let Some(mk) = parse_hotkey(hk) {
+            if !mod_id.is_empty() {
+                entries.push((mid, Some(mod_id.clone()), mk));
+                mid += 1;
+            }
         }
     }
+    // 去重：相同 (mod,key) 只注册一次（保留先出现者）。
+    let mut seen = std::collections::HashSet::new();
+    entries.retain(|(_, _, mk)| seen.insert(*mk));
 
-    if main_hotkey.is_none() {
+    if entries.is_empty() {
+        // 没有可用热键：卸载旧热键并结束。
+        unregister_previous_hotkeys();
         return Ok(());
     }
 
+    // 同步卸载上一次注册的热键（在当前线程执行，避免旧监听线程退出竞态误注销新热键）。
+    unregister_previous_hotkeys();
+
     let app_clone = app.clone();
-    let main_name = show_hide_str.to_string();
+    let new_ids: Vec<i32> = entries.iter().map(|(id, _, _)| *id).collect();
+    let actions: HashMap<i32, Option<String>> =
+        entries.iter().map(|(id, mod_id, _)| (*id, mod_id.clone())).collect();
+
+    // 记录本次 id，供下次卸载。
+    *REGISTERED_HOTKEY_IDS.lock().unwrap() = new_ids.clone();
 
     thread::spawn(move || {
         CURRENT_HOTKEY_THREAD_RUNNING.store(true, Ordering::SeqCst);
         let tid = unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() };
         HOTKEY_THREAD_ID.store(tid, Ordering::SeqCst);
 
-        const HOTKEY_MAIN_ID: i32 = 0x9001;
-
         unsafe {
-            let mut registered_main = false;
-
-            if let Some((modi, key)) = main_hotkey {
-                let mut res = RegisterHotKey(std::ptr::null_mut(), HOTKEY_MAIN_ID, modi | MOD_NOREPEAT, key);
+            let mut registered_any = false;
+            for (id, _, (modi, key)) in &entries {
+                let mut res = RegisterHotKey(std::ptr::null_mut(), *id, *modi | MOD_NOREPEAT, *key);
                 if res == 0 {
-                    res = RegisterHotKey(std::ptr::null_mut(), HOTKEY_MAIN_ID, modi, key);
+                    res = RegisterHotKey(std::ptr::null_mut(), *id, *modi, *key);
                 }
                 if res != 0 {
-                    registered_main = true;
-                    tracing::info!("成功注册唤起/隐藏主窗口全局热键: {}", main_name);
+                    registered_any = true;
                 } else {
-                    tracing::warn!("注册唤起/隐藏主窗口全局热键 {} 失败 (可能被占用)", main_name);
+                    tracing::warn!("注册全局热键 id={:#x} 失败 (可能被占用)", *id);
                 }
             }
 
-            if !registered_main {
+            if !registered_any {
                 CURRENT_HOTKEY_THREAD_RUNNING.store(false, Ordering::SeqCst);
                 return;
             }
@@ -816,16 +847,33 @@ pub fn register_global_hotkeys(
             let mut msg: MSG = std::mem::zeroed();
             while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
                 if msg.message == WM_HOTKEY {
-                    if msg.wParam == HOTKEY_MAIN_ID as usize {
+                    let wparam = msg.wParam as i32;
+                    if let Some(target) = actions.get(&wparam) {
                         if let Some(window) = app_clone.get_webview_window("main") {
-                            // 按一次显示，再按一次隐藏（切换）。
-                            // focus_main_window 内部会 emit "launcher-toggle" 切到「启动」模块。
                             let is_visible = window.is_visible().unwrap_or(false);
                             let is_minimized = window.is_minimized().unwrap_or(false);
-                            if is_visible && !is_minimized {
-                                let _ = window.hide();
-                            } else {
-                                crate::tray::focus_main_window(&window);
+                            match target {
+                                // 主热键：可见则隐藏，否则唤起并显示「启动」模块。
+                                None => {
+                                    if is_visible && !is_minimized {
+                                        let _ = window.hide();
+                                    } else {
+                                        crate::tray::focus_main_window(&window);
+                                    }
+                                }
+                                // 模块热键：与主热键一致，显示/隐藏来回切换。
+                                // 已显示且正显示该模块 -> 隐藏；否则显示并切到该模块。
+                                Some(module) => {
+                                    if is_visible && !is_minimized {
+                                        if CURRENT_PAGE.lock().unwrap().as_str() == module {
+                                            let _ = window.hide();
+                                        } else {
+                                            let _ = window.emit("launcher-open-module", module.clone());
+                                        }
+                                    } else {
+                                        crate::tray::show_and_open_module(&window, module);
+                                    }
+                                }
                             }
                         }
                     }
@@ -834,8 +882,8 @@ pub fn register_global_hotkeys(
                 DispatchMessageW(&msg);
             }
 
-            if registered_main {
-                UnregisterHotKey(std::ptr::null_mut(), HOTKEY_MAIN_ID);
+            for id in &new_ids {
+                UnregisterHotKey(std::ptr::null_mut(), *id);
             }
         }
         CURRENT_HOTKEY_THREAD_RUNNING.store(false, Ordering::SeqCst);
@@ -844,8 +892,19 @@ pub fn register_global_hotkeys(
     Ok(())
 }
 
+/// 同步卸载上一轮注册的全部热键（在当前线程调用，进程级生效）。
+fn unregister_previous_hotkeys() {
+    let ids = std::mem::take(&mut *REGISTERED_HOTKEY_IDS.lock().unwrap());
+    for id in ids {
+        unsafe {
+            let _ = UnregisterHotKey(std::ptr::null_mut(), id);
+        }
+    }
+}
+
 pub fn register_global_hotkey(app: AppHandle, hotkey_str: &str) -> Result<(), String> {
-    register_global_hotkeys(app, hotkey_str)
+    let empty: HashMap<String, String> = HashMap::new();
+    register_global_hotkeys(app, hotkey_str, &empty)
 }
 
 /// 辅助扩展：在 Windows 上创建隐藏命令行子进程

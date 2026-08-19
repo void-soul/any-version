@@ -388,13 +388,18 @@ pub async fn launcher_save_settings(
     settings: LauncherSetting,
 ) -> Result<(), String> {
     db::save_settings(&settings)?;
-    let _ = super::windows::register_global_hotkeys(app, &settings.show_hide_shortcut_key);
+    let _ = super::windows::register_global_hotkeys(
+        app,
+        &settings.show_hide_shortcut_key,
+        &settings.module_hotkeys,
+    );
     Ok(())
 }
 
 #[tauri::command]
 pub async fn launcher_register_hotkey(app: AppHandle, hotkey: String) -> Result<(), String> {
-    super::windows::register_global_hotkeys(app, &hotkey)
+    let empty: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    super::windows::register_global_hotkeys(app, &hotkey, &empty)
 }
 
 #[tauri::command]
