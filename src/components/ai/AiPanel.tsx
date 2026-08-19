@@ -42,7 +42,7 @@ export default function AiPanel() {
             onClick={() => switchTab(key)}
             className={`w-full px-3 py-2 rounded-lg text-[11px] font-semibold flex items-center gap-2 transition-all cursor-pointer text-left ${
               activeTab === key
-                ? "bg-violet-600 text-white shadow-md shadow-violet-500/10"
+                ? "bg-[var(--module-accent)] text-white shadow-md shadow-[var(--module-accent-ring)]"
                 : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
             }`}
           >

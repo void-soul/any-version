@@ -252,7 +252,7 @@ export default function SkillManager() {
               onClick={() => setTab(k)}
               className={`flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-semibold border-b-2 transition-all cursor-pointer ${
                 tab === k
-                  ? 'border-violet-500 text-white bg-white/[0.03]'
+                  ? 'border-[var(--module-accent)] text-white bg-white/[0.03]'
                   : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/[0.01]'
               }`}
             >
@@ -278,14 +278,14 @@ export default function SkillManager() {
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="搜索技能名称 / ID / 描述..."
-                  className="w-full pl-8 pr-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-violet-500/50"
+                  className="w-full pl-8 pr-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent-ring)]"
                 />
               </div>
               <div className="relative">
                 <select
                   value={selCat ?? ''}
                   onChange={(e) => setSelCat(e.target.value || null)}
-                  className="appearance-none pl-7 pr-7 py-1.5 rounded-lg bg-slate-800 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-violet-500/50 cursor-pointer"
+                  className="appearance-none pl-7 pr-7 py-1.5 rounded-lg bg-slate-800 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent-ring)] cursor-pointer"
                 >
                   <option value="">全部分类</option>
                   {allCats.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -312,7 +312,7 @@ export default function SkillManager() {
                       onClick={() => setSelTags(active ? selTags.filter((x) => x !== t) : [...selTags, t])}
                       className={`px-2 py-0.5 rounded-full text-[10px] font-medium transition-all cursor-pointer ${
                         active
-                          ? 'bg-violet-500/30 text-violet-200 border border-violet-400/40'
+                          ? 'bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]'
                           : 'bg-white/5 text-slate-400 hover:bg-white/10 border border-transparent'
                       }`}
                     >
@@ -347,7 +347,7 @@ export default function SkillManager() {
                       <div className="text-[10px] text-slate-500 font-mono truncate">{s.id}</div>
                     </div>
                     {s.category && (
-                      <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-violet-500/15 text-violet-300 flex-shrink-0">
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-[var(--module-accent-soft)] text-[var(--module-accent)] flex-shrink-0">
                         {s.category}
                       </span>
                     )}
@@ -365,7 +365,7 @@ export default function SkillManager() {
                   <div className="flex items-center justify-between pt-2 border-t border-white/5 text-[10px] text-slate-500">
                     <span>{s.installMethod === 'managed' ? '托管库' : s.installMethod}</span>
                     <div className="flex items-center gap-2">
-                      <button onClick={() => openEdit(s)} className="text-slate-400 hover:text-violet-300 cursor-pointer">
+                      <button onClick={() => openEdit(s)} className="text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
                         <Settings2 className="w-3.5 h-3.5" />
                       </button>
                       <button onClick={() => removeSkill(s.id)} className="text-slate-500 hover:text-red-400 cursor-pointer">
@@ -453,7 +453,7 @@ export default function SkillManager() {
                           onClick={() => toggleSymlink(tool.id, isSymlinkOn)}
                           disabled={togglingToolId === tool.id}
                           className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed ${
-                            isSymlinkOn ? 'bg-violet-600' : 'bg-slate-700'
+                            isSymlinkOn ? 'bg-[var(--module-accent)]' : 'bg-slate-700'
                           }`}
                           title={isSymlinkOn ? '关闭软链接部署' : '开启软链接部署'}
                         >
@@ -488,15 +488,15 @@ export default function SkillManager() {
         {/* ════════ 市场 Tab ════════ */}
         {tab === 'market' && (
           <div className="space-y-4 max-w-3xl">
-            <div className="rounded-xl bg-violet-500/5 border border-violet-500/20 p-3.5 text-[11px] text-violet-200/80 leading-relaxed">
-              从 Git 仓库或线上源安装的技能将统一下载落盘至 <code className="text-violet-300">~/.agents/skills</code>（skills.sh 标准技能根目录）。
+            <div className="rounded-xl bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] border border-[var(--module-accent-ring)] p-3.5 text-[11px] text-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] leading-relaxed">
+              从 Git 仓库或线上源安装的技能将统一下载落盘至 <code className="text-[var(--module-accent)]">~/.agents/skills</code>（skills.sh 标准技能根目录）。
               所有支持的工具均可直接接入该技能库。
             </div>
 
             {/* 来源列表 */}
             <div>
               <div className="text-xs font-semibold text-slate-300 mb-2 flex items-center gap-1.5">
-                <Store className="w-3.5 h-3.5 text-violet-400" /> 推荐技能生态源
+                <Store className="w-3.5 h-3.5 text-[var(--module-accent)]" /> 推荐技能生态源
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
                 {MARKET_SOURCES.map((src) => (
@@ -505,11 +505,11 @@ export default function SkillManager() {
                     href={src.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="rounded-xl bg-white/[0.03] border border-white/10 p-3.5 hover:border-violet-500/40 transition-all group"
+                    className="rounded-xl bg-white/[0.03] border border-white/10 p-3.5 hover:border-[var(--module-accent-ring)] transition-all group"
                   >
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-semibold text-slate-100">{src.name}</span>
-                      <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-violet-400 transition-colors" />
+                      <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-[var(--module-accent)] transition-colors" />
                     </div>
                     <p className="text-[10px] text-slate-400 mt-1">{src.desc}</p>
                   </a>
@@ -520,19 +520,19 @@ export default function SkillManager() {
             {/* 在线安装 */}
             <div>
               <div className="text-xs font-semibold text-slate-300 mb-2 flex items-center gap-1.5">
-                <Download className="w-3.5 h-3.5 text-violet-400" /> 从 Git / 远程 / 本地安装
+                <Download className="w-3.5 h-3.5 text-[var(--module-accent)]" /> 从 Git / 远程 / 本地安装
               </div>
               <div className="rounded-xl bg-white/[0.03] border border-white/10 p-3.5 space-y-2.5">
                 <input
                   value={installInput}
                   onChange={(e) => setInstallInput(e.target.value)}
                   placeholder="如: owner/repo / https://github.com/... / 本地技能路径"
-                  className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-violet-500/50"
+                  className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent-ring)]"
                 />
                 <button
                   onClick={startInstall}
                   disabled={installing || !installInput.trim()}
-                  className="w-full px-3 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-xs font-semibold text-white flex items-center justify-center gap-2 transition-all cursor-pointer"
+                  className="w-full px-3 py-2.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-xs font-semibold text-white flex items-center justify-center gap-2 transition-all cursor-pointer"
                 >
                   {installing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
                   {installing ? '正在安装技能中...' : '安装到 ~/.agents/skills'}
@@ -569,7 +569,7 @@ export default function SkillManager() {
                   value={edCat}
                   onChange={(e) => setEdCat(e.target.value)}
                   placeholder="如: 代码审计 / 前端 / 运维"
-                  className="w-full px-2.5 py-1.5 rounded bg-white/5 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-violet-500"
+                  className="w-full px-2.5 py-1.5 rounded bg-white/5 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
                 />
               </div>
 
@@ -577,7 +577,7 @@ export default function SkillManager() {
                 <label className="text-[10px] text-slate-400 mb-1 block">标签 (Tags)</label>
                 <div className="flex flex-wrap gap-1 mb-2">
                   {edTags.map((t) => (
-                    <span key={t} className="px-2 py-0.5 rounded bg-violet-500/20 text-violet-300 text-[10px] flex items-center gap-1">
+                    <span key={t} className="px-2 py-0.5 rounded bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[var(--module-accent)] text-[10px] flex items-center gap-1">
                       #{t}
                       <button onClick={() => removeTag(t)} className="hover:text-red-300">
                         <X className="w-2.5 h-2.5" />
@@ -591,7 +591,7 @@ export default function SkillManager() {
                     onChange={(e) => setTagInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
                     placeholder="输入标签按回车..."
-                    className="flex-1 px-2.5 py-1.5 rounded bg-white/5 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-violet-500"
+                    className="flex-1 px-2.5 py-1.5 rounded bg-white/5 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
                   />
                   <button onClick={addTag} className="px-3 py-1.5 rounded bg-white/10 hover:bg-white/20 text-xs font-semibold text-slate-200 cursor-pointer">
                     添加
@@ -607,7 +607,7 @@ export default function SkillManager() {
               <button
                 onClick={saveMeta}
                 disabled={savingMeta}
-                className="px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-500 text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer"
+                className="px-3 py-1.5 rounded bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer"
               >
                 {savingMeta ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
                 保存设置

@@ -57,7 +57,7 @@ export default function TaskPanel() {
             onClick={() => switchTab(key)}
             className={`w-full px-3 py-2 rounded-lg text-[11px] font-semibold flex items-center gap-2 transition-all cursor-pointer text-left ${
               activeTab === key
-                ? "bg-amber-500 text-slate-900 shadow-md shadow-amber-500/10"
+                ? "bg-[var(--module-accent)] text-white shadow-md shadow-[var(--module-accent-ring)]"
                 : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
             }`}
           >

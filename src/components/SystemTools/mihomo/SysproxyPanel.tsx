@@ -113,7 +113,7 @@ export default function SysproxyPanel() {
                 key={k}
                 onClick={() => setValues({ ...values, mode: k })}
                 className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
-                  values.mode === k ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-slate-200"
+                  values.mode === k ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200"
                 }`}
               >
                 {t}

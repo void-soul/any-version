@@ -83,7 +83,7 @@ export default function TaskReview() {
                 onClick={() => setDays(r.days)}
                 className={`px-2.5 py-1 rounded-md text-[10px] font-semibold cursor-pointer transition-all ${
                   days === r.days
-                    ? "bg-amber-500 text-slate-900"
+                    ? "bg-[var(--module-accent)] text-white"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
               >
@@ -129,14 +129,14 @@ export default function TaskReview() {
       </div>
 
       {/* 完成率环形提示 */}
-      <div className="p-4 rounded-xl bg-slate-900/40 border border-amber-500/20">
+      <div className="p-4 rounded-xl bg-slate-900/40 border border-[var(--module-accent-ring)]">
         <div className="flex items-center justify-between mb-2">
           <span className="text-[11px] font-semibold text-slate-300">整体完成率</span>
-          <span className="text-lg font-bold text-amber-300">{totals.rate}%</span>
+          <span className="text-lg font-bold text-[var(--module-accent)]">{totals.rate}%</span>
         </div>
         <div className="h-2 rounded-full bg-white/5 overflow-hidden">
           <div
-            className="h-full rounded-full bg-gradient-to-r from-amber-500 to-emerald-500 transition-all"
+            className="h-full rounded-full bg-gradient-to-r from-[var(--module-accent)] to-emerald-500 transition-all"
             style={{ width: `${totals.rate}%` }}
           />
         </div>
@@ -164,7 +164,7 @@ export default function TaskReview() {
                       title={`${s.date}：完成 ${s.completed} / 共 ${s.total}，投入 ${formatMinutes(s.minutesSpent)}`}
                     >
                       <div
-                        className="absolute bottom-0 left-0 w-full bg-amber-400 transition-all"
+                        className="absolute bottom-0 left-0 w-full bg-[var(--module-accent)] transition-all"
                         style={{ height: `${doneH}%` }}
                       />
                     </div>
@@ -179,7 +179,7 @@ export default function TaskReview() {
         )}
         <div className="flex items-center gap-3 mt-3 text-[9px] text-slate-500">
           <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-sm bg-amber-400" /> 已完成
+            <span className="w-2 h-2 rounded-sm bg-[var(--module-accent)]" /> 已完成
           </span>
           <span className="flex items-center gap-1">
             <span className="w-2 h-2 rounded-sm bg-white/8" /> 未完成

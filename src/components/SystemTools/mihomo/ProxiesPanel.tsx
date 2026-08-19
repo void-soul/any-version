@@ -320,7 +320,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
               {profiles.filter((p) => p.id !== curProfile).map((p) => (
                 <button
                   key={p.id}
-                  className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-[11px] text-emerald-300 hover:bg-emerald-500/20 cursor-pointer"
+                  className="px-2.5 py-1 rounded-lg bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] text-[11px] text-[var(--module-accent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] cursor-pointer"
                   onClick={async () => {
                     try {
                       await mihomoApi.changeCurrentProfile(p.id);
@@ -376,13 +376,13 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
                 <Pin className={`w-3.5 h-3.5 ${g.fixed ? "fill-current" : ""}`} />
               </button>
               <button
-                className="p-1.5 rounded-lg hover:bg-white/10 text-emerald-300 cursor-pointer disabled:opacity-50"
+                className="p-1.5 rounded-lg hover:bg-white/10 text-[var(--module-accent)] cursor-pointer disabled:opacity-50"
                 title="延迟测试"
                 disabled={!!testing[g.name]?.size}
                 onClick={(e) => { e.stopPropagation(); onGroupDelay(g); }}
               >
                 {testing[g.name]?.size ? (
-                  <span className="block w-3.5 h-3.5 rounded-full border-2 border-emerald-300/30 border-t-emerald-300 animate-spin" />
+                  <span className="block w-3.5 h-3.5 rounded-full border-2 border-[var(--module-accent-ring)] border-t-[var(--module-accent)] animate-spin" />
                 ) : (
                   <Zap className="w-3.5 h-3.5" />
                 )}
@@ -396,7 +396,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
                   <input
-                    className="w-full h-8 pl-8 pr-2.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                    className="w-full h-8 pl-8 pr-2.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
                     placeholder="搜索节点"
                     value={search[g.name] || ""}
                     onChange={(e) => setSearch((s) => ({ ...s, [g.name]: e.target.value }))}
@@ -413,13 +413,13 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
                         onClick={() => onChangeProxy(g, p.name)}
                         className={`px-2.5 py-2 rounded-xl border cursor-pointer transition-all ${
                           selected
-                            ? "bg-emerald-500/10 border-emerald-500/40"
+                            ? "bg-[var(--module-accent-soft)] border-[var(--module-accent-ring)]"
                             : "bg-white/[0.03] border-white/5 hover:border-white/20"
                         }`}
                       >
                         <div className="flex items-center gap-1.5">
                           <Flag name={p.name} />
-                          <span className={`text-[12px] truncate flex-1 ${selected ? "text-emerald-300 font-semibold" : "text-slate-200"}`}>
+                          <span className={`text-[12px] truncate flex-1 ${selected ? "text-[var(--module-accent)] font-semibold" : "text-slate-200"}`}>
                             {p.name}
                           </span>
                           <button

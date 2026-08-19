@@ -887,7 +887,7 @@ export default function CollabRoom() {
           <span className="text-[11px] font-bold text-slate-300">会话列表</span>
           <button
             onClick={() => setCreating(true)}
-            className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-violet-300 cursor-pointer"
+            className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-[var(--module-accent)] cursor-pointer"
             title="新建会话"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -900,7 +900,7 @@ export default function CollabRoom() {
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               placeholder="会话名"
-              className="w-full bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500"
+              className="w-full bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
             />
             <button
               onClick={handlePickProject}
@@ -916,7 +916,7 @@ export default function CollabRoom() {
             <div className="flex gap-1">
               <button
                 onClick={createRoom}
-                className="flex-1 px-2 py-1 rounded bg-violet-600 hover:bg-violet-500 text-[10px] font-semibold cursor-pointer"
+                className="flex-1 px-2 py-1 rounded bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-[10px] font-semibold cursor-pointer"
               >
                 创建
               </button>
@@ -941,7 +941,7 @@ export default function CollabRoom() {
               key={r.id}
               className={`group flex items-center gap-1 px-2 py-1.5 rounded-lg cursor-pointer text-[11px] ${
                 activeRoom?.id === r.id
-                  ? "bg-violet-600/30 text-violet-200"
+                  ? "bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] text-[var(--module-accent)]"
                   : "text-slate-400 hover:bg-white/5"
               }`}
               onClick={() => setActiveRoom(r)}
@@ -1047,7 +1047,7 @@ export default function CollabRoom() {
                           {t.status !== "done" && (
                             <button
                               onClick={() => taskAction("claim", t.id)}
-                              className="px-1.5 py-0.5 rounded bg-violet-600/80 text-white hover:bg-violet-500 cursor-pointer"
+                              className="px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] text-white hover:bg-[var(--module-accent-strong)] cursor-pointer"
                             >
                               认领
                             </button>
@@ -1069,11 +1069,11 @@ export default function CollabRoom() {
                       value={newTaskTitle}
                       onChange={(e) => setNewTaskTitle(e.target.value)}
                       placeholder="新任务标题"
-                      className="flex-1 bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500"
+                      className="flex-1 bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
                     />
                     <button
                       onClick={createTask}
-                      className="px-2 py-1 rounded bg-violet-600 text-white text-[10px] hover:bg-violet-500 cursor-pointer"
+                      className="px-2 py-1 rounded bg-[var(--module-accent)] text-white text-[10px] hover:bg-[var(--module-accent-strong)] cursor-pointer"
                     >
                       创建
                     </button>
@@ -1102,7 +1102,7 @@ export default function CollabRoom() {
                         onClick={() => setSelectedTool(on ? "" : t.id)}
                         className={`px-2 py-0.5 rounded-full text-[9px] font-semibold transition-all cursor-pointer ${
                           on
-                            ? "bg-violet-600 text-white"
+                            ? "bg-[var(--module-accent)] text-white"
                             : "text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-white/10"
                         }`}
                       >
@@ -1121,7 +1121,7 @@ export default function CollabRoom() {
                     <select
                       value={providerId}
                       onChange={(e) => onProviderChange(e.target.value)}
-                      className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500"
+                      className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
                     >
                       {providers.map((p) => (
                         <option key={p.id} value={p.id}>
@@ -1132,7 +1132,7 @@ export default function CollabRoom() {
                     <select
                       value={modelId}
                       onChange={(e) => { setModelId(e.target.value); const m = activeProvider?.models.find(x => x.id === e.target.value); resetCustomParamValues(m?.customParams || []); }}
-                      className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500"
+                      className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
                     >
                       {activeProvider?.models.map((m) => (
                         <option key={m.id} value={m.id}>
@@ -1170,16 +1170,16 @@ export default function CollabRoom() {
                                 {cp.paramType === "bool" ? (
                                   <input type="checkbox" checked={customParamValues[cp.key] !== "false"}
                                     onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.checked ? "true" : "false" }))}
-                                    className="w-3.5 h-3.5 accent-violet-500" />
+                                    className="w-3.5 h-3.5 accent-[var(--module-accent)]" />
                                 ) : cp.paramType === "text" ? (
                                   <input type="text" value={customParamValues[cp.key] || ""}
                                     onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.value }))}
                                     placeholder={cp.defaultValue || ""}
-                                    className="flex-1 min-w-0 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-[9px] text-slate-200 focus:outline-none focus:border-violet-500" />
+                                    className="flex-1 min-w-0 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-[9px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
                                 ) : (
                                   <select value={customParamValues[cp.key] || cp.defaultValue || ""}
                                     onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.value }))}
-                                    className="flex-1 min-w-0 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-[9px] text-slate-200 focus:outline-none focus:border-violet-500">
+                                    className="flex-1 min-w-0 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-[9px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]">
                                     {(cp.options && cp.options.length > 0 ? cp.options : [cp.defaultValue || ""]).filter(Boolean).map(o => (
                                       <option key={o} value={o}>{o}</option>
                                     ))}
@@ -1199,7 +1199,7 @@ export default function CollabRoom() {
                             <select
                               value={masqueradeModel}
                               onChange={(e) => setMasqueradeModel(e.target.value)}
-                              className="flex-1 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-[9px] text-slate-200 focus:outline-none focus:border-violet-500"
+                              className="flex-1 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-[9px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
                             >
                               <option value="">不伪装（使用实际模型名）</option>
                               {tool.builtin_models.map((m) => (
@@ -1215,7 +1215,7 @@ export default function CollabRoom() {
                               type="checkbox"
                               checked={oneMContext}
                               onChange={(e) => setOneMContext(e.target.checked)}
-                              className="w-3 h-3 rounded accent-violet-500"
+                              className="w-3 h-3 rounded accent-[var(--module-accent)]"
                             />
                             <span className="text-[9px] text-slate-400">1M 上下文窗口</span>
                           </label>
@@ -1227,7 +1227,7 @@ export default function CollabRoom() {
                               type="checkbox"
                               checked={optimizerEnabled}
                               onChange={(e) => setOptimizerEnabled(e.target.checked)}
-                              className="w-3 h-3 rounded accent-violet-500"
+                              className="w-3 h-3 rounded accent-[var(--module-accent)]"
                             />
                             <span className="text-[9px] text-slate-400">优化器（缓存注入 / 思考优化 / DeepSeek 规范化）</span>
                           </label>
@@ -1239,7 +1239,7 @@ export default function CollabRoom() {
                               type="checkbox"
                               checked={rectifierEnabled}
                               onChange={(e) => setRectifierEnabled(e.target.checked)}
-                              className="w-3 h-3 rounded accent-violet-500"
+                              className="w-3 h-3 rounded accent-[var(--module-accent)]"
                             />
                             <span className="text-[9px] text-slate-400">整流器（抹平协议差异）</span>
                           </label>
@@ -1285,7 +1285,7 @@ export default function CollabRoom() {
                   onKeyDown={onContentKeyDown}
                   rows={2}
                   placeholder="输入任务内容…（回车发送；Ctrl/⌘+回车换行；输入 @ 附带文件；可选中上方消息点「引用」带入上下文）"
-                  className="flex-1 bg-slate-800 border border-white/10 rounded-lg px-3 py-2 text-[11px] text-slate-200 focus:outline-none focus:border-violet-500 resize-none"
+                  className="flex-1 bg-slate-800 border border-white/10 rounded-lg px-3 py-2 text-[11px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)] resize-none"
                 />
                 {busy ? (
                   <button
@@ -1297,7 +1297,7 @@ export default function CollabRoom() {
                 ) : (
                   <button
                     onClick={send}
-                    className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                    className="px-4 py-2 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
                   >
                     <Send className="w-3.5 h-3.5" /> 发送
                   </button>
@@ -1469,14 +1469,14 @@ function MessageView({
           </span>
           <span className="text-[8px] text-slate-500">{m.created_at}</span>
           {m.dispatch && (
-            <span className="px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 text-[8px] font-medium flex items-center gap-1">
+            <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] text-[8px] font-medium flex items-center gap-1">
               <Cpu className="w-2.5 h-2.5" />
               {m.dispatch.model || m.dispatch.tool_id}
               {m.dispatch.duration_ms != null && (
-                <span className="text-violet-400/70">· {formatDuration(m.dispatch.duration_ms)}</span>
+                <span className="text-[color-mix(in_srgb,var(--module-accent)_70%,transparent)]">· {formatDuration(m.dispatch.duration_ms)}</span>
               )}
               {m.dispatch.usage && (
-                <span className="text-violet-400/70">
+                <span className="text-[color-mix(in_srgb,var(--module-accent)_70%,transparent)]">
                   · {(m.dispatch.usage.input_tokens + m.dispatch.usage.output_tokens).toLocaleString()} tokens
                 </span>
               )}
@@ -1541,8 +1541,8 @@ function MessageView({
         {running && activity && (
           <div className="mt-1.5 flex items-center gap-1.5 text-[9px] text-slate-400">
             <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-60"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-violet-500"></span>
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--module-accent)] opacity-60"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-[var(--module-accent)]"></span>
             </span>
             <span className="animate-pulse flex items-center gap-1">
               <ToolActivityIcon activity={activity} />
@@ -1592,7 +1592,7 @@ function MessageView({
         <div className="flex items-center gap-3 mt-1">
           <button
             onClick={() => onQuote(m)}
-            className="flex items-center gap-1 text-[8px] text-slate-500 hover:text-violet-300 cursor-pointer transition-colors"
+            className="flex items-center gap-1 text-[8px] text-slate-500 hover:text-[var(--module-accent)] cursor-pointer transition-colors"
           >
             <Quote className="w-3 h-3" /> 引用
           </button>
@@ -1629,13 +1629,13 @@ function ReferenceCard({
   const isInput = variant === "input";
   return (
     <div
-      className={`flex items-start gap-2 p-1.5 rounded border-l-2 border-violet-500 text-[9px] ${
+      className={`flex items-start gap-2 p-1.5 rounded border-l-2 border-[var(--module-accent)] text-[9px] ${
         isInput ? "bg-slate-800/60 text-slate-300" : "bg-slate-800/50 text-slate-400"
       }`}
     >
-      <Quote className="w-3 h-3 flex-shrink-0 mt-0.5 text-violet-400" />
+      <Quote className="w-3 h-3 flex-shrink-0 mt-0.5 text-[var(--module-accent)]" />
       <div className="flex-1 min-w-0">
-        <span className="font-semibold text-violet-300">
+        <span className="font-semibold text-[var(--module-accent)]">
           来自 {senderName}：
         </span>
         <span className={`whitespace-pre-wrap ${isInput ? "line-clamp-2" : "line-clamp-3"}`}>

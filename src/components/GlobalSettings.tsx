@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { check } from "@tauri-apps/plugin-updater";
@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import type { LauncherSetting } from "./launcher/types";
+import { MODULE_ORDER, MODULE_DEFAULTS } from "../App";
 
 interface Config {
   versions_dir?: string;
@@ -282,6 +283,7 @@ export default function GlobalSettings() {
   // 启动器配置 (全局唤起快捷键 + 视图设置)
   const [launcherCfg, setLauncherCfg] = useState<LauncherSetting>({
     showHideShortcutKey: "Alt+Space",
+    moduleHotkeys: {},
     itemIconSize: 32,
     itemColumnNumber: 0,
     cardDensity: "cozy",
@@ -293,9 +295,13 @@ export default function GlobalSettings() {
     categoryFontSize: 12,
     categoryGap: 24,
   });
-  const [recordingLauncherField, setRecordingLauncherField] = useState<
-    "showHide" | null
-  >(null);
+  // 录制目标：null=未录制；"main"=主唤起热键；否则为某个顶级模块的 moduleId
+  const [recordingField, setRecordingField] = useState<string | null>(null);
+  // 始终持有最新 launcherCfg，供录制监听闭包（仅依赖 recordingField）安全读取
+  const launcherCfgRef = useRef<LauncherSetting>(launcherCfg);
+  useEffect(() => {
+    launcherCfgRef.current = launcherCfg;
+  }, [launcherCfg]);
   const [savingLauncher, setSavingLauncher] = useState(false);
   const [launcherSaved, setLauncherSaved] = useState(false);
 
@@ -406,7 +412,7 @@ export default function GlobalSettings() {
   };
 
   const handleSaveLauncherConfig = async (patch?: Partial<LauncherSetting>) => {
-    const next = patch ? { ...launcherCfg, ...patch } : launcherCfg;
+    const next = patch ? { ...launcherCfgRef.current, ...patch } : launcherCfgRef.current;
     if (patch) setLauncherCfg(next);
     setSavingLauncher(true);
     setLauncherSaved(false);
@@ -421,24 +427,26 @@ export default function GlobalSettings() {
     }
   };
 
-  // 全局热键录制监听（支持 F1-F12、单键、组合键）
-  /*
+  // 全局热键录制监听（基于 e.code 解析，支持 F1-F12、Shift/Ctrl/Alt+组合、单键等）
   useEffect(() => {
-    if (!recordingLauncherField) return;
+    if (!recordingField) return;
+    const target = recordingField; // 本次录制目标：main 或 模块 id
 
     const handleKeyCapture = (e: KeyboardEvent) => {
-      // 忽略单纯修饰键的按下，等待最终按键
-      if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) {
+      // Escape 取消录制
+      if (e.code === "Escape") {
+        e.preventDefault();
+        setRecordingField(null);
+        return;
+      }
+
+      // 忽略单独按下的修饰键，等待最终按键
+      if (["ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight", "AltLeft", "AltRight", "MetaLeft", "MetaRight"].includes(e.code)) {
         return;
       }
 
       e.preventDefault();
       e.stopPropagation();
-
-      if (e.key === "Escape") {
-        setRecordingLauncherField(null);
-        return;
-      }
 
       const parts: string[] = [];
       if (e.ctrlKey) parts.push("Ctrl");
@@ -446,30 +454,69 @@ export default function GlobalSettings() {
       if (e.shiftKey) parts.push("Shift");
       if (e.metaKey) parts.push("Win");
 
-      let key = e.key;
-      if (key === " ") key = "Space";
+      let key = "";
+      const code = e.code;
+      if (code.startsWith("Key")) {
+        key = code.slice(3); // KeyA -> A
+      } else if (code.startsWith("Digit")) {
+        key = code.slice(5); // Digit1 -> 1
+      } else if (code.startsWith("F") && /^(F[1-9]|F1[0-2])$/.test(code)) {
+        key = code; // F1..F12
+      } else {
+        const map: Record<string, string> = {
+          Space: "Space",
+          Enter: "Enter",
+          Tab: "Tab",
+          ArrowUp: "Up",
+          ArrowDown: "Down",
+          ArrowLeft: "Left",
+          ArrowRight: "Right",
+          Backquote: "`",
+          Backspace: "Backspace",
+          Delete: "Delete",
+          Insert: "Insert",
+          Home: "Home",
+          End: "End",
+          PageUp: "PageUp",
+          PageDown: "PageDown",
+          Escape: "Esc",
+        };
+        key = map[code] || "";
+      }
+
+      if (!key) {
+        // 无法识别的按键，忽略（如纯修饰键已在上游拦截）
+        return;
+      }
 
       const formattedKey = key.length === 1 ? key.toUpperCase() : key;
       if (!parts.includes(formattedKey)) {
         parts.push(formattedKey);
       }
       const hotkeyStr = parts.join("+");
-      handleSaveLauncherConfig({ showHideShortcutKey: hotkeyStr });
-      setRecordingLauncherField(null);
+
+      if (target === "main") {
+        handleSaveLauncherConfig({ showHideShortcutKey: hotkeyStr });
+      } else {
+        // 写入对应模块的独立热键
+        const cur = launcherCfgRef.current.moduleHotkeys || {};
+        const nextMap = { ...cur, [target]: hotkeyStr };
+        handleSaveLauncherConfig({ moduleHotkeys: nextMap });
+      }
+      setRecordingField(null);
     };
 
     const handleWindowClick = () => {
-      setRecordingLauncherField(null);
+      setRecordingField(null);
     };
 
-    window.addEventListener("keydown", handleKeyCapture);
+    window.addEventListener("keydown", handleKeyCapture, true);
     window.addEventListener("mousedown", handleWindowClick);
     return () => {
-      window.removeEventListener("keydown", handleKeyCapture);
+      window.removeEventListener("keydown", handleKeyCapture, true);
       window.removeEventListener("mousedown", handleWindowClick);
     };
-  }, [recordingLauncherField, launcherCfg]);
-  */
+  }, [recordingField]);
 
   const handleLauncherExport = async () => {
     try {
@@ -688,7 +735,7 @@ export default function GlobalSettings() {
 
       <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-6">
         <div className="flex items-center gap-2 pb-3 border-b border-white/5">
-          <FolderKanban className="w-4 h-4 text-red-400" />
+          <FolderKanban className="w-4 h-4 text-[var(--module-accent)]" />
           <h3 className="text-xs font-semibold text-white">
             AnyVersion 工作目录说明
           </h3>
@@ -714,7 +761,7 @@ export default function GlobalSettings() {
 
         {loading ? (
           <div className="text-xs text-slate-400 py-6 flex items-center gap-2">
-            <RefreshCw className="w-4 h-4 animate-spin text-red-400" />
+            <RefreshCw className="w-4 h-4 animate-spin text-[var(--module-accent)]" />
             正在读取系统配置...
           </div>
         ) : (
@@ -831,22 +878,22 @@ export default function GlobalSettings() {
 
             {/* 迁移进度条 */}
             {progress && (
-              <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl space-y-2 animate-fadeIn">
+              <div className="p-3 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-xl space-y-2 animate-fadeIn">
                 <div className="flex items-center justify-between text-[10px]">
-                  <span className="text-red-300 font-semibold flex items-center gap-1.5">
+                  <span className="text-[var(--module-accent)] font-semibold flex items-center gap-1.5">
                     <Loader2 className="w-3 h-3 animate-spin" />
                     {progress.stage}
                   </span>
                   {progress.total > 0 && (
-                    <span className="text-red-400 font-mono">
+                    <span className="text-[var(--module-accent)] font-mono">
                       {progress.current}/{progress.total}
                     </span>
                   )}
                 </div>
                 {progress.total > 0 && (
-                  <div className="w-full bg-red-500/20 rounded-full h-1.5 overflow-hidden">
+                  <div className="w-full bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] rounded-full h-1.5 overflow-hidden">
                     <div
-                      className="bg-red-400 h-full rounded-full transition-all duration-300"
+                      className="bg-[var(--module-accent)] h-full rounded-full transition-all duration-300"
                       style={{
                         width: `${Math.round((progress.current / progress.total) * 100)}%`,
                       }}
@@ -920,7 +967,7 @@ export default function GlobalSettings() {
                       <button
                         onClick={handleDeleteOldDirs}
                         disabled={deletingOldDirs}
-                        className="px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 disabled:opacity-50 text-red-300 rounded-lg text-[10px] font-medium cursor-pointer transition-all flex items-center gap-1.5 border border-red-500/20"
+                        className="px-3 py-1.5 bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_40%,transparent)] disabled:opacity-50 text-[var(--module-accent)] rounded-lg text-[10px] font-medium cursor-pointer transition-all flex items-center gap-1.5 border border-[var(--module-accent-ring)]"
                       >
                         <Trash2 className="w-3 h-3" />
                         {deletingOldDirs ? "正在删除..." : "删除旧目录"}
@@ -946,7 +993,7 @@ export default function GlobalSettings() {
               <button
                 onClick={handleSaveClick}
                 disabled={saving || !dataDir}
-                className="px-6 py-2.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-red-500/10 cursor-pointer transition-all flex items-center gap-1.5"
+                className="px-6 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5"
               >
                 <Save className="w-3.5 h-3.5" />
                 {saving ? "正在保存..." : "保存配置"}
@@ -960,7 +1007,7 @@ export default function GlobalSettings() {
       <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-white/5">
           <div className="flex items-center gap-2">
-            <RefreshCw className="w-4 h-4 text-red-400" />
+            <RefreshCw className="w-4 h-4 text-[var(--module-accent)]" />
             <h3 className="text-xs font-semibold text-white">版本检查与升级</h3>
           </div>
           <button
@@ -983,7 +1030,7 @@ export default function GlobalSettings() {
         </div>
 
         {updateError && (
-          <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-[10px] text-red-400">
+          <div className="p-3 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-xl text-[10px] text-[var(--module-accent)]">
             {updateError}
           </div>
         )}
@@ -1033,7 +1080,7 @@ export default function GlobalSettings() {
       {/* 应用行为 */}
       <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-4">
         <div className="flex items-center gap-2 pb-3 border-b border-white/5">
-          <Power className="w-4 h-4 text-red-400" />
+          <Power className="w-4 h-4 text-[var(--module-accent)]" />
           <h3 className="text-xs font-semibold text-white">应用行为</h3>
         </div>
 
@@ -1050,7 +1097,7 @@ export default function GlobalSettings() {
             role="switch"
             aria-checked={autostartOn}
             className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
-              autostartOn ? "bg-red-600" : "bg-white/10"
+              autostartOn ? "bg-[var(--module-accent)]" : "bg-white/10"
             }`}
             title={autostartOn ? "已开启开机自启" : "已关闭开机自启"}
           >
@@ -1097,7 +1144,7 @@ export default function GlobalSettings() {
                   role="switch"
                   aria-checked={!!(trayCfg as any)[key]}
                   className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer disabled:cursor-not-allowed ${
-                    (trayCfg as any)[key] ? "bg-red-600" : "bg-white/10"
+                    (trayCfg as any)[key] ? "bg-[var(--module-accent)]" : "bg-white/10"
                   }`}
                 >
                   <span
@@ -1143,7 +1190,7 @@ export default function GlobalSettings() {
       <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-white/5">
           <div className="flex items-center gap-2">
-            <Rocket className="w-4 h-4 text-red-400" />
+            <Rocket className="w-4 h-4 text-[var(--module-accent)]" />
             <div>
               <h3 className="text-xs font-semibold text-white">服务自启管理</h3>
               <p className="text-[9px] text-slate-500 mt-0.5">
@@ -1245,7 +1292,7 @@ export default function GlobalSettings() {
                           <div
                             className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
                               isEnabled
-                                ? "bg-red-500/15 text-red-400 border border-red-500/20"
+                                ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]"
                                 : "bg-white/5 text-slate-400 border border-white/5"
                             }`}
                           >
@@ -1274,7 +1321,7 @@ export default function GlobalSettings() {
                           role="switch"
                           aria-checked={isEnabled}
                           className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
-                            isEnabled ? "bg-red-600" : "bg-white/10"
+                            isEnabled ? "bg-[var(--module-accent)]" : "bg-white/10"
                           }`}
                           title={isEnabled ? "已启用自启" : "已禁用自启"}
                         >
@@ -1373,7 +1420,7 @@ export default function GlobalSettings() {
             {appearance.customFontPath && (
               <button
                 onClick={handleClearCustomFont}
-                className="px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-red-600/20 border border-red-500/40 text-red-300 hover:bg-red-600/30 transition cursor-pointer whitespace-nowrap"
+                className="px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] border border-[color-mix(in_srgb,var(--module-accent)_40%,transparent)] text-[var(--module-accent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] transition cursor-pointer whitespace-nowrap"
                 title="移除自定义字体"
               >
                 移除自定义字体
@@ -1419,7 +1466,7 @@ export default function GlobalSettings() {
             <button
               onClick={() => handleSaveLauncherConfig()}
               disabled={savingLauncher}
-              className="px-4 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-md shadow-red-600/20 cursor-pointer transition flex items-center gap-1.5"
+              className="px-4 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-md shadow-[var(--module-accent-ring)] cursor-pointer transition flex items-center gap-1.5"
             >
               <Save className="w-3 h-3" />
               {savingLauncher ? "保存中..." : "保存设置"}
@@ -1432,7 +1479,7 @@ export default function GlobalSettings() {
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <p className="text-xs font-medium text-slate-200 flex items-center gap-1.5">
-                <Keyboard className="w-3.5 h-3.5 text-red-400" />
+                <Keyboard className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                 唤起/隐藏主程序界面快捷键
               </p>
               <p className="text-[9px] text-slate-500">
@@ -1442,29 +1489,29 @@ export default function GlobalSettings() {
             <div className="flex items-center gap-2">
               <div
                 className={`px-3 py-1.5 rounded-xl border text-xs font-mono text-center min-w-[120px] outline-none transition ${
-                  recordingLauncherField === "showHide"
-                    ? "bg-red-600/30 border-red-400 text-red-200 animate-pulse"
+                  recordingField === "main"
+                    ? "bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] border-[var(--module-accent)] text-[var(--module-accent)] animate-pulse"
                     : "bg-black/30 border-white/10 text-white"
                 }`}
               >
-                {recordingLauncherField === "showHide"
+                {recordingField === "main"
                   ? "请按下按键..."
                   : launcherCfg.showHideShortcutKey || "无"}
               </div>
 
               <button
                 onClick={() =>
-                  setRecordingLauncherField(
-                    recordingLauncherField === "showHide" ? null : "showHide"
+                  setRecordingField(
+                    recordingField === "main" ? null : "main"
                   )
                 }
                 className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition cursor-pointer ${
-                  recordingLauncherField === "showHide"
+                  recordingField === "main"
                     ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
                     : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10"
                 }`}
               >
-                {recordingLauncherField === "showHide" ? "取消录制" : "录制按键"}
+                {recordingField === "main" ? "取消录制" : "录制按键"}
               </button>
 
               <button
@@ -1478,18 +1525,71 @@ export default function GlobalSettings() {
           </div>
 
           <div className="flex items-center gap-2 pt-0.5">
-            <span className="text-[10px] text-slate-500">常用预设：</span>
-            {["Alt + Space", "F6", "Ctrl + Space", "Ctrl + `"].map((preset) => (
+            <span className="text-[10px] text-slate-500">或选常用预设：</span>
+            {["Alt+Space", "F6", "Ctrl+Space", "Ctrl+`"].map((preset) => (
               <button
                 key={preset}
-                onClick={() =>
-                  handleSaveLauncherConfig({ showHideShortcutKey: preset.replace(/\s+/g, "") })
-                }
-                className="px-2 py-0.5 bg-white/5 hover:bg-red-600/20 hover:border-red-500/40 text-slate-300 text-[11px] rounded-lg border border-white/10 transition cursor-pointer font-mono"
+                onClick={() => handleSaveLauncherConfig({ showHideShortcutKey: preset })}
+                className={`px-2 py-0.5 text-[11px] rounded-lg border transition cursor-pointer font-mono ${
+                  launcherCfg.showHideShortcutKey === preset
+                    ? "bg-[var(--module-accent-soft)] border-[var(--module-accent)] text-[var(--module-accent)]"
+                    : "bg-white/5 hover:bg-[var(--module-accent-soft)] hover:border-[var(--module-accent-ring)] text-slate-300 border-white/10"
+                }`}
               >
                 {preset}
               </button>
             ))}
+          </div>
+
+          {/* 各顶级模块的独立唤起快捷键 */}
+          <div className="pt-3 mt-3 border-t border-white/5 space-y-1.5">
+            <p className="text-[10px] text-slate-400">
+              模块专属快捷键：按下后直接唤起窗口并打开对应模块（「启动」模块即上方主热键）。
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
+              {MODULE_ORDER.filter((id) => id !== "launcher").map((id) => {
+                const label = MODULE_DEFAULTS[id]?.label || id;
+                const current = launcherCfg.moduleHotkeys?.[id] || "";
+                const isRecording = recordingField === id;
+                return (
+                  <div key={id} className="flex items-center gap-2">
+                    <span className="w-12 text-[11px] text-slate-300 shrink-0">{label}</span>
+                    <div
+                      className={`px-2 py-1 rounded-lg border text-[11px] font-mono text-center min-w-[86px] transition ${
+                        isRecording
+                          ? "bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] border-[var(--module-accent)] text-[var(--module-accent)] animate-pulse"
+                          : "bg-black/30 border-white/10 text-white"
+                      }`}
+                    >
+                      {isRecording ? "请按下按键..." : current || "未设置"}
+                    </div>
+                    <button
+                      onClick={() => setRecordingField(isRecording ? null : id)}
+                      className={`px-2 py-1 rounded-lg text-[11px] border transition cursor-pointer ${
+                        isRecording
+                          ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
+                          : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10"
+                      }`}
+                    >
+                      {isRecording ? "取消" : "录制"}
+                    </button>
+                    {current && (
+                      <button
+                        onClick={() => {
+                          const cur = { ...(launcherCfg.moduleHotkeys || {}) };
+                          delete cur[id];
+                          handleSaveLauncherConfig({ moduleHotkeys: cur });
+                        }}
+                        className="px-2 py-1 rounded-lg text-[11px] border border-white/10 text-slate-400 hover:text-rose-300 hover:border-rose-500/30 bg-white/5 cursor-pointer"
+                        title="清除该模块快捷键"
+                      >
+                        清除
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
 
@@ -1506,14 +1606,14 @@ export default function GlobalSettings() {
               onClick={handleLauncherExport}
               className="px-3.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs border border-white/10 transition cursor-pointer flex items-center gap-1.5"
             >
-              <Download className="w-3.5 h-3.5 text-red-400" />
+              <Download className="w-3.5 h-3.5 text-[var(--module-accent)]" />
               导出备份 (JSON)
             </button>
             <button
               onClick={handleLauncherImport}
               className="px-3.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs border border-white/10 transition cursor-pointer flex items-center gap-1.5"
             >
-              <Upload className="w-3.5 h-3.5 text-red-400" />
+              <Upload className="w-3.5 h-3.5 text-[var(--module-accent)]" />
               导入备份 (Dawn / AnyVersion)
             </button>
           </div>
@@ -1523,7 +1623,7 @@ export default function GlobalSettings() {
       {/* AI 配置 */}
       <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-4">
         <div className="flex items-center gap-2 pb-3 border-b border-white/5">
-          <FolderKanban className="w-4 h-4 text-red-400" />
+          <FolderKanban className="w-4 h-4 text-[var(--module-accent)]" />
           <h3 className="text-xs font-semibold text-white">AI 配置</h3>
         </div>
 
@@ -1617,7 +1717,7 @@ export default function GlobalSettings() {
           <button
             onClick={handleSaveAiConfig}
             disabled={savingAi || !aiConfig}
-            className="px-6 py-2.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-red-500/10 cursor-pointer transition-all flex items-center gap-1.5"
+            className="px-6 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5"
           >
             <Save className="w-3.5 h-3.5" />
             {savingAi ? "保存中..." : "保存"}

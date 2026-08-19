@@ -203,7 +203,7 @@ export default function AiCacheManager() {
                 {/* 工具名头 */}
                 <div className="px-4 py-2.5 bg-white/[0.02] border-b border-white/5 flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <HardDrive className="w-3.5 h-3.5 text-violet-400" />
+                    <HardDrive className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                     <span className="text-xs font-bold text-slate-200">{group.displayName}</span>
                   </div>
                   <span className="text-[9px] text-slate-500">{toolTotalStr}</span>

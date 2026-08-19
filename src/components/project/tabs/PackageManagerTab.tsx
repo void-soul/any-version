@@ -797,11 +797,11 @@ export function PackageManagerTab({
           <div className="pt-1 space-y-1">
             <p className="text-[13px] text-slate-400 font-semibold">旧文件处理方式：</p>
             {/* 移动旧文件 */}
-            <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-blue-500/30 bg-blue-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
+            <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)]" : "border-white/5 hover:bg-white/[0.02]"}`}>
               <input type="radio" name="wf_file_action" value="move" checked={workflowFileAction === "move"}
                 onChange={() => setWorkflowFileAction("move")} className="mt-0.5" />
               <div>
-                <span className="text-[13px] font-semibold text-blue-300">移动旧文件到新目录</span>
+                <span className="text-[13px] font-semibold text-[var(--module-accent)]">移动旧文件到新目录</span>
                 <p className="text-[11px] text-slate-500 mt-0.5">将现有文件整体复制到新位置，完成后{workflowMethod === "junction" ? "创建链接" : "修改配置指向"}。保留所有已有数据。</p>
               </div>
             </label>
@@ -862,7 +862,7 @@ export function PackageManagerTab({
             <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">操作预览</p>
             <div className="space-y-1.5">
               <div className="flex items-center gap-2 text-[12px]">
-                <span className={`px-1.5 py-0.5 rounded text-[13px] font-semibold ${workflowMethod === "junction" ? "bg-blue-500/10 text-blue-400" : "bg-purple-500/10 text-purple-400"
+                <span className={`px-1.5 py-0.5 rounded text-[13px] font-semibold ${workflowMethod === "junction" ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "bg-purple-500/10 text-purple-400"
                   }`}>
                   {workflowMethod === "junction" ? "Junction" : "指向"}
                 </span>
@@ -873,8 +873,8 @@ export function PackageManagerTab({
                       <span className="text-[11px] break-all">{workflowLinkPath}</span>
                     </p>
                     <p className="flex items-center gap-1">
-                      <span className="text-[13px] text-blue-400 flex-shrink-0">↓ 链接到</span>
-                      <span className="text-[11px] text-blue-300 break-all">{workflowActualPath}</span>
+                      <span className="text-[13px] text-[var(--module-accent)] flex-shrink-0">↓ 链接到</span>
+                      <span className="text-[11px] text-[var(--module-accent)] break-all">{workflowActualPath}</span>
                     </p>
                   </div>
                 ) : (
@@ -887,7 +887,7 @@ export function PackageManagerTab({
                 <span className="text-slate-500">旧文件处理：</span>
                 <span className={
                   workflowFileAction === "delete" ? "text-red-400 font-semibold" :
-                    workflowFileAction === "move" ? "text-blue-400 font-semibold" :
+                    workflowFileAction === "move" ? "text-[var(--module-accent)] font-semibold" :
                       "text-slate-400"
                 }>
                   {workflowFileAction === "delete" ? "🗑 删除旧文件" :
@@ -921,7 +921,7 @@ export function PackageManagerTab({
       return (
         <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center gap-2">
-            <Loader className="w-3.5 h-3.5 animate-spin text-blue-400" />
+            <Loader className="w-3.5 h-3.5 animate-spin text-[var(--module-accent)]" />
             <span className={`text-[12px] font-semibold ${accentText}`}>
               正在执行 · {workflowProgress?.stage || "准备中..."}
             </span>
@@ -982,8 +982,8 @@ export function PackageManagerTab({
   return (
     <div className="space-y-5">
       {projectStatus && !projectStatus.managed && (
-        <div className="flex items-start gap-2.5 p-3 rounded-xl border border-blue-500/20 bg-blue-500/10 text-[12.5px] text-blue-200 animate-fadeIn">
-          <Info className="w-4.5 h-4.5 text-blue-400 flex-shrink-0 mt-0.5" />
+        <div className="flex items-start gap-2.5 p-3 rounded-xl border border-[var(--module-accent-ring)] bg-[var(--module-accent-soft)] text-[12.5px] text-[var(--module-accent)] animate-fadeIn">
+          <Info className="w-4.5 h-4.5 text-[var(--module-accent)] flex-shrink-0 mt-0.5" />
           <span>
             <strong>只读模式提示：</strong>当前项目未开启托管。缓存路径、数据目录及附带工具等参数仅支持查看，不能执行修改、配置、迁移或清理操作。若需修改，请先在当前页下方开启【托管项目】。
           </span>
@@ -1006,7 +1006,7 @@ export function PackageManagerTab({
               {installed ? (
                 <span className="text-[13px] text-emerald-400 font-mono">{version || "已安装"}</span>
               ) : checking ? (
-                <span className="text-[13px] text-blue-400 flex items-center gap-1"><Loader className="w-3 h-3 animate-spin" />检测中...</span>
+                <span className="text-[13px] text-[var(--module-accent)] flex items-center gap-1"><Loader className="w-3 h-3 animate-spin" />检测中...</span>
               ) : (
                 <span className="text-[13px] text-slate-400">未安装</span>
               )}
@@ -1028,7 +1028,7 @@ export function PackageManagerTab({
               </>
             )}
             {!installed && pm.install_cmd && (
-              <button onClick={handleInstall} disabled={!projectStatus?.managed || installing || upgrading} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1.5" title={!projectStatus?.managed ? "请先托管项目" : ""}>
+              <button onClick={handleInstall} disabled={!projectStatus?.managed || installing || upgrading} className="px-4 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-lg text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1.5" title={!projectStatus?.managed ? "请先托管项目" : ""}>
                 <Download className="w-3.5 h-3.5" />{installing ? "安装中..." : "安装"}
               </button>
             )}
@@ -1037,17 +1037,17 @@ export function PackageManagerTab({
         {/* 安装/升级进度条 */}
         {installProgress && (
           <div className="mt-3 space-y-1.5 animate-fadeIn">
-            <div className="flex items-center gap-2 text-[13px] text-blue-300">
+            <div className="flex items-center gap-2 text-[13px] text-[var(--module-accent)]">
               <Loader className="w-3 h-3 animate-spin" />
               {upgrading ? `正在升级 ${pm.display_name}...` : `正在安装 ${pm.display_name}...`}
             </div>
             <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
-              <div className="h-full bg-blue-500/60 rounded-full animate-pulse" style={{ width: "100%" }} />
+              <div className="h-full bg-[color-mix(in_srgb,var(--module-accent)_60%,transparent)] rounded-full animate-pulse" style={{ width: "100%" }} />
             </div>
           </div>
         )}
         {detectStep && (
-          <div className="mt-3 flex items-center gap-2 text-[13px] text-blue-300">
+          <div className="mt-3 flex items-center gap-2 text-[13px] text-[var(--module-accent)]">
             <Loader className="w-3 h-3 animate-spin" />{detectStep}
           </div>
         )}
@@ -1094,11 +1094,11 @@ export function PackageManagerTab({
 
       {/* Git 仓库尚未初始化提示 (通用 is_git_repo) */}
       {projectDef?.is_git_repo && gitRepoStatus?.is_git && !gitRepoStatus?.has_exe && !checking && (
-        <div className="glass-panel rounded-2xl p-6 border border-blue-500/15 bg-blue-500/5 text-center space-y-4 animate-fadeIn">
-          <Package className="w-10 h-10 text-blue-400 mx-auto opacity-70 animate-pulse" />
+        <div className="glass-panel rounded-2xl p-6 border border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] text-center space-y-4 animate-fadeIn">
+          <Package className="w-10 h-10 text-[var(--module-accent)] mx-auto opacity-70 animate-pulse" />
           <div>
-            <p className="text-blue-300 text-sm font-semibold">{pm.display_name} 尚未初始化</p>
-            <p className="text-[12px] text-blue-400/80 mt-1 max-w-md mx-auto leading-relaxed">
+            <p className="text-[var(--module-accent)] text-sm font-semibold">{pm.display_name} 尚未初始化</p>
+            <p className="text-[12px] text-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] mt-1 max-w-md mx-auto leading-relaxed">
               检测到您指定的目录为 {pm.display_name} 仓库，但尚未生成可执行文件。您需要运行初始化脚本进行编译。
             </p>
           </div>
@@ -1118,7 +1118,7 @@ export function PackageManagerTab({
               }
             }}
             disabled={bootstrapping}
-            className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all inline-flex items-center gap-1.5"
+            className="px-5 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all inline-flex items-center gap-1.5"
           >
             {bootstrapping ? (
               <><Loader className="w-3.5 h-3.5 animate-spin" />正在编译初始化...</>
@@ -1152,7 +1152,7 @@ export function PackageManagerTab({
                 <div className="space-y-1 flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     {cacheInfo.detect_source && (
-                      <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[10px] inline-flex items-center font-mono">
+                      <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-[10px] inline-flex items-center font-mono">
                         {cacheInfo.detect_source}
                       </span>
                     )}
@@ -1231,7 +1231,7 @@ export function PackageManagerTab({
                 <div className="space-y-1 flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     {dataInfo.detect_source && (
-                      <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[10px] inline-flex items-center font-mono">
+                      <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-[10px] inline-flex items-center font-mono">
                         {dataInfo.detect_source}
                       </span>
                     )}
@@ -1289,7 +1289,7 @@ export function PackageManagerTab({
       {hasChecked && installed && pm.mirror_options && pm.mirror_options.length > 0 && (
         <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
-            <Globe className="w-4 h-4 text-blue-400" />
+            <Globe className="w-4 h-4 text-[var(--module-accent)]" />
             <h4 className="text-xs font-semibold text-white">镜像配置</h4>
             <span className="ml-auto text-[11px] text-slate-400 font-mono bg-black/20 px-2 py-0.5 rounded border border-white/5 break-all max-w-[400px]">
               当前: {currentMirror || "官方源（默认）"}
@@ -1307,7 +1307,7 @@ export function PackageManagerTab({
                     <span className={`text-[12px] ${isCurrent ? "text-emerald-400" : "text-slate-500"} font-mono`}>
                       {opt.url || "默认"}
                     </span>
-                    {switchingMirror === opt.url ? <Loader className="w-3 h-3 animate-spin text-blue-400" /> : isCurrent && <CheckCircle className="w-3 h-3 text-emerald-400" />}
+                    {switchingMirror === opt.url ? <Loader className="w-3 h-3 animate-spin text-[var(--module-accent)]" /> : isCurrent && <CheckCircle className="w-3 h-3 text-emerald-400" />}
                   </div>
                 </button>
               );
@@ -1331,7 +1331,7 @@ export function PackageManagerTab({
             <input type="text" value={proxyInput} onChange={(e) => setProxyInput(e.target.value)} disabled={!projectStatus?.managed}
               className="flex-1 glass-input px-3 py-1.5 text-[13px] font-mono disabled:opacity-50 disabled:cursor-not-allowed" placeholder="http://proxy.example.com:8080" />
             <button onClick={handleSetProxy} disabled={!projectStatus?.managed || settingProxy}
-              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-[13px] font-semibold cursor-pointer flex-shrink-0" title={!projectStatus?.managed ? "请先托管项目" : ""}>
+              className="px-3 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-[13px] font-semibold cursor-pointer flex-shrink-0" title={!projectStatus?.managed ? "请先托管项目" : ""}>
               {settingProxy ? "设置中..." : proxyInput ? "设置代理" : "清除代理"}
             </button>
           </div>
@@ -1344,7 +1344,7 @@ export function PackageManagerTab({
         <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Package className="w-4 h-4 text-blue-400" />
+              <Package className="w-4 h-4 text-[var(--module-accent)]" />
               <h4 className="text-xs font-semibold text-white">全局依赖包</h4>
             </div>
             <button onClick={loadPackages} disabled={loadingPackages} className="flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-[13px] border border-white/5 cursor-pointer">
@@ -1352,7 +1352,7 @@ export function PackageManagerTab({
             </button>
           </div>
           {loadingPackages ? (
-            <div className="flex items-center gap-2 text-[13px] text-slate-400 py-2"><Loader className="w-3 h-3 animate-spin text-blue-400" />正在扫描...</div>
+            <div className="flex items-center gap-2 text-[13px] text-slate-400 py-2"><Loader className="w-3 h-3 animate-spin text-[var(--module-accent)]" />正在扫描...</div>
           ) : packages.length === 0 ? (
             <p className="text-[13px] text-slate-500">无全局依赖包，或无法获取列表。</p>
           ) : (
@@ -1363,13 +1363,13 @@ export function PackageManagerTab({
                   {packages.map((p) => (
                     <tr key={p.name} className="hover:bg-white/2 text-slate-300">
                       <td className="p-2 font-medium">
-                        <button onClick={() => openUrl(p.homepage)} className="hover:text-blue-400 transition-colors cursor-pointer group">{p.name}<ExternalLink className="w-2.5 h-2.5 inline ml-0.5 text-slate-600 group-hover:text-blue-400 opacity-0 group-hover:opacity-100" /></button>
+                        <button onClick={() => openUrl(p.homepage)} className="hover:text-[var(--module-accent)] transition-colors cursor-pointer group">{p.name}<ExternalLink className="w-2.5 h-2.5 inline ml-0.5 text-slate-600 group-hover:text-[var(--module-accent)] opacity-0 group-hover:opacity-100" /></button>
                       </td>
                       <td className="p-2 font-mono">{p.current_version}</td>
                       <td className="p-2 font-mono text-slate-400">{p.latest_version}</td>
                       <td className="p-2">{p.status === "outdated" ? <span className="text-[11px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">可升级</span> : <span className="text-[11px] px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">最新</span>}</td>
                       <td className="p-2 text-center">
-                        {p.status === "outdated" && <button onClick={() => handleUpgradePackage(p.name)} disabled={!projectStatus?.managed || upgradingPkg === p.name} className="px-2 py-0.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-[11px] font-semibold cursor-pointer" title={!projectStatus?.managed ? "请先托管项目" : ""}>{upgradingPkg === p.name ? "升级中" : "升级"}</button>}
+                        {p.status === "outdated" && <button onClick={() => handleUpgradePackage(p.name)} disabled={!projectStatus?.managed || upgradingPkg === p.name} className="px-2 py-0.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded text-[11px] font-semibold cursor-pointer" title={!projectStatus?.managed ? "请先托管项目" : ""}>{upgradingPkg === p.name ? "升级中" : "升级"}</button>}
                       </td>
                     </tr>
                   ))}

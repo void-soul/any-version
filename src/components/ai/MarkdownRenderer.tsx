@@ -49,7 +49,7 @@ function MarkdownRendererBase({ content }: { content: string }) {
               type="checkbox"
               checked={checked}
               readOnly
-              className="mr-1.5 align-middle w-3 h-3 rounded accent-violet-500"
+              className="mr-1.5 align-middle w-3 h-3 rounded accent-[var(--module-accent)]"
             />
           ),
           // 引用
@@ -65,7 +65,7 @@ function MarkdownRendererBase({ content }: { content: string }) {
             if (!isBlock) {
               // 行内代码
               return (
-                <code className="px-1 py-0.5 rounded bg-slate-700/60 text-[10px] text-violet-300 font-mono">
+                <code className="px-1 py-0.5 rounded bg-slate-700/60 text-[10px] text-[var(--module-accent)] font-mono">
                   {children}
                 </code>
               );
@@ -80,7 +80,7 @@ function MarkdownRendererBase({ content }: { content: string }) {
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-violet-400 hover:text-violet-300 underline underline-offset-1"
+              className="text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] underline underline-offset-1"
             >
               {children}
             </a>

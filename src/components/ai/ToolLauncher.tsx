@@ -695,7 +695,7 @@ export default function ToolLauncher() {
               }}
               className={`w-full px-3 py-2.5 rounded-lg text-left transition-all cursor-pointer ${
                 selectedToolId === tool.id
-                  ? "bg-violet-600 text-white shadow-md shadow-violet-500/10"
+                  ? "bg-[var(--module-accent)] text-white shadow-md shadow-[var(--module-accent-ring)]"
                   : tool.installed
                     ? "text-slate-300 hover:text-white hover:bg-white/5"
                     : "text-slate-600 hover:text-slate-400 hover:bg-white/[0.03]"
@@ -707,7 +707,7 @@ export default function ToolLauncher() {
                   <span className="text-[11px] font-semibold truncate">{tool.nickname || tool.display_name}</span>
                   {tool.nickname && tool.nickname !== tool.display_name && (
                     <span className={`text-[9px] truncate flex-shrink-0 ${
-                      selectedToolId === tool.id ? "text-violet-200/70" : "text-slate-500"
+                      selectedToolId === tool.id ? "text-[color-mix(in_srgb,var(--module-accent)_70%,transparent)]" : "text-slate-500"
                     }`}>
                       ({tool.display_name})
                     </span>
@@ -733,14 +733,14 @@ export default function ToolLauncher() {
                 ) : getBusy(tool.id) === "uninstalling" ? (
                   <span className="text-[9px] text-blue-300 animate-pulse">卸载中...</span>
                 ) : tool.installed ? (
-                  <span className={`text-[9px] ${selectedToolId === tool.id ? "text-violet-200" : "text-slate-500"} font-mono`}>
+                  <span className={`text-[9px] ${selectedToolId === tool.id ? "text-[var(--module-accent)]" : "text-slate-500"} font-mono`}>
                     {tool.version || "已安装"}
                   </span>
                 ) : (
                   <span className="text-[9px] text-slate-600">未安装</span>
                 )}
                 {lastLaunchConfigs[tool.id] && tool.installed && (
-                  <div className={`flex items-center gap-1 mt-0.5 ml-5.5 flex-wrap ${selectedToolId === tool.id ? "text-violet-300/70" : "text-slate-600"}`}>
+                  <div className={`flex items-center gap-1 mt-0.5 ml-5.5 flex-wrap ${selectedToolId === tool.id ? "text-[color-mix(in_srgb,var(--module-accent)_70%,transparent)]" : "text-slate-600"}`}>
                     {lastLaunchConfigs[tool.id].use_official_model ? (
                       <span className="text-[9px]">官方</span>
                     ) : (
@@ -785,8 +785,8 @@ export default function ToolLauncher() {
             {/* 工具信息 + 版本详情 */}
             <div className="p-3 rounded-xl bg-slate-900/30 border border-white/5">
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-violet-500/10">
-                  <Bot className="w-5 h-5 text-violet-400" />
+                <div className="p-2 rounded-lg bg-[var(--module-accent-soft)]">
+                  <Bot className="w-5 h-5 text-[var(--module-accent)]" />
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-white">{selectedTool.display_name}</h3>
@@ -857,7 +857,7 @@ export default function ToolLauncher() {
                           {lastLaunchConfigs[selectedTool.id].provider_name || lastLaunchConfigs[selectedTool.id].provider_id || "-"}
                         </span>
                         {lastLaunchConfigs[selectedTool.id].model_id && (
-                          <span className="text-violet-300/80 truncate max-w-[120px]" title={lastLaunchConfigs[selectedTool.id].model_id ?? undefined}>
+                          <span className="text-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] truncate max-w-[120px]" title={lastLaunchConfigs[selectedTool.id].model_id ?? undefined}>
                             {lastLaunchConfigs[selectedTool.id].model_id}
                           </span>
                         )}
@@ -885,7 +885,7 @@ export default function ToolLauncher() {
                   <button
                     onClick={() => handleInstall(selectedTool)}
                     disabled={getBusy(selectedTool.id) === "installing"}
-                    className="px-2 py-1.5 rounded-md bg-violet-500/10 hover:bg-violet-500/20 text-[10px] text-violet-300 hover:text-violet-200 cursor-pointer transition-all flex items-center gap-1 flex-shrink-0 disabled:opacity-50"
+                    className="px-2 py-1.5 rounded-md bg-[var(--module-accent-soft)] hover:bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[10px] text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] cursor-pointer transition-all flex items-center gap-1 flex-shrink-0 disabled:opacity-50"
                     title="一键安装"
                   >
                     <Download className={`w-3.5 h-3.5 ${getBusy(selectedTool.id) === "installing" ? "animate-spin" : ""}`} />
@@ -1072,7 +1072,7 @@ export default function ToolLauncher() {
                                     {providerProtocolBadges(config?.providers.find(p => p.id === group.provider_id))}
                                   </div>
                                   {isSelected && selectedModel && (
-                                    <span className="text-[9px] text-violet-400 font-mono truncate ml-2">{selectedModel}</span>
+                                    <span className="text-[9px] text-[var(--module-accent)] font-mono truncate ml-2">{selectedModel}</span>
                                   )}
                                 </button>
                                 {expanded && (
@@ -1087,7 +1087,7 @@ export default function ToolLauncher() {
                                           }}
                                           className={`w-full text-left px-5 py-1.5 text-[11px] transition-all cursor-pointer flex items-center gap-2 ${
                                             isSelModel
-                                              ? "bg-violet-500/10 text-violet-300 font-semibold"
+                                              ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)] font-semibold"
                                               : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
                                           }`}>
                                           <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: isSelModel ? "#a78bfa" : "#334155" }} />
@@ -1102,7 +1102,7 @@ export default function ToolLauncher() {
                           })}
                         </div>
                         {selectedModel && (
-                          <div className="mt-1 text-[10px] text-violet-400">已选: <span className="font-mono">{selectedModel}</span> <span className="text-slate-500">（{config?.providers.find(p => p.id === selectedModelProvider)?.name}）</span></div>
+                          <div className="mt-1 text-[10px] text-[var(--module-accent)]">已选: <span className="font-mono">{selectedModel}</span> <span className="text-slate-500">（{config?.providers.find(p => p.id === selectedModelProvider)?.name}）</span></div>
                         )}
 
                         {/* 模型自定义启动参数（用户定义，运行时渲染为控件） */}
@@ -1115,16 +1115,16 @@ export default function ToolLauncher() {
                                 {cp.paramType === "bool" ? (
                                   <input type="checkbox" checked={customParamValues[cp.key] !== "false"}
                                     onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.checked ? "true" : "false" }))}
-                                    className="w-4 h-4 accent-violet-500" />
+                                    className="w-4 h-4 accent-[var(--module-accent)]" />
                                 ) : cp.paramType === "text" ? (
                                   <input type="text" value={customParamValues[cp.key] || ""}
                                     onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.value }))}
                                     placeholder={cp.defaultValue || ""}
-                                    className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500" />
+                                    className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
                                 ) : (
                                   <select value={customParamValues[cp.key] || cp.defaultValue || ""}
                                     onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.value }))}
-                                    className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500">
+                                    className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]">
                                     {(cp.options && cp.options.length > 0 ? cp.options : [cp.defaultValue || ""]).filter(Boolean).map(o => (
                                       <option key={o} value={o}>{o}</option>
                                     ))}
@@ -1156,7 +1156,7 @@ export default function ToolLauncher() {
                         <input type="text" list={`masq-list-${selectedTool.id}`} value={masqueradeModel}
                           onChange={e => setMasqueradeModel(e.target.value)}
                           placeholder={`不伪装（直接使用 ${selectedModel}）`}
-                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500" />
+                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                         <datalist id={`masq-list-${selectedTool.id}`}>
                           {selectedTool.builtin_models.map(c => (
                             <option key={c} value={c} />
@@ -1232,7 +1232,7 @@ export default function ToolLauncher() {
                         <input type="text" list={`fb-masq-list-${selectedTool.id}`} value={fallbackMasqueradeModel}
                           onChange={e => setFallbackMasqueradeModel(e.target.value)}
                           placeholder={`不伪装（直接使用 ${selectedFallbackModel}）`}
-                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500" />
+                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                         <datalist id={`fb-masq-list-${selectedTool.id}`}>
                           {selectedTool.builtin_models.map(c => (
                             <option key={c} value={c} />
@@ -1245,7 +1245,7 @@ export default function ToolLauncher() {
                         {selectedTool.support_one_m_context && (
                           <label className="flex items-center gap-2 mt-2 text-[10px] text-slate-400 cursor-pointer select-none">
                             <input type="checkbox" checked={fallbackOneMContext} onChange={e => setFallbackOneMContext(e.target.checked)}
-                              className="accent-violet-500" />
+                              className="accent-[var(--module-accent)]" />
                             为 Fallback 模型追加 [1m]（1M 上下文，独立勾选）
                           </label>
                         )}
@@ -1264,7 +1264,7 @@ export default function ToolLauncher() {
                     </div>
                     <button
                       onClick={() => setOneMContext(!oneMContext)}
-                      className={`p-1 rounded-md cursor-pointer transition-all ${oneMContext ? "text-violet-400" : "text-slate-600 hover:text-slate-400"}`}
+                      className={`p-1 rounded-md cursor-pointer transition-all ${oneMContext ? "text-[var(--module-accent)]" : "text-slate-600 hover:text-slate-400"}`}
                     >
                       {oneMContext ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
                     </button>
@@ -1298,7 +1298,7 @@ export default function ToolLauncher() {
                             <span className="text-[8px] text-slate-500 hidden sm:inline">缓存注入 / 思考优化 / DeepSeek 归一</span>
                           </div>
                           <button onClick={() => setOptimizerEnabled(!optimizerEnabled)}
-                            className={`p-1 rounded-md cursor-pointer transition-all ${optimizerEnabled ? "text-violet-400" : "text-slate-600 hover:text-slate-400"}`}>
+                            className={`p-1 rounded-md cursor-pointer transition-all ${optimizerEnabled ? "text-[var(--module-accent)]" : "text-slate-600 hover:text-slate-400"}`}>
                             {optimizerEnabled ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
                           </button>
                         </div>
@@ -1314,7 +1314,7 @@ export default function ToolLauncher() {
                                   type="checkbox"
                                   checked={optimizerStrategies[item.key]}
                                   onChange={() => setOptimizerStrategies(prev => ({ ...prev, [item.key]: !prev[item.key] }))}
-                                  className="accent-violet-500"
+                                  className="accent-[var(--module-accent)]"
                                 />
                                 <span className="text-[10px] text-slate-300">{item.label}</span>
                                 <span className="text-[9px] text-slate-600">{item.desc}</span>
@@ -1332,7 +1332,7 @@ export default function ToolLauncher() {
                             <span className="text-[8px] text-slate-500 hidden sm:inline">抹平协议差异</span>
                           </div>
                           <button onClick={() => setRectifierEnabled(!rectifierEnabled)}
-                            className={`p-1 rounded-md cursor-pointer transition-all ${rectifierEnabled ? "text-violet-400" : "text-slate-600 hover:text-slate-400"}`}>
+                            className={`p-1 rounded-md cursor-pointer transition-all ${rectifierEnabled ? "text-[var(--module-accent)]" : "text-slate-600 hover:text-slate-400"}`}>
                             {rectifierEnabled ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
                           </button>
                         </div>
@@ -1349,7 +1349,7 @@ export default function ToolLauncher() {
                                   type="checkbox"
                                   checked={rectifierStrategies[item.key]}
                                   onChange={() => setRectifierStrategies(prev => ({ ...prev, [item.key]: !prev[item.key] }))}
-                                  className="accent-violet-500"
+                                  className="accent-[var(--module-accent)]"
                                 />
                                 <span className="text-[10px] text-slate-300">{item.label}</span>
                                 <span className="text-[9px] text-slate-600">{item.desc}</span>
@@ -1377,7 +1377,7 @@ export default function ToolLauncher() {
                         </button>
                         <button
                           onClick={() => { setSelectionMode(!selectionMode); setSelectedSessionIds(new Set()); }}
-                          className={`p-1 rounded cursor-pointer transition-all ${selectionMode ? "text-violet-400" : "text-slate-500 hover:text-slate-300"}`}
+                          className={`p-1 rounded cursor-pointer transition-all ${selectionMode ? "text-[var(--module-accent)]" : "text-slate-500 hover:text-slate-300"}`}
                         >
                           <CheckCircle className="w-3.5 h-3.5" />
                         </button>
@@ -1388,14 +1388,14 @@ export default function ToolLauncher() {
                   <div className="flex gap-2 flex-wrap mb-2">
                     <button onClick={() => { setSessionMode("new"); setSelectedSession(null); setShowSessionPicker(false); }}
                       className={`px-3 py-1.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-all ${
-                        sessionMode === "new" ? "bg-violet-600 text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"
+                        sessionMode === "new" ? "bg-[var(--module-accent)] text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"
                       }`}>
                       使用新会话
                     </button>
                     {sessions.length > 0 && (
                       <button onClick={() => { setSessionMode("resume"); setShowSessionPicker(!showSessionPicker); setSelectedSession(null); }}
                         className={`px-3 py-1.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-all ${
-                          sessionMode === "resume" ? "bg-violet-600 text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"
+                          sessionMode === "resume" ? "bg-[var(--module-accent)] text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"
                         }`}>
                         <Clock className="w-3 h-3" /> 历史会话 ({sessions.length})
                       </button>
@@ -1408,7 +1408,7 @@ export default function ToolLauncher() {
                         <div className="flex-1 relative">
                           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500" />
                           <input value={sessionSearch} onChange={e => setSessionSearch(e.target.value)}
-                            placeholder="搜索会话..." className="w-full bg-slate-900 border border-white/10 rounded-lg pl-7 pr-7 py-1.5 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500" />
+                            placeholder="搜索会话..." className="w-full bg-slate-900 border border-white/10 rounded-lg pl-7 pr-7 py-1.5 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
                           {sessionSearch && (
                             <button onClick={() => setSessionSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
                               <X className="w-3 h-3" />
@@ -1441,12 +1441,12 @@ export default function ToolLauncher() {
                           filteredSessions.map(s => (
                             <div key={s.session_id}
                               className={`flex items-center px-3 py-2 text-[10px] transition-all group ${
-                                selectedSession?.session_id === s.session_id ? "bg-violet-500/10 text-violet-300" : "text-slate-400 hover:bg-white/[0.03] hover:text-slate-200"
+                                selectedSession?.session_id === s.session_id ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "text-slate-400 hover:bg-white/[0.03] hover:text-slate-200"
                               }`}>
                               {selectionMode && (
                                 <button onClick={() => toggleSessionSelect(s.session_id)}
                                   className={`mr-2 w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center cursor-pointer ${
-                                    selectedSessionIds.has(s.session_id) ? "bg-violet-500 border-violet-500 text-white" : "border-slate-700 hover:border-slate-500"
+                                    selectedSessionIds.has(s.session_id) ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white" : "border-slate-700 hover:border-slate-500"
                                   }`}>
                                   {selectedSessionIds.has(s.session_id) && <CheckCircle className="w-3 h-3" />}
                                 </button>
@@ -1474,12 +1474,12 @@ export default function ToolLauncher() {
                               {expandedDirs.has(group.dir) && group.sessions.map(s => (
                                 <div key={s.session_id}
                                   className={`flex items-center pl-9 pr-3 py-2 text-[10px] transition-all group ${
-                                    selectedSession?.session_id === s.session_id ? "bg-violet-500/10 text-violet-300" : "text-slate-400 hover:bg-white/[0.03] hover:text-slate-200"
+                                    selectedSession?.session_id === s.session_id ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "text-slate-400 hover:bg-white/[0.03] hover:text-slate-200"
                                   }`}>
                                   {selectionMode && (
                                     <button onClick={() => toggleSessionSelect(s.session_id)}
                                       className={`mr-2 w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center cursor-pointer ${
-                                        selectedSessionIds.has(s.session_id) ? "bg-violet-500 border-violet-500 text-white" : "border-slate-700 hover:border-slate-500"
+                                        selectedSessionIds.has(s.session_id) ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white" : "border-slate-700 hover:border-slate-500"
                                       }`}>
                                       {selectedSessionIds.has(s.session_id) && <CheckCircle className="w-2.5 h-2.5" />}
                                     </button>
@@ -1504,7 +1504,7 @@ export default function ToolLauncher() {
                   )}
 
                   {sessionMode === "resume" && selectedSession && (
-                    <div className="mt-2 p-2 rounded-lg bg-violet-500/5 border border-violet-500/15 text-[10px] text-violet-300 flex items-center gap-2">
+                    <div className="mt-2 p-2 rounded-lg bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] border border-[var(--module-accent-ring)] text-[10px] text-[var(--module-accent)] flex items-center gap-2">
                       <CheckCircle className="w-3 h-3 flex-shrink-0" />
                       <span className="truncate">将恢复 <span className="font-mono">{selectedSession.project_path}</span></span>
                     </div>
@@ -1517,7 +1517,7 @@ export default function ToolLauncher() {
                     <label className="text-xs font-bold text-slate-300 mb-2 block">项目目录</label>
                     <div className="flex gap-2">
                       <input value={projectPath} onChange={e => setProjectPath(e.target.value)} placeholder="选择或输入项目目录..."
-                        className="flex-1 bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500" />
+                        className="flex-1 bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                       <button onClick={handleBrowse}
                         className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:bg-white/10 cursor-pointer transition-all">
                         <FolderOpen className="w-4 h-4" />
@@ -1531,7 +1531,7 @@ export default function ToolLauncher() {
                   <div>
                     <label className="text-xs font-bold text-slate-300 mb-2 block">终端</label>
                     <select value={selectedTerminal} onChange={e => setSelectedTerminal(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-500">
+                      className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]">
                       {terminals.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                     </select>
                   </div>
@@ -1550,13 +1550,13 @@ export default function ToolLauncher() {
                   );
                   if (!proxyInfo) return null;
                   return (
-                    <div className="p-2.5 rounded-lg bg-violet-500/5 border border-violet-500/15 text-[10px] flex flex-col gap-1.5">
+                    <div className="p-2.5 rounded-lg bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] border border-[var(--module-accent-ring)] text-[10px] flex flex-col gap-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <Shield className="w-3.5 h-3.5 text-violet-400 flex-shrink-0" />
+                        <Shield className="w-3.5 h-3.5 text-[var(--module-accent)] flex-shrink-0" />
                         <span className="text-slate-300">
-                          入站 <span className="font-semibold text-violet-300">{PROTOCOL_LABELS[proxyInfo.inbound]}</span>
+                          入站 <span className="font-semibold text-[var(--module-accent)]">{PROTOCOL_LABELS[proxyInfo.inbound]}</span>
                           <span className="mx-1 text-slate-500">→</span>
-                          出站 <span className="font-semibold text-violet-300">{PROTOCOL_LABELS[proxyInfo.outbound]}</span>
+                          出站 <span className="font-semibold text-[var(--module-accent)]">{PROTOCOL_LABELS[proxyInfo.outbound]}</span>
                         </span>
                         {proxyInfo.converted ? (
                           <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[9px] font-semibold">自动转换</span>
@@ -1565,10 +1565,10 @@ export default function ToolLauncher() {
                         )}
                         <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300 text-[9px] font-semibold">统计已开启</span>
                         {selectedTool.supports_optimizer && optimizerEnabled && config?.optimizer.enabled && (
-                          <span className="px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 text-[9px] font-semibold">优化器</span>
+                          <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] text-[9px] font-semibold">优化器</span>
                         )}
                         {selectedTool.supports_rectifier && rectifierEnabled && config?.rectifier.enabled && (
-                          <span className="px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 text-[9px] font-semibold">整流器</span>
+                          <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] text-[9px] font-semibold">整流器</span>
                         )}
                       </div>
                       {proxyInfo.aliasEntries.length > 0 && (
@@ -1585,7 +1585,7 @@ export default function ToolLauncher() {
 
                 {/* 启动按钮 */}
                 <button onClick={handleLaunch} disabled={launching || !canLaunch}
-                  className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-all shadow-lg shadow-violet-500/20">
+                  className="w-full py-3 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-all shadow-lg shadow-[var(--module-accent-ring)]">
                   {launching ? (
                     <><RefreshCw className="w-4 h-4 animate-spin" /> 启动中...</>
                   ) : sessionMode === "resume" && selectedSession ? (

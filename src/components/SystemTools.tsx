@@ -67,7 +67,7 @@ export default function SystemTools({ defaultTab = "ports" }: SystemToolsProps) 
             onClick={() => setActiveTab(key)}
             className={`w-full px-3 py-2 rounded-lg text-[11px] font-semibold flex items-center gap-2 transition-all cursor-pointer text-left ${
               activeTab === key
-                ? "bg-emerald-600 text-white shadow-md shadow-emerald-500/10"
+                ? "bg-[var(--module-accent)] text-white shadow-md shadow-[var(--module-accent-ring)]"
                 : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
             }`}
           >

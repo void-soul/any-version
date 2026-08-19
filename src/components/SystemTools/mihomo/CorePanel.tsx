@@ -236,7 +236,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
               title={
                 <span className="inline-flex items-center gap-2">
                   {name}
-                  {active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">使用中</span>}
+                  {active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)]">使用中</span>}
                   <span className="text-[10px] text-slate-500">{info?.version || desc}</span>
                 </span>
               }

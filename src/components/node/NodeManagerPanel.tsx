@@ -352,8 +352,8 @@ export default function NodeManagerPanel() {
     return (
       <div className="h-full flex flex-col items-center justify-center select-none">
         <div className="text-center space-y-4">
-          <div className="w-16 h-16 mx-auto rounded-2xl bg-cyan-600/15 border border-cyan-500/20 flex items-center justify-center">
-            <LayoutDashboard className="w-8 h-8 text-cyan-400" />
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-[color-mix(in_srgb,var(--module-accent)_15%,transparent)] border border-[var(--module-accent-ring)] flex items-center justify-center">
+            <LayoutDashboard className="w-8 h-8 text-[var(--module-accent)]" />
           </div>
           <div>
             <h1 className="text-lg font-bold text-white">服务</h1>
@@ -363,7 +363,7 @@ export default function NodeManagerPanel() {
           </div>
           <button
             onClick={() => setManageOpen(true)}
-            className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-[13px] font-semibold flex items-center gap-2 mx-auto cursor-pointer transition-all"
+            className="px-5 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-xl text-[13px] font-semibold flex items-center gap-2 mx-auto cursor-pointer transition-all"
           >
             <Settings2 className="w-4 h-4" /> 打开服务管理
           </button>
@@ -379,7 +379,7 @@ export default function NodeManagerPanel() {
         <div className="flex-1 min-h-0 flex flex-col">
           {/* Tab 栏 */}
           <div className="flex items-center gap-1 px-2 pt-1.5 pb-0 bg-[#0b0f1a] border-b border-white/10 overflow-x-auto">
-            <LayoutDashboard className="w-3.5 h-3.5 text-cyan-400 ml-1 flex-shrink-0" />
+            <LayoutDashboard className="w-3.5 h-3.5 text-[var(--module-accent)] ml-1 flex-shrink-0" />
             {tabs.map((tab) => {
               const Icon = ICONS[tab.icon] ?? Bot;
               const active = tab.id === activeTabId;
@@ -389,7 +389,7 @@ export default function NodeManagerPanel() {
                   onClick={() => setActiveTabId(tab.id)}
                   className={`group flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-[11px] font-semibold transition-all cursor-pointer flex-shrink-0 ${
                     active
-                      ? "bg-white/10 text-white border-b-2 border-cyan-400"
+                      ? "bg-white/10 text-white border-b-2 border-[var(--module-accent)]"
                       : "text-slate-400 hover:text-slate-200 hover:bg-white/5 border-b-2 border-transparent"
                   }`}
                 >
@@ -450,7 +450,7 @@ export default function NodeManagerPanel() {
           >
             {/* 弹窗头部 */}
             <div className="flex items-center gap-2 px-5 py-3.5 border-b border-white/10 bg-white/[0.02]">
-              <Settings2 className="w-4 h-4 text-cyan-400" />
+              <Settings2 className="w-4 h-4 text-[var(--module-accent)]" />
               <h2 className="text-sm font-bold text-white">服务管理</h2>
               <span className="text-[10px] text-slate-500 ml-1">
                 安装 / 升级 / 装依赖 / 启动 / 停止
@@ -576,8 +576,8 @@ function ProjectCard({
     <div className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
       {/* 卡片头部 */}
       <div className="flex items-center gap-3 px-5 py-4">
-        <div className="w-10 h-10 rounded-xl bg-cyan-600/15 border border-cyan-500/20 flex items-center justify-center">
-          <Icon className="w-5 h-5 text-cyan-400" />
+        <div className="w-10 h-10 rounded-xl bg-[color-mix(in_srgb,var(--module-accent)_15%,transparent)] border border-[var(--module-accent-ring)] flex items-center justify-center">
+          <Icon className="w-5 h-5 text-[var(--module-accent)]" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
@@ -647,7 +647,7 @@ function ProjectCard({
                 {updateInfo.error}
               </span>
             ) : updateInfo.hasUpdate ? (
-              <span className="flex items-center gap-1.5 text-cyan-400">
+              <span className="flex items-center gap-1.5 text-[var(--module-accent)]">
                 <RefreshCw className="w-3.5 h-3.5" />
                 有新版本（落后 {updateInfo.behind} 个提交），点「升级」更新
                 <span className="text-slate-600">
@@ -666,7 +666,7 @@ function ProjectCard({
             <button
               onClick={() => onCheckUpdate(project)}
               disabled={isBusy || running}
-              className="flex items-center gap-1.5 text-slate-400 hover:text-cyan-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center gap-1.5 text-slate-400 hover:text-[var(--module-accent)] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <RefreshCw className="w-3 h-3" /> 检查更新
             </button>
@@ -752,7 +752,7 @@ function ProjectCard({
           busy={isBusy && busy === `install:${project.id}`}
           onClick={() => onAction(project, "install")}
           icon={Download}
-          color="bg-cyan-600 hover:bg-cyan-500"
+          color="bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)]"
           label="安装"
         />
         <ActionButton

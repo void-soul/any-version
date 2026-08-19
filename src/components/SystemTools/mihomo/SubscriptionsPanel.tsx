@@ -648,7 +648,7 @@ function EditInfoModal({ item, overrides, onClose, onSaved }: any) {
                   key={o.id}
                   className={`px-2.5 py-1 rounded-lg text-[11px] border transition-all cursor-pointer ${
                     on
-                      ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
+                      ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)] border-[var(--module-accent-ring)]"
                       : "bg-white/5 text-slate-400 border-white/10 hover:text-white"
                   }`}
                   onClick={() => {
