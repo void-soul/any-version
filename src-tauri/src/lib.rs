@@ -4,7 +4,7 @@ mod tray;
 pub mod exit_log;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{Manager, Emitter};
+use tauri::{Manager, Emitter, Listener};
 
 /// 用户通过托盘「退出」主动请求退出。置位后，即便 Tauri 在窗口销毁流程中
 /// 发出 code=None 的 ExitRequested，也不应拦截真正的退出意图。
@@ -196,6 +196,15 @@ pub fn run() {
                 crate::commands::utils::set_resource_dir(res_dir);
             }
             tray::build_tray(app.handle())?;
+            // 接收前端在切换顶级模块时上报的当前页面，供模块专属热键做「显示/隐藏」切换判定
+            {
+                let h = app.handle().clone();
+                h.listen("launcher-active-page", move |event| {
+                    if let Ok(page) = serde_json::from_str::<String>(event.payload()) {
+                        crate::commands::launcher::windows::set_current_page(&page);
+                    }
+                });
+            }
             // 启动时兜底重建 SDK 锚点 junction（修复迁移后遗留的普通空目录）
             {
                 let config = crate::commands::config::load_config();
@@ -280,6 +289,7 @@ pub fn run() {
                 let _ = commands::launcher::windows::register_global_hotkeys(
                     app.handle().clone(),
                     &setting.show_hide_shortcut_key,
+                    &setting.module_hotkeys,
                 );
             }
 

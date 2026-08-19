@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// 分类数据模型
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,6 +138,10 @@ pub struct CheckProgress {
 pub struct LauncherSetting {
     #[serde(default = "default_hotkey")]
     pub show_hide_shortcut_key: String,
+    /// 各顶级模块的独立唤起快捷键：module_id -> 热键字符串（如 "F2"）。
+    /// 按下后唤起主窗口并直接显示对应模块；主热键(show_hide_shortcut_key)仍用于全局切换且显示「启动」模块。
+    #[serde(default)]
+    pub module_hotkeys: HashMap<String, String>,
     // ---- 视图设置（全局，应用到所有分类）----
     /// 项目图标大小（px），默认 32
     #[serde(default = "default_item_icon_size")]
@@ -202,6 +207,7 @@ impl Default for LauncherSetting {
     fn default() -> Self {
         Self {
             show_hide_shortcut_key: default_hotkey(),
+            module_hotkeys: HashMap::new(),
             item_icon_size: default_item_icon_size(),
             item_column_number: 0,
             card_density: default_card_density(),

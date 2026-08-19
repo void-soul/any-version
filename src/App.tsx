@@ -11,17 +11,17 @@ import Mihomo from "./components/SystemTools/Mihomo";
 import CertManager from "./components/SystemTools/CertManager";
 import LauncherPanel from "./components/launcher/LauncherPanel";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listen, emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Wrench, Settings, X, Minus, Square, Rss, Cpu, Bot, CalendarCheck, Download, AlertTriangle, CheckCircle2, Loader2, Boxes, Waypoints, ShieldCheck, Rocket } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import "./App.css";
 
-type PageId = "launcher" | "sdk" | "ai" | "tasks" | "node" | "mihomo" | "cert" | "news" | "tools" | "settings";
+export type PageId = "launcher" | "sdk" | "ai" | "tasks" | "node" | "mihomo" | "cert" | "news" | "tools" | "settings";
 
 // 顶级模块默认主题色（可在全局设置里自定义覆盖）
-const MODULE_DEFAULTS: Record<string, { label: string; color: string; dark?: boolean }> = {
+export const MODULE_DEFAULTS: Record<string, { label: string; color: string; dark?: boolean }> = {
   launcher: { label: "启动", color: "#8b5cf6" }, // purple
   news: { label: "资讯", color: "#ea580c" }, // orange
   sdk: { label: "SDK", color: "#2563eb" }, // blue
@@ -34,7 +34,7 @@ const MODULE_DEFAULTS: Record<string, { label: string; color: string; dark?: boo
   settings: { label: "设置", color: "#dc2626" }, // red
 };
 
-const MODULE_ORDER: PageId[] = ["launcher", "news", "sdk", "ai", "tasks", "node", "mihomo", "cert", "tools", "settings"];
+export const MODULE_ORDER: PageId[] = ["launcher", "news", "sdk", "ai", "tasks", "node", "mihomo", "cert", "tools", "settings"];
 
 // 自定义字体 @font-face 的全局 CSS 注入
 function buildFontFaceCss(customFontPath: string): string {
@@ -151,6 +151,13 @@ export default function App() {
       listen("launcher-toggle", () => {
         switchPage("launcher");
       });
+      // 监听模块专属快捷键唤起：直接切到对应顶级模块（来自后端 launcher-open-module 事件，载荷为 moduleId）
+      listen<string>("launcher-open-module", (event) => {
+        const m = event.payload;
+        if (m && (MODULE_ORDER as string[]).includes(m)) {
+          switchPage(m as PageId);
+        }
+      });
       // 监听外观变更（全局设置里修改模块主题色/字体后实时生效）
       listen("appearance-updated", async () => {
         try {
@@ -167,6 +174,11 @@ export default function App() {
     };
     initApp();
   }, []);
+
+  // 当前激活模块变化时上报后端，供模块专属热键做「显示/隐藏」切换判定
+  useEffect(() => {
+    emit("launcher-active-page", activePage).catch(() => {});
+  }, [activePage]);
 
   // 下载运行组件
   const downloadBinAssets = async () => {
@@ -203,6 +215,16 @@ export default function App() {
       ? `${appearance.globalFont}, system-ui, sans-serif`
       : undefined;
   const fontFaceCss = buildFontFaceCss(appearance.customFontPath);
+
+  // 当前激活模块的主题色：注入内容区，供各模块内部用 --module-accent 系列变量联动
+  const activeModuleColor =
+    appearance.moduleThemeColors[activePage] || MODULE_DEFAULTS[activePage]?.color || "#8b5cf6";
+  const moduleThemeVars = {
+    "--module-accent": activeModuleColor,
+    "--module-accent-soft": `color-mix(in srgb, ${activeModuleColor} 12%, transparent)`,
+    "--module-accent-ring": `color-mix(in srgb, ${activeModuleColor} 30%, transparent)`,
+    "--module-accent-strong": `color-mix(in srgb, ${activeModuleColor} 85%, white)`,
+  } as React.CSSProperties;
 
   return (
     <div
@@ -284,7 +306,7 @@ export default function App() {
       </div>
 
       {/* content */}
-      <div className="flex-grow flex flex-col min-h-0 relative">
+      <div className="flex-grow flex flex-col min-h-0 relative" style={moduleThemeVars}>
         {mountedPages.has("launcher") && (
           <div className={activePage === "launcher" ? "h-full w-full flex flex-col" : "hidden"}>
             <LauncherPanel />
