@@ -284,7 +284,7 @@ export default function ModelConfig() {
     <div className="h-full overflow-y-auto p-6 space-y-4">
       {/* Add Button */}
       <div className="relative">
-        <button onClick={() => setShowAddMenu(!showAddMenu)} className="px-3.5 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-lg shadow-violet-500/10">
+        <button onClick={() => setShowAddMenu(!showAddMenu)} className="px-3.5 py-2 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-lg shadow-[var(--module-accent-ring)]">
           <Plus className="w-3.5 h-3.5" /> 添加 Provider
         </button>
         {showAddMenu && (
@@ -417,7 +417,7 @@ export default function ModelConfig() {
               <div>
                 <label className="text-[10px] text-slate-500 font-semibold block mb-1">名称</label>
                 <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
-                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500" />
+                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
               </div>
 
               {/* Website */}
@@ -432,7 +432,7 @@ export default function ModelConfig() {
                 <label className="text-[10px] text-slate-500 font-semibold block mb-1">API Key</label>
                 <div className="relative">
                   <input type={showApiKey ? "text" : "password"} value={form.api_key} onChange={e => setForm({ ...form, api_key: e.target.value })} placeholder="sk-..."
-                    className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 pr-9 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500" />
+                    className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 pr-9 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                   <button
                     type="button"
                     onClick={() => setShowApiKey(v => !v)}
@@ -492,7 +492,7 @@ export default function ModelConfig() {
                   onChange={e => setModelsText(e.target.value)}
                   rows={6}
                   placeholder={"gpt-4o\ngpt-4o-mini\nclaude-sonnet-4-20250514\ndeepseek-chat\ndeepseek-v4-pro"}
-                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500 resize-y leading-5"
+                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] resize-y leading-5"
                 />
                 <div className="text-[9px] text-slate-600 mt-1">
                   已录入 {modelsText.split("\n").filter(l => l.trim()).length} 个模型
@@ -508,14 +508,14 @@ export default function ModelConfig() {
                   </div>
                   {modelsText.split("\n").map(l => l.trim()).filter(Boolean).map((mid) => (
                     <div key={mid} className="rounded-md border border-white/5 bg-slate-900/40 p-2.5">
-                      <div className="text-[10px] text-violet-300 font-mono mb-2">{mid}</div>
+                      <div className="text-[10px] text-[var(--module-accent)] font-mono mb-2">{mid}</div>
                       {(modelParams[mid] || []).map((cp, ci) => (
                         <div key={ci} className="mb-2 p-2 rounded bg-slate-800/40 border border-white/5 space-y-1.5">
                           <div className="flex gap-1.5">
                             <input value={cp.label} onChange={e => updateModelParam(mid, ci, { label: e.target.value })}
-                              placeholder="显示名（如 思考强度）" className="w-37 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500" />
+                              placeholder="显示名（如 思考强度）" className="w-37 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
                             <input value={cp.key} onChange={e => updateModelParam(mid, ci, { key: e.target.value })}
-                              placeholder="参数键" className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-violet-500" />
+                              placeholder="参数键" className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                             <button onClick={() => removeModelParam(mid, ci)}
                               className="shrink-0 w-6 h-6 flex items-center justify-center rounded bg-red-500/10 hover:bg-red-500/20 text-[11px] text-red-400">×</button>
                           </div>
@@ -532,10 +532,10 @@ export default function ModelConfig() {
                             </div>
                             {cp.paramType === "enum" && (
                               <input value={(cp.options || []).join(",")} onChange={e => updateModelParam(mid, ci, { options: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })}
-                                placeholder="可选值(逗号分隔, 如 low,medium,high)" className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-violet-500" />
+                                placeholder="可选值(逗号分隔, 如 low,medium,high)" className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                             )}
                             <input value={cp.defaultValue || ""} onChange={e => updateModelParam(mid, ci, { defaultValue: e.target.value })}
-                              placeholder="默认值" className="w-24 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-violet-500" />
+                              placeholder="默认值" className="w-24 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
                           </div>
                           <div className="flex gap-1.5 items-stretch">
                             <div className="flex items-center gap-1.5 shrink-0 rounded-md border border-amber-500/20 bg-amber-500/5 px-2 py-1">
@@ -553,12 +553,12 @@ export default function ModelConfig() {
                                 ? updateModelParam(mid, ci, { configPath: e.target.value })
                                 : updateModelParam(mid, ci, { envKey: e.target.value })}
                               placeholder={cp.target === "config" ? "config 路径(如 params.reasoning_effort)" : "环境变量名(如 REASONING_EFFORT)"}
-                              className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-violet-500" />
+                              className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                           </div>
                         </div>
                       ))}
                       <button onClick={() => addModelParam(mid)}
-                        className="text-[10px] text-violet-400 hover:text-violet-300 cursor-pointer">+ 添加参数</button>
+                        className="text-[10px] text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] cursor-pointer">+ 添加参数</button>
                     </div>
                   ))}
                 </div>
@@ -577,7 +577,7 @@ export default function ModelConfig() {
               <button onClick={() => setShowModal(false)}
                 className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer">取消</button>
               <button onClick={handleModalConfirm}
-                className="px-3.5 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-[10px] font-semibold cursor-pointer">确定</button>
+                className="px-3.5 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[10px] font-semibold cursor-pointer">确定</button>
             </div>
           </div>
         </div>

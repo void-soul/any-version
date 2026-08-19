@@ -785,7 +785,7 @@ export default function ProjectDetailPanel({
                 onClick={() => setShowMenuConfig(!showMenuConfig)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] border cursor-pointer transition-all ${
                   showMenuConfig 
-                    ? "bg-blue-600 border-blue-500 text-white" 
+                    ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white" 
                     : "bg-white/5 border-white/5 text-slate-300 hover:bg-white/10"
                 }`}
                 title="托盘右键菜单显示配置"
@@ -809,7 +809,7 @@ export default function ProjectDetailPanel({
         <div className="mx-5 mt-4 p-4 glass-panel border border-white/5 rounded-2xl bg-white/2 space-y-3 animate-fadeIn flex-shrink-0">
           <div className="flex items-center justify-between border-b border-white/5 pb-2">
             <span className="text-xs font-semibold text-white flex items-center gap-1.5">
-              <Settings className="w-3.5 h-3.5 text-blue-400" />
+              <Settings className="w-3.5 h-3.5 text-[var(--module-accent)]" />
               右键托盘菜单显示配置
             </span>
             <button 
@@ -834,7 +834,7 @@ export default function ProjectDetailPanel({
                     await refreshSingle(pid);
                   }
                 }}
-                className="rounded border-white/10 bg-black/40 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+                className="rounded border-white/10 bg-black/40 text-[var(--module-accent)] focus:ring-[var(--module-accent)] w-3.5 h-3.5 cursor-pointer"
               />
               显示版本切换控制
             </label>
@@ -854,7 +854,7 @@ export default function ProjectDetailPanel({
                         await refreshSingle(pid);
                       }
                     }}
-                    className="rounded border-white/10 bg-black/40 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+                    className="rounded border-white/10 bg-black/40 text-[var(--module-accent)] focus:ring-[var(--module-accent)] w-3.5 h-3.5 cursor-pointer"
                   />
                   显示服务启动/停止控制
                 </label>
@@ -888,8 +888,8 @@ export default function ProjectDetailPanel({
 
       {status.managed && (status.is_simple_managed || def?.simple_mode) && !status.install_root ? (
         <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-4">
-          <div className="w-16 h-16 rounded-full bg-blue-600/10 flex items-center justify-center">
-            <Settings className="w-8 h-8 text-blue-500" />
+          <div className="w-16 h-16 rounded-full bg-[var(--module-accent-soft)] flex items-center justify-center">
+            <Settings className="w-8 h-8 text-[var(--module-accent)]" />
           </div>
           <div>
             <p className="text-sm font-medium text-slate-300">{"未检测到本地安装目录"}</p>
@@ -899,7 +899,7 @@ export default function ProjectDetailPanel({
           </div>
           <button
             onClick={handleSelectCustomPath}
-            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]"
+            className="px-5 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-xl text-xs font-semibold shadow-lg shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]"
           >
             {"手动指定目录"}
           </button>
@@ -907,7 +907,7 @@ export default function ProjectDetailPanel({
       ) : (
         <>
           {!status.managed && (
-            <div className="mx-5 mt-4 p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-start gap-2.5 text-xs text-blue-300">
+            <div className="mx-5 mt-4 p-3 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-xl flex items-start gap-2.5 text-xs text-[var(--module-accent)]">
               <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
               <div>
                 <p className="font-semibold text-slate-200">{"此项目尚未开启托管"}</p>
@@ -924,7 +924,7 @@ export default function ProjectDetailPanel({
                   key={tab}
                   onClick={() => pid && patch(pid, { activeSubTab: tab })}
                   className={`flex-1 py-1.5 rounded-lg text-[10px] font-semibold transition-all cursor-pointer ${
-                    activeTab === tab ? "bg-blue-600 text-white shadow-md" : "text-slate-400 hover:text-slate-200"
+                    activeTab === tab ? "bg-[var(--module-accent)] text-white shadow-md" : "text-slate-400 hover:text-slate-200"
                   }`}
                 >
                   {tabLabels[tab]}
@@ -936,9 +936,9 @@ export default function ProjectDetailPanel({
           <div className="flex-1 overflow-y-auto p-5 space-y-5">
             {ui.detectStep || ui.switchingVersion ? (
               <div className="flex flex-col items-center justify-center py-12 space-y-4">
-                <Loader className="w-6 h-6 animate-spin text-blue-400" />
+                <Loader className="w-6 h-6 animate-spin text-[var(--module-accent)]" />
                 <div className="text-center space-y-2 max-w-sm">
-                  <p className="text-xs text-blue-300 font-medium">{ui.detectStep || `正在切换到 ${ui.switchingVersion}...`}</p>
+                  <p className="text-xs text-[var(--module-accent)] font-medium">{ui.detectStep || `正在切换到 ${ui.switchingVersion}...`}</p>
                   <div className="w-64 mx-auto">
                     <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1">
                       <span>检测进度</span>
@@ -946,7 +946,7 @@ export default function ProjectDetailPanel({
                     </div>
                     <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-gradient-to-r from-blue-600 to-blue-400 rounded-full transition-all duration-500"
+                        className="h-full bg-gradient-to-r from-[var(--module-accent)] to-[var(--module-accent-strong)] rounded-full transition-all duration-500"
                         style={{ width: `${(ui.detectIndex / ui.detectTotal) * 100}%` }}
                       />
                     </div>
@@ -956,7 +956,7 @@ export default function ProjectDetailPanel({
               </div>
             ) : ui.detailLoading && !ui.detailLoaded ? (
               <div className="flex items-center justify-center gap-2 text-xs text-slate-400 py-8">
-                <Loader className="w-4 h-4 animate-spin text-blue-400" /> {"正在加载项目详情..."}
+                <Loader className="w-4 h-4 animate-spin text-[var(--module-accent)]" /> {"正在加载项目详情..."}
               </div>
             ) : (
               <>
@@ -1025,10 +1025,10 @@ export default function ProjectDetailPanel({
                 onClick={() => patch(pid!, { showManagePreview: false, managePreview: null })}
               />
               {/* 弹框 */}
-              <div className={`relative w-full max-w-lg max-h-[82vh] rounded-2xl border shadow-2xl flex flex-col overflow-hidden animate-fadeIn ${isUnmanage ? "bg-[#17181c] border-red-500/25" : "bg-[#17181c] border-blue-500/25"}`}>
+              <div className={`relative w-full max-w-lg max-h-[82vh] rounded-2xl border shadow-2xl flex flex-col overflow-hidden animate-fadeIn ${isUnmanage ? "bg-[#17181c] border-red-500/25" : "bg-[#17181c] border-[var(--module-accent-ring)]"}`}>
                 {/* 头部 */}
                 <div className="flex-shrink-0 px-4 py-3 border-b border-white/10 bg-white/[0.02] flex items-center justify-between">
-                  <h4 className={`text-xs font-semibold flex items-center gap-1.5 ${isUnmanage ? "text-red-300" : "text-blue-300"}`}>
+                  <h4 className={`text-xs font-semibold flex items-center gap-1.5 ${isUnmanage ? "text-red-300" : "text-[var(--module-accent)]"}`}>
                     <Info className="w-3.5 h-3.5" />
                     {isUnmanage ? "取消托管预览" : "托管配置选项"}
                   </h4>
@@ -1052,7 +1052,7 @@ export default function ProjectDetailPanel({
                         <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                           <input
                             type="checkbox"
-                            className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                            className="rounded border-white/10 bg-slate-800 text-[var(--module-accent)] focus:ring-[var(--module-accent)] focus:ring-offset-0"
                             checked={localDelegation.env_vars.length === envVars.filter(v => v.tier !== "compat").length}
                             onChange={(e) => {
                               const checked = e.target.checked;
@@ -1069,7 +1069,7 @@ export default function ProjectDetailPanel({
                             <label key={v.name} className="flex items-center gap-2 cursor-pointer text-[10px] text-slate-400 hover:text-slate-200">
                               <input
                                 type="checkbox"
-                                className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                                className="rounded border-white/10 bg-slate-800 text-[var(--module-accent)] focus:ring-[var(--module-accent)] focus:ring-offset-0"
                                 checked={localDelegation.env_vars.includes(v.name)}
                                 onChange={(e) => {
                                   const updated = e.target.checked
@@ -1091,7 +1091,7 @@ export default function ProjectDetailPanel({
                         <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                           <input
                             type="checkbox"
-                            className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                            className="rounded border-white/10 bg-slate-800 text-[var(--module-accent)] focus:ring-[var(--module-accent)] focus:ring-offset-0"
                             checked={localDelegation.path_vars.length === def.bin_dirs.length}
                             onChange={(e) => {
                               const checked = e.target.checked;
@@ -1106,7 +1106,7 @@ export default function ProjectDetailPanel({
                             <label key={binDir} className="flex items-center gap-2 cursor-pointer text-[10px] text-slate-400 hover:text-slate-200">
                               <input
                                 type="checkbox"
-                                className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                                className="rounded border-white/10 bg-slate-800 text-[var(--module-accent)] focus:ring-[var(--module-accent)] focus:ring-offset-0"
                                 checked={localDelegation.path_vars.includes(binDir)}
                                 onChange={(e) => {
                                   const updated = e.target.checked
@@ -1128,7 +1128,7 @@ export default function ProjectDetailPanel({
                         <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                           <input
                             type="checkbox"
-                            className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                            className="rounded border-white/10 bg-slate-800 text-[var(--module-accent)] focus:ring-[var(--module-accent)] focus:ring-offset-0"
                             checked={localDelegation.version_control}
                             onChange={(e) => {
                               handleCheckboxChange({ version_control: e.target.checked });
@@ -1147,7 +1147,7 @@ export default function ProjectDetailPanel({
                       <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                         <input
                           type="checkbox"
-                          className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                          className="rounded border-white/10 bg-slate-800 text-[var(--module-accent)] focus:ring-[var(--module-accent)] focus:ring-offset-0"
                           checked={localDelegation.create_symlink}
                           onChange={(e) => {
                             handleCheckboxChange({ create_symlink: e.target.checked });
@@ -1165,7 +1165,7 @@ export default function ProjectDetailPanel({
                       <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                         <input
                           type="checkbox"
-                          className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                          className="rounded border-white/10 bg-slate-800 text-[var(--module-accent)] focus:ring-[var(--module-accent)] focus:ring-offset-0"
                           checked={localDelegation.manage_install_dir}
                           onChange={(e) => {
                             handleCheckboxChange({ manage_install_dir: e.target.checked });
@@ -1184,7 +1184,7 @@ export default function ProjectDetailPanel({
                         <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                           <input
                             type="checkbox"
-                            className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                            className="rounded border-white/10 bg-slate-800 text-[var(--module-accent)] focus:ring-[var(--module-accent)] focus:ring-offset-0"
                             checked={localDelegation.manage_data_dir}
                             onChange={(e) => {
                               handleCheckboxChange({ manage_data_dir: e.target.checked });
@@ -1204,7 +1204,7 @@ export default function ProjectDetailPanel({
                         <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                           <input
                             type="checkbox"
-                            className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                            className="rounded border-white/10 bg-slate-800 text-[var(--module-accent)] focus:ring-[var(--module-accent)] focus:ring-offset-0"
                             checked={localDelegation.manage_cache_dir}
                             onChange={(e) => {
                               handleCheckboxChange({ manage_cache_dir: e.target.checked });
@@ -1224,7 +1224,7 @@ export default function ProjectDetailPanel({
                         <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                           <input
                             type="checkbox"
-                            className="rounded border-white/10 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                            className="rounded border-white/10 bg-slate-800 text-[var(--module-accent)] focus:ring-[var(--module-accent)] focus:ring-offset-0"
                             checked={localDelegation.manage_optional_tools.includes(pm.id)}
                             onChange={(e) => {
                               const checked = e.target.checked;
@@ -1250,7 +1250,7 @@ export default function ProjectDetailPanel({
                 <span className="text-xs font-semibold text-slate-300 block">将要执行的操作步骤：</span>
                 {preview?.steps?.map((step, idx) => (
                   <div key={idx} className="flex items-start gap-2 text-[11px]">
-                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5 ${stepColorMap[step.action] || "bg-blue-600/20 text-blue-400"}`}>
+                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5 ${stepColorMap[step.action] || "bg-[var(--module-accent-soft)] text-[var(--module-accent)]"}`}>
                       {idx + 1}
                     </span>
                     <div className="min-w-0">
@@ -1283,7 +1283,7 @@ export default function ProjectDetailPanel({
                 <div className="p-2.5 rounded-lg bg-black/20 border border-white/5 text-[10px] space-y-1.5">
                   <div className="flex items-center gap-1.5 text-slate-300">
                     <span className="font-semibold text-slate-200">{"备份文件位置："}</span>
-                    <span className="font-mono text-blue-300">%USERPROFILE%\\.any-version\\backup\\manage_{pid}_*.json</span>
+                    <span className="font-mono text-[var(--module-accent)]">%USERPROFILE%\\.any-version\\backup\\manage_{pid}_*.json</span>
                   </div>
                   <div className="flex items-center gap-1.5 text-slate-300">
                     <span className="font-semibold text-slate-200">{isUnmanage ? "托管时已备份：" : "取消托管时："}</span>
@@ -1300,7 +1300,7 @@ export default function ProjectDetailPanel({
                       {ui.unmanaging ? "正在执行..." : "确认取消托管"}
                     </button>
                   ) : (
-                    <button onClick={() => handleManage()} disabled={ui.managing} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all">
+                    <button onClick={() => handleManage()} disabled={ui.managing} className="px-4 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all">
                       {ui.managing ? "正在执行..." : "确认托管"}
                     </button>
                   )}
@@ -1327,7 +1327,7 @@ export default function ProjectDetailPanel({
                 {ui.unmanaging ? "取消托管中..." : "取消托管"}
               </button>
             ) : (
-              <button onClick={() => handlePreviewManage()} disabled={ui.managing} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]">
+              <button onClick={() => handlePreviewManage()} disabled={ui.managing} className="px-5 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]">
                 {ui.managing ? "托管中..." : "托管此项目"}
               </button>
             )}

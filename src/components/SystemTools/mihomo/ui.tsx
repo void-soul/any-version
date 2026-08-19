@@ -2,14 +2,14 @@
 import React from "react";
 
 export const inputCls =
-  "w-full h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500";
+  "w-full h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]";
 export const labelCls = "text-[11px] text-slate-400 mb-1 block font-medium";
 export const btnSec =
   "px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 text-[11px] font-semibold transition-all cursor-pointer";
 export const btnDanger =
   "px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-[11px] font-semibold transition-all cursor-pointer";
 export const btnPrimary =
-  "px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold transition-all cursor-pointer";
+  "px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold transition-all cursor-pointer";
 export const tagCls =
   "text-[10px] px-2 py-0.5 rounded-md bg-white/5 text-slate-400 border border-white/10";
 export const cardCls = "glass-panel rounded-2xl border border-white/10 bg-white/[0.02]";
@@ -24,7 +24,7 @@ export function Toggle({ label, v, onChange, disabled }: { label?: string; v: bo
         disabled={disabled}
         onClick={() => !disabled && onChange(!v)}
         className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer ${
-          v ? "bg-emerald-500" : "bg-white/15"
+          v ? "bg-[var(--module-accent)]" : "bg-white/15"
         }`}
       >
         <span
@@ -53,7 +53,7 @@ export function BusyOverlay({ show, text }: { show: boolean; text?: string }) {
   if (!show) return null;
   return (
     <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl bg-[#0b0e15]/70 backdrop-blur-[2px]">
-      <span className="w-6 h-6 rounded-full border-2 border-emerald-400/30 border-t-emerald-400 animate-spin" />
+      <span className="w-6 h-6 rounded-full border-2 border-[var(--module-accent-ring)] border-t-[var(--module-accent)] animate-spin" />
       <span className="text-[11px] text-slate-300">{text || "处理中…"}</span>
     </div>
   );

@@ -144,7 +144,7 @@ export default function TunPanel() {
               key={k}
               onClick={() => setValues({ ...values, stack: k })}
               className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
-                values.stack === k ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-slate-200"
+                values.stack === k ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200"
               }`}
             >
               {k === "gvisor" ? "gVisor" : k === "mixed" ? "Mixed" : "System"}

@@ -156,7 +156,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
               key={k}
               onClick={() => setTab(k)}
               className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
-                tab === k ? (k === "active" ? "bg-emerald-600 text-white" : "bg-rose-500/60 text-white") : "text-slate-400 hover:text-slate-200"
+                tab === k ? (k === "active" ? "bg-[var(--module-accent)] text-white" : "bg-rose-500/60 text-white") : "text-slate-400 hover:text-slate-200"
               }`}
             >
               {k === "active" ? `活动中 (${active.length})` : `已关闭 (${closed.length})`}
@@ -166,7 +166,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
         <div className="relative flex-1 min-w-40">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
-            className="w-full h-8 pl-8 pr-2.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+            className="w-full h-8 pl-8 pr-2.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
             placeholder="筛选连接"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}

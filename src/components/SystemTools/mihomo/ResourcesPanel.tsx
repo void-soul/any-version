@@ -102,7 +102,7 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
             {([["db", false], ["dat", true]] as const).map(([t, v]) => (
               <button key={t} onClick={() => patchC({ "geodata-mode": v })}
                 className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
-                  geoMode === v ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-slate-200"
+                  geoMode === v ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200"
                 }`}>{t}</button>
             ))}
           </div>

@@ -58,7 +58,7 @@ export default function ProjectListPanel({
           {FILTERS.map((f) => (
             <button key={f.key} onClick={() => onFilterChange(f.key)}
               className={`flex-1 py-0.5 rounded text-[11px] font-semibold transition-all cursor-pointer ${
-                filter === f.key ? "bg-blue-600 text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"
+                filter === f.key ? "bg-[var(--module-accent)] text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"
               }`}>
               {f.label}
             </button>
@@ -77,7 +77,7 @@ export default function ProjectListPanel({
             return (
               <div key={p.id} onClick={() => onSelect(p)}
                 className={`relative p-2.5 flex items-center justify-between cursor-pointer transition-all border-b border-white/[0.03] ${
-                  isSelected ? "bg-blue-600/10 border-l-2 border-l-blue-500"
+                  isSelected ? "bg-[var(--module-accent-soft)] border-l-2 border-l-[var(--module-accent)]"
                     : "hover:bg-white/[0.03] border-l-2 border-l-transparent"
                 }`}>
                 <div className="flex-1 min-w-0 flex items-center gap-2">

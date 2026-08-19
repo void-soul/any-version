@@ -98,7 +98,7 @@ export default function OverviewPanel({ info, running, onNavigate }: {
         {([["rule", "规则"], ["global", "全局"], ["direct", "直连"]] as const).map(([k, t]) => (
           <button key={k} onClick={() => onChangeMode(k)} disabled={!running}
             className={`flex-1 py-2 rounded-xl text-[12px] font-semibold cursor-pointer transition-all disabled:opacity-40 ${
-              mode === k ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+              mode === k ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
             }`}>{t}</button>
         ))}
       </div>

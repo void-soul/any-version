@@ -88,15 +88,15 @@ export default function Mihomo() {
       {/* 头部控制栏 */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-4">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-lg shadow-emerald-500/5">
+          <div className="p-2.5 rounded-xl bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] shadow-lg shadow-[var(--module-accent-ring)]">
             <Waypoints className="w-6 h-6" />
           </div>
           <div>
             <h3 className="text-base font-bold text-white flex items-center gap-2">
               Mihomo 代理
               {running ? (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]">
+                  <span className="w-2 h-2 rounded-full bg-[var(--module-accent)] animate-pulse" />
                   运行中
                 </span>
               ) : (
@@ -121,7 +121,7 @@ export default function Mihomo() {
             <button
               onClick={() => act("start", () => mihomoApi.start())}
               disabled={busy === "start"}
-              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-emerald-600/20 cursor-pointer disabled:opacity-50"
+              className="px-3.5 py-2 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-[var(--module-accent-ring)] cursor-pointer disabled:opacity-50"
             >
               <Play className="w-3.5 h-3.5 fill-current" /> {busy === "start" ? "启动中…" : "启动"}
             </button>
@@ -186,7 +186,7 @@ export default function Mihomo() {
             onClick={() => setTab(t.k)}
             className={`px-3 py-2 text-xs font-medium cursor-pointer border-b-2 -mb-px transition-all whitespace-nowrap ${
               tab === t.k
-                ? "text-emerald-400 border-emerald-400"
+                ? "text-[var(--module-accent)] border-[var(--module-accent)]"
                 : "text-slate-400 border-transparent hover:text-slate-200"
             }`}
           >

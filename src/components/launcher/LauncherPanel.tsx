@@ -654,7 +654,7 @@ export default function LauncherPanel() {
       <div
         key={cat.id}
         className={`space-y-1.5 rounded-xl p-1.5 transition ${
-          isGroupHovered ? "bg-purple-600/10 ring-1 ring-purple-500/50" : ""
+          isGroupHovered ? "bg-[var(--module-accent-soft)] ring-1 ring-[var(--module-accent-ring)]" : ""
         }`}
         onDragOver={(e) => handleHtml5DragOver(e, cat.id)}
       >
@@ -669,7 +669,7 @@ export default function LauncherPanel() {
               e.preventDefault();
               setCategoryContextMenu({ x: e.clientX, y: e.clientY, category: cat });
             }}
-            className="relative bg-[#0c101c] pr-4 pl-0.5 font-semibold text-slate-300 tracking-wide flex items-center gap-1 cursor-pointer hover:text-purple-300 transition group-header"
+            className="relative bg-[#0c101c] pr-4 pl-0.5 font-semibold text-slate-300 tracking-wide flex items-center gap-1 cursor-pointer hover:text-[var(--module-accent)] transition group-header"
             style={categoryNameStyle}
             title="点击展开/收起，右键管理此分组"
           >
@@ -681,7 +681,7 @@ export default function LauncherPanel() {
             {cat.data.icon ? (
               <span className="leading-none" style={{ fontSize: view.categoryFontSize + 2 }}>{cat.data.icon}</span>
             ) : (
-              <span className="w-1.5 h-1.5 rounded-sm bg-gradient-to-br from-purple-400 to-cyan-400 shadow-sm shadow-purple-500/40" />
+              <span className="w-1.5 h-1.5 rounded-sm bg-gradient-to-br from-[var(--module-accent)] to-cyan-400 shadow-sm shadow-[var(--module-accent-ring)]" />
             )}
             <span>{cat.name}</span>
             {groupItems.length > 0 && (
@@ -706,7 +706,7 @@ export default function LauncherPanel() {
                 className={`group relative rounded-xl border transition cursor-pointer min-w-0 flex items-center ${densityCard} ${cardBorderClass} ${
                   checkResults[item.id] && !checkResults[item.id].exists
                     ? "border-red-500/70 bg-red-500/10 hover:border-red-400 shadow-red-500/20 shadow-lg"
-                    : "border-white/5 hover:border-purple-500/40 bg-white/[0.02] hover:bg-purple-600/10"
+                    : "border-white/5 hover:border-[var(--module-accent-ring)] bg-white/[0.02] hover:bg-[var(--module-accent-soft)]"
                 } active:scale-95`}
                 style={cardRadius}
                 title={
@@ -743,13 +743,13 @@ export default function LauncherPanel() {
                   ) : item.itemType === 2 ? (
                     <Globe className="text-blue-400" style={{ width: view.iconSize * 0.55, height: view.iconSize * 0.55 }} />
                   ) : (
-                    <FileText className="text-purple-400" style={{ width: view.iconSize * 0.55, height: view.iconSize * 0.55 }} />
+                    <FileText className="text-[var(--module-accent)]" style={{ width: view.iconSize * 0.55, height: view.iconSize * 0.55 }} />
                   )}
                 </div>
 
                 {/* Name */}
                 {view.showName && (
-                  <span className="text-slate-200 truncate group-hover:text-purple-200 transition min-w-0 flex-1 font-medium" style={itemNameStyle}>
+                  <span className="text-slate-200 truncate group-hover:text-[var(--module-accent)] transition min-w-0 flex-1 font-medium" style={itemNameStyle}>
                     {item.name}
                   </span>
                 )}
@@ -763,7 +763,7 @@ export default function LauncherPanel() {
               setTargetClassificationId(cat.id);
               setItemModalOpen(true);
             }}
-            className="border border-dashed border-white/5 hover:border-purple-500/30 rounded-xl py-3 text-center text-slate-600 hover:text-slate-400 text-[11px] cursor-pointer transition"
+            className="border border-dashed border-white/5 hover:border-[var(--module-accent-ring)] rounded-xl py-3 text-center text-slate-600 hover:text-slate-400 text-[11px] cursor-pointer transition"
           >
             + 点击为此分组添加项目，或直接拖入 .exe / 文件夹 / 任意文件
           </div>
@@ -789,11 +789,11 @@ export default function LauncherPanel() {
       {/* Drag Over Overlay Toast / Indicator */}
       {isDragOver && (
         <div className="absolute inset-x-0 top-12 z-50 flex justify-center pointer-events-none animate-in fade-in slide-in-from-top-2 duration-150">
-          <div className="bg-purple-600/90 backdrop-blur-md border border-purple-400 text-white px-5 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2.5">
-            <UploadCloud className="w-5 h-5 text-purple-200 animate-bounce" />
+          <div className="bg-[color-mix(in_srgb,var(--module-accent)_90%,transparent)] backdrop-blur-md border border-[var(--module-accent)] text-white px-5 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2.5">
+            <UploadCloud className="w-5 h-5 text-[var(--module-accent)] animate-bounce" />
             <div className="text-xs">
               <span className="font-bold">松开鼠标立即添加至「{currentDragTargetName}」</span>
-              <span className="text-purple-200 text-[10px] ml-1.5">(支持 .exe、文件夹、任意文件、快捷方式)</span>
+              <span className="text-[var(--module-accent)] text-[10px] ml-1.5">(支持 .exe、文件夹、任意文件、快捷方式)</span>
             </div>
           </div>
         </div>
@@ -818,7 +818,7 @@ export default function LauncherPanel() {
             }}
             className={`px-2.5 py-1 rounded-lg text-xs flex items-center gap-1.5 border transition cursor-pointer ${
               isSearchOpen
-                ? "bg-purple-600 border-purple-400 text-white shadow-md shadow-purple-600/30"
+                ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white shadow-md shadow-[var(--module-accent-ring)]"
                 : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
             }`}
             title="搜索全部快捷方式 (Ctrl+F)"
@@ -867,7 +867,7 @@ export default function LauncherPanel() {
               onClick={() => setViewSettingsOpen((v) => !v)}
               className={`px-2.5 py-1 rounded-lg text-xs flex items-center gap-1.5 border transition cursor-pointer ${
                 viewSettingsOpen
-                  ? "bg-purple-600 border-purple-400 text-white"
+                  ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white"
                   : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
               }`}
               title="调整项目尺寸与外观"
@@ -880,7 +880,7 @@ export default function LauncherPanel() {
               <div className="absolute right-0 mt-1 z-[150] w-64 bg-[#171d2e] border border-white/15 rounded-xl shadow-2xl shadow-black/50 p-3 space-y-3 max-h-[75vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-100">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-slate-200 flex items-center gap-1">
-                    <Settings2 className="w-3 h-3 text-purple-400" />
+                    <Settings2 className="w-3 h-3 text-[var(--module-accent)]" />
                     全局视图设置
                   </span>
                 </div>
@@ -897,7 +897,7 @@ export default function LauncherPanel() {
                     step={4}
                     value={settings.itemIconSize ?? 32}
                     onChange={(e) => saveViewSettings({ itemIconSize: Number(e.target.value) })}
-                    className="w-full accent-purple-500"
+                    className="w-full accent-[var(--module-accent)]"
                   />
                 </div>
 
@@ -911,7 +911,7 @@ export default function LauncherPanel() {
                         onClick={() => saveViewSettings({ itemColumnNumber: col })}
                         className={`px-2 py-1 rounded-lg text-[10px] border transition cursor-pointer ${
                           (settings.itemColumnNumber ?? 0) === col
-                            ? "bg-purple-600 border-purple-400 text-white"
+                            ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white"
                             : "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10"
                         }`}
                       >
@@ -935,7 +935,7 @@ export default function LauncherPanel() {
                         onClick={() => saveViewSettings({ cardDensity: opt.key as LauncherSetting["cardDensity"] })}
                         className={`px-2 py-1.5 rounded-lg text-[10px] border transition cursor-pointer ${
                           (settings.cardDensity ?? "cozy") === opt.key
-                            ? "bg-purple-600 border-purple-400 text-white"
+                            ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white"
                             : "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10"
                         }`}
                       >
@@ -957,7 +957,7 @@ export default function LauncherPanel() {
                     step={1}
                     value={settings.itemFontSize ?? 12}
                     onChange={(e) => saveViewSettings({ itemFontSize: Number(e.target.value) })}
-                    className="w-full accent-purple-500"
+                    className="w-full accent-[var(--module-accent)]"
                   />
                 </div>
 
@@ -973,7 +973,7 @@ export default function LauncherPanel() {
                     step={1}
                     value={settings.categoryFontSize ?? 12}
                     onChange={(e) => saveViewSettings({ categoryFontSize: Number(e.target.value) })}
-                    className="w-full accent-purple-500"
+                    className="w-full accent-[var(--module-accent)]"
                   />
                 </div>
 
@@ -989,7 +989,7 @@ export default function LauncherPanel() {
                     step={1}
                     value={settings.itemRadius ?? 12}
                     onChange={(e) => saveViewSettings({ itemRadius: Number(e.target.value) })}
-                    className="w-full accent-purple-500"
+                    className="w-full accent-[var(--module-accent)]"
                   />
                 </div>
 
@@ -1005,7 +1005,7 @@ export default function LauncherPanel() {
                     step={1}
                     value={settings.categoryGap ?? 24}
                     onChange={(e) => saveViewSettings({ categoryGap: Number(e.target.value) })}
-                    className="w-full accent-purple-500"
+                    className="w-full accent-[var(--module-accent)]"
                   />
                 </div>
 
@@ -1016,7 +1016,7 @@ export default function LauncherPanel() {
                     <button
                       onClick={() => saveViewSettings({ itemBorder: !(settings.itemBorder ?? true) })}
                       className={`w-7 h-4 rounded-full transition relative cursor-pointer ${
-                        settings.itemBorder ?? true ? "bg-purple-600" : "bg-white/15"
+                        settings.itemBorder ?? true ? "bg-[var(--module-accent)]" : "bg-white/15"
                       }`}
                     >
                       <span
@@ -1031,7 +1031,7 @@ export default function LauncherPanel() {
                     <button
                       onClick={() => saveViewSettings({ showItemName: !(settings.showItemName ?? true) })}
                       className={`w-7 h-4 rounded-full transition relative cursor-pointer ${
-                        settings.showItemName ?? true ? "bg-purple-600" : "bg-white/15"
+                        settings.showItemName ?? true ? "bg-[var(--module-accent)]" : "bg-white/15"
                       }`}
                     >
                       <span
@@ -1046,7 +1046,7 @@ export default function LauncherPanel() {
                     <button
                       onClick={() => saveViewSettings({ iconBackgroundColor: !(settings.iconBackgroundColor ?? false) })}
                       className={`w-7 h-4 rounded-full transition relative cursor-pointer ${
-                        settings.iconBackgroundColor ?? false ? "bg-purple-600" : "bg-white/15"
+                        settings.iconBackgroundColor ?? false ? "bg-[var(--module-accent)]" : "bg-white/15"
                       }`}
                     >
                       <span
@@ -1068,7 +1068,7 @@ export default function LauncherPanel() {
               setTargetClassificationId(activeTopCategory ? activeTopCategory.id : 1);
               setItemModalOpen(true);
             }}
-            className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-medium transition cursor-pointer shadow-md shadow-purple-600/20 flex items-center gap-1"
+            className="px-3 py-1 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-lg text-xs font-medium transition cursor-pointer shadow-md shadow-[var(--module-accent-ring)] flex items-center gap-1"
           >
             <Plus className="w-3 h-3" />
             <span className="text-[11px]">添加项目</span>
@@ -1080,16 +1080,16 @@ export default function LauncherPanel() {
       {checkProgress && (
         <div className="h-9 px-4 flex items-center gap-3 bg-[#0c101c] border-b border-white/5 flex-shrink-0 animate-in slide-in-from-top-2 duration-150">
           <div className="flex items-center gap-1.5 text-[11px] text-slate-400 whitespace-nowrap min-w-0">
-            <Loader2 className="w-3.5 h-3.5 text-purple-400 animate-spin flex-shrink-0" />
+            <Loader2 className="w-3.5 h-3.5 text-[var(--module-accent)] animate-spin flex-shrink-0" />
             <span className="truncate">
               {checkProgress.name
-                ? <>正在检测 <span className="text-purple-300">{checkProgress.name}</span></>
+                ? <>正在检测 <span className="text-[var(--module-accent)]">{checkProgress.name}</span></>
                 : "正在检测"}
             </span>
           </div>
           <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
             <div
-              className="h-full bg-gradient-to-r from-purple-500 to-violet-400 rounded-full transition-all duration-200"
+              className="h-full bg-gradient-to-r from-[var(--module-accent)] to-[var(--module-accent-strong)] rounded-full transition-all duration-200"
               style={{
                 width: `${checkProgress.total > 0 ? Math.round((checkProgress.done / checkProgress.total) * 100) : 0}%`,
               }}
@@ -1187,7 +1187,7 @@ export default function LauncherPanel() {
                       <div className="w-full border-t border-white/5" />
                     </div>
                     <div className="relative bg-[#0c101c] pr-4 pl-0.5 font-semibold text-slate-400 tracking-wide flex items-center gap-1.5" style={categoryNameStyle}>
-                      <span className="w-1.5 h-1.5 rounded-sm bg-gradient-to-br from-purple-400 to-cyan-400 shadow-sm shadow-purple-500/40" />
+                      <span className="w-1.5 h-1.5 rounded-sm bg-gradient-to-br from-[var(--module-accent)] to-cyan-400 shadow-sm shadow-[var(--module-accent-ring)]" />
                       <span>其他项目</span>
                       {directItems.length > 0 && (
                         <span className="text-[10px] text-slate-600 font-normal">
@@ -1211,7 +1211,7 @@ export default function LauncherPanel() {
                         className={`group relative rounded-xl border transition cursor-pointer min-w-0 flex items-center ${densityCard} ${cardBorderClass} ${
                           checkResults[item.id] && !checkResults[item.id].exists
                             ? "border-red-500/70 bg-red-500/10 hover:border-red-400 shadow-lg shadow-red-500/20"
-                            : "border-white/5 hover:border-purple-500/40 bg-white/[0.02] hover:bg-purple-600/10"
+                            : "border-white/5 hover:border-[var(--module-accent-ring)] bg-white/[0.02] hover:bg-[var(--module-accent-soft)]"
                         } active:scale-95`}
                         style={cardRadius}
                         title={
@@ -1247,12 +1247,12 @@ export default function LauncherPanel() {
                           ) : item.itemType === 2 ? (
                             <Globe className="text-blue-400" style={{ width: view.iconSize * 0.55, height: view.iconSize * 0.55 }} />
                           ) : (
-                            <FileText className="text-purple-400" style={{ width: view.iconSize * 0.55, height: view.iconSize * 0.55 }} />
+                            <FileText className="text-[var(--module-accent)]" style={{ width: view.iconSize * 0.55, height: view.iconSize * 0.55 }} />
                           )}
                         </div>
 
                         {view.showName && (
-                          <span className="text-slate-200 truncate group-hover:text-purple-200 transition min-w-0 flex-1 font-medium" style={itemNameStyle}>
+                          <span className="text-slate-200 truncate group-hover:text-[var(--module-accent)] transition min-w-0 flex-1 font-medium" style={itemNameStyle}>
                             {item.name}
                           </span>
                         )}
@@ -1261,11 +1261,11 @@ export default function LauncherPanel() {
                   </div>
                 ) : subCategories.length === 0 ? (
                   <div className="py-20 text-center text-slate-500 flex flex-col items-center justify-center">
-                    <UploadCloud className="w-12 h-12 mb-3 opacity-30 text-purple-400" />
+                    <UploadCloud className="w-12 h-12 mb-3 opacity-30 text-[var(--module-accent)]" />
                     <p className="text-sm font-medium text-slate-300">当前分类暂无项目</p>
                     <p className="text-xs text-slate-500 mt-1 max-w-sm">
                       您可以直接将 .exe、文件夹、任意文件或快捷方式
-                      <span className="text-purple-400 font-medium">拖入此处</span>
+                      <span className="text-[var(--module-accent)] font-medium">拖入此处</span>
                     </p>
                     <div className="flex items-center gap-2 mt-4">
                       <button
@@ -1276,7 +1276,7 @@ export default function LauncherPanel() {
                           );
                           setItemModalOpen(true);
                         }}
-                        className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium rounded-xl transition cursor-pointer flex items-center gap-1.5"
+                        className="px-3.5 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-xs font-medium rounded-xl transition cursor-pointer flex items-center gap-1.5"
                       >
                         <Plus className="w-3.5 h-3.5" />
                         添加项目
@@ -1291,7 +1291,7 @@ export default function LauncherPanel() {
                         }}
                         className="px-3.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-medium rounded-xl border border-white/10 transition cursor-pointer flex items-center gap-1.5"
                       >
-                        <FolderPlus className="w-3.5 h-3.5 text-purple-400" />
+                        <FolderPlus className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                         新建子分组
                       </button>
                     </div>
@@ -1308,7 +1308,7 @@ export default function LauncherPanel() {
             <div className="w-full max-w-[600px] h-full flex flex-col">
               {/* Search Input Box */}
               <div className="relative flex items-center mb-3">
-                <Search className="w-4 h-4 absolute left-3.5 text-purple-400 pointer-events-none" />
+                <Search className="w-4 h-4 absolute left-3.5 text-[var(--module-accent)] pointer-events-none" />
                 <input
                   ref={searchInputRef}
                   type="text"
@@ -1338,7 +1338,7 @@ export default function LauncherPanel() {
                     }
                   }}
                   placeholder="搜索名称 / 拼音首字母 / 网址..."
-                  className="w-full bg-white/5 border border-purple-500/50 rounded-xl pl-10 pr-10 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-400 transition shadow-lg shadow-purple-600/10"
+                  className="w-full bg-white/5 border border-[var(--module-accent-ring)] rounded-xl pl-10 pr-10 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)] transition shadow-lg shadow-[var(--module-accent-ring)]"
                 />
                 <button
                   onClick={closeSearch}
@@ -1366,7 +1366,7 @@ export default function LauncherPanel() {
                       }}
                       className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs transition cursor-pointer ${
                         isSelected
-                          ? "bg-purple-600 text-white font-medium shadow-md shadow-purple-600/30"
+                          ? "bg-[var(--module-accent)] text-white font-medium shadow-md shadow-[var(--module-accent-ring)]"
                           : "text-slate-200 hover:bg-white/5"
                       }`}
                     >
@@ -1381,7 +1381,7 @@ export default function LauncherPanel() {
                         ) : item.itemType === 2 ? (
                           <Globe className="w-4 h-4 text-blue-400" />
                         ) : (
-                          <FileText className="w-4 h-4 text-purple-400" />
+                          <FileText className="w-4 h-4 text-[var(--module-accent)]" />
                         )}
                       </div>
 
@@ -1391,7 +1391,7 @@ export default function LauncherPanel() {
                         {parentName && (
                           <span
                             className={`text-xs px-1.5 py-0.5 rounded ${
-                              isSelected ? "bg-black/20 text-purple-200" : "bg-white/5 text-slate-400"
+                              isSelected ? "bg-black/20 text-[var(--module-accent)]" : "bg-white/5 text-slate-400"
                             }`}
                           >
                             ({parentName})
@@ -1433,7 +1433,7 @@ export default function LauncherPanel() {
               handleExecuteItem(itemContextMenu.item);
               setItemContextMenu(null);
             }}
-            className="w-full px-3 py-1.5 rounded-lg text-left text-slate-200 hover:bg-purple-600 hover:text-white flex items-center gap-2 cursor-pointer"
+            className="w-full px-3 py-1.5 rounded-lg text-left text-slate-200 hover:bg-[var(--module-accent)] hover:text-white flex items-center gap-2 cursor-pointer"
           >
             <ExternalLink className="w-3.5 h-3.5" />
             <span>打开</span>
@@ -1516,7 +1516,7 @@ export default function LauncherPanel() {
               setCategoryModalOpen(true);
               setCategoryContextMenu(null);
             }}
-            className="w-full px-3 py-1.5 rounded-lg text-left text-slate-200 hover:bg-purple-600 hover:text-white flex items-center gap-2 cursor-pointer"
+            className="w-full px-3 py-1.5 rounded-lg text-left text-slate-200 hover:bg-[var(--module-accent)] hover:text-white flex items-center gap-2 cursor-pointer"
           >
             <Edit2 className="w-3.5 h-3.5" />
             <span>编辑分类</span>
@@ -1590,7 +1590,7 @@ export default function LauncherPanel() {
               <button
                 onClick={() => handleImportBookmarks("edge")}
                 disabled={importingBookmark}
-                className="p-3.5 rounded-xl border border-white/10 bg-white/5 hover:bg-purple-600/20 hover:border-purple-500 text-slate-200 transition cursor-pointer flex flex-col items-center text-center gap-2 disabled:opacity-50"
+                className="p-3.5 rounded-xl border border-white/10 bg-white/5 hover:bg-[var(--module-accent-soft)] hover:border-[var(--module-accent-ring)] text-slate-200 transition cursor-pointer flex flex-col items-center text-center gap-2 disabled:opacity-50"
               >
                 <Globe className="w-6 h-6 text-blue-400" />
                 <span className="font-bold text-xs">Microsoft Edge</span>
@@ -1600,7 +1600,7 @@ export default function LauncherPanel() {
               <button
                 onClick={() => handleImportBookmarks("chrome")}
                 disabled={importingBookmark}
-                className="p-3.5 rounded-xl border border-white/10 bg-white/5 hover:bg-purple-600/20 hover:border-purple-500 text-slate-200 transition cursor-pointer flex flex-col items-center text-center gap-2 disabled:opacity-50"
+                className="p-3.5 rounded-xl border border-white/10 bg-white/5 hover:bg-[var(--module-accent-soft)] hover:border-[var(--module-accent-ring)] text-slate-200 transition cursor-pointer flex flex-col items-center text-center gap-2 disabled:opacity-50"
               >
                 <Globe className="w-6 h-6 text-emerald-400" />
                 <span className="font-bold text-xs">Google Chrome</span>
@@ -1609,7 +1609,7 @@ export default function LauncherPanel() {
             </div>
 
             {importingBookmark && (
-              <p className="text-center text-purple-400 text-xs animate-pulse">
+              <p className="text-center text-[var(--module-accent)] text-xs animate-pulse">
                 正在解析并导入书签，请稍候...
               </p>
             )}
@@ -1619,7 +1619,7 @@ export default function LauncherPanel() {
 
       {/* Toast Notification */}
       {toastMsg && (
-        <div className="fixed bottom-6 right-6 z-[300] bg-purple-600 text-white text-xs px-4 py-2.5 rounded-xl shadow-xl flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-150">
+        <div className="fixed bottom-6 right-6 z-[300] bg-[var(--module-accent)] text-white text-xs px-4 py-2.5 rounded-xl shadow-xl flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-150">
           <Check className="w-4 h-4" />
           <span>{toastMsg}</span>
         </div>

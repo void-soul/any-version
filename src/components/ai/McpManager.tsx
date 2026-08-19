@@ -237,7 +237,7 @@ export default function McpManager() {
           </button>
           <button
             onClick={openAdd}
-            className="px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1 shadow-lg shadow-violet-500/10"
+            className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1 shadow-lg shadow-[var(--module-accent-ring)]"
           >
             <Plus className="w-3 h-3" /> 添加服务器
           </button>
@@ -246,9 +246,9 @@ export default function McpManager() {
 
       {/* 添加 / 编辑表单 */}
       {showForm && (
-        <div className="p-3 rounded-xl bg-slate-900/40 border border-violet-500/20 space-y-3">
+        <div className="p-3 rounded-xl bg-slate-900/40 border border-[var(--module-accent-ring)] space-y-3">
           <div className="flex items-center justify-between">
-            <h4 className="text-xs font-bold text-violet-300 flex items-center gap-1.5">
+            <h4 className="text-xs font-bold text-[var(--module-accent)] flex items-center gap-1.5">
               <Plug className="w-3.5 h-3.5" /> {editingId ? "编辑服务器" : "添加 MCP 服务器"}
             </h4>
             <button onClick={() => { setShowForm(false); resetForm(); }} className="text-slate-500 hover:text-slate-300 cursor-pointer">
@@ -263,7 +263,7 @@ export default function McpManager() {
                 value={fName}
                 onChange={(e) => setFName(e.target.value)}
                 placeholder="如 github / context7"
-                className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500"
+                className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
               />
             </div>
             <div>
@@ -271,7 +271,7 @@ export default function McpManager() {
               <select
                 value={fTransport}
                 onChange={(e) => setFTransport(e.target.value)}
-                className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500"
+                className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
               >
                 <option value="stdio">本地 (stdio)</option>
                 <option value="http">HTTP</option>
@@ -288,7 +288,7 @@ export default function McpManager() {
                   value={fCommand}
                   onChange={(e) => setFCommand(e.target.value)}
                   placeholder="如 npx"
-                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500"
+                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
                 />
               </div>
               <div>
@@ -298,7 +298,7 @@ export default function McpManager() {
                   onChange={(e) => setFArgs(e.target.value)}
                   rows={2}
                   placeholder={"-y\n@modelcontextprotocol/server-everything"}
-                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500 resize-none"
+                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] resize-none"
                 />
               </div>
               <div>
@@ -307,7 +307,7 @@ export default function McpManager() {
                   value={fCwd}
                   onChange={(e) => setFCwd(e.target.value)}
                   placeholder="如 ./mcp-servers/python"
-                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500"
+                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
                 />
               </div>
               <div>
@@ -317,7 +317,7 @@ export default function McpManager() {
                   onChange={(e) => setFEnv(e.target.value)}
                   rows={2}
                   placeholder={"API_KEY=xxx"}
-                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500 resize-none"
+                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] resize-none"
                 />
               </div>
             </>
@@ -329,7 +329,7 @@ export default function McpManager() {
                   value={fUrl}
                   onChange={(e) => setFUrl(e.target.value)}
                   placeholder="如 https://mcp.context7.com/mcp"
-                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500"
+                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
                 />
               </div>
               <div>
@@ -339,7 +339,7 @@ export default function McpManager() {
                   onChange={(e) => setFHeaders(e.target.value)}
                   rows={2}
                   placeholder={"Authorization=Bearer xxx"}
-                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-violet-500 resize-none"
+                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] resize-none"
                 />
               </div>
             </>
@@ -351,12 +351,12 @@ export default function McpManager() {
               value={fDescription}
               onChange={(e) => setFDescription(e.target.value)}
               placeholder="如 搜索文档"
-              className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500"
+              className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
             />
           </div>
 
           <label className="flex items-center gap-2 text-[10px] text-slate-400 cursor-pointer">
-            <input type="checkbox" checked={fEnabled} onChange={(e) => setFEnabled(e.target.checked)} className="accent-violet-500" />
+            <input type="checkbox" checked={fEnabled} onChange={(e) => setFEnabled(e.target.checked)} className="accent-[var(--module-accent)]" />
             全局启用（关闭则不部署到任何工具）
           </label>
 
@@ -370,7 +370,7 @@ export default function McpManager() {
             <button
               onClick={handleSave}
               disabled={saving}
-              className="px-4 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-[10px] font-semibold cursor-pointer flex items-center gap-1"
+              className="px-4 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-40 text-white text-[10px] font-semibold cursor-pointer flex items-center gap-1"
             >
               {saving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
               {saving ? "保存中..." : "保存并部署"}
@@ -391,8 +391,8 @@ export default function McpManager() {
           {servers.map((s) => (
             <div key={s.id} className="rounded-xl bg-slate-900/30 border border-white/5 p-4 hover:border-white/10 transition-all">
               <div className="flex items-start gap-3">
-                <div className="p-2 rounded-lg bg-violet-500/10 flex-shrink-0">
-                  <Plug className="w-4 h-4 text-violet-400" />
+                <div className="p-2 rounded-lg bg-[var(--module-accent-soft)] flex-shrink-0">
+                  <Plug className="w-4 h-4 text-[var(--module-accent)]" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -490,8 +490,8 @@ export default function McpManager() {
       )}
 
       {/* Info */}
-      <div className="p-3 rounded-xl bg-violet-500/5 border border-violet-500/10 text-[10px] text-slate-400 space-y-1">
-        <p className="font-semibold text-violet-300">关于部署</p>
+      <div className="p-3 rounded-xl bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] border border-[var(--module-accent-ring)] text-[10px] text-slate-400 space-y-1">
+        <p className="font-semibold text-[var(--module-accent)]">关于部署</p>
         <p>保存后会按各工具格式写入其中心配置文件（如 Claude 的 ~/.claude.json、Qwen 的 ~/.qwen/settings.json、OpenCode 的 opencode.json），仅更新 mcpServers / mcp 字段，保留其它内容。重启对应工具即可生效。</p>
       </div>
     </div>

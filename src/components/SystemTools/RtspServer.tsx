@@ -452,15 +452,15 @@ export default function RtspServer() {
       {/* 头部控制栏 */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-4">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-lg shadow-emerald-500/5">
+          <div className="p-2.5 rounded-xl bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] shadow-lg shadow-[var(--module-accent-ring)]">
             <Video className="w-6 h-6" />
           </div>
           <div>
             <h3 className="text-base font-bold text-white flex items-center gap-2">
               RTSP 视频流服务器
               {runningCount > 0 && (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]">
+                  <span className="w-2 h-2 rounded-full bg-[var(--module-accent)] animate-pulse" />
                   {runningCount} 个节点运行中
                 </span>
               )}
@@ -474,7 +474,7 @@ export default function RtspServer() {
         <div className="flex items-center gap-2 self-start md:self-auto">
           <button
             onClick={handleAddInstance}
-            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
+            className="px-3.5 py-2 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-[var(--module-accent-ring)] cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             添加实例
@@ -513,7 +513,7 @@ export default function RtspServer() {
               key={inst.id}
               className={`glass-panel border rounded-2xl transition-all overflow-hidden ${
                 isRunning
-                  ? "border-emerald-500/40 bg-emerald-500/[0.03] shadow-lg shadow-emerald-500/5"
+                  ? "border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_3%,transparent)] shadow-lg shadow-[var(--module-accent-ring)]"
                   : "border-white/10 bg-slate-900/40 hover:border-white/20"
               }`}
             >
@@ -531,7 +531,7 @@ export default function RtspServer() {
                   <div
                     className={`p-2 rounded-xl flex-shrink-0 ${
                       isRunning
-                        ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                        ? "bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]"
                         : "bg-white/5 text-slate-400 border border-white/10"
                     }`}
                   >
@@ -545,8 +545,8 @@ export default function RtspServer() {
 
                       {/* 运行状态 Tag */}
                       {isRunning ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex-shrink-0">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] flex-shrink-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[var(--module-accent)] animate-pulse" />
                           运行中 · 端口 {inst.config.port}
                         </span>
                       ) : (
@@ -575,7 +575,7 @@ export default function RtspServer() {
                       {isRunning && inst.status.localUrl && (
                         <>
                           <span>·</span>
-                          <span className="text-emerald-400 font-semibold">{inst.status.localUrl}</span>
+                          <span className="text-[var(--module-accent)] font-semibold">{inst.status.localUrl}</span>
                         </>
                       )}
                     </div>
@@ -588,7 +588,7 @@ export default function RtspServer() {
                     <button
                       onClick={(e) => handleStartInstance(inst, e)}
                       disabled={inst.actionLoading}
-                      className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
+                      className="px-4 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-[var(--module-accent-ring)] cursor-pointer"
                     >
                       <Play className="w-3.5 h-3.5 fill-current" />
                       启动推流
@@ -627,14 +627,14 @@ export default function RtspServer() {
                       onChange={(e) => updateInstanceConfig(inst.id, { title: e.target.value })}
                       disabled={isRunning}
                       placeholder="自定义实例别名..."
-                      className="text-xs font-bold text-white bg-white/5 border border-white/10 rounded-lg px-2.5 py-1 focus:border-emerald-500 focus:outline-none transition-all flex-1"
+                      className="text-xs font-bold text-white bg-white/5 border border-white/10 rounded-lg px-2.5 py-1 focus:border-[var(--module-accent)] focus:outline-none transition-all flex-1"
                     />
                   </div>
 
                   {/* 运行中推流状态与 RTSP 链接复制区 */}
                   {isRunning && (
-                    <div className="rounded-xl bg-black/40 border border-emerald-500/30 p-4 space-y-3">
-                      <div className="flex flex-wrap items-center justify-between text-xs font-semibold text-emerald-300 gap-2 border-b border-white/5 pb-2">
+                    <div className="rounded-xl bg-black/40 border border-[var(--module-accent-ring)] p-4 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between text-xs font-semibold text-[var(--module-accent)] gap-2 border-b border-white/5 pb-2">
                         <div className="flex items-center gap-2">
                           <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
                           推流服务运行中 (MediaMTX PID: {inst.status.mtxPid ?? "N/A"} | FFmpeg PID: {inst.status.ffmpegPid ?? "N/A"})
@@ -649,14 +649,14 @@ export default function RtspServer() {
                           <div className="bg-white/[0.03] border border-white/10 rounded-xl p-3 flex items-center justify-between">
                             <div className="min-w-0 pr-2">
                               <div className="text-[10px] text-slate-400 font-semibold uppercase">本机回环地址 (Local)</div>
-                              <div className="text-xs font-mono text-emerald-400 truncate mt-0.5">{inst.status.localUrl}</div>
+                              <div className="text-xs font-mono text-[var(--module-accent)] truncate mt-0.5">{inst.status.localUrl}</div>
                             </div>
                             <button
                               onClick={(e) => handleCopy(inst.status.localUrl!, e)}
                               className="p-2 text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors cursor-pointer flex-shrink-0"
                               title="复制 RTSP 地址"
                             >
-                              {copiedUrl === inst.status.localUrl ? <CheckCircle className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                              {copiedUrl === inst.status.localUrl ? <CheckCircle className="w-4 h-4 text-[var(--module-accent)]" /> : <Copy className="w-4 h-4" />}
                             </button>
                           </div>
                         )}
@@ -686,7 +686,7 @@ export default function RtspServer() {
                                     </div>
                                     <div className="flex-shrink-0">
                                       {copiedUrl === url ? (
-                                        <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                                        <CheckCircle className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                                       ) : (
                                         <Copy className="w-3.5 h-3.5 text-slate-500 group-hover:text-white transition-colors" />
                                       )}
@@ -714,8 +714,8 @@ export default function RtspServer() {
                     {/* ── 卡片 1：视频输入源 ── */}
                     <div className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
                       <div className="px-4 py-2.5 border-b border-white/5 bg-white/[0.02] flex items-center gap-2">
-                        <div className="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                          <Sliders className="w-3.5 h-3.5 text-emerald-400" />
+                        <div className="p-1.5 rounded-lg bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)]">
+                          <Sliders className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                         </div>
                         <span className="text-xs font-semibold text-white">视频输入源</span>
                       </div>
@@ -728,7 +728,7 @@ export default function RtspServer() {
                               onClick={() => updateInstanceConfig(inst.id, { sourceType: st })}
                               className={`h-9 text-xs font-medium rounded-xl border transition-all cursor-pointer ${
                                 inst.config.sourceType === st
-                                  ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-300 font-semibold shadow-sm"
+                                  ? "bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] border-[color-mix(in_srgb,var(--module-accent)_50%,transparent)] text-[var(--module-accent)] font-semibold shadow-sm"
                                   : "bg-white/5 border-white/10 text-slate-400 hover:text-white"
                               }`}
                             >
@@ -754,7 +754,7 @@ export default function RtspServer() {
                                 value={inst.config.cameraName || ""}
                                 disabled={isLocked}
                                 onChange={(e) => updateInstanceConfig(inst.id, { cameraName: e.target.value })}
-                                className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                                className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
                               >
                                 {devices.videoDevices.length === 0 ? (
                                   <option value="">未找到摄像头设备</option>
@@ -773,7 +773,7 @@ export default function RtspServer() {
                               <label className="flex items-center justify-between cursor-pointer">
                                 <span className="text-[11px] text-slate-300 flex items-center gap-1.5">
                                   {inst.config.includeAudio ? (
-                                    <Mic className="w-3.5 h-3.5 text-emerald-400" />
+                                    <Mic className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                                   ) : (
                                     <MicOff className="w-3.5 h-3.5 text-slate-500" />
                                   )}
@@ -788,7 +788,7 @@ export default function RtspServer() {
                                     updateInstanceConfig(inst.id, { includeAudio: !inst.config.includeAudio })
                                   }
                                   className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer ${
-                                    inst.config.includeAudio ? "bg-emerald-500" : "bg-white/15"
+                                    inst.config.includeAudio ? "bg-[var(--module-accent)]" : "bg-white/15"
                                   } ${isLocked ? "opacity-50 cursor-not-allowed" : ""}`}
                                 >
                                   <span
@@ -806,7 +806,7 @@ export default function RtspServer() {
                                     value={inst.config.audioDevice || ""}
                                     disabled={isLocked}
                                     onChange={(e) => updateInstanceConfig(inst.id, { audioDevice: e.target.value })}
-                                    className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                                    className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
                                   >
                                     {devices.audioDevices.length === 0 ? (
                                       <option value="">未找到麦克风设备（将使用默认）</option>
@@ -835,7 +835,7 @@ export default function RtspServer() {
                                 disabled={isLocked}
                                 onChange={(e) => updateInstanceConfig(inst.id, { filePath: e.target.value })}
                                 placeholder="选择或粘贴视频文件路径..."
-                                className="flex-1 h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                                className="flex-1 h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
                               />
                               <button
                                 disabled={isLocked}
@@ -852,7 +852,7 @@ export default function RtspServer() {
                                 disabled={isLocked}
                                 checked={inst.config.loopFile}
                                 onChange={(e) => updateInstanceConfig(inst.id, { loopFile: e.target.checked })}
-                                className="rounded bg-white/5 border-white/20 text-emerald-500 focus:ring-0"
+                                className="rounded bg-white/5 border-white/20 text-[var(--module-accent)] focus:ring-0"
                               />
                               循环无限播放视频
                             </label>
@@ -870,8 +870,8 @@ export default function RtspServer() {
                     {/* ── 卡片 2：网络与传输协议 ── */}
                     <div className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
                       <div className="px-4 py-2.5 border-b border-white/5 bg-white/[0.02] flex items-center gap-2">
-                        <div className="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                          <Network className="w-3.5 h-3.5 text-emerald-400" />
+                        <div className="p-1.5 rounded-lg bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)]">
+                          <Network className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                         </div>
                         <span className="text-xs font-semibold text-white">网络与传输协议</span>
                       </div>
@@ -886,7 +886,7 @@ export default function RtspServer() {
                               onChange={(e) =>
                                 updateInstanceConfig(inst.id, { port: parseInt(e.target.value) || 8554 })
                               }
-                              className="w-full h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white focus:outline-none focus:border-emerald-500 font-mono"
+                              className="w-full h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] font-mono"
                             />
                           </div>
                           <div>
@@ -895,7 +895,7 @@ export default function RtspServer() {
                               disabled={isLocked}
                               value={inst.config.pathName}
                               onChange={(e) => updateInstanceConfig(inst.id, { pathName: e.target.value })}
-                              className="w-full h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white focus:outline-none focus:border-emerald-500 font-mono"
+                              className="w-full h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] font-mono"
                             />
                           </div>
                         </div>
@@ -908,7 +908,7 @@ export default function RtspServer() {
                             onChange={(e) =>
                               updateInstanceConfig(inst.id, { transport: e.target.value as "tcp" | "udp" })
                             }
-                            className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                            className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
                           >
                             <option value="tcp">TCP 协议 (默认推荐/稳定)</option>
                             <option value="udp">UDP 协议 (低延迟包冲刷)</option>
@@ -922,7 +922,7 @@ export default function RtspServer() {
                               disabled={isLocked}
                               checked={inst.config.allowLan}
                               onChange={(e) => updateInstanceConfig(inst.id, { allowLan: e.target.checked })}
-                              className="rounded bg-white/5 border-white/20 text-emerald-500 focus:ring-0"
+                              className="rounded bg-white/5 border-white/20 text-[var(--module-accent)] focus:ring-0"
                             />
                             允许局域网访问 (0.0.0.0)
                           </label>
@@ -957,7 +957,7 @@ export default function RtspServer() {
                                       </div>
                                       <div className="flex-shrink-0 ml-2">
                                         {copiedUrl === url ? (
-                                          <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                                          <CheckCircle className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                                         ) : (
                                           <Copy className="w-3.5 h-3.5 text-slate-500 group-hover:text-white transition-colors" />
                                         )}
@@ -975,8 +975,8 @@ export default function RtspServer() {
                     {/* ── 卡片 3：画幅与编码选项 ── */}
                     <div className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
                       <div className="px-4 py-2.5 border-b border-white/5 bg-white/[0.02] flex items-center gap-2">
-                        <div className="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                          <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+                        <div className="p-1.5 rounded-lg bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)]">
+                          <Cpu className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                         </div>
                         <span className="text-xs font-semibold text-white">视频编码与硬件加速</span>
                       </div>
@@ -990,7 +990,7 @@ export default function RtspServer() {
                               onChange={(e) =>
                                 updateInstanceConfig(inst.id, { videoCodec: e.target.value as "h264" | "h265" })
                               }
-                              className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer font-semibold text-emerald-400"
+                              className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer font-semibold text-[var(--module-accent)]"
                             >
                               <option value="h264">H.264 / AVC (默认广兼容)</option>
                               <option value="h265">H.265 / HEVC (高压缩比)</option>
@@ -1002,7 +1002,7 @@ export default function RtspServer() {
                               disabled={isLocked}
                               value={inst.config.resolution || "default"}
                               onChange={(e) => updateInstanceConfig(inst.id, { resolution: e.target.value })}
-                              className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                              className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
                             >
                               <option value="default">默认原始分辨率</option>
                               <option value="1920x1080">1080P (1920x1080)</option>
@@ -1022,7 +1022,7 @@ export default function RtspServer() {
                                 gpuAccel: e.target.value as any,
                               })
                             }
-                            className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                            className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
                           >
                             <option value="cpu">CPU 软件编码器 (libx264/libx265)</option>
                             <option value="nvenc">NVIDIA NVENC 硬件显卡编码</option>
@@ -1046,7 +1046,7 @@ export default function RtspServer() {
                         }
                         className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1.5 cursor-pointer"
                       >
-                        <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+                        <Terminal className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                         <span>查看实时日志 ({inst.status.logs.length} 行)</span>
                         {inst.showLogs ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                       </button>

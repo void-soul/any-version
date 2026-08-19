@@ -159,7 +159,7 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
           </span>
         </button>
         <button
-          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[12px] font-semibold cursor-pointer transition-all whitespace-nowrap"
+          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[12px] font-semibold cursor-pointer transition-all whitespace-nowrap"
           onClick={() => { setEditing({ id: genId(), name: "", host: "", port: 0, username: "", password: "" }); setIsNew(true); }}
         >
           <Plus className="w-4 h-4" /> 新增二级代理
@@ -431,7 +431,7 @@ function SecondaryPresetPanel({ running, profileId }: { running: boolean; profil
           <button className={btnSec} disabled={busy || !checked.size} onClick={removeRules}>
             <span className="inline-flex items-center gap-1"><X className="w-3 h-3" />移除已选</span>
           </button>
-          <button className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[12px] font-semibold cursor-pointer disabled:opacity-40"
+          <button className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[12px] font-semibold cursor-pointer disabled:opacity-40"
             disabled={busy || !checked.size} onClick={applyRules}>
             <Check className="w-3.5 h-3.5" /> 添加 {totalChecked ? `(${totalChecked})` : ""} 到二级代理
           </button>

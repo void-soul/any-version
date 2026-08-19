@@ -106,11 +106,11 @@ export function VersionsTab({
     <div className="space-y-6">
       {/* 安装进度面板 */}
       {installingVersion && (
-        <div className="glass-panel rounded-2xl p-5 border border-blue-500/20 bg-blue-600/5 space-y-4 animate-fadeIn">
+        <div className="glass-panel rounded-2xl p-5 border border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] space-y-4 animate-fadeIn">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Loader className="w-4 h-4 text-blue-400 animate-spin" />
-              <h4 className="text-xs font-semibold text-blue-300">
+              <Loader className="w-4 h-4 text-[var(--module-accent)] animate-spin" />
+              <h4 className="text-xs font-semibold text-[var(--module-accent)]">
                 正在安装 {project.display_name} v{currentVersionNumber}
               </h4>
             </div>
@@ -135,18 +135,18 @@ export function VersionsTab({
               return (
                 <React.Fragment key={step}>
                   {idx > 0 && (
-                    <div className={`flex-1 h-0.5 rounded-full ${isCompleted ? "bg-emerald-500" : isActive ? "bg-blue-500" : "bg-white/10"}`} />
+                    <div className={`flex-1 h-0.5 rounded-full ${isCompleted ? "bg-emerald-500" : isActive ? "bg-[var(--module-accent)]" : "bg-white/10"}`} />
                   )}
                   <div className="flex items-center gap-1.5">
                     <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold border ${isCompleted
                       ? "bg-emerald-500 text-white border-emerald-500"
                       : isActive
-                        ? "bg-blue-600 text-white border-blue-500 animate-pulse"
+                        ? "bg-[var(--module-accent)] text-white border-[var(--module-accent)] animate-pulse"
                         : "bg-white/5 text-slate-500 border-white/10"
                       }`}>
                       {isCompleted ? <Check className="w-3 h-3" /> : idx + 1}
                     </div>
-                    <span className={`text-[13px] font-medium ${isActive ? "text-blue-300" : isCompleted ? "text-emerald-400" : "text-slate-500"}`}>
+                    <span className={`text-[13px] font-medium ${isActive ? "text-[var(--module-accent)]" : isCompleted ? "text-emerald-400" : "text-slate-500"}`}>
                       {step}
                     </span>
                   </div>
@@ -166,12 +166,12 @@ export function VersionsTab({
                       ↓ {downloadProgress.speed_str}
                     </span>
                   )}
-                  <span className="text-blue-300 font-mono font-semibold">{downloadProgress.pct}%</span>
+                  <span className="text-[var(--module-accent)] font-mono font-semibold">{downloadProgress.pct}%</span>
                 </div>
               </div>
               <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-gradient-to-r from-blue-600 to-blue-400 rounded-full transition-all duration-300"
+                  className="h-full bg-gradient-to-r from-[var(--module-accent)] to-[var(--module-accent-strong)] rounded-full transition-all duration-300"
                   style={{ width: `${downloadProgress.pct}%` }}
                 />
               </div>
@@ -208,14 +208,14 @@ export function VersionsTab({
                 <div
                   key={v}
                   className={`p-3 rounded-xl border flex items-center justify-between transition-all ${isActive
-                    ? "bg-blue-600/10 border-blue-500/30 text-white shadow-md shadow-blue-500/5"
+                    ? "bg-[var(--module-accent-soft)] border-[var(--module-accent-ring)] text-white shadow-md shadow-[var(--module-accent-ring)]"
                     : "bg-black/20 border-white/5 text-slate-300"
                     }`}
                 >
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-xs font-medium">{v}</span>
                     {isActive && (
-                      <span className="px-1.5 py-0.5 rounded text-[11px] bg-blue-600 text-white font-bold">当前</span>
+                      <span className="px-1.5 py-0.5 rounded text-[11px] bg-[var(--module-accent)] text-white font-bold">当前</span>
                     )}
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -594,11 +594,11 @@ export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, i
           {/* 旧文件处理方式（本卡片默认为移动/保留） */}
           <div className="pt-1 space-y-1">
             <p className="text-[13px] text-slate-400 font-semibold">旧文件处理方式：</p>
-            <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-blue-500/30 bg-blue-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
+            <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)]" : "border-white/5 hover:bg-white/[0.02]"}`}>
               <input type="radio" name="wf_file_action" value="move" checked={workflowFileAction === "move"}
                 onChange={() => setWorkflowFileAction("move")} className="mt-0.5" />
               <div>
-                <span className="text-[13px] font-semibold text-blue-300">移动旧文件到新目录</span>
+                <span className="text-[13px] font-semibold text-[var(--module-accent)]">移动旧文件到新目录</span>
                 <p className="text-[11px] text-slate-500 mt-0.5">将现有文件整体复制到新位置，完成后{workflowMethod === "junction" ? "创建链接" : "修改环境变量"}。保留所有已有工具链。</p>
               </div>
             </label>
@@ -856,7 +856,7 @@ export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, i
                       {v.tier === "core" ? (
                         <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[12px] font-semibold">Core</span>
                       ) : v.tier === "package" ? (
-                        <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[12px] font-semibold">Package</span>
+                        <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-[12px] font-semibold">Package</span>
                       ) : (
                         <span className="px-1.5 py-0.5 rounded bg-white/5 text-slate-500 border border-white/5 text-[12px]">-</span>
                       )}
@@ -867,7 +867,7 @@ export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, i
                     </td>
                     <td className="p-2.5">
                       {v.source === "HKCU" ? (
-                        <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[12px] font-semibold">用户级</span>
+                        <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-[12px] font-semibold">用户级</span>
                       ) : v.source === "HKLM" ? (
                         <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[12px] font-semibold">系统级</span>
                       ) : (
@@ -917,7 +917,7 @@ export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, i
         {!advanced ? (
           <p className="text-[13px] text-slate-500">开启后可设置 {def?.display_name || "项目"} 的运行时环境变量（如 NODE_OPTIONS、DEBUG 等），适用于高级用户。</p>
         ) : loadingUserVars ? (
-          <div className="flex items-center gap-2 text-[13px] text-slate-400 py-4"><Loader className="w-3 h-3 animate-spin text-blue-400" />加载中...</div>
+          <div className="flex items-center gap-2 text-[13px] text-slate-400 py-4"><Loader className="w-3 h-3 animate-spin text-[var(--module-accent)]" />加载中...</div>
         ) : userVars.length === 0 ? (
           <p className="text-[13px] text-slate-500">该项目没有可配置的运行时环境变量。</p>
         ) : (
@@ -970,7 +970,7 @@ export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, i
                       <td className="p-2.5 text-center">
                         {isEditing ? (
                           <div className="flex items-center gap-1 justify-center">
-                            <button onClick={() => handleSetVar(v.name, editValue)} disabled={savingVar === v.name} className="px-2 py-0.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-[11px] font-semibold cursor-pointer">
+                            <button onClick={() => handleSetVar(v.name, editValue)} disabled={savingVar === v.name} className="px-2 py-0.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded text-[11px] font-semibold cursor-pointer">
                               {savingVar === v.name ? "保存中" : "保存"}
                             </button>
                             <button onClick={() => setEditingVar(null)} className="px-2 py-0.5 bg-white/5 hover:bg-white/10 text-slate-400 rounded text-[11px] cursor-pointer">取消</button>
@@ -1005,7 +1005,7 @@ export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, i
 
           {loadingConflicts ? (
             <div className="flex items-center gap-2 text-[13px] text-slate-400 py-2">
-              <Loader className="w-3.5 h-3.5 animate-spin text-blue-400" />正在扫描本地环境...
+              <Loader className="w-3.5 h-3.5 animate-spin text-[var(--module-accent)]" />正在扫描本地环境...
             </div>
           ) : conflictManagers.length === 0 ? (
             <p className="text-[13px] text-slate-500">未检测到任何冲突管理器配置。</p>
@@ -1039,7 +1039,7 @@ export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, i
                     {mgr.cache_path && (
                       <div className="p-3 bg-white/2 rounded-xl border border-white/5 space-y-3">
                         <div className="flex items-center gap-1.5">
-                          <HardDrive className="w-3.5 h-3.5 text-blue-400" />
+                          <HardDrive className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                           <span className="text-[12px] font-semibold text-slate-300">缓存与工具链目录管理</span>
                         </div>
                         
@@ -1048,7 +1048,7 @@ export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, i
                           <div className="space-y-1 flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
                               {hasEnvConfigured ? (
-                                <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[10px] inline-flex items-center font-mono">
+                                <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-[10px] inline-flex items-center font-mono">
                                   已配置环境变量
                                 </span>
                               ) : (
@@ -1201,7 +1201,7 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
 
       <div className="glass-panel border border-white/5 rounded-2xl p-5 bg-white/2 space-y-4">
         <div className="flex items-center gap-2 border-b border-white/5 pb-3">
-          <Activity className="w-4 h-4 text-blue-400" />
+          <Activity className="w-4 h-4 text-[var(--module-accent)]" />
           <h4 className="text-xs font-semibold text-white">本地服务控制台</h4>
         </div>
 
@@ -1375,7 +1375,7 @@ function RemoteVersionSelector({
               title={disabled ? disabledReason : "刷新版本列表"}
               className="flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300 rounded-lg text-[11px] border border-white/8 cursor-pointer transition-all"
             >
-              <RefreshCw className={`w-3 h-3 ${loadingRemote ? "animate-spin text-blue-400" : ""}`} />
+              <RefreshCw className={`w-3 h-3 ${loadingRemote ? "animate-spin text-[var(--module-accent)]" : ""}`} />
               {loadingRemote ? "更新中..." : "更新列表"}
             </button>
           )}
@@ -1384,7 +1384,7 @@ function RemoteVersionSelector({
 
       {loadingRemote && remoteVersions.length === 0 ? (
         <div className="flex items-center gap-2 text-slate-400 text-xs py-2">
-          <RefreshCw className="w-4 h-4 animate-spin text-blue-400" />
+          <RefreshCw className="w-4 h-4 animate-spin text-[var(--module-accent)]" />
           正在获取远程版本列表...
         </div>
       ) : (
@@ -1421,7 +1421,7 @@ function RemoteVersionSelector({
                 onClick={handleInstall}
                 disabled={disabled || installingVersion !== null || isOperating || !search.trim() || !remoteVersions.includes(search.trim())}
                 title={disabled ? disabledReason : "一键安装"}
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-md shadow-blue-500/10 cursor-pointer transition-all flex items-center gap-1.5"
+                className="px-5 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-md shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5"
               >
                 <Download className="w-3.5 h-3.5" />
                 {installingVersion ? "正在安装..." : "一键安装"}
@@ -1435,7 +1435,7 @@ function RemoteVersionSelector({
                   <button
                     key={v}
                     onClick={() => handleSelect(v)}
-                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-blue-600/20 transition-colors cursor-pointer ${search.trim() === v ? "bg-blue-600/10 text-blue-300" : "text-slate-300"
+                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] transition-colors cursor-pointer ${search.trim() === v ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "text-slate-300"
                       }`}
                   >
                     {v}
@@ -1495,7 +1495,7 @@ export function LegacyTab({ projectId }: { projectId: string }) {
   if (loading) {
     return (
       <div className="flex items-center justify-center gap-2 text-xs text-slate-400 py-8">
-        <Loader className="w-4 h-4 animate-spin text-blue-400" /> 正在加载旧版数据...
+        <Loader className="w-4 h-4 animate-spin text-[var(--module-accent)]" /> 正在加载旧版数据...
       </div>
     );
   }
@@ -1563,7 +1563,7 @@ export function LegacyTab({ projectId }: { projectId: string }) {
       {envVarEntries.length > 0 && (
         <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
-            <Globe className="w-4 h-4 text-blue-400" />
+            <Globe className="w-4 h-4 text-[var(--module-accent)]" />
             <h4 className="text-xs font-semibold text-white">备份的环境变量</h4>
             <span className="text-[12px] text-slate-500">({envVarEntries.length} 个)</span>
           </div>
@@ -2410,11 +2410,11 @@ function PackageManagerTabDeprecated({
           <div className="pt-1 space-y-1">
             <p className="text-[13px] text-slate-400 font-semibold">旧文件处理方式：</p>
             {/* 移动旧文件 */}
-            <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-blue-500/30 bg-blue-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
+            <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)]" : "border-white/5 hover:bg-white/[0.02]"}`}>
               <input type="radio" name="wf_file_action" value="move" checked={workflowFileAction === "move"}
                 onChange={() => setWorkflowFileAction("move")} className="mt-0.5" />
               <div>
-                <span className="text-[13px] font-semibold text-blue-300">移动旧文件到新目录</span>
+                <span className="text-[13px] font-semibold text-[var(--module-accent)]">移动旧文件到新目录</span>
                 <p className="text-[11px] text-slate-500 mt-0.5">将现有文件整体复制到新位置，完成后{workflowMethod === "junction" ? "创建链接" : "修改配置指向"}。保留所有已有数据。</p>
               </div>
             </label>
@@ -2474,7 +2474,7 @@ function PackageManagerTabDeprecated({
             <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">操作预览</p>
             <div className="space-y-1.5">
               <div className="flex items-center gap-2 text-[12px]">
-                <span className={`px-1.5 py-0.5 rounded text-[13px] font-semibold ${workflowMethod === "junction" ? "bg-blue-500/10 text-blue-400" : "bg-purple-500/10 text-purple-400"
+                <span className={`px-1.5 py-0.5 rounded text-[13px] font-semibold ${workflowMethod === "junction" ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "bg-purple-500/10 text-purple-400"
                   }`}>
                   {workflowMethod === "junction" ? "Junction" : "指向"}
                 </span>
@@ -2485,8 +2485,8 @@ function PackageManagerTabDeprecated({
                       <span className="text-[11px] break-all">{workflowLinkPath}</span>
                     </p>
                     <p className="flex items-center gap-1">
-                      <span className="text-[13px] text-blue-400 flex-shrink-0">↓ 链接到</span>
-                      <span className="text-[11px] text-blue-300 break-all">{workflowActualPath}</span>
+                      <span className="text-[13px] text-[var(--module-accent)] flex-shrink-0">↓ 链接到</span>
+                      <span className="text-[11px] text-[var(--module-accent)] break-all">{workflowActualPath}</span>
                     </p>
                   </div>
                 ) : (
@@ -2499,7 +2499,7 @@ function PackageManagerTabDeprecated({
                 <span className="text-slate-500">旧文件处理：</span>
                 <span className={
                   workflowFileAction === "delete" ? "text-red-400 font-semibold" :
-                    workflowFileAction === "move" ? "text-blue-400 font-semibold" :
+                    workflowFileAction === "move" ? "text-[var(--module-accent)] font-semibold" :
                       "text-slate-400"
                 }>
                   {workflowFileAction === "delete" ? "🗑 删除旧文件" :
@@ -2533,7 +2533,7 @@ function PackageManagerTabDeprecated({
       return (
         <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center gap-2">
-            <Loader className="w-3.5 h-3.5 animate-spin text-blue-400" />
+            <Loader className="w-3.5 h-3.5 animate-spin text-[var(--module-accent)]" />
             <span className={`text-[12px] font-semibold ${accentText}`}>
               正在执行 · {workflowProgress?.stage || "准备中..."}
             </span>
@@ -2594,8 +2594,8 @@ function PackageManagerTabDeprecated({
   return (
     <div className="space-y-5">
       {projectStatus && !projectStatus.managed && (
-        <div className="flex items-start gap-2.5 p-3 rounded-xl border border-blue-500/20 bg-blue-500/10 text-[12.5px] text-blue-200 animate-fadeIn">
-          <Info className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+        <div className="flex items-start gap-2.5 p-3 rounded-xl border border-[var(--module-accent-ring)] bg-[var(--module-accent-soft)] text-[12.5px] text-[var(--module-accent)] animate-fadeIn">
+          <Info className="w-4 h-4 text-[var(--module-accent)] flex-shrink-0 mt-0.5" />
           <span>
             <strong>只读模式提示：</strong>当前项目未开启托管。缓存路径、数据目录及附带工具等参数仅支持查看，不能执行修改、配置、迁移或清理操作。若需修改，请先在当前页下方开启【托管项目】。
           </span>
@@ -2618,7 +2618,7 @@ function PackageManagerTabDeprecated({
               {installed ? (
                 <span className="text-[13px] text-emerald-400 font-mono">{version || "已安装"}</span>
               ) : checking ? (
-                <span className="text-[13px] text-blue-400 flex items-center gap-1"><Loader className="w-3 h-3 animate-spin" />检测中...</span>
+                <span className="text-[13px] text-[var(--module-accent)] flex items-center gap-1"><Loader className="w-3 h-3 animate-spin" />检测中...</span>
               ) : (
                 <span className="text-[13px] text-slate-400">未安装</span>
               )}
@@ -2640,7 +2640,7 @@ function PackageManagerTabDeprecated({
               </>
             )}
             {!installed && pm.install_cmd && (
-              <button onClick={handleInstall} disabled={!projectStatus?.managed || installing || upgrading} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1.5" title={!projectStatus?.managed ? "请先托管项目" : ""}>
+              <button onClick={handleInstall} disabled={!projectStatus?.managed || installing || upgrading} className="px-4 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-lg text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1.5" title={!projectStatus?.managed ? "请先托管项目" : ""}>
                 <Download className="w-3.5 h-3.5" />{installing ? "安装中..." : "安装"}
               </button>
             )}
@@ -2649,17 +2649,17 @@ function PackageManagerTabDeprecated({
         {/* 安装/升级进度条 */}
         {installProgress && (
           <div className="mt-3 space-y-1.5 animate-fadeIn">
-            <div className="flex items-center gap-2 text-[13px] text-blue-300">
+            <div className="flex items-center gap-2 text-[13px] text-[var(--module-accent)]">
               <Loader className="w-3 h-3 animate-spin" />
               {upgrading ? `正在升级 ${pm.display_name}...` : `正在安装 ${pm.display_name}...`}
             </div>
             <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
-              <div className="h-full bg-blue-500/60 rounded-full animate-pulse" style={{ width: "100%" }} />
+              <div className="h-full bg-[color-mix(in_srgb,var(--module-accent)_60%,transparent)] rounded-full animate-pulse" style={{ width: "100%" }} />
             </div>
           </div>
         )}
         {detectStep && (
-          <div className="mt-3 flex items-center gap-2 text-[13px] text-blue-300">
+          <div className="mt-3 flex items-center gap-2 text-[13px] text-[var(--module-accent)]">
             <Loader className="w-3 h-3 animate-spin" />{detectStep}
           </div>
         )}
@@ -2706,11 +2706,11 @@ function PackageManagerTabDeprecated({
 
       {/* Git 仓库尚未初始化提示 (通用 is_git_repo) */}
       {projectDef?.is_git_repo && gitRepoStatus?.is_git && !gitRepoStatus?.has_exe && !checking && (
-        <div className="glass-panel rounded-2xl p-6 border border-blue-500/15 bg-blue-500/5 text-center space-y-4 animate-fadeIn">
-          <Package className="w-10 h-10 text-blue-400 mx-auto opacity-70 animate-pulse" />
+        <div className="glass-panel rounded-2xl p-6 border border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] text-center space-y-4 animate-fadeIn">
+          <Package className="w-10 h-10 text-[var(--module-accent)] mx-auto opacity-70 animate-pulse" />
           <div>
-            <p className="text-blue-300 text-sm font-semibold">{pm.display_name} 尚未初始化</p>
-            <p className="text-[12px] text-blue-400/80 mt-1 max-w-md mx-auto leading-relaxed">
+            <p className="text-[var(--module-accent)] text-sm font-semibold">{pm.display_name} 尚未初始化</p>
+            <p className="text-[12px] text-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] mt-1 max-w-md mx-auto leading-relaxed">
               检测到您指定的目录为 {pm.display_name} 仓库，但尚未生成可执行文件。您需要运行初始化脚本进行编译。
             </p>
           </div>
@@ -2730,7 +2730,7 @@ function PackageManagerTabDeprecated({
               }
             }}
             disabled={bootstrapping}
-            className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all inline-flex items-center gap-1.5"
+            className="px-5 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all inline-flex items-center gap-1.5"
           >
             {bootstrapping ? (
               <><Loader className="w-3.5 h-3.5 animate-spin" />正在编译初始化...</>
@@ -2764,7 +2764,7 @@ function PackageManagerTabDeprecated({
                 <div className="space-y-1 flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     {cacheInfo.detect_source && (
-                      <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[10px] inline-flex items-center font-mono">
+                      <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-[10px] inline-flex items-center font-mono">
                         {cacheInfo.detect_source}
                       </span>
                     )}
@@ -2843,7 +2843,7 @@ function PackageManagerTabDeprecated({
                 <div className="space-y-1 flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     {dataInfo.detect_source && (
-                      <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[10px] inline-flex items-center font-mono">
+                      <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-[10px] inline-flex items-center font-mono">
                         {dataInfo.detect_source}
                       </span>
                     )}
@@ -2901,7 +2901,7 @@ function PackageManagerTabDeprecated({
       {hasChecked && installed && pm.mirror_options && pm.mirror_options.length > 0 && (
         <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
-            <Globe className="w-4 h-4 text-blue-400" />
+            <Globe className="w-4 h-4 text-[var(--module-accent)]" />
             <h4 className="text-xs font-semibold text-white">镜像配置</h4>
             <span className="ml-auto text-[11px] text-slate-400 font-mono bg-black/20 px-2 py-0.5 rounded border border-white/5 break-all max-w-[400px]">
               当前: {currentMirror || "官方源（默认）"}
@@ -2919,7 +2919,7 @@ function PackageManagerTabDeprecated({
                     <span className={`text-[12px] ${isCurrent ? "text-emerald-400" : "text-slate-500"} font-mono`}>
                       {opt.url || "默认"}
                     </span>
-                    {switchingMirror === opt.url ? <Loader className="w-3 h-3 animate-spin text-blue-400" /> : isCurrent && <CheckCircle className="w-3 h-3 text-emerald-400" />}
+                    {switchingMirror === opt.url ? <Loader className="w-3 h-3 animate-spin text-[var(--module-accent)]" /> : isCurrent && <CheckCircle className="w-3 h-3 text-emerald-400" />}
                   </div>
                 </button>
               );
@@ -2943,7 +2943,7 @@ function PackageManagerTabDeprecated({
             <input type="text" value={proxyInput} onChange={(e) => setProxyInput(e.target.value)} disabled={!projectStatus?.managed}
               className="flex-1 glass-input px-3 py-1.5 text-[13px] font-mono disabled:opacity-50 disabled:cursor-not-allowed" placeholder="http://proxy.example.com:8080" />
             <button onClick={handleSetProxy} disabled={!projectStatus?.managed || settingProxy}
-              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-[13px] font-semibold cursor-pointer flex-shrink-0" title={!projectStatus?.managed ? "请先托管项目" : ""}>
+              className="px-3 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-[13px] font-semibold cursor-pointer flex-shrink-0" title={!projectStatus?.managed ? "请先托管项目" : ""}>
               {settingProxy ? "设置中..." : proxyInput ? "设置代理" : "清除代理"}
             </button>
           </div>
@@ -2956,7 +2956,7 @@ function PackageManagerTabDeprecated({
         <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Package className="w-4 h-4 text-blue-400" />
+              <Package className="w-4 h-4 text-[var(--module-accent)]" />
               <h4 className="text-xs font-semibold text-white">全局依赖包</h4>
             </div>
             <button onClick={loadPackages} disabled={loadingPackages} className="flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-[13px] border border-white/5 cursor-pointer">
@@ -2964,7 +2964,7 @@ function PackageManagerTabDeprecated({
             </button>
           </div>
           {loadingPackages ? (
-            <div className="flex items-center gap-2 text-[13px] text-slate-400 py-2"><Loader className="w-3 h-3 animate-spin text-blue-400" />正在扫描...</div>
+            <div className="flex items-center gap-2 text-[13px] text-slate-400 py-2"><Loader className="w-3 h-3 animate-spin text-[var(--module-accent)]" />正在扫描...</div>
           ) : packages.length === 0 ? (
             <p className="text-[13px] text-slate-500">无全局依赖包，或无法获取列表。</p>
           ) : (
@@ -2975,13 +2975,13 @@ function PackageManagerTabDeprecated({
                   {packages.map((p) => (
                     <tr key={p.name} className="hover:bg-white/2 text-slate-300">
                       <td className="p-2 font-medium">
-                        <button onClick={() => openUrl(p.homepage)} className="hover:text-blue-400 transition-colors cursor-pointer group">{p.name}<ExternalLink className="w-2.5 h-2.5 inline ml-0.5 text-slate-600 group-hover:text-blue-400 opacity-0 group-hover:opacity-100" /></button>
+                        <button onClick={() => openUrl(p.homepage)} className="hover:text-[var(--module-accent)] transition-colors cursor-pointer group">{p.name}<ExternalLink className="w-2.5 h-2.5 inline ml-0.5 text-slate-600 group-hover:text-[var(--module-accent)] opacity-0 group-hover:opacity-100" /></button>
                       </td>
                       <td className="p-2 font-mono">{p.current_version}</td>
                       <td className="p-2 font-mono text-slate-400">{p.latest_version}</td>
                       <td className="p-2">{p.status === "outdated" ? <span className="text-[11px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">可升级</span> : <span className="text-[11px] px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">最新</span>}</td>
                       <td className="p-2 text-center">
-                        {p.status === "outdated" && <button onClick={() => handleUpgradePackage(p.name)} disabled={!projectStatus?.managed || upgradingPkg === p.name} className="px-2 py-0.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-[11px] font-semibold cursor-pointer" title={!projectStatus?.managed ? "请先托管项目" : ""}>{upgradingPkg === p.name ? "升级中" : "升级"}</button>}
+                        {p.status === "outdated" && <button onClick={() => handleUpgradePackage(p.name)} disabled={!projectStatus?.managed || upgradingPkg === p.name} className="px-2 py-0.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded text-[11px] font-semibold cursor-pointer" title={!projectStatus?.managed ? "请先托管项目" : ""}>{upgradingPkg === p.name ? "升级中" : "升级"}</button>}
                       </td>
                     </tr>
                   ))}
@@ -3292,11 +3292,11 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                 {dir.exists && (
                   <div className="pt-1 space-y-1">
                     <p className="text-[12px] text-slate-400 font-semibold">旧文件处理方式：</p>
-                    <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-blue-500/30 bg-blue-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
+                    <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)]" : "border-white/5 hover:bg-white/[0.02]"}`}>
                       <input type="radio" name="wf_file_action" value="move" checked={workflowFileAction === "move"}
                         onChange={() => setWorkflowFileAction("move")} className="mt-0.5" />
                       <div>
-                        <span className="text-[12px] font-semibold text-blue-300">移动旧文件到新目录</span>
+                        <span className="text-[12px] font-semibold text-[var(--module-accent)]">移动旧文件到新目录</span>
                         <p className="text-[10px] text-slate-500 mt-0.5">将现有文件整体复制到新位置。保留所有已有数据。</p>
                       </div>
                     </label>
@@ -3349,7 +3349,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
             <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">操作预览</p>
             <div className="space-y-1.5">
               <div className="flex items-center gap-2 text-[12px]">
-                <span className={`px-1.5 py-0.5 rounded text-[11px] font-semibold ${workflowMethod === "junction" ? "bg-blue-500/10 text-blue-400" : "bg-purple-500/10 text-purple-400"
+                <span className={`px-1.5 py-0.5 rounded text-[11px] font-semibold ${workflowMethod === "junction" ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "bg-purple-500/10 text-purple-400"
                   }`}>
                   {workflowMethod === "junction" ? "Junction 链接" : "直接指向"}
                 </span>
@@ -3360,8 +3360,8 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                       <span className="break-all">{workflowLinkPath}</span>
                     </p>
                     <p className="flex items-center gap-1">
-                      <span className="text-blue-400 flex-shrink-0">↓ 链接到</span>
-                      <span className="text-blue-300 break-all">{workflowActualPath}</span>
+                      <span className="text-[var(--module-accent)] flex-shrink-0">↓ 链接到</span>
+                      <span className="text-[var(--module-accent)] break-all">{workflowActualPath}</span>
                     </p>
                   </div>
                 ) : (
@@ -3373,7 +3373,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
               {workflowMethod === "point" && dir.exists && (
                 <div className="flex items-center gap-2 text-[12px]">
                   <span className="text-slate-500">旧文件处理：</span>
-                  <span className={workflowFileAction === "move" ? "text-blue-400 font-semibold" : "text-slate-400"}>
+                  <span className={workflowFileAction === "move" ? "text-[var(--module-accent)] font-semibold" : "text-slate-400"}>
                     {workflowFileAction === "move" ? "📦 移动到新目录" : "📌 不做改动"}
                   </span>
                 </div>
@@ -3381,7 +3381,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
               {workflowMethod === "junction" && (
                 <div className="flex items-center gap-2 text-[12px]">
                   <span className="text-slate-500">文件迁移：</span>
-                  <span className="text-blue-400 font-semibold">
+                  <span className="text-[var(--module-accent)] font-semibold">
                     {pathsSame ? "📌 直接建立链接" : "📦 移动文件并建立链接"}
                   </span>
                 </div>
@@ -3408,7 +3408,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
       return (
         <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center gap-2">
-            <Loader className="w-3.5 h-3.5 animate-spin text-blue-400" />
+            <Loader className="w-3.5 h-3.5 animate-spin text-[var(--module-accent)]" />
             <span className={`text-[12px] font-semibold ${accentText}`}>
               正在执行 · {workflowProgress?.stage || "准备中..."}
             </span>
@@ -3464,7 +3464,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
     <div className="space-y-6">
       <div className="glass-panel rounded-2xl p-5 border border-white/5 bg-white/2 space-y-4">
         <div className="flex items-center gap-2">
-          <HardDrive className="w-5 h-5 text-blue-400" />
+          <HardDrive className="w-5 h-5 text-[var(--module-accent)]" />
           <div>
             <h4 className="text-sm font-semibold text-white">数据文件与数据残留管理</h4>
             <p className="text-[11px] text-slate-500 mt-0.5">扫描、迁移主数据文件或清除残留 of 旧版本数据以节省 C 盘空间。</p>
@@ -3513,7 +3513,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                     <div className="flex items-center gap-2 pt-1 border-t border-white/5">
                       <button
                         onClick={() => openWorkflow(dir)}
-                        className="px-3 py-1.5 bg-blue-600/80 hover:bg-blue-600 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
+                        className="px-3 py-1.5 bg-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] hover:bg-[var(--module-accent)] text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
                       >
                         <FolderSync className="w-3.5 h-3.5" /> 开始变更
                       </button>
@@ -3736,7 +3736,7 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
       {port && (
         <div className="glass-panel border border-white/5 rounded-2xl p-5 bg-white/2 space-y-4">
           <div className="flex items-center gap-2 border-b border-white/5 pb-3">
-            <Wrench className="w-4 h-4 text-blue-400" />
+            <Wrench className="w-4 h-4 text-[var(--module-accent)]" />
             <h4 className="text-xs font-semibold text-white">服务运行时参数</h4>
           </div>
 
@@ -3745,7 +3745,7 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
               <span className="text-[13px] text-slate-400 font-semibold block">服务监听端口</span>
               <span className="text-[11px] text-slate-500 mt-0.5">该参数已通过配置文件解析，如需更改请在下方编辑配置文件。</span>
             </div>
-            <span className="text-slate-300 font-mono text-[13px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 px-3 py-1 rounded-lg">
+            <span className="text-slate-300 font-mono text-[13px] font-bold bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] px-3 py-1 rounded-lg">
               {port}
             </span>
           </div>
@@ -3757,7 +3757,7 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
         <div className="glass-panel border border-white/5 rounded-2xl p-5 bg-white/2 space-y-4">
           <div className="flex items-center justify-between border-b border-white/5 pb-3">
             <div className="flex items-center gap-2">
-              <FileText className="w-4 h-4 text-blue-400" />
+              <FileText className="w-4 h-4 text-[var(--module-accent)]" />
               <div>
                 <h4 className="text-xs font-semibold text-white">配置文件可视化编辑</h4>
                 <p className="text-[10px] text-slate-500 mt-0.5 font-mono select-all break-all" title={configPath}>
@@ -3769,7 +3769,7 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
               <button
                 onClick={handleSaveConfig}
                 disabled={savingConfig}
-                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1 transition-all"
+                className="px-3 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1 transition-all"
               >
                 {savingConfig ? <Loader className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
                 保存配置
@@ -3779,7 +3779,7 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
 
           {loadingConfig ? (
             <div className="flex items-center justify-center gap-2 text-xs text-slate-400 py-12">
-              <Loader className="w-4 h-4 animate-spin text-blue-400" /> 正在读取配置文件...
+              <Loader className="w-4 h-4 animate-spin text-[var(--module-accent)]" /> 正在读取配置文件...
             </div>
           ) : errorMessage ? (
             <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-xs rounded-xl space-y-2">

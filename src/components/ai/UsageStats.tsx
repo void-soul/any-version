@@ -189,7 +189,7 @@ function SortableTable({
                 <div className="text-[10px] text-slate-200 font-mono truncate" title={r.label}>{r.label}</div>
                 {r.sub && <div className="text-[8px] text-slate-600 truncate">{r.sub}</div>}
               </td>
-              <td className="px-2 py-1.5 text-[10px] text-violet-300 text-right font-semibold tabular-nums">{r.requests}</td>
+              <td className="px-2 py-1.5 text-[10px] text-[var(--module-accent)] text-right font-semibold tabular-nums">{r.requests}</td>
               <td className="px-2 py-1.5 text-[10px] text-blue-300 text-right tabular-nums">{formatTokens(r.input)}</td>
               <td className="px-2 py-1.5 text-[10px] text-emerald-300 text-right tabular-nums">{formatTokens(r.output)}</td>
               <td className="px-2 py-1.5 text-right">
@@ -305,7 +305,7 @@ export default function UsageStats() {
       {/* 顶部操作条 */}
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/5 flex-shrink-0">
         <div className="flex items-center gap-2">
-          <Activity className="w-4 h-4 text-violet-400" />
+          <Activity className="w-4 h-4 text-[var(--module-accent)]" />
           <h3 className="text-sm font-bold text-white">用量统计</h3>
         </div>
         <div className="flex gap-1.5 items-center">
@@ -355,12 +355,12 @@ export default function UsageStats() {
         ) : (
           <>
             {/* 主卡：总 Token 消耗 + 输入/输出占比 */}
-            <div className="relative rounded-2xl bg-gradient-to-br from-violet-500/[0.10] via-slate-900/30 to-amber-500/[0.06] border border-white/5 p-4 overflow-hidden">
-              <div className="absolute -right-6 -top-6 w-24 h-24 rounded-full bg-violet-500/10 blur-2xl" />
+            <div className="relative rounded-2xl bg-gradient-to-br from-[color-mix(in_srgb,var(--module-accent)_10%,transparent)] via-slate-900/30 to-amber-500/[0.06] border border-white/5 p-4 overflow-hidden">
+              <div className="absolute -right-6 -top-6 w-24 h-24 rounded-full bg-[var(--module-accent-soft)] blur-2xl" />
               <div className="relative flex items-start justify-between">
                 <div>
                   <div className="text-[10px] text-slate-400 flex items-center gap-1">
-                    <Activity className="w-3 h-3 text-violet-400" /> 总 Token 消耗
+                    <Activity className="w-3 h-3 text-[var(--module-accent)]" /> 总 Token 消耗
                   </div>
                   <div className="text-3xl font-bold text-white tabular-nums mt-1 leading-none">
                     {formatTokens(totalTokens)}
@@ -392,7 +392,7 @@ export default function UsageStats() {
             {/* 指标卡 */}
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-xl bg-slate-900/30 border border-white/5 p-3">
-                <div className="text-[9px] text-slate-500 flex items-center gap-1"><Hash className="w-3 h-3 text-violet-400" />请求总数</div>
+                <div className="text-[9px] text-slate-500 flex items-center gap-1"><Hash className="w-3 h-3 text-[var(--module-accent)]" />请求总数</div>
                 <div className="text-lg font-bold text-slate-100 tabular-nums mt-1">{formatTokens(totalRecords)}</div>
               </div>
               <div className="rounded-xl bg-slate-900/30 border border-white/5 p-3">

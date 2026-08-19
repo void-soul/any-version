@@ -37,7 +37,7 @@ function SegTabs({ options, value, onChange }: { options: [string, string][]; va
       {options.map(([k, t]) => (
         <button key={k} onClick={() => onChange(k)}
           className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
-            value === k ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-slate-200"
+            value === k ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200"
           }`}>
           {t}
         </button>

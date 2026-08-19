@@ -504,7 +504,7 @@ export default function RssReader() {
           <button
             onClick={() => setView("feed")}
             className={`px-2.5 py-1 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
-              view === "feed" ? "bg-orange-600 text-white" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+              view === "feed" ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
             }`}
           >
             <Rss className="w-3 h-3" />
@@ -513,14 +513,14 @@ export default function RssReader() {
           <button
             onClick={() => setView("favorites")}
             className={`px-2.5 py-1 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
-              view === "favorites" ? "bg-orange-600 text-white" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+              view === "favorites" ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
             }`}
           >
             <Bookmark className="w-3 h-3" />
             我的收藏
             {favorites.size > 0 && (
               <span className={`text-[9px] font-bold px-1 rounded ${
-                view === "favorites" ? "bg-orange-700 text-orange-200" : "bg-white/10 text-slate-400"
+                view === "favorites" ? "bg-[color-mix(in_srgb,var(--module-accent)_70%,black)] text-[var(--module-accent)]" : "bg-white/10 text-slate-400"
               }`}>{favorites.size}</span>
             )}
           </button>
@@ -557,7 +557,7 @@ export default function RssReader() {
             <select
               value={sourceFilter}
               onChange={(e) => setSourceFilter(e.target.value)}
-              className="bg-slate-900 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-300 focus:outline-none focus:border-orange-500 cursor-pointer max-w-[140px]"
+              className="bg-slate-900 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-300 focus:outline-none focus:border-[var(--module-accent)] cursor-pointer max-w-[140px]"
               title="按来源名称筛选"
             >
               <option value="">全部来源</option>
@@ -602,7 +602,7 @@ export default function RssReader() {
         {view === "feed" && deletedLinks.size > 0 && (
           <button
             onClick={handleRestoreArticles}
-            className="px-2 py-1 rounded-md text-[10px] font-medium text-orange-400 hover:text-orange-300 hover:bg-orange-500/10 transition-all cursor-pointer flex items-center gap-1 flex-shrink-0"
+            className="px-2 py-1 rounded-md text-[10px] font-medium text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] hover:bg-[var(--module-accent-soft)] transition-all cursor-pointer flex items-center gap-1 flex-shrink-0"
             title="恢复所有已删除（已读过）的资讯"
           >
             <RefreshCw className="w-3 h-3" />
@@ -663,7 +663,7 @@ export default function RssReader() {
                   <div className="absolute right-0 top-0 w-24 h-24 bg-amber-500/5 blur-2xl rounded-full group-hover:bg-amber-500/10 transition-all pointer-events-none" />
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="px-1.5 py-0.5 bg-orange-500/10 border border-orange-500/20 text-orange-400 text-[8px] font-bold rounded-md flex items-center gap-0.5">
+                      <span className="px-1.5 py-0.5 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] text-[var(--module-accent)] text-[8px] font-bold rounded-md flex items-center gap-0.5">
                         <TrendingUp className="w-2.5 h-2.5" />
                         {article.source}
                       </span>
@@ -725,7 +725,7 @@ export default function RssReader() {
                   <div className="absolute right-0 top-0 w-24 h-24 bg-blue-500/5 blur-2xl rounded-full group-hover:bg-blue-500/10 transition-all pointer-events-none" />
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="px-1.5 py-0.5 bg-orange-500/10 border border-orange-500/20 text-orange-400 text-[8px] font-bold rounded-md flex items-center gap-0.5">
+                      <span className="px-1.5 py-0.5 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] text-[var(--module-accent)] text-[8px] font-bold rounded-md flex items-center gap-0.5">
                         <TrendingUp className="w-2.5 h-2.5" />
                         {article.source}
                       </span>

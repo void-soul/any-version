@@ -113,7 +113,7 @@ export default function TrafficPanel() {
           {TIME_RANGES.map((r) => (
             <button key={r} onClick={() => setTimeRange(r)}
               className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
-                timeRange === r ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-slate-200"
+                timeRange === r ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200"
               }`}>{TIME_LABEL[r]}</button>
           ))}
         </div>
@@ -143,7 +143,7 @@ export default function TrafficPanel() {
         {(Object.keys(VIEW_LABEL) as DataUsageType[]).map((v) => (
           <button key={v} onClick={() => setActiveView(v)}
             className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
-              activeView === v ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-slate-200"
+              activeView === v ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200"
             }`}>{VIEW_LABEL[v]}</button>
         ))}
       </div>
