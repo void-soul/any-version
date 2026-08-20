@@ -1,7 +1,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use serde::{Serialize, Deserialize};
 use tauri::Emitter;
+
+/// 串行化 config.json 的写入，避免并发命令交错写坏文件。
+static CONFIG_SAVE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ProjectMenuConfig {
@@ -92,6 +96,7 @@ pub struct Config {
     /// SDK 目录（合并 versions+links）。默认 data_dir/sdk，内部用 `_versions` 存版本库、sdk 根放 junction 锚点。
     #[serde(default)]
     pub sdk_dir: String,
+    #[serde(default)]
     pub managed_items: std::collections::HashSet<String>,
     #[serde(default)]
     pub simple_managed_items: std::collections::HashSet<String>,
@@ -105,7 +110,11 @@ pub struct Config {
     pub project_delegations: std::collections::HashMap<String, ProjectDelegation>,
     #[serde(default)]
     pub active_versions: std::collections::HashMap<String, String>,
-    pub original_envs: std::collections::HashMap<String, String>,
+    /// 托管前各项目环境变量的原始值备份。
+    /// 结构：project_id -> (变量名 -> 原始值)。按项目隔离，避免多项目同名的变量互相覆盖原始值。
+    #[serde(default, deserialize_with = "deserialize_original_envs")]
+    pub original_envs: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    #[serde(default)]
     pub original_paths: std::collections::HashMap<String, Vec<String>>,
     #[serde(default)]
     pub rss_sources: Vec<String>,
@@ -136,6 +145,9 @@ pub struct Config {
     /// 导入的自定义字体文件路径（用于 @font-face 注册），空表示未导入
     #[serde(default)]
     pub custom_font_path: String,
+    /// 顶级模块自定义顺序（模块 id 列表）。为空时前端使用默认顺序。
+    #[serde(default)]
+    pub module_order: Vec<String>,
 }
 
 pub fn get_base_dir() -> PathBuf {
@@ -198,8 +210,20 @@ pub fn get_sdk_dir_cmd() -> String {
     get_sdk_dir().to_string_lossy().to_string()
 }
 
-/// 服务类 Node 项目存储目录。始终为 data_dir/node-projects（单一路径策略，不单独配置）。
+/// 服务类 Node 项目存储目录。
+/// 优先使用用户在全局设置中配置的 node_projects_dir（可指向非系统盘节约 C 盘空间）；
+/// 未配置/为空时回退到 data_dir/node-projects。
 pub fn get_node_projects_dir() -> PathBuf {
+    let cfg = load_config();
+    let dir = cfg.node_projects_dir.trim();
+    if !dir.is_empty() {
+        let p = PathBuf::from(dir);
+        // 若是相对路径，则锚定到数据根目录，避免散落到工作目录
+        if p.is_absolute() {
+            return p;
+        }
+        return get_data_dir().join(p);
+    }
     get_data_dir().join("node-projects")
 }
 
@@ -207,10 +231,20 @@ pub fn load_config() -> Config {
     let base_dir = get_base_dir();
     let config_path = base_dir.join("config.json");
     if config_path.exists() {
-        if let Ok(data) = fs::read_to_string(&config_path) {
-            if let Ok(mut config) = serde_json::from_str::<Config>(&data) {
-                fill_legacy_dirs(&mut config, &base_dir);
-                return config;
+        match fs::read_to_string(&config_path) {
+            Ok(data) => match serde_json::from_str::<Config>(&data) {
+                Ok(mut config) => {
+                    fill_legacy_dirs(&mut config, &base_dir);
+                    return config;
+                }
+                Err(e) => {
+                    eprintln!("[config] config.json 解析失败: {}，已备份损坏文件后重建", e);
+                    backup_corrupt_config(&config_path);
+                }
+            },
+            Err(e) => {
+                eprintln!("[config] config.json 读取失败: {}，已备份损坏文件后重建", e);
+                backup_corrupt_config(&config_path);
             }
         }
     }
@@ -241,6 +275,7 @@ pub fn load_config() -> Config {
         module_theme_colors: std::collections::HashMap::new(),
         global_font: String::new(),
         custom_font_path: String::new(),
+        module_order: Vec::new(),
     };
     let _ = fs::create_dir_all(&base_dir);
     let _ = save_config(&default_config);
@@ -262,12 +297,40 @@ fn fill_legacy_dirs(config: &mut Config, base_dir: &Path) {
     config.links_dir = sdk.to_string_lossy().to_string();
 }
 
+/// 把损坏的 config.json 备份为 config.json.corrupt-<unix秒>.bak，避免用户数据直接丢失。
+fn backup_corrupt_config(config_path: &Path) {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let bak = config_path.with_file_name(format!("config.json.corrupt-{}.bak", ts));
+    match fs::copy(config_path, &bak) {
+        Ok(_) => eprintln!("[config] 已备份损坏配置到 {}", bak.display()),
+        Err(e) => eprintln!("[config] 备份损坏配置失败: {}", e),
+    }
+}
+
+/// 原子写入 config.json：先写临时文件再 rename 替换，避免写入中途崩溃/断电截断文件。
+/// 进程内用互斥锁串行化，防止多个命令并发写交错。
 pub fn save_config(config: &Config) -> Result<(), String> {
     let base_dir = get_base_dir();
     let config_path = base_dir.join("config.json");
     let data = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
-    fs::write(config_path, data).map_err(|e| e.to_string())?;
-    Ok(())
+    if let Err(e) = fs::create_dir_all(&base_dir) {
+        return Err(e.to_string());
+    }
+    let _guard = CONFIG_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp_path = base_dir.join("config.json.tmp");
+    fs::write(&tmp_path, &data).map_err(|e| e.to_string())?;
+    match fs::rename(&tmp_path, &config_path) {
+        Ok(_) => Ok(()),
+        Err(_) => {
+            // rename 失败（如目标被其他进程占用）：退回直接写，并清理临时文件。
+            let _ = fs::write(&config_path, &data);
+            let _ = fs::remove_file(&tmp_path);
+            Ok(())
+        }
+    }
 }
 
 /// 记录托盘「启动上次配置」所需的最近一次服务参数
@@ -327,13 +390,52 @@ pub fn save_backups(store: &BackupStore) -> Result<(), String> {
     Ok(())
 }
 
+/// 兼容反序列化 original_envs：同时接受旧版扁平结构 `{变量名: 值}` 与新版按项目隔离的
+/// `{project_id: {变量名: 值}}`。旧版扁平数据归入 "__legacy__" 项目，避免多项目同名的原始值丢失。
+fn deserialize_original_envs<'de, D>(
+    deserializer: D,
+) -> Result<std::collections::HashMap<String, std::collections::HashMap<String, String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let raw = serde_json::Value::deserialize(deserializer)?;
+    let mut out: std::collections::HashMap<String, std::collections::HashMap<String, String>> =
+        std::collections::HashMap::new();
+    if let serde_json::Value::Object(map) = raw {
+        for (k, v) in map {
+            match v {
+                serde_json::Value::String(s) => {
+                    // 旧版扁平格式：{变量名: 值}
+                    out.entry("__legacy__".to_string())
+                        .or_default()
+                        .insert(k, s);
+                }
+                serde_json::Value::Object(nested) => {
+                    // 新版：{project_id: {变量名: 值}}
+                    let inner = nested
+                        .into_iter()
+                        .map(|(nk, nv)| {
+                            (nk, nv.as_str().unwrap_or_default().to_string())
+                        })
+                        .collect();
+                    out.insert(k, inner);
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Migrate old backups from config.json into backups.json (one-time)
 pub fn migrate_backups_from_config(config: &mut Config) {
     if !config.original_envs.is_empty() || !config.original_paths.is_empty() {
         let mut store = load_backups();
-        for (k, v) in config.original_envs.drain() {
-            // store under a generic key since old format didn't track per-project
-            store.env_vars.entry("__migrated__".to_string()).or_default().insert(k, v);
+        for (project_id, vars) in config.original_envs.drain() {
+            for (k, v) in vars {
+                store.env_vars.entry(project_id.clone()).or_default().insert(k, v);
+            }
         }
         for (k, v) in config.original_paths.drain() {
             store.path_entries.entry(k).or_default().extend(v);
@@ -993,7 +1095,7 @@ pub fn set_auto_start_service(service_id: String, enabled: bool) -> Result<(), S
 
 // ---- 外观：顶级模块主题色 + 全局字体 ----
 
-/// 供前端读取外观配置（模块主题色 + 全局字体 + 自定义字体）
+/// 供前端读取外观配置（模块主题色 + 全局字体 + 自定义字体 + 模块顺序）
 #[tauri::command]
 pub fn get_appearance_config() -> AppearanceConfig {
     let config = load_config();
@@ -1001,7 +1103,16 @@ pub fn get_appearance_config() -> AppearanceConfig {
         module_theme_colors: config.module_theme_colors,
         global_font: config.global_font,
         custom_font_path: config.custom_font_path,
+        module_order: config.module_order,
     }
+}
+
+/// 保存顶级模块的自定义顺序（模块 id 列表，空 = 恢复默认顺序）
+#[tauri::command]
+pub fn set_module_order(order: Vec<String>) -> Result<(), String> {
+    let mut config = load_config();
+    config.module_order = order;
+    save_config(&config)
 }
 
 /// 设置单个顶级模块的主题色（hex，如 #8b5cf6）
@@ -1093,12 +1204,13 @@ pub struct CustomFontInfo {
     pub ext: String,
 }
 
-/// 外观配置（模块主题色 + 全局字体）
+/// 外观配置（模块主题色 + 全局字体 + 模块顺序）
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct AppearanceConfig {
     pub module_theme_colors: std::collections::HashMap<String, String>,
     pub global_font: String,
     pub custom_font_path: String,
+    pub module_order: Vec<String>,
 }
 

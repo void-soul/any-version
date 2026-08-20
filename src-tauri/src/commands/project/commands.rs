@@ -73,7 +73,11 @@ pub fn project_manage(app: tauri::AppHandle, id: String, delegation: crate::comm
         if delegation.env_vars.contains(&var_def.name) {
             if let Some((val, _)) = get_registry_env_any(&var_def.name) {
                 if !val.to_lowercase().contains(&config.links_dir.to_lowercase()) {
-                    config.original_envs.entry(var_def.name.clone()).or_insert(val);
+                    config.original_envs
+                        .entry(id.clone())
+                        .or_default()
+                        .entry(var_def.name.clone())
+                        .or_insert(val);
                 }
             }
         }
@@ -317,7 +321,8 @@ pub fn project_unmanage(app: tauri::AppHandle, id: String) -> Result<(), String>
             if *tier == super::types::EnvVarTier::Compat { continue; }
         }
         if delegation.env_vars.contains(&var_def.name) {
-            if let Some(orig_val) = config.original_envs.remove(&var_def.name) {
+            let orig_val = config.original_envs.get_mut(&id).and_then(|m| m.remove(&var_def.name));
+            if let Some(orig_val) = orig_val {
                 let _ = set_registry_env(&var_def.name, &orig_val);
                 std::env::set_var(&var_def.name, &orig_val);
             } else {
@@ -383,7 +388,7 @@ fn save_manage_backup(
     // 收集备份的环境变量（仅与此项目相关的）
     let mut backed_env_vars: HashMap<String, String> = HashMap::new();
     for var_def in &def.env_vars {
-        if let Some(val) = config.original_envs.get(&var_def.name) {
+        if let Some(val) = config.original_envs.get(&def.id).and_then(|m| m.get(&var_def.name)) {
             backed_env_vars.insert(var_def.name.clone(), val.clone());
         }
     }
@@ -478,7 +483,7 @@ pub fn project_preview_unmanage(id: String) -> Result<ManagePreview, String> {
         if var_def.tier.as_ref().map_or(false, |t| *t == super::types::EnvVarTier::Compat) {
             continue;
         }
-        if let Some(orig_val) = config.original_envs.get(&var_def.name) {
+        if let Some(orig_val) = config.original_envs.get(&id).and_then(|m| m.get(&var_def.name)) {
             restore_count += 1;
             restore_list.push(format!("{} = {}", var_def.name, orig_val));
         }

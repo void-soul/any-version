@@ -279,6 +279,14 @@ pub fn configure_sdk_env_vars(sdk_id: &str, link_dir: &str, _version_dir: &str) 
             }
         }
 
+        // 仅托管「路径型」变量（check_type=path 或缺省）。URL/端口/标志等 nonempty/runtime
+        // 变量（如 PUB_HOSTED_URL）不应被设为 link_dir（本地 SDK 路径），否则会破坏其语义
+        // （例如 PUB_HOSTED_URL 需要 https:// 前缀，设成本地路径会导致 Invalid PUB_HOSTED_URL）。
+        // 这类变量由各包管理器的镜像/运行时配置机制管理，不由本处托管。
+        if var_info.check_type != "path" {
+            continue;
+        }
+
         // 值策略由 EnvVarDef.sub_dir 驱动（详见 sdk_env_var_value）。
         let value = sdk_env_var_value(sdk_id, link_dir, var_info);
         let _ = set_registry_env(&var_info.name, &value);
@@ -307,6 +315,11 @@ pub fn remove_sdk_env_vars(sdk_id: &str) -> Result<(), String> {
             if *tier == super::project::types::EnvVarTier::Compat {
                 continue;
             }
+        }
+        // 与 configure 对称：仅清理我们实际托管过的路径型变量。
+        // 非路径变量（URL/标志等）从未被本处托管，不应清空。
+        if var_info.check_type != "path" {
+            continue;
         }
         let _ = set_registry_env(&var_info.name, "");
     }
@@ -348,9 +361,48 @@ pub fn get_user_configurable_vars(project_id: String) -> Result<Vec<serde_json::
 }
 
 /// 设置用户自定义环境变量（运行时参数）
+/// 冲突检测：若该变量名已被某个「已托管」项目的核心 env 变量管理，则拒绝设置，
+/// 避免用户自定义变量覆盖/破坏 AnyVersion 托管的 SDK 环境（如 JAVA_HOME、CARGO_HOME）。
 #[tauri::command]
 pub fn set_user_configurable_var(name: String, value: String) -> Result<(), String> {
-    set_registry_env(&name, &value)
+    let name_trim = name.trim().to_string();
+    if name_trim.is_empty() {
+        return Err("环境变量名不能为空".to_string());
+    }
+    // 检测是否与已托管项目的核心 env 变量冲突
+    if let Some((managed_by, is_clear)) = find_managed_env_conflict(&name_trim) {
+        return Err(format!(
+            "变量 {} 已被项目「{}」托管（{}），不能通过用户自定义设置覆盖。请先取消该项目的环境变量托管。",
+            name_trim,
+            managed_by,
+            if is_clear { "该变量由工具接管/清空" } else { "该变量指向 AnyVersion 管理的路径" }
+        ));
+    }
+    set_registry_env(&name_trim, &value)
+}
+
+/// 在已托管项目的核心 env 变量中查找是否与 name 冲突。
+/// 返回 (project_id, 是否为 Clear 级别变量)。None 表示无冲突。
+fn find_managed_env_conflict(name: &str) -> Option<(String, bool)> {
+    use super::project::registry;
+    use super::project::types::EnvVarTier;
+    let config = crate::commands::config::load_config();
+    let name_lower = name.to_lowercase();
+    for managed_id in config.managed_items.iter() {
+        if let Some(def) = registry::find_by_id(managed_id) {
+            for var in &def.env_vars {
+                // 兼容层变量由工具接管/忽略，不构成冲突；core/package/clear 才算托管
+                if var.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Compat) {
+                    continue;
+                }
+                if var.name.eq_ignore_ascii_case(&name_lower) {
+                    let is_clear = var.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Clear);
+                    return Some((managed_id.clone(), is_clear));
+                }
+            }
+        }
+    }
+    None
 }
 
 /// 删除用户自定义环境变量
@@ -371,12 +423,16 @@ pub fn toggle_item_management(id: String, enable: bool, cache_dest: Option<Strin
         // 1. Add to managed_items
         config.managed_items.insert(id.clone());
 
-        // 2. Backup conflicting environment variables
+        // 2. Backup conflicting environment variables（按项目隔离备份，避免多项目同名变量覆盖）
         for var_info in &sdk_def.env_vars {
             let var_name = &var_info.name;
             if let Some((val, _source)) = get_registry_env_any(var_name) {
                 if !val.to_lowercase().contains(&config.links_dir.to_lowercase()) {
-                    config.original_envs.entry(var_name.to_string()).or_insert(val);
+                    config.original_envs
+                        .entry(id.clone())
+                        .or_default()
+                        .entry(var_name.to_string())
+                        .or_insert(val);
                 }
             }
         }
@@ -464,11 +520,17 @@ pub fn toggle_item_management(id: String, enable: bool, cache_dest: Option<Strin
         // 1. Remove AnyVersion environment variables for this SDK
         let _ = remove_sdk_env_vars(&id);
 
-        // 2. Restore original environment variables from backup
-        for var_info in &sdk_def.env_vars {
-            let var_name = &var_info.name;
-            if let Some(orig_val) = config.original_envs.remove(var_name) {
-                let _ = set_registry_env(var_name, &orig_val);
+        // 2. Restore original environment variables from backup（按项目隔离恢复）
+        if let Some(proj_envs) = config.original_envs.get_mut(&id) {
+            for var_info in &sdk_def.env_vars {
+                let var_name = &var_info.name;
+                if let Some(orig_val) = proj_envs.remove(var_name) {
+                    let _ = set_registry_env(var_name, &orig_val);
+                }
+            }
+            // 该项目已无剩余备份时，清理空的子 Map
+            if proj_envs.is_empty() {
+                config.original_envs.remove(&id);
             }
         }
 

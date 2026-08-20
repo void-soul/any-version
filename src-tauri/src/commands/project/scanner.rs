@@ -500,7 +500,8 @@ fn build_env_vars_status(
         let name = &var_def.name;
         let (value, source, exists, in_anyversion) = if managed && var_def.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Clear) {
             // 如果已经被托管且是 Clear 级别的变量，我们展示已清空并托管的状态，并显示备份值
-            if let Some(backup_val) = config.original_envs.get(name) {
+            let backup_val = config.original_envs.get(&def.id).and_then(|m| m.get(name));
+            if let Some(backup_val) = backup_val {
                 (Some(format!("已清空并托管 (备份值: {})", backup_val)), "备份管理".to_string(), true, true)
             } else {
                 (Some("已清空并托管".to_string()), "托管中".to_string(), true, true)
