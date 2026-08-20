@@ -38,6 +38,7 @@ import {
   Folder,
   GripVertical,
   RotateCcw,
+  Search,
 } from "lucide-react";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -338,6 +339,9 @@ export default function GlobalSettings() {
     moduleOrder: string[];
   }>({ moduleThemeColors: {}, globalFont: "", customFontPath: "", moduleOrder: [] });
   const [importingFont, setImportingFont] = useState(false);
+  const [systemFonts, setSystemFonts] = useState<string[]>([]);
+  const [fontSearch, setFontSearch] = useState("");
+  const [fontRefreshing, setFontRefreshing] = useState(false);
 
   const MODULE_APPEARANCE_DEFAULTS: Record<string, { label: string; color: string }> = {
     launcher: { label: "启动", color: "#8b5cf6" },
@@ -367,6 +371,31 @@ export default function GlobalSettings() {
       console.error("读取外观配置失败", e);
     }
   };
+
+  const fetchSystemFonts = async () => {
+    try {
+      const fonts = await invoke<string[]>("list_system_fonts");
+      setSystemFonts(fonts || []);
+    } catch (e) {
+      console.error("读取系统字体失败", e);
+    }
+  };
+
+  const refreshSystemFonts = async () => {
+    setFontRefreshing(true);
+    try {
+      await fetchSystemFonts();
+    } finally {
+      setFontRefreshing(false);
+    }
+  };
+
+  // 按关键字过滤系统字体（大小写不敏感）
+  const filteredFonts = (() => {
+    const kw = fontSearch.trim().toLowerCase();
+    if (!kw) return systemFonts;
+    return systemFonts.filter((f) => f.toLowerCase().includes(kw));
+  })();
 
   const saveModuleOrder = async (order: string[]) => {
     setAppearance({ ...appearance, moduleOrder: order });
@@ -620,6 +649,7 @@ export default function GlobalSettings() {
     fetchAutoStartServices();
     fetchLauncherConfig();
     fetchAppearance();
+    fetchSystemFonts();
     invoke<TrayMenuConfig>("get_tray_menu_config")
       .then(setTrayCfg)
       .catch(() => {});
@@ -1455,23 +1485,37 @@ export default function GlobalSettings() {
         <div className="pt-3 border-t border-white/5 space-y-2.5">
           <p className="text-[11px] font-medium text-slate-200">全局字体</p>
           <div className="flex items-center gap-2">
+            <div className="relative flex-1 min-w-0">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500 pointer-events-none" />
+              <input
+                type="text"
+                value={fontSearch}
+                onChange={(e) => setFontSearch(e.target.value)}
+                placeholder={`搜索字体（共 ${systemFonts.length} 个）`}
+                className="w-full glass-input pl-7 pr-2.5 py-1.5 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-sky-400/50"
+              />
+            </div>
+            <button
+              onClick={refreshSystemFonts}
+              disabled={fontRefreshing}
+              className="p-1.5 rounded-lg text-[10px] text-slate-400 hover:text-slate-200 bg-white/5 hover:bg-white/10 border border-white/10 transition cursor-pointer flex-shrink-0 disabled:opacity-50"
+              title="刷新系统字体列表"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${fontRefreshing ? "animate-spin" : ""}`} />
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
             <select
               value={appearance.globalFont}
               onChange={(e) => handleSetGlobalFont(e.target.value)}
               className="flex-1 min-w-0 glass-input text-xs"
             >
               <option value="">默认字体 (Inter / system-ui)</option>
-              <option value="Segoe UI">Segoe UI</option>
-              <option value="Microsoft YaHei">微软雅黑</option>
-              <option value="SimHei">黑体</option>
-              <option value="KaiTi">楷体</option>
-              <option value="SimSun">宋体</option>
-              <option value="Arial">Arial</option>
-              <option value="Georgia">Georgia</option>
-              <option value="Consolas">Consolas</option>
-              <option value="Courier New">Courier New</option>
-              <option value="PingFang SC">苹方</option>
-              <option value="Noto Sans CJK SC">Noto Sans CJK SC</option>
+              {filteredFonts.map((f) => (
+                <option key={f} value={f}>
+                  {f}
+                </option>
+              ))}
             </select>
             {appearance.customFontPath && (
               <button

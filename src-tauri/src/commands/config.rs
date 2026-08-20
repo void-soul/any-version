@@ -1195,6 +1195,75 @@ pub fn clear_custom_font() -> Result<(), String> {
     save_config(&config)
 }
 
+/// 枚举系统已安装的字体家族名（供前端「全局字体」下拉动态填充）。
+///
+/// 合并读取两个字体注册表位置，避免漏掉「仅当前用户安装」的字体：
+/// - `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts`（为所有用户安装）
+/// - `HKCU\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts`（为当前用户安装）
+/// 值名形如 `Arial (TrueType)`，去掉括号后缀与扩展名得到家族名，去重排序返回。
+#[tauri::command]
+pub fn list_system_fonts() -> Result<Vec<String>, String> {
+    #[cfg(windows)]
+    {
+        use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+        use winreg::RegKey;
+
+        const FONTS_SUBKEY: &str = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts";
+        let mut families: Vec<String> = Vec::new();
+
+        for root in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
+            let key = RegKey::predef(root).open_subkey(FONTS_SUBKEY);
+            let key = match key {
+                Ok(k) => k,
+                Err(_) => continue, // 该位置不存在/无权访问则跳过
+            };
+            for name in key.enum_values().filter_map(|v| v.ok()).map(|(n, _)| n) {
+                let fam = strip_font_suffix(&name);
+                if !fam.is_empty() && !families.contains(&fam) {
+                    families.push(fam);
+                }
+            }
+        }
+        families.sort();
+        Ok(families)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+/// 从字体注册表值名里提取家族名：去掉「(xxx)」后缀、去掉 Regular/Bold/Italic 等字重后缀。
+fn strip_font_suffix(name: &str) -> String {
+    let trimmed = name.trim();
+    // 去掉末尾括号及其内容，如 "Arial (TrueType)" -> "Arial"
+    let no_paren = match trimmed.rfind('(') {
+        Some(idx) => trimmed[..idx].trim_end().to_string(),
+        None => trimmed.to_string(),
+    };
+    // 去掉末尾的常见字重/样式标记（Regular / Bold / Italic / Light / Medium ...）
+    const STYLE_SUFFIXES: &[&str] = &[
+        " Regular", " Bold", " Italic", " Bold Italic", " Light", " Medium",
+        " SemiBold", " Semibold", " Black", " Heavy", " Thin", " ExtraLight",
+        " ExtraBold", " UltraLight", " SemiLight", " DemiBold", " Demi",
+    ];
+    let mut fam = no_paren;
+    for s in STYLE_SUFFIXES {
+        if let Some(stripped) = fam.strip_suffix(s) {
+            fam = stripped.to_string();
+            break;
+        }
+    }
+    // 去掉扩展名（部分字体值名带 .ttf/.ttc/.otf）
+    for ext in [".ttf", ".ttc", ".otf", ".TTF", ".TTC", ".OTF"] {
+        if let Some(stripped) = fam.strip_suffix(ext) {
+            fam = stripped.to_string();
+            break;
+        }
+    }
+    fam.trim().to_string()
+}
+
 /// 自定义字体信息
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]

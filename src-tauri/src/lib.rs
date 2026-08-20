@@ -335,6 +335,7 @@ pub fn run() {
             commands::config::set_module_order,
             commands::config::import_custom_font,
             commands::config::clear_custom_font,
+            commands::config::list_system_fonts,
             commands::config::get_project_menu_config,
             commands::config::update_project_menu_config,
             commands::http_server::start_http_server,

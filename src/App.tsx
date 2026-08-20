@@ -43,7 +43,11 @@ function buildFontFaceCss(customFontPath: string): string {
   if (!customFontPath) return "";
   try {
     const src = convertFileSrc(customFontPath);
-    return `@font-face{font-family:'AppCustomFont';src:url('${src}') format('woff2'),url('${src}') format('woff'),url('${src}') format('truetype'),url('${src}') format('opentype');font-display:swap;}`;
+    // 按文件扩展名只声明一个正确的 format()，避免同一 URL 挂多个不匹配的 format
+    // 导致 Chromium 整条跳过、字体静默回退到系统默认（导入后「没变化」的根因）。
+    const ext = customFontPath.split(".").pop()?.toLowerCase() || "";
+    const format = ext === "woff2" ? "woff2" : ext === "woff" ? "woff" : ext === "otf" ? "opentype" : "truetype";
+    return `@font-face{font-family:'AppCustomFont';src:url('${src}') format('${format}');font-display:swap;}`;
   } catch {
     return "";
   }
