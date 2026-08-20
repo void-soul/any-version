@@ -1,42 +1,23 @@
-import React, { useState, useEffect } from "react";
-import ProjectManager from "./components/ProjectManager";
-import SystemTools from "./components/SystemTools";
-import GlobalSettings from "./components/GlobalSettings";
-import AiPanel from "./components/ai/AiPanel";
-import TaskPanel from "./components/tasks/TaskPanel";
+import React, { useState, useEffect, useMemo } from "react";
 import TaskReminderToast from "./components/tasks/TaskReminderToast";
-import RssReader from "./components/RssReader";
-import NodeManagerPanel from "./components/node/NodeManagerPanel";
-import Mihomo from "./components/SystemTools/Mihomo";
-import CertManager from "./components/SystemTools/CertManager";
-import LauncherPanel from "./components/launcher/LauncherPanel";
-import ClipboardPanel from "./components/ClipboardPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { Wrench, Settings, X, Minus, Square, Rss, Cpu, Bot, CalendarCheck, Download, AlertTriangle, CheckCircle2, Loader2, Boxes, Waypoints, ShieldCheck, Rocket, Clipboard, FolderOpen } from "lucide-react";
+import { X, Minus, Square, Download, AlertTriangle, CheckCircle2, Loader2, FolderOpen, ChevronDown, Settings } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { MODULES, MODULE_MAP, resolveModuleLayout, type ModuleDef } from "./moduleRegistry";
 import "./App.css";
 
-export type PageId = "launcher" | "sdk" | "ai" | "tasks" | "node" | "mihomo" | "cert" | "news" | "clipboard" | "tools" | "settings";
+// 模块 id 即字符串（所有模块平级）。
+export type PageId = string;
 
-// 顶级模块默认主题色（可在全局设置里自定义覆盖）
-export const MODULE_DEFAULTS: Record<string, { label: string; color: string; dark?: boolean }> = {
-  launcher: { label: "启动", color: "#8b5cf6" }, // purple
-  news: { label: "资讯", color: "#ea580c" }, // orange
-  sdk: { label: "SDK", color: "#2563eb" }, // blue
-  ai: { label: "AI", color: "#7c3aed" }, // violet
-  tasks: { label: "任务", color: "#f59e0b" }, // amber
-  node: { label: "服务", color: "#0891b2" }, // cyan
-  mihomo: { label: "代理", color: "#4f46e5" }, // indigo
-  cert: { label: "证书", color: "#0d9488" }, // teal
-  clipboard: { label: "剪贴板", color: "#0ea5e9" }, // sky
-  tools: { label: "更多", color: "#059669" }, // emerald
-  settings: { label: "设置", color: "#dc2626" }, // red
-};
+// 向后兼容导出：模块默认外观（label/color），供 GlobalSettings 等使用。
+export const MODULE_DEFAULTS: Record<string, { label: string; color: string }> =
+  Object.fromEntries(MODULES.map((m) => [m.id, { label: m.label, color: m.color }]));
 
-export const MODULE_ORDER: PageId[] = ["launcher", "news", "sdk", "ai", "tasks", "node", "mihomo", "cert", "clipboard", "tools", "settings"];
+// 向后兼容导出：默认模块顺序（全部平级模块）。
+export const MODULE_ORDER: PageId[] = MODULES.map((m) => m.id);
 
 // 自定义字体 @font-face 的全局 CSS 注入
 function buildFontFaceCss(customFontPath: string): string {
@@ -56,7 +37,6 @@ function buildFontFaceCss(customFontPath: string): string {
 export default function App() {
   // 应用启动默认进入「启动」（Launcher）模块
   const [activePage, setActivePage] = useState<PageId>("launcher");
-  const [defaultToolsTab, setDefaultToolsTab] = useState<"ports" | "backups" | "httpServer" | "imageBase64" | "pathEnv">("ports");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [showReminder, setShowReminder] = useState(false);
 
@@ -79,13 +59,22 @@ export default function App() {
   const [binOldDataDir, setBinOldDataDir] = useState("");
   const [binMigrating, setBinMigrating] = useState(false);
 
-  // 外观：每个顶级模块的主题色 + 全局字体 + 模块顺序
+  // 外观：模块主题色 + 全局字体 + 模块顺序 + 模块布局（顶栏/禁用）
   const [appearance, setAppearance] = useState<{
     moduleThemeColors: Record<string, string>;
     globalFont: string;
     customFontPath: string;
     moduleOrder: string[];
-  }>({ moduleThemeColors: {}, globalFont: "", customFontPath: "", moduleOrder: [] });
+    toolbarModules: string[];
+    disabledModules: string[];
+  }>({
+    moduleThemeColors: {},
+    globalFont: "",
+    customFontPath: "",
+    moduleOrder: [],
+    toolbarModules: [],
+    disabledModules: [],
+  });
 
   // 懒挂载：仅渲染至少被访问过一次的页面，避免启动时全部组件同时初始化
   const [mountedPages, setMountedPages] = useState<Set<PageId>>(new Set(["launcher"]));
@@ -142,6 +131,8 @@ export default function App() {
           globalFont: string;
           customFontPath: string;
           moduleOrder: string[];
+          toolbarModules: string[];
+          disabledModules: string[];
         }>("get_appearance_config");
         setAppearance(ap);
       } catch (e) {
@@ -167,11 +158,11 @@ export default function App() {
       listen("launcher-toggle", () => {
         switchPage("launcher");
       });
-      // 监听模块专属快捷键唤起：直接切到对应顶级模块（来自后端 launcher-open-module 事件，载荷为 moduleId）
+      // 监听模块专属快捷键唤起：直接切到对应模块（来自后端 launcher-open-module 事件，载荷为 moduleId）
       listen<string>("launcher-open-module", (event) => {
         const m = event.payload;
-        if (m && (MODULE_ORDER as string[]).includes(m)) {
-          switchPage(m as PageId);
+        if (m && MODULE_MAP[m] && !appearance.disabledModules.includes(m)) {
+          switchPage(m);
         }
       });
       // 监听外观变更（全局设置里修改模块主题色/字体后实时生效）
@@ -182,6 +173,8 @@ export default function App() {
             globalFont: string;
             customFontPath: string;
             moduleOrder: string[];
+            toolbarModules: string[];
+            disabledModules: string[];
           }>("get_appearance_config");
           setAppearance(ap);
         } catch (e) {
@@ -275,6 +268,31 @@ export default function App() {
     "--module-accent-strong": `color-mix(in srgb, ${activeModuleColor} 85%, white)`,
   } as React.CSSProperties;
 
+  // 计算模块布局：顶栏模块 / 更多模块 / 全部启用模块。
+  const { toolbarModules, moreModules, allEnabled } = useMemo(
+    () =>
+      resolveModuleLayout(
+        appearance.moduleOrder,
+        appearance.toolbarModules,
+        appearance.disabledModules
+      ),
+    [appearance.moduleOrder, appearance.toolbarModules, appearance.disabledModules]
+  );
+
+  // 「设置」模块图标（用于窗口右上角只显示图标的设置按钮）
+  const SettingsIcon = MODULE_MAP["settings"]?.icon ?? Settings;
+
+  // 「更多」下拉菜单开合
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  // 若当前激活模块被禁用，回退到「启动」模块
+  useEffect(() => {
+    if (appearance.disabledModules.includes(activePage)) {
+      switchPage("launcher");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appearance.disabledModules]);
+
   return (
     <div
       className="w-screen h-screen overflow-hidden bg-[#0d111d] text-slate-100 flex flex-col"
@@ -291,46 +309,100 @@ export default function App() {
           </div>
 
 
-          <div className="flex items-center gap-0.5 bg-white/5 border border-white/5 rounded-lg p-0.5">
-            {(appearance.moduleOrder.length > 0 ? appearance.moduleOrder : MODULE_ORDER).map((id) => {
-              const cfg = MODULE_DEFAULTS[id];
-              const effectiveColor = appearance.moduleThemeColors[id] || cfg.color;
-              const isActive = activePage === id;
+          <div className="relative flex items-center gap-0.5 bg-white/5 border border-white/5 rounded-lg p-0.5">
+            {toolbarModules.filter((m) => m.id !== "settings").map((m) => {
+              const effectiveColor = appearance.moduleThemeColors[m.id] || m.color;
+              const isActive = activePage === m.id;
+              const Icon = m.icon;
               return (
                 <button
-                  key={id}
-                  onClick={() => switchPage(id as PageId)}
+                  key={m.id}
+                  onClick={() => switchPage(m.id)}
                   className={`px-3 py-1.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
                     isActive
                       ? "text-white shadow-sm"
                       : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
                   }`}
                   style={isActive ? { backgroundColor: effectiveColor } : undefined}
-                  title={`${cfg.label} (可在全局设置调整主题色)`}
+                  title={`${m.label} (可在全局设置调整主题色)`}
                 >
-                  {id === "launcher" && <Rocket className="w-3 h-3" />}
-                  {id === "news" && <Rss className="w-3 h-3" />}
-                  {id === "sdk" && <Cpu className="w-3 h-3" />}
-                  {id === "ai" && <Bot className="w-3 h-3" />}
-                  {id === "tasks" && <CalendarCheck className="w-3 h-3" />}
-                  {id === "node" && <Boxes className="w-3 h-3" />}
-                  {id === "mihomo" && <Waypoints className="w-3 h-3" />}
-                  {id === "cert" && <ShieldCheck className="w-3 h-3" />}
-                  {id === "clipboard" && <Clipboard className="w-3 h-3" />}
-                  {id === "tools" && <Wrench className="w-3 h-3" />}
-                  {id === "settings" && <Settings className="w-3 h-3" />}
-                  {cfg.label}
+                  <Icon className="w-3 h-3" />
+                  {m.label}
                 </button>
               );
             })}
+
+            {/* 「更多」下拉：收纳未置顶的模块 */}
+            {moreModules.length > 0 && (
+              <div className="relative">
+                <button
+                  onClick={() => setMoreOpen((v) => !v)}
+                  className={`px-3 py-1.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+                    moreModules.some((m) => m.id === activePage)
+                      ? "text-white shadow-sm"
+                      : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+                  }`}
+                  style={
+                    moreModules.some((m) => m.id === activePage)
+                      ? { backgroundColor: "#059669" }
+                      : undefined
+                  }
+                  title="更多模块"
+                >
+                  <span className="w-3 h-3 flex items-center justify-center">⋯</span>
+                  更多
+                  <ChevronDown className={`w-2.5 h-2.5 transition-transform ${moreOpen ? "rotate-180" : ""}`} />
+                </button>
+                {moreOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setMoreOpen(false)} />
+                    <div className="absolute top-full right-0 mt-1.5 z-50 min-w-[160px] rounded-lg border border-white/10 bg-[#151a2a] shadow-2xl shadow-black/60 p-1">
+                      {moreModules.map((m) => {
+                        const Icon = m.icon;
+                        return (
+                          <button
+                            key={m.id}
+                            onClick={() => {
+                              switchPage(m.id);
+                              setMoreOpen(false);
+                            }}
+                            className={`w-full px-3 py-2 rounded-md text-[11px] font-medium flex items-center gap-2 transition-all cursor-pointer text-left ${
+                              activePage === m.id
+                                ? "bg-white/10 text-white"
+                                : "text-slate-300 hover:bg-white/5"
+                            }`}
+                          >
+                            <Icon className="w-3.5 h-3.5" style={{ color: m.color }} />
+                            {m.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
         {/* Draggable Middle Area */}
         <div className="flex-grow h-full" data-tauri-drag-region />
 
-        {/* Right: Window Controls */}
+        {/* Right: Settings + Window Controls */}
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => switchPage("settings")}
+            className={`p-1.5 rounded transition-all cursor-pointer ${
+              activePage === "settings"
+                ? "text-white"
+                : "text-slate-400 hover:text-white hover:bg-white/5"
+            }`}
+            style={activePage === "settings" ? { backgroundColor: appearance.moduleThemeColors["settings"] || "#dc2626" } : undefined}
+            title="设置"
+          >
+            <SettingsIcon className="w-3.5 h-3.5" />
+          </button>
+          <div className="w-px h-4 bg-white/10 mx-0.5" />
           <button
             onClick={() => getCurrentWindow().minimize()}
             className="p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded transition-all cursor-pointer"
@@ -357,61 +429,23 @@ export default function App() {
 
       {/* content */}
       <div className="flex-grow flex flex-col min-h-0 relative" style={moduleThemeVars}>
-        {mountedPages.has("launcher") && (
-          <div className={activePage === "launcher" ? "h-full w-full flex flex-col" : "hidden"}>
-            <LauncherPanel />
-          </div>
-        )}
-        {mountedPages.has("sdk") && (
-          <div className={activePage === "sdk" ? "h-full w-full" : "hidden"}>
-            <ProjectManager selectedId={selectedProjectId} onSelectId={setSelectedProjectId} />
-          </div>
-        )}
-        {mountedPages.has("ai") && (
-          <div className={activePage === "ai" ? "h-full w-full" : "hidden"}>
-            <AiPanel />
-          </div>
-        )}
-        {mountedPages.has("tasks") && (
-          <div className={activePage === "tasks" ? "h-full w-full" : "hidden"}>
-            <TaskPanel />
-          </div>
-        )}
-        {mountedPages.has("node") && (
-          <div className={activePage === "node" ? "h-full w-full" : "hidden"}>
-            <NodeManagerPanel />
-          </div>
-        )}
-        {mountedPages.has("mihomo") && (
-          <div className={activePage === "mihomo" ? "h-full w-full flex flex-col" : "hidden"}>
-            <Mihomo />
-          </div>
-        )}
-        {mountedPages.has("cert") && (
-          <div className={activePage === "cert" ? "h-full w-full flex flex-col" : "hidden"}>
-            <CertManager />
-          </div>
-        )}
-        {mountedPages.has("news") && (
-          <div className={activePage === "news" ? "h-full w-full flex flex-col" : "hidden"}>
-            <RssReader />
-          </div>
-        )}
-        {mountedPages.has("clipboard") && (
-          <div className={activePage === "clipboard" ? "h-full w-full flex flex-col" : "hidden"}>
-            <ClipboardPanel />
-          </div>
-        )}
-        {mountedPages.has("tools") && (
-          <div className={activePage === "tools" ? "h-full w-full flex flex-col" : "hidden"}>
-            <SystemTools defaultTab={defaultToolsTab} />
-          </div>
-        )}
-        {mountedPages.has("settings") && (
-          <div className={activePage === "settings" ? "h-full w-full flex flex-col overflow-y-auto" : "hidden"}>
-            <GlobalSettings />
-          </div>
-        )}
+        {allEnabled.map((m) => {
+          if (!mountedPages.has(m.id)) return null;
+          const Comp = m.Component;
+          const isActive = activePage === m.id;
+          // 特殊模块的额外 props
+          const extraProps: Record<string, unknown> =
+            m.id === "sdk" ? { selectedId: selectedProjectId, onSelectId: setSelectedProjectId } : {};
+          const containerClass =
+            m.id === "settings"
+              ? "h-full w-full flex flex-col overflow-y-auto"
+              : "h-full w-full flex flex-col";
+          return (
+            <div key={m.id} className={isActive ? containerClass : "hidden"}>
+              <Comp {...extraProps} />
+            </div>
+          );
+        })}
 
         {/* 启动后今日待办提醒（右下角自定义弹窗） */}
         {showReminder && (

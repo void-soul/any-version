@@ -28,7 +28,6 @@ import {
   Waypoints,
   Video,
   Globe,
-  Keyboard,
   LayoutGrid,
   Sliders,
   Shield,
@@ -39,33 +38,146 @@ import {
   GripVertical,
   RotateCcw,
   Search,
+  X,
 } from "lucide-react";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
-// 可拖拽的模块顺序行
-function ModuleOrderRow({ id, label, color }: { id: string; label: string; color: string }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+// 可拖拽的模块配置行：主题色 + 位置 + 启用 + 快捷键（拖拽手柄独立，避免与控件冲突）
+function ModuleConfigRow({
+  id,
+  label,
+  icon: Icon,
+  color,
+  disabled,
+  inToolbar,
+  pinned,
+  hotkey,
+  isRecording,
+  onColorChange,
+  onToggleToolbar,
+  onToggleEnabled,
+  onRecordHotkey,
+  onClearHotkey,
+}: {
+  id: string;
+  label: string;
+  icon: any;
+  color: string;
+  disabled: boolean;
+  inToolbar: boolean;
+  pinned: boolean;
+  hotkey: string;
+  isRecording: boolean;
+  onColorChange: (color: string) => void;
+  onToggleToolbar: () => void;
+  onToggleEnabled: () => void;
+  onRecordHotkey: () => void;
+  onClearHotkey: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging, setActivatorNodeRef } =
+    useSortable({ id });
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`flex items-center gap-2 px-2.5 py-2 rounded-xl bg-white/[0.03] border border-white/5 touch-none cursor-grab active:cursor-grabbing ${
+      className={`flex items-center gap-2 px-2.5 py-2 rounded-xl bg-white/[0.03] border border-white/5 ${
         isDragging ? "opacity-60 ring-1 ring-[var(--module-accent-ring)] z-10" : ""
-      }`}
+      } ${disabled ? "opacity-50" : ""}`}
       {...attributes}
-      {...listeners}
     >
-      <GripVertical className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
-      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: color }} />
-      <span className="text-[11px] text-slate-300 truncate">{label}</span>
+      {/* 拖拽手柄 */}
+      <button
+        ref={setActivatorNodeRef}
+        {...listeners}
+        className="cursor-grab active:cursor-grabbing text-slate-500 hover:text-slate-300 p-0.5 touch-none flex-shrink-0"
+        title="拖动排序"
+      >
+        <GripVertical className="w-3.5 h-3.5" />
+      </button>
+
+      {/* 图标 + 标签 */}
+      <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color }} />
+      <span className="text-[11px] text-slate-300 w-14 truncate flex-shrink-0">{label}</span>
+
+      {/* 主题色 */}
+      <input
+        type="color"
+        value={color}
+        onChange={(e) => onColorChange(e.target.value)}
+        title="模块主题色"
+        className="w-6 h-5 rounded cursor-pointer border border-white/10 bg-transparent p-0 flex-shrink-0"
+      />
+
+      {/* 位置：顶栏/更多 */}
+      {pinned ? (
+        <span className="text-[9px] text-slate-600 w-9 text-center flex-shrink-0">固定</span>
+      ) : (
+        <button
+          onClick={onToggleToolbar}
+          disabled={disabled}
+          className={`px-1.5 py-0.5 rounded-md text-[9px] font-medium border transition cursor-pointer disabled:opacity-40 w-9 flex-shrink-0 ${
+            inToolbar
+              ? "bg-cyan-500/15 border-cyan-500/40 text-cyan-300"
+              : "bg-white/5 border-white/10 text-slate-400"
+          }`}
+          title={inToolbar ? "在顶栏，点击收进更多" : "在更多，点击移到顶栏"}
+        >
+          {inToolbar ? "顶栏" : "更多"}
+        </button>
+      )}
+
+      {/* 启用开关 */}
+      {pinned ? (
+        <span className="w-8 flex-shrink-0" />
+      ) : (
+        <button
+          onClick={onToggleEnabled}
+          className={`relative w-8 rounded-full transition cursor-pointer flex-shrink-0 ${
+            disabled ? "bg-white/10" : "bg-emerald-500/60"
+          }`}
+          style={{ height: 18 }}
+          title={disabled ? "点击启用" : "点击禁用"}
+        >
+          <span
+            className="absolute top-[2px] w-[14px] h-[14px] rounded-full bg-white transition-all"
+            style={{ left: disabled ? 2 : 16 }}
+          />
+        </button>
+      )}
+
+      {/* 快捷键 */}
+      <div className="flex items-center gap-1 flex-shrink-0">
+        <button
+          onClick={onRecordHotkey}
+          className={`px-2 py-0.5 rounded-md text-[9px] font-mono border transition cursor-pointer ${
+            isRecording
+              ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
+              : hotkey
+                ? "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10"
+                : "bg-white/[0.02] border-dashed border-white/15 text-slate-500 hover:text-slate-300"
+          }`}
+          title={isRecording ? "按下按键完成录制，Esc 取消" : hotkey ? "点击重新录制" : "点击录制快捷键"}
+        >
+          {isRecording ? "请按键…" : hotkey || "无"}
+        </button>
+        {hotkey && !isRecording && (
+          <button
+            onClick={onClearHotkey}
+            className="text-slate-500 hover:text-rose-300 p-0.5 cursor-pointer"
+            title="清除快捷键"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 import type { LauncherSetting } from "./launcher/types";
-import { MODULE_ORDER, MODULE_DEFAULTS } from "../App";
+import { MODULES } from "../moduleRegistry";
 
 interface Config {
   versions_dir?: string;
@@ -330,32 +442,54 @@ export default function GlobalSettings() {
   const [savingLauncher, setSavingLauncher] = useState(false);
   const [launcherSaved, setLauncherSaved] = useState(false);
 
-  // ---- 外观：模块主题色 + 全局字体 + 模块顺序 ----
+  // ---- 外观：模块主题色 + 全局字体 + 模块顺序 + 模块布局 ----
   const [appearance, setAppearance] = useState<{
     moduleThemeColors: Record<string, string>;
     globalFont: string;
     customFontPath: string;
     moduleOrder: string[];
-  }>({ moduleThemeColors: {}, globalFont: "", customFontPath: "", moduleOrder: [] });
+    toolbarModules: string[];
+    disabledModules: string[];
+  }>({
+    moduleThemeColors: {},
+    globalFont: "",
+    customFontPath: "",
+    moduleOrder: [],
+    toolbarModules: [],
+    disabledModules: [],
+  });
   const [importingFont, setImportingFont] = useState(false);
   const [systemFonts, setSystemFonts] = useState<string[]>([]);
   const [fontSearch, setFontSearch] = useState("");
   const [fontRefreshing, setFontRefreshing] = useState(false);
 
-  const MODULE_APPEARANCE_DEFAULTS: Record<string, { label: string; color: string }> = {
-    launcher: { label: "启动", color: "#8b5cf6" },
-    news: { label: "资讯", color: "#ea580c" },
-    sdk: { label: "SDK", color: "#2563eb" },
-    ai: { label: "AI", color: "#7c3aed" },
-    tasks: { label: "任务", color: "#f59e0b" },
-    node: { label: "服务", color: "#0891b2" },
-    mihomo: { label: "代理", color: "#4f46e5" },
-    cert: { label: "证书", color: "#0d9488" },
-    clipboard: { label: "剪贴板", color: "#0ea5e9" },
-    tools: { label: "更多", color: "#059669" },
-    settings: { label: "设置", color: "#dc2626" },
+  // 模块默认外观：从统一注册表派生（含全部平级模块，含「更多」里的子工具）。
+  const MODULE_APPEARANCE_DEFAULTS: Record<string, { label: string; color: string }> =
+    Object.fromEntries(MODULES.map((m) => [m.id, { label: m.label, color: m.color }]));
+
+  // 模块顺序：优先用户自定义顺序，缺失的模块（新增/子工具）追加到末尾，保证完整。
+  const moduleOrderIds = (() => {
+    const custom = appearance.moduleOrder;
+    const all = MODULES.map((m) => m.id);
+    if (custom.length === 0) return all;
+    // 已有序的在前，未出现过的模块按默认顺序追加
+    const ordered = custom.filter((id) => all.includes(id));
+    const missing = all.filter((id) => !ordered.includes(id));
+    return [...ordered, ...missing];
+  })();
+
+  // 统一模块映射（从注册表派生），用于模块管理区。
+  const MODULE_MAP_LOCAL: Record<string, { id: string; label: string; color: string; icon: any; pinned?: boolean; defaultToolbar?: boolean }> =
+    Object.fromEntries(MODULES.map((m) => [m.id, { id: m.id, label: m.label, color: m.color, icon: m.icon, pinned: m.pinned, defaultToolbar: m.defaultToolbar }]));
+
+  // 判断模块当前是否「在顶栏」：优先用户显式布局，为空时回退默认顶栏。
+  const isModuleInToolbar = (id: string): boolean => {
+    if (MODULE_MAP_LOCAL[id]?.pinned) return true; // 设置模块始终顶栏
+    if (appearance.toolbarModules.length > 0) {
+      return appearance.toolbarModules.includes(id);
+    }
+    return !!MODULE_MAP_LOCAL[id]?.defaultToolbar;
   };
-  const moduleOrderIds = appearance.moduleOrder.length > 0 ? appearance.moduleOrder : Object.keys(MODULE_APPEARANCE_DEFAULTS);
 
   const fetchAppearance = async () => {
     try {
@@ -364,6 +498,8 @@ export default function GlobalSettings() {
         globalFont: string;
         customFontPath: string;
         moduleOrder: string[];
+        toolbarModules: string[];
+        disabledModules: string[];
       }>("get_appearance_config");
       setAppearance(ap);
     } catch (e) {
@@ -404,6 +540,44 @@ export default function GlobalSettings() {
     } catch (e) {
       console.error("保存模块顺序失败", e);
     }
+  };
+
+  // 保存模块布局（顶栏模块 + 禁用模块）
+  const saveModuleLayout = async (toolbar: string[], disabled: string[]) => {
+    setAppearance({ ...appearance, toolbarModules: toolbar, disabledModules: disabled });
+    try {
+      await invoke("set_module_layout", {
+        toolbarModules: toolbar,
+        disabledModules: disabled,
+      });
+      emit("appearance-updated");
+    } catch (e) {
+      console.error("保存模块布局失败", e);
+    }
+  };
+
+  // 物化「当前实际顶栏模块列表」：若用户尚未显式保存布局，则以默认顶栏列表为准。
+  // 避免在空列表上增删导致「只保留一个模块、其余全部落到更多」。
+  const materializedToolbar = (): string[] => {
+    if (appearance.toolbarModules.length > 0) return [...appearance.toolbarModules];
+    return MODULES.filter((m) => m.defaultToolbar).map((m) => m.id);
+  };
+
+  // 切换模块启用/禁用
+  const toggleModuleEnabled = (id: string) => {
+    if (MODULE_MAP_LOCAL[id]?.pinned) return; // 设置模块不可禁用
+    const disabled = appearance.disabledModules.includes(id)
+      ? appearance.disabledModules.filter((x) => x !== id)
+      : [...appearance.disabledModules, id];
+    saveModuleLayout(materializedToolbar(), disabled);
+  };
+
+  // 切换模块在顶栏 / 更多
+  const toggleModuleToolbar = (id: string) => {
+    if (MODULE_MAP_LOCAL[id]?.pinned) return; // 设置模块始终顶栏
+    const base = materializedToolbar();
+    const toolbar = base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
+    saveModuleLayout(toolbar, appearance.disabledModules);
   };
 
   const handleModuleOrderDragEnd = (event: { active: any; over: any }) => {
@@ -1442,41 +1616,7 @@ export default function GlobalSettings() {
           </div>
         </div>
 
-        {/* 1. 模块主题色 */}
-        <div>
-          <p className="text-[11px] font-medium text-slate-200 mb-2">顶级模块主题色</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            {Object.entries(MODULE_APPEARANCE_DEFAULTS).map(([id, cfg]) => {
-              const current = appearance.moduleThemeColors[id] || cfg.color;
-              return (
-                <div
-                  key={id}
-                  className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-white/[0.03] border border-white/5"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span
-                      className="w-4 h-4 rounded-full flex-shrink-0 border border-white/20"
-                      style={{ backgroundColor: current }}
-                    />
-                    <span className="text-[11px] text-slate-300 truncate">{cfg.label}</span>
-                  </div>
-                  <input
-                    type="color"
-                    value={current}
-                    onChange={(e) => handleSetModuleColor(id, e.target.value)}
-                    title={`${cfg.label} 主题色：${current}`}
-                    className="w-7 h-6 rounded cursor-pointer border border-white/10 bg-transparent p-0"
-                  />
-                </div>
-              );
-            })}
-          </div>
-          <p className="text-[9px] text-slate-500 mt-2">
-            点击色块选择颜色，即可为对应模块（启动/资讯/SDK/AI/任务/服务/代理/证书/更多/设置）设置独立主题色；选择回默认色即恢复原色。
-          </p>
-        </div>
-
-        {/* 2. 全局字体 */}
+        {/* 1. 全局字体 */}
         <div className="pt-3 border-t border-white/5 space-y-2.5">
           <p className="text-[11px] font-medium text-slate-200">全局字体</p>
           <div className="flex items-center gap-2">
@@ -1538,20 +1678,49 @@ export default function GlobalSettings() {
           )}
         </div>
 
-        {/* 3. 顶级模块顺序 */}
+        {/* 2. 模块管理：统一配置（主题色 + 位置 + 启用 + 快捷键 + 拖拽排序） */}
         <div className="pt-3 border-t border-white/5 space-y-2.5">
-          <p className="text-[11px] font-medium text-slate-200">顶级模块顺序（拖拽调整）</p>
+          <div className="space-y-0.5">
+            <p className="text-[11px] font-medium text-slate-200">模块管理</p>
+            <p className="text-[9px] text-slate-500">
+              所有模块地位平等。拖动排序、设置主题色、切换顶栏/更多、启用/禁用、录制快捷键，一站式配置。
+            </p>
+          </div>
           <DndContext sensors={orderSensors} collisionDetection={closestCenter} onDragEnd={handleModuleOrderDragEnd}>
             <SortableContext items={moduleOrderIds} strategy={verticalListSortingStrategy}>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {moduleOrderIds.map((id) => (
-                  <ModuleOrderRow
-                    key={id}
-                    id={id}
-                    label={MODULE_APPEARANCE_DEFAULTS[id]?.label || id}
-                    color={appearance.moduleThemeColors[id] || MODULE_APPEARANCE_DEFAULTS[id]?.color || "#64748b"}
-                  />
-                ))}
+              <div className="space-y-1.5">
+                {moduleOrderIds.map((id) => {
+                  const m = MODULE_MAP_LOCAL[id];
+                  if (!m) return null;
+                  const disabled = appearance.disabledModules.includes(id);
+                  const inToolbar = isModuleInToolbar(id);
+                  const pinned = !!m.pinned;
+                  const hotkey = launcherCfg.moduleHotkeys?.[id] || "";
+                  const isRecording = recordingField === id;
+                  return (
+                    <ModuleConfigRow
+                      key={id}
+                      id={id}
+                      label={m.label}
+                      icon={m.icon}
+                      color={appearance.moduleThemeColors[id] || m.color}
+                      disabled={disabled}
+                      inToolbar={inToolbar}
+                      pinned={pinned}
+                      hotkey={hotkey}
+                      isRecording={isRecording}
+                      onColorChange={(c) => handleSetModuleColor(id, c)}
+                      onToggleToolbar={() => toggleModuleToolbar(id)}
+                      onToggleEnabled={() => toggleModuleEnabled(id)}
+                      onRecordHotkey={() => setRecordingField(isRecording ? null : id)}
+                      onClearHotkey={() => {
+                        const cur = { ...(launcherCfg.moduleHotkeys || {}) };
+                        delete cur[id];
+                        handleSaveLauncherConfig({ moduleHotkeys: cur });
+                      }}
+                    />
+                  );
+                })}
               </div>
             </SortableContext>
           </DndContext>
@@ -1562,7 +1731,7 @@ export default function GlobalSettings() {
             >
               <RotateCcw className="w-3 h-3" /> 恢复默认顺序
             </button>
-            <span className="text-[9px] text-slate-600">拖动保存后立即生效</span>
+            <span className="text-[9px] text-slate-600">拖动手柄排序，配置即时生效</span>
           </div>
         </div>
       </div>
@@ -1597,91 +1766,8 @@ export default function GlobalSettings() {
           </div>
         </div>
 
-        {/* 1. 各顶级模块快捷键 */}
-        <div className="space-y-2">
-          <div className="space-y-0.5">
-            <p className="text-xs font-medium text-slate-200 flex items-center gap-1.5">
-              <Keyboard className="w-3.5 h-3.5 text-[var(--module-accent)]" />
-              各顶级模块快捷键
-            </p>
-            <p className="text-[9px] text-slate-500">
-              在 Windows 任意界面按下快捷键，即可激活并跳到对应模块：程序隐藏时唤起并切换；已激活时切换到该模块；若正处该模块则隐藏程序。
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
-            {MODULE_ORDER.map((id) => {
-              const label = MODULE_DEFAULTS[id]?.label || id;
-              // 所有模块（含「启动」）统一存于 moduleHotkeys，地位平等。
-              const current = launcherCfg.moduleHotkeys?.[id] || "";
-              const isRecording = recordingField === id;
-              return (
-                <div key={id} className="flex items-center gap-2">
-                  <span className="w-12 text-[11px] text-slate-300 shrink-0">{label}</span>
-                  <div
-                    className={`px-2 py-1 rounded-lg border text-[11px] font-mono text-center min-w-[86px] transition ${
-                      isRecording
-                        ? "bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] border-[var(--module-accent)] text-[var(--module-accent)] animate-pulse"
-                        : "bg-black/30 border-white/10 text-white"
-                    }`}
-                  >
-                    {isRecording ? "请按下按键..." : current || "未设置"}
-                  </div>
-                  <button
-                    onClick={() => setRecordingField(isRecording ? null : id)}
-                    className={`px-2 py-1 rounded-lg text-[11px] border transition cursor-pointer ${
-                      isRecording
-                        ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
-                        : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10"
-                    }`}
-                  >
-                    {isRecording ? "取消" : "录制"}
-                  </button>
-                  {current && (
-                    <button
-                      onClick={() => {
-                        const cur = { ...(launcherCfg.moduleHotkeys || {}) };
-                        delete cur[id];
-                        handleSaveLauncherConfig({ moduleHotkeys: cur });
-                      }}
-                      className="px-2 py-1 rounded-lg text-[11px] border border-white/10 text-slate-400 hover:text-rose-300 hover:border-rose-500/30 bg-white/5 cursor-pointer"
-                      title="清除该模块快捷键"
-                    >
-                      清除
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* 「启动」模块常用预设 */}
-          <div className="flex items-center gap-2 pt-0.5">
-            <span className="text-[10px] text-slate-500">「启动」模块常用预设：</span>
-            {["Alt+Space", "F6", "Ctrl+Space", "Ctrl+`"].map((preset) => (
-              <button
-                key={preset}
-                onClick={() =>
-                  handleSaveLauncherConfig({
-                    moduleHotkeys: {
-                      ...(launcherCfg.moduleHotkeys || {}),
-                      launcher: preset,
-                    },
-                  })
-                }
-                className={`px-2 py-0.5 text-[11px] rounded-lg border transition cursor-pointer font-mono ${
-                  (launcherCfg.moduleHotkeys?.["launcher"] || "") === preset
-                    ? "bg-[var(--module-accent-soft)] border-[var(--module-accent)] text-[var(--module-accent)]"
-                    : "bg-white/5 hover:bg-[var(--module-accent-soft)] hover:border-[var(--module-accent-ring)] text-slate-300 border-white/10"
-                }`}
-              >
-                {preset}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* 2. 数据备份与恢复 */}
+        {/* 模块快捷键已整合到「外观 → 模块管理」区，此处仅保留启动器数据备份 */}
+        {/* 1. 数据备份与恢复 */}
         <div className="pt-3 border-t border-white/5 flex items-center justify-between">
           <div className="space-y-0.5">
             <p className="text-xs font-medium text-slate-200">启动器数据备份与恢复</p>

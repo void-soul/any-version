@@ -332,6 +332,7 @@ pub fn run() {
             commands::config::set_module_theme_color,
             commands::config::set_global_font,
             commands::config::set_module_order,
+            commands::config::set_module_layout,
             commands::config::import_custom_font,
             commands::config::clear_custom_font,
             commands::config::list_system_fonts,

@@ -148,6 +148,13 @@ pub struct Config {
     /// 顶级模块自定义顺序（模块 id 列表）。为空时前端使用默认顺序。
     #[serde(default)]
     pub module_order: Vec<String>,
+    /// 置顶显示在顶栏的模块 id 列表（其余模块收进「更多」）。
+    /// 为空时前端按默认布局（全部顶级模块在顶栏，子工具在「更多」）。
+    #[serde(default)]
+    pub toolbar_modules: Vec<String>,
+    /// 被用户禁用的模块 id 列表（导航隐藏且不渲染，后端命令仍注册）。
+    #[serde(default)]
+    pub disabled_modules: Vec<String>,
 }
 
 pub fn get_base_dir() -> PathBuf {
@@ -276,6 +283,8 @@ pub fn load_config() -> Config {
         global_font: String::new(),
         custom_font_path: String::new(),
         module_order: Vec::new(),
+        toolbar_modules: Vec::new(),
+        disabled_modules: Vec::new(),
     };
     let _ = fs::create_dir_all(&base_dir);
     let _ = save_config(&default_config);
@@ -1104,6 +1113,8 @@ pub fn get_appearance_config() -> AppearanceConfig {
         global_font: config.global_font,
         custom_font_path: config.custom_font_path,
         module_order: config.module_order,
+        toolbar_modules: config.toolbar_modules,
+        disabled_modules: config.disabled_modules,
     }
 }
 
@@ -1112,6 +1123,18 @@ pub fn get_appearance_config() -> AppearanceConfig {
 pub fn set_module_order(order: Vec<String>) -> Result<(), String> {
     let mut config = load_config();
     config.module_order = order;
+    save_config(&config)
+}
+
+/// 保存模块布局：顶栏模块列表 + 禁用模块列表（所有模块平级，用户自由归类）。
+#[tauri::command]
+pub fn set_module_layout(
+    toolbar_modules: Vec<String>,
+    disabled_modules: Vec<String>,
+) -> Result<(), String> {
+    let mut config = load_config();
+    config.toolbar_modules = toolbar_modules;
+    config.disabled_modules = disabled_modules;
     save_config(&config)
 }
 
@@ -1273,7 +1296,7 @@ pub struct CustomFontInfo {
     pub ext: String,
 }
 
-/// 外观配置（模块主题色 + 全局字体 + 模块顺序）
+/// 外观配置（模块主题色 + 全局字体 + 模块顺序 + 模块布局）
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct AppearanceConfig {
@@ -1281,5 +1304,7 @@ pub struct AppearanceConfig {
     pub global_font: String,
     pub custom_font_path: String,
     pub module_order: Vec<String>,
+    pub toolbar_modules: Vec<String>,
+    pub disabled_modules: Vec<String>,
 }
 
