@@ -4,7 +4,6 @@ use std::sync::LazyLock;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::thread;
 
@@ -341,6 +340,13 @@ pub fn shell_execute(
                 if !work_dir.is_empty() {
                     cmd.current_dir(&work_dir);
                 }
+                // 彻底脱离 AnyVersion 生命周期与控制台：不继承 stdin/stdout/stderr 句柄，
+                // 不继承控制台，脱离 Job Object。否则子进程打印到 dev 控制台且随 AnyVersion
+                // 关闭而关闭。
+                cmd.stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .creation_flags_detached();
                 cmd.spawn().map_err(|e| format!("启动程序失败 (ShellExecute code {}): {}", res as isize, e))?;
             } else {
                 // 文档/文本文件/目录通过 cmd /c start 打开系统默认关联程序
@@ -349,7 +355,11 @@ pub fn shell_execute(
                 if !params.trim().is_empty() {
                     cmd_args.push(params.to_string());
                 }
-                cmd.args(&cmd_args).creation_flags_hidden();
+                cmd.args(&cmd_args)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .creation_flags_detached();
                 if !work_dir.is_empty() {
                     cmd.current_dir(&work_dir);
                 }
@@ -757,14 +767,16 @@ pub fn parse_hotkey(hotkey: &str) -> Option<(u32, u32)> {
     }
 }
 
-static CURRENT_HOTKEY_THREAD_RUNNING: AtomicBool = AtomicBool::new(false);
-static HOTKEY_THREAD_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-/// 已注册热键的 id 列表，供下次注册前同步卸载（避免旧线程退出竞态导致新热键被误注销）。
-static REGISTERED_HOTKEY_IDS: Mutex<Vec<i32>> = Mutex::new(Vec::new());
 /// 前端当前激活的顶级模块 id（由前端在切换页面时通过 "launcher-active-page" 事件上报）。
 /// 用于模块专属热键的「显示/隐藏」来回切换判定：当窗口已显示且正显示该模块时，按热键则隐藏。
 static CURRENT_PAGE: LazyLock<Mutex<String>> =
     LazyLock::new(|| Mutex::new(String::from("launcher")));
+
+/// 热键命令通道：向单一持久热键线程发送「重新注册」命令。
+/// 热键的注册与注销必须在同一线程进行（Windows 限制），否则旧热键无法被可靠
+/// 注销，导致「换成新快捷键后新旧都生效」。因此用单一常驻线程统一处理注册/注销。
+static HOTKEY_CMD_TX: Mutex<Option<std::sync::mpsc::Sender<Vec<(i32, Option<String>, (u32, u32))>>>> =
+    Mutex::new(None);
 
 /// 供前端上报当前激活模块（在 setup 中注册 listen 调用）。
 pub(crate) fn set_current_page(page: &str) {
@@ -774,23 +786,16 @@ pub(crate) fn set_current_page(page: &str) {
 
 /// 注册全局快捷键并启动消息循环监听线程。
 ///
-/// - `show_hide_str`：主热键（全局切换窗口显示，唤起时打开「启动」模块）。
-/// - `module_hotkeys`：各顶级模块独立热键（module_id -> 热键字符串），按下后唤起窗口并打开对应模块。
-///
-/// 主热键按一次显示、再按一次隐藏；模块热键唤起并切换到该模块（已可见时直接切换，不隐藏）。
+/// - `module_hotkeys`：各顶级模块独立热键（module_id -> 热键字符串，含「启动」= "launcher"）。
+///   所有模块快捷键地位平等，按下后按三段式切换：
+///   程序隐藏则唤起并切到该模块 / 已激活则切换到该模块 / 正处该模块则隐藏。
 pub fn register_global_hotkeys(
     app: AppHandle,
-    show_hide_str: &str,
     module_hotkeys: &HashMap<String, String>,
 ) -> Result<(), String> {
-    // 构造 (id, 目标模块id可选, (mod, key)) 列表。
-    // 主热键固定 id 0x9001（目标 None -> 启动模块）；模块热键从 0x9100 起分配。
+    // 构造 (id, 目标模块id, (mod, key)) 列表。所有模块（含 launcher）平等，从 0x9000 起顺序分配 id。
     let mut entries: Vec<(i32, Option<String>, (u32, u32))> = Vec::new();
-    let main_hotkey = parse_hotkey(show_hide_str);
-    if main_hotkey.is_some() {
-        entries.push((0x9001, None, main_hotkey.unwrap()));
-    }
-    let mut mid = 0x9100;
+    let mut mid = 0x9000;
     for (mod_id, hk) in module_hotkeys.iter() {
         if let Some(mk) = parse_hotkey(hk) {
             if !mod_id.is_empty() {
@@ -803,120 +808,171 @@ pub fn register_global_hotkeys(
     let mut seen = std::collections::HashSet::new();
     entries.retain(|(_, _, mk)| seen.insert(*mk));
 
-    if entries.is_empty() {
-        // 没有可用热键：卸载旧热键并结束。
-        unregister_previous_hotkeys();
-        return Ok(());
-    }
-
-    // 同步卸载上一次注册的热键（在当前线程执行，避免旧监听线程退出竞态误注销新热键）。
-    unregister_previous_hotkeys();
-
-    let app_clone = app.clone();
-    let new_ids: Vec<i32> = entries.iter().map(|(id, _, _)| *id).collect();
-    let actions: HashMap<i32, Option<String>> =
-        entries.iter().map(|(id, mod_id, _)| (*id, mod_id.clone())).collect();
-
-    // 记录本次 id，供下次卸载。
-    *REGISTERED_HOTKEY_IDS.lock().unwrap() = new_ids.clone();
-
-    thread::spawn(move || {
-        CURRENT_HOTKEY_THREAD_RUNNING.store(true, Ordering::SeqCst);
-        let tid = unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() };
-        HOTKEY_THREAD_ID.store(tid, Ordering::SeqCst);
-
-        unsafe {
-            let mut registered_any = false;
-            for (id, _, (modi, key)) in &entries {
-                let mut res = RegisterHotKey(std::ptr::null_mut(), *id, *modi | MOD_NOREPEAT, *key);
-                if res == 0 {
-                    res = RegisterHotKey(std::ptr::null_mut(), *id, *modi, *key);
-                }
-                if res != 0 {
-                    registered_any = true;
-                } else {
-                    tracing::warn!("注册全局热键 id={:#x} 失败 (可能被占用)", *id);
-                }
-            }
-
-            if !registered_any {
-                CURRENT_HOTKEY_THREAD_RUNNING.store(false, Ordering::SeqCst);
-                return;
-            }
-
-            let mut msg: MSG = std::mem::zeroed();
-            while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
-                if msg.message == WM_HOTKEY {
-                    let wparam = msg.wParam as i32;
-                    if let Some(target) = actions.get(&wparam) {
-                        if let Some(window) = app_clone.get_webview_window("main") {
-                            let is_visible = window.is_visible().unwrap_or(false);
-                            let is_minimized = window.is_minimized().unwrap_or(false);
-                            // 本次是否将「唤起窗口」而非「隐藏窗口」。若是唤起，
-                            // 提前记录当前前台窗口，供剪贴板模块「一键粘贴」使用。
-                            let will_show = match target {
-                                None => !(is_visible && !is_minimized),
-                                Some(module) => {
-                                    !(is_visible && !is_minimized
-                                        && CURRENT_PAGE.lock().unwrap().as_str() == module)
-                                }
-                            };
-                            if will_show {
-                                crate::commands::clipboard::monitor_remember_window();
-                            }
-                            match target {
-                                // 主热键：可见则隐藏，否则唤起并显示「启动」模块。
-                                None => {
-                                    if is_visible && !is_minimized {
-                                        let _ = window.hide();
-                                    } else {
-                                        crate::tray::focus_main_window(&window);
-                                    }
-                                }
-                                // 模块热键：与主热键一致，显示/隐藏来回切换。
-                                // 已显示且正显示该模块 -> 隐藏；否则显示并切到该模块。
-                                Some(module) => {
-                                    if is_visible && !is_minimized {
-                                        if CURRENT_PAGE.lock().unwrap().as_str() == module {
-                                            let _ = window.hide();
-                                        } else {
-                                            let _ = window.emit("launcher-open-module", module.clone());
-                                        }
-                                    } else {
-                                        crate::tray::show_and_open_module(&window, module);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
-
-            for id in &new_ids {
-                UnregisterHotKey(std::ptr::null_mut(), *id);
-            }
+    // 确保单一常驻热键线程存在，并把注册命令发给它。
+    // 注册/注销必须同线程，否则换快捷键时旧热键注销失败、新旧并存。
+    let tx = {
+        let mut guard = HOTKEY_CMD_TX.lock().unwrap();
+        if guard.is_none() {
+            let (tx, rx) = std::sync::mpsc::channel::<Vec<(i32, Option<String>, (u32, u32))>>();
+            *guard = Some(tx.clone());
+            spawn_hotkey_worker(app.clone(), rx);
         }
-        CURRENT_HOTKEY_THREAD_RUNNING.store(false, Ordering::SeqCst);
-    });
+        guard.as_ref().unwrap().clone()
+    };
 
+    tx.send(entries)
+        .map_err(|e| format!("发送热键注册命令失败: {}", e))?;
     Ok(())
 }
 
-/// 同步卸载上一轮注册的全部热键（在当前线程调用，进程级生效）。
-fn unregister_previous_hotkeys() {
-    let ids = std::mem::take(&mut *REGISTERED_HOTKEY_IDS.lock().unwrap());
-    for id in ids {
-        unsafe {
-            let _ = UnregisterHotKey(std::ptr::null_mut(), id);
+/// 启动单一常驻热键线程：负责所有热键的注册与注销，并处理 WM_HOTKEY 消息。
+/// 线程通过 channel 接收新的 entries；收到后在同一线程内先卸载旧热键再注册新热键。
+fn spawn_hotkey_worker(
+    app: AppHandle,
+    rx: std::sync::mpsc::Receiver<Vec<(i32, Option<String>, (u32, u32))>>,
+) {
+    thread::spawn(move || {
+        let mut current_ids: Vec<i32> = Vec::new();
+        let mut actions: HashMap<i32, Option<String>> = HashMap::new();
+
+        loop {
+            // 阻塞等待新的注册命令（或线程退出）。
+            let entries = match rx.recv() {
+                Ok(e) => e,
+                Err(_) => break, // 所有发送端关闭，线程退出
+            };
+
+            // 1) 在同一线程内卸载上一轮注册的热键（保证能成功注销）。
+            for id in &current_ids {
+                unsafe {
+                    let _ = UnregisterHotKey(std::ptr::null_mut(), *id);
+                }
+            }
+            current_ids.clear();
+            actions.clear();
+
+            // 2) 注册新热键。
+            for (id, mod_id, (modi, key)) in &entries {
+                unsafe {
+                    let mut res = RegisterHotKey(std::ptr::null_mut(), *id, *modi | MOD_NOREPEAT, *key);
+                    if res == 0 {
+                        res = RegisterHotKey(std::ptr::null_mut(), *id, *modi, *key);
+                    }
+                    if res != 0 {
+                        current_ids.push(*id);
+                        actions.insert(*id, mod_id.clone());
+                    } else {
+                        tracing::warn!("注册全局热键 id={:#x} 失败 (可能被占用)", *id);
+                    }
+                }
+            }
+
+            // 3) 消息循环：处理 WM_HOTKEY，同时监听新命令（通过 PeekMessage + 短轮询 channel）。
+            //    为兼顾「注册命令到达时能及时响应」，采用带超时的消息等待。
+            let mut msg: MSG = unsafe { std::mem::zeroed() };
+            loop {
+                // 先用 PeekMessage 非阻塞检查是否有 WM_HOTKEY 或其它消息。
+                let has_msg = unsafe { PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 };
+                if has_msg {
+                    if msg.message == WM_QUIT {
+                        // 收到退出消息：卸载热键并退出线程。
+                        for id in &current_ids {
+                            unsafe {
+                                let _ = UnregisterHotKey(std::ptr::null_mut(), *id);
+                            }
+                        }
+                        return;
+                    }
+                    if msg.message == WM_HOTKEY {
+                        let wparam = msg.wParam as i32;
+                        if let Some(Some(module)) = actions.get(&wparam) {
+                            handle_hotkey_action(&app, module);
+                        }
+                    }
+                    unsafe {
+                        TranslateMessage(&msg);
+                        DispatchMessageW(&msg);
+                    }
+                    continue;
+                }
+
+                // 无消息时，短暂等待并检查是否有新的注册命令（用 try_recv 轮询）。
+                if let Ok(new_entries) = rx.try_recv() {
+                    // 有新的注册命令：跳出内层消息循环，回到外层重新注册。
+                    // 先把 new_entries 塞回处理流程（用递归式循环变量）。
+                    // 简单做法：直接处理——卸载旧、注册新。
+                    for id in &current_ids {
+                        unsafe {
+                            let _ = UnregisterHotKey(std::ptr::null_mut(), *id);
+                        }
+                    }
+                    current_ids.clear();
+                    actions.clear();
+                    for (id, mod_id, (modi, key)) in &new_entries {
+                        unsafe {
+                            let mut res = RegisterHotKey(std::ptr::null_mut(), *id, *modi | MOD_NOREPEAT, *key);
+                            if res == 0 {
+                                res = RegisterHotKey(std::ptr::null_mut(), *id, *modi, *key);
+                            }
+                            if res != 0 {
+                                current_ids.push(*id);
+                                actions.insert(*id, mod_id.clone());
+                            } else {
+                                tracing::warn!("注册全局热键 id={:#x} 失败 (可能被占用)", *id);
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                // 短暂休眠，避免忙轮询占用 CPU。
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
         }
+    });
+}
+
+/// 处理热键动作（三段式切换），必须在主线程执行窗口操作。
+fn handle_hotkey_action(app: &AppHandle, module: &str) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let is_visible = window.is_visible().unwrap_or(false);
+    let is_minimized = window.is_minimized().unwrap_or(false);
+    let is_active_module = CURRENT_PAGE.lock().unwrap().as_str() == module;
+    // 三段式切换：
+    //   1) 程序隐藏 -> 唤起并切到该模块；
+    //   2) 程序可见但处于其它模块 -> 切到该模块；
+    //   3) 程序可见且正处该模块 -> 隐藏程序。
+    // 若本次将「唤起窗口」（而非隐藏），提前记录当前前台窗口，供剪贴板模块「一键粘贴」使用。
+    let will_show = !(is_visible && !is_minimized && is_active_module);
+    if will_show {
+        crate::commands::clipboard::monitor_remember_window();
     }
+    let module = module.to_string();
+    let app_for_ui = app.clone();
+    app.run_on_main_thread(move || {
+        let Some(window) = app_for_ui.get_webview_window("main") else {
+            return;
+        };
+        if is_visible && !is_minimized {
+            if is_active_module {
+                let _ = window.hide();
+            } else {
+                let _ = window.emit("launcher-open-module", module.clone());
+            }
+        } else {
+            crate::tray::show_and_open_module(&window, &module);
+        }
+    })
+    .map_err(|e| tracing::warn!("切主线程执行热键动作失败: {}", e))
+    .ok();
 }
 
 pub fn register_global_hotkey(app: AppHandle, hotkey_str: &str) -> Result<(), String> {
-    let empty: HashMap<String, String> = HashMap::new();
-    register_global_hotkeys(app, hotkey_str, &empty)
+    let mut map: HashMap<String, String> = HashMap::new();
+    map.insert("launcher".to_string(), hotkey_str.to_string());
+    register_global_hotkeys(app, &map)
 }
 
 /// 辅助扩展：在 Windows 上创建隐藏命令行子进程
@@ -930,7 +986,34 @@ impl CommandExtHidden for std::process::Command {
         {
             use std::os::windows::process::CommandExt;
             const CREATE_NO_WINDOW: u32 = 0x08000000;
-            self.creation_flags(CREATE_NO_WINDOW);
+            // CREATE_BREAKAWAY_FROM_JOB：让子进程脱离 AnyVersion 所在的 Job Object，
+            // 从而 AnyVersion 关闭时子进程不被连带终止。
+            const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
+            self.creation_flags(CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB);
+        }
+        self
+    }
+}
+
+/// 让子进程彻底脱离 AnyVersion 的控制台与生命周期：
+/// - `DETACHED_PROCESS`：不继承父进程控制台（子进程有自己的控制台或 GUI 窗口）。
+/// - `CREATE_BREAKAWAY_FROM_JOB`：脱离父进程 Job Object。
+/// - `CREATE_NEW_PROCESS_GROUP`：独立进程组，Ctrl+C 等信号不波及。
+///
+/// 注意：本方法不设置 NO_WINDOW，保留目标程序自身的窗口（用于启动用户可见的应用）。
+pub trait CommandExtDetached {
+    fn creation_flags_detached(&mut self) -> &mut Self;
+}
+
+impl CommandExtDetached for std::process::Command {
+    fn creation_flags_detached(&mut self) -> &mut Self {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const DETACHED_PROCESS: u32 = 0x00000008;
+            const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+            const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
+            self.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB);
         }
         self
     }

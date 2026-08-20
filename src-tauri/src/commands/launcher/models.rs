@@ -136,11 +136,15 @@ pub struct CheckProgress {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LauncherSetting {
-    #[serde(default = "default_hotkey")]
-    pub show_hide_shortcut_key: String,
-    /// 各顶级模块的独立唤起快捷键：module_id -> 热键字符串（如 "F2"）。
-    /// 按下后唤起主窗口并直接显示对应模块；主热键(show_hide_shortcut_key)仍用于全局切换且显示「启动」模块。
+    /// 遗留字段：旧版本用于激活「启动」模块的主热键。
+    /// 现已统一到 `module_hotkeys`（所有顶级模块快捷键平等，含「启动」= "launcher"）。
+    /// 读取时由 `db::get_settings` 自动迁移进 `module_hotkeys["launcher"]` 并清空本字段。
     #[serde(default)]
+    pub show_hide_shortcut_key: String,
+    /// 各顶级模块的独立唤起快捷键：module_id -> 热键字符串（如 "F2"、"Win+V"）。
+    /// 所有模块（含「启动」= "launcher"）地位平等，三段式切换：
+    /// 程序隐藏则唤起并切到该模块；已激活则切换到该模块；正处该模块则隐藏。
+    #[serde(default = "default_module_hotkeys")]
     pub module_hotkeys: HashMap<String, String>,
     // ---- 视图设置（全局，应用到所有分类）----
     /// 项目图标大小（px），默认 32
@@ -175,8 +179,10 @@ pub struct LauncherSetting {
     pub category_gap: i32,
 }
 
-fn default_hotkey() -> String {
-    "Alt+Space".to_string()
+fn default_module_hotkeys() -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    m.insert("launcher".to_string(), "Alt+Space".to_string());
+    m
 }
 fn default_item_icon_size() -> i32 {
     32
@@ -206,8 +212,8 @@ fn default_category_gap() -> i32 {
 impl Default for LauncherSetting {
     fn default() -> Self {
         Self {
-            show_hide_shortcut_key: default_hotkey(),
-            module_hotkeys: HashMap::new(),
+            show_hide_shortcut_key: String::new(),
+            module_hotkeys: default_module_hotkeys(),
             item_icon_size: default_item_icon_size(),
             item_column_number: 0,
             card_density: default_card_density(),

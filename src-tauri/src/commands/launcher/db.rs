@@ -536,13 +536,28 @@ pub fn get_settings() -> Result<LauncherSetting, String> {
             [],
             |row| row.get(0),
         );
-        match res {
-            Ok(json_str) => {
-                let setting: LauncherSetting = serde_json::from_str(&json_str).unwrap_or_default();
-                Ok(setting)
-            }
-            Err(_) => Ok(LauncherSetting::default()),
+        let mut setting: LauncherSetting = match res {
+            Ok(json_str) => serde_json::from_str(&json_str).unwrap_or_default(),
+            Err(_) => LauncherSetting::default(),
+        };
+
+        // 数据迁移：旧版本的「启动」模块快捷键存在 show_hide_shortcut_key，
+        // 现统一迁移到 module_hotkeys["launcher"]（所有模块快捷键平等）。
+        if !setting.show_hide_shortcut_key.is_empty()
+            && !setting.module_hotkeys.contains_key("launcher")
+        {
+            setting
+                .module_hotkeys
+                .insert("launcher".to_string(), setting.show_hide_shortcut_key.clone());
+            setting.show_hide_shortcut_key.clear();
+            // 立即落盘，避免每次读取都重复迁移。
+            let json_str = serde_json::to_string(&setting).map_err(|e| e.to_string())?;
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO launcher_setting (key, value) VALUES ('global', ?1)",
+                params![json_str],
+            );
         }
+        Ok(setting)
     })
 }
 

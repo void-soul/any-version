@@ -290,7 +290,6 @@ pub fn run() {
             if let Ok(setting) = commands::launcher::db::get_settings() {
                 let _ = commands::launcher::windows::register_global_hotkeys(
                     app.handle().clone(),
-                    &setting.show_hide_shortcut_key,
                     &setting.module_hotkeys,
                 );
             }
