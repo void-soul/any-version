@@ -226,10 +226,30 @@ fn build_proxies_yaml(nodes: &[String]) -> Result<String, String> {
         return Err("未从订阅中解析到任何节点".to_string());
     }
     let mut proxies = Vec::new();
+    let mut used_names: std::collections::HashSet<String> = std::collections::HashSet::new();
     for uri in nodes {
-        if let Some(proxy) = parse_node_uri(uri) {
-            proxies.push(proxy);
+        let Some(mut proxy) = parse_node_uri(uri) else {
+            continue;
+        };
+        // 重名去重：mihomo 要求 proxy 名字全局唯一，同名会导致启动校验失败
+        // （如多个无 #name 的节点都默认解析成 "server:port"）。自动加 -2/-3... 后缀。
+        if let Some(name) = proxy.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()) {
+            if used_names.contains(&name) {
+                let mut i = 2u32;
+                let mut new_name = format!("{name}-{i}");
+                while used_names.contains(&new_name) {
+                    i += 1;
+                    new_name = format!("{name}-{i}");
+                }
+                if let Some(obj) = proxy.as_object_mut() {
+                    obj.insert("name".to_string(), serde_json::Value::String(new_name.clone()));
+                }
+                used_names.insert(new_name);
+            } else {
+                used_names.insert(name);
+            }
         }
+        proxies.push(proxy);
     }
     if proxies.is_empty() {
         return Err("订阅内容无法识别为有效节点".to_string());

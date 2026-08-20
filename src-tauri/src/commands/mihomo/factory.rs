@@ -505,6 +505,64 @@ pub fn prepare_profile_work_dir(data_dir: &Path, current: &str) -> std::io::Resu
     Ok(())
 }
 
+/// 去重 proxies 数组里的重名节点，并同步修正 proxy-groups 引用。
+///
+/// mihomo 要求 proxy 名全局唯一，重名会导致启动校验失败（"xxx is the duplicate name"）。
+/// 规则：保留首个出现的节点原名，后续重名依次追加 `-2`、`-3`... 后缀；
+/// 若 proxy-groups 引用了被改名的节点，同步替换为新名（保证策略组仍指向有效节点）。
+fn dedup_proxies(obj: &mut serde_json::Map<String, Value>) {
+    let Some(Value::Array(proxies)) = obj.get_mut("proxies") else {
+        return;
+    };
+
+    // 1) 收集重名映射：旧名 -> 新名（仅记录被改名的节点）
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut rename_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for p in proxies.iter_mut() {
+        let Some(name) = p.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()) else {
+            continue;
+        };
+        if seen.contains(&name) {
+            // 重名：生成唯一后缀
+            let mut i = 2u32;
+            let mut new_name = format!("{name}-{i}");
+            while seen.contains(&new_name) {
+                i += 1;
+                new_name = format!("{name}-{i}");
+            }
+            if let Some(pobj) = p.as_object_mut() {
+                pobj.insert("name".into(), Value::String(new_name.clone()));
+            }
+            // 仅记录第一个改名，后续同名节点复用相同的新名（但这里每个都会生成独立 -n）
+            // 注意：同名第三个节点会走 while 循环拿到 -3，不需要重复映射。
+            rename_map.entry(name.clone()).or_insert(new_name.clone());
+            seen.insert(new_name);
+        } else {
+            seen.insert(name);
+        }
+    }
+
+    if rename_map.is_empty() {
+        return;
+    }
+
+    // 2) 修正 proxy-groups 里对已改名节点的引用（含 select/url-test/fallback/load-balance 的 proxies 数组）
+    if let Some(Value::Array(groups)) = obj.get_mut("proxy-groups") {
+        for g in groups.iter_mut() {
+            let Some(gobj) = g.as_object_mut() else { continue };
+            if let Some(Value::Array(refs)) = gobj.get_mut("proxies") {
+                for r in refs.iter_mut() {
+                    if let Some(s) = r.as_str() {
+                        if let Some(new) = rename_map.get(s) {
+                            *r = Value::String(new.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// 生成结果：runtime 用于前端预览/备份（保留用户 log-level），core 用于实际写入内核配置
 pub struct GeneratedConfig {
     pub runtime: String,
@@ -596,6 +654,13 @@ pub fn generate_runtime_config(
     ] {
         obj.entry(k.to_string()).or_insert(v);
     }
+
+    // 4.0 重名节点去重：订阅源可能返回重复 name 的 proxy（如多个无 #name 的节点
+    //     都解析成 "server:port"，或订阅源本身自带重名），mihomo 要求 proxy 名全局唯一，
+    //     重名会导致启动校验失败（"xxx is the duplicate name"）。
+    //     此处对齐 clash-party 语义：在生成内核配置的最后阶段兜底，把重名节点自动
+    //     追加 -2/-3... 后缀，并同步修正 proxy-groups 里的引用，保证内核可启动。
+    dedup_proxies(obj);
 
     // 4.1 二级代理：把配置的家庭 socks5 列表注入为 proxies 节点，
     //     每个命名为「二级-<name>」，并用一个 Selector 策略组「二级代理」收纳全部，

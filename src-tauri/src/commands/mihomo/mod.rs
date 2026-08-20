@@ -1039,6 +1039,7 @@ pub async fn mihomo_validate_subscription(url: String) -> Result<SubValidation, 
     let resp = client
         .get(&url)
         .header("User-Agent", "clash-verge/v1.7.0")
+        .header("Accept-Encoding", "identity")
         .send()
         .await
         .map_err(|e| format!("订阅下载失败: {e}"))?;
@@ -1165,6 +1166,7 @@ pub async fn mihomo_import_subscription(
         .map_err(|e| e.to_string())?
         .get(&url)
         .header("User-Agent", "clash-verge/v1.7.0")
+        .header("Accept-Encoding", "identity")
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -1292,6 +1294,9 @@ pub async fn mihomo_update_subscription(
     }
     let client = client_builder.build().map_err(|e| e.to_string())?;
     let mut req = client.get(&url);
+    // 对齐 clash-party fetchAndValidateSubscription：强制不压缩，
+    // 避免部分订阅站返回 gzip 内容导致 base64/YAML 解析异常。
+    req = req.header("Accept-Encoding", "identity");
     if let Some(ua) = &item.user_agent {
         req = req.header("User-Agent", ua.clone());
     }
