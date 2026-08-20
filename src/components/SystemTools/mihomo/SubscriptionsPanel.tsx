@@ -86,6 +86,7 @@ export default function SubscriptionsPanel({
   const [showLog, setShowLog] = useState(false);
   const logSeq = useRef(0);
   const timerRef = useRef<any>(null);
+  const [confirmBox, setConfirmBox] = useState<{ msg: string; title?: string; onOk: () => void } | null>(null);
 
   // 追加一条订阅请求日志（最多保留 100 条，最新在前）
   const pushLog = (l: Omit<SubLog, "id" | "time">) => {
@@ -161,18 +162,9 @@ export default function SubscriptionsPanel({
 
   const flash = (s: string) => { setMsg(s); setTimeout(() => setMsg(""), 3000); };
 
-  const doImport = async () => {
-    const u = url.trim();
-    if (!u) return;
+  const runImport = async (u: string) => {
     setBusy("import");
     try {
-      const v = await mihomoApi.validateSubscription(u);
-      if (v && v.ok === false) {
-        pushLog({ type: "校验", name: u, proxy: false, ok: false, msg: v.message });
-        if (!confirm(`订阅校验提示：${v.message}\n仍要导入吗？`)) { setBusy(""); return; }
-      } else if (v && v.message) {
-        pushLog({ type: "校验", name: u, proxy: false, ok: true, msg: v.message });
-      }
       const imported: any = await mihomoApi.importSubscription(u);
       const ui = imported?.subscription_userinfo;
       pushLog({
@@ -193,6 +185,33 @@ export default function SubscriptionsPanel({
       flash(`导入失败: ${e}`);
     }
     setBusy("");
+  };
+
+  const doImport = async () => {
+    const u = url.trim();
+    if (!u) return;
+    setBusy("import");
+    try {
+      const v = await mihomoApi.validateSubscription(u);
+      if (v && v.ok === false) {
+        pushLog({ type: "校验", name: u, proxy: false, ok: false, msg: v.message });
+        setBusy("");
+        setConfirmBox({
+          title: "导入订阅",
+          msg: `订阅校验提示：${v.message}\n仍要导入吗？`,
+          onOk: () => runImport(u),
+        });
+        return;
+      }
+      if (v && v.message) {
+        pushLog({ type: "校验", name: u, proxy: false, ok: true, msg: v.message });
+      }
+      await runImport(u);
+    } catch (e: any) {
+      pushLog({ type: "导入", name: u, proxy: false, ok: false, msg: String(e) });
+      flash(`导入失败: ${e}`);
+      setBusy("");
+    }
   };
 
   const pasteUrl = async () => {
@@ -306,10 +325,15 @@ export default function SubscriptionsPanel({
     setBusy("");
   };
 
-  const doRemove = async (it: ProfileItem) => {
-    if (!confirm(`确认删除配置「${it.name}」？`)) return;
-    try { await mihomoApi.removeProfile(it.id); await load(); }
-    catch (e: any) { flash(`删除失败: ${e}`); }
+  const doRemove = (it: ProfileItem) => {
+    setConfirmBox({
+      title: "删除配置",
+      msg: `确认删除配置「${it.name}」？`,
+      onOk: async () => {
+        try { await mihomoApi.removeProfile(it.id); await load(); }
+        catch (e: any) { flash(`删除失败: ${e}`); }
+      },
+    });
   };
 
   const move = async (idx: number, dir: -1 | 1) => {
@@ -565,6 +589,22 @@ export default function SubscriptionsPanel({
           onClose={() => setEditFile(null)}
           onSaved={async () => { setEditFile(null); await load(); flash("已保存"); }}
         />
+      )}
+      {confirmBox && (
+        <Modal
+          title={confirmBox.title || "确认"}
+          onClose={() => setConfirmBox(null)}
+          footer={
+            <div className="flex justify-end gap-2">
+              <button className={btnSec} onClick={() => setConfirmBox(null)}>取消</button>
+              <button className={btnPrimary} onClick={() => { const cb = confirmBox; setConfirmBox(null); cb.onOk(); }}>
+                确定
+              </button>
+            </div>
+          }
+        >
+          <div className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{confirmBox.msg}</div>
+        </Modal>
       )}
     </div>
   );
