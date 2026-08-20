@@ -308,8 +308,7 @@ export default function GlobalSettings() {
 
   // 启动器配置 (全局唤起快捷键 + 视图设置)
   const [launcherCfg, setLauncherCfg] = useState<LauncherSetting>({
-    showHideShortcutKey: "Alt+Space",
-    moduleHotkeys: {},
+    moduleHotkeys: { launcher: "Alt+Space" },
     itemIconSize: 32,
     itemColumnNumber: 0,
     cardDensity: "cozy",
@@ -321,7 +320,7 @@ export default function GlobalSettings() {
     categoryFontSize: 12,
     categoryGap: 24,
   });
-  // 录制目标：null=未录制；"main"=主唤起热键；否则为某个顶级模块的 moduleId
+  // 录制目标：null=未录制；否则为某个顶级模块的 moduleId（含「启动」= "launcher"）
   const [recordingField, setRecordingField] = useState<string | null>(null);
   // 始终持有最新 launcherCfg，供录制监听闭包（仅依赖 recordingField）安全读取
   const launcherCfgRef = useRef<LauncherSetting>(launcherCfg);
@@ -515,7 +514,7 @@ export default function GlobalSettings() {
   // 全局热键录制监听（基于 e.code 解析，支持 F1-F12、Shift/Ctrl/Alt+组合、单键等）
   useEffect(() => {
     if (!recordingField) return;
-    const target = recordingField; // 本次录制目标：main 或 模块 id
+    const target = recordingField; // 本次录制目标：模块 id（含「启动」= "launcher"）
 
     const handleKeyCapture = (e: KeyboardEvent) => {
       // Escape 取消录制
@@ -580,14 +579,10 @@ export default function GlobalSettings() {
       }
       const hotkeyStr = parts.join("+");
 
-      if (target === "main") {
-        handleSaveLauncherConfig({ showHideShortcutKey: hotkeyStr });
-      } else {
-        // 写入对应模块的独立热键
-        const cur = launcherCfgRef.current.moduleHotkeys || {};
-        const nextMap = { ...cur, [target]: hotkeyStr };
-        handleSaveLauncherConfig({ moduleHotkeys: nextMap });
-      }
+      // 统一写入对应模块的快捷键（所有模块平等，含「启动」= "launcher"）
+      const cur = launcherCfgRef.current.moduleHotkeys || {};
+      const nextMap = { ...cur, [target]: hotkeyStr };
+      handleSaveLauncherConfig({ moduleHotkeys: nextMap });
       setRecordingField(null);
     };
 
@@ -1602,64 +1597,80 @@ export default function GlobalSettings() {
           </div>
         </div>
 
-        {/* 1. 启动器全局呼出快捷键 */}
+        {/* 1. 各顶级模块快捷键 */}
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <p className="text-xs font-medium text-slate-200 flex items-center gap-1.5">
-                <Keyboard className="w-3.5 h-3.5 text-[var(--module-accent)]" />
-                唤起/隐藏主程序界面快捷键
-              </p>
-              <p className="text-[9px] text-slate-500">
-                在 Windows 任意界面按下此快捷键，即可立即唤起或隐藏 AnyVersion 主窗口。
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <div
-                className={`px-3 py-1.5 rounded-xl border text-xs font-mono text-center min-w-[120px] outline-none transition ${
-                  recordingField === "main"
-                    ? "bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] border-[var(--module-accent)] text-[var(--module-accent)] animate-pulse"
-                    : "bg-black/30 border-white/10 text-white"
-                }`}
-              >
-                {recordingField === "main"
-                  ? "请按下按键..."
-                  : launcherCfg.showHideShortcutKey || "无"}
-              </div>
-
-              <button
-                onClick={() =>
-                  setRecordingField(
-                    recordingField === "main" ? null : "main"
-                  )
-                }
-                className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition cursor-pointer ${
-                  recordingField === "main"
-                    ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
-                    : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10"
-                }`}
-              >
-                {recordingField === "main" ? "取消录制" : "录制按键"}
-              </button>
-
-              <button
-                onClick={() => handleSaveLauncherConfig({ showHideShortcutKey: "Alt+Space" })}
-                className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-xl text-xs border border-white/5 cursor-pointer"
-                title="重置为 Alt+Space"
-              >
-                重置
-              </button>
-            </div>
+          <div className="space-y-0.5">
+            <p className="text-xs font-medium text-slate-200 flex items-center gap-1.5">
+              <Keyboard className="w-3.5 h-3.5 text-[var(--module-accent)]" />
+              各顶级模块快捷键
+            </p>
+            <p className="text-[9px] text-slate-500">
+              在 Windows 任意界面按下快捷键，即可激活并跳到对应模块：程序隐藏时唤起并切换；已激活时切换到该模块；若正处该模块则隐藏程序。
+            </p>
           </div>
 
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
+            {MODULE_ORDER.map((id) => {
+              const label = MODULE_DEFAULTS[id]?.label || id;
+              // 所有模块（含「启动」）统一存于 moduleHotkeys，地位平等。
+              const current = launcherCfg.moduleHotkeys?.[id] || "";
+              const isRecording = recordingField === id;
+              return (
+                <div key={id} className="flex items-center gap-2">
+                  <span className="w-12 text-[11px] text-slate-300 shrink-0">{label}</span>
+                  <div
+                    className={`px-2 py-1 rounded-lg border text-[11px] font-mono text-center min-w-[86px] transition ${
+                      isRecording
+                        ? "bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] border-[var(--module-accent)] text-[var(--module-accent)] animate-pulse"
+                        : "bg-black/30 border-white/10 text-white"
+                    }`}
+                  >
+                    {isRecording ? "请按下按键..." : current || "未设置"}
+                  </div>
+                  <button
+                    onClick={() => setRecordingField(isRecording ? null : id)}
+                    className={`px-2 py-1 rounded-lg text-[11px] border transition cursor-pointer ${
+                      isRecording
+                        ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
+                        : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10"
+                    }`}
+                  >
+                    {isRecording ? "取消" : "录制"}
+                  </button>
+                  {current && (
+                    <button
+                      onClick={() => {
+                        const cur = { ...(launcherCfg.moduleHotkeys || {}) };
+                        delete cur[id];
+                        handleSaveLauncherConfig({ moduleHotkeys: cur });
+                      }}
+                      className="px-2 py-1 rounded-lg text-[11px] border border-white/10 text-slate-400 hover:text-rose-300 hover:border-rose-500/30 bg-white/5 cursor-pointer"
+                      title="清除该模块快捷键"
+                    >
+                      清除
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* 「启动」模块常用预设 */}
           <div className="flex items-center gap-2 pt-0.5">
-            <span className="text-[10px] text-slate-500">或选常用预设：</span>
+            <span className="text-[10px] text-slate-500">「启动」模块常用预设：</span>
             {["Alt+Space", "F6", "Ctrl+Space", "Ctrl+`"].map((preset) => (
               <button
                 key={preset}
-                onClick={() => handleSaveLauncherConfig({ showHideShortcutKey: preset })}
+                onClick={() =>
+                  handleSaveLauncherConfig({
+                    moduleHotkeys: {
+                      ...(launcherCfg.moduleHotkeys || {}),
+                      launcher: preset,
+                    },
+                  })
+                }
                 className={`px-2 py-0.5 text-[11px] rounded-lg border transition cursor-pointer font-mono ${
-                  launcherCfg.showHideShortcutKey === preset
+                  (launcherCfg.moduleHotkeys?.["launcher"] || "") === preset
                     ? "bg-[var(--module-accent-soft)] border-[var(--module-accent)] text-[var(--module-accent)]"
                     : "bg-white/5 hover:bg-[var(--module-accent-soft)] hover:border-[var(--module-accent-ring)] text-slate-300 border-white/10"
                 }`}
@@ -1667,57 +1678,6 @@ export default function GlobalSettings() {
                 {preset}
               </button>
             ))}
-          </div>
-
-          {/* 各顶级模块的独立唤起快捷键 */}
-          <div className="pt-3 mt-3 border-t border-white/5 space-y-1.5">
-            <p className="text-[10px] text-slate-400">
-              模块专属快捷键：按下后直接唤起窗口并打开对应模块（「启动」模块即上方主热键）。
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
-              {MODULE_ORDER.filter((id) => id !== "launcher").map((id) => {
-                const label = MODULE_DEFAULTS[id]?.label || id;
-                const current = launcherCfg.moduleHotkeys?.[id] || "";
-                const isRecording = recordingField === id;
-                return (
-                  <div key={id} className="flex items-center gap-2">
-                    <span className="w-12 text-[11px] text-slate-300 shrink-0">{label}</span>
-                    <div
-                      className={`px-2 py-1 rounded-lg border text-[11px] font-mono text-center min-w-[86px] transition ${
-                        isRecording
-                          ? "bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] border-[var(--module-accent)] text-[var(--module-accent)] animate-pulse"
-                          : "bg-black/30 border-white/10 text-white"
-                      }`}
-                    >
-                      {isRecording ? "请按下按键..." : current || "未设置"}
-                    </div>
-                    <button
-                      onClick={() => setRecordingField(isRecording ? null : id)}
-                      className={`px-2 py-1 rounded-lg text-[11px] border transition cursor-pointer ${
-                        isRecording
-                          ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
-                          : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10"
-                      }`}
-                    >
-                      {isRecording ? "取消" : "录制"}
-                    </button>
-                    {current && (
-                      <button
-                        onClick={() => {
-                          const cur = { ...(launcherCfg.moduleHotkeys || {}) };
-                          delete cur[id];
-                          handleSaveLauncherConfig({ moduleHotkeys: cur });
-                        }}
-                        className="px-2 py-1 rounded-lg text-[11px] border border-white/10 text-slate-400 hover:text-rose-300 hover:border-rose-500/30 bg-white/5 cursor-pointer"
-                        title="清除该模块快捷键"
-                      >
-                        清除
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
           </div>
         </div>
 

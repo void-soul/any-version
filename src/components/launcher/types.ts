@@ -60,8 +60,8 @@ export interface ItemData {
 }
 
 export interface LauncherSetting {
-  showHideShortcutKey: string; // 唤起/隐藏主程序界面全局快捷键 (默认 Alt+Space)
-  moduleHotkeys?: Record<string, string>; // 各顶级模块的独立唤起快捷键：moduleId -> 热键字符串
+  showHideShortcutKey?: string; // 遗留字段（旧版「启动」模块主热键），已迁移到 moduleHotkeys.launcher
+  moduleHotkeys?: Record<string, string>; // 各顶级模块快捷键：moduleId -> 热键字符串（含「启动」= "launcher"）
   // ---- 视图设置（全局，应用到所有分类）----
   itemIconSize?: number; // 项目图标大小 (px)，默认 32
   itemColumnNumber?: number; // 网格列数 (0=自适应)，默认 0

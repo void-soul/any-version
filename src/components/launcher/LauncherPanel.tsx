@@ -243,7 +243,7 @@ export default function LauncherPanel() {
 
   // Settings
   const [settings, setSettings] = useState<LauncherSetting>({
-    showHideShortcutKey: "Alt+Space",
+    moduleHotkeys: { launcher: "Alt+Space" },
     itemIconSize: 32,
     itemColumnNumber: 0,
     cardDensity: "cozy",

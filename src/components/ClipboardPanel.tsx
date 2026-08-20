@@ -263,14 +263,14 @@ function Row({
 }) {
   return (
     <div
-      onClick={onPreview}
+      onClick={onCopy}
       onDoubleClick={onPaste}
       className={`h-full flex items-center gap-3 rounded-lg border px-2.5 transition-all cursor-pointer group ${
         item.pinned
           ? "bg-amber-500/[0.06] border-amber-500/25"
           : "bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20"
       }`}
-      title="单击预览 · 双击粘贴到之前的窗口"
+      title="单击设为活跃剪贴板 · 双击粘贴到之前的窗口"
     >
       {/* 类型图标 / 缩略图 */}
       {item.kind === "image" ? (
@@ -316,6 +316,16 @@ function Row({
       {/* 操作 */}
       <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
         {item.pinned && <Pin className="w-3 h-3 text-amber-400" />}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onPreview();
+          }}
+          className="p-1.5 rounded-md hover:bg-white/10 text-slate-400 hover:text-sky-300 transition-all cursor-pointer"
+          title="预览内容"
+        >
+          <ZoomIn className="w-3.5 h-3.5" />
+        </button>
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -381,9 +391,8 @@ export default function ClipboardPanel() {
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [busy, setBusy] = useState("");
 
-  // 预览：单击条目打开（250ms 内再次单击视为双击粘贴，不弹预览）
+  // 预览：通过行内「预览」按钮打开弹窗
   const [preview, setPreview] = useState<ClipboardItem | null>(null);
-  const previewTimer = useRef<number | null>(null);
 
   const searchTimer = useRef<number | null>(null);
   const itemsRef = useRef<ClipboardItem[]>([]);
@@ -455,32 +464,11 @@ export default function ClipboardPanel() {
   };
 
   const openPreview = (item: ClipboardItem) => {
-    if (previewTimer.current) {
-      window.clearTimeout(previewTimer.current);
-      previewTimer.current = null;
-    }
     setPreview(item);
   };
 
   const closePreview = () => {
-    if (previewTimer.current) {
-      window.clearTimeout(previewTimer.current);
-      previewTimer.current = null;
-    }
     setPreview(null);
-  };
-
-  // 单击 250ms 后打开预览；期间再次单击（双击）则取消预览交给 onDoubleClick 粘贴
-  const handleRowClick = (item: ClipboardItem) => {
-    if (previewTimer.current) {
-      window.clearTimeout(previewTimer.current);
-      previewTimer.current = null;
-      return;
-    }
-    previewTimer.current = window.setTimeout(() => {
-      previewTimer.current = null;
-      openPreview(item);
-    }, 250);
   };
 
   // Esc 关闭预览
@@ -493,14 +481,6 @@ export default function ClipboardPanel() {
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preview]);
-
-  // 组件卸载时清理预览定时器
-  useEffect(
-    () => () => {
-      if (previewTimer.current) window.clearTimeout(previewTimer.current);
-    },
-    []
-  );
 
   const refreshSettings = useCallback(async () => {
     try {
@@ -628,7 +608,7 @@ export default function ClipboardPanel() {
               </span>
             </h3>
             <p className="text-[10px] text-slate-400 mt-0.5 truncate">
-              {total} 条历史 · 单击预览，双击粘贴到之前的窗口
+              {total} 条历史 · 单击设为活跃剪贴板，双击粘贴到之前的窗口
             </p>
           </div>
         </div>
@@ -712,7 +692,7 @@ export default function ClipboardPanel() {
                   <Row
                     item={items[idx]}
                     copied={copiedId === items[idx].id}
-                    onPreview={() => handleRowClick(items[idx])}
+                    onPreview={() => openPreview(items[idx])}
                     onCopy={() => copyItem(items[idx].id)}
                     onPaste={() => pasteItem(items[idx].id)}
                     onPin={() => togglePin(items[idx])}
