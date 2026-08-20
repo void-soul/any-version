@@ -10,6 +10,7 @@ pub mod manager;
 pub mod misc;
 pub mod netinfo;
 pub mod smart;
+pub mod subparse;
 pub mod substore;
 
 pub use manager::launch_core;
@@ -461,14 +462,26 @@ async fn auto_update_profiles(app: &AppHandle, inner: &Arc<MihomoInner>) {
             .and_then(|h| h.to_str().ok())
             .map(|s| s.to_string());
         let Ok(text) = resp.text().await else { continue };
-        if serde_yaml::from_str::<Value>(&text).is_err() {
+        // 嗅探并处理内容（age 解密 / base64 节点解码 / YAML），保持与手动更新一致
+        let processed =
+            match crate::commands::mihomo::subparse::process_subscription_content(
+                &text,
+                item.age_secret_key.as_deref(),
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("[mihomo] 订阅自动更新内容解析失败 {}: {}", item.name, e);
+                    continue;
+                }
+            };
+        if serde_yaml::from_str::<Value>(&processed).is_err() {
             eprintln!("[mihomo] 订阅自动更新内容非法 YAML: {}", item.name);
             continue;
         }
         let mut updated = item.clone();
         updated.subscription_userinfo = parse_subinfo(userinfo.as_deref());
         updated.updated_at = Some(now);
-        if write_profile_content(&inner.data_dir, &updated, &text).is_err() {
+        if write_profile_content(&inner.data_dir, &updated, &processed).is_err() {
             continue;
         }
         {
@@ -1016,19 +1029,28 @@ pub async fn mihomo_change_current_profile(
 }
 #[tauri::command]
 pub async fn mihomo_validate_subscription(url: String) -> Result<SubValidation, String> {
-    // F7 修复：加超时
-    let resp = reqwest::Client::builder()
+    // F7 修复：加超时。部分机场订阅站 TLS 证书链不完整，容错校验避免误报失败；
+    // 订阅 URL 为用户主动提供，属信任来源，可接受跳过证书校验。
+    let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
+        .danger_accept_invalid_certs(true)
         .build()
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    let resp = client
         .get(&url)
         .header("User-Agent", "clash-verge/v1.7.0")
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("订阅下载失败: {e}"))?;
     let headers = resp.headers().clone();
     let text = resp.text().await.map_err(|e| e.to_string())?;
-    let parsed: Value = serde_yaml::from_str(&text).map_err(|e| format!("订阅解析失败: {e}"))?;
+    // 嗅探并处理内容（age 解密 / base64 节点解码 / YAML），与正式导入保持一致
+    let processed = crate::commands::mihomo::subparse::process_subscription_content(&text, None)
+        .unwrap_or_else(|_| text.clone());
+    let parsed: Value = match serde_yaml::from_str(&processed) {
+        Ok(v) => v,
+        Err(_) => serde_yaml::from_str(&text).map_err(|e| format!("订阅解析失败: {e}"))?,
+    };
     let ok = parsed.get("proxy-providers").is_some()
         || parsed.get("proxies").is_some()
         || parsed.get("rules").is_some();
@@ -1239,6 +1261,11 @@ pub fn mihomo_import_file(
     Ok(item)
 }
 
+/// 获取 mihomo mixed-port（若已配置则返回，供"使用代理更新订阅"走本地代理）。
+fn get_mixed_port(state: &State<'_, MihomoState>) -> Option<u16> {
+    state.app_config.lock().ok().map(|c| c.mixed_port).filter(|p| *p > 0)
+}
+
 // 按订阅地址重新拉取订阅内容（使用编辑信息里的 授权令牌/UA/超时），更新流量信息并回写
 #[tauri::command]
 pub async fn mihomo_update_subscription(
@@ -1252,10 +1279,18 @@ pub async fn mihomo_update_subscription(
     }
     .ok_or("配置不存在")?;
     let url = item.url.clone().ok_or("该配置没有订阅地址（url）")?;
-    let client = reqwest::Client::builder()
+    let mut client_builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(item.update_timeout.max(5)))
-        .build()
-        .map_err(|e| e.to_string())?;
+        // 部分机场订阅站 TLS 证书链不完整，容错校验避免误报失败（订阅 URL 为用户主动提供）
+        .danger_accept_invalid_certs(true);
+    // 使用代理更新开关：走本地 mihomo mixed-port，实现"绕墙更新订阅"
+    if item.use_proxy {
+        if let Some(port) = get_mixed_port(&state) {
+            let proxy_url = format!("http://127.0.0.1:{}", port);
+            client_builder = client_builder.proxy(reqwest::Proxy::all(&proxy_url).map_err(|e| e.to_string())?);
+        }
+    }
+    let client = client_builder.build().map_err(|e| e.to_string())?;
     let mut req = client.get(&url);
     if let Some(ua) = &item.user_agent {
         req = req.header("User-Agent", ua.clone());
@@ -1270,11 +1305,24 @@ pub async fn mihomo_update_subscription(
         .and_then(|h| h.to_str().ok())
         .map(|s| s.to_string());
     let text = resp.text().await.map_err(|e| e.to_string())?;
-    let _: Value = serde_yaml::from_str(&text).map_err(|e| format!("订阅解析失败: {e}"))?;
+    // 嗅探并处理订阅内容：age 解密 / base64 节点解码 / YAML 校验，转成 mihomo 可加载的 clash YAML
+    let processed = crate::commands::mihomo::subparse::process_subscription_content(
+        &text,
+        item.age_secret_key.as_deref(),
+    )
+    .map_err(|e| format!("订阅内容解析失败: {e}"))?;
+    // 校验解析结果确实是 clash YAML
+    let parsed: Value = serde_yaml::from_str(&processed).map_err(|e| format!("订阅解析失败: {e}"))?;
+    if parsed.get("proxies").is_none() && parsed.get("proxy-providers").is_none() {
+        // base64 解码后可能是节点列表但未生成 proxies；若为空则报错
+        if text.trim().is_empty() {
+            return Err("订阅内容为空".to_string());
+        }
+    }
     let mut updated = item.clone();
     updated.subscription_userinfo = parse_subinfo(userinfo_header.as_deref());
     updated.updated_at = Some(now_secs());
-    write_profile_content(&state.data_dir, &updated, &text).map_err(|e| e.to_string())?;
+    write_profile_content(&state.data_dir, &updated, &processed).map_err(|e| e.to_string())?;
     {
         let mut cfg = state.profile_config.lock().unwrap();
         if let Some(it) = cfg.items.iter_mut().find(|i| i.id == id) {
@@ -1297,12 +1345,18 @@ pub fn mihomo_get_profile_status(
         cfg.items.iter().find(|i| i.id == id).cloned()
     };
     let content = match item {
-        Some(it) => read_profile_content(&state.data_dir, &it).unwrap_or_default(),
+        Some(ref it) => read_profile_content(&state.data_dir, it).unwrap_or_default(),
         None => String::new(),
     };
     let available = !content.trim().is_empty();
     let mut node_count = 0u32;
-    if let Ok(v) = serde_yaml::from_str::<Value>(&content) {
+    // 兼容 base64 节点 / age 加密内容：先嗅探处理为 clash YAML 再数节点
+    let processed = crate::commands::mihomo::subparse::process_subscription_content(
+        &content,
+        item.as_ref().and_then(|i| i.age_secret_key.as_deref()),
+    )
+    .unwrap_or(content.clone());
+    if let Ok(v) = serde_yaml::from_str::<Value>(&processed) {
         if let Some(proxies) = v.get("proxies").and_then(|p| p.as_array()) {
             node_count = proxies.len() as u32;
         }
