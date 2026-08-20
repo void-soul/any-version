@@ -13,7 +13,18 @@ pub fn write_multi(entries: &[(u32, Vec<u8>)]) -> Result<(), String> {
         return Ok(());
     }
     unsafe {
-        if OpenClipboard(std::ptr::null_mut()) == 0 {
+        // OpenClipboard 是阻塞调用，若剪贴板被其它程序（含本应用自己的监听线程）
+        // 长时间占用会永久阻塞 UI。这里重试最多 5 次、每次间隔 20ms，仍失败则返回
+        // 明确错误而非卡死。
+        let mut opened = false;
+        for _ in 0..5 {
+            if OpenClipboard(std::ptr::null_mut()) != 0 {
+                opened = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        if !opened {
             return Err(format!("打开剪贴板失败: {}", std::io::Error::last_os_error()));
         }
         EmptyClipboard();

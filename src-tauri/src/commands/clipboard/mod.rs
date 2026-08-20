@@ -51,8 +51,9 @@ pub struct ClipboardItem {
 }
 
 /// 剪贴板模块状态
+#[derive(Clone)]
 pub struct ClipboardState {
-    pub db: Mutex<rusqlite::Connection>,
+    pub db: std::sync::Arc<Mutex<rusqlite::Connection>>,
     pub data_dir: std::path::PathBuf,
 }
 
@@ -107,7 +108,7 @@ pub fn init_clipboard_state(app: &tauri::AppHandle) -> Result<(), String> {
     db::cleanup_orphan_images(&conn, &img_dir).map_err(|e| e.to_string())?;
 
     let state = ClipboardState {
-        db: Mutex::new(conn),
+        db: std::sync::Arc::new(Mutex::new(conn)),
         data_dir: dir,
     };
     app.manage(state);
