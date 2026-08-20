@@ -36,8 +36,33 @@ import {
   Upload,
   Layers,
   Folder,
+  GripVertical,
+  RotateCcw,
 } from "lucide-react";
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+
+// 可拖拽的模块顺序行
+function ModuleOrderRow({ id, label, color }: { id: string; label: string; color: string }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`flex items-center gap-2 px-2.5 py-2 rounded-xl bg-white/[0.03] border border-white/5 touch-none cursor-grab active:cursor-grabbing ${
+        isDragging ? "opacity-60 ring-1 ring-[var(--module-accent-ring)] z-10" : ""
+      }`}
+      {...attributes}
+      {...listeners}
+    >
+      <GripVertical className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: color }} />
+      <span className="text-[11px] text-slate-300 truncate">{label}</span>
+    </div>
+  );
+}
 import type { LauncherSetting } from "./launcher/types";
 import { MODULE_ORDER, MODULE_DEFAULTS } from "../App";
 
@@ -305,12 +330,13 @@ export default function GlobalSettings() {
   const [savingLauncher, setSavingLauncher] = useState(false);
   const [launcherSaved, setLauncherSaved] = useState(false);
 
-  // ---- 外观：模块主题色 + 全局字体 ----
+  // ---- 外观：模块主题色 + 全局字体 + 模块顺序 ----
   const [appearance, setAppearance] = useState<{
     moduleThemeColors: Record<string, string>;
     globalFont: string;
     customFontPath: string;
-  }>({ moduleThemeColors: {}, globalFont: "", customFontPath: "" });
+    moduleOrder: string[];
+  }>({ moduleThemeColors: {}, globalFont: "", customFontPath: "", moduleOrder: [] });
   const [importingFont, setImportingFont] = useState(false);
 
   const MODULE_APPEARANCE_DEFAULTS: Record<string, { label: string; color: string }> = {
@@ -322,9 +348,11 @@ export default function GlobalSettings() {
     node: { label: "服务", color: "#0891b2" },
     mihomo: { label: "代理", color: "#4f46e5" },
     cert: { label: "证书", color: "#0d9488" },
+    clipboard: { label: "剪贴板", color: "#0ea5e9" },
     tools: { label: "更多", color: "#059669" },
     settings: { label: "设置", color: "#dc2626" },
   };
+  const moduleOrderIds = appearance.moduleOrder.length > 0 ? appearance.moduleOrder : Object.keys(MODULE_APPEARANCE_DEFAULTS);
 
   const fetchAppearance = async () => {
     try {
@@ -332,12 +360,40 @@ export default function GlobalSettings() {
         moduleThemeColors: Record<string, string>;
         globalFont: string;
         customFontPath: string;
+        moduleOrder: string[];
       }>("get_appearance_config");
       setAppearance(ap);
     } catch (e) {
       console.error("读取外观配置失败", e);
     }
   };
+
+  const saveModuleOrder = async (order: string[]) => {
+    setAppearance({ ...appearance, moduleOrder: order });
+    try {
+      await invoke("set_module_order", { order });
+      emit("appearance-updated");
+    } catch (e) {
+      console.error("保存模块顺序失败", e);
+    }
+  };
+
+  const handleModuleOrderDragEnd = (event: { active: any; over: any }) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const oldIndex = moduleOrderIds.indexOf(active.id);
+      const newIndex = moduleOrderIds.indexOf(over.id);
+      if (oldIndex >= 0 && newIndex >= 0) {
+        saveModuleOrder(arrayMove(moduleOrderIds, oldIndex, newIndex));
+      }
+    }
+  };
+
+  const handleResetModuleOrder = () => {
+    saveModuleOrder([]);
+  };
+
+  const orderSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
   const handleSetModuleColor = async (moduleId: string, color: string) => {
     const trimmed = color.trim();
@@ -381,7 +437,7 @@ export default function GlobalSettings() {
         "import_custom_font",
         { src: selected as string }
       );
-      setAppearance({ moduleThemeColors: appearance.moduleThemeColors, globalFont: res.family, customFontPath: res.path });
+      setAppearance({ ...appearance, globalFont: res.family, customFontPath: res.path });
       emit("appearance-updated");
       alert(`字体导入成功：${res.family}`);
     } catch (e: any) {
@@ -1441,6 +1497,34 @@ export default function GlobalSettings() {
               已使用自定义字体：{appearance.globalFont}（即时生效，重启保留）
             </p>
           )}
+        </div>
+
+        {/* 3. 顶级模块顺序 */}
+        <div className="pt-3 border-t border-white/5 space-y-2.5">
+          <p className="text-[11px] font-medium text-slate-200">顶级模块顺序（拖拽调整）</p>
+          <DndContext sensors={orderSensors} collisionDetection={closestCenter} onDragEnd={handleModuleOrderDragEnd}>
+            <SortableContext items={moduleOrderIds} strategy={verticalListSortingStrategy}>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {moduleOrderIds.map((id) => (
+                  <ModuleOrderRow
+                    key={id}
+                    id={id}
+                    label={MODULE_APPEARANCE_DEFAULTS[id]?.label || id}
+                    color={appearance.moduleThemeColors[id] || MODULE_APPEARANCE_DEFAULTS[id]?.color || "#64748b"}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
+          <div className="flex items-center justify-between">
+            <button
+              onClick={handleResetModuleOrder}
+              className="text-[10px] text-slate-500 hover:text-slate-300 transition cursor-pointer flex items-center gap-1"
+            >
+              <RotateCcw className="w-3 h-3" /> 恢复默认顺序
+            </button>
+            <span className="text-[9px] text-slate-600">拖动保存后立即生效</span>
+          </div>
         </div>
       </div>
 

@@ -24,6 +24,30 @@ import {
   Settings2,
   Loader2,
 } from "lucide-react";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  closestCorners,
+  pointerWithin,
+  useDroppable,
+} from "@dnd-kit/core";
+import type {
+  CollisionDetection,
+  DragStartEvent,
+  DragOverEvent,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  horizontalListSortingStrategy,
+  sortableKeyboardCoordinates,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -36,6 +60,175 @@ import {
 import { matchPinyin } from "./pinyin";
 import CategoryModal from "./CategoryModal";
 import AddItemModal from "./AddItemModal";
+
+// ---------- dnd-kit 辅助组件（模块级，避免渲染期内重新挂载破坏排序动画） ----------
+
+/** 通用可放置容器：向 dnd-kit 注册（内部项目拖拽），同时保留 HTML5 外部文件拖放入口 */
+function Droppable(props: {
+  id: string;
+  dataCatId?: number;
+  className?: string;
+  style?: React.CSSProperties;
+  onClick?: React.MouseEventHandler<HTMLDivElement>;
+  onDragOver?: React.DragEventHandler<HTMLDivElement>;
+  onDrop?: React.DragEventHandler<HTMLDivElement>;
+  onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
+  children?: React.ReactNode;
+}) {
+  const { setNodeRef } = useDroppable({ id: props.id });
+  return (
+    <div
+      ref={setNodeRef}
+      data-cat-id={props.dataCatId}
+      className={props.className}
+      style={props.style}
+      onClick={props.onClick}
+      onDragOver={props.onDragOver}
+      onDrop={props.onDrop}
+      onContextMenu={props.onContextMenu}
+    >
+      {props.children}
+    </div>
+  );
+}
+
+/**
+ * 自定义碰撞检测：
+ * - 优先指针命中（pointerWithin），若多个容器重叠（子分组嵌套在外层直挂区内），
+ *   取 rect 面积最小的「最内层」容器 —— 否则 closestCorners 在距离都为 0 时
+ *   按注册顺序取外层容器，导致空子分组永远收不到拖入的项目。
+ * - 指针不落在任何 droppable 上（卡片间隙/边距）时，回退 closestCorners 保持排序手感。
+ */
+const customCollisionDetection: CollisionDetection = (args) => {
+  const pointer = pointerWithin(args);
+  if (pointer.length > 0) {
+    const innermost = [...pointer].sort((a, b) => {
+      const ra = args.droppableRects.get(a.id);
+      const rb = args.droppableRects.get(b.id);
+      const sa = ra ? ra.width * ra.height : 0;
+      const sb = rb ? rb.width * rb.height : 0;
+      return sa - sb;
+    })[0];
+    return innermost ? [innermost] : [];
+  }
+  return closestCorners(args);
+};
+
+/** 卡片渲染所需的视图参数（由 LauncherPanel 里的 view 派生） */
+type ItemView = {
+  iconSize: number;
+  showName: boolean;
+  iconBg: boolean;
+  itemFontSize: number;
+  itemRadius: number;
+  itemBorder: boolean;
+  densityCard: string;
+  cardBorderClass: string;
+  itemNameStyle: React.CSSProperties;
+};
+
+function cardClass(
+  item: Item,
+  view: ItemView,
+  checkResults: Record<number, { exists: boolean }>,
+  extra = "",
+): string {
+  const missing = checkResults[item.id] && !checkResults[item.id].exists;
+  return [
+    "group relative rounded-xl border cursor-pointer min-w-0 flex items-center",
+    view.densityCard,
+    view.cardBorderClass,
+    missing
+      ? "border-red-500/70 bg-red-500/10 hover:border-red-400 shadow-lg shadow-red-500/20"
+      : "border-white/5 hover:border-[var(--module-accent-ring)] bg-white/[0.02] hover:bg-[var(--module-accent-soft)]",
+    "active:scale-95",
+    extra,
+  ].join(" ");
+}
+
+/** 卡片内容（SortableItem 与 DragOverlay 共用，消除两处重复） */
+function ItemCardBody(props: {
+  item: Item;
+  view: ItemView;
+  checkResults: Record<number, { exists: boolean }>;
+}) {
+  const { item, view, checkResults } = props;
+  const missing = checkResults[item.id] && !checkResults[item.id].exists;
+  return (
+    <>
+      {item.data.runAsAdmin && (
+        <div className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-400" />
+      )}
+      {missing && <div className="absolute -top-1 -left-1 w-2 h-2 rounded-full bg-red-500 shadow shadow-red-500/50" />}
+      <div
+        className={`rounded-lg flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition overflow-hidden ${
+          view.iconBg ? "bg-white/5" : "bg-transparent"
+        }`}
+        style={{ width: view.iconSize, height: view.iconSize }}
+      >
+        {item.data.icon ? (
+          <img
+            src={item.data.icon}
+            className="object-contain"
+            style={{ width: view.iconSize * 0.82, height: view.iconSize * 0.82 }}
+            alt=""
+          />
+        ) : item.data.htmlIcon ? (
+          <span style={{ fontSize: view.iconSize * 0.5 }}>{item.data.htmlIcon}</span>
+        ) : item.itemType === 1 ? (
+          <Folder className="text-amber-400" style={{ width: view.iconSize * 0.55, height: view.iconSize * 0.55 }} />
+        ) : item.itemType === 2 ? (
+          <Globe className="text-blue-400" style={{ width: view.iconSize * 0.55, height: view.iconSize * 0.55 }} />
+        ) : (
+          <FileText className="text-[var(--module-accent)]" style={{ width: view.iconSize * 0.55, height: view.iconSize * 0.55 }} />
+        )}
+      </div>
+      {view.showName && (
+        <span
+          className="text-slate-200 truncate group-hover:text-[var(--module-accent)] transition min-w-0 flex-1 font-medium"
+          style={view.itemNameStyle}
+        >
+          {item.name}
+        </span>
+      )}
+    </>
+  );
+}
+
+/** 可排序卡片（dnd-kit） */
+function SortableItem(props: {
+  item: Item;
+  view: ItemView;
+  checkResults: Record<number, { exists: boolean }>;
+  onClick: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+}) {
+  const { item, view, checkResults } = props;
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: `item:${item.id}`,
+    data: { type: "item", itemId: item.id },
+  });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    borderRadius: view.itemRadius,
+  };
+  const missing = checkResults[item.id] && !checkResults[item.id].exists;
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      onClick={props.onClick}
+      onContextMenu={props.onContextMenu}
+      className={cardClass(item, view, checkResults, isDragging ? "opacity-40" : "")}
+      title={missing ? `${item.name}（不存在）` : item.name}
+    >
+      <ItemCardBody item={item} view={view} checkResults={checkResults} />
+    </div>
+  );
+}
 
 export default function LauncherPanel() {
   const [classifications, setClassifications] = useState<Classification[]>([]);
@@ -77,6 +270,33 @@ export default function LauncherPanel() {
   // Drag & Drop State
   const [isDragOver, setIsDragOver] = useState(false);
   const [targetDragSubId, setTargetDragSubId] = useState<number | null>(null);
+
+  // 项目卡片内部拖拽（dnd-kit：拖放修改分类 / 排序）
+  const [activeDragItem, setActiveDragItem] = useState<Item | null>(null);
+  const draggingItemRef = useRef<Item | null>(null);
+  // 拖拽开始时被拖项目的原始分类（跨分类移动持久化时需要）
+  const dragSourceCatIdRef = useRef<number | null>(null);
+
+  // dnd-kit 传感器：移动超过 6px 才判定为拖拽，单击仍可正常启动应用
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  // WebView2 中轻拖（按下即释放）有时会补发 click，导致拖拽结束误启动应用。
+  // 记录最近一次拖拽结束时间，短暂忽略随后的 click。
+  const justDraggedAtRef = useRef(0);
+
+  // Top-level categories (left sidebar) —— 必须先于 topCategoryIdsRef 的 useEffect（避免 TDZ）
+  const topCategories = useMemo(() => {
+    return classifications.filter((c) => !c.parentId);
+  }, [classifications]);
+
+  // 顶层分类 id 集合（Tauri 原生文件拖入左栏时判断是否需要切换分类）
+  const topCategoryIdsRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    topCategoryIdsRef.current = new Set(topCategories.map((c) => c.id));
+  }, [topCategories]);
 
   // Modals state
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
@@ -164,11 +384,6 @@ export default function LauncherPanel() {
     setCheckResults(restored);
     setMissingCount(missing);
   }, [allItems]);
-
-  // Top-level categories (left sidebar)
-  const topCategories = useMemo(() => {
-    return classifications.filter((c) => !c.parentId);
-  }, [classifications]);
 
   // Current active top-level category
   const activeTopCategory = useMemo(() => {
@@ -275,12 +490,7 @@ export default function LauncherPanel() {
   const lastDropKeyRef = useRef("");
   const lastDropTimeRef = useRef(0);
 
-  const targetDragSubIdRef = useRef<number | null>(null);
   const activeTopCategoryRef = useRef<Classification | undefined>(undefined);
-
-  useEffect(() => {
-    targetDragSubIdRef.current = targetDragSubId;
-  }, [targetDragSubId]);
 
   useEffect(() => {
     activeTopCategoryRef.current = activeTopCategory;
@@ -304,8 +514,12 @@ export default function LauncherPanel() {
         paths,
         classificationId: targetClassificationId,
       });
+      // 局部更新：只追加本次新增的项目，避免整页数据重载
+      // （重载会重置当前分类/滚动/展开状态，且历史上会因闭包过期把激活分类跳回第一个）
+      if (newItems && newItems.length > 0) {
+        setAllItems((prev) => [...prev, ...newItems]);
+      }
       showToast(`已成功添加 ${newItems.length} 个项目`);
-      await loadData();
     } catch (err: any) {
       console.error("处理拖入路径失败:", err);
       showToast(`录入失败: ${err}`);
@@ -313,6 +527,30 @@ export default function LauncherPanel() {
       isDroppingRef.current = false;
       setIsDragOver(false);
       setTargetDragSubId(null);
+    }
+  };
+
+  // 常驻监听器（onDragDropEvent 只在挂载时注册一次）通过该 ref 调用最新版本的 processDroppedPaths，
+  // 避免闭包捕获到首次渲染的旧函数（旧闭包里的 loadData 会因 activeParentId 为 null 而重置当前分类）
+  const processDroppedPathsRef = useRef<typeof processDroppedPaths>(processDroppedPaths);
+  useEffect(() => {
+    processDroppedPathsRef.current = processDroppedPaths;
+  });
+
+  // 根据光标位置（CSS 像素）解析当前悬停的子分组
+  // Tauri 原生文件拖拽不会触发 DOM 的 HTML5 dragover/drop 事件，
+  // 只能从 onDragDropEvent 的 position（物理像素）反查 DOM，做到「放到哪个二级分类就加到哪个」
+  const detectDragSubIdFromPoint = (clientX: number, clientY: number): number | null => {
+    try {
+      const el = document.elementFromPoint(clientX, clientY);
+      if (!el) return null;
+      const groupEl = el.closest("[data-cat-id]");
+      if (!groupEl) return null;
+      const raw = groupEl.getAttribute("data-cat-id");
+      const id = raw ? Number(raw) : NaN;
+      return Number.isFinite(id) ? id : null;
+    } catch {
+      return null;
     }
   };
 
@@ -325,6 +563,12 @@ export default function LauncherPanel() {
         unlisten = await win.onDragDropEvent(async (event) => {
           if (event.payload.type === "enter" || event.payload.type === "over") {
             setIsDragOver(true);
+            // 实时按光标位置更新悬停的子分组（同时驱动分组高亮反馈）
+            const pos = event.payload.position;
+            if (pos && typeof pos.x === "number" && typeof pos.y === "number") {
+              const scale = window.devicePixelRatio || 1;
+              setTargetDragSubId(detectDragSubIdFromPoint(pos.x / scale, pos.y / scale));
+            }
           } else if (event.payload.type === "leave") {
             setIsDragOver(false);
             setTargetDragSubId(null);
@@ -332,10 +576,24 @@ export default function LauncherPanel() {
             setIsDragOver(false);
             const paths = event.payload.paths;
             if (paths && paths.length > 0) {
+              // drop 时刻以光标位置为准，避免悬停状态滞后导致放错分类
+              let subId: number | null = null;
+              const pos = event.payload.position;
+              if (pos && typeof pos.x === "number" && typeof pos.y === "number") {
+                const scale = window.devicePixelRatio || 1;
+                subId = detectDragSubIdFromPoint(pos.x / scale, pos.y / scale);
+              }
               const targetId =
-                targetDragSubIdRef.current ||
-                (activeTopCategoryRef.current ? activeTopCategoryRef.current.id : 1);
-              await processDroppedPaths(paths, targetId);
+                subId !== null
+                  ? subId
+                  : activeTopCategoryRef.current
+                    ? activeTopCategoryRef.current.id
+                    : 1;
+              await processDroppedPathsRef.current(paths, targetId);
+              // 拖到左栏的大分类上：切过去让用户立即看到添加结果
+              if (subId !== null && topCategoryIdsRef.current.has(subId)) {
+                setActiveParentId(subId);
+              }
             }
             setTargetDragSubId(null);
           }
@@ -351,7 +609,7 @@ export default function LauncherPanel() {
     };
   }, []);
 
-  // HTML5 Drag & Drop Fallback Handlers
+  // HTML5 Drag & Drop Fallback Handlers（仅处理外部文件拖入；内部项目拖拽走 dnd-kit）
   const handleHtml5DragOver = (e: React.DragEvent, subId?: number) => {
     e.preventDefault();
     e.stopPropagation();
@@ -369,7 +627,6 @@ export default function LauncherPanel() {
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(false);
-
     const targetId = subId || targetDragSubId || (activeTopCategory ? activeTopCategory.id : 1);
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
@@ -383,6 +640,166 @@ export default function LauncherPanel() {
         await processDroppedPaths(paths, targetId);
       }
     }
+  };
+
+  // ---- dnd-kit：内部项目拖拽（移动分类 / 排序）----
+
+  const findItemById = (id: string): Item | undefined => {
+    if (!id.startsWith("item:")) return undefined;
+    const num = Number(id.slice(5));
+    return allItems.find((it) => it.id === num);
+  };
+
+  // 纯本地状态更新：把 dragItem 移动到 targetCatId 的 insertBeforeId 之前（null = 末尾）
+  // 用于 onDragOver 的实时让位；不写后端（避免拖拽过程中狂发请求）
+  const applyMoveLocal = (dragItem: Item, targetCatId: number, insertBeforeId: number | null) => {
+    setAllItems((prev) => {
+      const current = prev.find((it) => it.id === dragItem.id) || dragItem;
+      const sourceId = current.classificationId;
+      if (sourceId === targetCatId && insertBeforeId === null) return prev;
+
+      const movedItem = { ...current, classificationId: targetCatId };
+      const byCat = new Map<number, Item[]>();
+      for (const it of prev) {
+        if (it.id === movedItem.id) continue;
+        const arr = byCat.get(it.classificationId) || [];
+        arr.push(it);
+        byCat.set(it.classificationId, arr);
+      }
+
+      const target = byCat.get(targetCatId) || [];
+      let newTarget: Item[];
+      if (insertBeforeId === null) {
+        newTarget = [...target, movedItem];
+      } else {
+        const idx = target.findIndex((it) => it.id === insertBeforeId);
+        newTarget =
+          idx === -1 ? [...target, movedItem] : [...target.slice(0, idx), movedItem, ...target.slice(idx)];
+      }
+      byCat.set(targetCatId, newTarget);
+
+      const flat: Item[] = [];
+      for (const arr of byCat.values()) flat.push(...arr);
+      return flat;
+    });
+  };
+
+  // 拖拽结束后把最终位置持久化到后端（保存分类 + 重排序号）
+  const persistMoveAfterDrag = async (dragItem: Item, targetCatId: number, insertBeforeId: number | null) => {
+    try {
+      const sourceId = dragSourceCatIdRef.current ?? dragItem.classificationId;
+      const targetItems = itemsByClassification.get(targetCatId) || [];
+      const newTarget =
+        insertBeforeId === null
+          ? [...targetItems.filter((it) => it.id !== dragItem.id), dragItem]
+          : (() => {
+              const withoutDrag = targetItems.filter((it) => it.id !== dragItem.id);
+              const idx = withoutDrag.findIndex((it) => it.id === insertBeforeId);
+              return idx === -1
+                ? [...withoutDrag, dragItem]
+                : [...withoutDrag.slice(0, idx), dragItem, ...withoutDrag.slice(idx)];
+            })();
+
+      if (sourceId !== targetCatId) {
+        // 跨分类：保存被拖项（新分类 + 新序号），再重排目标分类与源分类其余项
+        const moved = newTarget.find((it) => it.id === dragItem.id);
+        if (moved) await invoke("launcher_save_item", { item: { ...moved, classificationId: targetCatId } });
+        const orders: [number, number][] = newTarget.map((it, i) => [it.id, i]);
+        if (orders.length > 0) await invoke("launcher_reorder_items", { orders });
+        const sourceItems = (itemsByClassification.get(sourceId) || []).filter((it) => it.id !== dragItem.id);
+        if (sourceItems.length > 0) {
+          await invoke("launcher_reorder_items", { orders: sourceItems.map((it, i) => [it.id, i]) });
+        }
+      } else {
+        // 同分类排序：整体重排
+        const orders: [number, number][] = newTarget.map((it, i) => [it.id, i]);
+        if (orders.length > 0) await invoke("launcher_reorder_items", { orders });
+      }
+    } catch (err) {
+      showToast(`保存排序失败: ${err}`);
+    }
+  };
+
+  const handleDragStart = (event: DragStartEvent) => {
+    const item = findItemById(String(event.active.id));
+    if (!item) return;
+    setActiveDragItem(item);
+    draggingItemRef.current = item;
+    dragSourceCatIdRef.current = item.classificationId;
+  };
+
+  const handleDragOver = (event: DragOverEvent) => {
+    const { active, over } = event;
+    if (!over) {
+      setTargetDragSubId(null);
+      return;
+    }
+    const activeId = String(active.id);
+    const overId = String(over.id);
+    if (activeId === overId) return;
+
+    const activeItem = findItemById(activeId);
+    if (!activeItem) return;
+
+    let targetCatId: number | null = null;
+    let insertBeforeId: number | null = null;
+
+    if (overId.startsWith("item:")) {
+      const overItem = findItemById(overId);
+      if (!overItem || overItem.id === activeItem.id) return;
+      targetCatId = overItem.classificationId;
+      insertBeforeId = overItem.id;
+    } else if (overId.startsWith("cat:") || overId.startsWith("sidebar:")) {
+      targetCatId = Number(overId.slice(overId.indexOf(":") + 1));
+    }
+    if (targetCatId === null || !Number.isFinite(targetCatId)) return;
+    if (!classificationMap.has(targetCatId)) return;
+
+    setTargetDragSubId(targetCatId); // 分组 / 左栏高亮
+
+    if (activeItem.classificationId === targetCatId && insertBeforeId === null) return;
+    applyMoveLocal(activeItem, targetCatId, insertBeforeId);
+  };
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    setActiveDragItem(null);
+    draggingItemRef.current = null;
+    dragSourceCatIdRef.current = null;
+    setTargetDragSubId(null);
+    justDraggedAtRef.current = Date.now(); // 拦截拖拽结束后的残留 click
+
+    if (!over) return;
+    const activeItem = findItemById(String(active.id));
+    if (!activeItem) return;
+
+    const overId = String(over.id);
+    let targetCatId: number | null = null;
+    let insertBeforeId: number | null = null;
+
+    if (overId.startsWith("item:")) {
+      const overItem = findItemById(overId);
+      if (!overItem) return;
+      targetCatId = overItem.classificationId;
+      insertBeforeId = overItem.id;
+    } else if (overId.startsWith("cat:") || overId.startsWith("sidebar:")) {
+      targetCatId = Number(overId.slice(overId.indexOf(":") + 1));
+    }
+    if (targetCatId === null || !Number.isFinite(targetCatId)) return;
+    if (!classificationMap.has(targetCatId)) return;
+
+    // 拖到左栏大分类：切过去让用户立即看到结果
+    if (overId.startsWith("sidebar:")) setActiveParentId(targetCatId);
+
+    await persistMoveAfterDrag(activeItem, targetCatId, insertBeforeId);
+  };
+
+  const handleDragCancel = () => {
+    setActiveDragItem(null);
+    draggingItemRef.current = null;
+    dragSourceCatIdRef.current = null;
+    setTargetDragSubId(null);
+    justDraggedAtRef.current = Date.now();
   };
 
   // Unified Search Filtering (Figure 2)
@@ -632,8 +1049,7 @@ export default function LauncherPanel() {
     : view.density === "spacious"
       ? "px-3 py-2.5 gap-2.5"
       : "px-2.5 py-1.5 gap-2";
-  // 卡片圆角/边框（受全局设置控制）
-  const cardRadius = { borderRadius: view.itemRadius };
+  // 卡片边框（受全局设置控制）
   const cardBorderClass = view.itemBorder
     ? ""
     : "!border-transparent";
@@ -644,6 +1060,19 @@ export default function LauncherPanel() {
     fontSize: view.categoryFontSize,
   };
 
+  // 卡片视图参数（SortableItem / DragOverlay 共用）
+  const itemView: ItemView = {
+    iconSize: view.iconSize,
+    showName: view.showName,
+    iconBg: view.iconBg,
+    itemFontSize: view.itemFontSize,
+    itemRadius: view.itemRadius,
+    itemBorder: view.itemBorder,
+    densityCard,
+    cardBorderClass,
+    itemNameStyle,
+  };
+
   // 递归渲染分组：支持多级子分类（如浏览器收藏夹导入后的层级结构）
   const renderGroup = (cat: Classification): React.ReactNode => {
     const groupItems = itemsByClassification.get(cat.id) || [];
@@ -651,12 +1080,15 @@ export default function LauncherPanel() {
     const isGroupHovered = targetDragSubId === cat.id;
 
     return (
-      <div
+      <Droppable
         key={cat.id}
+        id={`cat:${cat.id}`}
+        dataCatId={cat.id}
         className={`space-y-1.5 rounded-xl p-1.5 transition ${
           isGroupHovered ? "bg-[var(--module-accent-soft)] ring-1 ring-[var(--module-accent-ring)]" : ""
         }`}
         onDragOver={(e) => handleHtml5DragOver(e, cat.id)}
+        onDrop={(e) => handleHtml5Drop(e, cat.id)}
       >
         {/* Group Header (Left aligned with horizontal divider line) */}
         <div className="flex items-center justify-start relative py-0.5">
@@ -664,7 +1096,10 @@ export default function LauncherPanel() {
             <div className="w-full border-t border-white/5" />
           </div>
           <div
-            onClick={() => toggleGroupCollapse(cat.id)}
+            onClick={() => {
+              if (Date.now() - justDraggedAtRef.current < 300) return; // 拖拽后的残留 click 不触发
+              toggleGroupCollapse(cat.id);
+            }}
             onContextMenu={(e) => {
               e.preventDefault();
               setCategoryContextMenu({ x: e.clientX, y: e.clientY, category: cat });
@@ -694,76 +1129,38 @@ export default function LauncherPanel() {
 
         {/* Group Items Grid (Horizontal: Icon + Name, Auto Column Grid) */}
         {groupItems.length > 0 && !isGroupCollapsed(cat.id) ? (
-          <div className={`${gridClass} ${densityGap}`} style={gridStyle}>
-            {groupItems.map((item) => (
-              <div
-                key={item.id}
-                onClick={() => handleExecuteItem(item)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setItemContextMenu({ x: e.clientX, y: e.clientY, item });
-                }}
-                className={`group relative rounded-xl border transition cursor-pointer min-w-0 flex items-center ${densityCard} ${cardBorderClass} ${
-                  checkResults[item.id] && !checkResults[item.id].exists
-                    ? "border-red-500/70 bg-red-500/10 hover:border-red-400 shadow-red-500/20 shadow-lg"
-                    : "border-white/5 hover:border-[var(--module-accent-ring)] bg-white/[0.02] hover:bg-[var(--module-accent-soft)]"
-                } active:scale-95`}
-                style={cardRadius}
-                title={
-                  checkResults[item.id] && !checkResults[item.id].exists
-                    ? `${item.name}（不存在）`
-                    : item.name
-                }
-              >
-                {item.data.runAsAdmin && (
-                  <div className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-400" />
-                )}
-                {checkResults[item.id] && !checkResults[item.id].exists && (
-                  <div className="absolute -top-1 -left-1 w-2 h-2 rounded-full bg-red-500 shadow shadow-red-500/50" />
-                )}
-
-                {/* Icon (size from view settings) */}
-                <div
-                  className={`rounded-lg flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition overflow-hidden ${
-                    view.iconBg ? "bg-white/5" : "bg-transparent"
-                  }`}
-                  style={{ width: view.iconSize, height: view.iconSize }}
-                >
-                  {item.data.icon ? (
-                    <img
-                      src={item.data.icon}
-                      className="object-contain"
-                      style={{ width: view.iconSize * 0.82, height: view.iconSize * 0.82 }}
-                      alt=""
-                    />
-                  ) : item.data.htmlIcon ? (
-                    <span style={{ fontSize: view.iconSize * 0.5 }}>{item.data.htmlIcon}</span>
-                  ) : item.itemType === 1 ? (
-                    <Folder className="text-amber-400" style={{ width: view.iconSize * 0.55, height: view.iconSize * 0.55 }} />
-                  ) : item.itemType === 2 ? (
-                    <Globe className="text-blue-400" style={{ width: view.iconSize * 0.55, height: view.iconSize * 0.55 }} />
-                  ) : (
-                    <FileText className="text-[var(--module-accent)]" style={{ width: view.iconSize * 0.55, height: view.iconSize * 0.55 }} />
-                  )}
-                </div>
-
-                {/* Name */}
-                {view.showName && (
-                  <span className="text-slate-200 truncate group-hover:text-[var(--module-accent)] transition min-w-0 flex-1 font-medium" style={itemNameStyle}>
-                    {item.name}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
+          <SortableContext
+            items={groupItems.map((i) => `item:${i.id}`)}
+            strategy={horizontalListSortingStrategy}
+          >
+            <div className={`${gridClass} ${densityGap}`} style={gridStyle}>
+              {groupItems.map((item) => (
+                <SortableItem
+                  key={item.id}
+                  item={item}
+                  view={itemView}
+                  checkResults={checkResults}
+                  onClick={() => {
+                    if (Date.now() - justDraggedAtRef.current < 300) return; // 拖拽后的残留 click 不触发启动
+                    handleExecuteItem(item);
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setItemContextMenu({ x: e.clientX, y: e.clientY, item });
+                  }}
+                />
+              ))}
+            </div>
+          </SortableContext>
         ) : childGroups.length > 0 ? null : (
           <div
             onClick={() => {
+              if (Date.now() - justDraggedAtRef.current < 300) return; // 拖拽后的残留 click 不触发
               setEditingItem(null);
               setTargetClassificationId(cat.id);
               setItemModalOpen(true);
             }}
-            className="border border-dashed border-white/5 hover:border-[var(--module-accent-ring)] rounded-xl py-3 text-center text-slate-600 hover:text-slate-400 text-[11px] cursor-pointer transition"
+            className="border border-dashed border-white/5 hover:border-[var(--module-accent-ring)] rounded-xl min-h-[64px] flex items-center justify-center py-3 text-center text-slate-600 hover:text-slate-400 text-[11px] cursor-pointer transition"
           >
             + 点击为此分组添加项目，或直接拖入 .exe / 文件夹 / 任意文件
           </div>
@@ -775,7 +1172,7 @@ export default function LauncherPanel() {
             {childGroups.map((child) => renderGroup(child))}
           </div>
         )}
-      </div>
+      </Droppable>
     );
   };
 
@@ -1111,6 +1508,14 @@ export default function LauncherPanel() {
       )}
 
       {/* Main Split: Left Vertical Categories (128px) | Right Cards Flow */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={customCollisionDetection}
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDragEnd={handleDragEnd}
+        onDragCancel={handleDragCancel}
+      >
       <div className="flex-1 flex min-h-0 relative">
         {/* Left Vertical Categories (Fixed 128px) */}
         <div className="w-32 flex-shrink-0 border-r border-white/5 bg-[#090d16]/70 flex flex-col justify-between py-2 overflow-y-auto">
@@ -1119,11 +1524,38 @@ export default function LauncherPanel() {
               const isActive = cat.id === activeTopCategory?.id;
 
               return (
-                <div
+                <Droppable
                   key={cat.id}
+                  id={`sidebar:${cat.id}`}
+                  dataCatId={cat.id}
                   onClick={() => {
+                    if (Date.now() - justDraggedAtRef.current < 300) return; // 拖拽后的残留 click 不触发切换
                     setActiveParentId(cat.id);
                     if (isSearchOpen) closeSearch();
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsDragOver(true);
+                    setTargetDragSubId(cat.id);
+                  }}
+                  onDrop={async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsDragOver(false);
+                    setTargetDragSubId(null);
+                    // 左栏仅接收外部文件；内部项目拖拽由 dnd-kit 的 handleDragOver/handleDragEnd 处理
+                    const files = e.dataTransfer.files;
+                    const paths: string[] = [];
+                    for (let i = 0; i < files.length; i++) {
+                      // @ts-ignore
+                      const fullPath = files[i].path || files[i].name;
+                      if (fullPath) paths.push(fullPath);
+                    }
+                    if (paths.length > 0) {
+                      await processDroppedPaths(paths, cat.id);
+                      setActiveParentId(cat.id);
+                    }
                   }}
                   onContextMenu={(e) => {
                     e.preventDefault();
@@ -1133,6 +1565,10 @@ export default function LauncherPanel() {
                     isActive
                       ? "bg-slate-200 text-slate-900 font-bold shadow-md"
                       : "text-slate-400 hover:text-slate-200 hover:bg-white/5 font-medium"
+                  } ${
+                    targetDragSubId === cat.id
+                      ? "!bg-[var(--module-accent)] !text-slate-50 shadow-md ring-2 ring-[var(--module-accent-ring)]"
+                      : ""
                   }`}
                 >
                   <span className="truncate">{cat.name}</span>
@@ -1141,7 +1577,7 @@ export default function LauncherPanel() {
                       isActive ? "text-slate-900" : "opacity-40 group-hover:opacity-100"
                     }`}
                   />
-                </div>
+                </Droppable>
               );
             })}
           </div>
@@ -1180,7 +1616,25 @@ export default function LauncherPanel() {
             if (directItems.length === 0 && subCategories.length > 0) return null;
 
             return (
-              <div className="space-y-2.5">
+              <Droppable
+                id={activeTopCategory ? `cat:${activeTopCategory.id}` : `cat:-1`}
+                dataCatId={activeTopCategory ? activeTopCategory.id : undefined}
+                className={`space-y-2.5 rounded-xl transition ${
+                  targetDragSubId === activeTopCategory?.id
+                    ? "bg-[var(--module-accent-soft)] ring-1 ring-[var(--module-accent-ring)]"
+                    : ""
+                }`}
+                onDragOver={(e) =>
+                  activeTopCategory
+                    ? handleHtml5DragOver(e, activeTopCategory.id)
+                    : handleHtml5DragOver(e)
+                }
+                onDrop={(e) =>
+                  activeTopCategory
+                    ? handleHtml5Drop(e, activeTopCategory.id)
+                    : handleHtml5Drop(e)
+                }
+              >
                 {subCategories.length > 0 && (
                   <div className="flex items-center justify-start relative py-0.5">
                     <div className="absolute inset-0 flex items-center pointer-events-none">
@@ -1199,66 +1653,29 @@ export default function LauncherPanel() {
                 )}
 
                 {directItems.length > 0 ? (
-                  <div className={`${gridClass} ${densityGap}`} style={gridStyle}>
-                    {directItems.map((item) => (
-                      <div
-                        key={item.id}
-                        onClick={() => handleExecuteItem(item)}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          setItemContextMenu({ x: e.clientX, y: e.clientY, item });
-                        }}
-                        className={`group relative rounded-xl border transition cursor-pointer min-w-0 flex items-center ${densityCard} ${cardBorderClass} ${
-                          checkResults[item.id] && !checkResults[item.id].exists
-                            ? "border-red-500/70 bg-red-500/10 hover:border-red-400 shadow-lg shadow-red-500/20"
-                            : "border-white/5 hover:border-[var(--module-accent-ring)] bg-white/[0.02] hover:bg-[var(--module-accent-soft)]"
-                        } active:scale-95`}
-                        style={cardRadius}
-                        title={
-                          checkResults[item.id] && !checkResults[item.id].exists
-                            ? `${item.name}（不存在）`
-                            : item.name
-                        }
-                      >
-                        {item.data.runAsAdmin && (
-                          <div className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-400" />
-                        )}
-                        {checkResults[item.id] && !checkResults[item.id].exists && (
-                          <div className="absolute -top-1 -left-1 w-2 h-2 rounded-full bg-red-500 shadow shadow-red-500/50" />
-                        )}
-
-                        <div
-                          className={`rounded-lg flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition overflow-hidden ${
-                            view.iconBg ? "bg-white/5" : "bg-transparent"
-                          }`}
-                          style={{ width: view.iconSize, height: view.iconSize }}
-                        >
-                          {item.data.icon ? (
-                            <img
-                              src={item.data.icon}
-                              className="object-contain"
-                              style={{ width: view.iconSize * 0.82, height: view.iconSize * 0.82 }}
-                              alt=""
-                            />
-                          ) : item.data.htmlIcon ? (
-                            <span style={{ fontSize: view.iconSize * 0.5 }}>{item.data.htmlIcon}</span>
-                          ) : item.itemType === 1 ? (
-                            <Folder className="text-amber-400" style={{ width: view.iconSize * 0.55, height: view.iconSize * 0.55 }} />
-                          ) : item.itemType === 2 ? (
-                            <Globe className="text-blue-400" style={{ width: view.iconSize * 0.55, height: view.iconSize * 0.55 }} />
-                          ) : (
-                            <FileText className="text-[var(--module-accent)]" style={{ width: view.iconSize * 0.55, height: view.iconSize * 0.55 }} />
-                          )}
-                        </div>
-
-                        {view.showName && (
-                          <span className="text-slate-200 truncate group-hover:text-[var(--module-accent)] transition min-w-0 flex-1 font-medium" style={itemNameStyle}>
-                            {item.name}
-                          </span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                  <SortableContext
+                    items={directItems.map((i) => `item:${i.id}`)}
+                    strategy={horizontalListSortingStrategy}
+                  >
+                    <div className={`${gridClass} ${densityGap}`} style={gridStyle}>
+                      {directItems.map((item) => (
+                        <SortableItem
+                          key={item.id}
+                          item={item}
+                          view={itemView}
+                          checkResults={checkResults}
+                          onClick={() => {
+                            if (Date.now() - justDraggedAtRef.current < 300) return; // 拖拽后的残留 click 不触发启动
+                            handleExecuteItem(item);
+                          }}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            setItemContextMenu({ x: e.clientX, y: e.clientY, item });
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </SortableContext>
                 ) : subCategories.length === 0 ? (
                   <div className="py-20 text-center text-slate-500 flex flex-col items-center justify-center">
                     <UploadCloud className="w-12 h-12 mb-3 opacity-30 text-[var(--module-accent)]" />
@@ -1270,6 +1687,7 @@ export default function LauncherPanel() {
                     <div className="flex items-center gap-2 mt-4">
                       <button
                         onClick={() => {
+                          if (Date.now() - justDraggedAtRef.current < 300) return; // 拖拽后的残留 click 不触发
                           setEditingItem(null);
                           setTargetClassificationId(
                             activeTopCategory ? activeTopCategory.id : 1
@@ -1283,6 +1701,7 @@ export default function LauncherPanel() {
                       </button>
                       <button
                         onClick={() => {
+                          if (Date.now() - justDraggedAtRef.current < 300) return; // 拖拽后的残留 click 不触发
                           setEditingCategory(null);
                           setCategoryParentId(
                             activeTopCategory ? activeTopCategory.id : null
@@ -1297,7 +1716,7 @@ export default function LauncherPanel() {
                     </div>
                   </div>
                 ) : null}
-              </div>
+              </Droppable>
             );
           })()}
         </div>
@@ -1421,10 +1840,25 @@ export default function LauncherPanel() {
       )}
       </div>
 
+      {/* DragOverlay：拖拽时的悬浮卡片（跟随光标，自动让位由 SortableContext 处理） */}
+      <DragOverlay dropAnimation={null}>
+        {activeDragItem && (
+          <div className={cardClass(activeDragItem, itemView, checkResults)} style={{ borderRadius: itemView.itemRadius }}>
+            <ItemCardBody item={activeDragItem} view={itemView} checkResults={checkResults} />
+          </div>
+        )}
+      </DragOverlay>
+      </DndContext>
+
       {/* Item Context Menu */}
       {itemContextMenu && (
         <div
-          style={{ top: itemContextMenu.y, left: itemContextMenu.x }}
+          style={{
+            left: itemContextMenu.x,
+            ...(itemContextMenu.y > (typeof window !== "undefined" ? window.innerHeight : 0) - 280
+              ? { bottom: (typeof window !== "undefined" ? window.innerHeight : 0) - itemContextMenu.y, top: "auto" }
+              : { top: itemContextMenu.y }),
+          }}
           className="fixed z-[200] bg-[#171d2e] border border-white/15 rounded-xl shadow-2xl p-1.5 min-w-[160px] text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100"
           onClick={(e) => e.stopPropagation()}
         >
@@ -1505,7 +1939,12 @@ export default function LauncherPanel() {
       {/* Category Context Menu */}
       {categoryContextMenu && (
         <div
-          style={{ top: categoryContextMenu.y, left: categoryContextMenu.x }}
+          style={{
+            left: categoryContextMenu.x,
+            ...(categoryContextMenu.y > (typeof window !== "undefined" ? window.innerHeight : 0) - 200
+              ? { bottom: (typeof window !== "undefined" ? window.innerHeight : 0) - categoryContextMenu.y, top: "auto" }
+              : { top: categoryContextMenu.y }),
+          }}
           className="fixed z-[200] bg-[#171d2e] border border-white/15 rounded-xl shadow-2xl p-1.5 min-w-[150px] text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100"
           onClick={(e) => e.stopPropagation()}
         >
