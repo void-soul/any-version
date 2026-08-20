@@ -760,9 +760,11 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
 
     #[cfg(windows)]
     {
-        // 额外确保创建独立的进程组，便于后续 taskkill /T
+        // 额外确保创建独立的进程组，便于后续 taskkill /T；
+        // 并保留 CREATE_BREAKAWAY_FROM_JOB 让进程脱离 AnyVersion 生命周期。
         use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000 | 0x00000200); // CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+        // CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB
+        cmd.creation_flags(0x08000000 | 0x00000200 | 0x01000000);
     }
 
     let mut child = cmd.spawn().map_err(|e| format!("启动失败: {}", e))?;

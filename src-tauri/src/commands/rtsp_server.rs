@@ -240,7 +240,8 @@ pub fn start_rtsp_server(
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            mtx_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            // CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB：脱离 AnyVersion 生命周期
+            mtx_cmd.creation_flags(0x08000000 | 0x01000000);
         }
 
         match mtx_cmd.spawn() {
@@ -428,7 +429,8 @@ pub fn start_rtsp_server(
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        // CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB：脱离 AnyVersion 生命周期
+        cmd.creation_flags(0x08000000 | 0x01000000);
     }
 
     let mut child = match cmd.spawn() {
