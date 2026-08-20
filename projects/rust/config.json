@@ -4,12 +4,11 @@
   "category": "language",
   "official_website": "https://www.rust-lang.org",
   "bin_dirs": [
-    "bin",
-    "cargo\\bin"
+    "bin"
   ],
   "has_cache": true,
   "cache_detect_cmd": null,
-  "cache_default_path": "{home}\\.cargo\\registry\\cache",
+  "cache_default_path": "{data_dir}\\rust\\cargo",
   "has_mirror": false,
   "mirror_options": null,
   "has_pkg": false,
@@ -35,7 +34,7 @@
         ".cargo\\bin"
       ],
       "exe_name": "rustup.exe",
-      "cache_default_path": "{home}\\.rustup",
+      "cache_default_path": "{data_dir}\\rust\\rustup",
       "cache_env_var": "RUSTUP_HOME"
     }
   ]

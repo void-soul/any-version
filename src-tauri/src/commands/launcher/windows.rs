@@ -852,6 +852,18 @@ pub fn register_global_hotkeys(
                         if let Some(window) = app_clone.get_webview_window("main") {
                             let is_visible = window.is_visible().unwrap_or(false);
                             let is_minimized = window.is_minimized().unwrap_or(false);
+                            // 本次是否将「唤起窗口」而非「隐藏窗口」。若是唤起，
+                            // 提前记录当前前台窗口，供剪贴板模块「一键粘贴」使用。
+                            let will_show = match target {
+                                None => !(is_visible && !is_minimized),
+                                Some(module) => {
+                                    !(is_visible && !is_minimized
+                                        && CURRENT_PAGE.lock().unwrap().as_str() == module)
+                                }
+                            };
+                            if will_show {
+                                crate::commands::clipboard::monitor_remember_window();
+                            }
                             match target {
                                 // 主热键：可见则隐藏，否则唤起并显示「启动」模块。
                                 None => {

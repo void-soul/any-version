@@ -7,7 +7,7 @@
     "version_cmd": "cargo --version",
     "version_exe": "cargo",
     "cache_detect_cmd": null,
-    "cache_default_path": "{home}\\.cargo",
+    "cache_default_path": "{data_dir}\\rust\\cargo",
     "cache_env_var": "CARGO_HOME",
     "cache_set_cmd_template": null,
     "data_detect_cmd": null,
@@ -19,9 +19,9 @@
     "pkg_list_cmd": null,
     "pkg_homepage_template": "https://crates.io/crates/{pkg}",
     "mirror_cmd_template": null,
-    "mirror_config_file": "{home}\\.cargo\\config.toml",
+    "mirror_config_file": "{data_dir}\\rust\\cargo\\config.toml",
     "mirror_detect_file_regex": "registry\\s*=\\s*\"([^\"]+)\"",
-    "mirror_config_desc": "%USERPROFILE%\\.cargo\\config.toml（Cargo 镜像源配置）",
+    "mirror_config_desc": "Cargo 镜像源配置（托管后位于 {data_dir}\\rust\\cargo\\config.toml，即 CARGO_HOME 下）",
     "mirror_options": [
       {
         "mirror_type": "official",

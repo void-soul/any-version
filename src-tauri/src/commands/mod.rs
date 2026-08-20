@@ -23,4 +23,5 @@ pub mod mihomo;
 pub mod tasks;
 pub mod node_manager;
 pub mod launcher;
+pub mod clipboard;
 

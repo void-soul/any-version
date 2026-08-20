@@ -4,8 +4,7 @@
   "category": "language",
   "official_website": "https://python.org",
   "bin_dirs": [
-    "",
-    "Scripts"
+    ""
   ],
   "has_cache": false,
   "cache_detect_cmd": null,

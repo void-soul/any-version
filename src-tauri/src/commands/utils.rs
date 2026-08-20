@@ -68,13 +68,18 @@ pub fn find_in_path(exe_name: &str) -> Option<PathBuf> {
     None
 }
 
-/// Expand {home} placeholder in path strings
+/// Expand {home} / {data_dir} placeholders in path strings.
+/// - `{home}`      -> 用户主目录（%USERPROFILE%）
+/// - `{data_dir}`  -> 程序数据根目录（get_data_dir()），用于把缓存/数据锚定到托管的数据目录下
 pub fn expand_home(path: &str) -> String {
-    if path.contains("{home}") {
-        path.replace("{home}", &get_home_dir().to_string_lossy())
-    } else {
-        path.to_string()
+    let mut s = path.to_string();
+    if s.contains("{home}") {
+        s = s.replace("{home}", &get_home_dir().to_string_lossy());
     }
+    if s.contains("{data_dir}") {
+        s = s.replace("{data_dir}", &crate::commands::config::get_data_dir().to_string_lossy());
+    }
+    s
 }
 
 /// Generic configuration-file based cache resolver

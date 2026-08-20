@@ -22,6 +22,7 @@
     "type": "json_api",
     "response_type": "array",
     "version_field": "tag_name",
-    "version_transform": "trim_prefix:v"
+    "version_transform": "trim_prefix:v",
+    "filter_contains_not": "rc"
   }
 }

@@ -285,6 +285,8 @@ pub fn run() {
             // 初始化启动器数据库，并注册「唤起/隐藏主窗口」全局快捷键。
             // 注意：该快捷键只负责切换窗口显示状态，不拦截普通输入框按键。
             let _ = commands::launcher::db::init_db();
+            // 剪贴板监控（启动器热键注册之后，便于复用其热键线程记录前台窗口）
+            let _ = commands::clipboard::init_clipboard_state(app.handle());
             if let Ok(setting) = commands::launcher::db::get_settings() {
                 let _ = commands::launcher::windows::register_global_hotkeys(
                     app.handle().clone(),
@@ -330,6 +332,7 @@ pub fn run() {
             commands::config::get_appearance_config,
             commands::config::set_module_theme_color,
             commands::config::set_global_font,
+            commands::config::set_module_order,
             commands::config::import_custom_font,
             commands::config::clear_custom_font,
             commands::config::get_project_menu_config,
@@ -689,6 +692,21 @@ pub fn run() {
                 commands::launcher::commands::launcher_export_backup,
                 commands::launcher::commands::launcher_import_backup,
                 commands::launcher::commands::launcher_import_backup_file,
+
+                // ---- 剪贴板管理器（复刻 CopyQ） ----
+                commands::clipboard::clipboard_get_items,
+                commands::clipboard::clipboard_delete_item,
+                commands::clipboard::clipboard_pin_item,
+                commands::clipboard::clipboard_clear_history,
+                commands::clipboard::clipboard_copy_item,
+                commands::clipboard::clipboard_paste_item,
+                commands::clipboard::clipboard_get_settings,
+                commands::clipboard::clipboard_save_settings,
+                commands::clipboard::clipboard_get_ignored_apps,
+                commands::clipboard::clipboard_add_ignored_app,
+                commands::clipboard::clipboard_remove_ignored_app,
+                commands::clipboard::clipboard_remember_window,
+                commands::clipboard::clipboard_get_image,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

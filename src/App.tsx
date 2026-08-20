@@ -10,15 +10,16 @@ import NodeManagerPanel from "./components/node/NodeManagerPanel";
 import Mihomo from "./components/SystemTools/Mihomo";
 import CertManager from "./components/SystemTools/CertManager";
 import LauncherPanel from "./components/launcher/LauncherPanel";
+import ClipboardPanel from "./components/ClipboardPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { Wrench, Settings, X, Minus, Square, Rss, Cpu, Bot, CalendarCheck, Download, AlertTriangle, CheckCircle2, Loader2, Boxes, Waypoints, ShieldCheck, Rocket } from "lucide-react";
+import { Wrench, Settings, X, Minus, Square, Rss, Cpu, Bot, CalendarCheck, Download, AlertTriangle, CheckCircle2, Loader2, Boxes, Waypoints, ShieldCheck, Rocket, Clipboard, FolderOpen } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import "./App.css";
 
-export type PageId = "launcher" | "sdk" | "ai" | "tasks" | "node" | "mihomo" | "cert" | "news" | "tools" | "settings";
+export type PageId = "launcher" | "sdk" | "ai" | "tasks" | "node" | "mihomo" | "cert" | "news" | "clipboard" | "tools" | "settings";
 
 // 顶级模块默认主题色（可在全局设置里自定义覆盖）
 export const MODULE_DEFAULTS: Record<string, { label: string; color: string; dark?: boolean }> = {
@@ -30,11 +31,12 @@ export const MODULE_DEFAULTS: Record<string, { label: string; color: string; dar
   node: { label: "服务", color: "#0891b2" }, // cyan
   mihomo: { label: "代理", color: "#4f46e5" }, // indigo
   cert: { label: "证书", color: "#0d9488" }, // teal
+  clipboard: { label: "剪贴板", color: "#0ea5e9" }, // sky
   tools: { label: "更多", color: "#059669" }, // emerald
   settings: { label: "设置", color: "#dc2626" }, // red
 };
 
-export const MODULE_ORDER: PageId[] = ["launcher", "news", "sdk", "ai", "tasks", "node", "mihomo", "cert", "tools", "settings"];
+export const MODULE_ORDER: PageId[] = ["launcher", "news", "sdk", "ai", "tasks", "node", "mihomo", "cert", "clipboard", "tools", "settings"];
 
 // 自定义字体 @font-face 的全局 CSS 注入
 function buildFontFaceCss(customFontPath: string): string {
@@ -68,13 +70,18 @@ export default function App() {
     phase: string;
   }>({ downloaded: 0, total: 0, speed: "", phase: "" });
   const [binError, setBinError] = useState<string | null>(null);
+  // 数据目录（全局路径 data_dir）：首次启动下载运行组件前可先选择存储位置
+  const [binDataDir, setBinDataDir] = useState("");
+  const [binOldDataDir, setBinOldDataDir] = useState("");
+  const [binMigrating, setBinMigrating] = useState(false);
 
-  // 外观：每个顶级模块的主题色 + 全局字体
+  // 外观：每个顶级模块的主题色 + 全局字体 + 模块顺序
   const [appearance, setAppearance] = useState<{
     moduleThemeColors: Record<string, string>;
     globalFont: string;
     customFontPath: string;
-  }>({ moduleThemeColors: {}, globalFont: "", customFontPath: "" });
+    moduleOrder: string[];
+  }>({ moduleThemeColors: {}, globalFont: "", customFontPath: "", moduleOrder: [] });
 
   // 懒挂载：仅渲染至少被访问过一次的页面，避免启动时全部组件同时初始化
   const [mountedPages, setMountedPages] = useState<Set<PageId>>(new Set(["launcher"]));
@@ -115,8 +122,12 @@ export default function App() {
 
   useEffect(() => {
     const initApp = async () => {
+      // 读取当前数据目录（全局路径），供首次启动下载运行组件时选择/迁移
       try {
-        await invoke("get_config");
+        const config = await invoke<{ data_dir?: string }>("get_config");
+        const dir = config.data_dir || (await invoke<string>("get_data_dir_cmd").catch(() => ""));
+        setBinDataDir(dir);
+        setBinOldDataDir(dir);
       } catch (e) {
         console.error("Init error:", e);
       }
@@ -126,6 +137,7 @@ export default function App() {
           moduleThemeColors: Record<string, string>;
           globalFont: string;
           customFontPath: string;
+          moduleOrder: string[];
         }>("get_appearance_config");
         setAppearance(ap);
       } catch (e) {
@@ -165,6 +177,7 @@ export default function App() {
             moduleThemeColors: Record<string, string>;
             globalFont: string;
             customFontPath: string;
+            moduleOrder: string[];
           }>("get_appearance_config");
           setAppearance(ap);
         } catch (e) {
@@ -180,11 +193,40 @@ export default function App() {
     emit("launcher-active-page", activePage).catch(() => {});
   }, [activePage]);
 
+  // 路径归一化（去掉首尾空白与末尾斜杠），用于判断数据目录是否变化
+  const normalizePath = (s: string) => s.trim().replace(/[\\/]+$/, "");
+
+  // 浏览选择数据目录
+  const handleBrowseBinDataDir = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({ directory: true, title: "选择数据目录" });
+      if (selected) setBinDataDir(selected as string);
+    } catch {
+      alert("文件夹选择器不可用，请手动输入路径。");
+    }
+  };
+
   // 下载运行组件
   const downloadBinAssets = async () => {
     setBinDownloading(true);
     setBinError(null);
     setBinProgress({ downloaded: 0, total: 0, speed: "", phase: "connecting" });
+    // 若用户修改了数据目录：先迁移全部数据到新位置，再下载（组件将落到新目录/bin）
+    if (binDataDir.trim() && normalizePath(binDataDir) !== normalizePath(binOldDataDir)) {
+      setBinMigrating(true);
+      try {
+        await invoke("update_config", { dataDir: binDataDir.trim() });
+        setBinOldDataDir(binDataDir.trim());
+      } catch (e) {
+        setBinError(`数据目录迁移失败：${typeof e === "string" ? e : String(e)}`);
+        setBinDownloading(false);
+        setBinMigrating(false);
+        return;
+      } finally {
+        setBinMigrating(false);
+      }
+    }
     const unlisten = await listen<{
       downloaded: number;
       total: number;
@@ -208,6 +250,9 @@ export default function App() {
       setBinDownloading(false);
     }
   };
+
+  // 运行组件实际安装目录（随数据目录输入实时变化）
+  const effectiveBinDir = (binDataDir.trim() || binOldDataDir || "…").replace(/[\\/]+$/, "");
 
   const effectiveFontFamily = appearance.customFontPath
     ? "'AppCustomFont', system-ui, sans-serif"
@@ -243,14 +288,14 @@ export default function App() {
 
 
           <div className="flex items-center gap-0.5 bg-white/5 border border-white/5 rounded-lg p-0.5">
-            {MODULE_ORDER.map((id) => {
+            {(appearance.moduleOrder.length > 0 ? appearance.moduleOrder : MODULE_ORDER).map((id) => {
               const cfg = MODULE_DEFAULTS[id];
               const effectiveColor = appearance.moduleThemeColors[id] || cfg.color;
               const isActive = activePage === id;
               return (
                 <button
                   key={id}
-                  onClick={() => switchPage(id)}
+                  onClick={() => switchPage(id as PageId)}
                   className={`px-3 py-1.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
                     isActive
                       ? "text-white shadow-sm"
@@ -267,6 +312,7 @@ export default function App() {
                   {id === "node" && <Boxes className="w-3 h-3" />}
                   {id === "mihomo" && <Waypoints className="w-3 h-3" />}
                   {id === "cert" && <ShieldCheck className="w-3 h-3" />}
+                  {id === "clipboard" && <Clipboard className="w-3 h-3" />}
                   {id === "tools" && <Wrench className="w-3 h-3" />}
                   {id === "settings" && <Settings className="w-3 h-3" />}
                   {cfg.label}
@@ -347,6 +393,11 @@ export default function App() {
             <RssReader />
           </div>
         )}
+        {mountedPages.has("clipboard") && (
+          <div className={activePage === "clipboard" ? "h-full w-full flex flex-col" : "hidden"}>
+            <ClipboardPanel />
+          </div>
+        )}
         {mountedPages.has("tools") && (
           <div className={activePage === "tools" ? "h-full w-full flex flex-col" : "hidden"}>
             <SystemTools defaultTab={defaultToolsTab} />
@@ -372,16 +423,20 @@ export default function App() {
         {/* 运行组件下载（首次启动缺失时全屏阻塞，不下载无法使用） */}
         {binAssets && (
           <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/70 backdrop-blur-sm">
-            <div className="w-[420px] max-w-[92vw] rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl shadow-black/60 p-6">
+            <div className="w-[440px] max-w-[94vw] max-h-[92vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl shadow-black/60 p-6">
               <div className="flex items-center gap-2.5 mb-3">
                 <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0" />
                 <h2 className="text-[15px] font-bold text-white">需要下载运行组件</h2>
               </div>
               <p className="text-[12px] text-slate-400 leading-relaxed mb-3">
                 以下运行组件缺失，应用部分功能（代理 / 媒体流 / 证书等）依赖它们。
-                请下载后继续使用（约 209&nbsp;MB，解压至 <code className="text-[10px] text-amber-300/90 break-all">{binAssets.installDir}</code>）。
+                请下载后继续使用（约 209&nbsp;MB，解压至{" "}
+                <code className="text-[10px] text-amber-300/90 break-all">
+                  {effectiveBinDir}\bin
+                </code>
+                ）。
               </p>
-              <div className="flex flex-wrap gap-1.5 mb-4">
+              <div className="flex flex-wrap gap-1.5 mb-3">
                 {binAssets.missing.map((m) => (
                   <span
                     key={m}
@@ -390,6 +445,65 @@ export default function App() {
                     {m}
                   </span>
                 ))}
+              </div>
+
+              {/* 数据目录（全局路径）选择：下载前可先确定存储位置 */}
+              <div className="mb-4 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <FolderOpen className="w-3.5 h-3.5 text-sky-400 flex-shrink-0" />
+                  <span className="text-[11px] font-semibold text-slate-300">
+                    数据目录（全局路径 data_dir）
+                  </span>
+                  {binDataDir.trim() && normalizePath(binDataDir) !== normalizePath(binOldDataDir) && (
+                    <span className="ml-auto text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5 flex-shrink-0">
+                      已修改，下载前将迁移
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={binDataDir}
+                    disabled={binDownloading}
+                    onChange={(e) => setBinDataDir(e.target.value)}
+                    className="flex-1 min-w-0 glass-input px-3 py-2 text-[11px] font-mono bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-sky-400/50 disabled:opacity-50"
+                    placeholder="e.g. D:\AnyVersion"
+                  />
+                  <button
+                    onClick={handleBrowseBinDataDir}
+                    disabled={binDownloading}
+                    className="p-2 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-lg border border-white/5 cursor-pointer transition-all flex-shrink-0 disabled:opacity-50"
+                    title="选择文件夹"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <p className="text-[9px] text-slate-500 mt-1.5 leading-relaxed">
+                  所有可变数据（SDK、运行组件、Node 服务、证书、数据库）都存储在此目录下
+                  {binOldDataDir ? (
+                    <>
+                      ，当前默认{" "}
+                      <code className="text-slate-400 break-all">{binOldDataDir}</code>
+                    </>
+                  ) : null}
+                  。
+                </p>
+                <div className="mt-1.5 text-[9px] font-mono text-slate-500 space-y-0.5 leading-relaxed break-all">
+                  <div>
+                    <span className="text-amber-400">运行组件</span>{" "}
+                    {effectiveBinDir}\bin
+                  </div>
+                  <div>
+                    <span className="text-cyan-400">SDK</span> {effectiveBinDir}\sdk
+                  </div>
+                  <div>
+                    <span className="text-emerald-400">Node 服务</span>{" "}
+                    {effectiveBinDir}\node-projects
+                  </div>
+                  <div>
+                    <span className="text-teal-400">证书</span> {effectiveBinDir}\certs
+                  </div>
+                </div>
               </div>
 
               {binProgress.phase === "extracting" && (
@@ -427,9 +541,15 @@ export default function App() {
                 className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-[13px] font-bold text-slate-900 transition-all"
               >
                 {binDownloading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" /> 下载中…
-                  </>
+                  binMigrating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" /> 正在迁移数据…
+                    </>
+                  ) : (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" /> 下载中…
+                    </>
+                  )
                 ) : (
                   <>
                     <Download className="w-4 h-4" /> 开始下载（约 209 MB）
