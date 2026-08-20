@@ -835,26 +835,22 @@ fn spawn_hotkey_worker(
         let mut current_ids: Vec<i32> = Vec::new();
         let mut actions: HashMap<i32, Option<String>> = HashMap::new();
 
-        loop {
-            // 阻塞等待新的注册命令（或线程退出）。
-            let entries = match rx.recv() {
-                Ok(e) => e,
-                Err(_) => break, // 所有发送端关闭，线程退出
-            };
-
-            // 1) 在同一线程内卸载上一轮注册的热键（保证能成功注销）。
-            for id in &current_ids {
+        // 在同一线程内先卸载上一轮热键，再注册新热键（保证注销与注册同线程，避免竞态）。
+        // 返回 false 表示注册命令通道已关闭（所有发送端销毁），线程应退出。
+        let apply_entries = |entries: &[(i32, Option<String>, (u32, u32))],
+                            current_ids: &mut Vec<i32>,
+                            actions: &mut HashMap<i32, Option<String>>| {
+            for id in current_ids.iter() {
                 unsafe {
                     let _ = UnregisterHotKey(std::ptr::null_mut(), *id);
                 }
             }
             current_ids.clear();
             actions.clear();
-
-            // 2) 注册新热键。
-            for (id, mod_id, (modi, key)) in &entries {
+            for (id, mod_id, (modi, key)) in entries {
                 unsafe {
-                    let mut res = RegisterHotKey(std::ptr::null_mut(), *id, *modi | MOD_NOREPEAT, *key);
+                    let mut res =
+                        RegisterHotKey(std::ptr::null_mut(), *id, *modi | MOD_NOREPEAT, *key);
                     if res == 0 {
                         res = RegisterHotKey(std::ptr::null_mut(), *id, *modi, *key);
                     }
@@ -866,68 +862,53 @@ fn spawn_hotkey_worker(
                     }
                 }
             }
+        };
 
-            // 3) 消息循环：处理 WM_HOTKEY，同时监听新命令（通过 PeekMessage + 短轮询 channel）。
-            //    为兼顾「注册命令到达时能及时响应」，采用带超时的消息等待。
-            let mut msg: MSG = unsafe { std::mem::zeroed() };
-            loop {
-                // 先用 PeekMessage 非阻塞检查是否有 WM_HOTKEY 或其它消息。
-                let has_msg = unsafe { PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 };
-                if has_msg {
-                    if msg.message == WM_QUIT {
-                        // 收到退出消息：卸载热键并退出线程。
-                        for id in &current_ids {
-                            unsafe {
-                                let _ = UnregisterHotKey(std::ptr::null_mut(), *id);
-                            }
-                        }
-                        return;
-                    }
-                    if msg.message == WM_HOTKEY {
-                        let wparam = msg.wParam as i32;
-                        if let Some(Some(module)) = actions.get(&wparam) {
-                            handle_hotkey_action(&app, module);
-                        }
-                    }
-                    unsafe {
-                        TranslateMessage(&msg);
-                        DispatchMessageW(&msg);
-                    }
-                    continue;
-                }
-
-                // 无消息时，短暂等待并检查是否有新的注册命令（用 try_recv 轮询）。
-                if let Ok(new_entries) = rx.try_recv() {
-                    // 有新的注册命令：跳出内层消息循环，回到外层重新注册。
-                    // 先把 new_entries 塞回处理流程（用递归式循环变量）。
-                    // 简单做法：直接处理——卸载旧、注册新。
+        // 单一消息循环：处理 WM_HOTKEY，同时监听新的注册命令。
+        let mut msg: MSG = unsafe { std::mem::zeroed() };
+        loop {
+            // 1) 优先处理新的注册命令（非阻塞轮询）。
+            match rx.try_recv() {
+                Ok(entries) => apply_entries(&entries, &mut current_ids, &mut actions),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // 发送端关闭：卸载热键并退出线程。
                     for id in &current_ids {
                         unsafe {
                             let _ = UnregisterHotKey(std::ptr::null_mut(), *id);
                         }
                     }
-                    current_ids.clear();
-                    actions.clear();
-                    for (id, mod_id, (modi, key)) in &new_entries {
+                    return;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+
+            // 2) 处理窗口消息（WM_HOTKEY / WM_QUIT）。
+            let has_msg =
+                unsafe { PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 };
+            if has_msg {
+                if msg.message == WM_QUIT {
+                    for id in &current_ids {
                         unsafe {
-                            let mut res = RegisterHotKey(std::ptr::null_mut(), *id, *modi | MOD_NOREPEAT, *key);
-                            if res == 0 {
-                                res = RegisterHotKey(std::ptr::null_mut(), *id, *modi, *key);
-                            }
-                            if res != 0 {
-                                current_ids.push(*id);
-                                actions.insert(*id, mod_id.clone());
-                            } else {
-                                tracing::warn!("注册全局热键 id={:#x} 失败 (可能被占用)", *id);
-                            }
+                            let _ = UnregisterHotKey(std::ptr::null_mut(), *id);
                         }
                     }
-                    continue;
+                    return;
                 }
-
-                // 短暂休眠，避免忙轮询占用 CPU。
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                if msg.message == WM_HOTKEY {
+                    let wparam = msg.wParam as i32;
+                    if let Some(Some(module)) = actions.get(&wparam) {
+                        handle_hotkey_action(&app, module);
+                    }
+                }
+                unsafe {
+                    TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+                continue;
             }
+
+            // 3) 无消息：短暂休眠，避免忙轮询占用 CPU。
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
     });
 }
