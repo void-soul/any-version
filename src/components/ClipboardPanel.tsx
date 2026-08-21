@@ -390,6 +390,14 @@ export default function ClipboardPanel() {
   const [newApp, setNewApp] = useState("");
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [busy, setBusy] = useState("");
+  // 复制/粘贴结果提示（管理员模式下 alert 可能被 UAC 遮挡，用应用内提示确保可见）
+  const [toast, setToast] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
+  const toastTimer = useRef<number | null>(null);
+  const showToast = useCallback((kind: "ok" | "err", msg: string) => {
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    setToast({ kind, msg });
+    toastTimer.current = window.setTimeout(() => setToast(null), 2600);
+  }, []);
 
   // 预览：通过行内「预览」按钮打开弹窗
   const [preview, setPreview] = useState<ClipboardItem | null>(null);
@@ -500,8 +508,11 @@ export default function ClipboardPanel() {
       await invoke("clipboard_copy_item", { id });
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 1200);
+      showToast("ok", "已复制到剪贴板");
     } catch (e) {
-      alert(`复制失败：${e}`);
+      const msg = `复制失败：${e}`;
+      showToast("err", msg);
+      console.error(msg);
     }
   };
 
@@ -510,8 +521,11 @@ export default function ClipboardPanel() {
     try {
       await invoke("clipboard_paste_item", { id });
       setPreview(null);
+      showToast("ok", "已复制并粘贴");
     } catch (e) {
-      alert(`粘贴失败：${e}`);
+      const msg = `粘贴失败：${e}`;
+      showToast("err", msg);
+      console.error(msg);
     } finally {
       setBusy("");
     }
@@ -851,6 +865,28 @@ export default function ClipboardPanel() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 复制/粘贴结果提示（管理员模式下 alert 可能被遮挡，用应用内提示确保可见） */}
+      {toast && (
+        <div
+          style={{
+            position: "fixed",
+            left: 16,
+            bottom: 16,
+            zIndex: 9999,
+            padding: "9px 14px",
+            borderRadius: 8,
+            fontSize: 13,
+            color: "#fff",
+            background: toast.kind === "ok" ? "#1f9d55" : "#d23b3b",
+            boxShadow: "0 4px 16px rgba(0,0,0,.35)",
+            maxWidth: 520,
+            pointerEvents: "none",
+          }}
+        >
+          {toast.msg}
         </div>
       )}
     </div>

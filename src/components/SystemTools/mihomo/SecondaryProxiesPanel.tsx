@@ -77,15 +77,14 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
     persist(items, nextActive, nextActive ? "已启用二级代理" : "已停用二级代理");
   };
 
-  const saveEdit = async () => {
-    if (!editing) return;
-    if (!editing.name.trim()) { setMsg("请填写二级代理名称"); return; }
-    if (!editing.host.trim() || !editing.port) { setMsg("请填写 IP/域名 与 端口"); return; }
+  const saveEdit = async (patch: SecondaryProxy) => {
+    if (!patch.name.trim()) { setMsg("请填写二级代理名称"); return; }
+    if (!patch.host.trim() || !patch.port) { setMsg("请填写 IP/域名 与 端口"); return; }
     let list: SecondaryProxy[];
     if (isNew) {
-      list = [...items, { ...editing, id: editing.id || genId() }];
+      list = [...items, { ...patch, id: patch.id || genId() }];
     } else {
-      list = items.map((s) => (s.id === editing.id ? editing : s));
+      list = items.map((s) => (s.id === patch.id ? patch : s));
     }
     await persist(list, activeId, isNew ? "已新增二级代理" : "已保存修改");
     setEditing(null);
@@ -257,7 +256,7 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
           isNew={isNew}
           busy={saving}
           onCancel={() => { setEditing(null); setIsNew(false); }}
-          onSave={(patch) => { setEditing(patch); saveEdit(); }}
+          onSave={(patch) => saveEdit(patch)}
         />
       )}
     </div>

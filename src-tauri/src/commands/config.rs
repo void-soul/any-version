@@ -891,9 +891,16 @@ pub fn rebuild_sdk_junctions(config: &Config) -> Vec<String> {
             continue;
         }
         let needs_rebuild = if link_path.is_symlink() {
-            // 已是 junction，校验指向是否正确
+            // 已是 junction，校验指向是否正确。
+            // 注意：fs::canonicalize 在 Windows 返回带 `\\?\` 前缀的路径，
+            // 必须去掉前缀再比较，否则恒判断为「指向错误」，每次启动都会误删重建 junction。
             fs::canonicalize(&link_path)
-                .map(|c| !c.starts_with(&target_path))
+                .map(|c| {
+                    let resolved = c.to_string_lossy().to_string();
+                    let resolved_clean = resolved.trim_start_matches("\\\\?\\").to_lowercase();
+                    let target_clean = target_path.to_string_lossy().to_lowercase();
+                    !resolved_clean.starts_with(&target_clean)
+                })
                 .unwrap_or(false)
         } else {
             // 非 junction（不存在或普通目录）都需要重建

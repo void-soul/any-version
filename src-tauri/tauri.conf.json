@@ -16,7 +16,8 @@
         "width": 1150,
         "height": 780,
         "decorations": false,
-        "visible": false
+        "visible": false,
+        "backgroundColor": "#0d111d"
       }
     ],
     "security": {

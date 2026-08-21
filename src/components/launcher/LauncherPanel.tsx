@@ -51,6 +51,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   Classification,
   Item,
@@ -559,7 +560,11 @@ export default function LauncherPanel() {
     let unlisten: (() => void) | undefined;
     const setupTauriDragDrop = async () => {
       try {
-        const win = getCurrentWindow();
+        // 注意：Tauri 的文件拖放事件（tauri://drag-*）在「Webview」级别发射，
+        // 必须用 getCurrentWebview() 监听（target kind=Webview）；
+        // 用 getCurrentWindow()（kind=Window）会因 target 不匹配而收不到事件，
+        // 表现为拖入文件时光标始终是「禁止」且 onDragDropEvent 从不触发。
+        const win = getCurrentWebview();
         unlisten = await win.onDragDropEvent(async (event) => {
           if (event.payload.type === "enter" || event.payload.type === "over") {
             setIsDragOver(true);
@@ -1128,7 +1133,7 @@ export default function LauncherPanel() {
         </div>
 
         {/* Group Items Grid (Horizontal: Icon + Name, Auto Column Grid) */}
-        {groupItems.length > 0 && !isGroupCollapsed(cat.id) ? (
+        {!isGroupCollapsed(cat.id) && groupItems.length > 0 ? (
           <SortableContext
             items={groupItems.map((i) => `item:${i.id}`)}
             strategy={horizontalListSortingStrategy}
@@ -1152,7 +1157,7 @@ export default function LauncherPanel() {
               ))}
             </div>
           </SortableContext>
-        ) : childGroups.length > 0 ? null : (
+        ) : !isGroupCollapsed(cat.id) && groupItems.length === 0 && childGroups.length === 0 ? (
           <div
             onClick={() => {
               if (Date.now() - justDraggedAtRef.current < 300) return; // 拖拽后的残留 click 不触发
@@ -1164,7 +1169,7 @@ export default function LauncherPanel() {
           >
             + 点击为此分组添加项目，或直接拖入 .exe / 文件夹 / 任意文件
           </div>
-        )}
+        ) : null}
 
         {/* Child Groups (Nested, recursive) */}
         {childGroups.length > 0 && !isGroupCollapsed(cat.id) && (

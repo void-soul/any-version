@@ -84,7 +84,9 @@ export default function Mihomo() {
   };
 
   return (
-    <div className="px-6 py-4 max-w-6xl mx-auto space-y-5 select-none text-slate-200">
+    <div className="h-full flex flex-col select-none text-slate-200">
+      {/* 固定区：头部控制栏 + 告警 + Tab 栏（不滚动） */}
+      <div className="flex-shrink-0 px-6 pt-4 space-y-4">
       {/* 头部控制栏 */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-4">
         <div className="flex items-center gap-3">
@@ -194,7 +196,10 @@ export default function Mihomo() {
           </button>
         ))}
       </div>
+      </div>
 
+      {/* 可滚动内容区：横向铺满，仅此区域滚动 */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 pt-4">
       {tab === "overview" && <OverviewPanel info={info} running={running} onNavigate={setTab} />}
       {tab === "proxies" && <ProxiesPanel running={running} />}
       {tab === "secondary" && <SecondaryProxiesPanel running={running} />}
@@ -211,6 +216,7 @@ export default function Mihomo() {
       {tab === "dns" && <DnsPanel />}
       {tab === "sniffer" && <SnifferPanel />}
       {tab === "core" && <CorePanel onCoreChanged={refreshAll} />}
+      </div>
     </div>
   );
 }
