@@ -228,6 +228,76 @@ pub fn remove_from_user_path(paths: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// 将路径添加到【系统级 PATH】(HKLM)，对所有用户和构建子进程可见。
+/// 需要管理员权限；失败时返回错误，调用方应提示用户以管理员身份运行。
+pub fn add_to_system_path(paths: &[String]) -> Result<(), String> {
+    let known_tools = super::project::registry::all_ids();
+
+    if let Some(system_path) = get_system_registry_env("PATH") {
+        let mut parts = std::env::split_paths(&system_path)
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        let mut modified = false;
+        for path in paths.iter().rev() {
+            let path_lower = path.to_lowercase();
+
+            for tool in &known_tools {
+                let double = format!("{}{}", tool, tool);
+                let double_sep = format!("{}\\{}", tool, tool);
+                if path_lower.ends_with(&double) || path_lower.ends_with(&double_sep) {
+                    return Err(format!("PATH 条目疑似损坏（重复的工具名）: {}", path));
+                }
+            }
+
+            parts.retain(|p| p.to_lowercase() != path_lower);
+            parts.insert(0, path.clone());
+            modified = true;
+        }
+
+        if modified {
+            let new_path = std::env::join_paths(parts.iter().map(Path::new))
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .to_string();
+            set_system_registry_env("PATH", &new_path)?;
+        }
+    } else {
+        let new_path = std::env::join_paths(paths.iter().map(Path::new))
+            .map_err(|e| e.to_string())?
+            .to_string_lossy()
+            .to_string();
+        set_system_registry_env("PATH", &new_path)?;
+    }
+    Ok(())
+}
+
+/// 从【系统级 PATH】(HKLM) 中移除指定路径。
+pub fn remove_from_system_path(paths: &[String]) -> Result<(), String> {
+    if let Some(system_path) = get_system_registry_env("PATH") {
+        let parts = std::env::split_paths(&system_path)
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        let initial_len = parts.len();
+        let new_parts = parts.into_iter()
+            .filter(|p| {
+                let p_lower = p.to_lowercase();
+                !paths.iter().any(|target| target.to_lowercase() == p_lower)
+            })
+            .collect::<Vec<_>>();
+
+        if new_parts.len() != initial_len {
+            let new_path = std::env::join_paths(new_parts.iter().map(Path::new))
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .to_string();
+            set_system_registry_env("PATH", &new_path)?;
+        }
+    }
+    Ok(())
+}
+
 
 /// 自动配置 SDK 相关环境变量（注册表驱动）。
 /// 新增 SDK 时只需在 projects/<id>/config.json 中定义 env_vars，此函数自动生效。

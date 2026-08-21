@@ -56,7 +56,7 @@ pub fn project_preview_manage(id: String, delegation: crate::commands::config::P
 #[tauri::command]
 pub fn project_manage(app: tauri::AppHandle, id: String, delegation: crate::commands::config::ProjectDelegation) -> Result<(), String> {
     use crate::commands::config::{load_config, save_config};
-    use crate::commands::env::{get_registry_env_any, set_registry_env, add_to_user_path};
+    use crate::commands::env::{get_registry_env_any, set_registry_env, add_to_user_path, add_to_system_path};
     use super::registry;
     use std::path::Path;
 
@@ -222,7 +222,18 @@ pub fn project_manage(app: tauri::AppHandle, id: String, delegation: crate::comm
             }
         }
         if !add_paths.is_empty() {
-            let _ = add_to_user_path(&add_paths);
+            if def.requires_system_path {
+                // 构建工具（如 Flutter 启动的 cmake 子进程）只读取系统级 PATH 视图，
+                // 必须写入 HKLM PATH 才能被 find_program 找到。需要管理员权限。
+                add_to_system_path(&add_paths).map_err(|e| {
+                    format!(
+                        "已将 {} 添加到用户级 PATH，但写入系统级 PATH 失败（{}）。\n请「以管理员身份运行」AnyVersion 后重新托管该项目，否则 Flutter/cmake 等构建子进程将无法找到其可执行文件。",
+                        id, e
+                    )
+                })?;
+            } else {
+                let _ = add_to_user_path(&add_paths);
+            }
         }
     }
 
@@ -274,7 +285,7 @@ pub fn project_repair_env_vars(id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn project_unmanage(app: tauri::AppHandle, id: String) -> Result<(), String> {
     use crate::commands::config::{load_config, save_config};
-    use crate::commands::env::{set_registry_env, remove_from_user_path, add_to_user_path};
+    use crate::commands::env::{set_registry_env, remove_from_user_path, add_to_user_path, remove_from_system_path};
     use super::registry;
     use std::path::Path;
 
@@ -312,6 +323,10 @@ pub fn project_unmanage(app: tauri::AppHandle, id: String) -> Result<(), String>
         }
         if !remove_paths.is_empty() {
             let _ = remove_from_user_path(&remove_paths);
+            // 若曾注册到系统级 PATH，也一并清理（失败静默忽略，避免卸载受阻）
+            if def.requires_system_path {
+                let _ = remove_from_system_path(&remove_paths);
+            }
         }
     }
 

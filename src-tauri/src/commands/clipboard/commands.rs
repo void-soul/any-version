@@ -82,7 +82,11 @@ pub fn clipboard_clear_history(state: State<'_, ClipboardState>, keep_pinned: Op
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn clipboard_copy_item(state: State<'_, ClipboardState>, id: i64) -> Result<(), String> {
+pub async fn clipboard_copy_item(
+    app: AppHandle,
+    state: State<'_, ClipboardState>,
+    id: i64,
+) -> Result<(), String> {
     // 剪贴板写入是阻塞操作（OpenClipboard/SetClipboardData、大图解码），放到后台线程执行，
     // 避免在主线程卡死 UI（复制时程序无响应）。
     let st = state.inner().clone();
@@ -111,7 +115,14 @@ pub async fn clipboard_copy_item(state: State<'_, ClipboardState>, id: i64) -> R
         }
     })
     .await
-    .map_err(|e| format!("复制任务异常: {}", e))?
+    .map_err(|e| format!("复制任务异常: {}", e))??;
+
+    // 复制某项后隐藏主窗口（剪贴板模块便捷操作：复制即收起）
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+
+    Ok(())
 }
 
 #[tauri::command]

@@ -409,6 +409,11 @@ pub struct ProjectDef {
     /// 支持手动定义
     #[serde(default)]
     pub bin_dirs: Option<Vec<String>>,
+    /// 是否要求将 bin 目录注册到【系统级 PATH】(HKLM) 而非用户级 PATH (HKCU)。
+    /// 某些构建工具（如 Flutter 启动的 cmake 子进程）只读取系统级 PATH 视图，
+    /// 用户级 PATH 对其不可见，此时需开启此选项才能使 find_program 找到可执行文件。
+    #[serde(default)]
+    pub requires_system_path: bool,
     /// 版本前缀 → URL 模板映射（如 java 的 adoptium-/microsoft- 前缀）
     #[serde(default)]
     pub version_prefix_map: Option<std::collections::HashMap<String, String>>,
