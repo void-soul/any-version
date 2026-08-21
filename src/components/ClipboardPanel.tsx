@@ -263,14 +263,13 @@ function Row({
 }) {
   return (
     <div
-      onClick={onCopy}
-      onDoubleClick={onPaste}
+      onClick={onPaste}
       className={`h-full flex items-center gap-3 rounded-lg border px-2.5 transition-all cursor-pointer group ${
         item.pinned
           ? "bg-amber-500/[0.06] border-amber-500/25"
           : "bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20"
       }`}
-      title="单击设为活跃剪贴板 · 双击粘贴到之前的窗口"
+      title="单击复制并粘贴到之前的窗口"
     >
       {/* 类型图标 / 缩略图 */}
       {item.kind === "image" ? (

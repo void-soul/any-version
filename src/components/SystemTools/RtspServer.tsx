@@ -448,7 +448,7 @@ export default function RtspServer() {
   const runningCount = instances.filter((i) => i.status.running).length;
 
   return (
-    <div className="px-6 py-4 max-w-6xl mx-auto space-y-5 select-none text-slate-200">
+    <div className="w-full px-6 py-4 max-w-[1100px] mx-auto space-y-5 select-none text-slate-200">
       {/* 头部控制栏 */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-4">
         <div className="flex items-center gap-3">

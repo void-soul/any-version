@@ -51,7 +51,6 @@ import { CSS } from "@dnd-kit/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   Classification,
   Item,
@@ -443,12 +442,25 @@ export default function LauncherPanel() {
     await loadData();
   };
 
-  // Delete Category
-  const handleDeleteCategory = async (id: number) => {
-    if (!confirm("确定要删除此分类及其下的所有项目吗？")) return;
-    await invoke("launcher_delete_classification", { id });
-    showToast("分类已删除");
-    await loadData();
+  // Delete Category (确认弹框)
+  const [pendingDeleteCategory, setPendingDeleteCategory] = useState<Classification | null>(null);
+  const [deletingCategory, setDeletingCategory] = useState(false);
+  const handleDeleteCategory = (cat: Classification) => {
+    setPendingDeleteCategory(cat);
+  };
+  const confirmDeleteCategory = async () => {
+    if (!pendingDeleteCategory) return;
+    setDeletingCategory(true);
+    try {
+      await invoke("launcher_delete_classification", { id: pendingDeleteCategory.id });
+      showToast("分类已删除");
+      setPendingDeleteCategory(null);
+      await loadData();
+    } catch (e: any) {
+      showToast(`删除失败: ${e}`);
+    } finally {
+      setDeletingCategory(false);
+    }
   };
 
   // Save Item
@@ -560,11 +572,11 @@ export default function LauncherPanel() {
     let unlisten: (() => void) | undefined;
     const setupTauriDragDrop = async () => {
       try {
-        // 注意：Tauri 的文件拖放事件（tauri://drag-*）在「Webview」级别发射，
-        // 必须用 getCurrentWebview() 监听（target kind=Webview）；
-        // 用 getCurrentWindow()（kind=Window）会因 target 不匹配而收不到事件，
-        // 表现为拖入文件时光标始终是「禁止」且 onDragDropEvent 从不触发。
-        const win = getCurrentWebview();
+        // Tauri v2 的文件拖放事件（tauri://drag-*）在「Window」级别发射，
+        // 必须用 getCurrentWindow() 监听（target kind=Window）。
+        // 改用 getCurrentWebview() 会因 target 不匹配导致 onDragDropEvent 永不触发，
+        // 表现为「拖入文件到分类上无反应」。
+        const win = getCurrentWindow();
         unlisten = await win.onDragDropEvent(async (event) => {
           if (event.payload.type === "enter" || event.payload.type === "over") {
             setIsDragOver(true);
@@ -840,7 +852,7 @@ export default function LauncherPanel() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // If any modal is active, do not handle launcher shortcuts
-      if (categoryModalOpen || itemModalOpen || bookmarkModalOpen) {
+      if (categoryModalOpen || itemModalOpen || bookmarkModalOpen || pendingDeleteCategory) {
         return;
       }
 
@@ -1992,8 +2004,8 @@ export default function LauncherPanel() {
           <div className="h-px bg-white/10 my-1" />
           <button
             onClick={() => {
-              handleDeleteCategory(categoryContextMenu.category.id);
               setCategoryContextMenu(null);
+              handleDeleteCategory(categoryContextMenu.category);
             }}
             className="w-full px-3 py-1.5 rounded-lg text-left text-red-400 hover:bg-red-500 hover:text-white flex items-center gap-2 cursor-pointer"
           >
@@ -2093,6 +2105,59 @@ export default function LauncherPanel() {
           classificationId={targetClassificationId}
           classifications={classifications}
         />
+      )}
+
+      {/* 删除分类确认弹框 */}
+      {pendingDeleteCategory && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => !deletingCategory && setPendingDeleteCategory(null)}
+        >
+          <div
+            className="bg-[#141927] border rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-100"
+            style={{ borderColor: "var(--module-accent-ring)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2.5 px-5 py-4 border-b border-white/10 bg-white/[0.02]">
+              <span className="text-xl">{pendingDeleteCategory.data?.icon || "📁"}</span>
+              <h3 className="text-sm font-semibold text-white">删除分类</h3>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-xs leading-relaxed text-slate-300">
+                确定要删除分类
+                <span
+                  className="mx-1 px-1.5 py-0.5 rounded font-medium"
+                  style={{
+                    backgroundColor: "var(--module-accent-soft)",
+                    color: "var(--module-accent)",
+                  }}
+                >
+                  {pendingDeleteCategory.name}
+                </span>
+                及其下的所有项目吗？此操作不可恢复。
+              </p>
+              <div className="flex items-center justify-end gap-2.5 pt-1">
+                <button
+                  type="button"
+                  disabled={deletingCategory}
+                  onClick={() => setPendingDeleteCategory(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer disabled:opacity-50"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  disabled={deletingCategory}
+                  onClick={confirmDeleteCategory}
+                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  {deletingCategory ? "删除中..." : "删除"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

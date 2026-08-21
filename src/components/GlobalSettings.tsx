@@ -254,12 +254,9 @@ export default function GlobalSettings() {
     useState<SkillMigrateProgress | null>(null);
   const [skillMigrated, setSkillMigrated] = useState(false);
   // 开机自启：反映操作系统真实注册状态（打开设置页时查询）
+  // 应用通过 UAC manifest 始终以管理员身份运行，故开机自启天然具备管理员权限。
   const [autostartOn, setAutostartOn] = useState(false);
   const [autostartBusy, setAutostartBusy] = useState(false);
-  // 以管理员身份开机自启（任务计划程序 ONLOGON + 最高权限）
-  const [adminAutoStart, setAdminAutoStart] = useState(false);
-  const [adminAutoStartBusy, setAdminAutoStartBusy] = useState(false);
-  const [isAdminUser, setIsAdminUser] = useState(false);
   // 服务自启配置
   const [autoStartServices, setAutoStartServices] = useState<string[]>([]);
   const [sdkProjects, setSdkProjects] = useState<ProjectStatus[]>([]);
@@ -419,35 +416,6 @@ export default function GlobalSettings() {
       await fetchAutostart();
     } finally {
       setAutostartBusy(false);
-    }
-  };
-
-  // 管理员身份开机自启：依赖任务计划程序，创建/删除需管理员权限
-  const fetchAdminAutostart = async () => {
-    try {
-      setIsAdminUser(await invoke<boolean>("is_admin"));
-      setAdminAutoStart(await invoke<boolean>("is_admin_autostart_enabled"));
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleToggleAdminAutostart = async () => {
-    if (adminAutoStartBusy) return;
-    setAdminAutoStartBusy(true);
-    try {
-      if (adminAutoStart) {
-        await invoke("disable_admin_autostart");
-        setAdminAutoStart(false);
-      } else {
-        await invoke("enable_admin_autostart");
-        setAdminAutoStart(true);
-      }
-    } catch (e: any) {
-      alert(`设置管理员开机自启失败: ${e}`);
-      await fetchAdminAutostart();
-    } finally {
-      setAdminAutoStartBusy(false);
     }
   };
 
@@ -848,7 +816,6 @@ export default function GlobalSettings() {
     fetchVersion();
     fetchAiConfig();
     fetchAutostart();
-    fetchAdminAutostart();
     fetchAutoStartServices();
     fetchLauncherConfig();
     fetchAppearance();
@@ -1378,6 +1345,7 @@ export default function GlobalSettings() {
             <p className="text-xs font-medium text-slate-200">开机自启</p>
             <p className="text-[9px] text-slate-500">
               系统启动时自动运行 AnyVersion，并静默驻留到系统托盘。
+              AnyVersion 始终以管理员身份运行，开机自启同样具备完整管理员能力。
             </p>
           </div>
           <button
@@ -1393,45 +1361,6 @@ export default function GlobalSettings() {
             <span
               className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
                 autostartOn ? "translate-x-4" : "translate-x-0.5"
-              }`}
-            />
-          </button>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <div className="space-y-0.5">
-            <p className="text-xs font-medium text-slate-200">
-              以管理员身份开机自启
-              {!isAdminUser && (
-                <span className="ml-1 text-[9px] text-amber-400">
-                  （需以管理员身份运行后设置）
-                </span>
-              )}
-            </p>
-            <p className="text-[9px] text-slate-500">
-              通过任务计划程序以最高权限静默启动，复制/剪贴板/代理等功能可获完整管理员能力，
-              且不会弹出 UAC 确认框。
-            </p>
-          </div>
-          <button
-            onClick={handleToggleAdminAutostart}
-            disabled={adminAutoStartBusy || !isAdminUser}
-            role="switch"
-            aria-checked={adminAutoStart}
-            className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
-              adminAutoStart ? "bg-[var(--module-accent)]" : "bg-white/10"
-            }`}
-            title={
-              !isAdminUser
-                ? "请先以管理员身份运行 AnyVersion 再开启"
-                : adminAutoStart
-                ? "已开启管理员开机自启"
-                : "已关闭管理员开机自启"
-            }
-          >
-            <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                adminAutoStart ? "translate-x-4" : "translate-x-0.5"
               }`}
             />
           </button>
