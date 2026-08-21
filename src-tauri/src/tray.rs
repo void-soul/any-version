@@ -246,8 +246,19 @@ pub fn rebuild_tray_menu(app: &AppHandle) -> tauri::Result<()> {
     let now = now_ms();
     let last = REBUILD_LAST.load(Ordering::SeqCst);
     if now.saturating_sub(last) < REBUILD_MIN_INTERVAL_MS {
-        // 距上次重建过近：合并本次请求，由后续（间隔已过）的调用携带
+        // 距上次重建过近：合并本次请求，由后续（间隔已过）的调用携带。
+        // 关键修复：被节流合并的请求若仅依赖「下次有人再调 rebuild_tray_menu」来
+        // 触发，启动阶段可能因时序导致该次重建被永久丢弃（托盘一直停在首次空快照的
+        // “待启动”状态）。这里补一个一次性兜底定时器，保证 PENDING 必定在间隔后被刷新。
+        if REBUILD_PENDING.load(Ordering::SeqCst) {
+            return Ok(()); // 已排队，定时器会处理
+        }
         REBUILD_PENDING.store(true, Ordering::SeqCst);
+        let app2 = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(REBUILD_MIN_INTERVAL_MS + 50));
+            let _ = rebuild_tray_menu(&app2);
+        });
         return Ok(());
     }
     // 真正执行重建

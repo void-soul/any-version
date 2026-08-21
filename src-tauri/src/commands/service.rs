@@ -686,12 +686,26 @@ pub(crate) fn service_status_snapshot(managed_ids: &[String]) -> HashMap<String,
     if fresh.0 {
         return fresh.1;
     }
-    // 缓存过期/缺失：后台刷新，本轮返回空（托盘会先渲染无服务状态，稍后 rebuild 补齐）
+    // 缓存过期/缺失：后台刷新，本轮返回空（托盘会先渲染无服务状态，稍后 rebuild 补齐）。
+    // 关键修复：若缓存完全缺失（首次构建 / 重启后），本轮直接回退为同步检测真实状态，
+    // 与 scanner.rs 的 build_service_status 保持一致——否则托盘会一直停在“待启动”直到某次
+    // 异步重建被触发，而该重建在启动阶段时序下可能被节流丢弃（见 tray.rs 兜底定时器）。
     let ids = managed_ids.to_vec();
     let _ = std::thread::spawn(move || {
         let _ = refresh_service_status_snapshot(&ids);
         let _ = crate::tray::rebuild_tray_menu_global();
     });
+    if fresh.1.is_empty() {
+        // 完全无缓存：同步回退，保证托盘首屏即显示真实状态（已在运行的服务显示“运行中”）
+        let registry = crate::commands::project::registry::registry();
+        let mut fallback = HashMap::new();
+        for id in managed_ids {
+            if let Some(def) = registry.iter().find(|d| &d.id == id) {
+                fallback.insert(id.clone(), service_status_for_def(def));
+            }
+        }
+        return fallback;
+    }
     fresh.1
 }
 
