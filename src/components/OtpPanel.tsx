@@ -193,6 +193,15 @@ export default function OtpPanel() {
   const [busy, setBusy] = useState(false);
   const [categories, setCategories] = useState<OtpCategory[]>([]);
   const [activeCategory, setActiveCategory] = useState<number | null>(null); // null = 全部
+  // 分类新建/重命名弹窗：null=关闭；{mode:"add"} 新建；{mode:"rename",cat} 重命名
+  const [catModal, setCatModal] = useState<{ mode: "add" } | { mode: "rename"; cat: OtpCategory } | null>(null);
+  // 通用删除确认弹窗
+  const [confirmModal, setConfirmModal] = useState<{
+    title: string;
+    message: string;
+    danger?: boolean;
+    onConfirm: () => void;
+  } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -260,23 +269,37 @@ export default function OtpPanel() {
   };
 
   // 分类操作
-  const addCategory = async () => {
-    const title = prompt("输入分类名称：");
-    if (!title?.trim()) return;
-    await invoke("otp_add_category", { title: title.trim() });
-    load();
+  const addCategory = () => {
+    setCatModal({ mode: "add" });
   };
-  const renameCategory = async (cat: OtpCategory) => {
-    const title = prompt("重命名分类：", cat.title);
-    if (!title?.trim()) return;
-    await invoke("otp_rename_category", { id: cat.id, title: title.trim() });
-    load();
+  const renameCategory = (cat: OtpCategory) => {
+    setCatModal({ mode: "rename", cat });
   };
-  const deleteCategory = async (cat: OtpCategory) => {
-    if (!confirm(`删除分类「${cat.title}」？(不会删除其中的令牌)`)) return;
-    await invoke("otp_delete_category", { id: cat.id });
-    if (activeCategory === cat.id) setActiveCategory(null);
-    load();
+  const submitCategory = async (title: string) => {
+    if (!catModal) return;
+    try {
+      if (catModal.mode === "add") {
+        await invoke("otp_add_category", { title: title.trim() });
+      } else {
+        await invoke("otp_rename_category", { id: catModal.cat.id, title: title.trim() });
+      }
+      setCatModal(null);
+      load();
+    } catch (e) {
+      alert(`保存分类失败：${e}`);
+    }
+  };
+  const deleteCategory = (cat: OtpCategory) => {
+    setConfirmModal({
+      title: "删除分类",
+      message: `确定删除分类「${cat.title}」？该操作不会删除其中的令牌。`,
+      danger: true,
+      onConfirm: async () => {
+        await invoke("otp_delete_category", { id: cat.id });
+        if (activeCategory === cat.id) setActiveCategory(null);
+        load();
+      },
+    });
   };
 
   const togglePin = async (token: OtpToken) => {
@@ -284,19 +307,31 @@ export default function OtpPanel() {
     load();
   };
 
-  const deleteToken = async (token: OtpToken) => {
-    if (!confirm(`删除「${token.issuer} ${token.account}」？`)) return;
-    await invoke("otp_delete", { id: token.id });
-    load();
+  const deleteToken = (token: OtpToken) => {
+    const label = [token.issuer, token.account].filter(Boolean).join(" ") || "此令牌";
+    setConfirmModal({
+      title: "删除令牌",
+      message: `确定删除「${label}」？删除后无法恢复。`,
+      danger: true,
+      onConfirm: async () => {
+        await invoke("otp_delete", { id: token.id });
+        load();
+      },
+    });
   };
 
-  const saveToken = async (token: OtpToken) => {
+  const saveToken = async (token: OtpToken, categoryIds: number[]) => {
     setBusy(true);
     try {
+      let id = token.id;
       if (token.id) {
         await invoke("otp_update", { token });
       } else {
-        await invoke("otp_add", { token });
+        id = await invoke<number>("otp_add", { token });
+      }
+      // 保存令牌后设置其所属分类（整体替换绑定）
+      if (id) {
+        await invoke("otp_set_token_categories", { tokenId: id, categoryIds });
       }
       setShowAdd(false);
       setEditing(null);
@@ -448,6 +483,7 @@ export default function OtpPanel() {
                   token={token}
                   now={now}
                   copied={copiedId === token.id}
+                  categories={categories.filter((c) => c.tokenIds.includes(token.id)).map((c) => c.title)}
                   onCopy={() => copyCode(token)}
                   onTogglePin={() => togglePin(token)}
                   onDelete={() => deleteToken(token)}
@@ -466,6 +502,7 @@ export default function OtpPanel() {
       {showAdd && (
         <TokenForm
           token={editing}
+          categories={categories}
           onSave={saveToken}
           onClose={() => {
             setShowAdd(false);
@@ -504,6 +541,32 @@ export default function OtpPanel() {
           </div>
         </div>
       )}
+
+      {/* 新建/重命名分类弹窗 */}
+      {catModal && (
+        <CategoryModal
+          mode={catModal.mode}
+          initial={catModal.mode === "rename" ? catModal.cat.title : ""}
+          busy={busy}
+          onSubmit={submitCategory}
+          onClose={() => setCatModal(null)}
+        />
+      )}
+
+      {/* 删除确认弹窗 */}
+      {confirmModal && (
+        <ConfirmModal
+          title={confirmModal.title}
+          message={confirmModal.message}
+          danger={confirmModal.danger}
+          onConfirm={() => {
+            const cb = confirmModal.onConfirm;
+            setConfirmModal(null);
+            cb();
+          }}
+          onClose={() => setConfirmModal(null)}
+        />
+      )}
     </div>
   );
 }
@@ -533,6 +596,7 @@ function TokenCard({
   token,
   now,
   copied,
+  categories,
   onCopy,
   onTogglePin,
   onDelete,
@@ -541,6 +605,7 @@ function TokenCard({
   token: OtpToken;
   now: number;
   copied: boolean;
+  categories: string[];
   onCopy: () => void;
   onTogglePin: () => void;
   onDelete: () => void;
@@ -565,7 +630,7 @@ function TokenCard({
 
   return (
     <div
-      className={`group relative rounded-xl border p-3 transition cursor-pointer ${
+      className={`group relative rounded-xl border p-3 pb-9 transition cursor-pointer ${
         token.pinned
           ? "bg-amber-500/[0.06] border-amber-500/25"
           : "bg-white/[0.03] border-white/10 hover:bg-white/[0.05] hover:border-white/20"
@@ -586,6 +651,20 @@ function TokenCard({
           {token.description && (
             <div className="text-[9px] text-slate-600 truncate mt-0.5">{token.description}</div>
           )}
+          {/* 所属分类 */}
+          {categories.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1">
+              {categories.map((c, i) => (
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-0.5 text-[8px] px-1 py-0.5 rounded bg-[var(--module-accent)]/10 text-[var(--module-accent)] border border-[var(--module-accent)]/20"
+                >
+                  <Folder className="w-2 h-2" />{c}
+                </span>
+              ))}
+            </div>
+          )}
+          {/* 标签 */}
           {token.tags && (
             <div className="flex flex-wrap gap-1 mt-1">
               {token.tags.split(",").filter(Boolean).map((t, i) => (
@@ -636,8 +715,8 @@ function TokenCard({
         )}
       </div>
 
-      {/* hover 操作 */}
-      <div className="absolute top-2 right-2 hidden group-hover:flex items-center gap-1">
+      {/* hover 操作（左下角，避免与顶部右侧的类型/标签重叠） */}
+      <div className="absolute left-2 bottom-2 hidden group-hover:flex items-center gap-1">
         <button
           onClick={(e) => { e.stopPropagation(); onEdit(); }}
           className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
@@ -667,12 +746,14 @@ function TokenCard({
 // 添加/编辑表单
 function TokenForm({
   token,
+  categories,
   onSave,
   onClose,
   busy,
 }: {
   token: OtpToken | null;
-  onSave: (t: OtpToken) => void;
+  categories: OtpCategory[];
+  onSave: (t: OtpToken, categoryIds: number[]) => void;
   onClose: () => void;
   busy: boolean;
 }) {
@@ -700,12 +781,24 @@ function TokenForm({
 
   const set = (k: keyof OtpToken, v: unknown) => setForm((f) => ({ ...f, [k]: v }));
 
+  // 该令牌当前所属分类（编辑时回填；新增为空）
+  const [selectedCatIds, setSelectedCatIds] = useState<number[]>(() =>
+    token
+      ? categories.filter((c) => c.tokenIds.includes(token.id)).map((c) => c.id)
+      : []
+  );
+
+  const toggleCat = (id: number) =>
+    setSelectedCatIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+
   const submit = () => {
     if (!form.secret.trim()) {
       alert("请填写密钥 (secret)");
       return;
     }
-    onSave(form);
+    onSave(form, selectedCatIds);
   };
 
   const isSteam = form.tokenType === "Steam";
@@ -786,6 +879,36 @@ function TokenForm({
               placeholder="备注说明"
               className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
             />
+          </div>
+
+          {/* 分类多选 */}
+          <div>
+            <label className="text-[10px] text-slate-400 mb-1 block">
+              分类 {selectedCatIds.length > 0 && <span className="text-slate-500">(已选 {selectedCatIds.length})</span>}
+            </label>
+            {categories.length === 0 ? (
+              <p className="text-[10px] text-slate-500">暂无分类，可在 OTP 面板左侧「新建分类」后再分配。</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {categories.map((c) => {
+                  const on = selectedCatIds.includes(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => toggleCat(c.id)}
+                      className={`px-2.5 py-1 rounded-full text-[10px] border transition-colors cursor-pointer ${
+                        on
+                          ? "bg-[var(--module-accent)]/20 border-[var(--module-accent)] text-[var(--module-accent)]"
+                          : "bg-white/[0.03] border-white/10 text-slate-400 hover:border-white/25"
+                      }`}
+                    >
+                      {on ? "✓ " : ""}{c.title}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-2">
@@ -881,6 +1004,167 @@ function TokenForm({
             className="px-3 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
           >
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} 保存
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 新建 / 重命名分类弹窗（替代原生 prompt，美化样式）
+function CategoryModal({
+  mode,
+  initial,
+  busy,
+  onSubmit,
+  onClose,
+}: {
+  mode: "add" | "rename";
+  initial: string;
+  busy: boolean;
+  onSubmit: (title: string) => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(initial);
+
+  const submit = () => {
+    const t = name.trim();
+    if (!t) return;
+    onSubmit(t);
+  };
+
+  const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") submit();
+    if (e.key === "Escape") onClose();
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-[360px] max-w-[95vw] rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2.5 mb-4">
+          <div className="w-9 h-9 rounded-xl bg-[var(--module-accent)]/15 border border-[var(--module-accent)]/30 flex items-center justify-center">
+            {mode === "add" ? (
+              <FolderPlus className="w-4 h-4 text-[var(--module-accent)]" />
+            ) : (
+              <Pencil className="w-4 h-4 text-[var(--module-accent)]" />
+            )}
+          </div>
+          <div className="flex-1">
+            <h3 className="text-sm font-bold text-white">
+              {mode === "add" ? "新建分类" : "重命名分类"}
+            </h3>
+            <p className="text-[10px] text-slate-500">
+              {mode === "add" ? "创建后可在令牌编辑弹窗中分配" : "修改后所有关联令牌同步更新"}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={onKey}
+          placeholder="输入分类名称"
+          className="w-full glass-input px-3 py-2.5 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-[var(--module-accent)]/60 placeholder:text-slate-600"
+        />
+
+        <div className="flex justify-end gap-2 mt-4">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer"
+          >
+            取消
+          </button>
+          <button
+            onClick={submit}
+            disabled={busy || !name.trim()}
+            className="px-4 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
+          >
+            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} 保存
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 通用删除确认弹窗（替代原生 confirm，主题色随模块动态变化）
+function ConfirmModal({
+  title,
+  message,
+  danger,
+  onConfirm,
+  onClose,
+}: {
+  title: string;
+  message: string;
+  danger?: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-[360px] max-w-[95vw] rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2.5 mb-4">
+          <div
+            className={`w-9 h-9 rounded-xl flex items-center justify-center border ${
+              danger
+                ? "bg-rose-500/15 border-rose-500/30 text-rose-400"
+                : "bg-[var(--module-accent)]/15 border-[var(--module-accent)]/30 text-[var(--module-accent)]"
+            }`}
+          >
+            <Trash2 className="w-4 h-4" />
+          </div>
+          <div className="flex-1">
+            <h3 className="text-sm font-bold text-white">{title}</h3>
+            <p className="text-[10px] text-slate-500">
+              {danger ? "此操作不可撤销，请确认" : "请确认您的操作"}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <p className="text-xs text-slate-300 leading-relaxed mb-5">{message}</p>
+
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer"
+          >
+            取消
+          </button>
+          <button
+            onClick={onConfirm}
+            className={`px-4 py-1.5 rounded-lg text-[11px] text-white font-semibold cursor-pointer hover:opacity-85 flex items-center gap-1 ${
+              danger
+                ? "bg-rose-600 hover:bg-rose-500"
+                : "bg-[var(--module-accent)] hover:opacity-85"
+            }`}
+          >
+            <Trash2 className="w-3 h-3" /> 删除
           </button>
         </div>
       </div>

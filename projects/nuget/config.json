@@ -6,6 +6,7 @@
   "bin_dirs": [
     ""
   ],
+  "requires_system_path": true,
   "has_cache": true,
   "cache_detect_cmd": null,
   "cache_default_path": "{home}\\.nuget\\packages",
