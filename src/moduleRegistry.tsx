@@ -19,6 +19,7 @@ import {
   ScrollText,
   Braces,
   BookOpen,
+  KeyRound,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -135,6 +136,14 @@ export const MODULES: ModuleDef[] = [
     color: "#0ea5e9",
     defaultToolbar: true,
     Component: lazyLoad(() => import("./components/ClipboardPanel")),
+  },
+  {
+    id: "otp",
+    label: "OTP",
+    icon: KeyRound,
+    color: "#f59e0b",
+    defaultToolbar: false,
+    Component: lazyLoad(() => import("./components/OtpPanel")),
   },
   {
     id: "settings",

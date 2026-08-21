@@ -54,6 +54,8 @@ poly1305 = "0.8"
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 sha1 = "0.10"
 base64 = "0.22"
+# 二维码解码（OTP 模块「扫码添加」：从图片识别 otpauth URI）
+rqrr = "0.7"
 serde_yaml = "0.9"
 # 解码 cmd/子进程的 GBK（代码页 936）输出，修复 mklink 等中文输出乱码
 encoding_rs = "0.8"
