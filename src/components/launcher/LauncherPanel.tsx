@@ -16,6 +16,8 @@ import {
   FileText,
   X,
   ChevronRight,
+  ChevronsUp,
+  ChevronsDown,
   Bookmark,
   Layers,
   Sparkles,
@@ -51,6 +53,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   Classification,
   Item,
@@ -396,6 +399,42 @@ export default function LauncherPanel() {
     return classifications.filter((c) => c.parentId === activeTopCategory.id);
   }, [classifications, activeTopCategory]);
 
+  // 当前大分类下的所有子分组 id（含嵌套递归），用于「收缩/展开全部」
+  const activeSubIds = useMemo(() => {
+    if (!activeTopCategory) return [];
+    const result: number[] = [];
+    const walk = (parentId: number) => {
+      for (const c of classifications) {
+        if (c.parentId === parentId) {
+          result.push(c.id);
+          walk(c.id);
+        }
+      }
+    };
+    walk(activeTopCategory.id);
+    return result;
+  }, [classifications, activeTopCategory]);
+
+  // 是否当前大分类下的所有子分组均已收缩
+  const isAllCollapsed = useMemo(() => {
+    if (activeSubIds.length === 0) return false;
+    return activeSubIds.every((id) => collapsedGroups.has(id));
+  }, [activeSubIds, collapsedGroups]);
+
+  // 切换：全部收缩 / 全部展开
+  const handleToggleCollapseAll = () => {
+    if (activeSubIds.length === 0) return;
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (isAllCollapsed) {
+        activeSubIds.forEach((id) => next.delete(id));
+      } else {
+        activeSubIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
   // Items mapped by classification ID
   const itemsByClassification = useMemo(() => {
     const map = new Map<number, Item[]>();
@@ -572,11 +611,11 @@ export default function LauncherPanel() {
     let unlisten: (() => void) | undefined;
     const setupTauriDragDrop = async () => {
       try {
-        // Tauri v2 的文件拖放事件（tauri://drag-*）在「Window」级别发射，
-        // 必须用 getCurrentWindow() 监听（target kind=Window）。
-        // 改用 getCurrentWebview() 会因 target 不匹配导致 onDragDropEvent 永不触发，
-        // 表现为「拖入文件到分类上无反应」。
-        const win = getCurrentWindow();
+        // 注意：Tauri 的文件拖放事件（tauri://drag-*）在「Webview」级别发射，
+        // 必须用 getCurrentWebview() 监听（target kind=Webview）；
+        // 用 getCurrentWindow()（kind=Window）会因 target 不匹配而收不到事件，
+        // 表现为拖入文件时光标始终是「禁止」且 onDragDropEvent 从不触发。
+        const win = getCurrentWebview();
         unlisten = await win.onDragDropEvent(async (event) => {
           if (event.payload.type === "enter" || event.payload.type === "over") {
             setIsDragOver(true);
@@ -1273,6 +1312,25 @@ export default function LauncherPanel() {
                 {missingCount}
               </span>
             )}
+          </button>
+
+          {/* 收缩/展开全部子分组 */}
+          <button
+            onClick={handleToggleCollapseAll}
+            disabled={activeSubIds.length === 0}
+            className={`px-2.5 py-1 rounded-lg text-xs flex items-center gap-1.5 border transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+              isAllCollapsed
+                ? "bg-[var(--module-accent)]/15 border-[var(--module-accent)]/40 text-[var(--module-accent)]"
+                : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
+            }`}
+            title={isAllCollapsed ? "展开当前分类下的所有分组" : "收缩当前分类下的所有分组"}
+          >
+            {isAllCollapsed ? (
+              <ChevronsDown className="w-3 h-3 text-cyan-400" />
+            ) : (
+              <ChevronsUp className="w-3 h-3 text-cyan-400" />
+            )}
+            <span className="text-[11px]">{isAllCollapsed ? "展开全部" : "收缩全部"}</span>
           </button>
 
           {/* 视图设置 */}

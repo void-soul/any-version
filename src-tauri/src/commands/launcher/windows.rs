@@ -276,6 +276,43 @@ $sc = $sh.CreateShortcut('{}')
     })
 }
 
+/// 从快捷方式的 IconLocation（如 `C:\path\icon.ico,0` 或 `%USERPROFILE%\x.ico`）提取自定义图标。
+/// 仅当快捷方式显式指定了自定义图标时才有值；为空或提取失败时返回 None，
+/// 由调用方回退到「目标文件图标」。这样特殊快捷方式可保留自定义 .ico，又不影响普通快捷方式。
+fn extract_shortcut_custom_icon(icon_loc: &str) -> Option<String> {
+    let icon_loc = icon_loc.trim();
+    if icon_loc.is_empty() {
+        return None;
+    }
+
+    // 1. 展开环境变量（如 %USERPROFILE%）——纯 std 方式，遍历当前进程环境变量逐项替换
+    let mut expanded = icon_loc.to_string();
+    for (k, v) in std::env::vars() {
+        let pat = format!("%{}%", k);
+        if expanded.contains(&pat) {
+            expanded = expanded.replace(&pat, &v);
+        }
+    }
+
+    // 2. 去掉 `,索引` 后缀（IconLocation 形如 `path,index`；从右往左找最后一个逗号）
+    let path_part = match expanded.rfind(',') {
+        Some(idx) => &expanded[..idx],
+        None => expanded.as_str(),
+    };
+    let path_part = path_part.trim();
+    if path_part.is_empty() {
+        return None;
+    }
+
+    // 3. 仅当指向的图标文件确实存在时才提取；否则回退目标图标
+    let p = Path::new(path_part);
+    if !p.exists() {
+        return None;
+    }
+
+    extract_file_icon(path_part)
+}
+
 /// 执行文件/命令（支持 open / runas 管理员提权 / explore 资源管理器 / 任意文件关联程序打开）
 pub fn shell_execute(
     operation: &str,
@@ -378,9 +415,28 @@ pub fn shell_execute(
 }
 
 /// 以普通用户身份启动目标（降权代理）。仅当 AnyVersion 自身以管理员(elevated)运行时调用：
-/// 通过普通权限的系统 Shell(explorer.exe)代理启动，子进程继承 explorer 的普通令牌，
-/// 不继承 AnyVersion 的管理员令牌，且与 AnyVersion 进程完全无关(由系统托管)。
+/// 不继承 AnyVersion 的管理员令牌，与 AnyVersion 进程完全无关(由系统托管)。
+///
+/// 分两种方式：
+/// 1) 可执行程序（exe/bat/cmd/ps1/com）：通过 `WTSQueryUserToken` 取当前交互会话的用户令牌，
+///    再用 `CreateProcessWithTokenW` 降权启动。**不能用 explorer.exe 代理**——explorer 是单实例，
+///    已运行的 explorer 收到带引号的 exe 路径参数时无法可靠识别为"运行程序"，会退化为打开
+///    默认文件夹（如"我的文档"）。
+/// 2) 文档/网址/文件夹/shell: 路径：沿用 explorer.exe（普通权限系统 Shell）代理，由系统默认
+///    关联程序打开；explorer 对这些"打开"场景可靠。
 fn shell_execute_as_normal_user(file: &str, params: &str, work_dir: &str) -> Result<(), String> {
+    let ext = Path::new(file)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let is_exe = ext == "exe" || ext == "bat" || ext == "cmd" || ext == "ps1" || ext == "com";
+
+    if is_exe {
+        return create_process_as_normal_user(file, params, work_dir);
+    }
+
+    // 非可执行程序：explorer.exe 代理打开（文档/网址/文件夹等系统 Shell 场景）
     let arg = if params.trim().is_empty() {
         format!("\"{}\"", file)
     } else {
@@ -414,6 +470,113 @@ fn shell_execute_as_normal_user(file: &str, params: &str, work_dir: &str) -> Res
                 file
             ));
         }
+    }
+    Ok(())
+}
+
+/// 以当前交互会话用户的普通令牌降权启动可执行程序（CreateProcessWithTokenW）。
+/// 相比 explorer.exe 代理可靠得多，且子进程不继承 AnyVersion 的管理员令牌。
+fn create_process_as_normal_user(file: &str, params: &str, work_dir: &str) -> Result<(), String> {
+    use windows_sys::Win32::Security::DuplicateTokenEx;
+    use windows_sys::Win32::System::RemoteDesktop::{WTSQueryUserToken, WTS_CURRENT_SESSION};
+    use windows_sys::Win32::System::Threading::{
+        CreateProcessWithTokenW, PROCESS_INFORMATION, STARTUPINFOW,
+    };
+    // 降权复制令牌所需的常量（windows-sys 中为 i32 别名）
+    const SECURITY_IMPERSONATION_LEVEL: i32 = 2; // SecurityImpersonation
+    const TOKEN_TYPE_PRIMARY: i32 = 1; // TokenPrimary
+
+    unsafe {
+        // 1. 获取当前交互会话（控制台会话）的已登录用户令牌
+        let mut user_token: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
+        if WTSQueryUserToken(WTS_CURRENT_SESSION, &mut user_token) == 0 {
+            // 当前无交互会话时退化为直接 ShellExecuteW（继承管理员令牌，功能优先）
+            let w_file = to_wide_chars(file);
+            let w_params = to_wide_chars(params);
+            let w_dir = to_wide_chars(work_dir);
+            let res = ShellExecuteW(
+                std::ptr::null_mut(),
+                to_wide_chars("open").as_ptr(),
+                w_file.as_ptr(),
+                if params.is_empty() {
+                    std::ptr::null()
+                } else {
+                    w_params.as_ptr()
+                },
+                if work_dir.is_empty() {
+                    std::ptr::null()
+                } else {
+                    w_dir.as_ptr()
+                },
+                SW_SHOWNORMAL as i32,
+            );
+            if (res as isize) <= 32 {
+                return Err(format!("启动程序失败 (ShellExecute code {}): {}", res as isize, file));
+            }
+            return Ok(());
+        }
+
+        // 2. 复制为用户主令牌（TokenPrimary），供 CreateProcessWithTokenW 使用
+        let mut primary_token: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
+        if DuplicateTokenEx(
+            user_token,
+            0x0200_0000, // MAXIMUM_ALLOWED
+            std::ptr::null(),
+            SECURITY_IMPERSONATION_LEVEL,
+            TOKEN_TYPE_PRIMARY,
+            &mut primary_token,
+        ) == 0
+        {
+            let _ = windows_sys::Win32::Foundation::CloseHandle(user_token);
+            return Err(format!("降权启动失败（复制用户令牌失败）: {}", file));
+        }
+        // 原始用户令牌不再需要
+        let _ = windows_sys::Win32::Foundation::CloseHandle(user_token);
+
+        // 3. 组装命令行（CreateProcessWithTokenW 需要可变缓冲）
+        //    lpApplicationName 直接指向 exe，命令行含引号包裹的完整路径 + 参数
+        let mut command_line = if params.trim().is_empty() {
+            format!("\"{}\"", file)
+        } else {
+            format!("\"{}\" {}", file, params.trim())
+        }
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<u16>>();
+        let mut si: STARTUPINFOW = std::mem::zeroed();
+        si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+        let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
+
+        let w_file = to_wide_chars(file);
+        let w_dir = if work_dir.is_empty() {
+            std::ptr::null()
+        } else {
+            to_wide_chars(work_dir).as_ptr()
+        };
+
+        let ok = CreateProcessWithTokenW(
+            primary_token,
+            0, // LOGON_WITH_PROFILE=1，普通程序无需加载用户配置文件
+            w_file.as_ptr(),
+            command_line.as_mut_ptr(),
+            0, // CREATE_UNICODE_ENVIRONMENT 需配合 environment；普通启动用 0
+            std::ptr::null_mut(),
+            w_dir,
+            &si,
+            &mut pi,
+        );
+
+        let _ = windows_sys::Win32::Foundation::CloseHandle(primary_token);
+
+        if ok == 0 {
+            return Err(format!(
+                "降权启动失败 (CreateProcessWithTokenW error {}): {}",
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0),
+                file
+            ));
+        }
+        let _ = windows_sys::Win32::Foundation::CloseHandle(pi.hThread);
+        let _ = windows_sys::Win32::Foundation::CloseHandle(pi.hProcess);
     }
     Ok(())
 }
@@ -1228,6 +1391,12 @@ pub fn process_dropped_paths(paths: Vec<String>, classification_id: i64) -> Resu
         let item = if ext == "lnk" {
             // 快捷方式
             if let Some(info) = resolve_shortcut(&path_str) {
+                // 图标优先级：快捷方式显式指定的自定义图标(IconLocation，如 WorkDaddy.ico) > 目标文件图标
+                let icon = info
+                    .icon_path
+                    .as_deref()
+                    .and_then(extract_shortcut_custom_icon)
+                    .or(info.icon_base64);
                 Item {
                     id: 0,
                     classification_id,
@@ -1238,7 +1407,7 @@ pub fn process_dropped_paths(paths: Vec<String>, classification_id: i64) -> Resu
                         params: if !info.arguments.is_empty() { Some(info.arguments) } else { None },
                         start_location: if !info.working_dir.is_empty() { Some(info.working_dir) } else { None },
                         run_as_admin: false,
-                        icon: info.icon_base64,
+                        icon,
                         ..Default::default()
                     },
                     shortcut_key: None,
