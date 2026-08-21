@@ -961,21 +961,22 @@ fn spawn_hotkey_worker(
     });
 }
 
-/// 处理热键动作（三段式切换），必须在主线程执行窗口操作。
+/// 处理热键动作（四态切换），必须在主线程执行窗口操作。
+/// 核心以「窗口是否已激活(聚焦)」为判断依据：
+///   1) 窗口已激活且正处本模块  -> 隐藏窗口；
+///   2) 窗口已激活但处于其它模块 -> 切到本模块；
+///   3) 窗口可见但未激活        -> 激活并切到本模块；
+///   4) 窗口隐藏                -> 显示、激活并切到本模块。
 fn handle_hotkey_action(app: &AppHandle, module: &str) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let is_visible = window.is_visible().unwrap_or(false);
-    let is_minimized = window.is_minimized().unwrap_or(false);
+    let is_focused = window.is_focused().unwrap_or(false);
     let is_active_module = CURRENT_PAGE.lock().unwrap().as_str() == module;
-    // 三段式切换：
-    //   1) 程序隐藏 -> 唤起并切到该模块；
-    //   2) 程序可见但处于其它模块 -> 切到该模块；
-    //   3) 程序可见且正处该模块 -> 隐藏程序。
-    // 若本次将「唤起窗口」（而非隐藏），提前记录当前前台窗口，供剪贴板模块「一键粘贴」使用。
-    let will_show = !(is_visible && !is_minimized && is_active_module);
-    if will_show {
+    // 是否将「隐藏窗口」：仅当窗口已激活且正处本模块时隐藏；其余情况都需唤起/切换。
+    let will_hide = is_focused && is_active_module;
+    // 若本次将「唤起/切换窗口」（而非隐藏），提前记录当前前台窗口，供剪贴板模块「一键粘贴」使用。
+    if !will_hide {
         crate::commands::clipboard::monitor_remember_window();
     }
     let module = module.to_string();
@@ -984,13 +985,13 @@ fn handle_hotkey_action(app: &AppHandle, module: &str) {
         let Some(window) = app_for_ui.get_webview_window("main") else {
             return;
         };
-        if is_visible && !is_minimized {
-            if is_active_module {
-                let _ = window.hide();
-            } else {
-                let _ = window.emit("launcher-open-module", module.clone());
-            }
+        if will_hide {
+            let _ = window.hide();
+        } else if is_focused {
+            // 已激活但非本模块：直接切模块（保持激活态）。
+            let _ = window.emit("launcher-open-module", module.clone());
         } else {
+            // 可见未激活 或 隐藏：统一由 show_and_open_module 完成显示/激活/切模块。
             crate::tray::show_and_open_module(&window, &module);
         }
     })
