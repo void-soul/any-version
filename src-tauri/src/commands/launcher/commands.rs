@@ -71,6 +71,7 @@ pub async fn launcher_execute_item(
 ) -> Result<(), String> {
     let run_admin = item.data.run_as_admin;
     let op = if run_admin { "runas" } else { "open" };
+    crate::exit_log::exit_log(&format!("launcher_execute_item: op = {:?}, run_admin = {}", op, run_admin));
 
     match item.item_type {
         0 => {

@@ -303,6 +303,24 @@ pub fn start_watchdog(app: AppHandle, inner: Arc<MihomoInner>) {
 }
 
 pub async fn launch_core(app: &AppHandle, inner: Arc<MihomoInner>) -> Result<(), String> {
+    // 自动启动/重复启动时：先判断核心是否已在运行，已在运行则直接跳过，
+    // 避免"启动时才报错"。幂等：已在运行就不重复拉起，也不视为错误。
+    let app_config = inner.app_config.lock().unwrap().clone();
+    // 优先按子进程句柄判定（本应用拉起的核心，最准确）；
+    let has_child = {
+        let g = inner.child.lock().unwrap();
+        g.as_ref().map(|c| c.id() > 0).unwrap_or(false) && !inner.stop_flag.load(Ordering::SeqCst)
+    };
+    // 兜底：混合端口被监听（核心可能由外部/上次会话遗留运行）
+    let port_listening = app_config.mixed_port > 0 && port_in_use(app_config.mixed_port);
+    if has_child || port_listening {
+        crate::exit_log::exit_log(&format!(
+            "[mihomo] launch_core 跳过：核心已在运行 (child={}, port_listening={}, mixed_port={})",
+            has_child, port_listening, app_config.mixed_port
+        ));
+        return Ok(());
+    }
+
     // 启动核心前，确保 geo 数据文件已同步到 data_dir。
     // 核心会读取 data_dir 下的 country.mmdb/geoip.metadb 等，缺失会联网下载
     // MMDB（国内常超时）。这里再保险一次，避免任何时机遗漏导致启动失败。

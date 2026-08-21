@@ -55,6 +55,11 @@ pub struct ClipboardItem {
 pub struct ClipboardState {
     pub db: std::sync::Arc<Mutex<rusqlite::Connection>>,
     pub data_dir: std::path::PathBuf,
+    /// 剪贴板「系统写锁」：复制/粘贴（写系统剪贴板）时持有；
+    /// monitor 读取系统剪贴板前先 try_lock，拿不到则跳过本次更新。
+    /// 避免同进程内「写」与「读」两个线程同时 OpenClipboard 互相抢锁
+    /// （管理员高完整性会话下更易触发，表现为复制静默失败）。
+    pub clipboard_write_lock: std::sync::Arc<Mutex<()>>,
 }
 
 /// 剪贴板配置
@@ -110,6 +115,7 @@ pub fn init_clipboard_state(app: &tauri::AppHandle) -> Result<(), String> {
     let state = ClipboardState {
         db: std::sync::Arc::new(Mutex::new(conn)),
         data_dir: dir,
+        clipboard_write_lock: std::sync::Arc::new(Mutex::new(())),
     };
     app.manage(state);
 

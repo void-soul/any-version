@@ -10,6 +10,10 @@ use tauri::{Manager, Emitter, Listener};
 /// 发出 code=None 的 ExitRequested，也不应拦截真正的退出意图。
 pub static USER_QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
+/// Windows 防 FOUC：标记主页面首次 PageLoadEvent::Finished 是否已处理（仅触发一次 show）。
+#[cfg(target_os = "windows")]
+pub static STARTUP_PAGE_HANDLED: AtomicBool = AtomicBool::new(false);
+
 /// 同步注册表中的完整 PATH 到当前进程，并确保 AnyVersion 托管路径具有最高优先级。
 /// 解决 windows_subsystem="windows" 模式下进程 PATH 不包含用户 PATH 的问题。
 pub fn sync_process_path() {
@@ -158,6 +162,25 @@ pub fn run() {
 
     let builder = tauri::Builder::default();
 
+    // Windows 防 FOUC：原生窗口层先暗（tauri.conf backgroundColor），
+    // 主窗口在 tauri.conf 中 visible:false，待主页面 PageLoadEvent::Finished
+    // 后再 show，避免 WebView2 白底先绘制导致的白黑闪屏（移植自 cc-switch #6252）。
+    #[cfg(target_os = "windows")]
+    let builder = builder.on_page_load(move |webview, payload| {
+        if webview.label() == "main"
+            && payload.event() == tauri::webview::PageLoadEvent::Finished
+            && payload.url().scheme() != "about"
+            && !STARTUP_PAGE_HANDLED.swap(true, Ordering::Relaxed)
+            && !std::env::args().any(|a| a == "--minimized")
+        {
+            let app = webview.app_handle();
+            if let Some(window) = app.get_webview_window("main") {
+                crate::tray::focus_main_window(&window);
+                exit_log::exit_log("主页面加载完成，主窗口已显示（防 FOUC）");
+            }
+        }
+    });
+
     // 单一实例约束：仅在非开发环境生效，便于开发时并行启动多个实例调试。
     // debug_assertions 在 `tauri dev`（debug 构建）下为真，release 构建为假。
     // 注意：使用影子绑定（shadowing）而非 `let mut` + 重复赋值，
@@ -269,6 +292,19 @@ pub fn run() {
                     if svc_id == "mihomo" || svc_id == "rtsp" {
                         continue;
                     }
+                    // 自动启动前先判断服务是否已开启：已在运行，或端口已被占用（无论是否本实例
+                    // 进程），都视为"服务已开启/在跑"，跳过自启，避免"启动时才报错"。
+                    let already_running = crate::commands::project::registry::find_by_id(svc_id)
+                        .map(|def| {
+                            let st = crate::commands::service::service_status_for_def(&def);
+                            st.running
+                                || st.status.as_deref() == Some("port_conflict")
+                        })
+                        .unwrap_or(false);
+                    if already_running {
+                        exit_log::exit_log(&format!("[autostart] 服务 {} 已在运行/端口被占用，跳过自启", svc_id));
+                        continue;
+                    }
                     exit_log::exit_log(&format!("[autostart] 正在自启 SDK 服务: {}", svc_id));
                     if let Err(e) = commands::service::start_service_inner(svc_id.clone(), None) {
                         exit_log::exit_log(&format!("[autostart] 自启服务 {} 失败: {}", svc_id, e));
@@ -295,12 +331,21 @@ pub fn run() {
             }
 
             // 窗口在 tauri.conf.json 中设为 visible:false。
-            // 普通启动时主动显示；带 `--minimized`（开机自启）时保持隐藏在托盘。
+            // 带 `--minimized`（开机自启）时保持隐藏在托盘。
+            // 普通启动：Windows 下交给 on_page_load（页面 Finished 后）再显示主窗口，
+            // 以消除 WebView2 白底先绘制导致的闪屏（防 FOUC）；其余平台此处直接显示。
             let start_minimized = std::env::args().any(|a| a == "--minimized");
+            #[cfg(not(target_os = "windows"))]
             if !start_minimized {
                 if let Some(win) = app.get_webview_window("main") {
                     crate::tray::focus_main_window(&win);
                 }
+            }
+            #[cfg(target_os = "windows")]
+            if start_minimized {
+                exit_log::exit_log("防 FOUC：--minimized 自启，主窗口保持隐藏");
+            } else {
+                exit_log::exit_log("防 FOUC：Windows 普通启动，等待主页面加载完成后显示主窗口");
             }
             Ok(())
         })
@@ -708,6 +753,23 @@ pub fn run() {
                 commands::clipboard::clipboard_remove_ignored_app,
                 commands::clipboard::clipboard_remember_window,
                 commands::clipboard::clipboard_get_image,
+                commands::otp::otp_list,
+                commands::otp::otp_add,
+                commands::otp::otp_update,
+                commands::otp::otp_delete,
+                commands::otp::otp_toggle_pin,
+                commands::otp::otp_import_uri,
+                commands::otp::otp_generate_code,
+                commands::otp::otp_remaining_seconds,
+                commands::otp::otp_mark_copied,
+                commands::otp::otp_list_categories,
+                commands::otp::otp_add_category,
+                commands::otp::otp_rename_category,
+                commands::otp::otp_delete_category,
+                commands::otp::otp_set_token_categories,
+                commands::otp::otp_list_brands,
+                commands::otp::otp_match_brand,
+                commands::otp::otp_scan_qr,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -731,26 +793,32 @@ pub fn run() {
                     // 放到后台线程执行，绝不阻塞主退出路径。否则 set_sys_proxy 等
                     // 同步 shell 调用偶发卡死会导致进程永远走不到真正退出，表现为
                     // 「点了托盘退出但程序仍在」。后台线程跑清理，主线程直接强制退出。
-                    exit_log::exit_log("ExitRequested: 进入退出分支，启动清理线程 + 300ms 强杀兜底");
+                    // 退出清理：只关闭「需随应用退出」的服务（RTSP、mihomo，以及应用内
+                    // Http server 随进程自然终止）。Launcher「启动」模块与 SDK 模块启动的
+                    // 独立进程因使用 CREATE_BREAKAWAY_FROM_JOB 已与 AnyVersion 解耦，不会
+                    // 被清理，退出后保持运行。
+                    exit_log::exit_log("ExitRequested: 进入退出分支，启动清理线程 + 兜底强杀");
                     let app_handle = app.clone();
                     std::thread::spawn(move || {
-                        exit_log::exit_log("cleanup thread: start (stop_all_room_proxies / kill_on_exit / stop_all_rtsp)");
-                        commands::ai::collab::stop_all_room_proxies();
-                        exit_log::exit_log("cleanup thread: stop_all_room_proxies done");
-                        commands::mihomo::kill_on_exit(
-                            &**app_handle.state::<commands::mihomo::MihomoState>(),
-                        );
-                        exit_log::exit_log("cleanup thread: kill_on_exit done");
+                        exit_log::exit_log("cleanup thread: start (kill_on_exit / stop_all_rtsp)");
+                        // 先关 RTSP（内存 kill ffmpeg/mediamtx 子进程），再关 mihomo。
                         commands::rtsp_server::stop_all_rtsp_servers_inner(
                             &app_handle.state::<commands::rtsp_server::RtspServerState>(),
                         );
                         exit_log::exit_log("cleanup thread: stop_all_rtsp_servers done");
+                        commands::mihomo::kill_on_exit(
+                            &**app_handle.state::<commands::mihomo::MihomoState>(),
+                        );
+                        exit_log::exit_log("cleanup thread: kill_on_exit done");
+                        // 清理完成后再真正退出进程（比主线程 4s 兜底更早，保证不卡住用户）。
+                        exit_log::exit_log("cleanup thread: all done, process::exit(0)");
+                        std::process::exit(0);
                     });
-                    // 给清理线程一个极短的宽限（让 kill 尽快发出），随后强制退出。
-                    // 用 spawn 而非 sleep 在主线程，避免任何阻塞。
+                    // 兜底：清理线程若卡死（如 set_sys_proxy 同步 shell 卡顿），主线程在
+                    // 足够宽限后强制退出，避免「点了退出但程序仍在」。
                     std::thread::spawn(|| {
-                        std::thread::sleep(std::time::Duration::from_millis(300));
-                        exit_log::exit_log("force exit: std::process::exit(0) now");
+                        std::thread::sleep(std::time::Duration::from_millis(4000));
+                        exit_log::exit_log("force exit fallback: std::process::exit(0) now");
                         std::process::exit(0);
                     });
                 }

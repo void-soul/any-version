@@ -115,12 +115,20 @@ pub fn create_junction(link_path: &Path, target_path: &Path) -> Result<(), Strin
             .join(target_path)
     };
     if link_path.exists() || link_path.is_symlink() {
-        // Junctions are directory reparse points on Windows.
-        // fs::remove_dir removes the junction itself without deleting target contents.
-        // fs::remove_file would fail with Access Denied (os error 5) on a junction.
-        let _ = fs::remove_dir(link_path);
-        // Fallback: if remove_dir failed (e.g. it's a real dir, not a junction)
-        if link_path.exists() {
+        // 判断是否为 junction（目录重解析点）：symlink_metadata 的 file_type().is_symlink()
+        // 对 junction 返回 true（Windows 上 junction 也是 reparse point）。
+        let is_reparse = fs::symlink_metadata(link_path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false);
+        if is_reparse {
+            // junction：只用 remove_dir 删除链接本身，绝不跟随删除目标内容。
+            let _ = fs::remove_dir(link_path);
+            // remove_dir 失败（如占用/权限）时，用 rmdir 兜底（同样只删链接本身）。
+            if link_path.exists() {
+                let _ = fs::remove_file(link_path);
+            }
+        } else {
+            // 普通目录：递归删除（此时确实是真实目录，可安全 remove_dir_all）。
             fs::remove_dir_all(link_path).map_err(|e| format!("删除旧链接失败: {}", e))?;
         }
     }

@@ -305,6 +305,13 @@ pub fn shell_execute(
         get_default_work_dir(file)
     };
 
+    // 降权代理：若 AnyVersion 自身以管理员(elevated)运行，非 runas 的 open/explore 操作
+    // 改用 explorer.exe(普通权限系统 Shell)代理启动，使子进程不继承管理员令牌，
+    // 且与 AnyVersion 生命周期完全独立(由系统托管)。
+    if actual_op != "runas" && crate::commands::env::is_admin() {
+        return shell_execute_as_normal_user(file, params, &work_dir);
+    }
+
     let w_op = to_wide_chars(if is_dir && actual_op == "explore" { "open" } else { actual_op });
     let w_file = to_wide_chars(if is_dir && actual_op == "explore" { "explorer.exe" } else { file });
     let dir_param_str = if is_dir && actual_op == "explore" {
@@ -365,6 +372,47 @@ pub fn shell_execute(
                 }
                 cmd.spawn().map_err(|e| format!("打开文件失败 (ShellExecute code {}): {}", res as isize, e))?;
             }
+        }
+    }
+    Ok(())
+}
+
+/// 以普通用户身份启动目标（降权代理）。仅当 AnyVersion 自身以管理员(elevated)运行时调用：
+/// 通过普通权限的系统 Shell(explorer.exe)代理启动，子进程继承 explorer 的普通令牌，
+/// 不继承 AnyVersion 的管理员令牌，且与 AnyVersion 进程完全无关(由系统托管)。
+fn shell_execute_as_normal_user(file: &str, params: &str, work_dir: &str) -> Result<(), String> {
+    let arg = if params.trim().is_empty() {
+        format!("\"{}\"", file)
+    } else {
+        format!("\"{}\" {}", file, params.trim())
+    };
+    let w_op = to_wide_chars("open");
+    let w_file = to_wide_chars("explorer.exe");
+    let w_params = to_wide_chars(&arg);
+    let w_dir = to_wide_chars(work_dir);
+    unsafe {
+        let _ = windows_sys::Win32::System::Com::CoInitializeEx(
+            std::ptr::null_mut(),
+            windows_sys::Win32::System::Com::COINIT_APARTMENTTHREADED as u32,
+        );
+        let res = ShellExecuteW(
+            std::ptr::null_mut(),
+            w_op.as_ptr(),
+            w_file.as_ptr(),
+            w_params.as_ptr(),
+            if work_dir.is_empty() {
+                std::ptr::null()
+            } else {
+                w_dir.as_ptr()
+            },
+            SW_SHOWNORMAL as i32,
+        );
+        if (res as isize) <= 32 {
+            return Err(format!(
+                "降权启动失败 (explorer ShellExecute code {}): {}",
+                res as isize,
+                file
+            ));
         }
     }
     Ok(())
@@ -966,11 +1014,13 @@ impl CommandExtHidden for std::process::Command {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
+            // 仅 CREATE_NO_WINDOW：隐藏子进程窗口即可。
+            // 切勿在此加 CREATE_BREAKAWAY_FROM_JOB——若 AnyVersion 被放入一个
+            // 不允许 breakaway 的 Job Object（如由某些父进程/CI 启动），该标志会让
+            // 子进程 spawn 直接失败（os error 5 拒绝访问），导致 resolve_shortcut 等
+            // 同步查询（.output()）拿不到结果而静默降级（如 .lnk 被当成文件本身）。
             const CREATE_NO_WINDOW: u32 = 0x08000000;
-            // CREATE_BREAKAWAY_FROM_JOB：让子进程脱离 AnyVersion 所在的 Job Object，
-            // 从而 AnyVersion 关闭时子进程不被连带终止。
-            const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
-            self.creation_flags(CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB);
+            self.creation_flags(CREATE_NO_WINDOW);
         }
         self
     }

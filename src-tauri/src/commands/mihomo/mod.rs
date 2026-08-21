@@ -571,6 +571,11 @@ pub fn kill_on_exit(inner: &MihomoInner) {
         g.auto_close_proxy
     };
     crate::exit_log::exit_log(&format!("cleanup: auto_close_proxy={}", auto_close));
+    // 先停止核心（真正 kill mihomo 子进程），确保在有限退出窗口内优先完成；
+    // 清系统代理（可能同步卡顿）放到后面，避免阻塞内核关闭。
+    crate::exit_log::exit_log("cleanup: 开始 stop_core");
+    stop_core(inner);
+    crate::exit_log::exit_log("cleanup: stop_core 完成");
     if auto_close {
         crate::exit_log::exit_log("cleanup: 开始 set_sys_proxy(false)（同步 shell，可能卡）");
         // F5 修复：退出时清除系统代理失败应上报（此处为强制退出，保持日志但传播）
@@ -581,9 +586,6 @@ pub fn kill_on_exit(inner: &MihomoInner) {
             crate::exit_log::exit_log("cleanup: set_sys_proxy 完成");
         }
     }
-    crate::exit_log::exit_log("cleanup: 开始 stop_core");
-    stop_core(inner);
-    crate::exit_log::exit_log("cleanup: stop_core 完成");
 }
 
 // ---------- 下载/安装 ----------

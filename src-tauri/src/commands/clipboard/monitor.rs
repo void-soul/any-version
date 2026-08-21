@@ -175,6 +175,12 @@ fn handle_clipboard_update(app: &tauri::AppHandle) {
         return;
     }
 
+    // 若此刻正在执行复制/粘贴（写锁被持有），跳过本次读取，避免与写线程
+    // 同时 OpenClipboard 互相抢锁（管理员高完整性会话下更易触发复制静默失败）。
+    if state.clipboard_write_lock.try_lock().is_err() {
+        return;
+    }
+
     // 读取来源程序（尽力而为：剪贴板更新事件触发时前台窗口通常是复制发起者）
     let source_app = get_foreground_app_name();
 

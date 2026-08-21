@@ -13,21 +13,50 @@ pub fn write_multi(entries: &[(u32, Vec<u8>)]) -> Result<(), String> {
         return Ok(());
     }
     unsafe {
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetDesktopWindow;
         // OpenClipboard 是阻塞调用，若剪贴板被其它程序（含本应用自己的监听线程）
-        // 长时间占用会永久阻塞 UI。这里重试最多 5 次、每次间隔 20ms，仍失败则返回
-        // 明确错误而非卡死。
+        // 占用会失败。重试最多 30 次、每次间隔 10ms（共 ~300ms），重试前先尝试
+        // CloseClipboard 清理本进程可能残留的打开状态；仍失败则返回明确错误（含
+        // GetLastError，便于区分"被占用"与"权限不足/拒绝访问"）。
         let mut opened = false;
-        for _ in 0..5 {
+        let mut last_err = 0u32;
+        for _ in 0..30 {
+            // 优先用 NULL owner；管理员高完整性场景下有时需要指定 owner 窗口
             if OpenClipboard(std::ptr::null_mut()) != 0 {
                 opened = true;
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            last_err = windows_sys::Win32::Foundation::GetLastError();
+            // 清理本进程可能残留的打开状态，给监听线程让出剪贴板
+            let _ = CloseClipboard();
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
         if !opened {
-            return Err(format!("打开剪贴板失败: {}", std::io::Error::last_os_error()));
+            // 兜底：用桌面窗口作为 owner 再试一次（极少数会话下 NULL 会失败）
+            if OpenClipboard(GetDesktopWindow()) != 0 {
+                opened = true;
+            } else {
+                last_err = windows_sys::Win32::Foundation::GetLastError();
+            }
         }
-        EmptyClipboard();
+        if !opened {
+            crate::exit_log::exit_log(&format!(
+                "write_multi OpenClipboard 失败: last_err={} ({})",
+                last_err,
+                std::io::Error::from_raw_os_error(last_err as i32)
+            ));
+            return Err(format!(
+                "打开剪贴板失败(被占用或权限不足): {} (code {})",
+                std::io::Error::from_raw_os_error(last_err as i32),
+                last_err
+            ));
+        }
+        if EmptyClipboard() == 0 {
+            crate::exit_log::exit_log(&format!(
+                "write_multi EmptyClipboard 失败: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
         for (fmt, data) in entries {
             let h = GlobalAlloc(GMEM_MOVEABLE, data.len());
             if h.is_null() {

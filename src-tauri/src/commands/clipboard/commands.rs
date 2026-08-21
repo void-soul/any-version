@@ -87,9 +87,28 @@ pub async fn clipboard_copy_item(state: State<'_, ClipboardState>, id: i64) -> R
     // 避免在主线程卡死 UI（复制时程序无响应）。
     let st = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let conn = st.db.lock().map_err(|e| e.to_string())?;
-        let item = db::get_item(&conn, id)?.ok_or("条目不存在")?;
-        copy_item_to_clipboard(&st, &item)
+        crate::exit_log::exit_log(&format!("clipboard_copy_item 进入 (id={})", id));
+        // 写系统剪贴板期间持有写锁，避免与 monitor 读线程抢 OpenClipboard
+        // （管理员高完整性会话下更易触发，表现为复制静默失败）。
+        let _wl = st.clipboard_write_lock.lock().map_err(|e| e.to_string())?;
+        // 只在取数据时短暂持有 db 锁；复制系统剪贴板的重操作在 db 锁之外进行
+        let item = {
+            let conn = st.db.lock().map_err(|e| e.to_string())?;
+            db::get_item(&conn, id)?.ok_or("条目不存在")?
+        };
+        match copy_item_to_clipboard(&st, &item) {
+            Ok(()) => {
+                crate::exit_log::exit_log(&format!("clipboard_copy_item 成功 (id={})", id));
+                Ok(())
+            }
+            Err(e) => {
+                crate::exit_log::exit_log(&format!(
+                    "clipboard_copy_item 复制失败 (id={}): {}",
+                    id, e
+                ));
+                Err(e)
+            }
+        }
     })
     .await
     .map_err(|e| format!("复制任务异常: {}", e))?
@@ -104,9 +123,25 @@ pub async fn clipboard_paste_item(
     // 1. 复制到剪贴板（阻塞操作放后台线程）
     let st = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let conn = st.db.lock().map_err(|e| e.to_string())?;
-        let item = db::get_item(&conn, id)?.ok_or("条目不存在")?;
-        copy_item_to_clipboard(&st, &item)
+        crate::exit_log::exit_log(&format!("clipboard_paste_item 进入 (id={})", id));
+        let _wl = st.clipboard_write_lock.lock().map_err(|e| e.to_string())?;
+        let item = {
+            let conn = st.db.lock().map_err(|e| e.to_string())?;
+            db::get_item(&conn, id)?.ok_or("条目不存在")?
+        };
+        match copy_item_to_clipboard(&st, &item) {
+            Ok(()) => {
+                crate::exit_log::exit_log(&format!("clipboard_paste_item 成功 (id={})", id));
+                Ok(())
+            }
+            Err(e) => {
+                crate::exit_log::exit_log(&format!(
+                    "clipboard_paste_item 复制失败 (id={}): {}",
+                    id, e
+                ));
+                Err(e)
+            }
+        }
     })
     .await
     .map_err(|e| format!("复制任务异常: {}", e))??;
