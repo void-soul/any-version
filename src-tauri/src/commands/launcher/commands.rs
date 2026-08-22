@@ -205,8 +205,27 @@ pub async fn launcher_load_image_as_icon(path: String) -> Result<String, String>
 }
 
 #[tauri::command]
+pub async fn launcher_pick_file() -> Result<Option<String>, String> {
+    Ok(super::windows::pick_file())
+}
+
+#[tauri::command]
 pub async fn launcher_resolve_shortcut(path: String) -> Result<Option<ShortcutInfo>, String> {
-    Ok(resolve_shortcut(&path))
+    let info = resolve_shortcut(&path);
+    if let Some(i) = &info {
+        crate::exit_log!(
+            "[resolve-shortcut] path={} => name={} target={} args={} workdir={} icon={}",
+            path,
+            i.name,
+            i.target_path,
+            i.arguments,
+            i.working_dir,
+            i.icon_base64.as_ref().map(|b| b.len() > 0).unwrap_or(false)
+        );
+    } else {
+        crate::exit_log!("[resolve-shortcut] path={} => None（解析失败）", path);
+    }
+    Ok(info)
 }
 
 #[tauri::command]
@@ -521,36 +540,4 @@ pub async fn launcher_import_browser_bookmarks(
     custom_path: Option<String>,
 ) -> Result<super::models::BrowserImportResult, String> {
     super::windows::import_browser_bookmarks(&browser, custom_path.as_deref())
-}
-
-#[tauri::command]
-pub async fn launcher_export_backup() -> Result<String, String> {
-    db::export_backup()
-}
-
-#[tauri::command]
-pub async fn launcher_import_backup(json_str: String) -> Result<(), String> {
-    super::importers::import_dawn_or_any_json(&json_str).map(|_| ())
-}
-
-#[tauri::command]
-pub async fn launcher_import_backup_file(file_path: String) -> Result<usize, String> {
-    let path = Path::new(&file_path);
-    if !path.exists() {
-        return Err(format!("文件不存在: {}", file_path));
-    }
-
-    let bytes = std::fs::read(&file_path)
-        .map_err(|e| format!("读取备份文件失败: {}", e))?;
-
-    // 标准 SQLite 或 sqleet(chacha20) 加密数据库 → 走数据库导入（内部自动解密）
-    if bytes.starts_with(b"SQLite format 3\0") {
-        super::importers::import_dawn_or_any_db(&file_path)
-    } else if let Ok(content) = String::from_utf8(bytes) {
-        // 有效 UTF-8 文本 → 按 JSON 备份导入
-        super::importers::import_dawn_or_any_json(&content)
-    } else {
-        // 非文本、非标准 SQLite → 按数据库导入（支持 sqleet 加密的 Dawn Launcher Data.db）
-        super::importers::import_dawn_or_any_db(&file_path)
-    }
 }

@@ -276,6 +276,30 @@ $sc = $sh.CreateShortcut('{}')
     })
 }
 
+/// 使用 .NET WinForms 文件对话框选择文件，返回原始选中路径（**不跟随 .lnk 快捷方式**）。
+/// 相比 tauri-plugin-dialog 的 open（Windows 下会跟随 .lnk 返回其目标，如 wscript.exe），
+/// 此命令能拿到 .lnk 原始路径，供 resolve_shortcut 正确解析快捷方式的目标/参数/图标。
+/// 通过 `powershell -STA` 的 OpenFileDialog 实现（STA 线程必需，且不解析快捷方式）。
+pub fn pick_file() -> Option<String> {
+    let ps = r#"
+Add-Type -AssemblyName System.Windows.Forms
+$d = New-Object System.Windows.Forms.OpenFileDialog
+$d.Filter = '应用程序 (*.exe)|*.exe|快捷方式 (*.lnk)|*.lnk|所有文件 (*.*)|*.*'
+$d.Multiselect = $false
+if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.FileName }
+"#;
+    let out = crate::commands::hidden_cmd::hidden_cmd("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-STA", "-Command", ps])
+        .output()
+        .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
 /// 从快捷方式的 IconLocation（如 `C:\path\icon.ico,0` 或 `%USERPROFILE%\x.ico`）提取自定义图标。
 /// 仅当快捷方式显式指定了自定义图标时才有值；为空或提取失败时返回 None，
 /// 由调用方回退到「目标文件图标」。这样特殊快捷方式可保留自定义 .ico，又不影响普通快捷方式。
@@ -488,72 +512,254 @@ fn shell_execute_as_normal_user(file: &str, params: &str, work_dir: &str) -> Res
     Ok(())
 }
 
-/// 以当前交互会话用户的普通令牌降权启动可执行程序（CreateProcessWithTokenW）。
-/// 相比 explorer.exe 代理可靠得多，且子进程不继承 AnyVersion 的管理员令牌。
-/// 脚本类（.bat/.cmd/.ps1）会经解释器（cmd.exe / powershell.exe）执行，
-/// 因为 CreateProcess 系列无法直接运行脚本文件。
-fn create_process_as_normal_user(file: &str, params: &str, work_dir: &str) -> Result<(), String> {
+/// 获取当前交互会话用户的"主令牌"(TokenPrimary)，供 CreateProcessWithTokenW 降权使用。
+/// 先尝试 WTSQueryUserToken（服务/会话场景）；失败时回退到在活动控制台会话中
+/// 枚举 explorer.exe 进程令牌 —— explorer 始终以当前用户的普通（非提权）身份运行，
+/// 用它降权启动绝对可靠。两者都失败才返回 Err。
+/// 返回的令牌需调用方用 CloseHandle 释放。
+#[cfg(target_os = "windows")]
+unsafe fn get_active_user_primary_token() -> Result<windows_sys::Win32::Foundation::HANDLE, String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::Security::DuplicateTokenEx;
-    use windows_sys::Win32::System::RemoteDesktop::{WTSQueryUserToken, WTS_CURRENT_SESSION};
-    use windows_sys::Win32::System::Threading::{
-        CreateProcessWithTokenW, PROCESS_INFORMATION, STARTUPINFOW,
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+        PROCESSENTRY32W,
     };
-    // 降权复制令牌所需的常量（windows-sys 中为 i32 别名）
+    use windows_sys::Win32::System::RemoteDesktop::{
+        ProcessIdToSessionId, WTSGetActiveConsoleSessionId, WTSQueryUserToken,
+        WTS_CURRENT_SESSION,
+    };
+    use windows_sys::Win32::System::Threading::{OpenProcess, OpenProcessToken};
+    // 降权复制令牌所需的常量
     const SECURITY_IMPERSONATION_LEVEL: i32 = 2; // SecurityImpersonation
     const TOKEN_TYPE_PRIMARY: i32 = 1; // TokenPrimary
+    const MAXIMUM_ALLOWED: u32 = 0x0200_0000;
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const TOKEN_QUERY: u32 = 0x0008;
+    const TOKEN_DUPLICATE: u32 = 0x0002;
 
-    unsafe {
-        // 1. 获取当前交互会话（控制台会话）的已登录用户令牌
-        let mut user_token: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
-        if WTSQueryUserToken(WTS_CURRENT_SESSION, &mut user_token) == 0 {
-            crate::exit_log!(
-                "[启动] WTSQueryUserToken 失败 ({}), 降权启动不可用，退化为 ShellExecuteW（将继承管理员令牌）",
-                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-            );
-            // 当前无交互会话时退化为直接 ShellExecuteW（继承管理员令牌，功能优先）
-            let w_file = to_wide_chars(file);
-            let w_params = to_wide_chars(params);
-            let w_dir = to_wide_chars(work_dir);
-            let res = ShellExecuteW(
-                std::ptr::null_mut(),
-                to_wide_chars("open").as_ptr(),
-                w_file.as_ptr(),
-                if params.is_empty() {
-                    std::ptr::null()
-                } else {
-                    w_params.as_ptr()
-                },
-                if work_dir.is_empty() {
-                    std::ptr::null()
-                } else {
-                    w_dir.as_ptr()
-                },
-                SW_SHOWNORMAL as i32,
-            );
-            if (res as isize) <= 32 {
-                return Err(format!("启动程序失败 (ShellExecute code {}): {}", res as isize, file));
-            }
-            return Ok(());
-        }
-
-        // 2. 复制为用户主令牌（TokenPrimary），供 CreateProcessWithTokenW 使用
-        let mut primary_token: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
-        if DuplicateTokenEx(
+    // 1) 尝试 WTSQueryUserToken（需要 SE_TCB_NAME，普通提权进程通常没有）
+    let mut user_token: HANDLE = std::ptr::null_mut();
+    if WTSQueryUserToken(WTS_CURRENT_SESSION, &mut user_token) != 0 {
+        let mut primary: HANDLE = std::ptr::null_mut();
+        let ok = DuplicateTokenEx(
             user_token,
-            0x0200_0000, // MAXIMUM_ALLOWED
+            MAXIMUM_ALLOWED,
             std::ptr::null(),
             SECURITY_IMPERSONATION_LEVEL,
             TOKEN_TYPE_PRIMARY,
-            &mut primary_token,
-        ) == 0
-        {
-            let _ = windows_sys::Win32::Foundation::CloseHandle(user_token);
-            return Err(format!("降权启动失败（复制用户令牌失败）: {}", file));
+            &mut primary,
+        );
+        let _ = CloseHandle(user_token);
+        if ok != 0 && !primary.is_null() {
+            return Ok(primary);
         }
-        // 原始用户令牌不再需要
-        let _ = windows_sys::Win32::Foundation::CloseHandle(user_token);
+        crate::exit_log!("[启动] WTSQueryUserToken 可用但复制令牌失败，改用 explorer 令牌");
+    } else {
+        crate::exit_log!(
+            "[启动] WTSQueryUserToken 失败 ({}), 改用 explorer.exe 进程令牌降权",
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+        );
+    }
 
-        // 3. 组装可执行程序与命令行（CreateProcessWithTokenW 需要可变缓冲）
+    // 2) 回退：枚举 explorer.exe 的进程令牌。优先活动控制台会话（正常桌面），
+    //    找不到再放宽到任意会话（RDP / 多会话场景），最后才报错。
+    let active_session = WTSGetActiveConsoleSessionId();
+    let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if snapshot.is_null() {
+        return Err("无法枚举进程列表（CreateToolhelp32Snapshot 失败）".to_string());
+    }
+    let mut found_explorers = 0usize;
+    // 优先精确匹配活动会话；失败后用 fallback 再扫一遍放宽会话
+    let mut take_token_from = |entry: &PROCESSENTRY32W,
+                               allowed_sessions: &[u32]|
+     -> Result<Option<HANDLE>, String> {
+        let mut sess: u32 = 0;
+        if ProcessIdToSessionId(entry.th32ProcessID, &mut sess) == 0
+            || !allowed_sessions.contains(&sess)
+        {
+            return Ok(None);
+        }
+        found_explorers += 1;
+        let proc_handle = unsafe {
+            OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, entry.th32ProcessID)
+        };
+        if proc_handle.is_null() {
+            return Ok(None);
+        }
+        let mut raw_token: HANDLE = std::ptr::null_mut();
+        let token_ok = unsafe {
+            OpenProcessToken(proc_handle, TOKEN_QUERY | TOKEN_DUPLICATE, &mut raw_token)
+        };
+        if token_ok == 0 {
+            let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            crate::exit_log!(
+                "[启动] explorer pid={} OpenProcessToken 失败 ({})",
+                entry.th32ProcessID,
+                err
+            );
+            unsafe { let _ = CloseHandle(proc_handle); }
+            return Ok(None);
+        }
+        let mut primary: HANDLE = std::ptr::null_mut();
+        let ok = unsafe {
+            DuplicateTokenEx(
+                raw_token,
+                MAXIMUM_ALLOWED,
+                std::ptr::null(),
+                SECURITY_IMPERSONATION_LEVEL,
+                TOKEN_TYPE_PRIMARY,
+                &mut primary,
+            )
+        };
+        unsafe {
+            let _ = CloseHandle(raw_token);
+            let _ = CloseHandle(proc_handle);
+        }
+        if ok == 0 || primary.is_null() {
+            let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            crate::exit_log!(
+                "[启动] explorer pid={} DuplicateTokenEx 失败 ({})",
+                entry.th32ProcessID,
+                err
+            );
+            return Ok(None);
+        }
+        Ok(Some(primary))
+    };
+
+    let mut collect = |snapshot: HANDLE, allowed_sessions: &[u32]| -> Option<HANDLE> {
+        let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        if unsafe { Process32FirstW(snapshot, &mut entry) } == 0 {
+            return None;
+        }
+        loop {
+            // szExeFile 是固定 260 的 u16 数组：必须截断到第一个 NUL 再比较，
+            // 否则字符串是 "explorer.exe\0\0..." 永远匹配不上（explorer 回退必败）。
+            let exe_len = entry
+                .szExeFile
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(entry.szExeFile.len());
+            let exe = String::from_utf16_lossy(&entry.szExeFile[..exe_len]);
+            if exe.eq_ignore_ascii_case("explorer.exe") {
+                if let Ok(Some(token)) = take_token_from(&entry, allowed_sessions) {
+                    return Some(token);
+                }
+            }
+            if unsafe { Process32NextW(snapshot, &mut entry) } == 0 {
+                return None;
+            }
+        }
+    };
+
+    // 第一遍：仅活动控制台会话
+    if let Some(token) = collect(snapshot, &[active_session]) {
+        let _ = unsafe { CloseHandle(snapshot) };
+        return Ok(token);
+    }
+    // 第二遍：任意会话（RDP 等场景 explorer 可能不在控制台会话）
+    if let Some(token) = collect(snapshot, &[u32::MAX]) {
+        let _ = unsafe { CloseHandle(snapshot) };
+        return Ok(token);
+    }
+    let _ = unsafe { CloseHandle(snapshot) };
+    crate::exit_log!(
+        "[启动] explorer 回退失败：找到 {} 个 explorer.exe，均无法复制令牌",
+        found_explorers
+    );
+    Err("无法获取普通用户令牌（WTS 与 explorer 回退均失败）".to_string())
+}
+
+/// 最后兜底：拿不到普通用户令牌时用 ShellExecuteExW 启动，保证项目至少能跑起来。
+/// 1) 先尝试 rundll32 shell32.dll,ShellExec_RunDLL 方式——由系统 Shell 组件解析启动，
+///    在部分环境（如 UAC 关闭、会话含普通用户 shell 上下文）下可获得非提权上下文；
+/// 2) 再失败则直接 ShellExecuteExW（子进程继承当前管理员令牌），日志明确警告。
+#[cfg(target_os = "windows")]
+fn shell_execute_fallback(file: &str, params: &str, work_dir: &str) -> Result<(), String> {
+    use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    use std::mem::size_of;
+
+    let w_dir = to_wide_chars(work_dir);
+    let w_dir_ptr = if work_dir.is_empty() { std::ptr::null() } else { w_dir.as_ptr() };
+
+    unsafe {
+        // 1) rundll32 ShellExec_RunDLL 方式（尝试普通用户上下文）
+        let rundll_cmd = if params.trim().is_empty() {
+            format!("shell32.dll,ShellExec_RunDLL \"{}\"", file)
+        } else {
+            format!("shell32.dll,ShellExec_RunDLL \"{}\" {}", file, params)
+        };
+        let w_rundll = to_wide_chars("rundll32.exe");
+        let w_rundll_cmd = to_wide_chars(&rundll_cmd);
+        let mut sei: SHELLEXECUTEINFOW = std::mem::zeroed();
+        sei.cbSize = size_of::<SHELLEXECUTEINFOW>() as u32;
+        sei.fMask = 0;
+        sei.nShow = SW_SHOWNORMAL as i32;
+        sei.lpFile = w_rundll.as_ptr();
+        sei.lpParameters = w_rundll_cmd.as_ptr();
+        sei.lpDirectory = w_dir_ptr;
+        if ShellExecuteExW(&mut sei) != 0 {
+            crate::exit_log!(
+                "[启动] 降权令牌获取失败，已用 rundll32 ShellExec_RunDLL 兜底启动: {}",
+                file
+            );
+            return Ok(());
+        }
+        let err1 = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+
+        // 2) 直接 ShellExecuteExW（继承当前令牌，日志警告）
+        let w_file = to_wide_chars(file);
+        let w_params = to_wide_chars(params);
+        let mut sei2: SHELLEXECUTEINFOW = std::mem::zeroed();
+        sei2.cbSize = size_of::<SHELLEXECUTEINFOW>() as u32;
+        sei2.fMask = SEE_MASK_NOCLOSEPROCESS;
+        sei2.nShow = SW_SHOWNORMAL as i32;
+        sei2.lpFile = w_file.as_ptr();
+        sei2.lpParameters = if params.is_empty() { std::ptr::null() } else { w_params.as_ptr() };
+        sei2.lpDirectory = w_dir_ptr;
+        if ShellExecuteExW(&mut sei2) != 0 {
+            crate::exit_log!(
+                "[启动] 降权令牌获取失败，ShellExecuteExW 兜底启动（子进程继承管理员令牌）: {}",
+                file
+            );
+            if !sei2.hProcess.is_null() {
+                windows_sys::Win32::Foundation::CloseHandle(sei2.hProcess);
+            }
+            return Ok(());
+        }
+        let err2 = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        Err(format!(
+            "启动失败：普通用户令牌不可用，且 ShellExecuteEx 兜底也失败（rundll32={} ShellExecute={}）",
+            err1, err2
+        ))
+    }
+}
+
+/// 以当前交互会话用户的普通令牌降权启动可执行程序（CreateProcessWithTokenW）。
+/// 相比 explorer.exe 代理可靠得多，且子进程不继承 AnyVersion 的管理员令牌；
+/// 脚本类（.bat/.cmd/.ps1）会经解释器（cmd.exe / powershell.exe）执行，
+/// 因为 CreateProcess 系列无法直接运行脚本文件。
+/// 若获取用户令牌失败，最后兜底用 ShellExecuteExW 启动（rundll32 方式优先）。
+fn create_process_as_normal_user(file: &str, params: &str, work_dir: &str) -> Result<(), String> {
+    use windows_sys::Win32::System::Threading::{
+        CreateProcessWithTokenW, PROCESS_INFORMATION, STARTUPINFOW,
+    };
+
+    // 0. 获取当前交互会话用户的普通主令牌（WTS 或 explorer 回退）；
+    //    两者都失败时不再直接报错，改用 ShellExecuteExW 最后兜底（保证项目能启动）。
+    let primary_token = match unsafe { get_active_user_primary_token() } {
+        Ok(token) => token,
+        Err(e) => {
+            crate::exit_log!("[启动] 无法获取普通用户令牌: {}，进入 ShellExecuteExW 最后兜底", e);
+            return shell_execute_fallback(file, params, work_dir);
+        }
+    };
+
+    unsafe {
+        // 1. 组装可执行程序与命令行（CreateProcessWithTokenW 需要可变缓冲）
         //    .bat/.cmd/.ps1 脚本必须经解释器执行；lpApplicationName 指向解释器完整路径。
         let ext = Path::new(file)
             .extension()

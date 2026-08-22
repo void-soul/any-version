@@ -136,12 +136,10 @@ export default function AddItemModal({
   // 选择文件 / 快捷方式
   const handleSelectFile = async () => {
     try {
-      const selected = await openDialog({
-        directory: false,
-        multiple: false,
-        title: "选择应用程序或文件",
-      });
-      if (selected && typeof selected === "string") {
+      // 用自定义对话框（.NET OpenFileDialog，不跟随 .lnk），能拿到快捷方式原始路径，
+      // 便于 resolve_shortcut 正确解析目标/参数/工作目录/图标（openDialog 会跟随 .lnk 返回其目标）。
+      const selected = await invoke<string | null>("launcher_pick_file");
+      if (selected) {
         setTarget(selected);
         // 解析快捷方式或提取图标
         try {
