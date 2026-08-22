@@ -933,6 +933,10 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
   const set = (k: keyof PickySyncConfig, v: unknown) => setCfg((c) => (c ? { ...c, [k]: v } : c));
 
   const save = async () => {
+    if (!cfg.enabled) {
+      setMsg("请先勾选「启用云同步」才能保存参数");
+      return;
+    }
     setBusy(true);
     setMsg("");
     try {
@@ -947,6 +951,10 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
 
   // 一个「同步」按钮 = 内部双向合并：先拉取云端合并到本地，再上传合并结果。
   const syncNow = async () => {
+    if (!cfg.enabled) {
+      setMsg("请先勾选「启用云同步」再执行同步");
+      return;
+    }
     setBusy(true);
     setMsg("");
     try {
@@ -975,25 +983,30 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
           />
           启用云同步
         </label>
+        {!cfg.enabled && (
+          <p className="text-[10px] text-amber-400/90 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-2">
+            ⚠ 云同步未启用：先勾选上方「启用云同步」，才能编辑参数、保存配置和执行同步
+          </p>
+        )}
         {cfg.lastSyncAt && <p className="text-[10px] text-slate-500">上次同步：{fmtTime(cfg.lastSyncAt)}</p>}
 
         <div>
           <label className="text-[10px] text-slate-400 mb-1 block">Endpoint（如 https://s3.amazonaws.com 或 MinIO 地址）</label>
-          <input value={cfg.endpoint || ""} onChange={(e) => set("endpoint", e.target.value)} placeholder="https://s3.example.com" className={field} />
+          <input value={cfg.endpoint || ""} onChange={(e) => set("endpoint", e.target.value)} placeholder="https://s3.example.com" disabled={!cfg.enabled} className={field} />
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="text-[10px] text-slate-400 mb-1 block">Region</label>
-            <input value={cfg.region} onChange={(e) => set("region", e.target.value)} className={field} />
+            <input value={cfg.region} onChange={(e) => set("region", e.target.value)} disabled={!cfg.enabled} className={field} />
           </div>
           <div>
             <label className="text-[10px] text-slate-400 mb-1 block">Bucket</label>
-            <input value={cfg.bucketName} onChange={(e) => set("bucketName", e.target.value)} className={field} />
+            <input value={cfg.bucketName} onChange={(e) => set("bucketName", e.target.value)} disabled={!cfg.enabled} className={field} />
           </div>
         </div>
         <div>
           <label className="text-[10px] text-slate-400 mb-1 block">AccessKey ID</label>
-          <input value={cfg.accessKeyId} onChange={(e) => set("accessKeyId", e.target.value)} className={field} />
+          <input value={cfg.accessKeyId} onChange={(e) => set("accessKeyId", e.target.value)} disabled={!cfg.enabled} className={field} />
         </div>
         <div>
           <label className="text-[10px] text-slate-400 mb-1 block">SecretKey（加密存储）</label>
@@ -1001,17 +1014,18 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
             type="password"
             value={cfg.secretAccessKey}
             onChange={(e) => set("secretAccessKey", e.target.value)}
+            disabled={!cfg.enabled}
             className={field}
           />
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="text-[10px] text-slate-400 mb-1 block">前缀（可选）</label>
-            <input value={cfg.prefix || ""} onChange={(e) => set("prefix", e.target.value)} placeholder="picky/" className={field} />
+            <input value={cfg.prefix || ""} onChange={(e) => set("prefix", e.target.value)} placeholder="picky/" disabled={!cfg.enabled} className={field} />
           </div>
           <div>
             <label className="text-[10px] text-slate-400 mb-1 block">寻址风格</label>
-            <select value={cfg.addressingStyle} onChange={(e) => set("addressingStyle", e.target.value)} className={field}>
+            <select value={cfg.addressingStyle} onChange={(e) => set("addressingStyle", e.target.value)} disabled={!cfg.enabled} className={field}>
               <option value="auto">auto（自动）</option>
               <option value="path">path（路径式）</option>
               <option value="virtual-host">virtual-host（虚拟主机式）</option>
@@ -1023,6 +1037,7 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
             type="checkbox"
             checked={cfg.tlsVerify}
             onChange={(e) => set("tlsVerify", e.target.checked)}
+            disabled={!cfg.enabled}
             className="accent-[var(--module-accent)]"
           />
           校验 TLS 证书（自签名 / 内网 http 可关闭）
@@ -1038,14 +1053,14 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
         <div className="flex justify-end gap-2 pt-1">
           <button
             onClick={save}
-            disabled={busy}
+            disabled={!cfg.enabled || busy}
             className="px-3 py-1.5 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 cursor-pointer disabled:opacity-50"
           >
             保存配置
           </button>
           <button
             onClick={syncNow}
-            disabled={busy}
+            disabled={!cfg.enabled || busy}
             className="px-4 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
           >
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Cloud className="w-3 h-3" />} 同步

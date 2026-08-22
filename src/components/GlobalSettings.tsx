@@ -31,7 +31,6 @@ import {
   LayoutGrid,
   Sliders,
   Shield,
-  Download,
   Upload,
   Layers,
   Folder,
@@ -825,44 +824,6 @@ export default function GlobalSettings() {
       window.removeEventListener("mousedown", handleWindowClick);
     };
   }, [recordingField]);
-
-  const handleLauncherExport = async () => {
-    try {
-      const jsonStr = await invoke<string>("launcher_export_backup");
-      const filePath = await saveDialog({
-        title: "保存启动器备份文件",
-        defaultPath: `anyversion_launcher_backup_${new Date().toISOString().slice(0, 10)}.json`,
-        filters: [{ name: "JSON Backup", extensions: ["json"] }],
-      });
-      if (filePath) {
-        await invoke("write_text_file", { path: filePath, content: jsonStr });
-        alert("启动器备份导出成功！");
-      }
-    } catch (e: any) {
-      alert(`导出失败: ${e}`);
-    }
-  };
-
-  const handleLauncherImport = async () => {
-    try {
-      const selected = await openDialog({
-        title: "选择启动器备份文件 (支持 DawnLauncher .db/.json 及 AnyVersion 备份)",
-        multiple: false,
-        filters: [
-          { name: "支持的所有备份格式 (*.db, *.json)", extensions: ["db", "json"] },
-          { name: "Dawn Launcher 数据库备份 (*.db)", extensions: ["db"] },
-          { name: "JSON 备份 (*.json)", extensions: ["json"] },
-        ],
-      });
-      if (selected && typeof selected === "string") {
-        const count = await invoke<number>("launcher_import_backup_file", { filePath: selected });
-        await fetchLauncherConfig();
-        alert(`启动器数据已成功导入与恢复！共导入 ${count || 0} 个快捷启动项目。`);
-      }
-    } catch (e: any) {
-      alert(`导入恢复失败: ${e}`);
-    }
-  };
 
   useEffect(() => {
     fetchConfig();
@@ -1834,64 +1795,6 @@ export default function GlobalSettings() {
 
       {/* 数据备份与同步（统一快照，原「数据同步」模块迁入设置） */}
       <DataSyncPanel />
-
-      {/* 启动器配置 (Launcher) */}
-      <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-5">
-        <div className="flex items-center justify-between pb-3 border-b border-white/5">
-          <div className="flex items-center gap-2">
-            <Rocket className="w-4 h-4 text-purple-400" />
-            <div>
-              <h3 className="text-xs font-semibold text-white">快捷启动设置 (Launcher)</h3>
-              <p className="text-[9px] text-slate-500 mt-0.5">
-                自定义全局唤起/隐藏主程序界面的快捷键，所有分类及项目外观均已自动优化
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {launcherSaved && (
-              <span className="text-xs font-medium text-emerald-400 flex items-center gap-1.5 animate-fadeIn">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                已保存
-              </span>
-            )}
-            <button
-              onClick={() => handleSaveLauncherConfig()}
-              disabled={savingLauncher}
-              className="px-4 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-md shadow-[var(--module-accent-ring)] cursor-pointer transition flex items-center gap-1.5"
-            >
-              <Save className="w-3 h-3" />
-              {savingLauncher ? "保存中..." : "保存设置"}
-            </button>
-          </div>
-        </div>
-
-        {/* 模块快捷键已整合到「外观 → 模块管理」区，此处仅保留启动器数据备份 */}
-        {/* 1. 数据备份与恢复 */}
-        <div className="pt-3 border-t border-white/5 flex items-center justify-between">
-          <div className="space-y-0.5">
-            <p className="text-xs font-medium text-slate-200">启动器数据备份与恢复</p>
-            <p className="text-[9px] text-slate-500">
-              导出所有分类与快捷方式数据为 JSON 文件，或从备份文件（支持 DawnLauncher .db/.json）中导入恢复
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleLauncherExport}
-              className="px-3.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs border border-white/10 transition cursor-pointer flex items-center gap-1.5"
-            >
-              <Download className="w-3.5 h-3.5 text-[var(--module-accent)]" />
-              导出备份 (JSON)
-            </button>
-            <button
-              onClick={handleLauncherImport}
-              className="px-3.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs border border-white/10 transition cursor-pointer flex items-center gap-1.5"
-            >
-              <Upload className="w-3.5 h-3.5 text-[var(--module-accent)]" />
-              导入备份 (Dawn / AnyVersion)
-            </button>
-          </div>
-        </div>
-      </div>
 
       {/* AI 配置 */}
       <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-4">

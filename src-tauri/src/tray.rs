@@ -10,6 +10,63 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// 允许从低权限进程（如 Explorer）拖放文件到以管理员身份运行的本程序窗口。
+/// Windows UIPI 默认阻止低权限进程向高权限窗口发送 WM_DROPFILES / WM_COPYDATA 消息，
+/// 导致管理员模式下无法从外部拖放文件到启动模块的分类。
+#[cfg(target_os = "windows")]
+/// UIPI 放行：让低权限进程（explorer.exe）能向本进程窗口发送拖放/OLE 相关消息。
+/// 覆盖 OLE 拖放（wry 的 IDropTarget）与 DragAcceptFiles 两条路径所需的消息：
+/// WM_DROPFILES / WM_COPYDATA / WM_COPYGLOBALDATA / WM_GETOBJECT / WM_QUERYDRAGICON。
+/// 同时用进程级 ChangeWindowMessageFilter 与窗口级 ChangeWindowMessageFilterEx
+/// 双保险（对每个窗口含 WebView2 子窗口），不依赖窗口标题查找。
+fn allow_uipi_drop() {
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        ChangeWindowMessageFilter, ChangeWindowMessageFilterEx, EnumChildWindows, EnumWindows,
+        GetWindowThreadProcessId, MSGFLT_ADD, MSGFLT_ALLOW, WM_COPYDATA, WM_DROPFILES,
+        WM_GETOBJECT, WM_QUERYDRAGICON,
+    };
+    // OLE 拖放（wry 的 IDropTarget）与 DragAcceptFiles 两条路径所需的消息：
+    // WM_DROPFILES(0x0233) / WM_COPYDATA(0x004A) / WM_COPYGLOBALDATA(0x0049) /
+    // WM_GETOBJECT(0x003D) / WM_QUERYDRAGICON(0x0037)
+    const MESSAGES: [u32; 5] = [WM_DROPFILES, WM_COPYDATA, 0x0049, WM_GETOBJECT, WM_QUERYDRAGICON];
+
+    unsafe extern "system" fn allow_on(hwnd: HWND) {
+        for &m in &MESSAGES {
+            ChangeWindowMessageFilterEx(hwnd, m, MSGFLT_ALLOW, std::ptr::null_mut());
+        }
+    }
+    unsafe extern "system" fn child_cb(hwnd: HWND, _lparam: LPARAM) -> BOOL {
+        allow_on(hwnd);
+        1
+    }
+    unsafe extern "system" fn top_cb(hwnd: HWND, _lparam: LPARAM) -> BOOL {
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid == std::process::id() {
+            allow_on(hwnd);
+            // WebView2 控件窗口（Chrome_WidgetWin_0 等）是子窗口，递归放行
+            EnumChildWindows(hwnd, Some(child_cb), 0);
+        }
+        1
+    }
+
+    unsafe {
+        // 进程级：放行后本进程所有窗口都能接收低权限进程（explorer.exe）的消息
+        for &m in &MESSAGES {
+            ChangeWindowMessageFilter(m, MSGFLT_ADD);
+        }
+        // 窗口级双保险：对每个顶层窗口及其子窗口逐个放行
+        EnumWindows(Some(top_cb), 0);
+    }
+    crate::exit_log::exit_log(
+        "[tray] UIPI: 已放行拖放相关消息（WM_DROPFILES/COPYDATA/COPYGLOBALDATA/GETOBJECT/QUERYDRAGICON，进程级+窗口级）",
+    );
+}
+
+#[cfg(not(target_os = "windows"))]
+fn allow_uipi_drop() {}
+
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, Runtime, Webview, WebviewUrl, WebviewWindowBuilder};
@@ -98,6 +155,7 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 match (button, button_state) {
                     (MouseButton::Left, MouseButtonState::Up) => {
                         crate::exit_log::exit_log("[tray] 左键点击图标事件");
+                        // 简化行为：无论当前状态如何，总是打开并聚焦主窗口
                         show_main_window(tray.app_handle());
                     }
                     // 右键即将弹出菜单：标记打开，避免重建导致菜单闪退
@@ -325,13 +383,19 @@ pub(crate) fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
         },
     };
 
+    // 管理员模式下放行 UIPI 拖放消息，修复无法从外部拖放文件到启动模块的问题
+    allow_uipi_drop();
+
     focus_main_window(&window);
 }
+
 
 /// 显示并聚焦主窗口，且显式聚焦 WebView2 内容。
 /// 仅调用 window.set_focus() 只聚焦顶层窗口 HWND，键盘事件仍可能不进入 WebView2，
 /// 表现为「输入框光标闪烁但敲不进字」。必须在窗口显示后额外调用 webview.set_focus()。
 pub(crate) fn focus_main_window<R: Runtime>(window: &tauri::WebviewWindow<R>) {
+    // 管理员模式下放行 UIPI 拖放消息（覆盖页面加载后的首次 show 路径）
+    allow_uipi_drop();
     // 默认恢复/唤起时打开「启动」（Launcher）模块（应用启动、托盘恢复、主全局热键）。
     show_and_open_module(window, LAUNCHER_MODULE);
 }
