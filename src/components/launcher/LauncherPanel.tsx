@@ -25,6 +25,7 @@ import {
   LayoutGrid,
   Settings2,
   Loader2,
+  ArrowRightLeft,
 } from "lucide-react";
 import {
   DndContext,
@@ -157,6 +158,8 @@ function ItemCardBody(props: {
 }) {
   const { item, view, checkResults } = props;
   const missing = checkResults[item.id] && !checkResults[item.id].exists;
+  // per-item 图标背景色块优先于全局设置（参考 DawnLauncher）
+  const itemIconBg = item.data.iconBackgroundColor ?? view.iconBg;
   return (
     <>
       {item.data.runAsAdmin && (
@@ -165,9 +168,19 @@ function ItemCardBody(props: {
       {missing && <div className="absolute -top-1 -left-1 w-2 h-2 rounded-full bg-red-500 shadow shadow-red-500/50" />}
       <div
         className={`rounded-lg flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition overflow-hidden ${
-          view.iconBg ? "bg-white/5" : "bg-transparent"
+          itemIconBg
+            ? item.data.iconBackgroundColor
+              ? ""
+              : "bg-white/5"
+            : "bg-transparent"
         }`}
-        style={{ width: view.iconSize, height: view.iconSize }}
+        style={{
+          width: view.iconSize,
+          height: view.iconSize,
+          backgroundColor: itemIconBg && item.data.iconBackgroundColor
+            ? item.data.iconBackgroundColorValue || "#0078D7"
+            : undefined,
+        }}
       >
         {item.data.icon ? (
           <img
@@ -327,8 +340,16 @@ export default function LauncherPanel() {
     category: Classification;
   } | null>(null);
 
+  // 批量转移项目：把某分类（含子分类）下的项目移动到目标分类
+  const [moveItemsModalOpen, setMoveItemsModalOpen] = useState(false);
+  const [moveItemsSource, setMoveItemsSource] = useState<Classification | null>(null);
+  const [moveItemsTarget, setMoveItemsTarget] = useState<number | null>(null);
+  const [moveItemsLoading, setMoveItemsLoading] = useState(false);
+
   // 子类目展开/收起：collapsedGroups 中存在的分类 id 表示已收起
   const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(new Set());
+  // 标记是否已按分类的「默认收缩全部子分组」初始化过一次折叠状态（避免重复刷新后反复重置用户手动展开）
+  const collapseInitRef = useRef(false);
   const toggleGroupCollapse = (catId: number) => {
     setCollapsedGroups((prev) => {
       const next = new Set(prev);
@@ -351,6 +372,22 @@ export default function LauncherPanel() {
     try {
       const clsList = await invoke<Classification[]>("launcher_get_classifications");
       setClassifications(clsList);
+
+      // 首次加载：按各分类「默认收缩全部子分组」设置初始化折叠状态
+      if (!collapseInitRef.current && clsList.length > 0) {
+        const defaults = new Set<number>();
+        for (const c of clsList) {
+          if (c.data?.defaultCollapsed) {
+            for (const child of clsList) {
+              if (child.parentId === c.id) defaults.add(child.id);
+            }
+          }
+        }
+        if (defaults.size > 0) {
+          setCollapsedGroups(defaults);
+        }
+        collapseInitRef.current = true;
+      }
 
       const items = await invoke<Item[]>("launcher_get_all_items");
       setAllItems(items);
@@ -514,6 +551,81 @@ export default function LauncherPanel() {
     await invoke("launcher_delete_item", { id });
     showToast("启动项已删除");
     await loadData();
+  };
+
+  // ---- 批量移动子分类（保留层级）----
+
+  // 递归收集某分类及其所有子孙分类的 id
+  const collectCatIds = (cat: Classification): Set<number> => {
+    const ids = new Set<number>([cat.id]);
+    const walk = (parentId: number) => {
+      for (const c of classifications) {
+        if (c.parentId === parentId && !ids.has(c.id)) {
+          ids.add(c.id);
+          walk(c.id);
+        }
+      }
+    };
+    walk(cat.id);
+    return ids;
+  };
+
+  // 源分类下的直接子分类数量（这些会整体搬到目标分类下）
+  const moveItemsSourceCount = useMemo(() => {
+    if (!moveItemsSource) return 0;
+    return classifications.filter((c) => c.parentId === moveItemsSource.id).length;
+  }, [moveItemsSource, classifications]);
+
+  // 可用的目标分类：排除源分类及其所有子孙分类（避免循环 / 嵌套目标）
+  const moveItemsTargetList = useMemo(() => {
+    if (!moveItemsSource) return [];
+    const excluded = collectCatIds(moveItemsSource);
+    // 计算分类深度用于排序（防御性：父分类找不到或 parentId 为 null 时按 0 层处理，避免崩溃）
+    const getDepth = (c: Classification): number => {
+      let depth = 0;
+      let pid = c.parentId;
+      let guard = 0;
+      while (pid != null && guard < 100) {
+        const parent = classifications.find((x) => x.id === pid);
+        if (!parent) break;
+        depth++;
+        pid = parent.parentId;
+        guard++;
+      }
+      return depth;
+    };
+    return classifications
+      .filter((c) => !excluded.has(c.id))
+      .sort((a, b) => getDepth(a) - getDepth(b));
+  }, [moveItemsSource, classifications]);
+
+  // 打开移动子分类弹窗
+  const openMoveItemsModal = (cat: Classification) => {
+    setMoveItemsSource(cat);
+    setMoveItemsTarget(null);
+    setMoveItemsModalOpen(true);
+    setCategoryContextMenu(null);
+  };
+
+  // 确认批量移动子分类
+  const handleMoveItemsConfirm = async () => {
+    if (!moveItemsSource || moveItemsTarget === null) return;
+    setMoveItemsLoading(true);
+    try {
+      const moved = await invoke<number>("launcher_move_subcategories_to_classification", {
+        sourceId: moveItemsSource.id,
+        targetId: moveItemsTarget,
+      });
+      showToast(`已将 ${moved} 个子分类移动到目标分类`);
+      setMoveItemsModalOpen(false);
+      setMoveItemsSource(null);
+      setMoveItemsTarget(null);
+      await loadData();
+    } catch (e: any) {
+      showToast(`移动失败: ${e}`);
+    } finally {
+      setMoveItemsLoading(false);
+    }
   };
 
   // Import Browser Bookmarks
@@ -1224,7 +1336,10 @@ export default function LauncherPanel() {
 
         {/* Child Groups (Nested, recursive) */}
         {childGroups.length > 0 && !isGroupCollapsed(cat.id) && (
-          <div className="ml-2 pl-2.5 border-l border-white/5 space-y-2.5">
+          <div
+            className="ml-2 pl-2.5 border-l border-white/5 flex flex-col"
+            style={{ gap: view.categoryGap }}
+          >
             {childGroups.map((child) => renderGroup(child))}
           </div>
         )}
@@ -2059,6 +2174,14 @@ export default function LauncherPanel() {
             <Plus className="w-3.5 h-3.5" />
             <span>添加项目到此分类</span>
           </button>
+          <button
+            onClick={() => openMoveItemsModal(categoryContextMenu.category)}
+            title="将此分类下的所有直接子分类（连同各自下级与项目，保留层级）整体移动到另一个分类下"
+            className="w-full px-3 py-1.5 rounded-lg text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
+          >
+            <ArrowRightLeft className="w-3.5 h-3.5 text-cyan-400" />
+            <span>移动所有子分类到...</span>
+          </button>
           <div className="h-px bg-white/10 my-1" />
           <button
             onClick={() => {
@@ -2070,6 +2193,100 @@ export default function LauncherPanel() {
             <Trash2 className="w-3.5 h-3.5" />
             <span>删除分类</span>
           </button>
+        </div>
+      )}
+
+      {/* 批量转移分类项目弹窗 */}
+      {moveItemsModalOpen && moveItemsSource && (
+        <div
+          className="fixed inset-0 z-[250] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-100"
+          onClick={() => !moveItemsLoading && setMoveItemsModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm bg-[#171d2e] border border-white/15 rounded-2xl p-5 shadow-2xl space-y-4 text-xs"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <ArrowRightLeft className="w-4 h-4 text-cyan-400" />
+                <h3 className="text-sm font-bold text-white">移动子分类</h3>
+              </div>
+              <button
+                onClick={() => !moveItemsLoading && setMoveItemsModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              将「
+              <span className="text-slate-200 font-medium">{moveItemsSource.name}</span>
+              」下的
+              <span className="text-cyan-300 font-medium">{moveItemsSourceCount}</span>
+              个直接子分类，连同它们各自的子分类和项目（完整保留上下级关系），整体移动到选中的目标分类下。源分类本身不会被删除。
+            </p>
+
+            <div>
+              <label className="block text-[11px] text-slate-400 mb-1.5">选择目标分类</label>
+              <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
+                {moveItemsTargetList.length === 0 ? (
+                  <p className="text-[11px] text-slate-500">没有可选的目标分类。</p>
+                ) : (
+                  moveItemsTargetList.map((c) => {
+                    const depth = (() => {
+                      let d = 0;
+                      let p = c.parentId;
+                      while (p) {
+                        d++;
+                        p = classifications.find((x) => x.id === p)?.parentId ?? null;
+                      }
+                      return d;
+                    })();
+                    const isSelected = moveItemsTarget === c.id;
+                    return (
+                      <button
+                        type="button"
+                        key={c.id}
+                        onClick={() => setMoveItemsTarget(c.id)}
+                        className={`w-full text-left px-3 py-1.5 rounded-lg border transition cursor-pointer flex items-center gap-2 ${
+                          isSelected
+                            ? "bg-cyan-500/20 border-cyan-500 text-white"
+                            : "bg-white/[0.02] border-white/5 text-slate-300 hover:bg-white/[0.05]"
+                        }`}
+                      >
+                        <span style={{ marginLeft: depth * 12 }} className={depth > 0 ? "text-slate-500" : ""}>
+                          {depth > 0 ? "└ " : ""}
+                        </span>
+                        <span>{c.data?.icon || "📁"}</span>
+                        <span className="truncate">{c.name}</span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={moveItemsLoading}
+                onClick={() => setMoveItemsModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={moveItemsLoading || moveItemsTarget === null}
+                onClick={handleMoveItemsConfirm}
+                className="px-5 py-2 rounded-xl text-xs font-semibold bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg shadow-cyan-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <ArrowRightLeft className="w-3.5 h-3.5" />
+                {moveItemsLoading ? "转移中..." : "确认转移"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
