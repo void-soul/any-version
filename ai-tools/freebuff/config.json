@@ -1,0 +1,25 @@
+{
+  "id": "freebuff",
+  "displayName": "Freebuff CLI",
+  "avatar": "🐃",
+  "nickname": "Freebuff",
+  "category": "免费",
+  "website": "https://freebuff.com",
+  "apiProtocol": "openai",
+  "supportModel": false,
+  "supportFallbackModel": false,
+
+  "supportsOpenai": false,
+  "supportsAnthropic": false,
+  "supportsGoogle": false,
+  "builtinModels": [],
+  "supportsOptimizer": false,
+  "supportsRectifier": false,
+
+  "supportOneMContext": false,
+  "resumeCmd": null,
+  "continueCmd": null,
+  "cacheDirs": [".config/manicode/freebuff"],
+  "pkgManager": "npm",
+  "pkgName": "freebuff"
+}

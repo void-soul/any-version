@@ -1,0 +1,17 @@
+{
+  "name": "Freebuff CLI",
+  "category": "CLI Code",
+  "apiProtocol": ["openai"],
+  "command": "freebuff",
+  "startCommand": "freebuff",
+  "detectCmd": "freebuff --version",
+  "installCmd": "npm install -g freebuff",
+  "paths": {
+    "win32": [
+      "%APPDATA%/npm/freebuff.cmd",
+      "%USERPROFILE%/scoop/shims/freebuff.cmd",
+      "%USERPROFILE%/.bun/bin/freebuff.cmd",
+      "%LOCALAPPDATA%/pnpm/freebuff.cmd"
+    ]
+  }
+}
