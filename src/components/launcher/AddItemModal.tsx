@@ -15,7 +15,11 @@ import {
   Trash2,
   Check,
   Package,
-  AppWindow
+  AppWindow,
+  Image as ImageIcon,
+  RotateCcw,
+  Link2,
+  Download,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -81,6 +85,16 @@ export default function AddItemModal({
   const [runAsAdmin, setRunAsAdmin] = useState(!!editingItem?.data?.runAsAdmin);
   const [icon, setIcon] = useState<string | null>(editingItem?.data?.icon || null);
   const [htmlIcon, setHtmlIcon] = useState<string | null>(editingItem?.data?.htmlIcon || null);
+  const [iconBg, setIconBg] = useState<boolean>(!!editingItem?.data?.iconBackgroundColor);
+  // 图标背景色块色值（hex），默认 Windows 蓝
+  const [iconBgValue, setIconBgValue] = useState<string>(
+    editingItem?.data?.iconBackgroundColorValue || "#0078D7"
+  );
+  // 网络图标下载
+  const [netIconOpen, setNetIconOpen] = useState(false);
+  const [netIconUrl, setNetIconUrl] = useState("");
+  const [netIconLoading, setNetIconLoading] = useState(false);
+  const [netIconError, setNetIconError] = useState<string | null>(null);
   const [remark, setRemark] = useState(editingItem?.data?.remark || "");
   const [saving, setSaving] = useState(false);
 
@@ -220,6 +234,73 @@ export default function AddItemModal({
     }
   };
 
+  // ---- 图标编辑（参考 DawnLauncher）----
+
+  // 从本地选择图片文件作为项目图标（转为 base64 data URL）
+  const handleUploadIcon = async () => {
+    try {
+      const selected = await openDialog({
+        directory: false,
+        multiple: false,
+        title: "选择图片作为项目图标",
+        filters: [
+          {
+            name: "图片文件",
+            extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"],
+          },
+        ],
+      });
+      if (selected && typeof selected === "string") {
+        const dataUrl = await invoke<string>("launcher_load_image_as_icon", { path: selected });
+        setIcon(dataUrl);
+        setHtmlIcon(null);
+      }
+    } catch (e) {
+      console.error("上传图标失败:", e);
+    }
+  };
+
+  // 从目标程序/文件重新提取默认图标
+  const handleRestoreDefaultIcon = async () => {
+    if (!target.trim()) return;
+    try {
+      const extIcon = await invoke<string | null>("launcher_extract_icon", { path: target.trim() });
+      if (extIcon) {
+        setIcon(extIcon);
+        setHtmlIcon(null);
+      }
+    } catch (e) {
+      console.error("恢复默认图标失败:", e);
+    }
+  };
+
+  // 清除当前图标（恢复为按项目类型显示的默认图标）
+  const handleClearIcon = () => {
+    setIcon(null);
+    setHtmlIcon(null);
+  };
+
+  // 下载远程图片作为图标（参考 DawnLauncher 网络图标）
+  const handleDownloadNetIcon = async () => {
+    const url = netIconUrl.trim();
+    if (!url) return;
+    setNetIconLoading(true);
+    setNetIconError(null);
+    try {
+      const dataUrl = await invoke<string>("launcher_download_image", { url });
+      setIcon(dataUrl);
+      setHtmlIcon(null);
+      setNetIconOpen(false);
+      setNetIconUrl("");
+    } catch (e: any) {
+      console.error("下载网络图标失败:", e);
+      // 把具体错误透传给用户，便于定位（保持弹窗打开方便重试）
+      setNetIconError(typeof e === "string" ? e : e?.message || "下载失败，请检查链接或网络");
+    } finally {
+      setNetIconLoading(false);
+    }
+  };
+
   // 提交保存
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -238,6 +319,8 @@ export default function AddItemModal({
         runAsAdmin,
         icon: icon || undefined,
         htmlIcon: htmlIcon || undefined,
+        iconBackgroundColor: iconBg,
+        iconBackgroundColorValue: iconBg ? iconBgValue : undefined,
         remark: remark.trim() || undefined,
         multiItems: finalItemType === 5 ? multiItems : undefined,
       };
@@ -356,6 +439,137 @@ export default function AddItemModal({
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text transition"
               />
             </div>
+          </div>
+
+          {/* 图标编辑（参考 DawnLauncher） */}
+          <div className="pt-1">
+            <label className="block text-xs font-medium text-slate-400 mb-2">项目图标</label>
+            <div className="flex items-center gap-3">
+              {/* 图标预览 */}
+              <div
+                className="w-12 h-12 rounded-xl flex items-center justify-center overflow-hidden flex-shrink-0 border border-white/10"
+                style={{
+                  backgroundColor: iconBg ? iconBgValue : "rgba(255,255,255,0.05)",
+                }}
+              >
+                {icon ? (
+                  <img src={icon} className="w-10 h-10 object-contain" alt="" />
+                ) : htmlIcon ? (
+                  <span className="text-2xl leading-none">{htmlIcon}</span>
+                ) : (
+                  <FileText className="w-6 h-6 text-slate-500" />
+                )}
+              </div>
+              {/* 图标操作按钮 */}
+              <div className="flex flex-wrap gap-1.5 flex-1">
+                <button
+                  type="button"
+                  onClick={handleUploadIcon}
+                  title="从本地选择一张图片作为此项目图标"
+                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-lg transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <ImageIcon className="w-3.5 h-3.5 text-purple-400" />
+                  上传图片
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNetIconOpen((v) => !v);
+                    if (!netIconUrl) setNetIconUrl(target.trim().startsWith("http") ? target.trim() : "");
+                  }}
+                  title="输入远程图片链接（如网页 favicon）下载作为图标"
+                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-lg transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <Link2 className="w-3.5 h-3.5 text-blue-400" />
+                  网络图标
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRestoreDefaultIcon}
+                  disabled={!target.trim()}
+                  title="从目标程序/文件重新提取图标"
+                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-lg transition cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-cyan-400" />
+                  恢复默认
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearIcon}
+                  disabled={!icon && !htmlIcon}
+                  title="清除自定义图标，恢复为按项目类型显示的默认图标"
+                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-lg transition cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <X className="w-3.5 h-3.5 text-red-400" />
+                  清除图标
+                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setIconBg((v) => !v)}
+                    title="为图标添加背景色块"
+                    className={`px-2.5 py-1.5 border text-xs rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
+                      iconBg
+                        ? "bg-white/10 border-[var(--module-accent-ring)] text-white"
+                        : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
+                    }`}
+                  >
+                    <span
+                      className="w-3 h-3 rounded-sm"
+                      style={{ backgroundColor: iconBgValue }}
+                    />
+                    背景色块
+                  </button>
+                  {iconBg && (
+                    <label
+                      className="w-8 h-8 rounded-lg overflow-hidden border border-white/10 cursor-pointer flex items-center justify-center hover:bg-white/10 transition"
+                      title="自定义背景色块颜色"
+                    >
+                      <input
+                        type="color"
+                        value={iconBgValue}
+                        onChange={(e) => setIconBgValue(e.target.value)}
+                        className="w-10 h-10 -m-1 cursor-pointer"
+                      />
+                    </label>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* 网络图标输入（参考 DawnLauncher NetworkIcon） */}
+            {netIconOpen && (
+              <>
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    type="text"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={netIconUrl}
+                    onChange={(e) => setNetIconUrl(e.target.value)}
+                    placeholder="粘贴图片链接，例如 https://example.com/favicon.ico"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleDownloadNetIcon}
+                    disabled={netIconLoading || !netIconUrl.trim()}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs rounded-xl transition cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Download className={`w-3.5 h-3.5 ${netIconLoading ? "animate-pulse" : ""}`} />
+                    {netIconLoading ? "下载中..." : "下载"}
+                  </button>
+                </div>
+                {netIconError && (
+                  <p className="mt-1.5 text-[11px] text-red-400 leading-relaxed break-all">
+                    下载失败：{netIconError}
+                  </p>
+                )}
+              </>
+            )}
+            <p className="text-[10px] text-slate-500 mt-1.5 leading-relaxed">
+              支持 png / jpg / gif / webp / ico / svg；也可在「文件/程序」「网址」等标签页选择目标后自动提取图标。
+            </p>
           </div>
 
           {/* TAB 0: File / Executable */}

@@ -48,6 +48,9 @@ export default function CategoryModal({
   const [excludeSearch, setExcludeSearch] = useState(
     !!editingCategory?.data?.excludeSearch
   );
+  const [defaultCollapsed, setDefaultCollapsed] = useState(
+    !!editingCategory?.data?.defaultCollapsed
+  );
   const [saving, setSaving] = useState(false);
 
   // State is already cleanly initialized from props in useState() upon modal mount (via key)
@@ -100,6 +103,7 @@ export default function CategoryModal({
         associateFolderHiddenItems: classificationType === 1 ? associateFolderHiddenItems : undefined,
         itemShowOnly: classificationType === 1 ? itemShowOnly : "default",
         excludeSearch,
+        defaultCollapsed,
       };
 
       const category: Classification = {
@@ -302,7 +306,7 @@ export default function CategoryModal({
           )}
 
           {/* Additional switches */}
-          <div className="pt-2">
+          <div className="pt-2 space-y-2.5">
             <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
               <input
                 type="checkbox"
@@ -311,6 +315,23 @@ export default function CategoryModal({
                 className="rounded border-white/10 bg-white/5 text-purple-600 focus:ring-0"
               />
               <span>在全局快速搜索中排除此分类下的项目</span>
+            </label>
+            <label
+              className="flex items-start gap-2 cursor-pointer text-xs text-slate-300"
+              title="勾选后，每次打开启动器，此分类下的所有子分组默认处于折叠状态"
+            >
+              <input
+                type="checkbox"
+                checked={defaultCollapsed}
+                onChange={(e) => setDefaultCollapsed(e.target.checked)}
+                className="mt-0.5 rounded border-white/10 bg-white/5 text-purple-600 focus:ring-0"
+              />
+              <span>
+                默认收缩全部子分组
+                <span className="block text-[10px] text-slate-500 mt-0.5">
+                  打开启动器时此分类下的所有子分组默认折叠
+                </span>
+              </span>
             </label>
           </div>
 

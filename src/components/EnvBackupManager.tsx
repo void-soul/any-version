@@ -141,17 +141,20 @@ export default function EnvBackupManager() {
   };
 
   return (
-    <div className="flex-1 p-8 overflow-y-auto space-y-6 h-screen select-none flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-white tracking-wide">环境备份还原</h2>
-          <p className="text-xs text-slate-400 mt-1">
-            提供环境变量注册表备份与还原服务，防范开发工具误删/覆盖 PATH 导致系统崩溃。
-          </p>
+    <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-5">
+      {/* Section header */}
+      <div className="flex items-center justify-between pb-3 border-b border-white/5">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4 text-[var(--module-accent)]" />
+          <div>
+            <h3 className="text-xs font-semibold text-white">环境变量备份与还原</h3>
+            <p className="text-[9px] text-slate-500 mt-0.5">
+              备份/还原注册表环境变量，防范开发工具误删/覆盖 PATH 导致系统崩溃。
+            </p>
+          </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <button
             onClick={() => setShowCreateForm(!showCreateForm)}
             className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98]"
@@ -259,7 +262,7 @@ export default function EnvBackupManager() {
 
 
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left pane: Backups History */}
         <div className="lg:col-span-5 glass-panel rounded-2xl border border-white/5 overflow-hidden flex flex-col h-[520px]">
           <div className="p-4 bg-white/3 border-b border-white/5 flex items-center justify-between">
