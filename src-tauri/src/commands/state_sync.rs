@@ -5,11 +5,10 @@
 //! （文件内容 base64），本地导出时再整体 gzip 压缩，可导入/导出，也可同步到
 //! S3（独立于 Picky 的同步，使用自己的 S3 配置与对象 key，互不影响）。
 //!
-//! 刻意排除：`picky/`（有自己的同步）、`sdk/`（体积大，另行管理）、
-//! `version_cache/`（可重建的缓存）、mihomo 的 geo/日志/内核（可重新下载）。
-//!
-//! 可选目录（剪贴板图片 / mihomo 配置 / 自定义字体 / 环境备份目录）可在设置中
-//! 通过打包范围开关勾选是否包含，配置持久化在 sync_state_config.json。
+//! 全量打包（无勾选）：含 picky 数据库（含其云同步版本号 lastSyncAt）、剪贴板图片、
+//! mihomo 配置、自定义字体、环境备份目录等所有数据。
+//! 刻意排除：`sdk/`（体积大，另行管理）、`version_cache/`（可重建的缓存）、
+//! mihomo 的 geo/日志/内核（可重新下载）。
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -18,8 +17,8 @@ use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
+
 use crate::commands::config::{get_base_dir, get_data_dir};
-use crate::commands::s3_common::{S3Client, S3Connection};
 use crate::commands::secrets::{decrypt_secret, encrypt_secret};
 
 /// 快照打包的固定文件（相对 data_dir；config.json 例外，始终位于 base_dir）。
@@ -39,6 +38,7 @@ const MANAGED_FILES: &[&str] = &[
     "ai_usage.db",
     "otp/otp.db",
     "clipboard/clipboard.db",
+    "picky/picky.db",
 ];
 
 /// 快照打包的整目录（相对 data_dir，递归收集其下所有文件）。
@@ -59,8 +59,6 @@ const MIHOMO_FILES: &[&str] = &[
     "mihomo/override.json",
 ];
 
-/// 云端对象 key（前缀之后的部分）。
-const CLOUD_OBJECT_KEY: &str = "any-version-state.json";
 
 // ─── S3 同步配置（独立于 Picky） ───
 
@@ -190,20 +188,6 @@ impl StateSyncConfig {
             include_backup: self.include_backup,
         })
     }
-
-    fn connection(&self) -> S3Connection {
-        S3Connection {
-            endpoint: self.endpoint.clone(),
-            region: self.region.clone(),
-            access_key_id: self.access_key_id.clone(),
-            secret_access_key: self.secret_access_key.clone(),
-            bucket_name: self.bucket_name.clone(),
-            prefix: self.prefix.clone(),
-            addressing_style: self.addressing_style.clone(),
-            tls_verify: self.tls_verify,
-            timeout_seconds: self.timeout_seconds,
-        }
-    }
 }
 
 #[tauri::command]
@@ -273,51 +257,41 @@ fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
-/// 快照打包范围（可选目录开关，读取自 sync_state_config.json）。
-#[derive(Debug, Clone, Copy)]
-struct SnapshotScope {
-    include_clipboard_images: bool,
-    include_mihomo: bool,
-    include_fonts: bool,
-    include_backup: bool,
-}
-
-fn load_scope() -> SnapshotScope {
-    let stored = load_stored_config();
-    SnapshotScope {
-        include_clipboard_images: stored.include_clipboard_images,
-        include_mihomo: stored.include_mihomo,
-        include_fonts: stored.include_fonts,
-        include_backup: stored.include_backup,
-    }
-}
-
 /// 构建统一快照（JSON）：{ version, type, createdAt, files: { relPath: base64 } }。
-/// 可选目录（剪贴板图片 / mihomo / 字体 / 环境备份）按打包范围开关过滤。
+/// 全量打包：固定文件 + mihomo 配置 + 全部管理目录（剪贴板图片/mihomo/字体/环境备份/certs），
+/// 以及 picky 数据库（含其云同步版本号 lastSyncAt）——不做任何勾选过滤。
 fn build_snapshot() -> Result<JsonValue, String> {
-    let scope = load_scope();
+    build_snapshot_with_progress(|_, _| {})
+}
+
+/// 打包快照；`on_progress` 在读取每个文件后回调（参数为 (当前已处理文件数, 文件总数)），
+/// 供前端展示进度。
+fn build_snapshot_with_progress(mut on_progress: impl FnMut(usize, usize)) -> Result<JsonValue, String> {
     let data_dir = get_data_dir();
     let mut files = JsonMap::new();
     let mut count = 0usize;
     let mut total = 0usize;
 
     let mut rels: Vec<String> = MANAGED_FILES.iter().map(|s| s.to_string()).collect();
-    if scope.include_mihomo {
-        rels.extend(MIHOMO_FILES.iter().map(|s| s.to_string()));
-    }
+    rels.extend(MIHOMO_FILES.iter().map(|s| s.to_string()));
     for dir in MANAGED_DIRS {
-        let enabled = match *dir {
-            "clipboard/images" => scope.include_clipboard_images,
-            "mihomo/profiles" | "mihomo/override" => scope.include_mihomo,
-            "fonts" => scope.include_fonts,
-            "backup" => scope.include_backup,
-            _ => true, // certs 等核心数据始终包含
-        };
-        if enabled {
-            rels.extend(collect_dir_files(&data_dir, dir));
+        rels.extend(collect_dir_files(&data_dir, dir));
+    }
+    // WAL 兼容：SQLite 主库存在同名 `-wal` 时一并打包（WAL 模式下最新数据在 wal 文件里，
+    // 只拷主库会丢失最近写入；恢复时一并写回，SQLite 会自动合并）。
+    let mut rels_with_wal: Vec<String> = Vec::with_capacity(rels.len());
+    for rel in rels {
+        rels_with_wal.push(rel.clone());
+        if rel.ends_with(".db") {
+            let wal_rel = format!("{}-wal", rel);
+            if resolve_snapshot_path(&wal_rel).is_file() {
+                rels_with_wal.push(wal_rel);
+            }
         }
     }
+    let rels = rels_with_wal;
 
+    let total_files = rels.len().max(1);
     for rel in rels {
         let path = resolve_snapshot_path(&rel);
         if !path.is_file() {
@@ -327,6 +301,7 @@ fn build_snapshot() -> Result<JsonValue, String> {
         total += bytes.len();
         files.insert(rel, JsonValue::String(general_purpose::STANDARD.encode(&bytes)));
         count += 1;
+        on_progress(count.min(total_files), total_files);
     }
 
     Ok(serde_json::json!({
@@ -344,45 +319,6 @@ fn is_safe_rel(rel: &str) -> bool {
     !rel.is_empty()
         && !Path::new(rel).is_absolute()
         && !rel.split(['/', '\\']).any(|c| c == "..")
-}
-
-/// 快照内单个文件的清单信息。
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SnapshotFileInfo {
-    pub rel_path: String,
-    pub size_bytes: u64,
-}
-
-/// 解析快照并返回文件清单（不写盘），供前端选择要恢复哪些文件。
-fn inspect_snapshot(state: &JsonValue) -> Result<Vec<SnapshotFileInfo>, String> {
-    if state.get("type").and_then(|v| v.as_str()) != Some("any-version-state") {
-        return Err("不是有效的 any-version 数据快照（type 不匹配）".to_string());
-    }
-    let files = state
-        .get("files")
-        .and_then(|v| v.as_object())
-        .ok_or_else(|| "快照缺少 files 字段".to_string())?;
-
-    let mut out: Vec<SnapshotFileInfo> = Vec::with_capacity(files.len());
-    for (rel, val) in files {
-        if !is_safe_rel(rel) {
-            return Err(format!("快照包含非法路径，已中止: {}", rel));
-        }
-        let size = match val.as_str() {
-            Some(b64) => general_purpose::STANDARD
-                .decode(b64)
-                .map(|b| b.len() as u64)
-                .unwrap_or(0),
-            None => 0,
-        };
-        out.push(SnapshotFileInfo {
-            rel_path: rel.clone(),
-            size_bytes: size,
-        });
-    }
-    out.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
-    Ok(out)
 }
 
 /// 从快照 JSON 恢复文件，返回恢复的文件数。
@@ -472,18 +408,6 @@ pub fn state_sync_export(target_path: String) -> Result<serde_json::Value, Strin
     }))
 }
 
-/// 查看本地快照文件的文件清单（不写盘），供前端选择部分恢复。
-#[tauri::command]
-pub fn state_sync_peek(path: String) -> Result<Vec<SnapshotFileInfo>, String> {
-    let p = PathBuf::from(&path);
-    if !p.is_file() {
-        return Err(format!("快照文件不存在: {}", path));
-    }
-    let data = std::fs::read(&p).map_err(|e| format!("读取快照失败: {}", e))?;
-    let state = parse_snapshot(&data)?;
-    inspect_snapshot(&state)
-}
-
 /// 从本地快照文件恢复。`files` 为 Some 时只恢复列出的文件（部分恢复），None 表示恢复全部。
 #[tauri::command]
 pub fn state_sync_import(path: String, files: Option<Vec<String>>) -> Result<String, String> {
@@ -499,79 +423,6 @@ pub fn state_sync_import(path: String, files: Option<Vec<String>>) -> Result<Str
 }
 
 // ─── 命令：S3 同步（独立于 Picky） ───
-
-fn ensure_configured(cfg: &StateSyncConfig) -> Result<S3Client, String> {
-    if !cfg.is_configured() {
-        return Err("数据同步未配置（需启用并填写 endpoint / AccessKey / SecretKey / Bucket）".to_string());
-    }
-    Ok(S3Client::new(cfg.connection()))
-}
-
-/// 上传本地统一快照到 S3（gzip 压缩后上传，兼容旧版未压缩云端对象）。
-#[tauri::command]
-pub async fn state_sync_s3_push() -> Result<String, String> {
-    let cfg = state_sync_get_config()?;
-    let client = ensure_configured(&cfg)?;
-    let snapshot = build_snapshot()?;
-    let raw = serde_json::to_vec(&snapshot).map_err(|e| format!("序列化快照失败: {}", e))?;
-    let compressed = gzip_bytes(&raw)?;
-    let size = snapshot.get("sizeBytes").and_then(|v| v.as_u64()).unwrap_or(0);
-    let compressed_len = compressed.len() as u64;
-
-    let key = client
-        .upload_bytes(CLOUD_OBJECT_KEY, &compressed, "application/gzip")
-        .await?;
-    let synced_at = now_iso();
-
-    // 记录上次同步时间
-    let mut updated = cfg.clone();
-    updated.last_sync_at = Some(synced_at.clone());
-    state_sync_save_config(updated)?;
-
-    Ok(format!(
-        "已备份到云端（{}，{} 个文件 / {:.1} KB 原始 → {:.1} KB 压缩）",
-        key,
-        snapshot.get("fileCount").and_then(|v| v.as_u64()).unwrap_or(0),
-        size as f64 / 1024.0,
-        compressed_len as f64 / 1024.0,
-    ))
-}
-
-/// 查看云端快照的文件清单（不写盘），供前端选择部分恢复。
-/// 自动兼容 gzip 压缩与旧版未压缩的云端对象。
-#[tauri::command]
-pub async fn state_sync_s3_peek() -> Result<Vec<SnapshotFileInfo>, String> {
-    let cfg = state_sync_get_config()?;
-    let client = ensure_configured(&cfg)?;
-    let bytes = client.download_bytes(CLOUD_OBJECT_KEY).await?.ok_or_else(|| {
-        "云端暂无数据同步快照（any-version-state.json 不存在）".to_string()
-    })?;
-    let state = parse_snapshot(&bytes)?;
-    inspect_snapshot(&state)
-}
-
-/// 从 S3 下载统一快照并恢复本地（从云端还原）。
-/// 自动兼容 gzip 压缩与旧版未压缩的云端对象。
-/// `files` 为 Some 时只恢复列出的文件（部分恢复），None 表示恢复全部。
-#[tauri::command]
-pub async fn state_sync_s3_pull(files: Option<Vec<String>>) -> Result<String, String> {
-    let cfg = state_sync_get_config()?;
-    let client = ensure_configured(&cfg)?;
-    let bytes = client.download_bytes(CLOUD_OBJECT_KEY).await?.ok_or_else(|| {
-        "云端暂无数据同步快照（any-version-state.json 不存在）".to_string()
-    })?;
-    let state = parse_snapshot(&bytes)?;
-    let selection = files.map(|v| v.into_iter().collect::<std::collections::HashSet<_>>());
-    let restored = restore_snapshot(&state, selection.as_ref())?;
-
-    // 恢复后同步配置可能已被快照里的配置覆盖，需重新读取再记录同步时间
-    let synced_at = now_iso();
-    let mut updated = state_sync_get_config()?;
-    updated.last_sync_at = Some(synced_at);
-    state_sync_save_config(updated)?;
-
-    Ok(format!("已从云端恢复：还原 {} 个配置文件/数据库", restored))
-}
 
 #[cfg(test)]
 mod tests {

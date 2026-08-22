@@ -325,6 +325,12 @@ pub fn run() {
             let _ = commands::launcher::db::init_db();
             // 剪贴板监控（启动器热键注册之后，便于复用其热键线程记录前台窗口）
             let _ = commands::clipboard::init_clipboard_state(app.handle());
+            // picky 启动同步：延迟数秒（等自启服务就绪、界面加载完成）后拉取云端一次，
+            // 仅当已配置并启用云同步时执行，未配置则静默跳过。
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                commands::picky::picky_sync_if_enabled().await;
+            });
             if let Ok(setting) = commands::launcher::db::get_settings() {
                 let mut hotkeys = setting.module_hotkeys.clone();
                 if !setting.selection_translate_hotkey.trim().is_empty() {
@@ -539,6 +545,10 @@ pub fn run() {
             commands::ai::translate::hide_translate_popup,
             commands::ai::translate::show_translate_result,
             commands::ai::translate::get_last_translate_result,
+            commands::ai::translate::translate_history_list,
+            commands::ai::translate::translate_history_clear,
+            commands::ai::translate::translate_history_delete,
+            commands::ai::translate::translate_history_pin,
             commands::tool_version::check_all_tool_versions,
             commands::tool_version::check_tool_version,
             commands::tool_version::upgrade_tool,
@@ -743,6 +753,7 @@ pub fn run() {
                 commands::launcher::commands::launcher_open_file_location,
                 commands::launcher::commands::launcher_extract_icon,
                 commands::launcher::commands::launcher_load_image_as_icon,
+                commands::launcher::commands::launcher_pick_file,
                 commands::launcher::commands::launcher_resolve_shortcut,
                 commands::launcher::commands::launcher_fetch_url_info,
                 commands::launcher::commands::launcher_download_image,
@@ -757,9 +768,6 @@ pub fn run() {
                 commands::launcher::commands::launcher_register_hotkey,
                 commands::launcher::commands::launcher_import_browser_bookmarks,
                 commands::launcher::commands::launcher_process_dropped_paths,
-                commands::launcher::commands::launcher_export_backup,
-                commands::launcher::commands::launcher_import_backup,
-                commands::launcher::commands::launcher_import_backup_file,
 
                 // ---- 剪贴板管理器（复刻 CopyQ） ----
                 commands::clipboard::clipboard_get_items,
@@ -814,8 +822,6 @@ pub fn run() {
                 commands::state_sync::state_sync_save_config,
                 commands::state_sync::state_sync_export,
                 commands::state_sync::state_sync_import,
-                commands::state_sync::state_sync_s3_push,
-                commands::state_sync::state_sync_s3_pull,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -846,7 +852,18 @@ pub fn run() {
                     exit_log::exit_log("ExitRequested: 进入退出分支，启动清理线程 + 兜底强杀");
                     let app_handle = app.clone();
                     std::thread::spawn(move || {
-                        exit_log::exit_log("cleanup thread: start (kill_on_exit / stop_all_rtsp)");
+                        exit_log::exit_log("cleanup thread: start (picky-sync / kill_on_exit / stop_all_rtsp)");
+                        // 退出前先把 picky 本地变更推送到云端（仅已配置时执行，超时 8 秒兜底，
+                        // 避免卡住退出；未配置/失败都静默跳过，不阻塞退出流程）。
+                        exit_log::exit_log("cleanup thread: picky exit sync...");
+                        let _ = tauri::async_runtime::block_on(async {
+                            let _ = tokio::time::timeout(
+                                std::time::Duration::from_secs(8),
+                                commands::picky::picky_sync_if_enabled(),
+                            )
+                            .await;
+                        });
+                        exit_log::exit_log("cleanup thread: picky exit sync done");
                         // 先关 RTSP（内存 kill ffmpeg/mediamtx 子进程），再关 mihomo。
                         commands::rtsp_server::stop_all_rtsp_servers_inner(
                             &app_handle.state::<commands::rtsp_server::RtspServerState>(),

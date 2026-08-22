@@ -42,7 +42,7 @@ pub struct S3Connection {
 fn default_region() -> String { "us-east-1".to_string() }
 fn default_style() -> String { "auto".to_string() }
 fn default_true() -> bool { true }
-fn default_timeout() -> u64 { 30 }
+fn default_timeout() -> u64 { 120 }
 
 impl S3Connection {
     pub fn is_configured(&self) -> bool {
@@ -125,16 +125,25 @@ impl S3Client {
             uri.path().trim_end_matches('/').to_string()
         };
 
+        // host 是否已携带 bucket 作为子域（虚拟主机式 endpoint，如
+        // `https://<bucket>.s3...`）。只要 host 已含 bucket，路径就绝不再追加
+        // bucket 段，避免生成 `<bucket>.s3.../<bucket>/state.json` 的重复 bucket。
+        // 与 Flutter 端 picky 的寻址规则一致，保证双端读写同一对象。
+        let host_has_bucket = uri
+            .host_str()
+            .unwrap_or("")
+            .starts_with(&format!("{}.", self.config.bucket_name));
+
         let use_virtual_host = match self.config.addressing_style.as_str() {
-            "path" => false,
+            // 用户显式选路径式：但若 host 已含 bucket（虚拟主机式 endpoint），
+            // 仍视为虚拟主机式，避免把 bucket 写进路径段。
+            "path" => host_has_bucket,
             "virtual-host" | "virtualHost" => true,
-            _ => uri.host_str().unwrap_or("").starts_with(&format!("{}.", self.config.bucket_name)),
+            _ => host_has_bucket,
         };
 
         let mut effective = uri.clone();
-        if use_virtual_host
-            && !uri.host_str().unwrap_or("").starts_with(&format!("{}.", self.config.bucket_name))
-        {
+        if use_virtual_host && !host_has_bucket {
             if let Some(host) = uri.host_str() {
                 // 用 set_host 注入 bucket（保留端口），避免手工重建 URL 丢失 port
                 let new_host = format!("{}.{}", self.config.bucket_name, host);
@@ -242,6 +251,10 @@ impl S3Client {
         let uri = normalize_endpoint(&parsed);
         let key = clean_key(&format!("{}{}", self.config.prefix.as_deref().unwrap_or(""), object_key));
         let full_url = self.object_url(&uri, &key);
+        crate::exit_log!(
+            "[s3] 上传 bucket={} key={} url={} 字节={}",
+            self.config.bucket_name, key, full_url, body.len()
+        );
 
         let date = chrono::Utc::now();
         let date_str = date.format("%Y%m%dT%H%M%SZ").to_string();
@@ -269,17 +282,32 @@ impl S3Client {
             }
             req = req.header(k, v);
         }
-        let resp = req.send().await.map_err(|e| format!("S3 上传请求失败: {}", e))?;
+        let started = std::time::Instant::now();
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| format!("S3 上传请求失败 ({} 字节, 超时 {}s): {}", body.len(), self.config.timeout_seconds, e))?;
+        let elapsed_ms = started.elapsed().as_millis();
         let status = resp.status();
         if status.is_success() {
+            crate::exit_log!(
+                "[s3] 上传成功: key={} {} 字节 耗时 {}ms",
+                key,
+                body.len(),
+                elapsed_ms
+            );
             Ok(key)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(format!(
-                "S3 上传失败 ({}): {}",
+            let msg = format!(
+                "S3 上传失败 ({}): {} ({} 字节, 耗时 {}ms)",
                 status.as_u16(),
-                text.chars().take(300).collect::<String>()
-            ))
+                text.chars().take(300).collect::<String>(),
+                body.len(),
+                elapsed_ms
+            );
+            crate::exit_log::exit_log(&msg);
+            Err(msg)
         }
     }
 
@@ -293,6 +321,10 @@ impl S3Client {
         let uri = normalize_endpoint(&parsed);
         let key = clean_key(&format!("{}{}", self.config.prefix.as_deref().unwrap_or(""), object_key));
         let full_url = self.object_url(&uri, &key);
+        crate::exit_log!(
+            "[s3] 下载 bucket={} key={} url={}",
+            self.config.bucket_name, key, full_url
+        );
 
         let date = chrono::Utc::now();
         let date_str = date.format("%Y%m%dT%H%M%SZ").to_string();
@@ -347,6 +379,10 @@ impl S3Client {
         let uri = normalize_endpoint(&parsed);
         let key = clean_key(&format!("{}{}", self.config.prefix.as_deref().unwrap_or(""), object_key));
         let full_url = self.object_url(&uri, &key);
+        crate::exit_log!(
+            "[s3] 上传 bucket={} key={} url={}",
+            self.config.bucket_name, key, full_url
+        );
 
         let body = serde_json::to_vec(data).map_err(|e| format!("序列化失败: {}", e))?;
         let date = chrono::Utc::now();
@@ -399,6 +435,10 @@ impl S3Client {
         let uri = normalize_endpoint(&parsed);
         let key = clean_key(&format!("{}{}", self.config.prefix.as_deref().unwrap_or(""), object_key));
         let full_url = self.object_url(&uri, &key);
+        crate::exit_log!(
+            "[s3] 下载 bucket={} key={} url={}",
+            self.config.bucket_name, key, full_url
+        );
 
         let date = chrono::Utc::now();
         let date_str = date.format("%Y%m%dT%H%M%SZ").to_string();
@@ -514,6 +554,36 @@ mod tests {
         assert_eq!(
             client.object_url(&uri, "state.json"),
             "https://example.com/base/picky-9527/state.json"
+        );
+    }
+
+    /// 回归：path 风格 + endpoint host 已含 bucket 子域（七牛虚拟主机式 endpoint，
+    /// 如 `https://picky-9527.s3...`）时，路径里不再重复拼 bucket 段，
+    /// 避免双端读到不同对象（与 Flutter 端 picky 寻址规则一致）。
+    #[test]
+    fn object_url_path_style_no_duplicate_bucket_when_host_has_bucket() {
+        let mut cfg = S3Connection {
+            bucket_name: "picky-9527".to_string(),
+            ..Default::default()
+        };
+        cfg.addressing_style = "path".to_string();
+        let client = S3Client::new(cfg);
+        let uri = reqwest::Url::parse("https://picky-9527.s3.cn-north-1.qiniucs.com").unwrap();
+        assert_eq!(
+            client.object_url(&uri, "state.json"),
+            "https://picky-9527.s3.cn-north-1.qiniucs.com/state.json"
+        );
+
+        // auto 风格同样去重
+        let cfg = S3Connection {
+            bucket_name: "picky-9527".to_string(),
+            ..Default::default()
+        };
+        let client = S3Client::new(cfg);
+        let uri = reqwest::Url::parse("https://picky-9527.s3.cn-north-1.qiniucs.com").unwrap();
+        assert_eq!(
+            client.object_url(&uri, "state.json"),
+            "https://picky-9527.s3.cn-north-1.qiniucs.com/state.json"
         );
     }
 }
