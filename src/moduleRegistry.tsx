@@ -11,7 +11,6 @@ import {
   Clipboard,
   Settings,
   Network,
-  Database,
   Server,
   Video,
   Image,
@@ -20,6 +19,8 @@ import {
   Braces,
   BookOpen,
   KeyRound,
+  Languages,
+  Bookmark,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -146,6 +147,22 @@ export const MODULES: ModuleDef[] = [
     Component: lazyLoad(() => import("./components/OtpPanel")),
   },
   {
+    id: "translate",
+    label: "翻译",
+    icon: Languages,
+    color: "#10b981",
+    defaultToolbar: true,
+    Component: lazyLoad(() => import("./components/TranslatePanel")),
+  },
+  {
+    id: "picky",
+    label: "Picky",
+    icon: Bookmark,
+    color: "#e11d48",
+    defaultToolbar: false,
+    Component: lazyLoad(() => import("./components/PickyPanel")),
+  },
+  {
     id: "settings",
     label: "设置",
     icon: Settings,
@@ -162,14 +179,6 @@ export const MODULES: ModuleDef[] = [
     color: "#0ea5e9",
     defaultToolbar: false,
     Component: lazyLoad(() => import("./components/PortScanner")),
-  },
-  {
-    id: "backups",
-    label: "环境备份",
-    icon: Database,
-    color: "#8b5cf6",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/EnvBackupManager")),
   },
   {
     id: "httpServer",
@@ -196,12 +205,12 @@ export const MODULES: ModuleDef[] = [
     Component: lazyLoad(() => import("./components/ImageBase64")),
   },
   {
-    id: "pathEnv",
-    label: "PATH 变量",
+    id: "env",
+    label: "环境变量",
     icon: ListOrdered,
     color: "#f59e0b",
     defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/PathEnvManager")),
+    Component: lazyLoad(() => import("./components/EnvManager")),
   },
   {
     id: "logViewer",
