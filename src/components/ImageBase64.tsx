@@ -223,7 +223,7 @@ export default function ImageBase64() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 px-20 py-4 ">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold text-white">图片 与 Base64 互转</h3>

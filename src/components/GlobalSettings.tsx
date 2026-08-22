@@ -39,6 +39,7 @@ import {
   RotateCcw,
   Search,
   X,
+  Languages,
 } from "lucide-react";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -178,6 +179,7 @@ function ModuleConfigRow({
 }
 import type { LauncherSetting } from "./launcher/types";
 import { MODULES } from "../moduleRegistry";
+import DataSyncPanel from "./DataSyncPanel";
 
 interface Config {
   versions_dir?: string;
@@ -250,6 +252,9 @@ export default function GlobalSettings() {
   const [aiDefaultPath, setAiDefaultPath] = useState("");
   const [savingAi, setSavingAi] = useState(false);
   const [aiSaved, setAiSaved] = useState(false);
+  // 划词翻译默认模型（provider + model，持久化到 translate_config.json）
+  const [translateProvId, setTranslateProvId] = useState("");
+  const [translateModelId, setTranslateModelId] = useState("");
   const [skillProgress, setSkillProgress] =
     useState<SkillMigrateProgress | null>(null);
   const [skillMigrated, setSkillMigrated] = useState(false);
@@ -344,9 +349,24 @@ export default function GlobalSettings() {
 
   const fetchAiConfig = async () => {
     try {
-      const cfg = await invoke<AiConfig>("get_ai_config");
+      const [cfg, tCfg] = await Promise.all([
+        invoke<AiConfig>("get_ai_config"),
+        invoke<{ providerId: string | null; modelId: string | null; targetLang: string | null }>(
+          "get_translate_config",
+        ),
+      ]);
       setAiConfig(cfg);
       setAiDefaultPath(cfg.default_project_path || "");
+      // 划词翻译默认模型：优先使用已保存的，否则默认第一个可用 provider + 其模型
+      const defProv = tCfg.providerId && cfg.providers.some((p) => p.id === tCfg.providerId)
+        ? tCfg.providerId!
+        : (cfg.providers.find((p) => !p.openai_url)?.id || cfg.providers[0]?.id || "");
+      setTranslateProvId(defProv);
+      const selP = cfg.providers.find((p) => p.id === defProv);
+      const defModel = tCfg.modelId && selP?.models.some((m) => m.id === tCfg.modelId)
+        ? tCfg.modelId!
+        : (selP?.models[0]?.id || "");
+      setTranslateModelId(defModel);
     } catch (e) {
       console.error(e);
     }
@@ -391,6 +411,31 @@ export default function GlobalSettings() {
     }
   };
 
+  // 保存划词翻译默认模型
+  const saveTranslateConfig = async (provId: string, modelId: string) => {
+    try {
+      await invoke("save_translate_config", {
+        config: { providerId: provId, modelId: modelId, targetLang: null },
+      });
+    } catch (e: any) {
+      console.error("保存翻译默认模型失败:", e);
+    }
+  };
+
+  // 切换翻译默认供应商，联动模型
+  const changeTranslateProvider = (pid: string) => {
+    setTranslateProvId(pid);
+    const p = aiConfig?.providers.find((x) => x.id === pid);
+    const m = p?.models[0]?.id || "";
+    setTranslateModelId(m);
+    saveTranslateConfig(pid, m);
+  };
+
+  const changeTranslateModel = (mid: string) => {
+    setTranslateModelId(mid);
+    saveTranslateConfig(translateProvId, mid);
+  };
+
   const fetchAutostart = async () => {
     try {
       setAutostartOn(await isAutostartEnabled());
@@ -422,6 +467,7 @@ export default function GlobalSettings() {
   // 启动器配置 (全局唤起快捷键 + 视图设置)
   const [launcherCfg, setLauncherCfg] = useState<LauncherSetting>({
     moduleHotkeys: { launcher: "Alt+Space" },
+    selectionTranslateHotkey: "F6",
     itemIconSize: 32,
     itemColumnNumber: 0,
     cardDensity: "cozy",
@@ -435,6 +481,8 @@ export default function GlobalSettings() {
   });
   // 录制目标：null=未录制；否则为某个顶级模块的 moduleId（含「启动」= "launcher"）
   const [recordingField, setRecordingField] = useState<string | null>(null);
+  // 是否正在录制「划词翻译」热键（独立字段，与模块热键分离）
+  const recordingSelTrans = recordingField === "selection-translate";
   // 始终持有最新 launcherCfg，供录制监听闭包（仅依赖 recordingField）安全读取
   const launcherCfgRef = useRef<LauncherSetting>(launcherCfg);
   useEffect(() => {
@@ -754,10 +802,15 @@ export default function GlobalSettings() {
       }
       const hotkeyStr = parts.join("+");
 
-      // 统一写入对应模块的快捷键（所有模块平等，含「启动」= "launcher"）
-      const cur = launcherCfgRef.current.moduleHotkeys || {};
-      const nextMap = { ...cur, [target]: hotkeyStr };
-      handleSaveLauncherConfig({ moduleHotkeys: nextMap });
+      // 统一写入对应模块的快捷键（所有模块平等，含「启动」= "launcher"）；
+      // 「划词翻译」热键是独立字段，与翻译模块热键分离。
+      if (target === "selection-translate") {
+        handleSaveLauncherConfig({ selectionTranslateHotkey: hotkeyStr });
+      } else {
+        const cur = launcherCfgRef.current.moduleHotkeys || {};
+        const nextMap = { ...cur, [target]: hotkeyStr };
+        handleSaveLauncherConfig({ moduleHotkeys: nextMap });
+      }
       setRecordingField(null);
     };
 
@@ -1726,6 +1779,47 @@ export default function GlobalSettings() {
               </div>
             </SortableContext>
           </DndContext>
+          {/* 独立「翻译」热键：与翻译模块热键分离（模块热键=唤起面板看历史） */}
+          <div className="mt-2 flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-white/5 bg-white/[0.02]">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                <Languages className="w-3.5 h-3.5 text-emerald-400" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-medium text-slate-200">翻译热键</p>
+                <p className="text-[9px] text-slate-500 truncate">
+                  在任意程序选中文本后按下，直接悬浮翻译；与「翻译」模块热键（唤起面板看历史）相互独立
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {launcherCfg.selectionTranslateHotkey && !recordingSelTrans && (
+                <button
+                  onClick={() =>
+                    handleSaveLauncherConfig({ selectionTranslateHotkey: "" })
+                  }
+                  className="p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 cursor-pointer"
+                  title="清除翻译热键"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+              <button
+                onClick={() => setRecordingField(recordingSelTrans ? null : "selection-translate")}
+                className={`min-w-[86px] px-2.5 py-1 rounded-md border text-[11px] text-center transition cursor-pointer ${
+                  recordingSelTrans
+                    ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
+                    : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white"
+                }`}
+              >
+                {recordingSelTrans
+                  ? "请按键…"
+                  : launcherCfg.selectionTranslateHotkey
+                    ? launcherCfg.selectionTranslateHotkey
+                    : "点击录制"}
+              </button>
+            </div>
+          </div>
           <div className="flex items-center justify-between">
             <button
               onClick={handleResetModuleOrder}
@@ -1737,6 +1831,9 @@ export default function GlobalSettings() {
           </div>
         </div>
       </div>
+
+      {/* 数据备份与同步（统一快照，原「数据同步」模块迁入设置） */}
+      <DataSyncPanel />
 
       {/* 启动器配置 (Launcher) */}
       <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-5">
@@ -1826,6 +1923,50 @@ export default function GlobalSettings() {
           <p className="text-[9px] text-slate-500">
             启动 AI 工具时的默认工作目录。
           </p>
+        </div>
+
+        {/* 翻译默认模型 */}
+        <div className="space-y-2 pt-3 border-t border-white/5">
+          <div>
+            <label className="text-[10px] text-slate-300 uppercase font-semibold flex items-center gap-1">
+              <Languages className="w-3 h-3 text-emerald-400" />
+              翻译默认模型
+            </label>
+            <p className="text-[9px] text-slate-600 mt-0.5">
+              全局热键翻译使用的模型（在任意程序选中文本后按翻译热键时生效）。
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <select
+              value={translateProvId}
+              onChange={(e) => changeTranslateProvider(e.target.value)}
+              disabled={!aiConfig || aiConfig.providers.length === 0}
+              className="glass-input px-3 py-2 text-xs disabled:opacity-50"
+            >
+              {(!aiConfig || aiConfig.providers.length === 0) && (
+                <option value="">（无已配置供应商）</option>
+              )}
+              {aiConfig?.providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={translateModelId}
+              onChange={(e) => changeTranslateModel(e.target.value)}
+              disabled={!aiConfig || !translateProvId}
+              className="glass-input px-3 py-2 text-xs disabled:opacity-50"
+            >
+              {(aiConfig?.providers.find((p) => p.id === translateProvId)?.models || []).map(
+                (m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name || m.id}
+                  </option>
+                ),
+              )}
+            </select>
+          </div>
         </div>
 
         {/* 技能市场配置 */}

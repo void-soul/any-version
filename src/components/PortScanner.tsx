@@ -84,7 +84,7 @@ export default function PortScanner() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 px-40 py-4">
       {/* 端口查询 */}
       <div className="glass-panel rounded-2xl p-5 border border-white/5 space-y-4">
         <div className="flex items-center gap-2 pb-2 border-b border-white/5">
