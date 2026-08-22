@@ -15,6 +15,7 @@ pub mod cache;
 pub mod tools;
 pub mod tool_paths;
 pub mod collab;
+pub mod translate;
 
 pub use models::*;
 pub use config::*;
@@ -28,3 +29,4 @@ pub use sessions::*;
 pub use cache::*;
 pub use tools::*;
 pub use tool_paths::*;
+pub use translate::*;

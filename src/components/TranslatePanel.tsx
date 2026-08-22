@@ -1,0 +1,361 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import {
+  Languages,
+  ArrowRightLeft,
+  Copy,
+  Check,
+  Trash2,
+  Loader2,
+  Pin,
+  X,
+} from "lucide-react";
+
+// ─── 类型 ───
+
+interface AiProvider {
+  id: string;
+  name: string;
+  category: string;
+  api_key: string;
+  openai_url: string;
+  anthropic_url: string;
+  google_url: string;
+  models: { id: string; name: string }[];
+  active_model_id: string | null;
+}
+
+interface AiConfig {
+  providers: AiProvider[];
+  proxy_port: number;
+  default_project_path: string;
+  skills_dir: string;
+}
+
+interface TranslateConfig {
+  providerId: string | null;
+  modelId: string | null;
+  targetLang: string | null;
+}
+
+interface HistoryEntry {
+  source: string;
+  result: string;
+  target: string;
+  provider: string;
+  model: string;
+  ts: number;
+}
+
+// ─── API ───
+
+function getTranslateConfig(): Promise<TranslateConfig> {
+  return invoke("get_translate_config");
+}
+function saveTranslateConfig(cfg: TranslateConfig): Promise<void> {
+  return invoke("save_translate_config", { config: cfg });
+}
+function doTranslate(text: string, providerId: string | null, modelId: string | null, target: string): Promise<string> {
+  return invoke("translate_text", {
+    text,
+    providerId,
+    modelId,
+    targetLang: target,
+  });
+}
+
+// ─── 面板 ───
+
+export default function TranslatePanel() {
+  const [providers, setProviders] = useState<AiProvider[]>([]);
+  const [source, setSource] = useState("");
+  const [target, setTarget] = useState("中文");
+  const [result, setResult] = useState("");
+  const [translating, setTranslating] = useState(false);
+  const [error, setError] = useState("");
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [copied, setCopied] = useState(false);
+
+  // 划词翻译独立模型选择（默认继承 AI 当前选中）
+  const [providerId, setProviderId] = useState<string>("");
+  const [modelId, setModelId] = useState<string>("");
+  const [modelInitialized, setModelInitialized] = useState(false);
+
+  const textRef = useRef<HTMLTextAreaElement>(null);
+
+  // 加载 AI 配置 + 划词翻译已保存的选择
+  useEffect(() => {
+    (async () => {
+      try {
+        const [aiCfg, tCfg] = await Promise.all([
+          invoke<AiConfig>("get_ai_config"),
+          getTranslateConfig(),
+        ]);
+        setProviders(aiCfg.providers);
+        // 计算默认 provider：保存的 > 第一个可用
+        let defProvider = "";
+        if (tCfg.providerId && aiCfg.providers.some((p) => p.id === tCfg.providerId)) {
+          defProvider = tCfg.providerId!;
+        } else {
+          const first = aiCfg.providers.find((p) => !p.openai_url) || aiCfg.providers[0];
+          defProvider = first?.id || "";
+        }
+        setProviderId(defProvider);
+        // 计算默认模型：保存的 > 该 provider 的 active_model_id > 第一个模型
+        const selProvider = aiCfg.providers.find((p) => p.id === defProvider);
+        let defModel = "";
+        if (tCfg.modelId && selProvider?.models.some((m) => m.id === tCfg.modelId)) {
+          defModel = tCfg.modelId!;
+        } else if (selProvider?.active_model_id && selProvider.models.some((m) => m.id === selProvider.active_model_id)) {
+          defModel = selProvider.active_model_id!;
+        } else {
+          defModel = selProvider?.models[0]?.id || "";
+        }
+        setModelId(defModel);
+        // 目标语言（划词翻译默认值，持久化到划词翻译配置）
+        if (tCfg.targetLang && tCfg.targetLang.trim()) {
+          setTarget(tCfg.targetLang);
+        }
+        setModelInitialized(true);
+      } catch (e) {
+        console.error("加载翻译配置失败:", e);
+        setModelInitialized(true);
+      }
+    })();
+  }, []);
+
+  // 切换供应商时联动模型
+  const changeProvider = (pid: string) => {
+    setProviderId(pid);
+    const p = providers.find((x) => x.id === pid);
+    const m =
+      (p?.active_model_id && p.models.some((mm) => mm.id === p.active_model_id) ? p.active_model_id : p?.models[0]?.id) ||
+      "";
+    setModelId(m);
+    saveTranslateConfig({ providerId: pid, modelId: m || null, targetLang: target });
+  };
+
+  const changeModel = (mid: string) => {
+    setModelId(mid);
+    saveTranslateConfig({ providerId: providerId, modelId: mid, targetLang: target });
+  };
+
+  // 目标语言：既用于本面板翻译，也作为划词翻译默认值持久化
+  const changeTarget = (t: string) => {
+    setTarget(t);
+    saveTranslateConfig({ providerId: providerId, modelId: modelId, targetLang: t });
+  };
+
+  const selectedProvider = providers.find((p) => p.id === providerId);
+
+  const translate = async () => {
+    const text = source.trim();
+    if (!text) return;
+    setTranslating(true);
+    setError("");
+    setResult("");
+    setCopied(false);
+    try {
+      const res = await doTranslate(text, providerId || null, modelId || null, target);
+      setResult(res);
+      const entry: HistoryEntry = {
+        source: text,
+        result: res,
+        target,
+        provider: selectedProvider?.name || providerId,
+        model: modelId,
+        ts: Date.now(),
+      };
+      setHistory((h) => [entry, ...h].slice(0, 100));
+    } catch (e: any) {
+      setError(String(e));
+    } finally {
+      setTranslating(false);
+    }
+  };
+
+  const copyResult = async () => {
+    if (!result) return;
+    await navigator.clipboard.writeText(result);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const clearHistory = () => setHistory([]);
+
+  const isConfigured = providers.length > 0 && selectedProvider;
+
+  return (
+    <div className="w-full px-6 py-4 max-w-[1100px] mx-auto space-y-5 select-none text-slate-200">
+      {/* 头部 */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-white/10 pb-4">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-[var(--module-accent)]/15 border border-[var(--module-accent)]/30 flex items-center justify-center">
+            <Languages className="w-4 h-4 text-[var(--module-accent)]" />
+          </div>
+          <div>
+            <h2 className="text-sm font-bold text-white tracking-wide">翻译</h2>
+            <p className="text-[10px] text-slate-500">
+              使用 AI 模块已配置的模型供应商，选中文本后按划词热键或手动输入翻译
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* 模型选择 */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label className="text-[10px] text-slate-400 mb-1 block">翻译供应商</label>
+          <select
+            value={providerId}
+            onChange={(e) => changeProvider(e.target.value)}
+            disabled={!modelInitialized || providers.length === 0}
+            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60 disabled:opacity-50"
+          >
+            {providers.length === 0 && <option value="">（无已配置供应商，请先在 AI 模块配置）</option>}
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="text-[10px] text-slate-400 mb-1 block">翻译模型</label>
+          <select
+            value={modelId}
+            onChange={(e) => changeModel(e.target.value)}
+            disabled={!modelInitialized || !selectedProvider}
+            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60 disabled:opacity-50"
+          >
+            {(selectedProvider?.models || []).map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name || m.id}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* 翻译输入 / 结果 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* 原文 */}
+        <div className="bg-white/[0.03] border border-white/10 rounded-xl p-3 flex flex-col">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-semibold text-slate-400">原文</span>
+            <button
+              onClick={() => setSource("")}
+              disabled={!source}
+              className="text-[10px] text-slate-500 hover:text-slate-300 cursor-pointer disabled:opacity-40 flex items-center gap-1"
+            >
+              <X className="w-3 h-3" /> 清空
+            </button>
+          </div>
+          <textarea
+            ref={textRef}
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            placeholder="输入或粘贴要翻译的文本，也可在任意程序选中文字后按划词热键"
+            className="w-full flex-1 min-h-[180px] bg-transparent text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none resize-none leading-relaxed"
+            onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key === "Enter") translate();
+            }}
+          />
+        </div>
+
+        {/* 结果 */}
+        <div className="bg-white/[0.03] border border-white/10 rounded-xl p-3 flex flex-col">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-semibold text-slate-400">译文</span>
+            <div className="flex items-center gap-1.5">
+              <select
+                value={target}
+                onChange={(e) => changeTarget(e.target.value)}
+                className="bg-white/5 border border-white/10 rounded-md px-2 py-0.5 text-[10px] text-slate-300 focus:outline-none"
+              >
+                {["中文", "English", "日本語", "한국어", "Français", "Deutsch", "Русский", "Español"].map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+              {result && (
+                <button
+                  onClick={copyResult}
+                  className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-white/10 cursor-pointer"
+                  title="复制译文"
+                >
+                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                </button>
+              )}
+            </div>
+          </div>
+          {translating ? (
+            <div className="flex-1 flex items-center justify-center gap-2 text-slate-400 text-xs">
+              <Loader2 className="w-4 h-4 animate-spin text-[var(--module-accent)]" />
+              翻译中…
+            </div>
+          ) : error ? (
+            <div className="flex-1 text-xs text-red-400 leading-relaxed break-words">{error}</div>
+          ) : result ? (
+            <div className="flex-1 text-xs text-slate-100 leading-relaxed whitespace-pre-wrap break-words">{result}</div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-slate-600 text-xs">译文将显示在这里</div>
+          )}
+        </div>
+      </div>
+
+      {/* 翻译按钮 */}
+      <div className="flex items-center justify-end gap-2">
+        <span className="text-[10px] text-slate-500">Ctrl+Enter 快速翻译</span>
+        <button
+          onClick={translate}
+          disabled={translating || !isConfigured || !source.trim()}
+          className="px-5 py-2 rounded-xl text-xs font-semibold bg-[var(--module-accent)] text-white shadow-lg shadow-[var(--module-accent-ring)] hover:opacity-85 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+        >
+          <ArrowRightLeft className="w-3.5 h-3.5" />
+          {translating ? "翻译中…" : "翻译"}
+        </button>
+      </div>
+
+      {/* 历史 */}
+      {history.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold text-slate-400">翻译历史</span>
+            <button
+              onClick={clearHistory}
+              className="text-[10px] text-slate-500 hover:text-red-400 cursor-pointer flex items-center gap-1"
+            >
+              <Trash2 className="w-3 h-3" /> 清空
+            </button>
+          </div>
+          <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+            {history.map((h, i) => (
+              <div
+                key={i}
+                className="bg-white/[0.02] border border-white/5 rounded-lg p-3 space-y-1.5 hover:border-white/15 transition"
+              >
+                <div className="flex items-center justify-between text-[9px] text-slate-500">
+                  <span>
+                    {h.provider} · {h.model} → {h.target}
+                  </span>
+                  <span>{new Date(h.ts).toLocaleTimeString()}</span>
+                </div>
+                <p className="text-[10px] text-slate-400 line-clamp-2">{h.source}</p>
+                <p className="text-xs text-slate-100 leading-relaxed">{h.result}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!isConfigured && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-[11px] text-amber-300 flex items-center gap-2">
+          <Pin className="w-3.5 h-3.5" />
+          尚未在 AI 模块配置模型供应商（需有 API Key 且配置 OpenAI 兼容端点）。配置后即可使用翻译。
+        </div>
+      )}
+    </div>
+  );
+}
