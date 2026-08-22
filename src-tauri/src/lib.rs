@@ -314,7 +314,9 @@ pub fn run() {
                     }
                 }
 
-                // 刷新托盘菜单
+                // 刷新托盘菜单：先使状态缓存失效，确保 rebuild 重新检测真实状态，
+                // 避免命中 TTL 内的旧快照（如"跳过自启"前首屏的 stopped）导致托盘状态不更新。
+                crate::commands::service::invalidate_service_status_cache();
                 let _ = crate::tray::rebuild_tray_menu(&h);
             });
 
@@ -324,9 +326,16 @@ pub fn run() {
             // 剪贴板监控（启动器热键注册之后，便于复用其热键线程记录前台窗口）
             let _ = commands::clipboard::init_clipboard_state(app.handle());
             if let Ok(setting) = commands::launcher::db::get_settings() {
+                let mut hotkeys = setting.module_hotkeys.clone();
+                if !setting.selection_translate_hotkey.trim().is_empty() {
+                    hotkeys.insert(
+                        "selection-translate".to_string(),
+                        setting.selection_translate_hotkey.clone(),
+                    );
+                }
                 let _ = commands::launcher::windows::register_global_hotkeys(
                     app.handle().clone(),
-                    &setting.module_hotkeys,
+                    &hotkeys,
                 );
             }
 
@@ -523,6 +532,13 @@ pub fn run() {
             commands::ai_registry::reload_ai_registry,
             commands::ai_registry::update_tool_profile,
             commands::ai::tool_paths::get_tool_path_override_file,
+            commands::ai::translate::translate_text,
+            commands::ai::translate::get_translate_config,
+            commands::ai::translate::save_translate_config,
+            commands::ai::translate::trigger_selection_translate,
+            commands::ai::translate::hide_translate_popup,
+            commands::ai::translate::show_translate_result,
+            commands::ai::translate::get_last_translate_result,
             commands::tool_version::check_all_tool_versions,
             commands::tool_version::check_tool_version,
             commands::tool_version::upgrade_tool,
@@ -726,8 +742,11 @@ pub fn run() {
                 commands::launcher::commands::launcher_execute_system_command,
                 commands::launcher::commands::launcher_open_file_location,
                 commands::launcher::commands::launcher_extract_icon,
+                commands::launcher::commands::launcher_load_image_as_icon,
                 commands::launcher::commands::launcher_resolve_shortcut,
                 commands::launcher::commands::launcher_fetch_url_info,
+                commands::launcher::commands::launcher_download_image,
+                commands::launcher::commands::launcher_move_subcategories_to_classification,
                 commands::launcher::commands::launcher_check_items,
                 commands::launcher::commands::launcher_stop_check,
                 commands::launcher::commands::launcher_scan_start_menu,
@@ -773,6 +792,30 @@ pub fn run() {
                 commands::otp::otp_list_brands,
                 commands::otp::otp_match_brand,
                 commands::otp::otp_scan_qr,
+
+                // ---- Picky 收藏/归档（与 Flutter 端同数据接口 + S3 同步） ----
+                commands::picky::picky_get_state,
+                commands::picky::picky_add_bookmark,
+                commands::picky::picky_update_bookmark,
+                commands::picky::picky_set_refined,
+                commands::picky::picky_delete_bookmark,
+                commands::picky::picky_add_comment,
+                commands::picky::picky_update_comment,
+                commands::picky::picky_delete_comment,
+                commands::picky::picky_add_tag,
+                commands::picky::picky_delete_tag,
+                commands::picky::picky_toggle_bookmark_tag,
+                commands::picky::picky_get_sync_config,
+                commands::picky::picky_save_sync_config,
+                commands::picky::picky_sync_now,
+
+                // ---- any-version 统一数据快照备份与 S3 同步（独立于 Picky） ----
+                commands::state_sync::state_sync_get_config,
+                commands::state_sync::state_sync_save_config,
+                commands::state_sync::state_sync_export,
+                commands::state_sync::state_sync_import,
+                commands::state_sync::state_sync_s3_push,
+                commands::state_sync::state_sync_s3_pull,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

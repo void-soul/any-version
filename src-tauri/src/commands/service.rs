@@ -713,6 +713,22 @@ pub(crate) fn service_status_for_def(def: &ProjectDef) -> ServiceStatus {
     let runtime = resolve_service_runtime(def, None).ok();
     let install_root = runtime.as_ref().and_then(|r| r.install_root.clone());
     let all_processes = service_processes(def);
+    // 诊断：打印判定输入，定位"服务在跑但判定 stopped"的根因
+    crate::exit_log!(
+        "[svc-status] id={} name={} install_root={:?} 进程数={}",
+        def.id,
+        def.display_name,
+        install_root.as_ref().map(|p| p.to_string_lossy().to_string()),
+        all_processes.len()
+    );
+    for p in &all_processes {
+        crate::exit_log!(
+            "[svc-status]   进程 pid={} name={} exe_path={:?}",
+            p.pid,
+            p.name,
+            p.exe_path
+        );
+    }
 
     // 只有路径属于本 Any Version 实例的 install_root，才是我们真正的服务进程
     let processes: Vec<ProcessInfo> = if let Some(ref root) = install_root {
@@ -776,6 +792,15 @@ pub(crate) fn service_status_for_def(def: &ProjectDef) -> ServiceStatus {
         }
     }
 
+    crate::exit_log!(
+        "[svc-status] => id={} running={} status={} pid={:?} 注册系统服务={:?} 运行中系统服务={:?}",
+        def.id,
+        running,
+        status,
+        pid,
+        find_registered_system_service(def),
+        find_running_system_service(def)
+    );
     ServiceStatus {
         running,
         port,
