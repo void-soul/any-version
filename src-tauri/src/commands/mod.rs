@@ -25,5 +25,9 @@ pub mod node_manager;
 pub mod launcher;
 pub mod clipboard;
 pub mod otp;
+pub mod picky;
+pub mod secrets;
+pub mod s3_common;
+pub mod state_sync;
 pub mod autostart_admin;
 
