@@ -43,6 +43,142 @@ pub fn get_last_translate_result() -> Option<serde_json::Value> {
     get_last_translate_result_value()
 }
 
+// ─── 翻译历史（跨窗口共享 + 持久化） ───
+// 所有翻译（面板手动 / 划词热键 / 悬浮窗手动）都经过 translate_text，
+// 因此在这里统一记录历史，翻译模块面板与悬浮窗共享同一份历史。
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslateHistoryEntry {
+    #[serde(default)]
+    pub id: String,
+    pub source: String,
+    pub result: String,
+    pub target: String,
+    pub provider: String,
+    pub model: String,
+    pub ts: u64,
+    #[serde(default)]
+    pub pinned: bool,
+}
+
+static HISTORY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static HISTORY_ID_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn history_path() -> std::path::PathBuf {
+    crate::commands::config::get_data_dir().join("translate_history.json")
+}
+
+fn new_entry_id(ts: u64) -> String {
+    let n = HISTORY_ID_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{}-{}", ts, n)
+}
+
+fn persist_history(list: &[TranslateHistoryEntry]) {
+    if let Some(dir) = history_path().parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(data) = serde_json::to_string_pretty(list) {
+        let _ = std::fs::write(history_path(), data);
+    }
+}
+
+fn load_history() -> Vec<TranslateHistoryEntry> {
+    let path = history_path();
+    if path.exists() {
+        if let Ok(data) = std::fs::read_to_string(&path) {
+            if let Ok(mut list) = serde_json::from_str::<Vec<TranslateHistoryEntry>>(&data) {
+                // 兼容旧数据（无 id 字段）：补齐唯一 id 并回写
+                let mut changed = false;
+                for e in list.iter_mut() {
+                    if e.id.is_empty() {
+                        e.id = new_entry_id(e.ts);
+                        changed = true;
+                    }
+                }
+                if changed {
+                    persist_history(&list);
+                }
+                return list;
+            }
+        }
+    }
+    Vec::new()
+}
+
+fn sort_history(list: &mut [TranslateHistoryEntry]) {
+    // 置顶优先，其次按时间倒序
+    list.sort_by(|a, b| b.pinned.cmp(&a.pinned).then_with(|| b.ts.cmp(&a.ts)));
+}
+
+const HISTORY_CAP: usize = 100;
+
+fn add_history_entry(entry: TranslateHistoryEntry) {
+    let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut list = load_history();
+    list.insert(0, entry);
+    sort_history(&mut list);
+    list.truncate(HISTORY_CAP);
+    persist_history(&list);
+}
+
+/// 读取翻译历史（面板与悬浮窗共用），置顶优先、按时间倒序。
+#[tauri::command]
+pub fn translate_history_list() -> Vec<TranslateHistoryEntry> {
+    let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut list = load_history();
+    sort_history(&mut list);
+    list
+}
+
+/// 删除一条翻译历史。
+#[tauri::command]
+pub fn translate_history_delete(id: String) -> Result<(), String> {
+    let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut list = load_history();
+    let before = list.len();
+    list.retain(|e| e.id != id);
+    if list.len() == before {
+        return Err(format!("未找到历史记录: {}", id));
+    }
+    persist_history(&list);
+    Ok(())
+}
+
+/// 置顶/取消置顶一条翻译历史（置顶条目始终排在最前）。
+#[tauri::command]
+pub fn translate_history_pin(id: String) -> Result<(), String> {
+    let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut list = load_history();
+    let mut found = false;
+    for e in list.iter_mut() {
+        if e.id == id {
+            e.pinned = !e.pinned;
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        return Err(format!("未找到历史记录: {}", id));
+    }
+    sort_history(&mut list);
+    persist_history(&list);
+    Ok(())
+}
+
+/// 清空翻译历史（置顶条目保留，与剪贴板模块行为一致）。
+#[tauri::command]
+pub fn translate_history_clear() {
+    let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut list = load_history();
+    list.retain(|e| e.pinned);
+    if list.is_empty() {
+        let _ = std::fs::remove_file(history_path());
+    } else {
+        persist_history(&list);
+    }
+}
+
 // ─── 读写划词翻译配置 ───
 
 fn translate_config_path() -> std::path::PathBuf {
@@ -120,8 +256,10 @@ fn resolve_translation_target(
 
 /// 翻译文本。`target_lang` 为目标语言描述（如 "中文"、"English"、"日文"）；
 /// 为空则让模型自动判断源语言并翻译成中文。
+/// 成功后自动写入翻译历史（面板 / 划词悬浮窗统一入口）。
 #[tauri::command]
 pub async fn translate_text(
+    app: tauri::AppHandle,
     text: String,
     provider_id: Option<String>,
     model_id: Option<String>,
@@ -222,6 +360,24 @@ pub async fn translate_text(
     if content.is_empty() {
         return Err("翻译结果为空".to_string());
     }
+
+    // 记录翻译历史（面板 / 悬浮窗共用），并通知前端刷新
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    add_history_entry(TranslateHistoryEntry {
+        id: new_entry_id(ts),
+        source: text,
+        result: content.clone(),
+        target: target.clone(),
+        provider: provider.name,
+        model: model.clone(),
+        ts,
+        pinned: false,
+    });
+    let _ = app.emit("translate-history-changed", ());
+
     Ok(content)
 }
 
@@ -373,13 +529,10 @@ pub async fn trigger_selection_translate(
 
     // 2. 立即创建/显示悬浮窗（先显示，翻译期间前端展示 loading）
     crate::exit_log!("[划词翻译] 创建/复用悬浮窗");
-    let win = match ensure_translate_popup(&app) {
-        Ok(w) => w,
-        Err(e) => {
-            crate::exit_log!("[划词翻译] 创建悬浮窗失败: {}", e);
-            return Err(e);
-        }
-    };
+    if let Err(e) = ensure_translate_popup(&app) {
+        crate::exit_log!("[划词翻译] 创建悬浮窗失败: {}", e);
+        return Err(e);
+    }
 
     // 3. 目标语言（显式传入 > 划词翻译配置 > 默认中文）
     let target = target_lang
@@ -404,12 +557,14 @@ pub async fn trigger_selection_translate(
             let webview: &tauri::Webview<tauri::Wry> = w.as_ref();
             let _ = webview.set_focus();
             let _ = w.emit("translate-result", show_payload.clone());
+            // 双通道推送：window 级 + app 级，避免窗口级事件在悬浮窗复用等时序下丢失
+            let _ = app_for_main.emit("translate-result", show_payload.clone());
         }
     });
     crate::exit_log!("[划词翻译] 悬浮窗已显示（loading），开始翻译，目标语言: {}", target);
 
     // 4. 翻译；无论成败都回推结果到悬浮窗（失败也展示错误信息）
-    let translated = match translate_text(text.clone(), None, None, Some(target.clone())).await {
+    let translated = match translate_text(app.clone(), text.clone(), None, None, Some(target.clone())).await {
         Ok(t) => {
             crate::exit_log!("[划词翻译] 翻译成功: {}", t.chars().take(30).collect::<String>());
             t
@@ -425,6 +580,7 @@ pub async fn trigger_selection_translate(
                 if let Some(w) = app2.get_webview_window(POPUP_LABEL) {
                     let _ = w.emit("translate-result", err_payload.clone());
                 }
+                let _ = app2.emit("translate-result", err_payload.clone());
             });
             return Err(e);
         }
@@ -438,6 +594,7 @@ pub async fn trigger_selection_translate(
         if let Some(w) = app3.get_webview_window(POPUP_LABEL) {
             let _ = w.emit("translate-result", ok_payload.clone());
         }
+        let _ = app3.emit("translate-result", ok_payload.clone());
     });
     crate::exit_log!("[划词翻译] 结果已推送");
     Ok(())
@@ -467,6 +624,7 @@ pub async fn show_translate_result(app: tauri::AppHandle, source: String, result
             let webview: &tauri::Webview<tauri::Wry> = w.as_ref();
             let _ = webview.set_focus();
             let _ = w.emit("translate-result", payload.clone());
+            let _ = app2.emit("translate-result", payload.clone());
         }
     });
     Ok(())

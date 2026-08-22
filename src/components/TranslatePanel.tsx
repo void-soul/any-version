@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   Languages,
   ArrowRightLeft,
@@ -39,12 +40,14 @@ interface TranslateConfig {
 }
 
 interface HistoryEntry {
+  id: string;
   source: string;
   result: string;
   target: string;
   provider: string;
   model: string;
   ts: number;
+  pinned?: boolean;
 }
 
 // ─── API ───
@@ -75,6 +78,8 @@ export default function TranslatePanel() {
   const [error, setError] = useState("");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [copied, setCopied] = useState(false);
+  // 历史条目内复制反馈："id:source" / "id:result"
+  const [copiedEntry, setCopiedEntry] = useState<string | null>(null);
 
   // 划词翻译独立模型选择（默认继承 AI 当前选中）
   const [providerId, setProviderId] = useState<string>("");
@@ -83,7 +88,7 @@ export default function TranslatePanel() {
 
   const textRef = useRef<HTMLTextAreaElement>(null);
 
-  // 加载 AI 配置 + 划词翻译已保存的选择
+  // 加载 AI 配置 + 划词翻译已保存的选择 + 翻译历史（含悬浮窗产生的记录）
   useEffect(() => {
     (async () => {
       try {
@@ -122,6 +127,18 @@ export default function TranslatePanel() {
         setModelInitialized(true);
       }
     })();
+    // 翻译历史：载入持久化的历史（面板与划词悬浮窗共享），并监听后端变更实时刷新
+    invoke<HistoryEntry[]>("translate_history_list")
+      .then((list) => setHistory(list))
+      .catch(() => {});
+    const un = listen("translate-history-changed", () => {
+      invoke<HistoryEntry[]>("translate_history_list")
+        .then((list) => setHistory(list))
+        .catch(() => {});
+    });
+    return () => {
+      un.then((f) => f());
+    };
   }, []);
 
   // 切换供应商时联动模型
@@ -158,15 +175,10 @@ export default function TranslatePanel() {
     try {
       const res = await doTranslate(text, providerId || null, modelId || null, target);
       setResult(res);
-      const entry: HistoryEntry = {
-        source: text,
-        result: res,
-        target,
-        provider: selectedProvider?.name || providerId,
-        model: modelId,
-        ts: Date.now(),
-      };
-      setHistory((h) => [entry, ...h].slice(0, 100));
+      // 历史已由后端 translate_text 统一记录（含悬浮窗），这里刷新列表即可
+      invoke<HistoryEntry[]>("translate_history_list")
+        .then((list) => setHistory(list))
+        .catch(() => {});
     } catch (e: any) {
       setError(String(e));
     } finally {
@@ -181,7 +193,36 @@ export default function TranslatePanel() {
     setTimeout(() => setCopied(false), 1500);
   };
 
-  const clearHistory = () => setHistory([]);
+  const refreshHistory = () =>
+    invoke<HistoryEntry[]>("translate_history_list")
+      .then((list) => setHistory(list))
+      .catch(() => {});
+
+  const clearHistory = () => {
+    // 置顶条目保留，清空后刷新列表显示剩余的置顶条目
+    invoke("translate_history_clear")
+      .then(refreshHistory)
+      .catch(() => {});
+  };
+
+  // 复制历史条目的原文/译文
+  const copyEntry = async (h: HistoryEntry, kind: "source" | "result") => {
+    await navigator.clipboard.writeText(kind === "source" ? h.source : h.result);
+    setCopiedEntry(h.id + ":" + kind);
+    setTimeout(() => setCopiedEntry(null), 1200);
+  };
+
+  // 删除 / 置顶一条历史
+  const deleteEntry = (id: string) => {
+    invoke("translate_history_delete", { id })
+      .then(refreshHistory)
+      .catch((e) => console.error("删除翻译历史失败:", e));
+  };
+  const togglePin = (id: string) => {
+    invoke("translate_history_pin", { id })
+      .then(refreshHistory)
+      .catch((e) => console.error("置顶翻译历史失败:", e));
+  };
 
   const isConfigured = providers.length > 0 && selectedProvider;
 
@@ -325,22 +366,65 @@ export default function TranslatePanel() {
             <span className="text-[10px] font-semibold text-slate-400">翻译历史</span>
             <button
               onClick={clearHistory}
+              title="清空历史（置顶条目保留）"
               className="text-[10px] text-slate-500 hover:text-red-400 cursor-pointer flex items-center gap-1"
             >
-              <Trash2 className="w-3 h-3" /> 清空
+              <Trash2 className="w-3 h-3" /> 清空（置顶保留）
             </button>
           </div>
           <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
-            {history.map((h, i) => (
+            {history.map((h) => (
               <div
-                key={i}
+                key={h.id}
                 className="bg-white/[0.02] border border-white/5 rounded-lg p-3 space-y-1.5 hover:border-white/15 transition"
               >
                 <div className="flex items-center justify-between text-[9px] text-slate-500">
                   <span>
                     {h.provider} · {h.model} → {h.target}
                   </span>
-                  <span>{new Date(h.ts).toLocaleTimeString()}</span>
+                  <div className="flex items-center gap-1">
+                    <span className="mr-1">{new Date(h.ts).toLocaleTimeString()}</span>
+                    <button
+                      onClick={() => copyEntry(h, "source")}
+                      title="复制原文"
+                      className="px-1.5 py-0.5 rounded bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white cursor-pointer flex items-center gap-1"
+                    >
+                      {copiedEntry === h.id + ":source" ? (
+                        <Check className="w-3 h-3 text-emerald-400" />
+                      ) : (
+                        <Copy className="w-3 h-3" />
+                      )}
+                      <span>原文</span>
+                    </button>
+                    <button
+                      onClick={() => copyEntry(h, "result")}
+                      title="复制译文"
+                      className="px-1.5 py-0.5 rounded bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white cursor-pointer flex items-center gap-1"
+                    >
+                      {copiedEntry === h.id + ":result" ? (
+                        <Check className="w-3 h-3 text-emerald-400" />
+                      ) : (
+                        <Copy className="w-3 h-3" />
+                      )}
+                      <span>译文</span>
+                    </button>
+                    <button
+                      onClick={() => togglePin(h.id)}
+                      title={h.pinned ? "取消置顶" : "置顶"}
+                      className={`p-1 rounded hover:bg-white/10 cursor-pointer ${
+                        h.pinned ? "text-emerald-400" : "hover:text-white"
+                      }`}
+                    >
+                      <Pin className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => deleteEntry(h.id)}
+                      title="删除"
+                      className="p-1 rounded hover:bg-red-500/20 hover:text-red-400 cursor-pointer"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
                 </div>
                 <p className="text-[10px] text-slate-400 line-clamp-2">{h.source}</p>
                 <p className="text-xs text-slate-100 leading-relaxed">{h.result}</p>

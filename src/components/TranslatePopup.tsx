@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { Pin, PinOff, Copy, Check, X, Languages, Loader2, ArrowRightLeft } from "lucide-react";
+import { Copy, Check, X, Languages, Loader2, ArrowRightLeft } from "lucide-react";
 
 interface TranslateResult {
   source?: string;
@@ -35,19 +35,12 @@ export default function TranslatePopup() {
   const [modelId, setModelId] = useState("");
   // 可编辑的原文（从 result.source 初始化，可修改后重新翻译）
   const [sourceText, setSourceText] = useState("");
-  const pinnedRef = useRef(false);
-  const [, setPinnedTick] = useState(0);
 
   const appWindow = getCurrentWindow();
 
   // 关闭/隐藏悬浮窗
   const hidePopup = () => {
     invoke("hide_translate_popup");
-  };
-
-  const togglePin = () => {
-    pinnedRef.current = !pinnedRef.current;
-    setPinnedTick((t) => t + 1);
   };
 
   const [copySourceOk, setCopySourceOk] = useState(false);
@@ -83,6 +76,8 @@ export default function TranslatePopup() {
         targetLang: lang,
       });
       setResult({ source: text, result: translated, target: lang });
+      // 手动翻译结果也标记为「已应用」，避免轮询用后端旧结果覆盖
+      lastAppliedRef.current = { source: text, result: translated, target: lang };
     } catch (e: any) {
       setResult({ source: text, result: String(e), target: lang, error: true });
     } finally {
@@ -164,33 +159,25 @@ export default function TranslatePopup() {
       .catch(() => {});
     invoke<TranslateResult | null>("get_last_translate_result")
       .then((last) => {
-        if (last && last.source) {
-          setResult(last);
-          setTranslating(!!last.loading);
-          setSourceText(last.source);
-        }
+        if (last && last.source) applyPayload(last);
       })
       .catch(() => {});
     // 监听后端推送的翻译结果
     const unlisten = listen<TranslateResult>("translate-result", (e) => {
-      setResult(e.payload);
-      setTranslating(!!e.payload.loading);
-      if (e.payload.source) setSourceText(e.payload.source);
+      applyPayload(e.payload);
     });
-    // 失焦自动隐藏（除非已钉住）
+    // 失焦自动隐藏（无需钉住）：点击外部后自动收起悬浮窗。
+    // 注意：下拉框（供应商/模型/目标语言）是原生弹窗，会短暂夺走窗口焦点，
+    // 用 suppressBlurUntil 防止因此误隐藏。
     const unFocus = appWindow.onFocusChanged(({ payload: focused }) => {
       if (focused) {
         // 窗口获得焦点：主动拉取最近一次结果，兜底同步（修复窗口复用/事件丢失导致不更新）
         invoke<TranslateResult | null>("get_last_translate_result")
           .then((last) => {
-            if (last && last.source) {
-              setResult(last);
-              setTranslating(!!last.loading);
-              setSourceText(last.source);
-            }
+            if (last && last.source) applyPayloadRef.current(last);
           })
           .catch(() => {});
-      } else if (!pinnedRef.current) {
+      } else if (Date.now() >= suppressBlurUntil.current) {
         appWindow.hide();
       }
     });
@@ -216,26 +203,49 @@ export default function TranslatePopup() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 轮询兜底：translate-result 事件可能在窗口新建（页面未挂载）/页面重载等时序下
-  // 丢失，导致 UI 一直停留在「翻译中」。只要处于翻译中，就定时拉取最近一次结果，
-  // 保证悬浮窗最终收敛到最新状态（翻译完成/失败后 loading=false，自动停止轮询）。
+  // 轮询兜底：translate-result / focus 事件可能因窗口复用、页面时序、事件通道异常
+  // 等任何原因丢失（invoke 调用始终可用），只要悬浮窗存在就持续轮询最近一次结果，
+  // 仅在内容变化时更新 UI——保证悬浮窗一定收敛到最新原文/译文，不依赖事件。
+  // 用 lastAppliedRef 记录「最后一次应用的后端载荷」：轮询只在与上次不同时才写入，
+  // 因此用户手动编辑原文不会被轮询覆盖。
+  const lastAppliedRef = useRef<TranslateResult | null>(null);
+  const applyPayload = (p: TranslateResult) => {
+    const last = lastAppliedRef.current;
+    if (
+      last &&
+      last.source === p.source &&
+      last.result === p.result &&
+      last.target === p.target &&
+      !!last.loading === !!p.loading &&
+      !!last.error === !!p.error
+    ) {
+      return; // 与上次应用的内容一致，跳过（避免覆盖用户编辑）
+    }
+    lastAppliedRef.current = p;
+    setResult(p);
+    setTranslating(!!p.loading);
+    if (p.source) setSourceText(p.source);
+  };
+  const applyPayloadRef = useRef(applyPayload);
+  applyPayloadRef.current = applyPayload;
+
+  // 下拉框打开期间（原生弹窗夺焦）抑制失焦隐藏
+  const suppressBlurUntil = useRef(0);
+  const onSelectOpen = () => {
+    suppressBlurUntil.current = Date.now() + 3000;
+  };
+
   useEffect(() => {
-    if (!translating) return;
     const timer = setInterval(() => {
       invoke<TranslateResult | null>("get_last_translate_result")
         .then((last) => {
-          if (last && last.source) {
-            setResult(last);
-            setTranslating(!!last.loading);
-            setSourceText(last.source);
-          }
+          if (last && last.source) applyPayloadRef.current(last);
         })
         .catch(() => {});
     }, 400);
     return () => clearInterval(timer);
-  }, [translating]);
-
-  const pinned = pinnedRef.current;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <>
@@ -267,18 +277,6 @@ export default function TranslatePopup() {
             )}
           </div>
           <div className="flex items-center gap-1" style={{ WebkitAppRegion: "no-drag" } as any}>
-            {/* 钉住 */}
-            <button
-              onClick={togglePin}
-              className={`p-1.5 rounded-md cursor-pointer transition ${
-                pinned
-                  ? "bg-emerald-500/20 text-emerald-400"
-                  : "text-slate-400 hover:bg-white/10 hover:text-white"
-              }`}
-              title={pinned ? "已钉住（不自动消失）" : "未钉住（失焦自动隐藏）"}
-            >
-              {pinned ? <Pin className="w-3.5 h-3.5" /> : <PinOff className="w-3.5 h-3.5" />}
-            </button>
             {/* 复制译文 */}
             {result?.result && (
               <button
@@ -305,6 +303,8 @@ export default function TranslatePopup() {
           <Languages className="w-3 h-3 text-emerald-400 shrink-0" />
           <select
             value={provId}
+            onMouseDown={onSelectOpen}
+            onFocus={onSelectOpen}
             onChange={(e) => changeProvider(e.target.value)}
             disabled={translating || providers.length === 0}
             className="text-[9px] px-1.5 py-0.5 rounded bg-white/10 text-slate-300 border border-white/10 focus:outline-none disabled:opacity-50 cursor-pointer min-w-0 flex-1"
@@ -319,6 +319,8 @@ export default function TranslatePopup() {
           </select>
           <select
             value={modelId}
+            onMouseDown={onSelectOpen}
+            onFocus={onSelectOpen}
             onChange={(e) => changeModel(e.target.value)}
             disabled={translating || !provId}
             className="text-[9px] px-1.5 py-0.5 rounded bg-white/10 text-slate-300 border border-white/10 focus:outline-none disabled:opacity-50 cursor-pointer min-w-0 flex-1"
@@ -332,6 +334,8 @@ export default function TranslatePopup() {
           </select>
           <select
             value={result?.target || "中文"}
+            onMouseDown={onSelectOpen}
+            onFocus={onSelectOpen}
             onChange={(e) => changeTarget(e.target.value)}
             disabled={translating}
             className="text-[9px] px-1.5 py-0.5 rounded bg-white/10 text-slate-300 border border-white/10 focus:outline-none disabled:opacity-50 cursor-pointer shrink-0"
