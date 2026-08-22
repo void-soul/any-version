@@ -39,6 +39,9 @@ pub struct ClassificationData {
     pub fixed: bool,
     #[serde(default)]
     pub exclude_search: bool,
+    /// 默认收缩全部子分组（true 时打开启动器后该分类下的所有子分组默认折叠）
+    #[serde(default)]
+    pub default_collapsed: bool,
 }
 
 fn default_layout() -> String { "default".to_string() }
@@ -85,6 +88,9 @@ pub struct ItemData {
     pub remark: Option<String>,
     #[serde(default)]
     pub icon_background_color: bool,
+    /// 图标背景色块的色值（hex，如 "#0078D7"）；None 时用默认蓝色
+    #[serde(default)]
+    pub icon_background_color_value: Option<String>,
     #[serde(default)]
     pub fixed_icon: bool,
     #[serde(default)]
@@ -146,6 +152,10 @@ pub struct LauncherSetting {
     /// 程序隐藏则唤起并切到该模块；已激活则切换到该模块；正处该模块则隐藏。
     #[serde(default = "default_module_hotkeys")]
     pub module_hotkeys: HashMap<String, String>,
+    /// 独立「划词翻译」热键：在任意程序选中文本后按下，读取选中文本并悬浮翻译。
+    /// 与「翻译」模块热键（唤起模块面板看历史）相互独立。默认 F6。
+    #[serde(default = "default_selection_translate_hotkey")]
+    pub selection_translate_hotkey: String,
     // ---- 视图设置（全局，应用到所有分类）----
     /// 项目图标大小（px），默认 32
     #[serde(default = "default_item_icon_size")]
@@ -184,6 +194,9 @@ fn default_module_hotkeys() -> HashMap<String, String> {
     m.insert("launcher".to_string(), "Alt+Space".to_string());
     m
 }
+pub fn default_selection_translate_hotkey() -> String {
+    "F6".to_string()
+}
 fn default_item_icon_size() -> i32 {
     32
 }
@@ -214,6 +227,7 @@ impl Default for LauncherSetting {
         Self {
             show_hide_shortcut_key: String::new(),
             module_hotkeys: default_module_hotkeys(),
+            selection_translate_hotkey: default_selection_translate_hotkey(),
             item_icon_size: default_item_icon_size(),
             item_column_number: 0,
             card_density: default_card_density(),

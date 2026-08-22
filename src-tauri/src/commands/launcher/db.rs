@@ -516,6 +516,82 @@ pub fn reorder_items(orders: Vec<(i64, i32)>) -> Result<(), String> {
     })
 }
 
+/// 批量移动子分类：把 source 分类下的所有【直接子分类】整体移动到 target 分类之下。
+/// 每个被移动的子分类完整保留其自身的子孙层级（parent_id 不变）与项目（classification_id 不变），
+/// 只是把直接子分类的 parent_id 改成 target。返回移动的子分类数量。source 分类自身不移动。
+pub fn move_subcategories_to_classification(source_id: i64, target_id: i64) -> Result<usize, String> {
+    with_conn(|conn| {
+        if source_id == target_id {
+            return Err("源分类与目标分类不能相同".to_string());
+        }
+
+        // 校验 target 不能是 source 的子孙（否则会把 target 也一并搬走造成循环）
+        {
+            let mut cursor = Some(target_id);
+            let mut guard = 0;
+            while let Some(cid) = cursor {
+                if cid == source_id {
+                    return Err("目标分类不能位于源分类之下".to_string());
+                }
+                guard += 1;
+                if guard > 1000 {
+                    return Err("分类层级过深，已中止".to_string());
+                }
+                cursor = conn
+                    .query_row(
+                        "SELECT parent_id FROM launcher_classification WHERE id = ?1",
+                        params![cid],
+                        |row| row.get::<_, Option<i64>>(0),
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+
+        // 收集 source 的所有直接子分类 id（按原顺序）
+        let child_ids: Vec<i64> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id FROM launcher_classification WHERE parent_id = ?1 ORDER BY sort_order ASC",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([source_id], |row| row.get::<_, i64>(0))
+                .map_err(|e| e.to_string())?;
+            let mut v = Vec::new();
+            for r in rows {
+                if let Ok(i) = r {
+                    v.push(i);
+                }
+            }
+            v
+        };
+
+        if child_ids.is_empty() {
+            return Ok(0);
+        }
+
+        // 目标分类下当前最大 sort_order
+        let max_order: i32 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(sort_order), 0) FROM launcher_classification WHERE parent_id IS ?1",
+                params![target_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        for (i, cid) in child_ids.iter().enumerate() {
+            tx.execute(
+                "UPDATE launcher_classification SET parent_id = ?1, sort_order = ?2 WHERE id = ?3",
+                params![target_id, max_order + i as i32, cid],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(child_ids.len())
+    })
+}
+
 pub fn increment_item_open_count(id: i64) -> Result<(), String> {
     with_conn(|conn| {
         let now_ts = Local::now().timestamp_millis();
@@ -551,6 +627,15 @@ pub fn get_settings() -> Result<LauncherSetting, String> {
                 .insert("launcher".to_string(), setting.show_hide_shortcut_key.clone());
             setting.show_hide_shortcut_key.clear();
             // 立即落盘，避免每次读取都重复迁移。
+            let json_str = serde_json::to_string(&setting).map_err(|e| e.to_string())?;
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO launcher_setting (key, value) VALUES ('global', ?1)",
+                params![json_str],
+            );
+        }
+        // 数据迁移：划词翻译热键默认 F6（老配置为空串时不触发 serde 默认值，需在此补齐）。
+        if setting.selection_translate_hotkey.trim().is_empty() {
+            setting.selection_translate_hotkey = crate::commands::launcher::models::default_selection_translate_hotkey();
             let json_str = serde_json::to_string(&setting).map_err(|e| e.to_string())?;
             let _ = conn.execute(
                 "INSERT OR REPLACE INTO launcher_setting (key, value) VALUES ('global', ?1)",

@@ -172,6 +172,38 @@ pub async fn launcher_extract_icon(path: String) -> Result<Option<String>, Strin
     Ok(extract_file_icon(&path))
 }
 
+/// 读取本地图片文件并转为 Base64 data URL 作为项目图标（支持 png/jpg/jpeg/gif/webp/bmp/ico/svg）。
+/// 用于「修改图标 → 上传本地图片」。
+#[tauri::command]
+pub async fn launcher_load_image_as_icon(path: String) -> Result<String, String> {
+    use base64::{engine::general_purpose, Engine as _};
+
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err(format!("文件不存在: {}", path));
+    }
+    let bytes = std::fs::read(p).map_err(|e| format!("读取图片失败: {}", e))?;
+    if bytes.is_empty() {
+        return Err("图片文件为空".to_string());
+    }
+    let mime = match p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .as_deref()
+    {
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("ico") => "image/x-icon",
+        Some("svg") => "image/svg+xml",
+        _ => "image/png",
+    };
+    let encoded = general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{};base64,{}", mime, encoded))
+}
+
 #[tauri::command]
 pub async fn launcher_resolve_shortcut(path: String) -> Result<Option<ShortcutInfo>, String> {
     Ok(resolve_shortcut(&path))
@@ -180,6 +212,74 @@ pub async fn launcher_resolve_shortcut(path: String) -> Result<Option<ShortcutIn
 #[tauri::command]
 pub async fn launcher_fetch_url_info(url: String) -> Result<UrlMetadata, String> {
     fetch_url_metadata(&url).await
+}
+
+/// 下载远程图片（如网页 favicon / 任意图片链接）并转为 Base64 data URL 作为项目图标。
+/// 参考 DawnLauncher 的网络图标（NetworkIcon）功能。
+/// SVG 保持原样，其余位图格式统一用 image crate 重编码为 PNG，避免 WebView2 对
+/// `image/x-icon` 等 data URL 显示不稳定导致「图标下载了但显示不出来」。
+#[tauri::command]
+pub async fn launcher_download_image(url: String) -> Result<String, String> {
+    use base64::{engine::general_purpose, Engine as _};
+    use std::io::Cursor;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let res = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("下载图片失败: {}", e))?;
+    if !res.status().is_success() {
+        return Err(format!("下载图片失败，HTTP {}", res.status()));
+    }
+
+    // 在消费 body 前先读取 Content-Type，避免 res 被 bytes() move 后无法访问
+    let mime = res
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(';').next().unwrap_or("").trim().to_lowercase())
+        .filter(|s| s.starts_with("image/"))
+        .unwrap_or_else(|| "image/x-icon".to_string())
+        .to_string();
+
+    let bytes = res.bytes().await.map_err(|e| format!("读取图片失败: {}", e))?;
+    if bytes.is_empty() {
+        return Err("图片内容为空".to_string());
+    }
+
+    // SVG 保持原样（image crate 不支持 svg）
+    if mime == "image/svg+xml" {
+        let encoded = general_purpose::STANDARD.encode(&bytes);
+        return Ok(format!("data:image/svg+xml;base64,{}", encoded));
+    }
+
+    // 其余位图：解码并重编码为 PNG，保证在 WebView 稳定显示
+    if let Ok(img) = image::load_from_memory(&bytes) {
+        let mut png = Cursor::new(Vec::new());
+        if img.write_to(&mut png, image::ImageFormat::Png).is_ok() {
+            let encoded = general_purpose::STANDARD.encode(png.into_inner());
+            return Ok(format!("data:image/png;base64,{}", encoded));
+        }
+    }
+
+    // 解码失败（如未知格式）：回退原始字节，按原 mime 输出
+    let encoded = general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{};base64,{}", mime, encoded))
+}
+
+/// 批量移动子分类：把 source 分类下的所有直接子分类（连同各自子树与项目，保留层级）整体移动到 target 分类之下。
+#[tauri::command]
+pub async fn launcher_move_subcategories_to_classification(
+    source_id: i64,
+    target_id: i64,
+) -> Result<usize, String> {
+    db::move_subcategories_to_classification(source_id, target_id)
 }
 
 /// 停止检测：置位停止标志，正在运行的检测循环会在下一项前终止。
@@ -389,7 +489,14 @@ pub async fn launcher_save_settings(
     settings: LauncherSetting,
 ) -> Result<(), String> {
     db::save_settings(&settings)?;
-    let _ = super::windows::register_global_hotkeys(app, &settings.module_hotkeys);
+    let mut hotkeys = settings.module_hotkeys.clone();
+    if !settings.selection_translate_hotkey.trim().is_empty() {
+        hotkeys.insert(
+            "selection-translate".to_string(),
+            settings.selection_translate_hotkey.clone(),
+        );
+    }
+    let _ = super::windows::register_global_hotkeys(app, &hotkeys);
     Ok(())
 }
 

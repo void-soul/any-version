@@ -313,6 +313,18 @@ fn extract_shortcut_custom_icon(icon_loc: &str) -> Option<String> {
     extract_file_icon(path_part)
 }
 
+/// 是否为 URL / shell 协议目标（http(s)/ftp/mailto/file 等）。
+/// 避免把 `https://example.com` 误判为 `.com` 可执行程序。
+fn looks_like_url(file: &str) -> bool {
+    let lower = file.trim().to_ascii_lowercase();
+    lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("ftp://")
+        || lower.starts_with("ftps://")
+        || lower.starts_with("mailto:")
+        || lower.starts_with("file://")
+}
+
 /// 执行文件/命令（支持 open / runas 管理员提权 / explore 资源管理器 / 任意文件关联程序打开）
 pub fn shell_execute(
     operation: &str,
@@ -321,9 +333,10 @@ pub fn shell_execute(
     start_location: Option<&str>,
 ) -> Result<(), String> {
     let p = Path::new(file);
+    let is_url = looks_like_url(file);
     let is_dir = operation == "explore" || p.is_dir();
     let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-    let is_exe = ext == "exe" || ext == "bat" || ext == "cmd" || ext == "ps1" || ext == "com";
+    let is_exe = !is_url && (ext == "exe" || ext == "bat" || ext == "cmd" || ext == "ps1" || ext == "com");
 
     // 只有可执行程序才支持 runas 管理员提权，其它文档/文件夹降级为 open
     let actual_op = if operation == "runas" && !is_exe {
@@ -425,12 +438,13 @@ pub fn shell_execute(
 /// 2) 文档/网址/文件夹/shell: 路径：沿用 explorer.exe（普通权限系统 Shell）代理，由系统默认
 ///    关联程序打开；explorer 对这些"打开"场景可靠。
 fn shell_execute_as_normal_user(file: &str, params: &str, work_dir: &str) -> Result<(), String> {
+    let is_url = looks_like_url(file);
     let ext = Path::new(file)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
-    let is_exe = ext == "exe" || ext == "bat" || ext == "cmd" || ext == "ps1" || ext == "com";
+    let is_exe = !is_url && (ext == "exe" || ext == "bat" || ext == "cmd" || ext == "ps1" || ext == "com");
 
     if is_exe {
         return create_process_as_normal_user(file, params, work_dir);
@@ -476,6 +490,8 @@ fn shell_execute_as_normal_user(file: &str, params: &str, work_dir: &str) -> Res
 
 /// 以当前交互会话用户的普通令牌降权启动可执行程序（CreateProcessWithTokenW）。
 /// 相比 explorer.exe 代理可靠得多，且子进程不继承 AnyVersion 的管理员令牌。
+/// 脚本类（.bat/.cmd/.ps1）会经解释器（cmd.exe / powershell.exe）执行，
+/// 因为 CreateProcess 系列无法直接运行脚本文件。
 fn create_process_as_normal_user(file: &str, params: &str, work_dir: &str) -> Result<(), String> {
     use windows_sys::Win32::Security::DuplicateTokenEx;
     use windows_sys::Win32::System::RemoteDesktop::{WTSQueryUserToken, WTS_CURRENT_SESSION};
@@ -490,6 +506,10 @@ fn create_process_as_normal_user(file: &str, params: &str, work_dir: &str) -> Re
         // 1. 获取当前交互会话（控制台会话）的已登录用户令牌
         let mut user_token: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
         if WTSQueryUserToken(WTS_CURRENT_SESSION, &mut user_token) == 0 {
+            crate::exit_log!(
+                "[启动] WTSQueryUserToken 失败 ({}), 降权启动不可用，退化为 ShellExecuteW（将继承管理员令牌）",
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+            );
             // 当前无交互会话时退化为直接 ShellExecuteW（继承管理员令牌，功能优先）
             let w_file = to_wide_chars(file);
             let w_params = to_wide_chars(params);
@@ -533,26 +553,75 @@ fn create_process_as_normal_user(file: &str, params: &str, work_dir: &str) -> Re
         // 原始用户令牌不再需要
         let _ = windows_sys::Win32::Foundation::CloseHandle(user_token);
 
-        // 3. 组装命令行（CreateProcessWithTokenW 需要可变缓冲）
-        //    lpApplicationName 直接指向 exe，命令行含引号包裹的完整路径 + 参数
-        let mut command_line = if params.trim().is_empty() {
-            format!("\"{}\"", file)
-        } else {
-            format!("\"{}\" {}", file, params.trim())
-        }
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect::<Vec<u16>>();
+        // 3. 组装可执行程序与命令行（CreateProcessWithTokenW 需要可变缓冲）
+        //    .bat/.cmd/.ps1 脚本必须经解释器执行；lpApplicationName 指向解释器完整路径。
+        let ext = Path::new(file)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let (app_exe, command_text): (String, String) = match ext.as_str() {
+            "bat" | "cmd" => {
+                let comspec = std::env::var("COMSPEC")
+                    .unwrap_or_else(|_| "C:\\Windows\\System32\\cmd.exe".to_string());
+                let args = if params.trim().is_empty() {
+                    format!("/d /c \"\"{}\"\"", file)
+                } else {
+                    format!("/d /c \"\"{}\" {}\"", file, params.trim())
+                };
+                (comspec.clone(), format!("\"{}\" {}", comspec, args))
+            }
+            "ps1" => {
+                let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".to_string());
+                let ps = format!("{}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", windir);
+                let args = if params.trim().is_empty() {
+                    format!("-NoProfile -ExecutionPolicy Bypass -File \"{}\"", file)
+                } else {
+                    format!(
+                        "-NoProfile -ExecutionPolicy Bypass -File \"{}\" {}",
+                        file,
+                        params.trim()
+                    )
+                };
+                (ps.clone(), format!("\"{}\" {}", ps, args))
+            }
+            _ => {
+                let cmd = if params.trim().is_empty() {
+                    format!("\"{}\"", file)
+                } else {
+                    format!("\"{}\" {}", file, params.trim())
+                };
+                (file.to_string(), cmd)
+            }
+        };
+        let mut command_line = command_text
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<u16>>();
         let mut si: STARTUPINFOW = std::mem::zeroed();
         si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
         let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
 
-        let w_file = to_wide_chars(file);
-        let w_dir = if work_dir.is_empty() {
+        let w_file = to_wide_chars(&app_exe);
+        // 工作目录宽字符必须先绑定变量再取指针，避免临时 Vec 被提前释放导致悬垂指针
+        let w_dir_owned = if work_dir.is_empty() {
+            Vec::new()
+        } else {
+            to_wide_chars(work_dir)
+        };
+        let w_dir = if w_dir_owned.is_empty() {
             std::ptr::null()
         } else {
-            to_wide_chars(work_dir).as_ptr()
+            w_dir_owned.as_ptr()
         };
+
+        crate::exit_log!(
+            "[启动] 降权启动 {} (解释器={}, 参数={}, 工作目录={})",
+            file,
+            app_exe,
+            params,
+            work_dir
+        );
 
         let ok = CreateProcessWithTokenW(
             primary_token,
@@ -1019,6 +1088,11 @@ pub fn register_global_hotkeys(
     let mut seen = std::collections::HashSet::new();
     entries.retain(|(_, _, mk)| seen.insert(*mk));
 
+    // 诊断：打印实际要注册的模块热键（确认 selection-translate 是否传入）
+    for (mod_id, hk) in module_hotkeys.iter() {
+        crate::exit_log!("[热键] 待注册 module={} hk={}", mod_id, hk);
+    }
+
     // 确保单一常驻热键线程存在，并把注册命令发给它。
     // 注册/注销必须同线程，否则换快捷键时旧热键注销失败、新旧并存。
     let tx = {
@@ -1131,6 +1205,18 @@ fn spawn_hotkey_worker(
 ///   3) 窗口可见但未激活        -> 激活并切到本模块；
 ///   4) 窗口隐藏                -> 显示、激活并切到本模块。
 fn handle_hotkey_action(app: &AppHandle, module: &str) {
+    // 独立「划词翻译」热键：读取前台选中文本 → 翻译 → 悬浮窗显示，
+    // 不做四态窗口切换，也不唤起主窗口。
+    if module == "selection-translate" {
+        crate::exit_log!("[划词翻译] 热键触发 selection-translate");
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let res =
+                crate::commands::ai::translate::trigger_selection_translate(app, None).await;
+            crate::exit_log!("[划词翻译] trigger_selection_translate 结果: {:?}", res);
+        });
+        return;
+    }
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
