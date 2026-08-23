@@ -376,6 +376,8 @@ export default function ClipboardPanel() {
   const [items, setItems] = useState<ClipboardItem[]>([]);
   const [total, setTotal] = useState(0);
   const [keyword, setKeyword] = useState("");
+  // 输入框的临时值：输入过程只更新这里，不触发搜索；点击「搜索」按钮或回车后才同步到 keyword。
+  const [searchInput, setSearchInput] = useState("");
   const [kind, setKind] = useState(""); // "" | "text" | "image"
   const [pinnedOnly, setPinnedOnly] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -401,7 +403,6 @@ export default function ClipboardPanel() {
   // 预览：通过行内「预览」按钮打开弹窗
   const [preview, setPreview] = useState<ClipboardItem | null>(null);
 
-  const searchTimer = useRef<number | null>(null);
   const itemsRef = useRef<ClipboardItem[]>([]);
   itemsRef.current = items;
   const listRef = useRef<HTMLDivElement>(null);
@@ -453,10 +454,14 @@ export default function ClipboardPanel() {
     };
   }, [load]);
 
-  // 搜索防抖：停顿 250ms 后才更新 keyword，避免每次按键都触发查询
+  // 输入框值变化：只更新临时输入，不触发搜索（避免每次按键/停顿都查询导致卡顿）。
   const onSearchChange = (v: string) => {
-    if (searchTimer.current) window.clearTimeout(searchTimer.current);
-    searchTimer.current = window.setTimeout(() => setKeyword(v), 250);
+    setSearchInput(v);
+  };
+
+  // 点击「搜索」按钮或回车时触发：把临时输入同步到 keyword，由 useEffect 驱动重新查询。
+  const handleSearch = () => {
+    setKeyword(searchInput);
   };
 
   // 虚拟滚动 onScroll：更新可视窗口 + 触底自动加载
@@ -645,16 +650,37 @@ export default function ClipboardPanel() {
 
       {/* 工具栏：搜索 / 类型过滤 / 仅置顶 */}
       <div className="flex items-center gap-2 shrink-0 flex-wrap">
-        <div className="flex items-center gap-2 flex-1 min-w-[200px] bg-white/5 border border-white/10 rounded-lg px-2.5 h-8">
+        <div className="flex items-center gap-1 flex-1 min-w-[200px] bg-white/5 border border-white/10 rounded-lg pl-2.5 pr-1 h-8">
           <Search className="w-3 h-3 text-slate-500 flex-shrink-0" />
           <input
-            value={keyword}
+            value={searchInput}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="搜索剪贴板内容…"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSearch();
+              if (e.key === "Escape") {
+                setSearchInput("");
+                setKeyword("");
+              }
+            }}
+            placeholder="输入关键词，回车或点搜索"
             className="flex-1 bg-transparent outline-none text-[11.5px] text-slate-200 placeholder:text-slate-500"
           />
-          {keyword && (
-            <button onClick={() => onSearchChange("")} className="text-slate-500 hover:text-slate-300 cursor-pointer">
+          <button
+            onClick={handleSearch}
+            className="px-2 py-1 rounded-md bg-[var(--module-accent)] text-white text-[10.5px] font-semibold hover:opacity-90 cursor-pointer"
+            title="搜索"
+          >
+            搜索
+          </button>
+          {searchInput && (
+            <button
+              onClick={() => {
+                setSearchInput("");
+                setKeyword("");
+              }}
+              className="text-slate-500 hover:text-slate-300 cursor-pointer"
+              title="清空"
+            >
               <X className="w-3 h-3" />
             </button>
           )}

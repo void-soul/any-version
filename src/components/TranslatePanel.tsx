@@ -9,6 +9,7 @@ import {
   Trash2,
   Loader2,
   Pin,
+  Search,
   X,
 } from "lucide-react";
 
@@ -77,6 +78,9 @@ export default function TranslatePanel() {
   const [translating, setTranslating] = useState(false);
   const [error, setError] = useState("");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  // 搜索：输入过程只更新 searchInput，点击「搜索」/回车后才同步到 keyword（与剪贴板一致，避免输入卡顿）
+  const [searchInput, setSearchInput] = useState("");
+  const [keyword, setKeyword] = useState("");
   const [copied, setCopied] = useState(false);
   // 历史条目内复制反馈："id:source" / "id:result"
   const [copiedEntry, setCopiedEntry] = useState<string | null>(null);
@@ -197,6 +201,19 @@ export default function TranslatePanel() {
     invoke<HistoryEntry[]>("translate_history_list")
       .then((list) => setHistory(list))
       .catch(() => {});
+
+  // 搜索按钮触发：把临时输入同步到 keyword，驱动下方 useMemo 过滤历史
+  const handleSearch = () => setKeyword(searchInput);
+  // 根据实际搜索词过滤历史（匹配原文/译文），仅点击搜索/回车后生效
+  const filteredHistory = useMemo(() => {
+    const kw = keyword.trim().toLowerCase();
+    if (!kw) return history;
+    return history.filter(
+      (h) =>
+        (h.source || "").toLowerCase().includes(kw) ||
+        (h.result || "").toLowerCase().includes(kw)
+    );
+  }, [history, keyword]);
 
   const clearHistory = () => {
     // 置顶条目保留，清空后刷新列表显示剩余的置顶条目
@@ -372,8 +389,46 @@ export default function TranslatePanel() {
               <Trash2 className="w-3 h-3" /> 清空（置顶保留）
             </button>
           </div>
+
+          {/* 历史搜索：输入不触发，点「搜索」或回车后才过滤 */}
+          <div className="flex items-center gap-1 bg-white/5 border border-white/10 rounded-lg pl-2 pr-1 h-7">
+            <Search className="w-3 h-3 text-slate-500 flex-shrink-0" />
+            <input
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSearch();
+                if (e.key === "Escape") {
+                  setSearchInput("");
+                  setKeyword("");
+                }
+              }}
+              placeholder="输入关键词，回车或点搜索"
+              className="flex-1 bg-transparent outline-none text-[10.5px] text-slate-200 placeholder:text-slate-500"
+            />
+            <button
+              onClick={handleSearch}
+              className="px-2 py-0.5 rounded-md bg-[var(--module-accent)] text-white text-[9.5px] font-semibold hover:opacity-90 cursor-pointer"
+              title="搜索"
+            >
+              搜索
+            </button>
+            {searchInput && (
+              <button
+                onClick={() => {
+                  setSearchInput("");
+                  setKeyword("");
+                }}
+                className="text-slate-500 hover:text-slate-300 cursor-pointer"
+                title="清空"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+
           <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
-            {history.map((h) => (
+            {filteredHistory.map((h) => (
               <div
                 key={h.id}
                 className="bg-white/[0.02] border border-white/5 rounded-lg p-3 space-y-1.5 hover:border-white/15 transition"
@@ -430,6 +485,11 @@ export default function TranslatePanel() {
                 <p className="text-xs text-slate-100 leading-relaxed">{h.result}</p>
               </div>
             ))}
+            {filteredHistory.length === 0 && (
+              <p className="text-[11px] text-slate-500 text-center py-3">
+                未找到与「{keyword.trim()}」匹配的历史记录
+              </p>
+            )}
           </div>
         </div>
       )}
