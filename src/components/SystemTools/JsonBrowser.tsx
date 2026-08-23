@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -53,12 +53,18 @@ type JsonTab = {
   savedText: string | null;
 };
 
+type SearchMatches = {
+  query: string;
+  paths: Set<string>;
+  directPaths: Set<string>;
+};
+
 type TreeNodeProps = {
   name: string;
   value: JsonValue;
   path: string;
   depth: number;
-  query: string;
+  searchMatches: SearchMatches;
   collapsed: Set<string>;
   onToggle: (path: string) => void;
   onCopy: (value: string) => void;
@@ -102,14 +108,27 @@ function countNodes(value: JsonValue): number {
   return entriesOf(value).reduce((total, [, child]) => total + countNodes(child), 1);
 }
 
-function containsQuery(name: string, value: JsonValue, path: string, query: string): boolean {
-  if (!query) return true;
-  const normalized = query.toLowerCase();
-  if (name.toLowerCase().includes(normalized) || path.toLowerCase().includes(normalized)) return true;
-  if (!isContainer(value)) return String(value).toLowerCase().includes(normalized);
-  return entriesOf(value).some(([childName, child]) =>
-    containsQuery(childName, child, path ? `${path}.${childName}` : childName, query),
-  );
+function buildSearchMatches(value: JsonValue, query: string): SearchMatches {
+  const normalized = query.trim().toLowerCase();
+  const paths = new Set<string>();
+  const directPaths = new Set<string>();
+  if (!normalized) return { query: "", paths, directPaths };
+
+  const visit = (name: string, current: JsonValue, path: string): boolean => {
+    const direct = `${name} ${path} ${isContainer(current) ? "" : String(current)}`.toLowerCase().includes(normalized);
+    if (direct) directPaths.add(path);
+    let childMatch = false;
+    if (isContainer(current)) {
+      entriesOf(current).forEach(([childName, child]) => {
+        if (visit(childName, child, path ? `${path}.${childName}` : childName)) childMatch = true;
+      });
+    }
+    if (direct || childMatch) paths.add(path);
+    return direct || childMatch;
+  };
+
+  visit("root", value, "root");
+  return { query: normalized, paths, directPaths };
 }
 
 function copyValue(value: JsonValue, pretty = true): string {
@@ -130,12 +149,12 @@ function normalizeJsonText(value: string): string {
   return value.replace(/\r\n?/g, "\n");
 }
 
-function TreeNode({ name, value, path, depth, query, collapsed, onToggle, onCopy }: TreeNodeProps) {
-  if (query && !containsQuery(name, value, path, query)) return null;
+function TreeNode({ name, value, path, depth, searchMatches, collapsed, onToggle, onCopy }: TreeNodeProps) {
+  if (searchMatches.query && !searchMatches.paths.has(path)) return null;
   const type = typeOf(value);
   const container = isContainer(value);
-  const isCollapsed = collapsed.has(path) && !query;
-  const hit = Boolean(query && (name.toLowerCase().includes(query.toLowerCase()) || path.toLowerCase().includes(query.toLowerCase())));
+  const isCollapsed = collapsed.has(path) && !searchMatches.query;
+  const hit = searchMatches.directPaths.has(path);
   const keyClass = hit ? "text-cyan-200 bg-cyan-400/15 rounded px-0.5" : "text-sky-300";
   const valueClass: Record<string, string> = {
     string: "text-emerald-300",
@@ -189,7 +208,7 @@ function TreeNode({ name, value, path, depth, query, collapsed, onToggle, onCopy
               value={child}
               path={path ? `${path}.${childName}` : childName}
               depth={depth + 1}
-              query={query}
+              searchMatches={searchMatches}
               collapsed={collapsed}
               onToggle={onToggle}
               onCopy={onCopy}
@@ -235,7 +254,13 @@ function buildGraphItems(value: JsonValue): GraphItem[] {
   return items.map((item) => ({ ...item, y: (item.y - (maxRows - 1) * 38) }));
 }
 
-function GraphCanvas({ value, selectedPath, onSelectPath }: { value: JsonValue; selectedPath: string; onSelectPath: (path: string) => void }) {
+function GraphCanvas({ value, selectedPath, searchMatches, onSelectPath, onCopy }: {
+  value: JsonValue;
+  selectedPath: string;
+  searchMatches: SearchMatches;
+  onSelectPath: (path: string) => void;
+  onCopy: (value: string) => void;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const transformRef = useRef({ x: 36, y: 0, scale: 1 });
@@ -271,14 +296,20 @@ function GraphCanvas({ value, selectedPath, onSelectPath }: { value: JsonValue; 
       context.beginPath();
       context.moveTo(parent.x + parent.width, parent.y + parent.height / 2);
       context.bezierCurveTo(parent.x + parent.width + 55, parent.y + parent.height / 2, item.x - 55, item.y + item.height / 2, item.x, item.y + item.height / 2);
+      const relatedToSearch = !searchMatches.query || searchMatches.paths.has(item.id) || searchMatches.paths.has(parent.id);
+      context.globalAlpha = relatedToSearch ? 1 : 0.25;
       context.strokeStyle = "rgba(100, 116, 139, .65)";
       context.stroke();
+      context.globalAlpha = 1;
     });
     items.forEach((item) => {
       const selected = item.path === selectedPath;
+      const directMatch = searchMatches.directPaths.has(item.path);
+      const relatedToSearch = !searchMatches.query || searchMatches.paths.has(item.path);
       const container = isContainer(item.value);
+      context.globalAlpha = relatedToSearch ? 1 : 0.3;
       context.fillStyle = selected ? "#164e63" : container ? "#111f35" : "#101827";
-      context.strokeStyle = selected ? "#22d3ee" : container ? "#2d6081" : "#334155";
+      context.strokeStyle = directMatch ? "#facc15" : selected ? "#22d3ee" : container ? "#2d6081" : "#334155";
       context.lineWidth = (selected ? 2 : 1) / transform.scale;
       context.beginPath();
       context.roundRect(item.x, item.y, item.width, item.height, 6);
@@ -294,9 +325,10 @@ function GraphCanvas({ value, selectedPath, onSelectPath }: { value: JsonValue; 
       context.font = "11px ui-monospace, SFMono-Regular, Consolas, monospace";
       context.fillStyle = type === "string" ? "#86efac" : type === "number" ? "#fcd34d" : "#94a3b8";
       context.fillText(summary, item.x + 10, item.y + 36);
+      context.globalAlpha = 1;
     });
     context.restore();
-  }, [itemById, items, selectedPath]);
+  }, [itemById, items, searchMatches, selectedPath]);
 
   useEffect(() => {
     draw();
@@ -313,6 +345,8 @@ function GraphCanvas({ value, selectedPath, onSelectPath }: { value: JsonValue; 
     const y = (clientY - rect.top - transform.y) / transform.scale;
     return [...items].reverse().find((item) => x >= item.x && x <= item.x + item.width && y >= item.y && y <= item.y + item.height) ?? null;
   };
+
+  const selectedItem = itemById.get(selectedPath) ?? null;
 
   return (
     <div ref={viewportRef} className="relative h-full min-h-0 overflow-hidden bg-slate-950" onWheel={(event) => {
@@ -348,6 +382,11 @@ function GraphCanvas({ value, selectedPath, onSelectPath }: { value: JsonValue; 
       }
     }}>
       <canvas ref={canvasRef} className="absolute inset-0 cursor-grab active:cursor-grabbing" />
+      {selectedItem && <div className="absolute right-3 top-3 flex max-w-[min(360px,calc(100%-24px))] items-center gap-2 rounded-md border border-white/10 bg-slate-900/95 px-2 py-1.5 text-[10px] shadow-lg" onPointerDown={(event) => event.stopPropagation()}>
+        <span className="min-w-0 truncate font-mono text-slate-300" title={selectedItem.path}>{selectedItem.path}</span>
+        <button type="button" className="inline-flex h-6 shrink-0 items-center gap-1 rounded border border-white/10 bg-white/[0.06] px-2 text-slate-300 hover:bg-white/[0.12] hover:text-white" onClick={() => onCopy(copyValue(selectedItem.value))} title="复制当前节点内容"><Copy className="h-3 w-3" />复制</button>
+      </div>}
+      {searchMatches.query && <div className="pointer-events-none absolute right-3 bottom-3 rounded border border-yellow-400/20 bg-slate-900/80 px-2 py-1 text-[10px] text-yellow-200">命中 {searchMatches.directPaths.size} 个节点</div>}
       <div className="pointer-events-none absolute bottom-3 left-3 rounded border border-white/10 bg-slate-900/80 px-2 py-1 text-[10px] text-slate-500">滚轮缩放 · 拖动画布 · 点击节点定位</div>
     </div>
   );
@@ -376,6 +415,7 @@ export default function JsonBrowser() {
   const [viewMode, setViewMode] = useState<ViewMode>("tree");
   const [selectedPath, setSelectedPath] = useState("root");
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [showLeft, setShowLeft] = useState(true);
   const [showRight, setShowRight] = useState(true);
@@ -391,6 +431,7 @@ export default function JsonBrowser() {
 
   const active = tabs.find((tab) => tab.id === activeId) ?? null;
   const parsed = useMemo(() => parseJson(active?.text ?? ""), [active?.text]);
+  const searchMatches = useMemo(() => parsed.value === null ? { query: "", paths: new Set<string>(), directPaths: new Set<string>() } : buildSearchMatches(parsed.value, deferredQuery), [parsed.value, deferredQuery]);
   const compareParsed = useMemo(() => parseJson(compareText), [compareText]);
   const dirty = Boolean(active && active.savedText !== null && active.text !== active.savedText);
 
@@ -708,12 +749,12 @@ export default function JsonBrowser() {
 
             {viewMode === "tree" && (
               <div className="min-h-0 flex-1 overflow-auto p-2 font-mono">
-                {parsed.value === null ? <div className="py-10 text-center text-[11px] text-slate-600">输入有效 JSON 后显示结构树</div> : <TreeNode name="root" value={parsed.value} path="root" depth={0} query={query} collapsed={collapsed} onToggle={(path) => setCollapsed((previous) => { const next = new Set(previous); if (next.has(path)) next.delete(path); else next.add(path); return next; })} onCopy={(value) => void copyValue(value)} />}
+                {parsed.value === null ? <div className="py-10 text-center text-[11px] text-slate-600">输入有效 JSON 后显示结构树</div> : <TreeNode name="root" value={parsed.value} path="root" depth={0} searchMatches={searchMatches} collapsed={collapsed} onToggle={(path) => setCollapsed((previous) => { const next = new Set(previous); if (next.has(path)) next.delete(path); else next.add(path); return next; })} onCopy={(value) => void copyValue(value)} />}
               </div>
             )}
             {viewMode === "graph" && (
               <div className="min-h-0 flex-1">
-                {parsed.value === null ? <div className="flex h-full items-center justify-center text-[11px] text-slate-600">输入有效 JSON 后显示图形树</div> : <GraphCanvas value={parsed.value} selectedPath={selectedPath} onSelectPath={revealPathInEditor} />}
+                {parsed.value === null ? <div className="flex h-full items-center justify-center text-[11px] text-slate-600">输入有效 JSON 后显示图形树</div> : <GraphCanvas value={parsed.value} selectedPath={selectedPath} searchMatches={searchMatches} onSelectPath={revealPathInEditor} onCopy={(value) => void copyValue(value)} />}
               </div>
             )}
             {viewMode === "text" && (
