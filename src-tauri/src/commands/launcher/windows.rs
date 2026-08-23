@@ -469,19 +469,34 @@ fn shell_execute_as_normal_user(file: &str, params: &str, work_dir: &str) -> Res
         .unwrap_or("")
         .to_lowercase();
     let is_exe = !is_url && (ext == "exe" || ext == "bat" || ext == "cmd" || ext == "ps1" || ext == "com");
+    // explorer.exe 是单实例 shell 导航命令（如「打开文件位置」用 /select 定位文件）。
+    // 不能把它当可执行程序走 CreateProcessWithTokenW 降权启动——explorer 收到带引号的
+    // exe 路径参数时无法可靠识别为"运行程序"，会退化为打开默认文件夹（如"我的文档"）。
+    // 因此 explorer.exe 应作为 shell 导航走下方 explorer.exe 代理（ShellExecuteW），
+    // /select 等导航参数才能被已运行的 explorer 正确解析。
+    let file_name = Path::new(file)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or("");
+    let is_explorer_nav = !is_url && file_name.eq_ignore_ascii_case("explorer.exe");
 
-    if is_exe {
+    if is_exe && !is_explorer_nav {
         return create_process_as_normal_user(file, params, work_dir);
     }
 
     // 非可执行程序：explorer.exe 代理打开（文档/网址/文件夹等系统 Shell 场景）
-    let arg = if params.trim().is_empty() {
+    // 对 explorer 导航命令（如「打开文件位置」/select），目标就是 explorer.exe 本身，
+    // 参数只应包含导航参数（/select,"path"），不能再重复拼接 "explorer.exe"——否则
+    // 已运行的 explorer 收到带引号的 exe 路径参数会退化为打开默认文件夹。
+    let arg = if is_explorer_nav {
+        params.trim().to_string()
+    } else if params.trim().is_empty() {
         format!("\"{}\"", file)
     } else {
         format!("\"{}\" {}", file, params.trim())
     };
     let w_op = to_wide_chars("open");
-    let w_file = to_wide_chars("explorer.exe");
+    let w_file = to_wide_chars(if is_explorer_nav { file } else { "explorer.exe" });
     let w_params = to_wide_chars(&arg);
     let w_dir = to_wide_chars(work_dir);
     unsafe {

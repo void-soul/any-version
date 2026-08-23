@@ -1134,26 +1134,32 @@ fn scrape_aifreeplan_guides(html: &str, page_url: &str, source_name: &str) -> Ve
         }
         if !seen.insert(normalized.to_string()) { continue; }
 
-        let mut container = link;
-        for _ in 0..5 {
-            if let Some(parent) = container.parent().and_then(scraper::ElementRef::wrap) {
-                container = parent;
-                let tag = container.value().name();
-                if tag == "article" || tag == "li" { break; }
-            } else { break; }
-        }
+        // aifreeplan 的文章卡片就是 `<a>` 本身，其内部直接包含 `<h3>`(标题)、`<p>`(摘要)、`<time>`。
+        // 若向上遍历父容器查找 article/li（该页面不存在这些标签），会把作用域提升到 <body>/<html>，
+        // 导致标题/摘要都取到页面顶部的全局标题「AI 免费额度攻略」，且所有文章内容重复。
+        // 因此直接以 `<a>` 为作用域提取标题/摘要/时间，最准确。
+        let container = link;
 
         let title = container.select(&heading_selector).next()
             .map(|node| clean_scraped_text(&node.text().collect::<Vec<_>>().join(" ")))
             .filter(|value| !value.is_empty())
             .or_else(|| {
+                // 链接内无标题标签时，用链接自身文本兜底（过滤常见导航噪音）
                 let text = clean_scraped_text(&link.text().collect::<Vec<_>>().join(" "))
                     .replace("阅读全文", "")
-                    .replace("→", "");
+                    .replace("→", "")
+                    .replace("置顶推荐", "");
                 (!text.is_empty()).then_some(text)
             });
         let Some(title) = title else { continue };
-        if title == "指南" || title == "首页" { continue; }
+        // 过滤导航/无意义标题（长度过短或常见的 UI 文案）
+        let title_trim = title.trim();
+        if title_trim.is_empty() || title_trim.len() < 4 {
+            continue;
+        }
+        if matches!(title_trim, "指南" | "首页" | "工具" | "FAQ" | "攻略" | "AI" | "免费额度攻略") {
+            continue;
+        }
 
         let summary = container.select(&paragraph_selector).next()
             .map(|node| clean_scraped_text(&node.text().collect::<Vec<_>>().join(" ")))
@@ -1229,6 +1235,51 @@ pub async fn fetch_rss_feed(url: String) -> Result<String, String> {
         .map_err(|e| format!("读取内容失败: {}", e))?;
 
     Ok(text)
+}
+
+#[cfg(test)]
+mod aifreeplan_tests {
+    use super::*;
+
+    // 用真实页面结构片段作为测试夹具（aifreeplan.com/zh/guides 的文章卡片结构）：
+    // 每个 <a> 卡片内部直接包含 <h3>(标题)、<p>(摘要)，没有 article/li 容器，
+    // 也没有 <time> 标签。用来验证抓取逻辑以 <a> 为作用域正确提取。
+    const SAMPLE_HTML: &str = r#"<!DOCTYPE html><html lang="zh"><head><title>AI Free Plan</title></head>
+<body>
+<h1>AI 免费额度攻略</h1>
+<p>最新 AI 工具免费额度攻略，持续更新中</p>
+<div class="grid">
+  <a href="/zh/guides/gemini-code-assist-free-guide-2026" class="card">
+    <div><span>置顶推荐</span></div>
+    <h3>Gemini Code Assist 完全免费：Google AI 编程助手</h3>
+    <p>Google 推出免费版的 Gemini Code Assist，支持 VS Code 等编辑器</p>
+  </a>
+  <a href="/zh/guides/amazon-q-developer-free-tier-2026" class="card">
+    <h3>Amazon Q Developer 完全免费攻略</h3>
+    <p>Amazon Q Developer 是 AWS 官方 AI 编程助手</p>
+  </a>
+  <a href="/zh/guides/ollama-free-cloud-guide-2026" class="card">
+    <h3>Ollama 免费云端 AI 模型完全攻略</h3>
+    <p>Ollama 是开源 AI 模型运行平台</p>
+  </a>
+</div>
+</body></html>"#;
+
+    #[test]
+    fn test_scrape_aifreeplan_guides() {
+        let articles = scrape_aifreeplan_guides(SAMPLE_HTML, "https://aifreeplan.com/zh/guides/", "AI Free Plan");
+        assert_eq!(articles.len(), 3, "应抓取到 3 篇文章");
+        // 标题应与各卡片 <h3> 匹配，而非页面顶部全局标题
+        assert_eq!(articles[0].title, "Gemini Code Assist 完全免费：Google AI 编程助手");
+        assert_eq!(articles[1].title, "Amazon Q Developer 完全免费攻略");
+        assert_eq!(articles[2].title, "Ollama 免费云端 AI 模型完全攻略");
+        // 摘要正确
+        assert!(articles[0].summary.contains("Gemini Code Assist"));
+        // 链接被拼成绝对 URL
+        assert_eq!(articles[0].link, "https://aifreeplan.com/zh/guides/gemini-code-assist-free-guide-2026");
+        // 页面无 <time> 标签 → pub_date 为 None
+        assert!(articles.iter().all(|a| a.pub_date.is_none()));
+    }
 }
 
 #[tauri::command]
