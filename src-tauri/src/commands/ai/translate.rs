@@ -25,6 +25,8 @@ pub struct TranslateConfig {
 // 最近一次划词翻译结果（供悬浮窗在窗口复用/聚焦时同步，避免事件丢失导致不更新）
 static LAST_TRANSLATE_RESULT: std::sync::Mutex<Option<serde_json::Value>> =
     std::sync::Mutex::new(None);
+static POPUP_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static TRANSLATE_REQUEST_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn set_last_translate_result(v: serde_json::Value) {
     if let Ok(mut g) = LAST_TRANSLATE_RESULT.lock() {
@@ -41,6 +43,12 @@ fn get_last_translate_result_value() -> Option<serde_json::Value> {
 #[tauri::command]
 pub fn get_last_translate_result() -> Option<serde_json::Value> {
     get_last_translate_result_value()
+}
+
+/// 悬浮窗页面完成事件监听注册后调用，后端随后才发送新的翻译事件。
+#[tauri::command]
+pub fn translate_popup_ready() {
+    POPUP_READY.store(true, std::sync::atomic::Ordering::Release);
 }
 
 // ─── 翻译历史（跨窗口共享 + 持久化） ───
@@ -488,11 +496,23 @@ fn contains_cjk(text: &str) -> bool {
     ))
 }
 
+fn emit_translate_payload(app: &tauri::AppHandle, payload: &serde_json::Value) {
+    if let Some(win) = app.get_webview_window(POPUP_LABEL) {
+        if let Err(e) = win.emit("translate-result", payload.clone()) {
+            crate::exit_log!("[划词翻译] 悬浮窗事件发送失败: {}", e);
+        }
+    }
+    if let Err(e) = app.emit("translate-result", payload.clone()) {
+        crate::exit_log!("[划词翻译] 应用级事件发送失败: {}", e);
+    }
+}
+
 /// 确保悬浮窗存在并返回其句柄（存在则复用）。
 fn ensure_translate_popup(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
     if let Some(win) = app.get_webview_window(POPUP_LABEL) {
         return Ok(win);
     }
+    POPUP_READY.store(false, std::sync::atomic::Ordering::Release);
     let win = tauri::WebviewWindowBuilder::new(
         app,
         POPUP_LABEL,
@@ -542,6 +562,13 @@ pub async fn trigger_selection_translate(
         crate::exit_log!("[划词翻译] 创建悬浮窗失败: {}", e);
         return Err(e);
     }
+    // 首次创建窗口时等待前端完成事件注册，避免 loading/结果事件在页面初始化前丢失。
+    for _ in 0..200 {
+        if POPUP_READY.load(std::sync::atomic::Ordering::Acquire) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
 
     // 3. 目标语言：显式传入 > 文本语言自动判断 > 划词翻译配置 > 默认中文。
     // 快捷键通常用于把选中的中文翻译成英文，因此中文文本默认目标设为 English。
@@ -550,11 +577,12 @@ pub async fn trigger_selection_translate(
         .or_else(|| contains_cjk(&text).then(|| "English".to_string()))
         .or_else(|| load_translate_config().target_lang.filter(|s| !s.trim().is_empty()))
         .unwrap_or_else(|| "中文".to_string());
+    let request_id = TRANSLATE_REQUEST_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
 
     // 窗口操作（show/set_focus）与事件推送必须在 Tauri 主线程执行，
     // 否则在 async spawn 线程里 set_focus 可能失效，前端 onFocusChanged 不触发，
     // 导致"聚焦时同步最新结果"失效 → 悬浮窗原文不更新。
-    let show_payload = serde_json::json!({ "loading": true, "source": text, "target": target });
+    let show_payload = serde_json::json!({ "loading": true, "source": text, "target": target, "requestId": request_id });
     set_last_translate_result(show_payload.clone());
     let app_for_main = app.clone();
     let _ = app.run_on_main_thread(move || {
@@ -567,11 +595,9 @@ pub async fn trigger_selection_translate(
             // 需额外聚焦 WebView2（与主窗口 show_and_open_module 一致）。
             let webview: &tauri::Webview<tauri::Wry> = w.as_ref();
             let _ = webview.set_focus();
-            let _ = w.emit("translate-result", show_payload.clone());
-            // 双通道推送：window 级 + app 级，避免窗口级事件在悬浮窗复用等时序下丢失
-            let _ = app_for_main.emit("translate-result", show_payload.clone());
         }
     });
+    emit_translate_payload(&app, &show_payload);
     crate::exit_log!("[划词翻译] 悬浮窗已显示（loading），开始翻译，目标语言: {}", target);
 
     // 4. 翻译；无论成败都回推结果到悬浮窗（失败也展示错误信息）
@@ -583,30 +609,19 @@ pub async fn trigger_selection_translate(
         Err(e) => {
             crate::exit_log!("[划词翻译] 翻译失败: {}", e);
             let err_payload = serde_json::json!({
-                "loading": false, "source": text, "result": format!("翻译失败: {}", e), "target": target, "error": true
+                "loading": false, "source": text, "result": format!("翻译失败: {}", e), "target": target, "requestId": request_id, "error": true
             });
             set_last_translate_result(err_payload.clone());
-            let app2 = app.clone();
-            let _ = app.run_on_main_thread(move || {
-                if let Some(w) = app2.get_webview_window(POPUP_LABEL) {
-                    let _ = w.emit("translate-result", err_payload.clone());
-                }
-                let _ = app2.emit("translate-result", err_payload.clone());
-            });
+            emit_translate_payload(&app, &err_payload);
             return Err(e);
         }
     };
     let ok_payload = serde_json::json!({
-        "loading": false, "source": text, "result": translated, "target": target
+        "loading": false, "source": text, "result": translated, "target": target, "requestId": request_id
     });
     set_last_translate_result(ok_payload.clone());
-    let app3 = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(w) = app3.get_webview_window(POPUP_LABEL) {
-            let _ = w.emit("translate-result", ok_payload.clone());
-        }
-        let _ = app3.emit("translate-result", ok_payload.clone());
-    });
+    // 最终结果直接发送，不依赖主线程队列；主线程只负责窗口显示/聚焦。
+    emit_translate_payload(&app, &ok_payload);
     crate::exit_log!("[划词翻译] 结果已推送");
     Ok(())
 }
@@ -634,9 +649,8 @@ pub async fn show_translate_result(app: tauri::AppHandle, source: String, result
             let _ = w.set_focus();
             let webview: &tauri::Webview<tauri::Wry> = w.as_ref();
             let _ = webview.set_focus();
-            let _ = w.emit("translate-result", payload.clone());
-            let _ = app2.emit("translate-result", payload.clone());
         }
     });
+    emit_translate_payload(&app, &payload);
     Ok(())
 }

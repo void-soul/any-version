@@ -11,6 +11,7 @@ interface TranslateResult {
   target?: string;
   loading?: boolean;
   error?: boolean;
+  requestId?: number;
 }
 
 interface AiProvider {
@@ -38,6 +39,7 @@ export default function TranslatePopup() {
   // 后端事件可能比悬浮窗内的手动翻译旧；记录手动请求，
   // 防止同一原文的旧结果覆盖用户刚选择的目标语言。
   const manualTranslationSourceRef = useRef<string | null>(null);
+  const latestRequestIdRef = useRef(0);
 
   const appWindow = getCurrentWindow();
 
@@ -98,6 +100,31 @@ export default function TranslatePopup() {
   const hidePopupRef = useRef(hidePopup);
   hidePopupRef.current = hidePopup;
 
+  const applyPayloadRef = useRef<(p: TranslateResult) => void>(() => {});
+  const reconcileTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconcileKeepAliveRef = useRef(false);
+  const scheduleSnapshotReconcile = (keepAlive = false) => {
+    if (reconcileTimerRef.current) clearTimeout(reconcileTimerRef.current);
+    reconcileKeepAliveRef.current = keepAlive;
+    const delays = [250, 500, 1000, 2000, 4000, 8000, 12000, 15000];
+    let attempt = 0;
+    const retry = () => {
+      if (attempt >= delays.length) return;
+      const delay = delays[attempt++];
+      reconcileTimerRef.current = setTimeout(async () => {
+        try {
+          const last = await invoke<TranslateResult | null>("get_last_translate_result");
+          if (last?.source) applyPayloadRef.current(last);
+          if (reconcileKeepAliveRef.current || last?.loading) retry();
+        } catch (e) {
+          console.error("补偿读取翻译结果失败:", e);
+          retry();
+        }
+      }, delay);
+    };
+    retry();
+  };
+
   // 切换目标语言
   const changeTarget = (lang: string) => retranslate({ lang });
 
@@ -153,23 +180,35 @@ export default function TranslatePopup() {
   }, []);
 
   useEffect(() => {
-    // 窗口首次创建时，后端在页面 JS 挂载前就会 show/set_focus/emit，
-    // 事件会丢失，且 set_focus 早于监听器注册导致 onFocusChanged 也不触发——
-    // 因此挂载时主动拉取最近一次划词翻译结果，立即显示最新原文。
-    // 同时显式聚焦 WebView2 内容：仅聚焦顶层 HWND 时前端收不到
-    // tauri://focus / tauri://blur，导致「失焦自动关闭（钉住判断）」失效。
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    // 窗口首次创建时，先等待监听器真正注册，再读取最近快照。
+    // 这样即使后端在页面挂载前已经发过 loading/结果事件，也能通过快照恢复。
     getCurrentWebview()
       .setFocus()
       .catch(() => {});
-    // 先注册事件，再读取最近快照，避免窗口复用时错过新结果。
-    const unlisten = listen<TranslateResult>("translate-result", (e) => {
-      applyPayload(e.payload);
-    });
-    invoke<TranslateResult | null>("get_last_translate_result")
-      .then((last) => {
-        if (last && last.source) applyPayload(last);
-      })
-      .catch((e) => console.error("读取最近翻译结果失败:", e));
+
+    const setup = async () => {
+      try {
+        const removeListener = await listen<TranslateResult>("translate-result", (e) => {
+          applyPayloadRef.current(e.payload);
+        });
+        if (disposed) {
+          removeListener();
+          return;
+        }
+        unlisten = removeListener;
+        await invoke("translate_popup_ready");
+
+        const last = await invoke<TranslateResult | null>("get_last_translate_result");
+        if (!disposed && last?.source) applyPayloadRef.current(last);
+      } catch (e) {
+        console.error("初始化翻译悬浮窗事件失败:", e);
+      }
+    };
+    setup();
+
     // 失焦自动隐藏（无需钉住）：点击外部后自动收起悬浮窗。
     // 注意：下拉框（供应商/模型/目标语言）是原生弹窗，会短暂夺走窗口焦点，
     // 用 suppressBlurUntil 防止因此误隐藏。
@@ -193,17 +232,22 @@ export default function TranslatePopup() {
     };
     window.addEventListener("keydown", onKey, true);
     return () => {
-      unlisten.then((f) => f());
+      disposed = true;
+      if (reconcileTimerRef.current) clearTimeout(reconcileTimerRef.current);
+      reconcileKeepAliveRef.current = false;
+      if (unlisten) unlisten();
       unFocus.then((f) => f());
       window.removeEventListener("keydown", onKey, true);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // 记录最近一次已应用的事件载荷，避免窗口级和应用级双通道事件重复更新。
+  }, []);  // 记录最近一次已应用的事件载荷，避免窗口级和应用级双通道事件重复更新。
   const lastAppliedRef = useRef<TranslateResult | null>(null);
   const applyPayload = (p: TranslateResult) => {
-    // 后端事件中的旧结果不能再次覆盖手动翻译；新的快捷键原文到来时解除保护。
+    if (p.requestId && p.requestId < latestRequestIdRef.current) return;
+    if (p.requestId && p.requestId > latestRequestIdRef.current) {
+      latestRequestIdRef.current = p.requestId;
+    }
+    // 后端事件中的旧结果不能再次覆盖手动翻译；新的快捷键原文到来时解除保护.
     if (manualTranslationSourceRef.current) {
       const sameSource = p.source === manualTranslationSourceRef.current;
       if (sameSource && !p.loading) return;
@@ -226,7 +270,15 @@ export default function TranslatePopup() {
     setResult(p);
     setTranslating(!!p.loading);
     if (p.source) setSourceText(p.source);
+    if (p.loading) {
+      scheduleSnapshotReconcile();
+    } else if (reconcileTimerRef.current) {
+      clearTimeout(reconcileTimerRef.current);
+      reconcileTimerRef.current = null;
+      reconcileKeepAliveRef.current = false;
+    }
   };
+  applyPayloadRef.current = applyPayload;
   // 下拉框打开期间（原生弹窗夺焦）抑制失焦隐藏
   const suppressBlurUntil = useRef(0);
   const onSelectOpen = () => {
