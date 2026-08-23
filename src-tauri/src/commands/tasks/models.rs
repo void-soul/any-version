@@ -59,6 +59,9 @@ pub struct TaskItem {
     /// 计划日期（YYYY-MM-DD）。null 表示未排期（Inbox）。
     #[serde(default)]
     pub scheduled_date: Option<String>,
+    /// 父任务 ID。null 表示顶层任务。
+    #[serde(default)]
+    pub parent_id: Option<String>,
     #[serde(default)]
     pub priority: String, // low|medium|high|urgent
     pub progress: i64, // 0-100
@@ -147,6 +150,8 @@ pub struct CreateTaskInput {
     pub description: String,
     #[serde(default)]
     pub scheduled_date: Option<String>,
+    #[serde(default)]
+    pub parent_id: Option<String>,
     #[serde(default = "default_priority")]
     pub priority: String,
     #[serde(default)]
@@ -182,6 +187,8 @@ pub struct UpdateTaskInput {
     pub description: Option<String>,
     #[serde(default, deserialize_with = "double_option")]
     pub scheduled_date: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub parent_id: Option<Option<String>>,
     #[serde(default)]
     pub priority: Option<String>,
     #[serde(default)]

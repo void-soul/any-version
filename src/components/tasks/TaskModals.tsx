@@ -64,11 +64,15 @@ const ghostBtn =
 export function TaskEditModal({
   task,
   defaultDate,
+  parentOptions,
+  defaultParentId,
   onClose,
   onSaved,
 }: {
   task: TaskItem | null;
   defaultDate: string | null;
+  parentOptions?: TaskItem[];
+  defaultParentId?: string | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -77,6 +81,7 @@ export function TaskEditModal({
   const [scheduledDate, setScheduledDate] = useState<string>(
     task ? task.scheduledDate ?? "" : defaultDate ?? ""
   );
+  const [parentId, setParentId] = useState(task?.parentId ?? defaultParentId ?? "");
   const [priority, setPriority] = useState<TaskPriority>(task?.priority ?? "medium");
   const [estimate, setEstimate] = useState(String(task?.estimateMinutes ?? 0));
   const [tags, setTags] = useState(task?.tags ?? "");
@@ -95,6 +100,7 @@ export function TaskEditModal({
         title: title.trim(),
         description,
         scheduledDate: scheduledDate || null,
+        parentId: parentOptions ? (parentId || null) : (task?.parentId ?? null),
         priority,
         estimateMinutes: Number(estimate) || 0,
         tags,
@@ -149,6 +155,19 @@ export function TaskEditModal({
             onChange={(e) => setScheduledDate(e.target.value)}
             className={inputCls}
           />
+        </div>
+        <div>
+          <label className={labelCls}>父任务（可选）</label>
+          <select
+            value={parentId}
+            onChange={(e) => setParentId(e.target.value)}
+            className={inputCls}
+          >
+            <option value="">顶层任务</option>
+            {(parentOptions ?? []).filter((option) => option.id !== task?.id).map((option) => (
+              <option key={option.id} value={option.id}>{option.title}</option>
+            ))}
+          </select>
         </div>
         <div>
           <label className={labelCls}>优先级</label>

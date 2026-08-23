@@ -11,6 +11,8 @@ export interface TaskItem {
   description: string;
   /** 计划日期 YYYY-MM-DD，null 表示未排期（收集箱） */
   scheduledDate: string | null;
+  /** 父任务 ID，null 表示顶层任务 */
+  parentId: string | null;
   priority: TaskPriority;
   /** 0-100，完成度唯一真相来源 */
   progress: number;
@@ -87,6 +89,7 @@ export interface CreateTaskInput {
   title: string;
   description?: string;
   scheduledDate?: string | null;
+  parentId?: string | null;
   priority?: TaskPriority;
   progress?: number;
   estimateMinutes?: number;
@@ -97,6 +100,7 @@ export interface UpdateTaskInput {
   title?: string;
   description?: string;
   scheduledDate?: string | null;
+  parentId?: string | null;
   priority?: TaskPriority;
   estimateMinutes?: number;
   tags?: string;

@@ -1,18 +1,20 @@
 import React, { useState, useEffect } from "react";
-import { CalendarCheck, CalendarDays, ListTodo, BarChart3 } from "lucide-react";
+import { CalendarCheck, CalendarDays, ListTodo, BarChart3, GanttChartSquare } from "lucide-react";
 import TaskToday from "./TaskToday";
 import TaskCalendar from "./TaskCalendar";
 import TaskAll from "./TaskAll";
 import TaskReview from "./TaskReview";
+import TaskTimeline from "./TaskTimeline";
 import { tasksApi } from "./types";
 
-type TaskSubTab = "today" | "calendar" | "all" | "review";
+type TaskSubTab = "today" | "calendar" | "all" | "review" | "timeline";
 
 const TABS = [
   { key: "today" as TaskSubTab, label: "今日", icon: CalendarCheck },
   { key: "calendar" as TaskSubTab, label: "日历", icon: CalendarDays },
   { key: "all" as TaskSubTab, label: "全部", icon: ListTodo },
   { key: "review" as TaskSubTab, label: "复盘", icon: BarChart3 },
+  { key: "timeline" as TaskSubTab, label: "时间轴", icon: GanttChartSquare },
 ];
 
 export default function TaskPanel() {
@@ -87,6 +89,11 @@ export default function TaskPanel() {
         {mountedTabs.has("review") && (
           <div className={activeTab === "review" ? "h-full" : "hidden"}>
             <TaskReview />
+          </div>
+        )}
+        {mountedTabs.has("timeline") && (
+          <div className={activeTab === "timeline" ? "h-full" : "hidden"}>
+            <TaskTimeline />
           </div>
         )}
       </div>

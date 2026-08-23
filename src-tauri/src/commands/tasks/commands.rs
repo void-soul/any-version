@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use rusqlite::params;
 
 use super::db::{new_id, now_ts, today, with_conn};
@@ -6,7 +8,7 @@ use super::models::*;
 // ─── 内部工具 ───
 
 /// 从查询行构造 TaskItem（列顺序必须与 TASK_COLUMNS 一致）。
-const TASK_COLUMNS: &str = "id, title, description, scheduled_date, priority, progress, \
+const TASK_COLUMNS: &str = "id, title, description, scheduled_date, parent_id, priority, progress, \
      sort_order, estimate_minutes, tags, archived, created_at, updated_at, completed_at";
 
 fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<TaskItem> {
@@ -15,15 +17,16 @@ fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<TaskItem> {
         title: row.get(1)?,
         description: row.get(2)?,
         scheduled_date: row.get(3)?,
-        priority: row.get(4)?,
-        progress: row.get(5)?,
-        sort_order: row.get(6)?,
-        estimate_minutes: row.get(7)?,
-        tags: row.get(8)?,
-        archived: row.get::<_, i64>(9)? != 0,
-        created_at: row.get(10)?,
-        updated_at: row.get(11)?,
-        completed_at: row.get(12)?,
+        parent_id: row.get(4)?,
+        priority: row.get(5)?,
+        progress: row.get(6)?,
+        sort_order: row.get(7)?,
+        estimate_minutes: row.get(8)?,
+        tags: row.get(9)?,
+        archived: row.get::<_, i64>(10)? != 0,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
+        completed_at: row.get(13)?,
     })
 }
 
@@ -37,6 +40,43 @@ fn status_str(progress: i64) -> &'static str {
 
 fn clamp_progress(p: i64) -> i64 {
     p.clamp(0, 100)
+}
+
+/// 校验父任务存在且不会形成自引用或多级循环。
+fn validate_parent(
+    conn: &rusqlite::Connection,
+    task_id: Option<&str>,
+    parent_id: &Option<String>,
+) -> Result<(), String> {
+    let Some(parent) = parent_id.as_deref() else {
+        return Ok(());
+    };
+    if task_id == Some(parent) {
+        return Err("任务不能设为自己的父任务".into());
+    }
+
+    let parent_exists: i64 = conn
+        .query_row("SELECT COUNT(*) FROM tasks WHERE id = ?1", params![parent], |row| row.get(0))
+        .map_err(|e| format!("校验父任务失败: {}", e))?;
+    if parent_exists == 0 {
+        return Err("父任务不存在".into());
+    }
+
+    let mut seen = HashSet::new();
+    let mut current = Some(parent.to_string());
+    while let Some(id) = current {
+        if !seen.insert(id.clone()) {
+            return Err("父任务关系存在循环".into());
+        }
+        let next: Option<String> = conn
+            .query_row("SELECT parent_id FROM tasks WHERE id = ?1", params![id], |row| row.get(0))
+            .map_err(|e| format!("校验父任务失败: {}", e))?;
+        if task_id == Some(id.as_str()) {
+            return Err("父任务关系存在循环".into());
+        }
+        current = next;
+    }
+    Ok(())
 }
 
 /// 计算某天末尾的排序值（追加到末尾）。
@@ -206,19 +246,21 @@ pub fn tasks_create(input: CreateTaskInput) -> Result<TaskItem, String> {
     with_conn(move |conn| {
         let id = new_id("task");
         let ts = now_ts();
-        let progress = clamp_progress(input.progress);
-        let sort_order = next_sort_order(conn, &input.scheduled_date);
+        let progress = clamp_progress(input.progress);        let sort_order = next_sort_order(conn, &input.scheduled_date);
+        let parent_id = input.parent_id.filter(|parent| !parent.trim().is_empty());
+        validate_parent(conn, Some(&id), &parent_id)?;
         let completed_at = if progress >= 100 { Some(ts.clone()) } else { None };
 
         conn.execute(
-            "INSERT INTO tasks (id, title, description, scheduled_date, priority, progress, \
+            "INSERT INTO tasks (id, title, description, scheduled_date, parent_id, priority, progress, \
              sort_order, estimate_minutes, tags, archived, created_at, updated_at, completed_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, ?12, ?13)",
             params![
                 id,
                 title,
                 input.description,
                 input.scheduled_date,
+                parent_id,
                 input.priority,
                 progress,
                 sort_order,
@@ -249,6 +291,11 @@ pub fn tasks_update(id: String, input: UpdateTaskInput) -> Result<TaskItem, Stri
             Some(v) => v,
             None => old.scheduled_date.clone(),
         };
+        let parent_id = match input.parent_id {
+            Some(v) => v.filter(|parent| !parent.trim().is_empty()),
+            None => old.parent_id.clone(),
+        };
+        validate_parent(conn, Some(&id), &parent_id)?;
         let priority = input.priority.unwrap_or(old.priority.clone());
         let estimate = input.estimate_minutes.unwrap_or(old.estimate_minutes);
         let tags = input.tags.unwrap_or(old.tags.clone());
@@ -274,13 +321,14 @@ pub fn tasks_update(id: String, input: UpdateTaskInput) -> Result<TaskItem, Stri
         };
 
         conn.execute(
-            "UPDATE tasks SET title = ?1, description = ?2, scheduled_date = ?3, priority = ?4, \
-             progress = ?5, sort_order = ?6, estimate_minutes = ?7, tags = ?8, archived = ?9, \
-             updated_at = ?10, completed_at = ?11 WHERE id = ?12",
+            "UPDATE tasks SET title = ?1, description = ?2, scheduled_date = ?3, parent_id = ?4, priority = ?5, \
+             progress = ?6, sort_order = ?7, estimate_minutes = ?8, tags = ?9, archived = ?10, \
+             updated_at = ?11, completed_at = ?12 WHERE id = ?13",
             params![
                 title.trim(),
                 description,
                 scheduled_date,
+                parent_id,
                 priority,
                 progress,
                 sort_order,
@@ -539,6 +587,9 @@ pub fn tasks_set_archived(id: String, archived: bool) -> Result<(), String> {
 #[tauri::command]
 pub fn tasks_delete(id: String) -> Result<(), String> {
     with_conn(move |conn| {
+        // 删除父任务不删除子任务，子任务自动提升为顶层任务。
+        conn.execute("UPDATE tasks SET parent_id = NULL, updated_at = ?1 WHERE parent_id = ?2", params![now_ts(), id])
+            .map_err(|e| format!("整理子任务关系失败: {}", e))?;
         conn.execute("DELETE FROM task_logs WHERE task_id = ?1", params![id])
             .map_err(|e| e.to_string())?;
         conn.execute("DELETE FROM task_moves WHERE task_id = ?1", params![id])

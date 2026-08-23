@@ -77,6 +77,21 @@ pub fn init_db() -> Result<(), String> {
     )
     .map_err(|e| format!("初始化任务表失败: {}", e))?;
 
+    // 旧版本数据库没有 parent_id，使用幂等迁移补列。
+    let has_parent_id: bool = conn
+        .prepare("PRAGMA table_info(tasks)")
+        .and_then(|mut stmt| {
+            stmt.query_map([], |row| row.get::<_, String>(1))?.collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map(|columns| columns.iter().any(|column| column == "parent_id"))
+        .unwrap_or(false);
+    if !has_parent_id {
+        conn.execute("ALTER TABLE tasks ADD COLUMN parent_id TEXT", [])
+            .map_err(|e| format!("迁移任务父子关系字段失败: {}", e))?;
+    }
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id)", [])
+        .map_err(|e| format!("创建父任务索引失败: {}", e))?;
+
     let mut guard = DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))?;
     *guard = Some(conn);
     Ok(())
