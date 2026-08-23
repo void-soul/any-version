@@ -1,4 +1,5 @@
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { JsonFlowCanvas } from "../CanvasFlow";
 import Editor from "@monaco-editor/react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -17,6 +18,9 @@ import {
   GitCompareArrows,
   Indent,
   ListTree,
+  Map as MapIcon,
+  Table2,
+  Maximize2,
   Minimize2,
   PanelLeft,
   PanelRight,
@@ -29,8 +33,8 @@ import {
   X,
 } from "lucide-react";
 
-type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
-type ViewMode = "tree" | "graph" | "text" | "compare";
+export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+type ViewMode = "tree" | "graph" | "table" | "text" | "compare";
 
 type GraphItem = {
   id: string;
@@ -53,7 +57,7 @@ type JsonTab = {
   savedText: string | null;
 };
 
-type SearchMatches = {
+export type SearchMatches = {
   query: string;
   paths: Set<string>;
   directPaths: Set<string>;
@@ -149,6 +153,87 @@ function normalizeJsonText(value: string): string {
   return value.replace(/\r\n?/g, "\n");
 }
 
+type TableCandidate = { path: string; rows: JsonValue[]; columns: string[] };
+
+function tableCandidates(value: JsonValue): TableCandidate[] {
+  const result: TableCandidate[] = [];
+  const visit = (current: JsonValue, path: string) => {
+    if (Array.isArray(current)) {
+      const objectRows = current.filter((item): item is { [key: string]: JsonValue } => typeof item === "object" && item !== null && !Array.isArray(item));
+      if (objectRows.length > 0) {
+        const columns = [...new Set(objectRows.flatMap((row) => Object.keys(row)))].slice(0, 32);
+        result.push({ path, rows: current, columns });
+      } else if (current.length > 0) {
+        result.push({ path, rows: current, columns: ["value"] });
+      }
+      current.forEach((child, index) => visit(child, `${path}.${index}`));
+      return;
+    }
+    if (typeof current === "object" && current !== null) {
+      Object.entries(current).forEach(([key, child]) => visit(child, path ? `${path}.${key}` : key));
+    }
+  };
+  visit(value, "root");
+  return result;
+}
+
+function valueAtPath(value: JsonValue, path: string): JsonValue | null {
+  if (path === "root") return value;
+  return path.split(".").slice(1).reduce<JsonValue | null>((current, segment) => {
+    if (current === null || current === undefined) return null;
+    if (Array.isArray(current)) return current[Number(segment)] ?? null;
+    if (typeof current === "object") return current[segment] ?? null;
+    return null;
+  }, value);
+}
+
+function compactValue(value: JsonValue): string {
+  if (value === null) return "null";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  const raw = JSON.stringify(value);
+  return raw.length > 100 ? `${raw.slice(0, 97)}...` : raw;
+}
+
+function JsonTableView({ value, query, selectedPath, onSelectPath, onCopy }: {
+  value: JsonValue;
+  query: string;
+  selectedPath: string;
+  onSelectPath: (path: string) => void;
+  onCopy: (text: string) => void;
+}) {
+  const candidates = useMemo(() => tableCandidates(value), [value]);
+  const [tablePath, setTablePath] = useState(selectedPath);
+  const selected = candidates.find((candidate) => candidate.path === tablePath) ?? candidates[0] ?? null;
+  useEffect(() => {
+    if (!selected && candidates[0]) setTablePath(candidates[0].path);
+  }, [candidates, selected]);
+  if (!selected) return <div className="flex h-full items-center justify-center text-[11px] text-slate-600">当前 JSON 没有可表格化的数组</div>;
+  const normalized = query.trim().toLowerCase();
+  const rows = selected.rows
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => !normalized || JSON.stringify(row).toLowerCase().includes(normalized));
+  const isObjectRows = selected.columns[0] !== "value";
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-slate-950/20">
+      <div className="flex shrink-0 items-center gap-2 border-b border-white/10 px-3 py-2">
+        <Table2 className="h-3.5 w-3.5 text-cyan-300" />
+        <select value={selected.path} onChange={(event) => { setTablePath(event.target.value); onSelectPath(event.target.value); }} className="min-w-0 flex-1 rounded border border-white/10 bg-slate-900 px-2 py-1 text-[10px] text-slate-300 outline-none">
+          {candidates.map((candidate) => <option key={candidate.path} value={candidate.path}>{candidate.path} · {candidate.rows.length} 行</option>)}
+        </select>
+        <button type="button" className="rounded border border-white/10 px-2 py-1 text-[10px] text-slate-400 hover:bg-white/[0.08] hover:text-white" onClick={() => onCopy(copyValue(valueAtPath(value, selected.path) ?? []))}>复制整表</button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto p-3">
+        <table className="w-full border-separate border-spacing-0 text-left text-[11px]">
+          <thead><tr>{isObjectRows && <th className="sticky top-0 border-b border-white/10 bg-slate-900 px-2 py-2 font-medium text-slate-500">#</th>}{selected.columns.map((column) => <th key={column} className="sticky top-0 border-b border-white/10 bg-slate-900 px-2 py-2 font-medium text-cyan-300">{column}</th>)}</tr></thead>
+          <tbody>{rows.map(({ row, index }) => <tr key={`${selected.path}.${index}`} className="group hover:bg-white/[0.05]" onClick={() => onSelectPath(`${selected.path}.${index}`)}>{isObjectRows && <td className="border-b border-white/5 px-2 py-2 font-mono text-slate-600">{index + 1}</td>}{selected.columns.map((column) => { const cell = isObjectRows && typeof row === "object" && row !== null && !Array.isArray(row) ? row[column] ?? null : row; return <td key={column} className="max-w-[360px] border-b border-white/5 px-2 py-2 align-top text-slate-300"><span title={copyValue(cell)}>{compactValue(cell)}</span><button type="button" className="ml-2 opacity-0 transition group-hover:opacity-100 text-slate-500 hover:text-white" onClick={(event) => { event.stopPropagation(); onCopy(copyValue(cell)); }} title="复制单元格"><Copy className="inline h-3 w-3" /></button></td>; })}</tr>)}</tbody>
+        </table>
+        {rows.length === 0 && <div className="py-12 text-center text-[11px] text-slate-600">没有匹配的行</div>}
+      </div>
+    </div>
+  );
+}
+
 function TreeNode({ name, value, path, depth, searchMatches, collapsed, onToggle, onCopy }: TreeNodeProps) {
   if (searchMatches.query && !searchMatches.paths.has(path)) return null;
   const type = typeOf(value);
@@ -222,7 +307,7 @@ function TreeNode({ name, value, path, depth, searchMatches, collapsed, onToggle
 
 function buildGraphItems(value: JsonValue): GraphItem[] {
   const items: GraphItem[] = [];
-  const rowByDepth = new Map<number, number>();
+  const rowByDepth = new globalThis.Map<number, number>();
   const maxDepth = 0;
   const visit = (name: string, current: JsonValue, path: string, depth: number, parentId: string | null) => {
     const id = path || "root";
@@ -254,6 +339,47 @@ function buildGraphItems(value: JsonValue): GraphItem[] {
   return items.map((item) => ({ ...item, y: (item.y - (maxRows - 1) * 38) }));
 }
 
+type GraphTransform = { x: number; y: number; scale: number };
+
+function graphBounds(items: GraphItem[]) {
+  if (items.length === 0) return { minX: 0, minY: 0, maxX: 1, maxY: 1, width: 1, height: 1 };
+  const minX = Math.min(...items.map((item) => item.x));
+  const minY = Math.min(...items.map((item) => item.y));
+  const maxX = Math.max(...items.map((item) => item.x + item.width));
+  const maxY = Math.max(...items.map((item) => item.y + item.height));
+  return { minX, minY, maxX, maxY, width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) };
+}
+
+const GRAPH_EDGE_COLORS = [
+  ["#22d3ee", "#3b82f6"],
+  ["#a78bfa", "#ec4899"],
+  ["#34d399", "#14b8a6"],
+  ["#fbbf24", "#f97316"],
+  ["#fb7185", "#f43f5e"],
+  ["#60a5fa", "#818cf8"],
+] as const;
+
+function stableColorIndex(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  return hash % GRAPH_EDGE_COLORS.length;
+}
+
+function drawCanvasArrow(context: CanvasRenderingContext2D, x: number, y: number, angle: number, color: string, size: number) {
+  context.save();
+  context.translate(x, y);
+  context.rotate(angle);
+  context.beginPath();
+  context.moveTo(0, 0);
+  context.lineTo(-size, size * 0.52);
+  context.lineTo(-size * 0.82, 0);
+  context.lineTo(-size, -size * 0.52);
+  context.closePath();
+  context.fillStyle = color;
+  context.fill();
+  context.restore();
+}
+
 function GraphCanvas({ value, selectedPath, searchMatches, onSelectPath, onCopy }: {
   value: JsonValue;
   selectedPath: string;
@@ -262,11 +388,100 @@ function GraphCanvas({ value, selectedPath, searchMatches, onSelectPath, onCopy 
   onCopy: (value: string) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const minimapRef = useRef<HTMLCanvasElement>(null);
+  const drawRef = useRef<() => void>(() => {});
   const viewportRef = useRef<HTMLDivElement>(null);
-  const transformRef = useRef({ x: 36, y: 0, scale: 1 });
+  const transformRef = useRef<GraphTransform>({ x: 36, y: 0, scale: 1 });
   const dragRef = useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const items = useMemo(() => buildGraphItems(value), [value]);
-  const itemById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
+  const itemById = useMemo(() => new globalThis.Map(items.map((item) => [item.id, item])), [items]);
+  const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set());
+  const [zoomPercent, setZoomPercent] = useState(100);
+  const visibleItems = useMemo(() => items.filter((item) => {
+    let parentId = item.parentId;
+    while (parentId) {
+      if (collapsedPaths.has(parentId)) return false;
+      parentId = itemById.get(parentId)?.parentId ?? null;
+    }
+    return true;
+  }), [collapsedPaths, itemById, items]);
+  const chainIds = useMemo(() => {
+    const next = new Set<string>();
+    let current = itemById.get(selectedPath) ?? null;
+    while (current) {
+      next.add(current.id);
+      current = current.parentId ? itemById.get(current.parentId) ?? null : null;
+    }
+    return next;
+  }, [itemById, selectedPath]);
+
+  useEffect(() => {
+    setCollapsedPaths(new Set());
+  }, [value]);
+
+  const toggleCollapsed = useCallback((path: string) => {
+    setCollapsedPaths((previous) => {
+      const next = new Set(previous);
+      if (next.has(path)) next.delete(path); else next.add(path);
+      return next;
+    });
+  }, []);
+
+  const fitView = useCallback(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || visibleItems.length === 0) return;
+    const rect = viewport.getBoundingClientRect();
+    const bounds = graphBounds(visibleItems);
+    const padding = 52;
+    const scale = Math.max(0.35, Math.min(2.5, Math.min((rect.width - padding * 2) / bounds.width, (rect.height - padding * 2) / bounds.height)));
+    transformRef.current = {
+      scale,
+      x: (rect.width - bounds.width * scale) / 2 - bounds.minX * scale,
+      y: (rect.height - bounds.height * scale) / 2 - bounds.minY * scale,
+    };
+    setZoomPercent(Math.round(scale * 100));
+    drawRef.current();
+  }, [visibleItems]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => fitView());
+    return () => window.cancelAnimationFrame(frame);
+  }, [fitView, value]);
+
+  const drawMinimap = useCallback(() => {
+    const minimap = minimapRef.current;
+    if (!minimap) return;
+    const rect = minimap.getBoundingClientRect();
+    const ratio = window.devicePixelRatio || 1;
+    minimap.width = Math.max(1, Math.floor(rect.width * ratio));
+    minimap.height = Math.max(1, Math.floor(rect.height * ratio));
+    const context = minimap.getContext("2d");
+    if (!context) return;
+    const bounds = graphBounds(items);
+    const padding = 8;
+    const scale = Math.min((rect.width - padding * 2) / bounds.width, (rect.height - padding * 2) / bounds.height);
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.clearRect(0, 0, rect.width, rect.height);
+    context.fillStyle = "rgba(8, 15, 28, .94)";
+    context.fillRect(0, 0, rect.width, rect.height);
+    visibleItems.forEach((item) => {
+      const x = padding + (item.x - bounds.minX) * scale;
+      const y = padding + (item.y - bounds.minY) * scale;
+      context.fillStyle = item.path === selectedPath ? "#22d3ee" : chainIds.has(item.path) ? "#0891b2" : "#475569";
+      context.globalAlpha = item.path === selectedPath || chainIds.has(item.path) ? 1 : .7;
+      context.fillRect(x, y, Math.max(3, item.width * scale), Math.max(2, item.height * scale));
+    });
+    const viewport = viewportRef.current?.getBoundingClientRect();
+    if (viewport) {
+      const transform = transformRef.current;
+      const visibleWorld = { x: -transform.x / transform.scale, y: -transform.y / transform.scale, width: viewport.width / transform.scale, height: viewport.height / transform.scale };
+      context.globalAlpha = 1;
+      context.strokeStyle = "#f8fafc";
+      context.lineWidth = 1;
+      context.strokeRect(padding + (visibleWorld.x - bounds.minX) * scale, padding + (visibleWorld.y - bounds.minY) * scale, visibleWorld.width * scale, visibleWorld.height * scale);
+    }
+    context.globalAlpha = 1;
+  }, [chainIds, items, selectedPath, visibleItems]);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -289,28 +504,49 @@ function GraphCanvas({ value, selectedPath, searchMatches, onSelectPath, onCopy 
     context.translate(transform.x, transform.y);
     context.scale(transform.scale, transform.scale);
     context.lineWidth = 1.4 / transform.scale;
-    items.forEach((item) => {
+    visibleItems.forEach((item) => {
       if (!item.parentId) return;
       const parent = itemById.get(item.parentId);
       if (!parent) return;
-      context.beginPath();
-      context.moveTo(parent.x + parent.width, parent.y + parent.height / 2);
-      context.bezierCurveTo(parent.x + parent.width + 55, parent.y + parent.height / 2, item.x - 55, item.y + item.height / 2, item.x, item.y + item.height / 2);
+      const startX = parent.x + parent.width;
+      const startY = parent.y + parent.height / 2;
+      const endX = item.x;
+      const endY = item.y + item.height / 2;
+      const controlOffset = Math.max(55, Math.abs(endX - startX) * 0.42);
       const relatedToSearch = !searchMatches.query || searchMatches.paths.has(item.id) || searchMatches.paths.has(parent.id);
-      context.globalAlpha = relatedToSearch ? 1 : 0.25;
-      context.strokeStyle = "rgba(100, 116, 139, .65)";
+      const highlighted = chainIds.has(item.id) && chainIds.has(parent.id);
+      const [startColor, endColor] = GRAPH_EDGE_COLORS[stableColorIndex(item.id)];
+      const gradient = context.createLinearGradient(startX, startY, endX, endY);
+      gradient.addColorStop(0, startColor);
+      gradient.addColorStop(0.5, endColor);
+      gradient.addColorStop(1, startColor);
+
+      context.beginPath();
+      context.moveTo(startX, startY);
+      context.bezierCurveTo(startX + controlOffset, startY, endX - controlOffset, endY, endX, endY);
+      context.globalAlpha = relatedToSearch ? (highlighted ? 1 : 0.9) : 0.14;
+      context.save();
+      context.shadowColor = highlighted ? endColor : startColor;
+      context.shadowBlur = (highlighted ? 8 : 4) / transform.scale;
+      context.strokeStyle = gradient;
+      context.lineWidth = (highlighted ? 3.2 : 2) / transform.scale;
       context.stroke();
+      context.restore();
+
+      const angle = Math.atan2(endY - (endY - startY) * 0.04, endX - (endX - startX) * 0.04);
+      drawCanvasArrow(context, endX, endY, angle, endColor, (highlighted ? 9 : 7) / transform.scale);
       context.globalAlpha = 1;
     });
-    items.forEach((item) => {
+    visibleItems.forEach((item) => {
       const selected = item.path === selectedPath;
+      const onSelectedChain = chainIds.has(item.path);
       const directMatch = searchMatches.directPaths.has(item.path);
       const relatedToSearch = !searchMatches.query || searchMatches.paths.has(item.path);
       const container = isContainer(item.value);
       context.globalAlpha = relatedToSearch ? 1 : 0.3;
-      context.fillStyle = selected ? "#164e63" : container ? "#111f35" : "#101827";
-      context.strokeStyle = directMatch ? "#facc15" : selected ? "#22d3ee" : container ? "#2d6081" : "#334155";
-      context.lineWidth = (selected ? 2 : 1) / transform.scale;
+      context.fillStyle = selected ? "#164e63" : onSelectedChain ? "#123247" : container ? "#111f35" : "#101827";
+      context.strokeStyle = directMatch ? "#facc15" : selected ? "#22d3ee" : onSelectedChain ? "#0891b2" : container ? "#2d6081" : "#334155";
+      context.lineWidth = (selected ? 2.4 : onSelectedChain ? 1.8 : 1) / transform.scale;
       context.beginPath();
       context.roundRect(item.x, item.y, item.width, item.height, 6);
       context.fill();
@@ -325,10 +561,28 @@ function GraphCanvas({ value, selectedPath, searchMatches, onSelectPath, onCopy 
       context.font = "11px ui-monospace, SFMono-Regular, Consolas, monospace";
       context.fillStyle = type === "string" ? "#86efac" : type === "number" ? "#fcd34d" : "#94a3b8";
       context.fillText(summary, item.x + 10, item.y + 36);
+      if (container) {
+        context.fillStyle = "#94a3b8";
+        context.beginPath();
+        if (collapsedPaths.has(item.path)) {
+          context.moveTo(item.x + item.width - 18, item.y + 18);
+          context.lineTo(item.x + item.width - 10, item.y + 24);
+          context.lineTo(item.x + item.width - 18, item.y + 30);
+        } else {
+          context.moveTo(item.x + item.width - 20, item.y + 20);
+          context.lineTo(item.x + item.width - 10, item.y + 20);
+          context.lineTo(item.x + item.width - 15, item.y + 28);
+        }
+        context.closePath();
+        context.fill();
+      }
       context.globalAlpha = 1;
     });
     context.restore();
-  }, [itemById, items, searchMatches, selectedPath]);
+    drawMinimap();
+  }, [chainIds, collapsedPaths, drawMinimap, itemById, searchMatches, selectedPath, visibleItems]);
+
+  drawRef.current = draw;
 
   useEffect(() => {
     draw();
@@ -343,7 +597,7 @@ function GraphCanvas({ value, selectedPath, searchMatches, onSelectPath, onCopy 
     const transform = transformRef.current;
     const x = (clientX - rect.left - transform.x) / transform.scale;
     const y = (clientY - rect.top - transform.y) / transform.scale;
-    return [...items].reverse().find((item) => x >= item.x && x <= item.x + item.width && y >= item.y && y <= item.y + item.height) ?? null;
+    return [...visibleItems].reverse().find((item) => x >= item.x && x <= item.x + item.width && y >= item.y && y <= item.y + item.height) ?? null;
   };
 
   const selectedItem = itemById.get(selectedPath) ?? null;
@@ -358,7 +612,11 @@ function GraphCanvas({ value, selectedPath, searchMatches, onSelectPath, onCopy 
       const cursorX = event.clientX - rect.left;
       const cursorY = event.clientY - rect.top;
       transformRef.current = { x: cursorX - (cursorX - transformRef.current.x) * nextScale / oldScale, y: cursorY - (cursorY - transformRef.current.y) * nextScale / oldScale, scale: nextScale };
+      setZoomPercent(Math.round(nextScale * 100));
       draw();
+    }} onDoubleClick={(event) => {
+      const item = hitTest(event.clientX, event.clientY);
+      if (item && isContainer(item.value)) toggleCollapsed(item.path);
     }} onPointerDown={(event) => {
       event.currentTarget.setPointerCapture(event.pointerId);
       dragRef.current = { x: event.clientX, y: event.clientY, moved: false };
@@ -382,12 +640,34 @@ function GraphCanvas({ value, selectedPath, searchMatches, onSelectPath, onCopy 
       }
     }}>
       <canvas ref={canvasRef} className="absolute inset-0 cursor-grab active:cursor-grabbing" />
-      {selectedItem && <div className="absolute right-3 top-3 flex max-w-[min(360px,calc(100%-24px))] items-center gap-2 rounded-md border border-white/10 bg-slate-900/95 px-2 py-1.5 text-[10px] shadow-lg" onPointerDown={(event) => event.stopPropagation()}>
+      <div className="absolute right-3 top-3 z-10 flex items-center gap-1 rounded-md border border-white/10 bg-slate-900/90 p-1 shadow-lg" onPointerDown={(event) => event.stopPropagation()}>
+        <button type="button" className="inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-white/[0.1] hover:text-white" onClick={() => { const scale = Math.max(0.35, transformRef.current.scale * 0.85); transformRef.current.scale = scale; setZoomPercent(Math.round(scale * 100)); draw(); }} title="缩小" aria-label="缩小">−</button>
+        <span className="w-10 text-center font-mono text-[9px] text-slate-500">{zoomPercent}%</span>
+        <button type="button" className="inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-white/[0.1] hover:text-white" onClick={() => { const scale = Math.min(2.5, transformRef.current.scale * 1.18); transformRef.current.scale = scale; setZoomPercent(Math.round(scale * 100)); draw(); }} title="放大" aria-label="放大">+</button>
+        <button type="button" className="inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-white/[0.1] hover:text-white" onClick={() => void fitView()} title="适配视口" aria-label="适配视口"><Maximize2 className="h-3 w-3" /></button>
+        <button type="button" className="inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-white/[0.1] hover:text-white" onClick={() => { setCollapsedPaths(new Set()); void fitView(); }} title="自动布局" aria-label="自动布局"><MapIcon className="h-3 w-3" /></button>
+      </div>
+      <canvas ref={minimapRef} className="absolute bottom-3 right-3 z-10 h-[108px] w-[180px] rounded-md border border-white/10 shadow-lg" onPointerDown={(event) => {
+        event.stopPropagation();
+        const rect = event.currentTarget.getBoundingClientRect();
+        const bounds = graphBounds(items);
+        const padding = 8;
+        const scale = Math.min((rect.width - padding * 2) / bounds.width, (rect.height - padding * 2) / bounds.height);
+        const worldX = bounds.minX + (event.clientX - rect.left - padding) / scale;
+        const worldY = bounds.minY + (event.clientY - rect.top - padding) / scale;
+        const viewport = viewportRef.current?.getBoundingClientRect();
+        if (viewport) {
+          transformRef.current.x = viewport.width / 2 - worldX * transformRef.current.scale;
+          transformRef.current.y = viewport.height / 2 - worldY * transformRef.current.scale;
+          draw();
+        }
+      }} />
+      {selectedItem && <div className="absolute right-3 top-14 z-10 flex max-w-[min(360px,calc(100%-24px))] items-center gap-2 rounded-md border border-white/10 bg-slate-900/95 px-2 py-1.5 text-[10px] shadow-lg" onPointerDown={(event) => event.stopPropagation()}>
         <span className="min-w-0 truncate font-mono text-slate-300" title={selectedItem.path}>{selectedItem.path}</span>
         <button type="button" className="inline-flex h-6 shrink-0 items-center gap-1 rounded border border-white/10 bg-white/[0.06] px-2 text-slate-300 hover:bg-white/[0.12] hover:text-white" onClick={() => onCopy(copyValue(selectedItem.value))} title="复制当前节点内容"><Copy className="h-3 w-3" />复制</button>
       </div>}
       {searchMatches.query && <div className="pointer-events-none absolute right-3 bottom-3 rounded border border-yellow-400/20 bg-slate-900/80 px-2 py-1 text-[10px] text-yellow-200">命中 {searchMatches.directPaths.size} 个节点</div>}
-      <div className="pointer-events-none absolute bottom-3 left-3 rounded border border-white/10 bg-slate-900/80 px-2 py-1 text-[10px] text-slate-500">滚轮缩放 · 拖动画布 · 点击节点定位</div>
+      <div className="pointer-events-none absolute bottom-3 left-3 rounded border border-white/10 bg-slate-900/80 px-2 py-1 text-[10px] text-slate-500">滚轮缩放 · 拖动画布 · 单击选中 · 双击折叠/展开</div>
     </div>
   );
 }
@@ -738,6 +1018,7 @@ export default function JsonBrowser() {
             <div className="flex h-8 shrink-0 items-center gap-1 border-b border-white/10 px-2 text-[10px] text-slate-500">
               <button type="button" onClick={() => setViewMode("tree")} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "tree" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><ListTree className="h-3 w-3" />结构</button>
               <button type="button" onClick={() => setViewMode("graph")} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "graph" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><GitCompareArrows className="h-3 w-3" />图形树</button>
+              <button type="button" onClick={() => setViewMode("table")} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "table" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><Table2 className="h-3 w-3" />表格</button>
               <button type="button" onClick={() => { setRightText(active?.text ?? ""); setViewMode("text"); }} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "text" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><Braces className="h-3 w-3" />预览</button>
               <button type="button" onClick={() => setViewMode("compare")} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "compare" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><GitCompareArrows className="h-3 w-3" />对比</button>
               <span className="ml-auto flex items-center gap-2">
@@ -754,7 +1035,12 @@ export default function JsonBrowser() {
             )}
             {viewMode === "graph" && (
               <div className="min-h-0 flex-1">
-                {parsed.value === null ? <div className="flex h-full items-center justify-center text-[11px] text-slate-600">输入有效 JSON 后显示图形树</div> : <GraphCanvas value={parsed.value} selectedPath={selectedPath} searchMatches={searchMatches} onSelectPath={revealPathInEditor} onCopy={(value) => void copyValue(value)} />}
+                {parsed.value === null ? <div className="flex h-full items-center justify-center text-[11px] text-slate-600">输入有效 JSON 后显示图形树</div> : <JsonFlowCanvas value={parsed.value} selectedPath={selectedPath} searchMatches={searchMatches} onSelectPath={revealPathInEditor} onCopy={(value) => void copyValue(value)} />}
+              </div>
+            )}
+            {viewMode === "table" && (
+              <div className="min-h-0 flex-1">
+                {parsed.value === null ? <div className="flex h-full items-center justify-center text-[11px] text-slate-600">输入有效 JSON 后显示表格</div> : <JsonTableView value={parsed.value} query={deferredQuery} selectedPath={selectedPath} onSelectPath={revealPathInEditor} onCopy={(value) => void copyValue(value)} />}
               </div>
             )}
             {viewMode === "text" && (

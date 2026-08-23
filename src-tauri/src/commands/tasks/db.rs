@@ -58,6 +58,16 @@ pub fn init_db() -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS idx_logs_task ON task_logs(task_id);
         CREATE INDEX IF NOT EXISTS idx_logs_date ON task_logs(log_date);
 
+        CREATE TABLE IF NOT EXISTS task_log_references (
+            id TEXT PRIMARY KEY,
+            log_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            target TEXT NOT NULL,
+            label TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY(log_id) REFERENCES task_logs(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_log_refs_log ON task_log_references(log_id);
+
         CREATE TABLE IF NOT EXISTS task_moves (
             id            TEXT    PRIMARY KEY,
             task_id       TEXT    NOT NULL,
@@ -88,6 +98,22 @@ pub fn init_db() -> Result<(), String> {
     if !has_parent_id {
         conn.execute("ALTER TABLE tasks ADD COLUMN parent_id TEXT", [])
             .map_err(|e| format!("迁移任务父子关系字段失败: {}", e))?;
+    }
+    let task_columns: Vec<String> = conn
+        .prepare("PRAGMA table_info(tasks)")
+        .and_then(|mut stmt| stmt.query_map([], |row| row.get::<_, String>(1))?.collect::<rusqlite::Result<Vec<_>>>())
+        .unwrap_or_default();
+    if !task_columns.iter().any(|column| column == "color") {
+        conn.execute("ALTER TABLE tasks ADD COLUMN color TEXT NOT NULL DEFAULT '#f59e0b'", [])
+            .map_err(|e| format!("迁移任务颜色字段失败: {}", e))?;
+    }
+    if !task_columns.iter().any(|column| column == "position_x") {
+        conn.execute("ALTER TABLE tasks ADD COLUMN position_x REAL NOT NULL DEFAULT 0", [])
+            .map_err(|e| format!("迁移任务横坐标字段失败: {}", e))?;
+    }
+    if !task_columns.iter().any(|column| column == "position_y") {
+        conn.execute("ALTER TABLE tasks ADD COLUMN position_y REAL NOT NULL DEFAULT 0", [])
+            .map_err(|e| format!("迁移任务纵坐标字段失败: {}", e))?;
     }
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id)", [])
         .map_err(|e| format!("创建父任务索引失败: {}", e))?;

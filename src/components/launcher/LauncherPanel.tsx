@@ -1696,7 +1696,12 @@ export default function LauncherPanel() {
                       : ""
                   }`}
                 >
-                  <span className="truncate">{cat.name}</span>
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="shrink-0 leading-none" style={{ fontSize: 14 }}>
+                      {cat.data?.icon || "📁"}
+                    </span>
+                    <span className="truncate">{cat.name}</span>
+                  </span>
                   <ChevronRight
                     className={`w-3.5 h-3.5 flex-shrink-0 transition ${
                       isActive ? "text-slate-900" : "opacity-40 group-hover:opacity-100"
@@ -1766,7 +1771,9 @@ export default function LauncherPanel() {
                       <div className="w-full border-t border-white/5" />
                     </div>
                     <div className="relative bg-[#0c101c] pr-4 pl-0.5 font-semibold text-slate-400 tracking-wide flex items-center gap-1.5" style={categoryNameStyle}>
-                      <span className="w-1.5 h-1.5 rounded-sm bg-gradient-to-br from-[var(--module-accent)] to-cyan-400 shadow-sm shadow-[var(--module-accent-ring)]" />
+                      <span className="leading-none" style={{ fontSize: view.categoryFontSize + 2 }}>
+                        {activeTopCategory?.data?.icon || "📁"}
+                      </span>
                       <span>其他项目</span>
                       {directItems.length > 0 && (
                         <span className="text-[10px] text-slate-600 font-normal">

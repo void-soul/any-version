@@ -13,6 +13,10 @@ export interface TaskItem {
   scheduledDate: string | null;
   /** 父任务 ID，null 表示顶层任务 */
   parentId: string | null;
+  /** 节点主题色和画布坐标 */
+  color: string;
+  positionX: number;
+  positionY: number;
   priority: TaskPriority;
   /** 0-100，完成度唯一真相来源 */
   progress: number;
@@ -26,6 +30,14 @@ export interface TaskItem {
   completedAt: string | null;
 }
 
+export interface TaskLogReference {
+  id: string;
+  logId: string;
+  kind: "file" | "image" | "picky" | string;
+  target: string;
+  label: string;
+}
+
 export interface TaskLog {
   id: string;
   taskId: string;
@@ -34,6 +46,7 @@ export interface TaskLog {
   progressBefore: number;
   progressAfter: number;
   minutesSpent: number;
+  references: TaskLogReference[];
   createdAt: string;
 }
 
@@ -90,6 +103,9 @@ export interface CreateTaskInput {
   description?: string;
   scheduledDate?: string | null;
   parentId?: string | null;
+  color?: string;
+  positionX?: number;
+  positionY?: number;
   priority?: TaskPriority;
   progress?: number;
   estimateMinutes?: number;
@@ -101,6 +117,9 @@ export interface UpdateTaskInput {
   description?: string;
   scheduledDate?: string | null;
   parentId?: string | null;
+  color?: string;
+  positionX?: number;
+  positionY?: number;
   priority?: TaskPriority;
   estimateMinutes?: number;
   tags?: string;
@@ -109,9 +128,16 @@ export interface UpdateTaskInput {
   sortOrder?: number;
 }
 
+export interface TaskLogReferenceInput {
+  kind: "file" | "image" | "picky" | string;
+  target: string;
+  label?: string;
+}
+
 export interface SetProgressInput {
   progress: number;
   logContent?: string;
+  references?: TaskLogReferenceInput[];
   minutesSpent?: number;
   /** 未完成时把任务结转到该日期 */
   carryToDate?: string | null;
@@ -215,8 +241,8 @@ export const tasksApi = {
   reorder: (ids: string[]) => invoke<void>("tasks_reorder", { input: { ids } }),
   setArchived: (id: string, archived: boolean) => invoke<void>("tasks_set_archived", { id, archived }),
   remove: (id: string) => invoke<void>("tasks_delete", { id }),
-  addLog: (taskId: string, logDate: string, content: string, minutesSpent = 0) =>
-    invoke<TaskLog>("tasks_add_log", { input: { taskId, logDate, content, minutesSpent } }),
+  addLog: (taskId: string, logDate: string, content: string, minutesSpent = 0, references: TaskLogReferenceInput[] = []) =>
+    invoke<TaskLog>("tasks_add_log", { input: { taskId, logDate, content, minutesSpent, references } }),
   listLogs: (taskId: string) => invoke<TaskLog[]>("tasks_list_logs", { taskId }),
   listMoves: (taskId: string) => invoke<TaskMoveRecord[]>("tasks_list_moves", { taskId }),
   summary: (date: string) => invoke<TaskSummary>("tasks_summary", { date }),

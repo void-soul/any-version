@@ -62,6 +62,12 @@ pub struct TaskItem {
     /// 父任务 ID。null 表示顶层任务。
     #[serde(default)]
     pub parent_id: Option<String>,
+    #[serde(default = "default_task_color")]
+    pub color: String,
+    #[serde(default)]
+    pub position_x: f64,
+    #[serde(default)]
+    pub position_y: f64,
     #[serde(default)]
     pub priority: String, // low|medium|high|urgent
     pub progress: i64, // 0-100
@@ -95,7 +101,30 @@ pub struct TaskLog {
     /// 当日实际投入分钟。
     #[serde(default)]
     pub minutes_spent: i64,
+    #[serde(default)]
+    pub references: Vec<TaskLogReference>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskLogReference {
+    pub id: String,
+    pub log_id: String,
+    /// file | image | picky
+    pub kind: String,
+    pub target: String,
+    #[serde(default)]
+    pub label: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskLogReferenceInput {
+    pub kind: String,
+    pub target: String,
+    #[serde(default)]
+    pub label: String,
 }
 
 /// 任务转移到其它日期/状态的记录（用于复盘"为什么没做完"）。
@@ -152,6 +181,12 @@ pub struct CreateTaskInput {
     pub scheduled_date: Option<String>,
     #[serde(default)]
     pub parent_id: Option<String>,
+    #[serde(default = "default_task_color")]
+    pub color: String,
+    #[serde(default)]
+    pub position_x: f64,
+    #[serde(default)]
+    pub position_y: f64,
     #[serde(default = "default_priority")]
     pub priority: String,
     #[serde(default)]
@@ -164,6 +199,10 @@ pub struct CreateTaskInput {
 
 fn default_priority() -> String {
     "medium".to_string()
+}
+
+fn default_task_color() -> String {
+    "#f59e0b".to_string()
 }
 
 /// 区分"字段缺失"与"显式传 null"：
@@ -190,6 +229,12 @@ pub struct UpdateTaskInput {
     #[serde(default, deserialize_with = "double_option")]
     pub parent_id: Option<Option<String>>,
     #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub position_x: Option<f64>,
+    #[serde(default)]
+    pub position_y: Option<f64>,
+    #[serde(default)]
     pub priority: Option<String>,
     #[serde(default)]
     pub estimate_minutes: Option<i64>,
@@ -212,6 +257,8 @@ pub struct SetProgressInput {
     /// 可选复盘日志内容。
     #[serde(default)]
     pub log_content: Option<String>,
+    #[serde(default)]
+    pub references: Vec<TaskLogReferenceInput>,
     /// 当日投入分钟。
     #[serde(default)]
     pub minutes_spent: i64,
@@ -245,6 +292,8 @@ pub struct AddLogInput {
     pub content: String,
     #[serde(default)]
     pub minutes_spent: i64,
+    #[serde(default)]
+    pub references: Vec<TaskLogReferenceInput>,
 }
 
 /// 排序入参（批量重排）。

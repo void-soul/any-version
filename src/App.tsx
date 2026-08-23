@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo } from "react";
-import TaskReminderToast from "./components/tasks/TaskReminderToast";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -38,7 +37,6 @@ export default function App() {
   // 应用启动默认进入「启动」（Launcher）模块
   const [activePage, setActivePage] = useState<PageId>("launcher");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [showReminder, setShowReminder] = useState(false);
 
   // 运行组件（ffmpeg/lego/mediamtx/mihomo）首次启动检测
   const [binAssets, setBinAssets] = useState<{
@@ -151,9 +149,6 @@ export default function App() {
       } catch (e) {
         console.error("Check bin assets error:", e);
       }
-      // 启动后延迟弹出今日待办提醒一次（等窗口稳定）
-      setTimeout(() => setShowReminder(true), 900);
-
       // 监听全局快捷键唤起主窗口：切到「启动」模块
       listen("launcher-toggle", () => {
         switchPage("launcher");
@@ -446,17 +441,6 @@ export default function App() {
             </div>
           );
         })}
-
-        {/* 启动后今日待办提醒（右下角自定义弹窗） */}
-        {showReminder && (
-          <TaskReminderToast
-            onClose={() => setShowReminder(false)}
-            onOpenTasks={() => {
-              setShowReminder(false);
-              switchPage("tasks");
-            }}
-          />
-        )}
 
         {/* 运行组件下载（首次启动缺失时全屏阻塞，不下载无法使用） */}
         {binAssets && (

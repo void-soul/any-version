@@ -8,7 +8,7 @@ use super::models::*;
 // ─── 内部工具 ───
 
 /// 从查询行构造 TaskItem（列顺序必须与 TASK_COLUMNS 一致）。
-const TASK_COLUMNS: &str = "id, title, description, scheduled_date, parent_id, priority, progress, \
+const TASK_COLUMNS: &str = "id, title, description, scheduled_date, parent_id, color, position_x, position_y, priority, progress, \
      sort_order, estimate_minutes, tags, archived, created_at, updated_at, completed_at";
 
 fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<TaskItem> {
@@ -18,15 +18,18 @@ fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<TaskItem> {
         description: row.get(2)?,
         scheduled_date: row.get(3)?,
         parent_id: row.get(4)?,
-        priority: row.get(5)?,
-        progress: row.get(6)?,
-        sort_order: row.get(7)?,
-        estimate_minutes: row.get(8)?,
-        tags: row.get(9)?,
-        archived: row.get::<_, i64>(10)? != 0,
-        created_at: row.get(11)?,
-        updated_at: row.get(12)?,
-        completed_at: row.get(13)?,
+        color: row.get(5)?,
+        position_x: row.get(6)?,
+        position_y: row.get(7)?,
+        priority: row.get(8)?,
+        progress: row.get(9)?,
+        sort_order: row.get(10)?,
+        estimate_minutes: row.get(11)?,
+        tags: row.get(12)?,
+        archived: row.get::<_, i64>(13)? != 0,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
+        completed_at: row.get(16)?,
     })
 }
 
@@ -125,6 +128,38 @@ fn insert_move(
         ],
     )
     .map_err(|e| format!("写入转移记录失败: {}", e))?;
+    Ok(())
+}
+
+fn log_references(conn: &rusqlite::Connection, log_id: &str) -> Result<Vec<TaskLogReference>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id, log_id, kind, target, label FROM task_log_references WHERE log_id = ?1 ORDER BY rowid ASC")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![log_id], |row| Ok(TaskLogReference {
+            id: row.get(0)?,
+            log_id: row.get(1)?,
+            kind: row.get(2)?,
+            target: row.get(3)?,
+            label: row.get(4)?,
+        }))
+        .map_err(|e| e.to_string())?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| format!("读取日志引用失败: {}", e))
+}
+
+fn insert_log_references(conn: &rusqlite::Connection, log_id: &str, references: &[TaskLogReferenceInput]) -> Result<(), String> {
+    for reference in references {
+        let kind = reference.kind.trim();
+        let target = reference.target.trim();
+        if target.is_empty() || !matches!(kind, "file" | "image" | "picky") {
+            continue;
+        }
+        conn.execute(
+            "INSERT INTO task_log_references (id, log_id, kind, target, label) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![new_id("ref"), log_id, kind, target, reference.label.trim()],
+        ).map_err(|e| format!("写入日志引用失败: {}", e))?;
+    }
     Ok(())
 }
 
@@ -252,15 +287,18 @@ pub fn tasks_create(input: CreateTaskInput) -> Result<TaskItem, String> {
         let completed_at = if progress >= 100 { Some(ts.clone()) } else { None };
 
         conn.execute(
-            "INSERT INTO tasks (id, title, description, scheduled_date, parent_id, priority, progress, \
+            "INSERT INTO tasks (id, title, description, scheduled_date, parent_id, color, position_x, position_y, priority, progress, \
              sort_order, estimate_minutes, tags, archived, created_at, updated_at, completed_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, ?12, ?13)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, ?14, ?15, ?16)",
             params![
                 id,
                 title,
                 input.description,
                 input.scheduled_date,
                 parent_id,
+                input.color,
+                input.position_x,
+                input.position_y,
                 input.priority,
                 progress,
                 sort_order,
@@ -296,6 +334,9 @@ pub fn tasks_update(id: String, input: UpdateTaskInput) -> Result<TaskItem, Stri
             None => old.parent_id.clone(),
         };
         validate_parent(conn, Some(&id), &parent_id)?;
+        let color = input.color.unwrap_or(old.color.clone());
+        let position_x = input.position_x.unwrap_or(old.position_x);
+        let position_y = input.position_y.unwrap_or(old.position_y);
         let priority = input.priority.unwrap_or(old.priority.clone());
         let estimate = input.estimate_minutes.unwrap_or(old.estimate_minutes);
         let tags = input.tags.unwrap_or(old.tags.clone());
@@ -321,14 +362,17 @@ pub fn tasks_update(id: String, input: UpdateTaskInput) -> Result<TaskItem, Stri
         };
 
         conn.execute(
-            "UPDATE tasks SET title = ?1, description = ?2, scheduled_date = ?3, parent_id = ?4, priority = ?5, \
-             progress = ?6, sort_order = ?7, estimate_minutes = ?8, tags = ?9, archived = ?10, \
-             updated_at = ?11, completed_at = ?12 WHERE id = ?13",
+            "UPDATE tasks SET title = ?1, description = ?2, scheduled_date = ?3, parent_id = ?4, color = ?5, position_x = ?6, position_y = ?7, priority = ?8, \
+             progress = ?9, sort_order = ?10, estimate_minutes = ?11, tags = ?12, archived = ?13, \
+             updated_at = ?14, completed_at = ?15 WHERE id = ?16",
             params![
                 title.trim(),
                 description,
                 scheduled_date,
                 parent_id,
+                color,
+                position_x,
+                position_y,
                 priority,
                 progress,
                 sort_order,
@@ -389,14 +433,15 @@ pub fn tasks_set_progress(id: String, input: SetProgressInput) -> Result<TaskIte
         )
         .map_err(|e| format!("更新进度失败: {}", e))?;
 
-        // 有日志内容或有投入工时就记一条复盘日志
+        // 有日志内容、投入工时或引用就记一条复盘日志
         let content = input.log_content.unwrap_or_default();
-        if !content.trim().is_empty() || input.minutes_spent > 0 {
+        if !content.trim().is_empty() || input.minutes_spent > 0 || !input.references.is_empty() {
+            let log_id = new_id("log");
             conn.execute(
                 "INSERT INTO task_logs (id, task_id, log_date, content, progress_before, \
                  progress_after, minutes_spent, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
-                    new_id("log"),
+                    log_id,
                     id,
                     today(),
                     content.trim(),
@@ -407,6 +452,7 @@ pub fn tasks_set_progress(id: String, input: SetProgressInput) -> Result<TaskIte
                 ],
             )
             .map_err(|e| format!("写入日志失败: {}", e))?;
+            insert_log_references(conn, &log_id, &input.references)?;
         }
 
         if new_progress != old.progress || new_date != old.scheduled_date {
@@ -609,8 +655,8 @@ pub fn tasks_add_log(input: AddLogInput) -> Result<TaskLog, String> {
         let task = fetch_task(conn, &input.task_id)?;
         let id = new_id("log");
         conn.execute(
-            "INSERT INTO task_logs (id, task_id, log_date, content, progress_before, \
-             progress_after, minutes_spent, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO task_logs (id, task_id, log_date, content, progress_before, progress_after, minutes_spent, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 id,
                 input.task_id,
@@ -623,25 +669,29 @@ pub fn tasks_add_log(input: AddLogInput) -> Result<TaskLog, String> {
             ],
         )
         .map_err(|e| format!("写入日志失败: {}", e))?;
+        insert_log_references(conn, &id, &input.references)?;
 
-        conn.query_row(
-            "SELECT id, task_id, log_date, content, progress_before, progress_after, \
-             minutes_spent, created_at FROM task_logs WHERE id = ?1",
+        let base = conn.query_row(
+            "SELECT id, task_id, log_date, content, progress_before, progress_after, minutes_spent, created_at \
+             FROM task_logs WHERE id = ?1",
             params![id],
-            |row| {
-                Ok(TaskLog {
-                    id: row.get(0)?,
-                    task_id: row.get(1)?,
-                    log_date: row.get(2)?,
-                    content: row.get(3)?,
-                    progress_before: row.get(4)?,
-                    progress_after: row.get(5)?,
-                    minutes_spent: row.get(6)?,
-                    created_at: row.get(7)?,
-                })
-            },
-        )
-        .map_err(|e| e.to_string())
+            |row| Ok((
+                row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?, row.get::<_, String>(7)?,
+            )),
+        ).map_err(|e| e.to_string())?;
+        Ok(TaskLog {
+            references: log_references(conn, &base.0)?,
+            id: base.0,
+            task_id: base.1,
+            log_date: base.2,
+            content: base.3,
+            progress_before: base.4,
+            progress_after: base.5,
+            minutes_spent: base.6,
+            created_at: base.7,
+        })
     })
 }
 
@@ -649,28 +699,32 @@ pub fn tasks_add_log(input: AddLogInput) -> Result<TaskLog, String> {
 #[tauri::command]
 pub fn tasks_list_logs(task_id: String) -> Result<Vec<TaskLog>, String> {
     with_conn(move |conn| {
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, task_id, log_date, content, progress_before, progress_after, \
-                 minutes_spent, created_at FROM task_logs WHERE task_id = ?1 ORDER BY created_at DESC",
-            )
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map(params![task_id], |row| {
-                Ok(TaskLog {
-                    id: row.get(0)?,
-                    task_id: row.get(1)?,
-                    log_date: row.get(2)?,
-                    content: row.get(3)?,
-                    progress_before: row.get(4)?,
-                    progress_after: row.get(5)?,
-                    minutes_spent: row.get(6)?,
-                    created_at: row.get(7)?,
-                })
-            })
-            .map_err(|e| e.to_string())?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(|e| format!("读取日志失败: {}", e))
+        let base: Vec<(String, String, String, String, i64, i64, i64, String)> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, task_id, log_date, content, progress_before, progress_after, minutes_spent, created_at \
+                     FROM task_logs WHERE task_id = ?1 ORDER BY created_at DESC",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt.query_map(params![task_id], |row| Ok((
+                row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?, row.get::<_, String>(7)?,
+            ))).map_err(|e| e.to_string())?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(|e| format!("读取日志失败: {}", e))?
+        };
+        base.into_iter().map(|item| Ok(TaskLog {
+            references: log_references(conn, &item.0)?,
+            id: item.0,
+            task_id: item.1,
+            log_date: item.2,
+            content: item.3,
+            progress_before: item.4,
+            progress_after: item.5,
+            minutes_spent: item.6,
+            created_at: item.7,
+        })).collect()
     })
 }
 
