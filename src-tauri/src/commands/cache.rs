@@ -5,7 +5,7 @@ use walkdir::WalkDir;
 use tauri::Emitter;
 
 use super::config::{get_data_dir, MigrateProgress};
-use super::utils::{expand_home, get_cmd_output};
+use super::utils::expand_home;
 
 /// 把技能相关调试日志同时写入文件，便于在打包运行时排查（终端 stderr 不可见）。
 pub(crate) fn skill_debug_log(line: &str) {
@@ -361,6 +361,7 @@ fn build_cache_info(
 /// 解析附加缓存路径：先执行检测命令，再回退到默认路径模板。
 /// 返回 (解析后的路径, 检测依据描述, 检测内容)。
 fn resolve_extra_cache_path(
+    project_id: &str,
     detect_cmd: Option<&str>,
     detect_json_path: Option<&str>,
     default_path: Option<&str>,
@@ -371,13 +372,29 @@ fn resolve_extra_cache_path(
     let mut content = String::new();
 
     if let Some(cmd) = detect_cmd {
-        let parts: Vec<&str> = cmd.split_whitespace().collect();
-        if !parts.is_empty() {
-            let out = get_cmd_output(parts[0], &parts[1..]);
-            if let Some(path) = super::utils::resolve_detected_path(&out, detect_json_path) {
-                resolved = path;
-                source = format!("命令 `{}` 的输出", cmd);
-                content = format!("{} 报告的缓存目录为: {}", display_name, resolved);
+        let output = if cmd.starts_with("pnpm config get") {
+            super::utils::run_simple_command_checked(cmd)
+        } else {
+            super::project::commands::run_cmd_capture(cmd.to_string(), Some(project_id.to_string()))
+        };
+        match output {
+            Ok(out) => {
+                if let Some(path) = super::utils::resolve_detected_path(&out, detect_json_path) {
+                    resolved = path;
+                    source = format!("命令 `{}` 的输出", cmd);
+                    content = format!("{} 报告的缓存目录为: {}", display_name, resolved);
+                } else if cmd.starts_with("pnpm config get") {
+                    return None;
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "[cache] 附加缓存检测失败 project={} command={}: {}",
+                    project_id, cmd, e
+                );
+                if cmd.starts_with("pnpm config get") {
+                    return None;
+                }
             }
         }
     }
@@ -400,7 +417,7 @@ fn resolve_extra_cache_path(
 #[tauri::command]
 pub fn get_caches_list() -> Result<Vec<CacheInfo>, String> {
     use super::project::registry;
-    use super::utils::{expand_home, get_cmd_output, is_exe_in_path, cache_detect_evidence_dynamic, resolve_detected_path};
+    use super::utils::{expand_home, is_exe_in_path, cache_detect_evidence_dynamic, resolve_detected_path};
     
     let mut list = Vec::new();
     
@@ -420,9 +437,15 @@ pub fn get_caches_list() -> Result<Vec<CacheInfo>, String> {
                     if let Some(ref cmd) = pm.cache_detect_cmd {
                         let parts: Vec<&str> = cmd.split_whitespace().collect();
                         if !parts.is_empty() {
-                            let out = get_cmd_output(parts[0], &parts[1..]);
-                            if let Some(path) = resolve_detected_path(&out, pm.cache_detect_json_path.as_deref()) {
-                                resolved_path = path;
+                            let output = if cmd.starts_with("pnpm config get") {
+                                super::utils::run_simple_command_checked(cmd)
+                            } else {
+                                super::project::commands::run_cmd_capture(cmd.clone(), Some(project.id.clone()))
+                            };
+                            if let Ok(out) = output {
+                                if let Some(path) = resolve_detected_path(&out, pm.cache_detect_json_path.as_deref()) {
+                                    resolved_path = path;
+                                }
                             }
                         }
                     }
@@ -455,6 +478,7 @@ pub fn get_caches_list() -> Result<Vec<CacheInfo>, String> {
 
                 for extra in &pm.extra_caches {
                     if let Some((extra_path, extra_source, extra_content)) = resolve_extra_cache_path(
+                        &project.id,
                         extra.detect_cmd.as_deref(),
                         extra.detect_json_path.as_deref(),
                         extra.default_path.as_deref(),

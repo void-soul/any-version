@@ -1112,24 +1112,23 @@ fn check_parent_junction(cache_path: &str) -> Option<ParentLinkInfo> {
 
 /// 解析附加缓存目录路径（pnpm.cache 等）。优先执行 detect_cmd，再回退到 default_path。
 fn resolve_extra_cache_path_dynamic(
+    project_id: &str,
     extra: &crate::commands::project::types::ExtraCacheDef,
 ) -> Result<String, String> {
-    use crate::commands::utils::{expand_home, get_cmd_output, resolve_detected_path};
+    use crate::commands::utils::{expand_home, resolve_detected_path, run_simple_command_checked};
 
     let mut resolved = String::new();
     if let Some(ref cmd) = extra.detect_cmd {
-        let parts: Vec<&str> = cmd.split_whitespace().collect();
-        if !parts.is_empty() {
-            let out = get_cmd_output(parts[0], &parts[1..]);
-            if let Some(path) = resolve_detected_path(&out, extra.detect_json_path.as_deref()) {
-                resolved = path;
-            }
+        let out = if cmd.starts_with("pnpm config get") {
+            run_simple_command_checked(cmd)
+        } else {
+            run_cmd_capture(cmd.clone(), Some(project_id.to_string()))
         }
-    }
-    if resolved.is_empty() {
-        if let Some(ref dp) = extra.default_path {
-            resolved = expand_home(dp);
-        }
+        .map_err(|e| format!("附加缓存检测失败 ({}): {}", extra.display_name, e))?;
+        resolved = resolve_detected_path(&out, extra.detect_json_path.as_deref())
+            .ok_or_else(|| format!("附加缓存检测未返回有效路径: {}", extra.display_name))?;
+    } else if let Some(ref dp) = extra.default_path {
+        resolved = expand_home(dp);
     }
     let cleaned = resolved.trim_matches('"').trim_matches('\'').trim().to_string();
     if cleaned.is_empty() {
@@ -1158,7 +1157,7 @@ fn resolve_pkg_storage_path_dynamic(
     // 附加缓存目录（pnpm.cache 等）：优先按 extra_cache_id 解析
     if let Some(extra_id) = extra_cache_id {
         if let Some(extra) = pm.extra_caches.iter().find(|e| e.id == extra_id) {
-            return resolve_extra_cache_path_dynamic(extra);
+            return resolve_extra_cache_path_dynamic(project_id, extra);
         }
         return Err(format!("包管理器 {} 中未找到附加缓存: {}", pm_id, extra_id));
     }
@@ -1508,7 +1507,12 @@ pub fn project_set_cache_path(
 
     if let Some(ref tpl) = cache_set_cmd_template {
         let cmd = tpl.replace("{path}", &new_path);
-        if let Err(e) = run_cmd_capture(cmd, Some(project_id.clone())) {
+        let set_result = if cmd.starts_with("pnpm config set") {
+            crate::commands::utils::run_simple_command_checked(&cmd)
+        } else {
+            run_cmd_capture(cmd, Some(project_id.clone()))
+        };
+        if let Err(e) = set_result {
             // 如果命令执行失败，恢复本进程原先继承的环境变量。
             if let Some((env_name, old_value)) = process_env_removed.take() {
                 std::env::set_var(&env_name, &old_value);
@@ -1525,6 +1529,23 @@ pub fn project_set_cache_path(
                     std::env::set_var(env_var, &new_path);
                 } else {
                     return Err(e);
+                }
+            }
+        }
+
+        // 设置命令成功后立即回读，避免 pnpm 配置写入了另一层或被旧环境变量覆盖。
+        if let Some(extra_def) = extra {
+            if let Some(ref detect_cmd) = extra_def.detect_cmd {
+                let output = if detect_cmd.starts_with("pnpm config get") {
+                    crate::commands::utils::run_simple_command_checked(detect_cmd)
+                } else {
+                    run_cmd_capture(detect_cmd.clone(), Some(project_id.clone()))
+                }
+                .map_err(|e| format!("设置成功但回读缓存路径失败: {}", e))?;
+                let actual = resolve_detected_path(&output, extra_def.detect_json_path.as_deref())
+                    .ok_or_else(|| "设置成功但回读不到有效缓存路径".to_string())?;
+                if !std::path::Path::new(&actual).eq(std::path::Path::new(&new_path)) {
+                    return Err(format!("缓存路径设置未生效，实际路径仍为: {}", actual));
                 }
             }
         }

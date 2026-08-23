@@ -537,7 +537,7 @@ fn build_env_vars_status(
 fn build_cache_status(def: &ProjectDef) -> Option<CacheStatus> {
     use crate::commands::cache::get_dir_size;
     use crate::commands::cache::format_bytes;
-    use crate::commands::utils::{expand_home, get_cmd_output, resolve_custom_cache_path, resolve_detected_path};
+    use crate::commands::utils::{expand_home, resolve_custom_cache_path, resolve_detected_path, run_simple_command_checked};
 
     // Find the first package manager under this project that has cache settings configured
     let pm = def.package_managers.iter().find(|pm| pm.cache_detect_cmd.is_some() || pm.cache_default_path.is_some() || pm.cache_config_source.is_some())?;
@@ -549,9 +549,15 @@ fn build_cache_status(def: &ProjectDef) -> Option<CacheStatus> {
         if let Some(ref cmd) = pm.cache_detect_cmd {
             let parts: Vec<&str> = cmd.split_whitespace().collect();
             if !parts.is_empty() {
-                let out = get_cmd_output(parts[0], &parts[1..]);
-                if let Some(path) = resolve_detected_path(&out, pm.cache_detect_json_path.as_deref()) {
-                    resolved_path = path;
+                let output = if cmd.starts_with("pnpm config get") {
+                    run_simple_command_checked(cmd)
+                } else {
+                    super::commands::run_cmd_capture(cmd.clone(), Some(def.id.clone()))
+                };
+                if let Ok(out) = output {
+                    if let Some(path) = resolve_detected_path(&out, pm.cache_detect_json_path.as_deref()) {
+                        resolved_path = path;
+                    }
                 }
             }
         }

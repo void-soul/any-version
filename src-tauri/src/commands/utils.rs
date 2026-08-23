@@ -221,13 +221,75 @@ pub fn resolve_detected_path(output: &str, json_path: Option<&str>) -> Option<St
     }
 }
 
-/// Run a command and capture its stdout as a trimmed string
-pub fn get_cmd_output(cmd: &str, args: &[&str]) -> String {
-    super::hidden_cmd::hidden_cmd(cmd)
-        .args(args)
+/// Split a simple command line while preserving quoted arguments.
+pub fn split_simple_command(command: &str) -> Result<Vec<String>, String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    for ch in command.chars() {
+        match quote {
+            Some(q) if ch == q => quote = None,
+            Some(_) => current.push(ch),
+            None if ch == '\'' || ch == '"' => quote = Some(ch),
+            None if ch.is_whitespace() => {
+                if !current.is_empty() {
+                    args.push(std::mem::take(&mut current));
+                }
+            }
+            None => current.push(ch),
+        }
+    }
+    if quote.is_some() {
+        return Err("检测命令包含未闭合引号".to_string());
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+    if args.is_empty() {
+        return Err("检测命令为空".to_string());
+    }
+    Ok(args)
+}
+
+/// Run a simple command directly and return stdout only on success.
+/// This avoids `cmd /c` quoting and encoding issues for cache probes and
+/// configuration commands such as `pnpm config get/set cache-dir`.
+pub fn run_simple_command_checked(command: &str) -> Result<String, String> {
+    let args = split_simple_command(command)?;
+    let (program, arguments) = args.split_first().expect("split_simple_command guarantees a program");
+    let program_path = if program.contains('/') || program.contains('\\') {
+        PathBuf::from(program)
+    } else {
+        find_in_path(program).unwrap_or_else(|| PathBuf::from(program))
+    };
+    let output = super::hidden_cmd::hidden_cmd(&program_path)
+        .args(arguments)
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default()
+        .map_err(|e| format!("执行命令失败: {}", e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("命令失败，退出码: {}", output.status.code().unwrap_or(-1))
+        } else {
+            stderr
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Run a simple read-only command directly and return stdout only on success.
+pub fn get_cmd_output_checked(cmd: &str, args: &[&str]) -> Result<String, String> {
+    let mut command = String::from(cmd);
+    for arg in args {
+        command.push(' ');
+        command.push_str(arg);
+    }
+    run_simple_command_checked(&command)
+}
+
+/// Run a command and capture its stdout as a trimmed string.
+pub fn get_cmd_output(cmd: &str, args: &[&str]) -> String {
+    get_cmd_output_checked(cmd, args).unwrap_or_default()
 }
 
 /// Search for an executable in PATH (Windows compatible with .exe/.cmd/.bat)
