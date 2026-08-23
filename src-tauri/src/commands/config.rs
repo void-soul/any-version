@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use serde::{Serialize, Deserialize};
 use tauri::Emitter;
+use scraper::{Html, Selector};
 
 /// 串行化 config.json 的写入，避免并发命令交错写坏文件。
 static CONFIG_SAVE_LOCK: Mutex<()> = Mutex::new(());
@@ -996,6 +997,9 @@ pub struct RssSourceDto {
     pub url: String,
     #[serde(default)]
     pub name: String,
+    /// rss = XML feed, web = site-specific HTML adapter.
+    #[serde(default = "default_rss_source_kind")]
+    pub kind: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -1005,12 +1009,20 @@ pub struct RssConfig {
 }
 
 /// 内置默认 RSS 源的名称映射
+fn default_rss_source_kind() -> String {
+    "rss".to_string()
+}
+
 fn default_rss_source_names() -> std::collections::HashMap<String, String> {
     let mut m = std::collections::HashMap::new();
     m.insert("https://36kr.com/feed".to_string(), "36氪".to_string());
     m.insert(
         "https://www.ruanyifeng.com/blog/atom.xml".to_string(),
         "阮一峰的网络日志".to_string(),
+    );
+    m.insert(
+        "https://aifreeplan.com/zh/guides/".to_string(),
+        "AI Free Plan".to_string(),
     );
     m
 }
@@ -1023,8 +1035,15 @@ fn build_rss_sources(config: &Config) -> Vec<RssSourceDto> {
         .map(|url| RssSourceDto {
             url: url.clone(),
             name: config.rss_source_names.get(url).cloned().unwrap_or_default(),
+            kind: if is_aifreeplan_guides_url(url) { "web".to_string() } else { "rss".to_string() },
         })
         .collect()
+}
+
+fn is_aifreeplan_guides_url(url: &str) -> bool {
+    let normalized = url.trim_end_matches('/').to_ascii_lowercase();
+    normalized == "https://aifreeplan.com/zh/guides"
+        || normalized == "https://www.aifreeplan.com/zh/guides"
 }
 
 #[tauri::command]
@@ -1037,10 +1056,17 @@ pub fn get_rss_config() -> Result<RssConfig, String> {
             config.rss_sources = vec![
                 "https://36kr.com/feed".to_string(),
                 "https://www.ruanyifeng.com/blog/atom.xml".to_string(),
+                "https://aifreeplan.com/zh/guides/".to_string(),
             ];
         }
         if config.rss_source_names.is_empty() {
             config.rss_source_names = default_rss_source_names();
+        }
+        if !config.rss_sources.iter().any(|url| is_aifreeplan_guides_url(url)) {
+            config.rss_sources.push("https://aifreeplan.com/zh/guides/".to_string());
+            config.rss_source_names
+                .entry("https://aifreeplan.com/zh/guides/".to_string())
+                .or_insert_with(|| "AI Free Plan".to_string());
         }
         save_config(&config)?;
     }
@@ -1055,12 +1081,127 @@ pub fn set_rss_sources(sources: Vec<RssSourceDto>) -> Result<(), String> {
     let mut config = load_config();
     config.rss_sources = sources.iter().map(|s| s.url.clone()).collect();
     config.rss_source_names = sources
-        .into_iter()
+        .iter()
         .filter(|s| !s.name.trim().is_empty())
-        .map(|s| (s.url, s.name.trim().to_string()))
+        .map(|s| (s.url.clone(), s.name.trim().to_string()))
         .collect();
     save_config(&config)?;
     Ok(())
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct WebArticleDto {
+    pub title: String,
+    pub link: String,
+    pub pub_date: Option<String>,
+    pub summary: String,
+    pub source: String,
+}
+
+fn clean_scraped_text(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ").trim().to_string()
+}
+
+fn absolute_url(base: &str, href: &str) -> Option<String> {
+    if href.starts_with("https://") || href.starts_with("http://") {
+        return Some(href.to_string());
+    }
+    if href.starts_with('/') {
+        let origin = base.split("/zh/").next().unwrap_or(base).trim_end_matches('/');
+        return Some(format!("{}{}", origin, href));
+    }
+    None
+}
+
+fn scrape_aifreeplan_guides(html: &str, page_url: &str, source_name: &str) -> Vec<WebArticleDto> {
+    let document = Html::parse_document(html);
+    let link_selector = Selector::parse("a[href]").expect("valid selector");
+    let heading_selector = Selector::parse("h1, h2, h3, h4").expect("valid selector");
+    let paragraph_selector = Selector::parse("p").expect("valid selector");
+    let time_selector = Selector::parse("time").expect("valid selector");
+    let mut seen = std::collections::HashSet::new();
+    let mut articles = Vec::new();
+
+    for link in document.select(&link_selector) {
+        let Some(href) = link.value().attr("href") else { continue };
+        let Some(absolute) = absolute_url(page_url, href) else { continue };
+        let normalized = absolute.trim_end_matches('/');
+        let is_supported_host = normalized.starts_with("https://aifreeplan.com/zh/guides/")
+            || normalized.starts_with("https://www.aifreeplan.com/zh/guides/");
+        if !is_supported_host || normalized == page_url.trim_end_matches('/') {
+            continue;
+        }
+        if !seen.insert(normalized.to_string()) { continue; }
+
+        let mut container = link;
+        for _ in 0..5 {
+            if let Some(parent) = container.parent().and_then(scraper::ElementRef::wrap) {
+                container = parent;
+                let tag = container.value().name();
+                if tag == "article" || tag == "li" { break; }
+            } else { break; }
+        }
+
+        let title = container.select(&heading_selector).next()
+            .map(|node| clean_scraped_text(&node.text().collect::<Vec<_>>().join(" ")))
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                let text = clean_scraped_text(&link.text().collect::<Vec<_>>().join(" "))
+                    .replace("阅读全文", "")
+                    .replace("→", "");
+                (!text.is_empty()).then_some(text)
+            });
+        let Some(title) = title else { continue };
+        if title == "指南" || title == "首页" { continue; }
+
+        let summary = container.select(&paragraph_selector).next()
+            .map(|node| clean_scraped_text(&node.text().collect::<Vec<_>>().join(" ")))
+            .unwrap_or_default();
+        let pub_date = container.select(&time_selector).next()
+            .and_then(|node| node.value().attr("datetime").or_else(|| node.text().next()))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+
+        articles.push(WebArticleDto {
+            title,
+            link: normalized.to_string(),
+            pub_date,
+            summary,
+            source: source_name.to_string(),
+        });
+    }
+    articles
+}
+
+#[tauri::command]
+pub async fn fetch_web_source(url: String, kind: String, name: String) -> Result<Vec<WebArticleDto>, String> {
+    if kind != "web" {
+        return Err("该来源不是网页适配器".to_string());
+    }
+    if !is_aifreeplan_guides_url(&url) {
+        return Err("暂不支持该网页来源，请先实现对应的站点适配器".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client.get(&url)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36")
+        .header("Accept", "text/html,application/xhtml+xml")
+        .send().await.map_err(|e| format!("请求失败: {}", e))?;
+    if !response.status().is_success() {
+        return Err(format!("HTTP 请求失败: 状态码 {}", response.status()));
+    }
+    let html = response.text().await.map_err(|e| format!("读取网页失败: {}", e))?;
+    let source_name = if name.trim().is_empty() { "AI Free Plan" } else { name.trim() };
+    let articles = scrape_aifreeplan_guides(&html, &url, source_name);
+    if articles.is_empty() {
+        return Err("网页适配器未找到文章，请检查页面结构是否已变化".to_string());
+    }
+    Ok(articles)
 }
 
 #[tauri::command]

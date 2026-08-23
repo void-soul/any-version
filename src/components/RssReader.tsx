@@ -28,11 +28,25 @@ interface RssArticle {
 interface RssSource {
   url: string;
   name: string;
+  kind?: "rss" | "web";
+}
+
+interface WebArticleDto {
+  title: string;
+  link: string;
+  pubDate: string | null;
+  summary: string;
+  source: string;
 }
 
 interface RssConfig {
   sources: RssSource[];
   is_first_launch: boolean;
+}
+
+function sourceKindForUrl(url: string): "rss" | "web" {
+  const normalized = url.trim().replace(/\/$/, "").toLowerCase();
+  return normalized === "https://aifreeplan.com/zh/guides" || normalized === "https://www.aifreeplan.com/zh/guides" ? "web" : "rss";
 }
 
 function stripHtml(html: string): string {
@@ -275,12 +289,35 @@ export default function RssReader() {
     const cacheDuration = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
     // ── Phase 1: 获取所有 XML（并行网络 I/O，不阻塞主线程） ──
-    const feedData: { source: RssSource; xml: string }[] = [];
+    const feedData: { source: RssSource; xml?: string; webArticles?: WebArticleDto[] }[] = [];
     const errors: string[] = [];
 
     await Promise.all(
-      feedSources.map(async ({ url, name }) => {
+      feedSources.map(async ({ url, name, kind = sourceKindForUrl(url) }) => {
         try {
+          if (kind === "web") {
+            let webArticles: WebArticleDto[] | null = null;
+            if (!force) {
+              const cachedData = localStorage.getItem(`rss_web_cache_${url}`);
+              if (cachedData) {
+                try {
+                  const cached = JSON.parse(cachedData) as { articles: WebArticleDto[]; fetchedAt: number };
+                  if (cached.articles && cached.fetchedAt && now - cached.fetchedAt < cacheDuration) {
+                    webArticles = cached.articles;
+                  }
+                } catch {
+                  localStorage.removeItem(`rss_web_cache_${url}`);
+                }
+              }
+            }
+            if (!webArticles) {
+              webArticles = await invoke<WebArticleDto[]>("fetch_web_source", { url, kind, name });
+              localStorage.setItem(`rss_web_cache_${url}`, JSON.stringify({ articles: webArticles, fetchedAt: now }));
+            }
+            feedData.push({ source: { url, name, kind: "web" }, webArticles });
+            return;
+          }
+
           let xmlText = "";
           let useCache = false;
 
@@ -311,7 +348,7 @@ export default function RssReader() {
             }
           }
 
-          feedData.push({ source: { url, name }, xml: xmlText });
+          feedData.push({ source: { url, name, kind: "rss" }, xml: xmlText });
         } catch (err: any) {
           console.error(`Fetch feed error for ${url}:`, err);
           localStorage.removeItem(`rss_cache_${url}`);
@@ -322,10 +359,20 @@ export default function RssReader() {
 
     // ── Phase 2: 逐源解析，每个源之间 yield 事件循环，避免主线程长时间阻塞 ──
     const allArticles: RssArticle[] = [];
-    for (const { source, xml } of feedData) {
+    for (const { source, xml, webArticles } of feedData) {
       try {
-        const parsed = parseRssXml(xml, source.url, source.name);
-        allArticles.push(...parsed);
+        if (source.kind === "web") {
+          allArticles.push(...(webArticles ?? []).map((article) => ({
+            title: article.title,
+            link: article.link,
+            pubDate: article.pubDate ? new Date(article.pubDate) : null,
+            summary: article.summary,
+            source: article.source || source.name || "网页资讯",
+          })));
+        } else if (xml) {
+          const parsed = parseRssXml(xml, source.url, source.name);
+          allArticles.push(...parsed);
+        }
       } catch (err: any) {
         errors.push(`${source.name || source.url}: ${err.message || err}`);
       }
@@ -430,8 +477,13 @@ export default function RssReader() {
 
     setTestStatus(prev => ({ ...prev, [trimmed]: "testing" }));
     try {
-      const xmlText = await invoke<string>("fetch_rss_feed", { url: trimmed });
-      parseRssXml(xmlText, trimmed); // will throw error if invalid
+      const source = editSources.find((item) => item.url === trimmed);
+      if (source?.kind === "web" || sourceKindForUrl(trimmed) === "web") {
+        await invoke<WebArticleDto[]>("fetch_web_source", { url: trimmed, kind: "web", name: source?.name ?? "" });
+      } else {
+        const xmlText = await invoke<string>("fetch_rss_feed", { url: trimmed });
+        parseRssXml(xmlText, trimmed); // will throw error if invalid
+      }
       setTestStatus(prev => ({ ...prev, [trimmed]: "success" }));
     } catch (err) {
       console.error(err);
@@ -447,7 +499,7 @@ export default function RssReader() {
       setConfigMessage("该订阅源已在列表中");
       return;
     }
-    setEditSources([...editSources, { url: trimmed, name: newSourceName.trim() }]);
+    setEditSources([...editSources, { url: trimmed, name: newSourceName.trim(), kind: sourceKindForUrl(trimmed) }]);
     setNewSourceUrl("");
     setNewSourceName("");
     setConfigMessage(null);
@@ -469,7 +521,7 @@ export default function RssReader() {
   // Save config
   const handleSaveConfig = async () => {
     try {
-      const cleaned = editSources.map((s) => ({ url: s.url, name: s.name.trim() }));
+      const cleaned = editSources.map((s) => ({ url: s.url, name: s.name.trim(), kind: s.kind ?? (s.url.replace(/\/$/, "").toLowerCase() === "https://aifreeplan.com/zh/guides" ? "web" : "rss") }));
       await invoke("set_rss_sources", { sources: cleaned });
       setSources(cleaned);
       // 若当前来源筛选项已不存在，则重置
@@ -782,7 +834,7 @@ export default function RssReader() {
             <div className="p-4 border-b border-white/5 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Settings2 className="w-4.5 h-4.5 text-blue-400" />
-                <h3 className="text-xs font-bold text-slate-200">RSS 订阅源管理</h3>
+                <h3 className="text-xs font-bold text-slate-200">资讯源管理</h3>
               </div>
               <button 
                 onClick={() => {
@@ -807,7 +859,7 @@ export default function RssReader() {
                 />
                 <input
                   type="text"
-                  placeholder="RSS 订阅源 URL（例如：https://36kr.com/feed）"
+                  placeholder="RSS 或网页源 URL（例如：https://36kr.com/feed）"
                   value={newSourceUrl}
                   onChange={(e) => setNewSourceUrl(e.target.value)}
                   className="flex-1 bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-[10.5px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
@@ -837,11 +889,11 @@ export default function RssReader() {
 
             {/* List */}
             <div className="flex-grow overflow-y-auto p-4 space-y-2">
-              <div className="text-[10px] font-bold text-slate-500 mb-1">当前的订阅列表 ({editSources.length})</div>
+              <div className="text-[10px] font-bold text-slate-500 mb-1">当前资讯源 ({editSources.length})</div>
               {editSources.length === 0 ? (
                 <div className="py-8 text-center text-[10.5px] text-slate-600">无订阅源，请在上方添加新的订阅地址。</div>
               ) : (
-                editSources.map(({ url, name }) => {
+                editSources.map(({ url, name, kind }) => {
                   const status = testStatus[url];
                   return (
                     <div 
@@ -856,7 +908,12 @@ export default function RssReader() {
                           onChange={(e) => handleUpdateSourceName(url, e.target.value)}
                           className="w-full max-w-[200px] bg-slate-900 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
                         />
-                        <span className="font-mono text-slate-400 break-all truncate max-w-[320px] select-all" title={url}>{url}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`rounded px-1 py-0.5 text-[8px] font-semibold ${(kind ?? sourceKindForUrl(url)) === "web" ? "bg-cyan-500/10 text-cyan-300 border border-cyan-500/20" : "bg-white/5 text-slate-500 border border-white/5"}`}>
+                            {(kind ?? sourceKindForUrl(url)) === "web" ? "网页适配器" : "RSS"}
+                          </span>
+                          <span className="font-mono text-slate-400 break-all truncate max-w-[280px] select-all" title={url}>{url}</span>
+                        </div>
                       </div>
                       
                       <div className="flex items-center gap-2 flex-shrink-0">
