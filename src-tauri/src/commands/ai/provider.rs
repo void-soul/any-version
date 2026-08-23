@@ -1,6 +1,9 @@
 
 use super::config::load_ai_config;
 
+/// 模型列表接口超时（秒）：列表接口应快速返回，超时即报错。
+const FETCH_MODELS_TIMEOUT_SECS: u64 = 15;
+
 #[tauri::command]
 pub async fn fetch_provider_models(base_url: String, api_key: String) -> Result<Vec<String>, String> {
     let url = format!("{}/models", base_url.trim_end_matches('/'));
@@ -8,7 +11,7 @@ pub async fn fetch_provider_models(base_url: String, api_key: String) -> Result<
     let resp = client
         .get(&url)
         .header("Authorization", format!("Bearer {}", api_key))
-        .timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(FETCH_MODELS_TIMEOUT_SECS))
         .send()
         .await
         .map_err(|e| format!("请求失败: {}", e))?;

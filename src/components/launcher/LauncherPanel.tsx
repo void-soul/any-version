@@ -999,71 +999,6 @@ export default function LauncherPanel() {
   };
 
   // Keyboard shortcut listener (TEMPORARILY COMMENTED OUT FOR TESTING)
-  /*
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // If any modal is active, do not handle launcher shortcuts
-      if (categoryModalOpen || itemModalOpen || bookmarkModalOpen || pendingDeleteCategory) {
-        return;
-      }
-
-      const targetTag = (e.target as HTMLElement)?.tagName;
-      const isTyping = targetTag === "INPUT" || targetTag === "TEXTAREA" || targetTag === "SELECT";
-
-      if (e.key === "Escape") {
-        if (isSearchOpen) {
-          closeSearch();
-          e.preventDefault();
-        }
-        return;
-      }
-
-      if (isTyping && !isSearchOpen) {
-        return;
-      }
-
-      if ((e.ctrlKey && e.key.toLowerCase() === "f") || (e.key === "/" && !isTyping)) {
-        e.preventDefault();
-        openSearch();
-        return;
-      }
-
-      if (isSearchOpen && searchResults.length > 0) {
-        if (e.key === "ArrowDown") {
-          e.preventDefault();
-          setSearchSelectedIndex((prev) => (prev + 1) % searchResults.length);
-        } else if (e.key === "ArrowUp") {
-          e.preventDefault();
-          setSearchSelectedIndex((prev) => (prev - 1 + searchResults.length) % searchResults.length);
-        } else if (e.key === "Enter") {
-          e.preventDefault();
-          const target = searchResults[searchSelectedIndex];
-          if (target) {
-            handleExecuteItem(target);
-            closeSearch();
-          }
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isSearchOpen, searchResults, searchSelectedIndex, categoryModalOpen, itemModalOpen, bookmarkModalOpen]);
-
-  // Global hotkey event listener for Quick Search
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    const setup = async () => {
-      unlisten = await listen("launcher-open-search", () => {
-        openSearch();
-      });
-    };
-    setup();
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, []);
-  */
 
   // Close context menus on global click
   useEffect(() => {
@@ -1150,7 +1085,7 @@ export default function LauncherPanel() {
 
   // 停止检测
   const stopCheck = () => {
-    invoke("launcher_stop_check").catch(() => {});
+    invoke("launcher_stop_check").catch((e) => console.error("停止检测失败:", e));
   };
 
   // 检测所有项目是否存在（网页类刷新图标，其余红框标识缺失）

@@ -803,6 +803,8 @@ const AUTO_SYNC_DEBOUNCE: Duration = Duration::from_secs(3);
 
 static LAST_CHANGE: Mutex<Option<Instant>> = Mutex::new(None);
 static SYNC_RUNNING: AtomicBool = AtomicBool::new(false);
+/// 同步进行中又到达变更时置位，确保同步结束后补一轮（修复漏同步窗口）。
+static PENDING_RESYNC: AtomicBool = AtomicBool::new(false);
 
 /// 内容变更后调用：记录变更时间并安排一次防抖同步。
 /// 连续变更只触发一次同步（距最后一次变更 3 秒后才执行）。
@@ -819,6 +821,9 @@ pub fn schedule_auto_sync() {
             return;
         }
         if SYNC_RUNNING.swap(true, Ordering::SeqCst) {
+            // 已有同步在跑：置位待补同步，由运行中的同步结束后接手，
+            // 避免本任务提前返回后该变更从此被漏掉。
+            PENDING_RESYNC.store(true, Ordering::SeqCst);
             return;
         }
         let sync_started = Instant::now();
@@ -826,11 +831,12 @@ pub fn schedule_auto_sync() {
             crate::exit_log::exit_log(&format!("[picky-sync] 自动同步失败（稍后手动同步）: {}", e));
         }
         SYNC_RUNNING.store(false, Ordering::SeqCst);
-        // 同步期间又产生了新变更 → 再调度一轮
-        let has_new = LAST_CHANGE
-            .lock()
-            .unwrap()
-            .is_some_and(|t| t > sync_started);
+        // 同步期间又产生了新变更（防抖任务置位或变更时间晚于同步开始）→ 再调度一轮
+        let has_new = PENDING_RESYNC.swap(false, Ordering::SeqCst)
+            || LAST_CHANGE
+                .lock()
+                .unwrap()
+                .is_some_and(|t| t > sync_started);
         if has_new {
             schedule_auto_sync();
         }

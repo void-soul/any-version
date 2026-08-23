@@ -5,6 +5,7 @@ use walkdir::WalkDir;
 use tauri::Emitter;
 
 use super::config::{get_data_dir, MigrateProgress};
+use super::utils::{expand_home, get_cmd_output};
 
 /// 把技能相关调试日志同时写入文件，便于在打包运行时排查（终端 stderr 不可见）。
 pub(crate) fn skill_debug_log(line: &str) {
@@ -314,10 +315,92 @@ pub fn remove_dir_all_forced(path: impl AsRef<Path>) -> std::io::Result<()> {
     }
 }
 
+/// 计算缓存条目信息：检查是否符号链接、计算目录大小。
+fn build_cache_info(
+    name: &str,
+    installed: bool,
+    path: &str,
+    detect_source: &str,
+    detect_content: &str,
+) -> CacheInfo {
+    let clean_path = Path::new(path);
+    let mut is_link = false;
+    let mut real_target = String::new();
+
+    if let Ok(metadata) = fs::symlink_metadata(clean_path) {
+        if metadata.file_type().is_symlink() {
+            if let Ok(eval_path) = fs::read_link(clean_path) {
+                is_link = true;
+                real_target = eval_path.to_string_lossy().to_string();
+            } else if let Ok(eval_path) = fs::canonicalize(clean_path) {
+                let canonical = eval_path.to_string_lossy().to_string();
+                let canonical_clean = canonical.trim_start_matches(r"\\?\").to_string();
+                if canonical_clean != clean_path.to_string_lossy().to_string() {
+                    is_link = true;
+                    real_target = canonical_clean;
+                }
+            }
+        }
+    }
+
+    let size_path = if is_link { Path::new(&real_target) } else { clean_path };
+    let size_bytes = get_dir_size(size_path);
+
+    CacheInfo {
+        name: name.to_string(),
+        installed,
+        path: clean_path.to_string_lossy().to_string(),
+        size: format_bytes(size_bytes),
+        is_link,
+        real_target,
+        detect_source: detect_source.to_string(),
+        detect_content: detect_content.to_string(),
+    }
+}
+
+/// 解析附加缓存路径：先执行检测命令，再回退到默认路径模板。
+/// 返回 (解析后的路径, 检测依据描述, 检测内容)。
+fn resolve_extra_cache_path(
+    detect_cmd: Option<&str>,
+    detect_json_path: Option<&str>,
+    default_path: Option<&str>,
+    display_name: &str,
+) -> Option<(String, String, String)> {
+    let mut resolved = String::new();
+    let mut source = String::new();
+    let mut content = String::new();
+
+    if let Some(cmd) = detect_cmd {
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        if !parts.is_empty() {
+            let out = get_cmd_output(parts[0], &parts[1..]);
+            if let Some(path) = super::utils::resolve_detected_path(&out, detect_json_path) {
+                resolved = path;
+                source = format!("命令 `{}` 的输出", cmd);
+                content = format!("{} 报告的缓存目录为: {}", display_name, resolved);
+            }
+        }
+    }
+    if resolved.is_empty() {
+        if let Some(dp) = default_path {
+            resolved = expand_home(dp);
+            source = format!("默认路径配置: {}", dp);
+            content = format!("检测到的 {} 缓存目录为: {}", display_name, resolved);
+        }
+    }
+
+    let trimmed = resolved.trim_matches('"').trim_matches('\'').trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some((trimmed, source, content))
+    }
+}
+
 #[tauri::command]
 pub fn get_caches_list() -> Result<Vec<CacheInfo>, String> {
     use super::project::registry;
-    use super::utils::{expand_home, get_cmd_output, is_exe_in_path, cache_detect_evidence_dynamic};
+    use super::utils::{expand_home, get_cmd_output, is_exe_in_path, cache_detect_evidence_dynamic, resolve_detected_path};
     
     let mut list = Vec::new();
     
@@ -338,8 +421,8 @@ pub fn get_caches_list() -> Result<Vec<CacheInfo>, String> {
                         let parts: Vec<&str> = cmd.split_whitespace().collect();
                         if !parts.is_empty() {
                             let out = get_cmd_output(parts[0], &parts[1..]);
-                            if !out.is_empty() && out != "undefined" && out != "null" {
-                                resolved_path = out;
+                            if let Some(path) = resolve_detected_path(&out, pm.cache_detect_json_path.as_deref()) {
+                                resolved_path = path;
                             }
                         }
                     }
@@ -355,45 +438,34 @@ pub fn get_caches_list() -> Result<Vec<CacheInfo>, String> {
                 if trimmed_path.is_empty() {
                     continue;
                 }
-                
-                let clean_path = Path::new(&trimmed_path);
-                let mut is_link = false;
-                let mut real_target = String::new();
-                
-                if let Ok(metadata) = fs::symlink_metadata(clean_path) {
-                    if metadata.file_type().is_symlink() {
-                        if let Ok(eval_path) = fs::read_link(clean_path) {
-                            is_link = true;
-                            real_target = eval_path.to_string_lossy().to_string();
-                        } else if let Ok(eval_path) = fs::canonicalize(clean_path) {
-                            let canonical = eval_path.to_string_lossy().to_string();
-                            let canonical_clean = canonical.trim_start_matches(r"\\?\").to_string();
-                            if canonical_clean != clean_path.to_string_lossy().to_string() {
-                                is_link = true;
-                                real_target = canonical_clean;
-                            }
-                        }
-                    }
-                }
-                
-                let size_path = if is_link { Path::new(&real_target) } else { clean_path };
-                let size_bytes = get_dir_size(size_path);
-                let size_str = format_bytes(size_bytes);
-                
+
                 let (detect_source, detect_content) = cache_detect_evidence_dynamic(&pm.id, &resolved_path, pm);
                 
                 // Avoid duplicates in the cache list
-                if !list.iter().any(|c: &CacheInfo| c.path == resolved_path) {
-                    list.push(CacheInfo {
-                        name: pm.id.clone(),
-                        installed,
-                        path: clean_path.to_string_lossy().to_string(),
-                        size: size_str,
-                        is_link,
-                        real_target,
-                        detect_source,
-                        detect_content,
-                    });
+                let info = build_cache_info(&pm.id, installed, &trimmed_path, &detect_source, &detect_content);
+                if !list.iter().any(|c: &CacheInfo| c.path == info.path) {
+                    list.push(info);
+                }
+            }
+
+            // 附加缓存目录（一个包管理器可有多个缓存，如 pnpm 的 store + 元数据 cache-dir）
+            if !pm.extra_caches.is_empty() {
+                let exe_name = pm.version_exe.as_deref().unwrap_or(&pm.id);
+                let installed = is_exe_in_path(exe_name);
+
+                for extra in &pm.extra_caches {
+                    if let Some((extra_path, extra_source, extra_content)) = resolve_extra_cache_path(
+                        extra.detect_cmd.as_deref(),
+                        extra.detect_json_path.as_deref(),
+                        extra.default_path.as_deref(),
+                        &extra.display_name,
+                    ) {
+                        let name = format!("{}.{}", pm.id, extra.id);
+                        let info = build_cache_info(&name, installed, &extra_path, &extra_source, &extra_content);
+                        if !list.iter().any(|c: &CacheInfo| c.path == info.path) {
+                            list.push(info);
+                        }
+                    }
                 }
             }
         }
@@ -415,27 +487,44 @@ pub fn migrate_cache_path(name: String, new_path: String) -> Result<(), String> 
         return Err("原路径与目标路径相同，无需迁移".to_string());
     }
 
+    // 迁移标记：防止上次中断留下的半拷贝目录被再次当作目标（拷贝非原子）
+    const MIGRATE_MARKER: &str = ".anyversion-migrating";
+    let marker = target_path.join(MIGRATE_MARKER);
+    if marker.exists() {
+        return Err(format!(
+            "目标目录 {} 存在未完成的迁移标记（{}），可能上次迁移被中断。\n请确认后手动清理该目录再重试。",
+            target_path.display(),
+            marker.display()
+        ));
+    }
+
     // Ensure target directory exists
     fs::create_dir_all(target_path).map_err(|e| format!("无法创建目标目录: {}", e))?;
+    fs::write(&marker, "in-progress").map_err(|e| format!("写入迁移标记失败: {}", e))?;
 
     // Check if original path is already a junction/symlink
     let is_symlink = fs::symlink_metadata(orig_path).map(|m| m.file_type().is_symlink()).unwrap_or(false);
 
-    if is_symlink {
-        // Just remove old junction link
-        fs::remove_file(orig_path).map_err(|e| format!("无法移除已有的旧链接: {}", e))?;
-    } else {
-        // Move files
-        if orig_path.exists() {
-            copy_dir_all(orig_path, target_path).map_err(|e| format!("复制缓存文件失败: {}", e))?;
-            fs::remove_dir_all(orig_path).map_err(|e| format!("清空原缓存目录失败: {}", e))?;
+    let result = (|| -> Result<(), String> {
+        if is_symlink {
+            // Just remove old junction link
+            fs::remove_file(orig_path).map_err(|e| format!("无法移除已有的旧链接: {}", e))?;
+        } else {
+            // Move files
+            if orig_path.exists() {
+                copy_dir_all(orig_path, target_path).map_err(|e| format!("复制缓存文件失败: {}", e))?;
+                fs::remove_dir_all(orig_path).map_err(|e| format!("清空原缓存目录失败: {}", e))?;
+            }
         }
-    }
 
-    // Create Junction
-    create_junction(orig_path, target_path)?;
+        // Create Junction
+        create_junction(orig_path, target_path)?;
+        Ok(())
+    })();
 
-    Ok(())
+    // 无论成功失败都清理标记（失败时保留半拷贝供用户检查，但不再阻塞后续迁移）
+    let _ = fs::remove_file(&marker);
+    result
 }
 
 /// 存储迁移进度（与 config::MigrateProgress 区分，用于 cache/data 迁移）
@@ -660,4 +749,19 @@ pub fn migrate_cache_path_raw(orig_path_str: &str, new_path_str: &str) -> Result
 }
 pub fn move_cache_path_raw(orig_path_str: &str, new_path_str: &str) -> Result<(), String> {
     migrate_cache_path_raw(orig_path_str, new_path_str)
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::format_bytes;
+
+    #[test]
+    fn format_bytes_units() {
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1024), "1.00 KiB");
+        assert_eq!(format_bytes(5 * 1024 * 1024), "5.00 MiB");
+        assert_eq!(format_bytes(3 * 1024 * 1024 * 1024), "3.00 GiB");
+        assert_eq!(format_bytes(2 * 1024u64.pow(4)), "2.00 TiB");
+    }
 }

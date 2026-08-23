@@ -171,12 +171,16 @@ fn refresh_core_version(inner: &MihomoInner) {
 fn build_state_view(inner: &MihomoInner) -> MihomoStateView {
     // 注意：结构体字面量中的临时 MutexGuard 会活到整条语句结束，
     // 对同一个 Mutex 重复 lock 会死锁，因此这里每个锁都只取一次并提前释放。
+    // 锁顺序与 launch_core 保持一致（先 app_config 后 child），避免跨锁顺序反转。
     let (running, pid) = {
+        let mixed_port = inner.app_config.lock().unwrap().mixed_port;
         let g = inner.child.lock().unwrap();
-        (
-            g.as_ref().map(|c| c.id() > 0).unwrap_or(false) && !inner.stop_flag.load(Ordering::SeqCst),
-            g.as_ref().map(|c| c.id() as i64),
-        )
+        let child_running = g.as_ref().map(|c| c.id() > 0).unwrap_or(false)
+            && !inner.stop_flag.load(Ordering::SeqCst);
+        // running 判断与 launch_core 幂等检测一致（child 或端口监听），
+        // 避免外部/遗留进程占用端口时误判为未运行。
+        let port_running = mixed_port > 0 && manager::port_in_use(mixed_port);
+        (child_running || port_running, g.as_ref().map(|c| c.id() as i64))
     };
     let app_config = inner.app_config.lock().unwrap().clone();
     let installed = resolve_core_path(&app_config).exists();

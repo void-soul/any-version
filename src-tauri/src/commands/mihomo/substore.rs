@@ -253,7 +253,10 @@ fn start_static_server(root: PathBuf, port: u16) {
                     .unwrap_or("/")
                     .to_string();
                 let rel = path.trim_start_matches('/');
+                // 防路径穿越：`..` 段或任何逃逸 web 根的请求一律回退到 index.html
                 let mut file = if rel.is_empty() {
+                    root.join("index.html")
+                } else if rel.split(['/', '\\']).any(|seg| seg == "..") {
                     root.join("index.html")
                 } else {
                     root.join(rel)
@@ -261,9 +264,16 @@ fn start_static_server(root: PathBuf, port: u16) {
                 if !file.exists() || file.is_dir() {
                     file = root.join("index.html");
                 }
+                // 双重保险：canonicalize 后必须仍在 root 之下
+                if let (Ok(canon), Ok(root_canon)) = (file.canonicalize(), root.canonicalize()) {
+                    if !canon.starts_with(&root_canon) {
+                        file = root.join("index.html");
+                    }
+                }
                 let body = std::fs::read(&file).unwrap_or_default();
+                // 去掉 Access-Control-Allow-Origin: *（同源前端无需跨域；通配 ACAO 会让任意网页可读本机文件）
                 let head = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     content_type(&file),
                     body.len()
                 );

@@ -108,8 +108,18 @@
       }
     ],
     "cache_default_path": "{home}\\.local\\share\\pnpm\\store",
-    "cache_env_var": "PNPM_STORE_DIR",
+    "cache_env_var": "PNPM_CONFIG_STORE_DIR",
     "cache_set_cmd_template": "pnpm config set store-dir \"{path}\"",
+    "extra_caches": [
+      {
+        "id": "cache",
+        "display_name": "pnpm 元数据缓存",
+        "detect_cmd": "pnpm config get cache-dir",
+        "default_path": "{home}\\AppData\\Local\\pnpm-cache",
+        "env_var": "PNPM_CONFIG_CACHE_DIR",
+        "set_cmd_template": "pnpm config set cache-dir \"{path}\""
+      }
+    ],
     "data_detect_cmd": null,
     "data_default_path": null,
     "data_env_var": null,

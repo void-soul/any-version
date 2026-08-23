@@ -68,6 +68,24 @@ pub fn find_in_path(exe_name: &str) -> Option<PathBuf> {
     None
 }
 
+/// 校验将被替换进命令模板的「值」（`{url}` / `{path}` 等用户输入）。
+/// 拒绝 shell 注入元字符（单双引号、分号、管道、重定向、反引号、`$`、括号、换行）。
+/// 模板本身来自注册表白名单，但替换后的值是用户输入，必须在替换前校验。
+/// 保守策略：URL 中的 `&`、`(` 等请使用百分号编码。
+pub fn validate_subst_value(v: &str) -> Result<(), String> {
+    if v.trim().is_empty() {
+        return Err("值不能为空".to_string());
+    }
+    let dangerous = ['\'', '"', ';', '&', '|', '<', '>', '`', '$', '(', ')', '\r', '\n'];
+    if let Some(c) = v.chars().find(|c| dangerous.contains(c)) {
+        return Err(format!(
+            "值包含不允许的字符 {:?}（已拒绝，防止命令注入；URL 参数请用百分号编码）",
+            c
+        ));
+    }
+    Ok(())
+}
+
 /// Expand {home} / {data_dir} placeholders in path strings.
 /// - `{home}`      -> 用户主目录（%USERPROFILE%）
 /// - `{data_dir}`  -> 程序数据根目录（get_data_dir()），用于把缓存/数据锚定到托管的数据目录下
@@ -177,6 +195,32 @@ pub fn resolve_custom_cache_path(pm: &PackageManagerDef) -> Option<String> {
     None
 }
 
+/// 从检测命令输出中解析缓存路径。
+/// 未配置 JSON 字段时保持传统的纯文本路径行为；配置后只接受 JSON 字段中的字符串值。
+pub fn resolve_detected_path(output: &str, json_path: Option<&str>) -> Option<String> {
+    let trimmed = output.trim().trim_matches('"').trim_matches('\'').trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("undefined") || trimmed.eq_ignore_ascii_case("null") {
+        return None;
+    }
+
+    let value = if let Some(field_path) = json_path {
+        let json: serde_json::Value = serde_json::from_str(trimmed).ok()?;
+        let mut current = &json;
+        for part in field_path.split('.').filter(|part| !part.is_empty()) {
+            current = current.get(part)?;
+        }
+        current.as_str()?.trim().to_string()
+    } else {
+        trimmed.to_string()
+    };
+
+    if value.is_empty() || value.eq_ignore_ascii_case("undefined") || value.eq_ignore_ascii_case("null") {
+        None
+    } else {
+        Some(value)
+    }
+}
+
 /// Run a command and capture its stdout as a trimmed string
 pub fn get_cmd_output(cmd: &str, args: &[&str]) -> String {
     super::hidden_cmd::hidden_cmd(cmd)
@@ -283,7 +327,13 @@ pub fn apply_cache_config_writes(pm: &crate::commands::project::types::PackageMa
 
     let config_path = match config_path {
         Some(p) => p,
-        None => return, // 配置文件不存在，跳过
+        None => {
+            crate::exit_log::exit_log(&format!(
+                "[apply_cache_config_writes] {}: 配置文件不存在，跳过缓存路径写入",
+                pm.id
+            ));
+            return;
+        }
     };
 
     for wk in write_keys {
@@ -294,7 +344,12 @@ pub fn apply_cache_config_writes(pm: &crate::commands::project::types::PackageMa
                 .to_string(),
             None => base_path.to_string(),
         };
-        let _ = write_xml_config_key(&config_path, &wk.key, &value);
+        if let Err(e) = write_xml_config_key(&config_path, &wk.key, &value) {
+            crate::exit_log::exit_log(&format!(
+                "[apply_cache_config_writes] {}: 写入 {} 失败: {}",
+                pm.id, wk.key, e
+            ));
+        }
     }
 }
 
@@ -697,3 +752,43 @@ pub fn sync_mihomo_geo() {
 }
 
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_subst_value_accepts_safe_url_and_path() {
+        assert!(validate_subst_value("https://mirror.example.com/npm/").is_ok());
+        assert!(validate_subst_value(r"D:\any-version-caches\npm").is_ok());
+        assert!(validate_subst_value("https://user:p%40ss@host:8080").is_ok());
+        assert!(validate_subst_value("https://host:8080?token=abc").is_ok());
+    }
+
+    #[test]
+    fn validate_subst_value_rejects_injection_chars() {
+        for bad in ["'; rm -rf /; '", "x\"&calc", "`id`", "$(whoami)", "a;b", "a|b", "a&b", "a<b", "a(b", "a\nb", "a\rb"] {
+            assert!(validate_subst_value(bad).is_err(), "应拒绝: {:?}", bad);
+        }
+    }
+
+    #[test]
+    fn validate_subst_value_rejects_empty() {
+        assert!(validate_subst_value("").is_err());
+        assert!(validate_subst_value("   ").is_err());
+    }
+
+    #[test]
+    fn resolve_detected_path_parses_json_field_without_leaking_json() {
+        let output = serde_json::json!({
+            "global_cache_dir": r"D:\zig-cache",
+            "version": "0.15.1"
+        }).to_string();
+        assert_eq!(
+            resolve_detected_path(&output, Some("global_cache_dir")).as_deref(),
+            Some(r"D:\zig-cache")
+        );
+        assert!(resolve_detected_path(&output, Some("missing")).is_none());
+        assert_eq!(resolve_detected_path(r"D:\plain-cache", None).as_deref(), Some(r"D:\plain-cache"));
+    }
+}

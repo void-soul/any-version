@@ -155,6 +155,31 @@ pub struct DataDirStatus {
     pub source: Option<String>,
 }
 
+/// 附加缓存目录定义（一个包管理器可有多个缓存目录，
+/// 如 pnpm 的 store（内容寻址存储）与 cache（元数据缓存））
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ExtraCacheDef {
+    /// 附加缓存 id（缓存列表中 name 显示为 "{pm_id}.{id}"）
+    pub id: String,
+    /// 显示名（如 "pnpm 元数据缓存"）
+    pub display_name: String,
+    /// 缓存路径检测命令（如 "pnpm cache path"）
+    #[serde(default)]
+    pub detect_cmd: Option<String>,
+    /// 检测命令返回 JSON 时，从该字段读取路径（支持点号路径，如 "global_cache_dir"）
+    #[serde(default)]
+    pub detect_json_path: Option<String>,
+    /// 默认路径模板
+    #[serde(default)]
+    pub default_path: Option<String>,
+    /// 缓存环境变量
+    #[serde(default)]
+    pub env_var: Option<String>,
+    /// 设置命令模板
+    #[serde(default)]
+    pub set_cmd_template: Option<String>,
+}
+
 /// 包管理器定义（嵌套在项目内，如 Node.js 下 of npm/yarn/pnpm）
 ///
 /// 缓存、镜像、数据路径等属性属于包管理器，而非语言本身。
@@ -179,6 +204,9 @@ pub struct PackageManagerDef {
     pub version_exe: Option<String>,
     /// 缓存路径检测命令（如 "yarn cache dir"）
     pub cache_detect_cmd: Option<String>,
+    /// 检测命令返回 JSON 时，从该字段读取路径（支持点号路径）
+    #[serde(default)]
+    pub cache_detect_json_path: Option<String>,
     /// 全局包列表命令
     pub pkg_list_cmd: Option<String>,
     /// 镜像设置命令模板
@@ -201,6 +229,9 @@ pub struct PackageManagerDef {
     /// Cache set command template.
     #[serde(default)]
     pub cache_set_cmd_template: Option<String>,
+    /// 附加缓存目录定义（一个包管理器可有多个缓存目录，如 pnpm 的 store + 元数据 cache）
+    #[serde(default)]
+    pub extra_caches: Vec<ExtraCacheDef>,
     /// Default data path.
     #[serde(default)]
     pub data_default_path: Option<String>,

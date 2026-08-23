@@ -154,9 +154,49 @@ fn cleanup_legacy_env_vars() {
     }
 }
 
+/// 初始化 tracing 日志（滚动文件 + stderr）与全局 panic hook。
+/// 此前 tracing 未挂载 subscriber（见 exit_log.rs 注释），全仓 76 处 log 宏全部空操作；
+/// 且无 panic hook，worker 线程 panic 会静默崩溃导致命令永远不返回。
+fn init_tracing_and_panic_hook() {
+    // panic hook：记录位置与消息，避免线程静默崩溃无从排查
+    std::panic::set_hook(Box::new(|info| {
+        let msg = info.to_string();
+        let location = info
+            .location()
+            .map(|l| l.to_string())
+            .unwrap_or_default();
+        eprintln!("[panic] {msg} @ {location}");
+        crate::exit_log::exit_log(&format!("[panic] {msg} @ {location}"));
+    }));
+
+    let log_dir = crate::commands::config::get_data_dir().join("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "any-version.log");
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+    // guard 必须存活整个进程生命周期，否则日志写入会被丢弃
+    std::mem::forget(guard);
+
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_writer(non_blocking)
+        .with_ansi(false)
+        .try_init();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     exit_log::exit_log("=== app 启动 run() ===");
+    init_tracing_and_panic_hook();
+    // 对既有主密钥文件收紧 ACL（旧版本创建时未限权）
+    {
+        let key_path = crate::commands::config::get_data_dir().join("certs").join(".master_key");
+        if key_path.exists() {
+            crate::commands::secrets::restrict_master_key_acl(&key_path);
+        }
+    }
     cleanup_legacy_env_vars();
     sync_process_path();
 
@@ -852,9 +892,23 @@ pub fn run() {
                     exit_log::exit_log("ExitRequested: 进入退出分支，启动清理线程 + 兜底强杀");
                     let app_handle = app.clone();
                     std::thread::spawn(move || {
-                        exit_log::exit_log("cleanup thread: start (picky-sync / kill_on_exit / stop_all_rtsp)");
-                        // 退出前先把 picky 本地变更推送到云端（仅已配置时执行，超时 8 秒兜底，
-                        // 避免卡住退出；未配置/失败都静默跳过，不阻塞退出流程）。
+                        exit_log::exit_log("cleanup thread: start (kill_on_exit / stop_all_rtsp / picky-sync)");
+                        // 关键顺序：先关 mihomo 与 RTSP（同步快速操作，不依赖网络）。
+                        // 原先放在最后的 mihomo 关闭会被托盘退出的 500ms 兜底强杀打断——
+                        // 一旦前面的 picky 云同步卡在 S3 网络请求（block_on 内 timeout
+                        // 对同步阻塞无法及时取消），cleanup 线程走不到 kill_on_exit，
+                        // 进程就被 process::exit(0) 强杀，导致 mihomo 退出时未被关闭。
+                        // 因此把「关 mihomo / 关 RTSP」提前，保证在兜底强杀前完成。
+                        commands::mihomo::kill_on_exit(
+                            &**app_handle.state::<commands::mihomo::MihomoState>(),
+                        );
+                        exit_log::exit_log("cleanup thread: kill_on_exit done");
+                        // 先关 RTSP（内存 kill ffmpeg/mediamtx 子进程），再结束。
+                        commands::rtsp_server::stop_all_rtsp_servers_inner(
+                            &app_handle.state::<commands::rtsp_server::RtspServerState>(),
+                        );
+                        exit_log::exit_log("cleanup thread: stop_all_rtsp_servers done");
+                        // 最后做 picky 云同步（可能慢/卡，超时 8 秒兜底；未配置/失败静默跳过）。
                         exit_log::exit_log("cleanup thread: picky exit sync...");
                         let _ = tauri::async_runtime::block_on(async {
                             let _ = tokio::time::timeout(
@@ -864,15 +918,6 @@ pub fn run() {
                             .await;
                         });
                         exit_log::exit_log("cleanup thread: picky exit sync done");
-                        // 先关 RTSP（内存 kill ffmpeg/mediamtx 子进程），再关 mihomo。
-                        commands::rtsp_server::stop_all_rtsp_servers_inner(
-                            &app_handle.state::<commands::rtsp_server::RtspServerState>(),
-                        );
-                        exit_log::exit_log("cleanup thread: stop_all_rtsp_servers done");
-                        commands::mihomo::kill_on_exit(
-                            &**app_handle.state::<commands::mihomo::MihomoState>(),
-                        );
-                        exit_log::exit_log("cleanup thread: kill_on_exit done");
                         // 清理完成后再真正退出进程（比主线程 4s 兜底更早，保证不卡住用户）。
                         exit_log::exit_log("cleanup thread: all done, process::exit(0)");
                         std::process::exit(0);

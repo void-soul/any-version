@@ -836,7 +836,7 @@ export default function GlobalSettings() {
     fetchSystemFonts();
     invoke<TrayMenuConfig>("get_tray_menu_config")
       .then(setTrayCfg)
-      .catch(() => {});
+      .catch((e) => console.error("加载托盘菜单配置失败:", e));
   }, []);
 
   const pathsChanged = (): boolean => {

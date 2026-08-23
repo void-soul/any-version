@@ -35,6 +35,9 @@ export default function TranslatePopup() {
   const [modelId, setModelId] = useState("");
   // 可编辑的原文（从 result.source 初始化，可修改后重新翻译）
   const [sourceText, setSourceText] = useState("");
+  // 后端事件可能比悬浮窗内的手动翻译旧；记录手动请求，
+  // 防止同一原文的旧结果覆盖用户刚选择的目标语言。
+  const manualTranslationSourceRef = useRef<string | null>(null);
 
   const appWindow = getCurrentWindow();
 
@@ -67,6 +70,7 @@ export default function TranslatePopup() {
     const pid = opts?.provId ?? provId;
     const mid = opts?.modelId ?? modelId;
     const lang = opts?.lang ?? result?.target ?? "中文";
+    manualTranslationSourceRef.current = text;
     setTranslating(true);
     try {
       const translated = await invoke<string>("translate_text", {
@@ -157,27 +161,20 @@ export default function TranslatePopup() {
     getCurrentWebview()
       .setFocus()
       .catch(() => {});
+    // 先注册事件，再读取最近快照，避免窗口复用时错过新结果。
+    const unlisten = listen<TranslateResult>("translate-result", (e) => {
+      applyPayload(e.payload);
+    });
     invoke<TranslateResult | null>("get_last_translate_result")
       .then((last) => {
         if (last && last.source) applyPayload(last);
       })
-      .catch(() => {});
-    // 监听后端推送的翻译结果
-    const unlisten = listen<TranslateResult>("translate-result", (e) => {
-      applyPayload(e.payload);
-    });
+      .catch((e) => console.error("读取最近翻译结果失败:", e));
     // 失焦自动隐藏（无需钉住）：点击外部后自动收起悬浮窗。
     // 注意：下拉框（供应商/模型/目标语言）是原生弹窗，会短暂夺走窗口焦点，
     // 用 suppressBlurUntil 防止因此误隐藏。
     const unFocus = appWindow.onFocusChanged(({ payload: focused }) => {
-      if (focused) {
-        // 窗口获得焦点：主动拉取最近一次结果，兜底同步（修复窗口复用/事件丢失导致不更新）
-        invoke<TranslateResult | null>("get_last_translate_result")
-          .then((last) => {
-            if (last && last.source) applyPayloadRef.current(last);
-          })
-          .catch(() => {});
-      } else if (Date.now() >= suppressBlurUntil.current) {
+      if (!focused && Date.now() >= suppressBlurUntil.current) {
         appWindow.hide();
       }
     });
@@ -203,13 +200,17 @@ export default function TranslatePopup() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 轮询兜底：translate-result / focus 事件可能因窗口复用、页面时序、事件通道异常
-  // 等任何原因丢失（invoke 调用始终可用），只要悬浮窗存在就持续轮询最近一次结果，
-  // 仅在内容变化时更新 UI——保证悬浮窗一定收敛到最新原文/译文，不依赖事件。
-  // 用 lastAppliedRef 记录「最后一次应用的后端载荷」：轮询只在与上次不同时才写入，
-  // 因此用户手动编辑原文不会被轮询覆盖。
+  // 记录最近一次已应用的事件载荷，避免窗口级和应用级双通道事件重复更新。
   const lastAppliedRef = useRef<TranslateResult | null>(null);
   const applyPayload = (p: TranslateResult) => {
+    // 后端事件中的旧结果不能再次覆盖手动翻译；新的快捷键原文到来时解除保护。
+    if (manualTranslationSourceRef.current) {
+      const sameSource = p.source === manualTranslationSourceRef.current;
+      if (sameSource && !p.loading) return;
+      // loading=true 表示后端已经开始了一次新的快捷键翻译，
+      // 即使原文相同也必须解除手动结果保护。
+      manualTranslationSourceRef.current = null;
+    }
     const last = lastAppliedRef.current;
     if (
       last &&
@@ -226,26 +227,11 @@ export default function TranslatePopup() {
     setTranslating(!!p.loading);
     if (p.source) setSourceText(p.source);
   };
-  const applyPayloadRef = useRef(applyPayload);
-  applyPayloadRef.current = applyPayload;
-
   // 下拉框打开期间（原生弹窗夺焦）抑制失焦隐藏
   const suppressBlurUntil = useRef(0);
   const onSelectOpen = () => {
     suppressBlurUntil.current = Date.now() + 3000;
   };
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      invoke<TranslateResult | null>("get_last_translate_result")
-        .then((last) => {
-          if (last && last.source) applyPayloadRef.current(last);
-        })
-        .catch(() => {});
-    }, 400);
-    return () => clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   return (
     <>
@@ -367,7 +353,10 @@ export default function TranslatePopup() {
             </div>
             <textarea
               value={sourceText}
-              onChange={(e) => setSourceText(e.target.value)}
+              onChange={(e) => {
+                manualTranslationSourceRef.current = e.target.value;
+                setSourceText(e.target.value);
+              }}
               placeholder="输入或选中文本后按划词热键"
               className="w-full min-h-[60px] bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500/50 resize-none leading-relaxed"
             />

@@ -30,7 +30,30 @@ pub fn get_or_create_master_key() -> Result<[u8; 32], String> {
     }
     std::fs::write(&key_path, general_purpose::STANDARD.encode(&key))
         .map_err(|e| format!("写入主密钥失败: {}", e))?;
+    restrict_master_key_acl(&key_path);
     Ok(key)
+}
+
+/// 启动时对既有主密钥文件收紧 ACL（仅当前用户可读写）。
+/// 密钥是明文落盘，未限权时任何能读该目录的账户/进程都能解密所有凭据。
+pub fn restrict_master_key_acl(path: &std::path::Path) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        if let Ok(user) = std::env::var("USERNAME") {
+            let _ = std::process::Command::new("icacls")
+                .arg(path)
+                .arg("/inheritance:r")
+                .arg("/grant:r")
+                .arg(format!("{}:F", user))
+                .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                .output();
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+    }
 }
 
 /// AES-256-GCM 加密，返回 `ENC_V2:` + base64(nonce || ciphertext)。
@@ -78,4 +101,42 @@ pub fn decrypt_secret(enc: &str) -> Result<String, String> {
         .decrypt(nonce, ciphertext)
         .map_err(|e| format!("AES 解密失败（密钥不匹配或数据损坏）: {:?}", e))?;
     String::from_utf8(plaintext).map_err(|e| format!("解密结果编码错误: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encrypt_decrypt_roundtrip() {
+        let secret = "test-secret-value-for-roundtrip";
+        let enc = encrypt_secret(secret).expect("encrypt");
+        assert!(enc.starts_with(CRED_ENCRYPTION_MARKER));
+        assert_ne!(enc, format!("ENC_V2:{}", secret));
+        assert_eq!(decrypt_secret(&enc).expect("decrypt"), secret);
+    }
+
+    #[test]
+    fn decrypt_tampered_fails() {
+        let enc = encrypt_secret("hello").expect("encrypt");
+        // 篡改密文末尾一个字符（base64 载荷中间）
+        let mut bytes = enc.into_bytes();
+        let idx = bytes.len() - 2;
+        bytes[idx] = if bytes[idx] == b'A' { b'B' } else { b'A' };
+        let tampered = String::from_utf8(bytes).unwrap();
+        assert!(decrypt_secret(&tampered).is_err());
+    }
+
+    #[test]
+    fn empty_secret_roundtrips() {
+        assert_eq!(encrypt_secret("").unwrap(), "");
+        assert_eq!(decrypt_secret("").unwrap(), "");
+    }
+
+    #[test]
+    fn legacy_base64_no_marker_still_decrypts_as_obfuscation() {
+        // 旧版无 ENC_V2 前缀的 base64（非加密，仅混淆）——兼容读取
+        let legacy = general_purpose::STANDARD.encode("legacy-value");
+        assert_eq!(decrypt_secret(&legacy).unwrap(), "legacy-value");
+    }
 }

@@ -77,10 +77,21 @@ fn version_cache_path(project_id: &str) -> PathBuf {
     get_data_dir().join("version_cache").join(format!("{}.json", project_id))
 }
 
+/// 版本缓存有效期：超过后视为过期，下次读取强制联网刷新（否则新版本永不出现）。
+const VERSION_CACHE_TTL_SECS: u64 = 24 * 3600;
+
 fn load_version_cache(project_id: &str) -> Option<VersionCache> {
     let path = version_cache_path(project_id);
     let content = fs::read_to_string(&path).ok()?;
-    serde_json::from_str(&content).ok()
+    let cache: VersionCache = serde_json::from_str(&content).ok()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if now.saturating_sub(cache.updated_at) > VERSION_CACHE_TTL_SECS {
+        return None; // 过期，视为无缓存
+    }
+    Some(cache)
 }
 
 fn save_version_cache(project_id: &str, versions: &[String]) -> u64 {

@@ -48,6 +48,9 @@ fn sanitize_project_cmds(def: &mut ProjectDef) {
         check("pkg_list_cmd", &mut pm.pkg_list_cmd, true);
         check("cache_set_cmd_template", &mut pm.cache_set_cmd_template, false);
         check("proxy_clear_cmd", &mut pm.proxy_clear_cmd, false);
+        // 注意：PowerShell 类模板（proxy_set_cmd_template / mirror_cmd_template）
+        // 本身合法包含 `$` `'` `;` `(` 等元字符，不能在此处严格白名单（会误杀 vcpkg 等）。
+        // 注入防护改在替换点：用户输入值经 utils::validate_subst_value 校验后再拼入模板。
     }
 }
 

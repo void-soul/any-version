@@ -63,6 +63,10 @@ export function PackageManagerTab({
   type ParentLink = { parent_path: string; parent_target: string; child_rel: string };
   const [cacheInfo, setCacheInfo] = useState<any>(isCached ? cachedData.cacheInfo : null);
   const [dataInfo, setDataInfo] = useState<any>(isCached ? cachedData.dataInfo : null);
+  // 附加缓存目录（pnpm.cache 等）：key = extra.id，value = 缓存信息
+  const [extraCacheInfos, setExtraCacheInfos] = useState<Record<string, any>>(isCached ? cachedData.extraCacheInfos ?? {} : {});
+  // 当前工作流针对的附加缓存 id（null = 主缓存 store）
+  const [workflowExtraCacheId, setWorkflowExtraCacheId] = useState<string | null>(null);
 
   const updatePmCache = (data: Partial<typeof pmDetectionCache[string]>) => {
     const key = `${projectId}:${pm.id}`;
@@ -73,6 +77,7 @@ export function PackageManagerTab({
         latestVersion: null,
         cacheInfo: null,
         dataInfo: null,
+        extraCacheInfos: {},
         proxyDetected: null,
         proxyInput: "",
         currentMirror: null,
@@ -120,22 +125,28 @@ export function PackageManagerTab({
     setWorkflowFileAction("keep");
     setWorkflowExecuting(false);
     setWorkflowProgress(null);
+    setWorkflowExtraCacheId(null);
   };
 
-  // 打开工作流
-  const openWorkflow = (type: "cache" | "data") => {
+  // 打开工作流（extraId: 附加缓存 id，null 表示主缓存 store）
+  const openWorkflow = (type: "cache" | "data", extraId?: string) => {
     closeWorkflow();
     setWorkflowType(type);
     setWorkflowStep("method");
+    setWorkflowExtraCacheId(extraId ?? null);
     // 预填默认值
-    if (type === "cache" && cacheInfo) {
-      setWorkflowLinkPath(cacheInfo.path);
-      if (cacheInfo.real_target) {
-        setWorkflowActualPath(cacheInfo.real_target);
-      } else {
-        const drive = cacheInfo.path.match(/^([A-Za-z]):\\/);
-        if (drive && drive[1].toUpperCase() === "C") {
-          setWorkflowActualPath(`D:\\any-version-caches\\${pm.id}`);
+    if (type === "cache") {
+      const info = extraId ? extraCacheInfos[extraId] : cacheInfo;
+      if (info) {
+        setWorkflowLinkPath(info.path);
+        if (info.real_target) {
+          setWorkflowActualPath(info.real_target);
+        } else {
+          const drive = info.path.match(/^([A-Za-z]):\\/);
+          if (drive && drive[1].toUpperCase() === "C") {
+            const sub = extraId ? `${pm.id}-${extraId}` : pm.id;
+            setWorkflowActualPath(`D:\\any-version-caches\\${sub}`);
+          }
         }
       }
     }
@@ -221,14 +232,19 @@ export function PackageManagerTab({
           storageKind: workflowType as string,
           deleteOldFirst,
           origPath: workflowLinkPath || undefined,
+          extraCacheId: workflowExtraCacheId || undefined,
         });
       } else {
         // Point 模式：修改配置（仅缓存支持）
-        if (!pm.cache_set_cmd_template && !pm.cache_env_var) {
+        const extra = workflowExtraCacheId ? pm.extra_caches?.find(e => e.id === workflowExtraCacheId) : null;
+        const hasSetCmd = extra ? !!(extra.set_cmd_template || extra.env_var) : !!(pm.cache_set_cmd_template || pm.cache_env_var);
+        if (!hasSetCmd) {
           throw new Error("该项目不支持配置指向");
         }
         // 处理旧文件
-        const oldPath = workflowType === "cache" ? cacheInfo?.path : dataInfo?.path;
+        const oldPath = workflowType === "cache"
+          ? (workflowExtraCacheId ? extraCacheInfos[workflowExtraCacheId]?.path : cacheInfo?.path)
+          : dataInfo?.path;
         if (oldPath && workflowFileAction !== "keep") {
           await invoke("handle_point_storage_files", {
             oldPath,
@@ -240,6 +256,7 @@ export function PackageManagerTab({
           projectId,
           pmId: pm.id,
           newPath: workflowPointPath,
+          extraCacheId: workflowExtraCacheId || undefined,
         });
       }
       await runDetection();
@@ -383,6 +400,29 @@ export function PackageManagerTab({
       });
     }
 
+    // Step 2-extra: 附加缓存目录（pnpm.cache 等，与主缓存 store 平行可调整）
+    if (pm.extra_caches && pm.extra_caches.length > 0) {
+      steps.push({
+        label: `正在检测 ${pm.display_name} 附加缓存路径...`,
+        run: async () => {
+          const extraInfos: Record<string, any> = {};
+          for (const extra of pm.extra_caches!) {
+            try {
+              const info = await invoke<{ path: string; size: string; is_link: boolean; real_target: string; parent_link: ParentLink | null }>("get_pkg_cache_info", {
+                projectId,
+                pmId: pm.id,
+                storageKind: "cache",
+                extraCacheId: extra.id,
+              });
+              extraInfos[extra.id] = { ...info, display_name: extra.display_name, detect_source: extra.detect_cmd || extra.default_path || "" };
+            } catch { /* 忽略未检测到的附加缓存 */ }
+          }
+          setExtraCacheInfos(extraInfos);
+          cachedData.extraCacheInfos = extraInfos;
+        },
+      });
+    }
+
     // Step 2b: data
     if (pm.data_detect_cmd || pm.data_default_path || pm.data_env_var) {
       steps.push({
@@ -467,6 +507,7 @@ export function PackageManagerTab({
       latestVersion: cachedData.latestVersion,
       cacheInfo: cachedData.cacheInfo,
       dataInfo: cachedData.dataInfo,
+      extraCacheInfos: cachedData.extraCacheInfos,
       proxyDetected: cachedData.proxyDetected,
       proxyInput: cachedData.proxyInput,
       currentMirror: cachedData.currentMirror,
@@ -479,13 +520,21 @@ export function PackageManagerTab({
     const key = `${projectId}:${pm.id}`;
     const cached = pmDetectionCache[key];
     
-    // 检查缓存是否存在，且有效期在 5 分钟内
-    if (cached && Date.now() - cached.timestamp < 5 * 60 * 1000) {
+    // 缓存有效性：5 分钟内视为新鲜；切换回本 tab 时若超过 30 秒也强制重检，
+    // 避免长时间停留其他页面后看到陈旧的大小/路径/版本
+    const CACHE_TTL_MS = 5 * 60 * 1000;
+    const VISIBLE_REFRESH_MS = 30 * 1000;
+    const cacheFresh = cached && Date.now() - cached.timestamp < CACHE_TTL_MS;
+    const staleForTab = !hidden && cached && Date.now() - cached.timestamp > VISIBLE_REFRESH_MS;
+    const useCache = cacheFresh && !staleForTab;
+
+    if (useCache) {
       setInstalled(cached.installed);
       setVersion(cached.version);
       setLatestVersion(cached.latestVersion);
       setCacheInfo(cached.cacheInfo);
       setDataInfo(cached.dataInfo);
+      setExtraCacheInfos(cached.extraCacheInfos ?? {});
       setProxyDetected(cached.proxyDetected);
       setProxyInput(cached.proxyInput);
       setCurrentMirror(cached.currentMirror);
@@ -501,6 +550,7 @@ export function PackageManagerTab({
       setLatestVersion(null);
       setCacheInfo(null);
       setDataInfo(null);
+      setExtraCacheInfos({});
       setProxyDetected(null);
       setProxyInput("");
       setCurrentMirror(null);
@@ -608,6 +658,12 @@ export function PackageManagerTab({
   // 设置代理
   const handleSetProxy = async () => {
     if (!pm.proxy_set_cmd_template) return;
+    // 防注入：代理值会拼入 PowerShell/命令行模板执行，拒绝 shell 元字符
+    const v = proxyInput.trim();
+    if (v && /['";&|<>`$()\r\n]/.test(v)) {
+      alert("代理地址包含不允许的字符（' \" ; & | < > ` $ ( )），请检查后重试");
+      return;
+    }
     setSettingProxy(true);
     try {
       if (proxyInput.trim()) {
@@ -665,6 +721,11 @@ export function PackageManagerTab({
   // ── 工作流 UI 渲染函数 ──
   const renderWorkflow = () => {
     const isData = workflowType === "data";
+    // 指向模式是否可用：按当前工作流目标（主缓存 store 或附加缓存）自身的配置能力判断
+    const wfExtra = workflowExtraCacheId ? pm.extra_caches?.find(e => e.id === workflowExtraCacheId) : null;
+    const wfCanPoint = !isData && !!(wfExtra
+      ? (wfExtra.set_cmd_template || wfExtra.env_var)
+      : (pm.cache_set_cmd_template || pm.cache_env_var));
     const accentBg = isData ? "bg-red-500/10" : "bg-amber-500/10";
     const accentBorder = isData ? "border-red-500/20" : "border-amber-500/20";
     const accentText = isData ? "text-red-400" : "text-amber-400";
@@ -706,7 +767,7 @@ export function PackageManagerTab({
                 </p>
               </div>
             </label>
-            {!isData && (pm.cache_set_cmd_template || pm.cache_env_var) && (
+            {wfCanPoint && (
               <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${workflowMethod === "point"
                 ? `${accentBorder} bg-white/5`
                 : "border-white/5 hover:bg-white/[0.02]"
@@ -1139,13 +1200,16 @@ export function PackageManagerTab({
       )}
 
       {/* 缓存管理 */}
-      {hasChecked && installed && (pm.cache_detect_cmd || pm.cache_default_path) && (
+      {/* 缓存管理 — 展示所有可配置缓存路径（主缓存 store + 附加缓存），即使无法直接配置也可用 junction */}
+      {hasChecked && installed && (cacheInfo || pm.cache_default_path || pm.cache_detect_cmd || (pm.extra_caches && pm.extra_caches.length > 0)) && (
         <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             <HardDrive className="w-4 h-4 text-amber-400" />
             <h4 className="text-xs font-semibold text-white">缓存管理</h4>
             <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">缓存</span>
           </div>
+
+          {/* 主缓存（pnpm 的 store 等） */}
           {cacheInfo ? (
             <div className="p-4 bg-black/20 rounded-xl border border-white/5 space-y-3">
               <div className="flex items-start justify-between">
@@ -1208,10 +1272,54 @@ export function PackageManagerTab({
               )}
 
               {/* 工作流面板 — 缓存变更 */}
-              {workflowType === "cache" && renderWorkflow()}
+              {workflowType === "cache" && !workflowExtraCacheId && renderWorkflow()}
             </div>
-          ) : (
-            <p className="text-[13px] text-slate-500">默认路径: <span className="font-mono text-slate-400">{pm.cache_default_path || "未配置"}</span></p>
+          ) : (pm.cache_default_path || pm.cache_detect_cmd || pm.cache_env_var) ? (
+            <p className="text-[13px] text-slate-500">主缓存路径未检测到，默认: <span className="font-mono text-slate-400">{pm.cache_default_path || "未配置"}</span></p>
+          ) : null}
+
+          {/* 附加缓存目录（pnpm.cache 等），与主缓存平行独立展示 */}
+          {pm.extra_caches && pm.extra_caches.length > 0 && (
+            <div className="space-y-3">
+              {pm.extra_caches.map(extra => {
+                const eInfo = extraCacheInfos[extra.id];
+                return (
+                  <div key={extra.id} className="p-4 bg-black/20 rounded-xl border border-white/5 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="space-y-1 flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[12px] font-semibold text-slate-200">{extra.display_name}</span>
+                          {eInfo?.real_target ? (
+                            <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] inline-flex items-center font-semibold">
+                              已迁移 (Junction)
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 text-[10px] inline-flex items-center">
+                              默认路径
+                            </span>
+                          )}
+                        </div>
+                        <p className="font-mono text-[12px] text-slate-400 break-all">{eInfo?.path || extra.default_path || "未检测到路径"}</p>
+                        {eInfo?.real_target && (
+                          <p className="font-mono text-[11px] text-slate-500 break-all">↳ 实际指向: {eInfo.real_target}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {eInfo && (
+                          <span className="text-slate-300 font-mono text-[13px] font-semibold bg-white/5 px-2.5 py-1 rounded-lg">{eInfo.size}</span>
+                        )}
+                        <button onClick={() => openWorkflow("cache", extra.id)} disabled={!projectStatus?.managed || workflowType !== null}
+                          className="px-3 py-1.5 bg-amber-600/70 hover:bg-amber-600 disabled:opacity-40 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all" title={!projectStatus?.managed ? "请先托管项目" : ""}>
+                          <FolderSync className="w-3.5 h-3.5" />调整路径
+                        </button>
+                      </div>
+                    </div>
+                    {/* 附加缓存的工作流面板 */}
+                    {workflowType === "cache" && workflowExtraCacheId === extra.id && renderWorkflow()}
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       )}

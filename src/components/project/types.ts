@@ -44,6 +44,7 @@ export interface PackageManagerDef {
   latest_version_cmd: string | null;
   version_cmd: string | null;
   cache_detect_cmd: string | null;
+  cache_detect_json_path?: string | null;
   pkg_list_cmd: string | null;
   mirror_cmd_template: string | null;
   mirror_detect_cmd?: string | null;
@@ -52,6 +53,16 @@ export interface PackageManagerDef {
   cache_default_path: string | null;
   cache_env_var: string | null;
   cache_set_cmd_template: string | null;
+  // 附加缓存目录（一个包管理器可有多个缓存，如 pnpm 的 store + 元数据 cache-dir）
+  extra_caches?: Array<{
+    id: string;
+    display_name: string;
+    detect_cmd: string | null;
+    detect_json_path?: string | null;
+    default_path: string | null;
+    env_var: string | null;
+    set_cmd_template: string | null;
+  }>;
   // 数据文件路径
   data_detect_cmd: string | null;
   data_default_path: string | null;

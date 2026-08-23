@@ -5,6 +5,7 @@
 use tauri::Emitter;
 use super::types::{ProjectStatus, ProjectDetail, ManagePreview};
 use super::scanner;
+use crate::commands::utils::resolve_detected_path;
 
 /// 获取所有项目列表及运行时状态
 #[tauri::command]
@@ -887,7 +888,17 @@ pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String
     }
 
     // 仅记录命令与状态，绝不打印 stdout/stderr 明文（可能含 token 等敏感信息）。
-    eprintln!("[run_cmd_capture] cmd={}, resolved_cmd={}", cmd, resolved_cmd);
+    // 命令本身也可能内嵌 `://user:pass@` 凭据，落盘前脱敏。
+    fn redact_creds(s: &str) -> String {
+        // 匹配 http(s)://user:pass@ 形式（含 user 为空、pass 含常见合法字符）
+        let re = regex::Regex::new(r"(://)([^/@\s:]*)(:[^/@\s]*)?(@)").unwrap();
+        re.replace_all(s, "$1***$4").to_string()
+    }
+    eprintln!(
+        "[run_cmd_capture] cmd={}, resolved_cmd={}",
+        redact_creds(&cmd),
+        redact_creds(&resolved_cmd)
+    );
 
     // 为外部命令设置超时（默认 5 分钟），防止恶意/错误命令无限挂起。
     // 使用 std::thread + channel 实现同步超时（run_cmd_capture 是同步函数）。
@@ -1099,10 +1110,39 @@ fn check_parent_junction(cache_path: &str) -> Option<ParentLinkInfo> {
     None
 }
 
+/// 解析附加缓存目录路径（pnpm.cache 等）。优先执行 detect_cmd，再回退到 default_path。
+fn resolve_extra_cache_path_dynamic(
+    extra: &crate::commands::project::types::ExtraCacheDef,
+) -> Result<String, String> {
+    use crate::commands::utils::{expand_home, get_cmd_output, resolve_detected_path};
+
+    let mut resolved = String::new();
+    if let Some(ref cmd) = extra.detect_cmd {
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        if !parts.is_empty() {
+            let out = get_cmd_output(parts[0], &parts[1..]);
+            if let Some(path) = resolve_detected_path(&out, extra.detect_json_path.as_deref()) {
+                resolved = path;
+            }
+        }
+    }
+    if resolved.is_empty() {
+        if let Some(ref dp) = extra.default_path {
+            resolved = expand_home(dp);
+        }
+    }
+    let cleaned = resolved.trim_matches('"').trim_matches('\'').trim().to_string();
+    if cleaned.is_empty() {
+        return Err(format!("未能检测到附加缓存目录: {}", extra.display_name));
+    }
+    Ok(cleaned)
+}
+
 fn resolve_pkg_storage_path_dynamic(
     project_id: &str,
     pm_id: &str,
     storage_kind: &str,
+    extra_cache_id: Option<&str>,
 ) -> Result<String, String> {
     use crate::commands::project::registry;
     use crate::commands::utils::{expand_home, resolve_custom_cache_path};
@@ -1115,6 +1155,14 @@ fn resolve_pkg_storage_path_dynamic(
         .find(|m| m.id.eq_ignore_ascii_case(pm_id))
         .ok_or_else(|| format!("在项目 {} 中未找到包管理器: {}", project_id, pm_id))?;
 
+    // 附加缓存目录（pnpm.cache 等）：优先按 extra_cache_id 解析
+    if let Some(extra_id) = extra_cache_id {
+        if let Some(extra) = pm.extra_caches.iter().find(|e| e.id == extra_id) {
+            return resolve_extra_cache_path_dynamic(extra);
+        }
+        return Err(format!("包管理器 {} 中未找到附加缓存: {}", pm_id, extra_id));
+    }
+
     let mut resolved_path = String::new();
 
     if storage_kind == "cache" {
@@ -1122,9 +1170,8 @@ fn resolve_pkg_storage_path_dynamic(
         if resolved_path.is_empty() {
             if let Some(ref cmd) = pm.cache_detect_cmd {
                 if let Ok(out) = run_cmd_capture(cmd.clone(), Some(project_id.to_string())) {
-                    let trimmed = out.trim();
-                    if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("undefined") && !trimmed.eq_ignore_ascii_case("null") {
-                        resolved_path = trimmed.to_string();
+                    if let Some(path) = resolve_detected_path(&out, pm.cache_detect_json_path.as_deref()) {
+                        resolved_path = path;
                     }
                 }
             }
@@ -1146,9 +1193,8 @@ fn resolve_pkg_storage_path_dynamic(
     } else if storage_kind == "data" {
         if let Some(ref cmd) = pm.data_detect_cmd {
             if let Ok(out) = run_cmd_capture(cmd.clone(), Some(project_id.to_string())) {
-                let trimmed = out.trim();
-                if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("undefined") && !trimmed.eq_ignore_ascii_case("null") {
-                    resolved_path = trimmed.to_string();
+                if let Some(path) = resolve_detected_path(&out, None) {
+                    resolved_path = path;
                 }
             }
         }
@@ -1187,8 +1233,9 @@ pub fn get_pkg_cache_info(
     project_id: String,
     pm_id: String,
     storage_kind: String,
+    extra_cache_id: Option<String>,
 ) -> Result<PkgCacheInfo, String> {
-    let cache_path = resolve_pkg_storage_path_dynamic(&project_id, &pm_id, &storage_kind)?;
+    let cache_path = resolve_pkg_storage_path_dynamic(&project_id, &pm_id, &storage_kind, extra_cache_id.as_deref())?;
     // 过滤 Yarn 等工具返回的 "undefined" / "null" 字符串
     let trimmed = cache_path.trim();
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("undefined") || trimmed.eq_ignore_ascii_case("null") {
@@ -1242,22 +1289,52 @@ pub fn migrate_pkg_storage(
     storage_kind: String,
     delete_old_first: Option<bool>,
     orig_path: Option<String>,
+    extra_cache_id: Option<String>,
 ) -> Result<(), String> {
+    // 防注入：new_path 会替换进 set_cmd_template 后经 shell/PowerShell 执行
+    crate::commands::utils::validate_subst_value(&new_path)?;
+    // 后端复检：目标路径禁止 C 盘（前端已有校验，此处为信任边界兜底）
+    if new_path.to_ascii_lowercase().starts_with("c:") {
+        return Err("目标路径必须位于非 C 盘（C: 盘迁移无法腾出空间，且系统盘写入风险高）".to_string());
+    }
     let src_path = if let Some(ref op) = orig_path {
         op.clone()
     } else {
-        resolve_pkg_storage_path_dynamic(&project_id, &pm_id, &storage_kind)?
+        resolve_pkg_storage_path_dynamic(&project_id, &pm_id, &storage_kind, extra_cache_id.as_deref())?
     };
     let delete_old = delete_old_first.unwrap_or(false);
     crate::commands::cache::migrate_pkg_storage_impl(
         &app_handle, &src_path, &new_path, &storage_kind, delete_old,
     )?;
 
-    // 迁移完成后，同步更新配置文件中的缓存路径（如 NuGet.Config）
+    // 迁移完成后，同步更新配置中的缓存路径
     if storage_kind == "cache" {
         if let Some(def) = super::registry::find_by_id(&project_id) {
             if let Some(pm) = def.package_managers.iter().find(|p| p.id == pm_id) {
-                crate::commands::utils::apply_cache_config_writes(pm, &new_path);
+                if let Some(extra_id) = &extra_cache_id {
+                    // 附加缓存（pnpm.cache 等）：执行其 set_cmd_template 指向新路径
+                    if let Some(extra) = pm.extra_caches.iter().find(|e| &e.id == extra_id) {
+                        if let Some(ref tpl) = extra.set_cmd_template {
+                            // 清除进程中继承的旧值，避免它覆盖 pnpm 配置文件中的新路径。
+                            let old_env = extra.env_var.as_deref()
+                                .and_then(|name| std::env::var(name).ok()
+                                    .map(|value| (name.to_string(), value)));
+                            if let Some((name, _)) = &old_env {
+                                std::env::remove_var(name);
+                            }
+                            let cmd = tpl.replace("{path}", &new_path);
+                            if let Err(e) = run_cmd_capture(cmd, Some(project_id.clone())) {
+                                if let Some((name, value)) = old_env {
+                                    std::env::set_var(&name, &value);
+                                }
+                                return Err(format!("更新附加缓存配置失败: {}", e));
+                            }
+                        }
+                    }
+                } else {
+                    // 主缓存：同步更新配置文件中的缓存路径（如 NuGet.Config）
+                    crate::commands::utils::apply_cache_config_writes(pm, &new_path);
+                }
             }
         }
     }
@@ -1270,6 +1347,8 @@ pub fn migrate_pkg_storage(
 /// - 若存在设置命令（例如 go env -w）且旧环境变量在 HKCU（用户级），则主动在注册表及进程中将其清空，使命令托管生效；
 fn set_maven_local_repository(new_path: &str) -> Result<(), String> {
     use crate::commands::utils::expand_home;
+    // new_path 会写入 settings.xml 的 <localRepository> 标签，须防 XML/命令注入
+    crate::commands::utils::validate_subst_value(new_path)?;
     let config = crate::commands::config::load_config();
     let user_home = expand_home("{home}");
     let links_dir = config.links_dir;
@@ -1351,8 +1430,11 @@ pub fn project_set_cache_path(
     project_id: String,
     pm_id: String,
     new_path: String,
+    extra_cache_id: Option<String>,
 ) -> Result<(), String> {
-    if pm_id == "maven" {
+    // 防注入：new_path 会替换进 cache_set_cmd_template / 注册表环境变量
+    crate::commands::utils::validate_subst_value(&new_path)?;
+    if pm_id == "maven" && extra_cache_id.is_none() {
         return set_maven_local_repository(&new_path);
     }
 
@@ -1365,13 +1447,37 @@ pub fn project_set_cache_path(
     let pm = def.package_managers.iter().find(|p| p.id == pm_id)
         .ok_or_else(|| format!("未找到包管理器: {}", pm_id))?;
 
+    // 附加缓存（pnpm.cache 等）：使用附加缓存的 env_var / set_cmd_template
+    let extra = match &extra_cache_id {
+        Some(extra_id) => {
+            Some(pm.extra_caches.iter().find(|e| &e.id == extra_id)
+                .ok_or_else(|| format!("包管理器 {} 中未找到附加缓存: {}", pm_id, extra_id))?)
+        }
+        None => None,
+    };
+    // 指向模式的缓存环境变量与设置命令（附加缓存优先，否则用主缓存）
+    let cache_env_var = extra.and_then(|e| e.env_var.as_ref())
+        .or(extra.is_none().then(|| pm.cache_env_var.as_ref()).flatten());
+    let cache_set_cmd_template = extra.and_then(|e| e.set_cmd_template.as_ref())
+        .or(extra.is_none().then(|| pm.cache_set_cmd_template.as_ref()).flatten());
+
     let mut env_var_updated = false;
     let mut hkcu_deleted = false;
     let mut deleted_var_name = String::new();
+    // 应用启动时可能继承了旧的 PNPM_CONFIG_CACHE_DIR 等环境变量。
+    // 当存在明确的设置命令时，必须移除当前进程中的旧值，否则它会覆盖配置文件。
+    let mut process_env_removed: Option<(String, String)> = None;
 
-    if let Some(ref env_var) = pm.cache_env_var {
+    if let Some(env_var) = cache_env_var {
+        if cache_set_cmd_template.is_some() {
+            if let Ok(old_value) = std::env::var(env_var) {
+                std::env::remove_var(env_var);
+                process_env_removed = Some((env_var.clone(), old_value));
+            }
+        }
+
         if let Some((_, source)) = get_registry_env_any(env_var) {
-            if pm.cache_set_cmd_template.is_none() {
+            if cache_set_cmd_template.is_none() {
                 // 没有命令行设置方式，必须修改注册表环境变量
                 set_registry_env(env_var, &new_path)?;
                 std::env::set_var(env_var, &new_path);
@@ -1391,7 +1497,7 @@ pub fn project_set_cache_path(
             }
         } else {
             // 如果注册表中完全没有配置该环境变量
-            if pm.cache_set_cmd_template.is_none() {
+            if cache_set_cmd_template.is_none() {
                 // 如果没有命令行模板，则直接通过注册表环境变量来设置
                 set_registry_env(env_var, &new_path)?;
                 std::env::set_var(env_var, &new_path);
@@ -1400,10 +1506,13 @@ pub fn project_set_cache_path(
         }
     }
 
-    if let Some(ref tpl) = pm.cache_set_cmd_template {
+    if let Some(ref tpl) = cache_set_cmd_template {
         let cmd = tpl.replace("{path}", &new_path);
         if let Err(e) = run_cmd_capture(cmd, Some(project_id.clone())) {
-            // 如果命令执行失败
+            // 如果命令执行失败，恢复本进程原先继承的环境变量。
+            if let Some((env_name, old_value)) = process_env_removed.take() {
+                std::env::set_var(&env_name, &old_value);
+            }
             if hkcu_deleted {
                 // 如果之前删除了 HKCU 环境变量，且命令执行失败，则需要恢复/设置 HKCU 环境变量作为兜底
                 let _ = set_registry_env(&deleted_var_name, &new_path);
@@ -1411,7 +1520,7 @@ pub fn project_set_cache_path(
             } else if !env_var_updated {
                 // 如果既没删除也没修改过环境变量，则如果有环境变量名，降级/兜底通过修改注册表环境变量来设置它
                 //（例如：在 Go 1.13 以下不支持 go env -w 时，直接改环境变量是唯一的设置方式）
-                if let Some(ref env_var) = pm.cache_env_var {
+                if let Some(env_var) = cache_env_var {
                     set_registry_env(env_var, &new_path)?;
                     std::env::set_var(env_var, &new_path);
                 } else {
@@ -1421,8 +1530,10 @@ pub fn project_set_cache_path(
         }
     }
 
-    // 设置完成后，同步更新配置文件中的缓存路径（如 NuGet.Config）
-    crate::commands::utils::apply_cache_config_writes(pm, &new_path);
+    // 设置完成后，同步更新配置中的缓存路径（主缓存如 NuGet.Config；附加缓存无需写文件）
+    if extra.is_none() {
+        crate::commands::utils::apply_cache_config_writes(pm, &new_path);
+    }
 
     Ok(())
 }
@@ -1478,7 +1589,7 @@ pub fn clean_pkg_cache(
     let resolved = if let Some(ref cp) = cache_path {
         cp.clone()
     } else {
-        resolve_pkg_storage_path_dynamic(&project_id, &pm_id, "cache")?
+        resolve_pkg_storage_path_dynamic(&project_id, &pm_id, "cache", None)?
     };
     crate::commands::cache::clean_pkg_cache_impl(&app_handle, &resolved)
 }

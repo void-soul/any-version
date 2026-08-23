@@ -479,6 +479,15 @@ fn read_wide_string(ptr: *const u16) -> Option<String> {
 
 const POPUP_LABEL: &str = "translate-popup";
 
+fn contains_cjk(text: &str) -> bool {
+    text.chars().any(|ch| matches!(
+        ch,
+        '\u{3400}'..='\u{4DBF}'
+            | '\u{4E00}'..='\u{9FFF}'
+            | '\u{F900}'..='\u{FAFF}'
+    ))
+}
+
 /// 确保悬浮窗存在并返回其句柄（存在则复用）。
 fn ensure_translate_popup(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
     if let Some(win) = app.get_webview_window(POPUP_LABEL) {
@@ -534,9 +543,11 @@ pub async fn trigger_selection_translate(
         return Err(e);
     }
 
-    // 3. 目标语言（显式传入 > 划词翻译配置 > 默认中文）
+    // 3. 目标语言：显式传入 > 文本语言自动判断 > 划词翻译配置 > 默认中文。
+    // 快捷键通常用于把选中的中文翻译成英文，因此中文文本默认目标设为 English。
     let target = target_lang
         .filter(|s| !s.trim().is_empty())
+        .or_else(|| contains_cjk(&text).then(|| "English".to_string()))
         .or_else(|| load_translate_config().target_lang.filter(|s| !s.trim().is_empty()))
         .unwrap_or_else(|| "中文".to_string());
 

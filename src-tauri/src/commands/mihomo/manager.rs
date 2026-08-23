@@ -177,6 +177,26 @@ pub fn port_in_use(port: u16) -> bool {
     std::net::TcpListener::bind(("127.0.0.1", port)).is_err()
 }
 
+/// 判断 mihomo 核心是否处于运行中。
+///
+/// 判断逻辑必须与 `launch_core` 的幂等检测保持一致：
+/// 1. 本应用拉起的子进程句柄有效（`child.id() > 0`）且未标记停止；
+/// 2. 或混合端口被监听（核心可能由外部 / 上次会话遗留运行）。
+///
+/// 仅用 `child` 判断会在「外部/遗留进程占用端口」时误判为未运行，
+/// 导致托盘/状态视图显示「启动」而实际核心已在运行（自动启动场景常见）。
+/// 因此托盘 `build_mihomo_item` 与状态视图 `build_state_view` 均应复用本函数。
+pub fn is_core_running(inner: &crate::commands::mihomo::MihomoInner) -> bool {
+    // 锁顺序与 launch_core 保持一致（先 app_config 后 child），避免跨锁顺序反转。
+    let mixed_port = inner.app_config.lock().unwrap().mixed_port;
+    let has_child = {
+        let g = inner.child.lock().unwrap();
+        g.as_ref().map(|c| c.id() > 0).unwrap_or(false)
+            && !inner.stop_flag.load(std::sync::atomic::Ordering::SeqCst)
+    };
+    has_child || (mixed_port > 0 && port_in_use(mixed_port))
+}
+
 /// 读取内核日志末尾若干行，用于把启动失败原因回传给前端
 fn tail_log(path: &std::path::Path, lines: usize) -> String {
     let Ok(content) = std::fs::read_to_string(path) else {

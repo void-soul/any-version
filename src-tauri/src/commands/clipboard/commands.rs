@@ -7,6 +7,10 @@ use super::db;
 use super::paste;
 use super::{ClipboardItem, ClipboardSettings, ClipboardState};
 
+/// 历史列表默认分页大小与上限（防客户端一次拉取过大结果集）。
+const DEFAULT_PAGE_SIZE: i64 = 200;
+const MAX_PAGE_SIZE: i64 = 1000;
+
 // ---------------------------------------------------------------------------
 // 历史列表
 // ---------------------------------------------------------------------------
@@ -26,7 +30,7 @@ pub fn clipboard_get_items(
         keyword.as_deref().unwrap_or(""),
         kind.as_deref().unwrap_or(""),
         pinned_only.unwrap_or(false),
-        limit.unwrap_or(200).min(1000),
+        limit.unwrap_or(DEFAULT_PAGE_SIZE).min(MAX_PAGE_SIZE),
         offset.unwrap_or(0).max(0),
     )?;
     let total = db::count_items(

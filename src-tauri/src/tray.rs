@@ -589,7 +589,10 @@ fn build_mihomo_item(app: &AppHandle) -> tauri::Result<Option<tauri::menu::MenuI
         Some(s) => s.inner().clone(),
         None => return Ok(None),
     };
-    let running = state.child.lock().map(|c| c.is_some()).unwrap_or(false);
+    // 判断逻辑与 launch_core 的幂等检测一致：同时考虑本应用拉起的子进程
+    // 与混合端口监听（外部/上次会话遗留进程）。否则自动启动时核心已运行
+    // 但 child 为空，托盘会误显示「启动」且无法更新。
+    let running = crate::commands::mihomo::manager::is_core_running(&state);
 
     // 状态并入标题，一步切换启停，不套二级菜单
     let label = if running {
