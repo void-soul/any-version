@@ -43,6 +43,8 @@ interface RtspConfig {
   audioDevice?: string;
   resolution?: string;
   fps?: number;
+  bitrateMbps?: number;
+  gop?: number;
   transport?: "tcp" | "udp";
   videoCodec?: "h264" | "h265";
   gpuAccel?: "cpu" | "nvenc" | "qsv" | "amf" | "copy";
@@ -84,6 +86,8 @@ const DEFAULT_CONFIG: RtspConfig = {
   includeAudio: false,
   resolution: "default",
   fps: 30,
+  bitrateMbps: 0,
+  gop: 15,
   transport: "tcp",
   videoCodec: "h264",
   gpuAccel: "cpu",
@@ -1005,10 +1009,26 @@ export default function RtspServer() {
                               className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
                             >
                               <option value="default">默认原始分辨率</option>
-                              <option value="1920x1080">1080P (1920x1080)</option>
-                              <option value="1280x720">720P (1280x720)</option>
-                              <option value="640x480">480P (640x480)</option>
+                              <option value="3840x2160">4K UHD (3840×2160)</option>
+                              <option value="2560x1440">2K QHD (2560×1440)</option>
+                              <option value="1920x1080">1080P (1920×1080)</option>
+                              <option value="1280x720">720P (1280×720)</option>
+                              <option value="640x480">480P (640×480)</option>
                             </select>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 block mb-1">帧率 (FPS)</span>
+                            <input
+                              type="number"
+                              disabled={isLocked}
+                              min={1}
+                              max={240}
+                              value={inst.config.fps ?? 30}
+                              onChange={(e) => updateInstanceConfig(inst.id, { fps: Math.max(1, Math.min(240, parseInt(e.target.value) || 30)) })}
+                              className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)]"
+                              placeholder="30"
+                            />
+                            <span className="text-[9px] text-slate-500 mt-0.5 block">{inst.config.sourceType === "testsrc" ? "测试画幅原生帧率，120 FPS 适合 4K 高压测" : "输出帧率（编码时强制采样/插帧）"}</span>
                           </div>
                         </div>
 
@@ -1030,6 +1050,36 @@ export default function RtspServer() {
                             <option value="amf">AMD AMF 显卡硬件编码</option>
                             <option value="copy">流复制 (Copy / 不重新编码)</option>
                           </select>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <span className="text-[10px] text-slate-400 block mb-1">码率 (Mbps)</span>
+                            <input
+                              type="number"
+                              disabled={isLocked || inst.config.gpuAccel === "copy"}
+                              min={0}
+                              step={0.1}
+                              value={inst.config.bitrateMbps ?? 0}
+                              onChange={(e) => updateInstanceConfig(inst.id, { bitrateMbps: Math.max(0, parseFloat(e.target.value) || 0) })}
+                              className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)]"
+                              placeholder="0=自动"
+                            />
+                            <span className="text-[9px] text-slate-500 mt-0.5 block">0=编码器自动 · 4K 建议 8-20 Mbps</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 block mb-1">GOP (关键帧间隔)</span>
+                            <input
+                              type="number"
+                              disabled={isLocked || inst.config.gpuAccel === "copy"}
+                              min={1}
+                              max={600}
+                              value={inst.config.gop ?? 15}
+                              onChange={(e) => updateInstanceConfig(inst.id, { gop: Math.max(1, Math.min(600, parseInt(e.target.value) || 15)) })}
+                              className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)]"
+                              placeholder="15"
+                            />
+                            <span className="text-[9px] text-slate-500 mt-0.5 block">帧 · 低延迟用 15，高效率用 60+</span>
+                          </div>
                         </div>
                       </div>
                     </div>

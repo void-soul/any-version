@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   applyNodeChanges,
   Background,
@@ -17,23 +18,29 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
+import Editor from "@monaco-editor/react";
 import {
   CalendarDays,
   ChevronDown,
   ChevronRight,
-  CirclePlus,
+  ChevronUp,
+  Columns2,
   Eye,
   FilePlus2,
+  GripVertical,
   Image as ImageIcon,
+  Maximize2,
+  Minimize2,
   Pencil,
+  Plus,
   Trash2,
-  Type,
+  X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { JsonValue, SearchMatches } from "./SystemTools/JsonBrowser";
-import { TaskItem, TaskStatus, STATUS_META, UpdateTaskInput, deriveStatus } from "./tasks/types";
+import { TaskItem, TaskStatus, STATUS_META, UpdateTaskInput, deriveStatus, TaskSticker } from "./tasks/types";
 import { moduleAccent } from "../utils/theme";
 
 type JsonGraphItem = {
@@ -75,8 +82,7 @@ type TaskFlowNodeData = {
 type TaskFlowNode = TaskItem & { x: number; y: number; childrenCount: number };
 
 const JSON_EDGE_COLORS = ["#22d3ee", "#a78bfa", "#34d399", "#fbbf24", "#fb7185", "#60a5fa"];
-const TASK_NODE_HEIGHT = 470;
-const taskInputClass = "w-full rounded-md border border-white/10 bg-slate-950/85 px-2.5 py-2 text-[10px] leading-relaxed text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-400/60 focus:bg-slate-950";
+const TASK_NODE_HEIGHT = 138;
 const taskButton = "inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.05] px-2 py-1.5 text-[10px] text-slate-300 transition hover:bg-white/[0.1] hover:text-white disabled:opacity-40";
 const taskIconButton = "inline-flex h-7 items-center justify-center gap-1 rounded border border-white/10 bg-white/[0.04] px-2 text-[9px] text-slate-400 transition hover:bg-white/[0.1] hover:text-white disabled:opacity-40";
 
@@ -238,12 +244,50 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 function isLocalFilePath(value: string): boolean { return /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(value.trim()); }
-function localImageSrc(path: string): string { try { return convertFileSrc(path); } catch { return path; } }
+/** 还原 markdown 解析时被百分号编码的路径（如空格 → %20），解码失败时回退原值。 */
+function decodeLocalPath(value: string): string {
+  try { return decodeURIComponent(value); } catch { return value; }
+}
 function appendMarkdownLine(content: string, line: string): string { return content.trimEnd() ? `${content.trimEnd()}\n\n${line}` : line; }
+
+/** 本地图片：通过 image_to_base64 读取为 data URL 显示（不依赖 asset 协议作用域）。 */
+function LocalTaskImage({ path, alt, onOpenFile }: { path: string; alt: string; onOpenFile: (path: string) => void }) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setSrc(null);
+    setFailed(false);
+    void invoke<string>("image_to_base64", { filePath: path })
+      .then((data) => { if (!cancelled) setSrc(data); })
+      .catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [path]);
+  if (failed) {
+    return <button type="button" className="my-2 block max-w-full text-left text-[9px] text-red-300" onClick={() => onOpenFile(path)} title="打开文件">图片加载失败，点击打开文件</button>;
+  }
+  if (!src) {
+    return <div className="my-2 h-16 animate-pulse rounded border border-white/10 bg-slate-900/60" />;
+  }
+  return <button type="button" className="my-2 block max-w-full text-left" onClick={() => onOpenFile(path)} title="打开图片"><img src={src} alt={alt} className="max-h-48 max-w-full rounded border border-white/10 object-contain" /></button>;
+}
+
+/** react-markdown v10 默认 urlTransform 会把 `C:/...` 当作不安全协议清空 href/src，
+ *  这里放行本地磁盘路径（盘符/UNC），其余仍按安全协议白名单处理（javascript: 等仍被清空）。 */
+function taskUrlTransform(value: string): string {
+  if (/^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\")) return value;
+  const colon = value.indexOf(":");
+  const questionMark = value.indexOf("?");
+  const numberSign = value.indexOf("#");
+  const slash = value.indexOf("/");
+  if (colon === -1 || colon > (questionMark === -1 ? value.length : questionMark) || colon > (numberSign === -1 ? value.length : numberSign) || colon > (slash === -1 ? value.length : slash)) return value;
+  const protocol = value.slice(0, colon).toLowerCase();
+  return /^(https?|ircs?|mailto|xmpp)$/i.test(protocol) ? value : "";
+}
 
 function TaskMarkdown({ content, onOpenFile }: { content: string; onOpenFile: (path: string) => void }) {
   return <div className="task-markdown text-[10px] leading-relaxed text-slate-200 break-words">
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+    <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={taskUrlTransform} components={{
       h1: ({ children }) => <h1 className="mt-2 mb-1 text-sm font-bold text-white">{children}</h1>,
       h2: ({ children }) => <h2 className="mt-2 mb-1 text-[12px] font-bold text-slate-100">{children}</h2>,
       h3: ({ children }) => <h3 className="mt-1.5 mb-1 text-[11px] font-semibold text-slate-200">{children}</h3>,
@@ -259,11 +303,14 @@ function TaskMarkdown({ content, onOpenFile }: { content: string; onOpenFile: (p
       a: ({ href, children }) => {
         const target = href ?? "";
         const local = isLocalFilePath(target);
-        return <a href={local ? undefined : target} target={local ? undefined : "_blank"} rel={local ? undefined : "noopener noreferrer"} onClick={(event) => { if (local) { event.preventDefault(); onOpenFile(target); } }} className="text-cyan-300 underline decoration-cyan-400/40 underline-offset-2 hover:text-cyan-100">{children}</a>;
+        return <a href={local ? undefined : target} target={local ? undefined : "_blank"} rel={local ? undefined : "noopener noreferrer"} onClick={(event) => { if (local) { event.preventDefault(); onOpenFile(decodeLocalPath(target)); } }} className="text-cyan-300 underline decoration-cyan-400/40 underline-offset-2 hover:text-cyan-100">{children}</a>;
       },
       img: ({ src, alt }) => {
         const target = typeof src === "string" ? src : "";
-        return <button type="button" className="my-2 block max-w-full text-left" onClick={() => isLocalFilePath(target) && onOpenFile(target)} title="打开图片"><img src={isLocalFilePath(target) ? localImageSrc(target) : target} alt={alt ?? ""} className="max-h-48 max-w-full rounded border border-white/10 object-contain" /></button>;
+        if (isLocalFilePath(target)) {
+          return <LocalTaskImage path={decodeLocalPath(target)} alt={alt ?? ""} onOpenFile={onOpenFile} />;
+        }
+        return <img src={target} alt={alt ?? ""} className="max-h-48 max-w-full rounded border border-white/10 object-contain" />;
       },
       table: ({ children }) => <div className="my-2 overflow-x-auto rounded border border-white/10"><table className="min-w-full text-[9px]">{children}</table></div>,
       thead: ({ children }) => <thead className="bg-slate-800/80">{children}</thead>,
@@ -274,21 +321,109 @@ function TaskMarkdown({ content, onOpenFile }: { content: string; onOpenFile: (p
   </div>;
 }
 
+function TaskDetailModal({ task, onClose, onUpdate, onInsertFile, onInsertImage, onInsertScreenshot, onOpenFile }: {
+  task: TaskItem;
+  onClose: () => void;
+  onUpdate: (patch: UpdateTaskInput) => void;
+  onInsertFile: (content: string) => Promise<string | undefined>;
+  onInsertImage: (content: string) => Promise<string | undefined>;
+  onInsertScreenshot: (content: string) => Promise<string | undefined>;
+  onOpenFile: (path: string) => void;
+}) {
+  const color = taskColor(task);
+  const [draft, setDraft] = useState(task.detail);
+  const [mode, setMode] = useState<"edit" | "preview" | "split">("edit");
+  const [fullscreen, setFullscreen] = useState(false);
+  const [splitPct, setSplitPct] = useState(50);
+  const splitRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef(false);
+  useEffect(() => { setDraft(task.detail); }, [task.detail]);
+  const startSplitDrag = (event: React.PointerEvent) => {
+    event.preventDefault();
+    draggingRef.current = true;
+    const container = splitRef.current;
+    if (!container) return;
+    const update = (clientX: number) => {
+      const rect = container.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const pct = ((clientX - rect.left) / rect.width) * 100;
+      setSplitPct(Math.min(85, Math.max(15, pct)));
+    };
+    update(event.clientX);
+    const onMove = (moveEvent: PointerEvent) => update(moveEvent.clientX);
+    const onUp = () => {
+      draggingRef.current = false;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+  const save = () => { if (draft !== task.detail) onUpdate({ detail: draft }); onClose(); };
+  const insertWith = async (handler: (content: string) => Promise<string | undefined>) => { const next = await handler(draft); if (next !== undefined) setDraft(next); };
+  const insertDate = () => { const now = new Date(); const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`; setDraft(appendMarkdownLine(draft, `**日期：${date}**`)); };
+  const insertBar = (
+    <div className="flex flex-wrap items-center gap-1">
+      <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => void insertWith(onInsertFile)} title="插入文件路径"><FilePlus2 className="h-3 w-3" />文件</button>
+      <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => void insertWith(onInsertImage)} title="插入图片"><ImageIcon className="h-3 w-3" />图片</button>
+      <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => void insertWith(onInsertScreenshot)} title="插入剪贴板截图"><ImageIcon className="h-3 w-3" />截图</button>
+      <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={insertDate} title="插入当前日期"><CalendarDays className="h-3 w-3" />日期</button>
+      <span className="ml-auto font-mono text-[9px] text-slate-600">{draft.length} 字符</span>
+    </div>
+  );
+  const editorPane = (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="relative min-h-0 flex-1">
+        <Editor
+          height="100%"
+          language="markdown"
+          theme="vs-dark"
+          value={draft}
+          onChange={(value) => setDraft(value ?? "")}
+          onMount={(editor) => { if (mode === "edit") editor.focus(); }}
+          options={{ minimap: { enabled: false }, fontSize: 12, lineNumbers: "on", wordWrap: "on", automaticLayout: true, tabSize: 2, padding: { top: 8, bottom: 8 }, scrollBeyondLastLine: false, renderLineHighlight: "line", overviewRulerLanes: 0, hideCursorInOverviewRuler: true }}
+        />
+        {!draft && <div className="pointer-events-none absolute left-4 top-2.5 text-[11px] text-slate-600">使用 Markdown 记录任务的详细内容…</div>}
+      </div>
+      <div className="flex shrink-0 items-center border-t border-white/10 px-3 py-2">{insertBar}</div>
+    </div>
+  );
+  const previewPane = (
+    <div className="min-h-0 flex-1 overflow-y-auto p-4"><TaskMarkdown content={draft} onOpenFile={onOpenFile} /></div>
+  );
+  return createPortal(
+    <div className={`fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-[3px] ${fullscreen ? "p-0" : "p-6"}`} onClick={onClose}>
+      <div className={`flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl ${fullscreen ? "h-[100vh] w-[100vw] rounded-none" : "h-[82vh] w-[min(92vw,860px)]"}`} onClick={(event) => event.stopPropagation()}>
+        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/10 px-3" style={{ backgroundColor: hexToRgba(color, 0.12) }}>
+          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 9px ${color}` }} />
+          <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-slate-100">{task.title} · 详细</span>
+          <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => setMode("edit")} title="仅编辑"><Pencil className="h-3 w-3" />编辑</button>
+          <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => setMode("split")} title="左编辑右预览"><Columns2 className="h-3 w-3" />分栏</button>
+          <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => setMode("preview")} title="仅渲染"><Eye className="h-3 w-3" />渲染</button>
+          <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => setFullscreen((value) => !value)} title={fullscreen ? "退出全屏" : "全屏"}>{fullscreen ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}</button>
+          <button type="button" className="nodrag nopan ml-1 text-slate-500 hover:text-white" onClick={onClose} title="关闭"><X className="h-4 w-4" /></button>
+        </div>
+        {mode === "split" ? <div ref={splitRef} className="flex min-h-0 flex-1"><div className="flex min-w-0 flex-col" style={{ width: `${splitPct}%` }}>{editorPane}</div><div className="flex w-2 shrink-0 cursor-col-resize touch-none items-center justify-center bg-white/5 transition hover:bg-white/15" onPointerDown={startSplitDrag} title="拖拽调整宽度"><GripVertical className="h-3 w-3 text-slate-500" /></div><div className="min-w-0 flex-1 bg-slate-950/40">{previewPane}</div></div> : mode === "edit" ? editorPane : previewPane}
+        <div className="flex shrink-0 justify-end gap-2 border-t border-white/10 px-3 py-2.5">
+          <button type="button" className={taskButton} onClick={onClose}>取消</button>
+          <button type="button" className="nodrag nopan inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[10px] font-semibold text-white" style={{ backgroundColor: color }} onClick={save}>保存</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 const TaskFlowNode = memo(function TaskFlowNode({ data }: NodeProps<Node<TaskFlowNodeData>>) {
   const { task, selected, collapsed, hasChildren } = data;
   const [editingTitle, setEditingTitle] = useState(false);
-  const [markdownDraft, setMarkdownDraft] = useState(task.description);
-  const [markdownMode, setMarkdownMode] = useState<"edit" | "preview">("edit");
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [bodyCollapsed, setBodyCollapsed] = useState(false);
   const color = taskColor(task);
-  useEffect(() => { setMarkdownDraft(task.description); }, [task.description]);
-  useEffect(() => { if (!selected) setMarkdownMode("edit"); }, [selected]);
   const [titleDraft, setTitleDraft] = useState(task.title);
   useEffect(() => { setTitleDraft(task.title); }, [task.title]);
   const saveTitle = () => { const title = titleDraft.trim(); if (title && title !== task.title) data.onUpdate({ title }); setEditingTitle(false); };
-  const saveMarkdown = () => { if (markdownDraft !== task.description) data.onUpdate({ description: markdownDraft }); };
-  const insertWith = async (handler: (content: string) => Promise<string | undefined>) => { const next = await handler(markdownDraft); if (next !== undefined) setMarkdownDraft(next); };
-  const insertDate = () => { const now = new Date(); const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`; const next = appendMarkdownLine(markdownDraft, `**日期：${date}**`); setMarkdownDraft(next); data.onUpdate({ description: next }); };
-  return <article className={`relative w-[320px] overflow-hidden rounded-lg border bg-[#101827] shadow-2xl`} style={{ height: TASK_NODE_HEIGHT, borderColor: selected ? color : `${color}88`, boxShadow: selected ? `0 0 22px ${hexToRgba(color, 0.35)}` : "0 18px 40px rgba(0,0,0,.5)" }} onClick={data.onSelect}>
+  return <><article className={`relative flex w-[320px] flex-col overflow-hidden rounded-lg border bg-[#101827] shadow-2xl`} style={{ height: bodyCollapsed ? undefined : TASK_NODE_HEIGHT, borderColor: selected ? color : `${color}88`, boxShadow: selected ? `0 0 22px ${hexToRgba(color, 0.35)}` : "0 18px 40px rgba(0,0,0,.5)" }} onClick={data.onSelect} onDoubleClick={(event) => { event.stopPropagation(); setDetailOpen(true); }}>
     <Handle type="target" position={Position.Left} isConnectable className="!h-3 !w-3 !border-2 !border-slate-950" style={{ background: color }} />
     <header className="flex h-10 cursor-grab items-center gap-1.5 border-b border-white/10 px-2.5" style={{ backgroundColor: hexToRgba(color, 0.12) }}>
       <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 9px ${color}` }} />
@@ -296,37 +431,93 @@ const TaskFlowNode = memo(function TaskFlowNode({ data }: NodeProps<Node<TaskFlo
       <input type="color" value={color} onChange={(event) => data.onUpdate({ color: event.target.value })} className="nodrag nopan h-5 w-5 cursor-pointer rounded border-0 bg-transparent p-0" title="设置节点颜色" />
       <button type="button" className="nodrag nopan text-slate-500 hover:text-white" onClick={(event) => { event.stopPropagation(); setEditingTitle(true); }} title="编辑标题"><Pencil className="h-3 w-3" /></button>
       {hasChildren && <button type="button" className="nodrag nopan text-slate-500 hover:text-white" onClick={(event) => { event.stopPropagation(); data.onToggle(); }} title={collapsed ? "展开子任务" : "折叠子任务"}>{collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}</button>}
-    </header>      <div className="nodrag nopan h-[430px] overflow-y-auto p-2.5">
-      <div className="mb-2 flex items-center justify-between text-[9px] text-slate-500"><span className="font-medium text-slate-300" style={{ color }}>{STATUS_META[taskStatus(task)].label}</span><span className="font-mono font-semibold" style={{ color }}>{task.progress}%</span></div>
-      <div className="mb-2 h-1.5 rounded-full bg-white/10"><div className="h-full rounded-full transition-[width]" style={{ width: `${task.progress}%`, backgroundColor: color, boxShadow: `0 0 8px ${hexToRgba(color, 0.6)}` }} /></div>
-      <div className="mb-3 grid grid-cols-5 gap-1">{([0, 25, 50, 75, 100] as const).map((progress) => <button type="button" key={progress} onClick={() => data.onProgress(progress)} className={`rounded py-1 text-[9px] ${task.progress === progress ? "text-slate-950" : "bg-white/[0.05] text-slate-500 hover:bg-white/[0.1]"}`} style={task.progress === progress ? { backgroundColor: color } : undefined}>{progress}%</button>)}</div>
-      <div className="mb-2 flex items-center justify-between border-t border-white/10 pt-2"><span className="flex items-center gap-1 text-[10px] font-semibold text-slate-300"><Type className="h-3.5 w-3.5" style={{ color }} />任务内容</span><div className="flex items-center gap-1"><button type="button" className="nodrag nopan inline-flex items-center gap-1 rounded px-1.5 py-1 text-[9px] text-slate-500 hover:bg-white/[0.06] hover:text-white" style={{ color: `${color}cc` }} onClick={() => setMarkdownMode("edit")} title="编辑 Markdown"><Pencil className="h-3 w-3" />编辑</button><button type="button" className="nodrag nopan inline-flex items-center gap-1 rounded px-1.5 py-1 text-[9px] text-slate-500 hover:bg-white/[0.06] hover:text-white" style={{ color: `${color}cc` }} onClick={() => { saveMarkdown(); setMarkdownMode("preview"); }} title="渲染 Markdown"><Eye className="h-3 w-3" />渲染</button></div></div>
-      {markdownMode === "edit" ? <><textarea value={markdownDraft} onChange={(event) => setMarkdownDraft(event.target.value)} onBlur={saveMarkdown} rows={13} placeholder="使用 Markdown 记录任务的全部内容…" className={`${taskInputClass} nodrag nopan min-h-[250px] resize-y font-mono`} /><div className="mt-1.5 flex flex-wrap items-center gap-1"><button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => void insertWith(data.onInsertFile)} title="插入文件路径"><FilePlus2 className="h-3 w-3" />文件</button><button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => void insertWith(data.onInsertImage)} title="插入图片"><ImageIcon className="h-3 w-3" />图片</button><button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => void insertWith(data.onInsertScreenshot)} title="插入剪贴板截图"><ImageIcon className="h-3 w-3" />截图</button><button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={insertDate} title="插入当前日期"><CalendarDays className="h-3 w-3" />日期</button></div></> : <div className="min-h-[280px] rounded-md border border-white/10 bg-slate-950/60 px-2.5 py-2"><TaskMarkdown content={markdownDraft} onOpenFile={data.onOpenFile} /></div>}
-      <div className="mt-2 flex gap-1 border-t border-white/10 pt-2"><button type="button" className={`${taskButton} nodrag nopan flex-1 justify-center`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={data.onAddChild}><CirclePlus className="h-3 w-3" />子任务</button>{selected && <button type="button" className={`${taskButton} nodrag nopan text-red-300`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={data.onDelete}><Trash2 className="h-3 w-3" />删除</button>}</div>
-    </div>
+      <button type="button" className="nodrag nopan text-slate-500 hover:text-white" onClick={(event) => { event.stopPropagation(); setBodyCollapsed((v) => !v); }} title={bodyCollapsed ? "展开节点" : "收起节点"}>{bodyCollapsed ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}</button>
+    </header>
+    {!bodyCollapsed && <div className="nodrag nopan flex flex-1 flex-col gap-1.5 p-2.5">
+      <div className="flex items-center justify-between text-[9px] text-slate-500"><span className="font-medium text-slate-300" style={{ color }}>{STATUS_META[taskStatus(task)].label}</span><span className="font-mono font-semibold" style={{ color }}>{task.progress}%</span></div>
+      <input type="range" min={0} max={100} step={5} value={task.progress} onChange={(event) => data.onProgress(Number(event.target.value))} className="nodrag nopan h-1.5 w-full cursor-pointer accent-current" style={{ color }} title="拖动调整进度" />
+      <div className="mt-0.5 flex gap-1.5">
+        <button type="button" className="nodrag nopan flex flex-1 items-center justify-center gap-1.5 rounded border border-white/10 bg-white/[0.04] py-1.5 text-[10px] text-slate-400 transition hover:bg-white/[0.1] hover:text-white" style={{ borderColor: `${color}55`, color: `${color}cc` }} onClick={(event) => { event.stopPropagation(); setDetailOpen(true); }}><Maximize2 className="h-3.5 w-3.5" />编辑详细内容{task.detail ? `（${task.detail.length} 字符）` : ""}</button>
+        {selected && <button type="button" className="nodrag nopan inline-flex h-[26px] w-[34px] shrink-0 items-center justify-center rounded border border-red-400/30 text-red-300 transition hover:bg-red-400/10 hover:text-red-200" onClick={(event) => { event.stopPropagation(); data.onDelete(); }} title="删除任务"><Trash2 className="h-3.5 w-3.5" /></button>}
+      </div>
+    </div>}
     <Handle type="source" position={Position.Right} isConnectable className="!h-3 !w-3 !border-2 !border-slate-950" style={{ background: color }} />
-  </article>;
+  </article>
+  <button type="button" className="nodrag nopan absolute z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border-2 border-dashed text-sm font-bold leading-none transition hover:scale-110 hover:border-solid" style={{ right: -38, top: "50%", borderColor: `${color}88`, color: `${color}cc`, backgroundColor: "#101827", boxShadow: "0 0 6px rgba(0,0,0,.45)" }} onClick={(event) => { event.stopPropagation(); data.onAddChild(); }} title="添加子任务"><Plus className="h-3.5 w-3.5" /></button>
+  {detailOpen && <TaskDetailModal task={task} onClose={() => setDetailOpen(false)} onUpdate={data.onUpdate} onInsertFile={data.onInsertFile} onInsertImage={data.onInsertImage} onInsertScreenshot={data.onInsertScreenshot} onOpenFile={data.onOpenFile} />}
+</>;
 });
 
-const taskNodeTypes = { taskNode: TaskFlowNode };
+// ─── 贴纸节点（白板便签）───
+
+type StickerNodeData = {
+  sticker: TaskSticker;
+  onUpdate: (patch: { content?: string; color?: string; positionX?: number; positionY?: number }) => void;
+  onDelete: () => void;
+};
+
+const STICKER_PALETTE = ["#fef3c7", "#d4f5d4", "#dbeafe", "#fce7f3", "#ede9fe", "#ffedd5", "#e0e7ff"];
+
+const StickerFlowNode = memo(function StickerFlowNode({ data }: NodeProps<Node<StickerNodeData>>) {
+  const { sticker } = data;
+  const [editing, setEditing] = useState(!sticker.content);
+  const [draft, setDraft] = useState(sticker.content);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const bg = hexToRgba(sticker.color, 0.92);
+  useEffect(() => { setDraft(sticker.content); }, [sticker.content]);
+  const save = () => { if (draft !== sticker.content) data.onUpdate({ content: draft }); setEditing(false); };
+  return <>
+    <div className={`relative min-w-[200px] max-w-[320px] rounded px-3 py-2 shadow-lg`} style={{ backgroundColor: bg, borderColor: sticker.color, borderWidth: 1, color: "#1e1b4b", fontSize: 12, lineHeight: 1.5, fontFamily: "'Segoe UI', system-ui, sans-serif" }} onDoubleClick={() => setEditing(true)}>
+      {editing ? <textarea autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={save} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); save(); } if (e.key === "Escape") { setDraft(sticker.content); setEditing(false); } }} placeholder="写点什么…" className="nodrag nopan min-w-0 resize-none border-0 bg-transparent text-[13px] leading-relaxed outline-none placeholder:text-black/25" rows={Math.max(1, draft.split(/\r?\n/).length)} style={{ color: "#1e1b4b", fontFamily: "'Segoe UI', system-ui, sans-serif", width: "100%" }} /> : <div className="min-h-[1.5em] cursor-text whitespace-pre-wrap break-words text-[13px] leading-relaxed">{sticker.content || <span className="italic text-black/30">双击编辑…</span>}</div>}
+      <div className="mt-1.5 flex items-center gap-1 border-t border-black/10 pt-1.5">
+        <div className="relative">
+          <button type="button" className="nodrag nopan h-4 w-4 rounded-full border border-black/20" style={{ backgroundColor: sticker.color }} onClick={(e) => { e.stopPropagation(); setPaletteOpen((v) => !v); }} title="换颜色" />
+          {paletteOpen && <div className="nodrag nopan absolute bottom-full left-0 z-20 mb-1 flex gap-1 rounded bg-slate-900 p-1 shadow-xl" onMouseLeave={() => setPaletteOpen(false)}>{STICKER_PALETTE.map((c) => <button key={c} type="button" className="h-5 w-5 rounded-full border border-white/20 transition hover:scale-110" style={{ backgroundColor: c }} onClick={(e) => { e.stopPropagation(); data.onUpdate({ color: c }); setPaletteOpen(false); }} />)}</div>}
+        </div>
+        <button type="button" className="nodrag nopan ml-auto rounded p-0.5 text-black/30 hover:bg-black/10 hover:text-red-600" onClick={(e) => { e.stopPropagation(); data.onDelete(); }} title="删除贴纸"><Trash2 className="h-3 w-3" /></button>
+      </div>
+    </div>
+    <Handle type="source" position={Position.Right} isConnectable={false} style={{ visibility: "hidden" }} />
+    <Handle type="target" position={Position.Left} isConnectable={false} style={{ visibility: "hidden" }} />
+  </>;
+});
+
+const taskNodeTypes = { taskNode: TaskFlowNode, stickerNode: StickerFlowNode };
 const edgeTypes = { color: ColorEdge };
 
 function TaskFlowInner(props: TaskFlowProps) {
   const handleConnect = useCallback((connection: { source: string | null; target: string | null }) => { if (connection.source && connection.target && connection.source !== connection.target) props.onConnect(connection.source, connection.target); }, [props.onConnect]);
   const { fitView } = useReactFlow();
-  const [nodes, setNodes] = useState<Node<TaskFlowNodeData>[]>([]);
+  const [nodes, setNodes] = useState<Node<TaskFlowNodeData | StickerNodeData>[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const taskMap = useMemo(() => new globalThis.Map(props.tasks.map((task) => [task.id, task])), [props.tasks]);
   const visibleTasks = useMemo(() => { const result: TaskItem[] = []; const visit = (task: TaskItem) => { result.push(task); if (!collapsed.has(task.id)) props.tasks.filter((child) => child.parentId === task.id).sort((a, b) => a.sortOrder - b.sortOrder || a.createdAt.localeCompare(b.createdAt)).forEach(visit); }; const root = props.selectedSeries ? taskMap.get(props.selectedSeries) : undefined; if (root) visit(root); return result; }, [collapsed, props.selectedSeries, props.tasks, taskMap]);
   const taskNodes = useMemo(() => visibleTasks.map((task, index) => ({ id: task.id, type: "taskNode", position: { x: task.positionX !== 0 || task.positionY !== 0 ? task.positionX : task.parentId ? 420 : 60, y: task.positionX !== 0 || task.positionY !== 0 ? task.positionY : index * 90 }, data: { task, selected: props.selectedTaskId === task.id, collapsed: collapsed.has(task.id), hasChildren: props.tasks.some((child) => child.parentId === task.id), onSelect: () => props.onSelect(task.id), onToggle: () => setCollapsed((current) => { const next = new Set(current); next.has(task.id) ? next.delete(task.id) : next.add(task.id); return next; }), onAddChild: () => props.onAddChild(task.id), onDelete: () => props.onDelete(task), onProgress: (progress: number) => props.onProgress(task, progress), onUpdate: (patch: UpdateTaskInput) => props.onUpdate(task.id, patch), onInsertFile: (content: string) => props.onInsertFile(task.id, content), onInsertImage: (content: string) => props.onInsertImage(task.id, content), onInsertScreenshot: (content: string) => props.onInsertScreenshot(task.id, content), onOpenFile: props.onOpenFile } })), [collapsed, props]);
   const taskEdges = useMemo<Edge[]>(() => visibleTasks.flatMap((task) => task.parentId && visibleTasks.some((parent) => parent.id === task.parentId) ? [{ id: `task-edge-${task.id}`, source: task.parentId, target: task.id, type: "color", data: { color: taskColor(task) }, animated: props.selectedTaskId === task.id } as Edge] : []), [props.selectedTaskId, visibleTasks]);
-  useEffect(() => { setNodes((current) => { const currentById = new globalThis.Map(current.map((node) => [node.id, node])); return taskNodes.map((next) => { const existing = currentById.get(next.id); return existing ? { ...next, position: existing.position, dragging: existing.dragging } : next; }); }); }, [taskNodes]);
+
+  const stickerNodes = useMemo<Node<StickerNodeData>[]>(() => props.stickers.map((s) => ({
+    id: `sticker-${s.id}`,
+    type: "stickerNode",
+    position: { x: s.positionX, y: s.positionY },
+    draggable: true,
+    data: {
+      sticker: s,
+      onUpdate: (patch) => props.onUpdateSticker(s.id, patch),
+      onDelete: () => props.onDeleteSticker(s.id),
+    },
+  })), [props.stickers, props.onUpdateSticker, props.onDeleteSticker]);
+
+  useEffect(() => { setNodes((current) => { const currentById = new globalThis.Map(current.map((node) => [node.id, node])); return [
+      ...taskNodes.map((next) => { const existing = currentById.get(next.id); return existing ? { ...next, position: existing.position, dragging: existing.dragging } : next; }),
+      ...stickerNodes.map((next) => { const existing = currentById.get(next.id); return existing ? { ...next, position: existing.position, dragging: existing.dragging } : next; }),
+    ]; }); }, [taskNodes, stickerNodes]);
   useEffect(() => { const timer = window.setTimeout(() => fitView({ padding: 0.18, duration: 260 }), 0); return () => window.clearTimeout(timer); }, [fitView, props.selectedSeries, collapsed]);
-  return <ReactFlow nodes={nodes} edges={taskEdges} nodeTypes={taskNodeTypes} edgeTypes={edgeTypes} onNodesChange={(changes) => setNodes((current) => applyNodeChanges(changes, current))} onNodeDragStop={(_, node) => props.onPositionChange(node.id, node.position)} onConnect={handleConnect} fitView minZoom={0.1} maxZoom={2} nodesConnectable connectionRadius={28} proOptions={{ hideAttribution: true }}><Background color="#1e293b" gap={24} size={1} /><MiniMap style={{ backgroundColor: "#080f1c", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95" nodeColor={(node) => taskColor((node.data as TaskFlowNodeData).task)} nodeStrokeColor="#0f172a" nodeBorderRadius={2} maskColor="rgba(2, 6, 23, 0.72)" pannable zoomable /><Controls className="canvas-flow-controls" showInteractive={false} /></ReactFlow>;
+  return <ReactFlow nodes={nodes} edges={taskEdges} nodeTypes={taskNodeTypes} edgeTypes={edgeTypes} onNodesChange={(changes) => setNodes((current) => applyNodeChanges(changes, current))} onNodeDragStop={(_, node) => { if (node.id.startsWith("sticker-")) { props.onStickerPositionChange(node.id.slice(8), node.position); } else { props.onPositionChange(node.id, node.position); } }} onConnect={handleConnect} fitView minZoom={0.1} maxZoom={2} nodesConnectable connectionRadius={28} proOptions={{ hideAttribution: true }} onPaneClick={(event) => { if (event.detail === 2) { const bounds = (event.target as HTMLElement).closest(".react-flow__pane")?.getBoundingClientRect(); if (bounds) props.onAddSticker(event.clientX - bounds.left, event.clientY - bounds.top); } }}><Background color="#1e293b" gap={24} size={1} /><MiniMap style={{ backgroundColor: "#080f1c", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95" nodeColor={(node) => node.id.startsWith("sticker-") ? (node.data as StickerNodeData).sticker.color : taskColor((node.data as TaskFlowNodeData).task)} nodeStrokeColor="#0f172a" nodeBorderRadius={2} maskColor="rgba(2, 6, 23, 0.72)" pannable zoomable /><Controls className="canvas-flow-controls" showInteractive={false} /></ReactFlow>;
 }
 
 export type TaskFlowProps = {
   tasks: TaskItem[];
+  stickers: TaskSticker[];
   selectedSeries: string | null;
   selectedTaskId: string | null;
   onSelect: (id: string) => void;
@@ -340,6 +531,10 @@ export type TaskFlowProps = {
   onOpenFile: (path: string) => void;
   onPositionChange: (id: string, position: { x: number; y: number }) => void;
   onConnect: (parentId: string, childId: string) => void;
+  onAddSticker: (x: number, y: number) => void;
+  onUpdateSticker: (id: string, patch: { content?: string; color?: string; positionX?: number; positionY?: number }) => void;
+  onDeleteSticker: (id: string) => void;
+  onStickerPositionChange: (id: string, position: { x: number; y: number }) => void;
 };
 
 export function TaskFlowCanvas(props: TaskFlowProps) {

@@ -9,6 +9,8 @@ export interface TaskItem {
   id: string;
   title: string;
   description: string;
+  /** 详细内容（大段 markdown，弹窗编辑/预览） */
+  detail: string;
   /** 计划日期 YYYY-MM-DD，null 表示未排期（收集箱） */
   scheduledDate: string | null;
   /** 父任务 ID，null 表示顶层任务 */
@@ -101,6 +103,7 @@ export interface ReminderData {
 export interface CreateTaskInput {
   title: string;
   description?: string;
+  detail?: string;
   scheduledDate?: string | null;
   parentId?: string | null;
   color?: string;
@@ -115,6 +118,7 @@ export interface CreateTaskInput {
 export interface UpdateTaskInput {
   title?: string;
   description?: string;
+  detail?: string;
   scheduledDate?: string | null;
   parentId?: string | null;
   color?: string;
@@ -148,6 +152,35 @@ export interface MoveTaskInput {
   toDate?: string | null;
   toProgress?: number;
   reason?: string;
+}
+
+// ─── 画布贴纸（白板便签） ───
+
+export interface TaskSticker {
+  id: string;
+  seriesId: string;
+  content: string;
+  /** 便签颜色（hex，如 #fef3c7 淡黄）。 */
+  color: string;
+  positionX: number;
+  positionY: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateStickerInput {
+  seriesId: string;
+  content?: string;
+  color?: string;
+  positionX?: number;
+  positionY?: number;
+}
+
+export interface UpdateStickerInput {
+  content?: string;
+  color?: string;
+  positionX?: number;
+  positionY?: number;
 }
 
 // ─── 状态派生（必须与后端 derive_status 保持一致） ───
@@ -248,4 +281,13 @@ export const tasksApi = {
   summary: (date: string) => invoke<TaskSummary>("tasks_summary", { date }),
   dayStats: (start: string, end: string) => invoke<DayStat[]>("tasks_day_stats", { start, end }),
   todayReminder: () => invoke<ReminderData>("tasks_today_reminder"),
+};
+
+// ─── 贴纸 API ───
+
+export const stickersApi = {
+  list: (seriesId: string) => invoke<TaskSticker[]>("tasks_list_stickers", { seriesId }),
+  create: (input: CreateStickerInput) => invoke<TaskSticker>("tasks_create_sticker", { input }),
+  update: (id: string, input: UpdateStickerInput) => invoke<TaskSticker>("tasks_update_sticker", { id, input }),
+  remove: (id: string) => invoke<void>("tasks_delete_sticker", { id }),
 };

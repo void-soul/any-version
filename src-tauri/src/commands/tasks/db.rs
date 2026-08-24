@@ -115,8 +115,35 @@ pub fn init_db() -> Result<(), String> {
         conn.execute("ALTER TABLE tasks ADD COLUMN position_y REAL NOT NULL DEFAULT 0", [])
             .map_err(|e| format!("迁移任务纵坐标字段失败: {}", e))?;
     }
+    if !task_columns.iter().any(|column| column == "detail") {
+        conn.execute("ALTER TABLE tasks ADD COLUMN detail TEXT NOT NULL DEFAULT ''", [])
+            .map_err(|e| format!("迁移任务详细内容字段失败: {}", e))?;
+    }
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id)", [])
         .map_err(|e| format!("创建父任务索引失败: {}", e))?;
+
+    // 贴纸表（白板便签，按系列隔离）
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS task_stickers (\
+            id            TEXT    PRIMARY KEY,\
+            series_id     TEXT    NOT NULL,\
+            content       TEXT    NOT NULL DEFAULT '',\
+            color         TEXT    NOT NULL DEFAULT '#fef3c7',\
+            position_x    REAL    NOT NULL DEFAULT 0,\
+            position_y    REAL    NOT NULL DEFAULT 0,\
+            created_at    TEXT    NOT NULL,\
+            updated_at    TEXT    NOT NULL\
+        );\
+        CREATE INDEX IF NOT EXISTS idx_stickers_series ON task_stickers(series_id);"
+    )    .map_err(|e| format!("初始化贴纸表失败: {}", e))?;
+
+    let sticker_columns: Vec<String> = conn.prepare("PRAGMA table_info(task_stickers)")
+        .and_then(|mut stmt| stmt.query_map([], |row| row.get::<_, String>(1))?.collect::<rusqlite::Result<Vec<_>>>())
+        .unwrap_or_default();
+    if !sticker_columns.iter().any(|c| c == "series_id") {
+        conn.execute("ALTER TABLE task_stickers ADD COLUMN series_id TEXT NOT NULL DEFAULT ''", [])
+            .map_err(|e| format!("迁移贴纸系列字段失败: {}", e))?;
+    }
 
     let mut guard = DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))?;
     *guard = Some(conn);

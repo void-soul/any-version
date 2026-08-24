@@ -165,7 +165,7 @@ fn handle_clipboard_update(app: &tauri::AppHandle) {
         None => return,
     };
     let settings = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
         match db::load_settings(&conn) {
             Ok(s) => s,
             Err(_) => super::ClipboardSettings::default(),
@@ -203,7 +203,7 @@ fn handle_clipboard_update(app: &tauri::AppHandle) {
     };
     let src = source_app.unwrap_or_default();
 
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
     let now = chrono::Utc::now().timestamp();
 
     match db::find_by_hash(&conn, &hash) {
@@ -322,7 +322,7 @@ fn read_clipboard_content(
             .try_state::<super::ClipboardState>()
             .map(|s| s.clone())
             .ok_or("无剪贴板状态")?;
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
         if db::is_app_ignored(&conn, app_name).unwrap_or(false) {
             return Ok(None);
         }

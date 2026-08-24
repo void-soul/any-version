@@ -25,6 +25,8 @@ pub struct RtspConfig {
     pub audio_device: Option<String>,
     pub resolution: Option<String>,   // e.g. "1280x720" or "default"
     pub fps: Option<u32>,             // e.g. 30
+    pub bitrate_mbps: Option<f64>,    // e.g. 8.0 (8 Mbps)
+    pub gop: Option<u32>,             // e.g. 60 (关键帧间隔，默认 15)
     pub transport: Option<String>,    // "tcp" | "udp"
     pub video_codec: Option<String>,  // "h264" | "h265"
     pub gpu_accel: Option<String>,    // "cpu" | "nvenc" | "qsv" | "amf" | "copy"
@@ -276,10 +278,13 @@ pub fn start_rtsp_server(
 
     // 1. 输入源定义与选项
     if config.source_type == "testsrc" {
+        let res = config.resolution.as_deref().unwrap_or("");
+        let size = if !res.is_empty() && res != "default" { res.replace('x', ":") } else { "1280x720".to_string() };
+        let rate = config.fps.unwrap_or(30).max(1);
         args.extend(vec![
             "-re".to_string(),
             "-f".to_string(), "lavfi".to_string(),
-            "-i".to_string(), "testsrc=size=1280x720:rate=30".to_string(),
+            "-i".to_string(), format!("testsrc=size={}:rate={}", size, rate),
         ]);
     } else if config.source_type == "camera" {
         let cam = config.camera_name.as_deref().unwrap_or("");
@@ -338,6 +343,7 @@ pub fn start_rtsp_server(
     // 3. 视频编码器与显卡/硬件加速
     let codec = config.video_codec.as_deref().unwrap_or("h264");
     let gpu = config.gpu_accel.as_deref().unwrap_or("cpu");
+    let gop = config.gop.unwrap_or(15).max(1).to_string();
 
     if gpu == "copy" {
         args.extend(vec!["-c:v".to_string(), "copy".to_string()]);
@@ -347,21 +353,21 @@ pub fn start_rtsp_server(
             "-c:v".to_string(), v_encoder.to_string(),
             "-preset".to_string(), "p1".to_string(),
             "-tune".to_string(), "ll".to_string(),
-            "-g".to_string(), "15".to_string(),
+            "-g".to_string(), gop.clone(),
             "-pix_fmt".to_string(), "yuv420p".to_string(),
         ]);
     } else if gpu == "qsv" {
         let v_encoder = if codec == "h265" { "hevc_qsv" } else { "h264_qsv" };
         args.extend(vec![
             "-c:v".to_string(), v_encoder.to_string(),
-            "-g".to_string(), "15".to_string(),
+            "-g".to_string(), gop.clone(),
             "-pix_fmt".to_string(), "nv12".to_string(),
         ]);
     } else if gpu == "amf" {
         let v_encoder = if codec == "h265" { "hevc_amf" } else { "h264_amf" };
         args.extend(vec![
             "-c:v".to_string(), v_encoder.to_string(),
-            "-g".to_string(), "15".to_string(),
+            "-g".to_string(), gop.clone(),
             "-pix_fmt".to_string(), "yuv420p".to_string(),
         ]);
     } else {
@@ -370,12 +376,22 @@ pub fn start_rtsp_server(
             "-c:v".to_string(), v_encoder.to_string(),
             "-preset".to_string(), "ultrafast".to_string(),
             "-tune".to_string(), "zerolatency".to_string(),
-            "-g".to_string(), "15".to_string(),
-            "-keyint_min".to_string(), "15".to_string(),
+            "-g".to_string(), gop.clone(),
+            "-keyint_min".to_string(), gop.clone(),
             "-bf".to_string(), "0".to_string(),
             "-flags".to_string(), "+global_header".to_string(),
             "-pix_fmt".to_string(), "yuv420p".to_string(),
         ]);
+    }
+
+    // 码率控制（所有编码器通用，stream copy 除外）
+    if gpu != "copy" {
+        if let Some(mbps) = config.bitrate_mbps {
+            if mbps > 0.0 {
+                let kbps = (mbps * 1000.0) as u32;
+                args.extend(vec!["-b:v".to_string(), format!("{}k", kbps)]);
+            }
+        }
     }
 
     // 4. 音频编码

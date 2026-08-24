@@ -2,13 +2,15 @@ use std::collections::HashSet;
 
 use rusqlite::params;
 
+use crate::commands::config::get_data_dir;
+
 use super::db::{new_id, now_ts, today, with_conn};
 use super::models::*;
 
 // ─── 内部工具 ───
 
 /// 从查询行构造 TaskItem（列顺序必须与 TASK_COLUMNS 一致）。
-const TASK_COLUMNS: &str = "id, title, description, scheduled_date, parent_id, color, position_x, position_y, priority, progress, \
+const TASK_COLUMNS: &str = "id, title, description, detail, scheduled_date, parent_id, color, position_x, position_y, priority, progress, \
      sort_order, estimate_minutes, tags, archived, created_at, updated_at, completed_at";
 
 fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<TaskItem> {
@@ -16,20 +18,21 @@ fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<TaskItem> {
         id: row.get(0)?,
         title: row.get(1)?,
         description: row.get(2)?,
-        scheduled_date: row.get(3)?,
-        parent_id: row.get(4)?,
-        color: row.get(5)?,
-        position_x: row.get(6)?,
-        position_y: row.get(7)?,
-        priority: row.get(8)?,
-        progress: row.get(9)?,
-        sort_order: row.get(10)?,
-        estimate_minutes: row.get(11)?,
-        tags: row.get(12)?,
-        archived: row.get::<_, i64>(13)? != 0,
-        created_at: row.get(14)?,
-        updated_at: row.get(15)?,
-        completed_at: row.get(16)?,
+        detail: row.get(3)?,
+        scheduled_date: row.get(4)?,
+        parent_id: row.get(5)?,
+        color: row.get(6)?,
+        position_x: row.get(7)?,
+        position_y: row.get(8)?,
+        priority: row.get(9)?,
+        progress: row.get(10)?,
+        sort_order: row.get(11)?,
+        estimate_minutes: row.get(12)?,
+        tags: row.get(13)?,
+        archived: row.get::<_, i64>(14)? != 0,
+        created_at: row.get(15)?,
+        updated_at: row.get(16)?,
+        completed_at: row.get(17)?,
     })
 }
 
@@ -287,13 +290,14 @@ pub fn tasks_create(input: CreateTaskInput) -> Result<TaskItem, String> {
         let completed_at = if progress >= 100 { Some(ts.clone()) } else { None };
 
         conn.execute(
-            "INSERT INTO tasks (id, title, description, scheduled_date, parent_id, color, position_x, position_y, priority, progress, \
+            "INSERT INTO tasks (id, title, description, detail, scheduled_date, parent_id, color, position_x, position_y, priority, progress, \
              sort_order, estimate_minutes, tags, archived, created_at, updated_at, completed_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, ?14, ?15, ?16)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 0, ?15, ?16, ?17)",
             params![
                 id,
                 title,
                 input.description,
+                input.detail,
                 input.scheduled_date,
                 parent_id,
                 input.color,
@@ -325,6 +329,7 @@ pub fn tasks_update(id: String, input: UpdateTaskInput) -> Result<TaskItem, Stri
             return Err("任务标题不能为空".into());
         }
         let description = input.description.unwrap_or(old.description.clone());
+        let detail = input.detail.unwrap_or(old.detail.clone());
         let scheduled_date = match input.scheduled_date {
             Some(v) => v,
             None => old.scheduled_date.clone(),
@@ -362,12 +367,13 @@ pub fn tasks_update(id: String, input: UpdateTaskInput) -> Result<TaskItem, Stri
         };
 
         conn.execute(
-            "UPDATE tasks SET title = ?1, description = ?2, scheduled_date = ?3, parent_id = ?4, color = ?5, position_x = ?6, position_y = ?7, priority = ?8, \
-             progress = ?9, sort_order = ?10, estimate_minutes = ?11, tags = ?12, archived = ?13, \
-             updated_at = ?14, completed_at = ?15 WHERE id = ?16",
+            "UPDATE tasks SET title = ?1, description = ?2, detail = ?3, scheduled_date = ?4, parent_id = ?5, color = ?6, position_x = ?7, position_y = ?8, priority = ?9, \
+             progress = ?10, sort_order = ?11, estimate_minutes = ?12, tags = ?13, archived = ?14, \
+             updated_at = ?15, completed_at = ?16 WHERE id = ?17",
             params![
                 title.trim(),
                 description,
+                detail,
                 scheduled_date,
                 parent_id,
                 color,
@@ -852,8 +858,128 @@ pub fn tasks_day_stats(start: String, end: String) -> Result<Vec<DayStat>, Strin
     })
 }
 
+/// 将图片文件复制到任务数据目录（~/.any-version/tasks/images/），返回新路径。
+/// 选择图片后应复制到本软件数据目录，避免依赖原路径（原文件被移动/删除后仍可显示）。
+#[tauri::command]
+pub fn tasks_copy_image(source_path: String) -> Result<String, String> {
+    let trimmed = source_path.trim();
+    if trimmed.is_empty() {
+        return Err("图片路径不能为空".into());
+    }
+    let source = std::path::Path::new(&trimmed);
+    if !source.is_file() {
+        return Err(format!("图片文件不存在: {}", trimmed));
+    }
+    let ext = source
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .filter(|e| matches!(e.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "ico"))
+        .unwrap_or_else(|| "png".to_string());
+    let dir = get_data_dir().join("tasks").join("images");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建任务图片目录失败: {}", e))?;
+    let target = dir.join(format!("task_{}.{}", new_id("img"), ext));
+    std::fs::copy(&source, &target).map_err(|e| format!("复制图片失败: {}", e))?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
 /// 初始化任务数据库（供启动时调用）。
 #[tauri::command]
 pub fn tasks_init() -> Result<(), String> {
     super::db::init_db()
+}
+
+// ─── 画布贴纸（白板便签） ───
+
+const STICKER_COLUMNS: &str =
+    "id, series_id, content, color, position_x, position_y, created_at, updated_at";
+
+fn row_to_sticker(row: &rusqlite::Row) -> rusqlite::Result<TaskSticker> {
+    Ok(TaskSticker {
+        id: row.get(0)?,
+        series_id: row.get(1)?,
+        content: row.get(2)?,
+        color: row.get(3)?,
+        position_x: row.get(4)?,
+        position_y: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+    })
+}
+
+/// 某系列的贴纸列表。
+#[tauri::command]
+pub fn tasks_list_stickers(series_id: String) -> Result<Vec<TaskSticker>, String> {
+    with_conn(move |conn| {
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT {} FROM task_stickers WHERE series_id = ?1 ORDER BY created_at ASC",
+                STICKER_COLUMNS
+            ))
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![series_id], row_to_sticker)
+            .map_err(|e| e.to_string())?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| format!("读取贴纸失败: {}", e))
+    })
+}
+
+/// 创建贴纸。
+#[tauri::command]
+pub fn tasks_create_sticker(input: CreateStickerInput) -> Result<TaskSticker, String> {
+    with_conn(move |conn| {
+        let id = new_id("stk");
+        let ts = now_ts();
+        conn.execute(
+            "INSERT INTO task_stickers (id, series_id, content, color, position_x, position_y, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![id, input.series_id, input.content, input.color, input.position_x, input.position_y, ts, ts],
+        )
+        .map_err(|e| format!("创建贴纸失败: {}", e))?;
+        conn.query_row(
+            &format!("SELECT {} FROM task_stickers WHERE id = ?1", STICKER_COLUMNS),
+            params![id],
+            row_to_sticker,
+        )
+        .map_err(|e| format!("读取贴纸失败: {}", e))
+    })
+}
+
+/// 更新贴纸。
+#[tauri::command]
+pub fn tasks_update_sticker(id: String, input: UpdateStickerInput) -> Result<TaskSticker, String> {
+    with_conn(move |conn| {
+        let old = conn
+            .query_row(
+                &format!("SELECT {} FROM task_stickers WHERE id = ?1", STICKER_COLUMNS),
+                params![id],
+                row_to_sticker,
+            )
+            .map_err(|e| format!("贴纸不存在: {}", e))?;
+        let content = input.content.unwrap_or(old.content.clone());
+        let color = input.color.unwrap_or(old.color.clone());
+        let x = input.position_x.unwrap_or(old.position_x);
+        let y = input.position_y.unwrap_or(old.position_y);
+        conn.execute(
+            "UPDATE task_stickers SET content = ?1, color = ?2, position_x = ?3, position_y = ?4, updated_at = ?5 WHERE id = ?6",
+            params![content, color, x, y, now_ts(), id],
+        )
+        .map_err(|e| format!("更新贴纸失败: {}", e))?;
+        conn.query_row(
+            &format!("SELECT {} FROM task_stickers WHERE id = ?1", STICKER_COLUMNS),
+            params![id],
+            row_to_sticker,
+        )
+        .map_err(|e| format!("读取贴纸失败: {}", e))
+    })
+}
+
+/// 删除贴纸。
+#[tauri::command]
+pub fn tasks_delete_sticker(id: String) -> Result<(), String> {
+    with_conn(move |conn| {
+        conn.execute("DELETE FROM task_stickers WHERE id = ?1", params![id])
+            .map_err(|e| format!("删除贴纸失败: {}", e))?;
+        Ok(())
+    })
 }

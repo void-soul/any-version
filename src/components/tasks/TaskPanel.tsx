@@ -10,6 +10,7 @@ import {
   PanelLeftOpen,
   Plus,
   Search,
+  StickyNote,
   Trash2,
   X,
 } from "lucide-react";
@@ -20,6 +21,8 @@ import {
   UpdateTaskInput,
   tasksApi,
   deriveStatus,
+  stickersApi,
+  TaskSticker,
 } from "./types";
 import { moduleAccent } from "../../utils/theme";
 
@@ -87,6 +90,7 @@ export default function TaskPanel() {
   const [editing, setEditing] = useState<TaskItem | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
   const [notice, setNotice] = useState("");
+  const [stickers, setStickers] = useState<TaskSticker[]>([]);
   const [deleteCandidate, setDeleteCandidate] = useState<TaskItem | null>(null);
 
   const flash = useCallback((message: string) => {
@@ -136,10 +140,18 @@ export default function TaskPanel() {
   const insertImage = useCallback(async (id: string, current: string) => {
     const selected = await openDialog({ multiple: false, directory: false, title: "插入图片", filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"] }] });
     if (typeof selected !== "string") return undefined;
-    const next = appendMarkdown(current, markdownImage(selected));
+    let path = selected;
+    try {
+      // 复制到软件数据目录（~/.any-version/tasks/images/），避免依赖原路径。
+      path = await invoke<string>("tasks_copy_image", { sourcePath: selected });
+    } catch (error) {
+      flash(`复制图片失败：${String(error)}`);
+      return undefined;
+    }
+    const next = appendMarkdown(current, markdownImage(path));
     const updated = await updateTask(id, { description: next });
     return updated?.description ?? next;
-  }, [updateTask]);
+  }, [flash, updateTask]);
 
   const insertScreenshot = useCallback(async (id: string, current: string) => {
     try {
@@ -157,6 +169,39 @@ export default function TaskPanel() {
   const openLocalFile = useCallback((path: string) => {
     void openPath(path);
   }, []);
+
+  // ─── 贴纸 ───
+  const loadStickers = useCallback(async (seriesId: string | null) => {
+    if (!seriesId) { setStickers([]); return; }
+    try { setStickers(await stickersApi.list(seriesId)); } catch { /* ignore */ }
+  }, []);
+  useEffect(() => { void loadStickers(selectedSeries); }, [loadStickers, selectedSeries]);
+
+  const addSticker = useCallback(async (x: number, y: number) => {
+    if (!selectedSeries) return;
+    try {
+      const s = await stickersApi.create({ seriesId: selectedSeries, positionX: x, positionY: y });
+      setStickers((prev) => [...prev, s]);
+    } catch (error) { flash(`创建贴纸失败：${String(error)}`); }
+  }, [flash, selectedSeries]);
+
+  const updateSticker = useCallback(async (id: string, patch: { content?: string; color?: string; positionX?: number; positionY?: number }) => {
+    try {
+      const updated = await stickersApi.update(id, patch);
+      setStickers((prev) => prev.map((s) => s.id === id ? updated : s));
+    } catch { /* ignore */ }
+  }, []);
+
+  const deleteSticker = useCallback(async (id: string) => {
+    try {
+      await stickersApi.remove(id);
+      setStickers((prev) => prev.filter((s) => s.id !== id));
+    } catch (error) { flash(`删除贴纸失败：${String(error)}`); }
+  }, [flash]);
+
+  const saveStickerPosition = useCallback((id: string, position: { x: number; y: number }) => {
+    void updateSticker(id, { positionX: Math.round(position.x), positionY: Math.round(position.y) });
+  }, [updateSticker]);
 
   const connectTasks = useCallback(async (parentId: string, childId: string) => {
     if (parentId === childId) return;
@@ -230,7 +275,7 @@ export default function TaskPanel() {
       <header className="flex min-h-12 shrink-0 items-center gap-2 border-b border-white/10 px-3">
         <Network className="h-4 w-4 text-amber-300" /><span className="text-sm font-semibold text-white">任务画布</span>
         <button type="button" className={iconButton} onClick={() => setShowTaskList((visible) => !visible)} title={showTaskList ? "隐藏任务列表" : "显示任务列表"} aria-label={showTaskList ? "隐藏任务列表" : "显示任务列表"}>{showTaskList ? <PanelLeftClose className="h-3.5 w-3.5" /> : <PanelLeftOpen className="h-3.5 w-3.5" />}</button>
-        <div className="ml-auto flex items-center gap-1.5"><div className="flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.04] px-2"><Search className="h-3 w-3 text-slate-500" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索任务" className="h-7 w-36 bg-transparent text-[11px] outline-none placeholder:text-slate-600" /></div><button type="button" className={button} onClick={() => { setEditing(null); setCreateParentId(null); setDraftTitle(""); setShowCreate(true); }}><Plus className="h-3 w-3" />新建系列</button></div>
+        <div className="ml-auto flex items-center gap-1.5"><div className="flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.04] px-2"><Search className="h-3 w-3 text-slate-500" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索任务" className="h-7 w-36 bg-transparent text-[11px] outline-none placeholder:text-slate-600" /></div><button type="button" className={button} title="双击画布空白处也可添加" onClick={() => addSticker(200, 60)}><StickyNote className="h-3 w-3" />贴纸</button><button type="button" className={button} onClick={() => { setEditing(null); setCreateParentId(null); setDraftTitle(""); setShowCreate(true); }}><Plus className="h-3 w-3" />新建系列</button></div>
       </header>
       <div className="flex min-h-0 flex-1">
         {showTaskList && <aside className="flex w-[220px] shrink-0 flex-col border-r border-white/10 bg-slate-950/30">
@@ -252,7 +297,7 @@ export default function TaskPanel() {
           </div>
         </aside>}
         <main className="relative min-w-0 flex-1">
-          <TaskFlowCanvas tasks={tasks} selectedSeries={selectedSeries} selectedTaskId={selectedTaskId} onSelect={setSelectedTaskId} onAddChild={(id) => { setEditing(null); setCreateParentId(id); setDraftTitle(""); setShowCreate(true); }} onDelete={(task) => void deleteTask(task)} onProgress={(task, progress) => void setProgress(task, progress)} onUpdate={(id, patch) => void updateTask(id, patch)} onInsertFile={insertFile} onInsertImage={insertImage} onInsertScreenshot={insertScreenshot} onOpenFile={openLocalFile} onPositionChange={savePosition} onConnect={(parentId, childId) => void connectTasks(parentId, childId)} />
+          <TaskFlowCanvas tasks={tasks} stickers={stickers} selectedSeries={selectedSeries} selectedTaskId={selectedTaskId} onSelect={setSelectedTaskId} onAddChild={(id) => { setEditing(null); setCreateParentId(id); setDraftTitle(""); setShowCreate(true); }} onDelete={(task) => void deleteTask(task)} onProgress={(task, progress) => void setProgress(task, progress)} onUpdate={(id, patch) => void updateTask(id, patch)} onInsertFile={insertFile} onInsertImage={insertImage} onInsertScreenshot={insertScreenshot} onOpenFile={openLocalFile} onPositionChange={savePosition} onConnect={(parentId, childId) => void connectTasks(parentId, childId)} onAddSticker={(x, y) => void addSticker(x, y)} onUpdateSticker={(id, patch) => void updateSticker(id, patch)} onDeleteSticker={(id) => void deleteSticker(id)} onStickerPositionChange={saveStickerPosition} />
         </main>
       </div>
       {notice && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-[11px] text-slate-200 shadow-xl">{notice}</div>}

@@ -1,0 +1,2787 @@
+{
+  "info": {
+    "_postman_id": "3402e142-1293-48d6-8d4d-a6739a10727b",
+    "name": "Amazon SP-API 代理服务",
+    "description": "Amazon Selling Partner API 代理中间层服务端点集合\nBase URL: http://127.0.0.1:5000\n\n通用参数通过 Collection Variables 统一管理，只需填写一次：\n- shopid: 店铺ID\n- site: 站点代码（如 us, uk, jp 等）\n- refresh_token: OAuth刷新令牌\n- clientId: SP-API 客户端ID\n- client_secret: SP-API 客户端密钥\n\n每个请求的 form-data 中已显式引用这些变量（如 {{client_secret}}），导入后直接可用。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "27855000"
+  },
+  "item": [
+    {
+      "name": "Orders V0 (订单-旧版)",
+      "item": [
+        {
+          "name": "getOrders - 批量查询订单",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "createdAfter",
+                  "value": "",
+                  "type": "text",
+                  "description": "创建时间-起始 (ISO 8601)"
+                },
+                {
+                  "key": "createdBefore",
+                  "value": "",
+                  "type": "text",
+                  "description": "创建时间-结束 (ISO 8601)"
+                },
+                {
+                  "key": "lastUpdatedAfter",
+                  "value": "",
+                  "type": "text",
+                  "description": "最后更新时间-起始 (ISO 8601)"
+                },
+                {
+                  "key": "lastUpdatedBefore",
+                  "value": "",
+                  "type": "text",
+                  "description": "最后更新时间-结束 (ISO 8601)"
+                },
+                {
+                  "key": "orderStatuses",
+                  "value": "",
+                  "type": "text",
+                  "description": "订单状态（逗号分隔）: Pending/Unshipped/PartiallyShipped/Shipped/Canceled"
+                },
+                {
+                  "key": "fulfillmentChannels",
+                  "value": "",
+                  "type": "text",
+                  "description": "履约渠道: MFN/AFN"
+                },
+                {
+                  "key": "paymentMethods",
+                  "value": "",
+                  "type": "text",
+                  "description": "支付方式"
+                },
+                {
+                  "key": "buyerEmail",
+                  "value": "",
+                  "type": "text",
+                  "description": "买家邮箱"
+                },
+                {
+                  "key": "sellerOrderId",
+                  "value": "",
+                  "type": "text",
+                  "description": "卖家订单ID"
+                },
+                {
+                  "key": "maxResultsPerPage",
+                  "value": "",
+                  "type": "text",
+                  "description": "每页结果数"
+                },
+                {
+                  "key": "nextToken",
+                  "value": "",
+                  "type": "text",
+                  "description": "分页Token"
+                },
+                {
+                  "key": "amazonOrderIds",
+                  "value": "",
+                  "type": "text",
+                  "description": "Amazon订单ID（逗号分隔）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/ordersv0/getOrders.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ordersv0",
+                "getOrders.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "getOrder - 获取单个订单",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "orderId",
+                  "value": "",
+                  "type": "text",
+                  "description": "Amazon订单ID（必填）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/ordersv0/getOrder.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ordersv0",
+                "getOrder.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "getOrderItems - 获取订单明细",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "orderId",
+                  "value": "",
+                  "type": "text",
+                  "description": "Amazon订单ID（必填）"
+                },
+                {
+                  "key": "nextToken",
+                  "value": "",
+                  "type": "text",
+                  "description": "分页Token"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/ordersv0/getOrderItems.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ordersv0",
+                "getOrderItems.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "getOrderBuyerInfo - 获取买家信息",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "orderId",
+                  "value": "",
+                  "type": "text",
+                  "description": "Amazon订单ID（必填）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/ordersv0/getOrderBuyerInfo.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ordersv0",
+                "getOrderBuyerInfo.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "getOrderAddress - 获取订单地址",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "orderId",
+                  "value": "",
+                  "type": "text",
+                  "description": "Amazon订单ID（必填）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/ordersv0/getOrderAddress.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ordersv0",
+                "getOrderAddress.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "confirmShipment - 确认发货",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "orderId",
+                  "value": "",
+                  "type": "text",
+                  "description": "Amazon订单ID（必填）"
+                },
+                {
+                  "key": "confirmShipmentReq",
+                  "value": "",
+                  "type": "text",
+                  "description": "确认发货请求体（JSON字符串，含包裹详情、物流信息等）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/ordersv0/confirmShipment.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ordersv0",
+                "confirmShipment.api"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Amazon Orders V0 API — 订单管理"
+    },
+    {
+      "name": "Orders 2026 (订单-新版)",
+      "item": [
+        {
+          "name": "searchOrders - 搜索订单",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "createdAfter",
+                  "value": "",
+                  "type": "text",
+                  "description": "创建时间-起始 (ISO 8601)"
+                },
+                {
+                  "key": "createdBefore",
+                  "value": "",
+                  "type": "text",
+                  "description": "创建时间-结束 (ISO 8601)"
+                },
+                {
+                  "key": "lastUpdatedAfter",
+                  "value": "",
+                  "type": "text",
+                  "description": "最后更新时间-起始 (ISO 8601)"
+                },
+                {
+                  "key": "lastUpdatedBefore",
+                  "value": "",
+                  "type": "text",
+                  "description": "最后更新时间-结束 (ISO 8601)"
+                },
+                {
+                  "key": "fulfillmentStatuses",
+                  "value": "",
+                  "type": "text",
+                  "description": "履约状态"
+                },
+                {
+                  "key": "fulfilledBy",
+                  "value": "",
+                  "type": "text",
+                  "description": "履约方: AMAZON/MERCHANT"
+                },
+                {
+                  "key": "maxResultsPerPage",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "paginationToken",
+                  "value": "",
+                  "type": "text",
+                  "description": "分页Token"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders_20260101/searchOrders.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders_20260101",
+                "searchOrders.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "getOrder - 获取单个订单",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "orderId",
+                  "value": "",
+                  "type": "text",
+                  "description": "Amazon订单ID（必填）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders_20260101/getOrder.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders_20260101",
+                "getOrder.api"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Amazon Orders 2026-01-01 API — 新版订单管理"
+    },
+    {
+      "name": "Reports (报表)",
+      "item": [
+        {
+          "name": "createReport - 创建报表",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "reportType",
+                  "value": "",
+                  "type": "text",
+                  "description": "报表类型（必填）如 GET_FLAT_FILE_ORDERS_DATA_GENERAL"
+                },
+                {
+                  "key": "dataStartTime",
+                  "value": "",
+                  "type": "text",
+                  "description": "数据起始时间 (ISO 8601)"
+                },
+                {
+                  "key": "dataEndTime",
+                  "value": "",
+                  "type": "text",
+                  "description": "数据结束时间 (ISO 8601)"
+                },
+                {
+                  "key": "options",
+                  "value": "",
+                  "type": "text",
+                  "description": "报表选项（JSON字符串）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/reports_20210630/createReport.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reports_20210630",
+                "createReport.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "getReport - 获取报表",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "reportId",
+                  "value": "",
+                  "type": "text",
+                  "description": "报表ID（必填）"
+                },
+                {
+                  "key": "dbName",
+                  "value": "",
+                  "type": "text",
+                  "description": "数据库名称"
+                },
+                {
+                  "key": "format",
+                  "value": "",
+                  "type": "text",
+                  "description": "列名格式化映射（JSON字符串）"
+                },
+                {
+                  "key": "source",
+                  "value": "",
+                  "type": "text",
+                  "description": "数据源类型"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/reports_20210630/getReport.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reports_20210630",
+                "getReport.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "cancelReport - 取消报表",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "reportId",
+                  "value": "",
+                  "type": "text",
+                  "description": "报表ID（必填）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/reports_20210630/cancelReport.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reports_20210630",
+                "cancelReport.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "createReportSchedule - 创建报表定时任务",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "reportType",
+                  "value": "",
+                  "type": "text",
+                  "description": "报表类型（必填）"
+                },
+                {
+                  "key": "period",
+                  "value": "",
+                  "type": "text",
+                  "description": "周期"
+                },
+                {
+                  "key": "nextReportCreationTime",
+                  "value": "",
+                  "type": "text",
+                  "description": "下次创建时间"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/reports_20210630/createReportSchedule.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reports_20210630",
+                "createReportSchedule.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "getReportSchedule - 获取定时任务信息",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "reportScheduleId",
+                  "value": "",
+                  "type": "text",
+                  "description": "定时任务ID（必填）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/reports_20210630/getReportSchedule.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reports_20210630",
+                "getReportSchedule.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "getReportSchedules - 获取定时任务列表",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "reportType",
+                  "value": "",
+                  "type": "text",
+                  "description": "报表类型（可选筛选）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/reports_20210630/getReportSchedules.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reports_20210630",
+                "getReportSchedules.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "cancelReportSchedule - 取消报表定时任务",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "reportScheduleId",
+                  "value": "",
+                  "type": "text",
+                  "description": "定时任务ID（必填）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/reports_20210630/cancelReportSchedule.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reports_20210630",
+                "cancelReportSchedule.api"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Amazon Reports 2021-06-30 API — 报表管理"
+    },
+    {
+      "name": "Feeds (数据上传)",
+      "item": [
+        {
+          "name": "uploadFeed - 上传Feed",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "feedType",
+                  "value": "",
+                  "type": "text",
+                  "description": "Feed类型（必填），如 POST_PRODUCT_DATA"
+                },
+                {
+                  "key": "content",
+                  "value": "",
+                  "type": "text",
+                  "description": "Feed XML/JSON内容（必填）"
+                },
+                {
+                  "key": "metadata",
+                  "value": "",
+                  "type": "text",
+                  "description": "元数据（可选）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/feeds_20210630/uploadFeed.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "feeds_20210630",
+                "uploadFeed.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "checkFeed - 检查Feed状态",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "feedId",
+                  "value": "",
+                  "type": "text",
+                  "description": "Feed ID（必填）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/feeds_20210630/checkFeed.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "feeds_20210630",
+                "checkFeed.api"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Amazon Feeds 2021-06-30 API — 数据上传"
+    },
+    {
+      "name": "Finances (财务)",
+      "item": [
+        {
+          "name": "listFinancialEventGroups - 金融事件组列表",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "maxResultsPerPage",
+                  "value": "",
+                  "type": "text",
+                  "description": "每页结果数"
+                },
+                {
+                  "key": "financialEventGroupStartedBefore",
+                  "value": "",
+                  "type": "text",
+                  "description": "开始时间-结束 (yyyy-MM-dd HH:mm:ss)"
+                },
+                {
+                  "key": "financialEventGroupStartedAfter",
+                  "value": "",
+                  "type": "text",
+                  "description": "开始时间-起始 (yyyy-MM-dd HH:mm:ss)"
+                },
+                {
+                  "key": "nextToken",
+                  "value": "",
+                  "type": "text",
+                  "description": "分页Token"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/financesv0/listFinancialEventGroups.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "financesv0",
+                "listFinancialEventGroups.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "listFinancialEvents - 金融事件列表",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "maxResultsPerPage",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "postedAfter",
+                  "value": "",
+                  "type": "text",
+                  "description": "发布时间-起始 (yyyy-MM-dd HH:mm:ss)"
+                },
+                {
+                  "key": "postedBefore",
+                  "value": "",
+                  "type": "text",
+                  "description": "发布时间-结束 (yyyy-MM-dd HH:mm:ss)"
+                },
+                {
+                  "key": "nextToken",
+                  "value": "",
+                  "type": "text",
+                  "description": "分页Token"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/financesv0/listFinancialEvents.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "financesv0",
+                "listFinancialEvents.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "listFinancialEventsByGroupId - 按组查金融事件",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "eventGroupId",
+                  "value": "",
+                  "type": "text",
+                  "description": "事件组ID"
+                },
+                {
+                  "key": "maxResultsPerPage",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "nextToken",
+                  "value": "",
+                  "type": "text",
+                  "description": "分页Token"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/financesv0/listFinancialEventsByGroupId.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "financesv0",
+                "listFinancialEventsByGroupId.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "listFinancialEventsByOrderId - 按订单查金融事件",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "orderId",
+                  "value": "",
+                  "type": "text",
+                  "description": "Amazon订单ID"
+                },
+                {
+                  "key": "maxResultsPerPage",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "nextToken",
+                  "value": "",
+                  "type": "text",
+                  "description": "分页Token"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/financesv0/listFinancialEventsByOrderId.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "financesv0",
+                "listFinancialEventsByOrderId.api"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Amazon Finances V0 API — 财务事件查询"
+    },
+    {
+      "name": "Catalog Items (目录商品)",
+      "item": [
+        {
+          "name": "searchCatalogItems - 搜索目录项",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "marketplaceIds",
+                  "value": "",
+                  "type": "text",
+                  "description": "市场ID（逗号分隔）"
+                },
+                {
+                  "key": "identifiers",
+                  "value": "",
+                  "type": "text",
+                  "description": "标识符（逗号分隔）"
+                },
+                {
+                  "key": "identifiersType",
+                  "value": "ASIN",
+                  "type": "text",
+                  "description": "标识符类型: ASIN/EAN/GTIN/ISBN/JAN/MINSAN/SKU/UPC"
+                },
+                {
+                  "key": "includedData",
+                  "value": "",
+                  "type": "text",
+                  "description": "包含数据: summaries/attributes/images等"
+                },
+                {
+                  "key": "locale",
+                  "value": "",
+                  "type": "text",
+                  "description": "语言环境，如 en_US"
+                },
+                {
+                  "key": "sellerId",
+                  "value": "",
+                  "type": "text",
+                  "description": "卖家ID"
+                },
+                {
+                  "key": "keywords",
+                  "value": "",
+                  "type": "text",
+                  "description": "搜索关键词（逗号分隔）"
+                },
+                {
+                  "key": "brandNames",
+                  "value": "",
+                  "type": "text",
+                  "description": "品牌名（逗号分隔）"
+                },
+                {
+                  "key": "classificationIds",
+                  "value": "",
+                  "type": "text",
+                  "description": "分类ID（逗号分隔）"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "",
+                  "type": "text",
+                  "description": "每页大小"
+                },
+                {
+                  "key": "pageToken",
+                  "value": "",
+                  "type": "text",
+                  "description": "分页Token"
+                },
+                {
+                  "key": "keywordsLocale",
+                  "value": "",
+                  "type": "text",
+                  "description": "关键词语言"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/catalogitems_20220401/searchCatalogItems.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "catalogitems_20220401",
+                "searchCatalogItems.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "getCatalogItem - 获取目录项",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "asin",
+                  "value": "",
+                  "type": "text",
+                  "description": "ASIN码（必填）"
+                },
+                {
+                  "key": "marketplaceIds",
+                  "value": "",
+                  "type": "text",
+                  "description": "市场ID（逗号分隔）"
+                },
+                {
+                  "key": "includedData",
+                  "value": "",
+                  "type": "text",
+                  "description": "包含数据"
+                },
+                {
+                  "key": "locale",
+                  "value": "",
+                  "type": "text",
+                  "description": "语言环境"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/catalogitems_20220401/getCatalogItem.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "catalogitems_20220401",
+                "getCatalogItem.api"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Amazon Catalog Items 2022-04-01 API — 商品目录"
+    },
+    {
+      "name": "Product Pricing (商品定价)",
+      "item": [
+        {
+          "name": "getCompetitivePricing - 获取竞争价格",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "asins",
+                  "value": "",
+                  "type": "text",
+                  "description": "ASIN列表（逗号分隔）与skus二选一"
+                },
+                {
+                  "key": "skus",
+                  "value": "",
+                  "type": "text",
+                  "description": "SKU列表（逗号分隔）与asins二选一"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/productpricingv0/getCompetitivePricing.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "productpricingv0",
+                "getCompetitivePricing.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "getItemOffers - 获取商品买家报价",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "asin",
+                  "value": "",
+                  "type": "text",
+                  "description": "ASIN码"
+                },
+                {
+                  "key": "itemCondition",
+                  "value": "New",
+                  "type": "text",
+                  "description": "商品状态: New/Used/Collectible/Refurbished/Club"
+                },
+                {
+                  "key": "customerType",
+                  "value": "",
+                  "type": "text",
+                  "description": "客户类型: Consumer/Business"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/productpricingv0/getItemOffers.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "productpricingv0",
+                "getItemOffers.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "getItemOffersBatch - 批量获取商品买家报价",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "asin",
+                  "value": "",
+                  "type": "text",
+                  "description": "ASIN码"
+                },
+                {
+                  "key": "itemCondition",
+                  "value": "New",
+                  "type": "text"
+                },
+                {
+                  "key": "customerType",
+                  "value": "",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/productpricingv0/getItemOffersBatch.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "productpricingv0",
+                "getItemOffersBatch.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "getListingOffers - 获取卖家列表报价",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "sellerSKU",
+                  "value": "",
+                  "type": "text",
+                  "description": "卖家SKU"
+                },
+                {
+                  "key": "itemCondition",
+                  "value": "New",
+                  "type": "text"
+                },
+                {
+                  "key": "customerType",
+                  "value": "",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/productpricingv0/getListingOffers.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "productpricingv0",
+                "getListingOffers.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "getListingOffersBatch - 批量获取卖家列表报价",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "sellerSKU",
+                  "value": "",
+                  "type": "text",
+                  "description": "卖家SKU"
+                },
+                {
+                  "key": "itemCondition",
+                  "value": "New",
+                  "type": "text"
+                },
+                {
+                  "key": "customerType",
+                  "value": "",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/productpricingv0/getListingOffersBatch.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "productpricingv0",
+                "getListingOffersBatch.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "getPricing - 获取定价",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "asins",
+                  "value": "",
+                  "type": "text",
+                  "description": "ASIN列表（逗号分隔）"
+                },
+                {
+                  "key": "skus",
+                  "value": "",
+                  "type": "text",
+                  "description": "SKU列表（逗号分隔）"
+                },
+                {
+                  "key": "itemCondition",
+                  "value": "New",
+                  "type": "text"
+                },
+                {
+                  "key": "offerType",
+                  "value": "",
+                  "type": "text",
+                  "description": "报价类型: B2C/B2B"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/productpricingv0/getPricing.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "productpricingv0",
+                "getPricing.api"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Amazon Product Pricing V0 API — 价格查询"
+    },
+    {
+      "name": "Definitions Product Types (产品类型定义)",
+      "item": [
+        {
+          "name": "searchDefinitionsProductTypes - 搜索产品类型",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "keywords",
+                  "value": "",
+                  "type": "text",
+                  "description": "关键词（逗号分隔），如 'Electronics,Toys'"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/definitionsproducttypes_20200901/searchDefinitionsProductTypes.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "definitionsproducttypes_20200901",
+                "searchDefinitionsProductTypes.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "getDefinitionsProductType - 获取产品类型定义",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "productType",
+                  "value": "",
+                  "type": "text",
+                  "description": "产品类型名称（必填），如 'LUGGAGE'"
+                },
+                {
+                  "key": "sellerId",
+                  "value": "",
+                  "type": "text",
+                  "description": "卖家ID（必填）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/definitionsproducttypes_20200901/getDefinitionsProductType.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "definitionsproducttypes_20200901",
+                "getDefinitionsProductType.api"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Amazon Definitions Product Types 2020-09-01 API"
+    },
+    {
+      "name": "Sellers (卖家信息)",
+      "item": [
+        {
+          "name": "getMarketplaceParticipations - 获取市场参与情况",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/sellers/getMarketplaceParticipations.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sellers",
+                "getMarketplaceParticipations.api"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Amazon Sellers API — 卖家/市场信息"
+    },
+    {
+      "name": "A+ Content (A+内容)",
+      "item": [
+        {
+          "name": "searchContentDocuments - 搜索A+内容",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "pageToken",
+                  "value": "",
+                  "type": "text",
+                  "description": "分页Token"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/apluscontent_20201101/searchContentDocuments.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "apluscontent_20201101",
+                "searchContentDocuments.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "getContentDocument - 获取A+内容",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "contentReferenceKey",
+                  "value": "",
+                  "type": "text",
+                  "description": "A+内容引用Key（必填）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/apluscontent_20201101/getContentDocument.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "apluscontent_20201101",
+                "getContentDocument.api"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Amazon A+ Content 2020-11-01 API — A+页面管理"
+    },
+    {
+      "name": "Listings Items (列表管理)",
+      "item": [
+        {
+          "name": "getListingsItem - 获取Listing",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "sellerId",
+                  "value": "",
+                  "type": "text",
+                  "description": "卖家ID（必填）"
+                },
+                {
+                  "key": "sku",
+                  "value": "",
+                  "type": "text",
+                  "description": "SKU（必填）"
+                },
+                {
+                  "key": "marketplaceIds",
+                  "value": "",
+                  "type": "text",
+                  "description": "市场ID（必填）"
+                },
+                {
+                  "key": "issueLocale",
+                  "value": "",
+                  "type": "text",
+                  "description": "问题本地化语言，如 'en_US'"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/listingsitems_20210801/getListingsItem.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "listingsitems_20210801",
+                "getListingsItem.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "putListingsItem - 创建/替换Listing",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "sellerId",
+                  "value": "",
+                  "type": "text",
+                  "description": "卖家ID（必填）"
+                },
+                {
+                  "key": "sku",
+                  "value": "",
+                  "type": "text",
+                  "description": "SKU（必填）"
+                },
+                {
+                  "key": "marketplaceIds",
+                  "value": "",
+                  "type": "text",
+                  "description": "市场ID列表（逗号分隔）"
+                },
+                {
+                  "key": "body",
+                  "value": "",
+                  "type": "text",
+                  "description": "ListingsItemPutRequest（JSON字符串，必填）"
+                },
+                {
+                  "key": "includedData",
+                  "value": "",
+                  "type": "text",
+                  "description": "包含数据，如 'issues'"
+                },
+                {
+                  "key": "mode",
+                  "value": "",
+                  "type": "text",
+                  "description": "操作模式"
+                },
+                {
+                  "key": "issueLocale",
+                  "value": "",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/listingsitems_20210801/putListingsItem.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "listingsitems_20210801",
+                "putListingsItem.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "patchListingsItem - 更新Listing",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "sellerId",
+                  "value": "",
+                  "type": "text",
+                  "description": "卖家ID（必填）"
+                },
+                {
+                  "key": "sku",
+                  "value": "",
+                  "type": "text",
+                  "description": "SKU（必填）"
+                },
+                {
+                  "key": "marketplaceIds",
+                  "value": "",
+                  "type": "text",
+                  "description": "市场ID列表（逗号分隔）"
+                },
+                {
+                  "key": "body",
+                  "value": "",
+                  "type": "text",
+                  "description": "ListingsItemPatchRequest（JSON字符串，必填）"
+                },
+                {
+                  "key": "includedData",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "mode",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "issueLocale",
+                  "value": "",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/listingsitems_20210801/patchListingsItem.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "listingsitems_20210801",
+                "patchListingsItem.api"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Amazon Listings Items 2021-08-01 API — Listing管理"
+    },
+    {
+      "name": "Solicitations (索评)",
+      "item": [
+        {
+          "name": "createProductReviewAndSellerFeedbackSolicitation - 请求评价",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "amazonOrderId",
+                  "value": "",
+                  "type": "text",
+                  "description": "Amazon订单ID（必填）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/solicitationsApi/createProductReviewAndSellerFeedbackSolicitation.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "solicitationsApi",
+                "createProductReviewAndSellerFeedbackSolicitation.api"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "getSolicitationActionsForOrder - 查询索评状态",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "amazonOrderId",
+                  "value": "",
+                  "type": "text",
+                  "description": "Amazon订单ID（必填）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/solicitationsApi/getSolicitationActionsForOrder.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "solicitationsApi",
+                "getSolicitationActionsForOrder.api"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Amazon Solicitations API — 索要评价"
+    },
+    {
+      "name": "Uploads (文件上传)",
+      "item": [
+        {
+          "name": "createUploadDestinationForResource - 创建上传目标",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shopid",
+                  "value": "{{shopid}}",
+                  "type": "text"
+                },
+                {
+                  "key": "site",
+                  "value": "{{site}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{refresh_token}}",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "resource",
+                  "value": "",
+                  "type": "text",
+                  "description": "资源名称（必填）"
+                },
+                {
+                  "key": "contentType",
+                  "value": "",
+                  "type": "text",
+                  "description": "内容类型（必填）"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/uploads_20201101/createUploadDestinationForResource.api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "uploads_20201101",
+                "createUploadDestinationForResource.api"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Amazon Uploads 2020-11-01 API — 文件上传目标地址"
+    },
+    {
+      "name": "服务测试",
+      "item": [
+        {
+          "name": "TK发布",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "devid",
+                "value": "3BO9eHg2Q3D4kwNzrkS5D",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://127.0.0.1:8001/api0/awProduct/start15.json",
+              "protocol": "http",
+              "host": [
+                "127",
+                "0",
+                "0",
+                "1"
+              ],
+              "port": "8001",
+              "path": [
+                "api0",
+                "awProduct",
+                "start15.json"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:5000"
+    },
+    {
+      "key": "shopid",
+      "value": ""
+    },
+    {
+      "key": "site",
+      "value": "us"
+    },
+    {
+      "key": "refresh_token",
+      "value": ""
+    },
+    {
+      "key": "clientId",
+      "value": ""
+    },
+    {
+      "key": "client_secret",
+      "value": ""
+    }
+  ]
+}

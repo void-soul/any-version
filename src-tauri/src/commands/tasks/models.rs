@@ -56,6 +56,9 @@ pub struct TaskItem {
     pub title: String,
     #[serde(default)]
     pub description: String,
+    /// 详细内容（大段 markdown，弹窗编辑/预览）。
+    #[serde(default)]
+    pub detail: String,
     /// 计划日期（YYYY-MM-DD）。null 表示未排期（Inbox）。
     #[serde(default)]
     pub scheduled_date: Option<String>,
@@ -178,6 +181,8 @@ pub struct CreateTaskInput {
     #[serde(default)]
     pub description: String,
     #[serde(default)]
+    pub detail: String,
+    #[serde(default)]
     pub scheduled_date: Option<String>,
     #[serde(default)]
     pub parent_id: Option<String>,
@@ -224,6 +229,8 @@ pub struct UpdateTaskInput {
     pub title: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub detail: Option<String>,
     #[serde(default, deserialize_with = "double_option")]
     pub scheduled_date: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
@@ -345,4 +352,58 @@ pub struct ReminderData {
     pub today: String,
     pub today_pending: Vec<TaskBrief>,
     pub overdue: Vec<TaskBrief>,
+}
+
+// ─── 画布贴纸（白板便签） ───
+
+/// 贴纸数据。每个贴纸属于一个系列，可在画布上自由拖放。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskSticker {
+    pub id: String,
+    pub series_id: String,
+    #[serde(default)]
+    pub content: String,
+    /// 便签颜色（hex，如 #fef3c7 淡黄）。
+    #[serde(default = "default_sticker_color")]
+    pub color: String,
+    #[serde(default)]
+    pub position_x: f64,
+    #[serde(default)]
+    pub position_y: f64,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+}
+
+fn default_sticker_color() -> String {
+    "#fef3c7".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateStickerInput {
+    pub series_id: String,
+    #[serde(default)]
+    pub content: String,
+    #[serde(default = "default_sticker_color")]
+    pub color: String,
+    #[serde(default)]
+    pub position_x: f64,
+    #[serde(default)]
+    pub position_y: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateStickerInput {
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub position_x: Option<f64>,
+    #[serde(default)]
+    pub position_y: Option<f64>,
 }

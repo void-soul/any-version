@@ -21,6 +21,9 @@ import {
   KeyRound,
   Languages,
   Bookmark,
+  FlaskConical,
+  Camera,
+  Lightbulb,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -105,6 +108,22 @@ export const MODULES: ModuleDef[] = [
     color: "#f59e0b",
     defaultToolbar: true,
     Component: lazyLoad(() => import("./components/tasks/TaskPanel")),
+  },
+  {
+    id: "api",
+    label: "API",
+    icon: FlaskConical,
+    color: "#06b6d4",
+    defaultToolbar: true,
+    Component: lazyLoad(() => import("./components/api/ApiPanel")),
+  },
+  {
+    id: "learn",
+    label: "需求",
+    icon: Lightbulb,
+    color: "#eab308",
+    defaultToolbar: false,
+    Component: lazyLoad(() => import("./components/learn/LearnPanel")),
   },
   {
     id: "node",
@@ -235,6 +254,14 @@ export const MODULES: ModuleDef[] = [
     color: "#ea580c",
     defaultToolbar: false,
     Component: lazyLoad(() => import("./components/SystemTools/MarkdownReader")),
+  },
+  {
+    id: "ssp",
+    label: "SSP 模拟",
+    icon: Camera,
+    color: "#8b5cf6",
+    defaultToolbar: false,
+    Component: lazyLoad(() => import("./components/SystemTools/SspServer")),
   },
 ];
 
