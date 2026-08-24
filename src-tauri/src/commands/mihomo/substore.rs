@@ -129,8 +129,7 @@ pub fn mihomo_substore_start(state: State<'_, MihomoState>) -> Result<Value, Str
             .env("HTTPS_PROXY", &p)
             .env("ALL_PROXY", &p);
     }
-    let child = cmd
-        .spawn()
+    let child = crate::commands::hidden_cmd::spawn_breakaway_fallback(cmd)
         .map_err(|e| format!("启动 Sub-Store 失败（需要 node）: {e}"))?;
     *BACKEND.lock().unwrap() = Some(child);
 

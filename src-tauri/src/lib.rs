@@ -825,6 +825,7 @@ pub fn run() {
                 commands::clipboard::clipboard_remove_ignored_app,
                 commands::clipboard::clipboard_remember_window,
                 commands::clipboard::clipboard_get_image,
+                commands::clipboard::clipboard_save_latest_image_for_task,
                 commands::otp::otp_list,
                 commands::otp::otp_add,
                 commands::otp::otp_update,

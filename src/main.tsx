@@ -1,12 +1,12 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import "./monacoSetup";
-import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // 划词翻译悬浮窗：独立无边框窗口，以 `index.html?popup=translate` 打开，
 // 此时只渲染轻量的 TranslatePopup，而不挂载整个 App。
+// 关键：monacoSetup（Monaco 全量 bundle，数 MB）与 App 只在该分支动态加载，
+// 避免每次打开划词悬浮窗都要等待整包加载（否则首开要 5~6 秒才弹出）。
 const IS_TRANSLATE_POPUP = new URLSearchParams(window.location.search).get("popup") === "translate";
 
 if (IS_TRANSLATE_POPUP) {
@@ -41,11 +41,15 @@ if (IS_TRANSLATE_POPUP) {
     true, // 捕获阶段，确保优先于 WebView 默认处理
   );
 
-  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-    <React.StrictMode>
-      <ErrorBoundary>
-        <App />
-      </ErrorBoundary>
-    </React.StrictMode>,
-  );
+  // Monaco 本地打包初始化 + 主应用：动态加载，保持主窗口首屏启动路径不变，
+  // 同时确保 Monaco 在第一个编辑器组件挂载前完成 worker 配置。
+  Promise.all([import("./monacoSetup"), import("./App")]).then(([, { default: App }]) => {
+    ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+      <React.StrictMode>
+        <ErrorBoundary>
+          <App />
+        </ErrorBoundary>
+      </React.StrictMode>,
+    );
+  });
 }

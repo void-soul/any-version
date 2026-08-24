@@ -520,9 +520,12 @@ pub struct ServiceStatus {
     pub data_dir: String,
     /// 日志目录
     pub log_dir: String,
-    /// 状态: running | stopped | not_installed | port_conflict
+    /// 状态: running | stopped | not_installed | port_conflict | external_running
     #[serde(default)]
     pub status: Option<String>,
+    /// 是否由 AnyVersion 管理目录之外的外部进程提供服务。
+    #[serde(default)]
+    pub external: bool,
     /// 进程名
     #[serde(default)]
     pub process_name: Option<String>,

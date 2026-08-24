@@ -110,7 +110,19 @@ export default function ProjectListPanel({
                     </span>
                   </div>
                 </div>
-                <div className="flex-shrink-0 ml-2 relative z-10">
+                <div className="flex-shrink-0 ml-2 relative z-10 flex items-center gap-1">
+                  {(p.category === "service" || p.service_status) && p.service_status?.running && (
+                    <span
+                      className={`px-1.5 py-px rounded text-[9px] font-semibold border ${
+                        p.service_status.external || p.service_status.status === "external_running"
+                          ? "bg-sky-500/10 text-sky-300 border-sky-500/20"
+                          : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                      }`}
+                      title={p.service_status.external ? "检测到外部进程正在运行" : "服务正在运行"}
+                    >
+                      {p.service_status.external ? "外部运行" : "运行中"}
+                    </span>
+                  )}
                   {p.installed ? (
                     p.active_version ? (
                       <span className="px-1.5 py-px rounded text-[9px] font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">

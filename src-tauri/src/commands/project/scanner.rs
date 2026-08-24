@@ -27,7 +27,7 @@ pub fn list_projects() -> Result<Vec<ProjectStatus>, String> {
     let mut results = Vec::with_capacity(defs.len());
 
     for def in &defs {
-        let status = build_project_status(def, &config, false)?;
+        let status = build_project_status(def, &config, false, false)?;
         results.push(status);
     }
 
@@ -41,7 +41,7 @@ pub fn list_projects_fast() -> Result<Vec<ProjectStatus>, String> {
     let mut results = Vec::with_capacity(defs.len());
 
     for def in &defs {
-        let status = build_project_status(def, &config, true)?;
+        let status = build_project_status(def, &config, true, false)?;
         results.push(status);
     }
 
@@ -53,7 +53,7 @@ pub fn get_project_status(id: &str) -> Result<ProjectStatus, String> {
     let def = registry::find_by_id(id)
         .ok_or_else(|| format!("未找到项目: {}", id))?;
     let config = load_config();
-    build_project_status(&def, &config, false)
+    build_project_status(&def, &config, false, true)
 }
 
 /// 获取项目详情（定义 + 状态）
@@ -61,7 +61,7 @@ pub fn get_project_detail(id: &str) -> Result<ProjectDetail, String> {
     let def = registry::find_by_id(id)
         .ok_or_else(|| format!("未找到项目: {}", id))?;
     let config = load_config();
-    let status = build_project_status(&def, &config, false)?;
+    let status = build_project_status(&def, &config, false, true)?;
 
     Ok(ProjectDetail {
         def,
@@ -262,7 +262,7 @@ pub fn get_project_delegation(config: &crate::commands::config::Config, id: &str
 }
 
 /// 构建单个项目的运行时状态
-fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Config, skip_cache: bool) -> Result<ProjectStatus, String> {
+fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Config, skip_cache: bool, force_service_refresh: bool) -> Result<ProjectStatus, String> {
     let id = &def.id;
     let versions_dir = Path::new(&config.versions_dir).join(id);
     let links_dir = Path::new(&config.links_dir);
@@ -344,9 +344,13 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
     // 数据目录状态
     let data_dirs_status = build_data_dirs_status(def, active_install_root.as_deref());
 
-    // 服务状态
+    // 服务状态：单个 SDK 详情/状态请求先同步失效并检测一次，确保外部进程也能立即反映。
     let service_status = if def.is_service || def.category == super::types::ProjectCategory::Service {
-        build_service_status(def)
+        if force_service_refresh {
+            crate::commands::service::refresh_service_status_for_id(&def.id)
+        } else {
+            build_service_status(def)
+        }
     } else {
         None
     };

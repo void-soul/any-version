@@ -209,6 +209,24 @@ export default function TranslatePopup() {
     };
     setup();
 
+    // 版本标记轮询（轻量）：只同步原文/译文/翻译结果，不重建页面。
+    // 后端每次收到新的翻译请求或翻译完成都会递增 requestId（版本号），
+    // 前端只有发现后端版本领先时才覆盖页面内容；否则保持现状（不覆盖用户编辑）。
+    // 这样即使事件在页面加载期间丢失，也能通过快照自动补齐原文与译文。
+    const pollTimer = window.setInterval(async () => {
+      if (document.hidden) return; // 窗口隐藏时停止轮询，节省开销
+      // 用户正在编辑原文框时不要覆盖（版本号相同也不动），避免轮询打断输入。
+      const active = document.activeElement;
+      if (active && active.tagName === "TEXTAREA") return;
+      try {
+        const last = await invoke<TranslateResult | null>("get_last_translate_result");
+        if (last?.source) applyPayloadRef.current(last);
+      } catch (e) {
+        // 瞬时失败（如后端重启），下一轮重试即可
+        console.error("轮询翻译结果失败:", e);
+      }
+    }, 1000);
+
     // 失焦自动隐藏（无需钉住）：点击外部后自动收起悬浮窗。
     // 注意：下拉框（供应商/模型/目标语言）是原生弹窗，会短暂夺走窗口焦点，
     // 用 suppressBlurUntil 防止因此误隐藏。
@@ -233,6 +251,7 @@ export default function TranslatePopup() {
     window.addEventListener("keydown", onKey, true);
     return () => {
       disposed = true;
+      window.clearInterval(pollTimer);
       if (reconcileTimerRef.current) clearTimeout(reconcileTimerRef.current);
       reconcileKeepAliveRef.current = false;
       if (unlisten) unlisten();

@@ -657,6 +657,14 @@ pub(crate) fn invalidate_service_status_cache() {
     }
 }
 
+/// 清理缓存并同步检测指定服务，供进入 SDK 详情页时获取最新状态。
+pub(crate) fn refresh_service_status_for_id(id: &str) -> Option<ServiceStatus> {
+    invalidate_service_status_cache();
+    let registry = crate::commands::project::registry::registry();
+    let def = registry.iter().find(|def| def.id == id)?;
+    Some(service_status_for_def(def))
+}
+
 /// 刷新指定服务 id 的状态快照（在后台线程调用，内部会跑 tasklist/wmic/netstat）。
 pub(crate) fn refresh_service_status_snapshot(ids: &[String]) -> HashMap<String, ServiceStatus> {
     let mut map = HashMap::new();
@@ -667,7 +675,18 @@ pub(crate) fn refresh_service_status_snapshot(ids: &[String]) -> HashMap<String,
         }
     }
     if let Ok(mut guard) = SERVICE_STATUS_CACHE.lock() {
-        *guard = Some((Instant::now(), map.clone()));
+        // 单个 SDK 页面刷新时合并已有快照，避免启动阶段逐个扫描服务后，
+        // 托盘请求全量状态只能看到最后一个服务。
+        let merged = guard
+            .as_ref()
+            .map(|(_, previous)| {
+                let mut merged = previous.clone();
+                merged.extend(map.clone());
+                merged
+            })
+            .unwrap_or_else(|| map.clone());
+        *guard = Some((Instant::now(), merged.clone()));
+        return merged;
     }
     map
 }
@@ -680,7 +699,10 @@ pub(crate) fn service_status_snapshot(managed_ids: &[String]) -> HashMap<String,
         guard
             .as_ref()
             .and_then(|g| g.as_ref())
-            .map(|(at, map)| (at.elapsed() < SERVICE_STATUS_TTL, map.clone()))
+            .map(|(at, map)| {
+                let covers_all = managed_ids.iter().all(|id| map.contains_key(id));
+                (at.elapsed() < SERVICE_STATUS_TTL && covers_all, map.clone())
+            })
             .unwrap_or((false, HashMap::new()))
     };
     if fresh.0 {
@@ -713,6 +735,11 @@ pub(crate) fn service_status_for_def(def: &ProjectDef) -> ServiceStatus {
     let runtime = resolve_service_runtime(def, None).ok();
     let install_root = runtime.as_ref().and_then(|r| r.install_root.clone());
     let all_processes = service_processes(def);
+    let running_system_service = find_running_system_service(def);
+    let external_process = all_processes
+        .iter()
+        .find(|process| process_matches_def(&process.name, def))
+        .cloned();
     // 诊断：打印判定输入，定位"服务在跑但判定 stopped"的根因
     crate::exit_log!(
         "[svc-status] id={} name={} install_root={:?} 进程数={}",
@@ -756,6 +783,7 @@ pub(crate) fn service_status_for_def(def: &ProjectDef) -> ServiceStatus {
     let port = runtime.as_ref().and_then(|r| r.port).or(def.default_port);
 
     let mut running = false;
+    let mut external = false;
     let mut status = if install_root.is_some() { "stopped" } else { "not_installed" }.to_string();
     let mut pid = None;
     let mut process_name = None;
@@ -765,6 +793,16 @@ pub(crate) fn service_status_for_def(def: &ProjectDef) -> ServiceStatus {
         status = "running".to_string();
         pid = Some(process.pid);
         process_name = Some(process.name.clone());
+    } else if let Some(process) = external_process {
+        running = true;
+        external = true;
+        status = "external_running".to_string();
+        pid = Some(process.pid);
+        process_name = Some(process.name);
+    } else if running_system_service.is_some() {
+        running = true;
+        external = true;
+        status = "external_running".to_string();
     } else if let Some(port) = port {
         if let Some(owner) = find_port_owner_simple(&port.to_string()) {
             let mut owner_is_ours = false;
@@ -786,6 +824,12 @@ pub(crate) fn service_status_for_def(def: &ProjectDef) -> ServiceStatus {
             if owner_is_ours {
                 running = true;
                 status = "running".to_string();
+            } else if process_matches_def(&owner.process_name, def) {
+                // 外部目录或系统服务启动的同名服务仍属于该 SDK 的运行实例，
+                // 但不能交给 AnyVersion 的停止命令接管。
+                running = true;
+                external = true;
+                status = "external_running".to_string();
             } else {
                 status = "port_conflict".to_string();
             }
@@ -799,7 +843,7 @@ pub(crate) fn service_status_for_def(def: &ProjectDef) -> ServiceStatus {
         status,
         pid,
         find_registered_system_service(def),
-        find_running_system_service(def)
+        running_system_service
     );
     ServiceStatus {
         running,
@@ -808,6 +852,7 @@ pub(crate) fn service_status_for_def(def: &ProjectDef) -> ServiceStatus {
         data_dir: runtime.as_ref().map(|r| r.data_dir.clone()).unwrap_or_default(),
         log_dir: runtime.as_ref().map(|r| r.log_dir.clone()).unwrap_or_default(),
         status: Some(status),
+        external,
         process_name,
         install_root: install_root.map(|p| p.to_string_lossy().to_string()),
         config_file: runtime
@@ -886,7 +931,8 @@ fn run_service_command(cmd_str: &str, current_dir: Option<&Path>, detached: bool
 
     if detached {
         command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-        command.spawn().map_err(|e| format!("启动服务失败: {}", e))?;
+        super::hidden_cmd::spawn_breakaway_fallback(command)
+            .map_err(|e| format!("启动服务失败: {}", e))?;
         std::thread::sleep(Duration::from_millis(800));
         Ok(())
     } else {
@@ -1004,6 +1050,9 @@ pub(crate) fn stop_service_inner(name: String) -> Result<(), String> {
     }
 
     let status = service_status_for_def(&def);
+    if status.external || status.status.as_deref() == Some("external_running") {
+        return Err(format!("服务 {} 正由外部进程运行，AnyVersion 不会接管或停止该进程", def.display_name));
+    }
     if !status.running {
         if status.status.as_deref() == Some("port_conflict") {
             return Err(format!("端口被 {} 占用，但它不是 {} 服务进程，已拒绝停止。", status.process_name.unwrap_or_else(|| "其他进程".to_string()), def.display_name));
@@ -1083,6 +1132,9 @@ pub(crate) fn force_stop_service_inner(name: String) -> Result<(), String> {
     }
 
     let status = service_status_for_def(&def);
+    if status.external || status.status.as_deref() == Some("external_running") {
+        return Err(format!("服务 {} 正由外部进程运行，AnyVersion 不会强制终止该进程", def.display_name));
+    }
     let Some(pid) = status.pid else {
         return Err(format!("未检测到 {} 服务进程，无法强制终止", def.display_name));
     };

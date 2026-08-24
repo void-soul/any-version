@@ -98,6 +98,43 @@ select option,
   color: #f1f5f9;
 }
 
+/* React Flow 画布控件：默认主题为白底，暗色应用中会导致缩放图标不可见。 */
+.canvas-flow-controls.react-flow__controls {
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.96);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+}
+
+.canvas-flow-controls .react-flow__controls-button {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(30, 41, 59, 0.96);
+  color: #cbd5e1;
+}
+
+.canvas-flow-controls .react-flow__controls-button:last-child {
+  border-bottom: 0;
+}
+
+.canvas-flow-controls .react-flow__controls-button:hover {
+  background: rgba(51, 65, 85, 0.98);
+  color: #f8fafc;
+}
+
+.canvas-flow-controls .react-flow__controls-button:disabled {
+  background: rgba(15, 23, 42, 0.9);
+  color: #64748b;
+}
+
+.canvas-flow-controls .react-flow__controls-button svg {
+  fill: currentColor;
+  stroke: currentColor;
+}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

@@ -1184,9 +1184,10 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
   }
 
   const status = svc.status || (svc.running ? "running" : "stopped");
+  const externallyRunning = status === "external_running" || svc.external === true;
   const hasConflict = status === "port_conflict";
   const notInstalled = status === "not_installed";
-  const canToggle = !serviceCtrlLoading && !hasConflict && !notInstalled;
+  const canToggle = !serviceCtrlLoading && !hasConflict && !notInstalled && !externallyRunning;
 
   return (
     <div className="space-y-4">
@@ -1204,6 +1205,13 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
           <Activity className="w-4 h-4 text-[var(--module-accent)]" />
           <h4 className="text-xs font-semibold text-white">本地服务控制台</h4>
         </div>
+
+        {externallyRunning && (
+          <div className="p-3 rounded-xl border border-sky-500/20 bg-sky-500/10 text-[12px] text-sky-200 flex items-start gap-2">
+            <Info className="w-4 h-4 text-sky-400 flex-shrink-0 mt-0.5" />
+            <span>检测到服务正在外部运行{svc.process_name ? `（${svc.process_name}${svc.pid ? `，PID: ${svc.pid}` : ""}）` : ""}。AnyVersion 只展示状态，不会接管或停止该外部进程。</span>
+          </div>
+        )}
 
         {hasConflict && (
           <div className="p-3 rounded-xl border border-amber-500/20 bg-amber-500/10 text-[12px] text-amber-200 flex items-start gap-2">
@@ -1223,7 +1231,12 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
           <div className="p-3 bg-black/20 rounded-xl border border-white/5 space-y-1.5">
             <span className="text-[13px] text-slate-400 font-semibold uppercase tracking-wider block">当前状态</span>
             <div className="flex items-center gap-2">
-              {svc.running ? (
+              {externallyRunning ? (
+                <span className="px-2.5 py-1 rounded-lg bg-sky-500/10 text-sky-300 border border-sky-500/20 font-semibold flex items-center gap-1 animate-fadeIn">
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-ping" />
+                  外部运行 {svc.pid ? `(PID: ${svc.pid})` : ""}
+                </span>
+              ) : svc.running ? (
                 <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold flex items-center gap-1 animate-fadeIn">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
                   运行中 {svc.pid ? `(PID: ${svc.pid})` : ""}
@@ -1252,7 +1265,7 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
               disabled={!canToggle}
               className={`px-4 py-2 ${svc.running ? "bg-red-600 hover:bg-red-500" : "bg-emerald-600 hover:bg-emerald-500"} disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-xl text-xs cursor-pointer shadow-md transition-all flex items-center gap-1`}
             >
-              {serviceCtrlLoading ? "操作中..." : svc.running ? "停止服务" : "启动服务"}
+              {serviceCtrlLoading ? "操作中..." : externallyRunning ? "外部运行" : svc.running ? "停止服务" : "启动服务"}
             </button>
           </div>
         </div>

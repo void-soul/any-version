@@ -758,16 +758,11 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
 
-    #[cfg(windows)]
-    {
-        // 额外确保创建独立的进程组，便于后续 taskkill /T；
-        // 并保留 CREATE_BREAKAWAY_FROM_JOB 让进程脱离 AnyVersion 生命周期。
-        use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB
-        cmd.creation_flags(0x08000000 | 0x00000200 | 0x01000000);
-    }
-
-    let mut child = cmd.spawn().map_err(|e| format!("启动失败: {}", e))?;
+    // 额外确保创建独立的进程组，便于后续 taskkill /T；
+    // 通过 spawn_breakaway_fallback 尝试脱离 AnyVersion 生命周期，
+    // 若所在 Job 不允许 breakaway 则自动降级（不会整体启动失败）。
+    let mut child = crate::commands::hidden_cmd::spawn_breakaway_fallback(cmd)
+        .map_err(|e| format!("启动失败: {}", e))?;
     record_pid(&def.id, child.id());
 
     // 实时回传启动日志（进程常驻，子线程持续读取 stdout/stderr 直到进程退出）

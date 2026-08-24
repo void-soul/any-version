@@ -28,7 +28,8 @@ export interface ServiceStatus {
   pid: number | null;
   data_dir: string;
   log_dir: string;
-  status?: "running" | "stopped" | "not_installed" | "port_conflict" | string | null;
+  status?: "running" | "stopped" | "not_installed" | "port_conflict" | "external_running" | string | null;
+  external?: boolean;
   process_name?: string | null;
   install_root?: string | null;
   config_file?: string | null;

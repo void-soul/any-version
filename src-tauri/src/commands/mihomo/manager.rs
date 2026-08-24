@@ -416,8 +416,7 @@ pub async fn launch_core(app: &AppHandle, inner: Arc<MihomoInner>) -> Result<(),
         eprintln!("[mihomo] TUN 已开启但当前非管理员，可能无法创建虚拟网卡（请以管理员身份运行）");
     }
 
-    let mut child = cmd
-        .spawn()
+    let mut child = crate::commands::hidden_cmd::spawn_breakaway_fallback(cmd)
         .map_err(|e| format!("启动核心失败: {e}（路径: {core:?}）"))?;
     let pid = child.id();
     // CPU 优先级（对齐 clash-party mihomoCpuPriority）

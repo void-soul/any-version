@@ -4,7 +4,6 @@ import Editor from "@monaco-editor/react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
-  ArrowLeftRight,
   Braces,
   Check,
   ChevronDown,
@@ -15,11 +14,9 @@ import {
   FileJson,
   FilePlus2,
   FolderOpen,
-  GitCompareArrows,
   Indent,
   ListTree,
   Map as MapIcon,
-  Table2,
   Maximize2,
   Minimize2,
   PanelLeft,
@@ -34,7 +31,7 @@ import {
 } from "lucide-react";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
-type ViewMode = "tree" | "graph" | "table" | "text" | "compare";
+type ViewMode = "tree" | "graph" | "text";
 
 type GraphItem = {
   id: string;
@@ -57,24 +54,24 @@ type JsonTab = {
   savedText: string | null;
 };
 
+type ParsedJson = {
+  value: JsonValue | null;
+  error: string | null;
+  nodeCount: number;
+  nodeCountCapped: boolean;
+};
+
 export type SearchMatches = {
   query: string;
   paths: Set<string>;
   directPaths: Set<string>;
+  truncated?: boolean;
 };
 
-type TreeNodeProps = {
-  name: string;
-  value: JsonValue;
-  path: string;
-  depth: number;
-  searchMatches: SearchMatches;
-  collapsed: Set<string>;
-  onToggle: (path: string) => void;
-  onCopy: (value: string) => void;
-};
+const EMPTY_SEARCH_MATCHES: SearchMatches = { query: "", paths: new Set<string>(), directPaths: new Set<string>() };
 
 const MAX_TABS = 9;
+const MAX_STRUCTURED_TEXT_BYTES = 20 * 1024 * 1024;
 const JSON_EXTENSIONS = ["json", "jsonc", "json5", "ndjson"];
 
 function typeOf(value: JsonValue): "null" | "array" | "object" | "string" | "number" | "boolean" {
@@ -83,12 +80,13 @@ function typeOf(value: JsonValue): "null" | "array" | "object" | "string" | "num
   return typeof value as "object" | "string" | "number" | "boolean";
 }
 
-function parseJson(text: string): { value: JsonValue | null; error: string | null } {
-  if (!text.trim()) return { value: null, error: null };
+function parseJson(text: string): ParsedJson {
+  if (!text.trim()) return { value: null, error: null, nodeCount: 0, nodeCountCapped: false };
   try {
-    return { value: JSON.parse(text) as JsonValue, error: null };
+    const value = JSON.parse(text) as JsonValue;
+    return { value, error: null, nodeCount: countNodes(value), nodeCountCapped: false };
   } catch (error) {
-    return { value: null, error: error instanceof Error ? error.message : String(error) };
+    return { value: null, error: error instanceof Error ? error.message : String(error), nodeCount: 0, nodeCountCapped: false };
   }
 }
 
@@ -102,14 +100,35 @@ function isContainer(value: JsonValue): boolean {
   return Array.isArray(value) || (typeof value === "object" && value !== null);
 }
 
-function entriesOf(value: JsonValue): Array<[string, JsonValue]> {
-  if (Array.isArray(value)) return value.map((item, index) => [String(index), item]);
-  if (typeof value === "object" && value !== null) return Object.entries(value);
+function entriesOf(value: JsonValue, limit = Number.MAX_SAFE_INTEGER): Array<[string, JsonValue]> {
+  if (Array.isArray(value)) {
+    const result: Array<[string, JsonValue]> = [];
+    const end = Math.min(value.length, limit);
+    for (let index = 0; index < end; index += 1) result.push([String(index), value[index]]);
+    return result;
+  }
+  if (typeof value === "object" && value !== null) return Object.entries(value).slice(0, limit);
   return [];
 }
 
+function containerSize(value: JsonValue): number {
+  if (Array.isArray(value)) return value.length;
+  if (typeof value === "object" && value !== null) return Object.keys(value).length;
+  return 0;
+}
+
 function countNodes(value: JsonValue): number {
-  return entriesOf(value).reduce((total, [, child]) => total + countNodes(child), 1);
+  const stack: JsonValue[] = [value];
+  let count = 0;
+  while (stack.length > 0 && count < 2_000_000) {
+    const current = stack.pop() as JsonValue;
+    count += 1;
+    if (isContainer(current)) {
+      const children = entriesOf(current);
+      for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index][1]);
+    }
+  }
+  return count;
 }
 
 function buildSearchMatches(value: JsonValue, query: string): SearchMatches {
@@ -161,7 +180,7 @@ function tableCandidates(value: JsonValue): TableCandidate[] {
     if (Array.isArray(current)) {
       const objectRows = current.filter((item): item is { [key: string]: JsonValue } => typeof item === "object" && item !== null && !Array.isArray(item));
       if (objectRows.length > 0) {
-        const columns = [...new Set(objectRows.flatMap((row) => Object.keys(row)))].slice(0, 32);
+        const columns = [...new Set(objectRows.slice(0, 80).flatMap((row) => Object.keys(row)))].slice(0, 32);
         result.push({ path, rows: current, columns });
       } else if (current.length > 0) {
         result.push({ path, rows: current, columns: ["value"] });
@@ -177,128 +196,214 @@ function tableCandidates(value: JsonValue): TableCandidate[] {
   return result;
 }
 
-function valueAtPath(value: JsonValue, path: string): JsonValue | null {
-  if (path === "root") return value;
-  return path.split(".").slice(1).reduce<JsonValue | null>((current, segment) => {
-    if (current === null || current === undefined) return null;
-    if (Array.isArray(current)) return current[Number(segment)] ?? null;
-    if (typeof current === "object") return current[segment] ?? null;
-    return null;
-  }, value);
+// ─── 虚拟化结构树 ───
+// 将“可见”的树拍平成一行行数据（只包含已展开的容器），再按固定行高做窗口化渲染：
+// 无论 JSON 有多大，DOM 中始终只存在视口附近的几十行，从根上避免超大文档卡死。
+
+const TREE_ROW_HEIGHT = 22;
+const TREE_OVERSCAN = 10;
+/** 虚拟树最多拍平的行数：超过后截断并提示，避免展开超大数组时一次性占用过多内存。 */
+const MAX_FLAT_TREE_ROWS = 200_000;
+
+const SCALAR_VALUE_CLASS: Record<string, string> = {
+  string: "text-emerald-300",
+  number: "text-amber-300",
+  boolean: "text-violet-300",
+  null: "text-slate-500",
+};
+
+/** 容器子元素数量展示：数组 O(1)，对象最多数 1000 个键，超出显示 "1000+"。 */
+function displayChildCount(value: JsonValue): string {
+  if (Array.isArray(value)) return String(value.length);
+  if (typeof value === "object" && value !== null) {
+    let count = 0;
+    for (const _key in value) {
+      count += 1;
+      if (count > 1000) return "1000+";
+    }
+    return String(count);
+  }
+  return "0";
 }
 
-function compactValue(value: JsonValue): string {
-  if (value === null) return "null";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  const raw = JSON.stringify(value);
-  return raw.length > 100 ? `${raw.slice(0, 97)}...` : raw;
-}
-
-function JsonTableView({ value, query, selectedPath, onSelectPath, onCopy }: {
+type FlatTreeRow = {
+  path: string;
+  name: string;
   value: JsonValue;
-  query: string;
-  selectedPath: string;
-  onSelectPath: (path: string) => void;
-  onCopy: (text: string) => void;
-}) {
-  const candidates = useMemo(() => tableCandidates(value), [value]);
-  const [tablePath, setTablePath] = useState(selectedPath);
-  const selected = candidates.find((candidate) => candidate.path === tablePath) ?? candidates[0] ?? null;
-  useEffect(() => {
-    if (!selected && candidates[0]) setTablePath(candidates[0].path);
-  }, [candidates, selected]);
-  if (!selected) return <div className="flex h-full items-center justify-center text-[11px] text-slate-600">当前 JSON 没有可表格化的数组</div>;
-  const normalized = query.trim().toLowerCase();
-  const rows = selected.rows
-    .map((row, index) => ({ row, index }))
-    .filter(({ row }) => !normalized || JSON.stringify(row).toLowerCase().includes(normalized));
-  const isObjectRows = selected.columns[0] !== "value";
-  return (
-    <div className="flex h-full min-h-0 flex-col bg-slate-950/20">
-      <div className="flex shrink-0 items-center gap-2 border-b border-white/10 px-3 py-2">
-        <Table2 className="h-3.5 w-3.5 text-cyan-300" />
-        <select value={selected.path} onChange={(event) => { setTablePath(event.target.value); onSelectPath(event.target.value); }} className="min-w-0 flex-1 rounded border border-white/10 bg-slate-900 px-2 py-1 text-[10px] text-slate-300 outline-none">
-          {candidates.map((candidate) => <option key={candidate.path} value={candidate.path}>{candidate.path} · {candidate.rows.length} 行</option>)}
-        </select>
-        <button type="button" className="rounded border border-white/10 px-2 py-1 text-[10px] text-slate-400 hover:bg-white/[0.08] hover:text-white" onClick={() => onCopy(copyValue(valueAtPath(value, selected.path) ?? []))}>复制整表</button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-auto p-3">
-        <table className="w-full border-separate border-spacing-0 text-left text-[11px]">
-          <thead><tr>{isObjectRows && <th className="sticky top-0 border-b border-white/10 bg-slate-900 px-2 py-2 font-medium text-slate-500">#</th>}{selected.columns.map((column) => <th key={column} className="sticky top-0 border-b border-white/10 bg-slate-900 px-2 py-2 font-medium text-cyan-300">{column}</th>)}</tr></thead>
-          <tbody>{rows.map(({ row, index }) => <tr key={`${selected.path}.${index}`} className="group hover:bg-white/[0.05]" onClick={() => onSelectPath(`${selected.path}.${index}`)}>{isObjectRows && <td className="border-b border-white/5 px-2 py-2 font-mono text-slate-600">{index + 1}</td>}{selected.columns.map((column) => { const cell = isObjectRows && typeof row === "object" && row !== null && !Array.isArray(row) ? row[column] ?? null : row; return <td key={column} className="max-w-[360px] border-b border-white/5 px-2 py-2 align-top text-slate-300"><span title={copyValue(cell)}>{compactValue(cell)}</span><button type="button" className="ml-2 opacity-0 transition group-hover:opacity-100 text-slate-500 hover:text-white" onClick={(event) => { event.stopPropagation(); onCopy(copyValue(cell)); }} title="复制单元格"><Copy className="inline h-3 w-3" /></button></td>; })}</tr>)}</tbody>
-        </table>
-        {rows.length === 0 && <div className="py-12 text-center text-[11px] text-slate-600">没有匹配的行</div>}
-      </div>
-    </div>
-  );
+  depth: number;
+  container: boolean;
+  collapsed: boolean;
+};
+
+/**
+ * 迭代式拍平“当前可见”的树：
+ * - 搜索时只保留匹配路径（含祖先），且强制展开；
+ * - 折叠的容器整棵跳过；
+ * - 大型文档默认折叠（依赖 expandedPaths 逐层展开）；
+ * - 总行数超过 MAX_FLAT_TREE_ROWS 时截断（truncated=true）。
+ */
+function flattenTreeRows(
+  value: JsonValue,
+  searchMatches: SearchMatches,
+  collapsed: Set<string>,
+  largeDocument: boolean,
+  expandedPaths: Set<string>,
+): { rows: FlatTreeRow[]; truncated: boolean } {
+  const rows: FlatTreeRow[] = [];
+  const searching = Boolean(searchMatches.query);
+  const stack: Array<{ path: string; name: string; value: JsonValue; depth: number }> = [
+    { path: "root", name: "root", value, depth: 0 },
+  ];
+  let truncated = false;
+
+  while (stack.length > 0 && !truncated) {
+    const current = stack.pop() as (typeof stack)[number];
+    if (searching && !searchMatches.paths.has(current.path)) continue;
+    const container = isContainer(current.value);
+    const collapsedHere =
+      container &&
+      !searching &&
+      (collapsed.has(current.path) ||
+        (largeDocument && current.depth > 0 && !expandedPaths.has(current.path)));
+    rows.push({
+      path: current.path,
+      name: current.name,
+      value: current.value,
+      depth: current.depth,
+      container,
+      collapsed: collapsedHere,
+    });
+    if (rows.length >= MAX_FLAT_TREE_ROWS) {
+      truncated = true;
+      break;
+    }
+    if (!container || collapsedHere) continue;
+    // 只展开当前还有预算的子元素：超大数组/对象不会一次性全部入栈。
+    const budget = MAX_FLAT_TREE_ROWS - rows.length;
+    const children = childEntriesBounded(current.value, budget + 1);
+    if (children.length > budget) truncated = true;
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      const [childName, child] = children[index];
+      stack.push({
+        path: current.path ? `${current.path}.${childName}` : childName,
+        name: childName,
+        value: child,
+        depth: current.depth + 1,
+      });
+    }
+  }
+  return { rows, truncated };
 }
 
-function TreeNode({ name, value, path, depth, searchMatches, collapsed, onToggle, onCopy }: TreeNodeProps) {
-  if (searchMatches.query && !searchMatches.paths.has(path)) return null;
-  const type = typeOf(value);
-  const container = isContainer(value);
-  const isCollapsed = collapsed.has(path) && !searchMatches.query;
-  const hit = searchMatches.directPaths.has(path);
-  const keyClass = hit ? "text-cyan-200 bg-cyan-400/15 rounded px-0.5" : "text-sky-300";
-  const valueClass: Record<string, string> = {
-    string: "text-emerald-300",
-    number: "text-amber-300",
-    boolean: "text-violet-300",
-    null: "text-slate-500",
-  };
-  const children = entriesOf(value);
+/** 取容器前 limit 个子元素（数组用下标，对象用 for..in，避免 Object.entries 全量拷贝）。 */
+function childEntriesBounded(value: JsonValue, limit: number): Array<[string, JsonValue]> {
+  const result: Array<[string, JsonValue]> = [];
+  if (Array.isArray(value)) {
+    const end = Math.min(value.length, limit);
+    for (let index = 0; index < end; index += 1) result.push([String(index), value[index]]);
+    return result;
+  }
+  if (typeof value === "object" && value !== null) {
+    for (const key in value) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+      result.push([key, value[key]]);
+      if (result.length >= limit) break;
+    }
+  }
+  return result;
+}
+
+function VirtualJsonTree({ value, searchMatches, collapsed, largeDocument, expandedPaths, onToggle, onCopy }: {
+  value: JsonValue;
+  searchMatches: SearchMatches;
+  collapsed: Set<string>;
+  largeDocument: boolean;
+  expandedPaths: Set<string>;
+  onToggle: (path: string) => void;
+  onCopy: (value: string) => void;
+}) {
+  const flat = useMemo(
+    () => flattenTreeRows(value, searchMatches, collapsed, largeDocument, expandedPaths),
+    [value, searchMatches, collapsed, largeDocument, expandedPaths],
+  );
+  const rows = flat.rows;
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    const measure = () => setViewportHeight(node.clientHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  // 折叠/搜索变化后滚回顶部，避免停留在已失效的偏移上。
+  useEffect(() => {
+    setScrollTop(0);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [value, searchMatches.query, collapsed.size, expandedPaths.size]);
+
+  const start = Math.max(0, Math.floor(scrollTop / TREE_ROW_HEIGHT) - TREE_OVERSCAN);
+  const end = Math.min(rows.length, Math.ceil((scrollTop + viewportHeight) / TREE_ROW_HEIGHT) + TREE_OVERSCAN);
+  const slice = rows.slice(start, end);
 
   return (
-    <div>
-      <div
-        className="group flex min-h-[22px] items-center gap-1 rounded px-1 font-mono text-[12px] hover:bg-white/[0.06]"
-        style={{ paddingLeft: `${depth * 15 + 2}px` }}
-      >
-        {container ? (
-          <button
-            type="button"
-            onClick={() => onToggle(path)}
-            className="flex h-4 w-4 items-center justify-center text-slate-500 hover:text-slate-200"
-            aria-label={isCollapsed ? "展开" : "折叠"}
-            title={isCollapsed ? "展开" : "折叠"}
-          >
-            {isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-          </button>
-        ) : (
-          <span className="w-4" />
-        )}
-        {name !== "root" && <><span className={keyClass}>{name}</span><span className="text-slate-600">:</span></>}
-        {container ? (
-          <span className="text-sky-400">{type === "array" ? `array [${children.length}]` : `object {${children.length}}`}</span>
-        ) : (
-          <span className={valueClass[type] ?? "text-slate-400"}>{type === "string" ? `"${value}"` : String(value)}</span>
-        )}
-        <button
-          type="button"
-          onClick={() => onCopy(copyValue(value))}
-          className="ml-1 opacity-0 transition-opacity group-hover:opacity-100 text-slate-500 hover:text-slate-200"
-          title={container ? "复制子树" : "复制值"}
-          aria-label={container ? "复制子树" : "复制值"}
-        >
-          <Copy className="h-3 w-3" />
-        </button>
+    <div
+      ref={scrollRef}
+      className="h-full overflow-auto font-mono"
+      onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+    >
+      <div style={{ height: rows.length * TREE_ROW_HEIGHT, position: "relative" }}>
+        {slice.map((row, index) => {
+          const absoluteIndex = start + index;
+          const hit = searchMatches.directPaths.has(row.path);
+          const keyClass = hit ? "text-cyan-200 bg-cyan-400/15 rounded px-0.5" : "text-sky-300";
+          const type = typeOf(row.value);
+          return (
+            <div
+              key={row.path}
+              className="group absolute inset-x-0 flex items-center gap-1 rounded px-1 text-[12px] hover:bg-white/[0.06]"
+              style={{ top: absoluteIndex * TREE_ROW_HEIGHT, height: TREE_ROW_HEIGHT, paddingLeft: `${row.depth * 15 + 2}px` }}
+            >
+              {row.container ? (
+                <button
+                  type="button"
+                  onClick={() => onToggle(row.path)}
+                  className="flex h-4 w-4 items-center justify-center text-slate-500 hover:text-slate-200"
+                  aria-label={row.collapsed ? "展开" : "折叠"}
+                  title={row.collapsed ? "展开" : "折叠"}
+                >
+                  {row.collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                </button>
+              ) : (
+                <span className="w-4" />
+              )}
+              {row.name !== "root" && <><span className={keyClass}>{row.name}</span><span className="text-slate-600">:</span></>}
+              {row.container ? (
+                <span className="text-sky-400">{type === "array" ? `array [${displayChildCount(row.value)}]` : `object {${displayChildCount(row.value)}}`}</span>
+              ) : (
+                <span className={SCALAR_VALUE_CLASS[type] ?? "text-slate-400"}>{type === "string" ? `"${row.value}"` : String(row.value)}</span>
+              )}
+              <button
+                type="button"
+                onClick={() => onCopy(copyValue(row.value))}
+                className="ml-1 opacity-0 transition-opacity group-hover:opacity-100 text-slate-500 hover:text-slate-200"
+                title={row.container ? "复制子树" : "复制值"}
+                aria-label={row.container ? "复制子树" : "复制值"}
+              >
+                <Copy className="h-3 w-3" />
+              </button>
+            </div>
+          );
+        })}
       </div>
-      {container && !isCollapsed && (
-        <div>
-          {children.map(([childName, child]) => (
-            <TreeNode
-              key={`${path}.${childName}`}
-              name={childName}
-              value={child}
-              path={path ? `${path}.${childName}` : childName}
-              depth={depth + 1}
-              searchMatches={searchMatches}
-              collapsed={collapsed}
-              onToggle={onToggle}
-              onCopy={onCopy}
-            />
-          ))}
+      {flat.truncated && (
+        <div className="sticky bottom-0 px-2 py-1 text-[10px] text-amber-200">
+          仅显示前 {rows.length.toLocaleString()} 行（超出部分已截断，请搜索或折叠以缩小范围）
         </div>
       )}
     </div>
@@ -672,23 +777,6 @@ function GraphCanvas({ value, selectedPath, searchMatches, onSelectPath, onCopy 
   );
 }
 
-function CompareSummary({ left, right }: { left: string; right: string }) {
-  const leftLines = normalizeJsonText(left).split("\n");
-  const rightLines = normalizeJsonText(right).split("\n");
-  const max = Math.max(leftLines.length, rightLines.length);
-  let changed = 0;
-  for (let index = 0; index < max; index += 1) {
-    if (leftLines[index] !== rightLines[index]) changed += 1;
-  }
-  const equal = changed === 0;
-  return (
-    <div className={`flex items-center gap-2 border-b px-3 py-2 text-[11px] ${equal ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300" : "border-amber-500/20 bg-amber-500/10 text-amber-200"}`}>
-      <GitCompareArrows className="h-3.5 w-3.5" />
-      {equal ? "两份文档内容一致" : `发现 ${changed} 行差异 · 左侧 ${leftLines.length} 行 · 右侧 ${rightLines.length} 行`}
-    </div>
-  );
-}
-
 export default function JsonBrowser() {
   const [tabs, setTabs] = useState<JsonTab[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -697,12 +785,13 @@ export default function JsonBrowser() {
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [showLeft, setShowLeft] = useState(true);
   const [showRight, setShowRight] = useState(true);
   const [syncScroll, setSyncScroll] = useState(true);
   const [notice, setNotice] = useState("");
   const [rightText, setRightText] = useState("");
-  const [compareText, setCompareText] = useState("");
+  const [collapseAllToken, setCollapseAllToken] = useState(0);
   const [copyState, setCopyState] = useState(false);
   const sourceEditorRef = useRef<any>(null);
   const rightEditorRef = useRef<any>(null);
@@ -710,9 +799,74 @@ export default function JsonBrowser() {
   const syncLock = useRef<"left" | "right" | null>(null);
 
   const active = tabs.find((tab) => tab.id === activeId) ?? null;
-  const parsed = useMemo(() => parseJson(active?.text ?? ""), [active?.text]);
-  const searchMatches = useMemo(() => parsed.value === null ? { query: "", paths: new Set<string>(), directPaths: new Set<string>() } : buildSearchMatches(parsed.value, deferredQuery), [parsed.value, deferredQuery]);
-  const compareParsed = useMemo(() => parseJson(compareText), [compareText]);
+  const [parsed, setParsed] = useState<ParsedJson>({ value: null, error: null, nodeCount: 0, nodeCountCapped: false });
+  const [parsePending, setParsePending] = useState(false);
+  const [searchMatches, setSearchMatches] = useState<SearchMatches>(EMPTY_SEARCH_MATCHES);
+  const [oversizedDocument, setOversizedDocument] = useState(false);
+  const workerRef = useRef<Worker | null>(null);
+  const workerReady = useRef(false);
+  const parseRequestId = useRef(0);
+  const searchRequestId = useRef(0);
+  const largeDocument = oversizedDocument || parsed.nodeCount > 10_000 || parsed.nodeCountCapped;
+
+  useEffect(() => {
+    const worker = new Worker(new URL("./jsonWorker.ts", import.meta.url), { type: "module" });
+    workerRef.current = worker;
+    workerReady.current = true;
+    worker.onmessage = (event: MessageEvent<{ id: number; type: string; value?: JsonValue | null; error?: string | null; nodeCount?: number; nodeCountCapped?: boolean; query?: string; paths?: string[]; directPaths?: string[]; truncated?: boolean }>) => {
+      const response = event.data;
+      if (response.type === "parse" && response.id === parseRequestId.current) {
+        setParsed({ value: response.value ?? null, error: response.error ?? null, nodeCount: response.nodeCount ?? 0, nodeCountCapped: response.nodeCountCapped ?? false });
+        setParsePending(false);
+        setCollapsed(response.nodeCount && response.nodeCount > 10_000 ? new Set(["root"]) : new Set());
+        setExpandedPaths(new Set());
+      }
+      if (response.type === "search" && response.id === searchRequestId.current) {
+        setSearchMatches({ query: response.query ?? "", paths: new Set(response.paths ?? []), directPaths: new Set(response.directPaths ?? []), truncated: response.truncated });
+      }
+    };
+    return () => {
+      workerReady.current = false;
+      worker.terminate();
+      workerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const requestId = ++parseRequestId.current;
+    const text = active?.text ?? "";
+    setParsePending(true);
+    setSearchMatches(EMPTY_SEARCH_MATCHES);
+    setExpandedPaths(new Set());
+    const byteLength = new Blob([text]).size;
+    const oversized = byteLength > MAX_STRUCTURED_TEXT_BYTES;
+    setOversizedDocument(oversized);
+    if (oversized) {
+      setParsed({ value: null, error: null, nodeCount: 0, nodeCountCapped: true });
+      setParsePending(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      if (!workerReady.current || !workerRef.current) {
+        const fallback = parseJson(text);
+        setParsed(fallback);
+        setParsePending(false);
+        return;
+      }
+      workerRef.current.postMessage({ id: requestId, type: "parse", text });
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [active?.text]);
+
+  useEffect(() => {
+    const queryValue = deferredQuery.trim();
+    if (!queryValue || !parsed.value || !workerReady.current || !workerRef.current) {
+      setSearchMatches(queryValue ? EMPTY_SEARCH_MATCHES : { ...EMPTY_SEARCH_MATCHES, query: "" });
+      return;
+    }
+    const requestId = ++searchRequestId.current;
+    workerRef.current.postMessage({ id: requestId, type: "search", query: queryValue });
+  }, [deferredQuery, parsed.value]);
   const dirty = Boolean(active && active.savedText !== null && active.text !== active.savedText);
 
   const flash = useCallback((message: string) => {
@@ -745,9 +899,9 @@ export default function JsonBrowser() {
   useEffect(() => {
     if (!active) return;
     setRightText(active.text);
-    setCompareText("");
     setViewMode("tree");
     setCollapsed(new Set());
+    setExpandedPaths(new Set());
   }, [activeId]);
 
   const updateActive = useCallback((patch: Partial<JsonTab>) => {
@@ -881,19 +1035,6 @@ export default function JsonBrowser() {
     }
   };
 
-  const loadCompareFile = async () => {
-    try {
-      const selected = await open({ multiple: false, title: "选择对比文档", filters: [{ name: "JSON", extensions: JSON_EXTENSIONS }] });
-      if (typeof selected !== "string") return;
-      const text = await invoke<string>("read_text_file", { path: selected });
-      setCompareText(text);
-      setViewMode("compare");
-      flash("已载入右侧对比文档");
-    } catch (error) {
-      flash(`载入对比文档失败：${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
   const handleDrop = async (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     const file = event.dataTransfer.files[0];
@@ -924,14 +1065,21 @@ export default function JsonBrowser() {
   }, [active]);
 
   const collapseAll = () => {
-    const next = new Set<string>();
-    const visit = (value: JsonValue, path: string) => {
-      if (!isContainer(value)) return;
-      next.add(path);
-      entriesOf(value).forEach(([name, child]) => visit(child, path ? `${path}.${name}` : name));
-    };
-    if (parsed.value !== null) visit(parsed.value, "root");
-    setCollapsed(next);
+    if (largeDocument) {
+      setCollapsed(new Set(["root"]));
+      setExpandedPaths(new Set());
+    } else {
+      const next = new Set<string>();
+      const stack: Array<{ value: JsonValue; path: string }> = parsed.value === null ? [] : [{ value: parsed.value, path: "root" }];
+      while (stack.length > 0) {
+        const current = stack.pop() as (typeof stack)[number];
+        if (!isContainer(current.value)) continue;
+        next.add(current.path);
+        entriesOf(current.value).forEach(([name, child]) => stack.push({ value: child, path: `${current.path}.${name}` }));
+      }
+      setCollapsed(next);
+    }
+    setCollapseAllToken((token) => token + 1);
   };
 
   const scrollEditors = (source: "left" | "right", position: { scrollTop: number; scrollLeft: number }) => {
@@ -945,8 +1093,8 @@ export default function JsonBrowser() {
     });
   };
 
-  const topCount = parsed.value !== null && isContainer(parsed.value) ? entriesOf(parsed.value).length : 0;
-  const nodes = parsed.value !== null ? countNodes(parsed.value) : 0;
+  const topCount = parsed.value !== null && isContainer(parsed.value) ? containerSize(parsed.value) : 0;
+  const nodes = parsed.nodeCount;
   const language = "json";
   const buttonClass = "inline-flex h-7 items-center gap-1 rounded-md border border-white/10 bg-white/[0.05] px-2 text-[11px] font-medium text-slate-300 transition-colors hover:bg-white/[0.11] hover:text-white disabled:cursor-not-allowed disabled:opacity-40";
   const iconButtonClass = "inline-flex h-7 w-7 items-center justify-center rounded-md border border-white/10 bg-white/[0.05] text-slate-400 transition-colors hover:bg-white/[0.11] hover:text-white disabled:cursor-not-allowed disabled:opacity-40";
@@ -1017,30 +1165,22 @@ export default function JsonBrowser() {
           <section className={`${showLeft ? "w-1/2" : "w-full"} flex min-h-0 min-w-0 flex-col bg-slate-950/20`}>
             <div className="flex h-8 shrink-0 items-center gap-1 border-b border-white/10 px-2 text-[10px] text-slate-500">
               <button type="button" onClick={() => setViewMode("tree")} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "tree" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><ListTree className="h-3 w-3" />结构</button>
-              <button type="button" onClick={() => setViewMode("graph")} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "graph" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><GitCompareArrows className="h-3 w-3" />图形树</button>
-              <button type="button" onClick={() => setViewMode("table")} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "table" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><Table2 className="h-3 w-3" />表格</button>
-              <button type="button" onClick={() => { setRightText(active?.text ?? ""); setViewMode("text"); }} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "text" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><Braces className="h-3 w-3" />预览</button>
-              <button type="button" onClick={() => setViewMode("compare")} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "compare" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><GitCompareArrows className="h-3 w-3" />对比</button>
-              <span className="ml-auto flex items-center gap-2">
-                {parsed.value !== null && <span>顶层 {topCount} · 节点 {nodes}</span>}
+              <button type="button" onClick={() => setViewMode("graph")} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "graph" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><MapIcon className="h-3 w-3" />图形树</button>
+              <button type="button" onClick={() => { setRightText(active?.text ?? ""); setViewMode("text"); }} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "text" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><Braces className="h-3 w-3" />预览</button>              <span className="ml-auto flex items-center gap-2">
+                {oversizedDocument ? <span className="text-amber-300">超大型文档 · 结构视图已暂停</span> : parsed.value !== null && <span>{parsePending ? "解析中…" : `${topCount} 项 · ${nodes}${parsed.nodeCountCapped ? "+" : ""} 节点`}</span>}
                 <button type="button" onClick={() => setSyncScroll((value) => !value)} className={syncScroll ? "text-cyan-300" : "text-slate-600"} title={syncScroll ? "关闭同步滚动" : "开启同步滚动"} aria-label="同步滚动"><Split className="h-3.5 w-3.5" /></button>
                 <button type="button" onClick={() => setShowLeft((value) => !value)} className="hover:text-slate-200" title="切换左侧编辑器" aria-label="切换左侧编辑器"><PanelLeft className="h-3.5 w-3.5" /></button>
               </span>
             </div>
 
             {viewMode === "tree" && (
-              <div className="min-h-0 flex-1 overflow-auto p-2 font-mono">
-                {parsed.value === null ? <div className="py-10 text-center text-[11px] text-slate-600">输入有效 JSON 后显示结构树</div> : <TreeNode name="root" value={parsed.value} path="root" depth={0} searchMatches={searchMatches} collapsed={collapsed} onToggle={(path) => setCollapsed((previous) => { const next = new Set(previous); if (next.has(path)) next.delete(path); else next.add(path); return next; })} onCopy={(value) => void copyValue(value)} />}
+              <div className="min-h-0 flex-1 overflow-hidden p-2 font-mono">
+                {oversizedDocument ? <div className="py-10 text-center text-[11px] leading-5 text-amber-200">文件超过 20 MB，已切换为文本优先模式。<br />请使用左侧编辑器查看和编辑完整内容。</div> : parsed.value === null ? <div className="py-10 text-center text-[11px] text-slate-600">输入有效 JSON 后显示结构树</div> : <VirtualJsonTree value={parsed.value} searchMatches={searchMatches} collapsed={collapsed} largeDocument={largeDocument} expandedPaths={expandedPaths} onToggle={(path) => { if (largeDocument && path !== "root") { setExpandedPaths((previous) => { const next = new Set(previous); if (next.has(path)) next.delete(path); else next.add(path); return next; }); } else { setCollapsed((previous) => { const next = new Set(previous); if (next.has(path)) next.delete(path); else next.add(path); return next; }); } }} onCopy={(value) => void copyValue(value)} />}
               </div>
             )}
             {viewMode === "graph" && (
               <div className="min-h-0 flex-1">
-                {parsed.value === null ? <div className="flex h-full items-center justify-center text-[11px] text-slate-600">输入有效 JSON 后显示图形树</div> : <JsonFlowCanvas value={parsed.value} selectedPath={selectedPath} searchMatches={searchMatches} onSelectPath={revealPathInEditor} onCopy={(value) => void copyValue(value)} />}
-              </div>
-            )}
-            {viewMode === "table" && (
-              <div className="min-h-0 flex-1">
-                {parsed.value === null ? <div className="flex h-full items-center justify-center text-[11px] text-slate-600">输入有效 JSON 后显示表格</div> : <JsonTableView value={parsed.value} query={deferredQuery} selectedPath={selectedPath} onSelectPath={revealPathInEditor} onCopy={(value) => void copyValue(value)} />}
+                {oversizedDocument ? <div className="flex h-full items-center justify-center px-6 text-center text-[11px] leading-5 text-amber-200">文件超过 20 MB，图形视图已暂停以保持界面响应。<br />可在文本编辑器中查看完整 JSON。</div> : parsed.value === null ? <div className="flex h-full items-center justify-center text-[11px] text-slate-600">输入有效 JSON 后显示图形树</div> : <JsonFlowCanvas value={parsed.value} selectedPath={selectedPath} searchMatches={searchMatches} onSelectPath={revealPathInEditor} onCopy={(value) => void copyValue(value)} collapseAllToken={collapseAllToken} />}
               </div>
             )}
             {viewMode === "text" && (
@@ -1063,17 +1203,6 @@ export default function JsonBrowser() {
                 />
               </div>
             )}
-            {viewMode === "compare" && (
-              <div className="flex min-h-0 flex-1 flex-col">
-                <div className="flex shrink-0 items-center gap-1 border-b border-white/10 px-2 py-1.5">
-                  <button type="button" className={buttonClass} onClick={() => void loadCompareFile()}><FolderOpen className="h-3.5 w-3.5" />载入对比文件</button>
-                  <button type="button" className={buttonClass} onClick={() => setCompareText(active?.text ?? "")}><ArrowLeftRight className="h-3.5 w-3.5" />复制当前内容</button>
-                  {compareParsed.error && <span className="text-[10px] text-red-300">右侧 JSON 无效</span>}
-                </div>
-                <CompareSummary left={active?.text ?? ""} right={compareText} />
-                <div className="min-h-0 flex-1"><Editor height="100%" language="json" theme="vs-dark" value={compareText} onChange={(value) => setCompareText(value ?? "")} options={{ minimap: { enabled: false }, fontSize: 12, lineNumbers: "on", wordWrap: "on", automaticLayout: true, padding: { top: 8, bottom: 8 } }} /></div>
-              </div>
-            )}
           </section>
         )}
 
@@ -1081,7 +1210,7 @@ export default function JsonBrowser() {
       </div>
 
       <div className="flex h-7 shrink-0 items-center gap-3 border-t border-white/10 bg-slate-950/55 px-3 text-[10px] text-slate-500">
-        <span className="flex items-center gap-1"><Play className="h-3 w-3 text-emerald-400" />{parsed.error ? "JSON 无效" : parsed.value === null ? "等待输入" : "JSON 有效"}</span>
+        <span className="flex items-center gap-1"><Play className="h-3 w-3 text-emerald-400" />{oversizedDocument ? "文本优先模式" : parsePending ? "解析中" : parsed.error ? "JSON 无效" : parsed.value === null ? "等待输入" : "JSON 有效"}</span>
         <span>{active ? `${active.name}${active.path ? ` · ${active.path}` : ""}` : "无文档"}</span>
         <span className="ml-auto">{active ? `${formatBytes(new Blob([active.text]).size)} · ${active.text.split(/\r?\n/).length} 行` : ""}</span>
         <button type="button" className="hover:text-slate-200" onClick={() => setShowRight((value) => !value)} title={showRight ? "隐藏右侧面板" : "显示右侧面板"} aria-label={showRight ? "隐藏右侧面板" : "显示右侧面板"}>{showRight ? <PanelRight className="h-3.5 w-3.5" /> : <PanelRight className="h-3.5 w-3.5 opacity-50" />}</button>

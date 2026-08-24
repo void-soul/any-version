@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { X, Folder, Check } from "lucide-react";
+import { X, Folder, Check, Eraser } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Classification, ClassificationData } from "./types";
 import CategoryTreeSelect from "./CategoryTreeSelect";
@@ -34,7 +34,7 @@ export default function CategoryModal({
   const [classificationType, setClassificationType] = useState<number>(
     editingCategory ? (editingCategory.classificationType || 0) : 0
   );
-  const [icon, setIcon] = useState(editingCategory?.data?.icon || "📁");
+  const [icon, setIcon] = useState(editingCategory?.data?.icon ?? "📁");
   const [customEmoji, setCustomEmoji] = useState("");
   const [associateFolderPath, setAssociateFolderPath] = useState(
     editingCategory?.data?.associateFolderPath || ""
@@ -98,7 +98,7 @@ export default function CategoryModal({
     setSaving(true);
     try {
       const data: ClassificationData = {
-        icon: icon || "📁",
+        icon: icon.trim() || null,
         associateFolderPath: classificationType === 1 ? associateFolderPath : undefined,
         associateFolderHiddenItems: classificationType === 1 ? associateFolderHiddenItems : undefined,
         itemShowOnly: classificationType === 1 ? itemShowOnly : "default",
@@ -218,7 +218,7 @@ export default function CategoryModal({
             <label className="block text-xs font-medium text-slate-400 mb-1.5">分类图标 / Emoji</label>
             <div className="flex items-center gap-2 mb-2">
               <div className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-lg flex-shrink-0">
-                {icon}
+                {icon || <span className="text-slate-600">∅</span>}
               </div>
               <input
                 type="text"
@@ -232,6 +232,19 @@ export default function CategoryModal({
                 placeholder="输入任意 Emoji 或字符"
                 className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
               />
+              <button
+                type="button"
+                onClick={() => {
+                  setIcon("");
+                  setCustomEmoji("");
+                }}
+                disabled={!icon}
+                className="w-9 h-9 rounded-xl border border-white/10 bg-white/5 text-slate-500 hover:text-white hover:bg-white/10 transition cursor-pointer disabled:cursor-not-allowed disabled:opacity-30 flex items-center justify-center"
+                title="清空分类图标"
+                aria-label="清空分类图标"
+              >
+                <Eraser className="w-3.5 h-3.5" />
+              </button>
             </div>
             <div className="flex flex-wrap gap-1.5 p-2 rounded-xl bg-white/[0.02] border border-white/5 max-h-24 overflow-y-auto">
               {EMOJI_PRESETS.map((em) => (

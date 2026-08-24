@@ -266,6 +266,33 @@ pub fn clipboard_remember_window() -> Result<(), String> {
     Ok(())
 }
 
+/// 将最新剪贴板图片复制到任务截图目录，返回保存后的绝对路径。
+#[tauri::command]
+pub fn clipboard_save_latest_image_for_task(
+    state: State<'_, ClipboardState>,
+) -> Result<String, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let item = conn
+        .query_row(
+            "SELECT image_path FROM clipboard_items WHERE kind = 'image' ORDER BY created_at DESC LIMIT 1",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .map_err(|e| format!("没有可用的剪贴板截图: {}", e))?
+        .ok_or_else(|| "最近的剪贴板图片没有文件路径".to_string())?;
+    let source = db::image_file_path(&state.data_dir, &item);
+    if !source.is_file() {
+        return Err("最近的剪贴板图片文件不存在".to_string());
+    }
+
+    let target_dir = crate::commands::config::get_data_dir().join("tasks").join("screenshots");
+    std::fs::create_dir_all(&target_dir).map_err(|e| format!("创建任务截图目录失败: {}", e))?;
+    let stem = super::images::new_stem();
+    let target = target_dir.join(format!("task_{}.png", stem));
+    std::fs::copy(&source, &target).map_err(|e| format!("保存任务截图失败: {}", e))?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
 /// 读取图片为 base64 data-url（供前端预览）
 #[tauri::command]
 pub fn clipboard_get_image(

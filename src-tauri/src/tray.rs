@@ -498,17 +498,27 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         builder = builder.item(&empty);
     }
 
-    // 服务：仅显示「已托管 + 已检出 install_root」的服务项，平铺到顶层（不再用「服务」外层包装）
+    // 服务平铺到顶层：已托管服务正常显示；未托管但检测到外部进程运行的服务也显示，
+    // 让托盘能够反映 MySQL/Redis 等由系统服务或其它程序启动的实例。
     let mut any_service = false;
-    // 一次性收集所有待显示的服务 id，读取后台刷新的快照，避免在主线程同步执行
+    // 一次性收集所有服务 id，读取后台刷新的快照，避免在主线程同步执行
     // tasklist/wmic/netstat（长时运行后这些命令变慢会阻塞事件循环，导致托盘无响应）。
-    let managed_ids: Vec<String> = config.managed_items.iter().cloned().collect();
-    let status_snapshot = crate::commands::service::service_status_snapshot(&managed_ids);
+    let service_ids: Vec<String> = registry
+        .iter()
+        .filter(|def| def.category == crate::commands::project::types::ProjectCategory::Service || def.is_service)
+        .map(|def| def.id.clone())
+        .collect();
+    let status_snapshot = crate::commands::service::service_status_snapshot(&service_ids);
     for def in &registry {
         if def.category != crate::commands::project::types::ProjectCategory::Service && !def.is_service {
             continue;
         }
-        if !config.managed_items.contains(&def.id) {
+        let status = status_snapshot
+            .get(&def.id)
+            .cloned()
+            .unwrap_or_default();
+        let externally_running = status.external || status.status.as_deref() == Some("external_running");
+        if !config.managed_items.contains(&def.id) && !externally_running {
             continue;
         }
 
@@ -518,10 +528,6 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         }
 
         // 从快照取状态；快照未就绪（首次构建/后台刷新中）时用默认值兜底
-        let status = status_snapshot
-            .get(&def.id)
-            .cloned()
-            .unwrap_or_default();
         let status_text = status.status.as_deref().unwrap_or(if status.running { "running" } else { "stopped" });
         if status_text == "not_installed" {
             continue;
@@ -540,24 +546,33 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         };
         // 启动中状态：显示「⋯ 启动中」并置灰禁用，防止重复启动
         let starting = starting_services_contains(&def.id);
-        let (item_id, label) = if starting {
+        let (item_id, label, enabled) = if starting {
             (
                 format!("{}{}", ID_SERVICE_START_PREFIX, def.id),
                 format!("⋯ {} · 启动中", def.display_name),
+                false,
+            )
+        } else if externally_running {
+            (
+                format!("{}{}", ID_SERVICE_START_PREFIX, def.id),
+                format!("● {} · 外部运行", def.display_name),
+                false,
             )
         } else if status.running {
             (
                 format!("{}{}", ID_SERVICE_STOP_PREFIX, def.id),
                 format!("■ {} · 停止{}", def.display_name, port_text),
+                true,
             )
         } else {
             (
                 format!("{}{}", ID_SERVICE_START_PREFIX, def.id),
                 format!("▶ {} · 启动", def.display_name),
+                true,
             )
         };
         let item = MenuItemBuilder::with_id(item_id, label)
-            .enabled(!starting)
+            .enabled(enabled)
             .build(app)?;
         builder = builder.item(&item);
     }

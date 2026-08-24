@@ -28,9 +28,22 @@ static LAST_TRANSLATE_RESULT: std::sync::Mutex<Option<serde_json::Value>> =
 static POPUP_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static TRANSLATE_REQUEST_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// 保存最近结果快照，且保证版本号单调递增：
+/// trigger_selection_translate 与 translate_text 都会写入快照，后写的
+/// requestId 必须不小于已有快照，避免版本号回退导致悬浮窗轮询误判。
 fn set_last_translate_result(v: serde_json::Value) {
+    let new_seq = v.get("requestId").and_then(|r| r.as_u64());
     if let Ok(mut g) = LAST_TRANSLATE_RESULT.lock() {
-        *g = Some(v);
+        let keep_old = match (&*g, new_seq) {
+            (Some(old), Some(new_id)) => old
+                .get("requestId")
+                .and_then(|r| r.as_u64())
+                .is_some_and(|old_id| old_id > new_id),
+            _ => false,
+        };
+        if !keep_old {
+            *g = Some(v);
+        }
     }
 }
 
@@ -278,6 +291,11 @@ pub async fn translate_text(
         return Err("待翻译文本为空".to_string());
     }
 
+    // 版本标记：前端点击翻译也是一次“新的翻译请求”，必须递增版本号并保存快照。
+    // 悬浮窗通过轮询 get_last_translate_result + requestId 比较版本，
+    // 只有后端版本号领先时才会覆盖页面上的原文/译文（用户手动翻译同样推进版本）。
+    let request_id = TRANSLATE_REQUEST_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+
     let cfg = load_ai_config();
     let (provider, model) = resolve_translation_target(&cfg, &provider_id, &model_id)?;
 
@@ -376,7 +394,7 @@ pub async fn translate_text(
         .unwrap_or(0);
     add_history_entry(TranslateHistoryEntry {
         id: new_entry_id(ts),
-        source: text,
+        source: text.clone(),
         result: content.clone(),
         target: target.clone(),
         provider: provider.name,
@@ -385,6 +403,13 @@ pub async fn translate_text(
         pinned: false,
     });
     let _ = app.emit("translate-history-changed", ());
+
+    // 保存最近结果快照（含版本号），供悬浮窗轮询同步；
+    // 与 trigger_selection_translate 的 ok_payload 结构保持一致。
+    let ok_payload = serde_json::json!({
+        "loading": false, "source": text, "result": content, "target": target, "requestId": request_id
+    });
+    set_last_translate_result(ok_payload);
 
     Ok(content)
 }
