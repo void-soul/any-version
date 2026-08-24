@@ -1,7 +1,7 @@
 // 二级代理页 —— 管理多个家庭 socks5 二级代理，选择启用哪个连接
 // 链路：网络请求 → 一级代理（在「代理」页选中） → 二级代理（本页启用） → 目标
 // 界面与「代理」页统一：网格列数可调、选中绿色背景+绿色边框、支持测速
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, Pencil, Trash2, Zap, RefreshCw, Info, Layers, Check, ChevronDown, Filter, X } from "lucide-react";
 import { mihomoApi, SecondaryProxy } from "../mihomoApi";
 import { cardCls, Modal, btnSec, btnPrimary, inputCls, labelCls, delayColor, delayText } from "./ui";
@@ -317,7 +317,7 @@ const SECONDARY_PRESETS: { cat: string; domains: string[] }[] = [
   { cat: "AI", domains: ["openai.com", "chatgpt.com", "claude.ai", "anthropic.com", "gemini.google.com", "aistudio.google.com", "groq.com", "mistral.ai", "poe.com"] },
 ];
 
-function SecondaryPresetPanel({ running, profileId }: { running: boolean; profileId: string }) {
+function SecondaryPresetPanel({ profileId }: { running: boolean; profileId: string }) {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);

@@ -1,12 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
 use std::process::{Command, Child, ChildStdin, Stdio};
 #[cfg(windows)]
 #[cfg(windows)]
 use std::os::windows::process::CommandExt; // raw_arg：原样透传参数，阻止 Rust 对 cmd /c 命令串重新加引号
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::Mutex;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::Notify;

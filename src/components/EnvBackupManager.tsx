@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ShieldCheck,
@@ -28,8 +28,7 @@ export default function EnvBackupManager() {
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const [repairing, setRepairing] = useState(false);
-  const [repairLog, setRepairLog] = useState<string[] | null>(null);
+  const [repairLog] = useState<string[] | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // Description for new backup
@@ -112,22 +111,6 @@ export default function EnvBackupManager() {
       }
     } finally {
       setRestoring(false);
-    }
-  };
-
-  const handleRepairRegistry = async () => {
-    if (!confirm("此操作将修复注册表中环境变量的类型错误（REG_SZ ↔ REG_EXPAND_SZ）。\n\n这不会修改变量的值，只修正其存储类型。\n\n如果因还原备份导致 PATH 等含 %SystemRoot% 的变量损坏（例如无法打开'高级系统设置'），此修复可以解决。\n\n确定执行修复吗？")) return;
-    setRepairing(true);
-    setRepairLog(null);
-    setRestoreMessage(null);
-    try {
-      const log = await invoke<string[]>("repair_registry_env_types");
-      setRepairLog(log);
-      setRestoreMessage({ text: `修复完成！共处理 ${log.length} 项（详见下方日志）。更改已广播至系统。`, isError: false });
-    } catch (e: any) {
-      setRestoreMessage({ text: `修复失败: ${e}`, isError: true });
-    } finally {
-      setRepairing(false);
     }
   };
 

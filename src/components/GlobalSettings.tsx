@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { check } from "@tauri-apps/plugin-updater";
@@ -12,7 +12,7 @@ import {
   FolderKanban,
   Save,
   RefreshCw,
-  Info,
+
   CheckCircle2,
   ExternalLink,
   FolderOpen,
@@ -28,12 +28,12 @@ import {
   Waypoints,
   Video,
   Globe,
-  LayoutGrid,
+
   Sliders,
-  Shield,
+
   Upload,
-  Layers,
-  Folder,
+
+
   GripVertical,
   RotateCcw,
   Search,
@@ -43,7 +43,7 @@ import {
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 // 可拖拽的模块配置行：主题色 + 位置 + 启用 + 快捷键（拖拽手柄独立，避免与控件冲突）
 function ModuleConfigRow({
@@ -487,8 +487,8 @@ export default function GlobalSettings() {
   useEffect(() => {
     launcherCfgRef.current = launcherCfg;
   }, [launcherCfg]);
-  const [savingLauncher, setSavingLauncher] = useState(false);
-  const [launcherSaved, setLauncherSaved] = useState(false);
+  const [_savingLauncher, setSavingLauncher] = useState(false);
+  const [_launcherSaved, setLauncherSaved] = useState(false);
 
   // ---- 外观：模块主题色 + 全局字体 + 模块顺序 + 模块布局 ----
   const [appearance, setAppearance] = useState<{

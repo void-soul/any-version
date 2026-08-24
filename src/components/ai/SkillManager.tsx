@@ -65,7 +65,7 @@ export default function SkillManager() {
   // ── 工具数据 ──
   const [tools, setTools] = useState<DetectedAiTool[]>([]);
   const [toolStatus, setToolStatus] = useState<SkillToolStatusView[]>([]);
-  const [toolLoading, setToolLoading] = useState(true);
+  const [_toolLoading, setToolLoading] = useState(true);
   const [toolMsg, setToolMsg] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
   const [togglingToolId, setTogglingToolId] = useState<string | null>(null);
 

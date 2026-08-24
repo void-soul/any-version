@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   applyNodeChanges,
   Background,
@@ -238,7 +238,6 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 function isLocalFilePath(value: string): boolean { return /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(value.trim()); }
-function isImagePath(value: string): boolean { return /\.(?:png|jpe?g|gif|webp|bmp|svg)$/i.test(value.split(/[?#]/)[0]); }
 function localImageSrc(path: string): string { try { return convertFileSrc(path); } catch { return path; } }
 function appendMarkdownLine(content: string, line: string): string { return content.trimEnd() ? `${content.trimEnd()}\n\n${line}` : line; }
 

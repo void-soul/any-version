@@ -1000,14 +1000,8 @@ export default function ProjectDetailPanel({
       <div className="border-t border-white/5 p-4 bg-white/2 flex-shrink-0">
         {ui.showManagePreview && (() => {
           const envVars = def?.env_vars || [];
-          const linkPath = "%USERPROFILE%\\.any-version\\links\\" + pid;
-          const versionsDir = "%USERPROFILE%\\.any-version\\versions";
           const preview = ui.managePreview;
           const isUnmanage = status.managed;
-
-          const backupVars = envVars.filter(v => v.tier !== "compat");
-          const clearVars = envVars.filter(v => v.tier === "clear");
-          const manageVars = envVars.filter(v => v.tier !== "compat" && v.tier !== "clear");
 
           const stepColorMap: Record<string, string> = {
             clear_env: "bg-red-600/20 text-red-400",

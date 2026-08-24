@@ -1,5 +1,5 @@
 // 剪贴板历史面板（全宽紧凑列表 + 单行截断 + 固定行高虚拟滚动 + 触底加载）
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Clipboard,
   Search,
@@ -18,7 +18,7 @@ import {
   Loader2,
   Image as ImageIcon,
   ZoomIn,
-  ZoomOut,
+
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -390,7 +390,7 @@ export default function ClipboardPanel() {
   const [ignoredApps, setIgnoredApps] = useState<string[]>([]);
   const [newApp, setNewApp] = useState("");
   const [copiedId, setCopiedId] = useState<number | null>(null);
-  const [busy, setBusy] = useState("");
+  const [_busy, setBusy] = useState("");
   // 复制/粘贴结果提示（管理员模式下 alert 可能被 UAC 遮挡，用应用内提示确保可见）
   const [toast, setToast] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
   const toastTimer = useRef<number | null>(null);

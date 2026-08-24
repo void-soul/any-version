@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, ComponentType } from "react";
+import { lazy, Suspense, ComponentType } from "react";
 import {
   Rocket,
   Rss,

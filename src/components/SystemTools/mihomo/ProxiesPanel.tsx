@@ -1,12 +1,12 @@
 // 代理页 —— 1:1 复刻 clash-party src/renderer/src/pages/proxies.tsx 行为
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Zap, ChevronDown, ChevronUp, Search, Pin, LocateFixed, ArrowDownUp, RefreshCw, X } from "lucide-react";
 import "flag-icons/css/flag-icons.min.css";
 import { mihomoApi } from "../mihomoApi";
 import {
   IMihomoMixedGroup, IMihomoProxy, getMixedGroups, lastDelay, changeProxy, unfixedProxy,
   proxyDelay, groupDelay, pooledDelayTest, ctrlGet, closeConnection,
-  FAKE_GROUP_TYPE, ALL_NODES_GROUP,
+  FAKE_GROUP_TYPE,
 } from "./ctrl";
 import { btnSec, cardCls, delayColor, delayText, Toggle } from "./ui";
 import { nodeFlag } from "./flag";

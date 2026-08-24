@@ -1,7 +1,7 @@
 // TUN 页 —— 1:1 复刻 clash-party src/renderer/src/pages/tun.tsx（win32 分支）
 // （防火墙重置 / 栈 gvisor·mixed·system / 设备名 / 严格路由 / 自动路由 /
 //   自动选择接口 / MTU / DNS 劫持 / 排除路由地址（CIDR 校验））
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
 import { cardCls, SettingItem, Toggle, btnSec, btnPrimary, inputCls } from "./ui";

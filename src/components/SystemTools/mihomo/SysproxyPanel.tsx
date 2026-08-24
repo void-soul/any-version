@@ -1,6 +1,6 @@
 // 系统代理页 —— 1:1 复刻 clash-party src/renderer/src/pages/sysproxy.tsx
 // （代理主机 / 手动·PAC 模式 / UWP 工具 / PAC 脚本编辑 / bypass 列表编辑 / 保存即生效）
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
 import { cardCls, SettingItem, Modal, btnSec, btnPrimary, inputCls } from "./ui";

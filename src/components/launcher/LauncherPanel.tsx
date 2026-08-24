@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   Search,
   Plus,
@@ -19,8 +19,8 @@ import {
   ChevronsUp,
   ChevronsDown,
   Bookmark,
-  Layers,
-  Sparkles,
+
+
   ScanSearch,
   LayoutGrid,
   Settings2,

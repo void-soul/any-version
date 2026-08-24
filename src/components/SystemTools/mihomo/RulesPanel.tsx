@@ -1,6 +1,6 @@
 // 规则页 —— 1:1 复刻 clash-party src/renderer/src/pages/rules.tsx
 // （过滤持久化，匹配 payload/type/proxy；含规则集 provider 更新入口）
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search, RefreshCw, Plus, Trash2, PencilLine } from "lucide-react";
 import { IMihomoRule, getRules, ruleProviders, updateRuleProvider } from "./ctrl";
 import { cardCls, tagCls, btnSec, btnPrimary, inputCls, labelCls, Modal } from "./ui";

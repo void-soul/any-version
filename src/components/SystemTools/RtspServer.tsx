@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -20,7 +20,7 @@ import {
   Sliders,
   Network,
   Cpu,
-  Edit3,
+
   Mic,
   MicOff,
 } from "lucide-react";

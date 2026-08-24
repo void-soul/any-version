@@ -161,14 +161,6 @@ fn save_stored_config(cfg: &StoredConfig) -> Result<(), String> {
 }
 
 impl StateSyncConfig {
-    fn is_configured(&self) -> bool {
-        self.enabled
-            && self.endpoint.as_deref().is_some_and(|e| !e.trim().is_empty())
-            && !self.access_key_id.is_empty()
-            && !self.secret_access_key.is_empty()
-            && !self.bucket_name.is_empty()
-    }
-
     fn to_stored(&self) -> Result<StoredConfig, String> {
         Ok(StoredConfig {
             endpoint: self.endpoint.clone(),

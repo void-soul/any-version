@@ -1,6 +1,6 @@
 // 日志页 —— 1:1 复刻 clash-party src/renderer/src/pages/logs.tsx
 // （500 条环形缓存 + 100ms 渲染节流 + 过滤持久化 + 自动滚动 + 清空）
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MapPin, Trash2, Search } from "lucide-react";
 import { IMihomoLog, openMihomoWs, WsHandle } from "./ctrl";
 import { cardCls, btnSec } from "./ui";

@@ -606,7 +606,11 @@ async fn deploy_windows(
         "key": pems.1,
         "ca": pems.2,
     });
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?;
     let resp = client
         .post(&url)
         .bearer_auth(token)
@@ -1032,7 +1036,11 @@ pub async fn deploy_node_test(id: String) -> Result<String, String> {
         "windows" => {
             let url = node.config.get("url").cloned().unwrap_or_default();
             let token = node.config.get("token").cloned().unwrap_or_default();
-            let resp = reqwest::Client::new()
+            let resp = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .build()
+                .map_err(|e| e.to_string())?
                 .get(if url.ends_with('/') { format!("{}health", url) } else { format!("{}/health", url) })
                 .bearer_auth(token)
                 .send()

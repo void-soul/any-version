@@ -1,6 +1,6 @@
 // 连接页 —— 1:1 复刻 clash-party src/renderer/src/pages/connections.tsx 行为
 // （进程图标/应用名依赖 Electron 原生 API，Tauri 侧省略）
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pause, Play, X, Trash2, Search, ArrowUp, ArrowDown, Table2, List } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
 import { IMihomoConnection, openMihomoWs, closeConnection as apiClose, closeAllConnections, WsHandle } from "./ctrl";
@@ -65,7 +65,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
   const orderBy: OrderBy = (cfg?.connectionOrderBy as OrderBy) || "time";
   const direction: "asc" | "desc" = cfg?.connectionDirection === "desc" ? "desc" : "asc";
 
-  const loadCfg = async () => { try { setCfg(await mihomoApi.getAppConfig()); } catch {} };
+  const loadCfg = async () => { try { setCfg(await mihomoApi.getAppConfig()); } catch (err) { console.error("加载连接面板配置失败:", err); } };
   const patchCfg = async (p: any) => { await mihomoApi.patchAppConfig(p); loadCfg(); };
 
   useEffect(() => { loadCfg(); }, []);

@@ -1,5 +1,8 @@
 packages:
   - '.'
+overrides:
+  dompurify: ^3.4.13
+  nanoid: ^3.3.18
 allowBuilds:
   esbuild: false
 minimumReleaseAgeExclude:

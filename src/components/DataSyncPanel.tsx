@@ -1,7 +1,7 @@
 // any-version 统一数据配置备份面板（内嵌于「设置」模块）：
 // 一键把全部模块配置/数据库（含 picky 数据与其云同步版本号）打包为单个压缩文件（gzip），
 // 全量导出到本地 / 从备份文件全量导入恢复，无任何勾选环节。
-import React, { useState } from "react";
+import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { DatabaseBackup, Loader2, FolderDown, FolderUp } from "lucide-react";
@@ -78,9 +78,6 @@ export default function DataSyncPanel() {
       setBusy(false);
     }
   };
-
-  const field =
-    "w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-[var(--module-accent)]/50";
 
   return (
     <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-5">

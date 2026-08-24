@@ -163,8 +163,10 @@ pub fn steam(secret: &str, time_ms: i64) -> String {
     let mut mac = Hmac::<Sha1>::new_from_slice(&key).unwrap();
     mac.update(&counter_bytes);
     let digest = mac.finalize().into_bytes();
-    // Steam 特殊：offset 是最后一个字节 % 0xFF（不是 & 0x0f）
-    let b = (digest[19] as usize) & 0xff;
+    // Steam 与 RFC 4226 动态截断一致：offset 取摘要最后一个字节的低 4 位
+    // （见 node-steam-totp: let start = hmac[19] & 0x0F）。不能取整个字节，
+    // 否则 digest[b] 会越界，且生成的验证码与 Steam 官方不一致。
+    let b = (digest[19] & 0x0f) as usize;
     let mut code_point = ((digest[b] & 0x7f) as u32) << 24
         | ((digest[b + 1] & 0xff) as u32) << 16
         | ((digest[b + 2] & 0xff) as u32) << 8
@@ -255,22 +257,41 @@ mod tests {
 
     #[test]
     fn test_totp_rfc6238() {
-        // RFC 6238 测试向量：secret "12345678901234567890" (base32 of "12345678901234567890")
-        // 使用标准测试 secret "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"（即 "12345678901234567890" 的 base32）
-        let secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
-        // T=59s, SHA1, 8 digits -> 94287082
-        let code = totp(secret, 59_000, 8, 30, HashAlgo::Sha1);
-        assert_eq!(code, "94287082");
-        // T=1111111109, SHA256, 8 digits -> 67062674
-        let code = totp(secret, 1_111_111_109_000, 8, 30, HashAlgo::Sha256);
-        assert_eq!(code, "67062674");
+        // RFC 6238 附录 B 测试向量。各算法使用不同长度的 ASCII secret
+        // （见已验证勘误 EID 2866）：SHA-1 用 20 字节、SHA-256 用 32 字节、SHA-512 用 64 字节。
+        // 动态截断的 offset 取摘要最后一个字节的低 4 位：SHA-1 为 digest[19]，
+        // SHA-256 为 digest[31]，SHA-512 为 digest[63]。
+
+        // SHA-1：secret = "12345678901234567890"（base32）
+        let secret_sha1 = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+        // T=59s, 8 digits -> 94287082
+        assert_eq!(totp(secret_sha1, 59_000, 8, 30, HashAlgo::Sha1), "94287082");
+        // T=1111111109 -> 07081804
+        assert_eq!(totp(secret_sha1, 1_111_111_109_000, 8, 30, HashAlgo::Sha1), "07081804");
+
+        // SHA-256：secret = "12345678901234567890123456789012"（base32）
+        let secret_sha256 = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA";
+        // T=59 -> 46119246
+        assert_eq!(totp(secret_sha256, 59_000, 8, 30, HashAlgo::Sha256), "46119246");
+        // T=1111111109 -> 68084774
+        assert_eq!(totp(secret_sha256, 1_111_111_109_000, 8, 30, HashAlgo::Sha256), "68084774");
+
+        // SHA-512：secret = 64 字节 ASCII（base32）
+        let secret_sha512 = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA";
+        // T=59 -> 90693936
+        assert_eq!(totp(secret_sha512, 59_000, 8, 30, HashAlgo::Sha512), "90693936");
+        // T=1111111109 -> 25091201
+        assert_eq!(totp(secret_sha512, 1_111_111_109_000, 8, 30, HashAlgo::Sha512), "25091201");
     }
 
     #[test]
     fn test_steam() {
-        // 已知 Steam secret 的测试向量（来自开源实现）
+        // Steam 与 RFC 4226 截断一致（offset = digest[19] & 0x0F），期望值由
+        // node-steam-totp 权威实现交叉验证：secret 20 字节 ASCII
         let secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
-        let code = steam(secret, 59_000);
-        assert_eq!(code.len(), 5);
+        // T=59 -> PV9M4
+        assert_eq!(steam(secret, 59_000), "PV9M4");
+        // T=1111111109 -> PY4YB
+        assert_eq!(steam(secret, 1_111_111_109_000), "PY4YB");
     }
 }

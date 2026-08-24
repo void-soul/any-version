@@ -8,11 +8,11 @@ import {
   CheckCircle,
   AlertTriangle,
   RefreshCw,
-  Terminal,
+
   Bot,
   Clock,
   Play,
-  Plus,
+
   Copy,
   ArrowUpCircle,
   ExternalLink,
@@ -501,7 +501,7 @@ export default function ToolLauncher() {
     } catch (e) { console.error(e); }
   }, []);
 
-  const handleMigrateCache = async (toolId: string, dirName: string, fullPath: string) => {
+  const handleMigrateCache = async (toolId: string, dirName: string, _fullPath: string) => {
     try {
       const selected = await open({ directory: true, title: "选择新的缓存目录" });
       if (!selected) return;

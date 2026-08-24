@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { X, Minus, Square, Download, AlertTriangle, CheckCircle2, Loader2, FolderOpen, ChevronDown, Settings } from "lucide-react";
+import { X, Minus, Square, Download, AlertTriangle, Loader2, FolderOpen, ChevronDown, Settings } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { MODULES, MODULE_MAP, resolveModuleLayout, type ModuleDef } from "./moduleRegistry";
+import { MODULES, MODULE_MAP, resolveModuleLayout } from "./moduleRegistry";
 import "./App.css";
 
 // 模块 id 即字符串（所有模块平级）。

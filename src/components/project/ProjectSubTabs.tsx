@@ -2,9 +2,8 @@ import React, { useState, useEffect } from "react";
 import Editor from "@monaco-editor/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import {
-  ExternalLink,
+
   CheckCircle,
   AlertTriangle,
   RefreshCw,
@@ -15,13 +14,13 @@ import {
   HardDrive,
   Activity,
   FolderOpen,
-  Link,
+
   FolderSync,
-  Package,
+
   Loader,
   Search,
-  Wifi,
-  WifiOff,
+
+
   X,
   Wrench,
   Info,
@@ -85,22 +84,11 @@ export function VersionsTab({
   onInstall, onUninstall, onUse,
   downloadProgress, installStep, onCancelInstall,
   versionsUpdatedAt, onRefreshRemoteVersions,
-  isOperating, activeSubTab, onActiveSubTabChange,
+  isOperating,
 }: SubTabProps) {
   const currentVersionNumber = installingVersion
     ? (installingVersion.includes(" · ") ? installingVersion.split(" · ")[1] : installingVersion).trim().split(" ")[0]
     : "";
-
-  // 格式化上次更新时间
-  const formatUpdatedAt = (ts: number | null | undefined): string => {
-    if (!ts) return "";
-    const diff = Math.floor(Date.now() / 1000) - ts;
-    if (diff < 60) return "刚刚";
-    if (diff < 3600) return `${Math.floor(diff / 60)}分钟前`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}小时前`;
-    const d = new Date(ts * 1000);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  };
 
   return (
     <div className="space-y-6">
@@ -282,7 +270,7 @@ export function VersionsTab({
 // ═══════════════════════════════════════
 //  环境变量
 // ═══════════════════════════════════════
-export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, isOperating, repairingEnv, onRepairEnv, onRefresh }: SubTabProps) {
+export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, repairingEnv, onRepairEnv, onRefresh }: SubTabProps) {
   const vars: EnvVarStatus[] = project.env_vars_status ?? [];
   const [isAdmin, setIsAdmin] = useState(true);
 
@@ -303,7 +291,7 @@ export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, i
   const [workflowActualPath, setWorkflowActualPath] = useState("");
   const [workflowPointPath, setWorkflowPointPath] = useState("");
   const [workflowFileAction, setWorkflowFileAction] = useState<"delete" | "move" | "keep">("keep");
-  const [workflowExecuting, setWorkflowExecuting] = useState(false);
+  const [_workflowExecuting, setWorkflowExecuting] = useState(false);
   const [workflowProgress, setWorkflowProgress] = useState<{ stage: string; current: number; total: number; file_name: string } | null>(null);
 
   const loadConflictManagers = async () => {
@@ -1163,7 +1151,7 @@ export function EnvVarsTab({ project, def, activeSubTab, onActiveSubTabChange, i
 // ═══════════════════════════════════════
 //  服务管理
 // ═══════════════════════════════════════
-export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle, activeSubTab, onActiveSubTabChange }: SubTabProps) {
+export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle, onActiveSubTabChange }: SubTabProps) {
   const [isAdmin, setIsAdmin] = useState(true);
 
   // 当切换到 services 标签页时通知父组件
@@ -1621,20 +1609,6 @@ export function LegacyTab({ projectId }: { projectId: string }) {
 //  包管理器独立子页面
 //  每个包管理器（npm/yarn/pnpm）都有自己的管理页，包含：
 //  版本检测、缓存管理、镜像配置、代理设置、全局包管理
-// ═══════════════════════════════════════// 统一声明全局包管理器检测状态缓存，以防止切换项目时重复检测
-const pmDetectionCache: Record<string, {
-  installed: boolean;
-  version: string | null;
-  latestVersion: string | null;
-  cacheInfo: any;
-  dataInfo: any;
-  proxyDetected: string | null;
-  proxyInput: string;
-  currentMirror: string | null;
-  packages: any[];
-  gitRepoStatus: any;
-  timestamp: number;
-}> = {};
 
 export function PackageManagerTab(props: {
   projectId: string;
@@ -2264,7 +2238,7 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
     }
   };
 
-  const handleEditorDidMount = (editor: any, monaco: any) => {
+  const handleEditorDidMount = (_editor: any, monaco: any) => {
     // 1. Register Nginx language if not registered
     const languages = monaco.languages.getLanguages();
     if (!languages.some((lang: any) => lang.id === 'nginx')) {
@@ -2297,7 +2271,7 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
     // Nginx autocompletions
     if (!globalRegistered.nginxCompletions) {
       monaco.languages.registerCompletionItemProvider('nginx', {
-        provideCompletionItems: (model: any, position: any) => {
+        provideCompletionItems: (_model: any, _position: any) => {
           const suggestions = [
             { label: 'server', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'server {\n\tlisten ${1:80};\n\tserver_name ${2:localhost};\n\tlocation / {\n\t\troot ${3:html};\n\t\tindex ${4:index.html};\n\t}\n}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Server block' },
             { label: 'location', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'location ${1:/} {\n\t${2:proxy_pass http://localhost:8080;}\n}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, detail: 'Location block' },
@@ -2317,7 +2291,7 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
     // ini autocompletions (MySQL, Redis, PostgreSQL)
     if (!globalRegistered.iniCompletions) {
       monaco.languages.registerCompletionItemProvider('ini', {
-        provideCompletionItems: (model: any, position: any) => {
+        provideCompletionItems: (model: any, _position: any) => {
           const text = model.getValue();
           const suggestions = [];
 
@@ -2360,7 +2334,7 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
     // yaml autocompletions (MongoDB)
     if (!globalRegistered.yamlCompletions) {
       monaco.languages.registerCompletionItemProvider('yaml', {
-        provideCompletionItems: (model: any, position: any) => {
+        provideCompletionItems: (model: any, _position: any) => {
           const text = model.getValue();
           const suggestions = [];
           if (text.includes('dbPath') || text.includes('bindIp') || text.includes('systemLog') || text.includes('mongod')) {

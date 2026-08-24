@@ -1,5 +1,5 @@
 // OTP 模块面板（复刻 CloudOTP 电脑端核心：TOTP/HOTP/MOTP/Steam/Yandex + 分类 + 扫码 + 品牌图标）
-import React, { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Plus,
   Search,
@@ -111,7 +111,7 @@ function padCode(code: number, digits: number): string {
 }
 
 async function generateCode(token: OtpToken, nowMs: number): Promise<string> {
-  const { tokenType, secret, algorithm, digits, period, counter, pin } = token;
+  const { tokenType, secret, algorithm, digits, period, pin } = token;
   try {
     if (tokenType === "MOTP") {
       const counter = Math.floor(nowMs / 1000 / period);

@@ -1,12 +1,12 @@
-import React from "react";
+
 import { 
-  HeartPulse, 
+
   Layers, 
-  Database, 
-  Trash2, 
-  Globe, 
+
+
+
   Wrench, 
-  Box, 
+
   Settings,
   ShieldCheck
 } from "lucide-react";

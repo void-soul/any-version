@@ -5,7 +5,7 @@
 // 布局说明：
 // - 未打开任何服务时：全屏引导页，可点「打开服务管理」进入管理弹窗。
 // - 打开服务后：iframe 全屏占满页面；顶部 Tab 栏含「管理」按钮，可随时弹出服务管理弹窗。
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Bot,
   Boxes,
@@ -135,20 +135,13 @@ export default function NodeManagerPanel() {
   );
   const [checkingUpdate, setCheckingUpdate] = useState<string | null>(null);
 
-  const refreshProjects = useCallback(async () => {
-    try {
-      const list = await invoke<NodeProjectDef[]>("npm_list_projects");
-      setProjects(list);
-    } catch (e) {
-      console.error("npm_list_projects error:", e);
-    }
-  }, []);
-
   const refreshDeps = useCallback(async (id: string) => {
     try {
       const d = await invoke<DepCheckResult>("npm_deps", { projectId: id });
       setDeps((prev) => ({ ...prev, [id]: d }));
-    } catch {}
+    } catch (err) {
+      console.error("检查项目依赖失败:", err);
+    }
   }, []);
 
   const refreshStatus = useCallback(async (id: string) => {
@@ -157,7 +150,9 @@ export default function NodeManagerPanel() {
         projectId: id,
       });
       setStatuses((prev) => ({ ...prev, [id]: s }));
-    } catch {}
+    } catch (err) {
+      console.error("查询项目状态失败:", err);
+    }
   }, []);
 
   const refreshAll = useCallback(async () => {
@@ -471,10 +466,6 @@ export default function NodeManagerPanel() {
                 const st = statuses[project.id];
                 const d = deps[project.id];
                 const prog = progress[project.id];
-                const isBusy =
-                  busy === `install:${project.id}` ||
-                  busy === `upgrade:${project.id}` ||
-                  busy === `install_deps:${project.id}`;
                 const isStarting = busy === `start:${project.id}`;
                 const isStopping = busy === `stop:${project.id}`;
                 return (

@@ -145,9 +145,10 @@ where
     f(conn)
 }
 
-/// 当前时间戳（本地时间，ISO 秒级）。
+/// 当前时间戳（UTC，RFC3339 带时区）。
+/// 带时区偏移的 ISO 时间可被 `new Date(...)` 稳定解析，避免 naive datetime 在跨时区/换时区后语义漂移。
 pub fn now_ts() -> String {
-    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string()
+    chrono::Utc::now().to_rfc3339()
 }
 
 /// 今天日期 YYYY-MM-DD。

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import { useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { 
@@ -6,7 +6,7 @@ import {
   Image as ImageIcon, 
   Copy, 
   Download, 
-  RefreshCw, 
+
   FileCode,
   CheckCircle,
   AlertCircle,
@@ -32,30 +32,6 @@ export default function ImageBase64() {
   const [saveLoading, setSaveLoading] = useState(false);
 
   // --- Image to Base64 handlers ---
-  const processImageBytes = (bytes: Uint8Array, name: string, type: string) => {
-    // Custom Base64 encoding in JS
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let base64 = "";
-    const len = bytes.length;
-    for (let i = 0; i < len; i += 3) {
-      const b0 = bytes[i];
-      const b1 = i + 1 < len ? bytes[i + 1] : 0;
-      const b2 = i + 2 < len ? bytes[i + 2] : 0;
-      const n = (b0 << 16) | (b1 << 8) | b2;
-      base64 += chars[(n >> 18) & 63] + chars[(n >> 12) & 63];
-      base64 += i + 1 < len ? chars[(n >> 6) & 63] : "=";
-      base64 += i + 2 < len ? chars[n & 63] : "=";
-    }
-    const dataUrl = `data:${type};base64,${base64}`;
-    setImgSrc(dataUrl);
-    setBase64Result(dataUrl);
-    setImgDetails({
-      name,
-      size: (len / 1024).toFixed(1) + " KB",
-      type
-    });
-  };
-
   const handleSelectLocalImage = async () => {
     setError1(null);
     try {

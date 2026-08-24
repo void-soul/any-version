@@ -2,7 +2,7 @@
 // （出站模式切换 rule/global/direct + 切换时可选断开全部连接；
 //   系统代理开关卡片；TUN 开关卡片；连接卡片：traffic WS 速率 + 迷你趋势；
 //   内核卡片：memory WS 内存占用；订阅用量卡片）
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowUpCircle, ArrowDownCircle, Cpu, Globe, Shield, Link2 } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
 import { openMihomoWs, patchRuntimeConfigs, closeAllConnections, WsHandle } from "./ctrl";

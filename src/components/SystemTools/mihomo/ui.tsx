@@ -1,5 +1,4 @@
 // mihomo 模块共享 UI（沿用 SystemTools 统一风格）
-import React from "react";
 
 export const inputCls =
   "w-full h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]";

@@ -2,7 +2,7 @@
 // （开关 / 增强模式 fake-ip·redir-host·normal / fake-ip 范围+过滤模式+过滤列表 /
 //   IPv6 / respect-rules / 4 组 nameserver 列表 / nameserver-policy /
 //   系统 hosts / 自定义 hosts / fallback + fallback-filter）
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
 import { cardCls, SettingItem, Toggle, btnSec, btnPrimary, inputCls } from "./ui";

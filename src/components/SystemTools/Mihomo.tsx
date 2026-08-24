@@ -1,5 +1,5 @@
 // Mihomo 代理管理（功能对齐 clash-party，外观沿用 SystemTools 风格：Tailwind + emerald + glass-panel）
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Waypoints, Play, Square, RefreshCw, AlertTriangle } from "lucide-react";
 import { mihomoApi } from "./mihomoApi";
 

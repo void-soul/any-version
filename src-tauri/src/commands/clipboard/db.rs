@@ -5,11 +5,59 @@ use std::path::PathBuf;
 
 use super::{ClipboardItem, ClipboardSettings};
 
-/// 打开（或创建）剪贴板数据库
+/// 剪贴板内容为敏感数据（常含密码/密钥），落盘必须加密。
+/// 与 secrets.rs 的 CRED_ENCRYPTION_MARKER 保持一致。
+const ENC_MARKER: &str = "ENC_V2:";
+
+/// 加密剪贴板文本内容（AES-256-GCM；空值与已加密值原样保留）
+fn encrypt_content(value: Option<&str>) -> Option<String> {
+    let value = value?;
+    if value.is_empty() || value.starts_with(ENC_MARKER) {
+        return Some(value.to_string());
+    }
+    Some(crate::commands::secrets::encrypt_secret(value).unwrap_or_else(|e| {
+        eprintln!("[clipboard] content 加密失败: {}", e);
+        value.to_string()
+    }))
+}
+
+/// 解密剪贴板文本内容（兼容旧版明文）
+fn decrypt_content(value: String) -> String {
+    if value.starts_with(ENC_MARKER) {
+        crate::commands::secrets::decrypt_secret(&value).unwrap_or_else(|e| {
+            eprintln!("[clipboard] content 解密失败（密钥不匹配或数据损坏）: {}", e);
+            value
+        })
+    } else {
+        value
+    }
+}
+
+/// 打开（或创建）剪贴板数据库；并对历史明文 content 做就地加密迁移（幂等）。
 pub fn open_db(path: &std::path::Path) -> Result<Connection, String> {
     let conn = Connection::open(path).map_err(|e| format!("打开剪贴板数据库失败: {}", e))?;
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| format!("设置 WAL 失败: {}", e))?;
+    // 安全迁移：历史明文文本内容 → AES 加密（仅处理未加密行）
+    let plain_rows: Vec<(i64, String)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, content FROM clipboard_items
+                 WHERE kind='text' AND content != '' AND content NOT LIKE 'ENC_V2:%'",
+            )
+            .map_err(|e| format!("查询剪贴板明文行失败: {}", e))?;
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map(|iter| iter.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default()
+    };
+    for (id, content) in plain_rows {
+        if let Some(enc) = encrypt_content(Some(&content)) {
+            let _ = conn.execute(
+                "UPDATE clipboard_items SET content=?1 WHERE id=?2",
+                params![enc, id],
+            );
+        }
+    }
     Ok(conn)
 }
 
@@ -233,13 +281,6 @@ pub fn query_items(
                 COALESCE(source_app,''), pinned, created_at, COALESCE(formats,'')
          FROM clipboard_items WHERE 1=1",
     );
-    let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-
-    let kw = keyword.trim();
-    if !kw.is_empty() {
-        sql.push_str(" AND content LIKE ?");
-        args.push(Box::new(format!("%{}%", kw)));
-    }
     match kind {
         "text" => sql.push_str(" AND kind='text'"),
         "image" => sql.push_str(" AND kind='image'"),
@@ -248,21 +289,19 @@ pub fn query_items(
     if pinned_only {
         sql.push_str(" AND pinned=1");
     }
-    // 置顶在前，其余按时间倒序
-    sql.push_str(" ORDER BY pinned DESC, created_at DESC LIMIT ? OFFSET ?");
-    args.push(Box::new(limit));
-    args.push(Box::new(offset));
+    // 置顶在前，其余按时间倒序。关键词在内存中过滤（content 已加密，不能走 SQL LIKE）。
+    sql.push_str(" ORDER BY pinned DESC, created_at DESC");
 
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| format!("查询剪贴板历史失败: {}", e))?;
     let rows = stmt
-        .query_map(rusqlite::params_from_iter(args.iter().map(|a| a.as_ref())), |row| {
+        .query_map([], |row| {
             let formats_raw: String = row.get(10)?;
             Ok(ClipboardItem {
                 id: row.get(0)?,
                 kind: row.get(1)?,
-                content: row.get(2)?,
+                content: row.get::<_, Option<String>>(2)?.map(decrypt_content),
                 image_path: row.get(3)?,
                 thumb_path: row.get(4)?,
                 width: row.get(5)?,
@@ -275,25 +314,33 @@ pub fn query_items(
         })
         .map_err(|e| format!("读取剪贴板历史失败: {}", e))?;
 
-    let mut items = Vec::new();
-    for r in rows {
-        if let Ok(it) = r {
-            items.push(it);
-        }
+    let kw = keyword.trim().to_lowercase();
+    let mut items: Vec<ClipboardItem> = rows
+        .filter_map(|r| r.ok())
+        .filter(|it| {
+            if kw.is_empty() {
+                return true;
+            }
+            it.content
+                .as_deref()
+                .map(|c| c.to_lowercase().contains(&kw))
+                .unwrap_or(false)
+        })
+        .collect();
+    // 内存分页（上限由 max_items 设置约束，历史量有界）
+    let start = offset.max(0) as usize;
+    if start >= items.len() {
+        items.clear();
+    } else {
+        let end = (start + limit.max(0) as usize).min(items.len());
+        items = items[start..end].to_vec();
     }
     Ok(items)
 }
 
 /// 查询总数
 pub fn count_items(conn: &Connection, keyword: &str, kind: &str, pinned_only: bool) -> Result<i64, String> {
-    let mut sql = String::from("SELECT COUNT(1) FROM clipboard_items WHERE 1=1");
-    let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-
-    let kw = keyword.trim();
-    if !kw.is_empty() {
-        sql.push_str(" AND content LIKE ?");
-        args.push(Box::new(format!("%{}%", kw)));
-    }
+    let mut sql = String::from("SELECT id, kind, content FROM clipboard_items WHERE 1=1");
     match kind {
         "text" => sql.push_str(" AND kind='text'"),
         "image" => sql.push_str(" AND kind='image'"),
@@ -306,8 +353,24 @@ pub fn count_items(conn: &Connection, keyword: &str, kind: &str, pinned_only: bo
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| format!("统计剪贴板历史失败: {}", e))?;
-    stmt.query_row(rusqlite::params_from_iter(args.iter().map(|a| a.as_ref())), |row| row.get(0))
-        .map_err(|e| format!("统计剪贴板历史失败: {}", e))
+    let kw = keyword.trim().to_lowercase();
+    let count = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?)))
+        .map_err(|e| format!("统计剪贴板历史失败: {}", e))?
+        .filter_map(|r| r.ok())
+        .filter(|(kind, content)| {
+            if kw.is_empty() {
+                return true;
+            }
+            if kind != "text" {
+                return false;
+            }
+            decrypt_content(content.clone().unwrap_or_default())
+                .to_lowercase()
+                .contains(&kw)
+        })
+        .count();
+    Ok(count as i64)
 }
 
 /// 按 id 查询单条
@@ -325,7 +388,7 @@ pub fn get_item(conn: &Connection, id: i64) -> Result<Option<ClipboardItem>, Str
             Ok(ClipboardItem {
                 id: row.get(0)?,
                 kind: row.get(1)?,
-                content: row.get(2)?,
+                content: row.get::<_, Option<String>>(2)?.map(decrypt_content),
                 image_path: row.get(3)?,
                 thumb_path: row.get(4)?,
                 width: row.get(5)?,
@@ -374,6 +437,7 @@ pub fn insert_item(
     formats: &[String],
 ) -> Result<i64, String> {
     let formats_json = serde_json::to_string(formats).unwrap_or_else(|_| "[]".to_string());
+    let content = encrypt_content(content);
     conn.execute(
         "INSERT INTO clipboard_items (kind, content, image_path, thumb_path, width, height, source_app, hash, pinned, created_at, formats)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10)",

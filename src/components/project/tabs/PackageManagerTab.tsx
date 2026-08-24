@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -28,7 +28,6 @@ export function PackageManagerTab({
   pm, 
   hidden, 
   installRoot, 
-  installSource,
   projectDef,
   projectStatus
 }: { 
@@ -55,7 +54,7 @@ export function PackageManagerTab({
 
   // Git repo states (通用 is_git_repo 驱动)
   const [gitRepoStatus, setGitRepoStatus] = useState<any>(isCached ? cachedData.gitRepoStatus : null);
-  const [checkingGitRepo, setCheckingGitRepo] = useState(false);
+  const [_checkingGitRepo, setCheckingGitRepo] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(false);
   const [updatingGitRepo, setUpdatingGitRepo] = useState(false);
 

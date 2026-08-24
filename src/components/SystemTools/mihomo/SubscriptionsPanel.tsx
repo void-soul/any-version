@@ -1,5 +1,5 @@
 // 订阅页（对齐 clash-party profiles.tsx + profile-item + edit-info-modal）
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import {
   Download, FolderOpen, FilePlus2, RefreshCw, Trash2, Pencil, FileCode2,
@@ -9,7 +9,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { mihomoApi } from "../mihomoApi";
 import {
-  inputCls, labelCls, btnSec, btnDanger, btnPrimary, tagCls, cardCls,
+  inputCls, labelCls, btnSec, btnPrimary, tagCls, cardCls,
   Toggle, Modal, calcTraffic,
 } from "./ui";
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState } from "react";
 import { X, Folder, Check, Eraser } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Classification, ClassificationData } from "./types";

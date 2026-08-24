@@ -2,7 +2,7 @@
 // （GeoData：4 个 geox-url 编辑+确认 / db·dat 模式 / 自动更新+间隔 / 立即更新；
 //   代理集合 provider：全部更新/单个更新/订阅信息/复制链接；规则集合 provider 同理）
 import React, { useEffect, useMemo, useState } from "react";
-import { RefreshCw, Copy } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
 import { proxyProviders as apiProxyProviders, ruleProviders as apiRuleProviders, updateProxyProvider, updateRuleProvider } from "./ctrl";
 import { cardCls, SettingItem, Toggle, btnSec, btnPrimary, inputCls, tagCls, calcTraffic } from "./ui";

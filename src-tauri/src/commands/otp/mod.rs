@@ -9,6 +9,10 @@ use std::sync::{Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::config::get_data_dir;
+use crate::commands::secrets::{decrypt_secret, encrypt_secret};
+
+/// 与 secrets.rs 的 CRED_ENCRYPTION_MARKER 保持一致：密文前缀，用于区分加密/明文行
+const ENC_MARKER: &str = "ENC_V2:";
 
 /// OTP 令牌
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,8 +124,68 @@ fn conn() -> &'static Mutex<rusqlite::Connection> {
                 [],
             );
         }
+        // 安全迁移：历史明文 secret/pin 就地加密为 ENC_V2（幂等，仅处理未加密行）。
+        // OTP 种子等同账户密码，落盘必须加密（AES-256-GCM，机器级主密钥）。
+        let plain_rows: Vec<(i64, String, String)> = {
+            let mut stmt = c
+                .prepare(
+                    "SELECT id, secret, pin FROM otp_tokens
+                     WHERE (secret != '' AND secret NOT LIKE 'ENC_V2:%')
+                        OR (pin != '' AND pin NOT LIKE 'ENC_V2:%')",
+                )
+                .expect("查询 OTP 明文行失败");
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .map(|iter| iter.filter_map(|r| r.ok()).collect())
+                .unwrap_or_default()
+        };
+        for (id, secret, pin) in plain_rows {
+            let new_secret = if !secret.is_empty() && !secret.starts_with(ENC_MARKER) {
+                encrypt_secret(&secret).unwrap_or_else(|e| {
+                    eprintln!("[otp] secret 加密迁移失败 (id={}): {}", id, e);
+                    secret
+                })
+            } else {
+                secret
+            };
+            let new_pin = if !pin.is_empty() && !pin.starts_with(ENC_MARKER) {
+                encrypt_secret(&pin).unwrap_or_else(|e| {
+                    eprintln!("[otp] pin 加密迁移失败 (id={}): {}", id, e);
+                    pin
+                })
+            } else {
+                pin
+            };
+            let _ = c.execute(
+                "UPDATE otp_tokens SET secret=?1, pin=?2 WHERE id=?3",
+                rusqlite::params![new_secret, new_pin, id],
+            );
+        }
         Mutex::new(c)
     })
+}
+
+/// 读取时解密字段（secret/pin）：ENC_V2 前缀走 AES 解密，旧明文透传（迁移前的历史数据）。
+fn decrypt_field(value: String) -> String {
+    if value.starts_with(ENC_MARKER) {
+        match decrypt_secret(&value) {
+            Ok(plain) => plain,
+            Err(e) => {
+                eprintln!("[otp] 字段解密失败（密钥不匹配或数据损坏）: {}", e);
+                value
+            }
+        }
+    } else {
+        value
+    }
+}
+
+/// 写入时加密字段（secret/pin）：空值与已加密值原样保留，其余 AES 加密。
+fn encrypt_field(value: &str) -> Result<String, String> {
+    if value.is_empty() || value.starts_with(ENC_MARKER) {
+        Ok(value.to_string())
+    } else {
+        encrypt_secret(value)
+    }
 }
 
 fn row_to_token(row: &rusqlite::Row) -> rusqlite::Result<OtpToken> {
@@ -129,13 +193,13 @@ fn row_to_token(row: &rusqlite::Row) -> rusqlite::Result<OtpToken> {
         id: row.get(0)?,
         issuer: row.get(1)?,
         account: row.get(2)?,
-        secret: row.get(3)?,
+        secret: decrypt_field(row.get(3)?),
         token_type: row.get(4)?,
         algorithm: row.get(5)?,
         digits: row.get(6)?,
         period: row.get(7)?,
         counter: row.get(8)?,
-        pin: row.get(9)?,
+        pin: decrypt_field(row.get(9)?),
         pinned: row.get::<_, i64>(10)? != 0,
         created_at: row.get(11)?,
         description: row.get(12)?,
@@ -494,6 +558,8 @@ pub fn otp_list() -> Result<Vec<OtpToken>, String> {
 /// 新增令牌。
 #[tauri::command]
 pub fn otp_add(token: OtpToken) -> Result<i64, String> {
+    let secret = encrypt_field(&token.secret)?;
+    let pin = encrypt_field(&token.pin)?;
     let c = conn().lock().map_err(|e| e.to_string())?;
     let now = chrono::Utc::now().timestamp_millis();
     c.execute(
@@ -502,13 +568,13 @@ pub fn otp_add(token: OtpToken) -> Result<i64, String> {
         rusqlite::params![
             token.issuer,
             token.account,
-            token.secret,
+            secret,
             token.token_type,
             token.algorithm,
             token.digits,
             token.period,
             token.counter,
-            token.pin,
+            pin,
             token.pinned as i64,
             now,
             token.description,
@@ -525,19 +591,21 @@ pub fn otp_add(token: OtpToken) -> Result<i64, String> {
 /// 更新令牌。
 #[tauri::command]
 pub fn otp_update(token: OtpToken) -> Result<(), String> {
+    let secret = encrypt_field(&token.secret)?;
+    let pin = encrypt_field(&token.pin)?;
     let c = conn().lock().map_err(|e| e.to_string())?;
     c.execute(
         "UPDATE otp_tokens SET issuer=?1, account=?2, secret=?3, token_type=?4, algorithm=?5, digits=?6, period=?7, counter=?8, pin=?9, pinned=?10, description=?11, tags=?12, copy_times=?13, last_copy_time=?14, custom_icon=?15 WHERE id=?16",
         rusqlite::params![
             token.issuer,
             token.account,
-            token.secret,
+            secret,
             token.token_type,
             token.algorithm,
             token.digits,
             token.period,
             token.counter,
-            token.pin,
+            pin,
             token.pinned as i64,
             token.description,
             token.tags,

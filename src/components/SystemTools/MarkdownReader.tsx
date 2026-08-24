@@ -102,7 +102,7 @@ export default function MarkdownReader() {
    * rescan 为 true 时同时刷新左侧同目录列表。
    */
   const openPath = useCallback(
-    async (path: string, rescan = false) => {
+    async (path: string, _rescan = false) => {
       setActivePath(path);
       let existed = false;
       setTabs((prev) => {

@@ -1,5 +1,5 @@
 // Picky 模块面板：收藏 / 归档页面（与 Flutter 端 picky 同一数据接口 + S3 云同步）
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {

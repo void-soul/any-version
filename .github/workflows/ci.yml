@@ -17,9 +17,13 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-      - run: pnpm install --no-frozen-lockfile
+      # 锁文件漂移设防：与本地 lockfile 不一致时直接失败。
+      - run: pnpm install --frozen-lockfile
       - run: pnpm exec tsc --noEmit
       - run: pnpm test
+      # 依赖漏洞扫描：生产依赖存在 high/critical 漏洞时阻断。
+      - name: pnpm audit (production)
+        run: pnpm audit --prod --audit-level=high
 
   backend:
     # AnyVersion 是 Windows-only 应用（基于 WebView2），在 Windows runner 上编译检查

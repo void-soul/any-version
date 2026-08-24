@@ -2,7 +2,7 @@
 // （混合/Socks/HTTP 端口：数字+随机+启停+确认；外部控制器+校验；密钥生成/显隐；
 //   WebUI 面板选择/更新/打开；IPv6；允许局域网+允许/禁止网段；用户验证；
 //   跳过验证前缀；RTT 延迟；TCP 并发；记住节点/FakeIP；日志等级；进程查找；核心升级）
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Shuffle, RefreshCw, Eye, EyeOff, Trash2, ExternalLink, CloudDownload } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
 import { cardCls, SettingItem, Toggle, btnSec, btnPrimary, inputCls } from "./ui";
@@ -75,7 +75,9 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
       setLanDisallowed(cc?.["lan-disallowed-ips"] ?? []);
       setAuth(cc?.authentication ?? []);
       setSkipAuth(cc?.["skip-auth-prefixes"] ?? DEFAULT_SKIP_AUTH);
-    } catch {}
+    } catch (err) {
+      console.error("加载核心配置失败:", err);
+    }
   };
   useEffect(() => { load(); }, []);
 

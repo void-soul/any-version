@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::Emitter;
 use std::time::{Duration, Instant};
@@ -649,6 +650,11 @@ const SERVICE_STATUS_TTL: Duration = Duration::from_secs(3);
 static SERVICE_STATUS_CACHE: Mutex<Option<(Instant, HashMap<String, ServiceStatus>)>> =
     Mutex::new(None);
 
+/// 启动后首次同步回退是否已完成。
+/// 同步执行 tasklist/netstat 会阻塞调用线程；收窄为仅启动后首次执行一次，
+/// 之后缓存缺失一律走后台刷新，避免托盘主线程事件循环被反复阻塞。
+static BOOT_SYNC_DONE: AtomicBool = AtomicBool::new(false);
+
 /// 失效服务状态快照缓存。在启动/停止/强制终止服务成功后调用，
 /// 确保随后的前端轮询不会读到 TTL 内过期的旧状态（避免状态回跳）。
 pub(crate) fn invalidate_service_status_cache() {
@@ -717,8 +723,10 @@ pub(crate) fn service_status_snapshot(managed_ids: &[String]) -> HashMap<String,
         let _ = refresh_service_status_snapshot(&ids);
         let _ = crate::tray::rebuild_tray_menu_global();
     });
-    if fresh.1.is_empty() {
-        // 完全无缓存：同步回退，保证托盘首屏即显示真实状态（已在运行的服务显示“运行中”）
+    if fresh.1.is_empty() && !BOOT_SYNC_DONE.swap(true, Ordering::SeqCst) {
+        // 完全无缓存且尚未做过同步回退（仅启动后首次）：
+        // 同步检测一次真实状态，保证托盘首屏即显示真实状态（已在运行的服务显示“运行中”）。
+        // 之后的缓存缺失一律返回空并等待后台刷新，避免阻塞事件循环。
         let registry = crate::commands::project::registry::registry();
         let mut fallback = HashMap::new();
         for id in managed_ids {

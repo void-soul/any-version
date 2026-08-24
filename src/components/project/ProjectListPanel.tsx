@@ -1,4 +1,4 @@
-import React from "react";
+
 import { Search, RefreshCw } from "lucide-react";
 import type { ProjectStatus, ProjectCategory } from "./types";
 import { categoryLabel } from "./types";

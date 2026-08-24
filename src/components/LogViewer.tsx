@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import { stripAnsi } from "../utils/ansi";
 
 /**
  * 大文件日志查看器（纯前端 / 虚拟滚动）。

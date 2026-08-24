@@ -1,5 +1,5 @@
 // 环境变量模块：PATH 变量管理（排序/冲突检测）+ 环境变量备份还原（注册表）
-import React, { useState } from "react";
+import { useState } from "react";
 import { ListOrdered, ShieldCheck } from "lucide-react";
 import PathEnvManager from "./PathEnvManager";
 import EnvBackupManager from "./EnvBackupManager";

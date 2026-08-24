@@ -1,11 +1,11 @@
 // 覆写页 —— 1:1 复刻 clash-party src/renderer/src/pages/override.tsx
 // （URL 导入(剪贴板粘贴) / 打开本地文件 / 新建 YAML·JS / 卡片：远程更新+编辑信息+
 //   编辑文件+执行日志(js)+删除 / 双击编辑文件 / 排序(上下移替代拖拽) / global 标识）
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import { RefreshCw, MoreVertical, Plus, ClipboardPaste, ArrowUp, ArrowDown } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
-import { cardCls, Modal, btnSec, btnPrimary, btnDanger, inputCls, labelCls, tagCls, Toggle } from "./ui";
+import { cardCls, Modal, btnSec, btnPrimary, inputCls, labelCls, tagCls, Toggle } from "./ui";
 
 const DEFAULT_YAML = "# https://clashparty.org/docs/guide/override/yaml\n";
 const DEFAULT_JS = "// https://clashparty.org/docs/guide/override/javascript\nfunction main(config) {\n  return config\n}";

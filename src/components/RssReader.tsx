@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { 
@@ -12,9 +12,9 @@ import {
   Calendar,
   AlertTriangle,
   CheckCircle,
-  TrendingUp,
   Bookmark,
-  BookmarkCheck
+  BookmarkCheck,
+  Globe
 } from "lucide-react";
 
 interface RssArticle {
@@ -23,6 +23,8 @@ interface RssArticle {
   pubDate: Date | null;
   summary: string;
   source: string;
+  /** 来源类型：网页适配器为 web，XML 订阅为 rss（旧缓存数据可能缺失） */
+  kind?: "rss" | "web";
 }
 
 interface RssSource {
@@ -44,9 +46,52 @@ interface RssConfig {
   is_first_launch: boolean;
 }
 
+// 内置网页适配器源（与后端 web_adapter_for_url 保持一致）
+const WEB_SOURCE_URLS = new Set([
+  "https://aifreeplan.com/zh/guides",
+  "https://www.aifreeplan.com/zh/guides",
+  "https://news.ycombinator.com",
+  "https://github.com/trending",
+  "https://www.v2ex.com",
+  "https://v2ex.com",
+]);
+
+const WEB_SOURCE_PRESETS: { name: string; url: string }[] = [
+  { name: "AI Free Plan", url: "https://aifreeplan.com/zh/guides/" },
+  { name: "Hacker News", url: "https://news.ycombinator.com/" },
+  { name: "GitHub 趋势", url: "https://github.com/trending" },
+  { name: "V2EX", url: "https://www.v2ex.com/" },
+];
+
 function sourceKindForUrl(url: string): "rss" | "web" {
   const normalized = url.trim().replace(/\/$/, "").toLowerCase();
-  return normalized === "https://aifreeplan.com/zh/guides" || normalized === "https://www.aifreeplan.com/zh/guides" ? "web" : "rss";
+  return WEB_SOURCE_URLS.has(normalized) ? "web" : "rss";
+}
+
+/** 来源徽标：首字母头像 + 来源名。网页适配器源用青色并带小地球图标，RSS 源用中性色。 */
+function SourceBadge({ source, kind }: { source: string; kind?: "rss" | "web" }) {
+  const isWeb = kind === "web";
+  const initial = (source.trim().charAt(0) || "?").toUpperCase();
+  return (
+    <span
+      className={`px-1 py-0.5 rounded-md flex items-center gap-1 text-[8px] font-bold border ${
+        isWeb
+          ? "bg-cyan-500/10 border-cyan-500/25 text-cyan-300"
+          : "bg-white/5 border-white/10 text-slate-300"
+      }`}
+      title={isWeb ? "网页适配器来源" : "RSS 来源"}
+    >
+      <span
+        className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[7px] font-black shrink-0 ${
+          isWeb ? "bg-cyan-500/20 text-cyan-200" : "bg-slate-600/40 text-slate-300"
+        }`}
+      >
+        {initial}
+      </span>
+      {isWeb && <Globe className="w-2.5 h-2.5 shrink-0" />}
+      {source}
+    </span>
+  );
 }
 
 function stripHtml(html: string): string {
@@ -57,7 +102,7 @@ function stripHtml(html: string): string {
   return text.slice(0, 180).trim() + (text.length > 180 ? "..." : "");
 }
 
-function parseRssXml(xmlStr: string, feedUrl: string, customName?: string): RssArticle[] {
+function parseRssXml(xmlStr: string, _feedUrl: string, customName?: string): RssArticle[] {
   const parser = new DOMParser();
   let xmlDoc: Document = parser.parseFromString(xmlStr, "text/xml");
   
@@ -368,10 +413,11 @@ export default function RssReader() {
             pubDate: article.pubDate ? new Date(article.pubDate) : null,
             summary: article.summary,
             source: article.source || source.name || "网页资讯",
+            kind: "web" as const,
           })));
         } else if (xml) {
           const parsed = parseRssXml(xml, source.url, source.name);
-          allArticles.push(...parsed);
+          allArticles.push(...parsed.map((a) => ({ ...a, kind: "rss" as const })));
         }
       } catch (err: any) {
         errors.push(`${source.name || source.url}: ${err.message || err}`);
@@ -380,10 +426,11 @@ export default function RssReader() {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
-    // Sort articles by published date descending
+    // Sort articles by published date descending；无日期（网页适配源）视为最新排最前
     allArticles.sort((a, b) => {
-      if (!a.pubDate) return 1;
-      if (!b.pubDate) return -1;
+      if (!a.pubDate && !b.pubDate) return 0;
+      if (!a.pubDate) return -1;
+      if (!b.pubDate) return 1;
       return b.pubDate.getTime() - a.pubDate.getTime();
     });
 
@@ -435,8 +482,10 @@ export default function RssReader() {
       // 按来源名称筛选
       if (sourceFilter && article.source !== sourceFilter) return false;
 
+      // 无日期文章（如网页适配器抓取的指南类内容）始终保留，
+      // 否则默认“今天”过滤会把适配的网站全部隐藏。
+      if (!article.pubDate) return true;
       if (dateFilter === "all") return true;
-      if (!article.pubDate) return false;
 
       const diffTime = now.getTime() - article.pubDate.getTime();
       const diffDays = diffTime / (1000 * 60 * 60 * 24);
@@ -505,6 +554,17 @@ export default function RssReader() {
     setConfigMessage(null);
   };
 
+  // 从内置网页源预设一键添加
+  const addPresetSource = (preset: { name: string; url: string }) => {
+    const trimmed = preset.url.trim();
+    if (editSources.some((s) => s.url.trim().replace(/\/$/, "") === trimmed.replace(/\/$/, ""))) {
+      setConfigMessage("该订阅源已在列表中");
+      return;
+    }
+    setEditSources([...editSources, { url: preset.url, name: preset.name, kind: "web" }]);
+    setConfigMessage(null);
+  };
+
   // Update a source name in the edit list
   const handleUpdateSourceName = (url: string, name: string) => {
     setEditSources(editSources.map((s) => (s.url === url ? { ...s, name } : s)));
@@ -521,7 +581,7 @@ export default function RssReader() {
   // Save config
   const handleSaveConfig = async () => {
     try {
-      const cleaned = editSources.map((s) => ({ url: s.url, name: s.name.trim(), kind: s.kind ?? (s.url.replace(/\/$/, "").toLowerCase() === "https://aifreeplan.com/zh/guides" ? "web" : "rss") }));
+      const cleaned = editSources.map((s) => ({ url: s.url, name: s.name.trim(), kind: s.kind ?? sourceKindForUrl(s.url) }));
       await invoke("set_rss_sources", { sources: cleaned });
       setSources(cleaned);
       // 若当前来源筛选项已不存在，则重置
@@ -538,7 +598,7 @@ export default function RssReader() {
 
   // Format date helper
   const formatDate = (date: Date | null) => {
-    if (!date) return "未知时间";
+    if (!date) return "最新";
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, "0");
     const d = String(date.getDate()).padStart(2, "0");
@@ -715,10 +775,7 @@ export default function RssReader() {
                   <div className="absolute right-0 top-0 w-24 h-24 bg-amber-500/5 blur-2xl rounded-full group-hover:bg-amber-500/10 transition-all pointer-events-none" />
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="px-1.5 py-0.5 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] text-[var(--module-accent)] text-[8px] font-bold rounded-md flex items-center gap-0.5">
-                        <TrendingUp className="w-2.5 h-2.5" />
-                        {article.source}
-                      </span>
+                      <SourceBadge source={article.source} kind={article.kind} />
                       <span className="text-[9.5px] text-slate-500 flex items-center gap-1">
                         <Calendar className="w-3 h-3" />
                         {formatDate(article.pubDate)}
@@ -777,10 +834,7 @@ export default function RssReader() {
                   <div className="absolute right-0 top-0 w-24 h-24 bg-blue-500/5 blur-2xl rounded-full group-hover:bg-blue-500/10 transition-all pointer-events-none" />
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="px-1.5 py-0.5 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] text-[var(--module-accent)] text-[8px] font-bold rounded-md flex items-center gap-0.5">
-                        <TrendingUp className="w-2.5 h-2.5" />
-                        {article.source}
-                      </span>
+                      <SourceBadge source={article.source} kind={article.kind} />
                       <span className="text-[9.5px] text-slate-500 flex items-center gap-1">
                         <Calendar className="w-3 h-3" />
                         {formatDate(article.pubDate)}
@@ -878,6 +932,19 @@ export default function RssReader() {
                 >
                   <Plus className="w-3 h-3" /> 添加
                 </button>
+              </div>
+              {/* 内置网页源预设：一键添加已实现适配器的网站 */}
+              <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                <span className="text-[9.5px] text-slate-500 font-medium">内置网页源：</span>
+                {WEB_SOURCE_PRESETS.map((p) => (
+                  <button
+                    key={p.url}
+                    onClick={() => addPresetSource(p)}
+                    className="px-2 py-0.5 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[9.5px] text-slate-300 transition-colors cursor-pointer"
+                  >
+                    {p.name}
+                  </button>
+                ))}
               </div>
               {configMessage && (
                 <div className="text-[9.5px] text-red-400 mt-2 flex items-center gap-1 font-medium">
