@@ -152,8 +152,13 @@ pub fn delete_document(id: &str) -> Result<(), String> {
     with_conn(|c| { sql(c.execute("DELETE FROM mindmap_documents WHERE id=?1", rusqlite::params![id]))?; Ok(()) })
 }
 
+fn touch_document_inner(c: &rusqlite::Connection, id: &str) -> Result<(), String> {
+    sql(c.execute("UPDATE mindmap_documents SET updated_at=?1 WHERE id=?2", rusqlite::params![now_ts(), id]))?;
+    Ok(())
+}
+
 pub fn touch_document(id: &str) -> Result<(), String> {
-    with_conn(|c| { sql(c.execute("UPDATE mindmap_documents SET updated_at=?1 WHERE id=?2", rusqlite::params![now_ts(), id]))?; Ok(()) })
+    with_conn(|c| touch_document_inner(c, id))
 }
 
 // ─── 节点 ───
@@ -162,12 +167,14 @@ fn row_to_node(r: &rusqlite::Row) -> rusqlite::Result<MindmapNode> {
     Ok(MindmapNode { id: r.get(0)?, document_id: r.get(1)?, parent_id: r.get(2)?, name: r.get(3)?, description: r.get(4)?, detail: r.get(5)?, kind: r.get(6)?, color: r.get(7)?, progress: r.get(8)?, position_x: r.get(9)?, position_y: r.get(10)?, created_at: r.get(11)?, updated_at: r.get(12)? })
 }
 
+fn list_nodes_inner(c: &rusqlite::Connection, document_id: &str) -> Result<Vec<MindmapNode>, String> {
+    let mut s = c.prepare("SELECT id,document_id,parent_id,name,description,detail,kind,color,progress,position_x,position_y,created_at,updated_at FROM mindmap_nodes WHERE document_id=?1").map_err(|e| e.to_string())?;
+    let rows = s.query_map(rusqlite::params![document_id], |r| row_to_node(r)).map_err(|e| e.to_string())?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
+}
+
 pub fn list_nodes(document_id: &str) -> Result<Vec<MindmapNode>, String> {
-    with_conn(|c| {
-        let mut s = c.prepare("SELECT id,document_id,parent_id,name,description,detail,kind,color,progress,position_x,position_y,created_at,updated_at FROM mindmap_nodes WHERE document_id=?1").map_err(|e| e.to_string())?;
-        let rows = s.query_map(rusqlite::params![document_id], |r| row_to_node(r)).map_err(|e| e.to_string())?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
-    })
+    with_conn(|c| list_nodes_inner(c, document_id))
 }
 
 pub fn upsert_node(node: &MindmapNode) -> Result<(), String> {
@@ -179,7 +186,7 @@ pub fn upsert_node(node: &MindmapNode) -> Result<(), String> {
         } else {
             sql(c.execute("INSERT INTO mindmap_nodes (id,document_id,parent_id,name,description,detail,kind,color,progress,position_x,position_y,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)", rusqlite::params![node.id, node.document_id, node.parent_id, node.name, node.description, node.detail, node.kind, node.color, node.progress, node.position_x, node.position_y, ts, ts]))?;
         }
-        touch_document(&node.document_id)?;
+        touch_document_inner(c, &node.document_id)?;
         Ok(())
     })
 }
@@ -195,7 +202,7 @@ pub fn delete_node(document_id: &str, node_id: &str) -> Result<(), String> {
             i += 1;
         }
         for id in &ids { sql(c.execute("DELETE FROM mindmap_nodes WHERE id=?1", rusqlite::params![id]))?; }
-        touch_document(document_id)?;
+        touch_document_inner(c, document_id)?;
         Ok(())
     })
 }
@@ -208,12 +215,14 @@ fn row_to_sticker(r: &rusqlite::Row) -> rusqlite::Result<MindmapSticker> {
     Ok(MindmapSticker { id: r.get(0)?, document_id: r.get(1)?, content: r.get(2)?, color: r.get(3)?, position_x: r.get(4)?, position_y: r.get(5)?, created_at: r.get(6)?, updated_at: r.get(7)? })
 }
 
+fn list_stickers_inner(c: &rusqlite::Connection, document_id: &str) -> Result<Vec<MindmapSticker>, String> {
+    let mut s = c.prepare("SELECT id,document_id,content,color,position_x,position_y,created_at,updated_at FROM mindmap_stickers WHERE document_id=?1").map_err(|e| e.to_string())?;
+    let rows = s.query_map(rusqlite::params![document_id], |r| row_to_sticker(r)).map_err(|e| e.to_string())?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
+}
+
 pub fn list_stickers(document_id: &str) -> Result<Vec<MindmapSticker>, String> {
-    with_conn(|c| {
-        let mut s = c.prepare("SELECT id,document_id,content,color,position_x,position_y,created_at,updated_at FROM mindmap_stickers WHERE document_id=?1").map_err(|e| e.to_string())?;
-        let rows = s.query_map(rusqlite::params![document_id], |r| row_to_sticker(r)).map_err(|e| e.to_string())?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
-    })
+    with_conn(|c| list_stickers_inner(c, document_id))
 }
 
 pub fn upsert_sticker(s: &MindmapSticker) -> Result<(), String> {
@@ -225,13 +234,13 @@ pub fn upsert_sticker(s: &MindmapSticker) -> Result<(), String> {
         } else {
             sql(c.execute("INSERT INTO mindmap_stickers (id,document_id,content,color,position_x,position_y,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)", rusqlite::params![s.id, s.document_id, s.content, s.color, s.position_x, s.position_y, ts, ts]))?;
         }
-        touch_document(&s.document_id)?;
+        touch_document_inner(c, &s.document_id)?;
         Ok(())
     })
 }
 
 pub fn delete_sticker(document_id: &str, sticker_id: &str) -> Result<(), String> {
-    with_conn(|c| { sql(c.execute("DELETE FROM mindmap_stickers WHERE id=?1", rusqlite::params![sticker_id]))?; touch_document(document_id)?; Ok(()) })
+    with_conn(|c| { sql(c.execute("DELETE FROM mindmap_stickers WHERE id=?1", rusqlite::params![sticker_id]))?; touch_document_inner(c, document_id)?; Ok(()) })
 }
 
 pub fn load_full(document_id: &str) -> Result<Option<DocumentFull>, String> {
@@ -239,7 +248,7 @@ pub fn load_full(document_id: &str) -> Result<Option<DocumentFull>, String> {
         let mut s = c.prepare("SELECT id,name,description,source_type,source_desc,folder_id,created_at,updated_at FROM mindmap_documents WHERE id=?1").map_err(|e| e.to_string())?;
         let mut rows = s.query_map(rusqlite::params![document_id], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,String>(6)?,r.get::<_,String>(7)?))).map_err(|e| e.to_string())?;
         if let Some(Ok((id,name,desc,st,sd,fid,ca,ua))) = rows.next() {
-            let n = list_nodes(&id)?; let sc = list_stickers(&id)?;
+            let n = list_nodes_inner(c, &id)?; let sc = list_stickers_inner(c, &id)?;
             Ok(Some(DocumentFull { document: MindmapDocument { id, name, description: desc, source_type: st, source_desc: sd, folder_id: fid, node_count: n.len(), sticker_count: sc.len(), created_at: ca, updated_at: ua }, nodes: n, stickers: sc }))
         } else { Ok(None) }
     })
