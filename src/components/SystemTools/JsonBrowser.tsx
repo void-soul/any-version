@@ -30,7 +30,7 @@ import {
 } from "lucide-react";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
-type ViewMode = "tree" | "graph" | "text";
+type ViewMode = "tree" | "graph";
 
 
 type JsonTab = {
@@ -360,13 +360,10 @@ export default function JsonBrowser() {
   const [showRight, setShowRight] = useState(true);
   const [syncScroll, setSyncScroll] = useState(true);
   const [notice, setNotice] = useState("");
-  const [rightText, setRightText] = useState("");
   const [collapseAllToken, setCollapseAllToken] = useState(0);
   const [copyState, setCopyState] = useState(false);
   const sourceEditorRef = useRef<any>(null);
-  const rightEditorRef = useRef<any>(null);
   const noticeTimer = useRef<number | null>(null);
-  const syncLock = useRef<"left" | "right" | null>(null);
 
   const active = tabs.find((tab) => tab.id === activeId) ?? null;
   const [parsed, setParsed] = useState<ParsedJson>({ value: null, error: null, nodeCount: 0, nodeCountCapped: false });
@@ -468,7 +465,6 @@ export default function JsonBrowser() {
 
   useEffect(() => {
     if (!active) return;
-    setRightText(active.text);
     setViewMode("tree");
     setCollapsed(new Set());
     setExpandedPaths(new Set());
@@ -652,15 +648,8 @@ export default function JsonBrowser() {
     setCollapseAllToken((token) => token + 1);
   };
 
-  const scrollEditors = (source: "left" | "right", position: { scrollTop: number; scrollLeft: number }) => {
-    if (!syncScroll || syncLock.current === source) return;
-    const target = source === "left" ? rightEditorRef.current : sourceEditorRef.current;
-    if (!target) return;
-    syncLock.current = source;
-    target.setScrollPosition(position);
-    window.requestAnimationFrame(() => {
-      if (syncLock.current === source) syncLock.current = null;
-    });
+  const scrollEditors = (_source: "left" | "right", _position: unknown) => {
+    // 同步滚动已废弃：右侧不再有编辑器
   };
 
   const topCount = parsed.value !== null && isContainer(parsed.value) ? containerSize(parsed.value) : 0;
@@ -736,7 +725,7 @@ export default function JsonBrowser() {
             <div className="flex h-8 shrink-0 items-center gap-1 border-b border-white/10 px-2 text-[10px] text-slate-500">
               <button type="button" onClick={() => setViewMode("tree")} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "tree" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><ListTree className="h-3 w-3" />结构</button>
               <button type="button" onClick={() => setViewMode("graph")} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "graph" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><MapIcon className="h-3 w-3" />图形树</button>
-              <button type="button" onClick={() => { setRightText(active?.text ?? ""); setViewMode("text"); }} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "text" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><Braces className="h-3 w-3" />预览</button>              <span className="ml-auto flex items-center gap-2">
+              <span className="ml-auto flex items-center gap-2">
                 {oversizedDocument ? <span className="text-amber-300">超大型文档 · 结构视图已暂停</span> : parsed.value !== null && <span>{parsePending ? "解析中…" : `${topCount} 项 · ${nodes}${parsed.nodeCountCapped ? "+" : ""} 节点`}</span>}
                 <button type="button" onClick={() => setSyncScroll((value) => !value)} className={syncScroll ? "text-cyan-300" : "text-slate-600"} title={syncScroll ? "关闭同步滚动" : "开启同步滚动"} aria-label="同步滚动"><Split className="h-3.5 w-3.5" /></button>
                 <button type="button" onClick={() => setShowLeft((value) => !value)} className="hover:text-slate-200" title="切换左侧编辑器" aria-label="切换左侧编辑器"><PanelLeft className="h-3.5 w-3.5" /></button>
@@ -751,26 +740,6 @@ export default function JsonBrowser() {
             {viewMode === "graph" && (
               <div className="min-h-0 flex-1">
                 {oversizedDocument ? <div className="flex h-full items-center justify-center px-6 text-center text-[11px] leading-5 text-amber-200">文件超过 20 MB，图形视图已暂停以保持界面响应。<br />可在文本编辑器中查看完整 JSON。</div> : parsed.value === null ? <div className="flex h-full items-center justify-center text-[11px] text-slate-600">输入有效 JSON 后显示图形树</div> : <JsonFlowCanvas value={parsed.value} selectedPath={selectedPath} searchMatches={searchMatches} onSelectPath={revealPathInEditor} onCopy={(value) => void copyValue(value)} collapseAllToken={collapseAllToken} />}
-              </div>
-            )}
-            {viewMode === "text" && (
-              <div className="min-h-0 flex-1">
-                <Editor
-                  height="100%"
-                  language="json"
-                  theme="vs-dark"
-                  value={rightText}
-                  onChange={(value) => setRightText(value ?? "")}
-                  onMount={(editor) => {
-                    rightEditorRef.current = editor;
-                    editor.onDidScrollChange((event) => {
-                      if (event.scrollTopChanged || event.scrollLeftChanged) {
-                        scrollEditors("right", { scrollTop: event.scrollTop, scrollLeft: event.scrollLeft });
-                      }
-                    });
-                  }}
-                  options={{ readOnly: true, minimap: { enabled: false }, fontSize: 12, lineNumbers: "on", wordWrap: "on", automaticLayout: true, padding: { top: 8, bottom: 8 } }}
-                />
               </div>
             )}
           </section>

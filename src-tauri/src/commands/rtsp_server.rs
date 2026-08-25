@@ -1,5 +1,7 @@
 use parking_lot::Mutex;
 use std::process::{Command, Stdio, Child};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::io::{BufRead, BufReader};
@@ -211,6 +213,21 @@ pub fn start_rtsp_server(
     let mut mediamtx_child = None;
 
     if has_mediamtx {
+        // 清理占用目标 RTSP 端口的残留进程（上次会话遗留的 mediamtx 等），
+        // 否则新 mediamtx 绑定失败，potplayer 仍连到旧端口看到旧分辨率流。
+        if let Some(pid) = crate::commands::node_manager::port_owner_pid(config.port) {
+            if let Some(name) = crate::commands::node_manager::process_name_by_pid(pid) {
+                let n = name.to_lowercase();
+                if n.contains("mediamtx") || n.contains("ffmpeg") {
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/PID", &pid.to_string(), "/T", "/F"])
+                        .creation_flags(0x08000000)
+                        .output();
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                }
+            }
+        }
+
         let bind_addr = if config.allow_lan {
             format!("0.0.0.0:{}", config.port)
         } else {
@@ -279,7 +296,7 @@ pub fn start_rtsp_server(
     // 1. 输入源定义与选项
     if config.source_type == "testsrc" {
         let res = config.resolution.as_deref().unwrap_or("");
-        let size = if !res.is_empty() && res != "default" { res.replace('x', ":") } else { "1280x720".to_string() };
+        let size = if !res.is_empty() && res != "default" { res.to_string() } else { "1280x720".to_string() };
         let rate = config.fps.unwrap_or(30).max(1);
         args.extend(vec![
             "-re".to_string(),
@@ -328,9 +345,15 @@ pub fn start_rtsp_server(
     }
 
     // 2. 滤镜与帧率输出参数
-    if let Some(ref res) = config.resolution {
-        if !res.is_empty() && res != "default" {
-            args.extend(vec!["-vf".to_string(), format!("scale={}", res.replace('x', ":"))]);
+    // 注意：流复制（gpu=copy）模式下 -vf 与 -c:v copy 冲突（ffmpeg 直接报错
+    // "Filtering and streamcopy cannot be used together"），因此 copy 模式跳过缩放，
+    // 分辨率由源流本身决定；其余模式（CPU/硬件编码）正常应用 scale。
+    let gpu = config.gpu_accel.as_deref().unwrap_or("cpu");
+    if gpu != "copy" {
+        if let Some(ref res) = config.resolution {
+            if !res.is_empty() && res != "default" {
+                args.extend(vec!["-vf".to_string(), format!("scale={}", res.replace('x', ":"))]);
+            }
         }
     }
 
@@ -342,7 +365,6 @@ pub fn start_rtsp_server(
 
     // 3. 视频编码器与显卡/硬件加速
     let codec = config.video_codec.as_deref().unwrap_or("h264");
-    let gpu = config.gpu_accel.as_deref().unwrap_or("cpu");
     let gop = config.gop.unwrap_or(15).max(1).to_string();
 
     if gpu == "copy" {

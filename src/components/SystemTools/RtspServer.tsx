@@ -452,7 +452,7 @@ export default function RtspServer() {
   const runningCount = instances.filter((i) => i.status.running).length;
 
   return (
-    <div className="w-full px-6 py-4 max-w-[1100px] mx-auto space-y-5 select-none text-slate-200">
+    <div className="h-full w-full overflow-y-auto px-6 py-4 max-w-[1100px] mx-auto space-y-5 select-none text-slate-200">
       {/* 头部控制栏 */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-4">
         <div className="flex items-center gap-3">
@@ -1056,7 +1056,7 @@ export default function RtspServer() {
                             <span className="text-[10px] text-slate-400 block mb-1">码率 (Mbps)</span>
                             <input
                               type="number"
-                              disabled={isLocked || inst.config.gpuAccel === "copy"}
+                              disabled={isLocked}
                               min={0}
                               step={0.1}
                               value={inst.config.bitrateMbps ?? 0}
@@ -1064,13 +1064,13 @@ export default function RtspServer() {
                               className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)]"
                               placeholder="0=自动"
                             />
-                            <span className="text-[9px] text-slate-500 mt-0.5 block">0=编码器自动 · 4K 建议 8-20 Mbps</span>
+                            <span className="text-[9px] text-slate-500 mt-0.5 block">{inst.config.gpuAccel === "copy" ? "流复制模式下码率不生效" : "0=编码器自动 · 4K 建议 8-20 Mbps"}</span>
                           </div>
                           <div>
                             <span className="text-[10px] text-slate-400 block mb-1">GOP (关键帧间隔)</span>
                             <input
                               type="number"
-                              disabled={isLocked || inst.config.gpuAccel === "copy"}
+                              disabled={isLocked}
                               min={1}
                               max={600}
                               value={inst.config.gop ?? 15}
@@ -1078,7 +1078,7 @@ export default function RtspServer() {
                               className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)]"
                               placeholder="15"
                             />
-                            <span className="text-[9px] text-slate-500 mt-0.5 block">帧 · 低延迟用 15，高效率用 60+</span>
+                            <span className="text-[9px] text-slate-500 mt-0.5 block">{inst.config.gpuAccel === "copy" ? "流复制模式下 GOP 不生效" : "帧 · 低延迟用 15，高效率用 60+"}</span>
                           </div>
                         </div>
                       </div>
