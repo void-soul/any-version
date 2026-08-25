@@ -118,8 +118,8 @@ const LearnColorEdge = memo(function LearnColorEdge({ id, sourceX, sourceY, targ
           <stop offset="100%" stopColor="#f8fafc" />
         </linearGradient>
       </defs>
-      <path d={path} fill="none" stroke={color} strokeWidth={5} opacity={0.12} />
-      <path d={path} fill="none" stroke={`url(#${gradientId})`} strokeWidth={2.2} strokeLinecap="round" markerEnd={`url(#arrow-${gradientId})`} />
+      <path d={path} fill="none" stroke={color} strokeWidth={3} opacity={0.12} />
+      <path d={path} fill="none" stroke={`url(#${gradientId})`} strokeWidth={1.5} strokeLinecap="round" markerEnd={`url(#arrow-${gradientId})`} />
       <marker id={`arrow-${gradientId}`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
         <path d="M0,0 L6,3 L0,6 z" fill="#f8fafc" />
       </marker>
