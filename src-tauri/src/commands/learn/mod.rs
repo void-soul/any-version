@@ -1,16 +1,17 @@
-// 项目学习模块：用 AI 供应商/模型分析某个项目，生成「任务画布」式的父子结构，
-// 帮助快速理解、掌握陌生项目的模块组成与依赖关系。
-//
-// - models.rs   数据模型（节点/图/元信息）
-// - scan.rs     项目目录扫描（目录树 + 关键文件内容，作为 AI 的上下文）
-// - generate.rs 调用 AI 生成结构（复用 AI 配置里的供应商 + OpenAI 兼容协议）
-// - store.rs    生成结果按项目持久化（JSON 文件 + 索引）
+// 需求模块：多项目 → 多模块 → 多图谱 的思维导图式结构。
+// - models.rs   数据模型（项目/模块/节点/图谱）
+// - db.rs        SQLite 持久化
+// - scan.rs      项目目录扫描
+// - commands.rs  Tauri 命令（CRUD + AI 生成 + 导出）
+// - store.rs     旧 JSON 文件存储（保留兼容）
+// - generate.rs  旧 AI 生成（已废弃，redirect 到新命令）
 
 pub mod models;
+pub mod db;
 pub mod scan;
-pub mod generate;
+pub mod commands;
 pub mod store;
+pub mod generate;
 
 pub use models::*;
-pub use generate::*;
-pub use store::*;
+pub use commands::*;

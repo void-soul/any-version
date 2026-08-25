@@ -7,6 +7,8 @@ use crate::commands::mihomo::MihomoInner;
 use crate::commands::hidden_cmd::hidden_cmd;
 use std::path::PathBuf;
 use std::process::Stdio;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::AppHandle;
@@ -245,7 +247,7 @@ pub fn is_admin() -> bool {
 }
 
 fn kill_child(inner: &MihomoInner) {
-    if let Some(mut c) = inner.child.lock().unwrap().take() {
+    if let Some(mut c) = inner.child.lock().unwrap_or_else(|e| e.into_inner()).take() {
         let _ = c.kill();
     }
 }
@@ -253,6 +255,37 @@ fn kill_child(inner: &MihomoInner) {
 pub fn stop_core(inner: &MihomoInner) {
     inner.stop_flag.store(true, Ordering::SeqCst);
     kill_child(inner);
+}
+
+/// 退出时兜底：若子进程句柄已丢失（例如被 detach 或看门狗接管），
+/// 尝试按核心可执行文件路径 + 混合端口定位残留的 mihomo 进程并结束它，
+/// 确保 any-version 退出的同时也关闭自己拉起的核心。
+pub fn kill_core_by_port(inner: &MihomoInner) {
+    // 仅当本会话由 any-version 拉起过核心时才补杀，避免误杀外部 mihomo
+    if !inner.launched_by_us.load(Ordering::SeqCst) {
+        return;
+    }
+    let mixed_port = inner.app_config.lock().unwrap_or_else(|e| e.into_inner()).mixed_port;
+    if mixed_port == 0 {
+        return;
+    }
+    // 端口已被释放说明核心已退出，无需处理
+    if !port_in_use(mixed_port) {
+        return;
+    }
+    let Some(pid) = crate::commands::node_manager::port_owner_pid(mixed_port) else {
+        return;
+    };
+    // 仅结束我们的核心（避免误杀其它占用同端口的程序）
+    if let Some(name) = crate::commands::node_manager::process_name_by_pid(pid) {
+        let n = name.to_lowercase();
+        if n.contains("mihomo") {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .creation_flags(0x08000000)
+                .output();
+        }
+    }
 }
 
 /// 看门狗连续重启计数（超过上限后停止自动重启，避免疯狂拉起崩溃内核）
@@ -437,8 +470,9 @@ pub async fn launch_core(app: &AppHandle, inner: Arc<MihomoInner>) -> Result<(),
             std::thread::spawn(move || pipe_to_log(err, p, Some(s)));
         }
     }
-    *inner.child.lock().unwrap() = Some(child);
+    *inner.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
     inner.stop_flag.store(false, Ordering::SeqCst);
+    inner.launched_by_us.store(true, Ordering::SeqCst);
 
     // 启动就绪检测：轮询外部控制器端口，最长 10s；期间若进程退出则回传内核日志
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);

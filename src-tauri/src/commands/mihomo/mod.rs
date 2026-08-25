@@ -41,6 +41,9 @@ pub struct MihomoInner {
     pub profile_config: Mutex<ProfileConfig>,
     pub override_config: Mutex<OverrideConfig>,
     pub child: Mutex<Option<Child>>,
+    /// 本次会话内是否由 any-version 拉起过核心（用于退出时按端口补杀，
+    /// 避免误杀外部/上次会话遗留的 mihomo）
+    pub launched_by_us: Arc<AtomicBool>,
     pub data_dir: PathBuf,
     pub stop_flag: Arc<AtomicBool>,
     pub watchdog_running: Arc<AtomicBool>,
@@ -412,6 +415,7 @@ pub fn init_state() -> MihomoState {
         profile_config: Mutex::new(profile_config),
         override_config: Mutex::new(override_config),
         child: Mutex::new(None),
+        launched_by_us: Arc::new(AtomicBool::new(false)),
         data_dir: data_dir.clone(),
         stop_flag: Arc::new(AtomicBool::new(true)),
         watchdog_running: Arc::new(AtomicBool::new(false)),
@@ -580,6 +584,10 @@ pub fn kill_on_exit(inner: &MihomoInner) {
     crate::exit_log::exit_log("cleanup: 开始 stop_core");
     stop_core(inner);
     crate::exit_log::exit_log("cleanup: stop_core 完成");
+    // 兜底：子进程句柄丢失（detach/看门狗接管）时按端口+进程名补杀，
+    // 保证 any-version 退出时必然关闭自己拉起的 mihomo 核心。
+    crate::commands::mihomo::manager::kill_core_by_port(inner);
+    crate::exit_log::exit_log("cleanup: kill_core_by_port 完成");
     if auto_close {
         crate::exit_log::exit_log("cleanup: 开始 set_sys_proxy(false)（同步 shell，可能卡）");
         // F5 修复：退出时清除系统代理失败应上报（此处为强制退出，保持日志但传播）
@@ -2097,7 +2105,9 @@ pub fn mihomo_detach_core(state: State<'_, MihomoState>) -> Result<(), String> {
     state
         .stop_flag
         .store(true, std::sync::atomic::Ordering::SeqCst);
-    let mut g = state.child.lock().unwrap();
+    // 用户显式脱离托管：退出时不再补杀该核心
+    state.launched_by_us.store(false, std::sync::atomic::Ordering::SeqCst);
+    let mut g = state.child.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(child) = g.take() {
         // 丢弃句柄但不 kill，内核继续运行
         std::mem::forget(child);

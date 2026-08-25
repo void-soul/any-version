@@ -371,7 +371,7 @@ fn check_dep(exe_name: &str, version_args: &[&str]) -> DepCheck {
 // ─── 端口 / 进程检测 ───
 
 /// 检测端口是否被占用（LISTENING），返回占用进程 PID。
-fn port_owner_pid(port: u16) -> Option<u32> {
+pub fn port_owner_pid(port: u16) -> Option<u32> {
     let (stdout, _, _) = run_capture("netstat", &["-ano", "-p", "tcp"], None);
     let target = format!(":{}", port);
     for line in stdout.lines() {
@@ -390,7 +390,7 @@ fn port_owner_pid(port: u16) -> Option<u32> {
     None
 }
 
-fn process_name_by_pid(pid: u32) -> Option<String> {
+pub fn process_name_by_pid(pid: u32) -> Option<String> {
     let (stdout, _, _) = run_capture("tasklist", &["/fi", &format!("pid eq {}", pid), "/fo", "csv", "/nh"], None);
     let first = stdout.lines().next().unwrap_or("");
     first.split(',').next().map(|p| p.trim_matches('"').to_string())
