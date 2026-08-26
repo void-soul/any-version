@@ -21,7 +21,7 @@ pub fn api_init() -> Result<(), String> {
 pub fn api_list_projects() -> Result<Vec<ApiProject>, String> {
     db::with_db(|conn| {
         let mut stmt = conn
-            .prepare("SELECT id, name, description, active_env_id, created_at, updated_at FROM api_projects ORDER BY created_at")
+            .prepare("SELECT id, name, description, active_env_id, common_headers, common_params, created_at, updated_at FROM api_projects ORDER BY created_at")
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map([], |row| db::project_row(row))
@@ -40,7 +40,7 @@ pub fn api_create_project(name: String, description: String) -> Result<ApiProjec
     let ts = now_ts();
     db::with_db(|conn| {
         conn.execute(
-            "INSERT INTO api_projects (id, name, description, active_env_id, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, ?4, ?4)",
+            "INSERT INTO api_projects (id, name, description, active_env_id, common_headers, common_params, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, '[]', '[]', ?4, ?4)",
             rusqlite::params![id, name, description, ts],
         )
         .map_err(|e| e.to_string())?;
@@ -64,8 +64,13 @@ pub fn api_create_project(name: String, description: String) -> Result<ApiProjec
 pub fn api_update_project(project: ApiProject) -> Result<(), String> {
     db::with_db(|conn| {
         conn.execute(
-            "UPDATE api_projects SET name = ?1, description = ?2, active_env_id = ?3, updated_at = ?4 WHERE id = ?5",
-            rusqlite::params![project.name, project.description, project.active_env_id, now_ts(), project.id],
+            "UPDATE api_projects SET name = ?1, description = ?2, active_env_id = ?3, common_headers = ?4, common_params = ?5, updated_at = ?6 WHERE id = ?7",
+            rusqlite::params![
+                project.name, project.description, project.active_env_id,
+                serde_json::to_string(&project.common_headers).unwrap_or_else(|_| "[]".into()),
+                serde_json::to_string(&project.common_params).unwrap_or_else(|_| "[]".into()),
+                now_ts(), project.id
+            ],
         )
         .map_err(|e| e.to_string())?;
         Ok(())
@@ -338,13 +343,36 @@ pub fn api_get_endpoint(endpoint_id: String) -> Result<ApiEndpoint, String> {
 pub fn api_create_endpoint(ep: ApiEndpoint) -> Result<ApiEndpoint, String> {
     let id = if ep.id.is_empty() { db::new_id("ep") } else { ep.id };
     let ts = now_ts();
+    // 接口模板：把项目级通用 Headers / Params 合并进新接口（按 key 去重，避免重复）
+    let (headers, query_params) = db::with_db(|conn| {
+        let project: super::models::ApiProject = conn
+            .query_row(
+                "SELECT id, name, description, active_env_id, common_headers, common_params, created_at, updated_at FROM api_projects WHERE id = ?1",
+                rusqlite::params![ep.project_id],
+                |row| db::project_row(row),
+            )
+            .map_err(|e| format!("读取项目模板失败: {}", e))?;
+        let mut headers = ep.headers.clone();
+        for h in project.common_headers {
+            if h.enabled && !headers.iter().any(|x| x.key == h.key) {
+                headers.push(h);
+            }
+        }
+        let mut query_params = ep.query_params.clone();
+        for p in project.common_params {
+            if p.enabled && !query_params.iter().any(|x| x.key == p.key) {
+                query_params.push(p);
+            }
+        }
+        Ok::<(Vec<super::models::KeyValueItem>, Vec<super::models::KeyValueItem>), String>((headers, query_params))
+    })?;
     db::with_db(|conn| {
         conn.execute(
             &format!("INSERT INTO api_endpoints ({}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25)", EP_COLS),
             rusqlite::params![
                 id, ep.project_id, ep.module_id, ep.name, ep.method, ep.url,
-                serde_json::to_string(&ep.headers).unwrap_or_else(|_| "[]".into()),
-                serde_json::to_string(&ep.query_params).unwrap_or_else(|_| "[]".into()),
+                serde_json::to_string(&headers).unwrap_or_else(|_| "[]".into()),
+                serde_json::to_string(&query_params).unwrap_or_else(|_| "[]".into()),
                 serde_json::to_string(&ep.path_params).unwrap_or_else(|_| "[]".into()),
                 ep.body, ep.body_type, ep.description, ep.docs_md, ep.timeout_ms, ts, ts,
                 serde_json::to_string(&ep.body_form).unwrap_or_else(|_| "[]".into()),

@@ -7,7 +7,7 @@ import {
   BookOpen, ListChecks, Copy, Check, Loader2, Pencil, X, Database,
   Folder, KeyRound, Cookie, SlidersHorizontal, ArrowDown,
   RefreshCcw, Wrench, MoreHorizontal, FileText, TestTube2, Braces,
-  Link2, StickyNote, Star, History, Eraser,
+  Link2, StickyNote, Star, History, Eraser, ListTree,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -59,6 +59,68 @@ function prettyJson(text: string): string {
   } catch {
     return text;
   }
+}
+
+// ─── 响应体 JSON 轻量语法高亮 ───
+
+/** JSON token 类型 → 颜色类名 */
+const JSON_TOKEN_CLS: Record<string, string> = {
+  key: "text-sky-300",
+  str: "text-emerald-300",
+  num: "text-amber-300",
+  bool: "text-violet-300",
+  null: "text-slate-500",
+};
+
+/** 把 JSON 文本切成带颜色的 token（无依赖，正则扫描）。非 JSON 文本原样返回。 */
+function highlightJsonTokens(text: string): Array<{ cls: string; content: string }> | null {
+  // 快速探测是否为 JSON
+  const t = text.trim();
+  if (!t.startsWith("{") && !t.startsWith("[")) return null;
+  try {
+    JSON.parse(t);
+  } catch {
+    return null;
+  }
+  const re = /"(?:[^"\\]|\\.)*"(\s*:)?|\btrue\b|\bfalse\b|\bnull\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+  const tokens: Array<{ cls: string; content: string }> = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t))) {
+    if (m.index > last) tokens.push({ cls: "", content: t.slice(last, m.index) });
+    const isKey = m[1] !== undefined; // 引号后跟冒号 → 键
+    const raw = isKey ? m[0] : m[0];
+    let cls: string;
+    if (isKey) cls = JSON_TOKEN_CLS.key;
+    else if (raw.startsWith('"')) cls = JSON_TOKEN_CLS.str;
+    else if (raw === "true" || raw === "false") cls = JSON_TOKEN_CLS.bool;
+    else if (raw === "null") cls = JSON_TOKEN_CLS.null;
+    else cls = JSON_TOKEN_CLS.num;
+    tokens.push({ cls, content: raw });
+    last = m.index + m[0].length;
+  }
+  if (last < t.length) tokens.push({ cls: "", content: t.slice(last) });
+  return tokens;
+}
+
+/** 响应体查看器：JSON 高亮（pretty）或原始文本（raw）。 */
+function ResponseBody({ body, mode }: { body: string; mode: "pretty" | "raw" }) {
+  const shown = mode === "pretty" ? prettyJson(body) : body;
+  const tokens = mode === "pretty" ? highlightJsonTokens(shown) : null;
+  if (tokens) {
+    return (
+      <pre className="overflow-auto p-2 text-[11px] font-mono whitespace-pre-wrap break-all h-full">
+        {tokens.map((tk, i) =>
+          tk.cls ? (
+            <span key={i} className={tk.cls}>{tk.content}</span>
+          ) : (
+            <span key={i} className="text-slate-200">{tk.content}</span>
+          )
+        )}
+      </pre>
+    );
+  }
+  return <pre className="overflow-auto p-2 text-[11px] font-mono text-slate-200 whitespace-pre-wrap break-all h-full">{shown}</pre>;
 }
 
 // ─── 键值编辑器（Key-value 编辑 / Bulk 编辑 / 描述） ───
@@ -400,7 +462,7 @@ function PresetHeadersModal({ projectId, sets, onClose, onChanged }: {
   );
 }
 
-// ─── 变量集合弹窗 ───
+// ─── 变量集合弹窗（矩阵编辑：每列一个环境，每行一个变量名）───
 function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
   projectId: string;
   envs: ApiEnvironment[];
@@ -412,14 +474,14 @@ function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
   const [active, setActive] = useState<string | null>(activeEnvId);
 
   const updateEnv = (i: number, patch: Partial<ApiEnvironment>) => {
-    setLocal(local.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
+    setLocal(prev => prev.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
   };
 
   const addEnv = async () => {
     const created = await invoke<ApiEnvironment>("api_create_environment", {
-      projectId, name: "新变量集合", variables: {},
+      projectId, name: `环境${local.length + 1}`, variables: {},
     });
-    setLocal([...local, created]);
+    setLocal(prev => [...prev, created]);
     if (!active) setActive(created.id);
   };
 
@@ -434,88 +496,142 @@ function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
     onClose();
   };
 
+  // 变量名并集（保持首次出现的顺序），保证各环境列对齐
+  const allKeys = (() => {
+    const seen: string[] = [];
+    for (const e of local) for (const k of Object.keys(e.variables)) if (!seen.includes(k)) seen.push(k);
+    return seen;
+  })();
+
+  const setVar = (envIdx: number, key: string, value: string) => {
+    setLocal(prev => prev.map((e, i) => (i === envIdx ? { ...e, variables: { ...e.variables, [key]: value } } : e)));
+  };
+
+  const renameVar = (oldKey: string, newKey: string) => {
+    if (!newKey.trim() || newKey === oldKey) return;
+    setLocal(prev => prev.map(e => {
+      const vars = { ...e.variables };
+      if (oldKey in vars) { vars[newKey] = vars[oldKey]; delete vars[oldKey]; }
+      return { ...e, variables: vars };
+    }));
+  };
+
+  const addRow = () => {
+    const key = `变量${allKeys.length + 1}`;
+    setLocal(prev => prev.map(e => ({ ...e, variables: { ...e.variables, [key]: "" } })));
+  };
+
+  const deleteRow = (key: string) => {
+    setLocal(prev => prev.map(e => {
+      const vars = { ...e.variables }; delete vars[key]; return { ...e, variables: vars };
+    }));
+  };
+
+  const cellCls = "bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60";
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className="w-[680px] max-h-[80vh] overflow-hidden glass-panel rounded-2xl border border-white/10 shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+      <div className="w-[860px] max-w-[95vw] max-h-[82vh] overflow-hidden glass-panel rounded-2xl border border-white/10 shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
             <Database className="w-4 h-4" style={{ color: ACCENT }} /> 变量集合（环境）
           </div>
-          <button onClick={onClose} className="p-1 text-slate-500 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
+          <div className="flex items-center gap-2">
+            <select
+              value={active ?? ""}
+              onChange={(e) => setActive(e.target.value)}
+              className="bg-black/30 border border-white/10 rounded-md px-2 py-1 text-[11px] text-slate-200 focus:outline-none"
+              title="当前生效的环境（请求变量取自该列）"
+            >
+              {local.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+            </select>
+            <button onClick={onClose} className="p-1 text-slate-500 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
+          </div>
         </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {local.map((env, i) => (
-            <div key={env.id} className={`rounded-xl border p-3 ${env.id === active ? "border-[var(--module-accent)]/60 bg-[color-mix(in_srgb,var(--module-accent)_8%,transparent)]" : "border-white/10 bg-black/20"}`}>
-              <div className="flex items-center gap-2 mb-2">
-                <input
-                  type="radio"
-                  checked={env.id === active}
-                  onChange={() => setActive(env.id)}
-                  className="accent-[var(--module-accent)]"
-                  title="设为当前集合"
-                />
-                <input
-                  value={env.name}
-                  onChange={(e) => updateEnv(i, { name: e.target.value })}
-                  className="flex-1 bg-transparent border border-white/10 rounded-md px-2 py-1 text-xs font-semibold text-slate-100 focus:outline-none"
-                />
-                <button
-                  onClick={async () => {
-                    await invoke("api_delete_environment", { envId: env.id });
-                    setLocal(local.filter((_, idx) => idx !== i));
-                  }}
-                  className="p-1 text-slate-500 hover:text-rose-400 cursor-pointer"
-                  title="删除变量集合"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              <div className="space-y-1">
-                {Object.entries(env.variables).map(([k, v], vi) => (
-                  <div key={vi} className="flex items-center gap-1.5">
-                    <input
-                      value={k}
-                      onChange={(e) => {
-                        const vars = { ...env.variables };
-                        delete vars[k];
-                        vars[e.target.value] = v;
-                        updateEnv(i, { variables: vars });
-                      }}
-                      placeholder="变量名"
-                      className="w-1/3 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-200"
-                    />
-                    <input
-                      value={String(v ?? "")}
-                      onChange={(e) => updateEnv(i, { variables: { ...env.variables, [k]: e.target.value } })}
-                      placeholder="值（支持 {{$guid}} 等随机变量）"
-                      className="flex-1 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-200"
-                    />
-                    <button
-                      onClick={() => {
-                        const vars = { ...env.variables };
-                        delete vars[k];
-                        updateEnv(i, { variables: vars });
-                      }}
-                      className="p-1 text-slate-500 hover:text-rose-400 cursor-pointer"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  </div>
+        <div className="flex-1 overflow-auto p-4">
+          {local.length === 0 ? (
+            <div className="py-10 text-center text-xs text-slate-500">暂无环境，点击下方“新建环境”创建第一列</div>
+          ) : (
+            <table className="w-full border-separate border-spacing-0 text-xs">
+              <thead>
+                <tr>
+                  <th className="sticky left-0 z-10 bg-[#0d1524] px-2 py-1.5 text-left text-[10px] font-semibold text-slate-400 border-b border-white/10">变量名</th>
+                  {local.map((e, i) => (
+                    <th key={e.id} className={`px-1.5 py-1 border-b border-white/10 ${e.id === active ? "bg-[color-mix(in_srgb,var(--module-accent)_10%,transparent)]" : "bg-black/20"}`}>
+                      <div className="flex items-center gap-1">
+                        {e.id === active && <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "var(--module-accent)" }} title="当前生效" />}
+                        <input
+                          value={e.name}
+                          onChange={(ev) => updateEnv(i, { name: ev.target.value })}
+                          className={`w-full min-w-[110px] bg-transparent border ${e.id === active ? "border-[var(--module-accent)]/50" : "border-white/10"} rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-slate-100 focus:outline-none`}
+                        />
+                        <button
+                          onClick={() => setActive(e.id)}
+                          className="shrink-0 p-0.5 text-[9px] text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
+                          title="设为当前环境"
+                        >当前</button>
+                        <button
+                          onClick={async () => {
+                            await invoke("api_delete_environment", { envId: e.id });
+                            setLocal(prev => prev.filter((_, idx) => idx !== i));
+                            if (active === e.id) setActive(local.find(x => x.id !== e.id)?.id ?? null);
+                          }}
+                          className="shrink-0 p-0.5 text-slate-500 hover:text-rose-400 cursor-pointer"
+                          title="删除此环境列"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {allKeys.map((key) => (
+                  <tr key={key} className="group">
+                    <td className="sticky left-0 z-10 bg-[#0d1524] px-2 py-1 border-b border-white/5">
+                      <div className="flex items-center gap-1">
+                        <input
+                          defaultValue={key}
+                          onBlur={(e) => renameVar(key, e.target.value.trim())}
+                          className={`w-full min-w-[110px] bg-transparent border border-transparent rounded-md px-1 py-0.5 text-[11px] font-medium text-slate-200 focus:border-[var(--module-accent)]/50 focus:outline-none`}
+                          title="编辑变量名（失焦后同步到所有环境）"
+                        />
+                        <button
+                          onClick={() => deleteRow(key)}
+                          className="shrink-0 p-0.5 text-slate-600 opacity-0 group-hover:opacity-100 hover:text-rose-400 cursor-pointer"
+                          title="删除此行（所有环境）"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </td>
+                    {local.map((e, ei) => (
+                      <td key={e.id} className={`px-1.5 py-1 border-b border-white/5 ${e.id === active ? "bg-[color-mix(in_srgb,var(--module-accent)_4%,transparent)]" : ""}`}>
+                        <input
+                          value={String(e.variables[key] ?? "")}
+                          onChange={(ev) => setVar(ei, key, ev.target.value)}
+                          placeholder="{{$guid}} 等随机变量"
+                          className={`${cellCls} w-full min-w-[120px]`}
+                        />
+                      </td>
+                    ))}
+                  </tr>
                 ))}
-                <button
-                  onClick={() => updateEnv(i, { variables: { ...env.variables, ["新变量"]: "" } })}
-                  className="text-[11px] text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
-                >
-                  + 添加变量
-                </button>
-              </div>
-            </div>
-          ))}
-          <button onClick={addEnv} className="flex items-center gap-1 text-xs text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
-            <Plus className="w-3.5 h-3.5" /> 新建变量集合
-          </button>
-          <div className="text-[10px] text-slate-500 space-y-0.5">
-            提示：切换集合即切换整组变量；请求中通过 <code className="text-[var(--module-accent)]">{"{{变量名}}"}</code> 引用。
+              </tbody>
+            </table>
+          )}
+          <div className="mt-3 flex items-center gap-2">
+            <button onClick={addRow} className="flex items-center gap-1 text-xs text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
+              <Plus className="w-3.5 h-3.5" /> 添加变量行
+            </button>
+            <button onClick={addEnv} className="flex items-center gap-1 text-xs text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
+              <Plus className="w-3.5 h-3.5" /> 新建环境列
+            </button>
+          </div>
+          <div className="mt-2 text-[10px] text-slate-500 space-y-0.5">
+            提示：每组环境代表一列，每行一个变量名；不同环境的变量名自动对齐，只改值即可。
+            请求中通过 <code className="text-[var(--module-accent)]">{"{{变量名}}"}</code> 引用当前生效环境的值。
           </div>
         </div>
         <div className="flex justify-end gap-2 px-4 py-3 border-t border-white/10">
@@ -533,15 +649,17 @@ function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
 function ProjectModal({ project, onClose, onSave }: {
   project: ApiProject | null;
   onClose: () => void;
-  onSave: (name: string, description: string) => void;
+  onSave: (name: string, description: string, commonHeaders: KeyValueItem[], commonParams: KeyValueItem[]) => void;
 }) {
   const [name, setName] = useState(project?.name ?? "");
   const [description, setDescription] = useState(project?.description ?? "");
+  const [commonHeaders, setCommonHeaders] = useState<KeyValueItem[]>(project?.common_headers ?? []);
+  const [commonParams, setCommonParams] = useState<KeyValueItem[]>(project?.common_params ?? []);
   const editing = !!project;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div
-        className="w-[460px] glass-panel rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
+        className="w-[560px] glass-panel rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
@@ -549,7 +667,7 @@ function ProjectModal({ project, onClose, onSave }: {
           <span className="text-sm font-semibold text-white">{editing ? "编辑项目" : "新建项目"}</span>
           <button onClick={onClose} className="ml-auto p-1 text-slate-500 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
         </div>
-        <div className="p-4 space-y-3">
+        <div className="max-h-[60vh] overflow-y-auto p-4 space-y-3">
           <label className="block">
             <span className="text-[11px] text-slate-400 mb-1 block">项目名称</span>
             <input
@@ -557,7 +675,7 @@ function ProjectModal({ project, onClose, onSave }: {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="如：电商后台、开放平台…"
-              onKeyDown={(e) => e.key === "Enter" && name.trim() && onSave(name.trim(), description)}
+              onKeyDown={(e) => e.key === "Enter" && name.trim() && onSave(name.trim(), description, commonHeaders, commonParams)}
               className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-[var(--module-accent)]/60"
             />
           </label>
@@ -567,15 +685,31 @@ function ProjectModal({ project, onClose, onSave }: {
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="这个项目面向什么场景？包含哪些模块？…"
-              rows={3}
+              rows={2}
               className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 resize-none focus:outline-none focus:border-[var(--module-accent)]/60"
             />
           </label>
+          <div>
+            <div className="flex items-center gap-1.5 mb-1">
+              <Link2 className="w-3 h-3" style={{ color: ACCENT }} />
+              <span className="text-[11px] text-slate-400">通用 Headers（接口模板）</span>
+              <span className="text-[9px] text-slate-600">新建接口时自动附加</span>
+            </div>
+            <KvEditor items={commonHeaders} onChange={setCommonHeaders} placeholderKey="Header 名" placeholderValue="值" withDescription={false} />
+          </div>
+          <div>
+            <div className="flex items-center gap-1.5 mb-1">
+              <ListTree className="w-3 h-3" style={{ color: ACCENT }} />
+              <span className="text-[11px] text-slate-400">通用 Params（接口模板）</span>
+              <span className="text-[9px] text-slate-600">新建接口时自动附加</span>
+            </div>
+            <KvEditor items={commonParams} onChange={setCommonParams} placeholderKey="参数名" placeholderValue="值" withDescription={false} />
+          </div>
         </div>
         <div className="flex justify-end gap-2 px-4 py-3 border-t border-white/10">
           <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">取消</button>
           <button
-            onClick={() => name.trim() && onSave(name.trim(), description)}
+            onClick={() => name.trim() && onSave(name.trim(), description, commonHeaders, commonParams)}
             disabled={!name.trim()}
             className="px-4 py-1.5 text-xs rounded-lg font-semibold text-white cursor-pointer disabled:opacity-50"
             style={{ background: ACCENT }}
@@ -660,26 +794,62 @@ function StatCard({ label, value, accent }: { label: string; value: string; acce
 function TimelineChart({ report }: { report: LoadTestReport }) {
   const maxQps = Math.max(1, ...report.timeline.map((t) => t.qps));
   const maxFail = Math.max(1, ...report.timeline.map((t) => t.failed));
+  const maxMs = Math.max(1, ...report.timeline.map((t) => t.avg_ms));
   const width = 560;
-  const height = 110;
+  const height = 130;
+  const chartBottom = height - 22; // 图表区底部（留出图例）
+  const chartTop = 4;
+  const usableH = chartBottom - chartTop;
   const pad = 4;
   const n = Math.max(1, report.timeline.length);
-  const bw = Math.max(1, (width - pad * 2) / n - 1);
+  const stepX = (width - pad * 2) / n;
+  const bw = Math.max(1, stepX - 1);
+  const cx = (i: number) => pad + i * stepX + stepX / 2;
+
+  // 平均延迟折线
+  const latencyPoints = report.timeline
+    .map((t, i) => `${cx(i).toFixed(1)},${(chartBottom - (t.avg_ms / maxMs) * usableH).toFixed(1)}`)
+    .join(" ");
+  // 成功率折线（0~1 映射到图表区上半段）
+  const successPoints = report.timeline
+    .map((t, i) => {
+      const total = t.success + t.failed;
+      const rate = total > 0 ? t.success / total : 1;
+      return `${cx(i).toFixed(1)},${(chartBottom - rate * usableH).toFixed(1)}`;
+    })
+    .join(" ");
+
   return (
     <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto">
+      {/* QPS 柱 + 失败柱 */}
       {report.timeline.map((t, i) => {
-        const x = pad + i * ((width - pad * 2) / n);
-        const hQps = (t.qps / maxQps) * (height - 18);
-        const hFail = (t.failed / maxFail) * (height - 18);
+        const x = pad + i * stepX;
+        const hQps = (t.qps / maxQps) * usableH;
+        const hFail = (t.failed / maxFail) * usableH;
         return (
           <g key={i}>
-            <rect x={x} y={height - 12 - hQps} width={bw} height={hQps} fill="rgba(6,182,212,0.55)" />
-            {t.failed > 0 && <rect x={x} y={height - 12 - hFail} width={bw} height={hFail} fill="rgba(244,63,94,0.75)" />}
+            <rect x={x} y={chartBottom - hQps} width={bw} height={hQps} fill="rgba(6,182,212,0.35)" />
+            {t.failed > 0 && <rect x={x} y={chartBottom - hFail} width={bw} height={hFail} fill="rgba(244,63,94,0.55)" />}
           </g>
         );
       })}
-      <line x1={0} y1={height - 12} x2={width} y2={height - 12} stroke="rgba(255,255,255,0.15)" />
-      <text x={4} y={height - 2} fill="#64748b" fontSize="9">每秒 QPS（青） / 失败数（红）</text>
+      {/* 成功率曲线 */}
+      {n > 1 && <polyline points={successPoints} fill="none" stroke="#34d399" strokeWidth="1.4" strokeOpacity="0.85" strokeLinejoin="round" />}
+      {/* 平均延迟曲线 */}
+      {n > 1 && <polyline points={latencyPoints} fill="none" stroke="#fbbf24" strokeWidth="1.4" strokeOpacity="0.9" strokeLinejoin="round" />}
+      <line x1={0} y1={chartBottom} x2={width} y2={chartBottom} stroke="rgba(255,255,255,0.15)" />
+      {/* 图例 */}
+      <g fontSize="9" fill="#64748b">
+        <rect x={4} y={chartBottom + 8} width={8} height={6} fill="rgba(6,182,212,0.5)" rx={1} />
+        <text x={15} y={chartBottom + 14}>QPS</text>
+        <rect x={44} y={chartBottom + 8} width={8} height={6} fill="rgba(244,63,94,0.6)" rx={1} />
+        <text x={55} y={chartBottom + 14}>失败</text>
+        <line x1={86} y1={chartBottom + 11} x2={100} y2={chartBottom + 11} stroke="#34d399" strokeWidth="1.4" />
+        <text x={104} y={chartBottom + 14}>成功率</text>
+        <line x1={142} y1={chartBottom + 11} x2={156} y2={chartBottom + 11} stroke="#fbbf24" strokeWidth="1.4" />
+        <text x={160} y={chartBottom + 14}>平均延迟</text>
+        <text x={width - 4} y={chartBottom + 14} textAnchor="end">峰值 {maxQps.toFixed(0)} QPS · 峰值延迟 {maxMs.toFixed(0)}ms</text>
+      </g>
     </svg>
   );
 }
@@ -739,6 +909,7 @@ export default function ApiPanel() {
   const [hideCommonHeaders, setHideCommonHeaders] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState(false);
+  const [bodyMode, setBodyMode] = useState<"pretty" | "raw">("pretty");
   const [loadConfig, setLoadConfig] = useState<LoadTestConfig>({ concurrency: 10, duration_secs: 10, ramp_up_secs: 0, rps_limit: 0 });
   const [runningRunId, setRunningRunId] = useState<string | null>(null);
   const [loadStatus, setLoadStatus] = useState<LoadRunStatus | null>(null);
@@ -1083,9 +1254,9 @@ export default function ApiPanel() {
 
   const openEditProject = (p: ApiProject) => setProjectModal({ open: true, project: p });
 
-  const saveProjectModal = async (name: string, description: string) => {
+  const saveProjectModal = async (name: string, description: string, commonHeaders: KeyValueItem[], commonParams: KeyValueItem[]) => {
     if (projectModal.project) {
-      const updated = { ...projectModal.project, name, description };
+      const updated = { ...projectModal.project, name, description, common_headers: commonHeaders, common_params: commonParams };
       await invoke("api_update_project", { project: updated });
       setProjects(projects.map((p) => (p.id === updated.id ? updated : p)));
     } else {
@@ -1093,6 +1264,12 @@ export default function ApiPanel() {
       const list = await invoke<ApiProject[]>("api_list_projects");
       setProjects(list);
       setActiveProjectId(list[list.length - 1].id);
+      // 新项目模板字段由后端默认空；若用户在创建时就填了模板，则再更新一次
+      if (commonHeaders.length > 0 || commonParams.length > 0) {
+        const created = list[list.length - 1];
+        await invoke("api_update_project", { project: { ...created, common_headers: commonHeaders, common_params: commonParams } });
+        setProjects(await invoke<ApiProject[]>("api_list_projects"));
+      }
     }
     setProjectModal({ open: false, project: null });
   };
@@ -1201,7 +1378,8 @@ export default function ApiPanel() {
                 {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
                 <Folder className="w-3.5 h-3.5 text-amber-400/80 shrink-0" />
                 <span className="flex-1 text-xs text-slate-300 truncate">{m.name}</span>
-                <span className="text-[10px] text-slate-600">{children.length}</span>
+                {m.description && <span className="text-[10px] text-slate-600 truncate max-w-28 hidden group-hover:block" title={m.description}>{m.description}</span>}
+                <span className="text-[10px] px-1.5 py-px rounded-full bg-white/5 border border-white/5 text-slate-500 tabular-nums">{children.length}</span>
                 <button
                   onClick={(e) => { e.stopPropagation(); openEditModule(m); }}
                   className="hidden group-hover:block p-0.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
@@ -1224,15 +1402,21 @@ export default function ApiPanel() {
                   <Trash2 className="w-3 h-3" />
                 </button>
               </div>
-              {isOpen && (
-                <div className="ml-4 space-y-0.5">
-                  {m.description && (
-                    <div className="text-[10px] text-slate-500/90 leading-snug px-1.5 py-0.5 border-l border-white/10 ml-1">{m.description}</div>
-                  )}
-                  {children.map(row)}
-                  {children.length === 0 && <div className="text-[10px] text-slate-600 px-2 py-0.5">（空模块）</div>}
+              {/* 折叠动画容器（grid-rows 过渡） */}
+              <div
+                className="ml-4 grid transition-[grid-template-rows] duration-200 ease-out"
+                style={{ gridTemplateRows: isOpen ? "1fr" : "0fr" }}
+              >
+                <div className="overflow-hidden min-h-0">
+                  <div className="space-y-0.5 py-0.5">
+                    {m.description && (
+                      <div className="text-[10px] text-slate-500/90 leading-snug px-1.5 py-0.5 border-l border-white/10 ml-1">{m.description}</div>
+                    )}
+                    {children.map(row)}
+                    {children.length === 0 && <div className="text-[10px] text-slate-600 px-2 py-0.5">（空模块）</div>}
+                  </div>
                 </div>
-              )}
+              </div>
             </div>
           );
         })}
@@ -1715,15 +1899,27 @@ export default function ApiPanel() {
           <div className="shrink-0 h-64 border-t border-white/10 flex flex-col">
             <div className="flex items-center gap-2 px-3 py-1.5 border-b border-white/10">
               <span className="text-[11px] font-semibold text-slate-400">响应</span>
-              {statusBadge}
-              {response && (
-                <>
-                  <span className="text-[10px] text-slate-500">{fmtTime(response.time_ms)}</span>
+              {statusBadge}                  {response && (
+                    <>
+                      <span className="text-[10px] text-slate-500">{fmtTime(response.time_ms)}</span>
                   <span className="text-[10px] text-slate-500">{response.size_bytes > 1024 * 1024 ? `${(response.size_bytes / 1024 / 1024).toFixed(1)}MB` : `${(response.size_bytes / 1024).toFixed(1)}KB`}</span>
                   {response.body_truncated && <span className="text-[10px] text-amber-400">Body 已截断（2MB 上限）</span>}
-                  <button onClick={copyBody} className="ml-auto flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">
-                    {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />} {copied ? "已复制" : "复制 Body"}
-                  </button>
+                  <div className="ml-auto flex items-center gap-2">
+                    <div className="flex gap-0.5 bg-black/30 rounded p-0.5">
+                      {(["pretty", "raw"] as const).map((m) => (
+                        <button
+                          key={m}
+                          onClick={() => setBodyMode(m)}
+                          className={`px-1.5 py-0.5 rounded text-[10px] cursor-pointer ${bodyMode === m ? "bg-white/10 text-cyan-300" : "text-slate-500 hover:text-slate-300"}`}
+                        >
+                          {m === "pretty" ? "美化" : "原始"}
+                        </button>
+                      ))}
+                    </div>
+                    <button onClick={copyBody} className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">
+                      {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />} {copied ? "已复制" : "复制 Body"}
+                    </button>
+                  </div>
                 </>
               )}
             </div>
@@ -1737,9 +1933,19 @@ export default function ApiPanel() {
                 ))}
                 {response && response.headers.length === 0 && <div className="text-[10px] text-slate-600">无响应头</div>}
               </div>
-              <pre className="overflow-auto p-2 text-[11px] font-mono text-slate-200 whitespace-pre-wrap break-all">
-                {response ? prettyJson(response.body) : "发送请求后在此查看响应"}
-              </pre>
+              {sending ? (
+                <div className="flex flex-col items-center justify-center h-full gap-2 text-slate-500 select-none">
+                  <Loader2 className="w-5 h-5 animate-spin text-cyan-400" />
+                  <span className="text-[11px]">请求发送中…</span>
+                </div>
+              ) : response ? (
+                <ResponseBody body={response.body} mode={bodyMode} />
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-slate-600 gap-2 select-none">
+                  <Send className="w-6 h-6 opacity-40" />
+                  <span className="text-[11px]">发送请求后在此查看响应</span>
+                </div>
+              )}
               {/* 响应注释 */}
               <div className="border-l border-white/10 flex flex-col">
                 <div className="flex items-center gap-1 px-2 py-1 border-b border-white/10">

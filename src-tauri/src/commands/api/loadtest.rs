@@ -74,11 +74,15 @@ pub fn start_load_run(
 
     let concurrency = config.concurrency.max(1) as usize;
     let ramp_up = config.ramp_up_secs as f64;
+    // RPS 上限（0 = 不限）：全局发送配额调度，每个请求按序号分配精确的发送时刻
+    let rps_limit = config.rps_limit;
+    let send_counter = std::sync::Arc::new(AtomicU64::new(0));
 
     for worker_index in 0..concurrency {
         let state = state.clone();
         let client = client.clone();
         let input = input.clone();
+        let send_counter = send_counter.clone();
         // 用 tauri 的运行时 handle：命令可能从主线程（无 ambient runtime）调用，
         // 直接 tokio::spawn 会 panic；tauri::async_runtime::spawn 自动适配。
         tauri::async_runtime::spawn(async move {
@@ -95,6 +99,20 @@ pub fn start_load_run(
                 let sec = state.start.elapsed().as_secs();
                 if sec >= state.duration_secs {
                     break;
+                }
+                if rps_limit > 0 {
+                    // 取全局发送配额：第 n 个请求应发生在 start + n/rps 时刻
+                    let n = send_counter.fetch_add(1, Ordering::Relaxed);
+                    let scheduled = state.start + std::time::Duration::from_secs_f64((n as f64 + 1.0) / rps_limit as f64);
+                    let now = Instant::now();
+                    if scheduled > now {
+                        tokio::time::sleep(scheduled - now).await;
+                    }
+                    if !state.running.load(Ordering::SeqCst)
+                        || state.start.elapsed().as_secs() >= state.duration_secs
+                    {
+                        break;
+                    }
                 }
                 let started = Instant::now();
                 let request = match super::exec::build_request(&client, &input) {
@@ -276,5 +294,94 @@ fn build_report(state: &LoadRunState) -> LoadTestReport {
         latency_avg_ms: if sorted.is_empty() { 0.0 } else { sorted.iter().sum::<f64>() / sorted.len() as f64 },
         status_codes,
         timeline,
+    }
+}
+
+#[cfg(test)]
+mod rps_limit_tests {
+    //! rps_limit 端到端验证：内置临时慢速接口（本机随机端口，每请求延迟 20ms），
+    //! 分别以「限速 5 RPS」和「不限速」压测同一接口，对比实际吞吐。
+
+    use super::*;
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpListener;
+    use std::sync::Arc;
+
+    /// 临时慢速接口：每连接读一次请求、延迟 20ms、返回 200 + "ok"（Connection: close）。
+    fn spawn_slow_server() -> (String, Arc<AtomicU64>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("绑定测试端口失败");
+        let addr = listener.local_addr().unwrap().to_string();
+        let hits = Arc::new(AtomicU64::new(0));
+        let hits2 = hits.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let hits = hits2.clone();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 2048];
+                    let _ = stream.read(&mut buf); // 不解析内容，读到即算收到请求
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    hits.fetch_add(1, Ordering::Relaxed);
+                    let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
+                    let _ = stream.write_all(resp.as_bytes());
+                });
+            }
+        });
+        (addr, hits)
+    }
+
+    fn run_load(addr: &str, duration_secs: u32, concurrency: u32, rps_limit: u32) -> LoadRunStatus {
+        let input = SendRequestInput {
+            method: "GET".into(),
+            url: format!("http://{}/slow", addr),
+            timeout_ms: 5000,
+            ..Default::default()
+        };
+        let config = LoadTestConfig {
+            concurrency,
+            duration_secs,
+            ramp_up_secs: 0,
+            rps_limit,
+        };
+        let run_id = format!("test-{}-{}", std::process::id(), rps_limit);
+        start_load_run(run_id.clone(), "ep".into(), "验证".into(), config, "".into(), input);
+        // 轮询直到结束
+        let deadline = Instant::now() + std::time::Duration::from_secs((duration_secs as u64) + 10);
+        loop {
+            let st = load_run_status(&run_id).expect("查询压测状态失败");
+            if !st.running {
+                return st;
+            }
+            assert!(Instant::now() < deadline, "压测超时未结束");
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+
+    #[test]
+    fn limited_run_stays_near_rps_cap() {
+        let (addr, _hits) = spawn_slow_server();
+        let (dur, cap) = (6u32, 5u32);
+        let st = run_load(&addr, dur, 32, cap);
+        println!("[限速 {} RPS × {}s] total={} success={} failed={} qps_avg={:.2}", cap, dur, st.total, st.success, st.failed, st.qps);
+        // 上限：调度器按 n/rps 排发送时刻，最多 cap×(dur+1) 个左右；给少量调度抖动余量
+        assert!(
+            st.total <= (cap * (dur + 1) + 3) as u64,
+            "限速失效：total={} 超过上限 {}", st.total, cap * (dur + 1)
+        );
+        // 下限：不应显著低于 cap×dur
+        assert!(
+            st.total >= (cap * (dur - 1)) as u64,
+            "吞吐异常偏低：total={}", st.total
+        );
+        assert_eq!(st.failed, 0, "不应有失败请求");
+    }
+
+    #[test]
+    fn unlimited_run_far_exceeds_cap() {
+        let (addr, _hits) = spawn_slow_server();
+        let st = run_load(&addr, 3, 16, 0);
+        println!("[不限速 × 3s] total={} success={} failed={} qps_avg={:.2}", st.total, st.success, st.failed, st.qps);
+        // 同样 16 并发、20ms 延迟的服务端，不限速时吞吐应远超 5 RPS
+        assert!(st.total > 100, "不限速吞吐异常偏低：total={}", st.total);
     }
 }

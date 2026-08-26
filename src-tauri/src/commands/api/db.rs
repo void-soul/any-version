@@ -29,6 +29,8 @@ pub fn init_db() -> Result<(), String> {
             name          TEXT NOT NULL,
             description   TEXT NOT NULL DEFAULT '',
             active_env_id TEXT,
+            common_headers  TEXT NOT NULL DEFAULT '[]',
+            common_params   TEXT NOT NULL DEFAULT '[]',
             created_at    TEXT NOT NULL,
             updated_at    TEXT NOT NULL
         );
@@ -124,8 +126,29 @@ pub fn init_db() -> Result<(), String> {
 
     migrate_endpoint_columns(&conn)?;
     migrate_module_columns(&conn)?;
+    migrate_project_columns(&conn)?;
 
     *DB_CONN.lock().map_err(|e| e.to_string())? = Some(conn);
+    Ok(())
+}
+
+/// 为既有 api_projects 表补齐新列（幂等）。
+fn migrate_project_columns(conn: &rusqlite::Connection) -> Result<(), String> {
+    let has_column = |name: &str| -> Result<bool, String> {
+        let mut stmt = conn
+            .prepare("SELECT COUNT(*) FROM pragma_table_info('api_projects') WHERE name = ?1")
+            .map_err(|e| e.to_string())?;
+        let n: i64 = stmt
+            .query_row(rusqlite::params![name], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        Ok(n > 0)
+    };
+    for (name, def) in [("common_headers", "TEXT NOT NULL DEFAULT '[]'"), ("common_params", "TEXT NOT NULL DEFAULT '[]'")] {
+        if !has_column(name)? {
+            conn.execute_batch(&format!("ALTER TABLE api_projects ADD COLUMN {} {}", name, def))
+                .map_err(|e| format!("迁移 api_projects.{} 失败: {}", name, e))?;
+        }
+    }
     Ok(())
 }
 
@@ -222,13 +245,17 @@ pub fn parse_kv(raw: &str) -> Vec<super::models::KeyValueItem> {
 
 /// 读取项目行。
 pub fn project_row(row: &rusqlite::Row) -> Result<super::models::ApiProject, rusqlite::Error> {
+    let common_headers_raw: String = row.get(4)?;
+    let common_params_raw: String = row.get(5)?;
     Ok(super::models::ApiProject {
         id: row.get(0)?,
         name: row.get(1)?,
         description: row.get(2)?,
         active_env_id: row.get(3)?,
-        created_at: row.get(4)?,
-        updated_at: row.get(5)?,
+        common_headers: parse_kv(&common_headers_raw),
+        common_params: parse_kv(&common_params_raw),
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
     })
 }
 

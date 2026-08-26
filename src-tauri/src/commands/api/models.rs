@@ -7,6 +7,12 @@ pub struct ApiProject {
     pub name: String,
     pub description: String,
     pub active_env_id: Option<String>,
+    /// 项目级通用 Headers：新建接口时自动附加（接口模板）
+    #[serde(default)]
+    pub common_headers: Vec<KeyValueItem>,
+    /// 项目级通用 Params：新建接口时自动附加（接口模板）
+    #[serde(default)]
+    pub common_params: Vec<KeyValueItem>,
     pub created_at: String,
     pub updated_at: String,
 }

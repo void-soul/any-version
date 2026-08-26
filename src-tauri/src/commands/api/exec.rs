@@ -254,8 +254,9 @@ pub async fn execute_request(input: &SendRequestInput) -> Result<SendRequestOutp
     if !s.verify_ssl {
         builder = builder.danger_accept_invalid_certs(true);
     }
-    // follow_original_method / remove_referer_on_redirect 为尽力而为：
-    // reqwest 高层 API 不直接暴露，跟随重定向时保持默认（跟随方法、携带 Referer）。
+    // follow_original_method / remove_referer_on_redirect：reqwest 内建重定向
+    // 会自动把 POST 切为 GET 并附带 Referer，且策略层无法关闭这两个行为，
+    // 因此需要这两种设置时改为手动循环处理 3xx 跳转。
     if s.follow_redirects {
         builder = builder.redirect(reqwest::redirect::Policy::limited(10));
     } else {
@@ -270,10 +271,72 @@ pub async fn execute_request(input: &SendRequestInput) -> Result<SendRequestOutp
     let client = builder
         .build()
         .map_err(|e| format!("构建 HTTP 客户端失败: {}", e))?;
-    let request = build_request(&client, input)?;
 
     let started = std::time::Instant::now();
-    let response = client.execute(request).await.map_err(|e| format!("请求失败: {}", e))?;
+
+    let manual_redirect =
+        s.follow_redirects && (s.follow_original_method || s.remove_referer_on_redirect);
+
+    let response = if !manual_redirect {
+        let request = build_request(&client, input)?;
+        client.execute(request).await.map_err(|e| format!("请求失败: {}", e))?
+    } else {
+        // 手动重定向循环
+        let mut current_url = input.url.clone();
+        let mut force_get = false;
+        let mut referer: Option<String> = None;
+        let mut hops = 0usize;
+        loop {
+            let mut this_input = input.clone();
+            this_input.url = current_url.clone();
+            if force_get {
+                this_input.method = "GET".to_string();
+                this_input.body_type = "none".to_string();
+                this_input.body.clear();
+                this_input.body_form.clear();
+                this_input.body_urlencoded.clear();
+            }
+            let mut request = build_request(&client, &this_input)?;
+            if let Some(prev) = &referer {
+                if let Ok(val) = reqwest::header::HeaderValue::from_str(prev) {
+                    request.headers_mut().insert(reqwest::header::REFERER, val);
+                }
+            }
+            let resp = client.execute(request).await.map_err(|e| format!("请求失败: {}", e))?;
+            let code = resp.status().as_u16();
+            if !matches!(code, 301 | 302 | 303 | 307 | 308) {
+                break resp;
+            }
+            hops += 1;
+            if hops > 10 {
+                return Err("重定向次数超过 10 次".to_string());
+            }
+            let loc = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .ok_or("重定向响应缺少 Location 头")?
+                .to_string();
+            let base: reqwest::Url = current_url
+                .parse()
+                .map_err(|_| format!("URL 解析失败: {}", current_url))?;
+            let next = base
+                .join(&loc)
+                .map_err(|e| format!("Location 解析失败: {}", e))?;
+            // 关闭「保持原方法」时遵循浏览器语义：301/302/303 将非 GET 请求切换为 GET；
+            // 开启时始终沿用原始方法。
+            if !s.follow_original_method && matches!(code, 301 | 302 | 303) {
+                force_get = true;
+            }
+            // 「移除 Referer」开启时不携带；否则模拟默认行为指向上一跳 URL。
+            referer = if s.remove_referer_on_redirect {
+                None
+            } else {
+                Some(current_url.clone())
+            };
+            current_url = next.to_string();
+        }
+    };
     let status = response.status();
     let status_text = status.canonical_reason().unwrap_or("").to_string();
     let headers_out: Vec<KeyValueItem> = response
@@ -317,6 +380,9 @@ pub fn json_get<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serd
     if path.is_empty() || path == "$" {
         return Some(value);
     }
+    // 兼容 JSONPath 习惯写法：剥掉前导 "$" / "$." 前缀（如 $.data.items[0]）
+    let path = path.strip_prefix("$").unwrap_or(path);
+    let path = path.strip_prefix('.').unwrap_or(path);
     let mut current = value;
     // 解析 a.b[0].c 形式的路径
     let mut token = String::new();

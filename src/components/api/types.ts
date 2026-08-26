@@ -5,6 +5,8 @@ export interface ApiProject {
   name: string;
   description: string;
   active_env_id: string | null;
+  common_headers: KeyValueItem[];
+  common_params: KeyValueItem[];
   created_at: string;
   updated_at: string;
 }
