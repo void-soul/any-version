@@ -31,6 +31,9 @@ pub mod s3_common;
 pub mod state_sync;
 pub mod autostart_admin;
 pub mod api;
-pub mod learn;
 pub mod mindmap;
+pub mod regextool;
+pub mod cryptotool;
+pub mod serialtool;
+pub mod wstool;
 

@@ -254,6 +254,9 @@ pub fn run() {
         .manage(commands::http_server::HttpServerState::default())
         .manage(commands::cert::CertScheduler::default())
         .manage(commands::rtsp_server::RtspServerState::default())
+        .manage(commands::serialtool::SerialState::default())
+        .manage(commands::serialtool::SimState::default())
+        .manage(commands::wstool::WsState::default())
         .setup(|app| {
             if let Ok(res_dir) = app.path().resource_dir() {
                 crate::commands::utils::set_resource_dir(res_dir);
@@ -424,7 +427,30 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            commands::config::get_config,
+                // ---- 开发者工具模块（正则/加密/串口/WS-SSE/数据库） ----
+                commands::regextool::rx_test,
+                commands::cryptotool::crypto_base64_encode,
+                commands::cryptotool::crypto_base64_decode,
+                commands::cryptotool::crypto_hash,
+                commands::cryptotool::jwt_decode,
+                commands::cryptotool::jwt_verify_hs,
+                commands::cryptotool::aes_gcm_encrypt,
+                commands::cryptotool::aes_gcm_decrypt,
+                commands::serialtool::serial_list_ports,
+                commands::serialtool::serial_open,
+                commands::serialtool::serial_close,
+                commands::serialtool::serial_write,
+                commands::serialtool::serial_sim_start,
+                commands::serialtool::serial_sim_stop,
+                commands::serialtool::serial_sim_write,
+                commands::wstool::wstool_list,
+                commands::wstool::ws_connect,
+                commands::wstool::ws_send,
+                commands::wstool::wstool_disconnect,
+                commands::wstool::sse_connect,
+                commands::wstool::net_connect,
+                commands::wstool::net_send,
+                commands::config::get_config,
             commands::config::update_config,
             commands::config::get_data_dir_cmd,
             commands::config::get_sdk_dir_cmd,
@@ -809,34 +835,6 @@ pub fn run() {
                 commands::tasks::tasks_create_sticker,
                 commands::tasks::tasks_update_sticker,
                 commands::tasks::tasks_delete_sticker,
-
-                // ---- 项目学习（AI 生成父子结构） ----
-                commands::learn::learn_generate,
-                commands::learn::learn_generate_from_text,
-                commands::learn::learn_regenerate_node,
-                commands::learn::learn_list,
-                commands::learn::learn_load,
-                commands::learn::learn_delete,
-                commands::learn::learn_export_markdown,
-                commands::learn::learn_update_positions,
-
-                // ---- 需求模块（多项目/多模块/多图谱） ----
-                commands::learn::req_list_projects,
-                commands::learn::req_create_project,
-                commands::learn::req_update_project,
-                commands::learn::req_delete_project,
-                commands::learn::req_list_modules,
-                commands::learn::req_create_module,
-                commands::learn::req_update_module,
-                commands::learn::req_delete_module,
-                commands::learn::req_get_graph,
-                commands::learn::req_create_empty_graph,
-                commands::learn::req_update_graph,
-                commands::learn::req_update_positions,
-                commands::learn::req_export_markdown,
-                commands::learn::req_generate_from_project,
-                commands::learn::req_generate_from_text,
-                commands::learn::req_regenerate_node,
 
                 // ---- 思维导图模块（统一画布：需求 + 任务 + AI） ----
                 commands::mindmap::mm_init,
