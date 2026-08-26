@@ -153,3 +153,9 @@ select option,
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.18);
 }
+
+/* WebView2 下拖动节点闪烁修复：拖动时节点内容每帧被重绘（渐变/阴影），
+   为节点建立合成层，让 transform 更新走合成器、不再触发逐帧重绘。 */
+.react-flow__node.dragging {
+  will-change: transform;
+}

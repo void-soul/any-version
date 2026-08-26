@@ -78,11 +78,11 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>)
         {hasChildren && <button type="button" className="nodrag nopan inline-flex h-4 w-4 items-center justify-center text-slate-500 hover:text-white" onClick={(e) => { e.stopPropagation(); onToggle(); }} title={collapsed ? "展开" : "折叠"}>
           {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
         </button>}
+        <span title={KIND_LABELS[node.kind] ?? node.kind} className="inline-flex shrink-0 items-center rounded border px-1 py-0.5" style={{ borderColor: `${c}44`, color: c, backgroundColor: `${c}14` }}>{KIND_ICONS[node.kind]?.( "h-3 w-3") ?? <Circle className="h-3 w-3" />}</span>
         <span className="min-w-0 flex-1 truncate text-[11px] font-semibold" style={{ color: c }}>{node.name}</span>
       </div>
       {node.description && <div className="mt-1 line-clamp-2 text-[9px] leading-4 text-slate-400">{node.description}</div>}
       <div className="mt-1.5 flex items-center gap-1.5">
-        <span title={KIND_LABELS[node.kind] ?? node.kind} className="inline-flex items-center rounded-md border px-1 py-0.5" style={{ borderColor: `${c}44`, color: c, backgroundColor: `${c}14` }}>{KIND_ICONS[node.kind]?.( "h-3 w-3") ?? <Circle className="h-3 w-3" />}</span>
         {node.progress > 0 && <span className="text-[8px] text-slate-500">{node.progress}%</span>}
       </div>
       {node.progress > 0 && <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-slate-800/80"><div className="h-full rounded-full transition-all" style={{ width: `${node.progress}%`, backgroundColor: c, boxShadow: `0 0 6px ${c}66` }} /></div>}
@@ -131,7 +131,11 @@ const StickerFlowNode = memo(function StickerFlowNode({ data }: NodeProps<Node<S
 
 // ════════════ 自动布局 ════════════
 
-function layoutTree(nodes: MindmapNode[]): Map<string, { x: number; y: number }> {
+/** 布局方向：lr=左→右（默认，根在左） rl=右→左 tb=上→下 bt=下→上 */
+type LayoutDir = "lr" | "rl" | "tb" | "bt";
+const LAYOUT_DIR_LABELS: Record<LayoutDir, string> = { lr: "左→右", rl: "右→左", tb: "上→下", bt: "下→上" };
+
+function layoutTree(nodes: MindmapNode[], dir: LayoutDir = "lr"): Map<string, { x: number; y: number }> {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const children = new Map<string, string[]>();
   const roots: string[] = [];
@@ -154,12 +158,22 @@ function layoutTree(nodes: MindmapNode[]): Map<string, { x: number; y: number }>
   // 未被根遍历到的节点（环内）兜底放入布局，避免遗漏
   for (const n of nodes) { if (!visited.has(n.id)) dfs(n.id, 0); }
   const pos = new Map<string, { x: number; y: number }>();
-  const yByDepth = new Map<number, number>();
+  // 沿深度方向推进的间距（X 或 Y），以及同深度节点堆叠的间距
+  const depthStep = dir === "tb" || dir === "bt" ? 200 : 260;
+  const stackStep = dir === "tb" || dir === "bt" ? 240 : 80;
+  const depthIndex = new Map<number, number>();
   for (const id of order) {
     const d = depth.get(id) ?? 0;
-    const y = yByDepth.get(d) ?? 0;
-    pos.set(id, { x: d * 260, y });
-    yByDepth.set(d, y + 80);
+    const i = depthIndex.get(d) ?? 0;
+    depthIndex.set(d, i + 1);
+    const along = d * depthStep;   // 沿展开方向的偏移
+    const across = i * stackStep;  // 同深度堆叠的偏移
+    switch (dir) {
+      case "rl": pos.set(id, { x: -along, y: across }); break;
+      case "tb": pos.set(id, { x: across, y: along }); break;
+      case "bt": pos.set(id, { x: across, y: -along }); break;
+      default:  pos.set(id, { x: along, y: across });
+    }
   }
   return pos;
 }
@@ -372,6 +386,9 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   // onNodesChange → setNodes → 重建节点 → 重新测量 → onNodesChange 的死循环），
   // 而是直接驱动本地 posOverrides，一次性 setState，物理上杜绝反馈循环。
   const [posOverrides, setPosOverrides] = useState<Record<string, PosOverride>>({});
+  // RF 实测的节点尺寸（dimensions 变更写入）。adoptUserNodes 只认 userNode.measured，
+  // 缺了它 RF 会在拖动中每帧重测 → 节点尺寸塌陷/恢复 → 闪烁。
+  const [measuredMap, setMeasuredMap] = useState<Record<string, { width: number; height: number }>>({});
   // 切换文档时清空位置覆盖（新文档用其自身已保存坐标或自动布局）
   useEffect(() => { setPosOverrides({}); }, [full.document.id]);
   // 撤销/重做恢复快照后清空本地拖拽覆盖，让还原的坐标生效
@@ -388,7 +405,9 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   const graphNodes = full.nodes;
   const stickers = full.stickers;
   const byId = useMemo(() => new Map(graphNodes.map((n) => [n.id, n])), [graphNodes]);
-  const layout = useMemo(() => layoutTree(graphNodes), [graphNodes]);
+  // 布局方向（画布级设置）：切换后自动重排并持久化
+  const [dir, setDir] = useState<LayoutDir>("lr");
+  const layout = useMemo(() => layoutTree(graphNodes, dir), [graphNodes, dir]);
   const childrenCount = useMemo(() => { const m = new Map<string, number>(); for (const n of graphNodes) { if (n.parentId) m.set(n.parentId, (m.get(n.parentId) ?? 0) + 1); } return m; }, [graphNodes]);
 
   // Ancestor chain for selected node
@@ -454,26 +473,24 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
         main.push(prev.obj as Node<FlowNodeData>);
         continue;
       }
-      const prevObj = (prev?.obj ?? null) as Node<FlowNodeData> | null;
-      const obj: Node<FlowNodeData> = prevObj
-        // 复用旧对象并保留 React Flow 内部字段（measured/dragging/selected 等）：
-        // 拖拽时若重建全新对象会丢失 measured → React Flow 每帧重新测量 → 被拖节点闪烁。
-        ? { ...prevObj, position: p, data: { node: n, selected, hasChildren, collapsed: isCollapsed,
+      // data 仅在节点内容/状态变化时重建；纯位置变化（拖动中）复用旧 data 引用，
+      // 避免 memo(FlowNode) 因 data 每帧新引用而重渲染整个节点子树（WebView2 下闪烁）。
+      const prevData = prev ? (prev.obj as Node<FlowNodeData>).data : null;
+      const dataChanged = !prevData || prev!.node !== n || prev!.selected !== selected || prev!.hasChildren !== hasChildren || prev!.collapsed !== isCollapsed;
+      const data: FlowNodeData = dataChanged
+        ? { node: n, selected, hasChildren, collapsed: isCollapsed,
             onSelect: () => setSelectedId(n.id), onOpenDetail: () => openDetail(n),
             onToggle: () => setCollapsed(cur => { const nx = new Set(cur); nx.has(n.id) ? nx.delete(n.id) : nx.add(n.id); return nx; }),
             onAddChild: () => addChildNode(n.id),
             onPreview: (e) => setPreview({ node: n, x: e.clientX, y: e.clientY }),
             onPreviewEnd: () => setPreview(null),
-            onDelete: () => deleteNode(n.id) } }
-        : { id: n.id, type: "mmNode", position: p,
-            data: { node: n, selected, hasChildren, collapsed: isCollapsed,
-              onSelect: () => setSelectedId(n.id), onOpenDetail: () => openDetail(n),
-              onToggle: () => setCollapsed(cur => { const nx = new Set(cur); nx.has(n.id) ? nx.delete(n.id) : nx.add(n.id); return nx; }),
-              onAddChild: () => addChildNode(n.id),
-              onPreview: (e) => setPreview({ node: n, x: e.clientX, y: e.clientY }),
-              onPreviewEnd: () => setPreview(null),
-              onDelete: () => deleteNode(n.id) },
-            sourcePosition: Position.Right, targetPosition: Position.Left };
+            onDelete: () => deleteNode(n.id) }
+        : prevData;
+      const prevObj = (prev?.obj ?? null) as Node<FlowNodeData> | null;
+      const measured = measuredMap[n.id] ?? prevObj?.measured;
+      const obj: Node<FlowNodeData> = prevObj
+        ? { ...prevObj, position: p, data, measured }
+        : { id: n.id, type: "mmNode", position: p, data, measured, sourcePosition: Position.Right, targetPosition: Position.Left };
       cache.set(n.id, { node: n, full, px: p.x, py: p.y, selected, hasChildren, collapsed: isCollapsed, obj });
       main.push(obj);
     }
@@ -487,27 +504,31 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
         stickerNodes.push(prev.obj as Node<StickerNodeData>);
         continue;
       }
-      const updateSticker = (patch: { content?: string; color?: string }) => {
-        const next = { ...s, ...patch };
-        void mmApi.upsertSticker({ documentId: full.document.id, sticker: next });
-        onDocumentUpdate({ ...full, stickers: full.stickers.map(x => x.id === s.id ? next : x) });
-      };
-      const deleteSticker = () => {
-        void mmApi.deleteSticker({ documentId: full.document.id, stickerId: s.id });
-        onDocumentUpdate({ ...full, stickers: full.stickers.filter(x => x.id !== s.id) });
-      };
+      // 与节点同理：纯位置变化（拖动中）复用旧 data，避免贴纸每帧重渲染
+      const prevData = prev ? (prev.obj as Node<StickerNodeData>).data : null;
+      const dataChanged = !prevData || prev!.node !== s;
+      const data: StickerNodeData = dataChanged
+        ? { sticker: s, onUpdate: (patch: { content?: string; color?: string }) => {
+            const next = { ...s, ...patch };
+            void mmApi.upsertSticker({ documentId: full.document.id, sticker: next });
+            onDocumentUpdate({ ...full, stickers: full.stickers.map(x => x.id === s.id ? next : x) });
+          }, onDelete: () => {
+            void mmApi.deleteSticker({ documentId: full.document.id, stickerId: s.id });
+            onDocumentUpdate({ ...full, stickers: full.stickers.filter(x => x.id !== s.id) });
+          } }
+        : prevData;
       const prevObj = (prev?.obj ?? null) as Node<StickerNodeData> | null;
+      const measured = measuredMap[sid] ?? prevObj?.measured;
       const obj: Node<StickerNodeData> = prevObj
-        ? { ...prevObj, position: p, data: { sticker: s, onUpdate: updateSticker, onDelete: deleteSticker } }
-        : { id: sid, type: "stickerNode", position: p,
-            data: { sticker: s, onUpdate: updateSticker, onDelete: deleteSticker } };
+        ? { ...prevObj, position: p, data, measured }
+        : { id: sid, type: "stickerNode", position: p, data, measured };
       cache.set(sid, { node: s, full, px: p.x, py: p.y, selected: false, hasChildren: false, collapsed: false, obj });
       stickerNodes.push(obj);
     }
     // 清理不再显示的缓存项
     for (const k of cache.keys()) if (!alive.has(k)) cache.delete(k);
     return [...main, ...stickerNodes];
-  }, [visibleNodes, layout, selectedId, collapsed, childrenCount, stickers, full, onDocumentUpdate, highlightChain, posOverrides, addChildNode, deleteNode, openDetail]);
+  }, [visibleNodes, layout, selectedId, collapsed, childrenCount, stickers, full, onDocumentUpdate, highlightChain, posOverrides, measuredMap, addChildNode, deleteNode, openDetail]);
 
   const edges = useMemo<Edge[]>(() => visibleNodes.flatMap(n => {
     if (!n.parentId || !visibleNodes.some(p => p.id === n.parentId)) return [];
@@ -517,8 +538,11 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   }), [visibleNodes, highlightChain]);
 
   // 受控节点：React Flow 拖放时把位置写入 posOverrides。仅处理 position 变更，
-  // 忽略 dimensions/select 等（选择由 selectedId 管理，尺寸由 React Flow 内部测量）。
-  // 一次 setState → 一次渲染 → 收敛，无反馈循环。
+  // 选择由 selectedId 管理。一次 setState → 一次渲染 → 收敛，无反馈循环。
+  // 关键：dimensions 变更（RF 实测的节点尺寸）必须记录下来并挂回节点对象——
+  // adoptUserNodes 只认 userNode.measured，节点对象没有 measured 时 RF 会判定
+  // 未测量并重新测量，导致拖动中节点尺寸逐帧塌陷/恢复 → 闪烁（JSON 画布用
+  // applyNodeChanges 写回 measured 所以不闪）。
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     setPosOverrides(prev => {
       let next: Record<string, PosOverride> | null = null;
@@ -530,6 +554,17 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       }
       return next ?? prev;
     });
+    for (const ch of changes) {
+      if (ch.type === "dimensions" && ch.id && ch.dimensions) {
+        const d = ch.dimensions;
+        const dims = { width: d.width ?? 0, height: d.height ?? 0 };
+        setMeasuredMap(prev => {
+          const old = prev[ch.id];
+          if (old && old.width === dims.width && old.height === dims.height) return prev;
+          return { ...prev, [ch.id]: dims };
+        });
+      }
+    }
   }, []);
 
   useEffect(() => { const t = window.setTimeout(() => fitView({ padding: 0.2, duration: 260 }), 0); return () => window.clearTimeout(t); }, [fitView, full.document.id, collapsed]);
@@ -608,7 +643,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   }, [selectedId, full, onDocumentUpdate, onHistoryPush]);
 
   const relayout = useCallback(() => {
-    const lp = layoutTree(full.nodes);
+    const lp = layoutTree(full.nodes, dir);
     const n2 = flowNodes.filter(n => !n.id.startsWith("sticker-")).map(n => ({ nodeId: n.id, x: lp.get(n.id)?.x ?? 0, y: lp.get(n.id)?.y ?? 0 }));
     void mmApi.updatePositions(full.document.id, n2);
     setPosOverrides(prev => {
@@ -618,7 +653,22 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       return next;
     });
     window.setTimeout(() => fitView({ padding: 0.2, duration: 260 }), 30);
-  }, [flowNodes, full, fitView]);
+  }, [flowNodes, full, dir, fitView]);
+
+  // 切换布局方向：立即按新方向重排（覆盖已保存坐标）并适配视口
+  const changeDir = useCallback((d: LayoutDir) => {
+    if (d === dir) return;
+    setDir(d);
+    const lp = layoutTree(full.nodes, d);
+    const n2 = flowNodes.filter(n => !n.id.startsWith("sticker-")).map(n => ({ nodeId: n.id, x: lp.get(n.id)?.x ?? 0, y: lp.get(n.id)?.y ?? 0 }));
+    void mmApi.updatePositions(full.document.id, n2);
+    setPosOverrides(prev => {
+      const next = { ...prev };
+      for (const p of n2) next[p.nodeId] = { x: p.x, y: p.y };
+      return next;
+    });
+    window.setTimeout(() => fitView({ padding: 0.2, duration: 260 }), 30);
+  }, [dir, flowNodes, full, fitView]);
 
   const onNodeContextMenu = useCallback((event: React.MouseEvent, node: Node) => {
     event.preventDefault();
@@ -658,6 +708,9 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       <div className="absolute right-4 top-4 z-10 flex flex-col gap-1">
         <div className="rounded-lg border border-white/10 bg-slate-900/95 p-1 shadow-lg flex flex-col gap-0.5">
           <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={relayout} title="自动布局 (Ctrl+L)"><LayoutGrid className="h-3 w-3" />布局</button>
+          <select className="w-full rounded border border-white/10 bg-slate-900/95 px-1.5 py-1 text-[10px] text-slate-300 outline-none focus:border-cyan-400/60" value={dir} onChange={(e) => changeDir(e.target.value as LayoutDir)} title="布局方向">
+            {Object.entries(LAYOUT_DIR_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
           <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => addChildNode()} title="添加子节点 (Tab)"><Plus className="h-3 w-3" />子节点</button>
           <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={addSticker} title="添加贴纸"><StickyNote className="h-3 w-3" />贴纸</button>
         </div>
@@ -973,11 +1026,11 @@ export default function MindmapPanel() {
             {!activeFolderId && (
               <div className="border-b border-white/10 px-2 py-1.5 flex items-center justify-between">
                 <span className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">文件夹</span>
-                <button type="button" className="inline-flex h-5 w-5 items-center justify-center rounded text-slate-600 hover:bg-white/10 hover:text-white" onClick={() => { setShowFolderCreate(true); setFolderName(""); }} title="新建文件夹"><FolderPlus className="h-3 w-3" /></button>
+                <button type="button" className="inline-flex h-5 w-5 items-center justify-center rounded border border-white/15 bg-white/5 text-slate-300 hover:bg-white/15 hover:text-white" onClick={() => { setShowFolderCreate(true); setFolderName(""); }} title="新建文件夹"><FolderPlus className="h-3 w-3" /></button>
               </div>
             )}
             {!activeFolderId && folders.length === 0 && (
-              <div className="px-3 py-1 text-[9px] text-slate-700">暂无文件夹，点击右上角 + 新建</div>
+              <div className="px-3 py-1 text-[9px] text-slate-500">暂无文件夹，点击右上角 + 新建</div>
             )}
             <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
               {/* Folder list —— 可拖拽文档到文件夹归类 */}
@@ -992,9 +1045,9 @@ export default function MindmapPanel() {
                   <button type="button" className="flex min-w-0 flex-1 items-center gap-1.5 text-left" onClick={() => setActiveFolderId(f.id)}>
                     <Folder className="h-3.5 w-3.5 shrink-0 text-amber-400" />
                     <span className="truncate text-[10px] text-slate-300">{f.name}</span>
-                    <span className="shrink-0 text-[9px] text-slate-600">{f.documentCount}</span>
+                    <span className="shrink-0 text-[9px] text-slate-400">{f.documentCount}</span>
                   </button>
-                  <button type="button" className="hidden h-5 w-5 items-center justify-center rounded text-slate-600 group-hover:flex hover:bg-white/10 hover:text-white"
+                  <button type="button" className="hidden h-5 w-5 items-center justify-center rounded text-slate-300 group-hover:flex hover:bg-white/10 hover:text-white"
                     onClick={() => { setEditingFolder(f); setFolderName(f.name); }}><Pencil className="h-3 w-3" /></button>
                   <button type="button" className="hidden h-5 w-5 items-center justify-center rounded text-red-400/50 group-hover:flex hover:bg-red-400/10 hover:text-red-300"
                     onClick={() => void deleteFolder(f.id)}><Trash2 className="h-3 w-3" /></button>
@@ -1012,7 +1065,7 @@ export default function MindmapPanel() {
                 </button>
               )}
               {/* Documents */}
-              {filteredDocs.length === 0 && <div className="py-8 text-center text-[10px] text-slate-600">{search ? "无匹配文档" : "暂无文档"}</div>}
+              {filteredDocs.length === 0 && <div className="py-8 text-center text-[10px] text-slate-500">{search ? "无匹配文档" : "暂无文档"}</div>}
               {filteredDocs.map(d => {
                 const IconFn = DOC_SOURCE_ICONS[d.sourceType] ?? DOC_SOURCE_ICONS.manual;
                 return (
@@ -1024,10 +1077,10 @@ export default function MindmapPanel() {
                     {IconFn("h-3.5 w-3.5 shrink-0 text-slate-500")}
                     <span className="flex min-w-0 flex-col">
                       <span className="truncate text-[11px] text-slate-200">{d.name}</span>
-                      <span className="text-[9px] text-slate-600">{formatTime(d.updatedAt)}</span>
+                      <span className="text-[9px] text-slate-400">{formatTime(d.updatedAt)}</span>
                     </span>
                   </button>
-                  {activeFolderId && <button type="button" className="hidden shrink-0 text-[8px] text-slate-600 group-hover:block hover:text-slate-400" onClick={() => moveDoc(d.id, null)}>移出</button>}
+                  {activeFolderId && <button type="button" className="hidden shrink-0 text-[8px] text-slate-300 group-hover:block hover:text-white" onClick={() => moveDoc(d.id, null)}>移出</button>}
                   <button type="button" className="hidden h-5 w-5 shrink-0 items-center justify-center rounded text-red-300/60 transition group-hover:flex hover:bg-red-400/10 hover:text-red-200" onClick={() => void removeDoc(d.id)} title="删除"><Trash2 className="h-3 w-3" /></button>
                 </div>
               );})}

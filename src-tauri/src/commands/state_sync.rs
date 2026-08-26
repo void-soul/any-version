@@ -36,6 +36,8 @@ const MANAGED_FILES: &[&str] = &[
     "tasks.db",
     "launcher.db",
     "ai_usage.db",
+    "api.db",
+    "mindmap.db",
     "otp/otp.db",
     "clipboard/clipboard.db",
     "picky/picky.db",

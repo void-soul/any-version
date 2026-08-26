@@ -107,7 +107,7 @@ export default function DataSyncPanel() {
         <div className="bg-white/[0.03] border border-white/10 rounded-xl p-3.5 text-[11px] text-slate-400 leading-relaxed">
           所有数据统一打包为<b className="text-slate-200">一个压缩快照文件</b>，不做任何勾选：
           config.json / 各数据库 / AI 配置与会话 / 技能 / MCP / 协作 / 翻译配置 / 启动器 / 任务 / OTP /
-          剪贴板（含图片）/ 证书凭据 / mihomo 代理配置 / 环境备份 / 自定义字体 /{" "}
+          剪贴板（含图片）/ 证书凭据 / mihomo 代理配置 / 环境备份 / 自定义字体 / 思维导图 / API 接口平台 /{" "}
           <b className="text-slate-200">Picky 收藏数据（含其云同步版本号 lastSyncAt）</b>等。
           导入时整体恢复（会覆盖当前数据），请谨慎操作。
         </div>
