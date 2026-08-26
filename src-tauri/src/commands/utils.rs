@@ -498,6 +498,43 @@ pub fn bin_tool_path(tool: &str) -> Option<PathBuf> {
     Some(matches.remove(0).1)
 }
 
+// ─── 端口 / 进程检测（通用 OS 工具，自 node_manager 迁入） ───
+
+/// 检测端口是否被占用（LISTENING），返回占用进程 PID。
+pub fn port_owner_pid(port: u16) -> Option<u32> {
+    let output = super::hidden_cmd::hidden_cmd("netstat")
+        .args(["-ano", "-p", "tcp"])
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let target = format!(":{}", port);
+    for line in stdout.lines() {
+        let l = line.trim();
+        if !l.to_uppercase().starts_with("TCP") {
+            continue;
+        }
+        let fields: Vec<&str> = l.split_whitespace().collect();
+        if fields.len() < 5 {
+            continue;
+        }
+        if fields[1].ends_with(&target) && fields[3] == "LISTENING" {
+            return fields[4].parse::<u32>().ok();
+        }
+    }
+    None
+}
+
+/// 按进程 ID 查询进程名。
+pub fn process_name_by_pid(pid: u32) -> Option<String> {
+    let output = super::hidden_cmd::hidden_cmd("tasklist")
+        .args(["/fi", &format!("pid eq {}", pid), "/fo", "csv", "/nh"])
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let first = stdout.lines().next().unwrap_or("");
+    first.split(',').next().map(|p| p.trim_matches('"').to_string())
+}
+
 // ================= 运行组件（bin 资产）检测与按需下载 =================
 
 /// ModelScope 上的运行组件压缩包（含 ffmpeg/lego/mediamtx/mihomo 四个目录）。

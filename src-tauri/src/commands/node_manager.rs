@@ -368,34 +368,6 @@ fn check_dep(exe_name: &str, version_args: &[&str]) -> DepCheck {
     }
 }
 
-// ─── 端口 / 进程检测 ───
-
-/// 检测端口是否被占用（LISTENING），返回占用进程 PID。
-pub fn port_owner_pid(port: u16) -> Option<u32> {
-    let (stdout, _, _) = run_capture("netstat", &["-ano", "-p", "tcp"], None);
-    let target = format!(":{}", port);
-    for line in stdout.lines() {
-        let l = line.trim();
-        if !l.to_uppercase().starts_with("TCP") {
-            continue;
-        }
-        let fields: Vec<&str> = l.split_whitespace().collect();
-        if fields.len() < 5 {
-            continue;
-        }
-        if fields[1].ends_with(&target) && fields[3] == "LISTENING" {
-            return fields[4].parse::<u32>().ok();
-        }
-    }
-    None
-}
-
-pub fn process_name_by_pid(pid: u32) -> Option<String> {
-    let (stdout, _, _) = run_capture("tasklist", &["/fi", &format!("pid eq {}", pid), "/fo", "csv", "/nh"], None);
-    let first = stdout.lines().next().unwrap_or("");
-    first.split(',').next().map(|p| p.trim_matches('"').to_string())
-}
-
 // ─── 进度事件 ───
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -719,7 +691,7 @@ pub(crate) fn stop_project_process(def: &NodeProjectDef) -> Result<(), String> {
         }
     }
     // 2) 兜底：杀占用默认端口的进程（若是我们的）
-    if let Some(pid) = port_owner_pid(def.default_port) {
+    if let Some(pid) = crate::commands::utils::port_owner_pid(def.default_port) {
         let _ = run_capture("taskkill", &["/f", "/t", "/pid", &pid.to_string()], None);
     }
     Ok(())
@@ -736,8 +708,8 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
     }
 
     // 端口冲突检测
-    if let Some(pid) = port_owner_pid(def.default_port) {
-        let name = process_name_by_pid(pid).unwrap_or_default();
+    if let Some(pid) = crate::commands::utils::port_owner_pid(def.default_port) {
+        let name = crate::commands::utils::process_name_by_pid(pid).unwrap_or_default();
         return Err(format!(
             "端口 {} 已被进程 {} (PID {}) 占用，请先停止或处理端口冲突",
             def.default_port, name, pid
@@ -796,7 +768,7 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
     let started_at = Instant::now();
     let mut last_report = Instant::now();
     loop {
-        if port_owner_pid(def.default_port).is_some() {
+        if crate::commands::utils::port_owner_pid(def.default_port).is_some() {
             emit_progress(&app, &def.id, "running", &format!("已启动，端口 {}", def.default_port));
             return Ok(());
         }
@@ -1005,7 +977,7 @@ fn status_for(def: &NodeProjectDef) -> NodeProjectStatus {
     // 运行状态：端口被我们的进程占用 → running；被其他进程占用 → port_conflict
     let mut status = "stopped".to_string();
     let mut pid = None;
-    if let Some(p) = port_owner_pid(def.default_port) {
+    if let Some(p) = crate::commands::utils::port_owner_pid(def.default_port) {
         let recorded = recorded_pid(&def.id);
         if recorded == Some(p) || recorded.is_some() {
             pid = Some(p);

@@ -273,11 +273,11 @@ pub fn kill_core_by_port(inner: &MihomoInner) {
     if !port_in_use(mixed_port) {
         return;
     }
-    let Some(pid) = crate::commands::node_manager::port_owner_pid(mixed_port) else {
+    let Some(pid) = crate::commands::utils::port_owner_pid(mixed_port) else {
         return;
     };
     // 仅结束我们的核心（避免误杀其它占用同端口的程序）
-    if let Some(name) = crate::commands::node_manager::process_name_by_pid(pid) {
+    if let Some(name) = crate::commands::utils::process_name_by_pid(pid) {
         let n = name.to_lowercase();
         if n.contains("mihomo") {
             let _ = std::process::Command::new("taskkill")

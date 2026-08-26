@@ -149,7 +149,7 @@ pub async fn mm_ai_from_project(input: AiGenerateProjectInput) -> Result<Documen
     if pp.is_empty() { return Err("路径为空".into()); }
     let pname = std::path::Path::new(&pp).file_name().and_then(|n| n.to_str()).unwrap_or("项目").to_string();
     // 扫描
-    let context = crate::commands::learn::scan::scan_project(&pp)?;
+    let context = super::scan::scan_project(&pp)?;
     let (provider, model) = resolve_provider_model(&input.provider_id, &input.model_id)?;
     let url = completion_url(&provider.openai_url);
     let body = serde_json::json!({"model":model,"stream":false,"temperature":0.3,"messages":[{"role":"system","content":project_prompt()},{"role":"user","content":context}]});

@@ -215,8 +215,8 @@ pub fn start_rtsp_server(
     if has_mediamtx {
         // 清理占用目标 RTSP 端口的残留进程（上次会话遗留的 mediamtx 等），
         // 否则新 mediamtx 绑定失败，potplayer 仍连到旧端口看到旧分辨率流。
-        if let Some(pid) = crate::commands::node_manager::port_owner_pid(config.port) {
-            if let Some(name) = crate::commands::node_manager::process_name_by_pid(pid) {
+        if let Some(pid) = crate::commands::utils::port_owner_pid(config.port) {
+            if let Some(name) = crate::commands::utils::process_name_by_pid(pid) {
                 let n = name.to_lowercase();
                 if n.contains("mediamtx") || n.contains("ffmpeg") {
                     let _ = std::process::Command::new("taskkill")
