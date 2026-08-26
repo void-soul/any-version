@@ -170,33 +170,54 @@ export default function ApiPanel() {
   const [moveModule, setMoveModule] = useState<ApiModule | null>(null);
   // 模板继承项概览弹层
   const [showTplPanel, setShowTplPanel] = useState(false);
+  // 从模板继承面板打开项目弹窗时，定位到哪个模板编辑区
+  const [tplFocusSection, setTplFocusSection] = useState<"headers" | "params" | "body" | null>(null);
   const pollRef = useRef<number | null>(null);
 
-  // 当前 draft 中继承自项目模板的条目（按来源分组）
+  // 当前 draft 中继承自项目模板的条目（按来源分组），并对比项目最新模板判断是否待同步
   const tplItems = useMemo(() => {
-    if (!draft) return { total: 0, groups: [] as { label: string; items: KeyValueItem[] }[] };
-    const kv = (arr: KeyValueItem[]) => arr.filter((x) => x.from_template);
-    const groups: { label: string; items: KeyValueItem[] }[] = [];
-    const push = (label: string, arr: KeyValueItem[]) => {
+    if (!draft) return { total: 0, outOfSync: 0, groups: [] as { label: string; items: (KeyValueItem & { synced: boolean })[] }[] };
+    const project = projects.find((p) => p.id === activeProjectId);
+    // 模板项（headers/params/body 三类合并，用于比对 key/value）
+    const tplAll = [...(project?.common_headers ?? []), ...(project?.common_params ?? []), ...(project?.common_body ?? [])];
+    const syncedOf = (item: { key: string; value: string; enabled: boolean }) => {
+      const t = tplAll.find((x) => x.key === item.key);
+      return !!t && t.value === item.value && t.enabled === item.enabled;
+    };
+    const kv = (arr: KeyValueItem[]) =>
+      arr.filter((x) => x.from_template).map((x) => ({ ...x, synced: syncedOf(x) }));
+    const groups: { label: string; items: (KeyValueItem & { synced: boolean })[] }[] = [];
+    const push = (label: string, arr: (KeyValueItem & { synced: boolean })[]) => {
       if (arr.length > 0) groups.push({ label, items: arr });
     };
     push("Headers", kv(draft.headers));
     push("Query Params", kv(draft.query_params));
     push("Body (urlencoded)", kv(draft.body_urlencoded));
-    push("Body (form-data)", draft.body_form.filter((x) => x.from_template).map((f) => ({ key: f.key, value: f.value, enabled: f.enabled, from_template: true })));
+    push(
+      "Body (form-data)",
+      draft.body_form.filter((x) => x.from_template).map((f) => ({ key: f.key, value: f.value, enabled: f.enabled, from_template: true, synced: syncedOf(f) }))
+    );
     push("Cookies", kv(draft.cookies));
     push("Path Params", kv(draft.path_params));
     const total = groups.reduce((n, g) => n + g.items.length, 0);
-    return { total, groups };
-  }, [draft]);
+    const outOfSync = groups.reduce((n, g) => n + g.items.filter((it) => !it.synced).length, 0);
+    return { total, outOfSync, groups };
+  }, [draft, projects, activeProjectId]);
+
+  // 重新加载当前接口（同步模板值后角标消失）
+  const reloadCurrent = async () => {
+    if (!selectedId) return;
+    const ep = await invoke<ApiEndpoint>("api_get_endpoint", { endpointId: selectedId });
+    setDraft(ep);
+    setCommentDraft(ep.response_comment ?? "");
+    setResponse(null);
+  };
 
   const variables = useMemo(() => {
     const env = envs.find((e) => e.id === activeEnvId);
     return env?.variables ?? {};
   }, [envs, activeEnvId]);
 
-  // 当前环境变量名列表（用于输入框自动补全）
-  const envVarNames = useMemo(() => Object.keys(variables), [variables]);
 
   // 初始化
   useEffect(() => {
@@ -525,11 +546,28 @@ export default function ApiPanel() {
     setTimeout(() => setCopied(false), 1200);
   };
 
-  const [projectModal, setProjectModal] = useState<{ open: boolean; project: ApiProject | null }>({ open: false, project: null });
-
-  const openCreateProject = () => setProjectModal({ open: true, project: null });
-
-  const openEditProject = (p: ApiProject) => setProjectModal({ open: true, project: p });
+  const [projectModal, setProjectModal] = useState<{ open: boolean; project: ApiProject | null }>({ open: false, project: null });  const openCreateProject = () => {
+    setTplFocusSection(null);
+    setProjectModal({ open: true, project: null });
+  };
+  const openEditProject = (p: ApiProject) => {
+    setTplFocusSection(null);
+    setProjectModal({ open: true, project: p });
+  };
+  // 模板继承面板的「打开项目模板」：定位到未同步项最多的分区
+  const openProjectTpl = () => {
+    const proj = projects.find((p) => p.id === activeProjectId);
+    if (!proj) return;
+    setShowTplPanel(false);
+    const labelToSec = (label: string): "headers" | "params" | "body" | null =>
+      label === "Headers" ? "headers" : label === "Query Params" ? "params" : label.startsWith("Body") ? "body" : null;
+    const unsynced = tplItems.groups.filter((g) => g.items.some((it) => !it.synced));
+    const primary = (unsynced.length > 0 ? unsynced : tplItems.groups)
+      .map((g) => labelToSec(g.label))
+      .find((s): s is "headers" | "params" | "body" => s !== null) ?? "headers";
+    setTplFocusSection(primary);
+    setProjectModal({ open: true, project: proj });
+  };
 
   const saveProjectModal = async (name: string, description: string, commonHeaders: KeyValueItem[], commonParams: KeyValueItem[], commonBody: KeyValueItem[]) => {
     if (projectModal.project) {
@@ -548,6 +586,7 @@ export default function ApiPanel() {
         setProjects(await invoke<ApiProject[]>("api_list_projects"));
       }
     }
+    setTplFocusSection(null);
     setProjectModal({ open: false, project: null });
   };
 
@@ -910,7 +949,7 @@ export default function ApiPanel() {
             />
             <VarInput
               value={draft.url}
-              envVars={envVarNames}
+              envVars={variables}
               onChange={(v) => updateDraft({ url: v })}
               className="flex-1 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]/60"
               placeholder="https://api.example.com/users/{{userId}}"
@@ -920,17 +959,26 @@ export default function ApiPanel() {
               <div className="relative">
                 <button
                   onClick={() => setShowTplPanel((v) => !v)}
-                  className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs cursor-pointer transition-colors ${showTplPanel ? "border-[var(--module-accent)]/50 bg-[color-mix(in_srgb,var(--module-accent)_12%,transparent)] text-[var(--module-accent)]" : "border-[color-mix(in_srgb,var(--module-accent)_35%,transparent)] bg-[color-mix(in_srgb,var(--module-accent)_8%,transparent)] text-[var(--module-accent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_14%,transparent)]"}`}
-                  title="点击查看继承自项目模板的参数"
+                  className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs cursor-pointer transition-colors ${showTplPanel ? "border-[var(--module-accent)]/50 bg-[color-mix(in_srgb,var(--module-accent)_12%,transparent)] text-[var(--module-accent)]" : "border-[color-mix(in_srgb,var(--module-accent)_35%,transparent)] bg-[color-mix(in_srgb,var(--module-accent)_8%,transparent)] text-[var(--module-accent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_14%,transparent)]"} ${tplItems.outOfSync > 0 ? "!border-rose-500/60" : ""}`}
+                  title={tplItems.outOfSync > 0 ? `${tplItems.outOfSync} 项模板参数已变化，重新加载接口后同步` : "点击查看继承自项目模板的参数"}
                 >
                   <Link2 className="w-3.5 h-3.5" />
                   模板继承
                   <span
                     className="rounded-full px-1.5 py-px text-[10px] font-bold text-white tabular-nums"
-                    style={{ background: "var(--module-accent)" }}
+                    style={{ background: tplItems.outOfSync > 0 ? "#f43f5e" : "var(--module-accent)" }}
                   >
                     {tplItems.total}
                   </span>
+                  {tplItems.outOfSync > 0 && (
+                    <span
+                      className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold text-white shadow"
+                      style={{ background: "#e11d48" }}
+                      title={`${tplItems.outOfSync} 项待同步`}
+                    >
+                      {tplItems.outOfSync}
+                    </span>
+                  )}
                 </button>
                 {showTplPanel && (
                   <>
@@ -946,22 +994,47 @@ export default function ApiPanel() {
                         </button>
                       </div>
                       <div className="max-h-64 overflow-y-auto p-2 space-y-2.5">
+                        {tplItems.outOfSync > 0 && (
+                          <div className="flex items-center gap-2 rounded-md border border-rose-500/40 bg-rose-500/10 px-2.5 py-2">
+                            <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-rose-400" />
+                            <span className="flex-1 text-[10px] leading-snug text-rose-300">
+                              项目模板已修改，{tplItems.outOfSync} 项尚未同步到本接口。
+                            </span>
+                            <button
+                              onClick={reloadCurrent}
+                              className="shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold text-white cursor-pointer hover:opacity-85"
+                              style={{ background: "#e11d48" }}
+                            >
+                              重新加载
+                            </button>
+                          </div>
+                        )}
                         {tplItems.groups.map((g) => (
                           <div key={g.label}>
                             <div className="px-1 pb-1 text-[9px] font-semibold uppercase tracking-wider text-slate-500">{g.label}</div>
                             <div className="space-y-1">
                               {g.items.map((it, i) => (
-                                <div key={i} className="flex items-center gap-1.5 rounded-md bg-black/25 border border-white/5 px-2 py-1">
-                                  <Lock className="w-3 h-3 shrink-0 text-[var(--module-accent)]" />
+                                <div key={i} className={`flex items-center gap-1.5 rounded-md border px-2 py-1 ${it.synced ? "border-white/5 bg-black/25" : "border-rose-500/40 bg-rose-500/10"}`}>
+                                  <Lock className={`w-3 h-3 shrink-0 ${it.synced ? "text-[var(--module-accent)]" : "text-rose-400"}`} />
                                   <code className="font-mono text-[10px] text-slate-200 truncate">{it.key}</code>
                                   <span className="text-[10px] text-slate-500">=</span>
-                                  <code className="font-mono text-[10px] text-[var(--module-accent)]/90 truncate" title={it.value}>{it.value || "（空）"}</code>
+                                  <code className={`font-mono text-[10px] truncate ${it.synced ? "text-[var(--module-accent)]/90" : "text-rose-300"}`} title={it.value}>{it.value || "（空）"}</code>
+                                  {!it.synced && <span className="ml-auto shrink-0 text-[9px] font-semibold text-rose-400">待同步</span>}
                                 </div>
                               ))}
                             </div>
                           </div>
                         ))}
-                        <div className="px-1 pt-1 text-[9px] text-slate-500">在「项目 → 编辑项目 → 通用模板」中修改，所有接口自动同步。</div>
+                        <div className="px-1 pt-1 space-y-1.5">
+                          <button
+                            onClick={openProjectTpl}
+                            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[10px] font-semibold text-slate-200 hover:bg-white/10 hover:text-white cursor-pointer transition-colors"
+                          >
+                            <Settings2 className="w-3 h-3" style={{ color: "var(--module-accent)" }} />
+                            打开项目模板
+                          </button>
+                          <div className="text-center text-[9px] text-slate-500">在模板中修改后，所有接口自动同步。</div>
+                        </div>
                       </div>
                     </div>
                   </>
@@ -1064,7 +1137,7 @@ export default function ApiPanel() {
                   <KvEditor
                     items={draft.query_params}
                     onChange={(v) => updateDraft({ query_params: v })}
-                    envVars={envVarNames}
+                    envVars={variables}
                     placeholderValue="值（支持 {{baseUrl}} / {{$guid}}）"
                   />
                 )}
@@ -1102,7 +1175,7 @@ export default function ApiPanel() {
                         }
                       }}
                       placeholderKey="Header 名"
-                      envVars={envVarNames}
+                      envVars={variables}
                       placeholderValue="值（如 Bearer {{token}}）"
                     />
                   </div>
@@ -1121,10 +1194,10 @@ export default function ApiPanel() {
                       ))}
                     </div>
                     {draft.body_type === "formdata" && (
-                      <FormDataEditor items={draft.body_form} onChange={(v) => updateDraft({ body_form: v })} envVars={envVarNames} />
+                      <FormDataEditor items={draft.body_form} onChange={(v) => updateDraft({ body_form: v })} envVars={variables} />
                     )}
                     {draft.body_type === "form" && (
-                      <KvEditor items={draft.body_urlencoded} onChange={(v) => updateDraft({ body_urlencoded: v })} envVars={envVarNames} placeholderValue="值" />
+                      <KvEditor items={draft.body_urlencoded} onChange={(v) => updateDraft({ body_urlencoded: v })} envVars={variables} placeholderValue="值" />
                     )}
                     {draft.body_type === "graphql" && (
                       <div className="space-y-2">
@@ -1132,7 +1205,7 @@ export default function ApiPanel() {
                           multiline
                           rows={6}
                           value={draft.body_graphql_query}
-                          envVars={envVarNames}
+                          envVars={variables}
                           onChange={(v) => updateDraft({ body_graphql_query: v })}
                           placeholder={"query GetUser($id: ID!) {\n  user(id: $id) { id name }\n}"}
                           className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none"
@@ -1141,7 +1214,7 @@ export default function ApiPanel() {
                           multiline
                           rows={3}
                           value={draft.body_graphql_variables}
-                          envVars={envVarNames}
+                          envVars={variables}
                           onChange={(v) => updateDraft({ body_graphql_variables: v })}
                           placeholder='{"id": "{{random:int:1:100}}"}'
                           className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none"
@@ -1172,7 +1245,7 @@ export default function ApiPanel() {
                         multiline
                         rows={7}
                         value={draft.body}
-                        envVars={envVarNames}
+                        envVars={variables}
                         onChange={(v) => updateDraft({ body: v })}
                         className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
                         placeholder={draft.body_type === "json" ? '{"name": "{{random:string:6}}", "age": {{random:int:18:60}}}' : "原始内容"}
@@ -1190,7 +1263,7 @@ export default function ApiPanel() {
                 )}
                 {subTab === "cookies" && (
                   <div className="space-y-1.5">
-                    <KvEditor items={draft.cookies} onChange={(v) => updateDraft({ cookies: v })} envVars={envVarNames} placeholderKey="Cookie 名" placeholderValue="值" />
+                    <KvEditor items={draft.cookies} onChange={(v) => updateDraft({ cookies: v })} envVars={variables} placeholderKey="Cookie 名" placeholderValue="值" />
                     <div className="text-[10px] text-slate-500">独立设置的 Cookie 会随请求发送。</div>
                   </div>
                 )}
@@ -1410,7 +1483,11 @@ export default function ApiPanel() {
       {projectModal.open && (
         <ProjectModal
           project={projectModal.project}
-          onClose={() => setProjectModal({ open: false, project: null })}
+          initialSection={tplFocusSection}
+          onClose={() => {
+            setTplFocusSection(null);
+            setProjectModal({ open: false, project: null });
+          }}
           onSave={saveProjectModal}
         />
       )}

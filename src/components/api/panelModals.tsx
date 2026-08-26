@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Plus, Trash2, X, Link2, Database, FlaskConical, Folder, ListTree, Braces,
@@ -243,10 +243,13 @@ export function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
 }
 
 // ─── 项目新建/编辑弹窗 ───
-export function ProjectModal({ project, onClose, onSave }: {
+export type ProjectTemplateSection = "headers" | "params" | "body";
+
+export function ProjectModal({ project, onClose, onSave, initialSection }: {
   project: ApiProject | null;
   onClose: () => void;
   onSave: (name: string, description: string, commonHeaders: KeyValueItem[], commonParams: KeyValueItem[], commonBody: KeyValueItem[]) => void;
+  initialSection?: ProjectTemplateSection | null;
 }) {
   const [name, setName] = useState(project?.name ?? "");
   const [description, setDescription] = useState(project?.description ?? "");
@@ -254,6 +257,22 @@ export function ProjectModal({ project, onClose, onSave }: {
   const [commonParams, setCommonParams] = useState<KeyValueItem[]>(project?.common_params ?? []);
   const [commonBody, setCommonBody] = useState<KeyValueItem[]>(project?.common_body ?? []);
   const editing = !!project;
+  const headerRef = useRef<HTMLDivElement>(null);
+  const paramsRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [highlight, setHighlight] = useState<ProjectTemplateSection | null>(null);
+
+  // initialSection 变化时定位到对应模板编辑区并短暂高亮
+  useEffect(() => {
+    if (!initialSection) return;
+    const ref = initialSection === "headers" ? headerRef : initialSection === "params" ? paramsRef : bodyRef;
+    const el = ref.current;
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlight(initialSection);
+    const t = window.setTimeout(() => setHighlight(null), 1500);
+    return () => window.clearTimeout(t);
+  }, [initialSection]);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div
@@ -287,24 +306,24 @@ export function ProjectModal({ project, onClose, onSave }: {
               className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 resize-none focus:outline-none focus:border-[var(--module-accent)]/60"
             />
           </label>
-          <div>
-            <div className="flex items-center gap-1.5 mb-1">
+          <div ref={headerRef} className={`rounded-lg border transition-all duration-300 ${highlight === "headers" ? "border-[var(--module-accent)]/70 ring-2 ring-[color-mix(in_srgb,var(--module-accent)_30%,transparent)]" : "border-transparent"}`}>
+            <div className="flex items-center gap-1.5 mb-1 px-1 pt-1">
               <Link2 className="w-3 h-3" style={{ color: ACCENT }} />
               <span className="text-[11px] text-slate-400">通用 Headers（接口模板）</span>
               <span className="text-[9px] text-slate-600">新建接口时自动附加</span>
             </div>
             <KvEditor items={commonHeaders} onChange={setCommonHeaders} placeholderKey="Header 名" placeholderValue="值" withDescription={false} />
           </div>
-          <div>
-            <div className="flex items-center gap-1.5 mb-1">
+          <div ref={paramsRef} className={`rounded-lg border transition-all duration-300 ${highlight === "params" ? "border-[var(--module-accent)]/70 ring-2 ring-[color-mix(in_srgb,var(--module-accent)_30%,transparent)]" : "border-transparent"}`}>
+            <div className="flex items-center gap-1.5 mb-1 px-1 pt-1">
               <ListTree className="w-3 h-3" style={{ color: ACCENT }} />
               <span className="text-[11px] text-slate-400">通用 Params（接口模板）</span>
               <span className="text-[9px] text-slate-600">新建接口时自动附加</span>
             </div>
             <KvEditor items={commonParams} onChange={setCommonParams} placeholderKey="参数名" placeholderValue="值" withDescription={false} />
           </div>
-          <div>
-            <div className="flex items-center gap-1.5 mb-1">
+          <div ref={bodyRef} className={`rounded-lg border transition-all duration-300 ${highlight === "body" ? "border-[var(--module-accent)]/70 ring-2 ring-[color-mix(in_srgb,var(--module-accent)_30%,transparent)]" : "border-transparent"}`}>
+            <div className="flex items-center gap-1.5 mb-1 px-1 pt-1">
               <Braces className="w-3 h-3" style={{ color: ACCENT }} />
               <span className="text-[11px] text-slate-400">通用 Body 参数（接口模板）</span>
               <span className="text-[9px] text-slate-600">新建接口时自动附加到 x-www-form-urlencoded 与 form-data</span>

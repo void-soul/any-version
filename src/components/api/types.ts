@@ -283,14 +283,18 @@ export const ASSERTION_TYPES: { value: string; label: string; ops?: { value: str
 ];
 
 // 随机变量提示（插入辅助）
-export const RANDOM_VARIABLES: { token: string; desc: string }[] = [
-  { token: "{{$guid}}", desc: "UUID v4" },
-  { token: "{{$timestamp}}", desc: "Unix 秒" },
-  { token: "{{$isoTimestamp}}", desc: "ISO8601 时间" },
-  { token: "{{$randomInt}}", desc: "0-999999 随机整数" },
-  { token: "{{random:int:1:100}}", desc: "区间随机整数" },
-  { token: "{{random:string:8}}", desc: "随机字母数字串" },
-  { token: "{{$randomEmail}}", desc: "随机邮箱" },
+/** 随机变量：token / 简短描述 / 详细格式说明 / 示例值生成器（与后端 render.rs 行为一致） */
+export const RANDOM_VARIABLES: { token: string; desc: string; format: string; example: () => string }[] = [
+  { token: "{{$guid}}", desc: "UUID v4", format: "生成 RFC 4122 UUID v4（36 位，含连字符）", example: () => (crypto?.randomUUID?.() ?? "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d") },
+  { token: "{{$timestamp}}", desc: "Unix 秒", format: "当前时间的 Unix 时间戳（秒级，10 位）", example: () => String(Math.floor(Date.now() / 1000)) },
+  { token: "{{$isoTimestamp}}", desc: "ISO8601 时间", format: "当前时间的 ISO8601 UTC 格式（如 2026-08-26T12:00:00.000Z）", example: () => new Date().toISOString() },
+  { token: "{{$randomInt}}", desc: "0-999999 随机整数", format: "0 ~ 999999 之间的随机整数", example: () => String(Math.floor(Math.random() * 1000000)) },
+  { token: "{{random:int:1:100}}", desc: "区间随机整数", format: "格式 {{random:int:最小值:最大值}}，含两端（可自定义区间）", example: () => String(1 + Math.floor(Math.random() * 100)) },
+  { token: "{{random:string:8}}", desc: "随机字母数字串", format: "格式 {{random:string:长度}}，随机字母数字串（1-64 位，默认 8）", example: () => {
+    const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    return Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  } },
+  { token: "{{$randomEmail}}", desc: "随机邮箱", format: "随机用户名 + 随机域名的邮箱地址", example: () => `user${Math.floor(Math.random() * 100000)}@example.com` },
 ];
 
 // 默认值工厂

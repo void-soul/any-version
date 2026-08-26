@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
-  Plus, Save, Play, Loader2, Trash2, Pencil, Upload, X, Star,
+  Plus, Save, Play, Loader2, Trash2, Pencil, Upload, X, Star, Link2,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -21,6 +21,10 @@ export function EndpointRow({ ep, selected, onSelect, onDelete, onToggleFavorite
 }) {
   const Icon = methodIcon(ep.method);
   const color = ep.method === "GET" ? "text-emerald-400" : ep.method === "POST" ? "text-amber-400" : ep.method === "PUT" ? "text-sky-400" : ep.method === "DELETE" ? "text-rose-400" : ep.method === "PATCH" ? "text-violet-400" : "text-slate-400";
+  // 继承自项目模板的参数总数（含 form-data）
+  const tplCount =
+    [ep.headers, ep.query_params, ep.path_params, ep.body_urlencoded, ep.cookies].reduce((n, a) => n + a.filter((x) => x.from_template).length, 0) +
+    ep.body_form.filter((f) => f.from_template).length;
   return (
     <div
       onClick={onSelect}
@@ -29,6 +33,15 @@ export function EndpointRow({ ep, selected, onSelect, onDelete, onToggleFavorite
     >
       <Icon className={`w-3 h-3 shrink-0 ${color}`} />
       <Star className={`w-3 h-3 shrink-0 cursor-pointer ${ep.is_favorite ? "text-amber-400 fill-amber-400" : "text-slate-700 opacity-0 group-hover:opacity-100 hover:text-amber-400"}`} onClick={(e) => { e.stopPropagation(); onToggleFavorite(); }} />
+      {tplCount > 0 && (
+        <span
+          title={`${tplCount} 项参数继承自项目模板（只读）`}
+          className={`flex items-center gap-0.5 shrink-0 ${selected ? "text-[var(--module-accent)]" : "text-slate-500 group-hover:text-slate-400"}`}
+        >
+          <Link2 className="w-2.5 h-2.5" />
+          {tplCount > 1 && <span className="text-[9px] tabular-nums leading-none">{tplCount}</span>}
+        </span>
+      )}
       <span className="flex-1 text-xs text-slate-300 truncate">{ep.name}</span>
       <button
         onClick={(e) => { e.stopPropagation(); onDelete(); }}

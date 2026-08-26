@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
-  Plus, ArrowDown, Trash2, RefreshCcw, Wrench, MoreHorizontal, FileText, Lock, ChevronsUpDown,
+  Plus, ArrowDown, Trash2, RefreshCcw, Wrench, MoreHorizontal, FileText, Lock, ChevronsUpDown, ChevronDown, ChevronRight,
 } from "lucide-react";
 import type { ApiEndpoint, KeyValueItem, FormDataItem, Authorization, RequestSettings } from "./types";
 import { AUTH_TYPES, RANDOM_VARIABLES, defaultAuthorization, defaultSettings } from "./types";
@@ -10,12 +10,42 @@ export const ACCENT = "var(--module-accent)";
 
 // ─── 变量自动补全输入框 ───
 // 输入 {{ 触发下拉：环境变量 + 随机变量，选择后回填完整 {{var}}。
-// 环境变量名来自当前生效的变量集合，随机变量来自 RANDOM_VARIABLES 常量。
+// 环境变量来自当前生效的变量集合（名 → 值），随机变量来自 RANDOM_VARIABLES 常量。
+// 支持模糊匹配（子序列评分），悬停候选可预览当前环境值。
+
+/** 模糊匹配评分：q 需为 label 的子序列；前缀/连续/分隔符边界加分，返回 -1 表示不匹配。 */
+function fuzzyScore(label: string, q: string): number {
+  const s = label.toLowerCase();
+  const t = q.toLowerCase();
+  if (!t) return 0;
+  if (s.startsWith(t)) return 1000 + (s.length - t.length);
+  let score = 0;
+  let ti = 0;
+  let prev = -2;
+  for (let i = 0; i < s.length && ti < t.length; i++) {
+    if (s[i] !== t[ti]) continue;
+    // 连续命中加分；分隔符/驼峰边界额外加分
+    let add = i === prev + 1 ? 3 : 1;
+    if (i > 0) {
+      const prevCh = s[i - 1];
+      if (prevCh === "_" || prevCh === "-" || prevCh === " " || prevCh === "." || prevCh === "/") add += 4;
+      else if (prevCh >= "a" && prevCh <= "z" && s[i] >= "A" && s[i] <= "Z") add += 2;
+    } else {
+      add += 5;
+    }
+    if (i > prev + 1) add -= 1; // 中间有跳跃的小惩罚
+    score += add;
+    prev = i;
+    ti++;
+  }
+  return ti === t.length ? score : -1;
+}
+
 export function VarInput({ value, onChange, envVars, placeholder, className, disabled, multiline, rows, onKeyDown }: {
   value: string;
   onChange: (v: string) => void;
-  /** 当前环境可用的变量名（不含 {{}} 包裹） */
-  envVars: string[];
+  /** 当前环境变量（名 → 值） */
+  envVars: Record<string, unknown>;
   placeholder?: string;
   className?: string;
   disabled?: boolean;
@@ -28,6 +58,9 @@ export function VarInput({ value, onChange, envVars, placeholder, className, dis
   const [query, setQuery] = useState("");
   const [activeIdx, setActiveIdx] = useState(0);
   const [caret, setCaret] = useState<{ top: number; left: number } | null>(null);
+  // 随机变量行的展开说明（格式 + 示例）
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [hoverExample, setHoverExample] = useState<{ idx: number; value: string } | null>(null);
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
 
   // 计算光标在输入框中的像素位置（用于定位下拉）
@@ -91,13 +124,18 @@ export function VarInput({ value, onChange, envVars, placeholder, className, dis
     requestAnimationFrame(() => inputRef.current?.focus());
   };
 
-  // 候选：环境变量优先，随机变量在后
+  // 候选：环境变量优先，随机变量在后；查询时按模糊评分排序
   const candidates = useMemo(() => {
-    const env = envVars.map((name) => ({ label: name, desc: "环境变量", token: `{{${name}}}` }));
-    const rnd = RANDOM_VARIABLES.map((r) => ({ label: r.token, desc: r.desc, token: r.token }));
+    const env = Object.entries(envVars).map(([name, val]) => ({ label: name, value: String(val), desc: "环境变量", token: `{{${name}}}` as string, format: undefined as string | undefined, example: undefined as (() => string) | undefined }));
+    const rnd = RANDOM_VARIABLES.map((r) => ({ label: r.token, value: "", desc: r.desc, token: r.token, format: r.format, example: r.example }));
     const all = [...env, ...rnd];
-    const q = query.toLowerCase();
-    return q ? all.filter((c) => c.label.toLowerCase().includes(q)) : all;
+    const q = query.trim();
+    if (!q) return all;
+    return all
+      .map((c, i) => ({ c, i, s: fuzzyScore(c.label, q) }))
+      .filter((x) => x.s >= 0)
+      .sort((a, b) => b.s - a.s || a.i - b.i)
+      .map((x) => x.c);
   }, [envVars, query]);
 
   const commonProps = {
@@ -136,19 +174,60 @@ export function VarInput({ value, onChange, envVars, placeholder, className, dis
           className="absolute z-30 max-h-48 overflow-y-auto rounded-md border border-white/10 bg-[#0d1524] shadow-xl"
           style={caret ? { left: caret.left, top: caret.top } : { left: 0, right: 0, top: "calc(100% + 2px)" }}
         >
-          {candidates.map((c, i) => (
-            <button
-              key={c.label + c.desc}
-              type="button"
-              onMouseDown={(e) => { e.preventDefault(); insert(c.token); }}
-              onMouseEnter={() => setActiveIdx(i)}
-              className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] cursor-pointer ${i === activeIdx ? "bg-[color-mix(in_srgb,var(--module-accent)_15%,transparent)]" : ""}`}
-            >
-              <ChevronsUpDown className="w-3 h-3 shrink-0 text-slate-500" />
-              <code className="font-mono text-[var(--module-accent)] whitespace-nowrap">{c.label}</code>
-              <span className="ml-auto truncate text-[9px] text-slate-500">{c.desc}</span>
-            </button>
-          ))}
+          {candidates.map((c, i) => {
+            const exampleFn = c.example;
+            const isRandom = !!exampleFn;
+            const expanded = isRandom && expandedIdx === i;
+            const exampleVal = isRandom && hoverExample?.idx === i ? hoverExample.value : isRandom ? exampleFn() : "";
+            return (
+              <div key={c.label + c.desc}>
+                <button
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); insert(c.token); }}
+                  onMouseEnter={() => {
+                    setActiveIdx(i);
+                    if (exampleFn) setHoverExample({ idx: i, value: exampleFn() });
+                  }}
+                  title={
+                    c.value
+                      ? `当前环境值：${c.value}`
+                      : isRandom
+                        ? (hoverExample?.idx === i ? `示例值：${hoverExample.value}` : c.format)
+                        : c.desc
+                  }
+                  className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] cursor-pointer ${i === activeIdx ? "bg-[color-mix(in_srgb,var(--module-accent)_15%,transparent)]" : ""}`}
+                >
+                  {isRandom ? (
+                    <span
+                      role="button"
+                      tabIndex={-1}
+                      onClick={(e) => { e.stopPropagation(); setExpandedIdx(expanded ? null : i); }}
+                      className="shrink-0 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
+                      title={expanded ? "收起格式说明" : "展开格式说明"}
+                    >
+                      {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                    </span>
+                  ) : (
+                    <ChevronsUpDown className="w-3 h-3 shrink-0 text-slate-500" />
+                  )}
+                  <code className="font-mono text-[var(--module-accent)] whitespace-nowrap">{c.label}</code>
+                  {c.value !== "" && (
+                    <span className="max-w-[9rem] truncate font-mono text-[9px] text-slate-600">{c.value}</span>
+                  )}
+                  <span className="ml-auto shrink-0 truncate text-[9px] text-slate-500">{c.desc}</span>
+                </button>
+                {expanded && (
+                  <div className="mx-2 mb-1 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-[10px] leading-relaxed">
+                    <div className="text-slate-300">{c.format}</div>
+                    <div className="mt-0.5 flex items-center gap-1.5">
+                      <span className="text-slate-500">示例：</span>
+                      <code className="font-mono text-emerald-300 break-all">{exampleVal}</code>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -254,14 +333,14 @@ export function ResponseBody({ body, mode }: { body: string; mode: "pretty" | "r
 }
 
 // ─── 键值编辑器（Key-value 编辑 / Bulk 编辑 / 描述） ───
-export function KvEditor({ items, onChange, placeholderKey = "名称", placeholderValue = "值", withDescription = true, envVars = [] }: {
+export function KvEditor({ items, onChange, placeholderKey = "名称", placeholderValue = "值", withDescription = true, envVars = {} }: {
   items: KeyValueItem[];
   onChange: (items: KeyValueItem[]) => void;
   placeholderKey?: string;
   placeholderValue?: string;
   withDescription?: boolean;
-  /** 当前环境变量名（用于值输入框的自动补全） */
-  envVars?: string[];
+  /** 当前环境变量（名 → 值，用于值输入框的自动补全与悬停预览） */
+  envVars?: Record<string, unknown>;
 }) {
   const [mode, setMode] = useState<"kv" | "bulk">("kv");
   const [bulkText, setBulkText] = useState(items.map((kv) => kv.enabled ? `${kv.key}:${kv.value}` : `// ${kv.key}:${kv.value}`).join("\n"));
@@ -394,7 +473,7 @@ export function KvEditor({ items, onChange, placeholderKey = "名称", placehold
 }
 
 // ─── form-data 编辑器（text / 文件） ───
-export function FormDataEditor({ items, onChange, envVars = [] }: { items: FormDataItem[]; onChange: (items: FormDataItem[]) => void; envVars?: string[] }) {
+export function FormDataEditor({ items, onChange, envVars = {} }: { items: FormDataItem[]; onChange: (items: FormDataItem[]) => void; envVars?: Record<string, unknown> }) {
   const update = (i: number, patch: Partial<FormDataItem>) => {
     const target = items[i];
     // 模板继承项不允许修改（名称/值/类型/启用状态均由项目模板控制）
