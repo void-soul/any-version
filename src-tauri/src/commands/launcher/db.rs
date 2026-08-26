@@ -12,7 +12,7 @@ fn db_path() -> std::path::PathBuf {
     get_data_dir().join("launcher.db")
 }
 
-pub fn init_db() -> Result<(), String> {
+fn build_connection() -> Result<Connection, String> {
     let path = db_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -75,8 +75,12 @@ pub fn init_db() -> Result<(), String> {
         seed_default_data(&conn)?;
     }
 
-    let mut guard = DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))?;
-    *guard = Some(conn);
+    Ok(conn)
+}
+
+pub fn init_db() -> Result<(), String> {
+    let conn = build_connection()?;
+    *DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))? = Some(conn);
     Ok(())
 }
 
@@ -84,11 +88,10 @@ fn with_conn<T, F>(f: F) -> Result<T, String>
 where
     F: FnOnce(&mut Connection) -> Result<T, String>,
 {
+    // 检查 + 初始化 + 使用放在同一锁临界区，避免并发重复初始化覆盖连接。
     let mut guard = DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))?;
     if guard.is_none() {
-        drop(guard);
-        init_db()?;
-        guard = DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))?;
+        *guard = Some(build_connection()?);
     }
     match guard.as_mut() {
         Some(conn) => f(conn),

@@ -8,7 +8,8 @@ static DB_CONN: Mutex<Option<rusqlite::Connection>> = Mutex::new(None);
 
 fn db_path() -> std::path::PathBuf { get_data_dir().join("mindmap.db") }
 
-pub fn init_db() -> Result<(), String> {
+/// 打开并初始化连接（不持有全局锁；由调用方在锁内调用，避免并发重复初始化）。
+fn build_connection() -> Result<rusqlite::Connection, String> {
     let path = db_path();
     if let Some(p) = path.parent() { std::fs::create_dir_all(p).map_err(|e| e.to_string())?; }
     let conn = rusqlite::Connection::open(&path).map_err(|e| format!("打开思维导图数据库失败: {}", e))?;
@@ -52,18 +53,22 @@ pub fn init_db() -> Result<(), String> {
             .map_err(|e| format!("迁移 folder_id 失败: {}", e))?;
     }
 
+    Ok(conn)
+}
+
+/// 初始化数据库（幂等）。
+pub fn init_db() -> Result<(), String> {
+    let conn = build_connection()?;
     *DB_CONN.lock().map_err(|e| e.to_string())? = Some(conn);
     Ok(())
 }
 
-fn ensure_db() -> Result<(), String> {
-    if DB_CONN.lock().map_err(|e| e.to_string())?.is_some() { return Ok(()); }
-    init_db()
-}
-
 pub fn with_conn<T>(f: impl FnOnce(&mut rusqlite::Connection) -> Result<T, String>) -> Result<T, String> {
-    ensure_db()?;
+    // 检查 + 初始化 + 使用放在同一锁临界区，避免并发重复初始化覆盖连接。
     let mut guard = DB_CONN.lock().map_err(|e| format!("DB锁: {}", e))?;
+    if guard.is_none() {
+        *guard = Some(build_connection()?);
+    }
     f(guard.as_mut().ok_or("数据库未初始化")?)
 }
 
@@ -177,18 +182,20 @@ pub fn list_nodes(document_id: &str) -> Result<Vec<MindmapNode>, String> {
     with_conn(|c| list_nodes_inner(c, document_id))
 }
 
+fn upsert_node_inner(c: &rusqlite::Connection, node: &MindmapNode) -> Result<(), String> {
+    let ts = now_ts();
+    let exists: i64 = c.query_row("SELECT COUNT(*) FROM mindmap_nodes WHERE id=?1", rusqlite::params![node.id], |r| r.get(0)).unwrap_or(0);
+    if exists > 0 {
+        sql(c.execute("UPDATE mindmap_nodes SET parent_id=?1,name=?2,description=?3,detail=?4,kind=?5,color=?6,progress=?7,position_x=?8,position_y=?9,updated_at=?10 WHERE id=?11", rusqlite::params![node.parent_id, node.name, node.description, node.detail, node.kind, node.color, node.progress, node.position_x, node.position_y, ts, node.id]))?;
+    } else {
+        sql(c.execute("INSERT INTO mindmap_nodes (id,document_id,parent_id,name,description,detail,kind,color,progress,position_x,position_y,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)", rusqlite::params![node.id, node.document_id, node.parent_id, node.name, node.description, node.detail, node.kind, node.color, node.progress, node.position_x, node.position_y, ts, ts]))?;
+    }
+    touch_document_inner(c, &node.document_id)?;
+    Ok(())
+}
+
 pub fn upsert_node(node: &MindmapNode) -> Result<(), String> {
-    with_conn(|c| {
-        let ts = now_ts();
-        let exists: i64 = c.query_row("SELECT COUNT(*) FROM mindmap_nodes WHERE id=?1", rusqlite::params![node.id], |r| r.get(0)).unwrap_or(0);
-        if exists > 0 {
-            sql(c.execute("UPDATE mindmap_nodes SET parent_id=?1,name=?2,description=?3,detail=?4,kind=?5,color=?6,progress=?7,position_x=?8,position_y=?9,updated_at=?10 WHERE id=?11", rusqlite::params![node.parent_id, node.name, node.description, node.detail, node.kind, node.color, node.progress, node.position_x, node.position_y, ts, node.id]))?;
-        } else {
-            sql(c.execute("INSERT INTO mindmap_nodes (id,document_id,parent_id,name,description,detail,kind,color,progress,position_x,position_y,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)", rusqlite::params![node.id, node.document_id, node.parent_id, node.name, node.description, node.detail, node.kind, node.color, node.progress, node.position_x, node.position_y, ts, ts]))?;
-        }
-        touch_document_inner(c, &node.document_id)?;
-        Ok(())
-    })
+    with_conn(|c| upsert_node_inner(c, node))
 }
 
 pub fn delete_node(document_id: &str, node_id: &str) -> Result<(), String> {
@@ -207,7 +214,18 @@ pub fn delete_node(document_id: &str, node_id: &str) -> Result<(), String> {
     })
 }
 
-pub fn batch_save_nodes(nodes: &[MindmapNode]) -> Result<(), String> { for n in nodes { upsert_node(n)?; } Ok(()) }
+/// 批量保存节点坐标/内容：整批包在单个事务里，中途失败整体回滚，
+/// 避免拖拽保存时部分节点落盘、部分未写导致坐标不一致。
+pub fn batch_save_nodes(nodes: &[MindmapNode]) -> Result<(), String> {
+    with_conn(|c| {
+        let tx = c.transaction().map_err(|e| format!("开启事务失败: {}", e))?;
+        for n in nodes {
+            upsert_node_inner(&tx, n)?;
+        }
+        tx.commit().map_err(|e| format!("提交事务失败: {}", e))?;
+        Ok(())
+    })
+}
 
 // ─── 贴纸 ───
 

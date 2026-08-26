@@ -14,8 +14,8 @@ fn db_path() -> std::path::PathBuf {
     get_data_dir().join("ai_usage.db")
 }
 
-/// 初始化数据库（幂等，可在应用启动和首次写入时调用）
-pub fn init_db() -> Result<(), String> {
+/// 打开并初始化连接（不持有全局锁；由调用方在锁内调用，避免并发重复初始化）。
+fn init_connection() -> Result<rusqlite::Connection, String> {
     let path = db_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -45,22 +45,25 @@ pub fn init_db() -> Result<(), String> {
     )
     .map_err(|e| format!("初始化表失败: {}", e))?;
 
-    // 将连接存入全局池
-    let mut guard = DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))?;
-    *guard = Some(conn);
+    Ok(conn)
+}
 
+/// 初始化数据库（幂等，可在应用启动和首次写入时调用）
+pub fn init_db() -> Result<(), String> {
+    let conn = init_connection()?;
+    // 将连接存入全局池
+    *DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))? = Some(conn);
     Ok(())
 }
 
-/// 获取数据库连接（首次调用时自动初始化）
+/// 获取数据库连接（首次调用时自动初始化；检查 + 初始化在同一锁临界区，避免并发重复初始化）
 fn get_db() -> Result<(), String> {
-    {
-        let guard = DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))?;
-        if guard.is_some() {
-            return Ok(());
-        }
+    let mut guard = DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))?;
+    if guard.is_none() {
+        let conn = init_connection()?;
+        *guard = Some(conn);
     }
-    init_db()
+    Ok(())
 }
 
 /// 向数据库插入一条用量记录（线程安全）

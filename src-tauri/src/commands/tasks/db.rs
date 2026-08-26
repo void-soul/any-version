@@ -11,8 +11,8 @@ fn db_path() -> std::path::PathBuf {
     get_data_dir().join("tasks.db")
 }
 
-/// 初始化数据库（幂等）。
-pub fn init_db() -> Result<(), String> {
+/// 打开并初始化连接（不持有全局锁；由调用方在锁内调用，避免并发重复初始化）。
+fn build_connection() -> Result<rusqlite::Connection, String> {
     let path = db_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -145,20 +145,14 @@ pub fn init_db() -> Result<(), String> {
             .map_err(|e| format!("迁移贴纸系列字段失败: {}", e))?;
     }
 
-    let mut guard = DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))?;
-    *guard = Some(conn);
-    Ok(())
+    Ok(conn)
 }
 
-/// 确保数据库已初始化。
-fn ensure_db() -> Result<(), String> {
-    {
-        let guard = DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))?;
-        if guard.is_some() {
-            return Ok(());
-        }
-    }
-    init_db()
+/// 初始化数据库（幂等）。
+pub fn init_db() -> Result<(), String> {
+    let conn = build_connection()?;
+    *DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))? = Some(conn);
+    Ok(())
 }
 
 /// 以闭包方式借用连接，避免各处重复解锁样板代码。
@@ -166,8 +160,11 @@ pub fn with_conn<T, F>(f: F) -> Result<T, String>
 where
     F: FnOnce(&mut rusqlite::Connection) -> Result<T, String>,
 {
-    ensure_db()?;
+    // 检查 + 初始化 + 使用放在同一锁临界区，避免并发重复初始化覆盖连接。
     let mut guard = DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))?;
+    if guard.is_none() {
+        *guard = Some(build_connection()?);
+    }
     let conn = guard.as_mut().ok_or("任务数据库未初始化")?;
     f(conn)
 }

@@ -836,14 +836,19 @@ export default function MindmapPanel() {
     setHistoryVersion(v => v + 1);
     if (!cur) return;
     void (async () => {
+      // 逐条写回，任一失败就停止并提示（不再静默吞错，避免画布显示已恢复但未持久化）
       try {
         const snapIds = new Set(snap.nodes.map(n => n.id));
-        for (const n of cur.nodes) if (!snapIds.has(n.id)) { await mmApi.deleteNode({ documentId: snap.document.id, nodeId: n.id }).catch(() => {}); }
-        for (const n of snap.nodes) { await mmApi.upsertNode({ documentId: snap.document.id, node: n }).catch(() => {}); }
+        for (const n of cur.nodes) if (!snapIds.has(n.id)) { await mmApi.deleteNode({ documentId: snap.document.id, nodeId: n.id }); }
+        for (const n of snap.nodes) { await mmApi.upsertNode({ documentId: snap.document.id, node: n }); }
         const snapStickers = new Set(snap.stickers.map(s => s.id));
-        for (const s of cur.stickers) if (!snapStickers.has(s.id)) { await mmApi.deleteSticker({ documentId: snap.document.id, stickerId: s.id }).catch(() => {}); }
-        for (const s of snap.stickers) { await mmApi.upsertSticker({ documentId: snap.document.id, sticker: s }).catch(() => {}); }
-      } catch { /* 忽略持久化失败，本地已恢复 */ }
+        for (const s of cur.stickers) if (!snapStickers.has(s.id)) { await mmApi.deleteSticker({ documentId: snap.document.id, stickerId: s.id }); }
+        for (const s of snap.stickers) { await mmApi.upsertSticker({ documentId: snap.document.id, sticker: s }); }
+      } catch (e) {
+        // 本地已恢复，但持久化失败：明确告知用户，避免数据丢失后无从排查
+        console.error("[mindmap] 撤销/重做持久化失败:", e);
+        setError(`撤销/重做已生效但保存失败：${e}（请检查磁盘或重新保存）`);
+      }
     })();
   }, []);
 
