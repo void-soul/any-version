@@ -348,6 +348,7 @@ pub async fn execute_request(input: &SendRequestInput) -> Result<SendRequestOutp
             value: value.to_str().unwrap_or("<binary>").to_string(),
             enabled: true,
             description: String::new(),
+            from_template: false,
         })
         .collect();
     let size_bytes = response

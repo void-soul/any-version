@@ -10,8 +10,8 @@ fn db_path() -> std::path::PathBuf {
     get_data_dir().join("api.db")
 }
 
-/// 初始化数据库（幂等）。
-pub fn init_db() -> Result<(), String> {
+/// 打开并初始化连接（不持有全局锁；由调用方在锁内调用，避免并发重复初始化）。
+fn build_connection() -> Result<rusqlite::Connection, String> {
     let path = db_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -31,6 +31,7 @@ pub fn init_db() -> Result<(), String> {
             active_env_id TEXT,
             common_headers  TEXT NOT NULL DEFAULT '[]',
             common_params   TEXT NOT NULL DEFAULT '[]',
+            common_body     TEXT NOT NULL DEFAULT '[]',
             created_at    TEXT NOT NULL,
             updated_at    TEXT NOT NULL
         );
@@ -128,6 +129,12 @@ pub fn init_db() -> Result<(), String> {
     migrate_module_columns(&conn)?;
     migrate_project_columns(&conn)?;
 
+    Ok(conn)
+}
+
+/// 初始化数据库（幂等）。
+pub fn init_db() -> Result<(), String> {
+    let conn = build_connection()?;
     *DB_CONN.lock().map_err(|e| e.to_string())? = Some(conn);
     Ok(())
 }
@@ -143,7 +150,11 @@ fn migrate_project_columns(conn: &rusqlite::Connection) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         Ok(n > 0)
     };
-    for (name, def) in [("common_headers", "TEXT NOT NULL DEFAULT '[]'"), ("common_params", "TEXT NOT NULL DEFAULT '[]'")] {
+    for (name, def) in [
+        ("common_headers", "TEXT NOT NULL DEFAULT '[]'"),
+        ("common_params", "TEXT NOT NULL DEFAULT '[]'"),
+        ("common_body", "TEXT NOT NULL DEFAULT '[]'"),
+    ] {
         if !has_column(name)? {
             conn.execute_batch(&format!("ALTER TABLE api_projects ADD COLUMN {} {}", name, def))
                 .map_err(|e| format!("迁移 api_projects.{} 失败: {}", name, e))?;
@@ -203,10 +214,12 @@ fn migrate_endpoint_columns(conn: &rusqlite::Connection) -> Result<(), String> {
 
 /// 在数据库连接上执行闭包（自动初始化）。
 pub fn with_db<T>(f: impl FnOnce(&mut rusqlite::Connection) -> Result<T, String>) -> Result<T, String> {
-    if DB_CONN.lock().map_err(|e| e.to_string())?.is_none() {
-        init_db()?;
-    }
+    // 检查 + 初始化 + 使用放在同一锁临界区：
+    // 避免两个线程同时观察到未初始化而各自 init_db 覆盖连接（check-then-act 竞态）。
     let mut guard = DB_CONN.lock().map_err(|e| e.to_string())?;
+    if guard.is_none() {
+        *guard = Some(build_connection()?);
+    }
     let conn = guard.as_mut().ok_or("API 数据库未初始化")?;
     f(conn)
 }
@@ -247,6 +260,7 @@ pub fn parse_kv(raw: &str) -> Vec<super::models::KeyValueItem> {
 pub fn project_row(row: &rusqlite::Row) -> Result<super::models::ApiProject, rusqlite::Error> {
     let common_headers_raw: String = row.get(4)?;
     let common_params_raw: String = row.get(5)?;
+    let common_body_raw: String = row.get(6)?;
     Ok(super::models::ApiProject {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -254,8 +268,9 @@ pub fn project_row(row: &rusqlite::Row) -> Result<super::models::ApiProject, rus
         active_env_id: row.get(3)?,
         common_headers: parse_kv(&common_headers_raw),
         common_params: parse_kv(&common_params_raw),
-        created_at: row.get(6)?,
-        updated_at: row.get(7)?,
+        common_body: parse_kv(&common_body_raw),
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
     })
 }
 

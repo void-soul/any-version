@@ -21,7 +21,7 @@ pub fn api_init() -> Result<(), String> {
 pub fn api_list_projects() -> Result<Vec<ApiProject>, String> {
     db::with_db(|conn| {
         let mut stmt = conn
-            .prepare("SELECT id, name, description, active_env_id, common_headers, common_params, created_at, updated_at FROM api_projects ORDER BY created_at")
+            .prepare("SELECT id, name, description, active_env_id, common_headers, common_params, common_body, created_at, updated_at FROM api_projects ORDER BY created_at")
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map([], |row| db::project_row(row))
@@ -40,7 +40,7 @@ pub fn api_create_project(name: String, description: String) -> Result<ApiProjec
     let ts = now_ts();
     db::with_db(|conn| {
         conn.execute(
-            "INSERT INTO api_projects (id, name, description, active_env_id, common_headers, common_params, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, '[]', '[]', ?4, ?4)",
+            "INSERT INTO api_projects (id, name, description, active_env_id, common_headers, common_params, common_body, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, '[]', '[]', '[]', ?4, ?4)",
             rusqlite::params![id, name, description, ts],
         )
         .map_err(|e| e.to_string())?;
@@ -62,17 +62,97 @@ pub fn api_create_project(name: String, description: String) -> Result<ApiProjec
 
 #[tauri::command]
 pub fn api_update_project(project: ApiProject) -> Result<(), String> {
+    let old = load_project_template(&project.id)?;
+    // 收集改名映射：优先按 key 相同（值被改）排除，剩下按索引对应识别改名
+    let mut renames: Vec<(String, String)> = Vec::new();
+    // 按索引对应：新条目在第 i 位，若旧列表第 i 位存在且 key 不同、且旧 key 在新列表中已消失 → 改名
+    for (i, n) in project.common_headers.iter().enumerate() {
+        if let Some(o) = old.common_headers.get(i) {
+            if o.key != n.key && !project.common_headers.iter().any(|x| x.key == o.key) {
+                renames.push((o.key.clone(), n.key.clone()));
+            }
+        }
+    }
+    for (i, n) in project.common_params.iter().enumerate() {
+        if let Some(o) = old.common_params.get(i) {
+            if o.key != n.key && !project.common_params.iter().any(|x| x.key == o.key) {
+                renames.push((o.key.clone(), n.key.clone()));
+            }
+        }
+    }
+    for (i, n) in project.common_body.iter().enumerate() {
+        if let Some(o) = old.common_body.get(i) {
+            if o.key != n.key && !project.common_body.iter().any(|x| x.key == o.key) {
+                renames.push((o.key.clone(), n.key.clone()));
+            }
+        }
+    }
+    // 保存项目
     db::with_db(|conn| {
         conn.execute(
-            "UPDATE api_projects SET name = ?1, description = ?2, active_env_id = ?3, common_headers = ?4, common_params = ?5, updated_at = ?6 WHERE id = ?7",
+            "UPDATE api_projects SET name = ?1, description = ?2, active_env_id = ?3, common_headers = ?4, common_params = ?5, common_body = ?6, updated_at = ?7 WHERE id = ?8",
             rusqlite::params![
                 project.name, project.description, project.active_env_id,
                 serde_json::to_string(&project.common_headers).unwrap_or_else(|_| "[]".into()),
                 serde_json::to_string(&project.common_params).unwrap_or_else(|_| "[]".into()),
+                serde_json::to_string(&project.common_body).unwrap_or_else(|_| "[]".into()),
                 now_ts(), project.id
             ],
         )
         .map_err(|e| e.to_string())?;
+        // 同步模板值/改名到所有接口的继承参数（无条件执行：值变化也要跟随）
+        {
+            let ep_rows: Vec<(String, String, String, String, String)> = {
+                let mut stmt = conn
+                    .prepare("SELECT id, headers, query_params, body_urlencoded, body_form FROM api_endpoints WHERE project_id = ?1")
+                    .map_err(|e| e.to_string())?;
+                let rows = stmt
+                    .query_map(rusqlite::params![project.id], |r| {
+                        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?))
+                    })
+                    .map_err(|e| e.to_string())?;
+                let mut v = Vec::new();
+                for r in rows {
+                    v.push(r.map_err(|e| e.to_string())?);
+                }
+                v
+            };
+            for (ep_id, headers_raw, params_raw, body_raw, body_form_raw) in ep_rows {
+                let mut headers: Vec<KeyValueItem> = serde_json::from_str(&headers_raw).unwrap_or_default();
+                let mut params: Vec<KeyValueItem> = serde_json::from_str(&params_raw).unwrap_or_default();
+                let mut body: Vec<KeyValueItem> = serde_json::from_str(&body_raw).unwrap_or_default();
+                let mut body_form: Vec<FormDataItem> = serde_json::from_str(&body_form_raw).unwrap_or_default();
+                // 值同步：模板值变化 → 所有继承项跟随（不覆盖接口自建项）
+                let headers_before = headers.clone();
+                let params_before = params.clone();
+                let body_before = body.clone();
+                let body_form_before = body_form.clone();
+                resync_template_items(&mut headers, &project.common_headers);
+                resync_template_items(&mut params, &project.common_params);
+                resync_template_items(&mut body, &project.common_body);
+                resync_template_form_items(&mut body_form, &project.common_body);
+                // 改名同步：模板项改名 → 接口继承项跟随
+                for (old_key, new_key) in &renames {
+                    rename_template_items(&mut headers, old_key, new_key);
+                    rename_template_items(&mut params, old_key, new_key);
+                    rename_template_items(&mut body, old_key, new_key);
+                    rename_template_form_items(&mut body_form, old_key, new_key);
+                }
+                if headers != headers_before || params != params_before || body != body_before || body_form != body_form_before {
+                    conn.execute(
+                        "UPDATE api_endpoints SET headers = ?1, query_params = ?2, body_urlencoded = ?3, body_form = ?4 WHERE id = ?5",
+                        rusqlite::params![
+                            serde_json::to_string(&headers).unwrap_or_else(|_| "[]".into()),
+                            serde_json::to_string(&params).unwrap_or_else(|_| "[]".into()),
+                            serde_json::to_string(&body).unwrap_or_else(|_| "[]".into()),
+                            serde_json::to_string(&body_form).unwrap_or_else(|_| "[]".into()),
+                            ep_id
+                        ],
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+            }
+        }
         Ok(())
     })
 }
@@ -214,11 +294,63 @@ pub fn api_update_module(module: ApiModule) -> Result<(), String> {
 }
 
 #[tauri::command]
+/// 删除模块：其下所有接口一并删除（接口的单测/压测经外键级联删除）。
 pub fn api_delete_module(module_id: String) -> Result<(), String> {
     db::with_db(|conn| {
-        conn.execute("DELETE FROM api_modules WHERE id = ?1", rusqlite::params![module_id])
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        // 先取该模块下接口 id，逐个删除（触发 unit_tests / load_runs 级联）
+        let ep_ids: Vec<String> = {
+            let mut stmt = tx
+                .prepare("SELECT id FROM api_endpoints WHERE module_id = ?1")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(rusqlite::params![module_id], |r| r.get::<_, String>(0))
+                .map_err(|e| e.to_string())?;
+            let mut v = Vec::new();
+            for r in rows {
+                v.push(r.map_err(|e| e.to_string())?);
+            }
+            v
+        };
+        for ep_id in ep_ids {
+            tx.execute("DELETE FROM api_endpoints WHERE id = ?1", rusqlite::params![ep_id])
+                .map_err(|e| e.to_string())?;
+        }
+        tx.execute("DELETE FROM api_modules WHERE id = ?1", rusqlite::params![module_id])
             .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(())
+    })
+}
+
+/// 把源模块下的所有接口转移到目标模块（目标模块不存在则报错）。
+#[tauri::command]
+pub fn api_move_module_endpoints(
+    source_module_id: String,
+    target_module_id: String,
+) -> Result<usize, String> {
+    if source_module_id == target_module_id {
+        return Err("源模块与目标模块相同".to_string());
+    }
+    db::with_db(|conn| {
+        // 校验目标模块存在
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM api_modules WHERE id = ?1)",
+                rusqlite::params![target_module_id],
+                |r| r.get::<_, i64>(0).map(|n| n > 0),
+            )
+            .map_err(|e| format!("校验目标模块失败: {}", e))?;
+        if !exists {
+            return Err("目标模块不存在".to_string());
+        }
+        let n = conn
+            .execute(
+                "UPDATE api_endpoints SET module_id = ?1 WHERE module_id = ?2",
+                rusqlite::params![target_module_id, source_module_id],
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(n)
     })
 }
 
@@ -339,33 +471,117 @@ pub fn api_get_endpoint(endpoint_id: String) -> Result<ApiEndpoint, String> {
     })
 }
 
+/// 读取项目模板（通用 Headers / Params / Body）。
+pub fn load_project_template(project_id: &str) -> Result<ApiProject, String> {
+    db::with_db(|conn| {
+        conn.query_row(
+            "SELECT id, name, description, active_env_id, common_headers, common_params, common_body, created_at, updated_at FROM api_projects WHERE id = ?1",
+            rusqlite::params![project_id],
+            |row| db::project_row(row),
+        )
+        .map_err(|e| format!("读取项目模板失败: {}", e))
+    })
+}
+
+/// 把模板条目合并进接口的指定字段（按 key 去重；新条目打上 from_template 标记）。
+fn merge_template_items(items: &mut Vec<KeyValueItem>, template: &[KeyValueItem]) {
+    for t in template {
+        if !t.enabled {
+            continue;
+        }
+        if let Some(existing) = items.iter_mut().find(|x| x.key == t.key) {
+            // 已存在同名条目：标记为模板继承（值由模板控制）
+            existing.from_template = true;
+            existing.value = t.value.clone();
+        } else {
+            let mut item = t.clone();
+            item.from_template = true;
+            items.push(item);
+        }
+    }
+}
+
+/// 重同步接口中所有 from_template 条目的值（改模板值 → 接口同步）。
+fn resync_template_items(items: &mut [KeyValueItem], template: &[KeyValueItem]) {
+    for item in items.iter_mut() {
+        if item.from_template {
+            if let Some(t) = template.iter().find(|t| t.key == item.key) {
+                item.value = t.value.clone();
+                item.enabled = t.enabled;
+            }
+        }
+    }
+}
+
+/// 模板条目改名后，把接口中所有继承自旧名的条目同步改名。
+fn rename_template_items(items: &mut [KeyValueItem], old_key: &str, new_key: &str) {
+    for item in items.iter_mut() {
+        if item.from_template && item.key == old_key {
+            item.key = new_key.to_string();
+        }
+    }
+}
+
+/// 把通用 Body 模板合并进 form-data 字段（text 类型条目，打 from_template 标记）。
+fn merge_template_form_items(items: &mut Vec<FormDataItem>, template: &[KeyValueItem]) {
+    for t in template {
+        if !t.enabled {
+            continue;
+        }
+        if let Some(existing) = items.iter_mut().find(|x| x.key == t.key) {
+            existing.from_template = true;
+            existing.value = t.value.clone();
+        } else {
+            items.push(FormDataItem {
+                key: t.key.clone(),
+                value: t.value.clone(),
+                enabled: true,
+                kind: "text".to_string(),
+                file_path: String::new(),
+                description: String::new(),
+                from_template: true,
+            });
+        }
+    }
+}
+
+/// 重同步 form-data 中 from_template 条目的值。
+fn resync_template_form_items(items: &mut [FormDataItem], template: &[KeyValueItem]) {
+    for item in items.iter_mut() {
+        if item.from_template {
+            if let Some(t) = template.iter().find(|t| t.key == item.key) {
+                item.value = t.value.clone();
+                item.enabled = t.enabled;
+                item.kind = "text".to_string();
+                item.file_path.clear();
+            }
+        }
+    }
+}
+
+/// form-data 中模板项改名。
+fn rename_template_form_items(items: &mut [FormDataItem], old_key: &str, new_key: &str) {
+    for item in items.iter_mut() {
+        if item.from_template && item.key == old_key {
+            item.key = new_key.to_string();
+        }
+    }
+}
+
 #[tauri::command]
 pub fn api_create_endpoint(ep: ApiEndpoint) -> Result<ApiEndpoint, String> {
     let id = if ep.id.is_empty() { db::new_id("ep") } else { ep.id };
     let ts = now_ts();
-    // 接口模板：把项目级通用 Headers / Params 合并进新接口（按 key 去重，避免重复）
-    let (headers, query_params) = db::with_db(|conn| {
-        let project: super::models::ApiProject = conn
-            .query_row(
-                "SELECT id, name, description, active_env_id, common_headers, common_params, created_at, updated_at FROM api_projects WHERE id = ?1",
-                rusqlite::params![ep.project_id],
-                |row| db::project_row(row),
-            )
-            .map_err(|e| format!("读取项目模板失败: {}", e))?;
-        let mut headers = ep.headers.clone();
-        for h in project.common_headers {
-            if h.enabled && !headers.iter().any(|x| x.key == h.key) {
-                headers.push(h);
-            }
-        }
-        let mut query_params = ep.query_params.clone();
-        for p in project.common_params {
-            if p.enabled && !query_params.iter().any(|x| x.key == p.key) {
-                query_params.push(p);
-            }
-        }
-        Ok::<(Vec<super::models::KeyValueItem>, Vec<super::models::KeyValueItem>), String>((headers, query_params))
-    })?;
+    let project = load_project_template(&ep.project_id)?;
+    // 接口模板：合并项目级通用 Headers / Params / Body（urlencoded）进新接口
+    let mut headers = ep.headers.clone();
+    merge_template_items(&mut headers, &project.common_headers);
+    let mut query_params = ep.query_params.clone();
+    merge_template_items(&mut query_params, &project.common_params);
+    let mut body_urlencoded = ep.body_urlencoded.clone();
+    merge_template_items(&mut body_urlencoded, &project.common_body);
+    let mut body_form = ep.body_form.clone();
+    merge_template_form_items(&mut body_form, &project.common_body);
     db::with_db(|conn| {
         conn.execute(
             &format!("INSERT INTO api_endpoints ({}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25)", EP_COLS),
@@ -375,8 +591,8 @@ pub fn api_create_endpoint(ep: ApiEndpoint) -> Result<ApiEndpoint, String> {
                 serde_json::to_string(&query_params).unwrap_or_else(|_| "[]".into()),
                 serde_json::to_string(&ep.path_params).unwrap_or_else(|_| "[]".into()),
                 ep.body, ep.body_type, ep.description, ep.docs_md, ep.timeout_ms, ts, ts,
-                serde_json::to_string(&ep.body_form).unwrap_or_else(|_| "[]".into()),
-                serde_json::to_string(&ep.body_urlencoded).unwrap_or_else(|_| "[]".into()),
+                serde_json::to_string(&body_form).unwrap_or_else(|_| "[]".into()),
+                serde_json::to_string(&body_urlencoded).unwrap_or_else(|_| "[]".into()),
                 ep.body_graphql_query, ep.body_graphql_variables,
                 serde_json::to_string(&ep.authorization).unwrap_or_else(|_| "{}".into()),
                 serde_json::to_string(&ep.cookies).unwrap_or_else(|_| "[]".into()),
@@ -392,17 +608,27 @@ pub fn api_create_endpoint(ep: ApiEndpoint) -> Result<ApiEndpoint, String> {
 
 #[tauri::command]
 pub fn api_update_endpoint(ep: ApiEndpoint) -> Result<(), String> {
+    // 重同步模板值：接口中 from_template 的条目不允许修改（名称/值均由项目模板控制）
+    let project = load_project_template(&ep.project_id)?;
+    let mut headers = ep.headers.clone();
+    resync_template_items(&mut headers, &project.common_headers);
+    let mut query_params = ep.query_params.clone();
+    resync_template_items(&mut query_params, &project.common_params);
+    let mut body_urlencoded = ep.body_urlencoded.clone();
+    resync_template_items(&mut body_urlencoded, &project.common_body);
+    let mut body_form = ep.body_form.clone();
+    resync_template_form_items(&mut body_form, &project.common_body);
     db::with_db(|conn| {
         conn.execute(
             &format!("UPDATE api_endpoints SET module_id=?1, name=?2, method=?3, url=?4, headers=?5, query_params=?6, path_params=?7, body=?8, body_type=?9, description=?10, docs_md=?11, timeout_ms=?12, updated_at=?13, body_form=?14, body_urlencoded=?15, body_graphql_query=?16, body_graphql_variables=?17, authorization=?18, cookies=?19, settings=?20, response_comment=?21, is_favorite=?22 WHERE id=?23"),
             rusqlite::params![
                 ep.module_id, ep.name, ep.method, ep.url,
-                serde_json::to_string(&ep.headers).unwrap_or_else(|_| "[]".into()),
-                serde_json::to_string(&ep.query_params).unwrap_or_else(|_| "[]".into()),
+                serde_json::to_string(&headers).unwrap_or_else(|_| "[]".into()),
+                serde_json::to_string(&query_params).unwrap_or_else(|_| "[]".into()),
                 serde_json::to_string(&ep.path_params).unwrap_or_else(|_| "[]".into()),
                 ep.body, ep.body_type, ep.description, ep.docs_md, ep.timeout_ms, now_ts(),
-                serde_json::to_string(&ep.body_form).unwrap_or_else(|_| "[]".into()),
-                serde_json::to_string(&ep.body_urlencoded).unwrap_or_else(|_| "[]".into()),
+                serde_json::to_string(&body_form).unwrap_or_else(|_| "[]".into()),
+                serde_json::to_string(&body_urlencoded).unwrap_or_else(|_| "[]".into()),
                 ep.body_graphql_query, ep.body_graphql_variables,
                 serde_json::to_string(&ep.authorization).unwrap_or_else(|_| "{}".into()),
                 serde_json::to_string(&ep.cookies).unwrap_or_else(|_| "[]".into()),
@@ -663,6 +889,7 @@ pub fn api_export_postman(project_id: String) -> Result<String, String> {
                     },
                     enabled: true,
                     description: String::new(),
+                    from_template: false,
                 })
                 .collect::<Vec<_>>()
         })

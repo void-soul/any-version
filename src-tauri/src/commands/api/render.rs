@@ -139,6 +139,7 @@ pub fn render_kv(items: &[super::models::KeyValueItem], variables: &serde_json::
             value: render_template(&kv.value, variables),
             enabled: kv.enabled,
             description: kv.description.clone(),
+        from_template: false,
         })
         .collect()
 }
@@ -205,7 +206,7 @@ mod tests {
 
     #[test]
     fn apply_path_params_replaces_colon_and_brace() {
-        let items = vec![super::super::models::KeyValueItem { key: "id".into(), value: "7".into(), enabled: true, description: String::new() }];
+        let items = vec![super::super::models::KeyValueItem { key: "id".into(), value: "7".into(), enabled: true, description: String::new(), from_template: false }];
         assert_eq!(apply_path_params("/users/:id", &items), "/users/7");
         assert_eq!(apply_path_params("/users/{id}", &items), "/users/7");
     }

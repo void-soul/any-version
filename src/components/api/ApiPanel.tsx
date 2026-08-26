@@ -4,640 +4,130 @@ import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialo
 import {
   Send, Play, Plus, Trash2, Save, FolderPlus, FilePlus2, Settings2,
   ChevronDown, ChevronRight, Download, Upload, FlaskConical, Gauge,
-  BookOpen, ListChecks, Copy, Check, Loader2, Pencil, X, Database,
-  Folder, KeyRound, Cookie, SlidersHorizontal, ArrowDown,
-  RefreshCcw, Wrench, MoreHorizontal, FileText, TestTube2, Braces,
-  Link2, StickyNote, Star, History, Eraser, ListTree,
+  BookOpen, ListChecks, Copy, Check, Loader2, Pencil, Folder,
+  KeyRound, Cookie, SlidersHorizontal, FileText, TestTube2, Braces,
+  Link2, StickyNote, Star, History, Eraser, AlertTriangle, FolderInput, Lock, X,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type {
-  ApiProject, ApiEnvironment, ApiModule, ApiEndpoint, KeyValueItem, FormDataItem,
-  Authorization, RequestSettings, PresetHeaderSet,
-  SendRequestInput, SendRequestOutput, UnitTest,
-  UnitTestRunOutput, LoadTestConfig, LoadTestRun, LoadRunStatus, LoadTestReport,
+  ApiProject, ApiEnvironment, ApiModule, ApiEndpoint, KeyValueItem,
+  PresetHeaderSet, SendRequestInput, SendRequestOutput,
+  UnitTest, UnitTestRunOutput, LoadTestConfig, LoadTestRun, LoadRunStatus,
   ApiHistoryEntry,
 } from "./types";
 import {
-  METHODS, BODY_TYPES, AUTH_TYPES, ASSERTION_TYPES, RANDOM_VARIABLES,
-  COMMON_AUTO_HEADERS, defaultAuthorization, defaultSettings,
+  METHODS, BODY_TYPES, COMMON_AUTO_HEADERS,
+  defaultAuthorization, defaultSettings,
 } from "./types";
+import {
+  methodIcon, emptyEndpoint, fmtTime, prettyJson, ResponseBody,
+  KvEditor, FormDataEditor, AuthPanel, SettingsPanel, ACCENT, VarInput,
+} from "./panelParts";
+import { PresetHeadersModal, EnvModal, ProjectModal, ModuleModal } from "./panelModals";
+import { LoadReportView } from "./panelReport";
+import { EndpointRow, UnitTestsPanel, DocsPanel, ImportModal } from "./panelSubs";
 
-const ACCENT = "var(--module-accent)";
-
-function methodIcon(method: string) {
-  switch (method) {
-    case "GET": return ArrowDown;
-    case "POST": return Plus;
-    case "PUT": return RefreshCcw;
-    case "DELETE": return Trash2;
-    case "PATCH": return Wrench;
-    default: return MoreHorizontal;
-  }
-}
-
-function emptyEndpoint(projectId: string, moduleId: string | null): ApiEndpoint {
-  return {
-    id: "", project_id: projectId, module_id: moduleId,
-    name: "新接口", method: "GET", url: "", headers: [], query_params: [], path_params: [],
-    body: "", body_type: "none", body_form: [], body_urlencoded: [],
-    body_graphql_query: "", body_graphql_variables: "",
-    authorization: defaultAuthorization(), cookies: [], settings: defaultSettings(),
-    response_comment: "", is_favorite: false, description: "", docs_md: "", timeout_ms: 15000,
-    created_at: "", updated_at: "",
-  };
-}
-
-function fmtTime(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(2)}s`;
-}
-
-function prettyJson(text: string): string {
-  try {
-    return JSON.stringify(JSON.parse(text), null, 2);
-  } catch {
-    return text;
-  }
-}
-
-// ─── 响应体 JSON 轻量语法高亮 ───
-
-/** JSON token 类型 → 颜色类名 */
-const JSON_TOKEN_CLS: Record<string, string> = {
-  key: "text-sky-300",
-  str: "text-emerald-300",
-  num: "text-amber-300",
-  bool: "text-violet-300",
-  null: "text-slate-500",
-};
-
-/** 把 JSON 文本切成带颜色的 token（无依赖，正则扫描）。非 JSON 文本原样返回。 */
-function highlightJsonTokens(text: string): Array<{ cls: string; content: string }> | null {
-  // 快速探测是否为 JSON
-  const t = text.trim();
-  if (!t.startsWith("{") && !t.startsWith("[")) return null;
-  try {
-    JSON.parse(t);
-  } catch {
-    return null;
-  }
-  const re = /"(?:[^"\\]|\\.)*"(\s*:)?|\btrue\b|\bfalse\b|\bnull\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
-  const tokens: Array<{ cls: string; content: string }> = [];
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(t))) {
-    if (m.index > last) tokens.push({ cls: "", content: t.slice(last, m.index) });
-    const isKey = m[1] !== undefined; // 引号后跟冒号 → 键
-    const raw = isKey ? m[0] : m[0];
-    let cls: string;
-    if (isKey) cls = JSON_TOKEN_CLS.key;
-    else if (raw.startsWith('"')) cls = JSON_TOKEN_CLS.str;
-    else if (raw === "true" || raw === "false") cls = JSON_TOKEN_CLS.bool;
-    else if (raw === "null") cls = JSON_TOKEN_CLS.null;
-    else cls = JSON_TOKEN_CLS.num;
-    tokens.push({ cls, content: raw });
-    last = m.index + m[0].length;
-  }
-  if (last < t.length) tokens.push({ cls: "", content: t.slice(last) });
-  return tokens;
-}
-
-/** 响应体查看器：JSON 高亮（pretty）或原始文本（raw）。 */
-function ResponseBody({ body, mode }: { body: string; mode: "pretty" | "raw" }) {
-  const shown = mode === "pretty" ? prettyJson(body) : body;
-  const tokens = mode === "pretty" ? highlightJsonTokens(shown) : null;
-  if (tokens) {
-    return (
-      <pre className="overflow-auto p-2 text-[11px] font-mono whitespace-pre-wrap break-all h-full">
-        {tokens.map((tk, i) =>
-          tk.cls ? (
-            <span key={i} className={tk.cls}>{tk.content}</span>
-          ) : (
-            <span key={i} className="text-slate-200">{tk.content}</span>
-          )
-        )}
-      </pre>
-    );
-  }
-  return <pre className="overflow-auto p-2 text-[11px] font-mono text-slate-200 whitespace-pre-wrap break-all h-full">{shown}</pre>;
-}
-
-// ─── 键值编辑器（Key-value 编辑 / Bulk 编辑 / 描述） ───
-function KvEditor({ items, onChange, placeholderKey = "名称", placeholderValue = "值", withDescription = true }: {
-  items: KeyValueItem[];
-  onChange: (items: KeyValueItem[]) => void;
-  placeholderKey?: string;
-  placeholderValue?: string;
-  withDescription?: boolean;
+// ─── 美化确认弹窗（危险操作确认，主题色动态） ───
+function ConfirmDialog({ title, message, danger, confirmText, onConfirm, onCancel }: {
+  title: string;
+  message: string;
+  danger?: boolean;
+  confirmText?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
 }) {
-  const [mode, setMode] = useState<"kv" | "bulk">("kv");
-  const [bulkText, setBulkText] = useState(items.map((kv) => kv.enabled ? `${kv.key}:${kv.value}` : `// ${kv.key}:${kv.value}`).join("\n"));
-
-  const update = (i: number, patch: Partial<KeyValueItem>) => {
-    onChange(items.map((kv, idx) => (idx === i ? { ...kv, ...patch } : kv)));
-  };
-
-  const applyBulk = () => {
-    const parsed: KeyValueItem[] = [];
-    for (const raw of bulkText.split("\n")) {
-      const line = raw.trim();
-      if (!line) continue;
-      if (line.startsWith("//")) {
-        const rest = line.replace(/^\/\/\s*/, "");
-        const idx = rest.indexOf(":");
-        if (idx > 0) parsed.push({ key: rest.slice(0, idx).trim(), value: rest.slice(idx + 1).trim(), enabled: false, description: "" });
-        continue;
-      }
-      const idx = line.indexOf(":");
-      if (idx > 0) parsed.push({ key: line.slice(0, idx).trim(), value: line.slice(idx + 1).trim(), enabled: true, description: "" });
-      else parsed.push({ key: line, value: "", enabled: true, description: "" });
-    }
-    onChange(parsed);
-  };
-
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          onClick={() => { setMode("kv"); setBulkText(items.map((kv) => kv.enabled ? `${kv.key}:${kv.value}` : `// ${kv.key}:${kv.value}`).join("\n")); }}
-          className={`text-[10px] px-2 py-0.5 rounded cursor-pointer ${mode === "kv" ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
-        >
-          Key-value 编辑
-        </button>
-        <button
-          type="button"
-          onClick={() => { setMode("bulk"); setBulkText(items.map((kv) => kv.enabled ? `${kv.key}:${kv.value}` : `// ${kv.key}:${kv.value}`).join("\n")); }}
-          className={`text-[10px] px-2 py-0.5 rounded cursor-pointer ${mode === "bulk" ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
-        >
-          Bulk 编辑
-        </button>
-        {mode === "bulk" && (
-          <button type="button" onClick={applyBulk} className="text-[10px] px-2 py-0.5 rounded bg-[var(--module-accent)]/20 text-[var(--module-accent)] cursor-pointer">
-            应用
-          </button>
-        )}
-      </div>
-      {mode === "bulk" ? (
-        <textarea
-          value={bulkText}
-          onChange={(e) => setBulkText(e.target.value)}
-          rows={6}
-          placeholder={"每行一个 key:value；以 // 开头表示禁用"}
-          className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
-        />
-      ) : (
-        <div className="space-y-1">
-          {items.map((kv, i) => (
-            <div key={i} className="flex items-center gap-1.5">
-              <input
-                type="checkbox"
-                checked={kv.enabled}
-                onChange={(e) => update(i, { enabled: e.target.checked })}
-                className="accent-[var(--module-accent)] shrink-0"
-                title={kv.enabled ? "启用" : "禁用"}
-              />
-              <input
-                value={kv.key}
-                onChange={(e) => update(i, { key: e.target.value })}
-                placeholder={placeholderKey}
-                className="w-1/4 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
-              />
-              <input
-                value={kv.value}
-                onChange={(e) => update(i, { value: e.target.value })}
-                placeholder={placeholderValue}
-                className="flex-1 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
-              />
-              {withDescription && (
-                <input
-                  value={kv.description ?? ""}
-                  onChange={(e) => update(i, { description: e.target.value })}
-                  placeholder="描述"
-                  className="w-1/4 hidden lg:block bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-500 focus:outline-none focus:border-[var(--module-accent)]/60"
-                />
-              )}
-              <button
-                type="button"
-                onClick={() => onChange(items.filter((_, idx) => idx !== i))}
-                className="p-1 text-slate-500 hover:text-rose-400 cursor-pointer shrink-0"
-                title="删除"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ))}
-          <button
-            type="button"
-            onClick={() => onChange([...items, { key: "", value: "", enabled: true, description: "" }])}
-            className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onCancel}>
+      <div
+        className="w-[380px] overflow-hidden rounded-2xl border border-white/10 shadow-2xl"
+        style={{ background: "linear-gradient(160deg, rgba(13,21,36,0.98), rgba(13,21,36,0.92))" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start gap-3 px-5 pt-5">
+          <div
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+            style={{ background: "color-mix(in srgb, var(--module-accent) 15%, transparent)", color: danger ? "#fb7185" : "var(--module-accent)" }}
           >
-            <Plus className="w-3 h-3" /> 添加
+            <AlertTriangle className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-white">{title}</h3>
+            <p className="mt-1 text-xs leading-relaxed text-slate-400">{message}</p>
+          </div>
+        </div>
+        <div className="mt-5 flex justify-end gap-2 border-t border-white/10 bg-black/20 px-5 py-3">
+          <button
+            onClick={onCancel}
+            className="rounded-lg border border-white/10 px-3.5 py-1.5 text-xs text-slate-300 transition-colors hover:bg-white/5 hover:text-white cursor-pointer"
+          >
+            取消
+          </button>
+          <button
+            onClick={onConfirm}
+            className="rounded-lg px-3.5 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-85 cursor-pointer"
+            style={{ background: danger ? "linear-gradient(135deg, #f43f5e, #e11d48)" : "var(--module-accent)" }}
+          >
+            {confirmText ?? (danger ? "删除" : "确定")}
           </button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
 
-// ─── form-data 编辑器（text / 文件） ───
-function FormDataEditor({ items, onChange }: { items: FormDataItem[]; onChange: (items: FormDataItem[]) => void }) {
-  const update = (i: number, patch: Partial<FormDataItem>) => {
-    onChange(items.map((kv, idx) => (idx === i ? { ...kv, ...patch } : kv)));
-  };
-  const pickFile = async (i: number) => {
-    const f = await openDialog({ multiple: false });
-    if (f) update(i, { file_path: String(f), kind: "file" });
-  };
+// ─── 模块转移弹窗（选择目标模块） ───
+function MoveModuleModal({ module, modules, onClose, onMoved }: {
+  module: ApiModule;
+  modules: ApiModule[];
+  onClose: () => void;
+  onMoved: (targetId: string) => void;
+}) {
+  const [targetId, setTargetId] = useState("");
+  const targets = modules.filter((m) => m.id !== module.id);
   return (
-    <div className="space-y-1">
-      {items.map((kv, i) => (
-        <div key={i} className="flex items-center gap-1.5">
-          <input
-            type="checkbox"
-            checked={kv.enabled}
-            onChange={(e) => update(i, { enabled: e.target.checked })}
-            className="accent-[var(--module-accent)] shrink-0"
-          />
-          <input
-            value={kv.key}
-            onChange={(e) => update(i, { key: e.target.value })}
-            placeholder="字段名"
-            className="w-1/4 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none"
-          />
-          {kv.kind === "file" ? (
-            <button
-              type="button"
-              onClick={() => pickFile(i)}
-              className="flex-1 flex items-center gap-1.5 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-400 hover:text-[var(--module-accent)] cursor-pointer truncate"
-              title={kv.file_path}
-            >
-              <FileText className="w-3 h-3 shrink-0" />
-              <span className="truncate">{kv.file_path || "选择文件…"}</span>
-            </button>
-          ) : (
-            <input
-              value={kv.value}
-              onChange={(e) => update(i, { value: e.target.value })}
-              placeholder="值（支持 {{$guid}} 等）"
-              className="flex-1 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none"
-            />
-          )}
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="w-[420px] overflow-hidden rounded-2xl border border-white/10 shadow-2xl"
+        style={{ background: "linear-gradient(160deg, rgba(13,21,36,0.98), rgba(13,21,36,0.92))" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-3 px-5 pt-5">
+          <div
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+            style={{ background: "color-mix(in srgb, var(--module-accent) 15%, transparent)", color: "var(--module-accent)" }}
+          >
+            <FolderInput className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-white">移动模块内容</h3>
+            <p className="mt-1 text-xs leading-relaxed text-slate-400">
+              将「{module.name}」下的全部接口转移到其他模块。
+            </p>
+          </div>
+        </div>
+        <div className="px-5 pt-4">
           <select
-            value={kv.kind}
-            onChange={(e) => update(i, { kind: e.target.value as "text" | "file" })}
-            className="bg-black/30 border border-white/10 rounded-md px-1 py-1 text-[10px] text-slate-300 cursor-pointer"
+            value={targetId}
+            onChange={(e) => setTargetId(e.target.value)}
+            className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60 cursor-pointer"
           >
-            <option value="text">Text</option>
-            <option value="file">File</option>
+            <option value="">请选择目标模块…</option>
+            {targets.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
-          <input
-            value={kv.description ?? ""}
-            onChange={(e) => update(i, { description: e.target.value })}
-            placeholder="描述"
-            className="w-1/4 hidden lg:block bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-500 focus:outline-none"
-          />
+        </div>
+        <div className="mt-5 flex justify-end gap-2 border-t border-white/10 bg-black/20 px-5 py-3">
           <button
-            type="button"
-            onClick={() => onChange(items.filter((_, idx) => idx !== i))}
-            className="p-1 text-slate-500 hover:text-rose-400 cursor-pointer shrink-0"
+            onClick={onClose}
+            className="rounded-lg border border-white/10 px-3.5 py-1.5 text-xs text-slate-300 transition-colors hover:bg-white/5 hover:text-white cursor-pointer"
           >
-            <Trash2 className="w-3.5 h-3.5" />
+            取消
           </button>
-        </div>
-      ))}
-      <button
-        type="button"
-        onClick={() => onChange([...items, { key: "", value: "", enabled: true, kind: "text", file_path: "", description: "" }])}
-        className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
-      >
-        <Plus className="w-3 h-3" /> 添加字段
-      </button>
-    </div>
-  );
-}
-
-// ─── 认证面板 ───
-function AuthPanel({ auth, onChange }: { auth: Authorization; onChange: (a: Authorization) => void }) {
-  const set = (patch: Partial<Authorization>) => onChange({ ...auth, ...patch });
-  return (
-    <div className="space-y-2">
-      <div className="flex gap-1">
-        {AUTH_TYPES.map((t) => (
           <button
-            key={t.value}
-            type="button"
-            onClick={() => set({ type: t.value })}
-            className={`px-2.5 py-1 text-[11px] rounded-md cursor-pointer ${auth.type === t.value ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
+            disabled={!targetId}
+            onClick={() => onMoved(targetId)}
+            className="rounded-lg px-3.5 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-85 disabled:opacity-40 cursor-pointer"
+            style={{ background: "var(--module-accent)" }}
           >
-            {t.label}
-          </button>
-        ))}
-      </div>
-      {auth.type === "basic" && (
-        <div className="grid grid-cols-2 gap-2">
-          <input value={auth.username} onChange={(e) => set({ username: e.target.value })} placeholder="用户名" className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
-          <input type="password" value={auth.password} onChange={(e) => set({ password: e.target.value })} placeholder="密码" className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
-        </div>
-      )}
-      {auth.type === "bearer" && (
-        <input value={auth.token} onChange={(e) => set({ token: e.target.value })} placeholder="Token（支持 {{token}} 变量）" className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
-      )}
-      {auth.type === "jwt" && (
-        <input value={auth.jwt_token} onChange={(e) => set({ jwt_token: e.target.value })} placeholder="JWT Token（支持 {{jwt}} 变量）" className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
-      )}
-      {auth.type === "apiKey" && (
-        <div className="grid grid-cols-[auto_1fr_1fr] gap-2 items-center">
-          <select value={auth.api_key_in} onChange={(e) => set({ api_key_in: e.target.value as "header" | "query" })} className="bg-black/30 border border-white/10 rounded-md px-1.5 py-1.5 text-xs text-slate-300 cursor-pointer">
-            <option value="header">Header</option>
-            <option value="query">Query</option>
-          </select>
-          <input value={auth.api_key_name} onChange={(e) => set({ api_key_name: e.target.value })} placeholder="Key 名（如 X-API-Key）" className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
-          <input value={auth.api_key_value} onChange={(e) => set({ api_key_value: e.target.value })} placeholder="Key 值" className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
-        </div>
-      )}
-      {auth.type === "none" && <div className="text-[10px] text-slate-500">不附加认证信息。</div>}
-    </div>
-  );
-}
-
-// ─── 设置面板 ───
-function SettingsPanel({ settings, timeoutMs, onChange, onTimeout }: {
-  settings: RequestSettings;
-  timeoutMs: number;
-  onChange: (s: RequestSettings) => void;
-  onTimeout: (ms: number) => void;
-}) {
-  const set = (patch: Partial<RequestSettings>) => onChange({ ...settings, ...patch });
-  const Toggle = ({ label, value, on }: { label: string; value: boolean; on: (v: boolean) => void }) => (
-    <label className="flex items-center gap-2 py-1 cursor-pointer">
-      <button
-        type="button"
-        onClick={() => on(!value)}
-        className={`w-8 h-4.5 rounded-full transition-colors relative shrink-0 ${value ? "bg-[var(--module-accent)]" : "bg-white/15"}`}
-        style={{ height: 18 }}
-      >
-        <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white transition-all ${value ? "left-4" : "left-0.5"}`} />
-      </button>
-      <span className="text-xs text-slate-300">{label}</span>
-    </label>
-  );
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <span className="text-[10px] text-slate-500 w-32">HTTP 版本</span>
-        <select value={settings.http_version} onChange={(e) => set({ http_version: e.target.value as RequestSettings["http_version"] })} className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200 cursor-pointer">
-          <option value="auto">Auto</option>
-          <option value="http1">HTTP/1.x</option>
-          <option value="http2">HTTP/2</option>
-        </select>
-      </div>
-      <div className="flex items-center gap-2">
-        <span className="text-[10px] text-slate-500 w-32">超时时间(ms)</span>
-        <input type="number" min={100} value={timeoutMs} onChange={(e) => onTimeout(Number(e.target.value))} className="w-32 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
-      </div>
-      <div className="grid grid-cols-2 gap-x-4">
-        <Toggle label="启用 SSL 证书验证" value={settings.verify_ssl} on={(v) => set({ verify_ssl: v })} />
-        <Toggle label="自动跟随重定向" value={settings.follow_redirects} on={(v) => set({ follow_redirects: v })} />
-        <Toggle label="重定向时保持原始 HTTP 方法" value={settings.follow_original_method} on={(v) => set({ follow_original_method: v })} />
-        <Toggle label="重定向时携带 Authorization" value={settings.follow_authorization_header} on={(v) => set({ follow_authorization_header: v })} />
-        <Toggle label="重定向时移除 Referer" value={settings.remove_referer_on_redirect} on={(v) => set({ remove_referer_on_redirect: v })} />
-        <Toggle label="启用严格 HTTP 解析器" value={settings.strict_http_parser} on={(v) => set({ strict_http_parser: v })} />
-      </div>
-    </div>
-  );
-}
-
-// ─── 预设 Headers 弹窗 ───
-function PresetHeadersModal({ projectId, sets, onClose, onChanged }: {
-  projectId: string;
-  sets: PresetHeaderSet[];
-  onClose: () => void;
-  onChanged: () => void;
-}) {
-  const [local, setLocal] = useState<PresetHeaderSet[]>(sets);
-  const update = (i: number, patch: Partial<PresetHeaderSet>) => {
-    setLocal(local.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
-  };
-  const add = () => {
-    setLocal([...local, { id: "", project_id: projectId, name: `预设 ${local.length + 1}`, headers: [], created_at: "" }]);
-  };
-  const saveAll = async () => {
-    for (const s of local) {
-      await invoke("api_save_preset_headers", { set: s });
-    }
-    onChanged();
-    onClose();
-  };
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className="w-[620px] max-h-[80vh] overflow-hidden glass-panel rounded-2xl border border-white/10 shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-          <div className="flex items-center gap-2 text-sm font-semibold text-white">
-            <Link2 className="w-4 h-4" style={{ color: ACCENT }} /> 预设 Headers（项目级）
-          </div>
-          <button onClick={onClose} className="p-1 text-slate-500 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {local.map((s, i) => (
-            <div key={i} className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
-              <div className="flex items-center gap-2">
-                <input value={s.name} onChange={(e) => update(i, { name: e.target.value })} className="flex-1 bg-transparent border border-white/10 rounded-md px-2 py-1 text-xs font-semibold text-slate-100 focus:outline-none" />
-                <button onClick={() => setLocal(local.filter((_, idx) => idx !== i))} className="p-1 text-slate-500 hover:text-rose-400 cursor-pointer"><Trash2 className="w-3.5 h-3.5" /></button>
-              </div>
-              <KvEditor items={s.headers} onChange={(h) => update(i, { headers: h })} placeholderKey="Header 名" placeholderValue="值" withDescription={false} />
-            </div>
-          ))}
-          <button onClick={add} className="flex items-center gap-1 text-xs text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
-            <Plus className="w-3.5 h-3.5" /> 新建预设集合
-          </button>
-        </div>
-        <div className="flex justify-end gap-2 px-4 py-3 border-t border-white/10">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">取消</button>
-          <button onClick={saveAll} className="px-4 py-1.5 text-xs rounded-lg font-semibold text-white cursor-pointer" style={{ background: ACCENT }}>保存</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── 变量集合弹窗（矩阵编辑：每列一个环境，每行一个变量名）───
-function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
-  projectId: string;
-  envs: ApiEnvironment[];
-  activeEnvId: string | null;
-  onClose: () => void;
-  onChanged: () => void;
-}) {
-  const [local, setLocal] = useState<ApiEnvironment[]>(envs);
-  const [active, setActive] = useState<string | null>(activeEnvId);
-
-  const updateEnv = (i: number, patch: Partial<ApiEnvironment>) => {
-    setLocal(prev => prev.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
-  };
-
-  const addEnv = async () => {
-    const created = await invoke<ApiEnvironment>("api_create_environment", {
-      projectId, name: `环境${local.length + 1}`, variables: {},
-    });
-    setLocal(prev => [...prev, created]);
-    if (!active) setActive(created.id);
-  };
-
-  const saveAll = async () => {
-    for (const e of local) {
-      await invoke("api_update_environment", { env: e });
-    }
-    if (active && active !== activeEnvId) {
-      await invoke("api_set_active_env", { projectId, envId: active });
-    }
-    onChanged();
-    onClose();
-  };
-
-  // 变量名并集（保持首次出现的顺序），保证各环境列对齐
-  const allKeys = (() => {
-    const seen: string[] = [];
-    for (const e of local) for (const k of Object.keys(e.variables)) if (!seen.includes(k)) seen.push(k);
-    return seen;
-  })();
-
-  const setVar = (envIdx: number, key: string, value: string) => {
-    setLocal(prev => prev.map((e, i) => (i === envIdx ? { ...e, variables: { ...e.variables, [key]: value } } : e)));
-  };
-
-  const renameVar = (oldKey: string, newKey: string) => {
-    if (!newKey.trim() || newKey === oldKey) return;
-    setLocal(prev => prev.map(e => {
-      const vars = { ...e.variables };
-      if (oldKey in vars) { vars[newKey] = vars[oldKey]; delete vars[oldKey]; }
-      return { ...e, variables: vars };
-    }));
-  };
-
-  const addRow = () => {
-    const key = `变量${allKeys.length + 1}`;
-    setLocal(prev => prev.map(e => ({ ...e, variables: { ...e.variables, [key]: "" } })));
-  };
-
-  const deleteRow = (key: string) => {
-    setLocal(prev => prev.map(e => {
-      const vars = { ...e.variables }; delete vars[key]; return { ...e, variables: vars };
-    }));
-  };
-
-  const cellCls = "bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60";
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className="w-[860px] max-w-[95vw] max-h-[82vh] overflow-hidden glass-panel rounded-2xl border border-white/10 shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-          <div className="flex items-center gap-2 text-sm font-semibold text-white">
-            <Database className="w-4 h-4" style={{ color: ACCENT }} /> 变量集合（环境）
-          </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={active ?? ""}
-              onChange={(e) => setActive(e.target.value)}
-              className="bg-black/30 border border-white/10 rounded-md px-2 py-1 text-[11px] text-slate-200 focus:outline-none"
-              title="当前生效的环境（请求变量取自该列）"
-            >
-              {local.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-            </select>
-            <button onClick={onClose} className="p-1 text-slate-500 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
-          </div>
-        </div>
-        <div className="flex-1 overflow-auto p-4">
-          {local.length === 0 ? (
-            <div className="py-10 text-center text-xs text-slate-500">暂无环境，点击下方“新建环境”创建第一列</div>
-          ) : (
-            <table className="w-full border-separate border-spacing-0 text-xs">
-              <thead>
-                <tr>
-                  <th className="sticky left-0 z-10 bg-[#0d1524] px-2 py-1.5 text-left text-[10px] font-semibold text-slate-400 border-b border-white/10">变量名</th>
-                  {local.map((e, i) => (
-                    <th key={e.id} className={`px-1.5 py-1 border-b border-white/10 ${e.id === active ? "bg-[color-mix(in_srgb,var(--module-accent)_10%,transparent)]" : "bg-black/20"}`}>
-                      <div className="flex items-center gap-1">
-                        {e.id === active && <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "var(--module-accent)" }} title="当前生效" />}
-                        <input
-                          value={e.name}
-                          onChange={(ev) => updateEnv(i, { name: ev.target.value })}
-                          className={`w-full min-w-[110px] bg-transparent border ${e.id === active ? "border-[var(--module-accent)]/50" : "border-white/10"} rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-slate-100 focus:outline-none`}
-                        />
-                        <button
-                          onClick={() => setActive(e.id)}
-                          className="shrink-0 p-0.5 text-[9px] text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
-                          title="设为当前环境"
-                        >当前</button>
-                        <button
-                          onClick={async () => {
-                            await invoke("api_delete_environment", { envId: e.id });
-                            setLocal(prev => prev.filter((_, idx) => idx !== i));
-                            if (active === e.id) setActive(local.find(x => x.id !== e.id)?.id ?? null);
-                          }}
-                          className="shrink-0 p-0.5 text-slate-500 hover:text-rose-400 cursor-pointer"
-                          title="删除此环境列"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {allKeys.map((key) => (
-                  <tr key={key} className="group">
-                    <td className="sticky left-0 z-10 bg-[#0d1524] px-2 py-1 border-b border-white/5">
-                      <div className="flex items-center gap-1">
-                        <input
-                          defaultValue={key}
-                          onBlur={(e) => renameVar(key, e.target.value.trim())}
-                          className={`w-full min-w-[110px] bg-transparent border border-transparent rounded-md px-1 py-0.5 text-[11px] font-medium text-slate-200 focus:border-[var(--module-accent)]/50 focus:outline-none`}
-                          title="编辑变量名（失焦后同步到所有环境）"
-                        />
-                        <button
-                          onClick={() => deleteRow(key)}
-                          className="shrink-0 p-0.5 text-slate-600 opacity-0 group-hover:opacity-100 hover:text-rose-400 cursor-pointer"
-                          title="删除此行（所有环境）"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </td>
-                    {local.map((e, ei) => (
-                      <td key={e.id} className={`px-1.5 py-1 border-b border-white/5 ${e.id === active ? "bg-[color-mix(in_srgb,var(--module-accent)_4%,transparent)]" : ""}`}>
-                        <input
-                          value={String(e.variables[key] ?? "")}
-                          onChange={(ev) => setVar(ei, key, ev.target.value)}
-                          placeholder="{{$guid}} 等随机变量"
-                          className={`${cellCls} w-full min-w-[120px]`}
-                        />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-          <div className="mt-3 flex items-center gap-2">
-            <button onClick={addRow} className="flex items-center gap-1 text-xs text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
-              <Plus className="w-3.5 h-3.5" /> 添加变量行
-            </button>
-            <button onClick={addEnv} className="flex items-center gap-1 text-xs text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
-              <Plus className="w-3.5 h-3.5" /> 新建环境列
-            </button>
-          </div>
-          <div className="mt-2 text-[10px] text-slate-500 space-y-0.5">
-            提示：每组环境代表一列，每行一个变量名；不同环境的变量名自动对齐，只改值即可。
-            请求中通过 <code className="text-[var(--module-accent)]">{"{{变量名}}"}</code> 引用当前生效环境的值。
-          </div>
-        </div>
-        <div className="flex justify-end gap-2 px-4 py-3 border-t border-white/10">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">取消</button>
-          <button onClick={saveAll} className="px-4 py-1.5 text-xs rounded-lg font-semibold text-white cursor-pointer" style={{ background: ACCENT }}>
-            保存
+            移动
           </button>
         </div>
       </div>
@@ -645,246 +135,6 @@ function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
   );
 }
 
-// ─── 项目新建/编辑弹窗 ───
-function ProjectModal({ project, onClose, onSave }: {
-  project: ApiProject | null;
-  onClose: () => void;
-  onSave: (name: string, description: string, commonHeaders: KeyValueItem[], commonParams: KeyValueItem[]) => void;
-}) {
-  const [name, setName] = useState(project?.name ?? "");
-  const [description, setDescription] = useState(project?.description ?? "");
-  const [commonHeaders, setCommonHeaders] = useState<KeyValueItem[]>(project?.common_headers ?? []);
-  const [commonParams, setCommonParams] = useState<KeyValueItem[]>(project?.common_params ?? []);
-  const editing = !!project;
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div
-        className="w-[560px] glass-panel rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
-          <FlaskConical className="w-4 h-4" style={{ color: ACCENT }} />
-          <span className="text-sm font-semibold text-white">{editing ? "编辑项目" : "新建项目"}</span>
-          <button onClick={onClose} className="ml-auto p-1 text-slate-500 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
-        </div>
-        <div className="max-h-[60vh] overflow-y-auto p-4 space-y-3">
-          <label className="block">
-            <span className="text-[11px] text-slate-400 mb-1 block">项目名称</span>
-            <input
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="如：电商后台、开放平台…"
-              onKeyDown={(e) => e.key === "Enter" && name.trim() && onSave(name.trim(), description, commonHeaders, commonParams)}
-              className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-[var(--module-accent)]/60"
-            />
-          </label>
-          <label className="block">
-            <span className="text-[11px] text-slate-400 mb-1 block">简介</span>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="这个项目面向什么场景？包含哪些模块？…"
-              rows={2}
-              className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 resize-none focus:outline-none focus:border-[var(--module-accent)]/60"
-            />
-          </label>
-          <div>
-            <div className="flex items-center gap-1.5 mb-1">
-              <Link2 className="w-3 h-3" style={{ color: ACCENT }} />
-              <span className="text-[11px] text-slate-400">通用 Headers（接口模板）</span>
-              <span className="text-[9px] text-slate-600">新建接口时自动附加</span>
-            </div>
-            <KvEditor items={commonHeaders} onChange={setCommonHeaders} placeholderKey="Header 名" placeholderValue="值" withDescription={false} />
-          </div>
-          <div>
-            <div className="flex items-center gap-1.5 mb-1">
-              <ListTree className="w-3 h-3" style={{ color: ACCENT }} />
-              <span className="text-[11px] text-slate-400">通用 Params（接口模板）</span>
-              <span className="text-[9px] text-slate-600">新建接口时自动附加</span>
-            </div>
-            <KvEditor items={commonParams} onChange={setCommonParams} placeholderKey="参数名" placeholderValue="值" withDescription={false} />
-          </div>
-        </div>
-        <div className="flex justify-end gap-2 px-4 py-3 border-t border-white/10">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">取消</button>
-          <button
-            onClick={() => name.trim() && onSave(name.trim(), description, commonHeaders, commonParams)}
-            disabled={!name.trim()}
-            className="px-4 py-1.5 text-xs rounded-lg font-semibold text-white cursor-pointer disabled:opacity-50"
-            style={{ background: ACCENT }}
-          >
-            {editing ? "保存" : "创建"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── 模块新建/编辑弹窗 ───
-function ModuleModal({ module, onClose, onSave }: {
-  module: ApiModule | null;
-  onClose: () => void;
-  onSave: (name: string, description: string) => void;
-}) {
-  const [name, setName] = useState(module?.name ?? "");
-  const [description, setDescription] = useState(module?.description ?? "");
-  const editing = !!module;
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div
-        className="w-[440px] glass-panel rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
-          <Folder className="w-4 h-4" style={{ color: ACCENT }} />
-          <span className="text-sm font-semibold text-white">{editing ? "编辑模块" : "新建模块"}</span>
-          <button onClick={onClose} className="ml-auto p-1 text-slate-500 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
-        </div>
-        <div className="p-4 space-y-3">
-          <label className="block">
-            <span className="text-[11px] text-slate-400 mb-1 block">模块名称</span>
-            <input
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="如：订单、用户、商品…"
-              onKeyDown={(e) => e.key === "Enter" && name.trim() && onSave(name.trim(), description)}
-              className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-[var(--module-accent)]/60"
-            />
-          </label>
-          <label className="block">
-            <span className="text-[11px] text-slate-400 mb-1 block">简介</span>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="这个模块包含哪些接口？用途说明…"
-              rows={3}
-              className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 resize-none focus:outline-none focus:border-[var(--module-accent)]/60"
-            />
-          </label>
-        </div>
-        <div className="flex justify-end gap-2 px-4 py-3 border-t border-white/10">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">取消</button>
-          <button
-            onClick={() => name.trim() && onSave(name.trim(), description)}
-            disabled={!name.trim()}
-            className="px-4 py-1.5 text-xs rounded-lg font-semibold text-white cursor-pointer disabled:opacity-50"
-            style={{ background: ACCENT }}
-          >
-            {editing ? "保存" : "创建"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── 压测报告视图 ───
-function StatCard({ label, value, accent }: { label: string; value: string; accent?: string }) {
-  return (
-    <div className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-1.5 text-center">
-      <div className="text-[9px] text-slate-500">{label}</div>
-      <div className="text-sm font-semibold" style={{ color: accent ?? "#e2e8f0" }}>{value}</div>
-    </div>
-  );
-}
-
-function TimelineChart({ report }: { report: LoadTestReport }) {
-  const maxQps = Math.max(1, ...report.timeline.map((t) => t.qps));
-  const maxFail = Math.max(1, ...report.timeline.map((t) => t.failed));
-  const maxMs = Math.max(1, ...report.timeline.map((t) => t.avg_ms));
-  const width = 560;
-  const height = 130;
-  const chartBottom = height - 22; // 图表区底部（留出图例）
-  const chartTop = 4;
-  const usableH = chartBottom - chartTop;
-  const pad = 4;
-  const n = Math.max(1, report.timeline.length);
-  const stepX = (width - pad * 2) / n;
-  const bw = Math.max(1, stepX - 1);
-  const cx = (i: number) => pad + i * stepX + stepX / 2;
-
-  // 平均延迟折线
-  const latencyPoints = report.timeline
-    .map((t, i) => `${cx(i).toFixed(1)},${(chartBottom - (t.avg_ms / maxMs) * usableH).toFixed(1)}`)
-    .join(" ");
-  // 成功率折线（0~1 映射到图表区上半段）
-  const successPoints = report.timeline
-    .map((t, i) => {
-      const total = t.success + t.failed;
-      const rate = total > 0 ? t.success / total : 1;
-      return `${cx(i).toFixed(1)},${(chartBottom - rate * usableH).toFixed(1)}`;
-    })
-    .join(" ");
-
-  return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto">
-      {/* QPS 柱 + 失败柱 */}
-      {report.timeline.map((t, i) => {
-        const x = pad + i * stepX;
-        const hQps = (t.qps / maxQps) * usableH;
-        const hFail = (t.failed / maxFail) * usableH;
-        return (
-          <g key={i}>
-            <rect x={x} y={chartBottom - hQps} width={bw} height={hQps} fill="rgba(6,182,212,0.35)" />
-            {t.failed > 0 && <rect x={x} y={chartBottom - hFail} width={bw} height={hFail} fill="rgba(244,63,94,0.55)" />}
-          </g>
-        );
-      })}
-      {/* 成功率曲线 */}
-      {n > 1 && <polyline points={successPoints} fill="none" stroke="#34d399" strokeWidth="1.4" strokeOpacity="0.85" strokeLinejoin="round" />}
-      {/* 平均延迟曲线 */}
-      {n > 1 && <polyline points={latencyPoints} fill="none" stroke="#fbbf24" strokeWidth="1.4" strokeOpacity="0.9" strokeLinejoin="round" />}
-      <line x1={0} y1={chartBottom} x2={width} y2={chartBottom} stroke="rgba(255,255,255,0.15)" />
-      {/* 图例 */}
-      <g fontSize="9" fill="#64748b">
-        <rect x={4} y={chartBottom + 8} width={8} height={6} fill="rgba(6,182,212,0.5)" rx={1} />
-        <text x={15} y={chartBottom + 14}>QPS</text>
-        <rect x={44} y={chartBottom + 8} width={8} height={6} fill="rgba(244,63,94,0.6)" rx={1} />
-        <text x={55} y={chartBottom + 14}>失败</text>
-        <line x1={86} y1={chartBottom + 11} x2={100} y2={chartBottom + 11} stroke="#34d399" strokeWidth="1.4" />
-        <text x={104} y={chartBottom + 14}>成功率</text>
-        <line x1={142} y1={chartBottom + 11} x2={156} y2={chartBottom + 11} stroke="#fbbf24" strokeWidth="1.4" />
-        <text x={160} y={chartBottom + 14}>平均延迟</text>
-        <text x={width - 4} y={chartBottom + 14} textAnchor="end">峰值 {maxQps.toFixed(0)} QPS · 峰值延迟 {maxMs.toFixed(0)}ms</text>
-      </g>
-    </svg>
-  );
-}
-
-function LoadReportView({ report }: { report: LoadTestReport }) {
-  const errRate = (report.error_rate * 100).toFixed(2);
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-4 gap-1.5">
-        <StatCard label="总请求" value={String(report.total)} />
-        <StatCard label="成功" value={String(report.success)} accent="#34d399" />
-        <StatCard label="失败" value={String(report.failed)} accent={report.failed > 0 ? "#fb7185" : undefined} />
-        <StatCard label="错误率" value={`${errRate}%`} accent={report.error_rate > 0.05 ? "#fb7185" : "#34d399"} />
-        <StatCard label="QPS 平均" value={report.qps_avg.toFixed(1)} accent="#22d3ee" />
-        <StatCard label="QPS 峰值" value={report.qps_max.toFixed(1)} />
-        <StatCard label="平均延迟" value={`${report.latency_avg_ms.toFixed(1)}ms`} />
-        <StatCard label="最大延迟" value={`${report.latency_max_ms.toFixed(1)}ms`} />
-        <StatCard label="p50" value={`${report.latency_p50_ms.toFixed(1)}ms`} />
-        <StatCard label="p90" value={`${report.latency_p90_ms.toFixed(1)}ms`} />
-        <StatCard label="p95" value={`${report.latency_p95_ms.toFixed(1)}ms`} />
-        <StatCard label="p99" value={`${report.latency_p99_ms.toFixed(1)}ms`} />
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {report.status_codes.map(([code, count]) => (
-          <span key={code} className={`text-[10px] px-2 py-0.5 rounded-full border ${code >= 500 ? "text-rose-300 border-rose-500/30 bg-rose-500/10" : code >= 400 ? "text-amber-300 border-amber-500/30 bg-amber-500/10" : "text-emerald-300 border-emerald-500/30 bg-emerald-500/10"}`}>
-            {code} × {count}
-          </span>
-        ))}
-      </div>
-      <TimelineChart report={report} />
-    </div>
-  );
-}
-
-// ─── 主面板 ───
 export default function ApiPanel() {
   const [projects, setProjects] = useState<ApiProject[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
@@ -914,12 +164,39 @@ export default function ApiPanel() {
   const [runningRunId, setRunningRunId] = useState<string | null>(null);
   const [loadStatus, setLoadStatus] = useState<LoadRunStatus | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
+  // 美化确认弹窗状态：{ title, message, danger, confirmText, onConfirm }
+  const [confirm, setConfirm] = useState<{ title: string; message: string; danger?: boolean; confirmText?: string; onConfirm: () => void } | null>(null);
+  // 模块转移弹窗状态
+  const [moveModule, setMoveModule] = useState<ApiModule | null>(null);
+  // 模板继承项概览弹层
+  const [showTplPanel, setShowTplPanel] = useState(false);
   const pollRef = useRef<number | null>(null);
+
+  // 当前 draft 中继承自项目模板的条目（按来源分组）
+  const tplItems = useMemo(() => {
+    if (!draft) return { total: 0, groups: [] as { label: string; items: KeyValueItem[] }[] };
+    const kv = (arr: KeyValueItem[]) => arr.filter((x) => x.from_template);
+    const groups: { label: string; items: KeyValueItem[] }[] = [];
+    const push = (label: string, arr: KeyValueItem[]) => {
+      if (arr.length > 0) groups.push({ label, items: arr });
+    };
+    push("Headers", kv(draft.headers));
+    push("Query Params", kv(draft.query_params));
+    push("Body (urlencoded)", kv(draft.body_urlencoded));
+    push("Body (form-data)", draft.body_form.filter((x) => x.from_template).map((f) => ({ key: f.key, value: f.value, enabled: f.enabled, from_template: true })));
+    push("Cookies", kv(draft.cookies));
+    push("Path Params", kv(draft.path_params));
+    const total = groups.reduce((n, g) => n + g.items.length, 0);
+    return { total, groups };
+  }, [draft]);
 
   const variables = useMemo(() => {
     const env = envs.find((e) => e.id === activeEnvId);
     return env?.variables ?? {};
   }, [envs, activeEnvId]);
+
+  // 当前环境变量名列表（用于输入框自动补全）
+  const envVarNames = useMemo(() => Object.keys(variables), [variables]);
 
   // 初始化
   useEffect(() => {
@@ -1254,9 +531,9 @@ export default function ApiPanel() {
 
   const openEditProject = (p: ApiProject) => setProjectModal({ open: true, project: p });
 
-  const saveProjectModal = async (name: string, description: string, commonHeaders: KeyValueItem[], commonParams: KeyValueItem[]) => {
+  const saveProjectModal = async (name: string, description: string, commonHeaders: KeyValueItem[], commonParams: KeyValueItem[], commonBody: KeyValueItem[]) => {
     if (projectModal.project) {
-      const updated = { ...projectModal.project, name, description, common_headers: commonHeaders, common_params: commonParams };
+      const updated = { ...projectModal.project, name, description, common_headers: commonHeaders, common_params: commonParams, common_body: commonBody };
       await invoke("api_update_project", { project: updated });
       setProjects(projects.map((p) => (p.id === updated.id ? updated : p)));
     } else {
@@ -1265,9 +542,9 @@ export default function ApiPanel() {
       setProjects(list);
       setActiveProjectId(list[list.length - 1].id);
       // 新项目模板字段由后端默认空；若用户在创建时就填了模板，则再更新一次
-      if (commonHeaders.length > 0 || commonParams.length > 0) {
+      if (commonHeaders.length > 0 || commonParams.length > 0 || commonBody.length > 0) {
         const created = list[list.length - 1];
-        await invoke("api_update_project", { project: { ...created, common_headers: commonHeaders, common_params: commonParams } });
+        await invoke("api_update_project", { project: { ...created, common_headers: commonHeaders, common_params: commonParams, common_body: commonBody } });
         setProjects(await invoke<ApiProject[]>("api_list_projects"));
       }
     }
@@ -1307,28 +584,81 @@ export default function ApiPanel() {
   };
 
   const deleteEndpoint = async (id: string) => {
-    if (!window.confirm("确定删除该接口？")) return;
-    await invoke("api_delete_endpoint", { endpointId: id });
-    if (selectedId === id) {
-      setSelectedId(null);
-      setDraft(null);
-    }
-    refreshEndpoints();
+    const ep = endpoints.find((e) => e.id === id);
+    setConfirm({
+      title: "删除接口",
+      message: `确定删除接口「${ep?.name ?? ""}」？其单测、压测记录将一并删除，且不可恢复。`,
+      danger: true,
+      confirmText: "删除",
+      onConfirm: async () => {
+        await invoke("api_delete_endpoint", { endpointId: id });
+        if (selectedId === id) {
+          setSelectedId(null);
+          setDraft(null);
+        }
+        refreshEndpoints();
+      },
+    });
   };
 
   const deleteModule = async (id: string) => {
-    if (!window.confirm("确定删除该模块？其下的接口将变为未分组。")) return;
-    await invoke("api_delete_module", { moduleId: id });
-    setModules(modules.filter((m) => m.id !== id));
-    refreshEndpoints();
+    const mod = modules.find((m) => m.id === id);
+    const count = endpoints.filter((e) => e.module_id === id).length;
+    setConfirm({
+      title: "删除模块",
+      message: `确定删除模块「${mod?.name ?? ""}」？其下 ${count} 个接口将一并删除，且不可恢复。`,
+      danger: true,
+      confirmText: "删除",
+      onConfirm: async () => {
+        await invoke("api_delete_module", { moduleId: id });
+        setModules(modules.filter((m) => m.id !== id));
+        if (selectedId && endpoints.find((e) => e.id === selectedId)?.module_id === id) setSelectedId(null);
+        refreshEndpoints();
+      },
+    });
   };
 
   const deleteProject = async (id: string) => {
-    if (!window.confirm("确定删除该项目？项目下所有数据将被删除。")) return;
-    await invoke("api_delete_project", { projectId: id });
-    const list = projects.filter((p) => p.id !== id);
-    setProjects(list);
-    if (activeProjectId === id) setActiveProjectId(list[0]?.id ?? null);
+    const p = projects.find((x) => x.id === id);
+    setConfirm({
+      title: "删除项目",
+      message: `确定删除项目「${p?.name ?? ""}」？项目下所有模块、接口、变量集合与历史记录将一并删除，且不可恢复。`,
+      danger: true,
+      confirmText: "删除",
+      onConfirm: async () => {
+        await invoke("api_delete_project", { projectId: id });
+        const list = projects.filter((x) => x.id !== id);
+        setProjects(list);
+        if (activeProjectId === id) setActiveProjectId(list[0]?.id ?? null);
+      },
+    });
+  };
+
+  // 模块内容转移到其他模块
+  const doMoveModule = async (targetId: string) => {
+    if (!moveModule) return;
+    try {
+      const n = await invoke<number>("api_move_module_endpoints", {
+        sourceModuleId: moveModule.id,
+        targetModuleId: targetId,
+      });
+      setMoveModule(null);
+      refreshEndpoints();
+      setConfirm({
+        title: "移动完成",
+        message: `已将 ${n} 个接口从「${moveModule.name}」转移到目标模块。`,
+        confirmText: "知道了",
+        onConfirm: () => setConfirm(null),
+      });
+    } catch (e) {
+      setConfirm({
+        title: "移动失败",
+        message: String(e),
+        danger: true,
+        confirmText: "知道了",
+        onConfirm: () => setConfirm(null),
+      });
+    }
   };
 
   const exportPostman = async () => {
@@ -1395,9 +725,16 @@ export default function ApiPanel() {
                   <Plus className="w-3 h-3" />
                 </button>
                 <button
+                  onClick={(e) => { e.stopPropagation(); setMoveModule(m); }}
+                  className="hidden group-hover:block p-0.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
+                  title="移动到其他模块"
+                >
+                  <FolderInput className="w-3 h-3" />
+                </button>
+                <button
                   onClick={(e) => { e.stopPropagation(); deleteModule(m.id); }}
                   className="hidden group-hover:block p-0.5 text-slate-500 hover:text-rose-400 cursor-pointer"
-                  title="删除模块"
+                  title="删除模块（其下接口一并删除）"
                 >
                   <Trash2 className="w-3 h-3" />
                 </button>
@@ -1427,16 +764,6 @@ export default function ApiPanel() {
       </div>
     );
   };
-
-  const randomHint = (
-    <div className="flex flex-wrap gap-1 px-1 pb-1">
-      {RANDOM_VARIABLES.map((r) => (
-        <span key={r.token} className="text-[9px] px-1.5 py-0.5 rounded bg-black/30 border border-white/10 text-slate-500" title={r.desc}>
-          <code className="text-[var(--module-accent)]">{r.token}</code>
-        </span>
-      ))}
-    </div>
-  );
 
   const statusBadge = response ? (
     <span className={`text-xs font-bold px-2 py-0.5 rounded-md border ${response.status === 0 ? "text-rose-300 border-rose-500/40 bg-rose-500/10" : response.status < 300 ? "text-emerald-300 border-emerald-500/40 bg-emerald-500/10" : response.status < 500 ? "text-amber-300 border-amber-500/40 bg-amber-500/10" : "text-rose-300 border-rose-500/40 bg-rose-500/10"}`}>
@@ -1581,13 +908,66 @@ export default function ApiPanel() {
               className="w-40 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200 focus:outline-none"
               placeholder="接口名称"
             />
-            <input
+            <VarInput
               value={draft.url}
-              onChange={(e) => updateDraft({ url: e.target.value })}
+              envVars={envVarNames}
+              onChange={(v) => updateDraft({ url: v })}
               className="flex-1 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]/60"
               placeholder="https://api.example.com/users/{{userId}}"
               onKeyDown={(e) => e.key === "Enter" && sendRequest()}
             />
+            {tplItems.total > 0 && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowTplPanel((v) => !v)}
+                  className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs cursor-pointer transition-colors ${showTplPanel ? "border-[var(--module-accent)]/50 bg-[color-mix(in_srgb,var(--module-accent)_12%,transparent)] text-[var(--module-accent)]" : "border-[color-mix(in_srgb,var(--module-accent)_35%,transparent)] bg-[color-mix(in_srgb,var(--module-accent)_8%,transparent)] text-[var(--module-accent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_14%,transparent)]"}`}
+                  title="点击查看继承自项目模板的参数"
+                >
+                  <Link2 className="w-3.5 h-3.5" />
+                  模板继承
+                  <span
+                    className="rounded-full px-1.5 py-px text-[10px] font-bold text-white tabular-nums"
+                    style={{ background: "var(--module-accent)" }}
+                  >
+                    {tplItems.total}
+                  </span>
+                </button>
+                {showTplPanel && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={() => setShowTplPanel(false)} />
+                    <div className="absolute right-0 top-full z-40 mt-1.5 w-80 overflow-hidden rounded-xl border border-white/10 shadow-2xl" style={{ background: "linear-gradient(160deg, rgba(13,21,36,0.99), rgba(13,21,36,0.95))" }}>
+                      <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
+                        <span className="flex items-center gap-1.5 text-[11px] font-semibold text-white">
+                          <Link2 className="w-3 h-3" style={{ color: "var(--module-accent)" }} />
+                          继承自项目模板的参数（只读）
+                        </span>
+                        <button onClick={() => setShowTplPanel(false)} className="p-0.5 text-slate-500 hover:text-white cursor-pointer">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="max-h-64 overflow-y-auto p-2 space-y-2.5">
+                        {tplItems.groups.map((g) => (
+                          <div key={g.label}>
+                            <div className="px-1 pb-1 text-[9px] font-semibold uppercase tracking-wider text-slate-500">{g.label}</div>
+                            <div className="space-y-1">
+                              {g.items.map((it, i) => (
+                                <div key={i} className="flex items-center gap-1.5 rounded-md bg-black/25 border border-white/5 px-2 py-1">
+                                  <Lock className="w-3 h-3 shrink-0 text-[var(--module-accent)]" />
+                                  <code className="font-mono text-[10px] text-slate-200 truncate">{it.key}</code>
+                                  <span className="text-[10px] text-slate-500">=</span>
+                                  <code className="font-mono text-[10px] text-[var(--module-accent)]/90 truncate" title={it.value}>{it.value || "（空）"}</code>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                        <div className="px-1 pt-1 text-[9px] text-slate-500">在「项目 → 编辑项目 → 通用模板」中修改，所有接口自动同步。</div>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
             <button
               onClick={sendRequest}
               disabled={sending}
@@ -1684,6 +1064,7 @@ export default function ApiPanel() {
                   <KvEditor
                     items={draft.query_params}
                     onChange={(v) => updateDraft({ query_params: v })}
+                    envVars={envVarNames}
                     placeholderValue="值（支持 {{baseUrl}} / {{$guid}}）"
                   />
                 )}
@@ -1721,6 +1102,7 @@ export default function ApiPanel() {
                         }
                       }}
                       placeholderKey="Header 名"
+                      envVars={envVarNames}
                       placeholderValue="值（如 Bearer {{token}}）"
                     />
                   </div>
@@ -1739,24 +1121,28 @@ export default function ApiPanel() {
                       ))}
                     </div>
                     {draft.body_type === "formdata" && (
-                      <FormDataEditor items={draft.body_form} onChange={(v) => updateDraft({ body_form: v })} />
+                      <FormDataEditor items={draft.body_form} onChange={(v) => updateDraft({ body_form: v })} envVars={envVarNames} />
                     )}
                     {draft.body_type === "form" && (
-                      <KvEditor items={draft.body_urlencoded} onChange={(v) => updateDraft({ body_urlencoded: v })} placeholderValue="值" />
+                      <KvEditor items={draft.body_urlencoded} onChange={(v) => updateDraft({ body_urlencoded: v })} envVars={envVarNames} placeholderValue="值" />
                     )}
                     {draft.body_type === "graphql" && (
                       <div className="space-y-2">
-                        <textarea
-                          value={draft.body_graphql_query}
-                          onChange={(e) => updateDraft({ body_graphql_query: e.target.value })}
+                        <VarInput
+                          multiline
                           rows={6}
+                          value={draft.body_graphql_query}
+                          envVars={envVarNames}
+                          onChange={(v) => updateDraft({ body_graphql_query: v })}
                           placeholder={"query GetUser($id: ID!) {\n  user(id: $id) { id name }\n}"}
                           className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none"
                         />
-                        <textarea
-                          value={draft.body_graphql_variables}
-                          onChange={(e) => updateDraft({ body_graphql_variables: e.target.value })}
+                        <VarInput
+                          multiline
                           rows={3}
+                          value={draft.body_graphql_variables}
+                          envVars={envVarNames}
+                          onChange={(v) => updateDraft({ body_graphql_variables: v })}
                           placeholder='{"id": "{{random:int:1:100}}"}'
                           className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none"
                         />
@@ -1782,15 +1168,16 @@ export default function ApiPanel() {
                       </div>
                     )}
                     {(draft.body_type === "raw" || draft.body_type === "json") && (
-                      <textarea
-                        value={draft.body}
-                        onChange={(e) => updateDraft({ body: e.target.value })}
+                      <VarInput
+                        multiline
                         rows={7}
+                        value={draft.body}
+                        envVars={envVarNames}
+                        onChange={(v) => updateDraft({ body: v })}
                         className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
                         placeholder={draft.body_type === "json" ? '{"name": "{{random:string:6}}", "age": {{random:int:18:60}}}' : "原始内容"}
                       />
                     )}
-                    {randomHint}
                   </div>
                 )}
                 {subTab === "settings" && (
@@ -1803,7 +1190,7 @@ export default function ApiPanel() {
                 )}
                 {subTab === "cookies" && (
                   <div className="space-y-1.5">
-                    <KvEditor items={draft.cookies} onChange={(v) => updateDraft({ cookies: v })} placeholderKey="Cookie 名" placeholderValue="值" />
+                    <KvEditor items={draft.cookies} onChange={(v) => updateDraft({ cookies: v })} envVars={envVarNames} placeholderKey="Cookie 名" placeholderValue="值" />
                     <div className="text-[10px] text-slate-500">独立设置的 Cookie 会随请求发送。</div>
                   </div>
                 )}
@@ -2035,354 +1422,26 @@ export default function ApiPanel() {
           onSave={saveModuleModal}
         />
       )}
-    </div>
-  );
-}
 
-// ─── 接口树行（方法图标 + 名称） ───
-function EndpointRow({ ep, selected, onSelect, onDelete, onToggleFavorite }: {
-  ep: ApiEndpoint;
-  selected: boolean;
-  onSelect: () => void;
-  onDelete: () => void;
-  onToggleFavorite: () => void;
-}) {
-  const Icon = methodIcon(ep.method);
-  const color = ep.method === "GET" ? "text-emerald-400" : ep.method === "POST" ? "text-amber-400" : ep.method === "PUT" ? "text-sky-400" : ep.method === "DELETE" ? "text-rose-400" : ep.method === "PATCH" ? "text-violet-400" : "text-slate-400";
-  return (
-    <div
-      onClick={onSelect}
-      title={ep.description || undefined}
-      className={`group flex items-center gap-1.5 rounded-md px-2 py-1 cursor-pointer ${selected ? "bg-[color-mix(in_srgb,var(--module-accent)_15%,transparent)]" : "hover:bg-white/5"}`}
-    >
-      <Icon className={`w-3 h-3 shrink-0 ${color}`} />
-      <Star className={`w-3 h-3 shrink-0 cursor-pointer ${ep.is_favorite ? "text-amber-400 fill-amber-400" : "text-slate-700 opacity-0 group-hover:opacity-100 hover:text-amber-400"}`} onClick={(e) => { e.stopPropagation(); onToggleFavorite(); }} />
-      <span className="flex-1 text-xs text-slate-300 truncate">{ep.name}</span>
-      <button
-        onClick={(e) => { e.stopPropagation(); onDelete(); }}
-        className="hidden group-hover:block p-0.5 text-slate-600 hover:text-rose-400 cursor-pointer"
-      >
-        <Trash2 className="w-3 h-3" />
-      </button>
-    </div>
-  );
-}
-
-// ─── 单测面板 ───
-function UnitTestsPanel({ endpointId, tests, setTests, results, running, onRun }: {
-  endpointId: string | null;
-  tests: UnitTest[];
-  setTests: (t: UnitTest[]) => void;
-  results: Record<string, UnitTestRunOutput>;
-  running: boolean;
-  onRun: () => void;
-}) {
-  const addTest = () => {
-    setTests([...tests, { id: "", endpoint_id: endpointId ?? "", name: `测试 ${tests.length + 1}`, assertions: [{ type: "status_eq", expected: 200 }], created_at: "" }]);
-  };
-
-  const saveAll = async () => {
-    for (const t of tests) {
-      await invoke("api_save_unit_test", { test: t });
-    }
-    window.alert("已保存");
-  };
-
-  const deleteTest = async (id: string, i: number) => {
-    if (id) await invoke("api_delete_unit_test", { testId: id });
-    setTests(tests.filter((_, idx) => idx !== i));
-  };
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <button onClick={addTest} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
-          <Plus className="w-3.5 h-3.5" /> 添加断言组
-        </button>
-        <button onClick={saveAll} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
-          <Save className="w-3.5 h-3.5" /> 保存
-        </button>
-        <button
-          onClick={onRun}
-          disabled={running || tests.length === 0}
-          className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-md font-semibold text-white cursor-pointer disabled:opacity-50"
-          style={{ background: "var(--module-accent)" }}
-        >
-          {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />} 运行全部
-        </button>
-      </div>
-      {tests.map((t, ti) => {
-        const result = results[t.id];
-        return (
-          <div key={ti} className={`rounded-xl border p-3 ${result ? (result.pass ? "border-emerald-500/30" : "border-rose-500/30") : "border-white/10"} bg-black/20`}>
-            <div className="flex items-center gap-2 mb-2">
-              <input
-                value={t.name}
-                onChange={(e) => setTests(tests.map((x, i) => (i === ti ? { ...x, name: e.target.value } : x)))}
-                className="flex-1 bg-transparent text-xs font-semibold text-slate-100 focus:outline-none border-b border-transparent focus:border-white/20"
-              />
-              {result && (
-                <span className={`text-[10px] px-2 py-0.5 rounded-full border ${result.pass ? "text-emerald-300 border-emerald-500/40" : "text-rose-300 border-rose-500/40"}`}>
-                  {result.pass ? "通过" : "失败"} · {fmtTime(result.time_ms)} · HTTP {result.status}
-                </span>
-              )}
-              <button onClick={() => deleteTest(t.id, ti)} className="p-1 text-slate-600 hover:text-rose-400 cursor-pointer"><Trash2 className="w-3.5 h-3.5" /></button>
-            </div>
-            <div className="space-y-1">
-              {t.assertions.map((a, ai) => (
-                <div key={ai} className="flex items-center gap-1.5">
-                  <select
-                    value={a.type}
-                    onChange={(e) => setTests(tests.map((x, i) => (i === ti ? { ...x, assertions: x.assertions.map((y, j) => (j === ai ? { ...y, type: e.target.value, op: ASSERTION_TYPES.find((s) => s.value === e.target.value)?.ops?.[0]?.value ?? y.op } : y)) } : x)))}
-                    className="bg-black/30 border border-white/10 rounded-md px-1.5 py-1 text-[11px] text-slate-200 cursor-pointer"
-                  >
-                    {ASSERTION_TYPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                  </select>
-                  {a.type === "json_path" && (
-                    <input
-                      value={a.path ?? ""}
-                      onChange={(e) => setTests(tests.map((x, i) => (i === ti ? { ...x, assertions: x.assertions.map((y, j) => (j === ai ? { ...y, path: e.target.value } : y)) } : x)))}
-                      placeholder="data.items[0].id"
-                      className="w-36 bg-black/30 border border-white/10 rounded-md px-1.5 py-1 text-[11px] font-mono text-slate-200"
-                    />
-                  )}
-                  {(a.type === "json_path" || a.type === "body_contains" || a.type === "body_not_contains") && (
-                    <input
-                      value={a.type === "body_contains" || a.type === "body_not_contains" ? String(a.expected ?? "") : a.type === "json_path" ? String(a.expected ?? "") : ""}
-                      onChange={(e) => setTests(tests.map((x, i) => (i === ti ? { ...x, assertions: x.assertions.map((y, j) => (j === ai ? { ...y, expected: e.target.value } : y)) } : x)))}
-                      placeholder={a.type === "body_contains" ? "期望包含的文本" : "期望值"}
-                      className="flex-1 bg-black/30 border border-white/10 rounded-md px-1.5 py-1 text-[11px] text-slate-200"
-                    />
-                  )}
-                  {(a.type === "status_eq" || a.type === "status_lt" || a.type === "status_gt" || a.type === "time_lt_ms") && (
-                    <input
-                      type="number"
-                      value={a.type === "time_lt_ms" ? String(a.expected ?? 1000) : String(a.expected ?? 200)}
-                      onChange={(e) => setTests(tests.map((x, i) => (i === ti ? { ...x, assertions: x.assertions.map((y, j) => (j === ai ? { ...y, expected: Number(e.target.value) } : y)) } : x)))}
-                      className="w-24 bg-black/30 border border-white/10 rounded-md px-1.5 py-1 text-[11px] text-slate-200"
-                    />
-                  )}
-                  <button
-                    onClick={() => setTests(tests.map((x, i) => (i === ti ? { ...x, assertions: x.assertions.filter((_, j) => j !== ai) } : x)))}
-                    className="p-1 text-slate-600 hover:text-rose-400 cursor-pointer"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-              <button
-                onClick={() => setTests(tests.map((x, i) => (i === ti ? { ...x, assertions: [...x.assertions, { type: "status_eq", expected: 200 }] } : x)))}
-                className="text-[11px] text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
-              >
-                + 添加断言
-              </button>
-            </div>
-            {result && (
-              <div className="mt-2 space-y-0.5 border-t border-white/5 pt-2">
-                {result.results.map((r, ri) => (
-                  <div key={ri} className="flex items-center gap-1.5 text-[10px]">
-                    <span className={`w-1.5 h-1.5 rounded-full ${r.pass ? "bg-emerald-400" : "bg-rose-400"}`} />
-                    <span className="text-slate-400">{r.assertion}</span>
-                    <span className="text-slate-500 ml-auto truncate">实际: {r.actual}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })}
-      {tests.length === 0 && <div className="text-[11px] text-slate-500">暂无单测，点击「添加断言组」创建（每个断言组执行一次请求，逐条校验断言）。也可在顶部「存为单测」从当前请求/响应自动生成。</div>}
-    </div>
-  );
-}
-
-// ─── 文档面板 ───
-function DocsPanel({ draft, onSave }: { draft: ApiEndpoint; onSave: (md: string) => void }) {
-  const [edit, setEdit] = useState(false);
-  const [text, setText] = useState(draft.docs_md);
-  useEffect(() => { setText(draft.docs_md); }, [draft.docs_md]);
-  const save = async () => {
-    await onSave(text);
-    setEdit(false);
-  };
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2">
-        <button onClick={() => setEdit(!edit)} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
-          <Pencil className="w-3.5 h-3.5" /> {edit ? "预览" : "编辑"}
-        </button>
-        {edit && (
-          <button onClick={save} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md font-semibold text-white cursor-pointer" style={{ background: "var(--module-accent)" }}>
-            <Save className="w-3.5 h-3.5" /> 保存
-          </button>
-        )}
-        <span className="text-[10px] text-slate-500">Markdown 格式，支持代码块、表格等</span>
-      </div>
-      {edit ? (
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={16}
-          className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
-          placeholder={"# 接口说明\n\n## 请求参数\n\n| 参数 | 类型 | 必填 | 说明 |\n|------|------|------|------|\n| id | string | 是 | 用户 ID |\n"}
+      {confirm && (
+        <ConfirmDialog
+          title={confirm.title}
+          message={confirm.message}
+          danger={confirm.danger}
+          confirmText={confirm.confirmText}
+          onConfirm={() => { const fn = confirm.onConfirm; setConfirm(null); fn(); }}
+          onCancel={() => setConfirm(null)}
         />
-      ) : (
-        <div className="rounded-lg border border-white/10 bg-black/20 p-3 prose prose-invert prose-sm max-w-none">
-          {draft.docs_md ? (
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{draft.docs_md}</ReactMarkdown>
-          ) : (
-            <div className="text-[11px] text-slate-500">暂无文档，点击「编辑」编写接口文档，或在顶部「存为文档」从当前请求/响应自动生成。</div>
-          )}
-        </div>
       )}
-    </div>
-  );
-}
 
-// ─── 导入弹窗 ───
-function ImportModal({ projectId, modules, onClose, onImported }: {
-  projectId: string;
-  modules: ApiModule[];
-  onClose: () => void;
-  onImported: () => void;
-}) {
-  const [kind, setKind] = useState<"postman" | "swagger" | "framework">("postman");
-  const [postmanJson, setPostmanJson] = useState("");
-  const [swaggerSource, setSwaggerSource] = useState("");
-  const [framework, setFramework] = useState("nest");
-  const [frameworkDir, setFrameworkDir] = useState("");
-  const [targetModule, setTargetModule] = useState<string>("");
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
-
-  const pickDir = async () => {
-    const dir = await openDialog({ directory: true });
-    if (dir) setFrameworkDir(String(dir));
-  };
-
-  const pickPostmanFile = async () => {
-    const f = await openDialog({ multiple: false, filters: [{ name: "Postman Collection", extensions: ["json"] }] });
-    if (!f) return;
-    const content = await invoke<string>("read_text_file", { path: String(f) }).catch(() => "");
-    if (content) setPostmanJson(content);
-  };
-
-  const doImport = async () => {
-    setBusy(true);
-    setMsg("");
-    try {
-      let count = 0;
-      const moduleId = targetModule || null;
-      if (kind === "postman") {
-        count = await invoke<number>("api_import_postman", { json: postmanJson, projectId, moduleId });
-      } else if (kind === "swagger") {
-        count = await invoke<number>("api_import_swagger", { source: swaggerSource, projectId, moduleId });
-      } else {
-        count = await invoke<number>("api_scan_framework", { dir: frameworkDir, framework, projectId, moduleId });
-      }
-      setMsg(`成功导入 ${count} 个接口`);
-      onImported();
-    } catch (e) {
-      setMsg(`导入失败: ${e}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className="w-[560px] glass-panel rounded-2xl border border-white/10 shadow-2xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm font-semibold text-white">
-            <Upload className="w-4 h-4" style={{ color: "var(--module-accent)" }} /> 导入接口
-          </div>
-          <button onClick={onClose} className="p-1 text-slate-500 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
-        </div>
-        <div className="flex gap-1">
-          {([
-            ["postman", "Postman 数据"],
-            ["swagger", "Swagger"],
-            ["framework", "框架扫描"],
-          ] as const).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setKind(key)}
-              className={`px-3 py-1.5 text-xs rounded-md cursor-pointer ${kind === key ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <label className="block">
-          <span className="text-[10px] text-slate-500">导入到模块（留空自动创建）</span>
-          <select value={targetModule} onChange={(e) => setTargetModule(e.target.value)} className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200 cursor-pointer">
-            <option value="">（自动按来源创建）</option>
-            {modules.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
-        </label>
-        {kind === "postman" && (
-          <label className="block">
-            <span className="text-[10px] text-slate-500">Postman Collection v2.1 JSON（集合变量将导入为变量集合）</span>
-            <div className="flex gap-1.5 mb-1">
-              <button onClick={pickPostmanFile} className="px-2.5 py-1 text-[11px] rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">选择文件</button>
-            </div>
-            <textarea
-              value={postmanJson}
-              onChange={(e) => setPostmanJson(e.target.value)}
-              rows={9}
-              placeholder='{"info":{"name":"..."},"variable":[...],"item":[...]}'
-              className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs font-mono text-slate-200"
-            />
-          </label>
-        )}
-        {kind === "swagger" && (
-          <label className="block">
-            <span className="text-[10px] text-slate-500">Swagger/OpenAPI 地址或本地文件路径</span>
-            <input
-              value={swaggerSource}
-              onChange={(e) => setSwaggerSource(e.target.value)}
-              placeholder="https://api.example.com/swagger/v1/swagger.json 或 C:\\proj\\openapi.json"
-              className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200"
-            />
-          </label>
-        )}
-        {kind === "framework" && (
-          <div className="space-y-2">
-            <label className="block">
-              <span className="text-[10px] text-slate-500">框架类型</span>
-              <select value={framework} onChange={(e) => setFramework(e.target.value)} className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200 cursor-pointer">
-                <option value="nest">NestJS（*.controller.ts）</option>
-                <option value="nuxt">Nuxt3（server/api）</option>
-                <option value="spring">Spring（*Controller.java）</option>
-              </select>
-            </label>
-            <label className="block">
-              <span className="text-[10px] text-slate-500">项目目录</span>
-              <div className="flex gap-1.5">
-                <input
-                  value={frameworkDir}
-                  onChange={(e) => setFrameworkDir(e.target.value)}
-                  placeholder="选择或输入源码目录"
-                  className="flex-1 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200"
-                />
-                <button onClick={pickDir} className="px-2.5 py-1.5 text-xs rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">选择</button>
-              </div>
-            </label>
-          </div>
-        )}
-        {msg && <div className={`text-[11px] ${msg.startsWith("成功") ? "text-emerald-400" : "text-rose-400"}`}>{msg}</div>}
-        <div className="flex justify-end gap-2 pt-1">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">关闭</button>
-          <button
-            onClick={doImport}
-            disabled={busy || (kind === "postman" && !postmanJson.trim()) || (kind === "swagger" && !swaggerSource.trim()) || (kind === "framework" && !frameworkDir.trim())}
-            className="px-4 py-1.5 text-xs rounded-lg font-semibold text-white cursor-pointer disabled:opacity-50"
-            style={{ background: "var(--module-accent)" }}
-          >
-            {busy ? "导入中…" : "导入"}
-          </button>
-        </div>
-      </div>
+      {moveModule && (
+        <MoveModuleModal
+          module={moveModule}
+          modules={modules}
+          onClose={() => setMoveModule(null)}
+          onMoved={doMoveModule}
+        />
+      )}
     </div>
   );
 }

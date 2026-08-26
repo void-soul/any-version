@@ -180,6 +180,7 @@ fn parse_postman_item(item: &Value, out: &mut Vec<EndpointDraft>, parent_module:
                     value: v_str(q, "value"),
                     enabled: kv_enabled(q),
                     description: v_str(q, "description"),
+                from_template: false,
                 });
             }
         }
@@ -196,6 +197,7 @@ fn parse_postman_item(item: &Value, out: &mut Vec<EndpointDraft>, parent_module:
                 value: v_str(h, "value"),
                 enabled: kv_enabled(h),
                 description: v_str(h, "description"),
+            from_template: false,
             });
         }
     }
@@ -212,6 +214,7 @@ fn parse_postman_item(item: &Value, out: &mut Vec<EndpointDraft>, parent_module:
                     value: v_str(c, "value"),
                     enabled: kv_enabled(c),
                     description: v_str(c, "description"),
+                from_template: false,
                 });
             }
         }
@@ -248,6 +251,7 @@ fn parse_postman_item(item: &Value, out: &mut Vec<EndpointDraft>, parent_module:
                                 value: v_str(kv, "value"),
                                 enabled: kv_enabled(kv),
                                 description: v_str(kv, "description"),
+                            from_template: false,
                             });
                         }
                     }
@@ -269,6 +273,7 @@ fn parse_postman_item(item: &Value, out: &mut Vec<EndpointDraft>, parent_module:
                             kind: if kind == "file" { "file".to_string() } else { "text".to_string() },
                             file_path: v_str(kv, "src"),
                             description: v_str(kv, "description"),
+                            from_template: false,
                         });
                     }
                 }
@@ -375,6 +380,7 @@ pub fn parse_postman_collection(json: &str) -> Result<PostmanImport, String> {
                     value: v_str(v, "value"),
                     enabled: true,
                     description: v_str(v, "description"),
+                from_template: false,
                 });
             }
         }
@@ -633,8 +639,8 @@ pub fn parse_swagger(json: &str) -> Result<(String, String, Vec<EndpointDraft>),
                     let example = p.get("schema").and_then(|s| schema_example(s));
                     let value = example.map(|v| v.to_string()).unwrap_or_default();
                     match v_str(p, "in").as_str() {
-                        "query" => query_params.push(KeyValueItem { key: name, value, enabled: true, description: desc }),
-                        "header" => headers.push(KeyValueItem { key: name, value, enabled: true, description: desc }),
+                        "query" => query_params.push(KeyValueItem { key: name, value, enabled: true, description: desc, from_template: false }),
+                        "header" => headers.push(KeyValueItem { key: name, value, enabled: true, description: desc, from_template: false }),
                         _ => {}
                     }
                 }

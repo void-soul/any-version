@@ -805,6 +805,8 @@ pub fn run() {
                 commands::api::api_export_postman,
                 commands::api::api_import_swagger,
                 commands::api::api_scan_framework,
+                commands::api::import_ai::api_import_with_ai,
+                commands::api::api_move_module_endpoints,
                 commands::api::api_list_preset_headers,
                 commands::api::api_save_preset_headers,
                 commands::api::api_delete_preset_headers,

@@ -12,6 +12,7 @@ pub mod commands;
 pub mod db;
 pub mod exec;
 pub mod import;
+pub mod import_ai;
 pub mod loadtest;
 pub mod models;
 pub mod render;

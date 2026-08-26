@@ -7,6 +7,7 @@ export interface ApiProject {
   active_env_id: string | null;
   common_headers: KeyValueItem[];
   common_params: KeyValueItem[];
+  common_body: KeyValueItem[];
   created_at: string;
   updated_at: string;
 }
@@ -33,6 +34,8 @@ export interface KeyValueItem {
   value: string;
   enabled: boolean;
   description?: string;
+  /** 是否继承自项目通用模板（接口内只读，随模板改名/改值同步） */
+  from_template?: boolean;
 }
 
 // form-data / urlencoded 条目（text | file）
@@ -43,6 +46,8 @@ export interface FormDataItem {
   kind: "text" | "file";
   file_path: string;
   description?: string;
+  /** 是否继承自项目通用 Body 模板（接口内只读） */
+  from_template?: boolean;
 }
 
 // 认证

@@ -13,6 +13,9 @@ pub struct ApiProject {
     /// 项目级通用 Params：新建接口时自动附加（接口模板）
     #[serde(default)]
     pub common_params: Vec<KeyValueItem>,
+    /// 项目级通用 Body 参数（urlencoded 键值对）：新建接口时自动附加（接口模板）
+    #[serde(default)]
+    pub common_body: Vec<KeyValueItem>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -40,17 +43,20 @@ pub struct ApiModule {
 }
 
 // ─── 键值对（Header / 查询参数 / Cookie 共用） ───
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyValueItem {
     pub key: String,
     pub value: String,
     pub enabled: bool,
     #[serde(default)]
     pub description: String,
+    /// 是否继承自项目通用模板（接口内只读，随模板改名/改值同步）
+    #[serde(default)]
+    pub from_template: bool,
 }
 
 /// form-data / urlencoded 的条目（支持 text 与 file 类型）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FormDataItem {
     pub key: String,
     pub value: String,
@@ -63,6 +69,9 @@ pub struct FormDataItem {
     pub file_path: String,
     #[serde(default)]
     pub description: String,
+    /// 是否继承自项目通用 Body 模板（接口内只读，随模板改名/改值同步）
+    #[serde(default)]
+    pub from_template: bool,
 }
 
 // ─── 认证 ───
