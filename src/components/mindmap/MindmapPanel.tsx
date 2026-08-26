@@ -3,15 +3,15 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import {
-  Background, Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, ReactFlowProvider, getBezierPath, useReactFlow,
-  type Edge, type EdgeProps, type Node, type NodeChange, type NodeProps,
+  Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, ReactFlowProvider, getBezierPath, useReactFlow,
+  type Connection, type Edge, type EdgeProps, type Node, type NodeChange, type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { MindmapMarkdown } from "./MindmapMarkdown";
 import {
   AlertTriangle, Brain, Circle, File, Folder, FolderOpen, LayoutGrid, Lightbulb, Loader2, Lock, Puzzle,
-  Route, ScrollText, Server, Settings, Sparkles, StickyNote, Trash2, X, Plus, Pencil, Eye, Columns,
-  ChevronDown, ChevronRight, FolderPlus, Search, Maximize2, Minimize2, GripVertical, Code2, FileText, ListTree,
+  Route, ScrollText, Server, Settings, Sparkles, StickyNote, Image, Trash2, X, Plus, Pencil, Eye, Columns,
+  ChevronDown, ChevronRight, FolderPlus, Search, Maximize2, Minimize2, GripVertical, Code2, FileText, ListTree, Palette, RotateCcw, RotateCw,
 } from "lucide-react";
 import type { AiConfig } from "../ai/types";
 import { DocumentFull, MindmapDocument, MindmapFolder, MindmapNode, MindmapSticker, PositionInput, kindColor, mmApi } from "./types";
@@ -20,7 +20,6 @@ import { moduleAccent } from "../../utils/theme";
 const ACCENT = moduleAccent();
 const button = "inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.05] px-2 py-1.5 text-[10px] text-slate-300 transition hover:bg-white/[0.1] hover:text-white disabled:opacity-40";
 const selectClass = "h-8 min-w-[110px] rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400/60";
-const DOC_SOURCE_LABELS: Record<string, string> = { manual: "手动画", ai_project: "AI 读项目", ai_text: "AI 析需求", task: "任务" };
 const DOC_SOURCE_ICONS: Record<string, (cls: string) => React.ReactNode> = {
   manual: (c) => <ListTree className={c} />,
   ai_project: (c) => <Code2 className={c} />,
@@ -28,6 +27,29 @@ const DOC_SOURCE_ICONS: Record<string, (cls: string) => React.ReactNode> = {
   task: (c) => <Brain className={c} />,
 };
 const STICKER_PALETTE = ["#fef3c7", "#d4f5d4", "#dbeafe", "#fce7f3", "#e9d5ff", "#fef9c3", "#ccfbf1", "#ffe4e6"];
+const STICKER_ROTATIONS = [-4.5, 2.8, -1.8, 5.2, -3.2, 1.4, 4.1, -2.4];
+
+function stickerRotation(id: string): number {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  return STICKER_ROTATIONS[Math.abs(hash) % STICKER_ROTATIONS.length];
+}
+
+function stickerSpawnPosition(index: number): { x: number; y: number } {
+  // 用黄金角度把贴纸铺成轻微散开的不规则簇，避免整齐网格感。
+  const angle = index * 2.39996;
+  const radius = 45 + (index % 4) * 42;
+  return {
+    x: 170 + Math.cos(angle) * radius + (index % 2) * 24,
+    y: 120 + Math.sin(angle) * radius + (index % 3) * 18,
+  };
+}
+
+function stickerWidth(id: string): number {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 17 + id.charCodeAt(i)) | 0;
+  return 170 + (Math.abs(hash) % 4) * 12;
+}
 
 // 节点类型（kind）→ 图标（与文档列表同风格的 lucide 图标）+ 中文名
 const KIND_ICONS: Record<string, (cls: string) => React.ReactNode> = {
@@ -45,18 +67,28 @@ const KIND_ICONS: Record<string, (cls: string) => React.ReactNode> = {
   other: (c) => <Circle className={c} />,
 };
 const KIND_LABELS: Record<string, string> = { root: "根节点", module: "模块", task: "任务", requirement: "需求", constraint: "约束", risk: "风险", component: "组件", service: "服务", route: "路由", config: "配置", file: "文件", other: "其他" };
+function normalizeHexColor(value: string | null | undefined): string | null {
+  const raw = value?.trim() ?? "";
+  if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw;
+  if (/^#[0-9a-fA-F]{3}$/.test(raw)) {
+    return `#${raw.slice(1).split("").map((c) => c + c).join("")}`;
+  }
+  return null;
+}
+
+const effectiveNodeColor = (node: MindmapNode) => normalizeHexColor(node.color) ?? kindColor(node.kind);
 
 // ════════════ 节点 ════════════
 
-type FlowNodeData = { node: MindmapNode; selected: boolean; hasChildren: boolean; collapsed: boolean; onSelect: () => void; onOpenDetail: () => void; onToggle: () => void; onAddChild: () => void; onPreview: (e: React.MouseEvent) => void; onPreviewEnd: () => void; onDelete: () => void; };
+type FlowNodeData = { node: MindmapNode; selected: boolean; hasChildren: boolean; collapsed: boolean; targetPosition: Position; sourcePosition: Position; onSelect: () => void; onOpenDetail: () => void; onToggle: () => void; onAddChild: () => void; onPreview: (e: React.MouseEvent) => void; onPreviewEnd: () => void; onDelete: () => void; };
 
 const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>) {
-  const { node, selected, hasChildren, collapsed, onSelect, onOpenDetail, onToggle, onAddChild, onPreview, onPreviewEnd, onDelete } = data;
-  const c = node.color && node.color !== "#f59e0b" ? node.color : kindColor(node.kind);
+  const { node, selected, hasChildren, collapsed, targetPosition, sourcePosition, onSelect, onOpenDetail, onToggle, onAddChild, onPreview, onPreviewEnd, onDelete } = data;
+  const c = effectiveNodeColor(node);
   return (
-    <article className={`group relative w-[200px] rounded-xl border px-2.5 py-2 shadow-lg transition-shadow cursor-pointer ${selected ? "shadow-cyan-500/30 ring-1 ring-cyan-400/40" : "hover:shadow-xl"}`}
-      style={{ borderColor: selected ? c : `${c}55`, background: "linear-gradient(135deg, #111c2e 0%, #0d1524 100%)" }} onClick={onSelect} onDoubleClick={(e) => { e.stopPropagation(); onOpenDetail(); }}>
-      <Handle type="target" position={Position.Left} isConnectable={false} className="!h-2.5 !w-2.5 !border-2 !border-slate-950" style={{ background: c }} />
+    <article className={`group relative w-[200px] rounded-xl border shadow-lg transition-shadow cursor-pointer ${selected ? "shadow-cyan-500/30 ring-1 ring-cyan-400/40" : "hover:shadow-xl"}`}
+      style={{ borderColor: selected ? c : `${c}55`, backgroundColor: "#0d1524" }} onClick={onSelect} onDoubleClick={(e) => { e.stopPropagation(); onOpenDetail(); }}>
+      <Handle type="target" position={targetPosition} isConnectable className="!h-2.5 !w-2.5 !border-2 !border-slate-950" style={{ background: c }} />
       {/* 节点右上角悬浮按钮：预览（气泡）+ 删除 */}
       <div className="nodrag nopan absolute right-1 top-1 z-10 hidden items-center gap-0.5 group-hover:flex">
         <button type="button" className="rounded p-0.5 text-slate-500 transition hover:bg-white/10 hover:text-cyan-300"
@@ -74,19 +106,22 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>)
         onClick={(e) => { e.stopPropagation(); onAddChild(); }} title="添加子节点">
         <Plus className="h-3.5 w-3.5" />
       </button>
-      <div className="flex items-center gap-1.5 pr-8">
-        {hasChildren && <button type="button" className="nodrag nopan inline-flex h-4 w-4 items-center justify-center text-slate-500 hover:text-white" onClick={(e) => { e.stopPropagation(); onToggle(); }} title={collapsed ? "展开" : "折叠"}>
+      {/* 标题栏与描述区使用不同背景，节点信息层次保持稳定。 */}
+      <div className="flex items-center gap-1.5 rounded-t-[11px] border-b px-2.5 py-2 pr-8" style={{ borderColor: `${c}35`, backgroundColor: `${c}20` }}>
+        {hasChildren && <button type="button" className="nodrag nopan inline-flex h-4 w-4 items-center justify-center text-slate-400 hover:text-white" onClick={(e) => { e.stopPropagation(); onToggle(); }} title={collapsed ? "展开" : "折叠"}>
           {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
         </button>}
-        <span title={KIND_LABELS[node.kind] ?? node.kind} className="inline-flex shrink-0 items-center rounded border px-1 py-0.5" style={{ borderColor: `${c}44`, color: c, backgroundColor: `${c}14` }}>{KIND_ICONS[node.kind]?.( "h-3 w-3") ?? <Circle className="h-3 w-3" />}</span>
+        <span title={KIND_LABELS[node.kind] ?? node.kind} className="inline-flex shrink-0 items-center rounded border px-1 py-0.5" style={{ borderColor: `${c}66`, color: c, backgroundColor: `${c}24` }}>{KIND_ICONS[node.kind]?.( "h-3 w-3") ?? <Circle className="h-3 w-3" />}</span>
         <span className="min-w-0 flex-1 truncate text-[11px] font-semibold" style={{ color: c }}>{node.name}</span>
       </div>
-      {node.description && <div className="mt-1 line-clamp-2 text-[9px] leading-4 text-slate-400">{node.description}</div>}
-      <div className="mt-1.5 flex items-center gap-1.5">
+      <div className="mx-1.5 mt-1.5 min-h-[38px] rounded-md border border-white/[0.06] bg-slate-900/80 px-2 py-1.5 text-[9px] leading-4 text-slate-300">
+        <span className={node.description ? "line-clamp-2" : "italic text-slate-600"}>{node.description || "暂无描述"}</span>
+      </div>
+      <div className="flex items-center gap-1.5 px-2.5 pt-1.5">
         {node.progress > 0 && <span className="text-[8px] text-slate-500">{node.progress}%</span>}
       </div>
-      {node.progress > 0 && <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-slate-800/80"><div className="h-full rounded-full transition-all" style={{ width: `${node.progress}%`, backgroundColor: c, boxShadow: `0 0 6px ${c}66` }} /></div>}
-      <Handle type="source" position={Position.Right} isConnectable={false} className="!h-2.5 !w-2.5 !border-2 !border-slate-950" style={{ background: c }} />
+      {node.progress > 0 && <div className="mx-2.5 mb-2 mt-1 h-1 overflow-hidden rounded-full bg-slate-800/80"><div className="h-full rounded-full transition-all" style={{ width: `${node.progress}%`, backgroundColor: c, boxShadow: `0 0 6px ${c}66` }} /></div>}
+      <Handle type="source" position={sourcePosition} isConnectable className="!h-2.5 !w-2.5 !border-2 !border-slate-950" style={{ background: c }} />
     </article>
   );
 });
@@ -107,15 +142,46 @@ const ColorEdge = memo(function ColorEdge({ id, sourceX, sourceY, targetX, targe
 
 // ════════════ 贴纸节点 ════════════
 
-type StickerNodeData = { sticker: MindmapSticker; onUpdate: (patch: { content?: string; color?: string }) => void; onDelete: () => void };
+type StickerNodeData = {
+  sticker: MindmapSticker;
+  onUpdate: (patch: { content?: string; color?: string; imageData?: string; rotation?: number }) => void;
+  onRotate: (delta: number) => void;
+  onReplaceImage: () => void;
+  onDelete: () => void;
+};
 
 const StickerFlowNode = memo(function StickerFlowNode({ data }: NodeProps<Node<StickerNodeData>>) {
-  const { sticker, onUpdate, onDelete } = data;
+  const { sticker, onUpdate, onRotate, onReplaceImage, onDelete } = data;
   const bg = sticker.color || "#fef3c7";
-  return (<div className="group relative w-[190px] rounded-lg border border-white/10 p-3 shadow-xl" style={{ backgroundColor: bg }}>
-    <button type="button" className="nodrag nopan absolute right-1 top-1 hidden h-5 w-5 items-center justify-center rounded text-slate-400 group-hover:flex hover:bg-black/10 hover:text-red-500" onClick={(e) => { e.stopPropagation(); onDelete(); }}><X className="h-3 w-3" /></button>
-    <textarea className="nodrag nowheel w-full resize-none bg-transparent text-[10px] text-slate-800 outline-none" value={sticker.content}
-      onChange={(e) => onUpdate({ content: e.target.value })} rows={3} placeholder="写点什么..." style={{ minHeight: 50 }} />
+  const rotation = sticker.rotation ?? stickerRotation(sticker.id);
+  const isImage = Boolean(sticker.imageData);
+  return (<div className="group relative border border-black/10 p-3 transition-shadow hover:z-10 hover:shadow-2xl" style={{
+    width: isImage ? Math.max(stickerWidth(sticker.id), 220) : stickerWidth(sticker.id),
+    backgroundColor: bg,
+    transform: `rotate(${rotation}deg)`,
+    borderRadius: "2px 7px 3px 1px",
+    boxShadow: "2px 4px 10px rgba(0,0,0,.28), inset 0 0 0 1px rgba(255,255,255,.22)",
+  }}>
+    <span className="pointer-events-none absolute -left-1.5 -top-1.5 h-4 w-4 rotate-[-18deg] rounded-sm bg-white/75 shadow-sm" aria-hidden="true" />
+    <span className="pointer-events-none absolute -right-1.5 -top-1 h-4 w-4 rotate-[14deg] rounded-sm bg-white/65 shadow-sm" aria-hidden="true" />
+    <div className="nodrag nopan absolute right-1 top-1 z-10 hidden items-center gap-0.5 group-hover:flex">
+      <button type="button" className="rounded p-1 text-slate-500 hover:bg-black/10 hover:text-slate-800" onClick={(e) => { e.stopPropagation(); onRotate(-5); }} title="逆时针旋转 5°"><RotateCcw className="h-3 w-3" /></button>
+      <button type="button" className="rounded p-1 text-slate-500 hover:bg-black/10 hover:text-slate-800" onClick={(e) => { e.stopPropagation(); onRotate(5); }} title="顺时针旋转 5°"><RotateCw className="h-3 w-3" /></button>
+      {isImage && <button type="button" className="rounded p-1 text-slate-500 hover:bg-black/10 hover:text-slate-800" onClick={(e) => { e.stopPropagation(); onReplaceImage(); }} title="替换图片"><Image className="h-3 w-3" /></button>}
+      <button type="button" className="rounded p-1 text-slate-400 hover:bg-black/10 hover:text-red-500" onClick={(e) => { e.stopPropagation(); onDelete(); }} title="删除贴纸"><X className="h-3 w-3" /></button>
+    </div>
+    {isImage ? (
+      <>
+        <div className="flex min-h-[80px] items-center justify-center overflow-hidden border border-black/10 bg-white/35">
+          <img src={sticker.imageData} alt={sticker.content || "图片贴纸"} className="block max-h-[180px] max-w-full object-contain" draggable={false} />
+        </div>
+        <textarea className="nodrag nowheel mt-2 w-full resize-none bg-transparent text-[10px] leading-4 text-slate-800 outline-none" value={sticker.content}
+          onChange={(e) => onUpdate({ content: e.target.value })} rows={2} placeholder="添加图片说明..." />
+      </>
+    ) : (
+      <textarea className="nodrag nowheel w-full resize-none bg-transparent text-[10px] leading-4 text-slate-800 outline-none" value={sticker.content}
+        onChange={(e) => onUpdate({ content: e.target.value })} rows={3} placeholder="写点什么..." style={{ minHeight: 50 }} />
+    )}
     {/* 贴纸颜色：预设淡色 + 自定义取色器（与节点同一套机制，颜色更浅） */}
     <div className="mt-1.5 flex items-center gap-1 opacity-60 transition group-hover:opacity-100">
       {STICKER_PALETTE.slice(0, 6).map(cl => <button key={cl} type="button" className="h-3.5 w-3.5 rounded-full border border-black/20" style={{ backgroundColor: cl, boxShadow: bg === cl ? `0 0 0 1.5px rgba(0,0,0,.45)` : "none" }}
@@ -134,6 +200,45 @@ const StickerFlowNode = memo(function StickerFlowNode({ data }: NodeProps<Node<S
 /** 布局方向：lr=左→右（默认，根在左） rl=右→左 tb=上→下 bt=下→上 */
 type LayoutDir = "lr" | "rl" | "tb" | "bt";
 const LAYOUT_DIR_LABELS: Record<LayoutDir, string> = { lr: "左→右", rl: "右→左", tb: "上→下", bt: "下→上" };
+
+type BackgroundTexture = "none" | "grid" | "dots" | "diagonal" | "cross" | "paper";
+const BACKGROUND_TEXTURE_LABELS: Record<BackgroundTexture, string> = {
+  none: "纯色",
+  grid: "网格",
+  dots: "点阵",
+  diagonal: "斜线",
+  cross: "十字",
+  paper: "纸张",
+};
+const BACKGROUND_TEXTURE_STYLES: Record<BackgroundTexture, React.CSSProperties> = {
+  none: { backgroundColor: "#080f1c" },
+  grid: {
+    backgroundColor: "#080f1c",
+    backgroundImage: "linear-gradient(rgba(100,116,139,.12) 1px, transparent 1px), linear-gradient(90deg, rgba(100,116,139,.12) 1px, transparent 1px)",
+    backgroundSize: "24px 24px",
+  },
+  dots: {
+    backgroundColor: "#080f1c",
+    backgroundImage: "radial-gradient(rgba(100,116,139,.28) 1px, transparent 1px)",
+    backgroundSize: "24px 24px",
+  },
+  diagonal: {
+    backgroundColor: "#080f1c",
+    backgroundImage: "repeating-linear-gradient(135deg, rgba(100,116,139,.10) 0 1px, transparent 1px 14px)",
+    backgroundSize: "14px 14px",
+  },
+  cross: {
+    backgroundColor: "#080f1c",
+    backgroundImage: "linear-gradient(rgba(100,116,139,.12) 1px, transparent 1px), linear-gradient(90deg, rgba(100,116,139,.12) 1px, transparent 1px)",
+    backgroundSize: "12px 12px",
+  },
+  paper: {
+    backgroundColor: "#111827",
+    backgroundImage: "radial-gradient(rgba(148,163,184,.10) .7px, transparent .8px), radial-gradient(rgba(15,23,42,.18) .7px, transparent .8px)",
+    backgroundPosition: "0 0, 7px 8px",
+    backgroundSize: "15px 15px",
+  },
+};
 
 function layoutTree(nodes: MindmapNode[], dir: LayoutDir = "lr"): Map<string, { x: number; y: number }> {
   const byId = new Map(nodes.map((n) => [n.id, n]));
@@ -207,7 +312,7 @@ function DetailModal({ node, onUpdate, onClose }: { node: MindmapNode; accent?: 
   const [fullscreen, setFullscreen] = useState(false);
   const [splitRatio, setSplitRatio] = useState(50);
   const dragging = useRef(false);
-  const c = color && color !== "#f59e0b" ? color : kindColor(node.kind);
+  const c = normalizeHexColor(color) ?? kindColor(node.kind);
   const kinds = ["root", "module", "task", "requirement", "constraint", "risk", "component", "service", "route", "config", "file", "other"];
   const COLORS = ["#f8fafc","#22d3ee","#34d399","#fbbf24","#60a5fa","#fb7185","#a78bfa","#f97316","#f59e0b","#94a3b8"];
 
@@ -322,8 +427,8 @@ function DetailModal({ node, onUpdate, onClose }: { node: MindmapNode; accent?: 
 
 // ════════════ 创建文档弹窗 ════════════
 
-function CreateDocModal({ onClose, onCreate, folderId }: { onClose: () => void; onCreate: (name: string, desc: string, sourceType: string, folderId: string | null) => void; folderId: string | null }) {
-  const [name, setName] = useState(""); const [desc, setDesc] = useState(""); const [st, setSt] = useState("manual");
+function CreateDocModal({ onClose, onCreate, folderId }: { onClose: () => void; onCreate: (name: string, desc: string, folderId: string | null) => void; folderId: string | null }) {
+  const [name, setName] = useState(""); const [desc, setDesc] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => { inputRef.current?.focus(); }, []);
 
@@ -335,18 +440,10 @@ function CreateDocModal({ onClose, onCreate, folderId }: { onClose: () => void; 
           <button type="button" className="text-slate-500 hover:text-white" onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
         <div className="space-y-3">
-          <div><label className="text-[10px] text-slate-400 block mb-1">名称</label><input ref={inputRef} className="w-full h-9 rounded-lg bg-slate-900 border border-white/10 px-3 text-xs text-white outline-none" value={name} onChange={(e) => setName(e.target.value)} placeholder="思维导图名称" onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) onCreate(name.trim(), desc, st, folderId); }} /></div>
+          <div><label className="text-[10px] text-slate-400 block mb-1">名称</label><input ref={inputRef} className="w-full h-9 rounded-lg bg-slate-900 border border-white/10 px-3 text-xs text-white outline-none" value={name} onChange={(e) => setName(e.target.value)} placeholder="思维导图名称" onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) onCreate(name.trim(), desc, folderId); }} /></div>
           <div><label className="text-[10px] text-slate-400 block mb-1">描述</label><textarea className="w-full h-16 rounded-lg bg-slate-900 border border-white/10 px-3 py-2 text-xs text-white outline-none resize-none" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="可选描述" /></div>
-          <div><label className="text-[10px] text-slate-400 block mb-1">来源</label>
-            <div className="grid grid-cols-2 gap-1.5">
-              {Object.entries(DOC_SOURCE_LABELS).map(([k, v]) => (
-                <button key={k} type="button" className={`rounded-lg border px-3 py-2 text-[10px] transition ${st === k ? "border-cyan-400/40 bg-cyan-400/10 text-white" : "border-white/10 text-slate-400 hover:bg-white/5"}`}
-                  onClick={() => setSt(k)}>{v}</button>
-              ))}
-            </div>
-          </div>
           <button type="button" className="w-full rounded-lg py-2 text-[11px] font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }}
-            disabled={!name.trim()} onClick={() => { if (name.trim()) onCreate(name.trim(), desc, st, folderId); }}>创建</button>
+            disabled={!name.trim()} onClick={() => { if (name.trim()) onCreate(name.trim(), desc, folderId); }}>创建</button>
         </div>
       </div>
     </div>, document.body);
@@ -373,7 +470,7 @@ type NodeCacheEntry = {
   obj: Node;
 };
 
-function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number }) {
+function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onAiText, onError }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onAiText: () => void; onError: (message: string) => void }) {
   const { fitView } = useReactFlow();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -404,10 +501,20 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
 
   const graphNodes = full.nodes;
   const stickers = full.stickers;
+  const backgroundTexture = (full.document.backgroundTexture in BACKGROUND_TEXTURE_LABELS
+    ? full.document.backgroundTexture
+    : "dots") as BackgroundTexture;
   const byId = useMemo(() => new Map(graphNodes.map((n) => [n.id, n])), [graphNodes]);
   // 布局方向（画布级设置）：切换后自动重排并持久化
   const [dir, setDir] = useState<LayoutDir>("lr");
   const layout = useMemo(() => layoutTree(graphNodes, dir), [graphNodes, dir]);
+  const endpointPositions = dir === "tb"
+    ? { target: Position.Top, source: Position.Bottom }
+    : dir === "bt"
+      ? { target: Position.Bottom, source: Position.Top }
+      : dir === "rl"
+        ? { target: Position.Right, source: Position.Left }
+        : { target: Position.Left, source: Position.Right };
   const childrenCount = useMemo(() => { const m = new Map<string, number>(); for (const n of graphNodes) { if (n.parentId) m.set(n.parentId, (m.get(n.parentId) ?? 0) + 1); } return m; }, [graphNodes]);
 
   // Ancestor chain for selected node
@@ -427,18 +534,59 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     return result;
   }, [graphNodes, collapsed, byId]);
 
-  const addChildNode = useCallback((parentIdOverride?: string) => {
+  const addNode = useCallback((parentId: string | null) => {
     onHistoryPush();
-    const parentId = parentIdOverride ?? selectedId ?? graphNodes.find(n => !n.parentId)?.id ?? "root";
-    const n: MindmapNode = { id: `n${Date.now()}`, documentId: full.document.id, parentId, name: "新节点", description: "", detail: "", kind: "other", color: "#f59e0b", progress: 0, positionX: 0, positionY: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    const now = new Date().toISOString();
+    const n: MindmapNode = { id: `n${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, documentId: full.document.id, parentId, name: parentId ? "新节点" : "新根节点", description: "", detail: "", kind: parentId ? "other" : "root", color: "", progress: 0, positionX: 0, positionY: 0, createdAt: now, updatedAt: now };
     void mmApi.upsertNode({ documentId: full.document.id, node: n });
     onDocumentUpdate({ ...full, nodes: [...full.nodes, n] });
-  }, [selectedId, graphNodes, full, onDocumentUpdate, onHistoryPush]);
+    setSelectedId(n.id);
+  }, [full, onDocumentUpdate, onHistoryPush]);
+
+  const addChildNode = useCallback((parentIdOverride?: string) => {
+    addNode(parentIdOverride ?? selectedId ?? null);
+  }, [addNode, selectedId]);
+
+  const makeRoot = useCallback((nodeId: string) => {
+    const node = byId.get(nodeId);
+    if (!node || node.parentId === null) return;
+    onHistoryPush();
+    const updated = { ...node, parentId: null, kind: node.kind === "root" ? node.kind : "root", updatedAt: new Date().toISOString() };
+    void mmApi.upsertNode({ documentId: full.document.id, node: updated });
+    onDocumentUpdate({ ...full, nodes: full.nodes.map(n => n.id === nodeId ? updated : n) });
+  }, [byId, full, onDocumentUpdate, onHistoryPush]);
+
+  const onConnect = useCallback((connection: Connection) => {
+    const source = connection.source;
+    const target = connection.target;
+    if (!source || !target || source === target || !byId.has(source) || !byId.has(target)) return;
+    // 不能把节点连到自己的后代，否则会形成环，布局和折叠都会失效。
+    let cursor: string | null = source;
+    const seen = new Set<string>();
+    while (cursor && !seen.has(cursor)) {
+      if (cursor === target) return;
+      seen.add(cursor);
+      cursor = byId.get(cursor)?.parentId ?? null;
+    }
+    const child = byId.get(target)!;
+    onHistoryPush();
+    const updated = { ...child, parentId: source, kind: child.kind === "root" ? "other" : child.kind, updatedAt: new Date().toISOString() };
+    void mmApi.upsertNode({ documentId: full.document.id, node: updated });
+    onDocumentUpdate({ ...full, nodes: full.nodes.map(n => n.id === target ? updated : n) });
+  }, [byId, full, onDocumentUpdate, onHistoryPush]);
 
   const deleteNode = useCallback((nodeId: string) => {
     onHistoryPush();
     void mmApi.deleteNode({ documentId: full.document.id, nodeId });
-    onDocumentUpdate({ ...full, nodes: full.nodes.filter(n => n.id !== nodeId && n.parentId !== nodeId) });
+    const removed = new Set<string>([nodeId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const n of full.nodes) {
+        if (n.parentId && removed.has(n.parentId) && !removed.has(n.id)) { removed.add(n.id); changed = true; }
+      }
+    }
+    onDocumentUpdate({ ...full, nodes: full.nodes.filter(n => !removed.has(n.id)) });
     if (selectedId === nodeId) setSelectedId(null);
     if (detailNode?.id === nodeId) setDetailNode(null);
     setPreview(null);
@@ -476,9 +624,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       // data 仅在节点内容/状态变化时重建；纯位置变化（拖动中）复用旧 data 引用，
       // 避免 memo(FlowNode) 因 data 每帧新引用而重渲染整个节点子树（WebView2 下闪烁）。
       const prevData = prev ? (prev.obj as Node<FlowNodeData>).data : null;
-      const dataChanged = !prevData || prev!.node !== n || prev!.selected !== selected || prev!.hasChildren !== hasChildren || prev!.collapsed !== isCollapsed;
-      const data: FlowNodeData = dataChanged
-        ? { node: n, selected, hasChildren, collapsed: isCollapsed,
+      const dataChanged = !prevData || prev!.node !== n || prev!.selected !== selected || prev!.hasChildren !== hasChildren || prev!.collapsed !== isCollapsed || prevData.targetPosition !== endpointPositions.target || prevData.sourcePosition !== endpointPositions.source;
+      const data: FlowNodeData = dataChanged          ? { node: n, selected, hasChildren, collapsed: isCollapsed, targetPosition: endpointPositions.target, sourcePosition: endpointPositions.source,
             onSelect: () => setSelectedId(n.id), onOpenDetail: () => openDetail(n),
             onToggle: () => setCollapsed(cur => { const nx = new Set(cur); nx.has(n.id) ? nx.delete(n.id) : nx.add(n.id); return nx; }),
             onAddChild: () => addChildNode(n.id),
@@ -489,16 +636,17 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       const prevObj = (prev?.obj ?? null) as Node<FlowNodeData> | null;
       const measured = measuredMap[n.id] ?? prevObj?.measured;
       const obj: Node<FlowNodeData> = prevObj
-        ? { ...prevObj, position: p, data, measured }
-        : { id: n.id, type: "mmNode", position: p, data, measured, sourcePosition: Position.Right, targetPosition: Position.Left };
+        ? { ...prevObj, position: p, data, measured, sourcePosition: endpointPositions.source, targetPosition: endpointPositions.target }
+        : { id: n.id, type: "mmNode", position: p, data, measured, sourcePosition: endpointPositions.source, targetPosition: endpointPositions.target };
       cache.set(n.id, { node: n, full, px: p.x, py: p.y, selected, hasChildren, collapsed: isCollapsed, obj });
       main.push(obj);
     }
     const stickerNodes: Node<StickerNodeData>[] = [];
-    for (const s of stickers) {
+    const legacyStickerCluster = stickers.length > 1 && stickers.every(s => s.positionX === 100 && s.positionY === 100);
+    for (const [index, s] of stickers.entries()) {
       const sid = `sticker-${s.id}`;
       alive.add(sid);
-      const p = posOverrides[sid] ?? { x: s.positionX, y: s.positionY };
+      const p = posOverrides[sid] ?? (legacyStickerCluster ? stickerSpawnPosition(index) : { x: s.positionX, y: s.positionY });
       const prev = cache.get(sid);
       if (prev && prev.full === full && prev.node === s && prev.px === p.x && prev.py === p.y) {
         stickerNodes.push(prev.obj as Node<StickerNodeData>);
@@ -508,10 +656,25 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       const prevData = prev ? (prev.obj as Node<StickerNodeData>).data : null;
       const dataChanged = !prevData || prev!.node !== s;
       const data: StickerNodeData = dataChanged
-        ? { sticker: s, onUpdate: (patch: { content?: string; color?: string }) => {
+        ? { sticker: s, onUpdate: (patch: { content?: string; color?: string; imageData?: string; rotation?: number }) => {
             const next = { ...s, ...patch };
             void mmApi.upsertSticker({ documentId: full.document.id, sticker: next });
             onDocumentUpdate({ ...full, stickers: full.stickers.map(x => x.id === s.id ? next : x) });
+          }, onRotate: (delta: number) => {
+            const current = s.rotation ?? stickerRotation(s.id);
+            const nextRotation = Math.max(-180, Math.min(180, current + delta));
+            const next = { ...s, rotation: nextRotation };
+            void mmApi.upsertSticker({ documentId: full.document.id, sticker: next });
+            onDocumentUpdate({ ...full, stickers: full.stickers.map(x => x.id === s.id ? next : x) });
+          }, onReplaceImage: async () => {
+            const selected = await openDialog({ multiple: false, title: "替换贴纸图片", filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico"] }] });
+            if (typeof selected !== "string") return;
+            try {
+              const imageData = await invoke<string>("image_to_base64", { filePath: selected });
+              const next = { ...s, imageData };
+              void mmApi.upsertSticker({ documentId: full.document.id, sticker: next });
+              onDocumentUpdate({ ...full, stickers: full.stickers.map(x => x.id === s.id ? next : x) });
+            } catch (e) { console.error("[mindmap] 读取贴纸图片失败:", e); }
           }, onDelete: () => {
             void mmApi.deleteSticker({ documentId: full.document.id, stickerId: s.id });
             onDocumentUpdate({ ...full, stickers: full.stickers.filter(x => x.id !== s.id) });
@@ -528,13 +691,13 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     // 清理不再显示的缓存项
     for (const k of cache.keys()) if (!alive.has(k)) cache.delete(k);
     return [...main, ...stickerNodes];
-  }, [visibleNodes, layout, selectedId, collapsed, childrenCount, stickers, full, onDocumentUpdate, highlightChain, posOverrides, measuredMap, addChildNode, deleteNode, openDetail]);
+  }, [visibleNodes, layout, selectedId, collapsed, childrenCount, stickers, full, onDocumentUpdate, highlightChain, posOverrides, measuredMap, addChildNode, deleteNode, openDetail, endpointPositions]);
 
   const edges = useMemo<Edge[]>(() => visibleNodes.flatMap(n => {
     if (!n.parentId || !visibleNodes.some(p => p.id === n.parentId)) return [];
     const isOnChain = highlightChain.includes(n.id) && highlightChain.includes(n.parentId);
     return [{ id: `mm-e-${n.id}`, source: n.parentId, target: n.id, type: "colorE", style: isOnChain ? { strokeWidth: 2, opacity: 0.9 } : {},
-      data: { color: n.color && n.color !== "#f59e0b" ? n.color : kindColor(n.kind) }, markerEnd: { type: MarkerType.ArrowClosed, color: "#f8fafc" } } as Edge];
+      data: { color: effectiveNodeColor(n) }, markerEnd: { type: MarkerType.ArrowClosed, color: "#f8fafc" } } as Edge];
   }), [visibleNodes, highlightChain]);
 
   // 受控节点：React Flow 拖放时把位置写入 posOverrides。仅处理 position 变更，
@@ -627,20 +790,31 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     scheduleFlush();
   }, [onDocumentUpdate, scheduleFlush, onHistoryPush]);
 
-  const addSticker = useCallback(() => {
+  const addSticker = useCallback((imageData = "") => {
     onHistoryPush();
-    const s: MindmapSticker = { id: `s${Date.now()}`, documentId: full.document.id, content: "", color: STICKER_PALETTE[Math.floor(Math.random() * STICKER_PALETTE.length)], positionX: 100, positionY: 100, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    const id = `s${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const spawn = stickerSpawnPosition(full.stickers.length);
+    const now = new Date().toISOString();
+    const s: MindmapSticker = { id, documentId: full.document.id, content: "", imageData, rotation: stickerRotation(id), color: STICKER_PALETTE[Math.floor(Math.random() * STICKER_PALETTE.length)], positionX: spawn.x, positionY: spawn.y, createdAt: now, updatedAt: now };
     void mmApi.upsertSticker({ documentId: full.document.id, sticker: s });
     onDocumentUpdate({ ...full, stickers: [...full.stickers, s] });
   }, [full, onDocumentUpdate, onHistoryPush]);
 
+  const addImageSticker = useCallback(async () => {
+    const selected = await openDialog({ multiple: false, title: "选择图片贴纸", filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico"] }] });
+    if (typeof selected !== "string") return;
+    try {
+      const imageData = await invoke<string>("image_to_base64", { filePath: selected });
+      addSticker(imageData);
+    } catch (e) {
+      onError(`读取图片失败：${e}`);
+    }
+  }, [addSticker]);
+
   const deleteSelected = useCallback(() => {
     if (!selectedId) return;
-    onHistoryPush();
-    void mmApi.deleteNode({ documentId: full.document.id, nodeId: selectedId });
-    onDocumentUpdate({ ...full, nodes: full.nodes.filter(n => n.id !== selectedId && n.parentId !== selectedId) });
-    setSelectedId(null);
-  }, [selectedId, full, onDocumentUpdate, onHistoryPush]);
+    deleteNode(selectedId);
+  }, [selectedId, deleteNode]);
 
   const relayout = useCallback(() => {
     const lp = layoutTree(full.nodes, dir);
@@ -670,6 +844,15 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     window.setTimeout(() => fitView({ padding: 0.2, duration: 260 }), 30);
   }, [dir, flowNodes, full, fitView]);
 
+  const changeBackgroundTexture = useCallback((texture: BackgroundTexture) => {
+    if (texture === backgroundTexture) return;
+    onHistoryPush();
+    const now = new Date().toISOString();
+    const document = { ...full.document, backgroundTexture: texture, updatedAt: now };
+    void mmApi.updateBackgroundTexture(full.document.id, texture);
+    onDocumentUpdate({ ...full, document });
+  }, [backgroundTexture, full, onDocumentUpdate, onHistoryPush]);
+
   const onNodeContextMenu = useCallback((event: React.MouseEvent, node: Node) => {
     event.preventDefault();
     if (!node.id.startsWith("sticker-") && byId.has(node.id)) { setSelectedId(node.id); setCtxMenu({ x: event.clientX, y: event.clientY, nodeId: node.id }); }
@@ -692,14 +875,13 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   }, [selectedId, detailNode, deleteSelected, addChildNode, byId]);
 
   return (
-    <div className="relative h-full min-h-0">
+    <div className="relative h-full min-h-0" style={BACKGROUND_TEXTURE_STYLES[backgroundTexture]}>
       <ReactFlow nodes={flowNodes} edges={edges} nodeTypes={mmNodeTypes} edgeTypes={mmEdgeTypes}
-        onNodesChange={onNodesChange} onNodeDragStop={onNodeDragStop}
-        onNodeContextMenu={(e, n) => onNodeContextMenu(e, n as Node)} minZoom={0.1} maxZoom={2.5} nodesConnectable={false}
+        onNodesChange={onNodesChange} onNodeDragStop={onNodeDragStop} onConnect={onConnect}
+        onNodeContextMenu={(e, n) => onNodeContextMenu(e, n as Node)} minZoom={0.1} maxZoom={2.5} nodesConnectable
         proOptions={{ hideAttribution: true }}>
-        <Background color="#1e293b" gap={24} size={1} />
         <MiniMap style={{ backgroundColor: "#080f1c", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95"
-          nodeColor={(n) => { const d = n.data as FlowNodeData | StickerNodeData; return 'node' in d ? (d.node.color && d.node.color !== "#f59e0b" ? d.node.color : kindColor(d.node.kind)) : "#fef3c7"; }}
+          nodeColor={(n) => { const d = n.data as FlowNodeData | StickerNodeData; return 'node' in d ? effectiveNodeColor(d.node) : "#fef3c7"; }}
           nodeStrokeColor="#0f172a" nodeBorderRadius={2} maskColor="rgba(2,6,23,0.72)" pannable zoomable />
         <Controls className="canvas-flow-controls" showInteractive={false} />
       </ReactFlow>
@@ -711,8 +893,19 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
           <select className="w-full rounded border border-white/10 bg-slate-900/95 px-1.5 py-1 text-[10px] text-slate-300 outline-none focus:border-cyan-400/60" value={dir} onChange={(e) => changeDir(e.target.value as LayoutDir)} title="布局方向">
             {Object.entries(LAYOUT_DIR_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
+          <label className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300" title="修改画布背景纹理">
+            <Palette className="h-3 w-3 shrink-0 text-slate-400" />
+            <span className="shrink-0">背景</span>
+            <select className="min-w-0 flex-1 rounded border border-white/10 bg-slate-900 px-1 py-0.5 text-[10px] text-slate-300 outline-none focus:border-cyan-400/60" value={backgroundTexture} onChange={(e) => changeBackgroundTexture(e.target.value as BackgroundTexture)}>
+              {Object.entries(BACKGROUND_TEXTURE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </label>
           <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => addChildNode()} title="添加子节点 (Tab)"><Plus className="h-3 w-3" />子节点</button>
-          <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={addSticker} title="添加贴纸"><StickyNote className="h-3 w-3" />贴纸</button>
+          <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={() => addNode(null)} title="创建新的根节点"><ListTree className="h-3 w-3" />新根节点</button>
+          <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={onAiProject} title="选择项目目录、供应商和模型，追加一棵新的根树"><Code2 className="h-3 w-3" />AI 导入项目</button>
+          <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={onAiText} title="输入需求文本、供应商和模型，追加一棵新的根树"><FileText className="h-3 w-3" />AI 解析文档</button>
+          <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => addSticker()} title="添加文字贴纸"><StickyNote className="h-3 w-3" />文字贴纸</button>
+          <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => void addImageSticker()} title="选择本地图片，添加图片贴纸"><Image className="h-3 w-3" />图片贴纸</button>
         </div>
         {/* 自动保存指示 */}
         {lastSaved && (
@@ -738,14 +931,15 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
             onClick={() => { const n = byId.get(ctxMenu.nodeId); if (n) setDetailNode(n); setCtxMenu(null); }}><Sparkles className="h-3.5 w-3.5" />查看详情</button>
           <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-[11px] text-slate-300 transition hover:bg-white/[0.08] hover:text-white"
             onClick={() => { addChildNode(ctxMenu.nodeId); setCtxMenu(null); }}><Plus className="h-3.5 w-3.5" />添加子节点</button>
+          <button type="button" disabled={byId.get(ctxMenu.nodeId)?.parentId === null} className="flex w-full items-center gap-2 px-3 py-2 text-[11px] text-slate-300 transition hover:bg-white/[0.08] hover:text-white disabled:opacity-40"
+            onClick={() => { makeRoot(ctxMenu.nodeId); setCtxMenu(null); }}><ListTree className="h-3.5 w-3.5" />设为根节点</button>
           <div className="border-t border-white/10" />
           <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-[11px] text-red-300 transition hover:bg-white/[0.08] hover:text-red-100"
-            onClick={() => { void mmApi.deleteNode({ documentId: full.document.id, nodeId: ctxMenu.nodeId });
-              onDocumentUpdate({ ...full, nodes: full.nodes.filter(n => n.id !== ctxMenu.nodeId && n.parentId !== ctxMenu.nodeId) }); setCtxMenu(null); }}><Trash2 className="h-3.5 w-3.5" />删除</button>
+            onClick={() => { deleteNode(ctxMenu.nodeId); setCtxMenu(null); }}><Trash2 className="h-3.5 w-3.5" />删除</button>
         </div>)}
       {/* 悬浮只读预览气泡（跟随鼠标，pointer-events-none 不拦截交互） */}
       {preview && (() => {
-        const pc = preview.node.color && preview.node.color !== "#f59e0b" ? preview.node.color : kindColor(preview.node.kind);
+        const pc = effectiveNodeColor(preview.node);
         const left = Math.min(preview.x + 14, window.innerWidth - 380);
         const top = Math.min(preview.y + 14, window.innerHeight - 340);
         return (
@@ -768,8 +962,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   );
 }
 
-function Canvas({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number }) {
-  return <div className="h-full min-h-0 bg-[#080f1c]"><ReactFlowProvider><CanvasInner full={full} accent={accent} onDocumentUpdate={onDocumentUpdate} onHistoryPush={onHistoryPush} historyVersion={historyVersion} /></ReactFlowProvider></div>;
+function Canvas({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onAiText, onError }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onAiText: () => void; onError: (message: string) => void }) {
+  return <div className="h-full min-h-0 bg-[#080f1c]"><ReactFlowProvider><CanvasInner full={full} accent={accent} onDocumentUpdate={onDocumentUpdate} onHistoryPush={onHistoryPush} historyVersion={historyVersion} onAiProject={onAiProject} onAiText={onAiText} onError={onError} /></ReactFlowProvider></div>;
 }
 
 // ════════════ 主面板 ════════════
@@ -844,6 +1038,9 @@ export default function MindmapPanel() {
         const snapStickers = new Set(snap.stickers.map(s => s.id));
         for (const s of cur.stickers) if (!snapStickers.has(s.id)) { await mmApi.deleteSticker({ documentId: snap.document.id, stickerId: s.id }); }
         for (const s of snap.stickers) { await mmApi.upsertSticker({ documentId: snap.document.id, sticker: s }); }
+        if (snap.document.backgroundTexture !== cur.document.backgroundTexture) {
+          await mmApi.updateBackgroundTexture(snap.document.id, snap.document.backgroundTexture || "dots");
+        }
       } catch (e) {
         // 本地已恢复，但持久化失败：明确告知用户，避免数据丢失后无从排查
         console.error("[mindmap] 撤销/重做持久化失败:", e);
@@ -908,18 +1105,14 @@ export default function MindmapPanel() {
     } catch (e) { setError(String(e)); }
   }, [flash]);
 
-  const createDoc = useCallback(async (name: string, desc: string, sourceType: string, folderId: string | null) => {
+  const createDoc = useCallback(async (name: string, desc: string, folderId: string | null) => {
     try {
-      const doc = await mmApi.create({ name, description: desc, sourceType, folderId });
+      const doc = await mmApi.create({ name, description: desc, sourceType: "manual", folderId });
       setDocs(prev => [doc, ...prev]);
       if (!folderId) setActiveFolderId(null);
       setShowCreate(false);
-      if (sourceType === "ai_project") { setShowAi("project"); setFull(null); }
-      else if (sourceType === "ai_text") { setShowAi("text"); setFull(null); }
-      else {
-        const f = await mmApi.load(doc.id);
-        if (f) setFull(f);
-      }
+      const f = await mmApi.load(doc.id);
+      if (f) setFull(f);
       void refreshFolders();
     } catch (e) { flash(String(e)); }
   }, [flash, refreshFolders]);
@@ -966,22 +1159,22 @@ export default function MindmapPanel() {
   useEffect(() => { void loadDocs(); }, [activeFolderId, loadDocs]);
 
   const runAiProject = useCallback(async () => {
-    if (!full || !projectPath || !providerId) return;
+    if (!full || !projectPath || !providerId || !modelId) return;
     setAiLoading(true); setError("");
     try {
       const f = await mmApi.aiFromProject({ documentId: full.document.id, projectPath, providerId: providerId || null, modelId: modelId || null });
       setFull(f); setDocs(prev => prev.map(d => d.id === f.document.id ? f.document : d));
-      setShowAi(null); flash(`已生成 ${f.nodes.length} 个节点`);
+      setShowAi(null); flash(`已追加 ${f.nodes.length} 个节点`);
     } catch (e) { setError(String(e)); } finally { setAiLoading(false); }
   }, [full, projectPath, providerId, modelId, flash]);
 
   const runAiText = useCallback(async () => {
-    if (!full || !textInput.trim() || !providerId) return;
+    if (!full || !textInput.trim() || !providerId || !modelId) return;
     setAiLoading(true); setError("");
     try {
       const f = await mmApi.aiFromText({ documentId: full.document.id, text: textInput, title: textTitle || full.document.name, providerId: providerId || null, modelId: modelId || null });
       setFull(f); setDocs(prev => prev.map(d => d.id === f.document.id ? f.document : d));
-      setShowAi(null); flash(`已提取 ${f.nodes.length} 个节点`);
+      setShowAi(null); flash(`已追加 ${f.nodes.length} 个节点`);
     } catch (e) { setError(String(e)); } finally { setAiLoading(false); }
   }, [full, textInput, textTitle, providerId, modelId, flash]);
 
@@ -1093,26 +1286,22 @@ export default function MindmapPanel() {
           </aside>
         )}
         <main className="relative min-w-0 flex-1">
-          {full ? (
-            <Canvas full={full} accent={ACCENT} onDocumentUpdate={onDocumentUpdated} onHistoryPush={commitHistory} historyVersion={historyVersion} />
-          ) : showAi === "project" ? (
+          {showAi === "project" ? (
             <div className="flex h-full flex-col items-center justify-center gap-3 p-6">
               <div className="flex w-full max-w-[500px] flex-col gap-3">
-                <div className="flex items-center gap-2"><Lightbulb className="h-5 w-5" style={{ color: ACCENT }} /><span className="text-sm text-white font-semibold">从项目学习</span></div>
+                <div className="flex items-center gap-2"><Lightbulb className="h-5 w-5" style={{ color: ACCENT }} /><span className="text-sm text-white font-semibold">AI 导入项目</span></div>
                 <div className="flex gap-2">
-                  <button type="button" className={button} onClick={async () => { const d = await openDialog({ directory: true, multiple: false, title: "选择项目目录" }); if (typeof d === "string") setProjectPath(d); }}>
-                    <FolderOpen className="h-3 w-3" />{projectPath ? projectPath.split(/[\\\\/]/).pop() : "选择目录"}
-                  </button>
-                  <select className={selectClass} value={providerId} onChange={e => { setProviderId(e.target.value); setModelId(""); }}>
-                    {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  <button type="button" className={button} onClick={async () => { const d = await openDialog({ directory: true, multiple: false, title: "选择项目目录" }); if (typeof d === "string") setProjectPath(d); }}><FolderOpen className="h-3 w-3" />{projectPath ? projectPath.split(/[\\\\/]/).pop() : "选择目录"}</button>
+                  <select className={`${selectClass} flex-1`} value={providerId} onChange={e => { const p = providers.find(x => x.id === e.target.value); setProviderId(e.target.value); setModelId(p?.active_model_id ?? p?.models[0]?.id ?? ""); }}>
+                    <option value="">选择供应商</option>{providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </div>
-                <button type="button" className="w-full rounded-lg py-2 text-[11px] font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }}
-                  disabled={!projectPath || !providerId || aiLoading} onClick={() => void runAiProject()}>
-                  {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" /> : <Sparkles className="h-3.5 w-3.5 inline mr-1" />}
-                  {aiLoading ? "AI 分析中…" : "AI 分析项目结构"}
-                </button>
-                <button type="button" className="text-[10px] text-slate-500 hover:text-white" onClick={() => setShowAi(null)}>跳过，手动编辑</button>
+                <select className={selectClass} value={modelId} onChange={e => setModelId(e.target.value)} disabled={!providerId}>
+                  <option value="">选择模型</option>{(providers.find(p => p.id === providerId)?.models ?? []).map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
+                </select>
+                <p className="text-[10px] text-slate-500">AI 会把项目分析结果追加到当前画布，作为新的根节点，不会覆盖已有节点。</p>
+                <button type="button" className="w-full rounded-lg py-2 text-[11px] font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }} disabled={!projectPath || !providerId || !modelId || aiLoading} onClick={() => void runAiProject()}>{aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" /> : <Sparkles className="h-3.5 w-3.5 inline mr-1" />}{aiLoading ? "AI 分析中…" : "导入项目结构"}</button>
+                <button type="button" className="text-[10px] text-slate-500 hover:text-white" onClick={() => setShowAi(null)}>返回画布</button>
               </div>
             </div>
           ) : showAi === "text" ? (
@@ -1121,17 +1310,23 @@ export default function MindmapPanel() {
                 <div className="flex items-center gap-2"><Lightbulb className="h-5 w-5" style={{ color: ACCENT }} /><span className="text-sm text-white font-semibold">AI 析需求</span></div>
                 <input className="h-9 w-full rounded-xl bg-slate-900 border border-white/10 px-3 text-xs text-white outline-none" value={textTitle} onChange={e => setTextTitle(e.target.value)} placeholder="需求标题" />
                 <textarea className="w-full h-40 rounded-xl bg-slate-900 border border-white/10 px-3 py-2 text-xs text-white outline-none resize-none" value={textInput} onChange={e => setTextInput(e.target.value)} placeholder="粘贴需求文本…" />
-                <select className={selectClass} value={providerId} onChange={e => { setProviderId(e.target.value); setModelId(""); }}>
-                  {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                <select className={selectClass} value={providerId} onChange={e => { const p = providers.find(x => x.id === e.target.value); setProviderId(e.target.value); setModelId(p?.active_model_id ?? p?.models[0]?.id ?? ""); }}>
+                  <option value="">选择供应商</option>{providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
+                <select className={selectClass} value={modelId} onChange={e => setModelId(e.target.value)} disabled={!providerId}>
+                  <option value="">选择模型</option>{(providers.find(p => p.id === providerId)?.models ?? []).map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
+                </select>
+                <p className="text-[10px] text-slate-500">AI 会把解析结果追加到当前画布，作为新的根节点，不会覆盖已有节点。</p>
                 <button type="button" className="w-full rounded-lg py-2 text-[11px] font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }}
-                  disabled={!textInput.trim() || !providerId || aiLoading} onClick={() => void runAiText()}>
+                  disabled={!textInput.trim() || !providerId || !modelId || aiLoading} onClick={() => void runAiText()}>
                   {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" /> : <Sparkles className="h-3.5 w-3.5 inline mr-1" />}
                   {aiLoading ? "AI 提取中…" : "AI 提取需求"}
                 </button>
                 <button type="button" className="text-[10px] text-slate-500 hover:text-white" onClick={() => setShowAi(null)}>跳过，手动编辑</button>
               </div>
             </div>
+          ) : full ? (
+            <Canvas full={full} accent={ACCENT} onDocumentUpdate={onDocumentUpdated} onHistoryPush={commitHistory} historyVersion={historyVersion} onAiProject={() => setShowAi("project")} onAiText={() => setShowAi("text")} onError={setError} />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-4 text-slate-500">
               <div className="rounded-full border border-white/10 p-4"><Brain className="h-10 w-10" style={{ color: ACCENT }} /></div>
@@ -1142,7 +1337,7 @@ export default function MindmapPanel() {
           {error && !showAi && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 max-w-md rounded-md border border-red-400/20 bg-slate-900 px-3 py-2 text-[11px] text-red-300 shadow-xl">{error}<button type="button" className="ml-2 text-slate-400 hover:text-white" onClick={() => setError("")}>✕</button></div>}
         </main>
       </div>
-      {showCreate && <CreateDocModal onClose={() => setShowCreate(false)} onCreate={(n,d,st,fid) => { void createDoc(n,d,st,fid); }} folderId={activeFolderId} />}
+      {showCreate && <CreateDocModal onClose={() => setShowCreate(false)} onCreate={(n,d,fid) => { void createDoc(n,d,fid); }} folderId={activeFolderId} />}
       {error && showAi && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 max-w-md rounded-md border border-red-400/20 bg-slate-900 px-3 py-2 text-[11px] text-red-300 shadow-xl">{error}<button type="button" className="ml-2 text-slate-400 hover:text-white" onClick={() => setError("")}>✕</button></div>}
       {notice && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-[11px] text-slate-200 shadow-xl">{notice}</div>}
       {/* Folder create/edit modal */}

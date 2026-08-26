@@ -28,7 +28,11 @@ pub struct MindmapDocument {
     pub sticker_count: usize,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default = "default_background_texture")]
+    pub background_texture: String,
 }
+
+fn default_background_texture() -> String { "dots".to_string() }
 
 // ─── 节点 ───
 
@@ -73,6 +77,12 @@ pub struct MindmapSticker {
     pub id: String,
     pub document_id: String,
     pub content: String,
+    /// 图片贴纸的 data URL；文字贴纸为空
+    #[serde(default)]
+    pub image_data: String,
+    /// 用户调整后的旋转角度；旧数据为空时由前端使用默认角度
+    #[serde(default)]
+    pub rotation: Option<f64>,
     #[serde(default)]
     pub color: String,
     pub position_x: f64,

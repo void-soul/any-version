@@ -296,12 +296,12 @@ export default function SerialMonitor() {
     "bg-slate-950 border border-slate-700 rounded px-2 py-1.5 font-mono text-xs focus:outline-none focus:border-teal-500";
 
   return (
-    <div className="h-full flex flex-col overflow-hidden p-4 gap-3">
+    <div className="h-full flex flex-col overflow-hidden p-3 gap-2.5 text-[12px]">
       <div className="flex items-center gap-2 shrink-0">
-        <Usb className="w-5 h-5 text-teal-400" />
-        <h1 className="text-lg font-semibold">串口调试器</h1>
+        <Usb className="w-4 h-4 text-teal-400" />
+        <h1 className="text-base font-semibold">串口调试器</h1>
         {/* 模式切换 */}
-        <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs">
+        <div className="flex rounded-lg overflow-hidden border border-slate-700 text-[11px]">
           <button
             onClick={() => void switchMode("real")}
             className={`px-3 py-1 flex items-center gap-1 cursor-pointer ${mode === "real" ? "bg-teal-600 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"}`}
@@ -316,7 +316,7 @@ export default function SerialMonitor() {
           </button>
         </div>
         <span
-          className={`text-xs px-2 py-0.5 rounded-full ${
+          className={`text-[11px] px-2 py-0.5 rounded-full ${
             active
               ? mode === "sim"
                 ? "bg-violet-900/60 text-violet-300"
@@ -501,29 +501,30 @@ export default function SerialMonitor() {
       )}
 
       {/* 收发日志 */}
-      <div ref={logRef} className="flex-1 min-h-0 overflow-auto bg-slate-950 border border-slate-800 rounded-lg p-3 font-mono text-xs leading-relaxed">
+      <div ref={logRef} className="flex-1 min-h-0 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-3 font-mono text-[12px] leading-5">
         {logs.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center text-slate-600 gap-2 select-none">
             {mode === "sim" ? <Bot className="w-8 h-8 opacity-40" /> : <Usb className="w-8 h-8 opacity-40" />}
             <span>{mode === "sim" ? "启动设备并发送数据，收到的内容与设备应答将显示在这里" : "连接串口后，收发数据将显示在这里"}</span>
           </div>
         )}
-        {logs.map((entry, i) => (
-          <div key={i} className="flex gap-2 break-all">
-            <span className="text-slate-600 shrink-0">{entry.time}</span>
-            <span className={`shrink-0 ${entry.dir === "rx" ? "text-emerald-400" : entry.dir === "tx" ? "text-cyan-400" : entry.dir === "dev" ? "text-violet-400" : "text-yellow-500"}`}>
-              {entry.dir === "rx" ? "←" : entry.dir === "tx" ? "→" : entry.dir === "dev" ? "⇠" : "•"}
-            </span>
-            <span className={
-              entry.dir === "rx" ? "text-slate-200"
-              : entry.dir === "tx" ? "text-cyan-200"
-              : entry.dir === "dev" ? "text-violet-200"
-              : "text-yellow-200"
-            }>
-              {hexView && entry.hex !== undefined ? entry.hex : entry.text}
-            </span>
-          </div>
-        ))}
+        <div className="flex flex-col gap-2">
+          {logs.map((entry, i) => {
+            const system = entry.dir === "sys";
+            const outgoing = entry.dir === "tx";
+            return (
+              <div key={i} className={`flex ${system ? "justify-center" : outgoing ? "justify-end" : "justify-start"}`}>
+                <div className={`flex max-w-[86%] items-end gap-2 ${outgoing ? "flex-row-reverse" : ""}`}>
+                  <span className="shrink-0 text-[10px] text-slate-600">{entry.time}</span>
+                  <div className={`rounded-xl px-3 py-2 ${system ? "bg-slate-800/80 text-yellow-200" : outgoing ? "bg-cyan-500/15 text-cyan-100" : entry.dir === "dev" ? "bg-violet-500/15 text-violet-100" : "bg-emerald-500/10 text-slate-200"}`}>
+                    <span className="mr-1.5 text-[10px] opacity-70">{entry.dir === "rx" ? "设备" : entry.dir === "tx" ? "发送" : entry.dir === "dev" ? "应答" : "系统"}</span>
+                    <span className="break-all whitespace-pre-wrap">{hexView && entry.hex !== undefined ? entry.hex : entry.text}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* 发送区 */}

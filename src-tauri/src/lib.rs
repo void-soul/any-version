@@ -427,15 +427,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-                // ---- 开发者工具模块（正则/加密/串口/WS-SSE/数据库） ----
-                commands::regextool::rx_test,
-                commands::cryptotool::crypto_base64_encode,
-                commands::cryptotool::crypto_base64_decode,
-                commands::cryptotool::crypto_hash,
-                commands::cryptotool::jwt_decode,
-                commands::cryptotool::jwt_verify_hs,
-                commands::cryptotool::aes_gcm_encrypt,
-                commands::cryptotool::aes_gcm_decrypt,
+                // ---- 开发者工具模块（串口/网络/数据库） ----
                 commands::serialtool::serial_list_ports,
                 commands::serialtool::serial_open,
                 commands::serialtool::serial_close,
@@ -850,6 +842,7 @@ pub fn run() {
                 commands::mindmap::mm_update_folder,
                 commands::mindmap::mm_delete_folder,
                 commands::mindmap::mm_move_document,
+                commands::mindmap::mm_update_background_texture,
                 commands::mindmap::mm_upsert_node,
                 commands::mindmap::mm_delete_node,
                 commands::mindmap::mm_update_positions,

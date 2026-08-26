@@ -24,6 +24,7 @@ export interface MindmapDocument {
   stickerCount: number;
   createdAt: string;
   updatedAt: string;
+  backgroundTexture: string;
 }
 
 // ─── 节点 ───
@@ -50,6 +51,10 @@ export interface MindmapSticker {
   id: string;
   documentId: string;
   content: string;
+  /** 图片贴纸的 data URL；文字贴纸为空 */
+  imageData?: string;
+  /** 用户调整后的旋转角度；旧数据为空时使用稳定默认角度 */
+  rotation?: number;
   color: string;
   positionX: number;
   positionY: number;
@@ -158,6 +163,7 @@ export const mmApi = {
   updateFolder: (i: UpdateFolderInput) => invoke<void>("mm_update_folder", { input: i }),
   deleteFolder: (id: string) => invoke<void>("mm_delete_folder", { id }),
   moveDocument: (i: MoveDocumentInput) => invoke<void>("mm_move_document", { input: i }),
+  updateBackgroundTexture: (documentId: string, texture: string) => invoke<void>("mm_update_background_texture", { documentId, texture }),
 
   upsertNode: (i: UpsertNodeInput) => invoke<void>("mm_upsert_node", { input: i }),
   deleteNode: (i: DeleteNodeInput) => invoke<void>("mm_delete_node", { input: i }),

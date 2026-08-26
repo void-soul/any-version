@@ -42,11 +42,11 @@ export default function WsDebugger() {
     const un: Array<() => void> = [];
     (async () => {
       un.push(
-        await listen<{ id: string; kind?: string; data?: string; hex?: string; from?: string }>("wstool://message", (e) => {
+        await listen<{ id: string; kind?: string; data?: string; text?: string; hex?: string; from?: string }>("wstool://message", (e) => {
           if (e.payload.kind === "binary") {
-            push(setLogs, "rx", `[二进制 ${e.payload.hex?.split(" ").length ?? 0}B] ${e.payload.data ?? ""}`);
+            push(setLogs, "rx", `[二进制 ${e.payload.hex?.split(" ").length ?? 0}B] ${e.payload.data ?? e.payload.text ?? ""}`);
           } else {
-            push(setLogs, "rx", e.payload.from ? `[${e.payload.from}] ${e.payload.data ?? ""}` : e.payload.data ?? "");
+            push(setLogs, "rx", e.payload.from ? `[${e.payload.from}] ${e.payload.data ?? e.payload.text ?? ""}` : e.payload.data ?? e.payload.text ?? "");
           }
         })
       );
@@ -143,20 +143,20 @@ export default function WsDebugger() {
   const canSend = proto === "ws" || proto === "tcp" || proto === "udp";
 
   return (
-    <div className="h-full flex flex-col overflow-hidden p-4 gap-3">
+    <div className="h-full flex flex-col overflow-hidden p-3 gap-2.5 text-[12px]">
       {/* 标题 + 协议切换 */}
       <div className="flex items-center gap-3 shrink-0">
-        <Cable className="w-5 h-5 text-indigo-400" />
-        <h1 className="text-lg font-semibold">网络调试器</h1>
+        <Cable className="w-4 h-4 text-indigo-400" />
+        <h1 className="text-base font-semibold">网络调试器</h1>
         <span className={`text-xs px-2 py-0.5 rounded-full ${connected ? "bg-emerald-900/60 text-emerald-300" : "bg-slate-800 text-slate-400"}`}>
           {connected ? "已连接" : "未连接"}
         </span>
-        <div className="ml-auto flex gap-1 bg-slate-900 rounded-md p-0.5">
+        <div className="ml-auto flex gap-1 rounded-md bg-slate-900 p-0.5 text-[11px]">
           {PROTO_TABS.map(({ key, label }) => (
             <button
               key={key}
               onClick={() => switchProto(key)}
-              className={`px-3 py-1 rounded text-sm transition-colors ${proto === key ? "bg-slate-700 text-white" : "text-slate-400 hover:text-slate-200"}`}
+              className={`rounded px-2.5 py-1 text-[11px] transition-colors ${proto === key ? "bg-slate-700 text-white" : "text-slate-400 hover:text-slate-200"}`}
             >
               {label}
             </button>
@@ -223,22 +223,30 @@ export default function WsDebugger() {
       )}
 
       {/* 日志 */}
-      <div ref={logRef} className="flex-1 min-h-0 overflow-auto bg-slate-950 border border-slate-800 rounded-lg p-3 font-mono text-xs leading-relaxed">
+      <div ref={logRef} className="flex-1 min-h-0 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-3 font-mono text-[12px] leading-5">
         {logs.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-2 select-none">
-            <Network className="w-8 h-8 opacity-40" />
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-600 select-none">
+            <Network className="h-8 w-8 opacity-40" />
             <span>{proto === "udp" ? "等待 UDP 数据报…（发送一条消息即可收到回显）" : "暂无消息…"}</span>
           </div>
         )}
-        {logs.map((entry, i) => (
-          <div key={i} className="flex gap-2 break-all whitespace-pre-wrap">
-            <span className="text-slate-600 shrink-0">{entry.time}</span>
-            <span className={`shrink-0 ${colorCls(entry.dir)}`}>
-              {entry.dir === "rx" ? "←" : entry.dir === "tx" ? "→" : entry.dir === "event" ? "◈" : "•"}
-            </span>
-            <span className={colorCls(entry.dir)}>{entry.text}</span>
-          </div>
-        ))}
+        <div className="flex flex-col gap-2">
+          {logs.map((entry, i) => {
+            const system = entry.dir === "sys" || entry.dir === "open" || entry.dir === "close";
+            const outgoing = entry.dir === "tx";
+            return (
+              <div key={i} className={`flex ${system ? "justify-center" : outgoing ? "justify-end" : "justify-start"}`}>
+                <div className={`flex max-w-[86%] items-end gap-2 ${outgoing ? "flex-row-reverse" : ""}`}>
+                  <span className="shrink-0 text-[10px] text-slate-600">{entry.time}</span>
+                  <div className={`rounded-xl px-3 py-2 ${system ? "bg-slate-800/80" : outgoing ? "bg-indigo-500/15" : entry.dir === "event" ? "bg-violet-500/15" : "bg-emerald-500/10"} ${colorCls(entry.dir)}`}>
+                    <span className="mr-1.5 text-[10px] opacity-70">{entry.dir === "rx" ? "接收" : entry.dir === "tx" ? "发送" : entry.dir === "event" ? "事件" : entry.dir === "open" ? "连接" : entry.dir === "close" ? "断开" : "系统"}</span>
+                    <span className="break-all whitespace-pre-wrap">{entry.text}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* 发送区 */}

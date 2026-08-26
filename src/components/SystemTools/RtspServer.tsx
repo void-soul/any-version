@@ -452,9 +452,9 @@ export default function RtspServer() {
   const runningCount = instances.filter((i) => i.status.running).length;
 
   return (
-    <div className="h-full w-full overflow-y-auto px-6 py-4 max-w-[1100px] mx-auto space-y-5 select-none text-slate-200">
-      {/* 头部控制栏 */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-4">
+    <div className="flex h-full min-h-0 w-full max-w-[1100px] flex-col overflow-hidden px-6 py-4 mx-auto space-y-5 select-none text-slate-200">
+      {/* 头部控制栏固定，实例列表单独滚动 */}
+      <div className="flex shrink-0 flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-4">
         <div className="flex items-center gap-3">
           <div className="p-2.5 rounded-xl bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] shadow-lg shadow-[var(--module-accent-ring)]">
             <Video className="w-6 h-6" />
@@ -507,7 +507,7 @@ export default function RtspServer() {
       </div>
 
       {/* 实例卡片列表（支持全面折叠与精简视图） */}
-      <div className="space-y-3">
+      <div className="min-h-0 flex-1 overflow-y-auto space-y-3 pr-1">
         {instances.map((inst) => {
           const isRunning = inst.status.running;
           const isLocked = isRunning || inst.actionLoading;

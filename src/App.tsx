@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { X, Minus, Square, Download, AlertTriangle, Loader2, FolderOpen, ChevronDown, Settings } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { MODULES, MODULE_MAP, resolveModuleLayout } from "./moduleRegistry";
@@ -85,31 +84,6 @@ export default function App() {
       return next;
     });
   };
-
-  // 修复 Windows 上 WebView2 失去/重新获得焦点后键盘无法输入的问题：
-  // 窗口重新获得焦点时显式聚焦 webview 内容（Alt-Tab 回来等场景）。
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    const setup = async () => {
-      try {
-        const win = getCurrentWindow();
-        unlisten = await win.onFocusChanged(({ payload: focused }) => {
-          if (focused) {
-            // 延迟到焦点路由稳定后再聚焦，避免被 Windows 后续的焦点恢复覆盖
-            setTimeout(() => {
-              getCurrentWebview().setFocus().catch(() => {});
-            }, 30);
-          }
-        });
-      } catch (e) {
-        console.error("注册窗口焦点监听失败:", e);
-      }
-    };
-    setup();
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, []);
 
   useEffect(() => {
     const initApp = async () => {

@@ -22,8 +22,6 @@ import {
   Languages,
   Bookmark,
   FlaskConical,
-  Regex as RegexIcon,
-  KeySquare,
   Usb,
   Cable,
 } from "lucide-react";
@@ -252,22 +250,6 @@ export const MODULES: ModuleDef[] = [
   },
   // —— 开发者工具（默认收进「更多」） ——
   {
-    id: "regex",
-    label: "正则工具",
-    icon: RegexIcon,
-    color: "#06b6d4",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/devtools/RegexTester")),
-  },
-  {
-    id: "crypto",
-    label: "加解密",
-    icon: KeySquare,
-    color: "#f59e0b",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/devtools/CryptoToolbox")),
-  },
-  {
     id: "serial",
     label: "串口调试",
     icon: Usb,
@@ -277,7 +259,7 @@ export const MODULES: ModuleDef[] = [
   },
   {
     id: "wsDebugger",
-    label: "WS / SSE",
+    label: "网络调试器",
     icon: Cable,
     color: "#6366f1",
     defaultToolbar: false,
