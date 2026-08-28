@@ -72,12 +72,8 @@ fn load_store() -> McpStore {
 }
 
 fn save_store(store: &McpStore) -> Result<(), String> {
-    let path = mcp_path();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
     let data = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
-    fs::write(&path, data).map_err(|e| e.to_string())
+    crate::commands::config::atomic_write_file(&mcp_path(), data.as_bytes())
 }
 
 fn normalize_id(name: &str) -> String {
@@ -354,7 +350,8 @@ fn deploy_all() -> Result<(), String> {
         let count = servers_map.len();
         file_val.as_object_mut().unwrap().insert(mcp_key.to_string(), Value::Object(servers_map));
         let data = serde_json::to_string_pretty(&file_val).map_err(|e| e.to_string())?;
-        fs::write(&path, data).map_err(|e| format!("写入 {} 失败: {}", path.display(), e))?;
+        crate::commands::config::atomic_write_file(&path, data.as_bytes())
+            .map_err(|e| format!("写入 {} 失败: {}", path.display(), e))?;
         eprintln!("[mcp] 已部署 {} 个服务器到 {} ({})", count, tool_id, format);
     }
     Ok(())

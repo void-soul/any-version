@@ -360,6 +360,28 @@ pub fn save_config(config: &Config) -> Result<(), String> {
     write_config_unlocked(config)
 }
 
+/// 原子写入文件（tmp + rename），崩溃时不损坏原文件。
+/// rename 失败（如被其他进程占用）时退回直接写，并清理临时文件。
+pub(crate) fn atomic_write_file(path: &Path, data: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let file_name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let tmp_path = path.with_file_name(format!("{}.tmp", file_name));
+    fs::write(&tmp_path, data).map_err(|e| format!("写入临时文件失败: {}", e))?;
+    match fs::rename(&tmp_path, path) {
+        Ok(_) => Ok(()),
+        Err(_) => {
+            fs::write(path, data).map_err(|e| format!("写入文件失败: {}", e))?;
+            let _ = fs::remove_file(&tmp_path);
+            Ok(())
+        }
+    }
+}
+
 /// 写入已由调用方持有锁时的落盘实现（tmp + rename 原子替换）。
 fn write_config_unlocked(config: &Config) -> Result<(), String> {
     let base_dir = get_base_dir();

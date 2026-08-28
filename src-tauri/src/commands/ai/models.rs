@@ -112,7 +112,7 @@ pub struct ProtocolConfig {
 /// 工具启动时代理必开，根据供应商「已配置的协议 URL」判断其支持的协议，
 /// 并据此决定是否需要做协议转换（工具原生协议不被支持时转换）。
 /// 模型别名/伪装由工具启动时的代理按 `tool.builtin_models` 与所选取模型动态生成。
-#[derive(Serialize, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct AiProvider {
     pub id: String,
     pub name: String,
@@ -120,13 +120,10 @@ pub struct AiProvider {
     pub api_key: String,
     pub website: String,
     /// OpenAI 协议端点 URL（空 = 不支持 OpenAI 协议）
-    #[serde(default)]
     pub openai_url: String,
     /// Anthropic 协议端点 URL（空 = 不支持 Anthropic 协议）
-    #[serde(default)]
     pub anthropic_url: String,
     /// Google 协议端点 URL（空 = 不支持 Google 协议）
-    #[serde(default)]
     pub google_url: String,
     pub models: Vec<ModelEntry>,
     pub active_model_id: Option<String>,
@@ -158,6 +155,34 @@ impl AiProvider {
         else if !self.anthropic_url.is_empty() { "anthropic".to_string() }
         else if !self.google_url.is_empty() { "google".to_string() }
         else { "openai".to_string() }
+    }
+}
+
+/// 序列化时对 api_key 加密落盘（内存中始终为明文，磁盘上为 `ENC_V2:` 前缀密文）。
+/// 与 clipboard/otp 模块共用同一把机器级主密钥（commands/secrets）。
+impl Serialize for AiProvider {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let enc_key = crate::commands::secrets::encrypt_secret(&self.api_key)
+            .unwrap_or_else(|e| {
+                eprintln!("[config] 加密 API key 失败，回退明文写入: {}", e);
+                self.api_key.clone()
+            });
+        let mut st = serializer.serialize_struct("AiProvider", 10)?;
+        st.serialize_field("id", &self.id)?;
+        st.serialize_field("name", &self.name)?;
+        st.serialize_field("category", &self.category)?;
+        st.serialize_field("api_key", &enc_key)?;
+        st.serialize_field("website", &self.website)?;
+        st.serialize_field("openai_url", &self.openai_url)?;
+        st.serialize_field("anthropic_url", &self.anthropic_url)?;
+        st.serialize_field("google_url", &self.google_url)?;
+        st.serialize_field("models", &self.models)?;
+        st.serialize_field("active_model_id", &self.active_model_id)?;
+        st.end()
     }
 }
 
@@ -244,11 +269,19 @@ impl<'de> Deserialize<'de> for AiProvider {
         // 旧格式 v1 扁平字段：openai_url / anthropic_url / google_url 与新格式同名字段，
         // 已在上方直接读取，无需额外处理。
 
+        // api_key：磁盘上可能为加密密文（ENC_V2: 前缀）或历史明文（旧版本），
+        // 解密后内存中始终为明文，供代理/启动等直接使用。
+        let api_key = if h.api_key.starts_with("ENC_V2:") {
+            crate::commands::secrets::decrypt_secret(&h.api_key).unwrap_or_default()
+        } else {
+            h.api_key
+        };
+
         Ok(AiProvider {
             id: h.id,
             name: h.name,
             category: h.category,
-            api_key: h.api_key,
+            api_key,
             website: h.website,
             openai_url,
             anthropic_url,

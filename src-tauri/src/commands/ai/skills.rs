@@ -81,10 +81,8 @@ pub(crate) fn load_skills() -> SkillsFile {
 }
 
 pub(crate) fn save_skills(skills: &SkillsFile) -> Result<(), String> {
-    let path = skills_path();
-    let _ = fs::create_dir_all(path.parent().unwrap());
     let data = serde_json::to_string_pretty(skills).map_err(|e| e.to_string())?;
-    fs::write(path, data).map_err(|e| e.to_string())
+    crate::commands::config::atomic_write_file(&skills_path(), data.as_bytes())
 }
 
 // ─── 技能元数据（分类/标签）读写 ───
@@ -122,12 +120,8 @@ fn load_skill_meta() -> SkillMetaFile {
 }
 
 fn save_skill_meta(meta: &SkillMetaFile) -> Result<(), String> {
-    let path = skill_meta_path();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
     let data = serde_json::to_string_pretty(meta).map_err(|e| e.to_string())?;
-    fs::write(path, data).map_err(|e| e.to_string())
+    crate::commands::config::atomic_write_file(&skill_meta_path(), data.as_bytes())
 }
 
 // ─── SKILL.md 解析 ───

@@ -29,6 +29,7 @@ pub(crate) fn load_ai_config() -> AiConfig {
             // AiProvider 的自定义 Deserialize 已内置迁移逻辑：
             // 自动将旧版 protocols HashMap / 旧版扁平字段转换为新版扁平 URL 结构。
             if let Ok(config) = serde_json::from_str::<AiConfig>(&data) {
+                let mut save_needed = false;
                 // 检测是否需要迁移（旧格式 → 新格式），若需要则回写
                 if let Ok(raw) = serde_json::from_str::<serde_json::Value>(&data) {
                     let needs_migrate = raw.get("providers")
@@ -38,9 +39,17 @@ pub(crate) fn load_ai_config() -> AiConfig {
                             || p.get("anthropic_use_proxy").is_some()))
                         .unwrap_or(false);
                     if needs_migrate {
-                        let _ = save_ai_config_to_file(&config);
+                        save_needed = true;
                         eprintln!("[config] ✓ 已迁移 ai_config.json 至扁平 URL 格式");
                     }
+                }
+                // 明文 API key → 回写为加密存储（ENC_V2: 前缀），一次性原地迁移
+                if config.providers.iter().any(|p| !p.api_key.is_empty() && !p.api_key.starts_with("ENC_V2:")) {
+                    save_needed = true;
+                    eprintln!("[config] 检测到明文 API key，迁移为加密存储");
+                }
+                if save_needed {
+                    let _ = save_ai_config_to_file(&config);
                 }
                 return config;
             }
@@ -58,10 +67,8 @@ pub(crate) fn load_ai_config() -> AiConfig {
 }
 
 pub(crate) fn save_ai_config_to_file(config: &AiConfig) -> Result<(), String> {
-    let path = ai_config_path();
-    let _ = fs::create_dir_all(path.parent().unwrap());
     let data = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
-    fs::write(path, data).map_err(|e| e.to_string())
+    crate::commands::config::atomic_write_file(&ai_config_path(), data.as_bytes())
 }
 
 pub(crate) fn load_sessions() -> AiSessionsFile {
@@ -77,10 +84,8 @@ pub(crate) fn load_sessions() -> AiSessionsFile {
 }
 
 pub(crate) fn save_sessions_to_file(sessions: &AiSessionsFile) -> Result<(), String> {
-    let path = ai_sessions_path();
-    let _ = fs::create_dir_all(path.parent().unwrap());
     let data = serde_json::to_string_pretty(sessions).map_err(|e| e.to_string())?;
-    fs::write(path, data).map_err(|e| e.to_string())
+    crate::commands::config::atomic_write_file(&ai_sessions_path(), data.as_bytes())
 }
 
 pub(crate) fn load_last_launch_configs() -> LastLaunchConfigsFile {
@@ -96,10 +101,8 @@ pub(crate) fn load_last_launch_configs() -> LastLaunchConfigsFile {
 }
 
 pub(crate) fn save_last_launch_configs(configs: &LastLaunchConfigsFile) -> Result<(), String> {
-    let path = last_launch_configs_path();
-    let _ = fs::create_dir_all(path.parent().unwrap());
     let data = serde_json::to_string_pretty(configs).map_err(|e| e.to_string())?;
-    fs::write(path, data).map_err(|e| e.to_string())
+    crate::commands::config::atomic_write_file(&last_launch_configs_path(), data.as_bytes())
 }
 
 // ─── Provider 预设（从 providers.json 加载）───
@@ -325,5 +328,46 @@ mod tests {
         assert_eq!(p.anthropic_url, "");
         assert_eq!(p.google_url, "");
         assert_eq!(p.models.len(), 1);
+    }
+
+    #[test]
+    fn test_api_key_encrypted_at_rest() {
+        use crate::commands::ai::models::ModelEntry;
+        let config = AiConfig {
+            providers: vec![AiProvider {
+                id: "test-prov".to_string(),
+                name: "Test".to_string(),
+                category: "provider".to_string(),
+                api_key: "sk-plaintext-key-12345".to_string(),
+                website: String::new(),
+                openai_url: "https://api.example.com/v1".to_string(),
+                anthropic_url: String::new(),
+                google_url: String::new(),
+                models: vec![ModelEntry { id: "m1".into(), name: "M1".into(), custom_params: vec![] }],
+                active_model_id: None,
+            }],
+            proxy_port: 15721,
+            default_project_path: String::new(),
+            rectifier: RectifierConfig::default(),
+            optimizer: OptimizerConfig::default(),
+            skills_dir: String::new(),
+            tool_symlinks: std::collections::HashMap::new(),
+        };
+
+        let raw = serde_json::to_string(&config).expect("serialize");
+        // 磁盘上不再是明文，而是 ENC_V2 密文
+        assert!(raw.contains("ENC_V2:"), "api_key 应加密为密文，实际: {}", raw);
+        assert!(!raw.contains("sk-plaintext-key-12345"), "api_key 不得明文落盘");
+
+        let back: AiConfig = serde_json::from_str(&raw).expect("deserialize");
+        assert_eq!(back.providers[0].api_key, "sk-plaintext-key-12345", "内存中应还原明文");
+    }
+
+    #[test]
+    fn test_legacy_plaintext_key_stays_readable() {
+        // 旧版本明文 key（无 ENC_V2 前缀）读取后应保持原值，等待下次保存时加密
+        let legacy = r#"{"providers":[{"id":"p1","name":"P1","category":"provider","api_key":"sk-legacy","website":"","openai_url":"https://x/v1","anthropic_url":"","google_url":"","models":[],"active_model_id":null}],"proxy_port":15721,"default_project_path":"","rectifier":{},"optimizer":{},"skills_dir":""}"#;
+        let config: AiConfig = serde_json::from_str(legacy).expect("deserialize legacy");
+        assert_eq!(config.providers[0].api_key, "sk-legacy");
     }
 }

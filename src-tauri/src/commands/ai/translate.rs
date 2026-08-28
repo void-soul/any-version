@@ -96,11 +96,8 @@ fn new_entry_id(ts: u64) -> String {
 }
 
 fn persist_history(list: &[TranslateHistoryEntry]) {
-    if let Some(dir) = history_path().parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
     if let Ok(data) = serde_json::to_string_pretty(list) {
-        let _ = std::fs::write(history_path(), data);
+        let _ = crate::commands::config::atomic_write_file(&history_path(), data.as_bytes());
     }
 }
 
@@ -225,10 +222,8 @@ pub fn get_translate_config() -> TranslateConfig {
 
 #[tauri::command]
 pub fn save_translate_config(config: TranslateConfig) -> Result<(), String> {
-    let path = translate_config_path();
-    let _ = std::fs::create_dir_all(path.parent().unwrap());
     let data = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
-    std::fs::write(path, data).map_err(|e| e.to_string())
+    crate::commands::config::atomic_write_file(&translate_config_path(), data.as_bytes())
 }
 
 /// 从 AiConfig 解析出一个可用的 (provider, model_id)，按优先级：
