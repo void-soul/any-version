@@ -1281,7 +1281,7 @@ static HOTKEY_CMD_TX: Mutex<Option<std::sync::mpsc::Sender<Vec<(i32, Option<Stri
 
 /// 供前端上报当前激活模块（在 setup 中注册 listen 调用）。
 pub(crate) fn set_current_page(page: &str) {
-    let mut g = CURRENT_PAGE.lock().unwrap();
+    let mut g = CURRENT_PAGE.lock().unwrap_or_else(|e| e.into_inner());
     *g = page.to_string();
 }
 
@@ -1317,7 +1317,7 @@ pub fn register_global_hotkeys(
     // 确保单一常驻热键线程存在，并把注册命令发给它。
     // 注册/注销必须同线程，否则换快捷键时旧热键注销失败、新旧并存。
     let tx = {
-        let mut guard = HOTKEY_CMD_TX.lock().unwrap();
+        let mut guard = HOTKEY_CMD_TX.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_none() {
             let (tx, rx) = std::sync::mpsc::channel::<Vec<(i32, Option<String>, (u32, u32))>>();
             *guard = Some(tx.clone());
@@ -1442,7 +1442,7 @@ fn handle_hotkey_action(app: &AppHandle, module: &str) {
         return;
     };
     let is_focused = window.is_focused().unwrap_or(false);
-    let is_active_module = CURRENT_PAGE.lock().unwrap().as_str() == module;
+    let is_active_module = CURRENT_PAGE.lock().unwrap_or_else(|e| e.into_inner()).as_str() == module;
     // 是否将「隐藏窗口」：仅当窗口已激活且正处本模块时隐藏；其余情况都需唤起/切换。
     let will_hide = is_focused && is_active_module;
     // 若本次将「唤起/切换窗口」（而非隐藏），提前记录当前前台窗口，供剪贴板模块「一键粘贴」使用。

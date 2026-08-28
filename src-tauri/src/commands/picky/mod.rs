@@ -809,7 +809,7 @@ static PENDING_RESYNC: AtomicBool = AtomicBool::new(false);
 /// 内容变更后调用：记录变更时间并安排一次防抖同步。
 /// 连续变更只触发一次同步（距最后一次变更 3 秒后才执行）。
 pub fn schedule_auto_sync() {
-    *LAST_CHANGE.lock().unwrap() = Some(Instant::now());
+    *LAST_CHANGE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
     tauri::async_runtime::spawn(async {
         tokio::time::sleep(AUTO_SYNC_DEBOUNCE).await;
         // 防抖：睡眠期间有新变更则放弃本次，由最新变更的任务接手
