@@ -20,6 +20,8 @@ import {
   Send,
   Reply,
   Cloud,
+  List,
+  LayoutGrid,
 } from "lucide-react";
 
 // ─── 类型（camelCase，与后端 / Flutter 端一致） ───
@@ -115,6 +117,7 @@ export default function PickyPanel() {
   const [tab, setTab] = useState<Tab>("active");
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<"row" | "grid">("row");
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState<PickyBookmark | null>(null);
   const [tagFor, setTagFor] = useState<PickyBookmark | null>(null);
@@ -320,6 +323,27 @@ export default function PickyPanel() {
             className="glass-input pl-7 pr-2 py-1.5 text-xs bg-black/30 border border-white/10 rounded-lg w-52 focus:outline-none focus:border-[var(--module-accent)]/50"
           />
         </div>
+        {/* 视图切换：列表（一行一条简略） / 块状（一行多条信息块） */}
+        <div className="flex items-center gap-0.5 border border-white/10 rounded-lg p-0.5 flex-shrink-0">
+          <button
+            onClick={() => setViewMode("row")}
+            title="列表视图：一行一条，仅标题与操作"
+            className={`p-1.5 rounded-md transition cursor-pointer flex items-center ${
+              viewMode === "row" ? "bg-[var(--module-accent)]/20 text-[var(--module-accent)]" : "text-slate-500 hover:text-white hover:bg-white/10"
+            }`}
+          >
+            <List className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => setViewMode("grid")}
+            title="块状视图：一行多个信息块"
+            className={`p-1.5 rounded-md transition cursor-pointer flex items-center ${
+              viewMode === "grid" ? "bg-[var(--module-accent)]/20 text-[var(--module-accent)]" : "text-slate-500 hover:text-white hover:bg-white/10"
+            }`}
+          >
+            <LayoutGrid className="w-3.5 h-3.5" />
+          </button>
+        </div>
         <button
           onClick={() => setShowSync(true)}
           className="px-2.5 py-1.5 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition"
@@ -382,27 +406,53 @@ export default function PickyPanel() {
             </p>
           </div>
         ) : (
-          <div className="max-w-[1000px] mx-auto space-y-2.5">
-            {filtered.map((b) => (
-              <BookmarkCard
-                key={b.id}
-                bookmark={b}
-                tags={tagsOf(b.id)}
-                comments={commentsOf(b.id)}
-                expanded={expanded.has(b.id)}
-                onToggleExpand={() => toggleExpand(b.id)}
-                onOpen={() => openLink(b.url)}
-                onEdit={() => {
-                  setEditing(b);
-                  setShowAdd(true);
-                }}
-                onArchive={() => setRefined(b, !b.refined)}
-                onDelete={() => removeBookmark(b)}
-                onTags={() => setTagFor(b)}
-                onAddComment={(content, parentId) => addComment(b.id, content, parentId)}
-                onDeleteComment={removeComment}
-              />
-            ))}
+          <div
+            className={
+              viewMode === "row"
+                ? "flex flex-col gap-1.5"
+                : "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3"
+            }
+          >
+            {filtered.map((b) =>
+              viewMode === "row" ? (
+                <BookmarkRow
+                  key={b.id}
+                  bookmark={b}
+                  comments={commentsOf(b.id)}
+                  expanded={expanded.has(b.id)}
+                  onToggleExpand={() => toggleExpand(b.id)}
+                  onOpen={() => openLink(b.url)}
+                  onEdit={() => {
+                    setEditing(b);
+                    setShowAdd(true);
+                  }}
+                  onArchive={() => setRefined(b, !b.refined)}
+                  onDelete={() => removeBookmark(b)}
+                  onTags={() => setTagFor(b)}
+                  onAddComment={(content, parentId) => addComment(b.id, content, parentId)}
+                  onDeleteComment={removeComment}
+                />
+              ) : (
+                <BookmarkCard
+                  key={b.id}
+                  bookmark={b}
+                  tags={tagsOf(b.id)}
+                  comments={commentsOf(b.id)}
+                  expanded={expanded.has(b.id)}
+                  onToggleExpand={() => toggleExpand(b.id)}
+                  onOpen={() => openLink(b.url)}
+                  onEdit={() => {
+                    setEditing(b);
+                    setShowAdd(true);
+                  }}
+                  onArchive={() => setRefined(b, !b.refined)}
+                  onDelete={() => removeBookmark(b)}
+                  onTags={() => setTagFor(b)}
+                  onAddComment={(content, parentId) => addComment(b.id, content, parentId)}
+                  onDeleteComment={removeComment}
+                />
+              )
+            )}
           </div>
         )}
       </div>
@@ -508,19 +558,6 @@ function BookmarkCard({
   onAddComment: (content: string, parentId?: string) => void;
   onDeleteComment: (c: PickyComment) => void;
 }) {
-  const [commentText, setCommentText] = useState("");
-  const [replyTo, setReplyTo] = useState<PickyComment | null>(null);
-
-  const submitComment = () => {
-    if (!commentText.trim()) return;
-    onAddComment(commentText.trim(), replyTo?.id);
-    setCommentText("");
-    setReplyTo(null);
-  };
-
-  const topLevel = comments.filter((c) => !c.parentId);
-  const repliesOf = (id: string) => comments.filter((c) => c.parentId === id);
-
   return (
     <div
       className={`rounded-xl border p-3 transition ${
@@ -602,42 +639,152 @@ function BookmarkCard({
 
       {/* 评论区 */}
       {expanded && (
-        <div className="mt-3 pt-3 border-t border-white/5 space-y-2">
-          {comments.length === 0 && <p className="text-[10px] text-slate-600">还没有评论</p>}
-          {topLevel.map((c) => (
-            <div key={c.id} className="space-y-1.5">
-              <CommentRow comment={c} depth={0} onReply={() => setReplyTo(replyTo?.id === c.id ? null : c)} onDelete={() => onDeleteComment(c)} />
-              {repliesOf(c.id).map((r) => (
-                <CommentRow key={r.id} comment={r} depth={1} onDelete={() => onDeleteComment(r)} />
-              ))}
-            </div>
-          ))}
-          <div className="flex items-center gap-2 pt-1">
-            <input
-              value={commentText}
-              onChange={(e) => setCommentText(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submitComment()}
-              placeholder={replyTo ? `回复「${replyTo.content.slice(0, 20)}」…` : "写评论…"}
-              className="flex-1 glass-input px-2.5 py-1.5 text-[11px] bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-[var(--module-accent)]/50"
-            />
-            {replyTo && (
-              <button
-                onClick={() => setReplyTo(null)}
-                className="text-[10px] text-slate-500 hover:text-slate-300 cursor-pointer"
-              >
-                取消
-              </button>
-            )}
-            <button
-              onClick={submitComment}
-              disabled={!commentText.trim()}
-              className="p-1.5 rounded-lg bg-[var(--module-accent)]/80 text-white cursor-pointer hover:opacity-85 disabled:opacity-40 flex items-center"
-            >
-              <Send className="w-3 h-3" />
-            </button>
-          </div>
+        <div className="mt-3 pt-3 border-t border-white/5">
+          <CommentBlock comments={comments} onSubmit={onAddComment} onDelete={onDeleteComment} />
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── 列表视图：一行一条，仅标题 + 操作按钮（简洁紧凑） ───
+
+function BookmarkRow(props: {
+  bookmark: PickyBookmark;
+  comments: PickyComment[];
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onOpen: () => void;
+  onEdit: () => void;
+  onArchive: () => void;
+  onDelete: () => void;
+  onTags: () => void;
+  onAddComment: (content: string, parentId?: string) => void;
+  onDeleteComment: (c: PickyComment) => void;
+}) {
+  const {
+    bookmark: b,
+    comments,
+    expanded,
+    onToggleExpand,
+    onOpen,
+    onEdit,
+    onArchive,
+    onDelete,
+    onTags,
+    onAddComment,
+    onDeleteComment,
+  } = props;
+
+  return (
+    <div
+      className={`rounded-lg border px-2.5 py-1.5 transition ${
+        b.refined ? "bg-white/[0.02] border-white/5" : "bg-white/[0.03] border-white/10 hover:border-white/20"
+      }`}
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <div className="w-5 h-5 rounded bg-[var(--module-accent)]/10 border border-[var(--module-accent)]/20 flex items-center justify-center flex-shrink-0 overflow-hidden">
+          {b.faviconUrl ? (
+            <img src={b.faviconUrl} alt="" className="w-3.5 h-3.5 object-contain" />
+          ) : (
+            <Globe className="w-3 h-3 text-[var(--module-accent)]" />
+          )}
+        </div>
+        <span className="text-xs font-semibold text-white truncate flex-1 min-w-0" title={b.title}>
+          {b.title || "未命名"}
+        </span>
+        {b.refined && (
+          <span className="text-[8px] px-1.5 py-0.5 rounded bg-white/10 text-slate-400 flex-shrink-0">已归档</span>
+        )}
+        <div className="flex items-center gap-0.5 flex-shrink-0">
+          <IconBtn title="打开链接" onClick={onOpen}>
+            <ExternalLink className="w-3 h-3" />
+          </IconBtn>
+          <IconBtn title={expanded ? "收起评论" : `评论 (${comments.length})`} onClick={onToggleExpand} active={expanded}>
+            <MessageSquare className="w-3 h-3" />
+            <span className="text-[9px]">{comments.length > 0 ? comments.length : ""}</span>
+          </IconBtn>
+          <IconBtn title="标签" onClick={onTags}>
+            <Tag className="w-3 h-3" />
+          </IconBtn>
+          <IconBtn title={b.refined ? "取消归档（移回收藏）" : "归档（炼化）"} onClick={onArchive}>
+            {b.refined ? <ArchiveRestore className="w-3 h-3" /> : <Archive className="w-3 h-3" />}
+          </IconBtn>
+          <IconBtn title="编辑" onClick={onEdit}>
+            <Pencil className="w-3 h-3" />
+          </IconBtn>
+          <IconBtn title="删除" onClick={onDelete} danger>
+            <Trash2 className="w-3 h-3" />
+          </IconBtn>
+        </div>
+      </div>
+
+      {/* 评论区 */}
+      {expanded && (
+        <div className="mt-2 pt-2 border-t border-white/5">
+          <CommentBlock comments={comments} onSubmit={onAddComment} onDelete={onDeleteComment} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── 评论区块（列表 / 卡片视图共用） ───
+
+function CommentBlock({
+  comments,
+  onSubmit,
+  onDelete,
+}: {
+  comments: PickyComment[];
+  onSubmit: (content: string, parentId?: string) => void;
+  onDelete: (c: PickyComment) => void;
+}) {
+  const [commentText, setCommentText] = useState("");
+  const [replyTo, setReplyTo] = useState<PickyComment | null>(null);
+
+  const submitComment = () => {
+    if (!commentText.trim()) return;
+    onSubmit(commentText.trim(), replyTo?.id);
+    setCommentText("");
+    setReplyTo(null);
+  };
+
+  const topLevel = comments.filter((c) => !c.parentId);
+  const repliesOf = (id: string) => comments.filter((c) => c.parentId === id);
+
+  return (
+    <div className="space-y-2">
+      {comments.length === 0 && <p className="text-[10px] text-slate-600">还没有评论</p>}
+      {topLevel.map((c) => (
+        <div key={c.id} className="space-y-1.5">
+          <CommentRow comment={c} depth={0} onReply={() => setReplyTo(replyTo?.id === c.id ? null : c)} onDelete={() => onDelete(c)} />
+          {repliesOf(c.id).map((r) => (
+            <CommentRow key={r.id} comment={r} depth={1} onDelete={() => onDelete(r)} />
+          ))}
+        </div>
+      ))}
+      <div className="flex items-center gap-2 pt-0.5">
+        <input
+          value={commentText}
+          onChange={(e) => setCommentText(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && submitComment()}
+          placeholder={replyTo ? `回复「${replyTo.content.slice(0, 20)}」…` : "写评论…"}
+          className="flex-1 glass-input px-2.5 py-1.5 text-[11px] bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-[var(--module-accent)]/50"
+        />
+        {replyTo && (
+          <button onClick={() => setReplyTo(null)} className="text-[10px] text-slate-500 hover:text-slate-300 cursor-pointer">
+            取消
+          </button>
+        )}
+        <button
+          onClick={submitComment}
+          disabled={!commentText.trim()}
+          className="p-1.5 rounded-lg bg-[var(--module-accent)]/80 text-white cursor-pointer hover:opacity-85 disabled:opacity-40 flex items-center"
+        >
+          <Send className="w-3 h-3" />
+        </button>
+      </div>
     </div>
   );
 }
