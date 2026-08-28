@@ -269,9 +269,10 @@ fn migrate_legacy(dir: &Path, app: &mut AppConfig, profiles: &mut ProfileConfig)
                 age_secret_key: None,
                 url: None,
                 auth_token: None,
-                user_agent: None,
+user_agent: None,
                 use_proxy: false,
                 auto_update: false,
+                skip_verify: false,
                 update_interval: 86400,
                 update_timeout: 30,
                 override_ids: vec![],
@@ -397,6 +398,7 @@ pub fn init_state() -> MihomoState {
             user_agent: None,
             use_proxy: false,
             auto_update: false,
+            skip_verify: false,
             update_interval: 86400,
             update_timeout: 30,
             override_ids: vec![],
@@ -1043,11 +1045,10 @@ pub async fn mihomo_change_current_profile(
 }
 #[tauri::command]
 pub async fn mihomo_validate_subscription(url: String) -> Result<SubValidation, String> {
-    // F7 修复：加超时。部分机场订阅站 TLS 证书链不完整，容错校验避免误报失败；
-    // 订阅 URL 为用户主动提供，属信任来源，可接受跳过证书校验。
+    // 默认校验 TLS 证书（弱证书容错通过，不关闭校验）；个别证书链不完整的订阅站
+    // 可在配置里为对应订阅开启「跳过证书校验」豁免。
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
-        .danger_accept_invalid_certs(true)
         .build()
         .map_err(|e| e.to_string())?;
     let resp = client
@@ -1212,6 +1213,7 @@ pub async fn mihomo_import_subscription(
         user_agent: None,
         use_proxy: false,
         auto_update: false,
+        skip_verify: false,
         update_interval: 86400,
         update_timeout: 30,
             override_ids: vec![],
@@ -1260,6 +1262,7 @@ pub fn mihomo_import_file(
         user_agent: None,
         use_proxy: false,
         auto_update: false,
+        skip_verify: false,
         update_interval: 86400,
         update_timeout: 30,
             override_ids: vec![],
@@ -1297,8 +1300,9 @@ pub async fn mihomo_update_subscription(
     let url = item.url.clone().ok_or("该配置没有订阅地址（url）")?;
     let mut client_builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(item.update_timeout.max(5)))
-        // 部分机场订阅站 TLS 证书链不完整，容错校验避免误报失败（订阅 URL 为用户主动提供）
-        .danger_accept_invalid_certs(true);
+        // 默认校验 TLS；仅当该订阅显式开启「跳过证书校验」时才豁免，
+        // 避免订阅 token / 配置在网络上被中间人替换或窃取。
+        .danger_accept_invalid_certs(item.skip_verify);
     // 使用代理更新开关：走本地 mihomo mixed-port，实现"绕墙更新订阅"
     if item.use_proxy {
         if let Some(port) = get_mixed_port(&state) {

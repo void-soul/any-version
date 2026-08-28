@@ -22,6 +22,7 @@ type ProfileItem = {
   user_agent?: string | null;
   age_secret_key?: string | null;
   use_proxy: boolean;
+  skip_verify: boolean;
   auto_update: boolean;
   update_interval: number;
   update_timeout: number;
@@ -676,6 +677,7 @@ function EditInfoModal({ item, overrides, onClose, onSaved }: any) {
         <div className="col-span-2 flex items-center gap-6 pt-1">
           <Toggle label="自动更新" v={!!v.auto_update} onChange={(b) => set("auto_update", b)} />
           <Toggle label="使用代理更新" v={!!v.use_proxy} onChange={(b) => set("use_proxy", b)} />
+          <Toggle label="跳过证书校验（仅本订阅）" v={!!v.skip_verify} onChange={(b) => set("skip_verify", b)} />
         </div>
         <div className="col-span-2">
           <label className={labelCls}>应用覆写</label>

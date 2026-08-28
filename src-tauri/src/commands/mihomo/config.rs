@@ -184,6 +184,9 @@ pub struct ProfileItem {
     pub use_proxy: bool, // 使用代理更新
     #[serde(default = "default_false")]
     pub auto_update: bool, // 自动更新
+    /// 订阅下载时跳过 TLS 证书校验（仅本配置生效；默认校验，避免 MITM 替换配置）
+    #[serde(default = "default_false")]
+    pub skip_verify: bool,
     #[serde(default = "default_interval")]
     pub update_interval: u64, // 更新间隔（秒）
     #[serde(default = "default_update_timeout")]
@@ -251,6 +254,7 @@ impl Default for ProfileItem {
             user_agent: None,
             use_proxy: false,
             auto_update: false,
+            skip_verify: false,
             update_interval: default_interval(),
             update_timeout: default_update_timeout(),
             override_ids: Vec::new(),
