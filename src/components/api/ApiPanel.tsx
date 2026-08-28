@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   Send, Play, Plus, Trash2, Save, FolderPlus, FilePlus2, Settings2,
-  ChevronDown, ChevronRight, Download, Upload, FlaskConical, Gauge,
+  ChevronDown, ChevronLeft, ChevronRight, Download, Upload, FlaskConical, Gauge, Database,
   BookOpen, ListChecks, Copy, Check, Loader2, Pencil, Folder,
   KeyRound, Cookie, SlidersHorizontal, FileText, TestTube2, Braces,
   Link2, StickyNote, Star, History, Eraser, AlertTriangle, FolderInput, Lock, X,
@@ -174,6 +174,14 @@ export default function ApiPanel() {
   const [tplFocusSection, setTplFocusSection] = useState<"headers" | "params" | "body" | null>(null);
   const pollRef = useRef<number | null>(null);
 
+  // 侧栏：可拖动宽度 / 收起 / 接口历史选项卡 / 项目环境气泡切换
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarW, setSidebarW] = useState(240);
+  const sbResizeRef = useRef<{ moved: boolean }>({ moved: false });
+  const [sideTab, setSideTab] = useState<"tree" | "history">("tree");
+  const [projectPop, setProjectPop] = useState(false);
+  const [envPop, setEnvPop] = useState(false);
+
   // 当前 draft 中继承自项目模板的条目（按来源分组），并对比项目最新模板判断是否待同步
   const tplItems = useMemo(() => {
     if (!draft) return { total: 0, outOfSync: 0, groups: [] as { label: string; items: (KeyValueItem & { synced: boolean })[] }[] };
@@ -217,6 +225,15 @@ export default function ApiPanel() {
     const env = envs.find((e) => e.id === activeEnvId);
     return env?.variables ?? {};
   }, [envs, activeEnvId]);
+
+  const currentProject = useMemo(
+    () => projects.find((p) => p.id === activeProjectId) ?? null,
+    [projects, activeProjectId]
+  );
+  const activeEnv = useMemo(
+    () => envs.find((e) => e.id === activeEnvId) ?? null,
+    [envs, activeEnvId]
+  );
 
 
   // 初始化
@@ -811,123 +828,231 @@ export default function ApiPanel() {
   ) : null;
 
   return (
-    <div className="h-full flex" style={{ ["--module-accent" as string]: "#06b6d4" }}>
-      {/* 左侧栏 */}
-      <div className="w-60 shrink-0 border-r border-white/10 flex flex-col bg-black/20">
-        <div className="p-2 border-b border-white/10">
-          <div className="flex items-center justify-between px-1 pb-1.5">
-            <span className="text-[11px] font-semibold text-slate-400">API 项目</span>
-            <button onClick={openCreateProject} className="p-1 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer" title="新建项目">
-              <Plus className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          <div className="space-y-0.5">
-            {projects.map((p) => (
-              <div
-                key={p.id}
-                onClick={() => setActiveProjectId(p.id)}
-                className={`group flex items-center gap-1.5 rounded-md px-2 py-1 cursor-pointer ${activeProjectId === p.id ? "bg-[color-mix(in_srgb,var(--module-accent)_15%,transparent)] text-white" : "text-slate-300 hover:bg-white/5"}`}
-              >
-                <FlaskConical className="w-3.5 h-3.5 shrink-0" style={{ color: activeProjectId === p.id ? ACCENT : undefined }} />
-                <span className="flex-1 text-xs truncate" title={p.description || undefined}>{p.name}</span>
+    <div className="h-full flex relative" style={{ ["--module-accent" as string]: "#06b6d4" }}>
+      {/* 左侧栏（可拖动改宽度 / 收起） */}
+      {!sidebarCollapsed && (
+        <aside className="relative shrink-0 border-r border-white/10 bg-black/20 flex flex-col group/sb" style={{ width: sidebarW }}>
+          {/* 顶部：项目选择器（气泡切换）+ 编辑/删除/新建 */}
+          <div className="p-2 border-b border-white/10">
+            <div className="flex items-center gap-1">
+              <div className="relative flex-1 min-w-0">
                 <button
-                  onClick={(e) => { e.stopPropagation(); openEditProject(p); }}
-                  className="hidden group-hover:block p-0.5 text-slate-600 hover:text-[var(--module-accent)] cursor-pointer"
-                  title="编辑项目"
+                  onClick={() => { setProjectPop((v) => !v); setEnvPop(false); }}
+                  className="flex w-full items-center gap-1.5 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs text-slate-200 hover:border-white/25 cursor-pointer"
+                  title="点击切换项目"
                 >
-                  <Pencil className="w-3 h-3" />
+                  <FlaskConical className="w-3.5 h-3.5 shrink-0" style={{ color: ACCENT }} />
+                  <span className="flex-1 truncate text-left">{currentProject?.name ?? "选择项目"}</span>
+                  <ChevronDown className="w-3 h-3 shrink-0 text-slate-500" />
                 </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); deleteProject(p.id); }}
-                  className="hidden group-hover:block p-0.5 text-slate-600 hover:text-rose-400 cursor-pointer"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
+                {projectPop && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={() => setProjectPop(false)} />
+                    <div className="absolute left-0 top-full z-40 mt-1.5 w-56 overflow-hidden rounded-xl border border-white/10 shadow-2xl" style={{ background: "linear-gradient(160deg, rgba(13,21,36,0.99), rgba(13,21,36,0.95))" }}>
+                      <div className="flex items-center justify-between border-b border-white/10 px-3 py-1.5">
+                        <span className="text-[10px] font-semibold text-slate-500">API 项目</span>
+                        <button onClick={openCreateProject} className="p-0.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer" title="新建项目">
+                          <Plus className="w-3 h-3" />
+                        </button>
+                      </div>
+                      <div className="max-h-56 overflow-y-auto p-1 space-y-0.5">
+                        {projects.length === 0 && <div className="px-2 py-1 text-[10px] text-slate-600">暂无项目</div>}
+                        {projects.map((p) => (
+                          <div
+                            key={p.id}
+                            onClick={() => { setActiveProjectId(p.id); setProjectPop(false); }}
+                            className={`flex items-center gap-1.5 rounded-md px-2 py-1 cursor-pointer ${p.id === activeProjectId ? "bg-[color-mix(in_srgb,var(--module-accent)_15%,transparent)] text-white" : "text-slate-300 hover:bg-white/5"}`}
+                          >
+                            <FlaskConical className="w-3 h-3 shrink-0" style={{ color: p.id === activeProjectId ? ACCENT : undefined }} />
+                            <span className="flex-1 text-xs truncate" title={p.description || undefined}>{p.name}</span>
+                            {p.id === activeProjectId && (
+                              <span className="rounded-full px-1.5 py-px text-[9px] font-semibold" style={{ background: "color-mix(in srgb, var(--module-accent) 25%, transparent)", color: ACCENT }}>当前</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
-            ))}
-            {projects.length === 0 && <div className="text-[10px] text-slate-600 px-2 py-1">暂无项目，点击 + 新建</div>}
-          </div>
-        </div>
-        {activeProjectId && (
-          <>
-            {/* 变量集合快速切换 */}
-            <div className="px-2 pt-2">
-              <div className="flex items-center justify-between px-1 pb-1">
-                <span className="text-[11px] font-semibold text-slate-400">变量集合</span>
-                <button onClick={() => setEnvModal(true)} className="p-1 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer" title="管理变量集合">
-                  <Settings2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {envs.map((e) => (
-                  <button
-                    key={e.id}
-                    onClick={() => { setActiveEnvId(e.id); invoke("api_set_active_env", { projectId: activeProjectId, envId: e.id }); }}
-                    className={`text-[10px] px-2 py-0.5 rounded-full border cursor-pointer transition-colors ${e.id === activeEnvId ? "border-[var(--module-accent)]/70 text-white" : "border-white/10 text-slate-400 hover:border-white/30"}`}
-                    style={e.id === activeEnvId ? { background: "color-mix(in srgb, var(--module-accent) 18%, transparent)" } : undefined}
-                  >
-                    {e.name}
+              {currentProject && (
+                <>
+                  <button onClick={() => openEditProject(currentProject)} className="p-1.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer" title="编辑项目">
+                    <Pencil className="w-3.5 h-3.5" />
                   </button>
-                ))}
-              </div>
+                  <button onClick={() => deleteProject(currentProject.id)} className="p-1.5 text-slate-500 hover:text-rose-400 cursor-pointer" title="删除项目">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              )}
+              <button onClick={openCreateProject} className="p-1.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer" title="新建项目">
+                <Plus className="w-3.5 h-3.5" />
+              </button>
             </div>
-            <div className="flex-1 overflow-y-auto p-2 mt-1">{renderTree()}</div>
-            {/* 请求历史 */}
-            <div className="border-t border-white/10">
-              <div className="flex items-center gap-1 px-2 pt-1.5 pb-0.5">
-                <History className="w-3 h-3 text-slate-500" />
-                <span className="text-[10px] font-semibold text-slate-500">请求历史</span>
-                {history.length > 0 && (
+          </div>
+
+          {currentProject ? (
+            <>
+              {/* 环境切换（气泡）+ 变量维护 */}
+              <div className="px-2 pt-2">
+                <div className="flex items-center gap-1">
+                  <div className="relative flex-1 min-w-0">
+                    <button
+                      onClick={() => { setEnvPop((v) => !v); setProjectPop(false); }}
+                      className="flex w-full items-center gap-1.5 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-slate-200 hover:border-white/25 cursor-pointer"
+                      title="点击切换变量集合"
+                    >
+                      <Database className="w-3 h-3 shrink-0 text-slate-500" />
+                      <span className="flex-1 truncate text-left">{activeEnv?.name ?? "无环境"}</span>
+                      <ChevronDown className="w-3 h-3 shrink-0 text-slate-500" />
+                    </button>
+                    {envPop && (
+                      <>
+                        <div className="fixed inset-0 z-30" onClick={() => setEnvPop(false)} />
+                        <div className="absolute left-0 top-full z-40 mt-1.5 min-w-full w-max max-w-[260px] overflow-hidden rounded-xl border border-white/10 shadow-2xl" style={{ background: "linear-gradient(160deg, rgba(13,21,36,0.99), rgba(13,21,36,0.95))" }}>
+                          <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-500">变量集合（环境）· 点击切换</div>
+                          <div className="max-h-52 overflow-y-auto p-1 space-y-0.5">
+                            {envs.length === 0 && <div className="px-2 py-1 text-[10px] text-slate-600">暂无环境，点「变量维护」新建</div>}
+                            {envs.map((e) => (
+                              <button
+                                key={e.id}
+                                onClick={() => { setActiveEnvId(e.id); setEnvPop(false); invoke("api_set_active_env", { projectId: activeProjectId, envId: e.id }); }}
+                                className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-left cursor-pointer transition-colors ${e.id === activeEnvId ? "bg-[color-mix(in_srgb,var(--module-accent)_15%,transparent)] text-white" : "text-slate-300 hover:bg-white/5"}`}
+                              >
+                                {e.id === activeEnvId && <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "var(--module-accent)" }} />}
+                                <span className={`flex-1 truncate ${e.id === activeEnvId ? "" : "pl-3"}`}>{e.name}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <button onClick={() => setEnvModal(true)} className="flex items-center gap-1 rounded-md border border-white/10 bg-black/30 px-1.5 py-1.5 text-[10px] text-slate-400 hover:text-white hover:border-white/25 cursor-pointer" title="管理变量集合">
+                    <Settings2 className="w-3 h-3" />
+                    变量维护
+                  </button>
+                </div>
+              </div>
+
+              {/* 接口 / 历史 选项卡（共享空间，各自主滚动，不会互相挤压） */}
+              <div className="flex items-center gap-0.5 px-2 pt-2">
+                <button
+                  onClick={() => setSideTab("tree")}
+                  className={`flex flex-1 items-center gap-1 rounded-md px-2 py-1 text-[11px] cursor-pointer transition-colors ${sideTab === "tree" ? "bg-[color-mix(in_srgb,var(--module-accent)_14%,transparent)] text-white" : "text-slate-400 hover:bg-white/5 hover:text-slate-300"}`}
+                >
+                  <Braces className="w-3 h-3" style={sideTab === "tree" ? { color: ACCENT } : undefined} />
+                  接口
+                  <span className="ml-auto text-[9px] tabular-nums text-slate-500">{endpoints.length}</span>
+                </button>
+                <button
+                  onClick={() => setSideTab("history")}
+                  className={`flex flex-1 items-center gap-1 rounded-md px-2 py-1 text-[11px] cursor-pointer transition-colors ${sideTab === "history" ? "bg-[color-mix(in_srgb,var(--module-accent)_14%,transparent)] text-white" : "text-slate-400 hover:bg-white/5 hover:text-slate-300"}`}
+                >
+                  <History className="w-3 h-3" style={sideTab === "history" ? { color: ACCENT } : undefined} />
+                  历史
+                  <span className="ml-auto text-[9px] tabular-nums text-slate-500">{history.length}</span>
+                </button>
+                {sideTab === "history" && history.length > 0 && (
                   <button
                     onClick={async () => {
                       if (!window.confirm("清空该项目全部请求历史？")) return;
                       await invoke("api_clear_history", { projectId: activeProjectId });
                       setHistory([]);
                     }}
-                    className="ml-auto p-0.5 text-slate-600 hover:text-rose-400 cursor-pointer"
+                    className="p-1 text-slate-600 hover:text-rose-400 cursor-pointer"
                     title="清空历史"
                   >
                     <Eraser className="w-3 h-3" />
                   </button>
                 )}
               </div>
-              <div className="max-h-44 overflow-y-auto px-1.5 pb-1.5 space-y-0.5">
-                {history.slice(0, 20).map((h) => {
-                  const Icon = methodIcon(h.method);
-                  return (
-                    <div
-                      key={h.id}
-                      onClick={() => replayHistory(h)}
-                      className="group flex items-center gap-1.5 rounded-md px-1.5 py-1 hover:bg-white/5 cursor-pointer"
-                      title={`${h.method} ${h.url}\n${h.created_at.replace("T", " ").slice(0, 19)}`}
-                    >
-                      <Icon className={`w-3 h-3 shrink-0 ${h.method === "GET" ? "text-emerald-400" : h.method === "POST" ? "text-amber-400" : h.method === "DELETE" ? "text-rose-400" : "text-slate-400"}`} />
-                      <span className="flex-1 text-[11px] text-slate-400 truncate">{h.name || h.url}</span>
-                    </div>
-                  );
-                })}
-                {history.length === 0 && <div className="text-[10px] text-slate-600 px-1.5 py-1">发送请求后自动记录</div>}
+
+              {/* 内容区：接口树 / 历史 */}
+              <div className="flex-1 min-h-0 overflow-y-auto p-2 mt-1">
+                {sideTab === "tree" ? (
+                  renderTree()
+                ) : (
+                  <div className="space-y-0.5">
+                    {history.slice(0, 50).map((h) => {
+                      const Icon = methodIcon(h.method);
+                      return (
+                        <button
+                          key={h.id}
+                          onClick={() => replayHistory(h)}
+                          className="group flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left hover:bg-white/5 cursor-pointer"
+                          title={`${h.method} ${h.url}\n${h.created_at.replace("T", " ").slice(0, 19)}`}
+                        >
+                          <Icon className={`w-3 h-3 shrink-0 ${h.method === "GET" ? "text-emerald-400" : h.method === "POST" ? "text-amber-400" : h.method === "DELETE" ? "text-rose-400" : "text-slate-400"}`} />
+                          <span className="flex-1 text-[11px] text-slate-400 truncate">{h.name || h.url}</span>
+                        </button>
+                      );
+                    })}
+                    {history.length === 0 && <div className="text-[10px] text-slate-600 px-1.5 py-1">发送请求后自动记录</div>}
+                  </div>
+                )}
               </div>
-            </div>
-            <div className="p-2 border-t border-white/10 space-y-1">
-              <button onClick={openCreateModule} className="flex w-full items-center gap-1.5 px-2 py-1 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 rounded-md cursor-pointer">
-                <FolderPlus className="w-3.5 h-3.5" /> 新建模块
-              </button>
-              <button onClick={() => createEndpoint(null)} className="flex w-full items-center gap-1.5 px-2 py-1 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 rounded-md cursor-pointer">
-                <FilePlus2 className="w-3.5 h-3.5" /> 新建接口
-              </button>
-              <div className="flex gap-1 pt-1">
-                <button onClick={() => setImportModal(true)} className="flex flex-1 items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
-                  <Upload className="w-3 h-3" /> 导入
+
+              {/* 底部工具栏 */}
+              <div className="p-2 border-t border-white/10 space-y-1">
+                <button onClick={openCreateModule} className="flex w-full items-center gap-1.5 px-2 py-1 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 rounded-md cursor-pointer">
+                  <FolderPlus className="w-3.5 h-3.5" /> 新建模块
                 </button>
-                <button onClick={exportPostman} className="flex flex-1 items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
-                  <Download className="w-3 h-3" /> 导出
+                <button onClick={() => createEndpoint(null)} className="flex w-full items-center gap-1.5 px-2 py-1 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 rounded-md cursor-pointer">
+                  <FilePlus2 className="w-3.5 h-3.5" /> 新建接口
                 </button>
+                <div className="flex gap-1 pt-1">
+                  <button onClick={() => setImportModal(true)} className="flex flex-1 items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
+                    <Upload className="w-3 h-3" /> 导入
+                  </button>
+                  <button onClick={exportPostman} className="flex flex-1 items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
+                    <Download className="w-3 h-3" /> 导出
+                  </button>
+                </div>
               </div>
+            </>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-[11px] text-slate-600 px-4 text-center">
+              暂无项目，点击上方「+」新建
             </div>
-          </>
-        )}
-      </div>
+          )}
+
+          {/* 宽度拖拽把手 + 收起按钮（侧边栏右侧） */}
+          <div
+            className="absolute -right-1 top-0 z-10 flex h-full w-2.5 cursor-col-resize items-center justify-center hover:bg-white/[0.06]"
+            title="拖动调整宽度"
+            onMouseDown={(e) => {
+              if (e.button !== 0) return;
+              e.preventDefault();
+              sbResizeRef.current.moved = false;
+              const startX = e.clientX; const startW = sidebarW;
+              const onMove = (ev: MouseEvent) => { if (Math.abs(ev.clientX - startX) > 2) sbResizeRef.current.moved = true; setSidebarW(Math.min(460, Math.max(170, startW + (ev.clientX - startX)))); };
+              const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+              window.addEventListener("mousemove", onMove);
+              window.addEventListener("mouseup", onUp);
+            }}
+          >
+            <button
+              type="button"
+              className="flex h-6 w-2.5 items-center justify-center rounded-l bg-slate-800/80 text-slate-400 opacity-0 transition group-hover/sb:opacity-100 pointer-events-none group-hover/sb:pointer-events-auto hover:text-white cursor-pointer"
+              title="收起侧栏"
+              onClick={(e) => { e.stopPropagation(); if (!sbResizeRef.current.moved) setSidebarCollapsed(true); }}
+            >
+              <ChevronLeft className="h-3 w-3" />
+            </button>
+          </div>
+        </aside>
+      )}
+      {sidebarCollapsed && (
+        <button
+          type="button"
+          className="absolute left-2 top-2 z-20 inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/10 bg-slate-900/90 text-slate-300 shadow-lg transition hover:text-white cursor-pointer"
+          onClick={() => setSidebarCollapsed(false)}
+          title="展开侧栏"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      )}
 
       {/* 主区域 */}
       {draft ? (
