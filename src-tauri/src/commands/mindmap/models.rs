@@ -9,6 +9,8 @@ pub struct MindmapFolder {
     pub name: String,
     pub sort_order: i64,
     pub document_count: usize,
+    #[serde(default)]
+    pub parent_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -115,6 +117,8 @@ pub struct UpdateDocumentInput {
 #[serde(rename_all = "camelCase")]
 pub struct CreateFolderInput {
     pub name: String,
+    #[serde(default)]
+    pub folder_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +133,13 @@ pub struct UpdateFolderInput {
 pub struct MoveDocumentInput {
     pub document_id: String,
     pub folder_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveFolderInput {
+    pub folder_id: String,
+    pub parent_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

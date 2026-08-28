@@ -841,6 +841,7 @@ pub fn run() {
                 commands::mindmap::mm_create_folder,
                 commands::mindmap::mm_update_folder,
                 commands::mindmap::mm_delete_folder,
+                commands::mindmap::mm_move_folder,
                 commands::mindmap::mm_move_document,
                 commands::mindmap::mm_update_background_texture,
                 commands::mindmap::mm_upsert_node,

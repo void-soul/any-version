@@ -7,6 +7,7 @@ export interface MindmapFolder {
   name: string;
   sortOrder: number;
   documentCount: number;
+  parentId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -139,8 +140,14 @@ export interface MoveDocumentInput {
   folderId: string | null;
 }
 
+export interface MoveFolderInput {
+  folderId: string;
+  parentId: string | null;
+}
+
 export interface CreateFolderInput {
   name: string;
+  parentId?: string | null;
 }
 
 export interface UpdateFolderInput {
@@ -162,6 +169,7 @@ export const mmApi = {
   createFolder: (i: CreateFolderInput) => invoke<MindmapFolder>("mm_create_folder", { input: i }),
   updateFolder: (i: UpdateFolderInput) => invoke<void>("mm_update_folder", { input: i }),
   deleteFolder: (id: string) => invoke<void>("mm_delete_folder", { id }),
+  moveFolder: (i: MoveFolderInput) => invoke<void>("mm_move_folder", { input: i }),
   moveDocument: (i: MoveDocumentInput) => invoke<void>("mm_move_document", { input: i }),
   updateBackgroundTexture: (documentId: string, texture: string) => invoke<void>("mm_update_background_texture", { documentId, texture }),
 

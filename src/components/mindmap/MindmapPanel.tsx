@@ -11,7 +11,7 @@ import { MindmapMarkdown } from "./MindmapMarkdown";
 import {
   AlertTriangle, Brain, Circle, File, Folder, FolderOpen, LayoutGrid, Lightbulb, Loader2, Lock, Puzzle,
   Route, ScrollText, Server, Settings, Sparkles, StickyNote, Image, Trash2, X, Plus, Pencil, Eye, Columns,
-  ChevronDown, ChevronRight, FolderPlus, Search, Maximize2, Minimize2, GripVertical, Code2, FileText, ListTree, Palette, RotateCcw, RotateCw,
+  ChevronDown, ChevronRight, ChevronLeft, FolderPlus, Search, Maximize2, Minimize2, GripVertical, Code2, FileText, ListTree, Palette, RotateCcw, RotateCw,
 } from "lucide-react";
 import type { AiConfig } from "../ai/types";
 import { DocumentFull, MindmapDocument, MindmapFolder, MindmapNode, MindmapSticker, PositionInput, kindColor, mmApi } from "./types";
@@ -194,6 +194,25 @@ const StickerFlowNode = memo(function StickerFlowNode({ data }: NodeProps<Node<S
     </div>
   </div>);
 });
+
+// ════════════ 通用确认弹窗（强调/标题色由调用方按模块主题传入，不写死固定色）════════════
+
+function ConfirmModal({ title, message, accent, confirmText = "删除", onConfirm, onClose }: { title: string; message: string; accent: string; confirmText?: string; onConfirm: () => void; onClose: () => void }) {
+  return createPortal(
+    <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]" onClick={onClose}>
+      <div className="w-[360px] overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
+          <AlertTriangle className="h-4 w-4 shrink-0" style={{ color: accent }} />
+          <h3 className="text-sm font-semibold text-white">{title}</h3>
+        </div>
+        <div className="px-4 py-3 text-[11px] leading-5 text-slate-300">{message}</div>
+        <div className="flex justify-end gap-2 px-4 pb-4">
+          <button type="button" className="rounded-md border border-white/10 bg-white/[0.05] px-4 py-1.5 text-[11px] text-slate-300 hover:bg-white/10 hover:text-white" onClick={onClose}>取消</button>
+          <button type="button" className="rounded-md px-4 py-1.5 text-[11px] font-semibold text-white" style={{ backgroundColor: "#ef4444", boxShadow: `0 0 14px ${accent}66` }} onClick={onConfirm}>{confirmText}</button>
+        </div>
+      </div>
+    </div>, document.body);
+}
 
 // ════════════ 自动布局 ════════════
 
@@ -974,11 +993,48 @@ function formatTime(v: string): string {
   return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(d).replace(/\//g, "-");
 }
 
+// ─── 文件夹树：扁平列表 → 层级（支持拖拽整理） ───
+
+interface FolderNode {
+  folder: MindmapFolder;
+  children: FolderNode[];
+}
+
+function buildChildren(folders: MindmapFolder[], parentId: string | null): FolderNode[] {
+  return folders
+    .filter((f) => (f.parentId ?? null) === parentId)
+    .map((f) => ({ folder: f, children: buildChildren(folders, f.id) }));
+}
+
+/** candidateId 是否位于 id 的子树（后代）中 */
+function isFolderDescendant(folders: MindmapFolder[], id: string, candidateId: string): boolean {
+  const children = folders.filter((f) => f.parentId === id);
+  return children.some((c) => c.id === candidateId || isFolderDescendant(folders, c.id, candidateId));
+}
+
+/** 从根到 activeId 的路径（不含「全部文档」占位） */
+function getFolderPath(folders: MindmapFolder[], activeId: string | null): MindmapFolder[] {
+  if (!activeId) return [];
+  const chain: MindmapFolder[] = [];
+  let cur = folders.find((f) => f.id === activeId) ?? null;
+  while (cur) {
+    const c = cur;
+    chain.unshift(c);
+    cur = c.parentId ? (folders.find((f) => f.id === c.parentId) ?? null) : null;
+  }
+  return chain;
+}
+
 export default function MindmapPanel() {
   const [docs, setDocs] = useState<MindmapDocument[]>([]);
   const [folders, setFolders] = useState<MindmapFolder[]>([]);
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  // 跟随鼠标的拖拽浮层状态（自定义 pointer 拖拽；绕开 HTML5 DnD 在 WebView2 起拖/光标问题）
+  const [ghost, setGhost] = useState<{ kind: "doc" | "folder"; name: string; x: number; y: number; ok: boolean } | null>(null);
+  // 拖拽会话：按下即记录候选，移动超过阈值才确认为拖动
+  const dragHandleRef = useRef<{ kind: "doc" | "folder"; id: string; name: string; startX: number; startY: number; active: boolean } | null>(null);
   const [config, setConfig] = useState<AiConfig | null>(null);
   const [providerId, setProviderId] = useState<string>("");
   const [modelId, setModelId] = useState<string>("");
@@ -989,6 +1045,8 @@ export default function MindmapPanel() {
   const [showFolderCreate, setShowFolderCreate] = useState(false);
   const [editingFolder, setEditingFolder] = useState<MindmapFolder | null>(null);
   const [folderName, setFolderName] = useState("");
+  const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
+  const [renameDocName, setRenameDocName] = useState("");
   const [showAi, setShowAi] = useState<"project" | "text" | null>(null);
   const [textInput, setTextInput] = useState("");
   const [textTitle, setTextTitle] = useState("");
@@ -996,6 +1054,10 @@ export default function MindmapPanel() {
   const [aiLoading, setAiLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarW, setSidebarW] = useState(260);
+  const [confirmState, setConfirmState] = useState<{ title: string; message: string; action: () => void } | null>(null);
+  // 侧栏宽度拖拽期间是否发生了位移（用于区分「点击收起」与「拖动调宽」）
+  const sbResizeRef = useRef<{ moved: boolean }>({ moved: false });
 
   const flash = useCallback((m: string) => { setNotice(m); window.setTimeout(() => setNotice(""), 2600); }, []);
 
@@ -1098,6 +1160,20 @@ export default function MindmapPanel() {
 
   const providers = useMemo(() => (config?.providers ?? []).filter(p => p.api_key && p.openai_url), [config]);
 
+  // AI 导入入口：无当前文档时先自动新建空白文档承载导入结果（可导入并新建）
+  const openAiImport = useCallback(async (kind: "project" | "text") => {
+    if (!full) {
+      try {
+        const doc = await mmApi.create({ name: kind === "project" ? "AI 项目分析" : "AI 需求导入", description: "", sourceType: kind === "project" ? "ai_project" : "ai_text", folderId: null });
+        setDocs(prev => [doc, ...prev]);
+        const f = await mmApi.load(doc.id);
+        if (f) setFull(f);
+        void refreshFolders();
+      } catch (e) { flash(String(e)); return; }
+    }
+    setShowAi(kind);
+  }, [full, flash, refreshFolders]);
+
   const loadDocument = useCallback(async (id: string) => {
     setError("");
     try {
@@ -1118,19 +1194,29 @@ export default function MindmapPanel() {
     } catch (e) { flash(String(e)); }
   }, [flash, refreshFolders]);
 
-  const removeDoc = useCallback(async (id: string) => {
-    if (!confirm("确定删除此思维导图？")) return;
+  const removeDoc = useCallback((id: string, name: string) => {
+    setConfirmState({ title: "删除思维导图", message: `确定删除「${name}」？此操作不可撤销。`, action: () => void executeRemoveDoc(id) });
+  }, []);
+
+  const executeRemoveDoc = useCallback(async (id: string) => {
+    setConfirmState(null);
     try { await mmApi.remove(id); setDocs(prev => prev.filter(d => d.id !== id)); if (full?.document.id === id) setFull(null); refreshFolders(); } catch (e) { flash(String(e)); }
   }, [full, flash]);
 
   const createFolder = useCallback(async () => {
     if (!folderName.trim()) return;
     try {
-      await mmApi.createFolder({ name: folderName.trim() });
+      await mmApi.createFolder({ name: folderName.trim(), parentId: activeFolderId });
       setShowFolderCreate(false); setFolderName("");
       await refreshFolders();
+      setCollapsedFolders((prev) => {
+        if (!activeFolderId) return prev;
+        const next = new Set(prev);
+        next.delete(activeFolderId); // 展开父目录，让新文件夹可见
+        return next;
+      });
     } catch (e) { flash(String(e)); }
-  }, [folderName, flash, refreshFolders]);
+  }, [folderName, activeFolderId, flash, refreshFolders]);
 
   const updateFolder = useCallback(async () => {
     if (!editingFolder || !folderName.trim()) return;
@@ -1141,23 +1227,167 @@ export default function MindmapPanel() {
     } catch (e) { flash(String(e)); }
   }, [editingFolder, folderName, flash, refreshFolders]);
 
-  const deleteFolder = useCallback(async (id: string) => {
-    if (!confirm("确定删除此文件夹？（文档不会被删除，将移至根目录）")) return;
+  const loadDocs = useCallback(async () => {
+    try { setDocs(await mmApi.list(activeFolderId)); } catch {}
+  }, [activeFolderId]);
+
+  const deleteFolder = useCallback((id: string, name: string) => {
+    setConfirmState({ title: "删除文件夹", message: `确定删除文件夹「${name}」？其中文档不会被删除，将移至根目录。`, action: () => void executeDeleteFolder(id) });
+  }, []);
+
+  const executeDeleteFolder = useCallback(async (id: string) => {
+    setConfirmState(null);
     try { await mmApi.deleteFolder(id); if (activeFolderId === id) setActiveFolderId(null); await refreshFolders(); await loadDocs(); } catch (e) { flash(String(e)); }
-  }, [activeFolderId, flash, refreshFolders]);
+  }, [activeFolderId, flash, refreshFolders, loadDocs]);
+
+  const startRenameDoc = useCallback((d: MindmapDocument) => { setRenamingDocId(d.id); setRenameDocName(d.name); }, []);
+  const saveRenameDoc = useCallback(async (d: MindmapDocument) => {
+    setRenamingDocId(null);
+    const name = renameDocName.trim();
+    if (!name || name === d.name) return;
+    try {
+      await mmApi.update({ id: d.id, name });
+      setDocs(prev => prev.map(x => x.id === d.id ? { ...x, name } : x));
+      flash("已重命名");
+    } catch (e) { flash(String(e)); }
+  }, [renameDocName, flash]);
 
   const moveDoc = useCallback(async (docId: string, fid: string | null) => {
     try {
       await mmApi.moveDocument({ documentId: docId, folderId: fid });
       await Promise.all([loadDocs(), refreshFolders()]);
     } catch (e) { flash(String(e)); }
-  }, [flash]);
+  }, [flash, loadDocs]);
 
-  const loadDocs = useCallback(async () => {
-    try { setDocs(await mmApi.list(activeFolderId)); } catch {}
-  }, [activeFolderId]);
+  const moveFolder = useCallback(async (fid: string, toParent: string | null) => {
+    try {
+      await mmApi.moveFolder({ folderId: fid, parentId: toParent });
+      await Promise.all([loadDocs(), refreshFolders()]);
+    } catch (e) { flash(String(e)); }
+  }, [flash, loadDocs]);
+
+  // ── 自定义拖拽（pointer events，绕开 HTML5 DnD）──
+  // mousedown 只记录候选；窗口级 mousemove 移动超 5px 激活拖拽并绘制浮层、
+  // 用 elementFromPoint 命中检测落点（文件夹行 / 根落点）；mouseup 执行移动。
+  // 落点判定：文件夹不允许落入自身或自身后代（后端亦有防环兜底）。
+  useEffect(() => {
+    const onMove = (ev: MouseEvent) => {
+      const d = dragHandleRef.current;
+      if (!d) return;
+      if (!d.active) {
+        if (Math.hypot(ev.clientX - d.startX, ev.clientY - d.startY) < 5) return;
+        d.active = true;
+      }
+      ev.preventDefault();
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const hitFolder = el?.closest?.("[data-drop-folder]") as HTMLElement | null;
+      const hitRoot = el?.closest?.("[data-drop-root]") as HTMLElement | null;
+      let ok = false;
+      let target: string | null = null;
+      if (hitFolder) {
+        const tid = hitFolder.getAttribute("data-drop-folder")!;
+        if (d.kind === "folder" && (tid === d.id || isFolderDescendant(folders, d.id, tid))) {
+          ok = false;
+        } else {
+          target = tid; ok = true;
+        }
+      } else if (hitRoot) {
+        ok = true;
+      }
+      setDragOverFolderId(ok ? (target ?? "__root") : null);
+      setGhost({ kind: d.kind, name: d.name, x: ev.clientX, y: ev.clientY, ok });
+    };
+    const onUp = (ev: MouseEvent) => {
+      const d = dragHandleRef.current;
+      if (!d) return;
+      dragHandleRef.current = null;
+      if (!d.active) return;
+      ev.preventDefault();
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const hitFolder = el?.closest?.("[data-drop-folder]") as HTMLElement | null;
+      const hitRoot = el?.closest?.("[data-drop-root]") as HTMLElement | null;
+      let target: string | null = null;
+      let moved = false;
+      if (hitFolder) {
+        const tid = hitFolder.getAttribute("data-drop-folder")!;
+        if (d.kind === "folder" && (tid === d.id || isFolderDescendant(folders, d.id, tid))) {
+          moved = false; // 文件夹不能落入自身/自身后代
+        } else {
+          target = tid; moved = true;
+        }
+      } else if (hitRoot) {
+        moved = true; // target 保持 null = 根目录
+      }
+      if (moved) {
+        if (d.kind === "doc") void moveDoc(d.id, target);
+        else void moveFolder(d.id, target);
+      }
+      setDragOverFolderId(null);
+      setGhost(null);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+  }, [folders, moveDoc, moveFolder]);
+
+  // 按下时记录拖拽候选（阻止文本选择与滚动起手，保证拖动语义稳定）；
+  // 普通点击不受影响（click 事件仍正常派发）。
+  const startDragHandle = useCallback((e: React.MouseEvent, kind: "doc" | "folder", id: string, name: string) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    dragHandleRef.current = { kind, id, name, startX: e.clientX, startY: e.clientY, active: false };
+  }, []);
 
   useEffect(() => { void loadDocs(); }, [activeFolderId, loadDocs]);
+
+  const toggleFolderCollapse = useCallback((id: string) => {
+    setCollapsedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // 递归渲染文件夹树：每个文件夹既是拖源（可整理到任意目录/根），也是落点（接收文档与文件夹）
+  const renderFolderNodes = (nodes: FolderNode[], depth: number): React.ReactNode => {
+    return nodes.map((node) => {
+      const f = node.folder;
+      const over = dragOverFolderId === f.id;
+      const open = !collapsedFolders.has(f.id);
+      const hasChildren = node.children.length > 0;
+      return (
+        <div key={f.id}>
+<div
+            className={`group mb-0.5 flex items-center gap-1 rounded-md py-1.5 pr-1 transition select-none ${over ? "ring-1 ring-cyan-400/70 bg-cyan-400/10" : "hover:bg-white/[0.05]"}`}
+            style={{ paddingLeft: 6 + depth * 14 }}
+            data-drop-folder={f.id}
+            title={depth > 0 ? `拖到其他文件夹整理；拖到「← 全部文档」移回根目录` : "拖到其他文件夹整理"}
+            onMouseDown={(e) => startDragHandle(e, "folder", f.id, f.name)}
+          >
+            {hasChildren ? (
+              <button type="button" className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-slate-500 hover:text-white cursor-pointer"
+                onClick={(e) => { e.stopPropagation(); toggleFolderCollapse(f.id); }} title={open ? "折叠" : "展开"}>
+                {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              </button>
+            ) : (
+              <span className="w-4 shrink-0" />
+            )}
+            <button type="button" className="flex min-w-0 flex-1 items-center gap-1.5 text-left cursor-pointer" onClick={() => setActiveFolderId(f.id)} title={`进入「${f.name}」`}>
+              <Folder className={`h-3.5 w-3.5 shrink-0 ${depth === 0 ? "text-amber-400" : "text-amber-400/60"}`} />
+              <span className="truncate text-[10px] text-slate-300">{f.name}</span>
+              <span className="shrink-0 text-[9px] text-slate-400">{f.documentCount}</span>
+            </button>
+            <button type="button" className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-300 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto hover:bg-white/10 hover:text-white"
+              onClick={() => { setEditingFolder(f); setFolderName(f.name); }} title="重命名"><Pencil className="h-3 w-3" /></button>
+            <button type="button" className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-red-400/50 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto hover:bg-red-400/10 hover:text-red-300"
+              onClick={() => deleteFolder(f.id, f.name)} title="删除（文档移至根目录）"><Trash2 className="h-3 w-3" /></button>
+          </div>
+          {open && renderFolderNodes(node.children, depth + 1)}
+        </div>
+      );
+    });
+  };
 
   const runAiProject = useCallback(async () => {
     if (!full || !projectPath || !providerId || !modelId) return;
@@ -1197,97 +1427,126 @@ export default function MindmapPanel() {
     return docs.filter(d => d.name.toLowerCase().includes(q) || (d.description && d.description.toLowerCase().includes(q)));
   }, [docs, search]);
 
+  // 当前视图的文件夹树：根视图 = 顶层目录；进入目录 = 该目录直接子目录
+  const treeRoots = activeFolderId ? buildChildren(folders, activeFolderId) : buildChildren(folders, null);
+  const folderPath = getFolderPath(folders, activeFolderId);
+
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-slate-950/25 text-slate-200">
-      <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-white/10 px-3">
-        <button type="button" className="inline-flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:bg-white/10 hover:text-white"
-          onClick={() => setSidebarCollapsed(!sidebarCollapsed)} title={sidebarCollapsed ? "展开侧栏" : "收起侧栏"}>
-          {sidebarCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4 -rotate-90" />}
-        </button>
-        <Brain className="h-4 w-4" style={{ color: ACCENT }} />
-        <span className="text-sm font-semibold text-white">思维导图</span>
-        <button type="button" className={`${button} border-cyan-400/30 text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200`} onClick={() => setShowCreate(true)}><Plus className="h-3 w-3" />新建</button>
-        <div className="ml-auto flex items-center gap-1.5">
-          {full && <button type="button" className={button} onClick={exportMd}><ScrollText className="h-3 w-3" />导出</button>}
-          <span className="text-[10px] text-slate-500">{full ? `${full.document.name} · ${full.nodes.length} 节点` : "选择一个文档"}</span>
-          {full && <span className="hidden text-[9px] text-slate-600 sm:inline">双击节点即可编辑</span>}
-        </div>
-      </header>
       <div className="flex min-h-0 flex-1">
         {!sidebarCollapsed && (
-          <aside className="flex w-[250px] shrink-0 flex-col border-r border-white/10 bg-slate-950/30">
+          <aside className="group/sb relative flex shrink-0 flex-col border-r border-white/10 bg-slate-950/30" style={{ width: sidebarW }}>
             {/* Search */}
             <div className="border-b border-white/10 px-2 py-1.5 flex items-center gap-1.5">
               <Search className="h-3 w-3 shrink-0 text-slate-600" />
               <input className="min-w-0 flex-1 bg-transparent text-[10px] text-slate-300 outline-none placeholder:text-slate-700" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索文档..." />
               {search && <button type="button" className="text-slate-600 hover:text-white" onClick={() => setSearch("")}><X className="h-3 w-3" /></button>}
             </div>
-            {/* Folders —— 始终显示，保证随时可新建/重命名文件夹 */}
-            {!activeFolderId && (
-              <div className="border-b border-white/10 px-2 py-1.5 flex items-center justify-between">
-                <span className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">文件夹</span>
-                <button type="button" className="inline-flex h-5 w-5 items-center justify-center rounded border border-white/15 bg-white/5 text-slate-300 hover:bg-white/15 hover:text-white" onClick={() => { setShowFolderCreate(true); setFolderName(""); }} title="新建文件夹"><FolderPlus className="h-3 w-3" /></button>
-              </div>
-            )}
             {!activeFolderId && folders.length === 0 && (
-              <div className="px-3 py-1 text-[9px] text-slate-500">暂无文件夹，点击右上角 + 新建</div>
+              <div className="px-3 pt-1 text-[9px] text-slate-500">暂无文件夹，使用底部按钮新建</div>
             )}
-            <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
-              {/* Folder list —— 可拖拽文档到文件夹归类 */}
-              {!activeFolderId && folders.map(f => {
-                const over = dragOverFolderId === f.id;
-                return (
-                <div key={f.id} className={`group mb-0.5 flex items-center gap-1.5 rounded-md px-2 py-1.5 transition ${over ? "ring-1 ring-cyan-400/70 bg-cyan-400/10" : "hover:bg-white/[0.05]"}`}
-                  onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
-                  onDragEnter={() => setDragOverFolderId(f.id)}
-                  onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as unknown as globalThis.Node)) setDragOverFolderId(null); }}
-                  onDrop={e => { e.preventDefault(); setDragOverFolderId(null); const id = e.dataTransfer.getData("text/x-doc-id"); if (id) void moveDoc(id, f.id); }}>
-                  <button type="button" className="flex min-w-0 flex-1 items-center gap-1.5 text-left" onClick={() => setActiveFolderId(f.id)}>
-                    <Folder className="h-3.5 w-3.5 shrink-0 text-amber-400" />
-                    <span className="truncate text-[10px] text-slate-300">{f.name}</span>
-                    <span className="shrink-0 text-[9px] text-slate-400">{f.documentCount}</span>
-                  </button>
-                  <button type="button" className="hidden h-5 w-5 items-center justify-center rounded text-slate-300 group-hover:flex hover:bg-white/10 hover:text-white"
-                    onClick={() => { setEditingFolder(f); setFolderName(f.name); }}><Pencil className="h-3 w-3" /></button>
-                  <button type="button" className="hidden h-5 w-5 items-center justify-center rounded text-red-400/50 group-hover:flex hover:bg-red-400/10 hover:text-red-300"
-                    onClick={() => void deleteFolder(f.id)}><Trash2 className="h-3 w-3" /></button>
-                </div>
-              );})}
-              {/* Breadcrumb —— 也可作为拖回根目录的投放目标 */}
+            <div className="min-h-0 flex-1 overflow-y-auto p-1.5 select-none" data-drop-root>
+              {/* 面包屑：路径上级均可点击进入；也是移回相应目录的投放目标 */}
               {activeFolderId && (
-                <button type="button" className={`mb-1 flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-[10px] ${dragOverFolderId === "__root" ? "ring-1 ring-cyan-400/70 bg-cyan-400/10 text-white" : "text-slate-400 hover:bg-white/[0.05] hover:text-white"}`}
-                  onClick={() => setActiveFolderId(null)}
-                  onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
-                  onDragEnter={() => setDragOverFolderId("__root")}
-                  onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as unknown as globalThis.Node)) setDragOverFolderId(null); }}
-                  onDrop={e => { e.preventDefault(); setDragOverFolderId(null); const id = e.dataTransfer.getData("text/x-doc-id"); if (id) void moveDoc(id, null); }}>
-                  <ChevronRight className="h-3 w-3 -rotate-180" />← 全部文档（拖到此处移回根目录）
-                </button>
+                <div className="mb-1 space-y-0.5">
+                  <button type="button" className={`mb-0.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-[10px] select-none ${dragOverFolderId === "__root" ? "ring-1 ring-cyan-400/70 bg-cyan-400/10 text-white" : "text-slate-400 hover:bg-white/[0.05] hover:text-white"}`}
+                    onClick={() => setActiveFolderId(null)}
+                    data-drop-root>
+                    <ChevronRight className="h-3 w-3 -rotate-180" />← 全部文档 <span className="text-[8px] text-slate-500">（拖到此处移回根目录）</span>
+                  </button>
+                  {folderPath.map((f, i) => {
+                    const isLast = i === folderPath.length - 1;
+                    const over = dragOverFolderId === f.id;
+                    if (isLast) {
+                      return (
+                        <div key={f.id} className={`mb-0.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-[10px] ${over ? "ring-1 ring-cyan-400/70 bg-cyan-400/10 text-white" : "text-slate-400"}`}>
+                          <Folder className="h-3 w-3 shrink-0 text-amber-400/70" />
+                          <span className="truncate">{f.name}</span>
+                          <span className="shrink-0 text-[9px] text-slate-500">{f.documentCount}</span>
+                        </div>
+                      );
+                    }
+                    return (
+                      <button key={f.id} type="button" className={`mb-0.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-[10px] cursor-pointer select-none ${over ? "ring-1 ring-cyan-400/70 bg-cyan-400/10 text-white" : "text-slate-400 hover:bg-white/[0.05] hover:text-white"}`}
+                        onClick={() => setActiveFolderId(f.id)}
+                        data-drop-folder={f.id}>
+                        <Folder className="h-3 w-3 shrink-0 text-amber-400/70" />
+                        <span className="truncate">{f.name}</span>
+                        <span className="shrink-0 text-[9px] text-slate-500">{f.documentCount}</span>
+                        <ChevronRight className="h-2.5 w-2.5 shrink-0 text-slate-600" />
+                      </button>
+                    );
+                  })}
+                </div>
               )}
+              {/* 文件夹树 —— 可拖拽整理：文件↔目录、目录↔目录/根 */}
+              {treeRoots.length > 0 && <div className="mb-1.5">{renderFolderNodes(treeRoots, 0)}</div>}
               {/* Documents */}
               {filteredDocs.length === 0 && <div className="py-8 text-center text-[10px] text-slate-500">{search ? "无匹配文档" : "暂无文档"}</div>}
               {filteredDocs.map(d => {
                 const IconFn = DOC_SOURCE_ICONS[d.sourceType] ?? DOC_SOURCE_ICONS.manual;
                 return (
-                <div key={d.id} className={`group mb-1 flex items-center gap-1.5 rounded-md border px-2.5 py-2 transition ${full?.document.id === d.id ? "border-cyan-400/40 bg-cyan-400/10" : "border-white/10 bg-white/[0.02] hover:bg-white/[0.06]"}`}
-                  title="双击打开并直接编辑"
-                  draggable
-                  onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); void loadDocument(d.id); }}
-                  onDragStart={e => { e.dataTransfer.setData("text/x-doc-id", d.id); e.dataTransfer.effectAllowed = "move"; }}
-                  onDragEnd={() => setDragOverFolderId(null)}>
-                  <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => void loadDocument(d.id)}>
+                <div key={d.id} className={`group mb-1 flex items-center gap-1.5 rounded-md border px-2.5 py-2 transition select-none ${full?.document.id === d.id ? "border-cyan-400/40 bg-cyan-400/10" : "border-white/10 bg-white/[0.02] hover:bg-white/[0.06]"}`}
+                  title="双击打开并直接编辑；按住拖动可整理到文件夹或根目录"
+                  data-drop-root
+                  onMouseDown={(e) => { if (renamingDocId === d.id) return; startDragHandle(e, "doc", d.id, d.name); }}
+                  onDoubleClick={(e) => { if (renamingDocId === d.id) { e.stopPropagation(); return; } e.preventDefault(); e.stopPropagation(); void loadDocument(d.id); }}>
+                  <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => { if (renamingDocId === d.id) return; void loadDocument(d.id); }}>
                     {IconFn("h-3.5 w-3.5 shrink-0 text-slate-500")}
                     <span className="flex min-w-0 flex-col">
-                      <span className="truncate text-[11px] text-slate-200">{d.name}</span>
+                      {renamingDocId === d.id ? (
+                        <input autoFocus value={renameDocName} onChange={e => setRenameDocName(e.target.value)}
+                          onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}
+                          onKeyDown={e => { e.stopPropagation(); if (e.key === "Enter") void saveRenameDoc(d); else if (e.key === "Escape") setRenamingDocId(null); }}
+                          onBlur={() => void saveRenameDoc(d)}
+                          className="w-full rounded border border-cyan-400/50 bg-slate-900 px-1.5 py-0.5 text-[11px] text-white outline-none" />
+                      ) : (
+                        <span className="truncate text-[11px] text-slate-200">{d.name}</span>
+                      )}
                       <span className="text-[9px] text-slate-400">{formatTime(d.updatedAt)}</span>
                     </span>
                   </button>
-                  {activeFolderId && <button type="button" className="hidden shrink-0 text-[8px] text-slate-300 group-hover:block hover:text-white" onClick={() => moveDoc(d.id, null)}>移出</button>}
-                  <button type="button" className="hidden h-5 w-5 shrink-0 items-center justify-center rounded text-red-300/60 transition group-hover:flex hover:bg-red-400/10 hover:text-red-200" onClick={() => void removeDoc(d.id)} title="删除"><Trash2 className="h-3 w-3" /></button>
+                  {activeFolderId && <button type="button" className="shrink-0 text-[8px] text-slate-300 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto hover:text-white" onClick={() => void moveDoc(d.id, null)}>移出</button>}
+                  <button type="button" className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-400 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto hover:bg-white/10 hover:text-white" onClick={() => startRenameDoc(d)} title="重命名"><Pencil className="h-3 w-3" /></button>
+                  <button type="button" className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-red-300/60 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto hover:bg-red-400/10 hover:text-red-200" onClick={() => removeDoc(d.id, d.name)} title="删除"><Trash2 className="h-3 w-3" /></button>
                 </div>
               );})}
             </div>
+            {/* 底部工具区：新建文件夹/文档 + AI 导入入口 */}
+            <div className="shrink-0 space-y-1.5 border-t border-white/10 p-1.5">
+              <div className="grid grid-cols-2 gap-1.5">
+                <button type="button" className={button} onClick={() => { setShowFolderCreate(true); setFolderName(""); }} title="在当前目录下新建文件夹"><FolderPlus className="h-3 w-3" />文件夹</button>
+                <button type="button" className={button} onClick={() => setShowCreate(true)} title="新建思维导图"><Plus className="h-3 w-3" />文档</button>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button type="button" className={`${button} hover:bg-white/10`} style={{ color: ACCENT, borderColor: `${ACCENT}55` }} onClick={() => void openAiImport("project")} title="AI 从项目结构生成（无文档时自动新建）"><FolderOpen className="h-3 w-3" />AI·项目</button>
+                <button type="button" className={`${button} hover:bg-white/10`} style={{ color: ACCENT, borderColor: `${ACCENT}55` }} onClick={() => void openAiImport("text")} title="AI 从需求文本生成（无文档时自动新建）"><Sparkles className="h-3 w-3" />AI·文本</button>
+              </div>
+              {full && <div className="flex items-center justify-between px-0.5 text-[9px] text-slate-500"><span className="truncate">{full.document.name} · {full.nodes.length} 节点</span><button type="button" className={button} onClick={exportMd} title="导出 Markdown"><ScrollText className="h-3 w-3" /></button></div>}
+            </div>
+            {/* 宽度拖拽把手 + 收起按钮（侧边栏右侧） */}
+            <div className="absolute -right-1 top-0 z-10 flex h-full w-2.5 cursor-col-resize items-center justify-center hover:bg-white/[0.06]" title="拖动调整宽度"
+              onMouseDown={(e) => {
+                if (e.button !== 0) return;
+                e.preventDefault();
+                sbResizeRef.current.moved = false;
+                const startX = e.clientX; const startW = sidebarW;
+                const onMove = (ev: MouseEvent) => { if (Math.abs(ev.clientX - startX) > 2) sbResizeRef.current.moved = true; setSidebarW(Math.min(460, Math.max(170, startW + (ev.clientX - startX)))); };
+                const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+                window.addEventListener("mousemove", onMove);
+                window.addEventListener("mouseup", onUp);
+              }}>
+              <button type="button" className="flex h-6 w-2.5 items-center justify-center rounded-l bg-slate-800/80 text-slate-400 opacity-0 transition group-hover/sb:opacity-100 pointer-events-none group-hover/sb:pointer-events-auto hover:text-white" title="收起侧栏"
+                onClick={(e) => { e.stopPropagation(); if (!sbResizeRef.current.moved) setSidebarCollapsed(true); }}>
+                <ChevronLeft className="h-3 w-3" />
+              </button>
+            </div>
           </aside>
+        )}
+        {sidebarCollapsed && (
+          <button type="button" className="absolute left-2 top-2 z-20 inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/10 bg-slate-900/90 text-slate-300 shadow-lg transition hover:text-white" onClick={() => setSidebarCollapsed(false)} title="展开侧栏">
+            <ChevronRight className="h-4 w-4" />
+          </button>
         )}
         <main className="relative min-w-0 flex-1">
           {showAi === "project" ? (
@@ -1344,6 +1603,16 @@ export default function MindmapPanel() {
       {showCreate && <CreateDocModal onClose={() => setShowCreate(false)} onCreate={(n,d,fid) => { void createDoc(n,d,fid); }} folderId={activeFolderId} />}
       {error && showAi && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 max-w-md rounded-md border border-red-400/20 bg-slate-900 px-3 py-2 text-[11px] text-red-300 shadow-xl">{error}<button type="button" className="ml-2 text-slate-400 hover:text-white" onClick={() => setError("")}>✕</button></div>}
       {notice && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-[11px] text-slate-200 shadow-xl">{notice}</div>}
+      {confirmState && <ConfirmModal title={confirmState.title} message={confirmState.message} accent={ACCENT} onConfirm={confirmState.action} onClose={() => setConfirmState(null)} />}
+      {/* 拖拽浮层：跟随鼠标，提示当前落点是否有效 */}
+      {ghost && (
+        <div className="pointer-events-none fixed z-[9998] flex items-center gap-1.5 rounded-md border border-cyan-400/50 bg-slate-900/95 px-2 py-1 text-[10px] text-slate-200 shadow-2xl"
+          style={{ left: ghost.x + 14, top: ghost.y + 16 }}>
+          {ghost.kind === "folder" ? <Folder className="h-3 w-3 shrink-0 text-amber-400" /> : <FileText className="h-3 w-3 shrink-0 text-slate-400" />}
+          <span className="max-w-[150px] truncate font-medium">{ghost.name}</span>
+          <span className={`${ghost.ok ? "text-cyan-300" : "text-slate-500"}`}>{ghost.ok ? "松开放入" : "拖到文件夹 / 空白处"}</span>
+        </div>
+      )}
       {/* Folder create/edit modal */}
       {showFolderCreate && createPortal(
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]" onClick={() => setShowFolderCreate(false)}>

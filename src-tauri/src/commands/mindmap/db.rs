@@ -19,7 +19,7 @@ fn build_connection() -> Result<rusqlite::Connection, String> {
     conn.execute_batch(r#"
         CREATE TABLE IF NOT EXISTS mindmap_folders (
             id TEXT PRIMARY KEY, name TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            parent_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS mindmap_documents (
             id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
@@ -70,6 +70,15 @@ fn build_connection() -> Result<rusqlite::Connection, String> {
             .map_err(|e| format!("迁移 folder_id 失败: {}", e))?;
     }
 
+    // 旧版本文件夹表没有 parent_id（扁平），启动时幂等补列以支持层级整理。
+    let folder_cols: Vec<String> = conn.prepare("PRAGMA table_info(mindmap_folders)")
+        .and_then(|mut stmt| stmt.query_map([], |r| r.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>())
+        .unwrap_or_default();
+    if !folder_cols.iter().any(|c| c == "parent_id") {
+        conn.execute_batch("ALTER TABLE mindmap_folders ADD COLUMN parent_id TEXT")
+            .map_err(|e| format!("迁移 parent_id 失败: {}", e))?;
+    }
+
     Ok(conn)
 }
 
@@ -97,18 +106,45 @@ pub fn sql<T>(r: rusqlite::Result<T>) -> Result<T, String> { r.map_err(|e| e.to_
 
 pub fn list_folders() -> Result<Vec<MindmapFolder>, String> {
     with_conn(|c| {
-        let mut s = c.prepare("SELECT f.id,f.name,f.sort_order,f.created_at,f.updated_at,(SELECT COUNT(*) FROM mindmap_documents WHERE folder_id=f.id) FROM mindmap_folders f ORDER BY f.sort_order").map_err(|e| e.to_string())?;
-        let rows = s.query_map([], |r| Ok(MindmapFolder { id: r.get(0)?, name: r.get(1)?, sort_order: r.get(2)?, document_count: r.get(5)?, created_at: r.get(3)?, updated_at: r.get(4)? })).map_err(|e| e.to_string())?;
+        let mut s = c.prepare("SELECT f.id,f.name,f.sort_order,f.parent_id,f.created_at,f.updated_at,(SELECT COUNT(*) FROM mindmap_documents WHERE folder_id=f.id) FROM mindmap_folders f ORDER BY f.sort_order").map_err(|e| e.to_string())?;
+        let rows = s.query_map([], |r| Ok(MindmapFolder { id: r.get(0)?, name: r.get(1)?, sort_order: r.get(2)?, parent_id: r.get(3)?, created_at: r.get(4)?, updated_at: r.get(5)?, document_count: r.get(6)? })).map_err(|e| e.to_string())?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
     })
 }
 
-pub fn create_folder(name: &str) -> Result<MindmapFolder, String> {
+pub fn create_folder(name: &str, parent_id: Option<&str>) -> Result<MindmapFolder, String> {
     with_conn(|c| {
         let id = new_id("mf"); let ts = now_ts();
         let next: i64 = c.query_row("SELECT COALESCE(MAX(sort_order),-1)+1 FROM mindmap_folders", [], |r| r.get(0)).unwrap_or(0);
-        sql(c.execute("INSERT INTO mindmap_folders (id,name,sort_order,created_at,updated_at) VALUES (?1,?2,?3,?4,?5)", rusqlite::params![id, name, next, ts, ts]))?;
-        Ok(MindmapFolder { id, name: name.to_string(), sort_order: next, document_count: 0, created_at: ts.clone(), updated_at: ts })
+        sql(c.execute("INSERT INTO mindmap_folders (id,name,sort_order,parent_id,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6)", rusqlite::params![id, name, next, parent_id, ts, ts]))?;
+        Ok(MindmapFolder { id, name: name.to_string(), sort_order: next, document_count: 0, parent_id: parent_id.map(|s| s.to_string()), created_at: ts.clone(), updated_at: ts })
+    })
+}
+
+/// 判断 possible_parent_id 是否位于 id（含 id 自身）的父链上。用于防环。
+fn has_cycle(c: &rusqlite::Connection, folder_id: &str, new_parent: Option<&str>) -> Result<bool, String> {
+    let Some(nw) = new_parent else { return Ok(false) };
+    if nw == folder_id { return Ok(true); }
+    let mut cur = Some(nw.to_string());
+    let mut guard = 0;
+    while let Some(pid) = cur {
+        guard += 1;
+        if guard > 1000 { return Ok(true); } // 数据异常：链过长视为环
+        if pid == folder_id { return Ok(true); }
+        cur = c.query_row("SELECT parent_id FROM mindmap_folders WHERE id=?1", rusqlite::params![pid], |r| r.get::<_, Option<String>>(0)).unwrap_or(None);
+    }
+    Ok(false)
+}
+
+/// 移动文件夹到另一文件夹下；parent_id 为 None 表示移到根目录。
+/// 拒绝移入自身或其后代（防环）。
+pub fn move_folder(folder_id: &str, parent_id: Option<&str>) -> Result<(), String> {
+    with_conn(|c| {
+        if has_cycle(c, folder_id, parent_id)? {
+            return Err("不能把文件夹移动到自身或其子目录中".into());
+        }
+        sql(c.execute("UPDATE mindmap_folders SET parent_id=?1,updated_at=?2 WHERE id=?3", rusqlite::params![parent_id, now_ts(), folder_id]))?;
+        Ok(())
     })
 }
 
@@ -121,8 +157,19 @@ pub fn update_folder(id: &str, name: Option<&str>) -> Result<(), String> {
 
 pub fn delete_folder(id: &str) -> Result<(), String> {
     with_conn(|c| {
-        sql(c.execute("UPDATE mindmap_documents SET folder_id=NULL WHERE folder_id=?1", rusqlite::params![id]))?;
-        sql(c.execute("DELETE FROM mindmap_folders WHERE id=?1", rusqlite::params![id]))?;
+        // 收集 id 及其所有子孙文件夹，统一删除；文档一律移回根目录
+        let mut ids = vec![id.to_string()]; let mut i = 0;
+        while i < ids.len() {
+            let pid = &ids[i];
+            let mut s = c.prepare("SELECT id FROM mindmap_folders WHERE parent_id=?1").map_err(|e| e.to_string())?;
+            let rows = s.query_map(rusqlite::params![pid], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+            ids.extend(rows.filter_map(|x| x.ok()));
+            i += 1;
+        }
+        for fid in &ids {
+            sql(c.execute("UPDATE mindmap_documents SET folder_id=NULL WHERE folder_id=?1", rusqlite::params![fid]))?;
+            sql(c.execute("DELETE FROM mindmap_folders WHERE id=?1", rusqlite::params![fid]))?;
+        }
         Ok(())
     })
 }
@@ -131,7 +178,7 @@ pub fn delete_folder(id: &str) -> Result<(), String> {
 
 pub fn list_documents(folder_id: Option<&str>) -> Result<Vec<MindmapDocument>, String> {
     with_conn(|c| {
-        let sql_str = "SELECT d.id,d.name,d.description,d.source_type,d.source_desc,d.folder_id,d.background_texture,d.created_at,d.updated_at,(SELECT COUNT(*) FROM mindmap_nodes WHERE document_id=d.id),(SELECT COUNT(*) FROM mindmap_stickers WHERE document_id=d.id) FROM mindmap_documents d WHERE (?1 IS NULL OR d.folder_id=?1) ORDER BY d.updated_at DESC";
+        let sql_str = "SELECT d.id,d.name,d.description,d.source_type,d.source_desc,d.folder_id,d.background_texture,d.created_at,d.updated_at,(SELECT COUNT(*) FROM mindmap_nodes WHERE document_id=d.id),(SELECT COUNT(*) FROM mindmap_stickers WHERE document_id=d.id) FROM mindmap_documents d WHERE (?1 IS NULL AND d.folder_id IS NULL) OR d.folder_id=?1 ORDER BY d.updated_at DESC";
         let mut s = c.prepare(sql_str).map_err(|e| e.to_string())?;
         let mapped = s.query_map(rusqlite::params![folder_id], |r| Ok(MindmapDocument {
             id: r.get(0)?, name: r.get(1)?, description: r.get(2)?, source_type: r.get(3)?,

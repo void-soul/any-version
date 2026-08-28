@@ -353,13 +353,16 @@ pub fn mm_init() -> Result<(), String> { super::db::init_db() }
 pub fn mm_list_folders() -> Result<Vec<MindmapFolder>, String> { super::db::list_folders() }
 
 #[tauri::command]
-pub fn mm_create_folder(input: CreateFolderInput) -> Result<MindmapFolder, String> { super::db::create_folder(&input.name) }
+pub fn mm_create_folder(input: CreateFolderInput) -> Result<MindmapFolder, String> { super::db::create_folder(&input.name, input.folder_id.as_deref()) }
 
 #[tauri::command]
 pub fn mm_update_folder(input: UpdateFolderInput) -> Result<(), String> { super::db::update_folder(&input.id, input.name.as_deref()) }
 
 #[tauri::command]
 pub fn mm_delete_folder(id: String) -> Result<(), String> { super::db::delete_folder(&id) }
+
+#[tauri::command]
+pub fn mm_move_folder(input: MoveFolderInput) -> Result<(), String> { super::db::move_folder(&input.folder_id, input.parent_id.as_deref()) }
 
 #[tauri::command]
 pub fn mm_move_document(input: MoveDocumentInput) -> Result<(), String> { super::db::move_document(&input.document_id, input.folder_id.as_deref()) }
