@@ -169,8 +169,8 @@ fn detect_via_cmd(detect_cmd: &str) -> Option<String> {
         if parts.len() > 1 {
             cmd.args(&parts[1..]);
         }
-        match cmd.output() {
-            Ok(out) => {
+        match run_command_with_timeout(&mut cmd, 10) {
+            Some(out) => {
                 let stdout = String::from_utf8_lossy(&out.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&out.stderr).to_string();
                 eprintln!("[detect]     cmd exit_code={}", out.status.code().map_or(-1, |c| c));
@@ -186,8 +186,8 @@ fn detect_via_cmd(detect_cmd: &str) -> Option<String> {
                     None
                 }
             }
-            Err(e) => {
-                eprintln!("[detect]     cmd spawn error: {}", e);
+            None => {
+                eprintln!("[detect]     cmd spawn/超时失败");
                 None
             }
         }
@@ -210,6 +210,91 @@ fn find_in_path_local(exe_name: &str) -> Option<PathBuf> {
     find_in_path(exe_name)
 }
 
+/// 带超时执行命令并完整收集输出（stdout/stderr）。
+/// 超时后 kill 进程树（Windows taskkill /T）并返回 None，避免检测工具 --version 卡死线程池。
+fn run_command_with_timeout(cmd: &mut std::process::Command, timeout_secs: u64) -> Option<std::process::Output> {
+    use std::io::Read;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    let mut child = cmd
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .ok()?;
+
+    let (tx, rx) = mpsc::channel();
+    if let Some(mut o) = child.stdout.take() {
+        let t = tx.clone();
+        thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = o.read_to_end(&mut buf);
+            let _ = t.send((0u8, buf));
+        });
+    }
+    if let Some(mut e) = child.stderr.take() {
+        let t = tx.clone();
+        thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = e.read_to_end(&mut buf);
+            let _ = t.send((1u8, buf));
+        });
+    }
+    drop(tx);
+
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(_) => return None,
+        }
+        if Instant::now() >= deadline {
+            kill_cmd_tree(child.id());
+            let _ = child.wait();
+            eprintln!("[detect] 命令超时（{}s），已终止进程树", timeout_secs);
+            return None;
+        }
+        thread::sleep(Duration::from_millis(30));
+    };
+
+    let mut out_stdout = Vec::new();
+    let mut out_stderr = Vec::new();
+    for (tag, buf) in rx.iter() {
+        if tag == 0 {
+            out_stdout = buf;
+        } else {
+            out_stderr = buf;
+        }
+    }
+    Some(std::process::Output {
+        status,
+        stdout: out_stdout,
+        stderr: out_stderr,
+    })
+}
+
+/// 终止命令进程树（Windows 用 taskkill /T 连子进程一起杀，避免孤儿进程残留）
+fn kill_cmd_tree(pid: u32) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .creation_flags(0x08000000)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .output();
+    }
+}
+
 /// 从字符串中提取 semver 版本号（如 1.2.3, 0.45.0-alpha）
 fn extract_semver(text: &str) -> Option<String> {
     let re = SEMVER_RE.get_or_init(|| {
@@ -222,8 +307,10 @@ fn extract_semver(text: &str) -> Option<String> {
 
 /// 执行命令并返回 (stdout, stderr)，返回 None 时表示失败
 fn run_cmd_output_full(exe: &str, args: &[&str]) -> (Option<String>, String) {
-    match hidden_cmd::hidden_cmd(exe).args(args).output() {
-        Ok(output) => {
+    let mut binding = hidden_cmd::hidden_cmd(exe);
+    let mut cmd = binding.args(args);
+    match run_command_with_timeout(&mut cmd, 10) {
+        Some(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             eprintln!("[detect]     run_cmd: {} {}, exit={}",
@@ -235,8 +322,8 @@ fn run_cmd_output_full(exe: &str, args: &[&str]) -> (Option<String>, String) {
                 (None, stderr)
             }
         }
-        Err(e) => {
-            eprintln!("[detect]     run_cmd FAILED: {} {} → {}", exe, args.join(" "), e);
+        None => {
+            eprintln!("[detect]     run_cmd FAILED/超时: {} {}", exe, args.join(" "));
             (None, String::new())
         }
     }

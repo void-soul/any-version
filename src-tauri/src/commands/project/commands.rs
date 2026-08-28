@@ -785,6 +785,26 @@ fn contains_shell_injection(s: &str) -> bool {
     s.chars().any(|c| matches!(c, '&' | '|' | ';' | '<' | '>' | '$' | '`' | '(' | ')'))
 }
 
+/// 终止命令进程树（Windows 用 taskkill /T 连子进程一起杀，避免孤儿进程残留）
+fn kill_cmd_process_tree(pid: u32) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .creation_flags(0x08000000)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .output();
+    }
+}
+
 /// 执行 shell 命令并捕获输出（用于包管理器版本检测、镜像切换等）
 #[tauri::command]
 pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String, String> {
@@ -901,29 +921,77 @@ pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String
     );
 
     // 为外部命令设置超时（默认 5 分钟），防止恶意/错误命令无限挂起。
-    // 使用 std::thread + channel 实现同步超时（run_cmd_capture 是同步函数）。
+    // run_cmd_capture 是同步函数：用带 piped stdio 的子进程 + 轮询 try_wait 实现同步超时；
+    // 超时后 kill 进程树，避免孤儿进程与挂起线程泄漏。
+    use std::io::Read;
     use std::sync::mpsc;
     use std::thread;
-    let (tx, rx) = mpsc::channel();
-    let cmd_clone = resolved_cmd.clone();
-    thread::spawn(move || {
-        let _ = tx.send(command.output());
-    });
-    let output = rx.recv_timeout(std::time::Duration::from_secs(300))
-        .map_err(|_| format!("命令执行超时（5 分钟）: {}", cmd_clone))?
-        .map_err(|e| format!("执行命令失败: {}", e))?;
+    use std::time::{Duration, Instant};
 
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().trim_matches('"').trim_matches('\'').trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let mut child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("启动命令失败: {}", e))?;
+
+    // 并发读取 stdout/stderr（等价于 command.output() 的内部行为），防止管道积满后子进程写阻塞
+    let (tx, rx) = mpsc::channel();
+    if let Some(mut o) = child.stdout.take() {
+        let t = tx.clone();
+        thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = o.read_to_end(&mut buf);
+            let _ = t.send((b"o", buf));
+        });
+    }
+    if let Some(mut e) = child.stderr.take() {
+        let t = tx.clone();
+        thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = e.read_to_end(&mut buf);
+            let _ = t.send((b"e", buf));
+        });
+    }
+    drop(tx);
+
+    let deadline = Instant::now() + Duration::from_secs(300);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(e) => return Err(format!("等待命令失败: {}", e)),
+        }
+        if Instant::now() >= deadline {
+            kill_cmd_process_tree(child.id());
+            let _ = child.wait();
+            eprintln!("[run_cmd_capture] 命令超时，已终止进程树: {}", redact_creds(&resolved_cmd));
+            return Err(format!("命令执行超时（5 分钟）: {}", redact_creds(&resolved_cmd)));
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+
+    // 进程已退出，读取线程排空管道后关闭发送端；收集两部分输出
+    let mut out_stdout = Vec::new();
+    let mut out_stderr = Vec::new();
+    for (tag, buf) in rx.iter() {
+        if tag == b"o" {
+            out_stdout = buf;
+        } else {
+            out_stderr = buf;
+        }
+    }
+
+    let stdout = String::from_utf8_lossy(&out_stdout).trim().trim_matches('"').trim_matches('\'').trim().to_string();
+    let stderr = String::from_utf8_lossy(&out_stderr).trim().to_string();
     // 不打印 stdout/stderr 内容（避免泄露 token 等敏感数据），仅记录长度与状态。
     eprintln!(
         "[run_cmd_capture] status={}, stdout_len={}, stderr_len={}",
-        output.status.success(),
+        status.success(),
         stdout.len(),
         stderr.len()
     );
 
-    if output.status.success() {
+    if status.success() {
         return Ok(stdout);
     }
 
@@ -994,11 +1062,10 @@ pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String
         }
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if !stderr.is_empty() {
         Err(stderr)
     } else {
-        Err(format!("命令执行失败 (exit code: {})", output.status.code().unwrap_or(-1)))
+        Err(format!("命令执行失败 (exit code: {})", status.code().unwrap_or(-1)))
     }
 }
 
