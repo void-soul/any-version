@@ -25,15 +25,32 @@ fn pick_outbound_protocol(native: &str, provider: &AiProvider) -> Option<String>
     None
 }
 
+/// 生成本地代理的每次启动随机鉴权 token（32 字节加密随机 → hex）。
+/// 工具通过 env / 配置文件携带该 token 访问本地代理，真实上游 key 不再暴露给工具进程。
+fn fresh_proxy_token() -> String {
+    let mut buf = [0u8; 32];
+    match getrandom::getrandom(&mut buf) {
+        Ok(()) => buf.iter().map(|b| format!("{:02x}", b)).collect(),
+        Err(_) => {
+            // OS RNG 不可用（几乎不发生）：回退时间戳+进程号组合
+            let ns = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            format!("tok_{}_{}", ns, std::process::id())
+        }
+    }
+}
+
 /// 为指定工具启动一个本地代理（按需、空闲端口、后台 spawn）。
-/// CLI 工具与 GUI/桌面应用共用：返回监听端口；若未配置 Provider/Key、
-/// 无可用出站协议或绑定失败，则返回 0（调用方应回退普通逻辑）。
+/// CLI 工具与 GUI/桌面应用共用：返回 (监听端口, abort_handle, 本次启动的鉴权 token)；
+/// 若未配置 Provider/Key、无可用出站协议或绑定失败，则返回 (0, None, "")（调用方应回退普通逻辑）。
 pub(crate) async fn start_tool_proxy(
     tool_config: &ToolConfig,
     provider: Option<&AiProvider>,
     config: &AiConfig,
     req: &LaunchAiToolRequest,
-) -> (u16, Option<tokio::task::AbortHandle>) {
+) -> (u16, Option<tokio::task::AbortHandle>, String) {
     start_tool_proxy_with_collab(tool_config, provider, config, req, None, None).await
 }
 
@@ -45,7 +62,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
     req: &LaunchAiToolRequest,
     app_handle: Option<tauri::AppHandle>,
     collab_room_id: Option<String>,
-) -> (u16, Option<tokio::task::AbortHandle>) {
+) -> (u16, Option<tokio::task::AbortHandle>, String) {
     let inbound_protocols = tool_config.inbound_protocols();
     let primary_inbound = tool_config.native_protocol();
 
@@ -60,22 +77,25 @@ pub(crate) async fn start_tool_proxy_with_collab(
 
     let mut proxy_port: u16 = 0;
     let mut abort_handle: Option<tokio::task::AbortHandle> = None;
+    // 独立启动路径（非协同）启用每次启动的随机鉴权 token；协同房间代理保持原有
+    // 总线 token 校验流程，不额外引入 per-start token 以免破坏已存活的委派工具。
+    let auth_token = if collab_room_id.is_none() { fresh_proxy_token() } else { String::new() };
     // 明确的「不启动」诊断，避免静默 (0, None) 让调用方/用户无从排查
     if provider.is_none() {
         eprintln!("[proxy] ✗ 代理未启动: 未传入 provider（工具未绑定供应商或未选模型）");
-        return (0, None);
+        return (0, None, String::new());
     }
     let p = provider.unwrap();
     if p.api_key.is_empty() {
         eprintln!("[proxy] ✗ 代理未启动: provider '{}' 的 api_key 为空（请在设置里配置密钥）", p.id);
-        return (0, None);
+        return (0, None, String::new());
     }
     if chosen_outbound.is_empty() {
         eprintln!(
             "[proxy] ✗ 代理未启动: 无可用出站协议 (inbound={}, provider '{}' 未配置匹配的协议 URL)",
             primary_inbound, p.id
         );
-        return (0, None);
+        return (0, None, String::new());
     }
     if let Some(p) = provider {
         if !p.api_key.is_empty() && !chosen_outbound.is_empty() {
@@ -183,6 +203,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
                     let proxy_config = crate::proxy::types::ProxyConfig {
                         listen_address: listen_addr,
                         listen_port: port,
+                        auth_token: auth_token.clone(),
                         inbound_protocols: inbound_protocols.clone(),
                         outbound_protocol: outbound_protocol.clone(),
                         conversion_mode,
@@ -222,7 +243,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
                     if !ready {
                         eprintln!("[proxy] ⚠ 代理就绪检查失败, 中止: port={}", port);
                         handle.abort();
-                        return (0, None);
+                        return (0, None, String::new());
                     }
                 }
                 Err(e) => {
@@ -231,7 +252,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
             }
         }
     }
-    (proxy_port, abort_handle)
+    (proxy_port, abort_handle, auth_token)
 }
 
 
@@ -267,7 +288,15 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
 
     // ─── Step 1: 启动代理（强制开启，每工具独立实例 + 自由端口）───
     // 抽成 start_tool_proxy 复用：CLI 工具与 GUI/桌面应用共用同一套按需代理。
-    let (proxy_port, _proxy_abort) = start_tool_proxy(&tool_config, provider, &config, &req).await;
+    let (proxy_port, _proxy_abort, proxy_token) = start_tool_proxy(&tool_config, provider, &config, &req).await;
+
+    // 本次启动对外（配置文件/env）的「鉴权 key」：代理模式下用随机 token（工具只会
+    // 连本地代理，真实上游 key 不落盘也不进子进程环境）；未启动代理时回退真实 key。
+    let effective_api_key: String = if proxy_port != 0 {
+        proxy_token.clone()
+    } else {
+        provider.as_ref().map(|p| p.api_key.clone()).unwrap_or_default()
+    };
 
     // 出站协议（供 Step 2 写配置文件使用；与 start_tool_proxy 内部推导一致）
     let chosen_outbound = provider
@@ -319,7 +348,7 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                         req.model_id.as_deref(),
                         claimed_model.as_deref(),
                         &effective_base_url,
-                        &p.api_key,
+                        &effective_api_key,
                         req.fallback_model_id.as_deref(),
                         req.fallback_masquerade_model.as_deref(),
                         req.one_m_context,
@@ -483,7 +512,7 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
             .filter(|c| !c.is_empty())
             .or_else(|| req.model_id.clone())
             .unwrap_or_default();
-        let envs = build_env_vars(&tool_config, &p.api_key, &effective_base_url, &model);
+        let envs = build_env_vars(&tool_config, &effective_api_key, &effective_base_url, &model);
         for (k, v) in &envs {
             eprintln!("[spawn] env {} = {}", k, mask_secret(v));
             cmd.env(k, v);
@@ -920,7 +949,7 @@ fn write_json_config(
 
     let content = serde_json::to_string_pretty(&doc)
         .map_err(|e| format!("序列化配置失败: {}", e))?;
-    fs::write(path, content)
+    crate::commands::config::atomic_write_file(path, content.as_bytes())
         .map_err(|e| format!("写入 {} 失败: {}", path.display(), e))
 }
 
@@ -1167,7 +1196,7 @@ fn write_toml_config(
     }
 
     let content = out.join("\n");
-    fs::write(path, content)
+    crate::commands::config::atomic_write_file(path, content.as_bytes())
         .map_err(|e| format!("写入 {} 失败: {}", path.display(), e))
 }
 

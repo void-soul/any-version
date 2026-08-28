@@ -91,6 +91,36 @@ async fn catch_all_handler(OriginalUri(uri): OriginalUri) -> impl IntoResponse {
     (StatusCode::NOT_FOUND, "not found")
 }
 
+/// 本地代理鉴权中间件：配置了 auth_token 时，`/v1*`、`/messages`、`/chat/completions`
+/// 等数据路由必须携带正确 token（Authorization: Bearer / x-api-key / x-goog-api-key 三者
+/// 任一匹配即可，覆盖 Anthropic/OpenAI/Google 三种 SDK 的凭据注入习惯）。
+/// `/health` 与 `/collab/*`（有独立 X-Collab-Token 校验）免鉴权。
+async fn require_proxy_token_mw(
+    State(state): State<ProxyState>,
+    req: Request,
+    next: middleware::Next,
+) -> Response {
+    let path = req.uri().path().to_string();
+    let expected = state.config.read().await.auth_token.clone();
+    if expected.is_empty() || path == "/health" || path.starts_with("/collab") {
+        return next.run(req).await;
+    }
+    let headers = req.headers();
+    let bearer = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .map(|v| v.strip_prefix("Bearer ").unwrap_or(v))
+        .unwrap_or("");
+    let x_api_key = headers.get("x-api-key").and_then(|h| h.to_str().ok()).unwrap_or("");
+    let x_goog = headers.get("x-goog-api-key").and_then(|h| h.to_str().ok()).unwrap_or("");
+    if bearer == expected || x_api_key == expected || x_goog == expected {
+        next.run(req).await
+    } else {
+        log_proxy(&format!("✗ 鉴权失败: 缺少有效 token: {}", path));
+        (StatusCode::UNAUTHORIZED, "unauthorized").into_response()
+    }
+}
+
 /// 向前端 emit 协同代理事件（仅在协同上下文存在时发送）
 fn emit_proxy_event(state: &ProxyState, event: &str, payload: Value) {
     if let (Some(app), Some(room_id)) = (&state.app_handle, &state.collab_room_id) {
@@ -333,6 +363,7 @@ pub async fn serve_proxy(config: ProxyConfig, listener: std::net::TcpListener) -
         .route("/collab/agent/send", post(collab_agent_send_handler))
         .route("/collab/agent/message", post(collab_agent_message_handler))
         .route("/collab/agent/task", post(collab_agent_task_handler))
+        .layer(middleware::from_fn_with_state(state.clone(), require_proxy_token_mw))
         .layer(middleware::from_fn(log_requests_mw))
         .fallback(catch_all_handler)
         .with_state(state.clone());

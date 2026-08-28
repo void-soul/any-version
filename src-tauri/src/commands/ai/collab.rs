@@ -1308,7 +1308,7 @@ async fn ensure_room_proxy(
             ..Default::default()
         };
 
-        let (p1, h1) = start_tool_proxy_with_collab(
+        let (p1, h1, _tok) = start_tool_proxy_with_collab(
             tool_config, provider, &config, &req,
             Some(app_handle.clone()),
             Some(room_id.to_string()),

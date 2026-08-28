@@ -12,6 +12,10 @@ pub struct ProxyConfig {
     pub listen_address: String,
     /// 监听端口
     pub listen_port: u16,
+    /// 本地代理鉴权 token（每次启动随机生成；工具通过 Authorization: Bearer /
+    /// x-api-key / x-goog-api-key 携带。空串 = 不鉴权，用于启动早期/协同等旧路径）。
+    #[serde(default)]
+    pub auth_token: String,
 
     // ─── 协议 ───
     /// 入站协议列表：工具支持的协议（"anthropic" | "openai" | "google"）
@@ -103,6 +107,7 @@ impl Default for ProxyConfig {
         Self {
             listen_address: "127.0.0.1".to_string(),
             listen_port: 15721,
+            auth_token: String::new(),
             inbound_protocols: vec!["openai".to_string()],
             outbound_protocol: "openai".to_string(),
             conversion_mode: "none".to_string(),

@@ -102,6 +102,7 @@ pub async fn start_proxy(port: u16) -> Result<(), String> {
     let proxy_config = crate::proxy::types::ProxyConfig {
         listen_address: "127.0.0.1".to_string(),
         listen_port: port,
+        auth_token: String::new(),
         inbound_protocols: vec![inbound],
         outbound_protocol: outbound,
         conversion_mode,
