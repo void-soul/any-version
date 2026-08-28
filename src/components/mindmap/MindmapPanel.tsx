@@ -301,7 +301,8 @@ function ancestorChain(nodeId: string, nodes: MindmapNode[]): string[] {
 // ════════════ 详细弹窗（拖拽分隔条 + 全屏） ════════════
 
 function DetailModal({ node, onUpdate, onClose }: { node: MindmapNode; accent?: string; onUpdate: (patch: Partial<MindmapNode>) => void; onClose: () => void }) {
-  const [tab, setTab] = useState<"view" | "edit">("view");
+  // 双击节点进入详情后直接可编辑，预览仍可通过右上角按钮切换。
+  const [tab, setTab] = useState<"view" | "edit">("edit");
   const [detail, setDetail] = useState(node.detail);
   const [description, setDescription] = useState(node.description);
   const [name, setName] = useState(node.name);
@@ -1209,6 +1210,7 @@ export default function MindmapPanel() {
         <div className="ml-auto flex items-center gap-1.5">
           {full && <button type="button" className={button} onClick={exportMd}><ScrollText className="h-3 w-3" />导出</button>}
           <span className="text-[10px] text-slate-500">{full ? `${full.document.name} · ${full.nodes.length} 节点` : "选择一个文档"}</span>
+          {full && <span className="hidden text-[9px] text-slate-600 sm:inline">双击节点即可编辑</span>}
         </div>
       </header>
       <div className="flex min-h-0 flex-1">
@@ -1268,7 +1270,9 @@ export default function MindmapPanel() {
                 const IconFn = DOC_SOURCE_ICONS[d.sourceType] ?? DOC_SOURCE_ICONS.manual;
                 return (
                 <div key={d.id} className={`group mb-1 flex items-center gap-1.5 rounded-md border px-2.5 py-2 transition ${full?.document.id === d.id ? "border-cyan-400/40 bg-cyan-400/10" : "border-white/10 bg-white/[0.02] hover:bg-white/[0.06]"}`}
+                  title="双击打开并直接编辑"
                   draggable
+                  onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); void loadDocument(d.id); }}
                   onDragStart={e => { e.dataTransfer.setData("text/x-doc-id", d.id); e.dataTransfer.effectAllowed = "move"; }}
                   onDragEnd={() => setDragOverFolderId(null)}>
                   <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => void loadDocument(d.id)}>

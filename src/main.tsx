@@ -11,6 +11,9 @@ const IS_TRANSLATE_POPUP = new URLSearchParams(window.location.search).get("popu
 
 if (IS_TRANSLATE_POPUP) {
   // 划词翻译悬浮窗只渲染轻量组件，不加载 App 与全局快捷键逻辑。
+  // 样式：Tailwind 指令在 App.css 中，App 分支由 App.tsx 引入；
+  // 悬浮窗分支必须在此一并加载，否则所有工具类样式失效。
+  import("./App.css");
   import("./components/TranslatePopup").then(({ default: TranslatePopup }) => {
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
