@@ -507,6 +507,8 @@ pub fn run() {
             commands::network::net_iface_traffic,
             commands::network::ip_lookup,
             commands::network::ping_host,
+            commands::network::ip_db_status,
+            commands::network::download_ip_db,
             commands::pkg::get_global_packages,
             commands::pkg::upgrade_global_package,
             commands::pkg::upgrade_all_global_packages,

@@ -124,9 +124,12 @@ pub struct IfaceTraffic {
 /// 网卡收发字节数（累计值；前端轮询计算速率）。
 #[tauri::command]
 pub fn net_iface_traffic() -> Result<Vec<IfaceTraffic>, String> {
-    let script = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Get-NetAdapterStatistics | Where-Object { $_.Name -notmatch 'vEthernet|Loopback' } | Select-Object Name,ReceivedBytes,SentBytes | ConvertTo-Json -Compress";
-    let output = super::hidden_cmd::hidden_cmd("cmd")
-        .args(&["/c", "chcp 65001 >nul & powershell -NoProfile -Command", &format!("\"{}\"", script)])
+    // 直接调用 powershell（与 mihomo/netinfo.rs 同一套可靠模式），不再经 cmd 拼接
+    // `& powershell -Command` —— 那会在某些环境下被 cmd 拆成独立命令，导致
+    // powershell 收到 `-Command "..."` 作为脚本本体，报 "-Command 不是可识别的 cmdlet"。
+    let script = "$ErrorActionPreference='SilentlyContinue'; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $PSDefaultParameterValues['Out-File:Encoding']='utf8'; $OutputEncoding=[System.Text.Encoding]::UTF8; Get-NetAdapterStatistics | Where-Object { $_.Name -notmatch 'vEthernet|Loopback' } | Select-Object Name,ReceivedBytes,SentBytes | ConvertTo-Json -Compress";
+    let output = super::hidden_cmd::hidden_cmd("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script])
         .output()
         .map_err(|e| format!("执行 Get-NetAdapterStatistics 失败: {}", e))?;
     if !output.status.success() {
@@ -172,9 +175,74 @@ pub struct IpInfo {
     pub source: String,
 }
 
-/// 查询 IP 归属地。主源 ip-api.com（中文），回退 ipwho.is。
+/// 离线 IP 库的状态（存在性 / 大小 / 修改时间 / 路径）。
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct IpDbStatus {
+    pub exists: bool,
+    pub size_bytes: u64,
+    pub updated_at: Option<String>,
+    pub path: String,
+}
+
+/// 离线 IP 库默认存放位置：{data_dir}/ipdb/country.mmdb。
+fn ip_db_path() -> std::path::PathBuf {
+    crate::commands::config::get_data_dir().join("ipdb").join("country.mmdb")
+}
+
+/// 候选 MMDB 文件：专用库优先，其次复用 mihomo 已同步的 geo 库（很多安装已有）。
+fn ip_db_candidates() -> Vec<std::path::PathBuf> {
+    let mut v = vec![ip_db_path()];
+    v.push(crate::commands::config::get_data_dir().join("mihomo").join("country.mmdb"));
+    v
+}
+
+/// 用本地 MMDB（MaxMind 格式）查询 IP 归属地。
+///
+/// 国家/地区级信息从 MMDB 直接读；region/city/isp 离线库不包含，留空。
+/// 查不到（内网地址 / 库缺失 / 解析失败）返回 None，由调用方决定是否走网络 API。
+fn lookup_offline(ip: &str) -> Option<IpInfo> {
+    let addr: std::net::IpAddr = ip.trim().parse().ok()?;
+    for path in ip_db_candidates() {
+        if !path.is_file() {
+            continue;
+        }
+        let reader = maxminddb::Reader::open_readfile(&path).ok()?;
+        let record: maxminddb::geoip2::Country = reader.lookup(addr).ok()?;
+        let Some(country) = record.country.as_ref() else {
+            continue;
+        };
+        let iso = country.iso_code.unwrap_or_default();
+        // 优先中文名，回退英文名，再回退 ISO 码
+        let name = country
+            .names
+            .as_ref()
+            .and_then(|m| m.get("zh-CN").copied())
+            .or_else(|| country.names.as_ref().and_then(|m| m.get("en").copied()))
+            .unwrap_or(iso)
+            .to_string();
+        return Some(IpInfo {
+            ip: ip.trim().to_string(),
+            country: name,
+            region: String::new(),
+            city: String::new(),
+            isp: String::new(),
+            org: String::new(),
+            source: "离线 MMDB".into(),
+        });
+    }
+    None
+}
+
+/// 查询 IP 归属地。优先离线 MMDB 库（本地即查、不依赖网络），
+/// 库缺失或命中内网地址时才回退到在线 API（ip-api.com → ipwho.is）。
 #[tauri::command]
 pub async fn ip_lookup(ip: String) -> Result<IpInfo, String> {
+    // 离线优先：本地 MMDB 命中即返回，不打网络
+    if let Some(info) = lookup_offline(&ip) {
+        return Ok(info);
+    }
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(8))
         .connect_timeout(std::time::Duration::from_secs(5))
@@ -225,6 +293,68 @@ pub async fn ip_lookup(ip: String) -> Result<IpInfo, String> {
     }
 
     Err(format!("IP 归属地查询失败（网络不可用或 IP 无效: {}）", ip))
+}
+
+/// 离线 IP 库状态（存在性 / 大小 / 更新时间 / 路径）。
+#[tauri::command]
+pub fn ip_db_status() -> IpDbStatus {
+    let path = ip_db_path();
+    let meta = std::fs::metadata(&path).ok();
+    let exists = meta.is_some();
+    let size_bytes = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+    let updated_at = meta
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .map(|t| {
+            let dt: chrono::DateTime<chrono::Utc> = t.into();
+            dt.to_rfc3339()
+        });
+    IpDbStatus {
+        exists,
+        size_bytes,
+        updated_at,
+        path: path.to_string_lossy().to_string(),
+    }
+}
+
+/// 下载 / 更新离线 IP 库（country.mmdb，GeoIP2 Country 格式，含中文国家名）。
+/// 下载到 {data_dir}/ipdb/country.mmdb，覆盖旧文件。
+#[tauri::command]
+pub async fn download_ip_db() -> Result<IpDbStatus, String> {
+    // GeoLite2 Country 公共镜像（国内可访问，约 5-6MB）
+    let url = "https://cdn.jsdelivr.net/gh/P3TERX/GeoLite.mmdb@download/GeoLite2-Country.mmdb";
+    let client = reqwest::Client::builder()
+        .user_agent("Any-Version-Manager")
+        .timeout(std::time::Duration::from_secs(120))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("下载离线 IP 库失败: {}", e))?;
+    let st = resp.status();
+    if !st.is_success() {
+        return Err(format!(
+            "下载离线 IP 库失败 (HTTP {}): {}，可稍后重试或检查网络",
+            st.as_u16(),
+            crate::commands::utils::github_status_hint(st.as_u16())
+        ));
+    }
+    let bytes = resp.bytes().await.map_err(|e| format!("读取下载内容失败: {}", e))?;
+    if bytes.len() < 16 || &bytes[..3] != b"\xab\xcd\xef" {
+        return Err("下载到的文件不是有效的 MMDB（文件头校验失败）".into());
+    }
+    let dir = crate::commands::config::get_data_dir().join("ipdb");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建 IP 库目录失败: {}", e))?;
+    let tmp = dir.join("country.mmdb.tmp");
+    std::fs::write(&tmp, &bytes).map_err(|e| format!("写入 IP 库失败: {}", e))?;
+    // 先删旧文件再改名，Windows 下 rename 到已存在目标会失败
+    let final_path = dir.join("country.mmdb");
+    let _ = std::fs::remove_file(&final_path);
+    std::fs::rename(&tmp, &final_path).map_err(|e| format!("安装 IP 库失败: {}", e))?;
+    Ok(ip_db_status())
 }
 
 // ---------------------------------------------------------------------------
@@ -331,4 +461,27 @@ pub fn ping_host(host: String, count: Option<u32>) -> Result<PingResult, String>
         rtts,
         raw: text,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 若本机已有 MMDB（ipdb 或 mihomo geo 库），验证公网/内网地址能正确解析。
+    /// 无库时跳过（不失败）。
+    #[test]
+    fn offline_lookup_works_with_existing_db() {
+        if !ip_db_candidates().iter().any(|p| p.is_file()) {
+            return;
+        }
+        let info = lookup_offline("8.8.8.8");
+        // 8.8.8.8 是 Google 的地址，country 库应命中非空（美国/unknown 都算命中）
+        assert!(info.is_some(), "离线库存在时 8.8.8.8 应能查到归属地");
+        // 内网地址应能被解析（mihomo 的 country.mmdb 含保留/内网段，返回 Reserved），
+        // 解析失败时为 None 由调用方走网络 API，两者都允许。
+        lookup_offline("192.168.1.1");
+        lookup_offline("127.0.0.1");
+        // 无库或无法解析时走网络 API 兜底
+        assert!(lookup_offline("not-an-ip").is_none());
+    }
 }
