@@ -67,6 +67,12 @@ pub struct MindmapNode {
     /// 计划时间（ISO 8601 字符串，可空；旧数据为 None）
     #[serde(default)]
     pub plan_at: Option<String>,
+    /// 计划重复：none=不重复 / daily=每天 / weekly=每周
+    #[serde(default = "default_repeat")]
+    pub repeat: String,
+    /// 证据锚定：该节点对应的真实源码文件（项目相对路径，来自 AI 标注 + 扫描校验）
+    #[serde(default)]
+    pub sources: Vec<String>,
     #[serde(default)]
     pub position_x: f64,
     #[serde(default)]
@@ -74,6 +80,8 @@ pub struct MindmapNode {
     pub created_at: String,
     pub updated_at: String,
 }
+
+fn default_repeat() -> String { "none".to_string() }
 
 fn default_kind() -> String { "other".to_string() }
 fn default_color() -> String { "#f59e0b".to_string() }
@@ -228,4 +236,85 @@ pub struct DocumentFull {
     pub document: MindmapDocument,
     pub nodes: Vec<MindmapNode>,
     pub stickers: Vec<MindmapSticker>,
+}
+
+/// 指定日期范围内的具体计划发生记录（计划日历聚合展示用）。
+/// 重复计划（daily/weekly）已由后端在查询时展开为逐次发生。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlannedOccurrence {
+    pub id: String,
+    pub document_id: String,
+    pub document_name: String,
+    pub name: String,
+    pub kind: String,
+    pub color: String,
+    /// 原始计划时间（ISO 8601，用于打开详情时回显）
+    pub plan_at: String,
+    /// 计划重复：none / daily / weekly
+    #[serde(default = "default_repeat")]
+    pub repeat: String,
+    /// 本次发生的日期 YYYY-MM-DD（本地时间）
+    pub occur_day: String,
+    /// 本次发生的具体时间（本地时间字符串，如 2026-08-30T09:00:00）
+    pub occur_at: String,
+}
+
+/// 拖拽移动计划发生记录：按 from_day → to_day 的天数差改写 plan_at
+/// （保留本地钟点；daily/weekly 整条顺延、none 单次移动）。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MovePlanOccurrenceInput {
+    pub node_id: String,
+    /// 拖拽来源日期 YYYY-MM-DD（该次发生的 occur_day）
+    pub from_day: String,
+    /// 拖拽目标日期 YYYY-MM-DD
+    pub to_day: String,
+}
+
+/// 某个视图生成失败的原因（不影响其它已成功的视图）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiImportFailure {
+    pub view: String,
+    pub reason: String,
+}
+
+/// 单个视图的校验报告（导入完成弹窗展示用）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiImportReport {
+    pub document_id: String,
+    /// 视图类型：architecture / workflow / dataflow / sequence / lifecycle
+    pub view: String,
+    /// 导入的节点总数（含根）
+    pub node_count: usize,
+    /// 实际发生的 AI 调用轮数（1 = 首次即通过；>1 = 经过修复重试）
+    pub repair_rounds: usize,
+    /// 修复循环耗尽后仍残留的校验错误（空 = 完全通过）
+    pub diagnostics: Vec<String>,
+    /// 引用的证据文件总数（所有节点 sources 之和）
+    pub evidence_count: usize,
+    /// 命中真实文件的证据数（evidence_verified=false 时等于 evidence_count）
+    pub evidence_hit_count: usize,
+    /// 证据是否经过文件集核验（项目模式 true，文本模式 false）
+    pub evidence_verified: bool,
+    /// 有证据的节点数（无证据节点 = node_count - evidence_nodes，即纯 AI 推断）
+    pub evidence_nodes: usize,
+}
+
+/// AI 类型路由导入结果：一次生成多个视图，各自落在独立文档。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiImportResult {
+    /// 本次生成的全部文档（含内容），按视图重要程度排序
+    pub documents: Vec<DocumentFull>,
+    /// 应切换到的主文档 id（第一个成功的视图）
+    pub primary_id: String,
+    /// 失败的视图
+    #[serde(default)]
+    pub failures: Vec<AiImportFailure>,
+    /// 各视图的校验报告
+    #[serde(default)]
+    pub reports: Vec<AiImportReport>,
 }

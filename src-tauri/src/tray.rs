@@ -295,6 +295,33 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// 在托盘图标右上角叠加红点（计划提醒徽标）；show=false 恢复原始图标。
+pub(crate) fn set_tray_badge(app: &AppHandle, show: bool) -> Result<(), String> {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else { return Ok(()) };
+    let Some(base) = app.default_window_icon() else { return Ok(()) };
+    let mut img = image::RgbaImage::from_raw(base.width(), base.height(), base.rgba().to_vec())
+        .ok_or_else(|| "读取默认图标失败".to_string())?;
+    if show {
+        let dot = ((img.width() as f32) * 0.30).round().max(6.0) as i64;
+        let cx = img.width() as i64 - dot / 2 - 2;
+        let cy = dot / 2 + 2;
+        let r = dot / 2;
+        for y in 0..img.height() {
+            for x in 0..img.width() {
+                let dx = x as i64 - cx;
+                let dy = y as i64 - cy;
+                if dx * dx + dy * dy <= r * r {
+                    img.put_pixel(x, y, image::Rgba([255, 59, 48, 255]));
+                }
+            }
+        }
+    }
+    let (w, h) = (img.width(), img.height());
+    let icon = tauri::image::Image::new_owned(img.into_raw(), w, h);
+    tray.set_icon(Some(icon)).map_err(|e| format!("更新托盘图标失败: {}", e))?;
+    Ok(())
+}
+
 pub fn rebuild_tray_menu(app: &AppHandle) -> tauri::Result<()> {
     // 菜单打开期间不要重建，否则会关闭正在显示的右键菜单
     if TRAY_MENU_OPEN.load(Ordering::SeqCst) {

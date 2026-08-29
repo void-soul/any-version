@@ -83,13 +83,22 @@ fn build_connection() -> Result<rusqlite::Connection, String> {
             .map_err(|e| format!("迁移 parent_id 失败: {}", e))?;
     }
 
-    // 旧版本节点表没有 plan_at（计划时间），幂等补列。
+    // 旧版本节点表没有 plan_at（计划时间）/ repeat（重复），幂等补列。
     let node_cols: Vec<String> = conn.prepare("PRAGMA table_info(mindmap_nodes)")
         .and_then(|mut stmt| stmt.query_map([], |r| r.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>())
         .unwrap_or_default();
     if !node_cols.iter().any(|c| c == "plan_at") {
         conn.execute_batch("ALTER TABLE mindmap_nodes ADD COLUMN plan_at TEXT")
             .map_err(|e| format!("迁移 plan_at 失败: {}", e))?;
+    }
+    if !node_cols.iter().any(|c| c == "repeat") {
+        conn.execute_batch("ALTER TABLE mindmap_nodes ADD COLUMN repeat TEXT NOT NULL DEFAULT 'none'")
+            .map_err(|e| format!("迁移 repeat 失败: {}", e))?;
+    }
+    // 证据锚定：sources 列存 JSON 数组（项目相对路径）
+    if !node_cols.iter().any(|c| c == "sources") {
+        conn.execute_batch("ALTER TABLE mindmap_nodes ADD COLUMN sources TEXT NOT NULL DEFAULT '[]'")
+            .map_err(|e| format!("迁移 sources 失败: {}", e))?;
     }
 
     Ok(conn)
@@ -208,7 +217,7 @@ pub fn create_document(name: &str, description: &str, source_type: &str, folder_
         let id = new_id("mm"); let ts = now_ts();
         sql(c.execute("INSERT INTO mindmap_documents (id,name,description,source_type,source_desc,folder_id,background_texture,layout_dir,created_at,updated_at) VALUES (?1,?2,?3,?4,'',?5,'dots','lr',?6,?7)", rusqlite::params![id, name, description, source_type, folder_id, ts, ts]))?;
         let root_id = new_id("nd");
-        sql(c.execute("INSERT INTO mindmap_nodes (id,document_id,parent_id,name,description,detail,kind,color,progress,plan_at,position_x,position_y,created_at,updated_at) VALUES (?1,?2,NULL,?3,'根节点','','root','#f8fafc',0,NULL,0,0,?4,?5)", rusqlite::params![root_id, id, name, ts, ts]))?;
+        sql(c.execute("INSERT INTO mindmap_nodes (id,document_id,parent_id,name,description,detail,kind,color,progress,plan_at,repeat,sources,position_x,position_y,created_at,updated_at) VALUES (?1,?2,NULL,?3,'根节点','','root','#f8fafc',0,NULL,'none','[]',0,0,?4,?5)", rusqlite::params![root_id, id, name, ts, ts]))?;
         Ok(MindmapDocument { id, name: name.to_string(), description: description.to_string(), source_type: source_type.to_string(), source_desc: String::new(), folder_id: folder_id.map(|s| s.to_string()), background_texture: "dots".to_string(), layout_dir: "lr".to_string(), node_count: 1, sticker_count: 0, created_at: ts.clone(), updated_at: ts })
     })
 }
@@ -261,14 +270,29 @@ pub fn touch_document(id: &str) -> Result<(), String> {
     with_conn(|c| touch_document_inner(c, id))
 }
 
+/// 记录文档来源（AI 项目导入时存项目根路径，供证据文件定位）。
+pub fn update_source_desc(id: &str, desc: &str) -> Result<(), String> {
+    with_conn(|c| {
+        sql(c.execute(
+            "UPDATE mindmap_documents SET source_desc=?1, updated_at=?2 WHERE id=?3",
+            rusqlite::params![desc, now_ts(), id],
+        ))?;
+        Ok(())
+    })
+}
+
 // ─── 节点 ───
 
 fn row_to_node(r: &rusqlite::Row) -> rusqlite::Result<MindmapNode> {
-    Ok(MindmapNode { id: r.get(0)?, document_id: r.get(1)?, parent_id: r.get(2)?, name: r.get(3)?, description: r.get(4)?, detail: r.get(5)?, kind: r.get(6)?, color: r.get(7)?, progress: r.get(8)?, plan_at: r.get(9)?, position_x: r.get(10)?, position_y: r.get(11)?, created_at: r.get(12)?, updated_at: r.get(13)? })
+    let sources: Vec<String> = r
+        .get::<_, Option<String>>(15)?
+        .map(|s| serde_json::from_str(&s).unwrap_or_default())
+        .unwrap_or_default();
+    Ok(MindmapNode { id: r.get(0)?, document_id: r.get(1)?, parent_id: r.get(2)?, name: r.get(3)?, description: r.get(4)?, detail: r.get(5)?, kind: r.get(6)?, color: r.get(7)?, progress: r.get(8)?, plan_at: r.get(9)?, position_x: r.get(10)?, position_y: r.get(11)?, created_at: r.get(12)?, updated_at: r.get(13)?, repeat: r.get::<_, Option<String>>(14)?.unwrap_or_default(), sources })
 }
 
 fn list_nodes_inner(c: &rusqlite::Connection, document_id: &str) -> Result<Vec<MindmapNode>, String> {
-    let mut s = c.prepare("SELECT id,document_id,parent_id,name,description,detail,kind,color,progress,plan_at,position_x,position_y,created_at,updated_at FROM mindmap_nodes WHERE document_id=?1").map_err(|e| e.to_string())?;
+    let mut s = c.prepare("SELECT id,document_id,parent_id,name,description,detail,kind,color,progress,plan_at,position_x,position_y,created_at,updated_at,repeat,sources FROM mindmap_nodes WHERE document_id=?1").map_err(|e| e.to_string())?;
     let rows = s.query_map(rusqlite::params![document_id], |r| row_to_node(r)).map_err(|e| e.to_string())?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
 }
@@ -277,13 +301,137 @@ pub fn list_nodes(document_id: &str) -> Result<Vec<MindmapNode>, String> {
     with_conn(|c| list_nodes_inner(c, document_id))
 }
 
+/// 指定日期范围 [start, end]（YYYY-MM-DD，含端点）内所有具体计划发生记录。
+/// 重复计划（daily / weekly）在 SQL 中用递归 CTE 展开为范围内的逐次发生，
+/// 并按本地时区归日（plan_at 存的是 UTC，前端按本地日期查看计划）。
+pub fn list_planned_occurrences(start: &str, end: &str) -> Result<Vec<PlannedOccurrence>, String> {
+    // 防御：非法或超长范围直接拒绝，避免递归 CTE 失控（正常日历视图至多一个多月）。
+    let s = chrono::NaiveDate::parse_from_str(start, "%Y-%m-%d")
+        .map_err(|_| format!("无效的开始日期: {}", start))?;
+    let e = chrono::NaiveDate::parse_from_str(end, "%Y-%m-%d")
+        .map_err(|_| format!("无效的结束日期: {}", end))?;
+    let (s, e) = if s > e { (e, s) } else { (s, e) };
+    if (e - s).num_days() > 730 {
+        return Err("日期范围过大（最多 730 天）".into());
+    }
+    let s_str = s.format("%Y-%m-%d").to_string();
+    let e_str = e.format("%Y-%m-%d").to_string();
+    with_conn(|c| {
+        let mut stmt = c
+            .prepare(
+                r#"WITH RECURSIVE
+                plans AS (
+                    SELECT n.id, n.document_id, d.name AS doc_name, n.name, n.kind, n.color, n.plan_at, n.repeat,
+                           -- 本地化：完整时间戳转本地时间（去毫秒/时区后缀，SQLite 把无时区视为 UTC）；纯日期原样保留
+                           CASE WHEN instr(n.plan_at, 'T') > 0 OR instr(n.plan_at, ' ') > 0
+                                THEN datetime(substr(n.plan_at, 1, 19), 'localtime')
+                                ELSE datetime(substr(n.plan_at, 1, 10)) END AS p_local,
+                           CASE WHEN instr(n.plan_at, 'T') > 0 OR instr(n.plan_at, ' ') > 0
+                                THEN date(datetime(substr(n.plan_at, 1, 19), 'localtime'))
+                                ELSE date(substr(n.plan_at, 1, 10)) END AS p_date
+                    FROM mindmap_nodes n
+                    JOIN mindmap_documents d ON d.id = n.document_id
+                    WHERE n.plan_at IS NOT NULL AND n.plan_at != ''
+                ),
+                days(day) AS (
+                    SELECT date(?1)
+                    UNION ALL
+                    SELECT date(day, '+1 day') FROM days WHERE day < date(?2)
+                )
+                SELECT p.id, p.document_id, p.doc_name, p.name, p.kind, p.color, p.plan_at, p.repeat,
+                       d.day AS occur_day,
+                       -- 具体发生时间：原计划的钟点（本地）落在展开日当天
+                       d.day || 'T' || substr(p.p_local, 12) AS occur_local
+                FROM plans p JOIN days d
+                WHERE p.p_date <= d.day
+                  AND (p.repeat = 'daily'
+                       OR (p.repeat = 'weekly' AND CAST(strftime('%w', p.p_date) AS INTEGER) = CAST(strftime('%w', d.day) AS INTEGER))
+                       OR (p.repeat NOT IN ('daily', 'weekly') AND p.p_date = d.day))
+                ORDER BY d.day, p.p_local"#,
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params![s_str, e_str], |r| {
+                Ok(PlannedOccurrence {
+                    id: r.get(0)?,
+                    document_id: r.get(1)?,
+                    document_name: r.get(2)?,
+                    name: r.get(3)?,
+                    kind: r.get(4)?,
+                    color: r.get(5)?,
+                    plan_at: r.get(6)?,
+                    repeat: r.get::<_, Option<String>>(7)?.unwrap_or_default(),
+                    occur_day: r.get(8)?,
+                    occur_at: r.get(9)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| e.to_string())
+    })
+}
+
+/// 按拖拽天数差改写 plan_at：完整时间戳保留本地钟点、只平移本地日期（再转回 UTC 存储）；
+/// 纯日期（YYYY-MM-DD）直接平移日期。
+fn shifted_plan_at(plan_at: &str, from_day: &str, to_day: &str) -> Result<String, String> {
+    use chrono::{Duration, NaiveDate, TimeZone};
+    let f = NaiveDate::parse_from_str(from_day, "%Y-%m-%d")
+        .map_err(|_| format!("无效日期: {}", from_day))?;
+    let t = NaiveDate::parse_from_str(to_day, "%Y-%m-%d")
+        .map_err(|_| format!("无效日期: {}", to_day))?;
+    let delta = (t - f).num_days();
+    if delta == 0 {
+        return Ok(plan_at.to_string());
+    }
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(plan_at) {
+        let local = dt.with_timezone(&chrono::Local);
+        // 直接平移日期部分、保留钟点，避免按 24h 加跨 DST 时钟点漂移
+        let new_date = local.date_naive() + Duration::days(delta);
+        let shifted = chrono::Local
+            .from_local_datetime(&chrono::NaiveDateTime::new(new_date, local.time()))
+            .single()
+            .unwrap_or_else(|| local + Duration::days(delta));
+        return Ok(shifted.with_timezone(&chrono::Utc).to_rfc3339());
+    }
+    if let Ok(nd) = NaiveDate::parse_from_str(plan_at, "%Y-%m-%d") {
+        return Ok((nd + Duration::days(delta)).format("%Y-%m-%d").to_string());
+    }
+    Err(format!("无法解析计划时间: {}", plan_at))
+}
+
+/// 拖拽移动某次计划发生：按 from_day → to_day 的天数差改写节点 plan_at。
+/// 不重复计划即单次移动；daily/weekly 整条按相同天数顺延（保留钟点与重复规则）。
+pub fn move_plan_occurrence(node_id: &str, from_day: &str, to_day: &str) -> Result<(), String> {
+    use rusqlite::OptionalExtension;
+    with_conn(|c| {
+        let row = c
+            .query_row(
+                "SELECT document_id, plan_at FROM mindmap_nodes WHERE id=?1",
+                rusqlite::params![node_id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .ok_or("节点不存在")?;
+        let (document_id, plan_at) = row;
+        let plan_at = plan_at.ok_or("该节点没有计划时间")?;
+        let new_plan_at = shifted_plan_at(&plan_at, from_day, to_day)?;
+        sql(c.execute(
+            "UPDATE mindmap_nodes SET plan_at=?1, updated_at=?2 WHERE id=?3",
+            rusqlite::params![new_plan_at, now_ts(), node_id],
+        ))?;
+        touch_document_inner(c, &document_id)?;
+        Ok(())
+    })
+}
+
 fn upsert_node_inner(c: &rusqlite::Connection, node: &MindmapNode) -> Result<(), String> {
     let ts = now_ts();
     let exists: i64 = c.query_row("SELECT COUNT(*) FROM mindmap_nodes WHERE id=?1", rusqlite::params![node.id], |r| r.get(0)).unwrap_or(0);
     if exists > 0 {
-        sql(c.execute("UPDATE mindmap_nodes SET parent_id=?1,name=?2,description=?3,detail=?4,kind=?5,color=?6,progress=?7,plan_at=?8,position_x=?9,position_y=?10,updated_at=?11 WHERE id=?12", rusqlite::params![node.parent_id, node.name, node.description, node.detail, node.kind, node.color, node.progress, node.plan_at, node.position_x, node.position_y, ts, node.id]))?;
+        sql(c.execute("UPDATE mindmap_nodes SET parent_id=?1,name=?2,description=?3,detail=?4,kind=?5,color=?6,progress=?7,plan_at=?8,repeat=?9,sources=?10,position_x=?11,position_y=?12,updated_at=?13 WHERE id=?14", rusqlite::params![node.parent_id, node.name, node.description, node.detail, node.kind, node.color, node.progress, node.plan_at, node.repeat, serde_json::to_string(&node.sources).unwrap_or_else(|_| "[]".into()), node.position_x, node.position_y, ts, node.id]))?;
     } else {
-        sql(c.execute("INSERT INTO mindmap_nodes (id,document_id,parent_id,name,description,detail,kind,color,progress,plan_at,position_x,position_y,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)", rusqlite::params![node.id, node.document_id, node.parent_id, node.name, node.description, node.detail, node.kind, node.color, node.progress, node.plan_at, node.position_x, node.position_y, ts, ts]))?;
+        sql(c.execute("INSERT INTO mindmap_nodes (id,document_id,parent_id,name,description,detail,kind,color,progress,plan_at,repeat,sources,position_x,position_y,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)", rusqlite::params![node.id, node.document_id, node.parent_id, node.name, node.description, node.detail, node.kind, node.color, node.progress, node.plan_at, node.repeat, serde_json::to_string(&node.sources).unwrap_or_else(|_| "[]".into()), node.position_x, node.position_y, ts, ts]))?;
     }
     touch_document_inner(c, &node.document_id)?;
     Ok(())

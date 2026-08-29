@@ -44,6 +44,10 @@ export interface MindmapNode {
   progress: number;      // 0-100
   /** 计划时间（ISO 8601，可空） */
   planAt?: string | null;
+  /** 计划重复：none=不重复 / daily=每天 / weekly=每周 */
+  repeat?: string;
+  /** 证据锚定：该节点对应的真实源码文件（项目相对路径，AI 标注 + 扫描校验） */
+  sources?: string[];
   positionX: number;
   positionY: number;
   createdAt: string;
@@ -73,6 +77,42 @@ export interface DocumentFull {
   document: MindmapDocument;
   nodes: MindmapNode[];
   stickers: MindmapSticker[];
+}
+
+/** 某个视图生成失败的原因（不影响其它已成功的视图） */
+export interface AiImportFailure {
+  view: string;
+  reason: string;
+}
+
+/** 单个视图的校验报告（导入完成弹窗展示用） */
+export interface AiImportReport {
+  documentId: string;
+  /** 视图类型：architecture / workflow / dataflow / sequence / lifecycle */
+  view: string;
+  /** 导入的节点总数（含根） */
+  nodeCount: number;
+  /** 实际发生的 AI 调用轮数（1 = 首次即通过；>1 = 经过修复重试） */
+  repairRounds: number;
+  /** 修复循环耗尽后仍残留的校验错误（空 = 完全通过） */
+  diagnostics: string[];
+  /** 引用的证据文件总数（所有节点 sources 之和） */
+  evidenceCount: number;
+  /** 命中真实文件的证据数（evidenceVerified=false 时等于 evidenceCount） */
+  evidenceHitCount: number;
+  /** 证据是否经过文件集核验（项目模式 true，文本模式 false） */
+  evidenceVerified: boolean;
+  /** 有证据的节点数（无证据节点 = nodeCount - evidenceNodes，即纯 AI 推断） */
+  evidenceNodes: number;
+}
+
+/** AI 类型路由导入结果：一次生成多个视图，各自落在独立文档 */
+export interface AiImportResult {
+  documents: DocumentFull[];
+  /** 应切换到的主文档 id（第一个成功的视图） */
+  primaryId: string;
+  failures: AiImportFailure[];
+  reports: AiImportReport[];
 }
 
 // ─── 输入类型 ───
@@ -139,6 +179,33 @@ export interface RegenerateInput {
   modelId?: string | null;
 }
 
+/** 指定日期范围内的具体计划发生记录（计划日历聚合展示用）。
+ *  重复计划（daily/weekly）已由后端在查询时展开为逐次发生。 */
+export interface PlannedOccurrence {
+  id: string;
+  documentId: string;
+  documentName: string;
+  name: string;
+  kind: string;
+  color: string;
+  /** 原始计划时间（ISO 8601，用于打开详情时回显） */
+  planAt: string;
+  /** 计划重复：none / daily / weekly */
+  repeat?: string;
+  /** 本次发生的日期 YYYY-MM-DD（本地时间） */
+  occurDay: string;
+  /** 本次发生的具体时间（本地时间字符串，如 2026-08-30T09:00:00） */
+  occurAt: string;
+}
+
+export interface MovePlanOccurrenceInput {
+  nodeId: string;
+  /** 拖拽来源日期 YYYY-MM-DD（该次发生的 occurDay） */
+  fromDay: string;
+  /** 拖拽目标日期 YYYY-MM-DD */
+  toDay: string;
+}
+
 export interface MoveDocumentInput {
   documentId: string;
   folderId: string | null;
@@ -186,9 +253,12 @@ export const mmApi = {
   deleteSticker: (i: DeleteStickerInput) => invoke<void>("mm_delete_sticker", { input: i }),
 
   exportMd: (id: string) => invoke<string>("mm_export_markdown", { documentId: id }),
-  aiFromProject: (i: AiProjectInput) => invoke<DocumentFull>("mm_ai_from_project", { input: i }),
-  aiFromText: (i: AiTextInput) => invoke<DocumentFull>("mm_ai_from_text", { input: i }),
+  aiFromProject: (i: AiProjectInput) => invoke<AiImportResult>("mm_ai_from_project", { input: i }),
+  aiFromText: (i: AiTextInput) => invoke<AiImportResult>("mm_ai_from_text", { input: i }),
   regenerateNode: (i: RegenerateInput) => invoke<DocumentFull>("mm_regenerate_node", { input: i }),
+
+  plannedOccurrences: (start: string, end: string) => invoke<PlannedOccurrence[]>("mm_planned_occurrences", { start, end }),
+  movePlanOccurrence: (i: MovePlanOccurrenceInput) => invoke<void>("mm_move_plan_occurrence", { input: i }),
 };
 
 // ─── 节点颜色映射 ───

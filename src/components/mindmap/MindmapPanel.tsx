@@ -11,13 +11,14 @@ import { MindmapMarkdown } from "./MindmapMarkdown";
 import {
   AlertTriangle, Brain, Circle, File, Folder, FolderOpen, LayoutGrid, Lightbulb, Loader2, Lock, Puzzle,
   Route, ScrollText, Server, Settings, Sparkles, StickyNote, Image, Trash2, X, Plus, Pencil, Eye, Columns,
-  ChevronDown, ChevronRight, ChevronLeft, FolderPlus, Search, Maximize2, Minimize2, GripVertical, Code2, FileText, ListTree, Palette, RotateCcw, RotateCw,
+  ChevronDown, ChevronRight, ChevronLeft, FolderPlus, Search, Maximize2, Minimize2, GripVertical, Code2, FileText, ListTree, Palette, RotateCcw, RotateCw, Calendar,
 } from "lucide-react";
 import type { AiConfig } from "../ai/types";
-import { DocumentFull, MindmapDocument, MindmapFolder, MindmapNode, MindmapSticker, PositionInput, kindColor, mmApi } from "./types";
+import { AiImportResult, DocumentFull, MindmapDocument, MindmapFolder, MindmapNode, MindmapSticker, PlannedOccurrence, PositionInput, kindColor, mmApi } from "./types";
 import { moduleAccent } from "../../utils/theme";
 
 const ACCENT = moduleAccent();
+const MM_LAST_DOC_KEY = "any_version_mindmap_last_doc";
 const button = "inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.05] px-2 py-1.5 text-[10px] text-slate-300 transition hover:bg-white/[0.1] hover:text-white disabled:opacity-40";
 const selectClass = "h-8 min-w-[110px] rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400/60";
 const DOC_SOURCE_ICONS: Record<string, (cls: string) => React.ReactNode> = {
@@ -131,6 +132,7 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>)
       <div className="flex items-center gap-1.5 px-2.5 pt-1.5">
         {node.progress > 0 && <span className="text-[8px] text-slate-500">{node.progress}%</span>}
         {node.planAt && <span className="text-[8px] text-slate-400 font-mono">计划 {planShort(node.planAt)}</span>}
+        {(node.sources?.length ?? 0) > 0 && <span className="inline-flex items-center gap-0.5 text-[8px] text-cyan-300/70" title={`${node.sources!.length} 个证据文件：${node.sources!.join("、")}`}><File className="h-2.5 w-2.5" />{node.sources!.length}</span>}
       </div>
       {node.progress > 0 && <div className="mx-2.5 mb-2 mt-1 h-1 overflow-hidden rounded-full bg-slate-800/80"><div className="h-full rounded-full transition-all" style={{ width: `${node.progress}%`, backgroundColor: c, boxShadow: `0 0 6px ${c}66` }} /></div>}
       <Handle type="source" position={sourcePosition} isConnectable className="!h-2.5 !w-2.5 !border-2 !border-slate-950" style={{ background: c }} />
@@ -332,7 +334,14 @@ function ancestorChain(nodeId: string, nodes: MindmapNode[]): string[] {
 
 // ════════════ 详细弹窗（拖拽分隔条 + 全屏） ════════════
 
-function DetailModal({ node, onUpdate, onClose }: { node: MindmapNode; accent?: string; onUpdate: (patch: Partial<MindmapNode>) => void; onClose: () => void }) {
+function DetailModal({ node, onUpdate, onClose, projectRoot }: { node: MindmapNode; accent?: string; onUpdate: (patch: Partial<MindmapNode>) => void; onClose: () => void; projectRoot?: string }) {
+  // 证据文件点击：在资源管理器中定位（项目根路径来自文档 sourceDesc）
+  const openSource = (src: string) => {
+    if (!projectRoot) return;
+    const p = `${projectRoot.replace(/\\/g, "/")}/${src}`;
+    void invoke("launcher_open_file_location", { path: p }).catch(() => {});
+  };
+  const sources = node.sources ?? [];
   // 双击节点进入详情后直接可编辑，预览仍可通过右上角按钮切换。
   const [tab, setTab] = useState<"view" | "edit">("edit");
   const [detail, setDetail] = useState(node.detail);
@@ -341,6 +350,7 @@ function DetailModal({ node, onUpdate, onClose }: { node: MindmapNode; accent?: 
   const [kind, setKind] = useState(node.kind);
   const [progress, setProgress] = useState(node.progress);
   const [planAt, setPlanAt] = useState(node.planAt ?? "");
+  const [repeat, setRepeat] = useState(node.repeat || "none");
   const [color, setColor] = useState(node.color);
   const [split, setSplit] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -351,8 +361,8 @@ function DetailModal({ node, onUpdate, onClose }: { node: MindmapNode; accent?: 
   const COLORS = ["#f8fafc","#22d3ee","#34d399","#fbbf24","#60a5fa","#fb7185","#a78bfa","#f97316","#f59e0b","#94a3b8"];
 
   const save = useCallback(() => {
-    onUpdate({ name, description, color, kind, progress, detail, planAt: planAt.trim() ? planAt.trim() : null });
-  }, [name, description, color, kind, progress, detail, planAt, onUpdate]);
+    onUpdate({ name, description, color, kind, progress, detail, planAt: planAt.trim() ? planAt.trim() : null, repeat });
+  }, [name, description, color, kind, progress, detail, planAt, repeat, onUpdate]);
 
   // Auto-save on unmount（用 ref 保存最新 save，避免 save 身份变化时
   // cleanup 反复触发 save → 父级 setState → 新 save → 无限循环卡死）
@@ -399,6 +409,21 @@ function DetailModal({ node, onUpdate, onClose }: { node: MindmapNode; accent?: 
             <button type="button" className="nodrag nopan rounded p-1 text-slate-400 hover:text-white" onClick={onClose}><X className="h-4 w-4" /></button>
           </div>
         </div>
+        {sources.length > 0 && (
+          <div className="border-b border-white/5 bg-white/[0.02] px-4 py-2">
+            <div className="mb-1 flex items-center gap-1 text-[9px] text-slate-500"><File className="h-2.5 w-2.5" />证据（{sources.length}）—— 点击在资源管理器中定位</div>
+            <div className="flex flex-wrap gap-1">
+              {sources.map(s => (
+                <button key={s} type="button" onClick={() => openSource(s)}
+                  className={`nodrag nopan inline-flex max-w-[220px] cursor-pointer items-center gap-1 truncate rounded border border-cyan-400/25 bg-cyan-400/[0.07] px-1.5 py-0.5 font-mono text-[8px] text-cyan-200 transition hover:border-cyan-400/60 hover:bg-cyan-400/15 ${projectRoot ? "" : "cursor-default opacity-70"}`}
+                  title={s}>
+                  <File className="h-2.5 w-2.5 shrink-0" />
+                  <span className="truncate">{s}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {tab === "edit" ? (
           <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-3">
             <div>
@@ -418,11 +443,14 @@ function DetailModal({ node, onUpdate, onClose }: { node: MindmapNode; accent?: 
             </div>
             <div>
               <label className="text-[9px] text-slate-500 block mb-1">计划时间（可空）</label>
-              <div className="flex items-center gap-2">
-                <input type="datetime-local" value={planAt ? planAt.slice(0, 16) : ""}
-                  onChange={(e) => { const v = e.target.value; setPlanAt(v); onUpdate({ planAt: v ? new Date(v).toISOString() : null }); }}
-                  className="h-8 rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400/60" />
-                {planAt && <button type="button" className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-slate-400 hover:text-white" onClick={() => { setPlanAt(""); onUpdate({ planAt: null }); }}>清除</button>}
+              <div className="flex flex-wrap items-center gap-2">
+                <PlanDateTimePicker value={planAt} onChange={(iso) => { setPlanAt(iso ?? ""); onUpdate({ planAt: iso }); }} />
+                <select value={repeat} onChange={(e) => { const v = e.target.value; setRepeat(v); onUpdate({ repeat: v }); }}
+                  className="h-8 cursor-pointer rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400/60" title="计划重复">
+                  <option value="none">不重复</option>
+                  <option value="daily">每天</option>
+                  <option value="weekly">每周</option>
+                </select>
               </div>
             </div>
             <div>
@@ -492,6 +520,446 @@ function CreateDocModal({ onClose, onCreate, folderId }: { onClose: () => void; 
     </div>, document.body);
 }
 
+// ════════════ 计划日历 ════════════
+
+const WEEKDAY_LABELS = ["一", "二", "三", "四", "五", "六", "日"];
+
+/** Date → YYYY-MM-DD（本地时区） */
+function toYMD(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+}
+
+function monthDays(y: number, m: number): number { return new Date(y, m + 1, 0).getDate(); }
+// 该月 1 号是周几（周一 = 0）
+function monthOffset(y: number, m: number): number { return (new Date(y, m, 1).getDay() + 6) % 7; }
+
+/** 纯月份网格：供「计划时间选择器」与「计划日历」复用；onDropDay 存在时单元格可作为拖拽目标 */
+function MiniCalendar({ year, month, selected, marked, onSelect, onDropDay }: {
+  year: number; month: number;
+  selected?: string | null;
+  marked?: Set<string>;
+  onSelect: (ymd: string) => void;
+  onDropDay?: (ymd: string) => void;
+}) {
+  const today = toYMD(new Date());
+  const [dropYmd, setDropYmd] = useState<string | null>(null);
+  const dim = monthDays(year, month);
+  const off = monthOffset(year, month);
+  const cells: (string | null)[] = [];
+  for (let i = 0; i < off; i++) cells.push(null);
+  for (let d = 1; d <= dim; d++) cells.push(toYMD(new Date(year, month, d)));
+  while (cells.length % 7 !== 0) cells.push(null);
+  return (
+    <div className="w-full">
+      <div className="grid grid-cols-7 gap-0.5 mb-1">
+        {WEEKDAY_LABELS.map((w, i) => (
+          <div key={i} className={`py-1 text-center text-[9px] font-semibold ${i >= 5 ? "text-slate-500" : "text-slate-400"}`}>{w}</div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-0.5">
+        {cells.map((ymd, i) => {
+          if (!ymd) return <div key={i} className="h-8" />;
+          const dNum = Number(ymd.slice(8, 10));
+          const isSel = ymd === selected;
+          const isToday = ymd === today;
+          const hasMark = marked?.has(ymd) ?? false;
+          const isDrop = dropYmd === ymd;
+          return (
+            <button key={i} type="button"
+              onClick={() => onSelect(ymd)}
+              onDragOver={(e) => { if (!onDropDay) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDropYmd(ymd); }}
+              onDragLeave={() => setDropYmd((v) => (v === ymd ? null : v))}
+              onDrop={(e) => { if (!onDropDay) return; e.preventDefault(); setDropYmd(null); onDropDay(ymd); }}
+              className={`relative flex h-8 items-center justify-center rounded-md text-[10px] transition cursor-pointer ${isDrop ? "bg-cyan-400/25 ring-2 ring-inset ring-cyan-300 text-cyan-100" : isSel ? "bg-cyan-400 text-slate-950 font-bold" : isToday ? "text-cyan-300 ring-1 ring-inset ring-cyan-400/50 hover:bg-white/[0.06]" : "text-slate-300 hover:bg-white/[0.06]"}`}>
+              {dNum}
+              {hasMark && <span className={`absolute bottom-0.5 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full ${isSel ? "bg-slate-900" : isDrop ? "bg-cyan-200" : "bg-cyan-400"}`} />}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** 计划时间选择器：日历选日期 + 时间输入，弹层用 portal 避免被弹窗裁剪 */
+function PlanDateTimePicker({ value, onChange }: { value: string; onChange: (iso: string | null) => void }) {
+  const btnRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const init = value ? new Date(value) : new Date();
+  const [ym, setYm] = useState({ y: init.getFullYear(), m: init.getMonth() });
+  const [dateStr, setDateStr] = useState(() => (value ? toYMD(new Date(value)) : toYMD(new Date())));
+  const [timeStr, setTimeStr] = useState(() => {
+    if (!value) return "09:00";
+    const d = new Date(value);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  });
+
+  const toggleOpen = () => {
+    if (open) { setOpen(false); return; }
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) {
+      const popW = 280;
+      const left = Math.min(r.left, Math.max(8, window.innerWidth - popW - 8));
+      setPos({ left, top: r.bottom + 6 });
+    }
+    setOpen(true);
+  };
+
+  const confirm = () => {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const [hh, mi] = timeStr.split(":").map(Number);
+    const dt = new Date(y, m - 1, d, hh, mi);
+    if (Number.isNaN(dt.getTime())) return;
+    onChange(dt.toISOString());
+    setOpen(false);
+  };
+
+  return (
+    <>
+      <div ref={btnRef} className="flex items-center gap-2">
+        <button type="button" onClick={toggleOpen}
+          className={`flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs transition cursor-pointer ${value ? "border-cyan-400/40 bg-slate-950/70 text-slate-200 hover:border-cyan-400/70" : "border-dashed border-white/20 bg-transparent text-slate-500 hover:text-slate-300"}`}>
+          <Calendar className="h-3.5 w-3.5" />
+          {value ? planShort(value) : "选择计划时间"}
+        </button>
+        {value && <button type="button" className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-slate-400 hover:text-white" onClick={() => { onChange(null); setOpen(false); }}>清除</button>}
+      </div>
+      {open && createPortal(
+        <>
+          <div className="fixed inset-0 z-[220]" onClick={() => setOpen(false)} />
+          <div className="fixed z-[221] w-[280px] rounded-lg border border-white/10 bg-[#0d1524] p-3 shadow-2xl" style={pos ?? { left: 8, top: 8 }}>
+            <div className="mb-2 flex items-center justify-between">
+              <button type="button" className="rounded p-1 text-slate-400 hover:bg-white/10 hover:text-white" onClick={() => setYm(({ y, m }) => (m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 }))} title="上一月"><ChevronLeft className="h-3.5 w-3.5" /></button>
+              <span className="text-[11px] font-semibold text-slate-200">{ym.y} 年 {ym.m + 1} 月</span>
+              <button type="button" className="rounded p-1 text-slate-400 hover:bg-white/10 hover:text-white" onClick={() => setYm(({ y, m }) => (m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 }))} title="下一月"><ChevronRight className="h-3.5 w-3.5" /></button>
+            </div>
+            <MiniCalendar year={ym.y} month={ym.m} selected={dateStr} onSelect={(ymd) => setDateStr(ymd)} />
+            <div className="mt-2 flex items-center gap-1.5">
+              <span className="text-[9px] text-slate-500">时间</span>
+              <input type="time" value={timeStr} onChange={(e) => setTimeStr(e.target.value)}
+                className="h-7 flex-1 rounded-md border border-white/10 bg-slate-900 px-1.5 text-[10px] text-slate-200 outline-none focus:border-cyan-400/60" />
+            </div>
+            <div className="mt-2 flex items-center justify-between">
+              <button type="button" className="rounded border border-white/15 px-2 py-1 text-[9px] text-slate-300 hover:text-white" onClick={() => { const t = new Date(); setDateStr(toYMD(t)); setYm({ y: t.getFullYear(), m: t.getMonth() }); }}>今天</button>
+              <div className="flex gap-1.5">
+                <button type="button" className="rounded border border-white/15 px-2.5 py-1 text-[9px] text-slate-400 hover:text-white" onClick={() => { onChange(null); setOpen(false); }}>清除</button>
+                <button type="button" className="rounded bg-cyan-500 px-2.5 py-1 text-[9px] font-semibold text-slate-950 hover:bg-cyan-400" onClick={confirm}>确定</button>
+              </div>
+            </div>
+          </div>
+        </>, document.body)}
+    </>
+  );
+}
+
+/** 按后端返回的 occurDay 把范围查询结果分组（重复计划已在后端展开为具体发生记录） */
+function buildOccurMap(occ: PlannedOccurrence[]): Map<string, PlannedOccurrence[]> {
+  const m = new Map<string, PlannedOccurrence[]>();
+  for (const p of occ) {
+    const arr = m.get(p.occurDay) ?? [];
+    arr.push(p);
+    m.set(p.occurDay, arr);
+  }
+  for (const arr of m.values()) arr.sort((a, b) => a.occurAt.localeCompare(b.occurAt));
+  return m;
+}
+
+/** 计划日历：月/周视图（有计划的日期打点，今日高亮，过期计划置灰）+ 选中日期计划列表，跨全部文档聚合 */
+function PlanCalendarModal({ onPick, onClose, onAddPlan, onMoveOccurrence }: {
+  onPick: (p: PlannedOccurrence) => void;
+  onClose: () => void;
+  onAddPlan: (ymd: string) => void;
+  onMoveOccurrence: (fromDay: string, toDay: string, nodeId: string) => Promise<boolean>;
+}) {
+  const now = new Date();
+  const [view, setView] = useState<"month" | "week">("month");
+  const [ym, setYm] = useState({ y: now.getFullYear(), m: now.getMonth() });
+  const [selDay, setSelDay] = useState<string>(toYMD(now));
+  const [occ, setOcc] = useState<PlannedOccurrence[]>([]);
+  const [loading, setLoading] = useState(false);
+  // 拖拽改期：dragItem=正在拖的条目，pendingMove=待确认的移动，refreshKey=移动成功后重新拉取
+  const [dragItem, setDragItem] = useState<{ nodeId: string; fromDay: string; name: string } | null>(null);
+  const [pendingMove, setPendingMove] = useState<{ nodeId: string; name: string; fromDay: string; toDay: string } | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [moving, setMoving] = useState(false);
+
+  const pickDay = (ymd: string) => {
+    setSelDay(ymd);
+    const [y, m] = ymd.split("-").map(Number);
+    setYm({ y, m: m - 1 });
+  };
+
+  const shift = (delta: number) => {
+    if (view === "month") {
+      setYm(({ y, m }) => { const d = new Date(y, m + delta, 1); return { y: d.getFullYear(), m: d.getMonth() }; });
+    } else {
+      const d = new Date(`${selDay}T00:00:00`);
+      d.setDate(d.getDate() + delta * 7);
+      const ymd = toYMD(d);
+      setSelDay(ymd);
+      setYm({ y: d.getFullYear(), m: d.getMonth() });
+    }
+  };
+
+  const goToday = () => { const t = new Date(); setSelDay(toYMD(t)); setYm({ y: t.getFullYear(), m: t.getMonth() }); };
+
+  // 周视图：selDay 所在周的 7 天（周一为一周起点）
+  const weekStart = useMemo(() => {
+    const d = new Date(`${selDay}T00:00:00`);
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    return d;
+  }, [selDay]);
+  const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => { const d = new Date(weekStart); d.setDate(weekStart.getDate() + i); return d; }), [weekStart]);
+
+  // 当前可见范围（月=当月 1 日~月末；周=周一~周日），切换视图/翻页时重新拉取，
+  // 重复计划由后端在 SQL 中展开，前端只按 occurDay 分组。
+  const range = useMemo(() => {
+    if (view === "month") {
+      return { start: toYMD(new Date(ym.y, ym.m, 1)), end: toYMD(new Date(ym.y, ym.m + 1, 0)) };
+    }
+    return { start: toYMD(weekStart), end: toYMD(weekDays[6]) };
+  }, [view, ym, weekStart, weekDays]);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    mmApi.plannedOccurrences(range.start, range.end)
+      .then(list => { if (alive) setOcc(list); })
+      .catch(() => { if (alive) setOcc([]); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [range.start, range.end, refreshKey]);
+
+  // 拖拽改期：把条目拖到某天 → 弹出确认栏（不改 plan_at 本身的时间，只平移日期）
+  const dayDiff = (a: string, b: string) => Math.round((new Date(`${b}T00:00:00`).getTime() - new Date(`${a}T00:00:00`).getTime()) / 86400000);
+  const handleDayDrop = (ymd: string) => {
+    if (!dragItem) return;
+    setDragItem(null);
+    if (ymd === dragItem.fromDay) return;
+    setPendingMove({ nodeId: dragItem.nodeId, name: dragItem.name, fromDay: dragItem.fromDay, toDay: ymd });
+  };
+  const confirmMove = async () => {
+    if (!pendingMove || moving) return;
+    setMoving(true);
+    try {
+      const ok = await onMoveOccurrence(pendingMove.fromDay, pendingMove.toDay, pendingMove.nodeId);
+      if (ok) { setPendingMove(null); setRefreshKey(k => k + 1); }
+    } finally { setMoving(false); }
+  };
+
+  const byDay = useMemo(() => buildOccurMap(occ), [occ]);
+  const marked = useMemo(() => new Set(byDay.keys()), [byDay]);
+  const dayPlans = byDay.get(selDay) ?? [];
+
+  const label = view === "month"
+    ? `${ym.y} 年 ${ym.m + 1} 月`
+    : `${weekStart.getMonth() + 1}月${weekStart.getDate()}日 – ${weekDays[6].getMonth() + 1}月${weekDays[6].getDate()}日`;
+
+  const selLabel = (() => {
+    const d = new Date(`${selDay}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return selDay;
+    return `${d.getMonth() + 1} 月 ${d.getDate()} 日`;
+  })();
+
+  const todayYmd = toYMD(now);
+  const nowMs = now.getTime();
+
+  const renderPlan = (p: PlannedOccurrence) => {
+    const c = normalizeHexColor(p.color) ?? kindColor(p.kind);
+    const occMs = new Date(p.occurAt).getTime();
+    const past = !Number.isNaN(occMs) && occMs < nowMs;
+    return (
+      <button key={`${p.documentId}-${p.id}`} type="button"
+        draggable
+        onDragStart={(e) => { setDragItem({ nodeId: p.id, fromDay: p.occurDay, name: p.name }); e.dataTransfer.setData("text/plain", p.id); e.dataTransfer.effectAllowed = "move"; }}
+        onDragEnd={() => setDragItem(null)}
+        onClick={() => onPick(p)}
+        className={`flex w-full cursor-grab items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-2 text-left transition hover:bg-white/[0.08] active:cursor-grabbing ${past ? "opacity-45" : ""} ${dragItem?.nodeId === p.id ? "opacity-40" : ""}`}
+        title={`打开「${p.documentName}」中的此节点；拖动可改期${past ? "（已过期）" : ""}`}>
+        <span className={`shrink-0 font-mono text-[9px] ${past ? "text-slate-500 line-through" : "text-slate-400"}`}>{new Date(p.occurAt).toTimeString().slice(0, 5)}</span>
+        <span className="inline-flex shrink-0 items-center rounded border px-1 py-0.5" style={{ borderColor: `${c}66`, color: c, backgroundColor: `${c}24` }}>{KIND_ICONS[p.kind]?.( "h-2.5 w-2.5") ?? <Circle className="h-2.5 w-2.5" />}</span>
+        <span className={`min-w-0 flex-1 truncate text-[10px] ${past ? "text-slate-500 line-through" : "text-slate-200"}`}>{p.name}</span>
+        {p.repeat && p.repeat !== "none" && <span className="shrink-0 text-[8px] text-cyan-300/80">{p.repeat === "daily" ? "每天" : "每周"}</span>}
+        <span className="shrink-0 text-[9px] text-slate-500">{p.documentName}</span>
+      </button>
+    );
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-4 backdrop-blur-[3px]">
+      <div className="w-[min(94vw,760px)] rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-white"><Calendar className="h-4 w-4 text-cyan-400" />计划日历</h3>
+          <div className="flex items-center gap-1.5">
+            <div className="flex rounded-md border border-white/10 bg-slate-950/60 p-0.5">
+              <button type="button" onClick={() => setView("month")} className={`rounded px-2 py-1 text-[9px] font-medium transition cursor-pointer ${view === "month" ? "bg-cyan-500/20 text-cyan-300" : "text-slate-400 hover:text-white"}`}>月</button>
+              <button type="button" onClick={() => setView("week")} className={`rounded px-2 py-1 text-[9px] font-medium transition cursor-pointer ${view === "week" ? "bg-cyan-500/20 text-cyan-300" : "text-slate-400 hover:text-white"}`}>周</button>
+            </div>
+            <button type="button" className="rounded p-1 text-slate-400 hover:text-white" onClick={onClose} title="关闭"><X className="h-4 w-4" /></button>
+          </div>
+        </div>
+        <div className="flex min-h-[380px] flex-col gap-4 p-4 lg:flex-row">
+          {/* 网格区：月历 / 周历 */}
+          <div className="shrink-0 lg:w-[340px]">
+            <div className="mb-2 flex items-center justify-between">
+              <button type="button" className="rounded p-1 text-slate-400 hover:bg-white/10 hover:text-white" onClick={() => shift(-1)} title="上一页"><ChevronLeft className="h-4 w-4" /></button>
+              <span className="text-[11px] font-semibold text-slate-200">{label}</span>
+              <button type="button" className="rounded p-1 text-slate-400 hover:bg-white/10 hover:text-white" onClick={() => shift(1)} title="下一页"><ChevronRight className="h-4 w-4" /></button>
+            </div>
+            {view === "month" ? (
+              <MiniCalendar year={ym.y} month={ym.m} selected={selDay} marked={marked} onSelect={pickDay} onDropDay={handleDayDrop} />
+            ) : (
+              <div className="flex gap-1">
+                {weekDays.map((d, i) => {
+                  const ymd = toYMD(d);
+                  const isToday = ymd === todayYmd;
+                  const isSel = ymd === selDay;
+                  const dayPlansW = byDay.get(ymd) ?? [];
+                  return (
+                    <div key={i}
+                      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
+                      onDrop={(e) => { e.preventDefault(); handleDayDrop(ymd); }}
+                      className={`flex-1 rounded-md border px-1 pb-1 ${isSel ? "border-cyan-400/60 bg-cyan-400/[0.06]" : isToday ? "border-cyan-400/30 bg-white/[0.02]" : "border-white/5"}`}>
+                      <button type="button" onClick={() => pickDay(ymd)} className={`w-full py-1 text-center text-[9px] transition cursor-pointer ${isSel ? "font-bold text-cyan-300" : isToday ? "text-cyan-300" : "text-slate-400 hover:text-white"}`}>
+                        <div className="mb-0.5 text-[8px] text-slate-500">{WEEKDAY_LABELS[i]}</div>
+                        <div>{d.getDate()}</div>
+                      </button>
+                      <div className="space-y-0.5">
+                        {dayPlansW.slice(0, 3).map(p => <div key={`${p.documentId}-${p.id}`} className="mx-auto h-1 w-1 rounded-full" style={{ backgroundColor: normalizeHexColor(p.color) ?? kindColor(p.kind) }} title={p.name} />)}
+                        {dayPlansW.length > 3 && <div className="text-center text-[7px] text-slate-600">+{dayPlansW.length - 3}</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="mt-2 flex items-center justify-between">
+              <span className="flex items-center gap-1 text-[9px] text-slate-500"><span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />有计划的日期</span>
+              <button type="button" className="rounded border border-white/15 px-2 py-1 text-[9px] text-slate-300 hover:text-white" onClick={goToday}>今天</button>
+            </div>
+          </div>
+          {/* 当日计划列表 */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg border border-white/10 bg-slate-950/40">
+            <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+              <span className="text-[11px] font-semibold text-slate-200">{selLabel} · {dayPlans.length} 项计划 <span className="ml-1 text-[8px] font-normal text-slate-500">（拖动条目到日历可改期）</span></span>
+              <button type="button" onClick={() => onAddPlan(selDay)}
+                className="flex shrink-0 cursor-pointer items-center gap-1 rounded border border-cyan-400/40 px-1.5 py-0.5 text-[9px] text-cyan-300 transition hover:bg-cyan-400/10"
+                title="在当前文档新建带此日期（09:00）的计划节点">＋ 添加计划</button>
+            </div>
+            <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
+              {loading ? (
+                <div className="flex h-full items-center justify-center text-[10px] text-slate-500"><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />加载中…</div>
+              ) : dayPlans.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-[10px] text-slate-600">当天暂无计划</div>
+              ) : dayPlans.map(renderPlan)}
+            </div>
+            {occ.length === 0 && !loading && (
+              <div className="border-t border-white/10 px-3 py-2 text-center text-[9px] text-slate-600">还没有带计划时间的节点：双击节点 → 详情 → 计划时间</div>
+            )}
+          </div>
+        </div>
+        {pendingMove && (
+          <div className="flex items-center justify-between gap-3 border-t border-white/10 bg-cyan-400/[0.06] px-4 py-2.5">
+            <div className="min-w-0 text-[10px] text-slate-200">
+              移动「<span className="text-cyan-300">{pendingMove.name}</span>」：{pendingMove.fromDay} → {pendingMove.toDay}
+              <span className="ml-1.5 text-slate-500">（{dayDiff(pendingMove.fromDay, pendingMove.toDay) > 0 ? `顺延 ${dayDiff(pendingMove.fromDay, pendingMove.toDay)} 天` : `提前 ${Math.abs(dayDiff(pendingMove.fromDay, pendingMove.toDay))} 天`}，钟点与重复规则不变）</span>
+            </div>
+            <div className="flex shrink-0 gap-1.5">
+              <button type="button" className="cursor-pointer rounded border border-white/15 px-2 py-1 text-[9px] text-slate-400 hover:text-white" onClick={() => setPendingMove(null)}>取消</button>
+              <button type="button" disabled={moving} className="cursor-pointer rounded bg-cyan-500 px-2.5 py-1 text-[9px] font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-50" onClick={() => void confirmMove()}>
+                {moving ? "移动中…" : "确认移动"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>, document.body);
+}
+
+// ════════════ AI 导入校验报告 ════════════
+
+const VIEW_LABELS_ZH: Record<string, string> = {
+  architecture: "架构",
+  workflow: "流程",
+  dataflow: "数据流",
+  sequence: "时序",
+  lifecycle: "生命周期",
+};
+
+/** 导入完成弹窗：逐视图展示节点数、修复轮数与残留校验诊断；点击条目跳转到对应文档 */
+function AiImportReportModal({ result, onClose, onOpenDoc }: {
+  result: AiImportResult;
+  onClose: () => void;
+  onOpenDoc: (id: string) => void;
+}) {
+  const allOk = result.reports.length > 0 && result.reports.every(r => r.diagnostics.length === 0) && result.failures.length === 0;
+  return createPortal(
+    <div className="fixed inset-0 z-[210] modal-mask flex items-center justify-center bg-black/70 p-4 backdrop-blur-[3px]" onClick={onClose}>
+      <div className="w-[min(94vw,560px)] rounded-xl border border-white/10 bg-[#0d1524] p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-white"><Sparkles className="h-4 w-4 text-cyan-400" />AI 导入校验报告</h3>
+          <button type="button" className="cursor-pointer rounded p-1 text-slate-400 hover:text-white" onClick={onClose} title="关闭"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="max-h-[60vh] space-y-2 overflow-y-auto pr-1">
+          {result.reports.length === 0 && (
+            <p className="py-4 text-center text-[10px] text-slate-500">本次导入未生成任何视图。</p>
+          )}
+          {result.reports.map(r => {
+            const doc = result.documents.find(d => d.document.id === r.documentId);
+            const ok = r.diagnostics.length === 0;
+            return (
+              <button key={r.documentId} type="button"
+                onClick={() => onOpenDoc(r.documentId)}
+                className="block w-full cursor-pointer rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-left transition hover:bg-white/[0.08]"
+                title="点击切换到该文档">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-slate-200">
+                    <span className="shrink-0 rounded border border-cyan-400/40 bg-cyan-400/10 px-1.5 py-0.5 text-[9px] text-cyan-300">{VIEW_LABELS_ZH[r.view] ?? r.view}</span>
+                    <span className="truncate">{doc?.document.name ?? "（文档）"}</span>
+                  </span>
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] ${ok ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-300"}`}>{ok ? "校验通过" : "有残留错误"}</span>
+                </div>
+                <div className="mt-1 text-[9px] text-slate-500">
+                  {r.nodeCount} 个节点 · {r.repairRounds === 1 ? "首次即通过" : `第 ${r.repairRounds} 轮通过`}
+                </div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[9px]">
+                  <span className="text-slate-500">有证据 {r.evidenceNodes} 个 · 证据 {r.evidenceCount} 处</span>
+                  {r.nodeCount - r.evidenceNodes > 0 && (
+                    <span className="text-slate-600">纯 AI 推断 {r.nodeCount - r.evidenceNodes} 个</span>
+                  )}
+                  {r.evidenceVerified && r.evidenceCount > 0 && (
+                    <span className={r.evidenceHitCount === r.evidenceCount ? "text-emerald-300" : "text-amber-300"}>
+                      证据命中 {r.evidenceHitCount}/{r.evidenceCount}（{Math.round((r.evidenceHitCount / r.evidenceCount) * 100)}%）
+                    </span>
+                  )}
+                </div>
+                {r.diagnostics.length > 0 && (
+                  <div className="mt-1.5 rounded border border-red-500/20 bg-red-500/10 px-2 py-1 text-[9px] leading-relaxed text-red-300">{r.diagnostics.join("；")}</div>
+                )}
+              </button>
+            );
+          })}
+          {result.failures.length > 0 && (
+            <div className="rounded-lg border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2">
+              <div className="text-[10px] font-semibold text-amber-300">生成失败的视图</div>
+              {result.failures.map((f, i) => (
+                <div key={i} className="mt-1 text-[9px] leading-relaxed text-amber-200/80">「{VIEW_LABELS_ZH[f.view] ?? f.view}」：{f.reason}</div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="mt-3 flex items-center justify-between gap-2">
+          <span className={`text-[9px] ${allOk ? "text-emerald-300" : "text-slate-500"}`}>{allOk ? "全部视图校验通过 ✓" : "部分视图存在校验问题，详见上方条目"}</span>
+          <button type="button" className="cursor-pointer rounded bg-cyan-500 px-3 py-1.5 text-[10px] font-semibold text-slate-950 hover:bg-cyan-400" onClick={onClose}>关闭</button>
+        </div>
+      </div>
+    </div>, document.body);
+}
+
 // ════════════ 画布 ════════════
 
 // nodeTypes/edgeTypes 必须在组件外定义为常量：若在 JSX 内联新建，每次渲染都会
@@ -513,7 +981,7 @@ type NodeCacheEntry = {
   obj: Node;
 };
 
-function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onAiText, onError }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onAiText: () => void; onError: (message: string) => void }) {
+function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onAiText, onError, onOpenCalendar, focusRequest }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onAiText: () => void; onError: (message: string) => void; onOpenCalendar: () => void; focusRequest: { nodeId: string; ts: number } | null }) {
   const { fitView } = useReactFlow();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -585,7 +1053,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   const addNode = useCallback((parentId: string | null) => {
     onHistoryPush();
     const now = new Date().toISOString();
-    const n: MindmapNode = { id: `n${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, documentId: full.document.id, parentId, name: parentId ? "新节点" : "新根节点", description: "", detail: "", kind: parentId ? "other" : "root", color: "", progress: 0, planAt: null, positionX: 0, positionY: 0, createdAt: now, updatedAt: now };
+    const n: MindmapNode = { id: `n${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, documentId: full.document.id, parentId, name: parentId ? "新节点" : "新根节点", description: "", detail: "", kind: parentId ? "other" : "root", color: "", progress: 0, planAt: null, repeat: "none", positionX: 0, positionY: 0, createdAt: now, updatedAt: now };
     void mmApi.upsertNode({ documentId: full.document.id, node: n });
     onDocumentUpdate({ ...full, nodes: [...full.nodes, n] });
     setSelectedId(n.id);
@@ -780,6 +1248,18 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
 
   useEffect(() => { const t = window.setTimeout(() => fitView({ padding: 0.2, duration: 260 }), 0); return () => window.clearTimeout(t); }, [fitView, full.document.id, collapsed]);
 
+  // 计划日历点击节点 → 选中并打开详情，同时把视口聚焦到该节点（重复点击用 ts 区分）
+  useEffect(() => {
+    if (!focusRequest) return;
+    const n = byId.get(focusRequest.nodeId);
+    if (!n) return;
+    setSelectedId(n.id);
+    setDetailNode(n);
+    const t = window.setTimeout(() => fitView({ nodes: [{ id: n.id }], padding: 0.4, duration: 300, maxZoom: 1.2 }), 60);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRequest, byId]);
+
   const updateNode = useCallback((patch: Partial<MindmapNode>) => {
     if (!detailNode) return;
     const updated = { ...detailNode, ...patch, planAt: patch.planAt !== undefined ? patch.planAt : detailNode.planAt ?? null, updatedAt: new Date().toISOString() };
@@ -949,6 +1429,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
               {Object.entries(BACKGROUND_TEXTURE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </label>
+          <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={onOpenCalendar} title="按日历查看每天的计划"><Calendar className="h-3 w-3" />计划日历</button>
           <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => addChildNode()} title="添加子节点 (Tab)"><Plus className="h-3 w-3" />子节点</button>
           <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={() => addNode(null)} title="创建新的根节点"><ListTree className="h-3 w-3" />新根节点</button>
           <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={onAiProject} title="选择项目目录、供应商和模型，追加一棵新的根树"><Code2 className="h-3 w-3" />AI 导入项目</button>
@@ -1006,13 +1487,13 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
           </div>
         );
       })()}
-      {detailNode && <DetailModal node={detailNode} accent={accent} onUpdate={updateNode} onClose={() => setDetailNode(null)} />}
+      {detailNode && <DetailModal node={detailNode} accent={accent} projectRoot={full.document.sourceDesc} onUpdate={updateNode} onClose={() => setDetailNode(null)} />}
     </div>
   );
 }
 
-function Canvas({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onAiText, onError }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onAiText: () => void; onError: (message: string) => void }) {
-  return <div className="h-full min-h-0 bg-[#080f1c]"><ReactFlowProvider><CanvasInner full={full} accent={accent} onDocumentUpdate={onDocumentUpdate} onHistoryPush={onHistoryPush} historyVersion={historyVersion} onAiProject={onAiProject} onAiText={onAiText} onError={onError} /></ReactFlowProvider></div>;
+function Canvas({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onAiText, onError, onOpenCalendar, focusRequest }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onAiText: () => void; onError: (message: string) => void; onOpenCalendar: () => void; focusRequest: { nodeId: string; ts: number } | null }) {
+  return <div className="h-full min-h-0 bg-[#080f1c]"><ReactFlowProvider><CanvasInner full={full} accent={accent} onDocumentUpdate={onDocumentUpdate} onHistoryPush={onHistoryPush} historyVersion={historyVersion} onAiProject={onAiProject} onAiText={onAiText} onError={onError} onOpenCalendar={onOpenCalendar} focusRequest={focusRequest} /></ReactFlowProvider></div>;
 }
 
 // ════════════ 主面板 ════════════
@@ -1085,6 +1566,12 @@ export default function MindmapPanel() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarW, setSidebarW] = useState(260);
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; action: () => void } | null>(null);
+  // 计划日历：跨文档按日查看计划（具体发生记录由日历弹窗按可见范围向后端拉取）
+  const [showCalendar, setShowCalendar] = useState(false);
+  // AI 导入校验报告弹窗（导入完成后展示节点数/修复轮数/残留诊断）
+  const [aiReport, setAiReport] = useState<AiImportResult | null>(null);
+  // 日历点击节点后：通知画布选中并打开详情（ts 用于重复点击同一节点也触发）
+  const [calFocus, setCalFocus] = useState<{ nodeId: string; ts: number } | null>(null);
   // 侧栏宽度拖拽期间是否发生了位移（用于区分「点击收起」与「拖动调宽」）
   const sbResizeRef = useRef<{ moved: boolean }>({ moved: false });
 
@@ -1179,13 +1666,35 @@ export default function MindmapPanel() {
     void mmApi.init().then(async () => {
       const [ld, lf] = await Promise.all([mmApi.list(), mmApi.listFolders()]);
       setDocs(ld); setFolders(lf);
+      // 挂载时恢复上次打开的思维导图（模块卸载重挂载后仍停留在原文档）
+      try {
+        const last = localStorage.getItem(MM_LAST_DOC_KEY);
+        if (last && ld.some(d => d.id === last)) {
+          const f = await mmApi.load(last);
+          if (f) setFull(f);
+        }
+      } catch { /* 忽略恢复失败 */ }
     }).catch(() => {});
+    // 今日计划提醒：挂载时统计今天（含重复计划）的发生记录数
+    const today = toYMD(new Date());
+    void mmApi.plannedOccurrences(today, today).then(list => {
+      if (list.length > 0) flash(`今天有 ${list.length} 项计划，可在「计划日历」中查看`);
+    }).catch(() => {});
+    // 同步后端：更新托盘小红点（今天有计划时点亮），系统通知同一天只弹一次
+    void invoke("mm_refresh_plan_badge").catch(() => {});
     void invoke<AiConfig>("get_ai_config").then(cfg => {
       setConfig(cfg);
       const p = cfg.providers.find(x => x.api_key && x.openai_url) ?? cfg.providers[0];
       if (p) { setProviderId(p.id); setModelId(p.active_model_id ?? p.models[0]?.id ?? ""); }
     }).catch(() => setError("加载 AI 配置失败"));
   }, []);
+
+  // 当前文档变化时持久化 id，供挂载恢复
+  useEffect(() => {
+    if (full?.document.id) {
+      try { localStorage.setItem(MM_LAST_DOC_KEY, full.document.id); } catch { /* 忽略 */ }
+    }
+  }, [full?.document.id]);
 
   const providers = useMemo(() => (config?.providers ?? []).filter(p => p.api_key && p.openai_url), [config]);
 
@@ -1210,6 +1719,66 @@ export default function MindmapPanel() {
       if (f) { setFull(f); } else { flash("文档不存在"); }
     } catch (e) { setError(String(e)); }
   }, [flash]);
+
+  // 从校验报告弹窗跳转到对应视图文档
+  const openReportDoc = useCallback(async (id: string) => {
+    setAiReport(null);
+    try {
+      const f = await mmApi.load(id);
+      if (f) setFull(f); else flash("文档不存在");
+    } catch (e) { setError(String(e)); }
+  }, [flash]);
+
+  // 打开计划日历（弹窗内部按当前可见月份/周自动拉取该范围内的发生记录）
+  const openCalendar = useCallback(() => setShowCalendar(true), []);
+
+  // 日历中点击计划：若属于其它文档先切换过去，再让画布定位到该节点
+  const openPlannedNode = useCallback(async (p: PlannedOccurrence) => {
+    setShowCalendar(false);
+    if (!full || full.document.id !== p.documentId) {
+      try {
+        const f = await mmApi.load(p.documentId);
+        if (!f) { flash("文档不存在"); return; }
+        setFull(f);
+      } catch (e) { setError(String(e)); return; }
+    }
+    setCalFocus({ nodeId: p.id, ts: Date.now() });
+  }, [full, flash]);
+
+  // 日历拖拽改期：按 from→to 的天数差改写 plan_at（daily/weekly 整条顺延，钟点不变），成功刷新托盘角标
+  const movePlanOccurrence = useCallback(async (fromDay: string, toDay: string, nodeId: string): Promise<boolean> => {
+    try {
+      await mmApi.movePlanOccurrence({ nodeId, fromDay, toDay });
+      flash("计划已移动");
+      void invoke("mm_refresh_plan_badge").catch(() => {});
+      return true;
+    } catch (e) { setError(String(e)); return false; }
+  }, [flash]);
+
+  // 日历「添加计划」：在（当前或新建的）文档中创建带该日期（09:00）的计划节点，并打开详情
+  const addPlanNode = useCallback(async (ymd: string) => {
+    const nowIso = new Date().toISOString();
+    let docId = full?.document.id ?? null;
+    if (!docId) {
+      try {
+        const doc = await mmApi.create({ name: "计划", description: "", sourceType: "manual", folderId: null });
+        setDocs(prev => [doc, ...prev]);
+        const f = await mmApi.load(doc.id);
+        if (!f) { flash("创建文档失败"); return; }
+        setFull(f);
+        docId = doc.id;
+        void refreshFolders();
+      } catch (e) { flash(String(e)); return; }
+    }
+    const planIso = new Date(`${ymd}T09:00:00`).toISOString();
+    const n: MindmapNode = { id: `n${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, documentId: docId, parentId: null, name: "新计划", description: "", detail: "", kind: "task", color: "", progress: 0, planAt: planIso, repeat: "none", positionX: 0, positionY: 0, createdAt: nowIso, updatedAt: nowIso };
+    try { await mmApi.upsertNode({ documentId: docId, node: n }); }
+    catch (e) { setError(String(e)); return; }
+    setFull(prev => (prev && prev.document.id === docId) ? { ...prev, nodes: [...prev.nodes, n] } : prev);
+    setDocs(prev => prev.map(d => d.id === docId ? { ...d, nodeCount: d.nodeCount + 1, updatedAt: nowIso } : d));
+    setShowCalendar(false);
+    setCalFocus({ nodeId: n.id, ts: Date.now() });
+  }, [full, flash, refreshFolders]);
 
   const createDoc = useCallback(async (name: string, desc: string, folderId: string | null) => {
     try {
@@ -1418,25 +1987,41 @@ export default function MindmapPanel() {
     });
   };
 
+  // 应用 AI 类型路由导入结果：切到主文档，把新生成的视图文档并入侧栏列表
+  const applyAiImport = useCallback((r: AiImportResult) => {
+    const primary = r.documents.find(d => d.document.id === r.primaryId) ?? r.documents[0];
+    if (primary) {
+      setFull(primary);
+      setDocs(prev => {
+        const existing = new Set(prev.map(d => d.id));
+        return [...r.documents.map(d => d.document), ...prev.filter(d => !existing.has(d.id))];
+      });
+    }
+    const names = r.documents.map(d => d.document.name).join("、");
+    const failTxt = r.failures.length ? `（${r.failures.length} 个视图失败：${r.failures.map(f => f.view).join("、")}）` : "";
+    flash(`已生成 ${r.documents.length} 个视图${names ? `：${names}` : ""}${failTxt}`);
+    setShowAi(null);
+    setAiReport(r);
+    void refreshFolders();
+  }, [flash, refreshFolders]);
+
   const runAiProject = useCallback(async () => {
     if (!full || !projectPath || !providerId || !modelId) return;
     setAiLoading(true); setError("");
     try {
-      const f = await mmApi.aiFromProject({ documentId: full.document.id, projectPath, providerId: providerId || null, modelId: modelId || null });
-      setFull(f); setDocs(prev => prev.map(d => d.id === f.document.id ? f.document : d));
-      setShowAi(null); flash(`已追加 ${f.nodes.length} 个节点`);
+      const r = await mmApi.aiFromProject({ documentId: full.document.id, projectPath, providerId: providerId || null, modelId: modelId || null });
+      applyAiImport(r);
     } catch (e) { setError(String(e)); } finally { setAiLoading(false); }
-  }, [full, projectPath, providerId, modelId, flash]);
+  }, [full, projectPath, providerId, modelId, applyAiImport]);
 
   const runAiText = useCallback(async () => {
     if (!full || !textInput.trim() || !providerId || !modelId) return;
     setAiLoading(true); setError("");
     try {
-      const f = await mmApi.aiFromText({ documentId: full.document.id, text: textInput, title: textTitle || full.document.name, providerId: providerId || null, modelId: modelId || null });
-      setFull(f); setDocs(prev => prev.map(d => d.id === f.document.id ? f.document : d));
-      setShowAi(null); flash(`已追加 ${f.nodes.length} 个节点`);
+      const r = await mmApi.aiFromText({ documentId: full.document.id, text: textInput, title: textTitle || full.document.name, providerId: providerId || null, modelId: modelId || null });
+      applyAiImport(r);
     } catch (e) { setError(String(e)); } finally { setAiLoading(false); }
-  }, [full, textInput, textTitle, providerId, modelId, flash]);
+  }, [full, textInput, textTitle, providerId, modelId, applyAiImport]);
 
   const exportMd = useCallback(async () => {
     if (!full) return;
@@ -1551,6 +2136,7 @@ export default function MindmapPanel() {
                 <button type="button" className={`${button} hover:bg-white/10`} style={{ color: ACCENT, borderColor: `${ACCENT}55` }} onClick={() => void openAiImport("project")} title="AI 从项目结构生成（无文档时自动新建）"><FolderOpen className="h-3 w-3" />AI·项目</button>
                 <button type="button" className={`${button} hover:bg-white/10`} style={{ color: ACCENT, borderColor: `${ACCENT}55` }} onClick={() => void openAiImport("text")} title="AI 从需求文本生成（无文档时自动新建）"><Sparkles className="h-3 w-3" />AI·文本</button>
               </div>
+              <button type="button" className={button} onClick={() => void openCalendar()} title="按日历查看各文档每天的计划"><Calendar className="h-3 w-3" />计划日历</button>
               {full && <div className="flex items-center justify-between px-0.5 text-[9px] text-slate-500"><span className="truncate">{full.document.name} · {full.nodes.length} 节点</span><button type="button" className={button} onClick={exportMd} title="导出 Markdown"><ScrollText className="h-3 w-3" /></button></div>}
             </div>
             {/* 宽度拖拽把手 + 收起按钮（侧边栏右侧） */}
@@ -1618,7 +2204,7 @@ export default function MindmapPanel() {
               </div>
             </div>
           ) : full ? (
-            <Canvas full={full} accent={ACCENT} onDocumentUpdate={onDocumentUpdated} onHistoryPush={commitHistory} historyVersion={historyVersion} onAiProject={() => setShowAi("project")} onAiText={() => setShowAi("text")} onError={setError} />
+            <Canvas full={full} accent={ACCENT} onDocumentUpdate={onDocumentUpdated} onHistoryPush={commitHistory} historyVersion={historyVersion} onAiProject={() => setShowAi("project")} onAiText={() => setShowAi("text")} onError={setError} onOpenCalendar={openCalendar} focusRequest={calFocus} />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-4 text-slate-500">
               <div className="rounded-full border border-white/10 p-4"><Brain className="h-10 w-10" style={{ color: ACCENT }} /></div>
@@ -1633,6 +2219,8 @@ export default function MindmapPanel() {
       {error && showAi && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 max-w-md rounded-md border border-red-400/20 bg-slate-900 px-3 py-2 text-[11px] text-red-300 shadow-xl">{error}<button type="button" className="ml-2 text-slate-400 hover:text-white" onClick={() => setError("")}>✕</button></div>}
       {notice && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-[11px] text-slate-200 shadow-xl">{notice}</div>}
       {confirmState && <ConfirmModal title={confirmState.title} message={confirmState.message} accent={ACCENT} onConfirm={confirmState.action} onClose={() => setConfirmState(null)} />}
+      {showCalendar && <PlanCalendarModal onPick={(p) => void openPlannedNode(p)} onClose={() => setShowCalendar(false)} onAddPlan={(ymd) => void addPlanNode(ymd)} onMoveOccurrence={movePlanOccurrence} />}
+      {aiReport && <AiImportReportModal result={aiReport} onClose={() => setAiReport(null)} onOpenDoc={(id) => void openReportDoc(id)} />}
       {/* 拖拽浮层：跟随鼠标，提示当前落点是否有效 */}
       {ghost && (
         <div className="pointer-events-none fixed z-[9998] flex items-center gap-1.5 rounded-md border border-cyan-400/50 bg-slate-900/95 px-2 py-1 text-[10px] text-slate-200 shadow-2xl"

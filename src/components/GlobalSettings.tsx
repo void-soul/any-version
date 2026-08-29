@@ -468,7 +468,7 @@ export default function GlobalSettings() {
   const [launcherCfg, setLauncherCfg] = useState<LauncherSetting>({
     moduleHotkeys: { launcher: "Alt+Space" },
     selectionTranslateHotkey: "F6",
-    mindmapQuickHotkey: "F7",
+    mindmapQuickHotkey: "Shift+F3",
     itemIconSize: 32,
     itemColumnNumber: 0,
     cardDensity: "cozy",
