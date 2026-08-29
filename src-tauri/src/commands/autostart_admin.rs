@@ -73,7 +73,7 @@ pub fn enable_admin_autostart(_app: tauri::AppHandle) -> Result<String, String> 
         if !status.status.success() {
             let msg = String::from_utf8_lossy(&status.stderr).to_string();
             return Err(format!(
-                "创建管理员自启任务失败（可能需要以管理员身份运行 AnyVersion）: {}",
+                "创建管理员自启任务失败（可能需要以管理员身份运行 vex）: {}",
                 msg.trim()
             ));
         }

@@ -1,8 +1,8 @@
 [package]
-name = "any-version"
+name = "vex"
 version = "1.4.0"
 description = "Windows Multi-Language Dev Environment Version Manager"
-authors = ["AnyVersion Team"]
+authors = ["vex Team"]
 edition = "2021"
 
 [lib]

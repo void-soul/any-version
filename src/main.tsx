@@ -27,7 +27,7 @@ if (POPUP_KIND === "translate" || POPUP_KIND === "mindmap") {
 } else {
   // 禁止 WebView 默认快捷键：F3（页面搜索）、F5（刷新）。
   // 这些是浏览器内置行为，会误触发页面搜索框或整体刷新（丢失前端状态），
-  // 且可能与 AnyVersion 的全局热键冲突，故在应用层统一拦截。
+  // 且可能与 vex 的全局热键冲突，故在应用层统一拦截。
   window.addEventListener(
     "keydown",
     (e) => {

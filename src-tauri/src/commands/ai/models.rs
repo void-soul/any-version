@@ -369,7 +369,7 @@ pub struct ToolSession {
 /// 技能清单（持久化到 skills.json 的元数据）。
 ///
 /// 注意：`installed_tools`（已部署到哪些工具）**不在此处持久化** —— 安装状态由
-/// `get_skills` 扫描各工具 skills 目录实时推导。这样既能反映 AnyVersion 部署的链路，
+/// `get_skills` 扫描各工具 skills 目录实时推导。这样既能反映 vex 部署的链路，
 /// 也能发现被工具私自安装、但不在全局仓库的技能。
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Skill {
@@ -388,21 +388,21 @@ pub struct SkillView {
     pub name: String,
     pub description: String,
     pub directory: String,
-    /// 由 AnyVersion 统一安装（junction 指向全局仓库）的工具
+    /// 由 vex 统一安装（junction 指向全局仓库）的工具
     pub installed_tools: Vec<String>,
-    /// 工具私自安装 / junction 到其他目录的工具（非 AnyVersion 托管，可迁移）
+    /// 工具私自安装 / junction 到其他目录的工具（非 vex 托管，可迁移）
     pub foreign_tools: Vec<String>,
     pub installed_at: String,
     pub install_method: String,
 }
 
-/// 技能总览（「AnyVersion 技能」列表 / 区块二）：仅包含源文件位于技能仓库目录
+/// 技能总览（「vex 技能」列表 / 区块二）：仅包含源文件位于技能仓库目录
 /// （即 skills.sh 公共仓库，默认 `~/.agents/skills`，含 `.system` 嵌套）的技能。
 ///
 /// 托管的权威定义：**源文件是否物理位于技能仓库目录**（`in_store`）。
 /// 源文件不在该目录（工具私有目录 / 外部 junction）一律视为「无托管」，不会进入本列表
 /// （归入 `get_discoverable_skills` 的可移动列表）。是否登记进 manifest（`registered`）
-/// 只是 AnyVersion 的跟踪元数据，不改变「是否托管」的判定。
+/// 只是 vex 的跟踪元数据，不改变「是否托管」的判定。
 #[derive(Serialize, Clone, Debug)]
 pub struct SkillOverview {
     /// canonical id（技能的文件夹名）
@@ -410,11 +410,11 @@ pub struct SkillOverview {
     pub name: String,
     pub description: String,
     /// 源文件是否位于技能仓库目录（默认 ~/.agents/skills，含 .system）。
-    /// 这是「托管」的**唯一权威定义**：true = 被 AnyVersion 托管；false = 无托管。
+    /// 这是「托管」的**唯一权威定义**：true = 被 vex 托管；false = 无托管。
     pub in_store: bool,
-    /// 是否登记进 AnyVersion manifest（skills.json）。
-    /// `in_store && !registered`：物理上已被 AnyVersion 目录托管（如 skills.sh 装入 .system），
-    /// 但未被 AnyVersion 跟踪，前端显示「未纳入」并可「纳入管理」。
+    /// 是否登记进 vex manifest（skills.json）。
+    /// `in_store && !registered`：物理上已被 vex 目录托管（如 skills.sh 装入 .system），
+    /// 但未被 vex 跟踪，前端显示「未纳入」并可「纳入管理」。
     pub registered: bool,
     /// 全局仓库路径（源文件实际位置）
     pub directory: String,
@@ -428,11 +428,11 @@ pub struct SkillOverview {
 #[derive(Serialize, Clone, Debug)]
 pub struct SkillToolStatus {
     pub tool_id: String,
-    /// "managed"（AnyVersion 托管）| "foreign"（工具私自安装 / 外部 junction）| "none"（未安装）
+    /// "managed"（vex 托管）| "foreign"（工具私自安装 / 外部 junction）| "none"（未安装）
     pub status: String,
 }
 
-/// 工具私自安装、未由 AnyVersion 托管的技能（可迁移为托管方式）
+/// 工具私自安装、未由 vex 托管的技能（可迁移为托管方式）
 #[derive(Serialize, Clone, Debug)]
 pub struct ForeignSkill {
     /// 所属工具 id
@@ -445,19 +445,19 @@ pub struct ForeignSkill {
     pub kind: String,
     /// 真实数据源路径（目录本身或 junction 目标）。情况B 时为 junction 目标，即 link_target
     pub source_path: String,
-    /// 该技能是否已在 AnyVersion 全局仓库（默认 ~/.agents/skills，含 .system 嵌套）中存在。
+    /// 该技能是否已在 vex 全局仓库（默认 ~/.agents/skills，含 .system 嵌套）中存在。
     /// true = 整理时只需为工具重建 junction（relink）；false = 需先拷贝数据再建 junction。
     pub already_in_anyversion: bool,
 }
 
-/// 可移动技能（发现的可移动到 AnyVersion 目录的目标），按 skill_id 聚合多个工具位置。
+/// 可移动技能（发现的可移动到 vex 目录的目标），按 skill_id 聚合多个工具位置。
 /// 对应前端「发现的可移动技能」列表：展示叫什么、在哪里、情况A/B。
 #[derive(Serialize, Clone, Debug)]
 pub struct DiscoverableSkill {
     pub skill_id: String,
     pub name: String,
     pub description: String,
-    /// 是否已在 AnyVersion 全局仓库中存在（决定整理时是「仅 relink」还是「需拷贝」）
+    /// 是否已在 vex 全局仓库中存在（决定整理时是「仅 relink」还是「需拷贝」）
     pub already_in_anyversion: bool,
     /// 各工具位置：情况A（直装）/ 情况B（外部 junction）及链接目标
     pub locations: Vec<SkillLocation>,
@@ -467,7 +467,7 @@ pub struct DiscoverableSkill {
 #[derive(Serialize, Clone, Debug)]
 pub struct SkillLocation {
     pub tool_id: String,
-    /// "A"=工具目录直装（真实目录）| "B"=junction 到非 AnyVersion 目录
+    /// "A"=工具目录直装（真实目录）| "B"=junction 到非 vex 目录
     pub case: String,
     /// 情况B 的 junction 目标路径；情况A 为空
     pub link_target: String,
@@ -478,10 +478,10 @@ pub struct SkillLocation {
 /// 问题类型：
 /// - `"skills_sh"`: skills.sh 等管理工具目录中发现的可导入技能
 /// - `"A"`: AI 工具目录中直接安装的技能（真实目录）
-/// - `"B"`: AI 工具目录中 junction 指向非 AnyVersion 仓库的技能
+/// - `"B"`: AI 工具目录中 junction 指向非 vex 仓库的技能
 /// - `"D"`: AI 工具目录中 junction 目标已失效（断链）
 ///
-/// Case C（junction 指向 AnyVersion 仓库 = 已托管）不算问题，不在此列出。
+/// Case C（junction 指向 vex 仓库 = 已托管）不算问题，不在此列出。
 #[derive(Serialize, Clone, Debug)]
 pub struct SkillIssue {
     /// 问题类型："skills_sh" | "A" | "B" | "D"
@@ -496,7 +496,7 @@ pub struct SkillIssue {
     pub source_path: String,
     /// junction 目标路径（Case B/D）；非 junction 时为空
     pub link_target: String,
-    /// 是否已在 AnyVersion 仓库中存在（决定修复方式：仅需 relink 还是需要先拷贝）
+    /// 是否已在 vex 仓库中存在（决定修复方式：仅需 relink 还是需要先拷贝）
     pub already_in_store: bool,
 }
 
@@ -516,7 +516,7 @@ pub struct ScannedSkill {
     pub full_path: String,
     pub found_in: Vec<String>,
     pub is_symlink: bool,
-    /// 该技能是否已在 AnyVersion 全局仓库（默认 ~/.agents/skills）中存在
+    /// 该技能是否已在 vex 全局仓库（默认 ~/.agents/skills）中存在
     pub in_global: bool,
 }
 

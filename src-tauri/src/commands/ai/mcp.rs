@@ -32,7 +32,7 @@ pub struct McpServer {
   pub install_method: String,
 }
 
-/// 从工具配置中发现、但尚未由 AnyVersion 托管的 MCP 服务器
+/// 从工具配置中发现、但尚未由 vex 托管的 MCP 服务器
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct DiscoveredMcp {
@@ -45,7 +45,7 @@ pub struct DiscoveredMcp {
   pub cwd: Option<String>,
   pub url: String,
   pub headers: HashMap<String, String>,
-  /// 同名服务器是否已在 AnyVersion 托管（已托管则无需纳入）
+  /// 同名服务器是否已在 vex 托管（已托管则无需纳入）
   pub already_managed: bool,
 }
 
@@ -153,7 +153,7 @@ pub fn toggle_mcp_tool(id: String, tool_id: String, enabled: bool) -> Result<(),
     deploy_all()
 }
 
-/// 从各工具中心配置中发现已配置、但 AnyVersion 尚未托管的 MCP 服务器。
+/// 从各工具中心配置中发现已配置、但 vex 尚未托管的 MCP 服务器。
 /// 类比技能管理的「问题检测 / 纳入管理」：先把散落在工具里的服务器找出来，再统一纳管。
 #[tauri::command]
 pub fn get_discovered_mcp() -> Result<Vec<DiscoveredMcp>, String> {
@@ -192,7 +192,7 @@ pub fn get_discovered_mcp() -> Result<Vec<DiscoveredMcp>, String> {
     Ok(out)
 }
 
-/// 将一个在工具配置中发现的服务器纳入 AnyVersion 托管：
+/// 将一个在工具配置中发现的服务器纳入 vex 托管：
 /// 写入托管仓库（默认启用、仅部署到发现它的工具），并触发重新部署。
 #[tauri::command]
 pub fn adopt_mcp_server(tool_id: String, name: String) -> Result<(), String> {

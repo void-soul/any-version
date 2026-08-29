@@ -31,7 +31,7 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
           <ShieldCheck className="w-5 h-5" />
         </div>
         <div>
-          <h1 className="font-semibold text-white tracking-wide text-sm">AnyVersion</h1>
+          <h1 className="font-semibold text-white tracking-wide text-sm">vex</h1>
           <p className="text-[10px] text-slate-400">开发者工作站 v1.0</p>
         </div>
       </div>

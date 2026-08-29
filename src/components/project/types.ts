@@ -1,5 +1,5 @@
 // ============================================================
-// AnyVersion 项目管理 - TypeScript 类型定义
+// vex 项目管理 - TypeScript 类型定义
 // ============================================================
 
 export type ProjectCategory = "language" | "tool" | "service" | "ai_tool";

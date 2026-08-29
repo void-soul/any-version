@@ -638,8 +638,8 @@ impl AiToolRegistry {
         let av_store = skills_dir();
         dirs.push((av_store, "any-version".to_string()));
 
-        // skills.sh 仓库（~/.agents/skills）：作为「可发现的外来技能来源」（非 AnyVersion 托管仓库）。
-        // 用户可把其中的技能「整理」导入到 AnyVersion 目录。注意它与 AnyVersion 自身仓库无关。
+        // skills.sh 仓库（~/.agents/skills）：作为「可发现的外来技能来源」（非 vex 托管仓库）。
+        // 用户可把其中的技能「整理」导入到 vex 目录。注意它与 vex 自身仓库无关。
         let sh_store = Self::resolve_path(&self.skills_scan.base_skills_dir, &home);
         dirs.push((sh_store, "skills.sh".to_string()));
 

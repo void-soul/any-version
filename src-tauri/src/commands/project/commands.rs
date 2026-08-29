@@ -228,7 +228,7 @@ pub fn project_manage(app: tauri::AppHandle, id: String, delegation: crate::comm
                 // 必须写入 HKLM PATH 才能被 find_program 找到。需要管理员权限。
                 add_to_system_path(&add_paths).map_err(|e| {
                     format!(
-                        "已将 {} 添加到用户级 PATH，但写入系统级 PATH 失败（{}）。\n请「以管理员身份运行」AnyVersion 后重新托管该项目，否则 Flutter/cmake 等构建子进程将无法找到其可执行文件。",
+                        "已将 {} 添加到用户级 PATH，但写入系统级 PATH 失败（{}）。\n请「以管理员身份运行」vex 后重新托管该项目，否则 Flutter/cmake 等构建子进程将无法找到其可执行文件。",
                         id, e
                     )
                 })?;
@@ -447,7 +447,7 @@ pub fn project_preview_unmanage(id: String) -> Result<ManagePreview, String> {
     if is_simple {
         let steps = vec![super::types::ManageStep {
             action: "simple_unmanage".to_string(),
-            description: "取消托管后，AnyVersion 将不再管理该项目的缓存、代理和镜像配置".to_string(),
+            description: "取消托管后，vex 将不再管理该项目的缓存、代理和镜像配置".to_string(),
             target: id.clone(),
         }];
         return Ok(ManagePreview {
@@ -477,7 +477,7 @@ pub fn project_preview_unmanage(id: String) -> Result<ManagePreview, String> {
     if !managed_vars.is_empty() {
         steps.push(super::types::ManageStep {
             action: "clear_env".to_string(),
-            description: format!("清除 AnyVersion 设置的 {} 个环境变量", managed_vars.len()),
+            description: format!("清除 vex 设置的 {} 个环境变量", managed_vars.len()),
             target: managed_vars.join(", "),
         });
     }
@@ -527,7 +527,7 @@ pub fn project_preview_unmanage(id: String) -> Result<ManagePreview, String> {
     if !compat_vars.is_empty() {
         steps.push(super::types::ManageStep {
             action: "skip_compat".to_string(),
-            description: format!("以下 {} 个兼容层变量保持不变（不属于 AnyVersion 管理）: {}", compat_vars.len(), compat_vars.join(", ")),
+            description: format!("以下 {} 个兼容层变量保持不变（不属于 vex 管理）: {}", compat_vars.len(), compat_vars.join(", ")),
             target: String::new(),
         });
     }

@@ -164,7 +164,7 @@ export default function PathEnvManager() {
       const systemPaths = paths.filter((p) => p.source === "HKLM").map((p) => p.path);
 
       if (saveAll && systemPaths.length > 0 && !isAdmin) {
-        throw new Error("修改系统环境变量 (HKLM) 需要管理员权限，请重新以管理员身份运行 AnyVersion，或者仅保存用户级 PATH");
+        throw new Error("修改系统环境变量 (HKLM) 需要管理员权限，请重新以管理员身份运行 vex，或者仅保存用户级 PATH");
       }
 
       await invoke("save_path_directories", { 

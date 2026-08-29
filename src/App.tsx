@@ -274,7 +274,7 @@ export default function App() {
         <div className="flex items-center gap-2.5">
           <div className="flex items-center gap-2 pointer-events-none px-1 w-35" data-tauri-drag-region>
             <img src="/icon.png" className="w-5 h-5 object-contain" alt="logo" />
-            <span className="text-[11px] font-bold text-white tracking-wide">AnyVersion</span>
+            <span className="text-[11px] font-bold text-white tracking-wide">vex</span>
           </div>
 
 
@@ -468,7 +468,7 @@ export default function App() {
                     disabled={binDownloading}
                     onChange={(e) => setBinDataDir(e.target.value)}
                     className="flex-1 min-w-0 glass-input px-3 py-2 text-[11px] font-mono bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-sky-400/50 disabled:opacity-50"
-                    placeholder="e.g. D:\AnyVersion"
+                    placeholder="e.g. D:\vex"
                   />
                   <button
                     onClick={handleBrowseBinDataDir}

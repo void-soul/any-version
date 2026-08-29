@@ -432,7 +432,7 @@ pub fn get_user_configurable_vars(project_id: String) -> Result<Vec<serde_json::
 
 /// 设置用户自定义环境变量（运行时参数）
 /// 冲突检测：若该变量名已被某个「已托管」项目的核心 env 变量管理，则拒绝设置，
-/// 避免用户自定义变量覆盖/破坏 AnyVersion 托管的 SDK 环境（如 JAVA_HOME、CARGO_HOME）。
+/// 避免用户自定义变量覆盖/破坏 vex 托管的 SDK 环境（如 JAVA_HOME、CARGO_HOME）。
 #[tauri::command]
 pub fn set_user_configurable_var(name: String, value: String) -> Result<(), String> {
     let name_trim = name.trim().to_string();
@@ -445,7 +445,7 @@ pub fn set_user_configurable_var(name: String, value: String) -> Result<(), Stri
             "变量 {} 已被项目「{}」托管（{}），不能通过用户自定义设置覆盖。请先取消该项目的环境变量托管。",
             name_trim,
             managed_by,
-            if is_clear { "该变量由工具接管/清空" } else { "该变量指向 AnyVersion 管理的路径" }
+            if is_clear { "该变量由工具接管/清空" } else { "该变量指向 vex 管理的路径" }
         ));
     }
     set_registry_env(&name_trim, &value)

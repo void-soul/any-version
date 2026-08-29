@@ -1013,7 +1013,7 @@ export default function GlobalSettings() {
         <div className="flex items-center gap-2 pb-3 border-b border-white/5">
           <FolderKanban className="w-4 h-4 text-[var(--module-accent)]" />
           <h3 className="text-xs font-semibold text-white">
-            AnyVersion 工作目录说明
+            vex 工作目录说明
           </h3>
         </div>
 
@@ -1052,7 +1052,7 @@ export default function GlobalSettings() {
                   value={dataDir}
                   onChange={(e) => setDataDir(e.target.value)}
                   className="flex-1 glass-input px-3.5 py-2.5 text-xs font-mono"
-                  placeholder="e.g. D:\AnyVersion"
+                  placeholder="e.g. D:\vex"
                 />
                 <button
                   onClick={() => handleBrowseFolder(setDataDir)}
@@ -1119,7 +1119,7 @@ export default function GlobalSettings() {
                   确认路径迁移
                 </h4>
                 <div className="text-[10px] text-slate-300 space-y-1.5">
-                  <p>检测到存储路径已更改，AnyVersion 将执行以下操作：</p>
+                  <p>检测到存储路径已更改，vex 将执行以下操作：</p>
                   <p className="text-amber-300">
                     1. 将旧目录下的所有已安装版本文件移动到新目录
                   </p>
@@ -1364,8 +1364,8 @@ export default function GlobalSettings() {
           <div className="space-y-0.5">
             <p className="text-xs font-medium text-slate-200">开机自启</p>
             <p className="text-[9px] text-slate-500">
-              系统启动时自动运行 AnyVersion，并静默驻留到系统托盘。
-              AnyVersion 始终以管理员身份运行，开机自启同样具备完整管理员能力。
+              系统启动时自动运行 vex，并静默驻留到系统托盘。
+              vex 始终以管理员身份运行，开机自启同样具备完整管理员能力。
             </p>
           </div>
           <button
@@ -1471,7 +1471,7 @@ export default function GlobalSettings() {
             <div>
               <h3 className="text-xs font-semibold text-white">服务自启管理</h3>
               <p className="text-[9px] text-slate-500 mt-0.5">
-                在打开 AnyVersion 时自动拉起已勾选的服务（与开机自启协同，开机即可就绪）
+                在打开 vex 时自动拉起已勾选的服务（与开机自启协同，开机即可就绪）
               </p>
             </div>
           </div>

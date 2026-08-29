@@ -185,7 +185,7 @@ async fn serve_dir_list(stream: &mut TcpStream, dir: &Path, root: &Path, head_on
         }
     }
     
-    html.push_str("</ul><footer>Served by AnyVersion HTTP Server</footer></div></body></html>");
+    html.push_str("</ul><footer>Served by vex HTTP Server</footer></div></body></html>");
 
     let response = if head_only {
         format!(

@@ -3,7 +3,7 @@ use std::process::Command;
 /// 创建一个不会弹出控制台窗口的 Command（仅 Windows 生效）。
 ///
 /// 注意：这里只附加 `CREATE_NO_WINDOW`，**不**附加 `CREATE_BREAKAWAY_FROM_JOB`。
-/// 原因：当 AnyVersion 自身运行在某个不允许 breakaway 的 Job Object 内（例如由
+/// 原因：当 vex 自身运行在某个不允许 breakaway 的 Job Object 内（例如由
 /// 终端 / `yarn start` / 部分 IDE 拉起时），带 `CREATE_BREAKAWAY_FROM_JOB` 的
 /// `CreateProcess` 会直接以 `ERROR_ACCESS_DENIED` (os error 5) 失败——表现为
 /// `tasklist`/`netstat`/`sc`/`-v` 等所有探测命令全部失效（服务状态恒为 进程数=0、

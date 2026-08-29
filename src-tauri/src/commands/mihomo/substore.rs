@@ -120,7 +120,7 @@ pub fn mihomo_substore_start(state: State<'_, MihomoState>) -> Result<Value, Str
         .env("SUB_STORE_BACKEND_API_PORT", port.to_string())
         .env("SUB_STORE_BACKEND_API_HOST", "127.0.0.1")
         .env("SUB_STORE_DATA_BASE_PATH", &data_path)
-        .env("SUB_STORE_BACKEND_CUSTOM_NAME", "AnyVersion")
+        .env("SUB_STORE_BACKEND_CUSTOM_NAME", "vex")
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     if use_proxy {

@@ -1059,7 +1059,7 @@ pub(crate) fn stop_service_inner(name: String) -> Result<(), String> {
 
     let status = service_status_for_def(&def);
     if status.external || status.status.as_deref() == Some("external_running") {
-        return Err(format!("服务 {} 正由外部进程运行，AnyVersion 不会接管或停止该进程", def.display_name));
+        return Err(format!("服务 {} 正由外部进程运行，vex 不会接管或停止该进程", def.display_name));
     }
     if !status.running {
         if status.status.as_deref() == Some("port_conflict") {
@@ -1141,7 +1141,7 @@ pub(crate) fn force_stop_service_inner(name: String) -> Result<(), String> {
 
     let status = service_status_for_def(&def);
     if status.external || status.status.as_deref() == Some("external_running") {
-        return Err(format!("服务 {} 正由外部进程运行，AnyVersion 不会强制终止该进程", def.display_name));
+        return Err(format!("服务 {} 正由外部进程运行，vex 不会强制终止该进程", def.display_name));
     }
     let Some(pid) = status.pid else {
         return Err(format!("未检测到 {} 服务进程，无法强制终止", def.display_name));
