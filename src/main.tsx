@@ -49,9 +49,11 @@ if (POPUP_KIND === "translate" || POPUP_KIND === "mindmap") {
     true, // 捕获阶段，确保优先于 WebView 默认处理
   );
 
-  // Monaco 本地打包初始化 + 主应用：动态加载，保持主窗口首屏启动路径不变，
-  // 同时确保 Monaco 在第一个编辑器组件挂载前完成 worker 配置。
-  Promise.all([import("./monacoSetup"), import("./App")]).then(([, { default: App }]) => {
+  // 主应用：立即渲染，不阻塞首屏。Monaco 改为真正按需加载——
+  // 不再在启动路径上 import("./monacoSetup")（那会连带拉取 ~3.5MB monaco 核心），
+  // 而是由共享 MonacoEditor 组件在首个编辑器真正挂载时才依次加载
+  // monacoSetup（配置本地 worker）→ @monaco-editor/react → monaco 核心。
+  import("./App").then(({ default: App }) => {
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
         <ErrorBoundary>

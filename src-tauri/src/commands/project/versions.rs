@@ -37,6 +37,26 @@ struct InstallStepPayload {
     step: String,
 }
 
+/// 进行中安装的状态（内存态，供前端挂载时查询恢复进度条）。
+/// 卸载/取消/完成后由任务自行移除对应条目。
+/// 进行中安装的可查询视图（不含 abort handle）。
+#[derive(Serialize, Clone)]
+pub struct ActiveInstall {
+    pub sdk: String,
+    pub version: String,
+    pub step: String,
+    pub downloaded: u64,
+    pub total: u64,
+    pub pct: u8,
+    pub speed_str: String,
+}
+
+// 内部存 abort handle，查询时剥离，避免把 handle 序列化给前端。
+struct ActiveInstallEntry {
+    pub active: ActiveInstall,
+    pub abort_handle: AbortHandle,
+}
+
 struct TempDirGuard {
     path: PathBuf,
 }
@@ -49,9 +69,17 @@ impl Drop for TempDirGuard {
     }
 }
 
-fn get_active_downloads() -> &'static Mutex<HashMap<String, AbortHandle>> {
-    static ACTIVE_DOWNLOADS: std::sync::OnceLock<Mutex<HashMap<String, AbortHandle>>> = std::sync::OnceLock::new();
+fn get_active_downloads() -> &'static Mutex<HashMap<String, ActiveInstallEntry>> {
+    static ACTIVE_DOWNLOADS: std::sync::OnceLock<Mutex<HashMap<String, ActiveInstallEntry>>> = std::sync::OnceLock::new();
     ACTIVE_DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 同步进行中安装的步骤到内存态（供前端挂载时恢复），同时广播步骤事件。
+fn sync_install_step(app: &AppHandle, sdk: &str, step: &str) {
+    let _ = app.emit("install-step", InstallStepPayload { sdk: sdk.to_string(), step: step.to_string() });
+    if let Some(entry) = get_active_downloads().lock().unwrap().get_mut(sdk) {
+        entry.active.step = step.to_string();
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -570,12 +598,23 @@ pub async fn project_install_version(app: AppHandle, id: String, version: String
         do_install(app_task, id_task, version_task, dl_info).await
     });
 
-    // 注册 abort handle，允许前端取消
+    // 注册进行中的安装（含版本与起始进度），允许前端取消、并在前端挂载时恢复进度条
     let abort_handle = handle.abort_handle();
-    get_active_downloads()
-        .lock()
-        .unwrap()
-        .insert(id.clone(), abort_handle);
+    get_active_downloads().lock().unwrap().insert(
+        id.clone(),
+        ActiveInstallEntry {
+            active: ActiveInstall {
+                sdk: id.clone(),
+                version,
+                step: "下载中".to_string(),
+                downloaded: 0,
+                total: 0,
+                pct: 0,
+                speed_str: "".to_string(),
+            },
+            abort_handle,
+        },
+    );
 
     // 等待任务完成（或被取消）
     let result = handle.await;
@@ -621,15 +660,22 @@ async fn do_install(
             downloaded,
             total,
             pct,
-            speed_str,
+            speed_str: speed_str.clone(),
         });
+        // 同步写入内存状态，供前端挂载时查询恢复进度条
+        if let Some(entry) = get_active_downloads().lock().unwrap().get_mut(&id_cap) {
+            entry.active.downloaded = downloaded;
+            entry.active.total = total;
+            entry.active.pct = pct;
+            entry.active.speed_str = speed_str;
+        }
     }).await;
 
     if let Err(e) = dl_result {
         return Err(format!("下载失败: {}", e));
     }
 
-    let _ = app.emit("install-step", InstallStepPayload { sdk: id.clone(), step: "解压中".to_string() });
+    sync_install_step(&app, &id, "解压中");
 
     // 3. 解压
     let extract_dir = temp_dir.join("extracted");
@@ -696,13 +742,13 @@ async fn do_install(
     }
 
     // 7. 首次安装时自动创建 junction。环境变量在托管/修复时统一配置，版本安装不隐式修改注册表。
-    let _ = app.emit("install-step", InstallStepPayload { sdk: id.clone(), step: "创建链接中".to_string() });
+    sync_install_step(&app, &id, "创建链接中");
     let junction_path = Path::new(&config.links_dir).join(&id);
     if !junction_path.exists() {
         let _ = crate::commands::cache::create_junction(&junction_path, &dest_dir);
     }
 
-    let _ = app.emit("install-step", InstallStepPayload { sdk: id.clone(), step: "完成".to_string() });
+    sync_install_step(&app, &id, "完成");
 
     Ok(())
 }
@@ -711,12 +757,18 @@ async fn do_install(
 #[tauri::command]
 pub fn project_cancel_install(id: String) -> Result<(), String> {
     let mut map = get_active_downloads().lock().unwrap();
-    if let Some(handle) = map.remove(&id) {
-        handle.abort();
+    if let Some(active) = map.remove(&id) {
+        active.abort_handle.abort();
         Ok(())
     } else {
         Err(format!("没有正在进行的安装任务: {}", id))
     }
+}
+
+/// 查询当前正在进行中的安装列表（供前端挂载时恢复进度条/取消按钮）。
+#[tauri::command]
+pub fn project_get_active_installs() -> Vec<ActiveInstall> {
+    get_active_downloads().lock().unwrap().values().map(|e| e.active.clone()).collect()
 }
 
 /// 卸载指定版本

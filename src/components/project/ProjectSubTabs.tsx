@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import Editor from "@monaco-editor/react";
+import MonacoEditor from "../shared/MonacoEditor";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -2417,7 +2417,7 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
           ) : (
             <div className="space-y-3">
               <div className="border border-white/5 rounded-xl overflow-hidden h-80 bg-[#1e1e1e]">
-                <Editor
+                <MonacoEditor
                   height="100%"
                   language={getEditorLanguage(project.id)}
                   value={configContent}

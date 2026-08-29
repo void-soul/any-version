@@ -157,7 +157,7 @@ pub struct LauncherSetting {
     #[serde(default = "default_selection_translate_hotkey")]
     pub selection_translate_hotkey: String,
     /// 独立「思维导图速记」热键：呼出速记悬浮窗，随手把内容记进导图（节点/根/贴纸）。
-    /// 与「思维导图」模块热键（唤起模块面板）相互独立。默认 F7。
+    /// 与「思维导图」模块热键（唤起模块面板）相互独立。默认 Shift+F3。
     #[serde(default = "default_mindmap_quick_hotkey")]
     pub mindmap_quick_hotkey: String,
     // ---- 视图设置（全局，应用到所有分类）----
@@ -179,6 +179,9 @@ pub struct LauncherSetting {
     /// 项目文字大小（px），默认 12
     #[serde(default = "default_item_font_size")]
     pub item_font_size: i32,
+    /// 是否只显示有效项目（检测结果存在 且 未检测过也视为有效），默认 false = 显示全部
+    #[serde(default)]
+    pub show_only_valid: bool,
     /// 项目卡片圆角（px），默认 12
     #[serde(default = "default_item_radius")]
     pub item_radius: i32,
@@ -202,7 +205,7 @@ pub fn default_selection_translate_hotkey() -> String {
     "F6".to_string()
 }
 pub fn default_mindmap_quick_hotkey() -> String {
-    "F7".to_string()
+    "Shift+F3".to_string()
 }
 fn default_item_icon_size() -> i32 {
     32
@@ -241,6 +244,7 @@ impl Default for LauncherSetting {
             card_density: default_card_density(),
             show_item_name: default_show_item_name(),
             icon_background_color: false,
+            show_only_valid: false,
             item_font_size: default_item_font_size(),
             item_radius: default_item_radius(),
             item_border: default_item_border(),

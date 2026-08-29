@@ -58,6 +58,13 @@ pub async fn launcher_delete_item(id: i64) -> Result<(), String> {
     db::delete_item(id)
 }
 
+/// 一键清理所有检测为「不存在」的项目（data.exists == false），返回删除数量。
+/// 调用方（前端）应先在 UI 上询问用户确认。
+#[tauri::command]
+pub async fn launcher_delete_invalid_items() -> Result<usize, String> {
+    db::delete_invalid_items()
+}
+
 #[tauri::command]
 pub async fn launcher_reorder_items(orders: Vec<(i64, i32)>) -> Result<(), String> {
     db::reorder_items(orders)

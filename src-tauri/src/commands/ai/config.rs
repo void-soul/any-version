@@ -42,11 +42,19 @@ pub(crate) fn load_ai_config() -> AiConfig {
                         save_needed = true;
                         eprintln!("[config] ✓ 已迁移 ai_config.json 至扁平 URL 格式");
                     }
-                }
-                // 明文 API key → 回写为加密存储（ENC_V2: 前缀），一次性原地迁移
-                if config.providers.iter().any(|p| !p.api_key.is_empty() && !p.api_key.starts_with("ENC_V2:")) {
-                    save_needed = true;
-                    eprintln!("[config] 检测到明文 API key，迁移为加密存储");
+                    // 旧版加密 API key（ENC_V2: 前缀）→ 回写为明文存储，一次性原地迁移。
+                    // 注意：deserialize 后 api_key 已是解密明文，须从原始 raw JSON 里检测。
+                    let has_enc_key = raw.get("providers")
+                        .and_then(|p| p.as_array())
+                        .map(|arr| arr.iter().any(|p| p.get("api_key")
+                            .and_then(|k| k.as_str())
+                            .map(|s| s.starts_with("ENC_V2:"))
+                            .unwrap_or(false)))
+                        .unwrap_or(false);
+                    if has_enc_key {
+                        save_needed = true;
+                        eprintln!("[config] 检测到加密 API key，迁移为明文存储");
+                    }
                 }
                 if save_needed {
                     let _ = save_ai_config_to_file(&config);
@@ -331,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn test_api_key_encrypted_at_rest() {
+    fn test_api_key_plaintext_at_rest() {
         use crate::commands::ai::models::ModelEntry;
         let config = AiConfig {
             providers: vec![AiProvider {
@@ -355,12 +363,25 @@ mod tests {
         };
 
         let raw = serde_json::to_string(&config).expect("serialize");
-        // 磁盘上不再是明文，而是 ENC_V2 密文
-        assert!(raw.contains("ENC_V2:"), "api_key 应加密为密文，实际: {}", raw);
-        assert!(!raw.contains("sk-plaintext-key-12345"), "api_key 不得明文落盘");
+        // api_key 明文落盘（不再加密）
+        assert!(raw.contains("sk-plaintext-key-12345"), "api_key 应明文落盘，实际: {}", raw);
+        assert!(!raw.contains("ENC_V2:"), "api_key 不应再加密存储");
 
         let back: AiConfig = serde_json::from_str(&raw).expect("deserialize");
-        assert_eq!(back.providers[0].api_key, "sk-plaintext-key-12345", "内存中应还原明文");
+        assert_eq!(back.providers[0].api_key, "sk-plaintext-key-12345", "明文读取应保持原值");
+    }
+
+    #[test]
+    fn test_legacy_encrypted_key_still_readable() {
+        // 旧版本加密存储的 api_key（ENC_V2 前缀）读取时应能解出明文，兼容历史配置
+        use crate::commands::ai::models::ModelEntry;
+        let enc = crate::commands::secrets::encrypt_secret("sk-legacy-encrypted").expect("encrypt");
+        let json = format!(
+            r#"{{"providers":[{{"id":"p1","name":"P1","category":"provider","api_key":"{}","website":"","openai_url":"https://x/v1","anthropic_url":"","google_url":"","models":[],"active_model_id":null}}],"proxy_port":15721,"default_project_path":"","rectifier":{{}},"optimizer":{{}},"skills_dir":""}}"#,
+            enc
+        );
+        let config: AiConfig = serde_json::from_str(&json).expect("deserialize legacy encrypted");
+        assert_eq!(config.providers[0].api_key, "sk-legacy-encrypted");
     }
 
     #[test]

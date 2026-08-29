@@ -505,6 +505,48 @@ pub fn delete_item(id: i64) -> Result<(), String> {
     })
 }
 
+/// 批量删除所有检测结果为「不存在」的项目（data.exists == false），返回删除数量。
+/// 未检测过（exists 为 null）或存在（exists == true）的项目不受影响。
+pub fn delete_invalid_items() -> Result<usize, String> {
+    with_conn(|conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, data FROM launcher_item WHERE data LIKE '%\"exists\":false%'",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                let id: i64 = row.get(0)?;
+                let data_str: String = row.get(1)?;
+                Ok((id, data_str))
+            })
+            .map_err(|e| e.to_string())?;
+
+        let mut invalid_ids: Vec<i64> = Vec::new();
+        for r in rows {
+            if let Ok((id, data_str)) = r {
+                // 精确判定：反序列化后 exists 为 false 才删除，避免误伤文本中偶然出现该串的项目
+                if let Ok(data) = serde_json::from_str::<ItemData>(&data_str) {
+                    if data.exists == Some(false) {
+                        invalid_ids.push(id);
+                    }
+                }
+            }
+        }
+        if invalid_ids.is_empty() {
+            return Ok(0);
+        }
+        drop(stmt);
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        for id in &invalid_ids {
+            tx.execute("DELETE FROM launcher_item WHERE id = ?1", params![id])
+                .map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(invalid_ids.len())
+    })
+}
+
 pub fn reorder_items(orders: Vec<(i64, i32)>) -> Result<(), String> {
     with_conn(|conn| {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -645,7 +687,7 @@ pub fn get_settings() -> Result<LauncherSetting, String> {
                 params![json_str],
             );
         }
-        // 数据迁移：思维导图速记热键默认 F7（同上，老配置缺字段时补齐）。
+        // 数据迁移：思维导图速记热键默认 Shift+F3（同上，老配置缺字段时补齐）。
         if setting.mindmap_quick_hotkey.trim().is_empty() {
             setting.mindmap_quick_hotkey = crate::commands::launcher::models::default_mindmap_quick_hotkey();
             let json_str = serde_json::to_string(&setting).map_err(|e| e.to_string())?;

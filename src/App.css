@@ -1,5 +1,19 @@
 @import "tailwindcss";
 
+/* 皮肤语义 token：统一应用层明暗皮肤。
+   模块自己的强调色继续用 --module-accent 系列（App 注入），
+   本组 token 是「皮肤层」，两者正交——换肤改这里，模块主题色不变。 */
+@theme {
+  --color-surface: #0d111d;          /* 应用底色 */
+  --color-surface-raised: #11151f;   /* 卡片/面板底 */
+  --color-surface-modal: #101827;    /* 弹框底 */
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-border-subtle: rgba(255, 255, 255, 0.05);
+  --color-text-primary: #f1f5f9;
+  --color-text-secondary: #94a3b8;
+  --color-text-muted: #64748b;
+}
+
 @layer base {
   body {
     background-color: #0f131f;
@@ -13,6 +27,12 @@
     -webkit-user-select: auto !important;
     user-select: auto !important;
   }
+}
+
+/* 皮肤级共享组件样式：配合 src/components/shared 使用。 */
+.modal-surface {
+  background-color: var(--color-surface-modal);
+  border: 1px solid var(--color-border);
 }
 
 /* Custom animations */

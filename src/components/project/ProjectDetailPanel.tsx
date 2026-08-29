@@ -198,6 +198,46 @@ export default function ProjectDetailPanel({
     );
   }, [patch]);
 
+  // 挂载时向后端查询进行中的安装，恢复进度条（模块卸载重挂载时不再丢失安装进度）
+  useEffect(() => {
+    if (!pid) return;
+    let alive = true;
+    invoke<
+      {
+        sdk: string;
+        version: string;
+        step: string;
+        downloaded: number;
+        total: number;
+        pct: number;
+        speed_str: string;
+      }[]
+    >("project_get_active_installs")
+      .then((list) => {
+        if (!alive) return;
+        const cur = list.find((it) => it.sdk === pid);
+        if (!cur) return;
+        patch(pid, {
+          installingVersion: cur.version,
+          installStep: cur.step,
+          downloadProgress:
+            cur.total > 0
+              ? {
+                  sdk: pid,
+                  downloaded: cur.downloaded,
+                  total: cur.total,
+                  pct: cur.pct,
+                  speed_str: cur.speed_str,
+                }
+              : null,
+        });
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [pid, patch]);
+
   const loadDetail = useCallback(async (id: string) => {
     patch(id, { detailLoading: true });
     try {

@@ -158,24 +158,20 @@ impl AiProvider {
     }
 }
 
-/// 序列化时对 api_key 加密落盘（内存中始终为明文，磁盘上为 `ENC_V2:` 前缀密文）。
-/// 与 clipboard/otp 模块共用同一把机器级主密钥（commands/secrets）。
+/// API key 明文落盘（不再加密）：AI 供应商的 key 本质是账号凭据，
+/// 加密存储意义有限（本机工具启动时仍需明文，且密钥与配置同盘存放），
+/// 反而让用户无法直接编辑/备份配置文件。
 impl Serialize for AiProvider {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let enc_key = crate::commands::secrets::encrypt_secret(&self.api_key)
-            .unwrap_or_else(|e| {
-                eprintln!("[config] 加密 API key 失败，回退明文写入: {}", e);
-                self.api_key.clone()
-            });
         let mut st = serializer.serialize_struct("AiProvider", 10)?;
         st.serialize_field("id", &self.id)?;
         st.serialize_field("name", &self.name)?;
         st.serialize_field("category", &self.category)?;
-        st.serialize_field("api_key", &enc_key)?;
+        st.serialize_field("api_key", &self.api_key)?;
         st.serialize_field("website", &self.website)?;
         st.serialize_field("openai_url", &self.openai_url)?;
         st.serialize_field("anthropic_url", &self.anthropic_url)?;

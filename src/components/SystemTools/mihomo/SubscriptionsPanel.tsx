@@ -1,6 +1,6 @@
 // 订阅页（对齐 clash-party profiles.tsx + profile-item + edit-info-modal）
 import { useEffect, useMemo, useRef, useState } from "react";
-import Editor from "@monaco-editor/react";
+import MonacoEditor from "../../shared/MonacoEditor";
 import {
   Download, FolderOpen, FilePlus2, RefreshCw, Trash2, Pencil, FileCode2,
   ChevronUp, ChevronDown, Link2, Clipboard, ScrollText,
@@ -742,7 +742,7 @@ function EditFileModal({ item, initial, isCurrent, onClose, onSaved }: any) {
       }
     >
       <div className="w-full h-[55vh] rounded-xl border border-white/10 overflow-hidden">
-        <Editor
+        <MonacoEditor
           height="55vh"
           language="yaml"
           theme="vs-dark"

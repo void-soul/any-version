@@ -3,6 +3,54 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import hljs from "highlight.js/lib/core";
+import javascript from "highlight.js/lib/languages/javascript";
+import typescript from "highlight.js/lib/languages/typescript";
+import python from "highlight.js/lib/languages/python";
+import rust from "highlight.js/lib/languages/rust";
+import go from "highlight.js/lib/languages/go";
+import java from "highlight.js/lib/languages/java";
+import c from "highlight.js/lib/languages/c";
+import cpp from "highlight.js/lib/languages/cpp";
+import csharp from "highlight.js/lib/languages/csharp";
+import bash from "highlight.js/lib/languages/bash";
+import json from "highlight.js/lib/languages/json";
+import yaml from "highlight.js/lib/languages/yaml";
+import xml from "highlight.js/lib/languages/xml";
+import css from "highlight.js/lib/languages/css";
+import sql from "highlight.js/lib/languages/sql";
+import markdown from "highlight.js/lib/languages/markdown";
+import dockerfile from "highlight.js/lib/languages/dockerfile";
+import ini from "highlight.js/lib/languages/ini";
+import diff from "highlight.js/lib/languages/diff";
+
+hljs.registerLanguage("javascript", javascript);
+hljs.registerLanguage("js", javascript);
+hljs.registerLanguage("typescript", typescript);
+hljs.registerLanguage("ts", typescript);
+hljs.registerLanguage("python", python);
+hljs.registerLanguage("rust", rust);
+hljs.registerLanguage("go", go);
+hljs.registerLanguage("java", java);
+hljs.registerLanguage("c", c);
+hljs.registerLanguage("cpp", cpp);
+hljs.registerLanguage("csharp", csharp);
+hljs.registerLanguage("cs", csharp);
+hljs.registerLanguage("bash", bash);
+hljs.registerLanguage("sh", bash);
+hljs.registerLanguage("shell", bash);
+hljs.registerLanguage("json", json);
+hljs.registerLanguage("yaml", yaml);
+hljs.registerLanguage("xml", xml);
+hljs.registerLanguage("html", xml);
+hljs.registerLanguage("css", css);
+hljs.registerLanguage("sql", sql);
+hljs.registerLanguage("markdown", markdown);
+hljs.registerLanguage("md", markdown);
+hljs.registerLanguage("dockerfile", dockerfile);
+hljs.registerLanguage("ini", ini);
+hljs.registerLanguage("toml", ini);
+hljs.registerLanguage("diff", diff);
 import {
   FolderOpen, X, FileText, Search, PanelLeftClose, PanelLeftOpen, RefreshCw,
   ListTree, AlertCircle, Pencil, Eye, Save, Check, Columns, Link, List,
@@ -44,6 +92,8 @@ interface AssocStatus {
   markdown: boolean;
   exePath: string;
 }
+
+const MD_RECENT_KEY = "any_version_markdown_recent";
 
 const formatSize = (n: number): string => {
   if (n < 1024) return `${n} B`;
@@ -112,6 +162,7 @@ export default function MarkdownReader() {
   const [saving, setSaving] = useState(false);
   const [assoc, setAssoc] = useState<AssocStatus | null>(null);
   const [showAssoc, setShowAssoc] = useState(false);
+  const [cursor, setCursor] = useState({ line: 1, col: 1 }); // 光标行列（编辑态状态栏）
   const contentRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const saveTimer = useRef<number | null>(null);
@@ -131,6 +182,40 @@ export default function MarkdownReader() {
   }, []);
 
   useEffect(() => { void loadAssoc(); }, [loadAssoc]);
+
+  // 记住打开的 markdown 文件（存本地），模块卸载重挂载时恢复已打开的标签与侧栏目录。
+  useEffect(() => {
+    let alive = true;
+    try {
+      const saved = JSON.parse(localStorage.getItem(MD_RECENT_KEY) || "null");
+      const paths: string[] = Array.isArray(saved?.paths)
+        ? saved.paths.filter((p: unknown): p is string => typeof p === "string" && !!p)
+        : [];
+      if (paths.length === 0) return;
+      (async () => {
+        for (const p of paths) {
+          if (!alive) return;
+          await openPath(p);
+        }
+      })();
+    } catch {
+      // 忽略恢复失败（文件可能已被删除），回落到空白状态
+    }
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 标签列表变化时持久化打开路径（含未保存状态提示可在重挂载后重建，内容已自动保存到磁盘）。
+  useEffect(() => {
+    const paths = tabs.map((t) => t.path).filter((p): p is string => !!p);
+    try {
+      localStorage.setItem(MD_RECENT_KEY, JSON.stringify({ activePath, paths }));
+    } catch {
+      // 忽略写入失败
+    }
+  }, [tabs, activePath]);
 
   const toggleAssoc = useCallback(async (register: boolean) => {
     try {
@@ -385,6 +470,29 @@ export default function MarkdownReader() {
     );
   }, [siblings, filter]);
 
+  /** 实时字数统计：字符数（含/不含空白）、中文字数、英文单词数、行数 */
+  const stats = useMemo(() => {
+    const text = active?.content || "";
+    const chars = text.length;
+    const noSpace = text.replace(/\s/g, "").length;
+    const cjk = (text.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/g) || []).length;
+    const words = (text.match(/[A-Za-z0-9_]+(?:['-][A-Za-z0-9_]+)*/g) || []).length;
+    const lines = text ? text.split(/\r?\n/).length : 0;
+    return { chars, noSpace, cjk, words, lines };
+  }, [active?.content]);
+
+  /** 根据 selectionStart 计算光标所在行/列（1-based） */
+  const updateCursor = useCallback(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    const before = ta.value.slice(0, ta.selectionStart);
+    const idx = before.lastIndexOf("\n");
+    setCursor({
+      line: before.split("\n").length,
+      col: before.length - idx,
+    });
+  }, []);
+
   // 快捷键：Ctrl+S 保存 / Ctrl+W 关闭标签 / Ctrl+Z、Ctrl+Y（编辑态）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -564,7 +672,13 @@ export default function MarkdownReader() {
         <textarea
           ref={taRef}
           value={active.content}
-          onChange={(e) => activePath && setContent(activePath, e.target.value)}
+          onChange={(e) => {
+            if (activePath) setContent(activePath, e.target.value);
+            requestAnimationFrame(updateCursor);
+          }}
+          onClick={updateCursor}
+          onKeyUp={updateCursor}
+          onSelect={updateCursor}
           onKeyDown={(e) => {
             // Tab 插入两个空格而不是移动焦点
             if (e.key === "Tab") {
@@ -585,6 +699,23 @@ export default function MarkdownReader() {
             {preview}
           </div>
         )}
+      </div>
+      {/* 状态栏：光标位置 + 实时字数统计 */}
+      <div className="flex-shrink-0 flex items-center gap-3 px-3 py-1 border-t border-white/5 bg-white/[0.02] text-[10px] text-slate-500 select-none">
+        <span className="font-mono">Ln {cursor.line}, Col {cursor.col}</span>
+        <span className="w-px h-3 bg-white/10" />
+        <span title="总字符数">{stats.chars} 字符</span>
+        <span title="不含空白字符数">{stats.noSpace} 非空</span>
+        <span title="中文字数">{stats.cjk} 中文</span>
+        <span title="英文单词数">{stats.words} 词</span>
+        <span>{stats.lines} 行</span>
+        <div className="flex-1" />
+        {active.dirty ? (
+          <span className="text-amber-300/80">未保存</span>
+        ) : (
+          <span className="text-emerald-400/80">已保存</span>
+        )}
+        <span className="font-mono">UTF-8</span>
       </div>
     </div>
   );
@@ -810,21 +941,41 @@ function LoaderCircle() {
   return <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />;
 }
 
-/** 代码块：语言标签 + 一键复制 */
+/** 代码块：语言标签 + 语法高亮 + 一键复制 */
 function CodeBlock({ lang, children }: { lang: string; children: React.ReactNode }) {
   const [copied, setCopied] = useState(false);
+  const text = typeof children === "string" ? children : String(children);
+
   const handleCopy = useCallback(() => {
-    const text = typeof children === "string" ? children : String(children);
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     });
-  }, [children]);
+  }, [text]);
+
+  // 用 hljs 高亮；语言未注册时退回自动检测，再退回纯文本转义
+  const html = useMemo(() => {
+    try {
+      if (lang && hljs.getLanguage(lang)) {
+        return hljs.highlight(text, { language: lang, ignoreIllegals: true }).value;
+      }
+      const auto = hljs.highlightAuto(text);
+      if (auto.relevance > 0) return auto.value;
+    } catch {
+      /* fallthrough */
+    }
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }, [lang, text]);
 
   return (
     <div className="relative my-3 rounded-lg overflow-hidden border border-white/10 bg-slate-900/80">
       <div className="flex items-center justify-between px-2.5 py-1 bg-slate-800/60 border-b border-white/5">
-        <span className="text-[9px] font-mono text-slate-400 uppercase tracking-wide">{lang}</span>
+        <span className="text-[9px] font-mono text-slate-400 uppercase tracking-wide">
+          {lang || "text"}
+        </span>
         <button
           onClick={handleCopy}
           className="text-[9px] text-slate-500 hover:text-slate-200 transition-colors cursor-pointer"
@@ -833,8 +984,35 @@ function CodeBlock({ lang, children }: { lang: string; children: React.ReactNode
         </button>
       </div>
       <pre className="overflow-x-auto p-3 text-[11px] leading-relaxed">
-        <code className="font-mono text-slate-300">{children}</code>
+        <code
+          className="font-mono hljs"
+          style={{ background: "transparent", color: "#e2e8f0", padding: 0 }}
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
       </pre>
     </div>
   );
+}
+
+/** hljs 深色主题样式（One Dark 风格，随应用主题） */
+const hljsCss = `
+.hljs{color:#abb2bf}
+.hljs-comment,.hljs-quote{color:#5c6370;font-style:italic}
+.hljs-doctag,.hljs-keyword,.hljs-formula{color:#c678dd}
+.hljs-section,.hljs-name,.hljs-selector-tag,.hljs-deletion,.hljs-subst{color:#e06c75}
+.hljs-literal{color:#56b6c2}
+.hljs-string,.hljs-regexp,.hljs-addition,.hljs-attribute,.hljs-meta .hljs-string{color:#98c379}
+.hljs-attr,.hljs-variable,.hljs-template-variable,.hljs-type,.hljs-selector-class,.hljs-selector-attr,.hljs-selector-pseudo,.hljs-number{color:#d19a66}
+.hljs-symbol,.hljs-bullet,.hljs-link,.hljs-meta,.hljs-selector-id,.hljs-title{color:#61aeee}
+.hljs-built_in,.hljs-title.class_,.hljs-class .hljs-title{color:#e6c07b}
+.hljs-emphasis{font-style:italic}
+.hljs-strong{font-weight:bold}
+.hljs-link{text-decoration:underline}
+`;
+// 注入一次 hljs 主题（模块级，避免每次渲染都重建 <style>）
+if (typeof document !== "undefined" && !document.getElementById("hljs-theme")) {
+  const style = document.createElement("style");
+  style.id = "hljs-theme";
+  style.textContent = hljsCss;
+  document.head.appendChild(style);
 }

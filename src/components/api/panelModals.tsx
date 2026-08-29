@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  Plus, Trash2, X, Link2, Database, FlaskConical, Folder, ListTree, Braces,
+  Plus, Trash2, Link2, Database, FlaskConical, Folder, ListTree, Braces,
 } from "lucide-react";
 import type { ApiProject, ApiEnvironment, ApiModule, PresetHeaderSet, KeyValueItem } from "./types";
 import { KvEditor, ACCENT } from "./panelParts";
+import { SharedModal } from "../shared/Modal";
+import { SharedButton } from "../shared/Button";
 
 // ─── 预设 Headers 弹窗 ───
 export function PresetHeadersModal({ projectId, sets, onClose, onChanged }: {
@@ -28,34 +30,36 @@ export function PresetHeadersModal({ projectId, sets, onClose, onChanged }: {
     onClose();
   };
   return (
-    <div className="fixed inset-0 z-50 modal-mask flex items-center justify-center bg-black/60">
-      <div className="w-[620px] max-h-[80vh] overflow-hidden glass-panel rounded-2xl border border-white/10 shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-          <div className="flex items-center gap-2 text-sm font-semibold text-white">
-            <Link2 className="w-4 h-4" style={{ color: ACCENT }} /> 预设 Headers（项目级）
+    <SharedModal
+      open
+      onClose={onClose}
+      width={620}
+      title={
+        <span className="inline-flex items-center gap-2">
+          <Link2 className="w-4 h-4" style={{ color: ACCENT }} /> 预设 Headers（项目级）
+        </span>
+      }
+      bodyClass="space-y-3"
+      footer={
+        <>
+          <SharedButton onClick={onClose}>取消</SharedButton>
+          <SharedButton onClick={saveAll} variant="primary">保存</SharedButton>
+        </>
+      }
+    >
+      {local.map((s, i) => (
+        <div key={i} className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <input value={s.name} onChange={(e) => update(i, { name: e.target.value })} className="flex-1 bg-transparent border border-white/10 rounded-md px-2 py-1 text-xs font-semibold text-slate-100 focus:outline-none" />
+            <button onClick={() => setLocal(local.filter((_, idx) => idx !== i))} className="p-1 text-slate-500 hover:text-rose-400 cursor-pointer"><Trash2 className="w-3.5 h-3.5" /></button>
           </div>
-          <button onClick={onClose} className="p-1 text-slate-500 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
+          <KvEditor items={s.headers} onChange={(h) => update(i, { headers: h })} placeholderKey="Header 名" placeholderValue="值" withDescription={false} />
         </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {local.map((s, i) => (
-            <div key={i} className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
-              <div className="flex items-center gap-2">
-                <input value={s.name} onChange={(e) => update(i, { name: e.target.value })} className="flex-1 bg-transparent border border-white/10 rounded-md px-2 py-1 text-xs font-semibold text-slate-100 focus:outline-none" />
-                <button onClick={() => setLocal(local.filter((_, idx) => idx !== i))} className="p-1 text-slate-500 hover:text-rose-400 cursor-pointer"><Trash2 className="w-3.5 h-3.5" /></button>
-              </div>
-              <KvEditor items={s.headers} onChange={(h) => update(i, { headers: h })} placeholderKey="Header 名" placeholderValue="值" withDescription={false} />
-            </div>
-          ))}
-          <button onClick={add} className="flex items-center gap-1 text-xs text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
-            <Plus className="w-3.5 h-3.5" /> 新建预设集合
-          </button>
-        </div>
-        <div className="flex justify-end gap-2 px-4 py-3 border-t border-white/10">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">取消</button>
-          <button onClick={saveAll} className="px-4 py-1.5 text-xs rounded-lg font-semibold text-white cursor-pointer" style={{ background: ACCENT }}>保存</button>
-        </div>
-      </div>
-    </div>
+      ))}
+      <button onClick={add} className="flex items-center gap-1 text-xs text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
+        <Plus className="w-3.5 h-3.5" /> 新建预设集合
+      </button>
+    </SharedModal>
   );
 }
 
@@ -127,25 +131,33 @@ export function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
   const cellCls = "bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60";
 
   return (
-    <div className="fixed inset-0 z-50 modal-mask flex items-center justify-center bg-black/60">
-      <div className="w-[860px] max-w-[95vw] max-h-[82vh] overflow-hidden glass-panel rounded-2xl border border-white/10 shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-          <div className="flex items-center gap-2 text-sm font-semibold text-white">
-            <Database className="w-4 h-4" style={{ color: ACCENT }} /> 变量集合（环境）
-          </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={active ?? ""}
-              onChange={(e) => setActive(e.target.value)}
-              className="bg-black/30 border border-white/10 rounded-md px-2 py-1 text-[11px] text-slate-200 focus:outline-none"
-              title="当前生效的环境（请求变量取自该列）"
-            >
-              {local.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-            </select>
-            <button onClick={onClose} className="p-1 text-slate-500 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
-          </div>
-        </div>
-        <div className="flex-1 overflow-auto p-4">
+    <SharedModal
+      open
+      onClose={onClose}
+      width={860}
+      title={
+        <span className="inline-flex items-center gap-2">
+          <Database className="w-4 h-4" style={{ color: ACCENT }} /> 变量集合（环境）
+        </span>
+      }
+      headerActions={
+        <select
+          value={active ?? ""}
+          onChange={(e) => setActive(e.target.value)}
+          className="bg-black/30 border border-white/10 rounded-md px-2 py-1 text-[11px] text-slate-200 focus:outline-none"
+          title="当前生效的环境（请求变量取自该列）"
+        >
+          {local.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+        </select>
+      }
+      footer={
+        <>
+          <SharedButton onClick={onClose}>取消</SharedButton>
+          <SharedButton onClick={saveAll} variant="primary">保存</SharedButton>
+        </>
+      }
+    >
+      <div className="p-1">
           {local.length === 0 ? (
             <div className="py-10 text-center text-xs text-slate-500">暂无环境，点击下方“新建环境”创建第一列</div>
           ) : (
@@ -230,15 +242,8 @@ export function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
             提示：每组环境代表一列，每行一个变量名；不同环境的变量名自动对齐，只改值即可。
             请求中通过 <code className="text-[var(--module-accent)]">{"{{变量名}}"}</code> 引用当前生效环境的值。
           </div>
-        </div>
-        <div className="flex justify-end gap-2 px-4 py-3 border-t border-white/10">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">取消</button>
-          <button onClick={saveAll} className="px-4 py-1.5 text-xs rounded-lg font-semibold text-white cursor-pointer" style={{ background: ACCENT }}>
-            保存
-          </button>
-        </div>
       </div>
-    </div>
+    </SharedModal>
   );
 }
 
@@ -274,17 +279,27 @@ export function ProjectModal({ project, onClose, onSave, initialSection }: {
     return () => window.clearTimeout(t);
   }, [initialSection]);
   return (
-    <div className="fixed inset-0 z-50 modal-mask flex items-center justify-center bg-black/60">
-      <div
-        className="w-[560px] glass-panel rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
+    <SharedModal
+      open
+      onClose={onClose}
+      width={560}
+      title={
+        <span className="inline-flex items-center gap-2">
           <FlaskConical className="w-4 h-4" style={{ color: ACCENT }} />
-          <span className="text-sm font-semibold text-white">{editing ? "编辑项目" : "新建项目"}</span>
-          <button onClick={onClose} className="ml-auto p-1 text-slate-500 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
-        </div>
-        <div className="max-h-[60vh] overflow-y-auto p-4 space-y-3">
+          {editing ? "编辑项目" : "新建项目"}
+        </span>
+      }
+      bodyClass="space-y-3"
+      footer={
+        <>
+          <SharedButton onClick={onClose}>取消</SharedButton>
+          <SharedButton onClick={() => name.trim() && onSave(name.trim(), description, commonHeaders, commonParams, commonBody)} variant="primary">
+            {editing ? "保存" : "创建"}
+          </SharedButton>
+        </>
+      }
+    >
+      <div className="space-y-3">
           <label className="block">
             <span className="text-[11px] text-slate-400 mb-1 block">项目名称</span>
             <input
@@ -330,20 +345,8 @@ export function ProjectModal({ project, onClose, onSave, initialSection }: {
             </div>
             <KvEditor items={commonBody} onChange={setCommonBody} placeholderKey="参数名" placeholderValue="值" withDescription={false} />
           </div>
-        </div>
-        <div className="flex justify-end gap-2 px-4 py-3 border-t border-white/10">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">取消</button>
-          <button
-            onClick={() => name.trim() && onSave(name.trim(), description, commonHeaders, commonParams, commonBody)}
-            disabled={!name.trim()}
-            className="px-4 py-1.5 text-xs rounded-lg font-semibold text-white cursor-pointer disabled:opacity-50"
-            style={{ background: ACCENT }}
-          >
-            {editing ? "保存" : "创建"}
-          </button>
-        </div>
       </div>
-    </div>
+    </SharedModal>
   );
 }
 
@@ -357,17 +360,27 @@ export function ModuleModal({ module, onClose, onSave }: {
   const [description, setDescription] = useState(module?.description ?? "");
   const editing = !!module;
   return (
-    <div className="fixed inset-0 z-50 modal-mask flex items-center justify-center bg-black/60">
-      <div
-        className="w-[440px] glass-panel rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
+    <SharedModal
+      open
+      onClose={onClose}
+      width={440}
+      title={
+        <span className="inline-flex items-center gap-2">
           <Folder className="w-4 h-4" style={{ color: ACCENT }} />
-          <span className="text-sm font-semibold text-white">{editing ? "编辑模块" : "新建模块"}</span>
-          <button onClick={onClose} className="ml-auto p-1 text-slate-500 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
-        </div>
-        <div className="p-4 space-y-3">
+          {editing ? "编辑模块" : "新建模块"}
+        </span>
+      }
+      bodyClass="space-y-3"
+      footer={
+        <>
+          <SharedButton onClick={onClose}>取消</SharedButton>
+          <SharedButton onClick={() => name.trim() && onSave(name.trim(), description)} variant="primary">
+            {editing ? "保存" : "创建"}
+          </SharedButton>
+        </>
+      }
+    >
+      <div className="space-y-3">
           <label className="block">
             <span className="text-[11px] text-slate-400 mb-1 block">模块名称</span>
             <input
@@ -389,19 +402,7 @@ export function ModuleModal({ module, onClose, onSave }: {
               className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 resize-none focus:outline-none focus:border-[var(--module-accent)]/60"
             />
           </label>
-        </div>
-        <div className="flex justify-end gap-2 px-4 py-3 border-t border-white/10">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">取消</button>
-          <button
-            onClick={() => name.trim() && onSave(name.trim(), description)}
-            disabled={!name.trim()}
-            className="px-4 py-1.5 text-xs rounded-lg font-semibold text-white cursor-pointer disabled:opacity-50"
-            style={{ background: ACCENT }}
-          >
-            {editing ? "保存" : "创建"}
-          </button>
-        </div>
       </div>
-    </div>
+    </SharedModal>
   );
 }

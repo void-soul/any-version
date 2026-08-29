@@ -473,15 +473,22 @@ export default function LauncherPanel() {
   };
 
   // Items mapped by classification ID
+  // 开启「只显示有效项目」时过滤掉检测为不存在（data.exists === false）的项目；
+  // 未检测过（exists 为 null）视为有效，避免误藏。
+  const visibleItems = useMemo(() => {
+    if (!settings.showOnlyValid) return allItems;
+    return allItems.filter((it) => it.data.exists !== false);
+  }, [allItems, settings.showOnlyValid]);
+
   const itemsByClassification = useMemo(() => {
     const map = new Map<number, Item[]>();
-    for (const item of allItems) {
+    for (const item of visibleItems) {
       const list = map.get(item.classificationId) || [];
       list.push(item);
       map.set(item.classificationId, list);
     }
     return map;
-  }, [allItems]);
+  }, [visibleItems]);
 
   // Classification lookup map for name resolution
   const classificationMap = useMemo(() => {
@@ -975,13 +982,13 @@ export default function LauncherPanel() {
   const searchResults = useMemo(() => {
     if (!searchQuery.trim()) return [];
     const q = searchQuery.trim().toLowerCase();
-    return allItems.filter(
+    return visibleItems.filter(
       (it) =>
         matchPinyin(it.name, q) ||
         (it.data.target || "").toLowerCase().includes(q) ||
         matchPinyin(it.data.remark || "", q)
     );
-  }, [allItems, searchQuery]);
+  }, [visibleItems, searchQuery]);
 
   // Open / Close Search
   const openSearch = () => {
@@ -1086,6 +1093,30 @@ export default function LauncherPanel() {
   // 停止检测
   const stopCheck = () => {
     invoke("launcher_stop_check").catch((e) => console.error("停止检测失败:", e));
+  };
+
+  // 一键清理无效项目（检测为不存在），删除前询问确认
+  const cleanupInvalidItems = async () => {
+    if (missingCount === 0 && !allItems.some((it) => it.data.exists === false)) {
+      showToast("没有检测到无效项目");
+      return;
+    }
+    const invalidCount = allItems.filter((it) => it.data.exists === false).length;
+    const ok = window.confirm(
+      `确定删除 ${invalidCount} 个无效项目（检测为不存在的项目）？\n此操作不可撤销。`
+    );
+    if (!ok) return;
+    try {
+      const deleted = await invoke<number>("launcher_delete_invalid_items");
+      // 同步前端状态：移除已删除项目，清空红框标识
+      setAllItems((prev) => prev.filter((it) => it.data.exists !== false));
+      setCheckResults({});
+      setMissingCount(0);
+      showToast(`已删除 ${deleted} 个无效项目`);
+    } catch (e) {
+      console.error("清理无效项目失败", e);
+      showToast("清理失败，请重试");
+    }
   };
 
   // 检测所有项目是否存在（网页类刷新图标，其余红框标识缺失）
@@ -1323,8 +1354,7 @@ export default function LauncherPanel() {
               isSearchOpen
                 ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white shadow-md shadow-[var(--module-accent-ring)]"
                 : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
-            }`}
-            title="搜索全部快捷方式 (Ctrl+F)"
+            }`}             title="搜索全部快捷方式 (Ctrl+F)"
           >
             <Search className="w-3 h-3" />
             <span className="text-[11px]">搜索</span>
@@ -1362,6 +1392,24 @@ export default function LauncherPanel() {
                 {missingCount}
               </span>
             )}
+          </button>
+
+          {/* 清理无效项目（检测为不存在） */}
+          <button
+            onClick={() => void cleanupInvalidItems()}
+            disabled={
+              checking ||
+              (missingCount === 0 && !allItems.some((it) => it.data.exists === false))
+            }
+            className={`px-2.5 py-1 rounded-lg text-xs flex items-center gap-1.5 border transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+              missingCount > 0
+                ? "bg-red-600/20 border-red-500/40 text-red-300 hover:bg-red-600/30"
+                : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
+            }`}
+            title="删除所有检测为不存在的项目（删除前询问）"
+          >
+            <Trash2 className="w-3 h-3 text-red-400" />
+            <span className="text-[11px]">清理无效</span>
           </button>
 
           {/* 收缩/展开全部子分组 */}
@@ -1533,6 +1581,22 @@ export default function LauncherPanel() {
 
                 {/* 开关 */}
                 <div className="space-y-1.5">
+                  <label className="flex items-center justify-between cursor-pointer">
+                    <span className="text-[10px] text-slate-400">只显示有效项目</span>
+                    <button
+                      onClick={() => saveViewSettings({ showOnlyValid: !(settings.showOnlyValid ?? false) })}
+                      className={`w-7 h-4 rounded-full transition relative cursor-pointer ${
+                        settings.showOnlyValid ?? false ? "bg-[var(--module-accent)]" : "bg-white/15"
+                      }`}
+                      title="隐藏检测为不存在的项目（未检测过的项目始终显示）"
+                    >
+                      <span
+                        className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${
+                          settings.showOnlyValid ?? false ? "left-3.5" : "left-0.5"
+                        }`}
+                      />
+                    </button>
+                  </label>
                   <label className="flex items-center justify-between cursor-pointer">
                     <span className="text-[10px] text-slate-400">项目边框</span>
                     <button

@@ -19,7 +19,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { invoke } from "@tauri-apps/api/core";
-import Editor from "@monaco-editor/react";
+import MonacoEditor from "./shared/MonacoEditor";
 import {
   CalendarDays,
   ChevronDown,
@@ -387,7 +387,7 @@ function TaskDetailModal({ task, onClose, onUpdate, onInsertFile, onInsertImage,
   const editorPane = (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="relative min-h-0 flex-1">
-        <Editor
+        <MonacoEditor
           height="100%"
           language="markdown"
           theme="vs-dark"

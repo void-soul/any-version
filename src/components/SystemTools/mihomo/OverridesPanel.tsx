@@ -2,7 +2,7 @@
 // （URL 导入(剪贴板粘贴) / 打开本地文件 / 新建 YAML·JS / 卡片：远程更新+编辑信息+
 //   编辑文件+执行日志(js)+删除 / 双击编辑文件 / 排序(上下移替代拖拽) / global 标识）
 import { useEffect, useRef, useState } from "react";
-import Editor from "@monaco-editor/react";
+import MonacoEditor from "../../shared/MonacoEditor";
 import { RefreshCw, MoreVertical, Plus, ClipboardPaste, ArrowUp, ArrowDown } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
 import { cardCls, Modal, btnSec, btnPrimary, inputCls, labelCls, tagCls, Toggle } from "./ui";
@@ -299,7 +299,7 @@ function EditOverrideFileModal({ item, onClose }: any) {
       }>
       {loaded ? (
         <div className="w-full h-96 rounded-xl border border-white/10 overflow-hidden">
-          <Editor
+          <MonacoEditor
             height="100%"
             language={item?.ext === "js" ? "javascript" : "yaml"}
             theme="vs-dark"

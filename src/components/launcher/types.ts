@@ -65,13 +65,14 @@ export interface LauncherSetting {
   showHideShortcutKey?: string; // 遗留字段（旧版「启动」模块主热键），已迁移到 moduleHotkeys.launcher
   moduleHotkeys?: Record<string, string>; // 各顶级模块快捷键：moduleId -> 热键字符串（含「启动」= "launcher"）
   selectionTranslateHotkey?: string; // 独立「划词翻译」热键：任意程序选中文本后按下 → 悬浮翻译
-  mindmapQuickHotkey?: string; // 独立「思维导图速记」热键：呼出速记悬浮窗随手记录
+  mindmapQuickHotkey?: string; // 独立「思维导图速记」热键：呼出速记悬浮窗随手记录，默认 Shift+F3
   // ---- 视图设置（全局，应用到所有分类）----
   itemIconSize?: number; // 项目图标大小 (px)，默认 32
   itemColumnNumber?: number; // 网格列数 (0=自适应)，默认 0
   cardDensity?: "compact" | "cozy" | "spacious"; // 卡片密度，默认 cozy
   showItemName?: boolean; // 是否显示项目名称，默认 true
   iconBackgroundColor?: boolean; // 是否显示图标背景色块，默认 false
+  showOnlyValid?: boolean; // 只显示有效项目（检测存在 或 未检测），默认 false 显示全部
   itemFontSize?: number; // 项目文字大小 (px)，默认 12
   itemRadius?: number; // 项目卡片圆角 (px)，默认 12
   itemBorder?: boolean; // 是否显示项目卡片边框，默认 true

@@ -131,9 +131,7 @@ export default function AddItemModal({
   }, [isOpen, onClose]);
   */
 
-  if (!isOpen) return null;
-
-  // 选择文件 / 快捷方式
+  if (!isOpen) return null;   // 选择文件 / 快捷方式
   const handleSelectFile = async () => {
     try {
       // 用自定义对话框（.NET OpenFileDialog，不跟随 .lnk），能拿到快捷方式原始路径，

@@ -22,6 +22,9 @@ import {
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { toast } from "./shared/Toast";
+import { SharedModal } from "./shared/Modal";
+import { SharedButton } from "./shared/Button";
 
 interface ClipboardItem {
   id: number;
@@ -390,14 +393,8 @@ export default function ClipboardPanel() {
   const [newApp, setNewApp] = useState("");
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [_busy, setBusy] = useState("");
-  // 复制/粘贴结果提示（管理员模式下 alert 可能被 UAC 遮挡，用应用内提示确保可见）
-  const [toast, setToast] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
-  const toastTimer = useRef<number | null>(null);
-  const showToast = useCallback((kind: "ok" | "err", msg: string) => {
-    if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    setToast({ kind, msg });
-    toastTimer.current = window.setTimeout(() => setToast(null), 2600);
-  }, []);
+  // 复制/粘贴结果提示（管理员模式下 alert 可能被 UAC 遮挡，用应用内 toast 确保可见）
+  const showToast = useCallback((kind: "ok" | "err", msg: string) => toast(msg, kind), []);
 
   // 预览：通过行内「预览」按钮打开弹窗
   const [preview, setPreview] = useState<ClipboardItem | null>(null);
@@ -756,20 +753,23 @@ export default function ClipboardPanel() {
 
       {/* 设置面板 */}
       {showSettings && settings && (
-        <div className="fixed inset-0 z-[100] modal-mask flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div
-            className="w-[480px] max-w-[94vw] max-h-[86vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl shadow-black/60 p-5 space-y-5"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between">
-              <h4 className="text-[14px] font-bold text-white flex items-center gap-2">
-                <Settings2 className="w-4 h-4 text-[var(--module-accent)]" /> 剪贴板设置
-              </h4>
-              <button onClick={() => setShowSettings(false)} className="text-slate-500 hover:text-white cursor-pointer">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
+        <SharedModal
+          open
+          onClose={() => setShowSettings(false)}
+          title={
+            <span className="inline-flex items-center gap-2">
+              <Settings2 className="w-4 h-4 text-[var(--module-accent)]" /> 剪贴板设置
+            </span>
+          }
+          width={480}
+          bodyClass="space-y-5"
+          footer={
+            <>
+              <SharedButton onClick={() => setShowSettings(false)}>取消</SharedButton>
+              <SharedButton onClick={saveSettings} variant="primary">保存</SharedButton>
+            </>
+          }
+        >
             {/* 监控开关 */}
             <div className="flex items-center justify-between rounded-xl bg-white/[0.03] border border-white/10 p-3">
               <div>
@@ -863,44 +863,7 @@ export default function ClipboardPanel() {
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-1">
-              <button
-                onClick={() => setShowSettings(false)}
-                className="px-4 h-9 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[12px] text-slate-300 transition-all cursor-pointer"
-              >
-                取消
-              </button>
-              <button
-                onClick={saveSettings}
-                className="px-4 h-9 rounded-lg bg-[var(--module-accent)] hover:opacity-85 text-[12px] font-semibold text-white transition-all cursor-pointer"
-              >
-                保存
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 复制/粘贴结果提示（管理员模式下 alert 可能被遮挡，用应用内提示确保可见） */}
-      {toast && (
-        <div
-          style={{
-            position: "fixed",
-            left: 16,
-            bottom: 16,
-            zIndex: 9999,
-            padding: "9px 14px",
-            borderRadius: 8,
-            fontSize: 13,
-            color: "#fff",
-            background: toast.kind === "ok" ? "#1f9d55" : "#d23b3b",
-            boxShadow: "0 4px 16px rgba(0,0,0,.35)",
-            maxWidth: 520,
-            pointerEvents: "none",
-          }}
-        >
-          {toast.msg}
-        </div>
+        </SharedModal>
       )}
     </div>
   );

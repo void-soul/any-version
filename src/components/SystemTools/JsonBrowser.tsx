@@ -1,6 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { JsonFlowCanvas } from "../CanvasFlow";
-import Editor from "@monaco-editor/react";
+import MonacoEditor from "../shared/MonacoEditor";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
@@ -57,6 +57,7 @@ export type SearchMatches = {
 
 const EMPTY_SEARCH_MATCHES: SearchMatches = { query: "", paths: new Set<string>(), directPaths: new Set<string>() };
 
+const JSON_RECENT_KEY = "any_version_json_recent";
 const MAX_TABS = 9;
 const MAX_STRUCTURED_TEXT_BYTES = 20 * 1024 * 1024;
 const JSON_EXTENSIONS = ["json", "jsonc", "json5", "ndjson"];
@@ -364,6 +365,8 @@ export default function JsonBrowser() {
   const [copyState, setCopyState] = useState(false);
   const sourceEditorRef = useRef<any>(null);
   const noticeTimer = useRef<number | null>(null);
+  // 挂载恢复期间抑制「无标签则自动新建空白标签」逻辑
+  const restoringRef = useRef(false);
 
   const active = tabs.find((tab) => tab.id === activeId) ?? null;
   const [parsed, setParsed] = useState<ParsedJson>({ value: null, error: null, nodeCount: 0, nodeCountCapped: false });
@@ -459,8 +462,45 @@ export default function JsonBrowser() {
     return id;
   }, [flash, tabs.length]);
 
+  // 挂载时恢复上次打开的 JSON 文件（模块卸载重挂载不丢已打开文档）。
   useEffect(() => {
-    if (tabs.length === 0) createTab();
+    let alive = true;
+    restoringRef.current = true;
+    let paths: string[] = [];
+    try {
+      const saved = JSON.parse(localStorage.getItem(JSON_RECENT_KEY) || "[]");
+      paths = Array.isArray(saved) ? saved.filter((p): p is string => typeof p === "string" && !!p) : [];
+    } catch {
+      // 忽略
+    }
+    (async () => {
+      try {
+        for (const p of paths) {
+          if (!alive) return;
+          await openPath(p);
+        }
+      } finally {
+        if (alive) restoringRef.current = false;
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 打开/关闭标签后同步持久化文件路径列表（存本地，供挂载恢复）。
+  useEffect(() => {
+    const paths = tabs.map((t) => t.path).filter((p): p is string => !!p);
+    try {
+      localStorage.setItem(JSON_RECENT_KEY, JSON.stringify(paths));
+    } catch {
+      // 忽略写入失败
+    }
+  }, [tabs]);
+
+  useEffect(() => {
+    if (tabs.length === 0 && !restoringRef.current) createTab();
   }, [createTab, tabs.length]);
 
   useEffect(() => {
@@ -699,7 +739,7 @@ export default function JsonBrowser() {
               <span>{active ? `${formatBytes(new Blob([active.text]).size)} · ${language}` : ""}</span>
             </div>
             <div className="min-h-0 flex-1" onScroll={(event) => scrollEditors("left", { scrollTop: event.currentTarget.scrollTop, scrollLeft: event.currentTarget.scrollLeft })}>
-              <Editor
+              <MonacoEditor
                 height="100%"
                 language="json"
                 theme="vs-dark"
@@ -707,7 +747,7 @@ export default function JsonBrowser() {
                 onChange={(value) => updateActive({ text: value ?? "" })}
                 onMount={(editor) => {
                   sourceEditorRef.current = editor;
-                  editor.onDidScrollChange((event) => {
+                  editor.onDidScrollChange((event: any) => {
                     if (event.scrollTopChanged || event.scrollLeftChanged) {
                       scrollEditors("left", { scrollTop: event.scrollTop, scrollLeft: event.scrollLeft });
                     }

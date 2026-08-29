@@ -409,6 +409,11 @@ export default function App() {
             m.id === "settings"
               ? "h-full w-full flex flex-col overflow-y-auto"
               : "h-full w-full flex flex-col";
+          // 内存优化：默认只渲染当前激活模块，切走即卸载（对应组件内的事件监听/定时器随
+          // unmount 释放；后台服务如 RTSP/HTTP/剪贴板/全局快捷键/mihomo 都由 Rust 后端承载，
+          // 卸载前端面板不影响其运行）。settings/launcher 高频切换，保留常驻避免重新拉数据。
+          const keepAlive = m.id === "settings" || m.id === "launcher";
+          if (!isActive && !keepAlive) return null;
           return (
             <div key={m.id} className={isActive ? containerClass : "hidden"}>
               <Comp {...extraProps} />

@@ -25,54 +25,12 @@ import {
 import { PresetHeadersModal, EnvModal, ProjectModal, ModuleModal } from "./panelModals";
 import { LoadReportView } from "./panelReport";
 import { EndpointRow, UnitTestsPanel, DocsPanel, ImportModal } from "./panelSubs";
+import { ConfirmDialog } from "../shared/ConfirmDialog";
+import { SharedModal } from "../shared/Modal";
+import { SharedButton } from "../shared/Button";
 
-// ─── 美化确认弹窗（危险操作确认，主题色动态） ───
-function ConfirmDialog({ title, message, danger, confirmText, onConfirm, onCancel }: {
-  title: string;
-  message: string;
-  danger?: boolean;
-  confirmText?: string;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-[60] modal-mask flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div
-        className="w-[380px] overflow-hidden rounded-2xl border border-white/10 shadow-2xl"
-        style={{ background: "linear-gradient(160deg, rgba(13,21,36,0.98), rgba(13,21,36,0.92))" }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-start gap-3 px-5 pt-5">
-          <div
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
-            style={{ background: "color-mix(in srgb, var(--module-accent) 15%, transparent)", color: danger ? "#fb7185" : "var(--module-accent)" }}
-          >
-            <AlertTriangle className="h-5 w-5" />
-          </div>
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-white">{title}</h3>
-            <p className="mt-1 text-xs leading-relaxed text-slate-400">{message}</p>
-          </div>
-        </div>
-        <div className="mt-5 flex justify-end gap-2 border-t border-white/10 bg-black/20 px-5 py-3">
-          <button
-            onClick={onCancel}
-            className="rounded-lg border border-white/10 px-3.5 py-1.5 text-xs text-slate-300 transition-colors hover:bg-white/5 hover:text-white cursor-pointer"
-          >
-            取消
-          </button>
-          <button
-            onClick={onConfirm}
-            className="rounded-lg px-3.5 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-85 cursor-pointer"
-            style={{ background: danger ? "linear-gradient(135deg, #f43f5e, #e11d48)" : "var(--module-accent)" }}
-          >
-            {confirmText ?? (danger ? "删除" : "确定")}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// 记住当前项目/环境/激活接口（模块卸载重挂载后恢复）
+const API_CTX_KEY = "any_version_api_ctx";
 
 // ─── 模块转移弹窗（选择目标模块） ───
 function MoveModuleModal({ module, modules, onClose, onMoved }: {
@@ -84,54 +42,36 @@ function MoveModuleModal({ module, modules, onClose, onMoved }: {
   const [targetId, setTargetId] = useState("");
   const targets = modules.filter((m) => m.id !== module.id);
   return (
-    <div className="fixed inset-0 z-[60] modal-mask flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div
-        className="w-[420px] overflow-hidden rounded-2xl border border-white/10 shadow-2xl"
-        style={{ background: "linear-gradient(160deg, rgba(13,21,36,0.98), rgba(13,21,36,0.92))" }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-3 px-5 pt-5">
-          <div
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
-            style={{ background: "color-mix(in srgb, var(--module-accent) 15%, transparent)", color: "var(--module-accent)" }}
-          >
-            <FolderInput className="h-5 w-5" />
-          </div>
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-white">移动模块内容</h3>
-            <p className="mt-1 text-xs leading-relaxed text-slate-400">
-              将「{module.name}」下的全部接口转移到其他模块。
-            </p>
-          </div>
-        </div>
-        <div className="px-5 pt-4">
-          <select
-            value={targetId}
-            onChange={(e) => setTargetId(e.target.value)}
-            className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60 cursor-pointer"
-          >
-            <option value="">请选择目标模块…</option>
-            {targets.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
-        </div>
-        <div className="mt-5 flex justify-end gap-2 border-t border-white/10 bg-black/20 px-5 py-3">
-          <button
-            onClick={onClose}
-            className="rounded-lg border border-white/10 px-3.5 py-1.5 text-xs text-slate-300 transition-colors hover:bg-white/5 hover:text-white cursor-pointer"
-          >
-            取消
-          </button>
-          <button
-            disabled={!targetId}
-            onClick={() => onMoved(targetId)}
-            className="rounded-lg px-3.5 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-85 disabled:opacity-40 cursor-pointer"
-            style={{ background: "var(--module-accent)" }}
-          >
+    <SharedModal
+      open
+      onClose={onClose}
+      width={420}
+      title={
+        <span className="inline-flex items-center gap-2">
+          <FolderInput className="w-4 h-4" style={{ color: ACCENT }} /> 移动模块内容
+        </span>
+      }
+      footer={
+        <>
+          <SharedButton onClick={onClose}>取消</SharedButton>
+          <SharedButton onClick={() => onMoved(targetId)} variant="primary" disabled={!targetId}>
             移动
-          </button>
-        </div>
-      </div>
-    </div>
+          </SharedButton>
+        </>
+      }
+    >
+      <p className="text-xs leading-relaxed text-slate-400 mb-3">
+        将「{module.name}」下的全部接口转移到其他模块。
+      </p>
+      <select
+        value={targetId}
+        onChange={(e) => setTargetId(e.target.value)}
+        className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60 cursor-pointer"
+      >
+        <option value="">请选择目标模块…</option>
+        {targets.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+      </select>
+    </SharedModal>
   );
 }
 
@@ -236,6 +176,17 @@ export default function ApiPanel() {
   );
 
 
+  // 记住当前项目/环境/激活接口（模块卸载重挂载后恢复工作上下文）
+  useEffect(() => {
+    try {
+      localStorage.setItem(API_CTX_KEY, JSON.stringify({
+        projectId: activeProjectId, envId: activeEnvId, endpointId: selectedId,
+      }));
+    } catch {
+      // 忽略写入失败
+    }
+  }, [activeProjectId, activeEnvId, selectedId]);
+
   // 初始化
   useEffect(() => {
     invoke("api_init").then(() => loadProjects());
@@ -245,9 +196,11 @@ export default function ApiPanel() {
   const loadProjects = useCallback(async () => {
     const list = await invoke<ApiProject[]>("api_list_projects");
     setProjects(list);
-    if (list.length > 0 && !list.some((p) => p.id === activeProjectId)) {
-      setActiveProjectId(list[0].id);
-    }
+    // 恢复上次选中的项目（若已被删除则落到第一个）
+    const saved = (() => { try { return JSON.parse(localStorage.getItem(API_CTX_KEY) || "null"); } catch { return null; } })();
+    const savedProj = saved?.projectId;
+    if (savedProj && list.some((p) => p.id === savedProj)) setActiveProjectId(savedProj);
+    else if (list.length > 0) setActiveProjectId(list[0].id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -266,11 +219,15 @@ export default function ApiPanel() {
       setEndpoints(epList);
       setPresetSets(presetList);
       const project = projects.find((p) => p.id === activeProjectId);
-      const active = project?.active_env_id && envList.some((e) => e.id === project.active_env_id)
-        ? project.active_env_id
-        : envList[0]?.id ?? null;
-      setActiveEnvId(active);
-      setSelectedId(null);
+      // 恢复上次选中的环境与接口（模块卸载重挂载后保留工作上下文）
+      const saved = (() => { try { return JSON.parse(localStorage.getItem(API_CTX_KEY) || "null"); } catch { return null; } })();
+      const savedEnv = saved?.envId && envList.some((e) => e.id === saved.envId)
+        ? saved.envId
+        : project?.active_env_id && envList.some((e) => e.id === project.active_env_id)
+          ? project.active_env_id
+          : envList[0]?.id ?? null;
+      setActiveEnvId(savedEnv);
+      setSelectedId(saved?.endpointId && epList.some((e) => e.id === saved.endpointId) ? saved.endpointId : null);
       setDraft(null);
       setResponse(null);
       loadHistory();
@@ -1629,8 +1586,9 @@ export default function ApiPanel() {
 
       {confirm && (
         <ConfirmDialog
+          open
           title={confirm.title}
-          message={confirm.message}
+          desc={confirm.message}
           danger={confirm.danger}
           confirmText={confirm.confirmText}
           onConfirm={() => { const fn = confirm.onConfirm; setConfirm(null); fn(); }}
