@@ -80,6 +80,9 @@ export const isGroupType = (t?: string) => !!t && GROUP_TYPE_SET.has(normType(t)
 // 「全部节点」假组（内核中不存在，仅用于展示无所属组的独立节点）；切换时跳过
 export const FAKE_GROUP_TYPE = "all";
 export const ALL_NODES_GROUP = "全部节点";
+// 二级代理 Selector 组（工厂注入）：有专门的「二级代理」页管理，代理页不展示
+const SECONDARY_GROUP = "二级代理";
+const SECONDARY_NODE_PREFIX = "二级-";
 
 export async function getMixedGroups(): Promise<IMihomoMixedGroup[]> {
   const [proxiesRes, providersRes] = await Promise.all([
@@ -116,6 +119,8 @@ export async function getMixedGroups(): Promise<IMihomoMixedGroup[]> {
   for (const name of rootNames) {
     const g = proxies[name] as IMihomoGroup;
     if (g.hidden) continue;
+    // 二级代理有专门页面管理，不在代理页重复展示
+    if (name === SECONDARY_GROUP) continue;
     const all = (g.all || [])
       .map((n) => resolveProxy(n))
       .filter(Boolean) as IMihomoProxy[];
@@ -125,7 +130,7 @@ export async function getMixedGroups(): Promise<IMihomoMixedGroup[]> {
   // 兜底：若没有任何代理组，展示全部独立节点（避免「代理加载不出来」）
   if (groups.length === 0) {
     const loose = Object.keys(proxies)
-      .filter((n) => proxies[n] && !isGroupType(proxies[n].type))
+      .filter((n) => proxies[n] && !isGroupType(proxies[n].type) && !n.startsWith(SECONDARY_NODE_PREFIX))
       .map((n) => proxies[n] as IMihomoProxy);
     if (loose.length) {
       groups.push({

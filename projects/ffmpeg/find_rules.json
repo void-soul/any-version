@@ -1,0 +1,43 @@
+[
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "ffmpeg.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "env_bin",
+      "env_var": "FFMPEG_HOME",
+      "bin_sub": "bin",
+      "exe_name": "ffmpeg.exe"
+    },
+    "source_label": "FFMPEG_HOME",
+    "priority": 10,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "scoop\\apps\\ffmpeg",
+      "exe_name": "ffmpeg.exe"
+    },
+    "source_label": "Scoop",
+    "priority": 40,
+    "root_offset": 3
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "WinGet\\Packages",
+      "exe_name": "ffmpeg.exe"
+    },
+    "source_label": "Winget",
+    "priority": 50,
+    "root_offset": 3
+  }
+]

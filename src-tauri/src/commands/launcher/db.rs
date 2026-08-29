@@ -645,6 +645,15 @@ pub fn get_settings() -> Result<LauncherSetting, String> {
                 params![json_str],
             );
         }
+        // 数据迁移：思维导图速记热键默认 F7（同上，老配置缺字段时补齐）。
+        if setting.mindmap_quick_hotkey.trim().is_empty() {
+            setting.mindmap_quick_hotkey = crate::commands::launcher::models::default_mindmap_quick_hotkey();
+            let json_str = serde_json::to_string(&setting).map_err(|e| e.to_string())?;
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO launcher_setting (key, value) VALUES ('global', ?1)",
+                params![json_str],
+            );
+        }
         Ok(setting)
     })
 }

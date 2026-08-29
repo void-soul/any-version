@@ -150,8 +150,7 @@ function PreviewModal({
 }) {
   return (
     <div
-      className="fixed inset-0 z-[110] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
-      onClick={onClose}
+      className="fixed inset-0 z-[110] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
     >
       <div
         className={`flex flex-col rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl shadow-black/60 overflow-hidden max-h-[90vh] ${
@@ -483,17 +482,6 @@ export default function ClipboardPanel() {
     setPreview(null);
   };
 
-  // Esc 关闭预览
-  useEffect(() => {
-    if (!preview) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closePreview();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preview]);
-
   const refreshSettings = useCallback(async () => {
     try {
       setSettings(await invoke<ClipboardSettings>("clipboard_get_settings"));
@@ -768,7 +756,7 @@ export default function ClipboardPanel() {
 
       {/* 设置面板 */}
       {showSettings && settings && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowSettings(false)}>
+        <div className="fixed inset-0 z-[100] modal-mask flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div
             className="w-[480px] max-w-[94vw] max-h-[86vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl shadow-black/60 p-5 space-y-5"
             onClick={(e) => e.stopPropagation()}

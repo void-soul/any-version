@@ -26,6 +26,8 @@ export interface MindmapDocument {
   createdAt: string;
   updatedAt: string;
   backgroundTexture: string;
+  /** 布局方向：lr=左→右（默认） rl=右→左 tb=上→下 bt=下→上 */
+  layoutDir: string;
 }
 
 // ─── 节点 ───
@@ -40,6 +42,8 @@ export interface MindmapNode {
   kind: string;          // root/task/requirement/module/constraint/risk/other...
   color: string;         // hex
   progress: number;      // 0-100
+  /** 计划时间（ISO 8601，可空） */
+  planAt?: string | null;
   positionX: number;
   positionY: number;
   createdAt: string;
@@ -172,6 +176,7 @@ export const mmApi = {
   moveFolder: (i: MoveFolderInput) => invoke<void>("mm_move_folder", { input: i }),
   moveDocument: (i: MoveDocumentInput) => invoke<void>("mm_move_document", { input: i }),
   updateBackgroundTexture: (documentId: string, texture: string) => invoke<void>("mm_update_background_texture", { documentId, texture }),
+  updateLayoutDir: (documentId: string, dir: string) => invoke<void>("mm_update_layout_dir", { documentId, dir }),
 
   upsertNode: (i: UpsertNodeInput) => invoke<void>("mm_upsert_node", { input: i }),
   deleteNode: (i: DeleteNodeInput) => invoke<void>("mm_delete_node", { input: i }),

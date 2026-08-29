@@ -687,6 +687,16 @@ async fn get_latest_mihomo_release() -> Result<(String, String), String> {
         .send()
         .await
         .map_err(|e| e.to_string())?;
+    // F7 补充：保留状态码并给出可操作提示（401 令牌失效 / 403 限流 / 404 仓库不存在），
+    // 避免 error_for_status() 一把带过，用户看不出是限流还是网络问题。
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(format!(
+            "GitHub API 返回 {}{}",
+            status,
+            crate::commands::utils::github_status_hint(status.as_u16())
+        ));
+    }
     let v: Value = resp.json().await.map_err(|e| e.to_string())?;
     let assets = v
         .get("assets")

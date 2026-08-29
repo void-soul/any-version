@@ -10,7 +10,7 @@ import {
   ShieldCheck,
   Clipboard,
   Settings,
-  Network,
+  Activity,
   Server,
   Video,
   Image,
@@ -185,12 +185,12 @@ export const MODULES: ModuleDef[] = [
   },
   // —— 以下默认收进「更多」的子模块 ——
   {
-    id: "ports",
-    label: "端口排查",
-    icon: Network,
+    id: "network",
+    label: "本地网络",
+    icon: Activity,
     color: "#0ea5e9",
     defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/PortScanner")),
+    Component: lazyLoad(() => import("./components/LocalNetworkPanel")),
   },
   {
     id: "httpServer",
@@ -242,7 +242,7 @@ export const MODULES: ModuleDef[] = [
   },
   {
     id: "markdownReader",
-    label: "Markdown 阅读",
+    label: "Markdown",
     icon: BookOpen,
     color: "#ea580c",
     defaultToolbar: false,

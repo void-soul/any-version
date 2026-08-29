@@ -55,6 +55,7 @@ fn json_to_mindmap_nodes(json: &serde_json::Value, document_id: &str, id_prefix:
             kind: if is_root { "root".to_string() } else { v.get("kind").and_then(|x| x.as_str()).unwrap_or("other").to_string() },
             color: v.get("color").and_then(|x| x.as_str()).unwrap_or(c).to_string(),
             progress: v.get("progress").and_then(|x| x.as_i64()).unwrap_or(0).clamp(0, 100) as i32,
+            plan_at: v.get("plan_at").or_else(|| v.get("planAt")).and_then(|x| x.as_str()).map(|s| s.to_string()),
             position_x: 0.0, position_y: 0.0,
             created_at: ts.clone(), updated_at: ts.clone(),
         }
@@ -67,7 +68,7 @@ fn ensure_import_root(nodes: &mut Vec<MindmapNode>, document_id: &str, id_prefix
     nodes.insert(0, MindmapNode {
         id: format!("{}root", id_prefix), document_id: document_id.to_string(), parent_id: None,
         name: name.to_string(), description: "AI 导入根节点".to_string(), detail: summary.to_string(),
-        kind: "root".to_string(), color: "#f8fafc".to_string(), progress: 0,
+        kind: "root".to_string(), color: "#f8fafc".to_string(), progress: 0, plan_at: None,
         position_x: 0.0, position_y: 0.0, created_at: ts.clone(), updated_at: ts,
     });
 }
@@ -96,6 +97,11 @@ pub fn mm_delete_document(id: String) -> Result<(), String> { super::db::delete_
 #[tauri::command]
 pub fn mm_update_background_texture(document_id: String, texture: String) -> Result<(), String> {
     super::db::update_background_texture(&document_id, &texture)
+}
+
+#[tauri::command]
+pub fn mm_update_layout_dir(document_id: String, dir: String) -> Result<(), String> {
+    super::db::update_layout_dir(&document_id, &dir)
 }
 
 #[tauri::command]

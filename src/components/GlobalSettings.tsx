@@ -39,6 +39,7 @@ import {
   Search,
   X,
   Languages,
+  Brain,
 } from "lucide-react";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -467,6 +468,7 @@ export default function GlobalSettings() {
   const [launcherCfg, setLauncherCfg] = useState<LauncherSetting>({
     moduleHotkeys: { launcher: "Alt+Space" },
     selectionTranslateHotkey: "F6",
+    mindmapQuickHotkey: "F7",
     itemIconSize: 32,
     itemColumnNumber: 0,
     cardDensity: "cozy",
@@ -482,6 +484,8 @@ export default function GlobalSettings() {
   const [recordingField, setRecordingField] = useState<string | null>(null);
   // 是否正在录制「划词翻译」热键（独立字段，与模块热键分离）
   const recordingSelTrans = recordingField === "selection-translate";
+  // 是否正在录制「思维导图速记」热键（独立字段，与模块热键分离）
+  const recordingMindmapQuick = recordingField === "mindmap-quick";
   // 始终持有最新 launcherCfg，供录制监听闭包（仅依赖 recordingField）安全读取
   const launcherCfgRef = useRef<LauncherSetting>(launcherCfg);
   useEffect(() => {
@@ -802,9 +806,11 @@ export default function GlobalSettings() {
       const hotkeyStr = parts.join("+");
 
       // 统一写入对应模块的快捷键（所有模块平等，含「启动」= "launcher"）；
-      // 「划词翻译」热键是独立字段，与翻译模块热键分离。
+      // 「划词翻译」/「思维导图速记」热键是独立字段，与模块热键分离。
       if (target === "selection-translate") {
         handleSaveLauncherConfig({ selectionTranslateHotkey: hotkeyStr });
+      } else if (target === "mindmap-quick") {
+        handleSaveLauncherConfig({ mindmapQuickHotkey: hotkeyStr });
       } else {
         const cur = launcherCfgRef.current.moduleHotkeys || {};
         const nextMap = { ...cur, [target]: hotkeyStr };
@@ -1777,6 +1783,47 @@ export default function GlobalSettings() {
                   ? "请按键…"
                   : launcherCfg.selectionTranslateHotkey
                     ? launcherCfg.selectionTranslateHotkey
+                    : "点击录制"}
+              </button>
+            </div>
+          </div>
+          {/* 独立「思维导图速记」热键：呼出速记悬浮窗，随手把内容记进导图 */}
+          <div className="mt-2 flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-white/5 bg-white/[0.02]">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 rounded-lg bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center shrink-0">
+                <Brain className="w-3.5 h-3.5 text-cyan-400" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-medium text-slate-200">思维导图速记热键</p>
+                <p className="text-[9px] text-slate-500 truncate">
+                  呼出速记悬浮窗：选/建导图，把内容记为子节点、根节点或贴纸；与「思维导图」模块热键相互独立
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {recordingMindmapQuick && (
+                <button
+                  onClick={() =>
+                    handleSaveLauncherConfig({ mindmapQuickHotkey: "" })
+                  }
+                  className="p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 cursor-pointer"
+                  title="清除速记热键"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+              <button
+                onClick={() => setRecordingField(recordingMindmapQuick ? null : "mindmap-quick")}
+                className={`min-w-[86px] px-2.5 py-1 rounded-md border text-[11px] text-center transition cursor-pointer ${
+                  recordingMindmapQuick
+                    ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
+                    : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white"
+                }`}
+              >
+                {recordingMindmapQuick
+                  ? "请按键…"
+                  : launcherCfg.mindmapQuickHotkey
+                    ? launcherCfg.mindmapQuickHotkey
                     : "点击录制"}
               </button>
             </div>

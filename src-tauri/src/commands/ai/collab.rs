@@ -1491,6 +1491,14 @@ impl RunnerAdapter for GeminiRunner {
     }
 }
 
+/// reasonix（`reasonix-json`）适配器
+struct ReasonixRunner;
+impl RunnerAdapter for ReasonixRunner {
+    fn parse(&self, line: &str) -> Option<(StreamEvent, Option<String>)> {
+        parse_reasonix_json(line)
+    }
+}
+
 /// 兜底适配器：非 JSON runner（无流式协议），整段文本累加，不逐行解析
 struct GenericRunner;
 impl RunnerAdapter for GenericRunner {
@@ -1510,6 +1518,7 @@ fn runner_adapter(runner: &str) -> Box<dyn RunnerAdapter> {
         "codex-json" => Box::new(CodexRunner),
         "opencode-json" => Box::new(OpenCodeRunner),
         "gemini-json" => Box::new(GeminiRunner),
+        "reasonix-json" => Box::new(ReasonixRunner),
         _ => Box::new(GenericRunner),
     }
 }
@@ -1742,6 +1751,96 @@ fn parse_gemini_json(line: &str) -> Option<(StreamEvent, Option<String>)> {
         }
         _ => Some((StreamEvent::Ignore, sid)),
     }
+}
+
+/// reasonix `--output-format stream-json` 事件解析（eventwire JSONL 流）
+/// 格式（对齐 open-tag reasonixRuntime）：
+///   {"kind":"turn_started"} / {"kind":"phase",...}            → 活动状态
+///   {"kind":"text","text":"切片"}                          → 增量 token 切片，丢弃（message 事件才是权威组装结果）
+///   {"kind":"message","text":"完整回复"}                   → Delta
+///   {"kind":"tool_dispatch","tool":{id,name,args,partial}} → 工具调用（partial 标记先到、无 args；full 后到带 args，按 id 去重）
+///   {"kind":"reasoning","text":...}                        → 思考（v1.18/1.19 不发射，防御性保留）
+///   {"type":"result","session_id":"...","is_error":...}  → 终结事件：Result + session_id
+fn parse_reasonix_json(line: &str) -> Option<(StreamEvent, Option<String>)> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    // 终结 result 对象（{"type":"result","result":"...","session_id":"...","is_error":...}）
+    if v.get("type").and_then(|t| t.as_str()) == Some("result") {
+        let sid = v.get("session_id").and_then(|s| s.as_str()).map(|s| s.to_string());
+        let text = v.get("result").and_then(|r| r.as_str()).unwrap_or("").to_string();
+        let is_error = v.get("is_error").and_then(|e| e.as_bool()).unwrap_or(false);
+        let usage = v.get("usage").and_then(|u| {
+            let i = u.get("input_tokens").and_then(|x| x.as_u64());
+            let o = u.get("output_tokens").and_then(|x| x.as_u64());
+            match (i, o) {
+                (Some(i), Some(o)) => Some(TokenUsage { input_tokens: i, output_tokens: o }),
+                _ => None,
+            }
+        });
+        if is_error {
+            return Some((StreamEvent::Result(format!("[error] {}", text), usage), sid));
+        }
+        return Some((StreamEvent::Result(text, usage), sid));
+    }
+    match v.get("kind").and_then(|k| k.as_str()) {
+        Some("turn_started") | Some("phase") => {
+            Some((StreamEvent::Activity("工作中…".to_string()), None))
+        }
+        Some("text") => {
+            // 增量 token 切片 → 丢弃（message 事件才是权威组装结果）
+            Some((StreamEvent::Ignore, None))
+        }
+        Some("message") => {
+            let text = v.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+            Some((StreamEvent::Delta(text), None))
+        }
+        Some("reasoning") => {
+            // v1.18/1.19 不发射 reasoning 事件；防御性保留（未来版本可能输出）
+            Some((StreamEvent::Activity("思考中…".to_string()), None))
+        }
+        Some("tool_dispatch") => {
+            // partial 标记先到（无 args），full 事件后到（带 args）——按工具 id 去重，只展示 full 一次
+            let t = v.get("tool").unwrap_or(&serde_json::Value::Null);
+            let id = t.get("id").and_then(|x| x.as_str()).unwrap_or("");
+            let partial = t.get("partial").and_then(|x| x.as_bool()).unwrap_or(false);
+            let has_args = t.get("args").is_some();
+            if partial || !has_args || id.is_empty() {
+                return Some((StreamEvent::Ignore, None));
+            }
+            let name = t.get("name").and_then(|n| n.as_str()).unwrap_or("tool");
+            Some((StreamEvent::Activity(format!("调用工具: {}", name)), None))
+        }
+        // tool_result / usage / notice / approval_request / turn_done：忽略（终结以 result 对象为准）
+        _ => Some((StreamEvent::Ignore, None)),
+    }
+}
+
+/// reasonix 会话文件路径：`--resume` 需要的是会话文件（路径，不是 id）。
+/// reasonix 把会话持久化在 `<REASONIX_HOME>/projects/<encoded-cwd>/sessions/<session_id>.jsonl`，
+/// 其中 `<encoded-cwd>` 是 reasonix 对 cwd 的编码（/ 和 . 替换为 -；Windows 路径的 \ 与 : 一并替换），
+/// REASONIX_HOME 默认 `~/.reasonix`。计算路径不存在时按 session_id 兜底搜索（绑定挂载/路径拼写差异）。
+fn reasonix_session_file(session_id: &str, cwd: &str) -> String {
+    let home = std::env::var("REASONIX_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| crate::commands::utils::get_home_dir().join(".reasonix"));
+    let encoded: String = cwd
+        .chars()
+        .map(|c| if c == '/' || c == '\\' || c == '.' || c == ':' { '-' } else { c })
+        .collect();
+    let computed = home.join("projects").join(&encoded).join("sessions").join(format!("{}.jsonl", session_id));
+    if computed.exists() {
+        return computed.to_string_lossy().replace('\\', "/");
+    }
+    // 兜底：按 session_id 在 projects/*/sessions/ 下搜索（编码差异时计算路径 miss）
+    let projects_dir = home.join("projects");
+    if let Ok(rd) = std::fs::read_dir(&projects_dir) {
+        for entry in rd.flatten() {
+            let f = entry.path().join("sessions").join(format!("{}.jsonl", session_id));
+            if f.exists() {
+                return f.to_string_lossy().replace('\\', "/");
+            }
+        }
+    }
+    String::new()
 }
 
 /// 转义用于 cmd /c 字符串拼接的参数：用双引号整体包裹，内部 " 转义为 ""。
@@ -2448,6 +2547,13 @@ async fn dispatch_to_tool(
                 "{session_id}" => {
                     out.push(existing_sid.clone().unwrap_or_default());
                 }
+                "{session_file}" => {
+                    // reasonix 等工具：resume 需要会话文件路径而非 id（空则随 flag 一起被移除）
+                    let f = existing_sid.as_deref()
+                        .map(|sid| reasonix_session_file(sid, &project_path))
+                        .unwrap_or_default();
+                    out.push(f);
+                }
                 "{model}" => {
                     out.push(model_for_placeholders.clone());
                 }
@@ -2480,6 +2586,12 @@ async fn dispatch_to_tool(
     // shell 命令串（仅用于 Windows .cmd 垫片回退与日志；提示词经 cmd 转义）
     let mut cmd = tmpl;
     cmd = cmd.replace("{session_id}", &escape_cmd_arg(existing_sid.as_deref().unwrap_or("")));
+    if cmd.contains("{session_file}") {
+        let sf = existing_sid.as_deref()
+            .map(|sid| reasonix_session_file(sid, &project_path))
+            .unwrap_or_default();
+        cmd = cmd.replace("{session_file}", &escape_cmd_arg(&sf));
+    }
     cmd = cmd.replace("{model}", &escape_cmd_arg(&model_for_placeholders));
     if cmd.contains("{prompt_file}") {
         cmd = cmd.replace("{prompt_file}", &quoted);

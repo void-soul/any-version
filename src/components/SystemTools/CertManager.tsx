@@ -342,7 +342,7 @@ function CertList() {
       </div>
 
       {pem && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setPem(null)}>
+        <div className="fixed inset-0 modal-mask bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-900 border border-white/10 rounded-xl p-4 w-[80vw] max-h-[80vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between mb-2">
               <span className="text-xs font-bold text-slate-200">PEM 文件</span>

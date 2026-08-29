@@ -261,7 +261,11 @@ async fn fetch_github_latest(repo: &str) -> Result<Option<String>, String> {
         .await
         .map_err(|e| format!("GitHub 请求失败: {}", e))?;
     if !resp.status().is_success() {
-        return Err(format!("GitHub API 返回 {}", resp.status()));
+        return Err(format!(
+            "GitHub API 返回 {}{}",
+            resp.status(),
+            crate::commands::utils::github_status_hint(resp.status().as_u16())
+        ));
     }
     let release: GithubRelease = resp.json().await.map_err(|e| format!("GitHub 解析失败: {}", e))?;
     // Strip "v" prefix if present

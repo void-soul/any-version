@@ -2141,8 +2141,7 @@ export default function LauncherPanel() {
       {/* 批量转移分类项目弹窗 */}
       {moveItemsModalOpen && moveItemsSource && (
         <div
-          className="fixed inset-0 z-[250] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-100"
-          onClick={() => !moveItemsLoading && setMoveItemsModalOpen(false)}
+          className="fixed inset-0 z-[250] modal-mask bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-100"
         >
           <div
             className="w-full max-w-sm bg-[#171d2e] border border-white/15 rounded-2xl p-5 shadow-2xl space-y-4 text-xs"
@@ -2235,8 +2234,7 @@ export default function LauncherPanel() {
       {/* Browser Bookmarks Import Modal */}
       {bookmarkModalOpen && (
         <div
-          className="fixed inset-0 z-[250] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-100"
-          onClick={() => setBookmarkModalOpen(false)}
+          className="fixed inset-0 z-[250] modal-mask bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-100"
         >
           <div
             className="w-full max-w-sm bg-[#171d2e] border border-white/15 rounded-2xl p-5 shadow-2xl space-y-4 text-xs"
@@ -2327,8 +2325,7 @@ export default function LauncherPanel() {
       {/* 删除分类确认弹框 */}
       {pendingDeleteCategory && (
         <div
-          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-          onClick={() => !deletingCategory && setPendingDeleteCategory(null)}
+          className="fixed inset-0 z-[110] modal-mask flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
         >
           <div
             className="bg-[#141927] border rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-100"

@@ -11,7 +11,7 @@ use aes_gcm::KeyInit;
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, TimeZone, Utc};
 use hmac::Mac;
 use hmac::Hmac;
 use serde::{Deserialize, Serialize};
@@ -656,19 +656,43 @@ fn deploy_linux(node: &DeployNode, pems: &(String, String, String)) -> Result<()
         .args(["-P", &port, tmp_key.to_str().unwrap(), &format!("{}:{}", target, key_path)])
         .output();
     let _ = std::fs::remove_dir_all(&isolate_dir);
-    if let Err(e) = scp_cert {
-        return Err(format!("scp 证书失败: {}", e));
+    match scp_cert {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => {
+            return Err(format!(
+                "scp 证书失败 ({}): {}",
+                o.status,
+                String::from_utf8_lossy(&o.stderr).trim()
+            ))
+        }
+        Err(e) => return Err(format!("scp 证书失败: {}", e)),
     }
-    if let Err(e) = scp_key {
-        return Err(format!("scp 私钥失败: {}", e));
+    match scp_key {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => {
+            return Err(format!(
+                "scp 私钥失败 ({}): {}",
+                o.status,
+                String::from_utf8_lossy(&o.stderr).trim()
+            ))
+        }
+        Err(e) => return Err(format!("scp 私钥失败: {}", e)),
     }
     if !reload.is_empty() {
         let mut ssh_cmd = Command::new("ssh");
         #[cfg(windows)]
         ssh_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        let _ = ssh_cmd
-            .args(["-p", &port, &target, &reload])
-            .output();
+        match ssh_cmd.args(["-p", &port, &target, &reload]).output() {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => {
+                return Err(format!(
+                    "远程重载命令失败 ({}): {}",
+                    o.status,
+                    String::from_utf8_lossy(&o.stderr).trim()
+                ))
+            }
+            Err(e) => return Err(format!("无法执行 ssh: {}", e)),
+        }
     }
     Ok(())
 }
@@ -755,11 +779,12 @@ pub async fn issue_and_deploy(cert_id: &str) -> Result<Certificate, String> {
     let (crt, key, ca) = run_lego(&cert, &cred, renew)?;
     let pems = (crt, key, ca);
 
-    // 更新有效期
-    let not_after = extract_not_after(&pems.0);
+    // 更新有效期（从证书 DER 解析 notBefore / notAfter）
+    let (not_before, not_after) = extract_validity(&pems.0);
     let now = Utc::now().to_rfc3339();
     certs[idx].last_issue_at = Some(now.clone());
-    certs[idx].not_after = not_after.clone();
+    certs[idx].not_before = not_before;
+    certs[idx].not_after = not_after;
     certs[idx].status = "issued".to_string();
     certs[idx].last_error = None;
 
@@ -789,26 +814,159 @@ pub async fn issue_and_deploy(cert_id: &str) -> Result<Certificate, String> {
     Ok(updated)
 }
 
-/// 从证书 PEM 解析 notAfter（RFC3339 或 ASN1 日期）。
-fn extract_not_after(crt: &str) -> Option<String> {
-    // 简单解析：找 "Not After = <date>" 或 "notAfter=" 行
+/// 极简 DER TLV 读取器（仅用于解析 X.509 证书有效期）。
+struct DerReader<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> DerReader<'a> {
+    fn new(buf: &'a [u8]) -> Self {
+        DerReader { buf, pos: 0 }
+    }
+
+    /// 读取一个 TLV，返回 (tag, value)。
+    fn read_tlv(&mut self) -> Option<(u8, &'a [u8])> {
+        if self.pos >= self.buf.len() {
+            return None;
+        }
+        let tag = self.buf[self.pos];
+        self.pos += 1;
+        if self.pos >= self.buf.len() {
+            return None;
+        }
+        let first = self.buf[self.pos];
+        self.pos += 1;
+        let len = if first & 0x80 == 0 {
+            first as usize
+        } else {
+            let n = (first & 0x7f) as usize;
+            if n == 0 || n > 4 || self.pos + n > self.buf.len() {
+                return None;
+            }
+            let mut l = 0usize;
+            for _ in 0..n {
+                l = (l << 8) | self.buf[self.pos] as usize;
+                self.pos += 1;
+            }
+            l
+        };
+        if self.pos + len > self.buf.len() {
+            return None;
+        }
+        let value = &self.buf[self.pos..self.pos + len];
+        self.pos += len;
+        Some((tag, value))
+    }
+
+    fn read_children(&mut self) -> Vec<(u8, &'a [u8])> {
+        let mut out = Vec::new();
+        while let Some(tlv) = self.read_tlv() {
+            out.push(tlv);
+        }
+        out
+    }
+}
+
+/// 解析 DER Time（UTCTime 12 位 / GeneralizedTime 14 位，Z 结尾）。
+fn parse_der_time(v: &[u8]) -> Option<DateTime<Utc>> {
+    let s = std::str::from_utf8(v).ok()?;
+    let s = s.trim_end_matches('Z');
+    let s = s.split('.').next().unwrap_or(s); // 去掉小数秒
+    let d: Vec<u8> = s.bytes().filter(|b| b.is_ascii_digit()).collect();
+    let (year, month, day, hour, min, sec) = match d.len() {
+        12 => {
+            let yy = (d[0] - b'0') as i32 * 10 + (d[1] - b'0') as i32;
+            let year = if yy >= 50 { 1900 + yy } else { 2000 + yy };
+            (
+                year,
+                (d[2] - b'0') as u32 * 10 + (d[3] - b'0') as u32,
+                (d[4] - b'0') as u32 * 10 + (d[5] - b'0') as u32,
+                (d[6] - b'0') as u32 * 10 + (d[7] - b'0') as u32,
+                (d[8] - b'0') as u32 * 10 + (d[9] - b'0') as u32,
+                (d[10] - b'0') as u32 * 10 + (d[11] - b'0') as u32,
+            )
+        }
+        14 => {
+            let year = (d[0] - b'0') as i32 * 1000
+                + (d[1] - b'0') as i32 * 100
+                + (d[2] - b'0') as i32 * 10
+                + (d[3] - b'0') as i32;
+            (
+                year,
+                (d[4] - b'0') as u32 * 10 + (d[5] - b'0') as u32,
+                (d[6] - b'0') as u32 * 10 + (d[7] - b'0') as u32,
+                (d[8] - b'0') as u32 * 10 + (d[9] - b'0') as u32,
+                (d[10] - b'0') as u32 * 10 + (d[11] - b'0') as u32,
+                (d[12] - b'0') as u32 * 10 + (d[13] - b'0') as u32,
+            )
+        }
+        _ => return None,
+    };
+    Utc.with_ymd_and_hms(year, month, day, hour, min, sec).single()
+}
+
+/// 从证书 PEM 解析 notBefore / notAfter（RFC3339）。
+fn extract_validity(crt: &str) -> (Option<String>, Option<String>) {
+    // 提取 base64 主体
+    let mut b64 = String::new();
+    let mut in_pem = false;
     for line in crt.lines() {
         let l = line.trim();
-        if l.starts_with("Not After") || l.starts_with("notAfter") {
-            if let Some(pos) = l.find('=') {
-                let date = l[pos + 1..].trim();
-                // 尝试解析常见格式并转为 RFC3339
-                if let Ok(dt) = DateTime::parse_from_rfc2822(date) {
-                    return Some(dt.with_timezone(&Utc).to_rfc3339());
-                }
-                if let Ok(dt) = DateTime::parse_from_str(date, "%b %e %H:%M:%S %Y %Z") {
-                    return Some(dt.with_timezone(&Utc).to_rfc3339());
-                }
-                return Some(date.to_string());
+        if l.starts_with("-----BEGIN") {
+            in_pem = true;
+            continue;
+        }
+        if l.starts_with("-----END") {
+            break;
+        }
+        if in_pem {
+            b64.push_str(l);
+        }
+    }
+    let der = match B64.decode(b64.trim()) {
+        Ok(d) => d,
+        Err(_) => return (None, None),
+    };
+    // Certificate ::= SEQUENCE { tbsCertificate, signatureAlgorithm, signatureValue }
+    let mut r = DerReader::new(&der);
+    let cert_val = match r.read_tlv() {
+        Some((0x30, v)) => v,
+        _ => return (None, None),
+    };
+    // TBSCertificate ::= SEQUENCE { version?, serialNumber, signature, issuer, validity, ... }
+    let mut tr = DerReader::new(cert_val);
+    let children = tr.read_children();
+    let mut seq_idx = 0usize;
+    let mut validity: Option<&[u8]> = None;
+    for (tag, val) in &children {
+        if seq_idx == 0 && *tag == 0xA0 {
+            continue; // version [0] EXPLICIT
+        }
+        if seq_idx == 3 {
+            validity = Some(val);
+            break;
+        }
+        seq_idx += 1;
+    }
+    let validity = match validity {
+        Some(v) => v,
+        None => return (None, None),
+    };
+    // Validity ::= SEQUENCE { notBefore Time, notAfter Time }
+    let mut vr = DerReader::new(validity);
+    let mut nb = None;
+    let mut na = None;
+    for (tag, val) in vr.read_children() {
+        if tag == 0x17 || tag == 0x18 {
+            if nb.is_none() {
+                nb = parse_der_time(val);
+            } else {
+                na = parse_der_time(val);
             }
         }
     }
-    None
+    (nb.map(|d| d.to_rfc3339()), na.map(|d| d.to_rfc3339()))
 }
 
 // ---------------------------------------------------------------------------
@@ -888,7 +1046,38 @@ pub fn start_scheduler(app: tauri::AppHandle) {
 
 #[tauri::command]
 pub fn cert_list() -> Vec<Certificate> {
-    load_json::<Certificate>("certificates.json")
+    let mut certs = load_json::<Certificate>("certificates.json");
+    // 旧数据补解析：已申请但缺有效期的证书，从本地 PEM 读取
+    let mut changed = false;
+    for c in certs.iter_mut() {
+        if c.not_after.is_some() {
+            continue;
+        }
+        let dir = ensure_dir().join(&c.id).join(".lego").join("certificates");
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.ends_with(".crt") && !name.contains("issuer") {
+                    if let Ok(content) = std::fs::read_to_string(e.path()) {
+                        let (nb, na) = extract_validity(&content);
+                        if na.is_some() {
+                            c.not_before = nb;
+                            c.not_after = na;
+                            if c.status == "pending" {
+                                c.status = "issued".to_string();
+                            }
+                            changed = true;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    if changed {
+        save_json("certificates.json", &certs);
+    }
+    certs
 }
 
 #[tauri::command]

@@ -527,13 +527,75 @@ fn emit_translate_payload(app: &tauri::AppHandle, payload: &serde_json::Value) {
     }
 }
 
+// ─── 悬浮窗定位：跟随鼠标 ───
+
+/// 当前鼠标位置（虚拟屏物理像素坐标，多显示器可为负值）。
+fn cursor_position() -> Option<(i32, i32)> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut pt = POINT { x: 0, y: 0 };
+    if unsafe { GetCursorPos(&mut pt) } != 0 {
+        Some((pt.x, pt.y))
+    } else {
+        None
+    }
+}
+
+/// 鼠标所在显示器的工作区（不含任务栏），用于把悬浮窗限制在屏幕内。
+fn cursor_work_area() -> Option<(i32, i32, i32, i32)> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    let (cx, cy) = cursor_position()?;
+    let hmon = unsafe { MonitorFromPoint(POINT { x: cx, y: cy }, MONITOR_DEFAULTTONEAREST) };
+    if hmon.is_null() {
+        return None;
+    }
+    let mut mi: MONITORINFO = unsafe { std::mem::zeroed() };
+    mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    if unsafe { GetMonitorInfoW(hmon, &mut mi) } == 0 {
+        return None;
+    }
+    let r = mi.rcWork;
+    Some((r.left, r.top, r.right, r.bottom))
+}
+
+/// 计算悬浮窗位置：默认出现在鼠标右下方（留 12px 边距），
+/// 放不下则翻转到鼠标左上方，并始终限制在鼠标所在显示器的工作区内。
+fn popup_position(win_w: i32, win_h: i32) -> Option<(i32, i32)> {
+    let (cx, cy) = cursor_position()?;
+    const GAP: i32 = 12;
+    let mut x = cx + GAP;
+    let mut y = cy + GAP;
+    if let Some((left, top, right, bottom)) = cursor_work_area() {
+        if x + win_w > right {
+            x = cx - GAP - win_w;
+        }
+        if y + win_h > bottom {
+            y = cy - GAP - win_h;
+        }
+        x = x.clamp(left, (right - win_w).max(left));
+        y = y.clamp(top, (bottom - win_h).max(top));
+    }
+    Some((x, y))
+}
+
+/// 把悬浮窗移动到鼠标当前位置（复用窗口时调用）。
+fn position_popup_at_cursor(win: &tauri::WebviewWindow) {
+    let size = win.outer_size().unwrap_or(tauri::PhysicalSize::new(400, 480));
+    if let Some((x, y)) = popup_position(size.width as i32, size.height as i32) {
+        let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+    }
+}
+
 /// 确保悬浮窗存在并返回其句柄（存在则复用）。
 fn ensure_translate_popup(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
     if let Some(win) = app.get_webview_window(POPUP_LABEL) {
         return Ok(win);
     }
     POPUP_READY.store(false, std::sync::atomic::Ordering::Release);
-    let win = tauri::WebviewWindowBuilder::new(
+    let mut builder = tauri::WebviewWindowBuilder::new(
         app,
         POPUP_LABEL,
         tauri::WebviewUrl::App("index.html?popup=translate".into()),
@@ -547,9 +609,14 @@ fn ensure_translate_popup(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow
     .resizable(true)
     .maximizable(false)
     .minimizable(false)
-    .shadow(false)
-    .build()
-    .map_err(|e| format!("创建悬浮窗失败: {}", e))?;
+    .shadow(false);
+    // 悬浮窗跟随鼠标：创建时定位到光标附近（避免固定在屏幕中央）
+    if let Some((x, y)) = popup_position(400, 480) {
+        builder = builder.position(x as f64, y as f64);
+    }
+    let win = builder
+        .build()
+        .map_err(|e| format!("创建悬浮窗失败: {}", e))?;
     Ok(win)
 }
 
@@ -609,6 +676,8 @@ pub async fn trigger_selection_translate(
         let win = app_for_main.get_webview_window(POPUP_LABEL);
         if let Some(w) = win.as_ref() {
             let _ = w.show();
+            // 复用窗口时也跟随鼠标：把悬浮窗移到当前光标位置
+            position_popup_at_cursor(w);
             let _ = w.set_focus();
             // 仅 window.set_focus() 只激活顶层窗口 HWND，WebView2 内容不会获得焦点，
             // 前端就收不到 tauri://focus / tauri://blur，导致「失焦自动关闭（钉住判断）」失效。
@@ -666,6 +735,8 @@ pub async fn show_translate_result(app: tauri::AppHandle, source: String, result
     let _ = app.run_on_main_thread(move || {
         if let Some(w) = app2.get_webview_window(POPUP_LABEL) {
             let _ = w.show();
+            // 跟随鼠标：把悬浮窗移到当前光标位置
+            position_popup_at_cursor(&w);
             let _ = w.set_focus();
             let webview: &tauri::Webview<tauri::Wry> = w.as_ref();
             let _ = webview.set_focus();

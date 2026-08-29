@@ -1,0 +1,38 @@
+{
+  "id": "reasonix",
+  "displayName": "Reasonix",
+  "avatar": "🧠",
+  "nickname": "Reasonix",
+  "category": "开源社区",
+  "website": "https://reasonix.io",
+  "apiProtocol": "openai",
+  "supportModel": true,
+  "supportFallbackModel": false,
+
+  "supportsOpenai": true,
+  "supportsAnthropic": false,
+  "supportsGoogle": false,
+  "builtinModels": [],
+  "supportsOptimizer": true,
+  "supportsRectifier": true,
+
+  "resumeCmd": null,
+  "continueCmd": null,
+  "dispatchCmd": "reasonix run --output-format stream-json --permission-mode bypassPermissions --max-steps 3 \"{prompt}\"",
+  "dispatchResumeCmd": "reasonix run --output-format stream-json --permission-mode bypassPermissions --max-steps 3 --resume {session_file} \"{prompt}\"",
+  "runner": "reasonix-json",
+  "promptMode": "arg",
+  "cacheDirs": [".reasonix"],
+  "pkgManager": "npm",
+  "pkgName": "reasonix",
+  "configFile": null,
+  "modelFormat": {
+    "prefix": "",
+    "extractLast": true
+  },
+  "sessions": {
+    "type": "reasonix",
+    "dirs": ["~/.reasonix/projects"]
+  },
+  "skillsDir": "~/.reasonix/skills"
+}

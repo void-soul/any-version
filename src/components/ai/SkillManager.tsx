@@ -553,7 +553,7 @@ export default function SkillManager() {
 
       {/* 编辑分类/标签弹窗 */}
       {editing && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 modal-mask bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="rounded-xl bg-slate-900 border border-white/10 p-4 w-full max-w-md space-y-3 shadow-2xl">
             <div className="flex items-center justify-between border-b border-white/5 pb-2">
               <span className="text-xs font-bold text-slate-200">修改技能属性 · {editing.id}</span>

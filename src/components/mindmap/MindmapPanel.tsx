@@ -78,6 +78,17 @@ function normalizeHexColor(value: string | null | undefined): string | null {
 
 const effectiveNodeColor = (node: MindmapNode) => normalizeHexColor(node.color) ?? kindColor(node.kind);
 
+/** 计划时间徽标的短文本：ISO 串 → MM-DD HH:MM */
+function planShort(value: string): string {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${mm}-${dd} ${hh}:${mi}`;
+}
+
 // ════════════ 节点 ════════════
 
 type FlowNodeData = { node: MindmapNode; selected: boolean; hasChildren: boolean; collapsed: boolean; targetPosition: Position; sourcePosition: Position; onSelect: () => void; onOpenDetail: () => void; onToggle: () => void; onAddChild: () => void; onPreview: (e: React.MouseEvent) => void; onPreviewEnd: () => void; onDelete: () => void; };
@@ -119,6 +130,7 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>)
       </div>
       <div className="flex items-center gap-1.5 px-2.5 pt-1.5">
         {node.progress > 0 && <span className="text-[8px] text-slate-500">{node.progress}%</span>}
+        {node.planAt && <span className="text-[8px] text-slate-400 font-mono">计划 {planShort(node.planAt)}</span>}
       </div>
       {node.progress > 0 && <div className="mx-2.5 mb-2 mt-1 h-1 overflow-hidden rounded-full bg-slate-800/80"><div className="h-full rounded-full transition-all" style={{ width: `${node.progress}%`, backgroundColor: c, boxShadow: `0 0 6px ${c}66` }} /></div>}
       <Handle type="source" position={sourcePosition} isConnectable className="!h-2.5 !w-2.5 !border-2 !border-slate-950" style={{ background: c }} />
@@ -199,7 +211,7 @@ const StickerFlowNode = memo(function StickerFlowNode({ data }: NodeProps<Node<S
 
 function ConfirmModal({ title, message, accent, confirmText = "删除", onConfirm, onClose }: { title: string; message: string; accent: string; confirmText?: string; onConfirm: () => void; onClose: () => void }) {
   return createPortal(
-    <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]" onClick={onClose}>
+    <div className="fixed inset-0 z-[210] modal-mask flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]">
       <div className="w-[360px] overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
           <AlertTriangle className="h-4 w-4 shrink-0" style={{ color: accent }} />
@@ -219,6 +231,7 @@ function ConfirmModal({ title, message, accent, confirmText = "删除", onConfir
 /** 布局方向：lr=左→右（默认，根在左） rl=右→左 tb=上→下 bt=下→上 */
 type LayoutDir = "lr" | "rl" | "tb" | "bt";
 const LAYOUT_DIR_LABELS: Record<LayoutDir, string> = { lr: "左→右", rl: "右→左", tb: "上→下", bt: "下→上" };
+const isLayoutDir = (v: string): v is LayoutDir => v === "lr" || v === "rl" || v === "tb" || v === "bt";
 
 type BackgroundTexture = "none" | "grid" | "dots" | "diagonal" | "cross" | "paper";
 const BACKGROUND_TEXTURE_LABELS: Record<BackgroundTexture, string> = {
@@ -327,6 +340,7 @@ function DetailModal({ node, onUpdate, onClose }: { node: MindmapNode; accent?: 
   const [name, setName] = useState(node.name);
   const [kind, setKind] = useState(node.kind);
   const [progress, setProgress] = useState(node.progress);
+  const [planAt, setPlanAt] = useState(node.planAt ?? "");
   const [color, setColor] = useState(node.color);
   const [split, setSplit] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -337,8 +351,8 @@ function DetailModal({ node, onUpdate, onClose }: { node: MindmapNode; accent?: 
   const COLORS = ["#f8fafc","#22d3ee","#34d399","#fbbf24","#60a5fa","#fb7185","#a78bfa","#f97316","#f59e0b","#94a3b8"];
 
   const save = useCallback(() => {
-    onUpdate({ name, description, color, kind, progress, detail });
-  }, [name, description, color, kind, progress, detail, onUpdate]);
+    onUpdate({ name, description, color, kind, progress, detail, planAt: planAt.trim() ? planAt.trim() : null });
+  }, [name, description, color, kind, progress, detail, planAt, onUpdate]);
 
   // Auto-save on unmount（用 ref 保存最新 save，避免 save 身份变化时
   // cleanup 反复触发 save → 父级 setState → 新 save → 无限循环卡死）
@@ -372,7 +386,7 @@ function DetailModal({ node, onUpdate, onClose }: { node: MindmapNode; accent?: 
   }, [splitRatio]);
 
   return createPortal(
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-4 backdrop-blur-[3px]" onClick={onClose}>
+    <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-4 backdrop-blur-[3px]">
       <div className={`flex ${fullscreen ? "h-full w-full" : split ? "h-[85vh] w-[min(95vw,1100px)]" : "h-[80vh] w-[min(92vw,680px)]"} flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl`} onClick={(e) => e.stopPropagation()}>
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/10 px-3" style={{ backgroundColor: `${c}1f` }}>
           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: c, boxShadow: `0 0 9px ${c}` }} />
@@ -400,6 +414,15 @@ function DetailModal({ node, onUpdate, onClose }: { node: MindmapNode; accent?: 
               <div><label className="text-[9px] text-slate-500 block mb-1">进度</label>
                 <input type="range" min={0} max={100} value={progress} onChange={(e) => { const v = Number(e.target.value); setProgress(v); onUpdate({ progress: v }); }} className="w-20 h-6" />
                 <span className="text-[10px] text-slate-400 ml-1">{progress}%</span>
+              </div>
+            </div>
+            <div>
+              <label className="text-[9px] text-slate-500 block mb-1">计划时间（可空）</label>
+              <div className="flex items-center gap-2">
+                <input type="datetime-local" value={planAt ? planAt.slice(0, 16) : ""}
+                  onChange={(e) => { const v = e.target.value; setPlanAt(v); onUpdate({ planAt: v ? new Date(v).toISOString() : null }); }}
+                  className="h-8 rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400/60" />
+                {planAt && <button type="button" className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-slate-400 hover:text-white" onClick={() => { setPlanAt(""); onUpdate({ planAt: null }); }}>清除</button>}
               </div>
             </div>
             <div>
@@ -453,7 +476,7 @@ function CreateDocModal({ onClose, onCreate, folderId }: { onClose: () => void; 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
   return createPortal(
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]" onClick={onClose}>
+    <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]">
       <div className="w-[380px] rounded-xl border border-white/10 bg-[#0d1524] p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-semibold text-white">新建思维导图</h3>
@@ -508,6 +531,11 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   const [measuredMap, setMeasuredMap] = useState<Record<string, { width: number; height: number }>>({});
   // 切换文档时清空位置覆盖（新文档用其自身已保存坐标或自动布局）
   useEffect(() => { setPosOverrides({}); }, [full.document.id]);
+  // 切换文档时恢复该文档保存的布局方向（避免沿用上一份导图的方向）
+  useEffect(() => {
+    const d = full.document.layoutDir;
+    setDir(isLayoutDir(d) ? d : "lr");
+  }, [full.document.id]);
   // 撤销/重做恢复快照后清空本地拖拽覆盖，让还原的坐标生效
   useEffect(() => { setPosOverrides({}); }, [historyVersion]);
 
@@ -525,8 +553,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     ? full.document.backgroundTexture
     : "dots") as BackgroundTexture;
   const byId = useMemo(() => new Map(graphNodes.map((n) => [n.id, n])), [graphNodes]);
-  // 布局方向（画布级设置）：切换后自动重排并持久化
-  const [dir, setDir] = useState<LayoutDir>("lr");
+  // 布局方向（画布级设置）：切换后自动重排并持久化；初始值取该文档保存的方向
+  const [dir, setDir] = useState<LayoutDir>(() => (isLayoutDir(full.document.layoutDir) ? full.document.layoutDir : "lr"));
   const layout = useMemo(() => layoutTree(graphNodes, dir), [graphNodes, dir]);
   const endpointPositions = dir === "tb"
     ? { target: Position.Top, source: Position.Bottom }
@@ -557,7 +585,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   const addNode = useCallback((parentId: string | null) => {
     onHistoryPush();
     const now = new Date().toISOString();
-    const n: MindmapNode = { id: `n${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, documentId: full.document.id, parentId, name: parentId ? "新节点" : "新根节点", description: "", detail: "", kind: parentId ? "other" : "root", color: "", progress: 0, positionX: 0, positionY: 0, createdAt: now, updatedAt: now };
+    const n: MindmapNode = { id: `n${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, documentId: full.document.id, parentId, name: parentId ? "新节点" : "新根节点", description: "", detail: "", kind: parentId ? "other" : "root", color: "", progress: 0, planAt: null, positionX: 0, positionY: 0, createdAt: now, updatedAt: now };
     void mmApi.upsertNode({ documentId: full.document.id, node: n });
     onDocumentUpdate({ ...full, nodes: [...full.nodes, n] });
     setSelectedId(n.id);
@@ -754,7 +782,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
 
   const updateNode = useCallback((patch: Partial<MindmapNode>) => {
     if (!detailNode) return;
-    const updated = { ...detailNode, ...patch, updatedAt: new Date().toISOString() };
+    const updated = { ...detailNode, ...patch, planAt: patch.planAt !== undefined ? patch.planAt : detailNode.planAt ?? null, updatedAt: new Date().toISOString() };
     // 注意：不能 setDetailNode(updated) —— 弹窗关闭时的 unmount 自动保存会再次
     // 调用 updateNode → setDetailNode → 把刚关闭的弹窗重新打开（无法关闭的 bug）。
     // 弹窗内部用本地 state 渲染编辑，父级 detailNode 仅用于挂载，无需同步。
@@ -849,10 +877,11 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     window.setTimeout(() => fitView({ padding: 0.2, duration: 260 }), 30);
   }, [flowNodes, full, dir, fitView]);
 
-  // 切换布局方向：立即按新方向重排（覆盖已保存坐标）并适配视口
+  // 切换布局方向：立即按新方向重排（覆盖已保存坐标）并适配视口，同时持久化方向
   const changeDir = useCallback((d: LayoutDir) => {
     if (d === dir) return;
     setDir(d);
+    void mmApi.updateLayoutDir(full.document.id, d);
     const lp = layoutTree(full.nodes, d);
     const n2 = flowNodes.filter(n => !n.id.startsWith("sticker-")).map(n => ({ nodeId: n.id, x: lp.get(n.id)?.x ?? 0, y: lp.get(n.id)?.y ?? 0 }));
     void mmApi.updatePositions(full.document.id, n2);
@@ -1615,7 +1644,7 @@ export default function MindmapPanel() {
       )}
       {/* Folder create/edit modal */}
       {showFolderCreate && createPortal(
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]" onClick={() => setShowFolderCreate(false)}>
+        <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]">
           <div className="w-[340px] rounded-xl border border-white/10 bg-[#0d1524] p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="mb-4 text-sm font-semibold text-white">新建文件夹</h3>
             <input className="w-full h-9 rounded-lg bg-slate-900 border border-white/10 px-3 text-xs text-white outline-none mb-4" value={folderName} onChange={(e) => setFolderName(e.target.value)} placeholder="文件夹名称" autoFocus onKeyDown={(e) => e.key === "Enter" && createFolder()} />
@@ -1626,7 +1655,7 @@ export default function MindmapPanel() {
           </div>
         </div>, document.body)}
       {editingFolder && createPortal(
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]" onClick={() => setEditingFolder(null)}>
+        <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]">
           <div className="w-[340px] rounded-xl border border-white/10 bg-[#0d1524] p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="mb-4 text-sm font-semibold text-white">重命名文件夹</h3>
             <input className="w-full h-9 rounded-lg bg-slate-900 border border-white/10 px-3 text-xs text-white outline-none mb-4" value={folderName} onChange={(e) => setFolderName(e.target.value)} autoFocus onKeyDown={(e) => e.key === "Enter" && updateFolder()} />

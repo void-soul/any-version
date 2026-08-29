@@ -4,6 +4,7 @@ pub mod cache;
 pub mod sdk_resolver;
 pub mod hosts;
 pub mod port;
+pub mod network;
 pub mod pkg;
 pub mod mirror;
 pub mod service;

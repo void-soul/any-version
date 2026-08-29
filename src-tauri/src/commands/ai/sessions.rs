@@ -84,6 +84,16 @@ pub fn scan_tool_sessions(tool_id: String) -> Result<Vec<ToolSession>, String> {
             "mimocode_style" => {
                 scan_mimocode_sessions(&dir, &mut sessions);
             }
+            "reasonix" => {
+                // reasonix 会话：<REASONIX_HOME>/projects/<encoded-cwd>/sessions/*.jsonl（eventwire JSONL，
+                // 每行一个事件，result 行携带 session_id）。遍历目录下的 *.jsonl 解析。
+                let sessions_dir = if dir.ends_with("sessions") {
+                    dir.clone()
+                } else {
+                    dir.join("sessions")
+                };
+                scan_reasonix_sessions(&sessions_dir, &mut sessions);
+            }
             _ => {}
         }
     }
@@ -94,6 +104,51 @@ pub fn scan_tool_sessions(tool_id: String) -> Result<Vec<ToolSession>, String> {
     fill_resume_cmds(&mut sessions, &tool_id);
 
     Ok(sessions)
+}
+
+/// 扫描 Reasonix sessions（eventwire JSONL，参考 open-tag reasonixRuntime）
+/// 每个会话文件是 `<project>/sessions/<session_id>.jsonl`，文件内每行一个事件，
+/// 终结的 result 行（{"type":"result","session_id":"..."}）携带会话 id。
+fn scan_reasonix_sessions(sessions_dir: &PathBuf, sessions: &mut Vec<ToolSession>) {
+    if !sessions_dir.exists() {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(sessions_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map_or(false, |e| e != "jsonl") {
+                continue;
+            }
+            let sid = match path.file_stem().and_then(|s| s.to_str()) {
+                Some(s) if !s.is_empty() => s.to_string(),
+                _ => continue,
+            };
+            // 从文件内 result 行提取最后回复作为摘要（最多取前 200 字符）
+            let mut summary = None;
+            let last_used = path.metadata().and_then(|m| m.modified()).ok();
+            if let Ok(content) = fs::read_to_string(&path) {
+                for line in content.lines().rev() {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+                        if val.get("type").and_then(|t| t.as_str()) == Some("result") && summary.is_none() {
+                            if let Some(r) = val.get("result").and_then(|r| r.as_str()) {
+                                summary = Some(r.chars().take(200).collect());
+                            }
+                        }
+                    }
+                }
+            }
+            let last_used_str = last_used
+                .and_then(|m| chrono::DateTime::<chrono::Local>::from(m).format("%Y-%m-%d %H:%M:%S").to_string().into())
+                .unwrap_or_default();
+            sessions.push(ToolSession {
+                session_id: sid,
+                project_path: path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+                last_used: last_used_str,
+                summary,
+                resume_cmd: None,
+            });
+        }
+    }
 }
 
 /// 扫描 Codex sessions（JSONL 格式，参考 cc-switch）

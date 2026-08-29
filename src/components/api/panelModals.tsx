@@ -28,7 +28,7 @@ export function PresetHeadersModal({ projectId, sets, onClose, onChanged }: {
     onClose();
   };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+    <div className="fixed inset-0 z-50 modal-mask flex items-center justify-center bg-black/60">
       <div className="w-[620px] max-h-[80vh] overflow-hidden glass-panel rounded-2xl border border-white/10 shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -127,7 +127,7 @@ export function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
   const cellCls = "bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+    <div className="fixed inset-0 z-50 modal-mask flex items-center justify-center bg-black/60">
       <div className="w-[860px] max-w-[95vw] max-h-[82vh] overflow-hidden glass-panel rounded-2xl border border-white/10 shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -274,7 +274,7 @@ export function ProjectModal({ project, onClose, onSave, initialSection }: {
     return () => window.clearTimeout(t);
   }, [initialSection]);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+    <div className="fixed inset-0 z-50 modal-mask flex items-center justify-center bg-black/60">
       <div
         className="w-[560px] glass-panel rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -357,7 +357,7 @@ export function ModuleModal({ module, onClose, onSave }: {
   const [description, setDescription] = useState(module?.description ?? "");
   const editing = !!module;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+    <div className="fixed inset-0 z-50 modal-mask flex items-center justify-center bg-black/60">
       <div
         className="w-[440px] glass-panel rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}

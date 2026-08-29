@@ -515,6 +515,12 @@ pub async fn launcher_save_settings(
             settings.selection_translate_hotkey.clone(),
         );
     }
+    if !settings.mindmap_quick_hotkey.trim().is_empty() {
+        hotkeys.insert(
+            "mindmap-quick".to_string(),
+            settings.mindmap_quick_hotkey.clone(),
+        );
+    }
     let _ = super::windows::register_global_hotkeys(app, &hotkeys);
     Ok(())
 }

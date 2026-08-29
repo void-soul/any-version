@@ -3,7 +3,9 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": [
-    "main"
+    "main",
+    "translate-popup",
+    "mindmap-quick-popup"
   ],
   "permissions": [
     "core:default",

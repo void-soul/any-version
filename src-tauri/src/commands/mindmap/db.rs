@@ -24,7 +24,7 @@ fn build_connection() -> Result<rusqlite::Connection, String> {
         CREATE TABLE IF NOT EXISTS mindmap_documents (
             id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
             source_type TEXT NOT NULL DEFAULT 'manual', source_desc TEXT NOT NULL DEFAULT '',
-            folder_id TEXT, background_texture TEXT NOT NULL DEFAULT 'dots', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            folder_id TEXT, background_texture TEXT NOT NULL DEFAULT 'dots', layout_dir TEXT NOT NULL DEFAULT 'lr', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
             FOREIGN KEY(folder_id) REFERENCES mindmap_folders(id) ON DELETE SET NULL
         );
         CREATE TABLE IF NOT EXISTS mindmap_nodes (
@@ -65,6 +65,10 @@ fn build_connection() -> Result<rusqlite::Connection, String> {
         conn.execute_batch("ALTER TABLE mindmap_documents ADD COLUMN background_texture TEXT NOT NULL DEFAULT 'dots'")
             .map_err(|e| format!("迁移 background_texture 失败: {}", e))?;
     }
+    if !doc_cols.iter().any(|c| c == "layout_dir") {
+        conn.execute_batch("ALTER TABLE mindmap_documents ADD COLUMN layout_dir TEXT NOT NULL DEFAULT 'lr'")
+            .map_err(|e| format!("迁移 layout_dir 失败: {}", e))?;
+    }
     if !doc_cols.iter().any(|c| c == "folder_id") {
         conn.execute_batch("ALTER TABLE mindmap_documents ADD COLUMN folder_id TEXT")
             .map_err(|e| format!("迁移 folder_id 失败: {}", e))?;
@@ -77,6 +81,15 @@ fn build_connection() -> Result<rusqlite::Connection, String> {
     if !folder_cols.iter().any(|c| c == "parent_id") {
         conn.execute_batch("ALTER TABLE mindmap_folders ADD COLUMN parent_id TEXT")
             .map_err(|e| format!("迁移 parent_id 失败: {}", e))?;
+    }
+
+    // 旧版本节点表没有 plan_at（计划时间），幂等补列。
+    let node_cols: Vec<String> = conn.prepare("PRAGMA table_info(mindmap_nodes)")
+        .and_then(|mut stmt| stmt.query_map([], |r| r.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>())
+        .unwrap_or_default();
+    if !node_cols.iter().any(|c| c == "plan_at") {
+        conn.execute_batch("ALTER TABLE mindmap_nodes ADD COLUMN plan_at TEXT")
+            .map_err(|e| format!("迁移 plan_at 失败: {}", e))?;
     }
 
     Ok(conn)
@@ -178,13 +191,13 @@ pub fn delete_folder(id: &str) -> Result<(), String> {
 
 pub fn list_documents(folder_id: Option<&str>) -> Result<Vec<MindmapDocument>, String> {
     with_conn(|c| {
-        let sql_str = "SELECT d.id,d.name,d.description,d.source_type,d.source_desc,d.folder_id,d.background_texture,d.created_at,d.updated_at,(SELECT COUNT(*) FROM mindmap_nodes WHERE document_id=d.id),(SELECT COUNT(*) FROM mindmap_stickers WHERE document_id=d.id) FROM mindmap_documents d WHERE (?1 IS NULL AND d.folder_id IS NULL) OR d.folder_id=?1 ORDER BY d.updated_at DESC";
+        let sql_str = "SELECT d.id,d.name,d.description,d.source_type,d.source_desc,d.folder_id,d.background_texture,d.layout_dir,d.created_at,d.updated_at,(SELECT COUNT(*) FROM mindmap_nodes WHERE document_id=d.id),(SELECT COUNT(*) FROM mindmap_stickers WHERE document_id=d.id) FROM mindmap_documents d WHERE (?1 IS NULL AND d.folder_id IS NULL) OR d.folder_id=?1 ORDER BY d.updated_at DESC";
         let mut s = c.prepare(sql_str).map_err(|e| e.to_string())?;
         let mapped = s.query_map(rusqlite::params![folder_id], |r| Ok(MindmapDocument {
             id: r.get(0)?, name: r.get(1)?, description: r.get(2)?, source_type: r.get(3)?,
-            source_desc: r.get(4)?, folder_id: r.get(5)?, background_texture: r.get(6)?,
-            node_count: r.get(9)?, sticker_count: r.get(10)?,
-            created_at: r.get(7)?, updated_at: r.get(8)?,
+            source_desc: r.get(4)?, folder_id: r.get(5)?, background_texture: r.get(6)?, layout_dir: r.get(7)?,
+            node_count: r.get(10)?, sticker_count: r.get(11)?,
+            created_at: r.get(8)?, updated_at: r.get(9)?,
         })).map_err(|e| e.to_string())?;
         mapped.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
     })
@@ -193,10 +206,10 @@ pub fn list_documents(folder_id: Option<&str>) -> Result<Vec<MindmapDocument>, S
 pub fn create_document(name: &str, description: &str, source_type: &str, folder_id: Option<&str>) -> Result<MindmapDocument, String> {
     with_conn(|c| {
         let id = new_id("mm"); let ts = now_ts();
-        sql(c.execute("INSERT INTO mindmap_documents (id,name,description,source_type,source_desc,folder_id,background_texture,created_at,updated_at) VALUES (?1,?2,?3,?4,'',?5,'dots',?6,?7)", rusqlite::params![id, name, description, source_type, folder_id, ts, ts]))?;
+        sql(c.execute("INSERT INTO mindmap_documents (id,name,description,source_type,source_desc,folder_id,background_texture,layout_dir,created_at,updated_at) VALUES (?1,?2,?3,?4,'',?5,'dots','lr',?6,?7)", rusqlite::params![id, name, description, source_type, folder_id, ts, ts]))?;
         let root_id = new_id("nd");
-        sql(c.execute("INSERT INTO mindmap_nodes (id,document_id,parent_id,name,description,detail,kind,color,progress,position_x,position_y,created_at,updated_at) VALUES (?1,?2,NULL,?3,'根节点','','root','#f8fafc',0,0,0,?4,?5)", rusqlite::params![root_id, id, name, ts, ts]))?;
-        Ok(MindmapDocument { id, name: name.to_string(), description: description.to_string(), source_type: source_type.to_string(), source_desc: String::new(), folder_id: folder_id.map(|s| s.to_string()), background_texture: "dots".to_string(), node_count: 1, sticker_count: 0, created_at: ts.clone(), updated_at: ts })
+        sql(c.execute("INSERT INTO mindmap_nodes (id,document_id,parent_id,name,description,detail,kind,color,progress,plan_at,position_x,position_y,created_at,updated_at) VALUES (?1,?2,NULL,?3,'根节点','','root','#f8fafc',0,NULL,0,0,?4,?5)", rusqlite::params![root_id, id, name, ts, ts]))?;
+        Ok(MindmapDocument { id, name: name.to_string(), description: description.to_string(), source_type: source_type.to_string(), source_desc: String::new(), folder_id: folder_id.map(|s| s.to_string()), background_texture: "dots".to_string(), layout_dir: "lr".to_string(), node_count: 1, sticker_count: 0, created_at: ts.clone(), updated_at: ts })
     })
 }
 
@@ -212,6 +225,15 @@ pub fn update_background_texture(id: &str, texture: &str) -> Result<(), String> 
     let value = if ALLOWED.contains(&texture) { texture } else { "dots" };
     with_conn(|c| {
         sql(c.execute("UPDATE mindmap_documents SET background_texture=?1,updated_at=?2 WHERE id=?3", rusqlite::params![value, now_ts(), id]))?;
+        Ok(())
+    })
+}
+
+pub fn update_layout_dir(id: &str, dir: &str) -> Result<(), String> {
+    const ALLOWED: [&str; 4] = ["lr", "rl", "tb", "bt"];
+    let value = if ALLOWED.contains(&dir) { dir } else { "lr" };
+    with_conn(|c| {
+        sql(c.execute("UPDATE mindmap_documents SET layout_dir=?1,updated_at=?2 WHERE id=?3", rusqlite::params![value, now_ts(), id]))?;
         Ok(())
     })
 }
@@ -242,11 +264,11 @@ pub fn touch_document(id: &str) -> Result<(), String> {
 // ─── 节点 ───
 
 fn row_to_node(r: &rusqlite::Row) -> rusqlite::Result<MindmapNode> {
-    Ok(MindmapNode { id: r.get(0)?, document_id: r.get(1)?, parent_id: r.get(2)?, name: r.get(3)?, description: r.get(4)?, detail: r.get(5)?, kind: r.get(6)?, color: r.get(7)?, progress: r.get(8)?, position_x: r.get(9)?, position_y: r.get(10)?, created_at: r.get(11)?, updated_at: r.get(12)? })
+    Ok(MindmapNode { id: r.get(0)?, document_id: r.get(1)?, parent_id: r.get(2)?, name: r.get(3)?, description: r.get(4)?, detail: r.get(5)?, kind: r.get(6)?, color: r.get(7)?, progress: r.get(8)?, plan_at: r.get(9)?, position_x: r.get(10)?, position_y: r.get(11)?, created_at: r.get(12)?, updated_at: r.get(13)? })
 }
 
 fn list_nodes_inner(c: &rusqlite::Connection, document_id: &str) -> Result<Vec<MindmapNode>, String> {
-    let mut s = c.prepare("SELECT id,document_id,parent_id,name,description,detail,kind,color,progress,position_x,position_y,created_at,updated_at FROM mindmap_nodes WHERE document_id=?1").map_err(|e| e.to_string())?;
+    let mut s = c.prepare("SELECT id,document_id,parent_id,name,description,detail,kind,color,progress,plan_at,position_x,position_y,created_at,updated_at FROM mindmap_nodes WHERE document_id=?1").map_err(|e| e.to_string())?;
     let rows = s.query_map(rusqlite::params![document_id], |r| row_to_node(r)).map_err(|e| e.to_string())?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
 }
@@ -259,9 +281,9 @@ fn upsert_node_inner(c: &rusqlite::Connection, node: &MindmapNode) -> Result<(),
     let ts = now_ts();
     let exists: i64 = c.query_row("SELECT COUNT(*) FROM mindmap_nodes WHERE id=?1", rusqlite::params![node.id], |r| r.get(0)).unwrap_or(0);
     if exists > 0 {
-        sql(c.execute("UPDATE mindmap_nodes SET parent_id=?1,name=?2,description=?3,detail=?4,kind=?5,color=?6,progress=?7,position_x=?8,position_y=?9,updated_at=?10 WHERE id=?11", rusqlite::params![node.parent_id, node.name, node.description, node.detail, node.kind, node.color, node.progress, node.position_x, node.position_y, ts, node.id]))?;
+        sql(c.execute("UPDATE mindmap_nodes SET parent_id=?1,name=?2,description=?3,detail=?4,kind=?5,color=?6,progress=?7,plan_at=?8,position_x=?9,position_y=?10,updated_at=?11 WHERE id=?12", rusqlite::params![node.parent_id, node.name, node.description, node.detail, node.kind, node.color, node.progress, node.plan_at, node.position_x, node.position_y, ts, node.id]))?;
     } else {
-        sql(c.execute("INSERT INTO mindmap_nodes (id,document_id,parent_id,name,description,detail,kind,color,progress,position_x,position_y,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)", rusqlite::params![node.id, node.document_id, node.parent_id, node.name, node.description, node.detail, node.kind, node.color, node.progress, node.position_x, node.position_y, ts, ts]))?;
+        sql(c.execute("INSERT INTO mindmap_nodes (id,document_id,parent_id,name,description,detail,kind,color,progress,plan_at,position_x,position_y,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)", rusqlite::params![node.id, node.document_id, node.parent_id, node.name, node.description, node.detail, node.kind, node.color, node.progress, node.plan_at, node.position_x, node.position_y, ts, ts]))?;
     }
     touch_document_inner(c, &node.document_id)?;
     Ok(())
@@ -336,11 +358,11 @@ pub fn delete_sticker(document_id: &str, sticker_id: &str) -> Result<(), String>
 
 pub fn load_full(document_id: &str) -> Result<Option<DocumentFull>, String> {
     with_conn(|c| {
-        let mut s = c.prepare("SELECT id,name,description,source_type,source_desc,folder_id,background_texture,created_at,updated_at FROM mindmap_documents WHERE id=?1").map_err(|e| e.to_string())?;
-        let mut rows = s.query_map(rusqlite::params![document_id], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,String>(6)?,r.get::<_,String>(7)?,r.get::<_,String>(8)?))).map_err(|e| e.to_string())?;
-        if let Some(Ok((id,name,desc,st,sd,fid,bt,ca,ua))) = rows.next() {
+        let mut s = c.prepare("SELECT id,name,description,source_type,source_desc,folder_id,background_texture,layout_dir,created_at,updated_at FROM mindmap_documents WHERE id=?1").map_err(|e| e.to_string())?;
+        let mut rows = s.query_map(rusqlite::params![document_id], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,String>(6)?,r.get::<_,String>(7)?,r.get::<_,String>(8)?,r.get::<_,String>(9)?))).map_err(|e| e.to_string())?;
+        if let Some(Ok((id,name,desc,st,sd,fid,bt,ld,ca,ua))) = rows.next() {
             let n = list_nodes_inner(c, &id)?; let sc = list_stickers_inner(c, &id)?;
-            Ok(Some(DocumentFull { document: MindmapDocument { id, name, description: desc, source_type: st, source_desc: sd, folder_id: fid, background_texture: bt, node_count: n.len(), sticker_count: sc.len(), created_at: ca, updated_at: ua }, nodes: n, stickers: sc }))
+            Ok(Some(DocumentFull { document: MindmapDocument { id, name, description: desc, source_type: st, source_desc: sd, folder_id: fid, background_texture: bt, layout_dir: ld, node_count: n.len(), sticker_count: sc.len(), created_at: ca, updated_at: ua }, nodes: n, stickers: sc }))
         } else { Ok(None) }
     })
 }

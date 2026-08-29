@@ -436,8 +436,7 @@ export default function NodeManagerPanel() {
       {/* 服务管理弹窗 */}
       {manageOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm"
-          onClick={() => setManageOpen(false)}
+          className="fixed inset-0 z-50 modal-mask flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm"
         >
           <div
             className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-[#0b0f1a] overflow-hidden shadow-2xl"

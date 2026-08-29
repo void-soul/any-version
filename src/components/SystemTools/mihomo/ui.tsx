@@ -61,10 +61,7 @@ export function BusyOverlay({ show, text }: { show: boolean; text?: string }) {
 export function Modal({ title, onClose, children, footer, wide, busy, busyText }: any) {
   const locked = !!busy;
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      onClick={() => !locked && onClose?.()}
-    >
+    <div className="fixed inset-0 z-50 modal-mask flex items-center justify-center bg-black/60 p-4">
       <div
         className={`relative w-full ${wide ? "max-w-4xl" : "max-w-2xl"} max-h-[85vh] overflow-y-auto rounded-2xl border border-white/10 bg-[#11151f] shadow-2xl`}
         onClick={(e) => e.stopPropagation()}

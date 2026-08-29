@@ -405,7 +405,7 @@ function TaskDetailModal({ task, onClose, onUpdate, onInsertFile, onInsertImage,
     <div className="min-h-0 flex-1 overflow-y-auto p-4"><TaskMarkdown content={draft} onOpenFile={onOpenFile} /></div>
   );
   return createPortal(
-    <div className={`fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-[3px] ${fullscreen ? "p-0" : "p-6"}`} onClick={onClose}>
+    <div className={`fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-[3px] ${fullscreen ? "p-0" : "p-6"}`}>
       <div className={`flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl ${fullscreen ? "h-[100vh] w-[100vw] rounded-none" : "h-[82vh] w-[min(92vw,860px)]"}`} onClick={(event) => event.stopPropagation()}>
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/10 px-3" style={{ backgroundColor: hexToRgba(color, 0.12) }}>
           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 9px ${color}` }} />

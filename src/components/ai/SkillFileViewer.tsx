@@ -93,7 +93,7 @@ export default function SkillFileViewer({ skillId, onClose }: { skillId: string;
 
   if (loading) {
     return (
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 modal-mask flex items-center justify-center p-4">
         <div className="w-full max-w-3xl bg-slate-950/95 border border-white/10 rounded-2xl shadow-2xl p-8" onClick={e => e.stopPropagation()}>
           <div className="text-center text-slate-500">加载中...</div>
         </div>
@@ -103,7 +103,7 @@ export default function SkillFileViewer({ skillId, onClose }: { skillId: string;
 
   if (error) {
     return (
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 modal-mask flex items-center justify-center p-4">
         <div className="w-full max-w-3xl bg-slate-950/95 border border-white/10 rounded-2xl shadow-2xl p-8" onClick={e => e.stopPropagation()}>
           <div className="text-red-400 mb-4">加载失败: {error}</div>
           <button onClick={onClose} className="px-4 py-2 bg-white/5 rounded-lg text-white cursor-pointer">关闭</button>
@@ -115,7 +115,7 @@ export default function SkillFileViewer({ skillId, onClose }: { skillId: string;
   if (!skill) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 modal-mask flex items-center justify-center p-4">
       <div className="w-full max-w-4xl bg-slate-950/95 border border-white/10 rounded-2xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="p-4 border-b border-white/5 flex items-center justify-between">

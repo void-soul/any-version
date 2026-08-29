@@ -20,6 +20,22 @@ pub fn get_home_dir() -> PathBuf {
     }
 }
 
+/// 把 GitHub API 的 HTTP 状态翻成可操作的提示（抄自 CodexPlusPlus 3873d25）。
+///
+/// 之前一律 error_for_status() 一把带过，用户只看到「返回错误状态」——403 限流、
+/// 404 不存在、401 令牌失效处理方式完全不同，既没法自助也没法准确报障。
+pub fn github_status_hint(status: u16) -> &'static str {
+    match status {
+        401 => "：GITHUB_TOKEN / GH_TOKEN 无效或已过期",
+        // 未认证请求每小时只有 60 次，多个仓库/工具一起刷新很容易撞上限流
+        403 | 429 => {
+            "：GitHub API 限流。设置 GITHUB_TOKEN 环境变量可把配额从每小时 60 次提到 5000 次"
+        }
+        404 => "：仓库或分支不存在（私有仓库需要设置 GITHUB_TOKEN）",
+        _ => "",
+    }
+}
+
 /// 获取全局共享的 HTTP Client 单例，避免每次请求都重建连接池
 pub fn get_http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();

@@ -32,9 +32,13 @@ pub struct MindmapDocument {
     pub updated_at: String,
     #[serde(default = "default_background_texture")]
     pub background_texture: String,
+    /// 布局方向：lr=左→右（默认） rl=右→左 tb=上→下 bt=下→上
+    #[serde(default = "default_layout_dir")]
+    pub layout_dir: String,
 }
 
 fn default_background_texture() -> String { "dots".to_string() }
+fn default_layout_dir() -> String { "lr".to_string() }
 
 // ─── 节点 ───
 
@@ -60,6 +64,9 @@ pub struct MindmapNode {
     /// 进度 0-100
     #[serde(default)]
     pub progress: i32,
+    /// 计划时间（ISO 8601 字符串，可空；旧数据为 None）
+    #[serde(default)]
+    pub plan_at: Option<String>,
     #[serde(default)]
     pub position_x: f64,
     #[serde(default)]

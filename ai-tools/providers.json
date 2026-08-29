@@ -252,6 +252,24 @@
     "googleUrl": ""
   },
   {
+    "id": "opencode-zen",
+    "name": "OpenCode Zen",
+    "category": "relay",
+    "website": "https://opencode.ai/zen",
+    "openaiUrl": "https://opencode.ai/zen/v1",
+    "anthropicUrl": "https://opencode.ai/zen/v1/messages",
+    "googleUrl": ""
+  },
+  {
+    "id": "opencode-go",
+    "name": "OpenCode Go",
+    "category": "relay",
+    "website": "https://opencode.ai/go",
+    "openaiUrl": "https://opencode.ai/zen/go/v1",
+    "anthropicUrl": "https://opencode.ai/zen/go/v1/messages",
+    "googleUrl": ""
+  },
+  {
     "id": "openrouter",
     "name": "OpenRouter",
     "category": "relay",

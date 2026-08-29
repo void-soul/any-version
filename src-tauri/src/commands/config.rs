@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use serde::{Serialize, Deserialize};
 use tauri::Emitter;
-use scraper::{Html, Selector};
 
 /// 串行化 config.json 的写入，避免并发命令交错写坏文件。
 static CONFIG_SAVE_LOCK: Mutex<()> = Mutex::new(());
@@ -1067,33 +1066,18 @@ pub struct RssConfig {
     pub is_first_launch: bool,
 }
 
-/// 内置默认 RSS 源的名称映射
+/// 内置默认 RSS 源的 kind（兼容旧配置反序列化）
 fn default_rss_source_kind() -> String {
     "rss".to_string()
 }
 
+/// 内置默认 RSS 源的名称映射
 fn default_rss_source_names() -> std::collections::HashMap<String, String> {
     let mut m = std::collections::HashMap::new();
     m.insert("https://36kr.com/feed".to_string(), "36氪".to_string());
     m.insert(
         "https://www.ruanyifeng.com/blog/atom.xml".to_string(),
         "阮一峰的网络日志".to_string(),
-    );
-    m.insert(
-        "https://aifreeplan.com/zh/guides/".to_string(),
-        "AI Free Plan".to_string(),
-    );
-    m.insert(
-        "https://news.ycombinator.com/".to_string(),
-        "Hacker News".to_string(),
-    );
-    m.insert(
-        "https://github.com/trending".to_string(),
-        "GitHub 趋势".to_string(),
-    );
-    m.insert(
-        "https://www.v2ex.com/".to_string(),
-        "V2EX".to_string(),
     );
     m
 }
@@ -1106,66 +1090,11 @@ fn build_rss_sources(config: &Config) -> Vec<RssSourceDto> {
         .map(|url| RssSourceDto {
             url: url.clone(),
             name: config.rss_source_names.get(url).cloned().unwrap_or_default(),
-            kind: if is_web_source_url(url) { "web".to_string() } else { "rss".to_string() },
+            kind: "rss".to_string(),
         })
         .collect()
 }
 
-fn is_aifreeplan_guides_url(url: &str) -> bool {
-    let normalized = url.trim_end_matches('/').to_ascii_lowercase();
-    normalized == "https://aifreeplan.com/zh/guides"
-        || normalized == "https://www.aifreeplan.com/zh/guides"
-}
-
-fn normalize_web_url(url: &str) -> String {
-    url.trim().trim_end_matches('/').to_ascii_lowercase()
-}
-
-fn is_hacker_news_url(url: &str) -> bool {
-    normalize_web_url(url) == "https://news.ycombinator.com"
-}
-
-fn is_github_trending_url(url: &str) -> bool {
-    normalize_web_url(url) == "https://github.com/trending"
-}
-
-fn is_v2ex_url(url: &str) -> bool {
-    let normalized = normalize_web_url(url);
-    normalized == "https://www.v2ex.com" || normalized == "https://v2ex.com"
-}
-
-/// 是否命中任意内置网页适配器
-fn is_web_source_url(url: &str) -> bool {
-    is_aifreeplan_guides_url(url)
-        || is_hacker_news_url(url)
-        || is_github_trending_url(url)
-        || is_v2ex_url(url)
-}
-
-/// 返回命中的适配器 id，用于 fetch_web_source 分发
-fn web_adapter_for_url(url: &str) -> Option<&'static str> {
-    if is_aifreeplan_guides_url(url) {
-        Some("aifreeplan")
-    } else if is_hacker_news_url(url) {
-        Some("hackernews")
-    } else if is_github_trending_url(url) {
-        Some("github-trending")
-    } else if is_v2ex_url(url) {
-        Some("v2ex")
-    } else {
-        None
-    }
-}
-
-fn default_web_source_name(adapter: &str) -> &'static str {
-    match adapter {
-        "aifreeplan" => "AI Free Plan",
-        "hackernews" => "Hacker News",
-        "github-trending" => "GitHub 趋势",
-        "v2ex" => "V2EX",
-        _ => "网页源",
-    }
-}
 
 #[tauri::command]
 pub fn get_rss_config() -> Result<RssConfig, String> {
@@ -1177,29 +1106,10 @@ pub fn get_rss_config() -> Result<RssConfig, String> {
             config.rss_sources = vec![
                 "https://36kr.com/feed".to_string(),
                 "https://www.ruanyifeng.com/blog/atom.xml".to_string(),
-                "https://aifreeplan.com/zh/guides/".to_string(),
-                "https://news.ycombinator.com/".to_string(),
-                "https://github.com/trending".to_string(),
-                "https://www.v2ex.com/".to_string(),
             ];
         }
         if config.rss_source_names.is_empty() {
             config.rss_source_names = default_rss_source_names();
-        }
-        // 内置网页源缺失时补齐（幂等：按去掉末尾斜杠的 URL 判重）
-        for (missing_url, missing_name) in [
-            ("https://aifreeplan.com/zh/guides/", "AI Free Plan"),
-            ("https://news.ycombinator.com/", "Hacker News"),
-            ("https://github.com/trending", "GitHub 趋势"),
-            ("https://www.v2ex.com/", "V2EX"),
-        ] {
-            let trimmed = missing_url.trim_end_matches('/');
-            if !config.rss_sources.iter().any(|u| u.trim_end_matches('/') == trimmed) {
-                config.rss_sources.push(missing_url.to_string());
-                config.rss_source_names
-                    .entry(missing_url.to_string())
-                    .or_insert_with(|| missing_name.to_string());
-            }
         }
         save_config(&config)?;
     }
@@ -1222,302 +1132,6 @@ pub fn set_rss_sources(sources: Vec<RssSourceDto>) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Serialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct WebArticleDto {
-    pub title: String,
-    pub link: String,
-    pub pub_date: Option<String>,
-    pub summary: String,
-    pub source: String,
-}
-
-fn clean_scraped_text(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ").trim().to_string()
-}
-
-/// 常见导航/UI/广告类噪音标题（精确匹配整个标题，避免误杀正常标题）
-const NOISE_TITLES: &[&str] = &[
-    "首页", "登录", "注册", "更多", "广告", "推广", "赞助", "热门", "置顶推荐",
-    "加载更多", "阅读全文", "查看详情", "了解更多", "打开App", "下载App", "手机版",
-    "返回顶部", "上一页", "下一页", "关于我们", "联系我们", "网站地图", "全部",
-    "指南", "工具", "FAQ", "攻略", "AI", "免费额度攻略",
-    "home", "login", "register", "sign in", "sign up", "more",
-    "advertisement", "sponsored", "loading", "read more", "view details",
-];
-
-/// 标题相似度去重的阈值（归一化后二元组 Jaccard，0.0~1.0）
-const TITLE_DUP_THRESHOLD: f64 = 0.95;
-
-/// 标题归一化：仅保留字母数字并转小写（中文字符保留），用于相似度与噪音判断
-fn normalize_title(title: &str) -> String {
-    title
-        .chars()
-        .filter(|c| c.is_alphanumeric())
-        .flat_map(|c| c.to_lowercase())
-        .collect()
-}
-
-/// 判断标题是否为噪音（导航/广告/UI 文案、纯数字日期、过短无意义文本）
-fn is_noise_title(title: &str) -> bool {
-    let trimmed = title.trim();
-    let normalized = normalize_title(trimmed);
-    if normalized.chars().count() < 4 {
-        return true;
-    }
-    // 纯数字/日期类标题（如 "2026-08-23"、"12345"）
-    if normalized.chars().all(|c| c.is_ascii_digit()) {
-        return true;
-    }
-    let lower = trimmed.to_lowercase();
-    NOISE_TITLES.iter().any(|noise| lower == *noise)
-}
-
-/// 标题相似度：归一化后的二元组 Jaccard 相似度（0.0~1.0）
-fn title_similarity(a: &str, b: &str) -> f64 {
-    let na = normalize_title(a);
-    let nb = normalize_title(b);
-    if na == nb {
-        return 1.0;
-    }
-    let bigrams = |s: &str| -> std::collections::HashSet<String> {
-        let chars: Vec<char> = s.chars().collect();
-        if chars.len() <= 2 {
-            return chars.iter().map(|c| c.to_string()).collect();
-        }
-        chars.windows(2).map(|w| w.iter().collect::<String>()).collect()
-    };
-    let set_a = bigrams(&na);
-    let set_b = bigrams(&nb);
-    let intersection = set_a.intersection(&set_b).count();
-    let union = set_a.union(&set_b).count();
-    if union == 0 {
-        0.0
-    } else {
-        intersection as f64 / union as f64
-    }
-}
-
-/// 统一清洗网页抓取结果：过滤噪音标题 + 按标题相似度去重（保留第一条，保持抓取顺序）
-fn clean_web_articles(articles: Vec<WebArticleDto>) -> Vec<WebArticleDto> {
-    let mut kept: Vec<WebArticleDto> = Vec::new();
-    for article in articles {
-        if is_noise_title(&article.title) {
-            continue;
-        }
-        if kept
-            .iter()
-            .any(|k| title_similarity(&k.title, &article.title) >= TITLE_DUP_THRESHOLD)
-        {
-            continue;
-        }
-        kept.push(article);
-    }
-    kept
-}
-
-fn absolute_url(base: &str, href: &str) -> Option<String> {
-    if href.starts_with("https://") || href.starts_with("http://") {
-        return Some(href.to_string());
-    }
-    if href.starts_with('/') {
-        let origin = base.split("/zh/").next().unwrap_or(base).trim_end_matches('/');
-        return Some(format!("{}{}", origin, href));
-    }
-    None
-}
-
-fn scrape_aifreeplan_guides(html: &str, page_url: &str, source_name: &str) -> Vec<WebArticleDto> {
-    let document = Html::parse_document(html);
-    let link_selector = Selector::parse("a[href]").expect("valid selector");
-    let heading_selector = Selector::parse("h1, h2, h3, h4").expect("valid selector");
-    let paragraph_selector = Selector::parse("p").expect("valid selector");
-    let time_selector = Selector::parse("time").expect("valid selector");
-    let mut seen = std::collections::HashSet::new();
-    let mut articles = Vec::new();
-
-    for link in document.select(&link_selector) {
-        let Some(href) = link.value().attr("href") else { continue };
-        let Some(absolute) = absolute_url(page_url, href) else { continue };
-        let normalized = absolute.trim_end_matches('/');
-        let is_supported_host = normalized.starts_with("https://aifreeplan.com/zh/guides/")
-            || normalized.starts_with("https://www.aifreeplan.com/zh/guides/");
-        if !is_supported_host || normalized == page_url.trim_end_matches('/') {
-            continue;
-        }
-        if !seen.insert(normalized.to_string()) { continue; }
-
-        // aifreeplan 的文章卡片就是 `<a>` 本身，其内部直接包含 `<h3>`(标题)、`<p>`(摘要)、`<time>`。
-        // 若向上遍历父容器查找 article/li（该页面不存在这些标签），会把作用域提升到 <body>/<html>，
-        // 导致标题/摘要都取到页面顶部的全局标题「AI 免费额度攻略」，且所有文章内容重复。
-        // 因此直接以 `<a>` 为作用域提取标题/摘要/时间，最准确。
-        let container = link;
-
-        let title = container.select(&heading_selector).next()
-            .map(|node| clean_scraped_text(&node.text().collect::<Vec<_>>().join(" ")))
-            .filter(|value| !value.is_empty())
-            .or_else(|| {
-                // 链接内无标题标签时，用链接自身文本兜底（过滤常见导航噪音）
-                let text = clean_scraped_text(&link.text().collect::<Vec<_>>().join(" "))
-                    .replace("阅读全文", "")
-                    .replace("→", "")
-                    .replace("置顶推荐", "");
-                (!text.is_empty()).then_some(text)
-            });
-        let Some(title) = title else { continue };
-        // 过滤导航/无意义标题（长度过短或常见的 UI 文案）
-        let title_trim = title.trim();
-        if title_trim.is_empty() || title_trim.len() < 4 {
-            continue;
-        }
-        if matches!(title_trim, "指南" | "首页" | "工具" | "FAQ" | "攻略" | "AI" | "免费额度攻略") {
-            continue;
-        }
-
-        let summary = container.select(&paragraph_selector).next()
-            .map(|node| clean_scraped_text(&node.text().collect::<Vec<_>>().join(" ")))
-            .unwrap_or_default();
-        let pub_date = container.select(&time_selector).next()
-            .and_then(|node| node.value().attr("datetime").or_else(|| node.text().next()))
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string);
-
-        articles.push(WebArticleDto {
-            title,
-            link: normalized.to_string(),
-            pub_date,
-            summary,
-            source: source_name.to_string(),
-        });
-    }
-    articles
-}
-
-/// 通用：把相对 href 解析为绝对 URL（支持完整 URL、/path、以及无前导斜杠的
-/// 路径片段，如 Hacker News 的 `item?id=123`）
-fn resolve_absolute(base: &str, href: &str) -> Option<String> {
-    if href.starts_with("http://") || href.starts_with("https://") {
-        return Some(href.to_string());
-    }
-    let origin = base
-        .split('/')
-        .nth(2)
-        .map(|host| format!("https://{}", host))?;
-    if href.starts_with('/') {
-        return Some(format!("{}{}", origin, href));
-    }
-    if !href.is_empty() {
-        return Some(format!("{}/{}", origin, href));
-    }
-    None
-}
-
-/// Hacker News 首页：`.titleline > a` 为文章标题链接（结构多年稳定）
-fn scrape_hacker_news(html: &str, page_url: &str, source_name: &str) -> Vec<WebArticleDto> {
-    let document = Html::parse_document(html);
-    let titleline_selector = Selector::parse(".titleline > a").expect("valid selector");
-    let mut seen = std::collections::HashSet::new();
-    let mut articles = Vec::new();
-    for link in document.select(&titleline_selector) {
-        let Some(href) = link.value().attr("href") else { continue };
-        let Some(absolute) = resolve_absolute(page_url, href) else { continue };
-        let normalized = absolute.trim_end_matches('/').to_string();
-        if !seen.insert(normalized.clone()) {
-            continue;
-        }
-        let title = clean_scraped_text(&link.text().collect::<Vec<_>>().join(" "));
-        if title.is_empty() || title.len() < 4 {
-            continue;
-        }
-        articles.push(WebArticleDto {
-            title,
-            link: normalized,
-            pub_date: None,
-            summary: String::new(),
-            source: source_name.to_string(),
-        });
-    }
-    articles
-}
-
-/// GitHub 趋势页：`article.Box-row` 为仓库卡片，`h2 a` 为仓库名，`p` 为描述，`a[href*='/stargazers']` 为 star 数
-fn scrape_github_trending(html: &str, page_url: &str, source_name: &str) -> Vec<WebArticleDto> {
-    let document = Html::parse_document(html);
-    let row_selector = Selector::parse("article.Box-row").expect("valid selector");
-    let heading_selector = Selector::parse("h2 a").expect("valid selector");
-    let description_selector = Selector::parse("p").expect("valid selector");
-    let stars_selector = Selector::parse("a[href*='/stargazers']").expect("valid selector");
-    let mut seen = std::collections::HashSet::new();
-    let mut articles = Vec::new();
-    for row in document.select(&row_selector) {
-        let Some(link) = row.select(&heading_selector).next() else { continue };
-        let Some(href) = link.value().attr("href") else { continue };
-        let Some(absolute) = resolve_absolute(page_url, href) else { continue };
-        if !seen.insert(absolute.clone()) {
-            continue;
-        }
-        let title = clean_scraped_text(&link.text().collect::<Vec<_>>().join(" "));
-        if title.is_empty() || title.len() < 4 {
-            continue;
-        }
-        let description = row
-            .select(&description_selector)
-            .next()
-            .map(|node| clean_scraped_text(&node.text().collect::<Vec<_>>().join(" ")))
-            .unwrap_or_default();
-        let stars = row
-            .select(&stars_selector)
-            .next()
-            .map(|node| clean_scraped_text(&node.text().collect::<Vec<_>>().join(" ")))
-            .unwrap_or_default();
-        let summary = if stars.is_empty() {
-            description
-        } else if description.is_empty() {
-            format!("★ {}", stars)
-        } else {
-            format!("{}　★ {}", description, stars)
-        };
-        articles.push(WebArticleDto {
-            title,
-            link: absolute,
-            pub_date: None,
-            summary,
-            source: source_name.to_string(),
-        });
-    }
-    articles
-}
-
-/// V2EX 首页：`span.item_title > a` 为主题标题链接（结构多年稳定）
-fn scrape_v2ex(html: &str, page_url: &str, source_name: &str) -> Vec<WebArticleDto> {
-    let document = Html::parse_document(html);
-    let item_selector = Selector::parse("span.item_title > a").expect("valid selector");
-    let mut seen = std::collections::HashSet::new();
-    let mut articles = Vec::new();
-    for link in document.select(&item_selector) {
-        let Some(href) = link.value().attr("href") else { continue };
-        let Some(absolute) = resolve_absolute(page_url, href) else { continue };
-        let normalized = absolute.trim_end_matches('/').to_string();
-        if !seen.insert(normalized.clone()) {
-            continue;
-        }
-        let title = clean_scraped_text(&link.text().collect::<Vec<_>>().join(" "));
-        if title.is_empty() || title.len() < 4 {
-            continue;
-        }
-        articles.push(WebArticleDto {
-            title,
-            link: normalized,
-            pub_date: None,
-            summary: String::new(),
-            source: source_name.to_string(),
-        });
-    }
-    articles
-}
-
-/// 复用的 HTTP 客户端：连接池跨请求复用，避免每次抓取重复建连。
 fn http_client() -> reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT
@@ -1540,43 +1154,6 @@ fn validate_http_url(url: &str) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
-pub async fn fetch_web_source(url: String, kind: String, name: String) -> Result<Vec<WebArticleDto>, String> {
-    if kind != "web" {
-        return Err("该来源不是网页适配器".to_string());
-    }
-    validate_http_url(&url)?;
-    let Some(adapter) = web_adapter_for_url(&url) else {
-        return Err("暂不支持该网页来源，请先实现对应的站点适配器".to_string());
-    };
-    let client = http_client();
-    let response = client.get(&url)
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36")
-        .header("Accept", "text/html,application/xhtml+xml")
-        .send().await.map_err(|e| format!("请求失败: {}", e))?;
-    if !response.status().is_success() {
-        return Err(format!("HTTP 请求失败: 状态码 {}", response.status()));
-    }
-    let html = response.text().await.map_err(|e| format!("读取网页失败: {}", e))?;
-    let source_name = if name.trim().is_empty() {
-        default_web_source_name(adapter).to_string()
-    } else {
-        name.trim().to_string()
-    };
-    let articles = match adapter {
-        "aifreeplan" => scrape_aifreeplan_guides(&html, &url, &source_name),
-        "hackernews" => scrape_hacker_news(&html, &url, &source_name),
-        "github-trending" => scrape_github_trending(&html, &url, &source_name),
-        "v2ex" => scrape_v2ex(&html, &url, &source_name),
-        _ => Vec::new(),
-    };
-    // 统一清洗：过滤广告/导航噪音标题，并按标题相似度去重
-    let articles = clean_web_articles(articles);
-    if articles.is_empty() {
-        return Err("网页适配器未找到文章，请检查页面结构是否已变化".to_string());
-    }
-    Ok(articles)
-}
 
 #[tauri::command]
 pub async fn fetch_rss_feed(url: String) -> Result<String, String> {
@@ -1600,192 +1177,6 @@ pub async fn fetch_rss_feed(url: String) -> Result<String, String> {
         .map_err(|e| format!("读取内容失败: {}", e))?;
 
     Ok(text)
-}
-
-#[cfg(test)]
-mod aifreeplan_tests {
-    use super::*;
-
-    // 用真实页面结构片段作为测试夹具（aifreeplan.com/zh/guides 的文章卡片结构）：
-    // 每个 <a> 卡片内部直接包含 <h3>(标题)、<p>(摘要)，没有 article/li 容器，
-    // 也没有 <time> 标签。用来验证抓取逻辑以 <a> 为作用域正确提取。
-    const SAMPLE_HTML: &str = r#"<!DOCTYPE html><html lang="zh"><head><title>AI Free Plan</title></head>
-<body>
-<h1>AI 免费额度攻略</h1>
-<p>最新 AI 工具免费额度攻略，持续更新中</p>
-<div class="grid">
-  <a href="/zh/guides/gemini-code-assist-free-guide-2026" class="card">
-    <div><span>置顶推荐</span></div>
-    <h3>Gemini Code Assist 完全免费：Google AI 编程助手</h3>
-    <p>Google 推出免费版的 Gemini Code Assist，支持 VS Code 等编辑器</p>
-  </a>
-  <a href="/zh/guides/amazon-q-developer-free-tier-2026" class="card">
-    <h3>Amazon Q Developer 完全免费攻略</h3>
-    <p>Amazon Q Developer 是 AWS 官方 AI 编程助手</p>
-  </a>
-  <a href="/zh/guides/ollama-free-cloud-guide-2026" class="card">
-    <h3>Ollama 免费云端 AI 模型完全攻略</h3>
-    <p>Ollama 是开源 AI 模型运行平台</p>
-  </a>
-</div>
-</body></html>"#;
-
-    #[test]
-    fn test_scrape_aifreeplan_guides() {
-        let articles = scrape_aifreeplan_guides(SAMPLE_HTML, "https://aifreeplan.com/zh/guides/", "AI Free Plan");
-        assert_eq!(articles.len(), 3, "应抓取到 3 篇文章");
-        // 标题应与各卡片 <h3> 匹配，而非页面顶部全局标题
-        assert_eq!(articles[0].title, "Gemini Code Assist 完全免费：Google AI 编程助手");
-        assert_eq!(articles[1].title, "Amazon Q Developer 完全免费攻略");
-        assert_eq!(articles[2].title, "Ollama 免费云端 AI 模型完全攻略");
-        // 摘要正确
-        assert!(articles[0].summary.contains("Gemini Code Assist"));
-        // 链接被拼成绝对 URL
-        assert_eq!(articles[0].link, "https://aifreeplan.com/zh/guides/gemini-code-assist-free-guide-2026");
-        // 页面无 <time> 标签 → pub_date 为 None
-        assert!(articles.iter().all(|a| a.pub_date.is_none()));
-    }
-
-    #[test]
-    fn test_scrape_hacker_news() {
-        let html = r#"<!DOCTYPE html><html><head><title>Hacker News</title></head><body>
-<table class="itemlist">
-  <tr class="athing" id="42907000">
-    <td class="title"><span class="titleline"><a href="https://example.com/rust-2026">Rust 2026: A Year in Review</a></span></td>
-  </tr>
-  <tr><td colspan="2"></td><td class="subtext"><span class="subline"><a href="item?id=42907000">123 points</a></span></td></tr>
-  <tr class="athing" id="42907001">
-    <td class="title"><span class="titleline"><a href="item?id=42907001">Ask HN: Best CLI tools in 2026?</a></span></td>
-  </tr>
-  <tr><td colspan="2"></td><td class="subtext"><span class="subline"><a href="item?id=42907001">45 comments</a></span></td></tr>
-</table>
-</body></html>"#;
-        let articles = scrape_hacker_news(html, "https://news.ycombinator.com/", "Hacker News");
-        assert_eq!(articles.len(), 2, "应抓取到 2 条");
-        assert_eq!(articles[0].title, "Rust 2026: A Year in Review");
-        // 站外链接保持原样
-        assert_eq!(articles[0].link, "https://example.com/rust-2026");
-        // 站内相对链接（Ask HN 等）拼成绝对 URL
-        assert_eq!(articles[1].link, "https://news.ycombinator.com/item?id=42907001");
-    }
-
-    #[test]
-    fn test_scrape_github_trending() {
-        let html = r#"<!DOCTYPE html><html><head><title>Trending</title></head><body>
-<article class="Box-row">
-  <h2 class="h3 lh-condensed"><a href="/torvalds/linux"><span>torvalds</span> <span>/</span> <span>linux</span></a></h2>
-  <p class="col-9 color-fg-muted my-1 pr-4">Linux kernel source tree</p>
-  <div class="f6 color-fg-muted mt-2">
-    <a class="Link--muted d-inline-block mr-3" href="/torvalds/linux/stargazers">12,345 stars</a>
-  </div>
-</article>
-<article class="Box-row">
-  <h2 class="h3 lh-condensed"><a href="/microsoft/typescript"><span>microsoft</span> <span>/</span> <span>typescript</span></a></h2>
-  <p class="col-9 color-fg-muted my-1 pr-4">TypeScript is a superset of JavaScript</p>
-</article>
-</body></html>"#;
-        let articles = scrape_github_trending(html, "https://github.com/trending", "GitHub 趋势");
-        assert_eq!(articles.len(), 2, "应抓取到 2 个仓库");
-        assert_eq!(articles[0].title, "torvalds / linux");
-        assert_eq!(articles[0].link, "https://github.com/torvalds/linux");
-        // 描述 + star 数合并进摘要
-        assert!(articles[0].summary.contains("Linux kernel"));
-        assert!(articles[0].summary.contains("12,345 stars"));
-        // 无 star 的仓库摘要仅含描述
-        assert_eq!(articles[1].summary, "TypeScript is a superset of JavaScript");
-    }
-
-    #[test]
-    fn test_scrape_v2ex() {
-        let html = r#"<!DOCTYPE html><html><head><title>V2EX</title></head><body>
-<div class="item">
-  <span class="item_title"><a href="/t/1122334">分享一个我用 Rust 写的桌面小工具</a></span>
-  <span class="topic_info">2 小时前</span>
-</div>
-<div class="item">
-  <span class="item_title"><a href="/t/1122335">Node.js 22 性能优化实践</a></span>
-</div>
-</body></html>"#;
-        let articles = scrape_v2ex(html, "https://www.v2ex.com/", "V2EX");
-        assert_eq!(articles.len(), 2, "应抓取到 2 个主题");
-        assert_eq!(articles[0].title, "分享一个我用 Rust 写的桌面小工具");
-        assert_eq!(articles[0].link, "https://www.v2ex.com/t/1122334");
-        assert_eq!(articles[1].link, "https://www.v2ex.com/t/1122335");
-    }
-
-    #[test]
-    fn test_web_adapter_url_recognition() {
-        assert_eq!(web_adapter_for_url("https://news.ycombinator.com/"), Some("hackernews"));
-        assert_eq!(web_adapter_for_url("https://news.ycombinator.com"), Some("hackernews"));
-        assert_eq!(web_adapter_for_url("https://github.com/trending"), Some("github-trending"));
-        assert_eq!(web_adapter_for_url("https://www.v2ex.com/"), Some("v2ex"));
-        assert_eq!(web_adapter_for_url("https://v2ex.com"), Some("v2ex"));
-        assert_eq!(web_adapter_for_url("https://aifreeplan.com/zh/guides/"), Some("aifreeplan"));
-        assert_eq!(web_adapter_for_url("https://36kr.com/feed"), None);
-    }
-
-    fn mk_article(title: &str, link: &str) -> WebArticleDto {
-        WebArticleDto {
-            title: title.to_string(),
-            link: link.to_string(),
-            pub_date: None,
-            summary: String::new(),
-            source: "Test".to_string(),
-        }
-    }
-
-    #[test]
-    fn test_clean_web_articles_noise_and_dedup() {
-        let articles = vec![
-            mk_article("Rust 2026: A Year in Review", "https://a.com/1"),
-            // 标点/大小写差异的近重复 → 应被去重
-            mk_article("Rust 2026 a year in review", "https://a.com/2"),
-            // 噪音标题
-            mk_article("广告", "https://a.com/ad"),
-            mk_article("首页", "https://a.com/home"),
-            mk_article("2026-08-23", "https://a.com/date"),
-            mk_article("置顶推荐", "https://a.com/pin"),
-            // 正常文章保留
-            mk_article("Node.js 22 性能优化实践", "https://a.com/3"),
-            // 与上一条仅一字之差（实践/实战）→ 相似度低于阈值，不应误删
-            mk_article("Node.js 22 性能优化实战", "https://a.com/4"),
-        ];
-        let cleaned = clean_web_articles(articles);
-        assert_eq!(cleaned.len(), 3, "应保留 2 篇正常文章 + 1 条近重复（共 3 条），噪音全部剔除");
-        assert_eq!(cleaned[0].link, "https://a.com/1", "保留第一条出现的版本");
-        assert!(cleaned.iter().any(|a| a.title.contains("实践")));
-        assert!(cleaned.iter().any(|a| a.title.contains("实战")), "一字之差不构成重复，不应误删");
-    }
-
-    #[test]
-    fn test_title_similarity() {
-        // 仅大小写差异 → 归一化后完全一致
-        assert_eq!(title_similarity("Rust 2026: A Year in Review", "Rust 2026 a year in review"), 1.0);
-        // 标点/表情/多余符号差异（同一条目被重复抓取的典型形态）→ 完全一致
-        assert_eq!(
-            title_similarity("Rust 2026: A Year in Review", "Rust 2026 — A Year in Review！"),
-            1.0
-        );
-        // 一字之差（实践/实战）→ 低于阈值，不应误判为重复
-        assert!(title_similarity("Node.js 22 性能优化实践", "Node.js 22 性能优化实战") < TITLE_DUP_THRESHOLD);
-        // 换序变体 → 二元组高度重合但低于阈值，保守保留
-        assert!(title_similarity("A Year in Review: Rust 2026", "Rust 2026: A Year in Review") < TITLE_DUP_THRESHOLD);
-        // 完全不同 → 远低于阈值
-        assert!(title_similarity("Rust 2026: A Year in Review", "Node.js 22 性能优化实践") < 0.5);
-    }
-
-    #[test]
-    fn test_is_noise_title() {
-        assert!(is_noise_title("广告"));
-        assert!(is_noise_title("首页"));
-        assert!(is_noise_title("2026-08-23"));
-        assert!(is_noise_title("置顶推荐"));
-        assert!(is_noise_title("12345"));
-        assert!(is_noise_title("abc"));
-        assert!(!is_noise_title("Rust 2026: A Year in Review"));
-        assert!(!is_noise_title("Node.js 22 性能优化实践"));
-        assert!(!is_noise_title("广告行业年度报告 2026"), "含广告二字的正常标题不应被误杀");
-    }
 }
 
 #[tauri::command]

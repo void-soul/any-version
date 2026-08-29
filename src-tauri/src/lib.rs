@@ -384,6 +384,12 @@ pub fn run() {
                         setting.selection_translate_hotkey.clone(),
                     );
                 }
+                if !setting.mindmap_quick_hotkey.trim().is_empty() {
+                    hotkeys.insert(
+                        "mindmap-quick".to_string(),
+                        setting.mindmap_quick_hotkey.clone(),
+                    );
+                }
                 let _ = commands::launcher::windows::register_global_hotkeys(
                     app.handle().clone(),
                     &hotkeys,
@@ -468,7 +474,6 @@ pub fn run() {
             commands::config::get_rss_config,
             commands::config::set_rss_sources,
             commands::config::fetch_rss_feed,
-            commands::config::fetch_web_source,
             commands::env::toggle_item_management,
             commands::env::get_user_configurable_vars,
             commands::env::set_user_configurable_var,
@@ -490,6 +495,10 @@ pub fn run() {
             commands::port::check_port_status,
             commands::port::kill_port_owner,
             commands::port::get_reserved_ports,
+            commands::network::net_connections,
+            commands::network::net_iface_traffic,
+            commands::network::ip_lookup,
+            commands::network::ping_host,
             commands::pkg::get_global_packages,
             commands::pkg::upgrade_global_package,
             commands::pkg::upgrade_all_global_packages,
@@ -645,6 +654,8 @@ pub fn run() {
             commands::file_io::write_text_file,
             commands::file_io::list_sibling_markdown,
             commands::file_io::resolve_markdown_link,
+            commands::file_io::markdown_assoc_status,
+            commands::file_io::set_markdown_assoc,
             commands::utils::check_bin_assets,
             commands::utils::download_bin_assets,
 
@@ -844,10 +855,13 @@ pub fn run() {
                 commands::mindmap::mm_move_folder,
                 commands::mindmap::mm_move_document,
                 commands::mindmap::mm_update_background_texture,
+                commands::mindmap::mm_update_layout_dir,
                 commands::mindmap::mm_upsert_node,
                 commands::mindmap::mm_delete_node,
                 commands::mindmap::mm_update_positions,
                 commands::mindmap::mm_upsert_sticker,
+                commands::mindmap::quick_popup::open_mindmap_quick_popup,
+                commands::mindmap::quick_popup::hide_mindmap_quick_popup,
                 commands::mindmap::mm_delete_sticker,
                 commands::mindmap::mm_export_markdown,
                 commands::mindmap::mm_ai_from_project,

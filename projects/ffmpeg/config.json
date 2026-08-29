@@ -1,0 +1,46 @@
+{
+  "id": "ffmpeg",
+  "display_name": "FFmpeg",
+  "category": "tool",
+  "official_website": "https://ffmpeg.org",
+  "bin_dirs": [
+    "bin"
+  ],
+  "has_cache": false,
+  "cache_detect_cmd": null,
+  "cache_default_path": null,
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": false,
+  "simple_mode": false,
+  "default_port": null,
+  "data_dir": null,
+  "log_dir": null,
+  "config_file": null,
+  "start_cmd": null,
+  "stop_cmd": null,
+  "service_process_exes": [
+    "ffmpeg"
+  ],
+  "service_names": [],
+  "service_start_mode": "detached",
+  "service_allow_force_kill": true,
+  "service_auto_create_dirs": false,
+  "version_cmd": "ffmpeg -version",
+  "version_exe": "ffmpeg",
+  "version_parse_regex": "ffmpeg version (\\S+)",
+  "download_url_template": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-{version}/ffmpeg-master-latest-win64-gpl.zip",
+  "download_file_ext": "zip",
+  "extract_subdir": "ffmpeg-master-latest-win64-gpl",
+  "remote_versions_url": "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases",
+  "remote_versions_config": {
+    "type": "json_api",
+    "response_type": "array",
+    "version_field": "tag_name",
+    "version_transform": "trim_prefix:autobuild-",
+    "filter_contains_not": "rc"
+  }
+}

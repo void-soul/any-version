@@ -36,7 +36,7 @@ function ConfirmDialog({ title, message, danger, confirmText, onConfirm, onCance
   onCancel: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onCancel}>
+    <div className="fixed inset-0 z-[60] modal-mask flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div
         className="w-[380px] overflow-hidden rounded-2xl border border-white/10 shadow-2xl"
         style={{ background: "linear-gradient(160deg, rgba(13,21,36,0.98), rgba(13,21,36,0.92))" }}
@@ -84,7 +84,7 @@ function MoveModuleModal({ module, modules, onClose, onMoved }: {
   const [targetId, setTargetId] = useState("");
   const targets = modules.filter((m) => m.id !== module.id);
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] modal-mask flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div
         className="w-[420px] overflow-hidden rounded-2xl border border-white/10 shadow-2xl"
         style={{ background: "linear-gradient(160deg, rgba(13,21,36,0.98), rgba(13,21,36,0.92))" }}
@@ -993,20 +993,22 @@ export default function ApiPanel() {
                 )}
               </div>
 
-              {/* 底部工具栏 */}
-              <div className="p-2 border-t border-white/10 space-y-1">
-                <button onClick={openCreateModule} className="flex w-full items-center gap-1.5 px-2 py-1 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 rounded-md cursor-pointer">
-                  <FolderPlus className="w-3.5 h-3.5" /> 新建模块
-                </button>
-                <button onClick={() => createEndpoint(null)} className="flex w-full items-center gap-1.5 px-2 py-1 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 rounded-md cursor-pointer">
-                  <FilePlus2 className="w-3.5 h-3.5" /> 新建接口
-                </button>
-                <div className="flex gap-1 pt-1">
-                  <button onClick={() => setImportModal(true)} className="flex flex-1 items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
-                    <Upload className="w-3 h-3" /> 导入
+              {/* 底部工具栏（布局对齐思维导图：2×2 网格） */}
+              <div className="p-2 border-t border-white/10 space-y-1.5">
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button onClick={openCreateModule} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title="新建模块">
+                    <FolderPlus className="w-3.5 h-3.5" /> 模块
                   </button>
-                  <button onClick={exportPostman} className="flex flex-1 items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
-                    <Download className="w-3 h-3" /> 导出
+                  <button onClick={() => createEndpoint(null)} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title="新建接口">
+                    <FilePlus2 className="w-3.5 h-3.5" /> 接口
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button onClick={() => setImportModal(true)} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title="导入 (Postman/cURL)">
+                    <Upload className="w-3.5 h-3.5" /> 导入
+                  </button>
+                  <button onClick={exportPostman} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title="导出 Postman 集合">
+                    <Download className="w-3.5 h-3.5" /> 导出
                   </button>
                 </div>
               </div>

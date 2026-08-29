@@ -1,0 +1,25 @@
+{
+  "name": "Reasonix",
+  "category": "CLI Code",
+  "apiProtocol": ["openai"],
+  "command": "reasonix",
+  "startCommand": "reasonix",
+  "detectCmd": "reasonix --version",
+  "installCmd": "npm install -g reasonix",
+  "paths": {
+    "win32": [
+      "%APPDATA%/npm/reasonix.cmd",
+      "%USERPROFILE%/scoop/shims/reasonix.exe",
+      "%USERPROFILE%/.bun/bin/reasonix.exe",
+      "%LOCALAPPDATA%/pnpm/reasonix.exe"
+    ],
+    "darwin": [
+      "/usr/local/bin/reasonix",
+      "~/.bun/bin/reasonix"
+    ],
+    "linux": [
+      "/usr/local/bin/reasonix",
+      "~/.bun/bin/reasonix"
+    ]
+  }
+}

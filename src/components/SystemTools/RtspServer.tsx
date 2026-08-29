@@ -345,6 +345,27 @@ export default function RtspServer() {
     );
   };
 
+  // 将一个实例的配置复制到所有其他实例（保留各实例的端口/路径，避免冲突）
+  const handleCopyConfigToAll = (source: RtspInstanceItem) => {
+    const others = instances.filter((i) => i.id !== source.id);
+    if (others.length === 0) return;
+    if (!confirm(`确定将「${source.title}」的配置复制到其他 ${others.length} 个实例吗？\n各实例的端口与流路径保持不变，避免地址冲突。`)) return;
+    setInstances((prev) =>
+      prev.map((inst) => {
+        if (inst.id === source.id) return inst;
+        return {
+          ...inst,
+          config: {
+            ...source.config,
+            id: inst.id,
+            port: inst.config.port,
+            pathName: inst.config.pathName,
+          },
+        };
+      })
+    );
+  };
+
   // 启动单个实例
   const handleStartInstance = async (inst: RtspInstanceItem, e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -633,6 +654,15 @@ export default function RtspServer() {
                       placeholder="自定义实例别名..."
                       className="text-xs font-bold text-white bg-white/5 border border-white/10 rounded-lg px-2.5 py-1 focus:border-[var(--module-accent)] focus:outline-none transition-all flex-1"
                     />
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleCopyConfigToAll(inst); }}
+                      disabled={instances.length < 2}
+                      title={instances.length < 2 ? "仅一个实例，无需复制" : `将此实例配置复制到其他 ${instances.length - 1} 个实例（不影响端口/路径，避免冲突）`}
+                      className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      复制配置到全部 ({instances.length - 1})
+                    </button>
                   </div>
 
                   {/* 运行中推流状态与 RTSP 链接复制区 */}

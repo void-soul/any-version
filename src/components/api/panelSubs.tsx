@@ -307,7 +307,7 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+    <div className="fixed inset-0 z-50 modal-mask flex items-center justify-center bg-black/60">
       <div className="w-[560px] glass-panel rounded-2xl border border-white/10 shadow-2xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-sm font-semibold text-white">

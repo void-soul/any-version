@@ -4,15 +4,10 @@ import { open } from "@tauri-apps/plugin-dialog";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  FolderOpen,
-  X,
-  FileText,
-  Search,
-  PanelLeftClose,
-  PanelLeftOpen,
-  RefreshCw,
-  ListTree,
-  AlertCircle,
+  FolderOpen, X, FileText, Search, PanelLeftClose, PanelLeftOpen, RefreshCw,
+  ListTree, AlertCircle, Pencil, Eye, Save, Check, Columns, Link, List,
+  ListOrdered, Quote, Code, Minus, Heading1, Heading2, Heading3, Bold, Italic,
+  Strikethrough, Table, Square, Undo2, Redo2, ListChecks,
 } from "lucide-react";
 
 /** 后端 list_sibling_markdown 返回的条目 */
@@ -30,6 +25,10 @@ interface Tab {
   content: string;
   error: string | null;
   loading: boolean;
+  dirty: boolean;        // 有未保存修改
+  savedContent: string;  // 磁盘上的内容
+  undo: string[];        // 编辑历史（撤销栈）
+  redo: string[];        // 重做栈
 }
 
 /** 文档内提取出的标题，用于右侧大纲 */
@@ -37,6 +36,13 @@ interface Heading {
   id: string;
   text: string;
   level: number;
+}
+
+/** 文件关联状态（后端 markdown_assoc_status） */
+interface AssocStatus {
+  md: boolean;
+  markdown: boolean;
+  exePath: string;
 }
 
 const formatSize = (n: number): string => {
@@ -57,6 +63,41 @@ const slugify = (text: string): string =>
 const isExternal = (href: string): boolean =>
   /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//");
 
+/** 在光标选区前后包裹 prefix/suffix；无选区时插入占位符并选中它 */
+function wrapSelection(ta: HTMLTextAreaElement, prefix: string, suffix: string, placeholder = ""): { text: string; selStart: number; selEnd: number } {
+  const { selectionStart: s, selectionEnd: e, value } = ta;
+  const sel = value.slice(s, e);
+  const inner = sel || placeholder;
+  const next = value.slice(0, s) + prefix + inner + suffix + value.slice(e);
+  return {
+    text: next,
+    selStart: s + prefix.length,
+    selEnd: s + prefix.length + inner.length,
+  };
+}
+
+/** 行首前缀切换（标题/引用/列表） */
+function toggleLinePrefix(ta: HTMLTextAreaElement, prefix: string, ordered = false): { text: string; selStart: number; selEnd: number } {
+  const { value } = ta;
+  let s = ta.selectionStart;
+  let e = ta.selectionEnd;
+  // 扩展到整行（多行支持）
+  while (s > 0 && value[s - 1] !== "\n") s--;
+  while (e < value.length && value[e] !== "\n") e++;
+  const block = value.slice(s, e);
+  const lines = block.split("\n");
+  const allHave = lines.every((l) => l.trimStart().startsWith(prefix));
+  const next = lines
+    .map((l, i) => {
+      if (allHave) return l.replace(new RegExp(`^(\\s*)${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s?`), "$1");
+      if (ordered) return `${i + 1}. ${l.replace(/^\s*(#{1,6}\s|>\s|[-*+]\s|\d+\.\s)/, "")}`;
+      return `${prefix} ${l.replace(/^\s*(#{1,6}\s|>\s|[-*+]\s|\d+\.\s)/, "")}`;
+    })
+    .join("\n");
+  const out = value.slice(0, s) + next + value.slice(e);
+  return { text: out, selStart: s, selEnd: s + next.length };
+}
+
 export default function MarkdownReader() {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -66,7 +107,14 @@ export default function MarkdownReader() {
   const [filter, setFilter] = useState("");
   const [showSidebar, setShowSidebar] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
+  const [mode, setMode] = useState<"view" | "edit">("view"); // 默认预览
+  const [split, setSplit] = useState(false);                 // 编辑+预览分栏
+  const [saving, setSaving] = useState(false);
+  const [assoc, setAssoc] = useState<AssocStatus | null>(null);
+  const [showAssoc, setShowAssoc] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const saveTimer = useRef<number | null>(null);
 
   const active = useMemo(
     () => tabs.find((t) => t.path === activePath) || null,
@@ -77,6 +125,22 @@ export default function MarkdownReader() {
     setNotice(msg);
     window.setTimeout(() => setNotice((n) => (n === msg ? null : n)), 2600);
   }, []);
+
+  const loadAssoc = useCallback(async () => {
+    try { setAssoc(await invoke<AssocStatus>("markdown_assoc_status")); } catch { setAssoc(null); }
+  }, []);
+
+  useEffect(() => { void loadAssoc(); }, [loadAssoc]);
+
+  const toggleAssoc = useCallback(async (register: boolean) => {
+    try {
+      const msg = await invoke<string>("set_markdown_assoc", { register });
+      flashNotice(msg);
+      await loadAssoc();
+    } catch (e) {
+      flashNotice(String(e));
+    }
+  }, [flashNotice, loadAssoc]);
 
   /** 扫描某个文件所在目录的全部 markdown */
   const scanSiblings = useCallback(async (fromPath: string) => {
@@ -99,11 +163,11 @@ export default function MarkdownReader() {
 
   /**
    * 打开一个文件为选项卡。已打开则直接激活，避免重复标签。
-   * rescan 为 true 时同时刷新左侧同目录列表。
    */
   const openPath = useCallback(
     async (path: string, _rescan = false) => {
       setActivePath(path);
+      setMode("view");
       let existed = false;
       setTabs((prev) => {
         if (prev.some((t) => t.path === path)) {
@@ -112,18 +176,17 @@ export default function MarkdownReader() {
         }
         const sep = path.includes("\\") ? "\\" : "/";
         const name = path.slice(path.lastIndexOf(sep) + 1);
-        return [...prev, { path, name, content: "", error: null, loading: true }];
+        return [...prev, { path, name, content: "", error: null, loading: true, dirty: false, savedContent: "", undo: [], redo: [] }];
       });
 
-      // 打开文件即刷新左侧同目录列表，保证「文件导航」始终可用
-      // （之前仅 rescan 才扫描，其他打开入口会导致列表为空）。
+      // 打开文件即刷新左侧同目录列表，保证「文件导航」始终可用。
       void scanSiblings(path);
       if (existed) return;
 
       try {
         const content = await invoke<string>("read_text_file", { path });
         setTabs((prev) =>
-          prev.map((t) => (t.path === path ? { ...t, content, loading: false } : t))
+          prev.map((t) => (t.path === path ? { ...t, content, savedContent: content, loading: false } : t))
         );
       } catch (e) {
         setTabs((prev) =>
@@ -158,8 +221,10 @@ export default function MarkdownReader() {
     (path: string, e?: React.MouseEvent) => {
       e?.stopPropagation();
       setTabs((prev) => {
-        const idx = prev.findIndex((t) => t.path === path);
-        const next = prev.filter((t) => t.path !== path);
+        const t = prev.find((x) => x.path === path);
+        if (t?.dirty && !window.confirm(`「${t.name}」有未保存修改，确定关闭并丢弃？`)) return prev;
+        const idx = prev.findIndex((x) => x.path === path);
+        const next = prev.filter((x) => x.path !== path);
         // 关掉的是当前标签时，激活右邻居，没有则激活左邻居
         if (path === activePath) {
           const fallback = next[idx] || next[idx - 1] || null;
@@ -171,8 +236,78 @@ export default function MarkdownReader() {
     [activePath]
   );
 
+  /** 编辑器内容变更（带撤销栈） */
+  const setContent = useCallback((path: string, next: string, pushUndo = true) => {
+    setTabs((prev) =>
+      prev.map((t) => {
+        if (t.path !== path) return t;
+        const undo = pushUndo ? [...t.undo.slice(-200), t.content] : t.undo;
+        return { ...t, content: next, undo, redo: [], dirty: next !== t.savedContent };
+      })
+    );
+  }, []);
+
+  /** 撤销/重做 */
+  const undo = useCallback(() => {
+    setTabs((prev) =>
+      prev.map((t) => {
+        if (t.path !== activePath || t.undo.length === 0) return t;
+        const prevContent = t.undo[t.undo.length - 1];
+        return {
+          ...t,
+          content: prevContent,
+          undo: t.undo.slice(0, -1),
+          redo: [...t.redo, t.content],
+          dirty: prevContent !== t.savedContent,
+        };
+      })
+    );
+  }, [activePath]);
+
+  const redo = useCallback(() => {
+    setTabs((prev) =>
+      prev.map((t) => {
+        if (t.path !== activePath || t.redo.length === 0) return t;
+        const nextContent = t.redo[t.redo.length - 1];
+        return {
+          ...t,
+          content: nextContent,
+          undo: [...t.undo, t.content],
+          redo: t.redo.slice(0, -1),
+          dirty: nextContent !== t.savedContent,
+        };
+      })
+    );
+  }, [activePath]);
+
+  /** 保存到磁盘 */
+  const saveActive = useCallback(async () => {
+    if (!active || !active.dirty || saving) return;
+    setSaving(true);
+    try {
+      await invoke("write_text_file", { path: active.path, content: active.content });
+      setTabs((prev) =>
+        prev.map((t) => (t.path === active.path ? { ...t, savedContent: t.content, dirty: false } : t))
+      );
+      flashNotice("已保存");
+    } catch (e) {
+      flashNotice(`保存失败: ${e}`);
+    } finally {
+      setSaving(false);
+    }
+  }, [active, saving, flashNotice]);
+
+  // 自动保存（2s 防抖）
+  useEffect(() => {
+    if (!active?.dirty) return;
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => { void saveActive(); }, 2000);
+    return () => { if (saveTimer.current) window.clearTimeout(saveTimer.current); };
+  }, [active?.content, active?.dirty, saveActive, active]);
+
   const reloadActive = useCallback(async () => {
     if (!active) return;
+    if (active.dirty && !window.confirm("有未保存修改，重新加载将丢弃。继续？")) return;
     const path = active.path;
     setTabs((prev) =>
       prev.map((t) => (t.path === path ? { ...t, loading: true, error: null } : t))
@@ -180,7 +315,7 @@ export default function MarkdownReader() {
     try {
       const content = await invoke<string>("read_text_file", { path });
       setTabs((prev) =>
-        prev.map((t) => (t.path === path ? { ...t, content, loading: false } : t))
+        prev.map((t) => (t.path === path ? { ...t, content, savedContent: content, loading: false, dirty: false, undo: [], redo: [] } : t))
       );
     } catch (e) {
       setTabs((prev) =>
@@ -250,20 +385,45 @@ export default function MarkdownReader() {
     );
   }, [siblings, filter]);
 
-  // Ctrl+W 关闭当前标签
+  // 快捷键：Ctrl+S 保存 / Ctrl+W 关闭标签 / Ctrl+Z、Ctrl+Y（编辑态）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key.toLowerCase() === "s" && active?.dirty) {
+        e.preventDefault();
+        void saveActive();
+        return;
+      }
       if (e.ctrlKey && e.key.toLowerCase() === "w" && activePath) {
         e.preventDefault();
         closeTab(activePath);
+        return;
+      }
+      if (mode === "edit" && taRef.current === document.activeElement) {
+        if (e.ctrlKey && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); }
+        if (e.ctrlKey && (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))) { e.preventDefault(); redo(); }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activePath, closeTab]);
+  }, [activePath, closeTab, active, saveActive, mode, undo, redo]);
+
+  /** 工具栏动作：对 textarea 应用变换 */
+  const applyTransform = useCallback((fn: (ta: HTMLTextAreaElement) => { text: string; selStart: number; selEnd: number }) => {
+    const ta = taRef.current;
+    if (!ta || !activePath) return;
+    const { text, selStart, selEnd } = fn(ta);
+    setContent(activePath, text);
+    requestAnimationFrame(() => {
+      ta.focus();
+      ta.setSelectionRange(selStart, selEnd);
+    });
+  }, [activePath, setContent]);
 
   const btn =
     "flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-slate-300 bg-white/5 hover:bg-white/10 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed";
+  const tbtn =
+    "inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-300 bg-white/5 hover:bg-white/10 transition-colors cursor-pointer disabled:opacity-30";
+  const assocAll = assoc ? assoc.md && assoc.markdown : false;
 
   /** 带锚点 id 的标题渲染器 */
   const heading = (level: number, cls: string) =>
@@ -274,6 +434,160 @@ export default function MarkdownReader() {
       const Tag = `h${level}` as keyof React.JSX.IntrinsicElements;
       return React.createElement(Tag, { id: slugify(text), className: cls }, children);
     };
+
+  const preview = active && !active.loading && !active.error && (
+    <div className="px-6 py-5 max-w-4xl mx-auto text-[12px] leading-7 text-slate-200 break-words">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          h1: heading(1, "text-xl font-bold text-slate-100 mt-6 mb-3 pb-1.5 border-b border-white/10 first:mt-0"),
+          h2: heading(2, "text-lg font-bold text-slate-100 mt-5 mb-2.5 pb-1 border-b border-white/5 first:mt-0"),
+          h3: heading(3, "text-base font-bold text-slate-200 mt-4 mb-2 first:mt-0"),
+          h4: heading(4, "text-sm font-bold text-slate-200 mt-3 mb-1.5 first:mt-0"),
+          h5: heading(5, "text-[12px] font-semibold text-slate-300 mt-3 mb-1 first:mt-0"),
+          h6: heading(6, "text-[11px] font-semibold text-slate-400 mt-3 mb-1 first:mt-0"),
+          p: ({ children }) => <p className="my-2.5 first:mt-0 last:mb-0">{children}</p>,
+          ul: ({ children }) => <ul className="list-disc my-2.5 space-y-1 pl-6">{children}</ul>,
+          ol: ({ children }) => <ol className="list-decimal my-2.5 space-y-1 pl-6">{children}</ol>,
+          li: ({ children }) => <li className="leading-7">{children}</li>,
+          input: ({ checked }) => (
+            <input
+              type="checkbox"
+              checked={checked}
+              readOnly
+              className="mr-1.5 align-middle w-3 h-3 rounded accent-emerald-500"
+            />
+          ),
+          blockquote: ({ children }) => (
+            <blockquote className="border-l-2 border-emerald-600/50 pl-3 my-3 text-slate-400">
+              {children}
+            </blockquote>
+          ),
+          code: ({ className, children }) => {
+            const match = /language-(\w+)/.exec(className || "");
+            if (!match) {
+              return (
+                <code className="px-1 py-0.5 rounded bg-slate-700/60 text-[11px] text-emerald-300 font-mono">
+                  {children}
+                </code>
+              );
+            }
+            return <CodeBlock lang={match[1]}>{children}</CodeBlock>;
+          },
+          pre: ({ children }) => <>{children}</>,
+          a: ({ href, children }) => {
+            const h = href || "";
+            const external = isExternal(h);
+            return (
+              <a
+                href={h}
+                target={external ? "_blank" : undefined}
+                rel={external ? "noopener noreferrer" : undefined}
+                onClick={(e) => handleLinkClick(h, e)}
+                className={`underline underline-offset-2 cursor-pointer ${
+                  external
+                    ? "text-sky-400 hover:text-sky-300"
+                    : "text-emerald-400 hover:text-emerald-300"
+                }`}
+              >
+                {children}
+              </a>
+            );
+          },
+          img: ({ src, alt }) => (
+            <img src={typeof src === "string" ? src : ""} alt={alt || ""} className="max-w-full rounded my-3" />
+          ),
+          table: ({ children }) => (
+            <div className="overflow-x-auto my-3 rounded border border-white/10">
+              <table className="min-w-full text-[11px]">{children}</table>
+            </div>
+          ),
+          thead: ({ children }) => <thead className="bg-slate-800/80">{children}</thead>,
+          th: ({ children }) => (
+            <th className="px-2.5 py-1.5 text-left font-semibold text-slate-200 border-b border-white/10">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="px-2.5 py-1.5 text-slate-300 border-b border-white/5">{children}</td>
+          ),
+          hr: () => <hr className="border-white/10 my-5" />,
+          strong: ({ children }) => <strong className="font-bold text-slate-100">{children}</strong>,
+          del: ({ children }) => <del className="text-slate-500">{children}</del>,
+        }}
+      >
+        {active.content}
+      </ReactMarkdown>
+    </div>
+  );
+
+  const editor = active && !active.loading && !active.error && (
+    <div className="flex flex-col min-h-0 flex-1">
+      {/* 格式工具栏 */}
+      <div className="flex-shrink-0 flex items-center gap-0.5 px-2 py-1.5 border-b border-white/5 overflow-x-auto">
+        <button className={tbtn} title="撤销 (Ctrl+Z)" disabled={active.undo.length === 0} onClick={undo}><Undo2 className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title="重做 (Ctrl+Y)" disabled={active.redo.length === 0} onClick={redo}><Redo2 className="w-3.5 h-3.5" /></button>
+        <div className="w-px h-5 bg-white/10 mx-1" />
+        <button className={tbtn} title="标题 1" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "#"))}><Heading1 className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title="标题 2" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "##"))}><Heading2 className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title="标题 3" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "###"))}><Heading3 className="w-3.5 h-3.5" /></button>
+        <div className="w-px h-5 bg-white/10 mx-1" />
+        <button className={tbtn} title="粗体 (Ctrl+B)" onClick={() => applyTransform((ta) => wrapSelection(ta, "**", "**", "粗体"))}><Bold className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title="斜体 (Ctrl+I)" onClick={() => applyTransform((ta) => wrapSelection(ta, "*", "*", "斜体"))}><Italic className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title="删除线" onClick={() => applyTransform((ta) => wrapSelection(ta, "~~", "~~", "删除"))}><Strikethrough className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title="行内代码" onClick={() => applyTransform((ta) => wrapSelection(ta, "`", "`", "代码"))}><Code className="w-3.5 h-3.5" /></button>
+        <div className="w-px h-5 bg-white/10 mx-1" />
+        <button className={tbtn} title="无序列表" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "-"))}><List className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title="有序列表" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "1.", true))}><ListOrdered className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title="任务列表" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "- [ ]"))}><ListChecks className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title="引用" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, ">"))}><Quote className="w-3.5 h-3.5" /></button>
+        <div className="w-px h-5 bg-white/10 mx-1" />
+        <button className={tbtn} title="代码块" onClick={() => applyTransform((ta) => {
+          const { selectionStart: s, selectionEnd: e, value } = ta;
+          const sel = value.slice(s, e) || "// code";
+          const insert = `\n\`\`\`\n${sel}\n\`\`\`\n`;
+          return { text: value.slice(0, s) + insert + value.slice(e), selStart: s + 4, selEnd: s + 4 + sel.length };
+        })}><Square className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title="链接" onClick={() => applyTransform((ta) => wrapSelection(ta, "[", "](https://)", "链接文本"))}><Link className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title="表格" onClick={() => applyTransform((ta) => {
+          const tpl = "\n| 列1 | 列2 | 列3 |\n| --- | --- | --- |\n|  a  |  b  |  c  |\n";
+          const { selectionStart: s, value } = ta;
+          return { text: value.slice(0, s) + tpl + value.slice(s), selStart: s + 3, selEnd: s + 3 };
+        })}><Table className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title="分隔线" onClick={() => applyTransform((ta) => {
+          const { selectionStart: s, value } = ta;
+          return { text: value.slice(0, s) + "\n---\n" + value.slice(s), selStart: s + 5, selEnd: s + 5 };
+        })}><Minus className="w-3.5 h-3.5" /></button>
+      </div>
+      {/* 编辑区（可选分栏预览） */}
+      <div className="flex min-h-0 flex-1">
+        <textarea
+          ref={taRef}
+          value={active.content}
+          onChange={(e) => activePath && setContent(activePath, e.target.value)}
+          onKeyDown={(e) => {
+            // Tab 插入两个空格而不是移动焦点
+            if (e.key === "Tab") {
+              e.preventDefault();
+              const ta = e.currentTarget;
+              const { selectionStart: s, selectionEnd: ee, value } = ta;
+              const next = value.slice(0, s) + "  " + value.slice(ee);
+              setContent(activePath!, next);
+              requestAnimationFrame(() => { ta.setSelectionRange(s + 2, s + 2); });
+            }
+          }}
+          spellCheck={false}
+          className={`min-h-0 flex-1 resize-none bg-transparent px-6 py-5 text-[12px] leading-6 text-slate-200 font-mono outline-none ${split ? "border-r border-white/10 max-w-[50%]" : ""}`}
+          placeholder="开始编辑 Markdown…"
+        />
+        {split && (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {preview}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div className="h-full flex flex-col min-h-0 select-none">
@@ -295,7 +609,33 @@ export default function MarkdownReader() {
           )}
           {showSidebar ? "隐藏目录" : "显示目录"}
         </button>
+        <div className="w-px h-5 bg-white/10 mx-1" />
+        {active && (
+          <>
+            <button onClick={() => setMode(mode === "view" ? "edit" : "view")}
+              className={`${btn} ${mode === "edit" ? "!bg-emerald-600/25 !text-emerald-200" : ""}`}
+              title={mode === "view" ? "切换到编辑" : "切换到预览"}>
+              {mode === "view" ? <Pencil className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              {mode === "view" ? "编辑" : "预览"}
+            </button>
+            {mode === "edit" && (
+              <button onClick={() => setSplit(!split)}
+                className={`${btn} ${split ? "!bg-emerald-600/25 !text-emerald-200" : ""}`} title="编辑+预览分栏">
+                <Columns className="w-3.5 h-3.5" />
+                分栏
+              </button>
+            )}
+            <button onClick={() => void saveActive()} disabled={!active.dirty || saving} className={btn} title="保存 (Ctrl+S)">
+              {saving ? <LoaderCircle /> : active.dirty ? <Save className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5 text-emerald-400" />}
+              {active.dirty ? (saving ? "保存中…" : "保存") : "已保存"}
+            </button>
+          </>
+        )}
         <div className="flex-1" />
+        <button onClick={() => setShowAssoc((s) => !s)} className={btn} title=".md 文件关联设置">
+          <FileText className="w-3.5 h-3.5" />
+          文件关联{assoc ? (assocAll ? " ✓" : "") : ""}
+        </button>
         {notice && (
           <div className="flex items-center gap-1 text-[10px] text-amber-300">
             <AlertCircle className="w-3 h-3" />
@@ -303,11 +643,35 @@ export default function MarkdownReader() {
           </div>
         )}
         {active && (
-          <span className="text-[10px] text-slate-500 truncate max-w-[38%]" title={active.path}>
+          <span className="text-[10px] text-slate-500 truncate max-w-[30%]" title={active.path}>
             {active.path}
           </span>
         )}
       </div>
+
+      {/* 文件关联面板 */}
+      {showAssoc && (
+        <div className="flex-shrink-0 px-4 py-2.5 border-b border-white/5 bg-white/[0.02] space-y-2">
+          <div className="text-[10px] text-slate-400">
+            将 <span className="font-mono text-slate-200">.md</span> / <span className="font-mono text-slate-200">.markdown</span> 注册为系统打开方式（用户级注册表，无需管理员），并加入右键「打开方式」列表。
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => void toggleAssoc(true)} className={btn} disabled={assocAll}>
+              <Check className="w-3.5 h-3.5" />
+              {assocAll ? "已注册" : "注册关联"}
+            </button>
+            <button onClick={() => void toggleAssoc(false)} className={btn} disabled={assoc ? !assoc.md && !assoc.markdown : false}>
+              <X className="w-3.5 h-3.5" />
+              解除关联
+            </button>
+            {assoc && (
+              <span className="text-[10px] text-slate-500 font-mono truncate">
+                .md: {assoc.md ? "✓" : "✗"} · .markdown: {assoc.markdown ? "✓" : "✗"} · {assoc.exePath}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 选项卡条 */}
       {tabs.length > 0 && (
@@ -315,7 +679,7 @@ export default function MarkdownReader() {
           {tabs.map((t) => (
             <div
               key={t.path}
-              onClick={() => setActivePath(t.path)}
+              onClick={() => { setActivePath(t.path); setMode("view"); }}
               title={t.path}
               className={`group flex items-center gap-1.5 px-2.5 py-1.5 rounded-t-md text-[11px] whitespace-nowrap cursor-pointer transition-colors max-w-[200px] ${
                 t.path === activePath
@@ -324,7 +688,7 @@ export default function MarkdownReader() {
               }`}
             >
               <FileText className="w-3 h-3 flex-shrink-0" />
-              <span className="truncate">{t.name}</span>
+              <span className="truncate">{t.name}{t.dirty ? " •" : ""}</span>
               <button
                 onClick={(e) => closeTab(t.path, e)}
                 className="flex-shrink-0 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-300 transition-opacity"
@@ -387,8 +751,8 @@ export default function MarkdownReader() {
           </div>
         )}
 
-        {/* 中间：正文 */}
-        <div ref={contentRef} className="flex-1 min-w-0 overflow-y-auto select-text">
+        {/* 中间：正文 / 编辑器 */}
+        <div ref={contentRef} className="flex-1 min-w-0 flex flex-col overflow-y-auto select-text">
           {!active && (
             <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-600">
               <FileText className="w-10 h-10 opacity-30" />
@@ -398,8 +762,8 @@ export default function MarkdownReader() {
                 打开 Markdown 文件
               </button>
               <div className="text-[10px] text-slate-700 max-w-xs text-center leading-relaxed">
-                打开后会自动扫描同目录（含子目录 3 层）的所有 Markdown，
-                文中相对链接可直接点击，在新选项卡中打开。
+                默认预览；点「编辑」进入编辑器（自动保存、撤销/重做、格式工具栏、分栏实时预览）。
+                可在「文件关联」中把 .md 注册为系统打开方式。
               </div>
             </div>
           )}
@@ -413,89 +777,7 @@ export default function MarkdownReader() {
             </div>
           )}
           {active && !active.loading && !active.error && (
-            <div className="px-6 py-5 max-w-4xl mx-auto text-[12px] leading-7 text-slate-200 break-words">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  h1: heading(1, "text-xl font-bold text-slate-100 mt-6 mb-3 pb-1.5 border-b border-white/10 first:mt-0"),
-                  h2: heading(2, "text-lg font-bold text-slate-100 mt-5 mb-2.5 pb-1 border-b border-white/5 first:mt-0"),
-                  h3: heading(3, "text-base font-bold text-slate-200 mt-4 mb-2 first:mt-0"),
-                  h4: heading(4, "text-sm font-bold text-slate-200 mt-3 mb-1.5 first:mt-0"),
-                  h5: heading(5, "text-[12px] font-semibold text-slate-300 mt-3 mb-1 first:mt-0"),
-                  h6: heading(6, "text-[11px] font-semibold text-slate-400 mt-3 mb-1 first:mt-0"),
-                  p: ({ children }) => <p className="my-2.5 first:mt-0 last:mb-0">{children}</p>,
-                  ul: ({ children }) => <ul className="list-disc my-2.5 space-y-1 pl-6">{children}</ul>,
-                  ol: ({ children }) => <ol className="list-decimal my-2.5 space-y-1 pl-6">{children}</ol>,
-                  li: ({ children }) => <li className="leading-7">{children}</li>,
-                  input: ({ checked }) => (
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      readOnly
-                      className="mr-1.5 align-middle w-3 h-3 rounded accent-emerald-500"
-                    />
-                  ),
-                  blockquote: ({ children }) => (
-                    <blockquote className="border-l-2 border-emerald-600/50 pl-3 my-3 text-slate-400">
-                      {children}
-                    </blockquote>
-                  ),
-                  code: ({ className, children }) => {
-                    const match = /language-(\w+)/.exec(className || "");
-                    if (!match) {
-                      return (
-                        <code className="px-1 py-0.5 rounded bg-slate-700/60 text-[11px] text-emerald-300 font-mono">
-                          {children}
-                        </code>
-                      );
-                    }
-                    return <CodeBlock lang={match[1]}>{children}</CodeBlock>;
-                  },
-                  pre: ({ children }) => <>{children}</>,
-                  a: ({ href, children }) => {
-                    const h = href || "";
-                    const external = isExternal(h);
-                    return (
-                      <a
-                        href={h}
-                        target={external ? "_blank" : undefined}
-                        rel={external ? "noopener noreferrer" : undefined}
-                        onClick={(e) => handleLinkClick(h, e)}
-                        className={`underline underline-offset-2 cursor-pointer ${
-                          external
-                            ? "text-sky-400 hover:text-sky-300"
-                            : "text-emerald-400 hover:text-emerald-300"
-                        }`}
-                      >
-                        {children}
-                      </a>
-                    );
-                  },
-                  img: ({ src, alt }) => (
-                    <img src={typeof src === "string" ? src : ""} alt={alt || ""} className="max-w-full rounded my-3" />
-                  ),
-                  table: ({ children }) => (
-                    <div className="overflow-x-auto my-3 rounded border border-white/10">
-                      <table className="min-w-full text-[11px]">{children}</table>
-                    </div>
-                  ),
-                  thead: ({ children }) => <thead className="bg-slate-800/80">{children}</thead>,
-                  th: ({ children }) => (
-                    <th className="px-2.5 py-1.5 text-left font-semibold text-slate-200 border-b border-white/10">
-                      {children}
-                    </th>
-                  ),
-                  td: ({ children }) => (
-                    <td className="px-2.5 py-1.5 text-slate-300 border-b border-white/5">{children}</td>
-                  ),
-                  hr: () => <hr className="border-white/10 my-5" />,
-                  strong: ({ children }) => <strong className="font-bold text-slate-100">{children}</strong>,
-                  del: ({ children }) => <del className="text-slate-500">{children}</del>,
-                }}
-              >
-                {active.content}
-              </ReactMarkdown>
-            </div>
+            mode === "view" && !split ? preview : editor
           )}
         </div>
 
@@ -522,6 +804,10 @@ export default function MarkdownReader() {
       </div>
     </div>
   );
+}
+
+function LoaderCircle() {
+  return <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />;
 }
 
 /** 代码块：语言标签 + 一键复制 */

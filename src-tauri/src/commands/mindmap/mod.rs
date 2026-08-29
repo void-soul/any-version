@@ -3,6 +3,7 @@ pub mod models;
 pub mod db;
 pub mod scan;
 pub mod commands;
+pub mod quick_popup;
 
 pub use models::*;
 pub use commands::*;

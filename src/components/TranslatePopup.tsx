@@ -235,12 +235,9 @@ export default function TranslatePopup() {
         appWindow.hide();
       }
     });
-    // 快捷键：ESC 关闭、Ctrl+C 复制译文、Ctrl+Enter 翻译
+    // 快捷键：Ctrl+C 复制译文、Ctrl+Enter 翻译（弹框只允许通过关闭按钮关闭，不响应 ESC）
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        hidePopupRef.current();
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
         e.preventDefault();
         copyResultRef.current();
       } else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {

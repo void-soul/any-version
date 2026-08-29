@@ -1438,6 +1438,17 @@ fn handle_hotkey_action(app: &AppHandle, module: &str) {
         });
         return;
     }
+    // 独立「思维导图速记」热键：呼出速记悬浮窗（选/建导图 → 节点/根/贴纸），
+    // 不做四态窗口切换，也不唤起主窗口。
+    if module == "mindmap-quick" {
+        crate::exit_log!("[思维导图速记] 热键触发 mindmap-quick");
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let res = crate::commands::mindmap::quick_popup::open_mindmap_quick_popup(app);
+            crate::exit_log!("[思维导图速记] open_mindmap_quick_popup 结果: {:?}", res);
+        });
+        return;
+    }
     let Some(window) = app.get_webview_window("main") else {
         return;
     };

@@ -1014,10 +1014,7 @@ export default function ProjectDetailPanel({
           return (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
               {/* 遮罩 */}
-              <div
-                className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-                onClick={() => patch(pid!, { showManagePreview: false, managePreview: null })}
-              />
+              <div className="absolute inset-0 modal-mask bg-black/60 backdrop-blur-sm" />
               {/* 弹框 */}
               <div className={`relative w-full max-w-lg max-h-[82vh] rounded-2xl border shadow-2xl flex flex-col overflow-hidden animate-fadeIn ${isUnmanage ? "bg-[#17181c] border-red-500/25" : "bg-[#17181c] border-[var(--module-accent-ring)]"}`}>
                 {/* 头部 */}

@@ -15,6 +15,97 @@ pub fn write_text_file(path: String, content: String) -> Result<(), String> {
     fs::write(&path, content).map_err(|e| e.to_string())
 }
 
+/// Windows 文件关联状态：.md / .markdown 是否已指向 any-version 的 AnyMarkdown ProgID。
+#[tauri::command]
+pub fn markdown_assoc_status() -> Result<MarkdownAssocStatus, String> {
+    #[cfg(windows)]
+    {
+        use winreg::enums::HKEY_CURRENT_USER;
+        use winreg::RegKey;
+        let hkcr = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Software\\Classes");
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let mut md = false;
+        let mut markdown = false;
+        if let Ok(k) = hkcr {
+            for (ext, val) in [(".md", &mut md), (".markdown", &mut markdown)] {
+                if let Ok(default) = k.get_value::<String, _>(ext) {
+                    *val = default == "AnyMarkdown.Document";
+                }
+            }
+        }
+        Ok(MarkdownAssocStatus { md, markdown, exe_path: exe.to_string_lossy().to_string() })
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(MarkdownAssocStatus { md: false, markdown: false, exe_path: String::new() })
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkdownAssocStatus {
+    pub md: bool,
+    pub markdown: bool,
+    pub exe_path: String,
+}
+
+/// 注册/解除 .md 与 .markdown 的用户级文件关联（HKCU\Software\Classes，无需管理员）。
+///
+/// register=true: 写入 AnyMarkdown.Document ProgID（open 命令指向当前 exe），
+/// 并把 HKCR\.md / HKCR\.markdown 的用户级默认值指过去；同时在
+/// Software\Classes\AnyMarkdown.Document\shell\open\command 下注册。
+/// register=false: 若当前默认值仍指向 AnyMarkdown.Document，则删除该默认值。
+#[tauri::command]
+pub fn set_markdown_assoc(register: bool) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
+        use winreg::RegKey;
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let cmd = format!("\"{}\" \"%1\"", exe.to_string_lossy());
+        let classes = RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey_with_flags("Software\\Classes", KEY_SET_VALUE)
+            .map_err(|e| format!("打开 HKCU\\Software\\Classes 失败: {}", e))?;
+        if register {
+            let (progkey, _) = classes.create_subkey("AnyMarkdown.Document")
+                .map_err(|e| format!("创建 ProgID 失败: {}", e))?;
+            progkey.set_value("", &"AnyVersion Markdown 文档")
+                .map_err(|e| e.to_string())?;
+            let (openkey, _) = classes.create_subkey("AnyMarkdown.Document\\shell\\open\\command")
+                .map_err(|e| format!("创建 open 命令失败: {}", e))?;
+            openkey.set_value("", &cmd).map_err(|e| e.to_string())?;
+            for ext in [".md", ".markdown"] {
+                let (extkey, _) = classes.create_subkey(ext)
+                    .map_err(|e| format!("创建 {} 失败: {}", ext, e))?;
+                extkey.set_value("", &"AnyMarkdown.Document").map_err(|e| e.to_string())?;
+            }
+            Ok(format!("已注册 .md/.markdown → {}", cmd))
+        } else {
+            let mut removed = 0;
+            for ext in [".md", ".markdown"] {
+                if let Ok(k) = classes.open_subkey_with_flags(ext, KEY_SET_VALUE) {
+                    if let Ok(cur) = k.get_value::<String, _>("") {
+                        if cur == "AnyMarkdown.Document" {
+                            k.delete_value("").map_err(|e| e.to_string())?;
+                            removed += 1;
+                        }
+                    }
+                }
+            }
+            let _ = classes.delete_subkey_all("AnyMarkdown.Document\\shell\\open\\command");
+            let _ = classes.delete_subkey_all("AnyMarkdown.Document\\shell\\open");
+            let _ = classes.delete_subkey_all("AnyMarkdown.Document\\shell");
+            let _ = classes.delete_subkey_all("AnyMarkdown.Document");
+            Ok(format!("已解除关联（清理了 {} 项）", removed))
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = register;
+        Err("文件关联仅支持 Windows".into())
+    }
+}
+
 /// Markdown 阅读器：同目录（含子目录）中发现的一个 md 文件。
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
