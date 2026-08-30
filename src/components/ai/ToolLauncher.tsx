@@ -1031,13 +1031,13 @@ export default function ToolLauncher() {
                       <Cpu className="w-3.5 h-3.5 text-blue-400" />
                       <div>
                         <span className="text-[10px] font-semibold text-blue-300">使用官方模型</span>
-                        <p className="text-[8px] text-slate-500 mt-0.5">使用工具的官方 API Key，而不是 vex 配置的模型</p>
+                        <p className="text-[8px] text-slate-500 mt-0.5">使用工具的官方 API Key，而不是 Kira 配置的模型</p>
                       </div>
                     </div>
                     <button
                       onClick={() => setUseOfficialModel(!useOfficialModel)}
                       className={`p-1 rounded-md cursor-pointer transition-all ${useOfficialModel ? "text-blue-400" : "text-slate-600 hover:text-slate-400"}`}
-                      title={useOfficialModel ? "使用官方模型" : "使用 vex 模型"}
+                      title={useOfficialModel ? "使用官方模型" : "使用 Kira 模型"}
                     >
                       {useOfficialModel ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
                     </button>

@@ -45,6 +45,12 @@ import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from 
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import {
+  VEX_CYBER_ACCENT,
+  VEX_THEME_PRESETS,
+  VEX_THEME_STORE_KEY,
+  resolveThemeAccent,
+} from "../utils/brand";
 
 // 可拖拽的模块配置行：主题色 + 位置 + 启用 + 快捷键（拖拽手柄独立，避免与控件冲突）
 function ModuleConfigRow({
@@ -506,6 +512,9 @@ export default function GlobalSettings() {
   const [fontSearch, setFontSearch] = useState("");
   const [fontRefreshing, setFontRefreshing] = useState(false);
 
+  // 当前生效的全局主题色（用户可在下方「外观」里覆盖默认签名色）。
+  const themeAccent = resolveThemeAccent(appearance.moduleThemeColors);
+
   // 模块顺序：优先用户自定义顺序，缺失的模块（新增/子工具）追加到末尾，保证完整。
   const moduleOrderIds = (() => {
     const custom = appearance.moduleOrder;
@@ -643,6 +652,35 @@ export default function GlobalSettings() {
       emit("appearance-updated");
     } catch (e) {
       console.error("保存全局字体失败", e);
+    }
+  };
+
+  const handleSetThemeAccent = async (color: string) => {
+    setAppearance({
+      ...appearance,
+      moduleThemeColors: { ...appearance.moduleThemeColors, [VEX_THEME_STORE_KEY]: color },
+    });
+    try {
+      await invoke("set_module_theme_color", { moduleId: VEX_THEME_STORE_KEY, color });
+      emit("appearance-updated");
+    } catch (e) {
+      console.error("保存主题色失败", e);
+    }
+  };
+
+  const handleResetThemeAccent = async () => {
+    setAppearance({
+      ...appearance,
+      moduleThemeColors: {
+        ...appearance.moduleThemeColors,
+        [VEX_THEME_STORE_KEY]: VEX_CYBER_ACCENT,
+      },
+    });
+    try {
+      await invoke("set_module_theme_color", { moduleId: VEX_THEME_STORE_KEY, color: "" });
+      emit("appearance-updated");
+    } catch (e) {
+      console.error("重置主题色失败", e);
     }
   };
 
@@ -983,7 +1021,7 @@ export default function GlobalSettings() {
         <div className="flex items-center gap-2 pb-3 border-b border-white/5">
           <FolderKanban className="w-4 h-4 text-[var(--module-accent)]" />
           <h3 className="text-xs font-semibold text-white">
-            vex 工作目录说明
+            Kira 工作目录说明
           </h3>
         </div>
 
@@ -1022,7 +1060,7 @@ export default function GlobalSettings() {
                   value={dataDir}
                   onChange={(e) => setDataDir(e.target.value)}
                   className="flex-1 glass-input px-3.5 py-2.5 text-xs font-mono"
-                  placeholder="e.g. D:\vex"
+                  placeholder="e.g. D:\Kira"
                 />
                 <button
                   onClick={() => handleBrowseFolder(setDataDir)}
@@ -1089,7 +1127,7 @@ export default function GlobalSettings() {
                   确认路径迁移
                 </h4>
                 <div className="text-[10px] text-slate-300 space-y-1.5">
-                  <p>检测到存储路径已更改，vex 将执行以下操作：</p>
+                  <p>检测到存储路径已更改，Kira 将执行以下操作：</p>
                   <p className="text-amber-300">
                     1. 将旧目录下的所有已安装版本文件移动到新目录
                   </p>
@@ -1258,7 +1296,7 @@ export default function GlobalSettings() {
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-base font-black tracking-wide text-white">vex</span>
+              <span className="text-base font-black tracking-wide text-white">Kira</span>
               <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]">v{appVersion || "1.0.0"}</span>
             </div>
             <p className="text-[11px] text-slate-400 mt-0.5">暖心的桌面伙伴</p>
@@ -1354,8 +1392,8 @@ export default function GlobalSettings() {
           <div className="space-y-0.5">
             <p className="text-xs font-medium text-slate-200">开机自启</p>
             <p className="text-[9px] text-slate-500">
-              系统启动时自动运行 vex，并静默驻留到系统托盘。
-              vex 始终以管理员身份运行，开机自启同样具备完整管理员能力。
+              系统启动时自动运行 Kira，并静默驻留到系统托盘。
+              Kira 始终以管理员身份运行，开机自启同样具备完整管理员能力。
             </p>
           </div>
           <button
@@ -1461,7 +1499,7 @@ export default function GlobalSettings() {
             <div>
               <h3 className="text-xs font-semibold text-white">服务自启管理</h3>
               <p className="text-[9px] text-slate-500 mt-0.5">
-                在打开 vex 时自动拉起已勾选的服务（与开机自启协同，开机即可就绪）
+                在打开 Kira 时自动拉起已勾选的服务（与开机自启协同，开机即可就绪）
               </p>
             </div>
           </div>
@@ -1622,10 +1660,59 @@ export default function GlobalSettings() {
             <div>
               <h3 className="text-xs font-semibold text-white">外观 (Appearance)</h3>
               <p className="text-[9px] text-slate-500 mt-0.5">
-                全 App 统一于 vex 的赛博电子风主题，这里只配置全局字体
+                配置 Kira 的主题色与全局字体，改色即全局生效
               </p>
             </div>
           </div>
+        </div>
+
+        {/* 0. 主题色 */}
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between pt-3 border-t border-white/5">
+            <p className="text-[11px] font-medium text-slate-200">主题色</p>
+            <div className="flex items-center gap-2">
+              <div
+                className="flex items-center gap-1.5 rounded-md border border-white/10 bg-black/30 px-2 py-1 font-mono text-[10px] text-slate-200"
+                style={{ boxShadow: `0 0 8px ${themeAccent}55` }}
+              >
+                <span className="h-3 w-3 rounded-full" style={{ background: themeAccent }} />
+                <span>{themeAccent}</span>
+              </div>
+              <button
+                onClick={() => void handleResetThemeAccent()}
+                className="rounded-md border border-white/10 px-2 py-1 text-[10px] text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
+                title="恢复默认主题色"
+              >
+                恢复默认
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {VEX_THEME_PRESETS.map((c) => (
+              <button
+                key={c}
+                onClick={() => void handleSetThemeAccent(c)}
+                title={c}
+                className={`h-8 w-8 rounded-lg border transition cursor-pointer ${
+                  c === themeAccent ? "border-white ring-2 ring-white/40" : "border-white/15 hover:border-white/50"
+                }`}
+                style={{ background: c }}
+              />
+            ))}
+            <label
+              className="relative h-8 w-8 rounded-lg border border-white/15 hover:border-white/50 cursor-pointer flex items-center justify-center overflow-hidden transition"
+              title="自定义颜色…"
+            >
+              <span className="h-full w-full" style={{ background: "conic-gradient(red, yellow, lime, cyan, blue, magenta, red)" }} />
+              <input
+                type="color"
+                value={themeAccent}
+                onChange={(e) => void handleSetThemeAccent(e.target.value)}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+              />
+            </label>
+          </div>
+          <p className="text-[9px] text-slate-600">预设色盘一键切换，或在最右用取色器自定义。</p>
         </div>
 
         {/* 1. 全局字体 */}

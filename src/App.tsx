@@ -6,7 +6,7 @@ import { X, Minus, Square, Download, AlertTriangle, Loader2, FolderOpen, Chevron
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { MODULES, MODULE_MAP, resolveModuleLayout } from "./moduleRegistry";
 import VexAvatar from "./components/VexAvatar";
-import { VEX_CYBER_ACCENT, VEX_CYBER_CYAN, timeGreeting } from "./utils/brand";
+import { VEX_CYBER_CYAN, resolveThemeAccent } from "./utils/brand";
 import { vexSay, onVexSay, type VexSayKind } from "./utils/vexSay";
 import "./App.css";
 
@@ -54,13 +54,6 @@ export default function App() {
     phase: string;
   }>({ downloaded: 0, total: 0, speed: "", phase: "" });
   const [binError, setBinError] = useState<string | null>(null);
-  // 启动欢迎 toast：vex 按时间段冒一句开场白，几秒后自动收起
-  const [welcomeToast, setWelcomeToast] = useState(true);
-  useEffect(() => {
-    if (!welcomeToast) return;
-    const t = window.setTimeout(() => setWelcomeToast(false), 6500);
-    return () => window.clearTimeout(t);
-  }, [welcomeToast]);
 
   // 冷启动闪屏：vex 赛博 Logo + 进度条，短暂铺满后淡出，替代白屏
   const [booting, setBooting] = useState(true);
@@ -282,9 +275,9 @@ export default function App() {
       : undefined;
   const fontFaceCss = buildFontFaceCss(appearance.customFontPath);
 
-  // 统一赛博电子风主题：不再按模块动态设色，全 App 共用同一主强调色
-  // （vex 的固定签名色）。各模块内部用 --module-accent 系列变量联动处同步跟随。
-  const activeModuleColor = VEX_CYBER_ACCENT;
+  // 全 App 主强调色：优先读后端配置里的主题色（module_theme_colors["theme"]），
+  // 未设置时回退默认签名色。各模块内部用 --module-accent 系列变量联动处同步跟随。
+  const activeModuleColor = resolveThemeAccent(appearance.moduleThemeColors);
   const moduleThemeVars = {
     "--module-accent": activeModuleColor,
     "--module-accent-soft": `color-mix(in srgb, ${activeModuleColor} 12%, transparent)`,
@@ -324,42 +317,29 @@ export default function App() {
     >
       {fontFaceCss && <style>{fontFaceCss}</style>}
 
-      {/* 冷启动闪屏：vex 赛博 Logo + 进度，替代白屏 */}
+      {/* 冷启动闪屏：Kira 赛博 Logo + 进度，替代白屏 */}
       {booting && (
         <div className="fixed inset-0 z-[10000] flex flex-col items-center justify-center gap-6 bg-[#0b101b] cyber-grid">
           <div className="relative">
-            <span className="absolute -inset-3 rounded-full blur-xl opacity-60" style={{ background: `radial-gradient(circle, ${VEX_CYBER_ACCENT}55, transparent 70%)` }} />
+            <span className="absolute -inset-3 rounded-full blur-xl opacity-60" style={{ background: `radial-gradient(circle, ${activeModuleColor}55, transparent 70%)` }} />
             <VexAvatar size={92} className="relative" />
           </div>
           <div className="text-center">
             <div className="text-xl font-black tracking-[0.35em] text-white">
-              v<span className="text-[var(--module-accent)]">e</span>x
+              K<span className="text-[var(--module-accent)]">i</span>ra
             </div>
             <div className="mt-1 text-[10px] tracking-[0.3em] text-slate-500">暖心的桌面伙伴</div>
           </div>
           <div className="h-1 w-48 overflow-hidden rounded-full bg-white/10">
             <div
               className="h-full rounded-full animate-[vexbusybar_1.1s_ease-in-out_infinite]"
-              style={{ background: `linear-gradient(90deg, ${VEX_CYBER_ACCENT}, ${VEX_CYBER_CYAN})` }}
+              style={{ background: `linear-gradient(90deg, ${activeModuleColor}, ${VEX_CYBER_CYAN})` }}
             />
           </div>
         </div>
       )}
 
-      {welcomeToast && (
-        <div className="fixed left-1/2 top-14 z-[200] -translate-x-1/2 pointer-events-none animate-in fade-in slide-in-from-top-3 duration-500">
-          <div className="glass-panel rounded-2xl border border-white/10 px-4 py-2.5 shadow-2xl shadow-black/50 flex items-center gap-3">
-            <VexAvatar size={30} />
-            <div className="text-[11px] text-slate-200">
-              <span className="mr-1 font-semibold text-[var(--module-accent)]">vex</span>
-              <span className="text-slate-300">{timeGreeting()}</span>
-              <span className="ml-1.5 text-slate-500">一切就绪，想从哪儿开始？</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* vex 事件伴随语 toast（成功/报错统一人设） */}
+      {/* Kira 事件伴随语 toast（成功/报错统一人设） */}
       {vexToast && (
         <div
           key={vexToast.id}
@@ -387,7 +367,7 @@ export default function App() {
             <div className="flex items-center gap-3">
               <VexAvatar size={46} />
               <div>
-                <div className="text-sm font-black text-white">hi，我是 vex</div>
+                <div className="text-sm font-black text-white">hi，我是 Kira</div>
                 <div className="text-[10px] text-slate-400">暖心的桌面伙伴</div>
               </div>
             </div>
@@ -412,10 +392,10 @@ export default function App() {
                 {introStep < 2 ? (
                   <>
                     <button onClick={finishIntro} className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:text-white transition cursor-pointer">跳过</button>
-                    <button onClick={() => setIntroStep((s) => s + 1)} className="px-4 py-1.5 rounded-lg text-[11px] font-semibold text-white transition cursor-pointer" style={{ background: VEX_CYBER_ACCENT }}>下一步 →</button>
+                    <button onClick={() => setIntroStep((s) => s + 1)} className="px-4 py-1.5 rounded-lg text-[11px] font-semibold text-white transition cursor-pointer" style={{ background: activeModuleColor }}>下一步 →</button>
                   </>
                 ) : (
-                  <button onClick={finishIntro} className="px-5 py-1.5 rounded-lg text-[11px] font-semibold text-white transition cursor-pointer" style={{ background: `linear-gradient(90deg, ${VEX_CYBER_ACCENT}, ${VEX_CYBER_CYAN})` }}>开始吧</button>
+                  <button onClick={finishIntro} className="px-5 py-1.5 rounded-lg text-[11px] font-semibold text-white transition cursor-pointer" style={{ background: `linear-gradient(90deg, ${activeModuleColor}, ${VEX_CYBER_CYAN})` }}>开始吧</button>
                 )}
               </div>
             </div>
@@ -432,7 +412,7 @@ export default function App() {
         <div className="flex items-center gap-2.5">
           <div className="flex items-center gap-2 pointer-events-none px-1 w-35" data-tauri-drag-region>
             <VexAvatar size={22} glow={activeModuleColor} />
-            <span className="text-[11px] font-bold text-white tracking-wide">vex</span>
+            <span className="text-[11px] font-bold text-white tracking-wide">Kira</span>
           </div>
 
 
@@ -626,7 +606,7 @@ export default function App() {
                     disabled={binDownloading}
                     onChange={(e) => setBinDataDir(e.target.value)}
                     className="flex-1 min-w-0 glass-input px-3 py-2 text-[11px] font-mono bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-sky-400/50 disabled:opacity-50"
-                    placeholder="e.g. D:\vex"
+                    placeholder="e.g. D:\Kira"
                   />
                   <button
                     onClick={handleBrowseBinDataDir}

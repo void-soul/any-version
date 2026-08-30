@@ -7,7 +7,7 @@ import { Copy, Check, X, Languages, ArrowRightLeft } from "lucide-react";
 import VexAvatar from "./VexAvatar";
 import VexGreeting from "./VexGreeting";
 import VexBusy from "./VexBusy";
-import { VEX_CYBER_ACCENT } from "../utils/brand";
+import { VEX_CYBER_ACCENT, resolveThemeAccent } from "../utils/brand";
 
 interface TranslateResult {
   source?: string;
@@ -47,9 +47,19 @@ export default function TranslatePopup() {
 
   const appWindow = getCurrentWindow();
 
-  // 统一赛博电子风主题：不按模块动态设色，悬浮窗固定用 vex 的签名主色。
-  // （本窗口独立于 App，自行注入 --tl-accent 系列。）
-  const translateAccent = VEX_CYBER_ACCENT;
+  // 顶部主题色：读取后端配置里用户自定义的主色（module_theme_colors["theme"]），
+  // 未设置时回退默认签名色。本窗口独立于 App，自行注入 --tl-accent 系列。
+  const [translateAccent, setTranslateAccent] = useState(VEX_CYBER_ACCENT);
+  useEffect(() => {
+    (async () => {
+      try {
+        const ap = await invoke<{ moduleThemeColors?: Record<string, string> }>("get_appearance_config");
+        setTranslateAccent(resolveThemeAccent(ap.moduleThemeColors));
+      } catch {
+        /* 加载失败用默认色即可 */
+      }
+    })();
+  }, []);
   const themeVars = {
     "--tl-accent": translateAccent,
     "--tl-accent-soft": `color-mix(in srgb, ${translateAccent} 14%, transparent)`,

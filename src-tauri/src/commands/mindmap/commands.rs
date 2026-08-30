@@ -336,7 +336,7 @@ pub fn mm_export_markdown(document_id: String) -> Result<String, String> {
             }
         }
     }
-    out.push_str("\n---\n*由 vex 思维导图生成*\n");
+    out.push_str("\n---\n*由 Kira 思维导图生成*\n");
     Ok(out)
 }
 

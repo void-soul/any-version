@@ -1,8 +1,8 @@
 [package]
-name = "vex"
+name = "kira"
 version = "1.4.0"
 description = "Windows Multi-Language Dev Environment Version Manager"
-authors = ["vex Team"]
+authors = ["Kira Team"]
 edition = "2021"
 
 [lib]

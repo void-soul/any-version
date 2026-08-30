@@ -27,6 +27,8 @@ import {
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import VexAvatar from "../VexAvatar";
+import VexGreeting from "../VexGreeting";
 
 // ---- 类型（与后端 node_manager.rs 对应，serde camelCase）----
 
@@ -347,13 +349,14 @@ export default function NodeManagerPanel() {
     return (
       <div className="h-full flex flex-col items-center justify-center select-none">
         <div className="text-center space-y-4">
-          <div className="w-16 h-16 mx-auto rounded-2xl bg-[color-mix(in_srgb,var(--module-accent)_15%,transparent)] border border-[var(--module-accent-ring)] flex items-center justify-center">
-            <LayoutDashboard className="w-8 h-8 text-[var(--module-accent)]" />
-          </div>
+          <VexAvatar size={64} className="mx-auto" />
           <div>
             <h1 className="text-lg font-bold text-white">服务</h1>
             <p className="text-[12px] text-slate-500 mt-1">
               启动并管理 Node 服务应用，界面在主窗口内全屏呈现
+            </p>
+            <p className="text-[11px] text-slate-400 mt-2">
+              <VexGreeting seconds={9} />
             </p>
           </div>
           <button

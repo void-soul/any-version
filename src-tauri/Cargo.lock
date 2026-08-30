@@ -2497,6 +2497,64 @@ dependencies = [
 ]
 
 [[package]]
+name = "kira"
+version = "1.4.0"
+dependencies = [
+ "aes-gcm",
+ "async-stream",
+ "axum",
+ "base64 0.22.1",
+ "bytes",
+ "bzip2 0.4.4",
+ "chacha20",
+ "chrono",
+ "encoding_rs",
+ "flate2",
+ "futures-util",
+ "getrandom 0.2.17",
+ "hmac",
+ "http-body-util",
+ "hyper-util",
+ "image",
+ "maxminddb",
+ "md5",
+ "parking_lot",
+ "pbkdf2",
+ "poly1305",
+ "regex",
+ "reqwest 0.12.28",
+ "rqrr",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "serialport",
+ "sha1",
+ "sha2",
+ "sysinfo",
+ "tar",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tauri-plugin-process",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "trash",
+ "walkdir",
+ "windows-sys 0.59.0",
+ "winreg 0.52.0",
+ "xz2",
+ "zip 2.4.2",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5731,64 +5789,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "vex"
-version = "1.4.0"
-dependencies = [
- "aes-gcm",
- "async-stream",
- "axum",
- "base64 0.22.1",
- "bytes",
- "bzip2 0.4.4",
- "chacha20",
- "chrono",
- "encoding_rs",
- "flate2",
- "futures-util",
- "getrandom 0.2.17",
- "hmac",
- "http-body-util",
- "hyper-util",
- "image",
- "maxminddb",
- "md5",
- "parking_lot",
- "pbkdf2",
- "poly1305",
- "regex",
- "reqwest 0.12.28",
- "rqrr",
- "rusqlite",
- "serde",
- "serde_json",
- "serde_yaml",
- "serialport",
- "sha1",
- "sha2",
- "sysinfo",
- "tar",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tauri-plugin-process",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "tokio",
- "tokio-tungstenite",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "trash",
- "walkdir",
- "windows-sys 0.59.0",
- "winreg 0.52.0",
- "xz2",
- "zip 2.4.2",
-]
 
 [[package]]
 name = "vswhom"

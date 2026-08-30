@@ -319,7 +319,7 @@ pub fn kill_port_owner(port_str: String) -> Result<String, String> {
 
     if is_access_denied {
         return Err(format!(
-            "权限不足：无法终止进程 {} (PID: {})。该进程可能需要管理员权限才能终止。\n\n解决方案：\n1. 以管理员身份运行 vex\n2. 或在任务管理器中手动结束该进程\n\n原始错误：{}",
+            "权限不足：无法终止进程 {} (PID: {})。该进程可能需要管理员权限才能终止。\n\n解决方案：\n1. 以管理员身份运行 Kira\n2. 或在任务管理器中手动结束该进程\n\n原始错误：{}",
             owner.process_name, owner.pid, stderr.trim()
         ));
     }

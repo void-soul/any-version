@@ -3,15 +3,37 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Brain, ListTree, Plus, StickyNote, X } from "lucide-react";
 import { mmApi, type MindmapDocument, type DocumentFull, type MindmapNode } from "./types";
+import { PlanDateTimePicker, KIND_LABELS } from "./MindmapPanel";
 import VexAvatar from "../VexAvatar";
 import VexGreeting from "../VexGreeting";
-import { VEX_CYBER_ACCENT } from "../../utils/brand";
+import { VEX_CYBER_ACCENT, resolveThemeAccent } from "../../utils/brand";
 
 type Mode = "child" | "root" | "sticker";
 
-// 统一赛博电子风主题：悬浮窗独立于 App，固定用 vex 的签名主色，注入 --mm-accent 系列。
+const KINDS = ["root", "module", "task", "requirement", "constraint", "risk", "component", "service", "route", "config", "file", "other"];
+const COLORS = ["#f8fafc", "#22d3ee", "#34d399", "#fbbf24", "#60a5fa", "#fb7185", "#a78bfa", "#f97316", "#f59e0b", "#94a3b8"];
+
+function normalizeHex(value: string): string | null {
+  const raw = value?.trim() ?? "";
+  if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw;
+  return null;
+}
+const kindColor = (k: string) => ({ root: "#f8fafc", module: "#22d3ee", component: "#34d399", service: "#fb7185", route: "#f97316", config: "#94a3b8", file: "#94a3b8", requirement: "#fbbf24", task: "#60a5fa", constraint: "#a78bfa", risk: "#fb7185" }[k] ?? "#64748b");
+
+// 悬浮窗独立于 App：读取后端配置里用户自定义的主色（module_theme_colors["theme"]），
+// 未设置时回退默认签名色，注入 --mm-accent 系列。
 export default function MindmapQuickPopup() {
-  const accent = VEX_CYBER_ACCENT;
+  const [accent, setAccent] = useState(VEX_CYBER_ACCENT);
+  useEffect(() => {
+    (async () => {
+      try {
+        const ap = await invoke<{ moduleThemeColors?: Record<string, string> }>("get_appearance_config");
+        setAccent(resolveThemeAccent(ap.moduleThemeColors));
+      } catch {
+        /* 加载失败用默认色即可 */
+      }
+    })();
+  }, []);
 
   const themeVars = {
     "--mm-accent": accent,
@@ -26,7 +48,13 @@ export default function MindmapQuickPopup() {
   const [loadingDoc, setLoadingDoc] = useState(false);
   const [mode, setMode] = useState<Mode>("child");
   const [parentId, setParentId] = useState<string>("");
-  const [text, setText] = useState("");
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [kind, setKind] = useState("other");
+  const [progress, setProgress] = useState(0);
+  const [planAt, setPlanAt] = useState("");
+  const [repeat, setRepeat] = useState("none");
+  const [color, setColor] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -52,6 +80,17 @@ export default function MindmapQuickPopup() {
         setError(String(e));
         setDocs([]);
       }
+    })();
+  }, []);
+
+  // 呼出时若后台有选中文本，默认填入「描述」——像划词翻译一样自动带入，
+  // 内容（节点名）留给你手动填写。拉取一次即清空，已有内容时不覆盖。
+  useEffect(() => {
+    void (async () => {
+      try {
+        const sel = await invoke<string | null>("take_mindmap_quick_selection");
+        if (sel) setDescription((cur) => (cur.trim() ? cur : sel));
+      } catch { /* 无捕获或后端未支持时保持为空 */ }
     })();
   }, []);
 
@@ -89,32 +128,32 @@ export default function MindmapQuickPopup() {
       full.nodes.filter((c) => c.parentId === n.id && c.id !== n.id).forEach((c) => visit(c, depth + 1));
     };
     full.nodes.filter((n) => !n.parentId || !byId.has(n.parentId!)).forEach((n) => visit(n, 0));
-    // 孤立/环兜底
     full.nodes.forEach((n) => { if (!visited.has(n.id)) visit(n, 0); });
     return out;
   }, [full]);
 
   const submit = useCallback(async () => {
-    if (!text.trim() || busy) return;
+    if (!name.trim() || busy) return;
     setBusy(true);
     setError(null);
     try {
       // 无文档：先自动创建
       let targetId = docId;
       if (!targetId) {
-        const name = newDocName.trim() || `速记 ${new Date().toLocaleDateString("zh-CN")}`;
-        const doc = await mmApi.create({ name, description: "", sourceType: "manual", folderId: null });
+        const docName = newDocName.trim() || `速记 ${new Date().toLocaleDateString("zh-CN")}`;
+        const doc = await mmApi.create({ name: docName, description: "", sourceType: "manual", folderId: null });
         targetId = doc.id;
         setDocId(doc.id);
       }
       const f = full && full.document.id === targetId ? full : await mmApi.load(targetId);
       if (!f) throw new Error("文档加载失败");
       const now = new Date().toISOString();
+      const c = normalizeHex(color) ?? kindColor(kind);
       if (mode === "sticker") {
         const id = `s${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         const s = {
-          id, documentId: targetId, content: text.trim(), imageData: "",
-          color: "#fef3c7", positionX: 170 + (f.stickers.length % 5) * 30,
+          id, documentId: targetId, content: name.trim(), imageData: "",
+          color: normalizeHex(color) ?? "#fef3c7", positionX: 170 + (f.stickers.length % 5) * 30,
           positionY: 120 + (f.stickers.length % 5) * 24, createdAt: now, updatedAt: now,
         };
         await mmApi.upsertSticker({ documentId: targetId, sticker: s });
@@ -122,8 +161,8 @@ export default function MindmapQuickPopup() {
       } else if (mode === "root") {
         const n: MindmapNode = {
           id: `n${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          documentId: targetId, parentId: null, name: text.trim(), description: "", detail: "",
-          kind: "root", color: "", progress: 0, planAt: null, positionX: 0, positionY: 0,
+          documentId: targetId, parentId: null, name: name.trim(), description: description.trim(), detail: "",
+          kind, color: c, progress, planAt: planAt.trim() || null, repeat, positionX: 0, positionY: 0,
           createdAt: now, updatedAt: now,
         };
         await mmApi.upsertNode({ documentId: targetId, node: n });
@@ -131,11 +170,10 @@ export default function MindmapQuickPopup() {
       } else {
         const pid = parentId || roots[0]?.id || null;
         if (!pid) {
-          // 没有任何节点 → 作为根
           const n: MindmapNode = {
             id: `n${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            documentId: targetId, parentId: null, name: text.trim(), description: "", detail: "",
-            kind: "root", color: "", progress: 0, planAt: null, positionX: 0, positionY: 0,
+            documentId: targetId, parentId: null, name: name.trim(), description: description.trim(), detail: "",
+            kind: "root", color: c, progress, planAt: planAt.trim() || null, repeat, positionX: 0, positionY: 0,
             createdAt: now, updatedAt: now,
           };
           await mmApi.upsertNode({ documentId: targetId, node: n });
@@ -143,8 +181,8 @@ export default function MindmapQuickPopup() {
         } else {
           const n: MindmapNode = {
             id: `n${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            documentId: targetId, parentId: pid, name: text.trim(), description: "", detail: "",
-            kind: "other", color: "", progress: 0, planAt: null, positionX: 0, positionY: 0,
+            documentId: targetId, parentId: pid, name: name.trim(), description: description.trim(), detail: "",
+            kind, color: c, progress, planAt: planAt.trim() || null, repeat, positionX: 0, positionY: 0,
             createdAt: now, updatedAt: now,
           };
           await mmApi.upsertNode({ documentId: targetId, node: n });
@@ -152,7 +190,9 @@ export default function MindmapQuickPopup() {
           setDone(`已记入「${f.document.name}」→ ${pname}`);
         }
       }
-      setText("");
+      setName("");
+      setDescription("");
+      setPlanAt("");
       // 3 秒后自动隐藏
       window.setTimeout(() => { void hide(); }, 3000);
     } catch (e) {
@@ -160,7 +200,7 @@ export default function MindmapQuickPopup() {
     } finally {
       setBusy(false);
     }
-  }, [text, busy, docId, newDocName, full, mode, parentId, roots]);
+  }, [name, description, busy, docId, newDocName, full, mode, parentId, roots, kind, progress, planAt, repeat, color]);
 
   const hide = useCallback(async () => {
     try { await invoke("hide_mindmap_quick_popup"); } catch { /* 窗口可能已关 */ }
@@ -168,7 +208,7 @@ export default function MindmapQuickPopup() {
 
   useEffect(() => { inputRef.current?.focus(); }, [full, docId]);
 
-  // Esc dentro del popup: cerrar (ocultar) la ventana
+  // Esc 在速记悬浮窗内：关闭（隐藏）窗口
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); void hide(); }
@@ -190,7 +230,7 @@ export default function MindmapQuickPopup() {
         </button>
       </div>
 
-      {/* vex 随口一吹（元气提示） */}
+      {/* Kira 随口一吹（元气提示） */}
       <div className="flex shrink-0 items-center gap-1.5 border-b border-white/5 bg-white/[0.02] px-3 py-1.5">
         <span className="text-[9px] italic leading-snug text-slate-400">
           💬<VexGreeting seconds={10} />
@@ -248,21 +288,96 @@ export default function MindmapQuickPopup() {
           </div>
         )}
 
-        {/* 内容 */}
-        <div className="flex min-h-0 flex-1 flex-col">
-          <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">内容</label>
-          <textarea ref={inputRef} value={text} onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void submit(); }
-            }}
-            placeholder="记点什么… (Ctrl+Enter 记录)"
-            className="min-h-[110px] flex-1 resize-none rounded-md border border-white/10 bg-slate-950/70 px-3 py-2 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
-        </div>
+        {mode === "sticker" ? (
+          <>
+            {/* 贴纸内容 */}
+            <div className="flex min-h-0 flex-1 flex-col">
+              <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">贴纸内容</label>
+              <textarea ref={inputRef} value={name} onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void submit(); }
+                }}
+                placeholder="贴纸上写点什么… (Ctrl+Enter 记录)"
+                className="min-h-[90px] flex-1 resize-none rounded-md border border-white/10 bg-slate-950/70 px-3 py-2 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
+            </div>
+          </>
+        ) : (
+          <>
+            {/* 内容（节点名）—— 手动填写 */}
+            <div className="flex min-h-0 flex-col">
+              <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">内容（节点名）</label>
+              <textarea ref={inputRef} value={name} onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void submit(); }
+                }}
+                placeholder="节点的标题… (Ctrl+Enter 记录)"
+                className="min-h-[56px] resize-none rounded-md border border-white/10 bg-slate-950/70 px-3 py-2 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
+            </div>
+
+            {/* 描述 —— 自动带入前台选区，可改 */}
+            <div className="flex min-h-0 flex-col">
+              <label className="mb-1 flex items-center justify-between text-[9px] uppercase font-semibold text-slate-500">
+                <span>描述</span>
+                <span className="font-normal normal-case text-slate-600">自动带入选中的文本</span>
+              </label>
+              <textarea value={description} onChange={(e) => setDescription(e.target.value)}
+                placeholder="补充说明（选中文字会自动带到这里）…"
+                className="min-h-[46px] resize-none rounded-md border border-white/10 bg-slate-950/70 px-3 py-2 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
+            </div>
+
+            {/* 类型 + 进度 */}
+            <div className="grid grid-cols-[1.2fr_0.8fr] gap-1.5">
+              <div>
+                <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">类型</label>
+                <select value={kind} onChange={(e) => setKind(e.target.value)}
+                  className="h-8 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]">
+                  {KINDS.map((k) => <option key={k} value={k}>{KIND_LABELS[k] ?? k}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">进度 {progress}%</label>
+                <input type="range" min={0} max={100} value={progress} onChange={(e) => setProgress(Number(e.target.value))}
+                  className="h-8 w-full cursor-pointer accent-[var(--mm-accent)]" />
+              </div>
+            </div>
+
+            {/* 计划时间 + 重复 */}
+            <div>
+              <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">计划时间（可空）</label>
+              <div className="flex items-center gap-1.5">
+                <PlanDateTimePicker value={planAt} onChange={(iso) => setPlanAt(iso ?? "")} />
+                <select value={repeat} onChange={(e) => setRepeat(e.target.value)}
+                  className="h-8 flex-1 rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]">
+                  <option value="none">不重复</option>
+                  <option value="daily">每天</option>
+                  <option value="weekly">每周</option>
+                </select>
+              </div>
+            </div>
+
+            {/* 颜色 */}
+            <div>
+              <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">颜色</label>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {COLORS.map((cl) => <button key={cl} type="button" className="h-5 w-5 rounded-full border border-white/20"
+                  style={{ backgroundColor: cl, boxShadow: color === cl ? `0 0 6px ${cl}` : "none" }}
+                  onClick={() => setColor(cl)} />)}
+                <label className="relative inline-flex h-5 w-5 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-white/30" title="自定义颜色">
+                  <input type="color" value={normalizeHex(color) ?? "#22d3ee"} className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                    onChange={(e) => setColor(e.target.value)} />
+                  <span className="h-3 w-3 rounded-full" style={{ background: "conic-gradient(#f87171,#fbbf24,#34d399,#22d3ee,#a78bfa,#f87171)" }} />
+                </label>
+                <button type="button" className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-slate-400 hover:text-white"
+                  onClick={() => setColor("")} title="按类型自动配色">自动</button>
+              </div>
+            </div>
+          </>
+        )}
 
         {error && <div className="rounded-md border border-red-500/20 bg-red-500/10 px-2.5 py-1.5 text-[10px] text-red-300">{error}</div>}
         {done && <div className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-[10px] text-emerald-300">✓ {done}</div>}
 
-        <button onClick={() => void submit()} disabled={busy || !text.trim()}
+        <button onClick={() => void submit()} disabled={busy || !name.trim()}
           className="shrink-0 rounded-lg py-2 text-xs font-semibold text-white disabled:opacity-40"
           style={{ backgroundColor: "var(--mm-accent)" }}>
           {busy ? "记录中…" : mode === "sticker" ? "记为贴纸" : mode === "root" ? "记为新根节点" : "记为子节点"}

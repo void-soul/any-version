@@ -804,7 +804,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
           <div>
             <span className="text-xs font-semibold text-slate-300">项目关联环境变量</span>
             <span className="text-[13px] text-slate-500 ml-1.5">{vars.length} 个变量</span>
-            <p className="text-[13px] text-slate-500 mt-0.5">路径类环境变量由 vex 自动管理，不可手动修改。</p>
+            <p className="text-[13px] text-slate-500 mt-0.5">路径类环境变量由 Kira 自动管理，不可手动修改。</p>
           </div>
           {onRepairEnv && (
             <button
@@ -813,7 +813,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                 onRepairEnv();
               }}
               disabled={isOperating || repairingEnv}
-              title="重新将环境变量和 PATH 校准到 vex links 路径"
+              title="重新将环境变量和 PATH 校准到 Kira links 路径"
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed text-amber-300 border border-amber-500/20 text-[13px] font-semibold cursor-pointer transition-all whitespace-nowrap"
             >
               {repairingEnv ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
@@ -987,7 +987,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
               <h4 className="text-xs font-semibold text-slate-300">系统冲突版本管理器检测</h4>
             </div>
             <p className="text-[13px] text-slate-500 mt-0.5">
-              检测到本机系统上存在以下可能会与 vex 产生冲突的官方或第三方版本管理器。推荐通过禁用它们的环境变量或将其缓存迁移，以实现 vex 独占。
+              检测到本机系统上存在以下可能会与 Kira 产生冲突的官方或第三方版本管理器。推荐通过禁用它们的环境变量或将其缓存迁移，以实现 Kira 独占。
             </p>
           </div>
 
@@ -1133,7 +1133,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                       ) : (
                         <div className="text-[12px] text-emerald-400 font-semibold flex items-center gap-1 bg-emerald-500/5 p-2 rounded-lg border border-emerald-500/10">
                           <Check className="w-3.5 h-3.5 text-emerald-400" />
-                          已完全解除与本机的冲突。vex 对此项目的版本拥有独占控制权。
+                          已完全解除与本机的冲突。Kira 对此项目的版本拥有独占控制权。
                         </div>
                       )}
                     </div>
@@ -1197,7 +1197,7 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
         {externallyRunning && (
           <div className="p-3 rounded-xl border border-sky-500/20 bg-sky-500/10 text-[12px] text-sky-200 flex items-start gap-2">
             <Info className="w-4 h-4 text-sky-400 flex-shrink-0 mt-0.5" />
-            <span>检测到服务正在外部运行{svc.process_name ? `（${svc.process_name}${svc.pid ? `，PID: ${svc.pid}` : ""}）` : ""}。vex 只展示状态，不会接管或停止该外部进程。</span>
+            <span>检测到服务正在外部运行{svc.process_name ? `（${svc.process_name}${svc.pid ? `，PID: ${svc.pid}` : ""}）` : ""}。Kira 只展示状态，不会接管或停止该外部进程。</span>
           </div>
         )}
 
@@ -1524,7 +1524,7 @@ export function LegacyTab({ projectId }: { projectId: string }) {
           <div>
             <h4 className="text-xs font-semibold text-amber-300">托管前旧版数据</h4>
             <p className="text-[13px] text-amber-400/60 mt-0.5">
-              以下数据来自 vex 托管前的备份。取消托管时将从备份还原原始环境变量和 PATH 条目。
+              以下数据来自 Kira 托管前的备份。取消托管时将从备份还原原始环境变量和 PATH 条目。
             </p>
           </div>
         </div>

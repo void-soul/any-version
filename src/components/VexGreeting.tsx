@@ -45,7 +45,7 @@ export default function VexGreeting({
   const color = nameColor ?? "var(--module-accent)";
   return (
     <span>
-      <span className="mr-1 font-semibold" style={{ color }}>vex</span>
+      <span className="mr-1 font-semibold" style={{ color }}>Kira</span>
       {full.slice(0, shown)}
       {shown < full.length && (
         <span className="ml-px inline-block w-[1ch] animate-pulse text-[var(--module-accent)]">▍</span>

@@ -72,7 +72,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Emitter, Manager, Runtime, Webview, WebviewUrl, WebviewWindowBuilder};
 
 const MAIN_WINDOW_LABEL: &str = "main";
-const MAIN_WINDOW_TITLE: &str = "vex 开发助理";
+const MAIN_WINDOW_TITLE: &str = "Kira 开发助理";
 /// 前端「启动」模块的 PageId。主全局热键/托盘恢复/程序启动时打开它。
 const LAUNCHER_MODULE: &str = "launcher";
 const MAIN_WINDOW_WIDTH: f64 = 1150.0;
@@ -143,7 +143,7 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let _ = GLOBAL_APP.set(app.clone());
     let menu = build_menu(app)?;
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
-        .tooltip("vex")
+        .tooltip("Kira")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
@@ -654,7 +654,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         }
     }
 
-    let quit_item = MenuItemBuilder::with_id(ID_QUIT, "退出 vex").build(app)?;
+    let quit_item = MenuItemBuilder::with_id(ID_QUIT, "退出 Kira").build(app)?;
     builder = builder.separator().item(&quit_item);
 
     builder.build()

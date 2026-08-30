@@ -111,6 +111,34 @@ fn ensure_quick_popup(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, St
 /// 打开（或隐藏已聚焦的）思维导图速记悬浮窗，定位到鼠标附近。
 /// 行为切换（toggle）：窗口已存在且聚焦 → 隐藏；否则显示/聚焦并移到光标旁。
 /// 由「思维导图速记」全局快捷键触发（与划词翻译热键同一注册机制）。
+/// 最近一次呼出时读到的前台选中文本，供前端挂载/聚焦后拉取默认填入「内容」。
+static LAST_SELECTION: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+    std::sync::OnceLock::new();
+
+/// 读取前台窗口选中文本并暂存，供前端拉取。
+fn capture_selection() {
+    // 先在后台窗口仍聚焦、选中高亮还没被抢走时模拟 Ctrl+C 读选区。
+    crate::commands::ai::translate::simulate_copy_selection();
+    let selection = {
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        crate::commands::ai::translate::read_clipboard_text()
+    };
+    let slot = LAST_SELECTION.get_or_init(|| std::sync::Mutex::new(None));
+    if let Some(txt) = selection {
+        if !txt.is_empty() {
+            *slot.lock().unwrap() = Some(txt);
+        }
+    }
+    crate::exit_log!("[思维导图速记] 已捕获选区文本");
+}
+
+/// 前端拉取最近一次呼出时捕获的选中文本（拉取后清空，避免旧文案反复填入）。
+#[tauri::command]
+pub fn take_mindmap_quick_selection() -> Option<String> {
+    let slot = LAST_SELECTION.get_or_init(|| std::sync::Mutex::new(None));
+    slot.lock().unwrap().take()
+}
+
 #[tauri::command]
 pub fn open_mindmap_quick_popup(app: tauri::AppHandle) -> Result<(), String> {
     // toggle: 已打开且聚焦 → 直接隐藏（再按一次热键收起）
@@ -121,6 +149,8 @@ pub fn open_mindmap_quick_popup(app: tauri::AppHandle) -> Result<(), String> {
         }
     }
     ensure_quick_popup(&app)?;
+    // 读取前台窗口选中文本，默认填入「内容」——与划词翻译一致。
+    capture_selection();
     // 窗口操作必须在 Tauri 主线程执行
     let app_for_main = app.clone();
     let _ = app.run_on_main_thread(move || {

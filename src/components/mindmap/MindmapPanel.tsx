@@ -68,7 +68,7 @@ const KIND_ICONS: Record<string, (cls: string) => React.ReactNode> = {
   file: (c) => <File className={c} />,
   other: (c) => <Circle className={c} />,
 };
-const KIND_LABELS: Record<string, string> = { root: "根节点", module: "模块", task: "任务", requirement: "需求", constraint: "约束", risk: "风险", component: "组件", service: "服务", route: "路由", config: "配置", file: "文件", other: "其他" };
+export const KIND_LABELS: Record<string, string> = { root: "根节点", module: "模块", task: "任务", requirement: "需求", constraint: "约束", risk: "风险", component: "组件", service: "服务", route: "路由", config: "配置", file: "文件", other: "其他" };
 function normalizeHexColor(value: string | null | undefined): string | null {
   const raw = value?.trim() ?? "";
   if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw;
@@ -586,7 +586,7 @@ function MiniCalendar({ year, month, selected, marked, onSelect, onDropDay }: {
 }
 
 /** 计划时间选择器：日历选日期 + 时间输入，弹层用 portal 避免被弹窗裁剪 */
-function PlanDateTimePicker({ value, onChange }: { value: string; onChange: (iso: string | null) => void }) {
+export function PlanDateTimePicker({ value, onChange }: { value: string; onChange: (iso: string | null) => void }) {
   const btnRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);

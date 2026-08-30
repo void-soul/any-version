@@ -13,16 +13,17 @@ export default function VexBusy({
   /** 伴随语，可为 JSX（如高亮进行中的项名） */
   text?: React.ReactNode;
   avatarSize?: number;
-  /** 加载条主色，默认赛博紫红到青的渐变 */
+  /** 加载条主色，默认跟随当前主题色（--module-accent）到青的渐变 */
   barColor?: string;
 }) {
+  const accent = `var(--module-accent, ${VEX_CYBER_ACCENT})`;
   return (
     <div className="flex items-center gap-3">
       <div className="relative flex-shrink-0">
-        <VexAvatar size={avatarSize} glow={VEX_CYBER_ACCENT} />
+        <VexAvatar size={avatarSize} />
         <span
           className="absolute inset-0 -z-10 animate-ping rounded-full"
-          style={{ boxShadow: `0 0 24px ${VEX_CYBER_ACCENT}` }}
+          style={{ boxShadow: `0 0 24px ${barColor ?? accent}` }}
         />
       </div>
       <div className="min-w-0 flex-1">
@@ -30,7 +31,7 @@ export default function VexBusy({
           <div
             className="h-full rounded-full animate-[vexbusybar_1.3s_ease-in-out_infinite]"
             style={{
-              background: `linear-gradient(90deg, ${barColor ?? VEX_CYBER_ACCENT}, ${VEX_CYBER_CYAN})`,
+              background: `linear-gradient(90deg, ${barColor ?? accent}, ${VEX_CYBER_CYAN})`,
             }}
           />
         </div>

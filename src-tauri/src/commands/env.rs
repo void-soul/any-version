@@ -445,7 +445,7 @@ pub fn set_user_configurable_var(name: String, value: String) -> Result<(), Stri
             "变量 {} 已被项目「{}」托管（{}），不能通过用户自定义设置覆盖。请先取消该项目的环境变量托管。",
             name_trim,
             managed_by,
-            if is_clear { "该变量由工具接管/清空" } else { "该变量指向 vex 管理的路径" }
+            if is_clear { "该变量由工具接管/清空" } else { "该变量指向 Kira 管理的路径" }
         ));
     }
     set_registry_env(&name_trim, &value)

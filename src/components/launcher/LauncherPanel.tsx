@@ -2022,7 +2022,7 @@ export default function LauncherPanel() {
                   <VexAvatar size={44} className="opacity-80" />
                   <div>
                     <p>未找到与「{searchQuery}」相关的快捷方式</p>
-                    <p className="text-[11px] text-slate-600 mt-1">嘿嘿，换个别名或拼音再试试？vex 帮你想～</p>
+                    <p className="text-[11px] text-slate-600 mt-1">嘿嘿，换个别名或拼音再试试？Kira 帮你想～</p>
                   </div>
                 </div>
               ) : (

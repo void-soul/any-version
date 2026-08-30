@@ -4,7 +4,8 @@ import { VEX_AVATAR, VEX_CYBER_ACCENT } from "../utils/brand";
 /**
  * Vex 头像——全 App 统一入口。
  * 资源固定从 public/logo.png（/logo.png）读取：想换头像，替换该文件即可，所有引用同步更新。
- * 自带「生命力」动效：常驻呼吸缩放 + 悬停俏皮歪头；默认带赛博霓虹辉光。
+ * 自带「生命力」动效：常驻呼吸缩放 + 悬停俏皮歪头；默认辉光跟随当前主题色
+ * （--module-accent，未注入时回退默认签名色）。
  */
 export default function VexAvatar({
   size = 32,
@@ -19,10 +20,10 @@ export default function VexAvatar({
   round?: boolean;
   className?: string;
   title?: string;
-  /** 外圈辉光色（赛博主色默认） */
+  /** 外圈辉光色（默认跟随当前主题色） */
   glow?: string;
 }) {
-  const color = glow ?? VEX_CYBER_ACCENT;
+  const color = glow ?? `var(--module-accent, ${VEX_CYBER_ACCENT})`;
   const glowCss = useMemo(
     () => `0 0 ${Math.round(size * 0.4)}px ${color}, 0 0 ${Math.round(size * 1.2)}px ${color}40`,
     [color, size],
@@ -37,8 +38,8 @@ export default function VexAvatar({
         height: size,
         boxShadow: glowCss,
       }}
-      alt="vex"
-      title={title ?? "vex"}
+      alt="Kira"
+      title={title ?? "Kira"}
       draggable={false}
     />
   );

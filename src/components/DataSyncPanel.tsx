@@ -37,9 +37,9 @@ export default function DataSyncPanel() {
   const exportSnapshot = async () => {
     try {
       const filePath = await saveDialog({
-        title: "导出 vex 数据快照",
+        title: "导出 Kira 数据快照",
         defaultPath: `any-version-state-${new Date().toISOString().slice(0, 10)}.json.gz`,
-        filters: [{ name: "vex 数据快照 (压缩)", extensions: ["gz"] }],
+        filters: [{ name: "Kira 数据快照 (压缩)", extensions: ["gz"] }],
       });
       if (!filePath || typeof filePath !== "string") return;
       setBusy(true);
@@ -64,7 +64,7 @@ export default function DataSyncPanel() {
       const selected = await openDialog({
         title: "选择 any-version 数据快照文件",
         filters: [
-          { name: "vex 数据快照 (*.gz, *.json)", extensions: ["gz", "json"] },
+          { name: "Kira 数据快照 (*.gz, *.json)", extensions: ["gz", "json"] },
           { name: "压缩快照 (*.gz)", extensions: ["gz"] },
           { name: "旧版 JSON 快照 (*.json)", extensions: ["json"] },
         ],

@@ -119,7 +119,7 @@ pub fn preview_manage(id: &str, delegation: crate::commands::config::ProjectDele
     if has_path_delegated {
         steps.push(ManageStep {
             action: "clean_path".to_string(),
-            description: "清理 PATH 中的外部 SDK 条目，替换为 vex 管理路径".to_string(),
+            description: "清理 PATH 中的外部 SDK 条目，替换为 Kira 管理路径".to_string(),
             target: id.to_string(),
         });
     }

@@ -416,7 +416,7 @@ const CF_UNICODETEXT: u32 = 13;
 
 /// 模拟 Ctrl+C，把当前前台窗口的选中文本复制到剪贴板。
 /// 若前台窗口无选中文本，剪贴板可能保持不变；由调用方读取后判断是否为空。
-fn simulate_copy_selection() {
+pub(crate) fn simulate_copy_selection() {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
     unsafe {
         let mut inputs: Vec<INPUT> = Vec::with_capacity(4);
@@ -448,7 +448,7 @@ fn simulate_copy_selection() {
 }
 
 /// 读取剪贴板纯文本（需在 OpenClipboard 之后调用）。此处自带重试，避免被占用。
-fn read_clipboard_text() -> Option<String> {
+pub(crate) fn read_clipboard_text() -> Option<String> {
     use windows_sys::Win32::System::DataExchange::*;
     use windows_sys::Win32::System::Memory::*;
     unsafe {

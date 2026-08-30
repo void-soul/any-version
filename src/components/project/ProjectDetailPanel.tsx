@@ -921,7 +921,7 @@ export default function ProjectDetailPanel({
             )}
           </div>
           <p className="text-[10px] text-slate-500 leading-normal">
-            提示：此配置将决定该项目在托盘菜单中的展示以及是否随 vex 启动自动在后台拉起。
+            提示：此配置将决定该项目在托盘菜单中的展示以及是否随 Kira 启动自动在后台拉起。
           </p>
         </div>
       )}
@@ -934,7 +934,7 @@ export default function ProjectDetailPanel({
           <div>
             <p className="text-sm font-medium text-slate-300">{"未检测到本地安装目录"}</p>
             <p className="text-[11px] text-slate-500 mt-1 max-w-sm">
-              {"该项目为简单托管项目，vex 不提供版本下载与安装服务。请先手动指定本地已安装的目录以进行托管管理。"}
+              {"该项目为简单托管项目，Kira 不提供版本下载与安装服务。请先手动指定本地已安装的目录以进行托管管理。"}
             </p>
           </div>
           <button
@@ -952,7 +952,7 @@ export default function ProjectDetailPanel({
               <div>
                 <p className="font-semibold text-slate-200">{"此项目尚未开启托管"}</p>
                 <p className="text-[10px] text-slate-400 mt-0.5">
-                  {"vex 尚未为此项目接管系统环境变量或目录链接。你可以直接在下方“版本列表”中下载和使用版本。如果需要，可在底部点击“托管此项目”开启。"}
+                  {"Kira 尚未为此项目接管系统环境变量或目录链接。你可以直接在下方“版本列表”中下载和使用版本。如果需要，可在底部点击“托管此项目”开启。"}
                 </p>
               </div>
             </div>
@@ -1167,7 +1167,7 @@ export default function ProjectDetailPanel({
                           />
                           <div className="flex flex-col">
                             <span>版本控制与下载</span>
-                            <span className="text-[9px] text-slate-400 font-normal">允许在 vex 内下载多版本</span>
+                            <span className="text-[9px] text-slate-400 font-normal">允许在 Kira 内下载多版本</span>
                           </div>
                         </label>
                       </div>
@@ -1349,7 +1349,7 @@ export default function ProjectDetailPanel({
             {status.managed 
               ? status.is_simple_managed 
                 ? "简单托管中: 环境变量、代理和缓存已配置，不接管版本" 
-                : "托管中: 环境变量和 PATH 已由 vex 管理" 
+                : "托管中: 环境变量和 PATH 已由 Kira 管理" 
               : "未托管: 环境变量由系统或手动管理"}
           </div>
           <div className="flex items-center gap-2">

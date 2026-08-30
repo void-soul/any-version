@@ -65,7 +65,7 @@ fn run_monitor_loop(app: tauri::AppHandle) -> Result<(), String> {
     let instance = unsafe { GetModuleHandleW(std::ptr::null()) };
 
     // 注册窗口类
-    let class_name: Vec<u16> = "vexClipboardMonitor\0".encode_utf16().collect();
+    let class_name: Vec<u16> = "KiraClipboardMonitor\0".encode_utf16().collect();
     let wc = WNDCLASSW {
         style: 0,
         lpfnWndProc: Some(monitor_wnd_proc),

@@ -69,7 +69,7 @@ pub fn set_markdown_assoc(register: bool) -> Result<String, String> {
         if register {
             let (progkey, _) = classes.create_subkey("AnyMarkdown.Document")
                 .map_err(|e| format!("创建 ProgID 失败: {}", e))?;
-            progkey.set_value("", &"vex Markdown 文档")
+            progkey.set_value("", &"Kira Markdown 文档")
                 .map_err(|e| e.to_string())?;
             let (openkey, _) = classes.create_subkey("AnyMarkdown.Document\\shell\\open\\command")
                 .map_err(|e| format!("创建 open 命令失败: {}", e))?;
