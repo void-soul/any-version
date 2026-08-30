@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+/* ─── vex 赛博电子风全局 token ───
+   双色体系：紫红主（--vex-primary，即签名主色）＋ 青点缀（--vex-cyan）。
+   全 App 的 --module-accent 已统一为紫红主色；青色只做描边/点缀，形成明确 duo-tone。 */
+@theme {
+  --color-vex-primary: #ff2d95;
+  --color-vex-cyan: #22d3ee;
+}
+
 /* 皮肤语义 token：统一应用层明暗皮肤。
    模块自己的强调色继续用 --module-accent 系列（App 注入），
    本组 token 是「皮肤层」，两者正交——换肤改这里，模块主题色不变。 */
@@ -33,6 +41,76 @@
 .modal-surface {
   background-color: var(--color-surface-modal);
   border: 1px solid var(--color-border);
+}
+
+/* vex 忙碌态加载条：赛博霓虹流光 */
+@keyframes vexbusybar {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* vex 头像呼吸：常驻轻微缩放，像在轻轻呼吸（生命力） */
+@keyframes vex-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.045);
+  }
+}
+
+.vex-breathe {
+  animation: vex-breathe 3.2s ease-in-out infinite;
+}
+
+/* vex 头像悬停「俏皮眨一下」：轻微放大 + 歪头 */
+.vex-hover:hover {
+  transform: scale(1.12) rotate(-4deg);
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 霓虹发光：给激活态/头像/卡片统一辉光 */
+.vex-neon {
+  box-shadow:
+    0 0 8px color-mix(in srgb, var(--vex-primary, #ff2d95) 45%, transparent),
+    0 0 22px color-mix(in srgb, var(--vex-primary, #ff2d95) 22%, transparent);
+}
+
+/* 赛博渐变描边（紫红→青），用背景渐变+内层遮罩实现 */
+.cyber-border {
+  position: relative;
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--color-surface-modal, #101827), var(--color-surface-modal, #101827)) padding-box,
+    linear-gradient(135deg, var(--vex-primary, #ff2d95), var(--vex-cyan, #22d3ee)) border-box;
+}
+
+/* 赛博网格暗纹背景（tile 网格） */
+.cyber-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* 微扫描线（CRT 质感，低透明度常驻覆盖） */
+.cyber-scanline {
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 2px,
+    rgba(255, 45, 149, 0.018) 3px,
+    transparent 4px
+  );
 }
 
 /* Custom animations */
