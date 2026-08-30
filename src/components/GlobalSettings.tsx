@@ -57,7 +57,6 @@ function ModuleConfigRow({
   pinned,
   hotkey,
   isRecording,
-  onColorChange,
   onToggleToolbar,
   onToggleEnabled,
   onRecordHotkey,
@@ -72,7 +71,6 @@ function ModuleConfigRow({
   pinned: boolean;
   hotkey: string;
   isRecording: boolean;
-  onColorChange: (color: string) => void;
   onToggleToolbar: () => void;
   onToggleEnabled: () => void;
   onRecordHotkey: () => void;
@@ -102,15 +100,6 @@ function ModuleConfigRow({
       {/* 图标 + 标签 */}
       <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color }} />
       <span className="text-[11px] text-slate-300 w-14 truncate flex-shrink-0">{label}</span>
-
-      {/* 主题色 */}
-      <input
-        type="color"
-        value={color}
-        onChange={(e) => onColorChange(e.target.value)}
-        title="模块主题色"
-        className="w-6 h-5 rounded cursor-pointer border border-white/10 bg-transparent p-0 flex-shrink-0"
-      />
 
       {/* 位置：顶栏/更多 */}
       {pinned ? (
@@ -180,6 +169,8 @@ function ModuleConfigRow({
 import type { LauncherSetting } from "./launcher/types";
 import { MODULES } from "../moduleRegistry";
 import DataSyncPanel from "./DataSyncPanel";
+import VexAvatar from "./VexAvatar";
+import VexGreeting from "./VexGreeting";
 
 interface Config {
   versions_dir?: string;
@@ -515,10 +506,6 @@ export default function GlobalSettings() {
   const [fontSearch, setFontSearch] = useState("");
   const [fontRefreshing, setFontRefreshing] = useState(false);
 
-  // 模块默认外观：从统一注册表派生（含全部平级模块，含「更多」里的子工具）。
-  const MODULE_APPEARANCE_DEFAULTS: Record<string, { label: string; color: string }> =
-    Object.fromEntries(MODULES.map((m) => [m.id, { label: m.label, color: m.color }]));
-
   // 模块顺序：优先用户自定义顺序，缺失的模块（新增/子工具）追加到末尾，保证完整。
   const moduleOrderIds = (() => {
     const custom = appearance.moduleOrder;
@@ -648,23 +635,6 @@ export default function GlobalSettings() {
   };
 
   const orderSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
-
-  const handleSetModuleColor = async (moduleId: string, color: string) => {
-    const trimmed = color.trim();
-    const next = { ...appearance.moduleThemeColors };
-    if (trimmed && trimmed !== MODULE_APPEARANCE_DEFAULTS[moduleId]?.color) {
-      next[moduleId] = trimmed;
-    } else {
-      delete next[moduleId];
-    }
-    setAppearance({ ...appearance, moduleThemeColors: next });
-    try {
-      await invoke("set_module_theme_color", { moduleId, color: trimmed });
-      emit("appearance-updated");
-    } catch (e) {
-      console.error("保存模块主题色失败", e);
-    }
-  };
 
   const handleSetGlobalFont = async (font: string) => {
     setAppearance({ ...appearance, globalFont: font });
@@ -1279,6 +1249,26 @@ export default function GlobalSettings() {
         )}
       </div>
 
+      {/* 关于 vex：元气少女名片 */}
+      <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-3">
+        <div className="flex items-center gap-4">
+          <div className="relative flex-shrink-0">
+            <VexAvatar size={56} />
+            <span className="absolute -inset-1 rounded-full blur-md opacity-40 bg-[var(--module-accent)]" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-base font-black tracking-wide text-white">vex</span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]">v{appVersion || "1.0.0"}</span>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-0.5">二次元元气少女 · 活力四射 · 个性张扬</p>
+            <p className="text-[11px] text-slate-300 mt-1 truncate">
+              <VexGreeting />
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* 版本检查与升级 */}
       <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-white/5">
@@ -1632,7 +1622,7 @@ export default function GlobalSettings() {
             <div>
               <h3 className="text-xs font-semibold text-white">外观 (Appearance)</h3>
               <p className="text-[9px] text-slate-500 mt-0.5">
-                为每个顶级模块设置各自的主题色，并配置全局字体
+                全 App 统一于 vex 的赛博电子风主题，这里只配置全局字体
               </p>
             </div>
           </div>
@@ -1705,7 +1695,7 @@ export default function GlobalSettings() {
           <div className="space-y-0.5">
             <p className="text-[11px] font-medium text-slate-200">模块管理</p>
             <p className="text-[9px] text-slate-500">
-              所有模块地位平等。拖动排序、设置主题色、切换顶栏/更多、启用/禁用、录制快捷键，一站式配置。
+              所有模块地位平等。拖动排序、切换顶栏/更多、启用/禁用、录制快捷键，一站式配置。
             </p>
           </div>
           <DndContext sensors={orderSensors} collisionDetection={closestCenter} onDragEnd={handleModuleOrderDragEnd}>
@@ -1725,13 +1715,12 @@ export default function GlobalSettings() {
                       id={id}
                       label={m.label}
                       icon={m.icon}
-                      color={appearance.moduleThemeColors[id] || m.color}
+                      color={m.color}
                       disabled={disabled}
                       inToolbar={inToolbar}
                       pinned={pinned}
                       hotkey={hotkey}
                       isRecording={isRecording}
-                      onColorChange={(c) => handleSetModuleColor(id, c)}
                       onToggleToolbar={() => toggleModuleToolbar(id)}
                       onToggleEnabled={() => toggleModuleEnabled(id)}
                       onRecordHotkey={() => setRecordingField(isRecording ? null : id)}
