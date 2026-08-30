@@ -4,6 +4,9 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Copy, Check, X, Languages, Loader2, ArrowRightLeft } from "lucide-react";
+import VexAvatar from "./VexAvatar";
+import VexGreeting from "./VexGreeting";
+import { VEX_CYBER_ACCENT } from "../utils/brand";
 
 interface TranslateResult {
   source?: string;
@@ -42,6 +45,24 @@ export default function TranslatePopup() {
   const latestRequestIdRef = useRef(0);
 
   const appWindow = getCurrentWindow();
+
+  // 统一赛博电子风主题：不按模块动态设色，悬浮窗固定用 vex 的签名主色。
+  // （本窗口独立于 App，自行注入 --tl-accent 系列。）
+  const translateAccent = VEX_CYBER_ACCENT;
+  const themeVars = {
+    "--tl-accent": translateAccent,
+    "--tl-accent-soft": `color-mix(in srgb, ${translateAccent} 14%, transparent)`,
+    "--tl-accent-ring": `color-mix(in srgb, ${translateAccent} 30%, transparent)`,
+    "--tl-accent-strong": `color-mix(in srgb, ${translateAccent} 85%, white)`,
+  } as React.CSSProperties;
+
+  // 失焦自动隐藏的焦点保护（防「一闪就关」）：
+  // 创建/复用悬浮窗时 Windows/Tauri 会产生焦点振荡（瞬间 blur），误触发自动隐藏。
+  // 记录「挂载时间 + 最近一次真实聚焦」：仅当挂载超过 1s、且聚焦后保持 ≥500ms
+  // 再次失焦时，才认定用户点击了窗口外部而收起悬浮窗。
+  const mountedAtRef = useRef(Date.now());
+  const lastFocusAtRef = useRef(Date.now());
+  const everFocusedRef = useRef(false);
 
   // 关闭/隐藏悬浮窗
   const hidePopup = () => {
@@ -231,7 +252,19 @@ export default function TranslatePopup() {
     // 注意：下拉框（供应商/模型/目标语言）是原生弹窗，会短暂夺走窗口焦点，
     // 用 suppressBlurUntil 防止因此误隐藏。
     const unFocus = appWindow.onFocusChanged(({ payload: focused }) => {
-      if (!focused && Date.now() >= suppressBlurUntil.current) {
+      if (focused) {
+        everFocusedRef.current = true;
+        lastFocusAtRef.current = Date.now();
+        return;
+      }
+      // 创建/复用窗口的焦点震荡保护：
+      // 1. 挂载后 1s 内的 blur 是窗口创建/显示阶段的焦点抖动，忽略；
+      // 2. 从未真正获得过焦点时，不因启动期振荡而收起；
+      // 3. 聚焦后 500ms 内的瞬间失焦（透明窗口 WebView2 重聚焦）也视为抖动忽略。
+      if (Date.now() - mountedAtRef.current < 1000) return;
+      if (!everFocusedRef.current) return;
+      if (Date.now() - lastFocusAtRef.current < 500) return;
+      if (Date.now() >= suppressBlurUntil.current) {
         appWindow.hide();
       }
     });
@@ -310,7 +343,7 @@ export default function TranslatePopup() {
           background-color: transparent !important;
         }
       `}</style>
-      <div className="w-screen h-screen bg-transparent select-none">
+      <div className="w-screen h-screen bg-transparent select-none" style={themeVars}>
         <div
           className="w-full h-full rounded-none border border-white/15 bg-[#1b1d23]/95 shadow-2xl shadow-black/60 overflow-hidden"
           data-tauri-drag-region
@@ -322,7 +355,8 @@ export default function TranslatePopup() {
           style={{ WebkitAppRegion: "drag" } as any}
         >
           <div className="flex items-center gap-1.5 text-slate-300">
-            <Languages className="w-3.5 h-3.5 text-emerald-400" />
+            <VexAvatar size={16} />
+            <Languages className="w-3.5 h-3.5 text-[var(--tl-accent)]" />
             <span className="text-[11px] font-semibold tracking-wide">翻译</span>
             {result?.target && (
               <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/10 text-slate-400">
@@ -338,7 +372,7 @@ export default function TranslatePopup() {
                 className="p-1.5 rounded-md text-slate-400 hover:bg-white/10 hover:text-white cursor-pointer"
                 title="复制译文"
               >
-                {copyOk ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                {copyOk ? <Check className="w-3.5 h-3.5 text-[var(--tl-accent)]" /> : <Copy className="w-3.5 h-3.5" />}
               </button>
             )}
             {/* 关闭 */}
@@ -352,9 +386,16 @@ export default function TranslatePopup() {
           </div>
         </div>
 
+        {/* vex 随口一吹（元气提示） */}
+        <div className="px-3 py-1 border-b border-white/5">
+          <span className="text-[9px] italic text-slate-500 leading-snug">
+            💬<VexGreeting seconds={10} />
+          </span>
+        </div>
+
         {/* 模型选择工具栏（默认继承全局设置，逻辑同翻译模块） */}
         <div className="px-3 py-1.5 border-b border-white/5 flex items-center gap-1.5">
-          <Languages className="w-3 h-3 text-emerald-400 shrink-0" />
+          <Languages className="w-3 h-3 text-[var(--tl-accent)] shrink-0" />
           <select
             value={provId}
             onMouseDown={onSelectOpen}
@@ -415,7 +456,7 @@ export default function TranslatePopup() {
                   className="text-slate-500 hover:text-white hover:bg-white/10 rounded p-1 cursor-pointer"
                   title="复制原文"
                 >
-                  {copySourceOk ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  {copySourceOk ? <Check className="w-3 h-3 text-[var(--tl-accent)]" /> : <Copy className="w-3 h-3" />}
                 </button>
               )}
             </div>
@@ -426,7 +467,7 @@ export default function TranslatePopup() {
                 setSourceText(e.target.value);
               }}
               placeholder="输入或选中文本后按划词热键"
-              className="w-full min-h-[60px] bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500/50 resize-none leading-relaxed"
+              className="w-full min-h-[60px] bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-[var(--tl-accent)] resize-none leading-relaxed"
             />
           </div>
 
@@ -438,7 +479,7 @@ export default function TranslatePopup() {
             <button
               onClick={doTranslate}
               disabled={translating || !sourceText.trim()}
-              className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-emerald-500/90 text-white hover:bg-emerald-500 transition cursor-pointer disabled:opacity-50 flex items-center gap-1"
+              className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-[var(--tl-accent)] text-white hover:bg-[var(--tl-accent-strong)] transition cursor-pointer disabled:opacity-50 flex items-center gap-1"
             >
               <ArrowRightLeft className="w-3 h-3" />
               {translating ? "翻译中…" : "翻译"}
@@ -455,13 +496,13 @@ export default function TranslatePopup() {
                   className="text-slate-500 hover:text-white hover:bg-white/10 rounded p-1 cursor-pointer"
                   title="复制译文"
                 >
-                  {copyOk ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  {copyOk ? <Check className="w-3 h-3 text-[var(--tl-accent)]" /> : <Copy className="w-3 h-3" />}
                 </button>
               )}
             </div>
             {translating ? (
               <div className="flex items-center gap-2 text-slate-400 text-[11px] py-1">
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--tl-accent)]" />
                 翻译中…
               </div>
             ) : result?.error ? (

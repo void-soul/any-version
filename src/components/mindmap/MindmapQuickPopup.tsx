@@ -3,12 +3,23 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Brain, ListTree, Plus, StickyNote, X } from "lucide-react";
 import { mmApi, type MindmapDocument, type DocumentFull, type MindmapNode } from "./types";
+import VexAvatar from "../VexAvatar";
+import VexGreeting from "../VexGreeting";
+import { VEX_CYBER_ACCENT } from "../../utils/brand";
 
 type Mode = "child" | "root" | "sticker";
 
-const ACCENT = "#22d3ee";
-
+// 统一赛博电子风主题：悬浮窗独立于 App，固定用 vex 的签名主色，注入 --mm-accent 系列。
 export default function MindmapQuickPopup() {
+  const accent = VEX_CYBER_ACCENT;
+
+  const themeVars = {
+    "--mm-accent": accent,
+    "--mm-accent-soft": `color-mix(in srgb, ${accent} 12%, transparent)`,
+    "--mm-accent-ring": `color-mix(in srgb, ${accent} 30%, transparent)`,
+    "--mm-accent-strong": `color-mix(in srgb, ${accent} 85%, white)`,
+  } as React.CSSProperties;
+
   const [docs, setDocs] = useState<MindmapDocument[] | null>(null);
   const [docId, setDocId] = useState<string>("");
   const [full, setFull] = useState<DocumentFull | null>(null);
@@ -167,10 +178,11 @@ export default function MindmapQuickPopup() {
   }, [hide]);
 
   return (
-    <div className="h-screen w-screen overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl flex flex-col text-slate-200 select-none">
+    <div className="h-screen w-screen overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl flex flex-col text-slate-200 select-none" style={themeVars}>
       {/* 标题栏（拖拽区） */}
-      <div className="flex shrink-0 cursor-grab items-center gap-2 border-b border-white/10 px-3 py-2 active:cursor-grabbing" onMouseDown={onTitleMouseDown} style={{ backgroundColor: `${ACCENT}14` }}>
-        <Brain className="h-4 w-4" style={{ color: ACCENT }} />
+      <div className="flex shrink-0 cursor-grab items-center gap-2 border-b border-white/10 px-3 py-2 active:cursor-grabbing" onMouseDown={onTitleMouseDown} style={{ backgroundColor: "var(--mm-accent-soft)" }}>
+        <VexAvatar size={18} />
+        <Brain className="h-4 w-4" style={{ color: "var(--mm-accent)" }} />
         <span className="text-xs font-semibold text-white">思维导图速记</span>
         <div className="flex-1" />
         <button className="rounded p-1 text-slate-400 hover:bg-white/10 hover:text-white" onClick={() => void hide()} title="关闭 (Esc)">
@@ -178,18 +190,25 @@ export default function MindmapQuickPopup() {
         </button>
       </div>
 
+      {/* vex 随口一吹（元气提示） */}
+      <div className="flex shrink-0 items-center gap-1.5 border-b border-white/5 bg-white/[0.02] px-3 py-1.5">
+        <span className="text-[9px] italic leading-snug text-slate-400">
+          💬<VexGreeting seconds={10} />
+        </span>
+      </div>
+
       <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
         {/* 目标导图 */}
         <div>
           <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">导图</label>
           {docs && docs.length > 0 ? (
-            <select value={docId} onChange={(e) => setDocId(e.target.value)} className="h-8 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400/60">
+            <select value={docId} onChange={(e) => setDocId(e.target.value)} className="h-8 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]">
               {docs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           ) : (
             <div className="flex gap-1.5">
               <input value={newDocName} onChange={(e) => setNewDocName(e.target.value)} placeholder="新导图名称（可空=「速记 日期」）"
-                className="h-8 min-w-0 flex-1 rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400/60" />
+                className="h-8 min-w-0 flex-1 rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
             </div>
           )}
         </div>
@@ -199,15 +218,15 @@ export default function MindmapQuickPopup() {
           <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">记录为</label>
           <div className="grid grid-cols-3 gap-1.5">
             <button onClick={() => setMode("child")} disabled={!!docs && docs.length === 0 && !newDocName}
-              className={`flex items-center justify-center gap-1 rounded-md border px-2 py-1.5 text-[10px] font-semibold transition ${mode === "child" ? "border-cyan-400/60 bg-cyan-500/15 text-cyan-200" : "border-white/10 bg-white/5 text-slate-400 hover:text-white"}`}>
+              className={`flex items-center justify-center gap-1 rounded-md border px-2 py-1.5 text-[10px] font-semibold transition ${mode === "child" ? "border-[var(--mm-accent-ring)] bg-[var(--mm-accent-soft)] text-[var(--mm-accent-strong)]" : "border-white/10 bg-white/5 text-slate-400 hover:text-white"}`}>
               <Plus className="h-3 w-3" />子节点
             </button>
             <button onClick={() => setMode("root")}
-              className={`flex items-center justify-center gap-1 rounded-md border px-2 py-1.5 text-[10px] font-semibold transition ${mode === "root" ? "border-cyan-400/60 bg-cyan-500/15 text-cyan-200" : "border-white/10 bg-white/5 text-slate-400 hover:text-white"}`}>
+              className={`flex items-center justify-center gap-1 rounded-md border px-2 py-1.5 text-[10px] font-semibold transition ${mode === "root" ? "border-[var(--mm-accent-ring)] bg-[var(--mm-accent-soft)] text-[var(--mm-accent-strong)]" : "border-white/10 bg-white/5 text-slate-400 hover:text-white"}`}>
               <ListTree className="h-3 w-3" />根节点
             </button>
             <button onClick={() => setMode("sticker")}
-              className={`flex items-center justify-center gap-1 rounded-md border px-2 py-1.5 text-[10px] font-semibold transition ${mode === "sticker" ? "border-cyan-400/60 bg-cyan-500/15 text-cyan-200" : "border-white/10 bg-white/5 text-slate-400 hover:text-white"}`}>
+              className={`flex items-center justify-center gap-1 rounded-md border px-2 py-1.5 text-[10px] font-semibold transition ${mode === "sticker" ? "border-[var(--mm-accent-ring)] bg-[var(--mm-accent-soft)] text-[var(--mm-accent-strong)]" : "border-white/10 bg-white/5 text-slate-400 hover:text-white"}`}>
               <StickyNote className="h-3 w-3" />贴纸
             </button>
           </div>
@@ -220,7 +239,7 @@ export default function MindmapQuickPopup() {
             {loadingDoc ? (
               <div className="text-[10px] text-slate-600">加载中…</div>
             ) : childTargets.length > 0 ? (
-              <select value={parentId} onChange={(e) => setParentId(e.target.value)} className="h-8 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400/60">
+              <select value={parentId} onChange={(e) => setParentId(e.target.value)} className="h-8 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]">
                 {childTargets.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
               </select>
             ) : (
@@ -237,7 +256,7 @@ export default function MindmapQuickPopup() {
               if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void submit(); }
             }}
             placeholder="记点什么… (Ctrl+Enter 记录)"
-            className="min-h-[110px] flex-1 resize-none rounded-md border border-white/10 bg-slate-950/70 px-3 py-2 text-xs text-slate-200 outline-none focus:border-cyan-400/60" />
+            className="min-h-[110px] flex-1 resize-none rounded-md border border-white/10 bg-slate-950/70 px-3 py-2 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
         </div>
 
         {error && <div className="rounded-md border border-red-500/20 bg-red-500/10 px-2.5 py-1.5 text-[10px] text-red-300">{error}</div>}
@@ -245,7 +264,7 @@ export default function MindmapQuickPopup() {
 
         <button onClick={() => void submit()} disabled={busy || !text.trim()}
           className="shrink-0 rounded-lg py-2 text-xs font-semibold text-white disabled:opacity-40"
-          style={{ backgroundColor: ACCENT }}>
+          style={{ backgroundColor: "var(--mm-accent)" }}>
           {busy ? "记录中…" : mode === "sticker" ? "记为贴纸" : mode === "root" ? "记为新根节点" : "记为子节点"}
         </button>
       </div>

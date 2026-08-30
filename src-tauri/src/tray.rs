@@ -81,6 +81,7 @@ const MAIN_WINDOW_HEIGHT: f64 = 780.0;
 const TRAY_ID: &str = "main-tray";
 const ID_SHOW: &str = "show";
 const ID_QUIT: &str = "quit";
+const ID_VEX_GREETING: &str = "vex-greeting";
 const ID_EMPTY: &str = "__empty";
 const ID_SWITCH_PREFIX: &str = "switch::";
 const ID_SERVICE_START_PREFIX: &str = "service-start::";
@@ -465,9 +466,27 @@ fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::We
     builder.build()
 }
 
+/// vex 元气问候（托盘失活菜单项）：按时间轮换，托盘每次重建都换一句，让女孩更「活」。
+fn vex_greeting() -> String {
+    const GREETINGS: &[&str] = &[
+        "vex 在此！有什么要整的？",
+        "元气能量，注入——随时待命！",
+        "今天也想帮你干点大事呢！",
+        "vex 在线营业，冲鸭！",
+    ];
+    let secs = now_ms() / 1000;
+    let idx = ((secs / 8) as usize) % GREETINGS.len();
+    format!("💖 {}", GREETINGS[idx])
+}
+
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let show_item = MenuItemBuilder::with_id(ID_SHOW, "显示主窗口").build(app)?;
     let mut builder = MenuBuilder::new(app).item(&show_item).separator();
+    // vex 的问候：置灰失活项，展示角色存在感
+    let vex_item = MenuItemBuilder::with_id(ID_VEX_GREETING, vex_greeting())
+        .enabled(false)
+        .build(app)?;
+    builder = builder.item(&vex_item).separator();
 
     let config = crate::commands::config::load_config();
     let registry = crate::commands::project::registry::registry();
