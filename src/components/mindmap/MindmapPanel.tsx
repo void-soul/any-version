@@ -8,6 +8,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { MindmapMarkdown } from "./MindmapMarkdown";
+import VexEmptyState from "../VexEmptyState";
 import {
   AlertTriangle, Brain, Circle, File, Folder, FolderOpen, LayoutGrid, Lightbulb, Loader2, Lock, Puzzle,
   Route, ScrollText, Server, Settings, Sparkles, StickyNote, Image, Trash2, X, Plus, Pencil, Eye, Columns,
@@ -854,7 +855,7 @@ function PlanCalendarModal({ onPick, onClose, onAddPlan, onMoveOccurrence }: {
               {loading ? (
                 <div className="flex h-full items-center justify-center text-[10px] text-slate-500"><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />加载中…</div>
               ) : dayPlans.length === 0 ? (
-                <div className="flex h-full items-center justify-center text-[10px] text-slate-600">当天暂无计划</div>
+                <VexEmptyState title="这天还没安排～" desc="给节点双击设个计划时间吧" avatarSize={34} className="!py-6" />
               ) : dayPlans.map(renderPlan)}
             </div>
             {occ.length === 0 && !loading && (
@@ -981,7 +982,7 @@ type NodeCacheEntry = {
   obj: Node;
 };
 
-function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onAiText, onError, onOpenCalendar, focusRequest }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onAiText: () => void; onError: (message: string) => void; onOpenCalendar: () => void; focusRequest: { nodeId: string; ts: number } | null }) {
+function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onAiText, onError, onOpenCalendar, focusRequest, onFocusHandled }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onAiText: () => void; onError: (message: string) => void; onOpenCalendar: () => void; focusRequest: { nodeId: string; ts: number } | null; onFocusHandled: () => void }) {
   const { fitView } = useReactFlow();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1021,6 +1022,9 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     ? full.document.backgroundTexture
     : "dots") as BackgroundTexture;
   const byId = useMemo(() => new Map(graphNodes.map((n) => [n.id, n])), [graphNodes]);
+  // focusRequest effect 需要读取最新节点但又不依赖 byId 变化（避免弹窗被重开），用 ref 镜像
+  const byIdRef = useRef(byId);
+  useEffect(() => { byIdRef.current = byId; }, [byId]);
   // 布局方向（画布级设置）：切换后自动重排并持久化；初始值取该文档保存的方向
   const [dir, setDir] = useState<LayoutDir>(() => (isLayoutDir(full.document.layoutDir) ? full.document.layoutDir : "lr"));
   const layout = useMemo(() => layoutTree(graphNodes, dir), [graphNodes, dir]);
@@ -1248,17 +1252,20 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
 
   useEffect(() => { const t = window.setTimeout(() => fitView({ padding: 0.2, duration: 260 }), 0); return () => window.clearTimeout(t); }, [fitView, full.document.id, collapsed]);
 
-  // 计划日历点击节点 → 选中并打开详情，同时把视口聚焦到该节点（重复点击用 ts 区分）
+  // 计划日历点击节点 → 选中并打开详情，同时把视口聚焦到该节点（重复点击用 ts 区分）。
+  // 只用 ref 读取节点、不依赖 byId：处理完立即回调清除 focusRequest，避免 byId 变化时
+  // effect 重跑 → 把用户刚关闭的详情弹窗又打开（「弹窗关不掉」bug）。
   useEffect(() => {
     if (!focusRequest) return;
-    const n = byId.get(focusRequest.nodeId);
+    const n = byIdRef.current.get(focusRequest.nodeId);
+    onFocusHandled();
     if (!n) return;
     setSelectedId(n.id);
     setDetailNode(n);
     const t = window.setTimeout(() => fitView({ nodes: [{ id: n.id }], padding: 0.4, duration: 300, maxZoom: 1.2 }), 60);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusRequest, byId]);
+  }, [focusRequest]);
 
   const updateNode = useCallback((patch: Partial<MindmapNode>) => {
     if (!detailNode) return;
@@ -1492,8 +1499,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   );
 }
 
-function Canvas({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onAiText, onError, onOpenCalendar, focusRequest }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onAiText: () => void; onError: (message: string) => void; onOpenCalendar: () => void; focusRequest: { nodeId: string; ts: number } | null }) {
-  return <div className="h-full min-h-0 bg-[#080f1c]"><ReactFlowProvider><CanvasInner full={full} accent={accent} onDocumentUpdate={onDocumentUpdate} onHistoryPush={onHistoryPush} historyVersion={historyVersion} onAiProject={onAiProject} onAiText={onAiText} onError={onError} onOpenCalendar={onOpenCalendar} focusRequest={focusRequest} /></ReactFlowProvider></div>;
+function Canvas({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onAiText, onError, onOpenCalendar, focusRequest, onFocusHandled }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onAiText: () => void; onError: (message: string) => void; onOpenCalendar: () => void; focusRequest: { nodeId: string; ts: number } | null; onFocusHandled: () => void }) {
+  return <div className="h-full min-h-0 bg-[#080f1c]"><ReactFlowProvider><CanvasInner full={full} accent={accent} onDocumentUpdate={onDocumentUpdate} onHistoryPush={onHistoryPush} historyVersion={historyVersion} onAiProject={onAiProject} onAiText={onAiText} onError={onError} onOpenCalendar={onOpenCalendar} focusRequest={focusRequest} onFocusHandled={onFocusHandled} /></ReactFlowProvider></div>;
 }
 
 // ════════════ 主面板 ════════════
@@ -2204,7 +2211,7 @@ export default function MindmapPanel() {
               </div>
             </div>
           ) : full ? (
-            <Canvas full={full} accent={ACCENT} onDocumentUpdate={onDocumentUpdated} onHistoryPush={commitHistory} historyVersion={historyVersion} onAiProject={() => setShowAi("project")} onAiText={() => setShowAi("text")} onError={setError} onOpenCalendar={openCalendar} focusRequest={calFocus} />
+            <Canvas full={full} accent={ACCENT} onDocumentUpdate={onDocumentUpdated} onHistoryPush={commitHistory} historyVersion={historyVersion} onAiProject={() => setShowAi("project")} onAiText={() => setShowAi("text")} onError={setError} onOpenCalendar={openCalendar} focusRequest={calFocus} onFocusHandled={() => setCalFocus(null)} />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-4 text-slate-500">
               <div className="rounded-full border border-white/10 p-4"><Brain className="h-10 w-10" style={{ color: ACCENT }} /></div>

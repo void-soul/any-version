@@ -3,9 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { Copy, Check, X, Languages, Loader2, ArrowRightLeft } from "lucide-react";
+import { Copy, Check, X, Languages, ArrowRightLeft } from "lucide-react";
 import VexAvatar from "./VexAvatar";
 import VexGreeting from "./VexGreeting";
+import VexBusy from "./VexBusy";
 import { VEX_CYBER_ACCENT } from "../utils/brand";
 
 interface TranslateResult {
@@ -501,10 +502,7 @@ export default function TranslatePopup() {
               )}
             </div>
             {translating ? (
-              <div className="flex items-center gap-2 text-slate-400 text-[11px] py-1">
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--tl-accent)]" />
-                翻译中…
-              </div>
+              <VexBusy text="vex 正在努力翻译…" avatarSize={32} />
             ) : result?.error ? (
               <div className="text-[11px] text-red-400 leading-relaxed whitespace-pre-wrap break-words">
                 {result.result}

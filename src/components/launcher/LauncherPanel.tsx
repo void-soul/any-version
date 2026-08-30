@@ -65,7 +65,8 @@ import { matchPinyin } from "./pinyin";
 import CategoryModal from "./CategoryModal";
 import AddItemModal from "./AddItemModal";
 import VexAvatar from "../VexAvatar";
-import { greetingAt } from "../../utils/brand";
+import VexBusy from "../VexBusy";
+import VexGreeting from "../VexGreeting";
 
 // ---------- dnd-kit 辅助组件（模块级，避免渲染期内重新挂载破坏排序动画） ----------
 
@@ -283,8 +284,7 @@ export default function LauncherPanel() {
 
   // 视图设置面板开关
   const [viewSettingsOpen, setViewSettingsOpen] = useState(false);
-  // vex 元气问候：轮换欢迎语，让程序更有生命力
-  const [greetIdx, setGreetIdx] = useState(0);
+
   const viewSettingsRef = useRef<HTMLDivElement>(null);
 
   // Drag & Drop State
@@ -412,12 +412,6 @@ export default function LauncherPanel() {
 
   useEffect(() => {
     loadData();
-  }, []);
-
-  // 轮换 vex 问候语（8s 一换）
-  useEffect(() => {
-    const t = window.setInterval(() => setGreetIdx((i) => i + 1), 8000);
-    return () => window.clearInterval(t);
   }, []);
 
   // 从持久化的检测结果恢复红框标识（data.exists 为 false 的项目）
@@ -1672,41 +1666,25 @@ export default function LauncherPanel() {
         </div>
       </div>
 
-      {/* Vex 元气问候（生命力）：头像 + 轮换欢迎语 */}
+      {/* Vex 元气问候（生命力）：头像 + 时段开场白 + 轮换问候 */}
       <div className="flex items-center gap-2.5 px-4 py-1.5 bg-[var(--module-accent)]/5 border-b border-white/5 flex-shrink-0">
         <VexAvatar size={26} />
-        <span className="text-[11px] text-slate-300 truncate animate-in fade-in duration-500" key={greetIdx}>
-          <span className="text-[var(--module-accent)] font-semibold mr-1">vex</span>
-          {greetingAt(greetIdx)}
+        <span className="text-[11px] text-slate-300 truncate">
+          <VexGreeting />
         </span>
       </div>
 
-      {/* 检测进度条（使用「启动」主题色：紫色） */}
+      {/* 检测进度条（vex 忙碌小助手） */}
       {checkProgress && (
-        <div className="h-9 px-4 flex items-center gap-3 bg-[#0c101c] border-b border-white/5 flex-shrink-0 animate-in slide-in-from-top-2 duration-150">
-          <div className="flex items-center gap-1.5 text-[11px] text-slate-400 whitespace-nowrap min-w-0">
-            <Loader2 className="w-3.5 h-3.5 text-[var(--module-accent)] animate-spin flex-shrink-0" />
-            <span className="truncate">
-              {checkProgress.name
-                ? <>正在检测 <span className="text-[var(--module-accent)]">{checkProgress.name}</span></>
-                : "正在检测"}
-            </span>
-          </div>
-          <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-r from-[var(--module-accent)] to-[var(--module-accent-strong)] rounded-full transition-all duration-200"
-              style={{
-                width: `${checkProgress.total > 0 ? Math.round((checkProgress.done / checkProgress.total) * 100) : 0}%`,
-              }}
-            />
-          </div>
-          <div className="text-[11px] text-slate-400 whitespace-nowrap tabular-nums">
-            {checkProgress.done}/{checkProgress.total}
-          </div>
+        <div className="flex items-center gap-2 px-4 py-1.5 bg-[#0c101c] border-b border-white/5 flex-shrink-0 animate-in slide-in-from-top-2 duration-150">
+          <VexBusy
+            avatarSize={26}
+            text={checkProgress.name ? <>正在检测 <span className="text-[var(--module-accent)]">{checkProgress.name}</span> · {checkProgress.done}/{checkProgress.total}</> : `正在检测 ${checkProgress.done}/${checkProgress.total}…`}
+          />
           {checking && (
             <button
               onClick={stopCheck}
-              className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-red-600/20 border border-red-500/40 text-red-300 hover:bg-red-600/30 transition cursor-pointer whitespace-nowrap"
+              className="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-medium bg-red-600/20 border border-red-500/40 text-red-300 hover:bg-red-600/30 transition cursor-pointer"
               title="停止检测"
             >
               停止
