@@ -650,6 +650,16 @@ pub async fn download_bin_assets(app: tauri::AppHandle) -> Result<(), String> {
     let install_dir = resolve_bin_install_dir();
     std::fs::create_dir_all(&install_dir).map_err(|e| e.to_string())?;
 
+    // 托盘状态灯：下载/解压期间琥珀（忙碌），函数无论成败退出都自动清除
+    let _ = crate::tray::set_tray_status_badge(&app, Some((251, 191, 36)));
+    struct BadgeGuard(tauri::AppHandle);
+    impl Drop for BadgeGuard {
+        fn drop(&mut self) {
+            let _ = crate::tray::set_tray_status_badge(&self.0, None);
+        }
+    }
+    let _badge = BadgeGuard(app.clone());
+
     // 1) 下载到临时 zip
     let tmp_zip = install_dir.join("any-version-bin.tmp.zip");
     let client = reqwest::Client::builder()

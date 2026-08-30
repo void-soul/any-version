@@ -296,23 +296,34 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// 在托盘图标右上角叠加红点（计划提醒徽标）；show=false 恢复原始图标。
-pub(crate) fn set_tray_badge(app: &AppHandle, show: bool) -> Result<(), String> {
+/// 计划提醒红点是否开启（优先级高于状态光环：提醒不能丢）。
+static PLAN_BADGE_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 在托盘图标右上角叠加状态光环；color=None 恢复原始图标。
+/// 颜色语义（vex 状态灯）：红=提醒，绿=服务运行中，琥珀=忙碌（下载/安装），青=待命。
+/// 计划提醒红点（PLAN_BADGE_ON）优先级最高：开启时无论请求什么颜色都保持红色。
+pub(crate) fn set_tray_status_badge(app: &AppHandle, color: Option<(u8, u8, u8)>) -> Result<(), String> {
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return Ok(()) };
     let Some(base) = app.default_window_icon() else { return Ok(()) };
     let mut img = image::RgbaImage::from_raw(base.width(), base.height(), base.rgba().to_vec())
         .ok_or_else(|| "读取默认图标失败".to_string())?;
-    if show {
+    // 提醒优先：计划红点开着时，状态光环让位
+    let color = if PLAN_BADGE_ON.load(std::sync::atomic::Ordering::SeqCst) {
+        Some((255, 59, 48))
+    } else {
+        color
+    };
+    if let Some((r, g, b)) = color {
         let dot = ((img.width() as f32) * 0.30).round().max(6.0) as i64;
         let cx = img.width() as i64 - dot / 2 - 2;
         let cy = dot / 2 + 2;
-        let r = dot / 2;
+        let rad = dot / 2;
         for y in 0..img.height() {
             for x in 0..img.width() {
                 let dx = x as i64 - cx;
                 let dy = y as i64 - cy;
-                if dx * dx + dy * dy <= r * r {
-                    img.put_pixel(x, y, image::Rgba([255, 59, 48, 255]));
+                if dx * dx + dy * dy <= rad * rad {
+                    img.put_pixel(x, y, image::Rgba([r, g, b, 255]));
                 }
             }
         }
@@ -321,6 +332,13 @@ pub(crate) fn set_tray_badge(app: &AppHandle, show: bool) -> Result<(), String> 
     let icon = tauri::image::Image::new_owned(img.into_raw(), w, h);
     tray.set_icon(Some(icon)).map_err(|e| format!("更新托盘图标失败: {}", e))?;
     Ok(())
+}
+
+/// 在托盘图标右上角叠加红点（计划提醒徽标）；show=false 恢复原始图标。
+/// 兼容旧调用，语义不变。
+pub(crate) fn set_tray_badge(app: &AppHandle, show: bool) -> Result<(), String> {
+    PLAN_BADGE_ON.store(show, std::sync::atomic::Ordering::SeqCst);
+    set_tray_status_badge(app, if show { Some((255, 59, 48)) } else { None })
 }
 
 pub fn rebuild_tray_menu(app: &AppHandle) -> tauri::Result<()> {

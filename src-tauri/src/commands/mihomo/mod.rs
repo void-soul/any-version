@@ -771,6 +771,8 @@ pub async fn mihomo_start(app: AppHandle, state: State<'_, MihomoState>) -> Resu
     if need_proxy {
         set_sys_proxy(&state, true)?;
     }
+    // 托盘状态灯：代理运行中 → 绿色光环
+    let _ = crate::tray::set_tray_status_badge(&app, Some((16, 185, 129)));
     Ok(())
 }
 
@@ -781,6 +783,8 @@ pub async fn mihomo_stop(app: AppHandle, state: State<'_, MihomoState>) -> Resul
     if need_proxy {
         set_sys_proxy(&state, false)?;
     }
+    // 托盘状态灯：停止 → 恢复（计划红点仍会优先保留）
+    let _ = crate::tray::set_tray_status_badge(&app, None);
     emit_state(&app, &state);
     Ok(())
 }
