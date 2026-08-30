@@ -1,10 +1,10 @@
 import { useMemo } from "react";
-import { VEX_AVATAR } from "../utils/brand";
+import { VEX_AVATAR, VEX_CYBER_ACCENT } from "../utils/brand";
 
 /**
  * Vex 头像（二次元元气少女）——全 App 统一入口。
  * 资源固定从 public/logo.png（/logo.png）读取：想换头像，替换该文件即可，所有引用同步更新。
- * 附带轻微的「生命力」动效：常驻呼吸缩放 + 悬停时俏皮眨一下（可关）。
+ * 自带「生命力」动效：常驻呼吸缩放 + 悬停俏皮歪头；默认带赛博霓虹辉光。
  */
 export default function VexAvatar({
   size = 32,
@@ -19,25 +19,23 @@ export default function VexAvatar({
   round?: boolean;
   className?: string;
   title?: string;
-  /** 外圈辉光色（模块主题色等），不传则用默认紫 */
+  /** 外圈辉光色（赛博主色默认） */
   glow?: string;
 }) {
+  const color = glow ?? VEX_CYBER_ACCENT;
   const glowCss = useMemo(
-    () =>
-      glow
-        ? `0 0 ${Math.round(size * 0.4)}px ${glow}, 0 0 ${Math.round(size * 1.2)}px ${glow}33`
-        : undefined,
-    [glow, size],
+    () => `0 0 ${Math.round(size * 0.4)}px ${color}, 0 0 ${Math.round(size * 1.2)}px ${color}40`,
+    [color, size],
   );
 
   return (
     <img
       src={VEX_AVATAR}
-      className={`object-cover select-none ${round ? "rounded-full" : "rounded-lg"} ${className}`}
+      className={`object-cover select-none vex-breathe vex-hover ${round ? "rounded-full" : "rounded-lg"} ${className}`}
       style={{
         width: size,
         height: size,
-        boxShadow: glow ? glowCss : undefined,
+        boxShadow: glowCss,
       }}
       alt="vex"
       title={title ?? "vex"}

@@ -6,7 +6,8 @@ import { X, Minus, Square, Download, AlertTriangle, Loader2, FolderOpen, Chevron
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { MODULES, MODULE_MAP, resolveModuleLayout } from "./moduleRegistry";
 import VexAvatar from "./components/VexAvatar";
-import { VEX_CYBER_ACCENT } from "./utils/brand";
+import { VEX_CYBER_ACCENT, VEX_CYBER_CYAN, timeGreeting } from "./utils/brand";
+import { vexSay, onVexSay, type VexSayKind } from "./utils/vexSay";
 import "./App.css";
 
 // 模块 id 即字符串（所有模块平级）。
@@ -53,6 +54,56 @@ export default function App() {
     phase: string;
   }>({ downloaded: 0, total: 0, speed: "", phase: "" });
   const [binError, setBinError] = useState<string | null>(null);
+  // 启动欢迎 toast：vex 按时间段冒一句开场白，几秒后自动收起
+  const [welcomeToast, setWelcomeToast] = useState(true);
+  useEffect(() => {
+    if (!welcomeToast) return;
+    const t = window.setTimeout(() => setWelcomeToast(false), 6500);
+    return () => window.clearTimeout(t);
+  }, [welcomeToast]);
+
+  // 冷启动闪屏：vex 赛博 Logo + 进度条，短暂铺满后淡出，替代白屏
+  const [booting, setBooting] = useState(true);
+  useEffect(() => {
+    const t = window.setTimeout(() => setBooting(false), 1500);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  // 初次见面：三步引导卡（localStorage 记忆，只看一次）
+  const [introOpen, setIntroOpen] = useState(false);
+  const [introStep, setIntroStep] = useState(0);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("vex_intro_seen") === "1") return;
+      const t = window.setTimeout(() => setIntroOpen(true), 900);
+      return () => window.clearTimeout(t);
+    } catch {
+      /* localStorage 不可用则跳过引导 */
+    }
+  }, []);
+  const finishIntro = () => {
+    try {
+      localStorage.setItem("vex_intro_seen", "1");
+    } catch {
+      /* ignore */
+    }
+    setIntroOpen(false);
+  };
+
+  // vex 事件伴随语 toast（vexSay 全局总线，自动收起）
+  const [vexToast, setVexToast] = useState<{ msg: string; kind: VexSayKind; id: number } | null>(null);
+  useEffect(() => {
+    let tid: ReturnType<typeof setTimeout> | null = null;
+    const off = onVexSay((msg, kind) => {
+      setVexToast({ msg, kind, id: Date.now() });
+      if (tid) window.clearTimeout(tid);
+      tid = window.setTimeout(() => setVexToast(null), 4200);
+    });
+    return () => {
+      off();
+      if (tid) window.clearTimeout(tid);
+    };
+  }, []);
   // 数据目录（全局路径 data_dir）：首次启动下载运行组件前可先选择存储位置
   const [binDataDir, setBinDataDir] = useState("");
   const [binOldDataDir, setBinOldDataDir] = useState("");
@@ -211,8 +262,10 @@ export default function App() {
     try {
       await invoke("download_bin_assets");
       setBinAssets(null); // 关闭模态
+      vexSay("运行组件都备齐啦，随时可以开工！✨", "success");
     } catch (e) {
       setBinError(typeof e === "string" ? e : String(e));
+      vexSay("唔…下载这步卡住了，vex 帮你看看是哪出岔子", "error");
     } finally {
       unlisten();
       setBinDownloading(false);
@@ -266,10 +319,113 @@ export default function App() {
 
   return (
     <div
-      className="w-screen h-screen overflow-hidden bg-[#0d111d] text-slate-100 flex flex-col"
+      className="w-screen h-screen overflow-hidden bg-[#0d111d] text-slate-100 flex flex-col cyber-grid"
       style={{ fontFamily: effectiveFontFamily }}
     >
       {fontFaceCss && <style>{fontFaceCss}</style>}
+
+      {/* 冷启动闪屏：vex 赛博 Logo + 进度，替代白屏 */}
+      {booting && (
+        <div className="fixed inset-0 z-[10000] flex flex-col items-center justify-center gap-6 bg-[#0b101b] cyber-grid">
+          <div className="relative">
+            <span className="absolute -inset-3 rounded-full blur-xl opacity-60" style={{ background: `radial-gradient(circle, ${VEX_CYBER_ACCENT}55, transparent 70%)` }} />
+            <VexAvatar size={92} className="relative" />
+          </div>
+          <div className="text-center">
+            <div className="text-xl font-black tracking-[0.35em] text-white">
+              v<span className="text-[var(--module-accent)]">e</span>x
+            </div>
+            <div className="mt-1 text-[10px] tracking-[0.3em] text-slate-500">CYBER ASSISTANT</div>
+          </div>
+          <div className="h-1 w-48 overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-full rounded-full animate-[vexbusybar_1.1s_ease-in-out_infinite]"
+              style={{ background: `linear-gradient(90deg, ${VEX_CYBER_ACCENT}, ${VEX_CYBER_CYAN})` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {welcomeToast && (
+        <div className="fixed left-1/2 top-14 z-[200] -translate-x-1/2 pointer-events-none animate-in fade-in slide-in-from-top-3 duration-500">
+          <div className="glass-panel rounded-2xl border border-white/10 px-4 py-2.5 shadow-2xl shadow-black/50 flex items-center gap-3">
+            <VexAvatar size={30} />
+            <div className="text-[11px] text-slate-200">
+              <span className="mr-1 font-semibold text-[var(--module-accent)]">vex</span>
+              <span className="text-slate-300">{timeGreeting()}</span>
+              <span className="ml-1.5 text-slate-500">一切就绪，带劲儿开工！</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* vex 事件伴随语 toast（成功/报错统一人设） */}
+      {vexToast && (
+        <div
+          key={vexToast.id}
+          className="fixed left-1/2 top-14 z-[210] -translate-x-1/2 animate-in fade-in slide-in-from-top-3 duration-300"
+        >
+          <div
+            className={`flex items-center gap-2.5 rounded-2xl border px-4 py-2.5 shadow-2xl shadow-black/50 backdrop-blur-md ${
+              vexToast.kind === "error"
+                ? "border-red-500/40 bg-[#1a1016]/90"
+                : vexToast.kind === "success"
+                  ? "border-emerald-500/30 bg-[#0f1a16]/90"
+                  : "border-white/10 bg-[#12151f]/90"
+            }`}
+          >
+            <VexAvatar size={26} />
+            <span className="text-[11px] text-slate-200">{vexToast.msg}</span>
+          </div>
+        </div>
+      )}
+
+      {/* 初次见面：三步引导卡 */}
+      {introOpen && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="cyber-border w-[380px] max-w-[92vw] rounded-2xl p-6 shadow-2xl shadow-black/60">
+            <div className="flex items-center gap-3">
+              <VexAvatar size={46} />
+              <div>
+                <div className="text-sm font-black text-white">hi，我是 vex！</div>
+                <div className="text-[10px] text-slate-400">二次元元气少女 · 赛博小助手</div>
+              </div>
+            </div>
+            <div className="mt-4 min-h-[72px] text-[12px] leading-relaxed text-slate-300">
+              {introStep === 0 && (
+                <>我会一直在你身边：顶栏、落地页、悬浮窗、托盘里都有我的身影，随时陪你干活～</>
+              )}
+              {introStep === 1 && (
+                <>背景任务完成我会第一时间报喜，卡住了也会帮你盯着。需要时记得按模块热键呼出我～</>
+              )}
+              {introStep === 2 && (
+                <>现在，想先从哪个模块开工？选一个，我们冲！⚡</>
+              )}
+            </div>
+            <div className="mt-5 flex items-center justify-between">
+              <div className="flex gap-1">
+                {[0, 1, 2].map((i) => (
+                  <span key={i} className={`h-1 w-4 rounded-full ${i === introStep ? "bg-[var(--module-accent)]" : "bg-white/15"}`} />
+                ))}
+              </div>
+              <div className="flex gap-2">
+                {introStep < 2 ? (
+                  <>
+                    <button onClick={finishIntro} className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:text-white transition cursor-pointer">跳过</button>
+                    <button onClick={() => setIntroStep((s) => s + 1)} className="px-4 py-1.5 rounded-lg text-[11px] font-semibold text-white transition cursor-pointer" style={{ background: VEX_CYBER_ACCENT }}>下一步 →</button>
+                  </>
+                ) : (
+                  <button onClick={finishIntro} className="px-5 py-1.5 rounded-lg text-[11px] font-semibold text-white transition cursor-pointer" style={{ background: `linear-gradient(90deg, ${VEX_CYBER_ACCENT}, ${VEX_CYBER_CYAN})` }}>开始干活！⚡</button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 微扫描线质感层 */}
+      <div className="cyber-scanline fixed inset-0 z-[9998]" />
+
       {/* top bar */}
       <div className="flex-shrink-0 h-11 flex items-center justify-between px-3 border-b border-white/5 bg-[#0e1220]/80 backdrop-blur-md z-50" data-tauri-drag-region>
         {/* Left: Logo + Name + Navigation Capsule */}

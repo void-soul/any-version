@@ -5,6 +5,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { DatabaseBackup, Loader2, FolderDown, FolderUp } from "lucide-react";
+import { vexSay } from "../utils/vexSay";
 
 interface ExportResult {
   path: string;
@@ -48,8 +49,10 @@ export default function DataSyncPanel() {
       setMsg(
         `已导出全量快照：${res.fileCount} 个文件 / ${fmtSize(res.sizeBytes)}（压缩后 ${fmtSize(res.compressedBytes)}）`,
       );
+      vexSay("快照打包好啦，你的数据由 vex 看着，稳！📦", "success");
     } catch (e) {
       setMsg(`导出失败：${e}`);
+      vexSay("唔…导出这步卡住了，vex 帮你看看", "error");
     } finally {
       setBusy(false);
     }
@@ -72,8 +75,10 @@ export default function DataSyncPanel() {
       setMsg("");
       const res = await invoke<string>("state_sync_import", { path: selected });
       setMsg(res);
+      vexSay("恢复完成！数据都归位了，vex 帮你确认过～ ✅", "success");
     } catch (e) {
       setMsg(`导入失败：${e}`);
+      vexSay("唔…恢复这步卡住了，先别急，vex 看看备份还在不在", "error");
     } finally {
       setBusy(false);
     }

@@ -29,6 +29,19 @@ export function greetingAt(index: number): string {
   return VEX_GREETINGS[Math.abs(index) % VEX_GREETINGS.length];
 }
 
+/// 按时段返回开场白（对话式，拟真人）：早上/上午/中午/下午/晚上/深夜。
+/// 供启动欢迎 toast 与时间感知问候使用。
+export function timeGreeting(d: Date = new Date()): string {
+  const h = d.getHours();
+  if (h < 5) return "夜深了还在忙，注意休息呀！";
+  if (h < 9) return "早上好！元气满满开工吧！";
+  if (h < 12) return "上午好！今天也要活力四射哦！";
+  if (h < 14) return "中午好！记得吃口热乎的～";
+  if (h < 18) return "下午好！还有大事等我们干呢！";
+  if (h < 22) return "晚上好！vex 陪你搞点事情～";
+  return "夜猫子组报到！继续冲鸭！";
+}
+
 // ─── 签名赛博电子风主题（统一主色，不再每模块单独设色） ───
 
 /// 主强调色（赛博电光紫红）：全 App 的 --module-accent 统一用它，
