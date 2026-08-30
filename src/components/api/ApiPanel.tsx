@@ -24,6 +24,7 @@ import {
 } from "./panelParts";
 import { PresetHeadersModal, EnvModal, ProjectModal, ModuleModal } from "./panelModals";
 import { LoadReportView } from "./panelReport";
+import VexEmptyState from "../VexEmptyState";
 import { EndpointRow, UnitTestsPanel, DocsPanel, ImportModal } from "./panelSubs";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { SharedModal } from "../shared/Modal";
@@ -971,9 +972,13 @@ export default function ApiPanel() {
               </div>
             </>
           ) : (
-            <div className="flex-1 flex items-center justify-center text-[11px] text-slate-600 px-4 text-center">
-              暂无项目，点击上方「+」新建
-            </div>
+            <VexEmptyState
+              title="这里还没有项目"
+              desc="点上方「 + 」新建第一个"
+              tick="从建一个项目开始"
+              avatarSize={38}
+              className="flex-1 !py-10"
+            />
           )}
 
           {/* 宽度拖拽把手 + 收起按钮（侧边栏右侧） */}

@@ -487,10 +487,10 @@ fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::We
 /// vex 元气问候（托盘失活菜单项）：按时间轮换，托盘每次重建都换一句，让女孩更「活」。
 fn vex_greeting() -> String {
     const GREETINGS: &[&str] = &[
-        "vex 在此！有什么要整的？",
-        "元气能量，注入——随时待命！",
-        "今天也想帮你干点大事呢！",
-        "vex 在线营业，冲鸭！",
+        "我在呢，有什么想弄的，随时说一声。",
+        "今天也慢慢来，我从旁边陪着。",
+        "忙归忙，记得歇一歇。",
+        "有需要就喊我，我一直都在。",
     ];
     let secs = now_ms() / 1000;
     let idx = ((secs / 8) as usize) % GREETINGS.len();

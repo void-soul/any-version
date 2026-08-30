@@ -1319,7 +1319,7 @@ export default function LauncherPanel() {
 
   return (
     <div
-      className="w-full h-full flex flex-col bg-[#0b101b] text-slate-100 overflow-hidden relative font-sans"
+      className="w-full h-full flex flex-col text-slate-100 overflow-hidden relative font-sans"
       onDragOver={(e) => handleHtml5DragOver(e)}
       onDragLeave={handleHtml5DragLeave}
       onDrop={(e) => handleHtml5Drop(e)}
@@ -1791,7 +1791,7 @@ export default function LauncherPanel() {
 
         {/* Right Groups / Cards Stream */}
         <div
-          className="flex-1 overflow-y-auto p-5 bg-[#0c101c]/90 flex flex-col"
+          className="flex-1 overflow-y-auto p-5 bg-[#0c101c]/30 backdrop-blur-[1px] flex flex-col"
           style={{ gap: view.categoryGap }}
         >
           {/* 1. If Category has Sub-Categories (recursively rendered) */}

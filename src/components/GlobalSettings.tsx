@@ -1261,7 +1261,7 @@ export default function GlobalSettings() {
               <span className="text-base font-black tracking-wide text-white">vex</span>
               <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]">v{appVersion || "1.0.0"}</span>
             </div>
-            <p className="text-[11px] text-slate-400 mt-0.5">二次元元气少女 · 活力四射 · 个性张扬</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">暖心的桌面伙伴</p>
             <p className="text-[11px] text-slate-300 mt-1 truncate">
               <VexGreeting />
             </p>

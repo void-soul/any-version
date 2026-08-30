@@ -6,7 +6,7 @@ import { VEX_CYBER_ACCENT, VEX_CYBER_CYAN } from "../utils/brand";
  * 陪用户等待（导入 / 扫描 / AI 生成 / 翻译…）。
  */
 export default function VexBusy({
-  text = "vex 正在忙，稍等片刻…",
+  text = "稍等，我忙这一下，马上好。",
   avatarSize = 34,
   barColor,
 }: {

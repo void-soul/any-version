@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { VEX_AVATAR, VEX_CYBER_ACCENT } from "../utils/brand";
 
 /**
- * Vex 头像（二次元元气少女）——全 App 统一入口。
+ * Vex 头像——全 App 统一入口。
  * 资源固定从 public/logo.png（/logo.png）读取：想换头像，替换该文件即可，所有引用同步更新。
  * 自带「生命力」动效：常驻呼吸缩放 + 悬停俏皮歪头；默认带赛博霓虹辉光。
  */

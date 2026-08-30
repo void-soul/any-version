@@ -502,7 +502,7 @@ export default function TranslatePopup() {
               )}
             </div>
             {translating ? (
-              <VexBusy text="vex 正在努力翻译…" avatarSize={32} />
+              <VexBusy text="正在翻译，稍等一下…" avatarSize={32} />
             ) : result?.error ? (
               <div className="text-[11px] text-red-400 leading-relaxed whitespace-pre-wrap break-words">
                 {result.result}

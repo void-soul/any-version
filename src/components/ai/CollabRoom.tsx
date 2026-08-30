@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import VexEmptyState from "../VexEmptyState";
 import {
   MessagesSquare,
   Plus,
@@ -932,9 +933,13 @@ export default function CollabRoom() {
 
         <div className="flex-1 overflow-y-auto space-y-0.5" onScroll={onRoomsScroll}>
           {rooms.length === 0 && !loadingMore && (
-            <p className="text-[10px] text-slate-500 px-1 leading-relaxed">
-              还没有会话。点上方 + 新建一个，把多个 CLI 工具拉进同一个群。
-            </p>
+            <VexEmptyState
+              title="还没有会话"
+              desc="点上方 + 新建一个，把多个工具拉进同一个群。"
+              tick="开个群，热闹起来"
+              avatarSize={34}
+              className="!py-8"
+            />
           )}
           {rooms.map((r) => (
             <div

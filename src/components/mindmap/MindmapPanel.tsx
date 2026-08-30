@@ -855,7 +855,7 @@ function PlanCalendarModal({ onPick, onClose, onAddPlan, onMoveOccurrence }: {
               {loading ? (
                 <div className="flex h-full items-center justify-center text-[10px] text-slate-500"><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />加载中…</div>
               ) : dayPlans.length === 0 ? (
-                <VexEmptyState title="这天还没安排～" desc="给节点双击设个计划时间吧" avatarSize={34} className="!py-6" />
+                <VexEmptyState title="这天还没安排" desc="双击节点，就能给它设个计划时间" tick="不着急，想到再安排" avatarSize={34} className="!py-6" />
               ) : dayPlans.map(renderPlan)}
             </div>
             {occ.length === 0 && !loading && (
@@ -2213,11 +2213,13 @@ export default function MindmapPanel() {
           ) : full ? (
             <Canvas full={full} accent={ACCENT} onDocumentUpdate={onDocumentUpdated} onHistoryPush={commitHistory} historyVersion={historyVersion} onAiProject={() => setShowAi("project")} onAiText={() => setShowAi("text")} onError={setError} onOpenCalendar={openCalendar} focusRequest={calFocus} onFocusHandled={() => setCalFocus(null)} />
           ) : (
-            <div className="flex h-full flex-col items-center justify-center gap-4 text-slate-500">
-              <div className="rounded-full border border-white/10 p-4"><Brain className="h-10 w-10" style={{ color: ACCENT }} /></div>
-              <p className="text-[12px] font-medium text-slate-400">新建或选择一个思维导图</p>
-              <p className="text-[10px] text-slate-600 max-w-xs text-center">点击左侧 + 新建空白导图，或通过 AI 从项目 / 需求文本自动生成</p>
-            </div>
+            <VexEmptyState
+              title="新建或选择一个思维导图"
+              desc="点左侧 + 新建空白导图，或通过 AI 从项目 / 需求文本自动生成"
+              tick="开个头，剩下的慢慢来"
+              avatarSize={56}
+              className="h-full"
+            />
           )}
           {error && !showAi && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 max-w-md rounded-md border border-red-400/20 bg-slate-900 px-3 py-2 text-[11px] text-red-300 shadow-xl">{error}<button type="button" className="ml-2 text-slate-400 hover:text-white" onClick={() => setError("")}>✕</button></div>}
         </main>

@@ -1,5 +1,6 @@
 // 剪贴板历史面板（全宽紧凑列表 + 单行截断 + 固定行高虚拟滚动 + 触底加载）
 import { useState, useEffect, useCallback, useRef } from "react";
+import VexEmptyState from "./VexEmptyState";
 import {
   Clipboard,
   Search,
@@ -702,10 +703,13 @@ export default function ClipboardPanel() {
       {/* 虚拟滚动列表 */}
       <div className="flex-grow min-h-0 overflow-y-auto" ref={listRef} onScroll={onListScroll}>
         {items.length === 0 && !loading && (
-          <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-2">
-            <Clipboard className="w-8 h-8 opacity-40" />
-            <p className="text-[11.5px]">暂无剪贴板历史{keyword && "（换关键词试试）"}</p>
-          </div>
+          <VexEmptyState
+            title="这里的剪贴板历史暂时是空的"
+            desc={keyword ? "换个关键词试试，没准就有结果了" : "复制点东西，历史会自动记在这儿"}
+            tick={keyword ? "换个词搜搜看" : "来，先复制点东西"}
+            avatarSize={40}
+            className="!py-12"
+          />
         )}
         <div className="relative" style={{ height: totalRows * ROW_H }}>
           {Array.from({ length: end - start }, (_, i) => {

@@ -262,10 +262,10 @@ export default function App() {
     try {
       await invoke("download_bin_assets");
       setBinAssets(null); // 关闭模态
-      vexSay("运行组件都备齐啦，随时可以开工！✨", "success");
+      vexSay("运行组件都备齐了，随时能用。✨", "success");
     } catch (e) {
       setBinError(typeof e === "string" ? e : String(e));
-      vexSay("唔…下载这步卡住了，vex 帮你看看是哪出岔子", "error");
+      vexSay("唔…下载这步卡住了，我帮你看看是哪出的问题", "error");
     } finally {
       unlisten();
       setBinDownloading(false);
@@ -335,7 +335,7 @@ export default function App() {
             <div className="text-xl font-black tracking-[0.35em] text-white">
               v<span className="text-[var(--module-accent)]">e</span>x
             </div>
-            <div className="mt-1 text-[10px] tracking-[0.3em] text-slate-500">CYBER ASSISTANT</div>
+            <div className="mt-1 text-[10px] tracking-[0.3em] text-slate-500">暖心的桌面伙伴</div>
           </div>
           <div className="h-1 w-48 overflow-hidden rounded-full bg-white/10">
             <div
@@ -353,7 +353,7 @@ export default function App() {
             <div className="text-[11px] text-slate-200">
               <span className="mr-1 font-semibold text-[var(--module-accent)]">vex</span>
               <span className="text-slate-300">{timeGreeting()}</span>
-              <span className="ml-1.5 text-slate-500">一切就绪，带劲儿开工！</span>
+              <span className="ml-1.5 text-slate-500">一切就绪，想从哪儿开始？</span>
             </div>
           </div>
         </div>
@@ -387,19 +387,19 @@ export default function App() {
             <div className="flex items-center gap-3">
               <VexAvatar size={46} />
               <div>
-                <div className="text-sm font-black text-white">hi，我是 vex！</div>
-                <div className="text-[10px] text-slate-400">二次元元气少女 · 赛博小助手</div>
+                <div className="text-sm font-black text-white">hi，我是 vex</div>
+                <div className="text-[10px] text-slate-400">暖心的桌面伙伴</div>
               </div>
             </div>
             <div className="mt-4 min-h-[72px] text-[12px] leading-relaxed text-slate-300">
               {introStep === 0 && (
-                <>我会一直在你身边：顶栏、落地页、悬浮窗、托盘里都有我的身影，随时陪你干活～</>
+                <>我会一直住在这台电脑里：顶栏、落地页、悬浮窗还有托盘都看得见我。平时不用管我，需要时喊一声就行。</>
               )}
               {introStep === 1 && (
-                <>背景任务完成我会第一时间报喜，卡住了也会帮你盯着。需要时记得按模块热键呼出我～</>
+                <>后台的事忙完了我会第一时间跟你报个信；要是卡住了，也会帮你盯着。想找某个功能？按下它的快捷键就呼出来了。</>
               )}
               {introStep === 2 && (
-                <>现在，想先从哪个模块开工？选一个，我们冲！⚡</>
+                <>不用想着一次全记住。挑个最想先试的模块，点开看看，我在旁边等着你。</>
               )}
             </div>
             <div className="mt-5 flex items-center justify-between">
@@ -415,7 +415,7 @@ export default function App() {
                     <button onClick={() => setIntroStep((s) => s + 1)} className="px-4 py-1.5 rounded-lg text-[11px] font-semibold text-white transition cursor-pointer" style={{ background: VEX_CYBER_ACCENT }}>下一步 →</button>
                   </>
                 ) : (
-                  <button onClick={finishIntro} className="px-5 py-1.5 rounded-lg text-[11px] font-semibold text-white transition cursor-pointer" style={{ background: `linear-gradient(90deg, ${VEX_CYBER_ACCENT}, ${VEX_CYBER_CYAN})` }}>开始干活！⚡</button>
+                  <button onClick={finishIntro} className="px-5 py-1.5 rounded-lg text-[11px] font-semibold text-white transition cursor-pointer" style={{ background: `linear-gradient(90deg, ${VEX_CYBER_ACCENT}, ${VEX_CYBER_CYAN})` }}>开始吧</button>
                 )}
               </div>
             </div>
