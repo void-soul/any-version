@@ -55,7 +55,7 @@ export default function App() {
   }>({ downloaded: 0, total: 0, speed: "", phase: "" });
   const [binError, setBinError] = useState<string | null>(null);
 
-  // 冷启动闪屏：vex 赛博 Logo + 进度条，短暂铺满后淡出，替代白屏
+  // 冷启动闪屏：Kira 赛博 Logo + 进度条，短暂铺满后淡出，替代白屏
   const [booting, setBooting] = useState(true);
   useEffect(() => {
     const t = window.setTimeout(() => setBooting(false), 1500);

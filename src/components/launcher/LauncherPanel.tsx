@@ -1666,7 +1666,7 @@ export default function LauncherPanel() {
         </div>
       </div>
 
-      {/* Vex 元气问候（生命力）：头像 + 时段开场白 + 轮换问候 */}
+      {/* Kira 贴心问候（生命力）：头像 + 时段开场白 + 轮换问候 */}
       <div className="flex items-center gap-2.5 px-4 py-1.5 bg-[var(--module-accent)]/5 border-b border-white/5 flex-shrink-0">
         <VexAvatar size={26} />
         <span className="text-[11px] text-slate-300 truncate">
@@ -1674,7 +1674,7 @@ export default function LauncherPanel() {
         </span>
       </div>
 
-      {/* 检测进度条（vex 忙碌小助手） */}
+      {/* 检测进度条（Kira 忙碌小助手） */}
       {checkProgress && (
         <div className="flex items-center gap-2 px-4 py-1.5 bg-[#0c101c] border-b border-white/5 flex-shrink-0 animate-in slide-in-from-top-2 duration-150">
           <VexBusy

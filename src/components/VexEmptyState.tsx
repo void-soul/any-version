@@ -1,7 +1,7 @@
 import VexAvatar from "./VexAvatar";
 
 /**
- * vex 风格的空态：头像 + 一句人设口吻的说明，替代冷冰冰的「暂无数据」。
+ * Kira 风格的空态：头像 + 一句人设口吻的说明，替代冷冰冰的「暂无数据」。
  * 用于导图空文档 / 无订阅 / 无历史 / 无结果等空状态。
  */
 export default function VexEmptyState({
@@ -14,7 +14,7 @@ export default function VexEmptyState({
 }: {
   title?: string;
   desc?: string;
-  /** 一句 vex 口头语，点缀在空态下方，让人味更足。 */
+  /** 一句 Kira 口头语，点缀在空态下方，让人味更足。 */
   tick?: string;
   tickColor?: string;
   avatarSize?: number;

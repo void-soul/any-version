@@ -179,7 +179,7 @@ function agentStatusTitle(status?: string): string {
 }
 
 // 从 open-tag 移植：按活动文本关键词映射工具图标（优先精确匹配，回退兜底）。
-// open-tag 用结构化 toolName 字段，any-version 仅传合并后的 activity 字符串，
+// open-tag 用结构化 toolName 字段，Kira 仅传合并后的 activity 字符串，
 // 故对字符串做关键词匹配——只要文本含 bash/read/web/todo 等词即给对应图标。
 type IconType = React.ComponentType<{ className?: string }>;
 const TOOL_ICON_RULES: Array<[RegExp, IconType]> = [

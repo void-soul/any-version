@@ -459,7 +459,7 @@ export default function McpManager() {
         </div>
       )}
 
-      {/* 发现：工具配置里已有、但尚未由 vex 托管的服务器 */}
+      {/* 发现：工具配置里已有、但尚未由 Kira 托管的服务器 */}
       {discovered.length > 0 && (
         <div className="p-3 rounded-xl bg-amber-500/5 border border-amber-500/20 space-y-2">
           <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-300">

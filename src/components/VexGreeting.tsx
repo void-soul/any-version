@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { greetingAt, timeGreeting } from "../utils/brand";
 
 /**
- * 轮换的 vex 打招呼文案 + 打字机效果。任意界面丢一个即可，让 vex 的形象与语气「活」在更多角落。
+ * 轮换的 Kira 打招呼文案 + 打字机效果。任意界面丢一个即可，让 Kira 的形象与语气「活」在更多角落。
  * 默认带按时段开场白（早/午/晚），拟真人感；文案逐字打出后停留，再换下一句。
  */
 export default function VexGreeting({
@@ -12,7 +12,7 @@ export default function VexGreeting({
 }: {
   /** 换一句话的间隔（秒） */
   seconds?: number;
-  /** 「vex」名字的颜色（默认取当前模块主题色 var(--module-accent)） */
+  /** 「Kira」名字的颜色（默认取当前模块主题色 var(--module-accent)） */
   nameColor?: string;
   /** 是否附加按时段开场白（早上好/晚上好…），默认开 */
   time?: boolean;

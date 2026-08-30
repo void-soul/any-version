@@ -1,6 +1,6 @@
 // 网络信息页 —— 1:1 复刻 clash-party src/renderer/src/pages/network.tsx
 // （出口 IP 直连/经代理 · 延迟测试 · 网络拓扑 · 网卡枚举）
-// 视觉主题改用 any-version 的 emerald/glass 风格；拓扑改为无依赖的可折叠树（功能等价）
+// 视觉主题改用 Kira 的 emerald/glass 风格；拓扑改为无依赖的可折叠树（功能等价）
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import {
   RefreshCw,

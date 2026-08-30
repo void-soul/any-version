@@ -38,7 +38,7 @@ export default function DataSyncPanel() {
     try {
       const filePath = await saveDialog({
         title: "导出 Kira 数据快照",
-        defaultPath: `any-version-state-${new Date().toISOString().slice(0, 10)}.json.gz`,
+        defaultPath: `kira-state-${new Date().toISOString().slice(0, 10)}.json.gz`,
         filters: [{ name: "Kira 数据快照 (压缩)", extensions: ["gz"] }],
       });
       if (!filePath || typeof filePath !== "string") return;
@@ -62,7 +62,7 @@ export default function DataSyncPanel() {
   const importAll = async () => {
     try {
       const selected = await openDialog({
-        title: "选择 any-version 数据快照文件",
+        title: "选择 Kira 数据快照文件",
         filters: [
           { name: "Kira 数据快照 (*.gz, *.json)", extensions: ["gz", "json"] },
           { name: "压缩快照 (*.gz)", extensions: ["gz"] },

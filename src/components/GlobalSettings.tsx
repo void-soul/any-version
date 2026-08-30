@@ -1287,7 +1287,7 @@ export default function GlobalSettings() {
         )}
       </div>
 
-      {/* 关于 vex：元气少女名片 */}
+      {/* 关于 Kira：温暖桌面伙伴名片 */}
       <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-3">
         <div className="flex items-center gap-4">
           <div className="relative flex-shrink-0">

@@ -397,7 +397,7 @@ export default function TranslatePopup() {
           </div>
         </div>
 
-        {/* vex 随口一吹（元气提示） */}
+        {/* Kira 随口一说（贴心提示） */}
         <div className="px-3 py-1 border-b border-white/5">
           <span className="text-[9px] italic text-slate-500 leading-snug">
             💬<VexGreeting seconds={10} />

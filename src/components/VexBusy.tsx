@@ -2,7 +2,7 @@ import VexAvatar from "./VexAvatar";
 import { VEX_CYBER_ACCENT, VEX_CYBER_CYAN } from "../utils/brand";
 
 /**
- * vex 「忙碌小助手」：替代干巴巴的转圈，让 vex 的面容 + 霓虹加载条 + 一句伴随语
+ * Kira 「忙碌小助手」：替代干巴巴的转圈，让 Kira 的面容 + 霓虹加载条 + 一句伴随语
  * 陪用户等待（导入 / 扫描 / AI 生成 / 翻译…）。
  */
 export default function VexBusy({

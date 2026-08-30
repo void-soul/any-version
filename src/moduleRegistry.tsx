@@ -28,7 +28,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 
 /**
- * 统一模块注册表：any-version 的所有模块都是「平级」的，
+ * 统一模块注册表：Kira 的所有模块都是「平级」的，
  * 只不过有的显示在顶栏（toolbar），有的收进「更多」（overflow）。
  * 用户可自由控制每个模块的归类（顶栏/更多）与启用/禁用。
  *
