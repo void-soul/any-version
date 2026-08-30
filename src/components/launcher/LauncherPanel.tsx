@@ -64,6 +64,8 @@ import {
 import { matchPinyin } from "./pinyin";
 import CategoryModal from "./CategoryModal";
 import AddItemModal from "./AddItemModal";
+import VexAvatar from "../VexAvatar";
+import { greetingAt } from "../../utils/brand";
 
 // ---------- dnd-kit 辅助组件（模块级，避免渲染期内重新挂载破坏排序动画） ----------
 
@@ -281,6 +283,8 @@ export default function LauncherPanel() {
 
   // 视图设置面板开关
   const [viewSettingsOpen, setViewSettingsOpen] = useState(false);
+  // vex 元气问候：轮换欢迎语，让程序更有生命力
+  const [greetIdx, setGreetIdx] = useState(0);
   const viewSettingsRef = useRef<HTMLDivElement>(null);
 
   // Drag & Drop State
@@ -408,6 +412,12 @@ export default function LauncherPanel() {
 
   useEffect(() => {
     loadData();
+  }, []);
+
+  // 轮换 vex 问候语（8s 一换）
+  useEffect(() => {
+    const t = window.setInterval(() => setGreetIdx((i) => i + 1), 8000);
+    return () => window.clearInterval(t);
   }, []);
 
   // 从持久化的检测结果恢复红框标识（data.exists 为 false 的项目）
@@ -1662,6 +1672,15 @@ export default function LauncherPanel() {
         </div>
       </div>
 
+      {/* Vex 元气问候（生命力）：头像 + 轮换欢迎语 */}
+      <div className="flex items-center gap-2.5 px-4 py-1.5 bg-[var(--module-accent)]/5 border-b border-white/5 flex-shrink-0">
+        <VexAvatar size={26} />
+        <span className="text-[11px] text-slate-300 truncate animate-in fade-in duration-500" key={greetIdx}>
+          <span className="text-[var(--module-accent)] font-semibold mr-1">vex</span>
+          {greetingAt(greetIdx)}
+        </span>
+      </div>
+
       {/* 检测进度条（使用「启动」主题色：紫色） */}
       {checkProgress && (
         <div className="h-9 px-4 flex items-center gap-3 bg-[#0c101c] border-b border-white/5 flex-shrink-0 animate-in slide-in-from-top-2 duration-150">
@@ -2021,8 +2040,12 @@ export default function LauncherPanel() {
                   );
                 })
               ) : searchQuery.trim() ? (
-                <div className="py-16 text-center text-slate-500 text-xs">
-                  未找到与「{searchQuery}」相关的快捷方式
+                <div className="py-14 text-center text-slate-500 text-xs flex flex-col items-center gap-3">
+                  <VexAvatar size={44} className="opacity-80" />
+                  <div>
+                    <p>未找到与「{searchQuery}」相关的快捷方式</p>
+                    <p className="text-[11px] text-slate-600 mt-1">嘿嘿，换个别名或拼音再试试？vex 帮你想～</p>
+                  </div>
                 </div>
               ) : (
                 <div className="py-12 text-center text-slate-500 text-xs space-y-1">

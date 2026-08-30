@@ -5,6 +5,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { X, Minus, Square, Download, AlertTriangle, Loader2, FolderOpen, ChevronDown, Settings } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { MODULES, MODULE_MAP, resolveModuleLayout } from "./moduleRegistry";
+import VexAvatar from "./components/VexAvatar";
+import { VEX_CYBER_ACCENT } from "./utils/brand";
 import "./App.css";
 
 // 模块 id 即字符串（所有模块平级）。
@@ -227,9 +229,9 @@ export default function App() {
       : undefined;
   const fontFaceCss = buildFontFaceCss(appearance.customFontPath);
 
-  // 当前激活模块的主题色：注入内容区，供各模块内部用 --module-accent 系列变量联动
-  const activeModuleColor =
-    appearance.moduleThemeColors[activePage] || MODULE_DEFAULTS[activePage]?.color || "#8b5cf6";
+  // 统一赛博电子风主题：不再按模块动态设色，全 App 共用同一主强调色
+  // （vex 的固定签名色）。各模块内部用 --module-accent 系列变量联动处同步跟随。
+  const activeModuleColor = VEX_CYBER_ACCENT;
   const moduleThemeVars = {
     "--module-accent": activeModuleColor,
     "--module-accent-soft": `color-mix(in srgb, ${activeModuleColor} 12%, transparent)`,
@@ -273,14 +275,14 @@ export default function App() {
         {/* Left: Logo + Name + Navigation Capsule */}
         <div className="flex items-center gap-2.5">
           <div className="flex items-center gap-2 pointer-events-none px-1 w-35" data-tauri-drag-region>
-            <img src="/icon.png" className="w-5 h-5 object-contain" alt="logo" />
+            <VexAvatar size={22} glow={activeModuleColor} />
             <span className="text-[11px] font-bold text-white tracking-wide">vex</span>
           </div>
 
 
           <div className="relative flex items-center gap-0.5 bg-white/5 border border-white/5 rounded-lg p-0.5">
             {toolbarModules.filter((m) => m.id !== "settings").map((m) => {
-              const effectiveColor = appearance.moduleThemeColors[m.id] || m.color;
+              const effectiveColor = activeModuleColor;
               const isActive = activePage === m.id;
               const Icon = m.icon;
               return (
@@ -313,7 +315,7 @@ export default function App() {
                   }`}
                   style={
                     moreModules.some((m) => m.id === activePage)
-                      ? { backgroundColor: "#059669" }
+                      ? { backgroundColor: activeModuleColor }
                       : undefined
                   }
                   title="更多模块"
@@ -366,7 +368,7 @@ export default function App() {
                 ? "text-white"
                 : "text-slate-400 hover:text-white hover:bg-white/5"
             }`}
-            style={activePage === "settings" ? { backgroundColor: appearance.moduleThemeColors["settings"] || "#dc2626" } : undefined}
+            style={activePage === "settings" ? { backgroundColor: activeModuleColor } : undefined}
             title="设置"
           >
             <SettingsIcon className="w-3.5 h-3.5" />
