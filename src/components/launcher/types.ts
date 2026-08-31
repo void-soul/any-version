@@ -65,7 +65,8 @@ export interface LauncherSetting {
   showHideShortcutKey?: string; // 遗留字段（旧版「启动」模块主热键），已迁移到 moduleHotkeys.launcher
   moduleHotkeys?: Record<string, string>; // 各顶级模块快捷键：moduleId -> 热键字符串（含「启动」= "launcher"）
   selectionTranslateHotkey?: string; // 独立「划词翻译」热键：任意程序选中文本后按下 → 悬浮翻译
-  mindmapQuickHotkey?: string; // 独立「思维导图速记」热键：呼出速记悬浮窗随手记录，默认 Shift+F3
+  mindmapQuickHotkey?: string; // 独立「思维导图节点速记」热键：呼出节点悬浮窗随手记录，默认 Shift+F3
+  mindmapStickerHotkey?: string; // 独立「思维导图贴纸」热键：呼出贴纸悬浮窗，默认 Shift+F4
   // ---- 视图设置（全局，应用到所有分类）----
   itemIconSize?: number; // 项目图标大小 (px)，默认 32
   itemColumnNumber?: number; // 网格列数 (0=自适应)，默认 0

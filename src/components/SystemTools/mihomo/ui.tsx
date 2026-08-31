@@ -1,14 +1,14 @@
 // mihomo 模块共享 UI（沿用 SystemTools 统一风格）
 
 export const inputCls =
-  "w-full h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]";
+  "vex-input-cyan w-full h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none";
 export const labelCls = "text-[11px] text-slate-400 mb-1 block font-medium";
 export const btnSec =
-  "px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 text-[11px] font-semibold transition-all cursor-pointer";
+  "px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 text-[11px] font-semibold transition-all cursor-pointer vex-btn-neon";
 export const btnDanger =
-  "px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-[11px] font-semibold transition-all cursor-pointer";
+  "px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-[11px] font-semibold transition-all cursor-pointer vex-btn-neon-danger";
 export const btnPrimary =
-  "px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold transition-all cursor-pointer";
+  "px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold transition-all cursor-pointer vex-btn-neon-primary";
 export const tagCls =
   "text-[10px] px-2 py-0.5 rounded-md bg-white/5 text-slate-400 border border-white/10";
 export const cardCls = "glass-panel rounded-2xl border border-white/10 bg-white/[0.02]";

@@ -398,6 +398,12 @@ pub fn run() {
                         setting.mindmap_quick_hotkey.clone(),
                     );
                 }
+                if !setting.mindmap_sticker_hotkey.trim().is_empty() {
+                    hotkeys.insert(
+                        "mindmap-sticker".to_string(),
+                        setting.mindmap_sticker_hotkey.clone(),
+                    );
+                }
                 let _ = commands::launcher::windows::register_global_hotkeys(
                     app.handle().clone(),
                     &hotkeys,
@@ -465,6 +471,7 @@ pub fn run() {
             commands::config::get_appearance_config,
             commands::config::set_module_theme_color,
             commands::config::set_global_font,
+            commands::config::set_background_texture,
             commands::config::set_module_order,
             commands::config::set_module_layout,
             commands::config::import_custom_font,
@@ -505,10 +512,7 @@ pub fn run() {
             commands::port::get_reserved_ports,
             commands::network::net_connections,
             commands::network::net_iface_traffic,
-            commands::network::ip_lookup,
             commands::network::ping_host,
-            commands::network::ip_db_status,
-            commands::network::download_ip_db,
             commands::pkg::get_global_packages,
             commands::pkg::upgrade_global_package,
             commands::pkg::upgrade_all_global_packages,
@@ -550,6 +554,7 @@ pub fn run() {
             commands::project::versions::project_uninstall_version,
             commands::project::versions::project_use_version,
             tray::refresh_tray_menu,
+            tray::set_tray_quote,
             commands::conflict::get_conflict_managers_status,
             commands::conflict::handle_conflict_manager_action,
             commands::ai::config::get_ai_config,
@@ -873,6 +878,8 @@ pub fn run() {
                 commands::mindmap::mm_upsert_sticker,
                 commands::mindmap::quick_popup::open_mindmap_quick_popup,
                 commands::mindmap::quick_popup::hide_mindmap_quick_popup,
+                commands::mindmap::quick_popup::open_mindmap_sticker_popup,
+                commands::mindmap::quick_popup::hide_mindmap_sticker_popup,
                 commands::mindmap::quick_popup::take_mindmap_quick_selection,
                 commands::mindmap::mm_delete_sticker,
                 commands::mindmap::mm_export_markdown,
@@ -969,6 +976,7 @@ pub fn run() {
                 commands::picky::picky_add_bookmark,
                 commands::picky::picky_update_bookmark,
                 commands::picky::picky_set_refined,
+                commands::picky::picky_refetch_metadata,
                 commands::picky::picky_delete_bookmark,
                 commands::picky::picky_add_comment,
                 commands::picky::picky_update_comment,

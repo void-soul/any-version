@@ -528,6 +528,12 @@ pub async fn launcher_save_settings(
             settings.mindmap_quick_hotkey.clone(),
         );
     }
+    if !settings.mindmap_sticker_hotkey.trim().is_empty() {
+        hotkeys.insert(
+            "mindmap-sticker".to_string(),
+            settings.mindmap_sticker_hotkey.clone(),
+        );
+    }
     let _ = super::windows::register_global_hotkeys(app, &hotkeys);
     Ok(())
 }

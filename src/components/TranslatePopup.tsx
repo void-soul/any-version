@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Copy, Check, X, Languages, ArrowRightLeft } from "lucide-react";
 import VexAvatar from "./VexAvatar";
@@ -45,10 +44,6 @@ export default function TranslatePopup() {
   const manualTranslationSourceRef = useRef<string | null>(null);
   const latestRequestIdRef = useRef(0);
 
-  const appWindow = getCurrentWindow();
-
-  // 顶部主题色：读取后端配置里用户自定义的主色（module_theme_colors["theme"]），
-  // 未设置时回退默认签名色。本窗口独立于 App，自行注入 --tl-accent 系列。
   const [translateAccent, setTranslateAccent] = useState(VEX_CYBER_ACCENT);
   useEffect(() => {
     (async () => {
@@ -66,14 +61,6 @@ export default function TranslatePopup() {
     "--tl-accent-ring": `color-mix(in srgb, ${translateAccent} 30%, transparent)`,
     "--tl-accent-strong": `color-mix(in srgb, ${translateAccent} 85%, white)`,
   } as React.CSSProperties;
-
-  // 失焦自动隐藏的焦点保护（防「一闪就关」）：
-  // 创建/复用悬浮窗时 Windows/Tauri 会产生焦点振荡（瞬间 blur），误触发自动隐藏。
-  // 记录「挂载时间 + 最近一次真实聚焦」：仅当挂载超过 1s、且聚焦后保持 ≥500ms
-  // 再次失焦时，才认定用户点击了窗口外部而收起悬浮窗。
-  const mountedAtRef = useRef(Date.now());
-  const lastFocusAtRef = useRef(Date.now());
-  const everFocusedRef = useRef(false);
 
   // 关闭/隐藏悬浮窗
   const hidePopup = () => {
@@ -259,26 +246,7 @@ export default function TranslatePopup() {
       }
     }, 1000);
 
-    // 失焦自动隐藏（无需钉住）：点击外部后自动收起悬浮窗。
-    // 注意：下拉框（供应商/模型/目标语言）是原生弹窗，会短暂夺走窗口焦点，
-    // 用 suppressBlurUntil 防止因此误隐藏。
-    const unFocus = appWindow.onFocusChanged(({ payload: focused }) => {
-      if (focused) {
-        everFocusedRef.current = true;
-        lastFocusAtRef.current = Date.now();
-        return;
-      }
-      // 创建/复用窗口的焦点震荡保护：
-      // 1. 挂载后 1s 内的 blur 是窗口创建/显示阶段的焦点抖动，忽略；
-      // 2. 从未真正获得过焦点时，不因启动期振荡而收起；
-      // 3. 聚焦后 500ms 内的瞬间失焦（透明窗口 WebView2 重聚焦）也视为抖动忽略。
-      if (Date.now() - mountedAtRef.current < 1000) return;
-      if (!everFocusedRef.current) return;
-      if (Date.now() - lastFocusAtRef.current < 500) return;
-      if (Date.now() >= suppressBlurUntil.current) {
-        appWindow.hide();
-      }
-    });
+    // 失焦不再自动隐藏：悬浮窗保持显示，只能通过关闭按钮关闭。
     // 快捷键：Ctrl+C 复制译文、Ctrl+Enter 翻译（弹框只允许通过关闭按钮关闭，不响应 ESC）
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
@@ -296,11 +264,10 @@ export default function TranslatePopup() {
       if (reconcileTimerRef.current) clearTimeout(reconcileTimerRef.current);
       reconcileKeepAliveRef.current = false;
       if (unlisten) unlisten();
-      unFocus.then((f) => f());
       window.removeEventListener("keydown", onKey, true);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);  // 记录最近一次已应用的事件载荷，避免窗口级和应用级双通道事件重复更新。
+  }, []);
   const lastAppliedRef = useRef<TranslateResult | null>(null);
   const applyPayload = (p: TranslateResult) => {
     if (p.requestId && p.requestId < latestRequestIdRef.current) return;
@@ -339,11 +306,8 @@ export default function TranslatePopup() {
     }
   };
   applyPayloadRef.current = applyPayload;
-  // 下拉框打开期间（原生弹窗夺焦）抑制失焦隐藏
-  const suppressBlurUntil = useRef(0);
-  const onSelectOpen = () => {
-    suppressBlurUntil.current = Date.now() + 3000;
-  };
+  // 下拉框为原生弹窗，打开时短暂夺焦属正常现象，无需任何抑制逻辑。
+  const onSelectOpen = () => {};
 
   return (
     <>

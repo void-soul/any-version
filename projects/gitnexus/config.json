@@ -1,10 +1,10 @@
 {
-  "id": "ffmpeg",
-  "display_name": "FFmpeg",
+  "id": "gitnexus",
+  "display_name": "GitNexus",
   "category": "tool",
-  "official_website": "https://ffmpeg.org",
+  "official_website": "https://github.com/abhigyanpatwari/GitNexus",
   "bin_dirs": [
-    "bin"
+    "node_modules/.bin"
   ],
   "has_cache": false,
   "cache_detect_cmd": null,
@@ -23,25 +23,29 @@
   "start_cmd": null,
   "stop_cmd": null,
   "service_process_exes": [
-    "ffmpeg"
+    "gitnexus"
   ],
   "service_names": [],
   "service_start_mode": "detached",
   "service_allow_force_kill": true,
   "service_auto_create_dirs": false,
-  "version_cmd": "ffmpeg -version",
-  "version_exe": "ffmpeg",
-  "version_parse_regex": "ffmpeg version (\\d+\\.\\d+(?:\\.\\d+)*)",
-  "download_url_template": "https://github.com/GyanD/codexffmpeg/releases/download/{version}/ffmpeg-{version}-full_build.7z",
-  "download_file_ext": "7z",
-  "extract_subdir": "ffmpeg-{version}-full_build",
-  "remote_versions_url": "https://api.github.com/repos/GyanD/codexffmpeg/releases",
+  "version_cmd": "gitnexus --version",
+  "version_exe": "gitnexus",
+  "version_parse_regex": "(\\d+\\.\\d+\\.\\d+)",
+  "npm_pkg_name": "gitnexus",
+  "download_url_template": null,
+  "download_file_ext": null,
+  "extract_subdir": null,
+  "remote_versions_url": "https://registry.npmjs.org/gitnexus",
   "remote_versions_config": {
     "type": "json_api",
-    "response_type": "array",
-    "version_field": "tag_name",
+    "response_type": "object_keys",
+    "array_field": "versions",
+    "version_field": "version",
     "filter_contains_not": "-",
     "sort_by_version": true,
     "reverse": true
-  }
+  },
+  "user_configurable_vars": [],
+  "post_install": null
 }

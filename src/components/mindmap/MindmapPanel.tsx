@@ -2,12 +2,14 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
+import { openPath } from "@tauri-apps/plugin-opener";
 import {
   Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, ReactFlowProvider, getBezierPath, useReactFlow,
   type Connection, type Edge, type EdgeProps, type Node, type NodeChange, type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { MindmapMarkdown } from "./MindmapMarkdown";
+import { MarkdownFieldEditor } from "./MarkdownFieldEditor";
 import VexEmptyState from "../VexEmptyState";
 import {
   AlertTriangle, Brain, Circle, File, Folder, FolderOpen, LayoutGrid, Lightbulb, Loader2, Lock, Puzzle,
@@ -93,14 +95,14 @@ function planShort(value: string): string {
 
 // ════════════ 节点 ════════════
 
-type FlowNodeData = { node: MindmapNode; selected: boolean; hasChildren: boolean; collapsed: boolean; targetPosition: Position; sourcePosition: Position; onSelect: () => void; onOpenDetail: () => void; onToggle: () => void; onAddChild: () => void; onPreview: (e: React.MouseEvent) => void; onPreviewEnd: () => void; onDelete: () => void; };
+type FlowNodeData = { node: MindmapNode; selected: boolean; hasChildren: boolean; collapsed: boolean; targetPosition: Position; sourcePosition: Position; onSelect: () => void; onOpenDetail: () => void; onToggle: () => void; onAddChild: () => void; onPreview: (e: React.MouseEvent) => void; onPreviewEnd: () => void; onDelete: () => void; onContextMenu: (e: React.MouseEvent) => void; };
 
 const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>) {
-  const { node, selected, hasChildren, collapsed, targetPosition, sourcePosition, onSelect, onOpenDetail, onToggle, onAddChild, onPreview, onPreviewEnd, onDelete } = data;
+  const { node, selected, hasChildren, collapsed, targetPosition, sourcePosition, onSelect, onOpenDetail, onToggle, onAddChild, onPreview, onPreviewEnd, onDelete, onContextMenu } = data;
   const c = effectiveNodeColor(node);
   return (
     <article className={`group relative w-[200px] rounded-xl border shadow-lg transition-shadow cursor-pointer ${selected ? "shadow-cyan-500/30 ring-1 ring-cyan-400/40" : "hover:shadow-xl"}`}
-      style={{ borderColor: selected ? c : `${c}55`, backgroundColor: "#0d1524" }} onClick={onSelect} onDoubleClick={(e) => { e.stopPropagation(); onOpenDetail(); }}>
+      style={{ borderColor: selected ? c : `${c}55`, backgroundColor: "#0d1524" }} onClick={onSelect} onDoubleClick={(e) => { e.stopPropagation(); onOpenDetail(); }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e); }}>
       <Handle type="target" position={targetPosition} isConnectable className="!h-2.5 !w-2.5 !border-2 !border-slate-950" style={{ background: c }} />
       {/* 节点右上角悬浮按钮：预览（气泡）+ 删除 */}
       <div className="nodrag nopan absolute right-1 top-1 z-10 hidden items-center gap-0.5 group-hover:flex">
@@ -471,8 +473,9 @@ function DetailModal({ node, onUpdate, onClose, projectRoot }: { node: MindmapNo
               </div>
             </div>
             <div><label className="text-[9px] text-slate-500 block mb-1">详细内容 (Markdown)</label>
-              <textarea className="w-full min-h-[200px] rounded bg-slate-900 border border-white/10 px-3 py-2 text-[11px] text-white font-mono outline-none resize-none" value={detail}
-                onChange={(e) => setDetail(e.target.value)} onBlur={save} placeholder="支持 Markdown..." />
+              <div style={{ minHeight: 240 }}>
+                <MarkdownFieldEditor value={detail} onChange={(v) => setDetail(v)} minHeight="200px" defaultSplit={false} />
+              </div>
             </div>
           </div>
         ) : (
@@ -1151,7 +1154,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
             onAddChild: () => addChildNode(n.id),
             onPreview: (e) => setPreview({ node: n, x: e.clientX, y: e.clientY }),
             onPreviewEnd: () => setPreview(null),
-            onDelete: () => deleteNode(n.id) }
+            onDelete: () => deleteNode(n.id),
+            onContextMenu: (e) => { setSelectedId(n.id); setCtxMenu({ x: e.clientX, y: e.clientY, nodeId: n.id }); } }
         : prevData;
       const prevObj = (prev?.obj ?? null) as Node<FlowNodeData> | null;
       const measured = measuredMap[n.id] ?? prevObj?.measured;
@@ -1470,6 +1474,25 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
             onClick={() => { addChildNode(ctxMenu.nodeId); setCtxMenu(null); }}><Plus className="h-3.5 w-3.5" />添加子节点</button>
           <button type="button" disabled={byId.get(ctxMenu.nodeId)?.parentId === null} className="flex w-full items-center gap-2 px-3 py-2 text-[11px] text-slate-300 transition hover:bg-white/[0.08] hover:text-white disabled:opacity-40"
             onClick={() => { makeRoot(ctxMenu.nodeId); setCtxMenu(null); }}><ListTree className="h-3.5 w-3.5" />设为根节点</button>
+          {(byId.get(ctxMenu.nodeId)?.sources?.length ?? 0) > 0 && (() => {
+            const n = byId.get(ctxMenu.nodeId)!;
+            const root = full.document.sourceDesc || "";
+            const srcs = n.sources ?? [];
+            return (<>
+              <div className="border-t border-white/10" />
+              {srcs.length === 1 && root && (() => { const p = `${root.replace(/\\/g, "/")}/${srcs[0]}`; return (
+                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-[11px] text-slate-300 transition hover:bg-white/[0.08] hover:text-white"
+                  onClick={() => { void invoke("launcher_open_file_location", { path: p }).catch(() => {}); setCtxMenu(null); }}><Folder className="h-3.5 w-3.5" />打开所在目录</button>
+              ); })()}
+              {srcs.map((s, i) => (
+                <button key={i} type="button" className="flex w-full items-center gap-2 px-3 py-2 text-[11px] text-slate-300 transition hover:bg-white/[0.08] hover:text-white"
+                  onClick={() => {
+                    if (root) { const p = `${root.replace(/\\/g, "/")}/${s}`; void openPath(p).catch(() => {}); }
+                    setCtxMenu(null);
+                  }} title={s}><FileText className="h-3.5 w-3.5" />打开文件: {s.length > 20 ? s.slice(0, 18) + "…" : s}</button>
+              ))}
+            </>);
+          })()}
           <div className="border-t border-white/10" />
           <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-[11px] text-red-300 transition hover:bg-white/[0.08] hover:text-red-100"
             onClick={() => { deleteNode(ctxMenu.nodeId); setCtxMenu(null); }}><Trash2 className="h-3.5 w-3.5" />删除</button>

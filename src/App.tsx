@@ -7,6 +7,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { MODULES, MODULE_MAP, resolveModuleLayout } from "./moduleRegistry";
 import VexAvatar from "./components/VexAvatar";
 import { VEX_CYBER_CYAN, resolveThemeAccent } from "./utils/brand";
+import { kiraQuoteLine } from "./utils/kiraQuotes";
 import { vexSay, onVexSay, type VexSayKind } from "./utils/vexSay";
 import "./App.css";
 
@@ -102,7 +103,7 @@ export default function App() {
   const [binOldDataDir, setBinOldDataDir] = useState("");
   const [binMigrating, setBinMigrating] = useState(false);
 
-  // 外观：模块主题色 + 全局字体 + 模块顺序 + 模块布局（顶栏/禁用）
+  // 外观：模块主题色 + 全局字体 + 模块顺序 + 模块布局（顶栏/禁用）+ 背景底图纹理
   const [appearance, setAppearance] = useState<{
     moduleThemeColors: Record<string, string>;
     globalFont: string;
@@ -110,6 +111,7 @@ export default function App() {
     moduleOrder: string[];
     toolbarModules: string[];
     disabledModules: string[];
+    backgroundTexture: string;
   }>({
     moduleThemeColors: {},
     globalFont: "",
@@ -117,6 +119,7 @@ export default function App() {
     moduleOrder: [],
     toolbarModules: [],
     disabledModules: [],
+    backgroundTexture: "",
   });
 
   // 懒挂载：仅渲染至少被访问过一次的页面，避免启动时全部组件同时初始化
@@ -133,6 +136,12 @@ export default function App() {
 
   useEffect(() => {
     const initApp = async () => {
+      // 把统一函数库(kQuotes)：把 Kira 语录推给托盘（悬停提示 + 问候菜单共同取这一句）
+      try {
+        await invoke("set_tray_quote", { text: kiraQuoteLine() });
+      } catch (e) {
+        console.error("推送托盘语录失败", e);
+      }
       // 读取当前数据目录（全局路径），供首次启动下载运行组件时选择/迁移
       try {
         const config = await invoke<{ data_dir?: string }>("get_config");
@@ -151,6 +160,7 @@ export default function App() {
           moduleOrder: string[];
           toolbarModules: string[];
           disabledModules: string[];
+          backgroundTexture: string;
         }>("get_appearance_config");
         setAppearance(ap);
       } catch (e) {
@@ -190,6 +200,7 @@ export default function App() {
             moduleOrder: string[];
             toolbarModules: string[];
             disabledModules: string[];
+            backgroundTexture: string;
           }>("get_appearance_config");
           setAppearance(ap);
         } catch (e) {
@@ -283,6 +294,8 @@ export default function App() {
     "--module-accent-soft": `color-mix(in srgb, ${activeModuleColor} 12%, transparent)`,
     "--module-accent-ring": `color-mix(in srgb, ${activeModuleColor} 30%, transparent)`,
     "--module-accent-strong": `color-mix(in srgb, ${activeModuleColor} 85%, white)`,
+    "--neon": activeModuleColor,
+    "--cyan": VEX_CYBER_CYAN,
   } as React.CSSProperties;
 
   // 计算模块布局：顶栏模块 / 更多模块 / 全部启用模块。
@@ -302,6 +315,11 @@ export default function App() {
   // 「更多」下拉菜单开合
   const [moreOpen, setMoreOpen] = useState(false);
 
+  // 全局背景底图纹理 class（由全局设置决定；空=默认网格）。
+  const bgTextureClass = appearance.backgroundTexture
+    ? `app-bg-${appearance.backgroundTexture}`
+    : "cyber-grid";
+
   // 若当前激活模块被禁用，回退到「启动」模块
   useEffect(() => {
     if (appearance.disabledModules.includes(activePage)) {
@@ -312,7 +330,7 @@ export default function App() {
 
   return (
     <div
-      className="w-screen h-screen overflow-hidden bg-[#0d111d] text-slate-100 flex flex-col cyber-grid"
+      className={`w-screen h-screen overflow-hidden bg-[#0d111d] text-slate-100 flex flex-col ${bgTextureClass}`}
       style={{ fontFamily: effectiveFontFamily }}
     >
       {fontFaceCss && <style>{fontFaceCss}</style>}
@@ -346,13 +364,21 @@ export default function App() {
           className="fixed left-1/2 top-14 z-[210] -translate-x-1/2 animate-in fade-in slide-in-from-top-3 duration-300"
         >
           <div
-            className={`flex items-center gap-2.5 rounded-2xl border px-4 py-2.5 shadow-2xl shadow-black/50 backdrop-blur-md ${
+            className={`vex-neon-edge flex items-center gap-2.5 rounded-2xl px-4 py-2.5 backdrop-blur-md ${
               vexToast.kind === "error"
-                ? "border-red-500/40 bg-[#1a1016]/90"
+                ? "vex-toast-pulse bg-[#1a1016]/90"
                 : vexToast.kind === "success"
-                  ? "border-emerald-500/30 bg-[#0f1a16]/90"
-                  : "border-white/10 bg-[#12151f]/90"
+                  ? "vex-toast-light bg-[#0f1a16]/90"
+                  : "bg-[#12151f]/90"
             }`}
+            style={{
+              boxShadow:
+                vexToast.kind === "error"
+                  ? "0 0 14px rgba(244,63,94,0.35), 0 0 34px rgba(244,63,94,0.20), 0 10px 26px rgba(0,0,0,0.5)"
+                  : vexToast.kind === "success"
+                    ? "0 0 12px rgba(52,211,153,0.30), 0 0 30px rgba(52,211,153,0.18), 0 10px 26px rgba(0,0,0,0.5)"
+                    : "0 0 12px color-mix(in srgb, var(--module-accent) 30%, transparent), 0 0 30px color-mix(in srgb, var(--module-accent) 16%, transparent), 0 10px 26px rgba(0,0,0,0.5)",
+            }}
           >
             <VexAvatar size={26} />
             <span className="text-[11px] text-slate-200">{vexToast.msg}</span>
@@ -406,13 +432,18 @@ export default function App() {
       {/* 微扫描线质感层 */}
       <div className="cyber-scanline fixed inset-0 z-[9998]" />
 
+      {/* content 区环境光晕（霓虹氛围光，叠在底图之上，随主题色同步） */}
+      <div className="vex-neon-ambient fixed inset-0 z-0" />
+
       {/* top bar */}
-      <div className="flex-shrink-0 h-11 flex items-center justify-between px-3 border-b border-white/5 bg-[#0e1220]/80 backdrop-blur-md z-50" data-tauri-drag-region>
+      <div className="relative flex-shrink-0 h-11 flex items-center justify-between px-3 border-b border-white/5 bg-[#0e1220]/80 backdrop-blur-md z-50" data-tauri-drag-region>
+        {/* 顶栏底部霓虹辉光细线 */}
+        <div className="vex-neon-line absolute bottom-0 left-0 right-0 h-px" />
         {/* Left: Logo + Name + Navigation Capsule */}
         <div className="flex items-center gap-2.5">
           <div className="flex items-center gap-2 pointer-events-none px-1 w-35" data-tauri-drag-region>
-            <VexAvatar size={22} glow={activeModuleColor} />
-            <span className="text-[11px] font-bold text-white tracking-wide">Kira</span>
+            <VexAvatar size={22} glow={activeModuleColor} className="vex-neon-breathe" />
+            <span className="vex-neon-text text-[11px] font-black tracking-wide">Kira</span>
           </div>
 
 
@@ -427,10 +458,10 @@ export default function App() {
                   onClick={() => switchPage(m.id)}
                   className={`px-3 py-1.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
                     isActive
-                      ? "text-white shadow-sm"
+                      ? "vex-neon-ring text-white"
                       : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
                   }`}
-                  style={isActive ? { backgroundColor: effectiveColor } : undefined}
+                  style={isActive ? { backgroundColor: effectiveColor, "--neon": effectiveColor } as React.CSSProperties : undefined}
                   title={`${m.label} (可在全局设置调整主题色)`}
                 >
                   <Icon className="w-3 h-3" />
@@ -446,12 +477,12 @@ export default function App() {
                   onClick={() => setMoreOpen((v) => !v)}
                   className={`px-3 py-1.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
                     moreModules.some((m) => m.id === activePage)
-                      ? "text-white shadow-sm"
+                      ? "vex-neon-ring text-white"
                       : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
                   }`}
                   style={
                     moreModules.some((m) => m.id === activePage)
-                      ? { backgroundColor: activeModuleColor }
+                      ? { backgroundColor: activeModuleColor, "--neon": activeModuleColor } as React.CSSProperties
                       : undefined
                   }
                   title="更多模块"
@@ -501,10 +532,10 @@ export default function App() {
             onClick={() => switchPage("settings")}
             className={`p-1.5 rounded transition-all cursor-pointer ${
               activePage === "settings"
-                ? "text-white"
-                : "text-slate-400 hover:text-white hover:bg-white/5"
+                ? "vex-neon-ring text-white"
+                : "vex-neon-hover text-slate-400 hover:text-white hover:bg-white/5"
             }`}
-            style={activePage === "settings" ? { backgroundColor: activeModuleColor } : undefined}
+            style={activePage === "settings" ? { backgroundColor: activeModuleColor, "--neon": activeModuleColor } as React.CSSProperties : undefined}
             title="设置"
           >
             <SettingsIcon className="w-3.5 h-3.5" />
@@ -512,14 +543,14 @@ export default function App() {
           <div className="w-px h-4 bg-white/10 mx-0.5" />
           <button
             onClick={() => getCurrentWindow().minimize()}
-            className="p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded transition-all cursor-pointer"
+            className="vex-neon-hover p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded transition-all cursor-pointer"
             title="最小化"
           >
             <Minus className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => getCurrentWindow().toggleMaximize()}
-            className="p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded transition-all cursor-pointer"
+            className="vex-neon-hover p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded transition-all cursor-pointer"
             title="还原/最大化"
           >
             <Square className="w-3.5 h-3.5" />

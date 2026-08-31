@@ -79,6 +79,39 @@ const MAIN_WINDOW_WIDTH: f64 = 1150.0;
 const MAIN_WINDOW_HEIGHT: f64 = 780.0;
 
 const TRAY_ID: &str = "main-tray";
+
+/// Kira 语句统一来源：所有「Kira 说的话」由前端从 kiraQuotes 函数库（src/utils/kiraQuotes.ts）
+/// 推入后端，托盘悬停提示与托盘问候菜单都从这里取，避免文案散落多处。
+static TRAY_QUOTE: OnceLock<Mutex<String>> = OnceLock::new();
+
+/// 前端尚未推入时的励志兜底句。
+const TRAY_QUOTE_FALLBACK: &str = "心之所向，素履以往。加油，我陪你一起把事做成。";
+
+/// 前端应用启动时调用：把统一函数库里的一句励志名言推给托盘（悬停提示 + 问候菜单共用）。
+#[tauri::command]
+pub fn set_tray_quote(app: AppHandle, text: String) -> Result<(), String> {
+    let slot = TRAY_QUOTE.get_or_init(|| Mutex::new(String::new()));
+    if let Ok(mut g) = slot.lock() {
+        *g = text.clone();
+    }
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_tooltip(Some(text));
+    }
+    Ok(())
+}
+
+/// 读取最近由前端推入的 Kira 语句；未设置时用励志兜底句。
+fn current_tray_quote() -> String {
+    if let Some(slot) = TRAY_QUOTE.get() {
+        if let Ok(g) = slot.lock() {
+            if !g.is_empty() {
+                return g.clone();
+            }
+        }
+    }
+    TRAY_QUOTE_FALLBACK.to_string()
+}
+
 const ID_SHOW: &str = "show";
 const ID_QUIT: &str = "quit";
 const ID_VEX_GREETING: &str = "vex-greeting";
@@ -143,7 +176,7 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let _ = GLOBAL_APP.set(app.clone());
     let menu = build_menu(app)?;
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
-        .tooltip("Kira")
+        .tooltip(current_tray_quote())
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
@@ -293,6 +326,7 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     }
 
     builder.build(app)?;
+
     Ok(())
 }
 
@@ -484,17 +518,9 @@ fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::We
     builder.build()
 }
 
-/// vex 元气问候（托盘失活菜单项）：按时间轮换，托盘每次重建都换一句，让女孩更「活」。
+/// vex 元气问候（托盘失活菜单项）：直接取 Kira 统一语句库（前端推入的励志名言）。
 fn vex_greeting() -> String {
-    const GREETINGS: &[&str] = &[
-        "我在呢，有什么想弄的，随时说一声。",
-        "今天也慢慢来，我从旁边陪着。",
-        "忙归忙，记得歇一歇。",
-        "有需要就喊我，我一直都在。",
-    ];
-    let secs = now_ms() / 1000;
-    let idx = ((secs / 8) as usize) % GREETINGS.len();
-    format!("💖 {}", GREETINGS[idx])
+    format!("💖 {}", current_tray_quote())
 }
 
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {

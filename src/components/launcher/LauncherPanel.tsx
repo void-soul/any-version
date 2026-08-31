@@ -1327,7 +1327,7 @@ export default function LauncherPanel() {
       {/* Drag Over Overlay Toast / Indicator */}
       {isDragOver && (
         <div className="absolute inset-x-0 top-12 z-50 flex justify-center pointer-events-none animate-in fade-in slide-in-from-top-2 duration-150">
-          <div className="bg-[color-mix(in_srgb,var(--module-accent)_90%,transparent)] backdrop-blur-md border border-[var(--module-accent)] text-white px-5 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2.5">
+          <div className="bg-[color-mix(in_srgb,var(--module-accent)_90%,transparent)] backdrop-blur-md border border-[var(--module-accent)] text-white px-5 py-2.5 rounded-2xl shadow-[0_0_16px_color-mix(in_srgb,var(--module-accent)_45%,transparent),0_0_40px_color-mix(in_srgb,var(--module-accent)_25%,transparent)] flex items-center gap-2.5">
             <UploadCloud className="w-5 h-5 text-[var(--module-accent)] animate-bounce" />
             <div className="text-xs">
               <span className="font-bold">松开鼠标立即添加至「{currentDragTargetName}」</span>
@@ -2355,7 +2355,7 @@ export default function LauncherPanel() {
 
       {/* Toast Notification */}
       {toastMsg && (
-        <div className="fixed bottom-6 right-6 z-[300] bg-[var(--module-accent)] text-white text-xs px-4 py-2.5 rounded-xl shadow-xl flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-150">
+        <div className="fixed bottom-6 right-6 z-[300] bg-[var(--module-accent)] text-white text-xs px-4 py-2.5 rounded-xl shadow-[0_0_14px_color-mix(in_srgb,var(--module-accent)_48%,transparent),0_0_36px_color-mix(in_srgb,var(--module-accent)_26%,transparent)] flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-150">
           <Check className="w-4 h-4" />
           <span>{toastMsg}</span>
         </div>

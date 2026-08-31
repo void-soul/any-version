@@ -5,23 +5,23 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 /* ---------- 可复用 className 常量（直接拼接在已有 className 处） ---------- */
 export const btnBase =
-  "inline-flex items-center justify-center gap-1.5 rounded-lg transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed select-none";
+  "vex-btn-neon inline-flex items-center justify-center gap-1.5 rounded-lg transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed select-none";
 
 /** 次级按钮：中性底 / 描边 */
 export const btnSecondary = `${btnBase} px-3 h-8 bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-slate-300`;
 
-/** 主按钮：用模块主题色 */
-export const btnPrimary = `${btnBase} px-3 h-8 bg-[var(--module-accent)] hover:opacity-85 text-[11px] font-semibold text-white`;
+/** 主按钮：用模块主题色（常态带霓虹环） */
+export const btnPrimary = `${btnBase} px-3 h-8 bg-[var(--module-accent)] hover:opacity-85 text-[11px] font-semibold text-white vex-btn-neon-primary`;
 
 /** 危险按钮：红 */
-export const btnDanger = `${btnBase} px-3 h-8 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-[11px] text-rose-300`;
+export const btnDanger = `${btnBase} px-3 h-8 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-[11px] text-rose-300 vex-btn-neon-danger`;
 
 /** 幽灵按钮：只有文字，无底 */
 export const btnGhost = `${btnBase} px-3 h-8 text-[11px] text-slate-400 hover:text-white hover:bg-white/5`;
 
 /* ---------- 输入框 / 卡片 ---------- */
 export const inputCls =
-  "w-full h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]";
+  "vex-input-cyan w-full h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none";
 export const labelCls = "text-[11px] text-slate-400 mb-1 block font-medium";
 export const cardCls = "glass-panel rounded-2xl border border-white/10 bg-white/[0.02]";
 

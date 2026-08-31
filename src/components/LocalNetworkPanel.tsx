@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  Activity, AlertTriangle, CheckCircle, Globe, Loader2, MapPin,
+  Activity, AlertTriangle, CheckCircle, Globe, Loader2,
   Network, Radio, RefreshCw, Signal, Wifi, X
 } from "lucide-react";
 import PortScanner from "./PortScanner";
@@ -20,16 +20,6 @@ interface IfaceTraffic {
   name: string;
   received_bytes: number;
   sent_bytes: number;
-}
-
-interface IpInfo {
-  ip: string;
-  country: string;
-  region: string;
-  city: string;
-  isp: string;
-  org: string;
-  source: string;
 }
 
 interface PingResult {
@@ -240,46 +230,6 @@ export default function LocalNetworkPanel() {
   // 读取失败时的重试：清除错误并立即重新采样
   const retryTraffic = () => { setTrafficError(null); void tick(); };
 
-  // —— IP 归属地 ——
-  const [ipQueries, setIpQueries] = useState<Map<string, IpInfo | string>>(new Map());
-  const [ipLoading, setIpLoading] = useState<string | null>(null);
-
-  // —— 离线 IP 库 ——
-  const [ipDb, setIpDb] = useState<{ exists: boolean; sizeBytes: number; updatedAt: string | null; path: string } | null>(null);
-  const [ipDbBusy, setIpDbBusy] = useState(false);
-  const [ipDbMsg, setIpDbMsg] = useState<string | null>(null);
-
-  const loadIpDb = useCallback(async () => {
-    try { setIpDb(await invoke("ip_db_status")); } catch { /* 后端缺失时忽略 */ }
-  }, []);
-  useEffect(() => { void loadIpDb(); }, [loadIpDb]);
-
-  const downloadIpDb = async () => {
-    setIpDbBusy(true);
-    setIpDbMsg(null);
-    try {
-      const st = await invoke<{ exists: boolean; sizeBytes: number; updatedAt: string | null; path: string }>("download_ip_db");
-      setIpDb(st);
-      setIpDbMsg(st.exists ? `离线 IP 库已更新（${fmtBytes(st.sizeBytes)}）` : "下载完成");
-    } catch (e: any) {
-      setIpDbMsg(`下载失败: ${e}`);
-    } finally {
-      setIpDbBusy(false);
-    }
-  };
-
-  const lookupIp = async (ip: string) => {
-    setIpLoading(ip);
-    try {
-      const info = await invoke<IpInfo>("ip_lookup", { ip });
-      setIpQueries((m) => new Map(m).set(ip, info));
-    } catch (e: any) {
-      setIpQueries((m) => new Map(m).set(ip, String(e)));
-    } finally {
-      setIpLoading(null);
-    }
-  };
-
   // —— Ping ——
   const [pingHost, setPingHost] = useState("");
   const [pingCount, setPingCount] = useState(4);
@@ -421,91 +371,28 @@ export default function LocalNetworkPanel() {
                     <td className="py-1.5 pr-3">本地地址</td>
                     <td className="py-1.5 pr-3">远程地址</td>
                     <td className="py-1.5 pr-3">状态</td>
-                    <td className="py-1.5 pr-3">进程</td>
-                    <td className="py-1.5">归属地</td>
+                    <td className="py-1.5">进程</td>
                   </tr>
                 </thead>
                 <tbody className="text-slate-300 divide-y divide-white/[0.03]">
-                  {filteredConns.map((c, i) => {
-                    const remoteIp = c.remote.replace(/:[^:]*$/, "").replace(/^\[|\]$/g, "");
-                    const isRemote = remoteIp !== "" && remoteIp !== "*" && remoteIp !== "0.0.0.0" && !c.remote.startsWith("127.") && !c.remote.startsWith("[::1]");
-                    const q = ipQueries.get(remoteIp);
-                    return (
-                      <tr key={i} className="hover:bg-white/[0.02]">
-                        <td className="py-1 font-mono text-slate-400">{c.proto}</td>
-                        <td className="py-1 font-mono">{c.local}</td>
-                        <td className="py-1 font-mono">{c.remote}</td>
-                        <td className="py-1">
-                          <span className={c.state === "LISTENING" ? "text-amber-400" : c.state === "ESTABLISHED" ? "text-emerald-400" : "text-slate-500"}>
-                            {c.state}
-                          </span>
-                        </td>
-                        <td className="py-1 text-slate-400">{c.process || (c.pid !== "0" ? `PID ${c.pid}` : "系统")}</td>
-                        <td className="py-1">
-                          {isRemote ? (
-                            q === undefined ? (
-                              <button onClick={() => lookupIp(remoteIp)} disabled={ipLoading !== null}
-                                className="px-1.5 py-0.5 bg-white/5 hover:bg-white/10 text-slate-400 rounded text-[9px] border border-white/5 cursor-pointer flex items-center gap-1 disabled:opacity-50">
-                                {ipLoading === remoteIp ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <MapPin className="w-2.5 h-2.5" />}
-                                查询
-                              </button>
-                            ) : typeof q === "string" ? (
-                              <span className="text-red-400 text-[9px]" title={q}>查询失败</span>
-                            ) : (
-                              <span className="text-slate-300 text-[9px]" title={`${q.isp} ${q.org} (${q.source})`}>
-                                {q.country}{q.city ? ` ${q.city}` : ""}
-                              </span>
-                            )
-                          ) : (
-                            <span className="text-slate-600">-</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {filteredConns.map((c, i) => (
+                    <tr key={i} className="hover:bg-white/[0.02]">
+                      <td className="py-1 font-mono text-slate-400">{c.proto}</td>
+                      <td className="py-1 font-mono">{c.local}</td>
+                      <td className="py-1 font-mono">{c.remote}</td>
+                      <td className="py-1">
+                        <span className={c.state === "LISTENING" ? "text-amber-400" : c.state === "ESTABLISHED" ? "text-emerald-400" : "text-slate-500"}>
+                          {c.state}
+                        </span>
+                      </td>
+                      <td className="py-1 text-slate-400">{c.process || (c.pid !== "0" ? `PID ${c.pid}` : "系统")}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
           </>
         )}
-      </div>
-
-      {/* 离线 IP 库 */}
-      <div className="glass-panel rounded-2xl p-5 border border-white/5 space-y-3">
-        <div className="flex items-center gap-2 pb-2 border-b border-white/5">
-          <MapPin className="w-4 h-4 text-teal-400" />
-          <h4 className="font-semibold text-white text-xs">离线 IP 库</h4>
-          <span className="text-[10px] text-slate-500">连接列表的归属地优先本地查询，不依赖网络</span>
-        </div>
-        <div className="flex items-center gap-3">
-          {ipDb === null ? (
-            <span className="text-[10px] text-slate-500">读取状态中…</span>
-          ) : ipDb.exists ? (
-            <span className="text-[10px] text-emerald-400 flex items-center gap-1">
-              <CheckCircle className="w-3 h-3" /> 已安装 · {fmtBytes(ipDb.sizeBytes)}
-              {ipDb.updatedAt && ` · ${new Date(ipDb.updatedAt).toLocaleString("zh-CN", { hour12: false })}`}
-            </span>
-          ) : (
-            <span className="text-[10px] text-amber-400">未安装（当前使用在线 API 查询）</span>
-          )}
-          <div className="flex-1" />
-          <button onClick={() => void downloadIpDb()} disabled={ipDbBusy}
-            className="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white rounded-lg text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1.5">
-            {ipDbBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-            {ipDbBusy ? "下载中…" : ipDb?.exists ? "更新" : "下载"}
-          </button>
-        </div>
-        {ipDbMsg && (
-          <div className={`p-2.5 rounded-xl text-[10px] flex items-center gap-1.5 ${ipDbMsg.startsWith("下载失败") || ipDbMsg.startsWith("下载离线")
-            ? "bg-red-500/10 border border-red-500/20 text-red-400"
-            : "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"}`}>
-            <AlertTriangle className="w-3 h-3" /> {ipDbMsg}
-          </div>
-        )}
-        <p className="text-[9px] text-slate-600">
-          库文件为 GeoLite2 Country MMDB（约 5-6 MB，含中文国家名），保存在应用数据目录 ipdb/ 下；
-          仅覆盖国家/地区级信息，省/市/ISP 仍在需要时走在线 API 补充。
-        </p>
       </div>
 
       {/* Ping */}

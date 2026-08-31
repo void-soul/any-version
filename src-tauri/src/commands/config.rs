@@ -155,6 +155,9 @@ pub struct Config {
     /// 被用户禁用的模块 id 列表（导航隐藏且不渲染，后端命令仍注册）。
     #[serde(default)]
     pub disabled_modules: Vec<String>,
+    /// 全局背景底图纹理（grid / dots / scanline / aurora / solid）。空 = 默认网格。
+    #[serde(default)]
+    pub background_texture: String,
 }
 
 pub fn get_base_dir() -> PathBuf {
@@ -305,6 +308,7 @@ fn default_config() -> Config {
         module_order: Vec::new(),
         toolbar_modules: Vec::new(),
         disabled_modules: Vec::new(),
+        background_texture: String::new(),
     }
 }
 
@@ -1211,6 +1215,7 @@ pub fn get_appearance_config() -> AppearanceConfig {
         module_order: config.module_order,
         toolbar_modules: config.toolbar_modules,
         disabled_modules: config.disabled_modules,
+        background_texture: config.background_texture,
     }
 }
 
@@ -1251,6 +1256,14 @@ pub fn set_module_theme_color(module_id: String, color: String) -> Result<(), St
 pub fn set_global_font(font: String) -> Result<(), String> {
     let mut config = load_config();
     config.global_font = font;
+    save_config(&config)
+}
+
+/// 设置全局背景底图纹理（grid / dots / scanline / aurora / solid；空=默认网格）。
+#[tauri::command]
+pub fn set_background_texture(texture: String) -> Result<(), String> {
+    let mut config = load_config();
+    config.background_texture = texture;
     save_config(&config)
 }
 
@@ -1402,5 +1415,7 @@ pub struct AppearanceConfig {
     pub module_order: Vec<String>,
     pub toolbar_modules: Vec<String>,
     pub disabled_modules: Vec<String>,
+    /// 全局背景底图纹理。
+    pub background_texture: String,
 }
 

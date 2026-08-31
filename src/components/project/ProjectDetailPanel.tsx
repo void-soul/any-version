@@ -41,15 +41,17 @@ const baseTabLabels: Record<string, string> = {
   config: "参数配置",
 };
 
-// 判断项目是否支持版本管理（下载多版本 / Git 仓库 / 版本前缀 URL 映射）。
+// 判断项目是否支持版本管理（下载多版本 / Git 仓库 / 版本前缀 URL 映射 / npm 包）。
 // mysql 等 SDK 使用 version_url_prefix_map + remote_versions_config 提供版本，
-// 必须纳入判定，否则托管后会被误判为「简单托管」。
+// npm 包（如 GitNexus）使用 npm_pkg_name 安装，均须纳入判定，
+// 否则托管后会被误判为「简单托管」。
 function hasVersionSupportOf(def: ProjectDef | null | undefined): boolean {
   if (!def) return false;
   return !!(
     def.download_url_template ||
     def.is_git_repo ||
-    def.version_url_prefix_map
+    def.version_url_prefix_map ||
+    def.npm_pkg_name
   );
 }
 

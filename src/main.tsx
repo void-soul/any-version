@@ -9,14 +9,16 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 // 避免每次打开划词悬浮窗都要等待整包加载（否则首开要 5~6 秒才弹出）。
 const POPUP_KIND = new URLSearchParams(window.location.search).get("popup");
 
-if (POPUP_KIND === "translate" || POPUP_KIND === "mindmap") {
+if (POPUP_KIND === "translate" || POPUP_KIND === "mindmap-node" || POPUP_KIND === "mindmap-sticker" || POPUP_KIND === "mindmap") {
   // 划词翻译悬浮窗只渲染轻量组件，不加载 App 与全局快捷键逻辑。
   // 样式：Tailwind 指令在 App.css 中，App 分支由 App.tsx 引入；
   // 悬浮窗分支必须在此一并加载，否则所有工具类样式失效。
   import("./App.css");
   const mod = POPUP_KIND === "translate"
     ? import("./components/TranslatePopup")
-    : import("./components/mindmap/MindmapQuickPopup");
+    : POPUP_KIND === "mindmap-sticker"
+    ? import("./components/mindmap/MindmapStickerPopup")
+    : import("./components/mindmap/MindmapNodePopup");
   void mod.then(({ default: Popup }) => {
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>

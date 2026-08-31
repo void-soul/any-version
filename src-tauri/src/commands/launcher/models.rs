@@ -156,10 +156,14 @@ pub struct LauncherSetting {
     /// 与「翻译」模块热键（唤起模块面板看历史）相互独立。默认 F6。
     #[serde(default = "default_selection_translate_hotkey")]
     pub selection_translate_hotkey: String,
-    /// 独立「思维导图速记」热键：呼出速记悬浮窗，随手把内容记进导图（节点/根/贴纸）。
+    /// 独立「思维导图速记」热键：呼出节点速记悬浮窗，随手把内容记进导图为节点。
     /// 与「思维导图」模块热键（唤起模块面板）相互独立。默认 Shift+F3。
     #[serde(default = "default_mindmap_quick_hotkey")]
     pub mindmap_quick_hotkey: String,
+    /// 独立「思维导图贴纸」热键：呼出贴纸速记悬浮窗，必须先选目标文档。
+    /// 默认 Shift+F4。
+    #[serde(default = "default_mindmap_sticker_hotkey")]
+    pub mindmap_sticker_hotkey: String,
     // ---- 视图设置（全局，应用到所有分类）----
     /// 项目图标大小（px），默认 32
     #[serde(default = "default_item_icon_size")]
@@ -207,6 +211,9 @@ pub fn default_selection_translate_hotkey() -> String {
 pub fn default_mindmap_quick_hotkey() -> String {
     "Shift+F3".to_string()
 }
+pub fn default_mindmap_sticker_hotkey() -> String {
+    "Shift+F4".to_string()
+}
 fn default_item_icon_size() -> i32 {
     32
 }
@@ -239,6 +246,7 @@ impl Default for LauncherSetting {
             module_hotkeys: default_module_hotkeys(),
             selection_translate_hotkey: default_selection_translate_hotkey(),
             mindmap_quick_hotkey: default_mindmap_quick_hotkey(),
+            mindmap_sticker_hotkey: default_mindmap_sticker_hotkey(),
             item_icon_size: default_item_icon_size(),
             item_column_number: 0,
             card_density: default_card_density(),

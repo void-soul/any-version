@@ -897,9 +897,9 @@ function TokenForm({
                       key={c.id}
                       type="button"
                       onClick={() => toggleCat(c.id)}
-                      className={`px-2.5 py-1 rounded-full text-[10px] border transition-colors cursor-pointer ${
+                      className={`vex-chip px-2.5 py-1 rounded-full text-[10px] border transition-colors cursor-pointer ${
                         on
-                          ? "bg-[var(--module-accent)]/20 border-[var(--module-accent)] text-[var(--module-accent)]"
+                          ? "vex-chip-active bg-[var(--module-accent)]/20 border-[var(--module-accent)] text-[var(--module-accent)]"
                           : "bg-white/[0.03] border-white/10 text-slate-400 hover:border-white/25"
                       }`}
                     >

@@ -422,6 +422,10 @@ pub struct ProjectDef {
     pub bootstrap_cmd: Option<String>,
 
 
+    /// npm 包名。当存在时，该项目通过 `npm install --prefix` 安装（如 GitNexus），
+    /// 而非下载二进制归档。安装/卸载/版本切换均复用 versions_dir + junction 机制。
+    #[serde(default)]
+    pub npm_pkg_name: Option<String>,
     /// 下载 URL 模板（{version} 为占位符）
     #[serde(default)]
     pub download_url_template: Option<String>,

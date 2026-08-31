@@ -17,6 +17,7 @@ import {
   Globe,
   Archive,
   ArchiveRestore,
+  RefreshCw,
   Send,
   Reply,
   Cloud,
@@ -245,6 +246,17 @@ export default function PickyPanel() {
     }
   };
 
+  const refetchBookmark = async (b: PickyBookmark) => {
+    try {
+      flash(`正在重新抓取「${b.title}」的元数据…`);
+      await invoke("picky_refetch_metadata", { id: b.id });
+      await load();
+      flash(`已更新「${b.title}」的元数据`);
+    } catch (e) {
+      flash(`重新抓取失败：${e}`);
+    }
+  };
+
   const removeBookmark = (b: PickyBookmark) => {
     setConfirm({
       title: "删除收藏",
@@ -431,6 +443,7 @@ export default function PickyPanel() {
                   onTags={() => setTagFor(b)}
                   onAddComment={(content, parentId) => addComment(b.id, content, parentId)}
                   onDeleteComment={removeComment}
+                  onRefetch={() => refetchBookmark(b)}
                 />
               ) : (
                 <BookmarkCard
@@ -450,6 +463,7 @@ export default function PickyPanel() {
                   onTags={() => setTagFor(b)}
                   onAddComment={(content, parentId) => addComment(b.id, content, parentId)}
                   onDeleteComment={removeComment}
+                  onRefetch={() => refetchBookmark(b)}
                 />
               )
             )}
@@ -543,6 +557,7 @@ function BookmarkCard({
   onTags,
   onAddComment,
   onDeleteComment,
+  onRefetch,
 }: {
   bookmark: PickyBookmark;
   tags: PickyTag[];
@@ -556,6 +571,7 @@ function BookmarkCard({
   onTags: () => void;
   onAddComment: (content: string, parentId?: string) => void;
   onDeleteComment: (c: PickyComment) => void;
+  onRefetch: () => void;
 }) {
   return (
     <div
@@ -621,6 +637,9 @@ function BookmarkCard({
             <MessageSquare className="w-3 h-3" />
             <span className="text-[9px]">{comments.length > 0 ? comments.length : ""}</span>
           </IconBtn>
+          <IconBtn title="重新抓取元数据（支持 JS 渲染页面）" onClick={onRefetch}>
+            <RefreshCw className="w-3 h-3" />
+          </IconBtn>
           <IconBtn title="标签" onClick={onTags}>
             <Tag className="w-3 h-3" />
           </IconBtn>
@@ -660,6 +679,7 @@ function BookmarkRow(props: {
   onTags: () => void;
   onAddComment: (content: string, parentId?: string) => void;
   onDeleteComment: (c: PickyComment) => void;
+  onRefetch: () => void;
 }) {
   const {
     bookmark: b,
@@ -673,6 +693,7 @@ function BookmarkRow(props: {
     onTags,
     onAddComment,
     onDeleteComment,
+    onRefetch,
   } = props;
 
   return (
@@ -702,6 +723,8 @@ function BookmarkRow(props: {
           <IconBtn title={expanded ? "收起评论" : `评论 (${comments.length})`} onClick={onToggleExpand} active={expanded}>
             <MessageSquare className="w-3 h-3" />
             <span className="text-[9px]">{comments.length > 0 ? comments.length : ""}</span>
+          </IconBtn>          <IconBtn title="重新抓取元数据（支持 JS 渲染页面）" onClick={onRefetch}>
+            <RefreshCw className="w-3 h-3" />
           </IconBtn>
           <IconBtn title="标签" onClick={onTags}>
             <Tag className="w-3 h-3" />
@@ -725,6 +748,8 @@ function BookmarkRow(props: {
         </div>
       )}
     </div>
+
+    
   );
 }
 
@@ -1013,7 +1038,7 @@ function TagModal({
               <span key={t.id} className="inline-flex items-center gap-1">
                 <button
                   onClick={() => onToggle(t.id)}
-                  className={`px-2.5 py-1 rounded-full text-[10px] border transition-colors cursor-pointer ${
+                  className={`vex-chip px-2.5 py-1 rounded-full text-[10px] border transition-colors cursor-pointer ${
                     on ? "bg-white/10 border-white/30 text-white" : "bg-white/[0.03] border-white/10 text-slate-400 hover:border-white/25"
                   }`}
                   style={on ? { background: `${t.color}33`, borderColor: `${t.color}66`, color: t.color } : undefined}

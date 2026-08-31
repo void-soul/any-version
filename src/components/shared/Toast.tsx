@@ -50,16 +50,17 @@ function ToastView({ items }: { items: ToastMsg[] }) {
             : t.kind === "err"
               ? "bg-rose-500/20 text-rose-300"
               : "bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[var(--module-accent)]";
-        const borderCls =
+        const glowShadow =
           t.kind === "ok"
-            ? "border-emerald-500/30"
+            ? "0 0 12px rgba(52,211,153,0.28), 0 0 30px rgba(52,211,153,0.16), 0 12px 26px rgba(0,0,0,0.5)"
             : t.kind === "err"
-              ? "border-rose-500/30"
-              : "border-[var(--module-accent-ring)]";
+              ? "0 0 14px rgba(244,63,94,0.35), 0 0 34px rgba(244,63,94,0.20), 0 12px 26px rgba(0,0,0,0.5)"
+              : "0 0 12px color-mix(in srgb, var(--module-accent) 30%, transparent), 0 0 30px color-mix(in srgb, var(--module-accent) 16%, transparent), 0 12px 26px rgba(0,0,0,0.5)";
         return (
           <div
             key={t.id}
-            className={`flex items-center gap-2.5 pl-3 pr-4 py-2.5 rounded-xl border ${borderCls} bg-slate-900/95 backdrop-blur-md shadow-2xl shadow-black/50`}
+            className={`vex-neon-edge flex items-center gap-2.5 pl-3 pr-4 py-2.5 rounded-xl bg-slate-900/95 backdrop-blur-md ${t.kind === "err" ? "vex-toast-pulse" : t.kind === "ok" ? "vex-toast-light" : ""}`}
+            style={{ boxShadow: glowShadow }}
           >
             <span className={`w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 ${iconCls}`}>
               <Icon className="w-3 h-3" />

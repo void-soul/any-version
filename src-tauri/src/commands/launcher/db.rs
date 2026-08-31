@@ -696,6 +696,15 @@ pub fn get_settings() -> Result<LauncherSetting, String> {
                 params![json_str],
             );
         }
+        // 数据迁移：思维导图贴纸热键默认 Shift+F4。
+        if setting.mindmap_sticker_hotkey.trim().is_empty() {
+            setting.mindmap_sticker_hotkey = crate::commands::launcher::models::default_mindmap_sticker_hotkey();
+            let json_str = serde_json::to_string(&setting).map_err(|e| e.to_string())?;
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO launcher_setting (key, value) VALUES ('global', ?1)",
+                params![json_str],
+            );
+        }
         Ok(setting)
     })
 }

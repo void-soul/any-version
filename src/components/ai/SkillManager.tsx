@@ -310,9 +310,9 @@ export default function SkillManager() {
                     <button
                       key={t}
                       onClick={() => setSelTags(active ? selTags.filter((x) => x !== t) : [...selTags, t])}
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-medium transition-all cursor-pointer ${
+                      className={`vex-chip px-2 py-0.5 rounded-full text-[10px] font-medium transition-all cursor-pointer ${
                         active
-                          ? 'bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]'
+                          ? 'vex-chip-active bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]'
                           : 'bg-white/5 text-slate-400 hover:bg-white/10 border border-transparent'
                       }`}
                     >

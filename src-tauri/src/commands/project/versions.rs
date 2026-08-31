@@ -378,6 +378,14 @@ async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, ur
                 let arr_field = config.get("array_field").and_then(|v| v.as_str()).unwrap_or("releases");
                 body.get(arr_field).and_then(|v| v.as_array()).cloned().unwrap_or_default()
             }
+            // npm registry 等：versions 是 { "1.0.0": {...}, ... } 这样的字典，取键作版本列表
+            "object_keys" => {
+                let keys_field = config.get("array_field").and_then(|v| v.as_str()).unwrap_or("versions");
+                body.get(keys_field)
+                    .and_then(|v| v.as_object())
+                    .map(|o| o.keys().map(|k| serde_json::Value::String(k.clone())).collect())
+                    .unwrap_or_default()
+            }
             _ => {
                 last_error = format!("不支持的 response_type: {}", response_type);
                 continue;
@@ -401,8 +409,8 @@ async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, ur
                 }
             }
 
-            let raw_version = if response_type == "object_with_array" {
-                // items may be objects (Adoptium API) or plain strings
+            let raw_version = if response_type == "object_with_array" || response_type == "object_keys" {
+                // items may be objects (Adoptium API) or plain strings (npm registry keys)
                 item.get(version_field).and_then(|v| v.as_str().map(String::from))
                     .or_else(|| item.as_str().map(String::from))
                     .unwrap_or_default()
@@ -631,6 +639,72 @@ pub async fn project_install_version(app: AppHandle, id: String, version: String
     }
 }
 
+/// npm 包类型的安装：在 versions_dir/{id}/{version} 目录下执行
+/// `npm install --prefix <dest_dir> <pkg>@{version}`（npm 包名来自 def.npm_pkg_name）。
+/// 复用 junction 与 PATH 托管机制；bin 目录为 `<dest>/node_modules/.bin`。
+async fn do_npm_install(
+    app: AppHandle,
+    id: String,
+    version: String,
+    pkg: String,
+) -> Result<(), String> {
+    let config = load_config();
+    let dest_dir = Path::new(&config.versions_dir).join(&id).join(&version);
+
+    // 1. 先确认 npm 可用（GitNexus 等 npm 包依赖 Node.js 环境）
+    let npm_probe = super::super::hidden_cmd::hidden_cmd("npm")
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("未找到 npm，请先安装 Node.js: {}", e))?;
+    if !npm_probe.status.success() {
+        return Err("npm 不可用，请先安装 Node.js".to_string());
+    }
+
+    // 2. 清理旧目录并创建
+    if dest_dir.exists() {
+        let _ = fs::remove_dir_all(&dest_dir);
+    }
+    fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+
+    // 3. 执行 npm install --prefix <dest_dir> <pkg>@{version}
+    sync_install_step(&app, &id, "npm 安装中");
+    let version_spec = if version.is_empty() || version.eq_ignore_ascii_case("latest") {
+        pkg.clone()
+    } else {
+        format!("{}@{}", pkg, version)
+    };
+    crate::exit_log!("[npm 安装] {} -> {}", id, version_spec);
+
+    let npm_result = super::super::hidden_cmd::hidden_cmd("npm")
+        .args(["install", "--prefix"])
+        .arg(&dest_dir)
+        .arg(&version_spec)
+        .output()
+        .map_err(|e| format!("npm install 执行失败: {}", e))?;
+
+    if !npm_result.status.success() {
+        let stderr = String::from_utf8_lossy(&npm_result.stderr);
+        let stdout = String::from_utf8_lossy(&npm_result.stdout);
+        crate::exit_log!("[npm 安装失败] stdout: {} stderr: {}", stdout, stderr);
+        return Err(format!(
+            "npm install 失败: {}",
+            if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() }
+        ));
+    }
+
+    // 若 `--prefix` 实际把内容装到了 dest_dir/.，但在 Windows 上 node_modules 就在 dest_dir 根下
+    // 4. 首次安装时自动创建 junction
+    sync_install_step(&app, &id, "创建链接中");
+    let junction_path = Path::new(&config.links_dir).join(&id);
+    if !junction_path.exists() {
+        let _ = crate::commands::cache::create_junction(&junction_path, &dest_dir);
+    }
+
+    sync_install_step(&app, &id, "完成");
+
+    Ok(())
+}
+
 /// 实际安装逻辑（在可取消的 Tokio 任务中运行）
 async fn do_install(
     app: AppHandle,
@@ -641,6 +715,12 @@ async fn do_install(
     let def = super::registry::find_by_id(&id)
         .ok_or_else(|| format!("未找到项目: {}", id))?;
     let config = load_config();
+
+    // 0. npm 包类型：通过 `npm install --prefix` 安装到 versions_dir，而非下载归档。
+    if let Some(ref pkg) = def.npm_pkg_name {
+        return do_npm_install(app, id, version, pkg.clone()).await;
+    }
+
     let file_ext = dl_info.file_ext.clone();
     let download_url = dl_info.url.clone();
 
@@ -683,6 +763,7 @@ async fn do_install(
         "tar.gz" | "tgz" => extract_tar_gz(&archive_path, &extract_dir),
         "tar.xz" => extract_tar_xz(&archive_path, &extract_dir),
         "tar.bz2" => extract_tar_bz2(&archive_path, &extract_dir),
+        "7z" => extract_7z(&archive_path, &extract_dir),
         "msi" => extract_msi(&archive_path, &extract_dir),
         "exe" => {
             fs::create_dir_all(&extract_dir).map_err(|e| e.to_string())?;
@@ -959,6 +1040,13 @@ fn setup_temp_dir(prefix: &str) -> Result<(PathBuf, Box<dyn FnOnce() + Send>), S
     Ok((temp_dir, Box::new(cleanup)))
 }
 
+/// 解压 7z 文件
+fn extract_7z(src: &Path, dest: &Path) -> Result<(), String> {
+    fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    sevenz_rust::decompress_file(src, dest).map_err(|e| format!("7z 解压失败: {}", e))?;
+    Ok(())
+}
+
 /// 解压 zip 文件
 fn unzip_file(src: &Path, dest: &Path) -> Result<(), String> {
     let file = fs::File::open(src).map_err(|e| e.to_string())?;
@@ -1169,6 +1257,15 @@ struct DownloadInfo {
 fn get_download_url(project_id: &str, version: &str) -> Result<DownloadInfo, String> {
     let def = super::registry::find_by_id(project_id)
         .ok_or_else(|| format!("未找到项目: {}", project_id))?;
+
+    // npm 包类型：无二进制归档 URL，由 do_npm_install 处理，这里返回空占位。
+    if def.npm_pkg_name.is_some() {
+        return Ok(DownloadInfo {
+            url: String::new(),
+            file_ext: "npm".to_string(),
+            extract_subdir: None,
+        });
+    }
 
     // 如果版本字符串带有 version_label 前缀，先剥离
     let version_stripped = if let Some(ref cfg) = def.remote_versions_config {

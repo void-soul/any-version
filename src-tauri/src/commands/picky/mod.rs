@@ -246,6 +246,231 @@ fn bookmark_from_row(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
     })
 }
 
+/// 按 id 读取单条收藏（用于 refetch 等场景）。
+fn get_bookmark(conn: &rusqlite::Connection, id: &str) -> Result<Bookmark, String> {
+    conn.query_row(
+        "SELECT id,title,description,url,image_url,favicon_url,created_at,updated_at,refined,meta_fetched,extra FROM picky_bookmarks WHERE id=?1",
+        [id],
+        |row| bookmark_from_row(row),
+    )
+    .map_err(|e| format!("收藏不存在: {}", e))
+}
+
+/// 用 Edge 无头浏览器渲染页面，返回 JS 执行后的完整 DOM 文本。
+/// 关键：`--dump-dom` 输出的是渲染完成后的 DOM（含 JS 动态插入的内容）；
+/// `--virtual-time-budget` 让浏览器快进虚拟时间并等待异步内容（SPA/懒加载）落定。
+/// Edge 不存在或超时返回 None，调用方再决定是否回退普通 HTTP。
+async fn render_dom_via_browser(url: &str) -> Option<String> {
+    let edge_path = find_msedge()?;
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(25),
+        tokio::process::Command::new(&edge_path)
+            .args([
+                "--headless",
+                "--disable-gpu",
+                "--no-sandbox",
+                "--disable-extensions",
+                "--virtual-time-budget=8000",
+                "--dump-dom",
+                url,
+            ])
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let body = String::from_utf8_lossy(&output.stdout).to_string();
+    if body.trim().is_empty() {
+        None
+    } else {
+        Some(body)
+    }
+}
+
+/// 定位 Edge 可执行文件（Windows 自带，无需安装额外依赖）。
+fn find_msedge() -> Option<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var("ProgramFiles(x86)")
+            .or_else(|_| std::env::var("ProgramFiles"))
+            .ok()
+            .map(|pf| {
+                let p = std::path::Path::new(&pf).join("Microsoft/Edge/Application/msedge.exe");
+                if p.exists() { Some(p) } else { None }
+            })
+            .flatten()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// 从 HTML 里取 `<meta name/property="X" content="...">` 的 content 值。
+/// 逐个 `<meta ...>` 标签手写解析属性，不依赖正则回引用（Rust regex 不支持），
+/// 因此属性顺序、单双引号、大小写都兼容。
+fn meta_content(html: &str, pred: fn(&str) -> bool) -> Option<String> {
+    const META: &str = "<meta";
+    let lower = html.to_lowercase();
+    let mut from = 0usize;
+    while let Some(rel) = lower[from..].find(META) {
+        let tag_start = from + rel;
+        let seg = &html[tag_start..];
+        // 找该标签的结束 `>`（不跨上述小写偏移：用原 html 找）
+        let tag_end = seg.find('>')?;
+        let tag = seg[..tag_end].to_string();
+        let tag_lower = tag.to_lowercase();
+        // 只处理真正的 meta 标签（magnet etc. 不作为条件，但留有名字可判定）
+        let mut content = None;
+        let mut name_or_prop: Option<String> = None;
+        parse_attrs(&tag, |k, v| {
+            match k.as_str() {
+                "name" | "property" => name_or_prop = Some(v),
+                "content" => content = Some(v),
+                _ => {}
+            }
+        });
+        let _ = tag_lower;
+        if let Some(k) = name_or_prop {
+            if pred(&k) {
+                return content;
+            }
+        }
+        from = tag_start + tag_end + 1;
+    }
+    None
+}
+
+/// 手写解析一个标签字符串里的 `k="v"` / `k='v'` / `k=v` 属性，逐个回调。
+fn parse_attrs(tag: &str, mut on_attr: impl FnMut(String, String)) {
+    let bytes = tag.as_bytes();
+    let mut i = 0usize;
+    let n = bytes.len();
+    while i < n {
+        // 跳过空白
+        while i < n && (bytes[i] as char).is_whitespace() {
+            i += 1;
+        }
+        if i >= n {
+            break;
+        }
+        // 读 key：字母数字 / '-' / '_' / ':' / '.'
+        let key_start = i;
+        while i < n {
+            let c = bytes[i] as char;
+            if c.is_alphanumeric() || matches!(c, '-' | '_' | ':' | '.') {
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        let key = tag[key_start..i].to_lowercase();
+        // 跳过空白到 '='
+        while i < n && (bytes[i] as char).is_whitespace() {
+            i += 1;
+        }
+        if i >= n || bytes[i] != b'=' {
+            // 无值属性：继续当作空值（例如仅 rel="icon" 之外的裸属性）
+            on_attr(key, String::new());
+            continue;
+        }
+        i += 1; // '='
+        while i < n && (bytes[i] as char).is_whitespace() {
+            i += 1;
+        }
+        if i >= n {
+            break;
+        }
+        let delim = bytes[i];
+        if delim == b'"' || delim == b'\'' {
+            i += 1;
+            let val_start = i;
+            while i < n && bytes[i] != delim {
+                i += 1;
+            }
+            let value = tag[val_start..i.min(n)].to_string();
+            on_attr(key, value);
+            if i < n {
+                i += 1; // 结束引号
+            }
+        } else {
+            let val_start = i;
+            while i < n && !(bytes[i] as char).is_whitespace() && bytes[i] != b'>' {
+                i += 1;
+            }
+            on_attr(key, tag[val_start..i].to_string());
+        }
+    }
+}
+
+/// 解析渲染后 DOM 的元数据：标题 / 描述 / 图片 / favicon。
+/// 全部来自浏览器渲染结果（可抓 JS SPA），返回相对路径均已按 base 展开。
+fn parse_rendered_meta(dom: &str, url: &str) -> UrlMetadataRich {
+    let base = reqwest::Url::parse(url).ok();
+    let resolve = |s: &str| -> Option<String> {
+        let s = s.trim();
+        if s.is_empty() { return None; }
+        if let Some(base) = &base {
+            if let Ok(u) = base.join(s) { return Some(u.to_string()); }
+        }
+        Some(s.to_string())
+    };
+
+    // title：og:title 优先，否则 <title>
+    let title = meta_content(dom, |n| n.eq_ignore_ascii_case("og:title"))
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            let re = regex::Regex::new(r"(?is)<title\b[^>]*>(.*?)</title>")
+                .ok()?;
+            re.captures(dom)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().trim().to_string())
+                .filter(|s| !s.is_empty())
+        });
+
+    let description = meta_content(dom, |n| n.eq_ignore_ascii_case("og:description"))
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| meta_content(dom, |n| n.eq_ignore_ascii_case("description")))
+        .map(|s| s.trim().to_string());
+
+    let image_url = meta_content(dom, |n| n.eq_ignore_ascii_case("og:image"))
+        .and_then(|s| resolve(&s));
+
+    // favicon：link[rel~=icon] 的 href，否则默认 /favicon.ico
+    let favicon_url = {
+        let re = regex::Regex::new(r"(?is)<link\b[^>]*>");
+        let mut found = None;
+        if let Ok(re) = re {
+            for caps in re.captures_iter(dom) {
+                let tag_lc = caps.get(0).map(|m| m.as_str()).unwrap_or("").to_lowercase();
+                if tag_lc.contains("rel=\"icon\"") || tag_lc.contains("rel='icon'") || tag_lc.contains("rel=\"shortcut icon\"") {
+                    if let Ok(hre) = regex::Regex::new(r#"href=["']([^"']+)["']"#) {
+                        if let Some(m) = hre.captures(&tag_lc) {
+                            found = m.get(1).map(|mm| mm.as_str().to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        found.and_then(|s| resolve(&s))
+            .or_else(|| base.as_ref().and_then(|b| b.join("/favicon.ico").ok().map(|u| u.to_string())))
+    };
+
+    UrlMetadataRich { title, description, image_url, favicon_url }
+}
+
+#[derive(Default, Clone, Debug)]
+struct UrlMetadataRich {
+    title: Option<String>,
+    description: Option<String>,
+    image_url: Option<String>,
+    favicon_url: Option<String>,
+}
+
 fn insert_bookmark(conn: &rusqlite::Connection, bm: &Bookmark) -> Result<(), String> {
     conn.execute(
         "INSERT OR REPLACE INTO picky_bookmarks
@@ -630,6 +855,69 @@ pub fn picky_set_refined(id: String, refined: bool) -> Result<(), String> {
     .map_err(|e| format!("更新收藏状态失败: {}", e))?;
     schedule_auto_sync();
     Ok(())
+}
+
+/// 重新抓取单个收藏页面的完整元数据（标题、描述、图片、Favicon）。
+///
+/// 真实元数据抓取**必须走浏览器模拟**：很多页面（尤其是 JS 渲染的 SPA / 懒加载页）
+/// 用普通 HTTP GET 拿到的 HTML 只有空壳，`<title>`/OG 标签是由脚本动态写入的。
+/// 因此这里先调 Edge 无头渲染（`--dump-dom` + 虚拟时间快进），从渲染后的完整 DOM
+/// 提取标题/描述/图片/favicon；仅当本机没有 Edge 时，才退回普通 HTTP 抓取兜底。
+#[tauri::command]
+pub async fn picky_refetch_metadata(id: String) -> Result<Bookmark, String> {
+    let conn = open_db()?;
+    let bm = get_bookmark(&conn, &id)?;
+    let url = bm.url.clone().ok_or_else(|| "该收藏无 URL".to_string())?;
+
+    // 1) 浏览器模拟抓取（首选）：渲染后 DOM 含 JS 动态内容
+    let rendered = render_dom_via_browser(&url).await;
+    let rich = rendered.as_deref().map(|dom| parse_rendered_meta(dom, &url));
+
+    // 2) 若没有浏览器可用，退回普通 HTTP 抓取的标题/favicon（仅做窄兜底）
+    let http_fallback = if rich.is_none() {
+        crate::commands::launcher::windows::fetch_url_metadata_with_timeout(
+            &url,
+            std::time::Duration::from_secs(10),
+        )
+        .await
+        .ok()
+    } else {
+        None
+    };
+
+    let mut updated = bm.clone();
+    match &rich {
+        Some(r) => {
+            if let Some(t) = &r.title {
+                updated.title = t.clone();
+            }
+            if let Some(d) = &r.description {
+                updated.description = Some(d.clone());
+            }
+            if let Some(img) = &r.image_url {
+                updated.image_url = Some(img.clone());
+            }
+            if let Some(f) = &r.favicon_url {
+                updated.favicon_url = Some(f.clone());
+            }
+        }
+        None => {
+            if let Some(m) = &http_fallback {
+                if m.title != url && !m.title.is_empty() {
+                    updated.title = m.title.clone();
+                }
+                if let Some(icon) = m.icon.clone() {
+                    updated.favicon_url = Some(icon);
+                }
+            }
+        }
+    }
+    updated.meta_fetched = true;
+    updated.updated_at = now_iso();
+    insert_bookmark(&conn, &updated)?;
+    drop(conn);
+    schedule_auto_sync();
+    Ok(updated)
 }
 
 #[tauri::command]

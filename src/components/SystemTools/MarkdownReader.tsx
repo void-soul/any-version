@@ -55,7 +55,7 @@ import {
   FolderOpen, X, FileText, Search, PanelLeftClose, PanelLeftOpen, RefreshCw,
   ListTree, AlertCircle, Pencil, Eye, Save, Check, Columns, Link, List,
   ListOrdered, Quote, Code, Minus, Heading1, Heading2, Heading3, Bold, Italic,
-  Strikethrough, Table, Square, Undo2, Redo2, ListChecks,
+  Strikethrough, Table, Square, Undo2, Redo2, ListChecks, FilePlus, Folder,
 } from "lucide-react";
 
 /** 后端 list_sibling_markdown 返回的条目 */
@@ -283,6 +283,54 @@ export default function MarkdownReader() {
     },
     [scanSiblings]
   );
+
+  /** 打开目录：列出目录下所有 markdown 文件，不自动打开文件 */
+  const openDirectory = useCallback(async () => {
+    try {
+      const dir = await open({
+        directory: true,
+        title: "选择目录",
+      });
+      if (!dir || typeof dir !== "string") return;
+      setSiblingRoot(dir);
+      setScanning(true);
+      try {
+        const list = await invoke<MarkdownEntry[]>("list_sibling_markdown", {
+          path: dir,
+          maxDepth: 3,
+        });
+        setSiblings(list);
+      } catch (e) {
+        console.error(e);
+        setSiblings([]);
+      } finally {
+        setScanning(false);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  /** 新建文件：在当前侧栏目录下创建空 .md 文件并打开 */
+  const createNewFile = useCallback(async () => {
+    const baseDir = siblingRoot || active?.path;
+    if (!baseDir) {
+      flashNotice("请先打开目录或文件");
+      return;
+    }
+    const dir = active?.path ? active.path.slice(0, active.path.lastIndexOf(active.path.includes("\\") ? "\\" : "/")) : baseDir;
+    const name = window.prompt("文件名（不含扩展名）:");
+    if (!name?.trim()) return;
+    const sep = dir.includes("\\") ? "\\" : "/";
+    const filePath = `${dir}${sep}${name.trim()}.md`;
+    try {
+      await invoke("write_text_file", { path: filePath, content: `# ${name.trim()}\n\n` });
+      await openPath(filePath);
+      flashNotice(`已创建 ${name.trim()}.md`);
+    } catch (e) {
+      flashNotice(`创建失败: ${e}`);
+    }
+  }, [siblingRoot, active, openPath, flashNotice]);
 
   /** 文件选择对话框，支持一次选多个 */
   const pickFiles = useCallback(async () => {
@@ -728,6 +776,14 @@ export default function MarkdownReader() {
           <FolderOpen className="w-3.5 h-3.5" />
           打开文件
         </button>
+        <button onClick={() => void openDirectory()} className={btn} title="选择目录，列出所有 Markdown 文件">
+          <Folder className="w-3.5 h-3.5" />
+          打开目录
+        </button>
+        <button onClick={() => void createNewFile()} className={btn} title="在当前目录下新建 .md 文件">
+          <FilePlus className="w-3.5 h-3.5" />
+          新建文件
+        </button>
         <button onClick={reloadActive} disabled={!active} className={btn}>
           <RefreshCw className="w-3.5 h-3.5" />
           重新加载
@@ -840,7 +896,7 @@ export default function MarkdownReader() {
               <div className="flex items-center gap-1.5 mb-1.5 text-[10px] text-slate-500">
                 <ListTree className="w-3 h-3" />
                 <span className="truncate" title={siblingRoot}>
-                  {siblingRoot ? siblingRoot.split(/[\\/]/).pop() : "同目录文件"}
+                  {siblingRoot ? siblingRoot.split(/[\\/]/).pop() : "文件列表"}
                 </span>
                 {scanning && <RefreshCw className="w-3 h-3 animate-spin ml-auto" />}
                 {!scanning && siblings.length > 0 && (
@@ -888,13 +944,23 @@ export default function MarkdownReader() {
             <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-600">
               <FileText className="w-10 h-10 opacity-30" />
               <div className="text-[11px]">尚未打开文档</div>
-              <button onClick={pickFiles} className={btn}>
-                <FolderOpen className="w-3.5 h-3.5" />
-                打开 Markdown 文件
-              </button>
+              <div className="flex gap-2">
+                <button onClick={pickFiles} className={btn}>
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  打开文件
+                </button>
+                <button onClick={() => void openDirectory()} className={btn}>
+                  <Folder className="w-3.5 h-3.5" />
+                  打开目录
+                </button>
+                <button onClick={() => void createNewFile()} className={btn}>
+                  <FilePlus className="w-3.5 h-3.5" />
+                  新建文件
+                </button>
+              </div>
               <div className="text-[10px] text-slate-700 max-w-xs text-center leading-relaxed">
                 默认预览；点「编辑」进入编辑器（自动保存、撤销/重做、格式工具栏、分栏实时预览）。
-                可在「文件关联」中把 .md 注册为系统打开方式。
+                支持打开目录列出所有文件、新建 .md 文件。可在「文件关联」中把 .md 注册为系统打开方式。
               </div>
             </div>
           )}

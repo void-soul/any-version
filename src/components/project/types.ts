@@ -173,6 +173,9 @@ export interface ProjectDef {
   service_allow_force_kill?: boolean;
   service_auto_create_dirs?: boolean;
   conflict_managers?: ConflictManagerDef[];
+  // npm 包类型：存在时该项目通过 `npm install --prefix` 安装（如 GitNexus）
+  npm_pkg_name?: string;
+  pkg_manager?: string;
   // ... 其他字段
   [key: string]: unknown;
 }
