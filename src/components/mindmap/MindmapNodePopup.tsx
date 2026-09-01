@@ -4,12 +4,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { Brain, X } from "lucide-react";
 import { mmApi, type MindmapDocument, type DocumentFull, type MindmapNode, kindColor } from "./types";
-import { PlanDateTimePicker } from "./MindmapPanel";
 import { MarkdownFieldEditor } from "./MarkdownFieldEditor";
+import { NodeFormFields } from "./NodeFormFields";
 import VexAvatar from "../VexAvatar";
 import { VEX_CYBER_ACCENT, resolveThemeAccent } from "../../utils/brand";
-
-const COLORS = ["#f8fafc", "#22d3ee", "#34d399", "#fbbf24", "#60a5fa", "#fb7185", "#a78bfa", "#f97316", "#f59e0b", "#94a3b8"];
 
 function normalizeHex(value: string): string | null {
   const raw = value?.trim() ?? "";
@@ -244,39 +242,14 @@ export default function MindmapNodePopup() {
           </div>
         </div>
 
-        {/* 进度 · 计划时间 · 重复：标签内联，单行 */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md border border-white/5 bg-white/[0.02] px-2.5 py-2">
-          <label className="flex items-center gap-1.5 text-[9px] uppercase font-semibold text-slate-500">{t("mmdpop.progress", { value: progress })}
-            <input type="range" min={0} max={100} value={progress} onChange={(e) => setProgress(Number(e.target.value))}
-              className="h-6 w-20 cursor-pointer accent-[var(--mm-accent)]" />
-          </label>
-          <label className="flex items-center gap-1.5 text-[9px] uppercase font-semibold text-slate-500">{t("mmdpop.planTime")}
-            <PlanDateTimePicker value={planAt} onChange={(iso) => setPlanAt(iso ?? "")} />
-          </label>
-          <label className="flex items-center gap-1.5 text-[9px] uppercase font-semibold text-slate-500">{t("mmdpop.repeat")}
-            <select value={repeat} onChange={(e) => setRepeat(e.target.value)}
-              className="h-7 cursor-pointer rounded-md border border-white/10 bg-slate-950/70 px-1.5 text-[11px] text-slate-200 outline-none focus:border-[var(--mm-accent)]">
-              <option value="none">{t("mmdpop.noRepeat")}</option>
-              <option value="daily">{t("mmdpop.daily")}</option>
-              <option value="weekly">{t("mmdpop.weekly")}</option>
-            </select>
-          </label>
-        </div>
-
-        {/* 颜色：与进度/计划合并为同一块，标签内联 */}
-        <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-white/5 bg-white/[0.02] px-2.5 py-2">
-          <span className="text-[9px] uppercase font-semibold text-slate-500">{t("mmdpop.color")}</span>
-          {COLORS.map((cl) => <button key={cl} type="button" className="h-4 w-4 rounded-full border border-white/20"
-            style={{ backgroundColor: cl, boxShadow: color === cl ? `0 0 6px ${cl}` : "none" }}
-            onClick={() => setColor(cl)} />)}
-          <label className="relative inline-flex h-4 w-4 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-white/30" title={t("mmdpop.customColor")}>
-            <input type="color" value={normalizeHex(color) ?? "#22d3ee"} className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-              onChange={(e) => setColor(e.target.value)} />
-            <span className="h-2.5 w-2.5 rounded-full" style={{ background: "conic-gradient(#f87171,#fbbf24,#34d399,#22d3ee,#a78bfa,#f87171)" }} />
-          </label>
-          <button type="button" className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-slate-400 hover:text-white"
-            onClick={() => setColor("")} title={t("mmdpop.autoColor")}>{t("mmdpop.auto")}</button>
-        </div>
+        <NodeFormFields ns="mmdpop"
+          progress={progress} planAt={planAt} repeat={repeat} color={color}
+          onProgress={setProgress}
+          onPlanAt={(iso) => setPlanAt(iso ?? "")}
+          onRepeat={setRepeat}
+          onColor={setColor}
+          showHexInput={false}
+        />
 
         {/* 详细内容（完整 Markdown 编辑器） */}
         <div className="flex min-h-0 flex-col">

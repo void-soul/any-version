@@ -11,6 +11,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { MindmapMarkdown } from "./MindmapMarkdown";
 import { MarkdownFieldEditor } from "./MarkdownFieldEditor";
+import { NodeFormFields } from "./NodeFormFields";
 import VexEmptyState from "../VexEmptyState";
 import {
   AlertTriangle, Brain, File, Folder, FolderOpen, LayoutGrid, Lightbulb, Loader2,
@@ -347,7 +348,6 @@ function DetailModal({ node, onUpdate, onClose, projectRoot }: { node: MindmapNo
   const [color, setColor] = useState(node.color);
   const [fullscreen, setFullscreen] = useState(false);
   const c = normalizeHexColor(color) ?? kindColor(node.kind);
-  const COLORS = ["#f8fafc","#22d3ee","#34d399","#fbbf24","#60a5fa","#fb7185","#a78bfa","#f97316","#f59e0b","#94a3b8"];
 
   const save = useCallback(() => {
     onUpdate({ name, description, color, progress, detail, planAt: planAt.trim() ? planAt.trim() : null, repeat });
@@ -366,9 +366,38 @@ function DetailModal({ node, onUpdate, onClose, projectRoot }: { node: MindmapNo
     return () => window.clearTimeout(t);
   }, [name, description, detail]);
 
+  // 弹窗高度随内容自动伸缩（与速记悬浮窗一致）：先以 height:auto 测量各子块
+  // 自然高度（标题栏 + 证据 + 表单 + 详情编辑器），再把弹窗高度设为
+  // min(自然高度, 视口可用高度)；超出后由表单区内部滚动兜底。
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [fitH, setFitH] = useState<number | null>(null);
+  useEffect(() => {
+    if (fullscreen) { setFitH(null); return; }
+    const card = cardRef.current;
+    if (!card) return;
+    let raf = 0;
+    const measure = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const prev = card.style.height;
+        card.style.height = "auto";
+        const natural = card.scrollHeight;
+        card.style.height = prev;
+        const maxH = Math.max(420, window.innerHeight - 48); // modal-mask p-4 上下各 16px
+        const desired = Math.round(Math.min(maxH, Math.max(420, natural)));
+        setFitH((h) => (h === desired ? h : desired));
+      });
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(card);
+    for (const k of card.children) ro.observe(k);
+    measure();
+    return () => { ro.disconnect(); cancelAnimationFrame(raf); };
+  }, [fullscreen, sources.length]);
+
   return createPortal(
     <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-4 backdrop-blur-[3px]">
-      <div className={`flex ${fullscreen ? "h-full w-full" : "h-[80vh] w-[min(92vw,680px)]"} flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl`} onClick={(e) => e.stopPropagation()}>
+      <div ref={cardRef} className={`flex ${fullscreen ? "h-full w-full" : "w-[min(92vw,680px)]"} flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl`} style={fullscreen ? undefined : { height: fitH ?? "auto" }} onClick={(e) => e.stopPropagation()}>
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/10 px-3" style={{ backgroundColor: `${c}1f` }}>
           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: c, boxShadow: `0 0 9px ${c}` }} />
           <input className="min-w-0 flex-1 bg-transparent text-[12px] font-semibold text-slate-100 outline-none" value={name} onChange={(e) => setName(e.target.value)} onBlur={save} />
@@ -392,50 +421,19 @@ function DetailModal({ node, onUpdate, onClose, projectRoot }: { node: MindmapNo
             </div>
           </div>
         )}
-        {/* 表单字段区（紧凑、可滚动）：描述 / 进度·计划时间·重复（同一行） / 颜色 */}
-        <div className="shrink-0 space-y-3 overflow-y-auto p-4" style={{ maxHeight: "42%" }}>
+        {/* 表单字段区（与速记悬浮窗一致的压缩布局）：描述 + 进度/计划时间/重复/颜色单行卡片 */}
+        <div className="shrink-0 space-y-2.5 overflow-y-auto p-3" style={{ maxHeight: "42%" }}>
           <div>
-            <label className="text-[9px] text-slate-500 block mb-1">{t("mindmap.descLabel")}</label>
-            <textarea className="w-full rounded bg-slate-900 border border-white/10 px-3 py-2 text-[11px] text-white outline-none resize-none" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} onBlur={save} />
+            <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">{t("mindmap.descLabel")}</label>
+            <textarea className="min-h-[56px] w-full resize-none rounded-md border border-white/10 bg-slate-950/70 px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-cyan-400/60" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} onBlur={save} />
           </div>
-          <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
-            <div>
-              <label className="text-[9px] text-slate-500 block mb-1">{t("mindmap.progressLabel")}</label>
-              <div className="flex items-center gap-1">
-                <input type="range" min={0} max={100} value={progress} onChange={(e) => { const v = Number(e.target.value); setProgress(v); onUpdate({ progress: v }); }} className="w-24 h-6" />
-                <span className="text-[10px] text-slate-400">{progress}%</span>
-              </div>
-            </div>
-            <div>
-              <label className="text-[9px] text-slate-500 block mb-1">{t("mindmap.planTimeLabel")}</label>
-              <PlanDateTimePicker value={planAt} onChange={(iso) => { setPlanAt(iso ?? ""); onUpdate({ planAt: iso }); }} />
-            </div>
-            <div>
-              <label className="text-[9px] text-slate-500 block mb-1">{t("mindmap.planRepeat")}</label>
-              <select value={repeat} onChange={(e) => { const v = e.target.value; setRepeat(v); onUpdate({ repeat: v }); }}
-                className="h-8 cursor-pointer rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400/60">
-                <option value="none">{t("mindmap.noRepeat")}</option>
-                <option value="daily">{t("mindmap.daily")}</option>
-                <option value="weekly">{t("mindmap.weekly")}</option>
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className="text-[9px] text-slate-500 block mb-1">{t("mindmap.colorLabel")}</label>
-            <div className="flex gap-1.5 flex-wrap items-center">
-              {COLORS.map(cl => <button key={cl} type="button" className="h-5 w-5 rounded-full border border-white/20" style={{ backgroundColor: cl, boxShadow: color === cl ? `0 0 6px ${cl}` : "none" }}
-                onClick={() => { setColor(cl); onUpdate({ color: cl }); }} />)}
-              {/* 自定义任意颜色：原生取色器 + hex 输入 + 恢复默认 */}
-              <label className="relative inline-flex h-5 w-5 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-white/30" title={t("mindmap.customColor")}>
-                <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(color) ? color : "#22d3ee"} className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                  onChange={(e) => { const v = e.target.value; setColor(v); onUpdate({ color: v }); }} />
-                <span className="h-3 w-3 rounded-full" style={{ background: "conic-gradient(#f87171,#fbbf24,#34d399,#22d3ee,#a78bfa,#f87171)" }} />
-              </label>
-              <input value={color || ""} onChange={(e) => { const v = e.target.value; setColor(v); onUpdate({ color: v || "" }); }} placeholder="#RRGGBB"
-                className="h-5 w-[74px] rounded border border-white/15 bg-slate-900 px-1.5 text-[9px] text-slate-300 outline-none focus:border-cyan-400/60" />
-              <button type="button" className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-slate-400 hover:text-white" onClick={() => { setColor(""); onUpdate({ color: "" }); }} title={t("mindmap.autoColor")}>{t("mindmap.auto")}</button>
-            </div>
-          </div>
+          <NodeFormFields ns="mindmap"
+            progress={progress} planAt={planAt} repeat={repeat} color={color}
+            onProgress={(v) => { setProgress(v); onUpdate({ progress: v }); }}
+            onPlanAt={(iso) => { setPlanAt(iso ?? ""); onUpdate({ planAt: iso }); }}
+            onRepeat={(v) => { setRepeat(v); onUpdate({ repeat: v }); }}
+            onColor={(v) => { setColor(v); onUpdate({ color: v }); }}
+          />
         </div>
         {/* 详细内容：完整 Markdown 编辑器，占满剩余高度（不再留大片空白） */}
         <div className="flex min-h-0 flex-1 flex-col px-4 pb-4">
