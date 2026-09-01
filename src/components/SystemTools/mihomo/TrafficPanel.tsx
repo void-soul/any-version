@@ -1,6 +1,7 @@
 // 流量统计页 —— 1:1 复刻 clash-party src/renderer/src/pages/traffic.tsx
 // （1h/24h/7d/30d 时间范围 / 4 维度视图 / 汇总卡片 / 排行榜 / 趋势图 / 下钻明细 / 清空）
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Trash2, ChevronDown, ChevronRight } from "lucide-react";
 import {
   trafficDb, getTrafficOverview, getSubStatsByHost, getDevicesByHost, getProxyStatsByHost,
@@ -10,8 +11,8 @@ import { cardCls, btnSec, calcTraffic } from "./ui";
 
 type TimeRange = "1h" | "24h" | "7d" | "30d";
 const TIME_RANGES: TimeRange[] = ["1h", "24h", "7d", "30d"];
-const TIME_LABEL: Record<TimeRange, string> = { "1h": "1 小时", "24h": "24 小时", "7d": "7 天", "30d": "30 天" };
-const VIEW_LABEL: Record<DataUsageType, string> = { sourceIP: "来源 IP", host: "域名", outbound: "出站代理", process: "进程" };
+const TIME_LABEL: Record<TimeRange, string> = { "1h": "traffic.t1h", "24h": "traffic.t24h", "7d": "traffic.t7d", "30d": "traffic.t30d" };
+const VIEW_LABEL: Record<DataUsageType, string> = { sourceIP: "traffic.sourceIP", host: "traffic.host", outbound: "traffic.outbound", process: "traffic.process" };
 const AUTO_REFRESH_MS = 5000;
 
 function getTimeRange(range: TimeRange) {
@@ -33,6 +34,7 @@ function fmtBucketTime(ts: number, bucketSizeMs: number): string {
 }
 
 export default function TrafficPanel() {
+  const { t } = useTranslation();
   const [activeView, setActiveView] = useState<DataUsageType>("host");
   const [timeRange, setTimeRange] = useState<TimeRange>("24h");
   const [rankings, setRankings] = useState<AggregatedData[]>([]);
@@ -114,11 +116,11 @@ export default function TrafficPanel() {
             <button key={r} onClick={() => setTimeRange(r)}
               className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
                 timeRange === r ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200"
-              }`}>{TIME_LABEL[r]}</button>
+              }`}>{t(TIME_LABEL[r])}</button>
           ))}
         </div>
         <div className="flex-1" />
-        <button className={btnSec} title="清空统计" onClick={async () => { await trafficDb.clearAll(); load(); }}>
+        <button className={btnSec} title={t("traffic.clearStatsTip")} onClick={async () => { await trafficDb.clearAll(); load(); }}>
           <Trash2 className="w-3.5 h-3.5 text-rose-300" />
         </button>
       </div>
@@ -126,10 +128,10 @@ export default function TrafficPanel() {
       {/* 汇总卡片 */}
       <div className="grid grid-cols-4 gap-2">
         {[
-          ["会话数", String(totalStats.count)],
-          ["上传", calcTraffic(totalStats.upload)],
-          ["下载", calcTraffic(totalStats.download)],
-          ["总计", calcTraffic(totalStats.total)],
+          [t("traffic.sessions"), String(totalStats.count)],
+          [t("traffic.upload"), calcTraffic(totalStats.upload)],
+          [t("traffic.download"), calcTraffic(totalStats.download)],
+          [t("traffic.total"), calcTraffic(totalStats.total)],
         ].map(([label, value]) => (
           <div key={label} className={`${cardCls} flex flex-col items-center py-3`}>
             <span className="text-[10px] text-slate-500 uppercase tracking-wide">{label}</span>
@@ -144,15 +146,15 @@ export default function TrafficPanel() {
           <button key={v} onClick={() => setActiveView(v)}
             className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
               activeView === v ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200"
-            }`}>{VIEW_LABEL[v]}</button>
+            }`}>{t(VIEW_LABEL[v])}</button>
         ))}
       </div>
 
       {/* 排行 + 趋势 */}
       <div className="grid grid-cols-4 gap-3">
         <div className={`${cardCls} col-span-1 h-56 p-3 overflow-y-auto`}>
-          <div className="text-[11px] text-slate-400 font-semibold mb-2">{VIEW_LABEL[activeView]} 排行</div>
-          {rankings.length === 0 && <div className="text-[11px] text-slate-500 text-center pt-8">暂无数据</div>}
+          <div className="text-[11px] text-slate-400 font-semibold mb-2">{t("traffic.rankingTitle", { view: t(VIEW_LABEL[activeView]) })}</div>
+          {rankings.length === 0 && <div className="text-[11px] text-slate-500 text-center pt-8">{t("traffic.noData")}</div>}
           {rankings.slice(0, 50).map((r) => (
             <div key={r.label}
               className={`px-2 py-1.5 rounded-lg cursor-pointer mb-0.5 ${selectedRow === r.label ? "bg-emerald-500/15" : "hover:bg-white/5"}`}
@@ -169,7 +171,7 @@ export default function TrafficPanel() {
         </div>
         {/* 趋势图（纯 CSS 柱状，上传/下载堆叠） */}
         <div className={`${cardCls} col-span-3 h-56 p-3 flex flex-col`}>
-          <div className="text-[11px] text-slate-400 font-semibold mb-2">流量趋势</div>
+          <div className="text-[11px] text-slate-400 font-semibold mb-2">{t("traffic.trendTitle")}</div>
           <div className="flex-1 flex items-end gap-px min-h-0">
             {trend.map((t) => (
               <div key={t.timestamp} className="flex-1 flex flex-col justify-end h-full group relative">
@@ -185,8 +187,8 @@ export default function TrafficPanel() {
           <div className="flex justify-between text-[9px] text-slate-500 mt-1">
             <span>{trend.length ? fmtBucketTime(trend[0].timestamp, bucketSizeMs) : ""}</span>
             <span className="flex gap-3">
-              <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-sm bg-sky-500/70 inline-block" />上传</span>
-              <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-sm bg-emerald-500/70 inline-block" />下载</span>
+              <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-sm bg-sky-500/70 inline-block" />{t("traffic.upload")}</span>
+              <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-sm bg-emerald-500/70 inline-block" />{t("traffic.download")}</span>
             </span>
             <span>{trend.length ? fmtBucketTime(trend[trend.length - 1].timestamp, bucketSizeMs) : ""}</span>
           </div>
@@ -197,16 +199,16 @@ export default function TrafficPanel() {
       {selectedRow && (
         <div className={`${cardCls} p-3`}>
           <div className="text-[11px] text-slate-400 font-semibold mb-2">
-            {selectedRow} 的{activeView === "host" ? "设备" : "域名"}明细
+            {activeView === "host" ? t("traffic.detailDevices", { name: selectedRow }) : t("traffic.detailDomains", { name: selectedRow })}
           </div>
           <table className="w-full text-[11px]">
             <thead>
               <tr className="text-slate-500 text-left">
-                <th className="py-1 font-medium">{activeView === "host" ? "来源 IP" : "域名"}</th>
-                <th className="py-1 font-medium text-right">上传</th>
-                <th className="py-1 font-medium text-right">下载</th>
-                <th className="py-1 font-medium text-right">总计</th>
-                <th className="py-1 font-medium text-right">会话</th>
+                <th className="py-1 font-medium">{activeView === "host" ? t("traffic.sourceIP") : t("traffic.thDomain")}</th>
+                <th className="py-1 font-medium text-right">{t("traffic.upload")}</th>
+                <th className="py-1 font-medium text-right">{t("traffic.download")}</th>
+                <th className="py-1 font-medium text-right">{t("traffic.total")}</th>
+                <th className="py-1 font-medium text-right">{t("traffic.sessions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -239,7 +241,7 @@ export default function TrafficPanel() {
                 );
               })}
               {subStats.length === 0 && (
-                <tr><td colSpan={5} className="py-3 text-center text-slate-500">暂无明细</td></tr>
+                <tr><td colSpan={5} className="py-3 text-center text-slate-500">{t("traffic.noDetail")}</td></tr>
               )}
             </tbody>
           </table>

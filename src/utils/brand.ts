@@ -1,5 +1,5 @@
 // ─── Kira 品牌统一出口 ───
-// Kira：暖心的桌面伙伴，安静陪着、有求必应。
+// Kira：桌面开发助理，安静干活、随叫随到。
 // 头像资源固定从 public/logo.png 读取（/logo.png）——想换头像，直接替换
 // public 下的 logo.png 即可，代码无需改动，全 App 头像同步更新。
 
@@ -12,7 +12,7 @@ export const VEX_AVATAR = "/logo.png";
 export const VEX_NAME = "Kira";
 
 /// 角色人设（用于介绍/提示文案）。
-export const VEX_PERSONA = "暖心的桌面伙伴：安静陪着，有求必应，不闹腾";
+export const VEX_PERSONA = "你的开发助理：安静干活，随叫随到";
 
 /// 常驻欢迎语：统一定义在 kiraQuotes.ts（Kira 统一语句库，励志名言）。
 /// 这里只是向后兼容的别名，保证旧有 import 地址不破坏。

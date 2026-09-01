@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ShieldCheck,
@@ -24,6 +25,7 @@ interface EnvBackup {
 }
 
 export default function EnvBackupManager() {
+  const { t } = useTranslation();
   const [backups, setBackups] = useState<EnvBackup[]>([]);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -65,14 +67,14 @@ export default function EnvBackupManager() {
     setCreating(true);
     setRestoreMessage(null);
     try {
-      const desc = description.trim() || "手动创建的备份";
+      const desc = description.trim() || t("envbackup.defaultDesc");
       const newBackup = await invoke<EnvBackup>("create_env_backup", { description: desc });
       setDescription("");
       setShowCreateForm(false);
       await fetchBackups();
       setSelectedBackup(newBackup);
     } catch (e: any) {
-      alert(`创建备份失败: ${e}`);
+      alert(t("envbackup.createFail", { err: String(e) }));
     } finally {
       setCreating(false);
     }
@@ -80,7 +82,7 @@ export default function EnvBackupManager() {
 
   const handleDeleteBackup = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm("确定要删除这个环境备份吗？删除后将无法通过此备份还原。")) return;
+    if (!confirm(t("envbackup.delConfirm"))) return;
     setDeletingId(id);
     try {
       await invoke("delete_env_backup", { id });
@@ -89,25 +91,27 @@ export default function EnvBackupManager() {
       }
       await fetchBackups();
     } catch (e: any) {
-      alert(`删除备份失败: ${e}`);
+      alert(t("envbackup.delFail", { err: String(e) }));
     } finally {
       setDeletingId(null);
     }
   };
 
   const handleRestoreBackup = async (id: string) => {
-    if (!confirm("警告！还原环境变量将覆盖当前注册表中的所有环境变量（新增变量将被删除，现有变量将被重置为备份值）。\n确定要继续还原吗？")) return;
+    if (!confirm(t("envbackup.restoreConfirm"))) return;
     setRestoring(true);
     setRestoreMessage(null);
     try {
       await invoke("restore_env_backup", { id });
-      setRestoreMessage({ text: "环境变量已成功恢复！更改已广播至系统。", isError: false });
+      setRestoreMessage({ text: t("envbackup.restoreOk"), isError: false });
     } catch (e: any) {
       // If error is related to admin permission warnings, display it as a warning instead of generic alert
-      if (e.toString().includes("系统级环境变量恢复失败")) {
-        setRestoreMessage({ text: e.toString(), isError: true });
+      // （backendErrors 包装后原始中文消息保存在 rawMessage，这里用它做精确判断）
+      const raw = (e as Error & { rawMessage?: string }).rawMessage ?? String(e);
+      if (raw.includes("系统级环境变量恢复失败")) {
+        setRestoreMessage({ text: String(e), isError: true });
       } else {
-        alert(`还原失败: ${e}`);
+        alert(t("envbackup.restoreFail", { err: String(e) }));
       }
     } finally {
       setRestoring(false);
@@ -130,9 +134,9 @@ export default function EnvBackupManager() {
         <div className="flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-[var(--module-accent)]" />
           <div>
-            <h3 className="text-xs font-semibold text-white">环境变量备份与还原</h3>
+            <h3 className="text-xs font-semibold text-white">{t("envbackup.title")}</h3>
             <p className="text-[9px] text-slate-500 mt-0.5">
-              备份/还原注册表环境变量，防范开发工具误删/覆盖 PATH 导致系统崩溃。
+              {t("envbackup.subtitle")}
             </p>
           </div>
         </div>
@@ -143,7 +147,7 @@ export default function EnvBackupManager() {
             className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98]"
           >
             <Plus className="w-4 h-4" />
-            创建备份
+            {t("envbackup.create")}
           </button>
 
           <button
@@ -152,7 +156,7 @@ export default function EnvBackupManager() {
             className="flex items-center gap-2 px-3.5 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs border border-white/5 cursor-pointer transition-all"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-            刷新列表
+            {t("envbackup.refresh")}
           </button>
 
           {/* <button
@@ -169,11 +173,11 @@ export default function EnvBackupManager() {
       {/* Backup Form Overlay/Dropdown */}
       {showCreateForm && (
         <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-4 max-w-xl animate-fadeIn">
-          <h3 className="text-xs font-semibold text-white">创建当前环境备份</h3>
+          <h3 className="text-xs font-semibold text-white">{t("envbackup.createFormTitle")}</h3>
           <div className="space-y-3">
             <input
               type="text"
-              placeholder="输入本次备份的描述（例如: 安装 SDK 之前的备份，或 初始环境变量备份）"
+              placeholder={t("envbackup.descPh")}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               className="w-full glass-input px-3.5 py-2 text-xs"
@@ -183,14 +187,14 @@ export default function EnvBackupManager() {
                 onClick={() => setShowCreateForm(false)}
                 className="px-3.5 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg cursor-pointer"
               >
-                取消
+                {t("envbackup.cancel")}
               </button>
               <button
                 onClick={handleCreateBackup}
                 disabled={creating}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg font-semibold cursor-pointer transition-all"
               >
-                {creating ? "正在备份..." : "立即备份"}
+                {creating ? t("envbackup.backingUp") : t("envbackup.backupNow")}
               </button>
             </div>
           </div>
@@ -209,7 +213,7 @@ export default function EnvBackupManager() {
             <CheckCircle className="w-5 h-5 flex-shrink-0 text-emerald-400 mt-0.5" />
           )}
           <div>
-            <h4 className="font-semibold text-xs">{restoreMessage.isError ? "环境变量恢复完成（有警告）" : "环境变量恢复成功"}</h4>
+            <h4 className="font-semibold text-xs">{restoreMessage.isError ? t("envbackup.restoreWarnTitle") : t("envbackup.restoreOkTitle")}</h4>
             <p className="text-[11px] mt-1 leading-relaxed whitespace-pre-line">{restoreMessage.text}</p>
           </div>
         </div>
@@ -220,7 +224,7 @@ export default function EnvBackupManager() {
         <div className="glass-panel p-4 rounded-2xl border border-amber-500/20 animate-fadeIn max-h-64 overflow-y-auto">
           <h4 className="text-xs font-semibold text-amber-300 mb-2 flex items-center gap-1.5">
             <Wrench className="w-3.5 h-3.5" />
-            修复日志
+            {t("envbackup.repairLog")}
           </h4>
           <div className="space-y-0.5">
             {repairLog.map((line, i) => {
@@ -249,21 +253,21 @@ export default function EnvBackupManager() {
         {/* Left pane: Backups History */}
         <div className="lg:col-span-5 glass-panel rounded-2xl border border-white/5 overflow-hidden flex flex-col h-[520px]">
           <div className="p-4 bg-white/3 border-b border-white/5 flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-300">历史环境备份列表</span>
-            <span className="text-[10px] text-slate-500">共 {backups.length} 个备份</span>
+            <span className="text-xs font-semibold text-slate-300">{t("envbackup.historyTitle")}</span>
+            <span className="text-[10px] text-slate-500">{t("envbackup.count", { count: backups.length })}</span>
           </div>
 
           <div className="flex-1 overflow-y-auto divide-y divide-white/5">
             {loading ? (
               <div className="p-12 text-center text-slate-500">
                 <RefreshCw className="w-6 h-6 animate-spin text-blue-400 mx-auto mb-3" />
-                正在加载备份记录...
+                {t("envbackup.loading")}
               </div>
             ) : backups.length === 0 ? (
               <div className="p-12 text-center text-slate-500 space-y-2">
                 <ShieldCheck className="w-10 h-10 text-slate-600 mx-auto" />
-                <p className="text-xs font-medium text-slate-400">目前暂无环境备份</p>
-                <p className="text-[10px] text-slate-500 max-w-[240px] mx-auto leading-relaxed">建议在每次一键修复或安装新的 SDK 前，先点击上方“创建备份”安全归档。</p>
+                <p className="text-xs font-medium text-slate-400">{t("envbackup.empty")}</p>
+                <p className="text-[10px] text-slate-500 max-w-[240px] mx-auto leading-relaxed">{t("envbackup.emptyHint")}</p>
               </div>
             ) : (
               backups.map((b) => {
@@ -289,7 +293,7 @@ export default function EnvBackupManager() {
                         onClick={(e) => handleDeleteBackup(b.id, e)}
                         disabled={deletingId === b.id}
                         className="p-1 hover:bg-red-500/10 hover:text-red-400 rounded text-slate-500 transition-all cursor-pointer"
-                        title="删除备份"
+                        title={t("envbackup.delTitle")}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -298,10 +302,10 @@ export default function EnvBackupManager() {
                     <h4 className="font-semibold text-white text-xs leading-snug">{b.description}</h4>
 
                     <div className="flex items-center gap-3 text-[10px] text-slate-500">
-                      <span>用户变量: <strong className="text-slate-300 font-mono">{Object.keys(b.user_vars).length}</strong></span>
-                      <span>系统变量: <strong className="text-slate-300 font-mono">{Object.keys(b.sys_vars).length}</strong></span>
+                      <span>{t("envbackup.userVars")}<strong className="text-slate-300 font-mono">{Object.keys(b.user_vars).length}</strong></span>
+                      <span>{t("envbackup.sysVars")}<strong className="text-slate-300 font-mono">{Object.keys(b.sys_vars).length}</strong></span>
                       <span className="text-slate-600">•</span>
-                      <span>共 {totalVars} 项</span>
+                      <span>{t("envbackup.totalItems", { count: totalVars })}</span>
                     </div>
                   </div>
                 );
@@ -318,7 +322,7 @@ export default function EnvBackupManager() {
               <div className="p-5 border-b border-white/5 flex items-center justify-between bg-white/2">
                 <div className="min-w-0">
                   <h3 className="text-xs font-semibold text-white truncate">{selectedBackup.description}</h3>
-                  <p className="text-[10px] text-slate-400 mt-1">创建时间: {selectedBackup.timestamp} | ID: {selectedBackup.id}</p>
+                  <p className="text-[10px] text-slate-400 mt-1">{t("envbackup.createdAt", { time: selectedBackup.timestamp, id: selectedBackup.id })}</p>
                 </div>
 
                 <button
@@ -327,7 +331,7 @@ export default function EnvBackupManager() {
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-emerald-500/10 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98]"
                 >
                   <RotateCcw className={`w-3.5 h-3.5 ${restoring ? "animate-spin" : ""}`} />
-                  {restoring ? "正在还原..." : "还原此备份"}
+                  {restoring ? t("envbackup.restoring") : t("envbackup.restore")}
                 </button>
               </div>
 
@@ -337,7 +341,7 @@ export default function EnvBackupManager() {
                   <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
                   <input
                     type="text"
-                    placeholder="输入关键词搜索备份中的环境变量键或值..."
+                    placeholder={t("envbackup.searchPh")}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="w-full glass-input pl-9 pr-3.5 py-1.5 text-[11px] font-sans"
@@ -351,21 +355,21 @@ export default function EnvBackupManager() {
                 <div className="space-y-2">
                   <div className="flex items-center gap-1.5">
                     <FileText className="w-4 h-4 text-blue-400" />
-                    <h4 className="text-xs font-semibold text-slate-300">用户环境变量 (HKEY_CURRENT_USER\Environment)</h4>
+                    <h4 className="text-xs font-semibold text-slate-300">{t("envbackup.userVarsTitle")}</h4>
                   </div>
 
                   <div className="border border-white/5 rounded-xl overflow-hidden font-mono text-[10px]">
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-white/3 text-slate-400 font-semibold border-b border-white/5">
-                          <th className="p-2 w-1/3">变量名 (Key)</th>
-                          <th className="p-2">备份值 (Value)</th>
+                          <th className="p-2 w-1/3">{t("envbackup.colKey")}</th>
+                          <th className="p-2">{t("envbackup.colValue")}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5 text-slate-300">
                         {getFilteredVars(selectedBackup.user_vars).length === 0 ? (
                           <tr>
-                            <td colSpan={2} className="p-4 text-center text-slate-500 italic">无匹配的变量</td>
+                            <td colSpan={2} className="p-4 text-center text-slate-500 italic">{t("envbackup.noMatch")}</td>
                           </tr>
                         ) : (
                           getFilteredVars(selectedBackup.user_vars).map(([k, v]) => (
@@ -384,21 +388,21 @@ export default function EnvBackupManager() {
                 <div className="space-y-2">
                   <div className="flex items-center gap-1.5">
                     <ShieldCheck className="w-4 h-4 text-purple-400" />
-                    <h4 className="text-xs font-semibold text-slate-300">系统环境变量 (HKEY_LOCAL_MACHINE\Session Manager...)</h4>
+                    <h4 className="text-xs font-semibold text-slate-300">{t("envbackup.sysVarsTitle")}</h4>
                   </div>
 
                   <div className="border border-white/5 rounded-xl overflow-hidden font-mono text-[10px]">
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-white/3 text-slate-400 font-semibold border-b border-white/5">
-                          <th className="p-2 w-1/3">变量名 (Key)</th>
-                          <th className="p-2">备份值 (Value)</th>
+                          <th className="p-2 w-1/3">{t("envbackup.colKey")}</th>
+                          <th className="p-2">{t("envbackup.colValue")}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5 text-slate-300">
                         {getFilteredVars(selectedBackup.sys_vars).length === 0 ? (
                           <tr>
-                            <td colSpan={2} className="p-4 text-center text-slate-500 italic">无匹配的变量</td>
+                            <td colSpan={2} className="p-4 text-center text-slate-500 italic">{t("envbackup.noMatch")}</td>
                           </tr>
                         ) : (
                           getFilteredVars(selectedBackup.sys_vars).map(([k, v]) => (
@@ -417,7 +421,7 @@ export default function EnvBackupManager() {
           ) : (
             <div className="flex-1 glass-panel rounded-2xl border border-white/5 flex flex-col items-center justify-center text-center text-slate-500 p-8">
               <Info className="w-12 h-12 text-slate-600 mb-4" />
-              <p className="text-xs font-medium text-slate-400">选择左侧列表中的环境备份查看详情和进行还原</p>
+              <p className="text-xs font-medium text-slate-400">{t("envbackup.selectHint")}</p>
             </div>
           )}
         </div>

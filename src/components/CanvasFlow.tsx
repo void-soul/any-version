@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import {
   applyNodeChanges,
@@ -142,18 +143,19 @@ function arrayColumns(value: JsonValue[]): string[] {
 }
 
 function JsonArrayTable({ value, path, onSelect }: { value: JsonValue[]; path: string; onSelect: (path: string) => void }) {
+  const { t } = useTranslation();
   const columns = arrayColumns(value);
   const objectRows = columns[0] !== "value";
   const displayRows = value.slice(0, 80);
   return (
     <div className="mt-2 overflow-hidden rounded border border-white/10 bg-slate-950/60" onClick={(event) => event.stopPropagation()}>
-      <div className="border-b border-white/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-wide text-cyan-300">数组内容 · {value.length} 行</div>
+      <div className="border-b border-white/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-wide text-cyan-300">{t("canvasflow.arrContent", { count: value.length })}</div>
       <div className="max-h-36 overflow-auto">
         <table className="w-full table-fixed border-collapse text-left font-mono text-[9px]">
           <thead><tr>{objectRows && <th className="sticky top-0 w-6 border-b border-white/10 bg-slate-900 px-1.5 py-1 text-slate-600">#</th>}{columns.map((column) => <th key={column} className="sticky top-0 max-w-[100px] border-b border-white/10 bg-slate-900 px-1.5 py-1 text-cyan-300">{column}</th>)}</tr></thead>
           <tbody>{displayRows.map((row, index) => <tr key={`${path}.${index}`} className="hover:bg-white/[0.05]" onClick={() => onSelect(`${path}.${index}`)}>{objectRows && <td className="border-b border-white/5 px-1.5 py-1 text-slate-600">{index + 1}</td>}{columns.map((column) => { const cell = objectRows && typeof row === "object" && row !== null && !Array.isArray(row) ? row[column] ?? null : row; return <td key={column} className="max-w-[100px] truncate border-b border-white/5 px-1.5 py-1 text-slate-300" title={JSON.stringify(cell)}>{compactJsonValue(cell)}</td>; })}</tr>)}</tbody>
         </table>
-        {value.length > 80 && <div className="border-t border-white/10 px-2 py-1 text-[9px] text-slate-600">仅显示前 80 行</div>}
+        {value.length > 80 && <div className="border-t border-white/10 px-2 py-1 text-[9px] text-slate-600">{t("canvasflow.showFirst80")}</div>}
       </div>
     </div>
   );
@@ -184,6 +186,7 @@ function copyJsonValue(value: JsonValue): string {
 }
 
 const JsonFlowNode = memo(function JsonFlowNode({ data }: NodeProps<Node<JsonFlowNodeData>>) {
+  const { t } = useTranslation();
   const { item, selectedPath, searchMatches, collapsed, onSelect, onToggle, onCopy } = data;
   const selected = item.path === selectedPath;
   const chain = searchMatches.paths.has(item.path);
@@ -194,9 +197,9 @@ const JsonFlowNode = memo(function JsonFlowNode({ data }: NodeProps<Node<JsonFlo
     <div className={`w-[250px] rounded-lg border bg-[#101827] px-2.5 py-2 shadow-xl ${selected ? "border-cyan-300 shadow-cyan-500/30" : chain ? "border-cyan-700/80" : "border-white/10"}`} onClick={() => onSelect(item.path)}>
       <Handle type="target" position={Position.Left} isConnectable={false} className="!h-2.5 !w-2.5 !border-2 !border-slate-950" style={{ background: color }} />
       <div className="flex items-center gap-1.5">
-        {container && <button type="button" className="nodrag nopan inline-flex h-4 w-4 items-center justify-center text-slate-500 hover:text-white" onClick={(event) => { event.stopPropagation(); onToggle(item.path); }} title={collapsed.has(item.path) ? "展开" : "折叠"}>{collapsed.has(item.path) ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}</button>}
+        {container && <button type="button" className="nodrag nopan inline-flex h-4 w-4 items-center justify-center text-slate-500 hover:text-white" onClick={(event) => { event.stopPropagation(); onToggle(item.path); }} title={collapsed.has(item.path) ? t("canvasflow.expand") : t("canvasflow.collapse")}>{collapsed.has(item.path) ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}</button>}
         <span className={`min-w-0 flex-1 truncate font-mono text-[11px] ${directMatch ? "text-yellow-300" : "text-cyan-200"}`}>{item.name}</span>
-        <button type="button" className="nodrag nopan text-slate-600 hover:text-white" onClick={(event) => { event.stopPropagation(); onCopy(copyJsonValue(item.value)); }} title="复制节点内容"><span className="text-[10px]">⧉</span></button>
+        <button type="button" className="nodrag nopan text-slate-600 hover:text-white" onClick={(event) => { event.stopPropagation(); onCopy(copyJsonValue(item.value)); }} title={t("canvasflow.copyNode")}><span className="text-[10px]">⧉</span></button>
       </div>
       <div className="mt-1 truncate font-mono text-[10px]" style={{ color }}>{jsonSummary(item.value)}</div>
       {Array.isArray(item.value) && !collapsed.has(item.path) && <JsonArrayTable value={item.value} path={item.path} onSelect={onSelect} />}
@@ -213,6 +216,7 @@ const ColorEdge = memo(function ColorEdge({ id, sourceX, sourceY, targetX, targe
 });
 
 function JsonFlowInner({ value, selectedPath, searchMatches, onSelectPath, onCopy, collapseAllToken }: { value: JsonValue; selectedPath: string; searchMatches: SearchMatches; onSelectPath: (path: string) => void; onCopy: (value: string) => void; collapseAllToken: number }) {
+  const { t } = useTranslation();
   const { fitView } = useReactFlow();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [nodes, setNodes] = useState<Node<JsonFlowNodeData>[]>([]);
@@ -240,7 +244,7 @@ function JsonFlowInner({ value, selectedPath, searchMatches, onSelectPath, onCop
   // JSON 内容变化时重置位置
   useEffect(() => { setNodes(computedNodes); }, [value]);
   useEffect(() => { const timer = window.setTimeout(() => fitView({ padding: 0.2, duration: 240 }), 0); return () => window.clearTimeout(timer); }, [fitView, value, collapsed]);
-  return <div className="relative h-full min-h-0"><ReactFlow nodes={nodes} edges={edges} nodeTypes={{ jsonNode: JsonFlowNode }} edgeTypes={{ color: ColorEdge }} onNodesChange={(changes) => setNodes((cur) => applyNodeChanges(changes, cur))} fitView minZoom={0.15} maxZoom={2.2} nodesDraggable nodesConnectable={false} elementsSelectable proOptions={{ hideAttribution: true }}><Background color="#1e293b" gap={24} size={1} /><MiniMap style={{ backgroundColor: "#080f1c", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95" nodeColor={(node) => hashColor(String(node.id), JSON_EDGE_COLORS)} nodeStrokeColor="#0f172a" nodeBorderRadius={2} maskColor="rgba(2, 6, 23, 0.72)" pannable zoomable /><Controls className="canvas-flow-controls" showInteractive={false} /></ReactFlow>{graphTruncated && <div className="pointer-events-none absolute left-3 top-3 z-10 rounded border border-amber-400/20 bg-slate-900/90 px-2 py-1 text-[10px] text-amber-200">图形树仅显示前 {MAX_JSON_FLOW_ITEMS} 个节点</div>}</div>;
+  return <div className="relative h-full min-h-0"><ReactFlow nodes={nodes} edges={edges} nodeTypes={{ jsonNode: JsonFlowNode }} edgeTypes={{ color: ColorEdge }} onNodesChange={(changes) => setNodes((cur) => applyNodeChanges(changes, cur))} fitView minZoom={0.15} maxZoom={2.2} nodesDraggable nodesConnectable={false} elementsSelectable proOptions={{ hideAttribution: true }}><Background color="#1e293b" gap={24} size={1} /><MiniMap style={{ backgroundColor: "#080f1c", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95" nodeColor={(node) => hashColor(String(node.id), JSON_EDGE_COLORS)} nodeStrokeColor="#0f172a" nodeBorderRadius={2} maskColor="rgba(2, 6, 23, 0.72)" pannable zoomable /><Controls className="canvas-flow-controls" showInteractive={false} /></ReactFlow>{graphTruncated && <div className="pointer-events-none absolute left-3 top-3 z-10 rounded border border-amber-400/20 bg-slate-900/90 px-2 py-1 text-[10px] text-amber-200">{t("canvasflow.graphTruncated", { count: MAX_JSON_FLOW_ITEMS })}</div>}</div>;
 }
 
 export function JsonFlowCanvas(props: { value: JsonValue; selectedPath: string; searchMatches: SearchMatches; onSelectPath: (path: string) => void; onCopy: (value: string) => void; collapseAllToken: number }) {
@@ -265,6 +269,7 @@ function appendMarkdownLine(content: string, line: string): string { return cont
 
 /** 本地图片：通过 image_to_base64 读取为 data URL 显示（不依赖 asset 协议作用域）。 */
 function LocalTaskImage({ path, alt, onOpenFile }: { path: string; alt: string; onOpenFile: (path: string) => void }) {
+  const { t } = useTranslation();
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -277,12 +282,12 @@ function LocalTaskImage({ path, alt, onOpenFile }: { path: string; alt: string; 
     return () => { cancelled = true; };
   }, [path]);
   if (failed) {
-    return <button type="button" className="my-2 block max-w-full text-left text-[9px] text-red-300" onClick={() => onOpenFile(path)} title="打开文件">图片加载失败，点击打开文件</button>;
+    return <button type="button" className="my-2 block max-w-full text-left text-[9px] text-red-300" onClick={() => onOpenFile(path)} title={t("canvasflow.openFile")}>{t("canvasflow.imgFail")}</button>;
   }
   if (!src) {
     return <div className="my-2 h-16 animate-pulse rounded border border-white/10 bg-slate-900/60" />;
   }
-  return <button type="button" className="my-2 block max-w-full text-left" onClick={() => onOpenFile(path)} title="打开图片"><img src={src} alt={alt} className="max-h-48 max-w-full rounded border border-white/10 object-contain" /></button>;
+  return <button type="button" className="my-2 block max-w-full text-left" onClick={() => onOpenFile(path)} title={t("canvasflow.openImage")}><img src={src} alt={alt} className="max-h-48 max-w-full rounded border border-white/10 object-contain" /></button>;
 }
 
 /** react-markdown v10 默认 urlTransform 会把 `C:/...` 当作不安全协议清空 href/src，
@@ -299,6 +304,7 @@ function taskUrlTransform(value: string): string {
 }
 
 function TaskMarkdown({ content, onOpenFile }: { content: string; onOpenFile: (path: string) => void }) {
+  const { t } = useTranslation();
   return <div className="task-markdown text-[10px] leading-relaxed text-slate-200 break-words">
     <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={taskUrlTransform} components={{
       h1: ({ children }) => <h1 className="mt-2 mb-1 text-sm font-bold text-white">{children}</h1>,
@@ -330,7 +336,7 @@ function TaskMarkdown({ content, onOpenFile }: { content: string; onOpenFile: (p
       th: ({ children }) => <th className="border-b border-white/10 px-1.5 py-1 text-left text-cyan-200">{children}</th>,
       td: ({ children }) => <td className="border-b border-white/5 px-1.5 py-1 text-slate-300">{children}</td>,
       hr: () => <hr className="my-2 border-white/10" />,
-    }}>{content || "暂无内容"}</ReactMarkdown>
+    }}>{content || t("canvasflow.emptyContent")}</ReactMarkdown>
   </div>;
 }
 
@@ -343,6 +349,7 @@ function TaskDetailModal({ task, onClose, onUpdate, onInsertFile, onInsertImage,
   onInsertScreenshot: (content: string) => Promise<string | undefined>;
   onOpenFile: (path: string) => void;
 }) {
+  const { t } = useTranslation();
   const color = taskColor(task);
   const [draft, setDraft] = useState(task.detail);
   const [mode, setMode] = useState<"edit" | "preview" | "split">("edit");
@@ -374,14 +381,14 @@ function TaskDetailModal({ task, onClose, onUpdate, onInsertFile, onInsertImage,
   };
   const save = () => { if (draft !== task.detail) onUpdate({ detail: draft }); onClose(); };
   const insertWith = async (handler: (content: string) => Promise<string | undefined>) => { const next = await handler(draft); if (next !== undefined) setDraft(next); };
-  const insertDate = () => { const now = new Date(); const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`; setDraft(appendMarkdownLine(draft, `**日期：${date}**`)); };
+  const insertDate = () => { const now = new Date(); const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`; setDraft(appendMarkdownLine(draft, t("canvasflow.dateMark", { date }))); };
   const insertBar = (
     <div className="flex flex-wrap items-center gap-1">
-      <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => void insertWith(onInsertFile)} title="插入文件路径"><FilePlus2 className="h-3 w-3" />文件</button>
-      <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => void insertWith(onInsertImage)} title="插入图片"><ImageIcon className="h-3 w-3" />图片</button>
-      <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => void insertWith(onInsertScreenshot)} title="插入剪贴板截图"><ImageIcon className="h-3 w-3" />截图</button>
-      <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={insertDate} title="插入当前日期"><CalendarDays className="h-3 w-3" />日期</button>
-      <span className="ml-auto font-mono text-[9px] text-slate-600">{draft.length} 字符</span>
+      <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => void insertWith(onInsertFile)}      title={t("canvasflow.insertFile")}><FilePlus2 className="h-3 w-3" />{t("canvasflow.file")}</button>
+      <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => void insertWith(onInsertImage)}      title={t("canvasflow.insertImage")}><ImageIcon className="h-3 w-3" />{t("canvasflow.image")}</button>
+      <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => void insertWith(onInsertScreenshot)}      title={t("canvasflow.insertScreenshot")}><ImageIcon className="h-3 w-3" />{t("canvasflow.screenshot")}</button>
+      <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={insertDate}      title={t("canvasflow.insertDate")}><CalendarDays className="h-3 w-3" />{t("canvasflow.date")}</button>
+      <span className="ml-auto font-mono text-[9px] text-slate-600">{t("canvasflow.chars", { count: draft.length })}</span>
     </div>
   );
   const editorPane = (
@@ -396,7 +403,7 @@ function TaskDetailModal({ task, onClose, onUpdate, onInsertFile, onInsertImage,
           onMount={(editor) => { if (mode === "edit") editor.focus(); }}
           options={{ minimap: { enabled: false }, fontSize: 12, lineNumbers: "on", wordWrap: "on", automaticLayout: true, tabSize: 2, padding: { top: 8, bottom: 8 }, scrollBeyondLastLine: false, renderLineHighlight: "line", overviewRulerLanes: 0, hideCursorInOverviewRuler: true }}
         />
-        {!draft && <div className="pointer-events-none absolute left-4 top-2.5 text-[11px] text-slate-600">使用 Markdown 记录任务的详细内容…</div>}
+        {!draft && <div className="pointer-events-none absolute left-4 top-2.5 text-[11px] text-slate-600">{t("canvasflow.detailPh")}</div>}
       </div>
       <div className="flex shrink-0 items-center border-t border-white/10 px-3 py-2">{insertBar}</div>
     </div>
@@ -409,17 +416,17 @@ function TaskDetailModal({ task, onClose, onUpdate, onInsertFile, onInsertImage,
       <div className={`flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl ${fullscreen ? "h-[100vh] w-[100vw] rounded-none" : "h-[82vh] w-[min(92vw,860px)]"}`} onClick={(event) => event.stopPropagation()}>
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/10 px-3" style={{ backgroundColor: hexToRgba(color, 0.12) }}>
           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 9px ${color}` }} />
-          <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-slate-100">{task.title} · 详细</span>
-          <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => setMode("edit")} title="仅编辑"><Pencil className="h-3 w-3" />编辑</button>
-          <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => setMode("split")} title="左编辑右预览"><Columns2 className="h-3 w-3" />分栏</button>
-          <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => setMode("preview")} title="仅渲染"><Eye className="h-3 w-3" />渲染</button>
-          <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => setFullscreen((value) => !value)} title={fullscreen ? "退出全屏" : "全屏"}>{fullscreen ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}</button>
-          <button type="button" className="nodrag nopan ml-1 text-slate-500 hover:text-white" onClick={onClose} title="关闭"><X className="h-4 w-4" /></button>
+          <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-slate-100">{t("canvasflow.detailTitle", { title: task.title })}</span>
+          <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => setMode("edit")}      title={t("canvasflow.modeEdit")}><Pencil className="h-3 w-3" />{t("canvasflow.edit")}</button>
+          <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => setMode("split")}      title={t("canvasflow.modeSplit")}><Columns2 className="h-3 w-3" />{t("canvasflow.split")}</button>
+          <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => setMode("preview")}      title={t("canvasflow.modePreview")}><Eye className="h-3 w-3" />{t("canvasflow.preview")}</button>
+          <button type="button" className={`${taskIconButton} nodrag nopan`} style={{ borderColor: `${color}55`, color: `${color}ee` }} onClick={() => setFullscreen((value) => !value)}      title={fullscreen ? t("canvasflow.fullscreenExit") : t("canvasflow.fullscreen")}>{fullscreen ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}</button>
+          <button type="button" className="nodrag nopan ml-1 text-slate-500 hover:text-white" onClick={onClose} title={t("canvasflow.close")}><X className="h-4 w-4" /></button>
         </div>
-        {mode === "split" ? <div ref={splitRef} className="flex min-h-0 flex-1"><div className="flex min-w-0 flex-col" style={{ width: `${splitPct}%` }}>{editorPane}</div><div className="flex w-2 shrink-0 cursor-col-resize touch-none items-center justify-center bg-white/5 transition hover:bg-white/15" onPointerDown={startSplitDrag} title="拖拽调整宽度"><GripVertical className="h-3 w-3 text-slate-500" /></div><div className="min-w-0 flex-1 bg-slate-950/40">{previewPane}</div></div> : mode === "edit" ? editorPane : previewPane}
+        {mode === "split" ? <div ref={splitRef} className="flex min-h-0 flex-1"><div className="flex min-w-0 flex-col" style={{ width: `${splitPct}%` }}>{editorPane}</div><div className="flex w-2 shrink-0 cursor-col-resize touch-none items-center justify-center bg-white/5 transition hover:bg-white/15" onPointerDown={startSplitDrag} title={t("canvasflow.splitDrag")}><GripVertical className="h-3 w-3 text-slate-500" /></div><div className="min-w-0 flex-1 bg-slate-950/40">{previewPane}</div></div> : mode === "edit" ? editorPane : previewPane}
         <div className="flex shrink-0 justify-end gap-2 border-t border-white/10 px-3 py-2.5">
-          <button type="button" className={taskButton} onClick={onClose}>取消</button>
-          <button type="button" className="nodrag nopan inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[10px] font-semibold text-white" style={{ backgroundColor: color }} onClick={save}>保存</button>
+          <button type="button" className={taskButton} onClick={onClose}>{t("canvasflow.cancel")}</button>
+          <button type="button" className="nodrag nopan inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[10px] font-semibold text-white" style={{ backgroundColor: color }} onClick={save}>{t("canvasflow.save")}</button>
         </div>
       </div>
     </div>,
@@ -428,6 +435,7 @@ function TaskDetailModal({ task, onClose, onUpdate, onInsertFile, onInsertImage,
 }
 
 const TaskFlowNode = memo(function TaskFlowNode({ data }: NodeProps<Node<TaskFlowNodeData>>) {
+  const { t } = useTranslation();
   const { task, selected, collapsed, hasChildren } = data;
   const [editingTitle, setEditingTitle] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -441,22 +449,22 @@ const TaskFlowNode = memo(function TaskFlowNode({ data }: NodeProps<Node<TaskFlo
     <header className="flex h-10 cursor-grab items-center gap-1.5 border-b border-white/10 px-2.5" style={{ backgroundColor: hexToRgba(color, 0.12) }}>
       <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 9px ${color}` }} />
       {editingTitle ? <input autoFocus value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} onBlur={saveTitle} onKeyDown={(event) => { if (event.key === "Enter") saveTitle(); if (event.key === "Escape") { setTitleDraft(task.title); setEditingTitle(false); } }} className="nodrag nopan min-w-0 flex-1 rounded border border-white/20 bg-slate-950 px-1.5 py-1 text-[11px] text-white outline-none" /> : <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-100">{task.title}</span>}
-      <input type="color" value={color} onChange={(event) => data.onUpdate({ color: event.target.value })} className="nodrag nopan h-5 w-5 cursor-pointer rounded border-0 bg-transparent p-0" title="设置节点颜色" />
-      <button type="button" className="nodrag nopan text-slate-500 hover:text-white" onClick={(event) => { event.stopPropagation(); setEditingTitle(true); }} title="编辑标题"><Pencil className="h-3 w-3" /></button>
-      {hasChildren && <button type="button" className="nodrag nopan text-slate-500 hover:text-white" onClick={(event) => { event.stopPropagation(); data.onToggle(); }} title={collapsed ? "展开子任务" : "折叠子任务"}>{collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}</button>}
-      <button type="button" className="nodrag nopan text-slate-500 hover:text-white" onClick={(event) => { event.stopPropagation(); setBodyCollapsed((v) => !v); }} title={bodyCollapsed ? "展开节点" : "收起节点"}>{bodyCollapsed ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}</button>
+      <input type="color" value={color} onChange={(event) => data.onUpdate({ color: event.target.value })} className="nodrag nopan h-5 w-5 cursor-pointer rounded border-0 bg-transparent p-0" title={t("canvasflow.nodeColor")} />
+      <button type="button" className="nodrag nopan text-slate-500 hover:text-white" onClick={(event) => { event.stopPropagation(); setEditingTitle(true); }} title={t("canvasflow.editTitle")}><Pencil className="h-3 w-3" /></button>
+      {hasChildren && <button type="button" className="nodrag nopan text-slate-500 hover:text-white" onClick={(event) => { event.stopPropagation(); data.onToggle(); }} title={collapsed ? t("canvasflow.expandSub") : t("canvasflow.collapseSub")}>{collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}</button>}
+      <button type="button" className="nodrag nopan text-slate-500 hover:text-white" onClick={(event) => { event.stopPropagation(); setBodyCollapsed((v) => !v); }} title={bodyCollapsed ? t("canvasflow.expandNode") : t("canvasflow.collapseNode")}>{bodyCollapsed ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}</button>
     </header>
     {!bodyCollapsed && <div className="nodrag nopan flex flex-1 flex-col gap-1.5 p-2.5">
       <div className="flex items-center justify-between text-[9px] text-slate-500"><span className="font-medium text-slate-300" style={{ color }}>{STATUS_META[taskStatus(task)].label}</span><span className="font-mono font-semibold" style={{ color }}>{task.progress}%</span></div>
-      <input type="range" min={0} max={100} step={5} value={task.progress} onChange={(event) => data.onProgress(Number(event.target.value))} className="nodrag nopan h-1.5 w-full cursor-pointer accent-current" style={{ color }} title="拖动调整进度" />
+      <input type="range" min={0} max={100} step={5} value={task.progress} onChange={(event) => data.onProgress(Number(event.target.value))} className="nodrag nopan h-1.5 w-full cursor-pointer accent-current" style={{ color }} title={t("canvasflow.progressTip")} />
       <div className="mt-0.5 flex gap-1.5">
-        <button type="button" className="nodrag nopan flex flex-1 items-center justify-center gap-1.5 rounded border border-white/10 bg-white/[0.04] py-1.5 text-[10px] text-slate-400 transition hover:bg-white/[0.1] hover:text-white" style={{ borderColor: `${color}55`, color: `${color}cc` }} onClick={(event) => { event.stopPropagation(); setDetailOpen(true); }}><Maximize2 className="h-3.5 w-3.5" />编辑详细内容{task.detail ? `（${task.detail.length} 字符）` : ""}</button>
-        {selected && <button type="button" className="nodrag nopan inline-flex h-[26px] w-[34px] shrink-0 items-center justify-center rounded border border-red-400/30 text-red-300 transition hover:bg-red-400/10 hover:text-red-200" onClick={(event) => { event.stopPropagation(); data.onDelete(); }} title="删除任务"><Trash2 className="h-3.5 w-3.5" /></button>}
+        <button type="button" className="nodrag nopan flex flex-1 items-center justify-center gap-1.5 rounded border border-white/10 bg-white/[0.04] py-1.5 text-[10px] text-slate-400 transition hover:bg-white/[0.1] hover:text-white" style={{ borderColor: `${color}55`, color: `${color}cc` }} onClick={(event) => { event.stopPropagation(); setDetailOpen(true); }}><Maximize2 className="h-3.5 w-3.5" />{t("canvasflow.editDetail")}{task.detail ? t("canvasflow.detailChars", { count: task.detail.length }) : ""}</button>
+        {selected && <button type="button" className="nodrag nopan inline-flex h-[26px] w-[34px] shrink-0 items-center justify-center rounded border border-red-400/30 text-red-300 transition hover:bg-red-400/10 hover:text-red-200" onClick={(event) => { event.stopPropagation(); data.onDelete(); }} title={t("canvasflow.deleteTask")}><Trash2 className="h-3.5 w-3.5" /></button>}
       </div>
     </div>}
     <Handle type="source" position={Position.Right} isConnectable className="!h-3 !w-3 !border-2 !border-slate-950" style={{ background: color }} />
   </article>
-  <button type="button" className="nodrag nopan absolute z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border-2 border-dashed text-sm font-bold leading-none transition hover:scale-110 hover:border-solid" style={{ right: -38, top: "50%", borderColor: `${color}88`, color: `${color}cc`, backgroundColor: "#101827", boxShadow: "0 0 6px rgba(0,0,0,.45)" }} onClick={(event) => { event.stopPropagation(); data.onAddChild(); }} title="添加子任务"><Plus className="h-3.5 w-3.5" /></button>
+  <button type="button" className="nodrag nopan absolute z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border-2 border-dashed text-sm font-bold leading-none transition hover:scale-110 hover:border-solid" style={{ right: -38, top: "50%", borderColor: `${color}88`, color: `${color}cc`, backgroundColor: "#101827", boxShadow: "0 0 6px rgba(0,0,0,.45)" }} onClick={(event) => { event.stopPropagation(); data.onAddChild(); }} title={t("canvasflow.addSub")}><Plus className="h-3.5 w-3.5" /></button>
   {detailOpen && <TaskDetailModal task={task} onClose={() => setDetailOpen(false)} onUpdate={data.onUpdate} onInsertFile={data.onInsertFile} onInsertImage={data.onInsertImage} onInsertScreenshot={data.onInsertScreenshot} onOpenFile={data.onOpenFile} />}
 </>;
 });
@@ -472,6 +480,7 @@ type StickerNodeData = {
 const STICKER_PALETTE = ["#fef3c7", "#d4f5d4", "#dbeafe", "#fce7f3", "#ede9fe", "#ffedd5", "#e0e7ff"];
 
 const StickerFlowNode = memo(function StickerFlowNode({ data }: NodeProps<Node<StickerNodeData>>) {
+  const { t } = useTranslation();
   const { sticker } = data;
   const [editing, setEditing] = useState(!sticker.content);
   const [draft, setDraft] = useState(sticker.content);
@@ -481,13 +490,13 @@ const StickerFlowNode = memo(function StickerFlowNode({ data }: NodeProps<Node<S
   const save = () => { if (draft !== sticker.content) data.onUpdate({ content: draft }); setEditing(false); };
   return <>
     <div className={`relative min-w-[200px] max-w-[320px] rounded px-3 py-2 shadow-lg`} style={{ backgroundColor: bg, borderColor: sticker.color, borderWidth: 1, color: "#1e1b4b", fontSize: 12, lineHeight: 1.5, fontFamily: "'Segoe UI', system-ui, sans-serif" }} onDoubleClick={() => setEditing(true)}>
-      {editing ? <textarea autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={save} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); save(); } if (e.key === "Escape") { setDraft(sticker.content); setEditing(false); } }} placeholder="写点什么…" className="nodrag nopan min-w-0 resize-none border-0 bg-transparent text-[13px] leading-relaxed outline-none placeholder:text-black/25" rows={Math.max(1, draft.split(/\r?\n/).length)} style={{ color: "#1e1b4b", fontFamily: "'Segoe UI', system-ui, sans-serif", width: "100%" }} /> : <div className="min-h-[1.5em] cursor-text whitespace-pre-wrap break-words text-[13px] leading-relaxed">{sticker.content || <span className="italic text-black/30">双击编辑…</span>}</div>}
+      {editing ? <textarea autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={save} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); save(); } if (e.key === "Escape") { setDraft(sticker.content); setEditing(false); } }} placeholder={t("canvasflow.stickerPh")} className="nodrag nopan min-w-0 resize-none border-0 bg-transparent text-[13px] leading-relaxed outline-none placeholder:text-black/25" rows={Math.max(1, draft.split(/\r?\n/).length)} style={{ color: "#1e1b4b", fontFamily: "'Segoe UI', system-ui, sans-serif", width: "100%" }} /> : <div className="min-h-[1.5em] cursor-text whitespace-pre-wrap break-words text-[13px] leading-relaxed">{sticker.content || <span className="italic text-black/30">{t("canvasflow.stickerHint")}</span>}</div>}
       <div className="mt-1.5 flex items-center gap-1 border-t border-black/10 pt-1.5">
         <div className="relative">
-          <button type="button" className="nodrag nopan h-4 w-4 rounded-full border border-black/20" style={{ backgroundColor: sticker.color }} onClick={(e) => { e.stopPropagation(); setPaletteOpen((v) => !v); }} title="换颜色" />
+          <button type="button" className="nodrag nopan h-4 w-4 rounded-full border border-black/20" style={{ backgroundColor: sticker.color }} onClick={(e) => { e.stopPropagation(); setPaletteOpen((v) => !v); }} title={t("canvasflow.stickerColor")} />
           {paletteOpen && <div className="nodrag nopan absolute bottom-full left-0 z-20 mb-1 flex gap-1 rounded bg-slate-900 p-1 shadow-xl" onMouseLeave={() => setPaletteOpen(false)}>{STICKER_PALETTE.map((c) => <button key={c} type="button" className="h-5 w-5 rounded-full border border-white/20 transition hover:scale-110" style={{ backgroundColor: c }} onClick={(e) => { e.stopPropagation(); data.onUpdate({ color: c }); setPaletteOpen(false); }} />)}</div>}
         </div>
-        <button type="button" className="nodrag nopan ml-auto rounded p-0.5 text-black/30 hover:bg-black/10 hover:text-red-600" onClick={(e) => { e.stopPropagation(); data.onDelete(); }} title="删除贴纸"><Trash2 className="h-3 w-3" /></button>
+        <button type="button" className="nodrag nopan ml-auto rounded p-0.5 text-black/30 hover:bg-black/10 hover:text-red-600" onClick={(e) => { e.stopPropagation(); data.onDelete(); }} title={t("canvasflow.deleteSticker")}><Trash2 className="h-3 w-3" /></button>
       </div>
     </div>
     <Handle type="source" position={Position.Right} isConnectable={false} style={{ visibility: "hidden" }} />

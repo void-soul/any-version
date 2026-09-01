@@ -1,6 +1,7 @@
 import { memo, useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useTranslation } from "react-i18next";
 
 /**
  * 可复用的 Markdown 渲染器，专为 AI 对话场景设计。
@@ -117,6 +118,7 @@ function MarkdownRendererBase({ content }: { content: string }) {
 
 /// 代码块：语言标签 + 一键复制
 function CodeBlock({ lang, children }: { lang: string; children: React.ReactNode }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const handleCopy = useCallback(() => {
     const text = typeof children === "string" ? children : String(children);
@@ -134,7 +136,7 @@ function CodeBlock({ lang, children }: { lang: string; children: React.ReactNode
           onClick={handleCopy}
           className="text-[9px] text-slate-500 hover:text-slate-200 transition-colors cursor-pointer"
         >
-          {copied ? "✓ 已复制" : "复制"}
+          {copied ? t("mmdmark.copied") : t("mmdmark.copy")}
         </button>
       </div>
       <pre className="overflow-x-auto p-2.5 text-[10px] leading-relaxed">

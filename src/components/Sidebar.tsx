@@ -1,4 +1,5 @@
 
+import { useTranslation } from "react-i18next";
 import { 
 
   Layers, 
@@ -17,10 +18,11 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
+  const { t } = useTranslation();
   const menuItems = [
-    { id: "projects", label: "项目管理", icon: Layers },
-    { id: "tools", label: "系统工具", icon: Wrench },
-    { id: "settings", label: "设置", icon: Settings },
+    { id: "projects", label: t("sidebar.projects"), icon: Layers },
+    { id: "tools", label: t("sidebar.tools"), icon: Wrench },
+    { id: "settings", label: t("sidebar.settings"), icon: Settings },
   ];
 
   return (
@@ -32,7 +34,7 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
         </div>
         <div>
           <h1 className="font-semibold text-white tracking-wide text-sm">Kira</h1>
-          <p className="text-[10px] text-slate-400">开发者工作站 v1.0</p>
+          <p className="text-[10px] text-slate-400">{t("sidebar.version")}</p>
         </div>
       </div>
 
@@ -60,8 +62,8 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
 
       {/* Footer info */}
       <div className="p-6 border-t border-white/5 space-y-1 text-center">
-        <p className="text-[10px] text-slate-500">Windows 工作站</p>
-        <p className="text-[9px] text-slate-600 leading-relaxed">任何人，零基础，也能一步到位搭建开发环境。一切操作透明可见。</p>
+        <p className="text-[10px] text-slate-500">{t("sidebar.platform")}</p>
+        <p className="text-[9px] text-slate-600 leading-relaxed">{t("sidebar.slogan")}</p>
       </div>
     </aside>
   );

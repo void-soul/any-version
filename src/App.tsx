@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -7,8 +8,10 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { MODULES, MODULE_MAP, resolveModuleLayout } from "./moduleRegistry";
 import VexAvatar from "./components/VexAvatar";
 import { VEX_CYBER_CYAN, resolveThemeAccent } from "./utils/brand";
+import { moduleLabel } from "./moduleRegistry";
 import { kiraQuoteLine } from "./utils/kiraQuotes";
 import { vexSay, onVexSay, type VexSayKind } from "./utils/vexSay";
+import { useTranslation } from "react-i18next";
 import "./App.css";
 
 // 模块 id 即字符串（所有模块平级）。
@@ -37,6 +40,7 @@ function buildFontFaceCss(customFontPath: string): string {
 }
 
 export default function App() {
+  const { t, i18n: i18nInst } = useTranslation();
   // 应用启动默认进入「启动」（Launcher）模块
   const [activePage, setActivePage] = useState<PageId>("launcher");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -136,9 +140,10 @@ export default function App() {
 
   useEffect(() => {
     const initApp = async () => {
-      // 把统一函数库(kQuotes)：把 Kira 语录推给托盘（悬停提示 + 问候菜单共同取这一句）
+      // 把统一函数库(kQuotes)：把 Kira 语录推给托盘（悬停提示 + 问候菜单共同取这一句），
+      // 同时上报生效语言，让托盘原生菜单文案与界面语言保持一致（跟随系统时 config.language 可能为空）。
       try {
-        await invoke("set_tray_quote", { text: kiraQuoteLine() });
+        await invoke("set_tray_quote", { text: kiraQuoteLine(), language: i18nInst.language || undefined });
       } catch (e) {
         console.error("推送托盘语录失败", e);
       }
@@ -314,6 +319,9 @@ export default function App() {
 
   // 「更多」下拉菜单开合
   const [moreOpen, setMoreOpen] = useState(false);
+  // 「更多」下拉锚点：记录按钮底边/右边距，配合 portal 在 body 下渲染（胶囊居中 + 横向滚动会裁剪 fixed 元素）
+  const moreBtnRef = useRef<HTMLButtonElement>(null);
+  const [moreAnchor, setMoreAnchor] = useState<{ bottom: number; right: number } | null>(null);
 
   // 全局背景底图纹理 class（由全局设置决定；空=默认网格）。
   const bgTextureClass = appearance.backgroundTexture
@@ -346,7 +354,7 @@ export default function App() {
             <div className="text-xl font-black tracking-[0.35em] text-white">
               K<span className="text-[var(--module-accent)]">i</span>ra
             </div>
-            <div className="mt-1 text-[10px] tracking-[0.3em] text-slate-500">暖心的桌面伙伴</div>
+            <div className="mt-1 text-[10px] tracking-[0.3em] text-slate-500">{t("app.tagline")}</div>
           </div>
           <div className="h-1 w-48 overflow-hidden rounded-full bg-white/10">
             <div
@@ -393,8 +401,8 @@ export default function App() {
             <div className="flex items-center gap-3">
               <VexAvatar size={46} />
               <div>
-                <div className="text-sm font-black text-white">hi，我是 Kira</div>
-                <div className="text-[10px] text-slate-400">暖心的桌面伙伴</div>
+                <div className="text-sm font-black text-white">hi，我是 {t("app.name")}</div>
+                <div className="text-[10px] text-slate-400">{t("app.tagline")}</div>
               </div>
             </div>
             <div className="mt-4 min-h-[72px] text-[12px] leading-relaxed text-slate-300">
@@ -439,62 +447,62 @@ export default function App() {
       <div className="relative flex-shrink-0 h-11 flex items-center justify-between px-3 border-b border-white/5 bg-[#0e1220]/80 backdrop-blur-md z-50" data-tauri-drag-region>
         {/* 顶栏底部霓虹辉光细线 */}
         <div className="vex-neon-line absolute bottom-0 left-0 right-0 h-px" />
-        {/* Left: Logo + Name + Navigation Capsule */}
-        <div className="flex items-center gap-2.5">
-          <div className="flex items-center gap-2 pointer-events-none px-1 w-35" data-tauri-drag-region>
-            <VexAvatar size={22} glow={activeModuleColor} className="vex-neon-breathe" />
-            <span className="vex-neon-text text-[11px] font-black tracking-wide">Kira</span>
-          </div>
+        {/* Left: Logo + Name */}
+        <div className="flex shrink-0 items-center gap-2 pointer-events-none px-1" data-tauri-drag-region>
+          <VexAvatar size={22} glow={activeModuleColor} className="vex-neon-breathe" />
+          <span className="vex-neon-text text-[11px] font-black tracking-wide">Kira</span>
+        </div>
 
-
-          <div className="relative flex items-center gap-0.5 bg-white/5 border border-white/5 rounded-lg p-0.5">
+        {/* Center: Navigation Capsule —— 水平居中；模块多时在胶囊内横向滚动，不挤占两侧 */}
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex max-w-[calc(100%-300px)] items-center gap-0.5 overflow-x-auto no-scrollbar bg-white/5 border border-white/5 rounded-lg p-0.5" data-tauri-drag-region>
             {toolbarModules.filter((m) => m.id !== "settings").map((m) => {
-              const effectiveColor = activeModuleColor;
               const isActive = activePage === m.id;
               const Icon = m.icon;
               return (
                 <button
                   key={m.id}
                   onClick={() => switchPage(m.id)}
-                  className={`px-3 py-1.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer vex-nav-tab ${
                     isActive
-                      ? "vex-neon-ring text-white"
-                      : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+                      ? "vex-nav-tab-active text-white"
+                      : "text-slate-400 hover:text-slate-200"
                   }`}
-                  style={isActive ? { backgroundColor: effectiveColor, "--neon": effectiveColor } as React.CSSProperties : undefined}
-                  title={`${m.label} (可在全局设置调整主题色)`}
+                  style={{ "--neon": appearance.moduleThemeColors?.[m.id] ?? m.color } as React.CSSProperties}
+                  title={`${moduleLabel(m.id)} (可在全局设置调整主题色)`}
                 >
                   <Icon className="w-3 h-3" />
-                  {m.label}
+                  {moduleLabel(m.id)}
                 </button>
               );
             })}
 
             {/* 「更多」下拉：收纳未置顶的模块 */}
             {moreModules.length > 0 && (
-              <div className="relative">
+              <>
                 <button
-                  onClick={() => setMoreOpen((v) => !v)}
-                  className={`px-3 py-1.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+                  ref={moreBtnRef}
+                  onClick={() => {
+                    setMoreOpen((v) => !v);
+                    const r = moreBtnRef.current?.getBoundingClientRect();
+                    if (r) setMoreAnchor({ bottom: r.bottom, right: window.innerWidth - r.right });
+                  }}
+                  className={`px-3 py-1.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer vex-nav-tab ${
                     moreModules.some((m) => m.id === activePage)
-                      ? "vex-neon-ring text-white"
-                      : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+                      ? "vex-nav-tab-active text-white"
+                      : "text-slate-400 hover:text-slate-200"
                   }`}
-                  style={
-                    moreModules.some((m) => m.id === activePage)
-                      ? { backgroundColor: activeModuleColor, "--neon": activeModuleColor } as React.CSSProperties
-                      : undefined
-                  }
+                  style={{ "--neon": (moreModules.find((x) => x.id === activePage)?.color) ?? "#ff2d95" } as React.CSSProperties}
                   title="更多模块"
                 >
                   <span className="w-3 h-3 flex items-center justify-center">⋯</span>
-                  更多
+                  {t("topbar.more")}
                   <ChevronDown className={`w-2.5 h-2.5 transition-transform ${moreOpen ? "rotate-180" : ""}`} />
                 </button>
-                {moreOpen && (
+                {moreOpen && moreAnchor && createPortal(
                   <>
-                    <div className="fixed inset-0 z-40" onClick={() => setMoreOpen(false)} />
-                    <div className="absolute top-full right-0 mt-1.5 z-50 min-w-[160px] rounded-lg border border-white/10 bg-[#151a2a] shadow-2xl shadow-black/60 p-1">
+                    <div className="fixed inset-0 z-[200]" onClick={() => setMoreOpen(false)} />
+                    <div className="fixed z-[201] min-w-[160px] rounded-lg border border-white/10 bg-[#151a2a] shadow-2xl shadow-black/60 p-1"
+                      style={{ top: moreAnchor.bottom + 6, right: moreAnchor.right }}>
                       {moreModules.map((m) => {
                         const Icon = m.icon;
                         return (
@@ -511,32 +519,29 @@ export default function App() {
                             }`}
                           >
                             <Icon className="w-3.5 h-3.5" style={{ color: m.color }} />
-                            {m.label}
+                            {moduleLabel(m.id)}
                           </button>
                         );
                       })}
                     </div>
-                  </>
+                  </>,
+                  document.body
                 )}
-              </div>
+              </>
             )}
-          </div>
         </div>
-
-        {/* Draggable Middle Area */}
-        <div className="flex-grow h-full" data-tauri-drag-region />
 
         {/* Right: Settings + Window Controls */}
         <div className="flex items-center gap-1">
           <button
             onClick={() => switchPage("settings")}
-            className={`p-1.5 rounded transition-all cursor-pointer ${
+            className={`p-1.5 rounded transition-all cursor-pointer vex-nav-tab ${
               activePage === "settings"
-                ? "vex-neon-ring text-white"
-                : "vex-neon-hover text-slate-400 hover:text-white hover:bg-white/5"
+                ? "vex-nav-tab-active text-white"
+                : "vex-neon-hover text-slate-400 hover:text-white"
             }`}
-            style={activePage === "settings" ? { backgroundColor: activeModuleColor, "--neon": activeModuleColor } as React.CSSProperties : undefined}
-            title="设置"
+            style={{ "--neon": activeModuleColor } as React.CSSProperties}
+            title={t("topbar.settings")}
           >
             <SettingsIcon className="w-3.5 h-3.5" />
           </button>
@@ -544,21 +549,21 @@ export default function App() {
           <button
             onClick={() => getCurrentWindow().minimize()}
             className="vex-neon-hover p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded transition-all cursor-pointer"
-            title="最小化"
+            title={t("topbar.minimize")}
           >
             <Minus className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => getCurrentWindow().toggleMaximize()}
             className="vex-neon-hover p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded transition-all cursor-pointer"
-            title="还原/最大化"
+            title={t("topbar.maximize")}
           >
             <Square className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => getCurrentWindow().close()}
             className="p-1.5 text-slate-400 hover:text-white hover:bg-red-500/80 rounded transition-all cursor-pointer"
-            title="关闭"
+            title={t("topbar.close")}
           >
             <X className="w-3.5 h-3.5" />
           </button>

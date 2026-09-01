@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { useTranslation } from "react-i18next";
 import { 
   Upload, 
   Image as ImageIcon, 
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 
 export default function ImageBase64() {
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<"toBase64" | "toImage">("toBase64");
   
   // Image to Base64 State
@@ -154,7 +156,7 @@ export default function ImageBase64() {
     const base64Data = formatted.substring(formatted.indexOf(",") + 1);
     const regex = /^[a-zA-Z0-9+/]*={0,2}$/;
     if (!regex.test(base64Data.replace(/\s/g, ""))) {
-      setError2("无效的 Base64 字符编码格式");
+      setError2(t("imgbase64.invalidBase64"));
       setPreviewSrc(null);
       setPreviewDetails(null);
       return;
@@ -176,7 +178,7 @@ export default function ImageBase64() {
     try {
       const ext = previewDetails?.type.split("/")[1] || "png";
       const savePath = await save({
-        title: "保存图片文件",
+        title: t("imgbase64.saveTitle"),
         defaultPath: `image.${ext}`,
         filters: [{
           name: "Image",
@@ -189,10 +191,10 @@ export default function ImageBase64() {
           base64Str: previewSrc,
           filePath: savePath
         });
-        alert("图片保存成功！");
+        alert(t("imgbase64.saveOk"));
       }
     } catch (e: any) {
-      alert(`保存失败: ${e}`);
+      alert(t("imgbase64.saveFail", { err: String(e) }));
     } finally {
       setSaveLoading(false);
     }
@@ -202,8 +204,8 @@ export default function ImageBase64() {
     <div className="space-y-6 px-20 py-4 ">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-white">图片 与 Base64 互转</h3>
-          <p className="text-[11px] text-slate-400 mt-0.5">支持本地图片转为 Base64 DataURL，或将 Base64 字符串还原并保存为图片文件。</p>
+          <h3 className="text-sm font-semibold text-white">{t("imgbase64.title")}</h3>
+          <p className="text-[11px] text-slate-400 mt-0.5">{t("imgbase64.subtitle")}</p>
         </div>
         
         {/* Tab Selector */}
@@ -214,7 +216,7 @@ export default function ImageBase64() {
               activeTab === "toBase64" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"
             }`}
           >
-            图片 转 Base64
+            {t("imgbase64.imgToBase64")}
           </button>
           <button
             onClick={() => setActiveTab("toImage")}
@@ -222,7 +224,7 @@ export default function ImageBase64() {
               activeTab === "toImage" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"
             }`}
           >
-            Base64 转 图片
+            {t("imgbase64.base64ToImg")}
           </button>
         </div>
       </div>
@@ -235,14 +237,14 @@ export default function ImageBase64() {
             <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4 flex-shrink-0">
               <span className="text-xs font-semibold text-white flex items-center gap-1.5">
                 <ImageIcon className="w-4 h-4 text-blue-400" />
-                图片文件源
+                {t("imgbase64.imgSource")}
               </span>
               {imgSrc && (
                 <button
                   onClick={handleClearImage}
                   className="text-[10px] text-red-400 hover:text-red-300 font-semibold cursor-pointer"
                 >
-                  清除图片
+                  {t("imgbase64.clearImg")}
                 </button>
               )}
             </div>
@@ -258,8 +260,8 @@ export default function ImageBase64() {
                   <Upload className="w-6 h-6 text-blue-400" />
                 </div>
                 <div>
-                  <p className="text-xs text-slate-300 font-medium">拖拽图片文件到此处，或 <span className="text-blue-400 hover:underline">点击上传</span></p>
-                  <p className="text-[10px] text-slate-500 mt-1">支持 PNG, JPG, GIF, WebP, SVG 等常见格式</p>
+                  <p className="text-xs text-slate-300 font-medium">{t("imgbase64.dragHint")}</p>
+                  <p className="text-[10px] text-slate-500 mt-1">{t("imgbase64.formatsHint")}</p>
                 </div>
                 <div className="pt-2">
                   <button
@@ -270,7 +272,7 @@ export default function ImageBase64() {
                     }}
                     className="px-3.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/5 text-slate-300 rounded-lg text-[10px] font-semibold cursor-pointer transition-colors"
                   >
-                    从系统目录选择
+                    {t("imgbase64.pickFromDir")}
                   </button>
                 </div>
                 <input
@@ -312,7 +314,7 @@ export default function ImageBase64() {
             <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4 flex-shrink-0">
               <span className="text-xs font-semibold text-white flex items-center gap-1.5">
                 <FileCode className="w-4 h-4 text-blue-400" />
-                Base64 编码结果
+                {t("imgbase64.base64Result")}
               </span>
             </div>
 
@@ -320,13 +322,13 @@ export default function ImageBase64() {
               <textarea
                 value={base64Result}
                 readOnly
-                placeholder="上传图片后，这里将生成 Base64 编码结果..."
+                placeholder={t("imgbase64.resultPh")}
                 className="w-full h-full glass-input p-4 font-mono text-[10px] text-slate-300 resize-none break-all"
               />
               {base64Result && (
                 <div className="absolute top-2 right-2 flex items-center gap-1.5">
                   <span className="text-[9px] text-slate-500 bg-black/40 px-2 py-1 rounded border border-white/5 font-mono">
-                    长度: {base64Result.length}
+                    {t("imgbase64.length", { n: base64Result.length })}
                   </span>
                 </div>
               )}
@@ -339,21 +341,21 @@ export default function ImageBase64() {
                   className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[10px] font-semibold cursor-pointer transition-all flex items-center justify-center gap-1.5"
                 >
                   {copySuccess === "base64" ? <CheckCircle className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  {copySuccess === "base64" ? "复制成功!" : "复制 Base64"}
+                  {copySuccess === "base64" ? t("imgbase64.copied") : t("imgbase64.copyBase64")}
                 </button>
                 <button
                   onClick={() => handleCopy("html")}
                   className="px-3 py-2 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 rounded-xl text-[10px] font-semibold cursor-pointer transition-colors flex items-center gap-1"
                 >
                   {copySuccess === "html" ? <CheckCircle className="w-3.5 h-3.5 text-emerald-400" /> : <FileCode className="w-3.5 h-3.5" />}
-                  HTML 标签
+                  {t("imgbase64.htmlTag")}
                 </button>
                 <button
                   onClick={() => handleCopy("css")}
                   className="px-3 py-2 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 rounded-xl text-[10px] font-semibold cursor-pointer transition-colors flex items-center gap-1"
                 >
                   {copySuccess === "css" ? <CheckCircle className="w-3.5 h-3.5 text-emerald-400" /> : <Scissors className="w-3.5 h-3.5" />}
-                  CSS 样式
+                  {t("imgbase64.cssStyle")}
                 </button>
               </div>
             )}
@@ -369,14 +371,14 @@ export default function ImageBase64() {
             <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4 flex-shrink-0">
               <span className="text-xs font-semibold text-white flex items-center gap-1.5">
                 <FileCode className="w-4 h-4 text-blue-400" />
-                输入 Base64 编码
+                {t("imgbase64.inputBase64")}
               </span>
               {base64Input && (
                 <button
                   onClick={() => handleBase64InputChange("")}
                   className="text-[10px] text-red-400 hover:text-red-300 font-semibold cursor-pointer"
                 >
-                  清空
+                  {t("imgbase64.clear")}
                 </button>
               )}
             </div>
@@ -385,7 +387,7 @@ export default function ImageBase64() {
               <textarea
                 value={base64Input}
                 onChange={(e) => handleBase64InputChange(e.target.value)}
-                placeholder="粘贴 data:image/...;base64,... 或 原始 Base64 编码字符串..."
+                placeholder={t("imgbase64.inputPh")}
                 className="w-full h-full glass-input p-4 font-mono text-[10px] text-slate-300 resize-none break-all"
               />
             </div>
@@ -403,13 +405,13 @@ export default function ImageBase64() {
             <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4 flex-shrink-0">
               <span className="text-xs font-semibold text-white flex items-center gap-1.5">
                 <ImageIcon className="w-4 h-4 text-blue-400" />
-                图片文件预览
+                {t("imgbase64.preview")}
               </span>
             </div>
 
             {!previewSrc ? (
               <div className="flex-1 border border-white/5 rounded-xl bg-black/10 flex flex-col items-center justify-center p-6 text-center text-slate-500 text-xs">
-                在左侧粘贴 Base64 代码后，此处将实时展示预览。
+                {t("imgbase64.previewHint")}
               </div>
             ) : (
               <div className="flex-1 flex flex-col min-h-0 bg-black/20 border border-white/5 rounded-xl overflow-hidden">
@@ -417,14 +419,14 @@ export default function ImageBase64() {
                   <img
                     src={previewSrc}
                     alt="Restored Preview"
-                    onError={() => setError2("图片加载失败，请确认 Base64 编码是否完整且有效。")}
+                    onError={() => setError2(t("imgbase64.loadFail"))}
                     className="max-h-full max-w-full object-contain rounded shadow-lg"
                   />
                 </div>
                 {previewDetails && (
                   <div className="bg-black/40 px-4 py-2 border-t border-white/5 flex items-center justify-between text-[10px] text-slate-400 font-mono flex-shrink-0">
-                    <span>检测格式: {previewDetails.type}</span>
-                    <span>文件大小: {previewDetails.size}</span>
+                    <span>{t("imgbase64.detectFormat", { type: previewDetails.type })}</span>
+                    <span>{t("imgbase64.fileSize", { size: previewDetails.size })}</span>
                   </div>
                 )}
               </div>
@@ -438,7 +440,7 @@ export default function ImageBase64() {
                   className="w-full px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center justify-center gap-1.5"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  {saveLoading ? "正在保存..." : "保存为图片文件"}
+                  {saveLoading ? t("imgbase64.saving") : t("imgbase64.saveAsImg")}
                 </button>
               </div>
             )}

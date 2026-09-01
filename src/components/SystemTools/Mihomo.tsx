@@ -1,5 +1,6 @@
 // Mihomo 代理管理（功能对齐 clash-party，外观沿用 SystemTools 风格：Tailwind + emerald + glass-panel）
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { Waypoints, Play, Square, RefreshCw, AlertTriangle } from "lucide-react";
 import { mihomoApi } from "./mihomoApi";
 
@@ -22,25 +23,26 @@ import CorePanel from "./mihomo/CorePanel";
 import { startTrafficLogger, stopTrafficLogger } from "./mihomo/trafficDb";
 
 const TABS = [
-  { k: "overview", t: "概览" },
-  { k: "profiles", t: "订阅" },
-  { k: "proxies", t: "代理" },
-  { k: "secondary", t: "二级代理" },
-  { k: "rules", t: "规则" },
-  { k: "connections", t: "连接" },
-  { k: "logs", t: "日志" },
-  { k: "traffic", t: "流量" },
-  { k: "resources", t: "资源" },
-  { k: "overrides", t: "覆写" },
-  { k: "sysproxy", t: "系统代理" },
-  { k: "network", t: "网络" },
-  { k: "tun", t: "TUN" },
-  { k: "dns", t: "DNS" },
-  { k: "sniffer", t: "嗅探" },
-  { k: "core", t: "内核" },
+  { k: "overview", t: "tabOverview" },
+  { k: "profiles", t: "tabProfiles" },
+  { k: "proxies", t: "tabProxies" },
+  { k: "secondary", t: "tabSecondary" },
+  { k: "rules", t: "tabRules" },
+  { k: "connections", t: "tabConnections" },
+  { k: "logs", t: "tabLogs" },
+  { k: "traffic", t: "tabTraffic" },
+  { k: "resources", t: "tabResources" },
+  { k: "overrides", t: "tabOverrides" },
+  { k: "sysproxy", t: "tabSysproxy" },
+  { k: "network", t: "tabNetwork" },
+  { k: "tun", t: "tabTun" },
+  { k: "dns", t: "tabDns" },
+  { k: "sniffer", t: "tabSniffer" },
+  { k: "core", t: "tabCore" },
 ];
 
 export default function Mihomo() {
+  const { t } = useTranslation();
   const [tab, setTab] = useState("overview");
   const [state, setState] = useState<any>(null);
   const [info, setInfo] = useState<any>(null);
@@ -95,15 +97,15 @@ export default function Mihomo() {
           </div>
           <div>
             <h3 className="text-base font-bold text-white flex items-center gap-2">
-              Mihomo 代理
+              {t("mihomo.shellTitle")}
               {running ? (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]">
                   <span className="w-2 h-2 rounded-full bg-[var(--module-accent)] animate-pulse" />
-                  运行中
+                  {t("mihomo.shellRunning")}
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-white/5 text-slate-400 border border-white/10">
-                  ○ 已停止
+                  ○ {t("mihomo.shellStopped")}
                 </span>
               )}
               {state?.core_version && (
@@ -113,7 +115,7 @@ export default function Mihomo() {
               )}
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              内置 Mihomo 核心：订阅、代理组、规则、覆写、TUN / DNS / 嗅探与流量统计。
+              {t("mihomo.shellDesc")}
             </p>
           </div>
         </div>
@@ -125,7 +127,7 @@ export default function Mihomo() {
               disabled={busy === "start"}
               className="px-3.5 py-2 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-[var(--module-accent-ring)] cursor-pointer disabled:opacity-50"
             >
-              <Play className="w-3.5 h-3.5 fill-current" /> {busy === "start" ? "启动中…" : "启动"}
+              <Play className="w-3.5 h-3.5 fill-current" /> {busy === "start" ? t("mihomo.shellStarting") : t("mihomo.shellStart")}
             </button>
           ) : (
             <button
@@ -133,7 +135,7 @@ export default function Mihomo() {
               disabled={busy === "stop"}
               className="px-3.5 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
             >
-              <Square className="w-3.5 h-3.5 fill-current" /> 停止
+              <Square className="w-3.5 h-3.5 fill-current" /> {t("mihomo.shellStop")}
             </button>
           )}
           <button
@@ -141,7 +143,7 @@ export default function Mihomo() {
             disabled={busy === "restart"}
             className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${busy === "restart" ? "animate-spin" : ""}`} /> 重启
+            <RefreshCw className={`w-3.5 h-3.5 ${busy === "restart" ? "animate-spin" : ""}`} /> {t("mihomo.shellRestart")}
           </button>
         </div>
       </div>
@@ -150,14 +152,14 @@ export default function Mihomo() {
       {Array.isArray(state?.warnings) && state.warnings.length > 0 && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 space-y-1.5">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-semibold text-amber-300">运行告警</span>
+            <span className="text-[11px] font-semibold text-amber-300">{t("mihomo.shellWarnings")}</span>
             <button
               onClick={() => act("dismiss", () => mihomoApi.clearWarnings())}
               disabled={busy === "dismiss"}
               className="text-amber-300 hover:text-amber-100 text-[11px] font-semibold cursor-pointer disabled:opacity-50"
-              title="清除全部告警"
+              title={t("mihomo.shellClearWarnings")}
             >
-              清除
+              {t("mihomo.shellClear")}
             </button>
           </div>
           {state.warnings.map((w: string, i: number) => (
@@ -173,7 +175,7 @@ export default function Mihomo() {
                 disabled={busy === "elevate"}
                 className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 text-[11px] font-semibold cursor-pointer disabled:opacity-50"
               >
-                {busy === "elevate" ? "正在重启…" : "以管理员身份重启程序"}
+                {busy === "elevate" ? t("mihomo.shellRestarting") : t("mihomo.shellRestartAsAdmin")}
               </button>
             </div>
           )}
@@ -182,17 +184,17 @@ export default function Mihomo() {
 
       {/* 子 Tab 栏 */}
       <div className="flex items-center gap-1 border-b border-white/5 overflow-x-auto overflow-y-hidden">
-        {TABS.map((t) => (
+        {TABS.map((tb) => (
           <button
-            key={t.k}
-            onClick={() => setTab(t.k)}
+            key={tb.k}
+            onClick={() => setTab(tb.k)}
             className={`px-3 py-2 text-xs font-medium cursor-pointer border-b-2 -mb-px transition-all whitespace-nowrap ${
-              tab === t.k
+              tab === tb.k
                 ? "text-[var(--module-accent)] border-[var(--module-accent)]"
                 : "text-slate-400 border-transparent hover:text-slate-200"
             }`}
           >
-            {t.t}
+            {t(`mihomo.${tb.t}`)}
           </button>
         ))}
       </div>

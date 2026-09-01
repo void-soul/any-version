@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ShieldCheck,
@@ -190,6 +191,7 @@ function fmtDate(s?: string | null): string {
 // 组件
 // ---------------------------------------------------------------------------
 export default function CertManager() {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<SubTab>(persistedTab);
   const changeTab = (k: SubTab) => {
     persistedTab = k;
@@ -200,10 +202,10 @@ export default function CertManager() {
     <div className="flex-1 overflow-hidden flex min-h-0 select-none">
       <div className="w-40 flex-shrink-0 border-r border-white/5 py-3 px-2 space-y-0.5 overflow-y-auto">
         {([
-          { k: "certs" as const, label: "证书列表", icon: ShieldCheck },
-          { k: "nodes" as const, label: "部署节点", icon: Server },
-          { k: "creds" as const, label: "DNS凭据", icon: KeyRound },
-          { k: "sched" as const, label: "调度日志", icon: History },
+          { k: "certs" as const, label: t("certmgr.tabCerts"), icon: ShieldCheck },
+          { k: "nodes" as const, label: t("certmgr.tabNodes"), icon: Server },
+          { k: "creds" as const, label: t("certmgr.tabCreds"), icon: KeyRound },
+          { k: "sched" as const, label: t("certmgr.tabSched"), icon: History },
         ]).map(({ k, label, icon: Icon }) => (
           <button
             key={k}
@@ -231,6 +233,7 @@ export default function CertManager() {
 
 // ---- 证书列表 ----
 function CertList() {
+  const { t } = useTranslation();
   const [certs, setCerts] = useState<Certificate[]>([]);
   const [creds, setCreds] = useState<Credential[]>([]);
   const [nodes, setNodes] = useState<DeployNode[]>([]);
@@ -258,13 +261,13 @@ function CertList() {
       await invoke("cert_issue_now", { id });
       await refresh();
     } catch (e) {
-      alert("申请失败: " + String(e));
+      alert(t("certmgr.applyFail", { err: String(e) }));
     } finally {
       markIssuing(id, false);
     }
   };
   const del = async (id: string) => {
-    if (!confirm("确认删除该证书？")) return;
+    if (!confirm(t("certmgr.delCertConfirm"))) return;
     await invoke("cert_delete", { id });
     refresh();
   };
@@ -275,12 +278,12 @@ function CertList() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-bold text-slate-200">证书列表</h3>
+        <h3 className="text-sm font-bold text-slate-200">{t("certmgr.certsTitle")}</h3>
         <button
           onClick={() => setShowForm((v) => !v)}
           className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5"
         >
-          <Plus className="w-3.5 h-3.5" /> 新建证书
+          <Plus className="w-3.5 h-3.5" /> {t("certmgr.newCert")}
         </button>
       </div>
 
@@ -299,13 +302,13 @@ function CertList() {
         <table className="w-full text-[11px] text-slate-300">
           <thead className="bg-white/5 text-slate-400">
             <tr>
-              <th className="px-3 py-2 text-left">域名</th>
+              <th className="px-3 py-2 text-left">{t("certmgr.colDomain")}</th>
               <th className="px-3 py-2 text-left">CA</th>
-              <th className="px-3 py-2 text-left">DNS 插件</th>
-              <th className="px-3 py-2 text-left">到期</th>
-              <th className="px-3 py-2 text-left">状态</th>
-              <th className="px-3 py-2 text-left">部署节点</th>
-              <th className="px-3 py-2 text-right">操作</th>
+              <th className="px-3 py-2 text-left">{t("certmgr.colDns")}</th>
+              <th className="px-3 py-2 text-left">{t("certmgr.colExpire")}</th>
+              <th className="px-3 py-2 text-left">{t("certmgr.colStatus")}</th>
+              <th className="px-3 py-2 text-left">{t("certmgr.colNodes")}</th>
+              <th className="px-3 py-2 text-right">{t("certmgr.colOps")}</th>
             </tr>
           </thead>
           <tbody>
@@ -320,10 +323,10 @@ function CertList() {
                     {c.status}
                   </span>
                 </td>
-                <td className="px-3 py-2">{c.deploy_node_ids.length} 个</td>
+                <td className="px-3 py-2">{t("certmgr.nodesCount", { count: c.deploy_node_ids.length })}</td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
                   <button onClick={() => issue(c.id)} disabled={issuing.has(c.id)} className="text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] mr-2 disabled:opacity-50">
-                    {issuing.has(c.id) ? "申请中…" : "申请"}
+                    {issuing.has(c.id) ? t("certmgr.issuing") : t("certmgr.apply")}
                   </button>
                   <button onClick={() => viewPem(c.id)} className="text-sky-400 hover:text-sky-300 mr-2">PEM</button>
                   <button onClick={() => del(c.id)} className="text-rose-400 hover:text-rose-300">
@@ -334,7 +337,7 @@ function CertList() {
             ))}
             {certs.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-center text-slate-500">暂无证书，点击「新建证书」开始</td>
+                <td colSpan={7} className="px-3 py-6 text-center text-slate-500">{t("certmgr.certsEmpty")}</td>
               </tr>
             )}
           </tbody>
@@ -345,8 +348,8 @@ function CertList() {
         <div className="fixed inset-0 modal-mask bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-900 border border-white/10 rounded-xl p-4 w-[80vw] max-h-[80vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between mb-2">
-              <span className="text-xs font-bold text-slate-200">PEM 文件</span>
-              <button onClick={() => setPem(null)} className="text-slate-400 hover:text-slate-200">关闭</button>
+              <span className="text-xs font-bold text-slate-200">{t("certmgr.pemTitle")}</span>
+              <button onClick={() => setPem(null)} className="text-slate-400 hover:text-slate-200">{t("certmgr.close")}</button>
             </div>
             {Object.entries(pem).map(([name, content]) => (
               <div key={name} className="mb-3">
@@ -362,6 +365,7 @@ function CertList() {
 }
 
 function CertForm({ creds, nodes, onDone }: { creds: Credential[]; nodes: DeployNode[]; onDone: () => void }) {
+  const { t } = useTranslation();
   const [domains, setDomains] = useState("");
   const [email, setEmail] = useState("");
   const [ca, setCa] = useState("letsencrypt");
@@ -384,8 +388,8 @@ function CertForm({ creds, nodes, onDone }: { creds: Credential[]; nodes: Deploy
         const root = wild.slice(2);
         if (!domList.includes(root)) domList.push(root);
       }
-      if (domList.length === 0) return setErr("请填写至少一个域名");
-      if (!credentialId) return setErr("请选择关联DNS凭据");
+      if (domList.length === 0) return setErr(t("certmgr.domainRequired"));
+      if (!credentialId) return setErr(t("certmgr.credRequired"));
       await invoke("cert_create", {
         domains: domList,
         email,
@@ -405,44 +409,43 @@ function CertForm({ creds, nodes, onDone }: { creds: Credential[]; nodes: Deploy
     <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <label className="text-[11px] text-slate-400">
-          域名（逗号分隔，支持 *.example.com）
+          {t("certmgr.domainLabel")}
           <input value={domains} onChange={(e) => setDomains(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" placeholder="*.example.com, example.com" />
         </label>
         <label className="text-[11px] text-slate-400">
-          邮箱
+          {t("certmgr.emailLabel")}
           <input value={email} onChange={(e) => setEmail(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" placeholder="admin@example.com" />
         </label>
         <label className="text-[11px] text-slate-400">
           CA
           <select value={ca} onChange={(e) => setCa(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
-            <option value="letsencrypt" className="bg-slate-800 text-slate-200">letsencrypt（生产）</option>
-            <option value="letsencrypt-staging" className="bg-slate-800 text-slate-200">letsencrypt-staging（测试）</option>
+            <option value="letsencrypt" className="bg-slate-800 text-slate-200">{t("certmgr.letsencrypt")}</option>
+            <option value="letsencrypt-staging" className="bg-slate-800 text-slate-200">{t("certmgr.letsencryptStaging")}</option>
           </select>
         </label>
         <label className="text-[11px] text-slate-400">
-          DNS 服务商
+          {t("certmgr.dnsProvider")}
           <select value={dnsProvider} onChange={(e) => setDnsProvider(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
-            {[...DNS_PROVIDER_MAP, { id: "custom", label: "custom（自定义）" }].map((p) => (
-              <option key={p.id} value={p.id} className="bg-slate-800 text-slate-200">{p.label}</option>
+            {[...DNS_PROVIDER_MAP, { id: "custom", label: t("certmgr.custom") }].map((p) => (
+              <option key={p.id} value={p.id} className="bg-slate-800 text-slate-200">{t(p.label)}</option>
             ))}
           </select>
         </label>
-        <label className="text-[11px] text-slate-400">
-          关联DNS凭据
-          <select value={credentialId} onChange={(e) => setCredentialId(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
-            <option value="">-- 选择 --</option>
+        <label className="text-[11px] text-slate-400">          {t("certmgr.credLabel")}
+            <select value={credentialId} onChange={(e) => setCredentialId(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
+            <option value="">{t("certmgr.select")}</option>
             {creds.map((c) => (
               <option key={c.id} value={c.id}>{c.name}（{c.cred_type}）</option>
             ))}
           </select>
         </label>
         <label className="text-[11px] text-slate-400">
-          提前续期天数（N）
+          {t("certmgr.renewDays")}
           <input type="number" value={renewBefore} onChange={(e) => setRenewBefore(Number(e.target.value))} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
         </label>
       </div>
       <div className="text-[11px] text-slate-400">
-        关联部署节点
+        {t("certmgr.deployNodes")}
         <div className="mt-1 flex flex-wrap gap-2">
           {nodes.map((n) => (
             <label key={n.id} className="flex items-center gap-1 text-[10px] text-slate-300 bg-black/30 rounded px-2 py-1 cursor-pointer">
@@ -454,13 +457,13 @@ function CertForm({ creds, nodes, onDone }: { creds: Credential[]; nodes: Deploy
               {n.name}
             </label>
           ))}
-          {nodes.length === 0 && <span className="text-slate-500">暂无部署节点，请先在「部署节点」中创建</span>}
+          {nodes.length === 0 && <span className="text-slate-500">{t("certmgr.noNodesHint")}</span>}
         </div>
       </div>
       {err && <div className="text-[11px] text-rose-400">{err}</div>}
       <div className="flex gap-2">
-        <button onClick={submit} className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold">创建并保存</button>
-        <button onClick={onDone} className="px-3 py-1.5 rounded-lg bg-white/10 text-slate-300 text-[11px]">取消</button>
+        <button onClick={submit} className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold">{t("certmgr.createSave")}</button>
+        <button onClick={onDone} className="px-3 py-1.5 rounded-lg bg-white/10 text-slate-300 text-[11px]">{t("certmgr.cancel")}</button>
       </div>
     </div>
   );
@@ -468,6 +471,7 @@ function CertForm({ creds, nodes, onDone }: { creds: Credential[]; nodes: Deploy
 
 // ---- 部署节点 ----
 function DeployNodes() {
+  const { t } = useTranslation();
   const [nodes, setNodes] = useState<DeployNode[]>([]);
   const [editing, setEditing] = useState<DeployNode | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -481,26 +485,26 @@ function DeployNodes() {
   }, [refresh]);
 
   const del = async (id: string) => {
-    if (!confirm("确认删除该部署节点？关联的证书将自动解除。")) return;
+    if (!confirm(t("certmgr.delNodeConfirm"))) return;
     await invoke("deploy_node_delete", { id });
     refresh();
   };
   const test = async (id: string) => {
-    setTestMsg("测试中…");
+    setTestMsg(t("certmgr.testing"));
     try {
       const r = await invoke<string>("deploy_node_test", { id });
       setTestMsg(r);
     } catch (e) {
-      setTestMsg("失败: " + String(e));
+      setTestMsg(t("certmgr.testFail", { err: String(e) }));
     }
   };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-bold text-slate-200">部署节点</h3>
+        <h3 className="text-sm font-bold text-slate-200">{t("certmgr.nodesTitle")}</h3>
         <button onClick={() => { setEditing(null); setShowForm(true); }} className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5">
-          <Plus className="w-3.5 h-3.5" /> 新建节点
+          <Plus className="w-3.5 h-3.5" /> {t("certmgr.newNode")}
         </button>
       </div>
 
@@ -513,23 +517,24 @@ function DeployNodes() {
               <div className="text-xs font-semibold text-slate-200">{n.name}</div>
               <span className="text-[10px] px-2 py-0.5 rounded bg-sky-500/20 text-sky-300">{n.node_type}</span>
             </div>
-            <div className="text-[10px] text-slate-500 mt-1">提前 {n.deploy_before_days} 天部署 · 上次部署 {fmtDate(n.last_deploy_at)}</div>
+            <div className="text-[10px] text-slate-500 mt-1">{t("certmgr.deployInfo", { days: n.deploy_before_days, time: fmtDate(n.last_deploy_at) })}</div>
             {n.last_deploy_error && <div className="text-[10px] text-rose-400 mt-1">⚠ {n.last_deploy_error}</div>}
             <div className="flex gap-3 mt-2 text-[11px]">
-              <button onClick={() => { setEditing(n); setShowForm(true); }} className="text-slate-300 hover:text-white">编辑</button>
-              <button onClick={() => test(n.id)} className="text-sky-400 hover:text-sky-300 flex items-center gap-1"><Cable className="w-3 h-3" />测试</button>
-              <button onClick={() => del(n.id)} className="text-rose-400 hover:text-rose-300 flex items-center gap-1"><Trash2 className="w-3 h-3" />删除</button>
+              <button onClick={() => { setEditing(n); setShowForm(true); }} className="text-slate-300 hover:text-white">{t("certmgr.edit")}</button>
+              <button onClick={() => test(n.id)} className="text-sky-400 hover:text-sky-300 flex items-center gap-1"><Cable className="w-3 h-3" />{t("certmgr.test")}</button>
+              <button onClick={() => del(n.id)} className="text-rose-400 hover:text-rose-300 flex items-center gap-1"><Trash2 className="w-3 h-3" />{t("certmgr.delete")}</button>
             </div>
           </div>
         ))}
-        {nodes.length === 0 && <div className="text-[11px] text-slate-500">暂无部署节点</div>}
+        {nodes.length === 0 && <div className="text-[11px] text-slate-500">{t("certmgr.nodesEmpty")}</div>}
       </div>
-      {testMsg && <div className="text-[11px] text-slate-400">测试：{testMsg}</div>}
+      {testMsg && <div className="text-[11px] text-slate-400">{t("certmgr.testLabel", { msg: testMsg })}</div>}
     </div>
   );
 }
 
 function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDone: () => void }) {
+  const { t } = useTranslation();
   const makeData = (cfg: Record<string, string>, fields: FieldSpec[]) => {
     const d: Record<string, string> = {};
     for (const f of fields) d[f.key] = cfg[f.key] ?? "";
@@ -575,11 +580,11 @@ function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDone: () 
     <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <label className="text-[11px] text-slate-400">
-          名称
+          {t("certmgr.name")}
           <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
         </label>
         <label className="text-[11px] text-slate-400">
-          类型
+          {t("certmgr.type")}
           <select value={nodeType} onChange={(e) => setNodeType(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
             {Object.keys(NODE_FIELDS).map((t) => (
               <option key={t} value={t} className="bg-slate-800 text-slate-200">{t}</option>
@@ -587,11 +592,11 @@ function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDone: () 
           </select>
         </label>
       </div>
-      <div className="text-[11px] text-slate-400 font-semibold">配置项</div>
+      <div className="text-[11px] text-slate-400 font-semibold">{t("certmgr.configItems")}</div>
       <div className="grid grid-cols-2 gap-3">
         {fields.map((f) => (
           <label key={f.key} className="text-[11px] text-slate-400">
-            {f.label}
+            {t(f.label)}
             <input
               type={f.type}
               value={data[f.key] ?? ""}
@@ -604,18 +609,18 @@ function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDone: () 
       </div>
       <div className="grid grid-cols-2 gap-3">
         <label className="text-[11px] text-slate-400">
-          提前部署天数（N）
+          {t("certmgr.deployDays")}
           <input type="number" value={deployBefore} onChange={(e) => setDeployBefore(Number(e.target.value))} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
         </label>
         <label className="text-[11px] text-slate-400">
-          备注
+          {t("certmgr.remark")}
           <input value={note} onChange={(e) => setNote(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
         </label>
       </div>
       {err && <div className="text-[11px] text-rose-400">{err}</div>}
       <div className="flex gap-2">
-        <button onClick={submit} className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold">保存</button>
-        <button onClick={onDone} className="px-3 py-1.5 rounded-lg bg-white/10 text-slate-300 text-[11px]">取消</button>
+        <button onClick={submit} className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold">{t("certmgr.save")}</button>
+        <button onClick={onDone} className="px-3 py-1.5 rounded-lg bg-white/10 text-slate-300 text-[11px]">{t("certmgr.cancel")}</button>
       </div>
     </div>
   );
@@ -623,6 +628,7 @@ function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDone: () 
 
 // ---- DNS凭据 ----
 function Credentials() {
+  const { t } = useTranslation();
   const [creds, setCreds] = useState<Credential[]>([]);
   const [showForm, setShowForm] = useState(false);
 
@@ -634,7 +640,7 @@ function Credentials() {
   }, [refresh]);
 
   const del = async (id: string) => {
-    if (!confirm("确认删除该DNS凭据？")) return;
+    if (!confirm(t("certmgr.delCredConfirm"))) return;
     await invoke("credential_delete", { id });
     refresh();
   };
@@ -642,9 +648,9 @@ function Credentials() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-bold text-slate-200">DNS凭据</h3>
+        <h3 className="text-sm font-bold text-slate-200">{t("certmgr.credsTitle")}</h3>
         <button onClick={() => setShowForm((v) => !v)} className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5">
-          <Plus className="w-3.5 h-3.5" /> 新建DNS凭据
+          <Plus className="w-3.5 h-3.5" /> {t("certmgr.newCred")}
         </button>
       </div>
       {showForm && <CredForm onDone={() => { setShowForm(false); refresh(); }} />}
@@ -655,19 +661,20 @@ function Credentials() {
               <span className="text-xs font-semibold text-slate-200">{c.name}</span>
               <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300">{c.cred_type}</span>
             </div>
-            <div className="text-[10px] text-slate-500 mt-1">字段：{Object.keys(c.data).join(", ")}</div>
+            <div className="text-[10px] text-slate-500 mt-1">{t("certmgr.fieldsLabel", { names: Object.keys(c.data).join(", ") })}</div>
             <div className="mt-2 text-[11px]">
-              <button onClick={() => del(c.id)} className="text-rose-400 hover:text-rose-300 flex items-center gap-1"><Trash2 className="w-3 h-3" />删除</button>
+              <button onClick={() => del(c.id)} className="text-rose-400 hover:text-rose-300 flex items-center gap-1"><Trash2 className="w-3 h-3" />{t("certmgr.delete")}</button>
             </div>
           </div>
         ))}
-        {creds.length === 0 && <div className="text-[11px] text-slate-500">暂无DNS凭据</div>}
+        {creds.length === 0 && <div className="text-[11px] text-slate-500">{t("certmgr.credsEmpty")}</div>}
       </div>
     </div>
   );
 }
 
 function CredForm({ onDone }: { onDone: () => void }) {
+  const { t } = useTranslation();
   const makeData = (fields: FieldSpec[]) => {
     const d: Record<string, string> = {};
     for (const f of fields) d[f.key] = "";
@@ -712,30 +719,29 @@ function CredForm({ onDone }: { onDone: () => void }) {
     <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <label className="text-[11px] text-slate-400">
-          名称
-          <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" placeholder="例如：阿里云生产 DNS" />
+          {t("certmgr.name")}
+          <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" placeholder={t("certmgr.namePh")} />
         </label>
-        <label className="text-[11px] text-slate-400">
-          DNS 服务商
-          <select value={credType} onChange={(e) => setCredType(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
-            {([...DNS_PROVIDER_MAP, { id: "custom", label: "custom（自定义）" }]).map((p) => (
-              <option key={p.id} value={p.id} className="bg-slate-800 text-slate-200">{p.label}</option>
+        <label className="text-[11px] text-slate-400">          {t("certmgr.dnsProvider")}
+            <select value={credType} onChange={(e) => setCredType(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
+            {([...DNS_PROVIDER_MAP, { id: "custom", label: t("certmgr.custom") }]).map((p) => (
+              <option key={p.id} value={p.id} className="bg-slate-800 text-slate-200">{t(p.label)}</option>
             ))}
           </select>
         </label>
       </div>
       {isCustom ? (
         <label className="text-[11px] text-slate-400 block">
-          lego 环境变量（每行 KEY=VALUE）
+          {t("certmgr.envVars")}
           <textarea value={customText} onChange={(e) => setCustomText(e.target.value)} rows={4} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none font-mono text-[10px]" placeholder="LEGO_ENV_VAR=value" />
         </label>
       ) : (
         <>
-          <div className="text-[11px] text-slate-400 font-semibold">凭据字段（敏感值存储时做轻量混淆）</div>
+          <div className="text-[11px] text-slate-400 font-semibold">{t("certmgr.credFields")}</div>
           <div className="grid grid-cols-2 gap-3">
             {fields.map((f) => (
               <label key={f.key} className="text-[11px] text-slate-400">
-                {f.label}
+                {t(f.label)}
                 <input
                   type={f.type}
                   value={data[f.key] ?? ""}
@@ -749,13 +755,13 @@ function CredForm({ onDone }: { onDone: () => void }) {
         </>
       )}
       <label className="text-[11px] text-slate-400 block">
-        备注
+        {t("certmgr.remark")}
         <input value={note} onChange={(e) => setNote(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
       </label>
       {err && <div className="text-[11px] text-rose-400">{err}</div>}
       <div className="flex gap-2">
-        <button onClick={submit} className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold">保存</button>
-        <button onClick={onDone} className="px-3 py-1.5 rounded-lg bg-white/10 text-slate-300 text-[11px]">取消</button>
+        <button onClick={submit} className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold">{t("certmgr.save")}</button>
+        <button onClick={onDone} className="px-3 py-1.5 rounded-lg bg-white/10 text-slate-300 text-[11px]">{t("certmgr.cancel")}</button>
       </div>
     </div>
   );
@@ -763,6 +769,7 @@ function CredForm({ onDone }: { onDone: () => void }) {
 
 // ---- 调度日志 ----
 function SchedulerView() {
+  const { t } = useTranslation();
   const [state, setState] = useState<SchedulerState | null>(null);
   const [running, setRunning] = useState(false);
   const [runResult, setRunResult] = useState<string[]>([]);
@@ -792,18 +799,18 @@ function SchedulerView() {
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-bold text-slate-200">调度日志</h3>
+      <h3 className="text-sm font-bold text-slate-200">{t("certmgr.schedTitle")}</h3>
       <div className="rounded-lg border border-white/5 bg-white/5 p-4 text-[11px] text-slate-300 space-y-2">
-        <div>状态：{state?.enabled ? <span className="text-emerald-400">运行中</span> : <span className="text-amber-400">已暂停</span>}</div>
-        <div>扫描间隔：{state?.interval_minutes} 分钟</div>
-        <div>上次运行：{fmtDate(state?.last_run_at)}</div>
-        <div>下次运行：{fmtDate(state?.next_run_at)}</div>
+        <div>{t("certmgr.statusLabel")}{state?.enabled ? <span className="text-emerald-400">{t("certmgr.stateRunning")}</span> : <span className="text-amber-400">{t("certmgr.statePaused")}</span>}</div>
+        <div>{t("certmgr.scanInterval", { count: state?.interval_minutes ?? 0 })}</div>
+        <div>{t("certmgr.lastRun", { time: fmtDate(state?.last_run_at) })}</div>
+        <div>{t("certmgr.nextRun", { time: fmtDate(state?.next_run_at) })}</div>
         <div className="flex gap-2 pt-1">
           <button onClick={() => toggle(!state?.enabled)} className="px-3 py-1.5 rounded-lg bg-white/10 text-slate-200 text-[11px]">
-            {state?.enabled ? "暂停" : "启用"}
+            {state?.enabled ? t("certmgr.pause") : t("certmgr.enable")}
           </button>
           <button onClick={runNow} disabled={running} className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] flex items-center gap-1.5">
-            <Play className="w-3 h-3" /> {running ? "执行中…" : "立即运行全部"}
+            <Play className="w-3 h-3" /> {running ? t("certmgr.runningNow") : t("certmgr.runAll")}
           </button>
         </div>
       </div>
@@ -813,7 +820,7 @@ function SchedulerView() {
       )}
 
       <div>
-        <div className="text-[11px] text-slate-400 mb-2">历史记录</div>
+        <div className="text-[11px] text-slate-400 mb-2">{t("certmgr.history")}</div>
         <div className="space-y-1">
           {(state?.log || []).slice().reverse().map((e, i) => (
             <div key={i} className="text-[10px] flex items-center gap-2">
@@ -824,7 +831,7 @@ function SchedulerView() {
               <span className={e.ok ? "text-emerald-400" : "text-rose-400"}>{e.message}</span>
             </div>
           ))}
-          {(!state?.log || state.log.length === 0) && <div className="text-[10px] text-slate-500">暂无记录</div>}
+          {(!state?.log || state.log.length === 0) && <div className="text-[10px] text-slate-500">{t("certmgr.noRecords")}</div>}
         </div>
       </div>
     </div>

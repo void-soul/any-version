@@ -1,4 +1,5 @@
 import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Bold, Italic, Strikethrough, Code, List, ListOrdered, ListChecks, Quote,
   Square, Link, Table, Minus, Heading1, Heading2, Heading3, Undo2, Redo2,
@@ -47,6 +48,7 @@ interface Props {
 /** 可复用的 Markdown 编辑器：格式工具栏 + 编辑区 + 可选分栏实时预览。
  *  供思维导图节点详情编辑、悬浮窗节点表单等场景复用。 */
 export const MarkdownFieldEditor = memo(function MarkdownFieldEditor({ value, onChange, minHeight = "200px", defaultSplit = false }: Props) {
+  const { t } = useTranslation();
   const [split, setSplit] = useState(defaultSplit);
   const [mode, setMode] = useState<"edit" | "view">("edit");
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -109,53 +111,53 @@ export const MarkdownFieldEditor = memo(function MarkdownFieldEditor({ value, on
 
   const preview = useMemo(() => (
     <div className="overflow-y-auto p-3">
-      <MindmapMarkdown content={value || "暂无内容"} />
+      <MindmapMarkdown content={value || t("mmd.empty")} />
     </div>
-  ), [value]);
+  ), [value, t]);
 
   return (
     <div className="flex flex-col min-h-0 flex-1 rounded-md border border-white/10 bg-slate-950/70">
       {/* 格式工具栏 */}
       <div className="flex-shrink-0 flex items-center gap-0.5 px-1.5 py-1 border-b border-white/5 overflow-x-auto">
-        <button className={tbtn} title="撤销 (Ctrl+Z)" onClick={undo}><Undo2 className="w-3 h-3" /></button>
-        <button className={tbtn} title="重做 (Ctrl+Y)" onClick={redo}><Redo2 className="w-3 h-3" /></button>
+        <button className={tbtn} title={t("mmd.undo")} onClick={undo}><Undo2 className="w-3 h-3" /></button>
+        <button className={tbtn} title={t("mmd.redo")} onClick={redo}><Redo2 className="w-3 h-3" /></button>
         <div className="w-px h-4 bg-white/10 mx-0.5" />
-        <button className={tbtn} title="标题 1" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "#"))}><Heading1 className="w-3 h-3" /></button>
-        <button className={tbtn} title="标题 2" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "##"))}><Heading2 className="w-3 h-3" /></button>
-        <button className={tbtn} title="标题 3" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "###"))}><Heading3 className="w-3 h-3" /></button>
+        <button className={tbtn} title={t("mmd.h1")} onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "#"))}><Heading1 className="w-3 h-3" /></button>
+        <button className={tbtn} title={t("mmd.h2")} onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "##"))}><Heading2 className="w-3 h-3" /></button>
+        <button className={tbtn} title={t("mmd.h3")} onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "###"))}><Heading3 className="w-3 h-3" /></button>
         <div className="w-px h-4 bg-white/10 mx-0.5" />
-        <button className={tbtn} title="粗体" onClick={() => applyTransform((ta) => wrapSelection(ta, "**", "**", "粗体"))}><Bold className="w-3 h-3" /></button>
-        <button className={tbtn} title="斜体" onClick={() => applyTransform((ta) => wrapSelection(ta, "*", "*", "斜体"))}><Italic className="w-3 h-3" /></button>
-        <button className={tbtn} title="删除线" onClick={() => applyTransform((ta) => wrapSelection(ta, "~~", "~~", "删除"))}><Strikethrough className="w-3 h-3" /></button>
-        <button className={tbtn} title="行内代码" onClick={() => applyTransform((ta) => wrapSelection(ta, "`", "`", "代码"))}><Code className="w-3 h-3" /></button>
+        <button className={tbtn} title={t("mmd.bold")} onClick={() => applyTransform((ta) => wrapSelection(ta, "**", "**", t("mmd.phBold")))}><Bold className="w-3 h-3" /></button>
+        <button className={tbtn} title={t("mmd.italic")} onClick={() => applyTransform((ta) => wrapSelection(ta, "*", "*", t("mmd.phItalic")))}><Italic className="w-3 h-3" /></button>
+        <button className={tbtn} title={t("mmd.strike")} onClick={() => applyTransform((ta) => wrapSelection(ta, "~~", "~~", t("mmd.phStrike")))}><Strikethrough className="w-3 h-3" /></button>
+        <button className={tbtn} title={t("mmd.inlineCode")} onClick={() => applyTransform((ta) => wrapSelection(ta, "`", "`", t("mmd.phCode")))}><Code className="w-3 h-3" /></button>
         <div className="w-px h-4 bg-white/10 mx-0.5" />
-        <button className={tbtn} title="无序列表" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "-"))}><List className="w-3 h-3" /></button>
-        <button className={tbtn} title="有序列表" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "1.", true))}><ListOrdered className="w-3 h-3" /></button>
-        <button className={tbtn} title="任务列表" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "- [ ]"))}><ListChecks className="w-3 h-3" /></button>
-        <button className={tbtn} title="引用" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, ">"))}><Quote className="w-3 h-3" /></button>
+        <button className={tbtn} title={t("mmd.ul")} onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "-"))}><List className="w-3 h-3" /></button>
+        <button className={tbtn} title={t("mmd.ol")} onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "1.", true))}><ListOrdered className="w-3 h-3" /></button>
+        <button className={tbtn} title={t("mmd.task")} onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "- [ ]"))}><ListChecks className="w-3 h-3" /></button>
+        <button className={tbtn} title={t("mmd.quote")} onClick={() => applyTransform((ta) => toggleLinePrefix(ta, ">"))}><Quote className="w-3 h-3" /></button>
         <div className="w-px h-4 bg-white/10 mx-0.5" />
-        <button className={tbtn} title="代码块" onClick={() => applyTransform((ta) => {
+        <button className={tbtn} title={t("mmd.codeBlock")} onClick={() => applyTransform((ta) => {
           const { selectionStart: s, selectionEnd: e, value } = ta;
           const sel = value.slice(s, e) || "// code";
           const insert = `\n\`\`\`\n${sel}\n\`\`\`\n`;
           return { text: value.slice(0, s) + insert + value.slice(e), selStart: s + 4, selEnd: s + 4 + sel.length };
         })}><Square className="w-3 h-3" /></button>
-        <button className={tbtn} title="链接" onClick={() => applyTransform((ta) => wrapSelection(ta, "[", "](https://)", "链接文本"))}><Link className="w-3 h-3" /></button>
-        <button className={tbtn} title="表格" onClick={() => applyTransform((ta) => {
-          const tpl = "\n| 列1 | 列2 | 列3 |\n| --- | --- | --- |\n|  a  |  b  |  c  |\n";
+        <button className={tbtn} title={t("mmd.link")} onClick={() => applyTransform((ta) => wrapSelection(ta, "[", "](https://)", t("mmd.phLink")))}><Link className="w-3 h-3" /></button>
+        <button className={tbtn} title={t("mmd.table")} onClick={() => applyTransform((ta) => {
+          const tpl = `\n| ${t("mmd.tableCol1")} | ${t("mmd.tableCol2")} | ${t("mmd.tableCol3")} |\n| --- | --- | --- |\n|  a  |  b  |  c  |\n`;
           const { selectionStart: s, value } = ta;
           return { text: value.slice(0, s) + tpl + value.slice(s), selStart: s + 3, selEnd: s + 3 };
         })}><Table className="w-3 h-3" /></button>
-        <button className={tbtn} title="分隔线" onClick={() => applyTransform((ta) => {
+        <button className={tbtn} title={t("mmd.hr")} onClick={() => applyTransform((ta) => {
           const { selectionStart: s, value } = ta;
           return { text: value.slice(0, s) + "\n---\n" + value.slice(s), selStart: s + 5, selEnd: s + 5 };
         })}><Minus className="w-3 h-3" /></button>
         <div className="flex-1" />
-        <button className={tbtn} title={mode === "edit" ? "预览" : "编辑"} onClick={() => setMode(mode === "edit" ? "view" : "edit")}>
+        <button className={tbtn} title={mode === "edit" ? t("mmd.preview") : t("mmd.edit")} onClick={() => setMode(mode === "edit" ? "view" : "edit")}>
           {mode === "edit" ? <Eye className="w-3 h-3" /> : <Pencil className="w-3 h-3" />}
         </button>
         {mode === "edit" && (
-          <button className={`${tbtn} ${split ? "bg-white/10 text-white" : ""}`} title="分栏预览" onClick={() => setSplit(!split)}>
+          <button className={`${tbtn} ${split ? "bg-white/10 text-white" : ""}`} title={t("mmd.split")} onClick={() => setSplit(!split)}>
             <Columns className="w-3 h-3" />
           </button>
         )}
@@ -174,7 +176,7 @@ export const MarkdownFieldEditor = memo(function MarkdownFieldEditor({ value, on
             spellCheck={false}
             className={`min-h-0 flex-1 resize-none bg-transparent px-3 py-2 text-[11px] leading-5 text-slate-200 font-mono outline-none ${split ? "border-r border-white/10 max-w-[50%]" : ""}`}
             style={{ minHeight }}
-            placeholder="支持 Markdown..."
+            placeholder={t("mmd.placeholder")}
           />
           {split && (
             <div className="min-h-0 flex-1 overflow-y-auto">{preview}</div>

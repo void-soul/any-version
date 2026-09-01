@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "react-i18next";
 import {
   Plug,
   Plus,
@@ -67,13 +68,14 @@ function serializeKV(obj: Record<string, string>): string {
   return Object.entries(obj).map(([k, v]) => `${k}=${v}`).join("\n");
 }
 
-const TRANSPORT_LABEL: Record<string, string> = {
-  stdio: "本地 (stdio)",
-  http: "HTTP",
-  sse: "SSE",
+const TRANSPORT_KEY: Record<string, string> = {
+  stdio: "transportStdio",
+  http: "http",
+  sse: "sse",
 };
 
 export default function McpManager() {
+  const { t } = useTranslation();
   const [servers, setServers] = useState<McpServer[]>([]);
   const [mcpTools, setMcpTools] = useState<McpToolInfo[]>([]);
   const [discovered, setDiscovered] = useState<DiscoveredMcp[]>([]);
@@ -150,11 +152,11 @@ export default function McpManager() {
   };
 
   const handleSave = async () => {
-    if (!fName.trim()) { alert("请填写服务器名称"); return; }
+    if (!fName.trim()) { alert(t("mcp.needName")); return; }
     if (fTransport === "stdio") {
-      if (!fCommand.trim()) { alert("stdio 类型必须填写启动命令"); return; }
+      if (!fCommand.trim()) { alert(t("mcp.needCommand")); return; }
     } else if (!fUrl.trim()) {
-      alert("http/sse 类型必须填写 URL"); return;
+      alert(t("mcp.needUrl")); return;
     }
     const payload: McpServer = {
       id: editingId ?? "",
@@ -180,25 +182,25 @@ export default function McpManager() {
       resetForm();
       await load();
     } catch (e: any) {
-      alert(`保存失败: ${e}`);
+      alert(t("mcp.saveFail", { err: String(e) }));
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("确定删除该 MCP 服务器？将从已部署工具的配置中移除。")) return;
+    if (!confirm(t("mcp.confirmDelete"))) return;
     try {
       await invoke("delete_mcp_server", { id });
       await load();
-    } catch (e: any) { alert(`删除失败: ${e}`); }
+    } catch (e: any) { alert(t("mcp.deleteFail", { err: String(e) })); }
   };
 
   const handleAdopt = async (d: DiscoveredMcp) => {
     try {
       await invoke("adopt_mcp_server", { toolId: d.toolId, name: d.name });
       await load();
-    } catch (e: any) { alert(`纳入管理失败: ${e}`); }
+    } catch (e: any) { alert(t("mcp.adoptFail", { err: String(e) })); }
   };
 
   const handleToggle = async (id: string, toolId: string, current: boolean) => {
@@ -207,7 +209,7 @@ export default function McpManager() {
     try {
       await invoke("toggle_mcp_tool", { id, toolId, enabled: !current });
       await load();
-    } catch (e: any) { alert(`操作失败: ${e}`); }
+    } catch (e: any) { alert(t("mcp.opFail", { err: String(e) })); }
     finally { setTogglingMap((p) => ({ ...p, [key]: false })); }
   };
 
@@ -215,7 +217,7 @@ export default function McpManager() {
     return (
       <div className="h-full flex items-center justify-center text-slate-500">
         <RefreshCw className="w-5 h-5 animate-spin mr-2" />
-        <span className="text-xs">加载中...</span>
+        <span className="text-xs">{t("mcp.loading")}</span>
       </div>
     );
   }
@@ -225,21 +227,21 @@ export default function McpManager() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-bold text-white">MCP 管理</h3>
-          <p className="text-[10px] text-slate-500 mt-0.5">管理 Model Context Protocol 服务器，一键部署到各工具</p>
+          <h3 className="text-sm font-bold text-white">{t("mcp.title")}</h3>
+          <p className="text-[10px] text-slate-500 mt-0.5">{t("mcp.subtitle")}</p>
         </div>
         <div className="flex gap-2">
           <button
             onClick={load}
             className="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-400 hover:text-white cursor-pointer transition-all flex items-center gap-1"
           >
-            <RefreshCw className="w-3 h-3" /> 刷新
+            <RefreshCw className="w-3 h-3" /> {t("mcp.refresh")}
           </button>
           <button
             onClick={openAdd}
             className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1 shadow-lg shadow-[var(--module-accent-ring)]"
           >
-            <Plus className="w-3 h-3" /> 添加服务器
+            <Plus className="w-3 h-3" /> {t("mcp.addServer")}
           </button>
         </div>
       </div>
@@ -249,7 +251,7 @@ export default function McpManager() {
         <div className="p-3 rounded-xl bg-slate-900/40 border border-[var(--module-accent-ring)] space-y-3">
           <div className="flex items-center justify-between">
             <h4 className="text-xs font-bold text-[var(--module-accent)] flex items-center gap-1.5">
-              <Plug className="w-3.5 h-3.5" /> {editingId ? "编辑服务器" : "添加 MCP 服务器"}
+              <Plug className="w-3.5 h-3.5" /> {editingId ? t("mcp.editServer") : t("mcp.addMcpServer")}
             </h4>
             <button onClick={() => { setShowForm(false); resetForm(); }} className="text-slate-500 hover:text-slate-300 cursor-pointer">
               <X className="w-4 h-4" />
@@ -258,22 +260,22 @@ export default function McpManager() {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[9px] text-slate-500 block mb-1">名称（工具配置中的唯一键）</label>
+              <label className="text-[9px] text-slate-500 block mb-1">{t("mcp.nameLabel")}</label>
               <input
                 value={fName}
                 onChange={(e) => setFName(e.target.value)}
-                placeholder="如 github / context7"
+                placeholder={t("mcp.namePh")}
                 className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
               />
             </div>
             <div>
-              <label className="text-[9px] text-slate-500 block mb-1">传输类型</label>
+              <label className="text-[9px] text-slate-500 block mb-1">{t("mcp.transportLabel")}</label>
               <select
                 value={fTransport}
                 onChange={(e) => setFTransport(e.target.value)}
                 className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
               >
-                <option value="stdio">本地 (stdio)</option>
+                <option value="stdio">{t("mcp.transportStdio")}</option>
                 <option value="http">HTTP</option>
                 <option value="sse">SSE</option>
               </select>
@@ -283,16 +285,16 @@ export default function McpManager() {
           {fTransport === "stdio" ? (
             <>
               <div>
-                <label className="text-[9px] text-slate-500 block mb-1">启动命令</label>
+                <label className="text-[9px] text-slate-500 block mb-1">{t("mcp.commandLabel")}</label>
                 <input
                   value={fCommand}
                   onChange={(e) => setFCommand(e.target.value)}
-                  placeholder="如 npx"
+                  placeholder={t("mcp.commandPh")}
                   className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
                 />
               </div>
               <div>
-                <label className="text-[9px] text-slate-500 block mb-1">参数（每行一个）</label>
+                <label className="text-[9px] text-slate-500 block mb-1">{t("mcp.argsLabel")}</label>
                 <textarea
                   value={fArgs}
                   onChange={(e) => setFArgs(e.target.value)}
@@ -302,16 +304,16 @@ export default function McpManager() {
                 />
               </div>
               <div>
-                <label className="text-[9px] text-slate-500 block mb-1">工作目录（可选）</label>
+                <label className="text-[9px] text-slate-500 block mb-1">{t("mcp.cwdLabel")}</label>
                 <input
                   value={fCwd}
                   onChange={(e) => setFCwd(e.target.value)}
-                  placeholder="如 ./mcp-servers/python"
+                  placeholder={t("mcp.cwdPh")}
                   className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
                 />
               </div>
               <div>
-                <label className="text-[9px] text-slate-500 block mb-1">环境变量（KEY=VALUE，每行一个）</label>
+                <label className="text-[9px] text-slate-500 block mb-1">{t("mcp.envLabel")}</label>
                 <textarea
                   value={fEnv}
                   onChange={(e) => setFEnv(e.target.value)}
@@ -328,12 +330,12 @@ export default function McpManager() {
                 <input
                   value={fUrl}
                   onChange={(e) => setFUrl(e.target.value)}
-                  placeholder="如 https://mcp.context7.com/mcp"
+                  placeholder={t("mcp.urlPh")}
                   className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
                 />
               </div>
               <div>
-                <label className="text-[9px] text-slate-500 block mb-1">请求头（KEY=VALUE，每行一个）</label>
+                <label className="text-[9px] text-slate-500 block mb-1">{t("mcp.headersLabel")}</label>
                 <textarea
                   value={fHeaders}
                   onChange={(e) => setFHeaders(e.target.value)}
@@ -346,18 +348,18 @@ export default function McpManager() {
           )}
 
           <div>
-            <label className="text-[9px] text-slate-500 block mb-1">描述（可选）</label>
+            <label className="text-[9px] text-slate-500 block mb-1">{t("mcp.descLabel")}</label>
             <input
               value={fDescription}
               onChange={(e) => setFDescription(e.target.value)}
-              placeholder="如 搜索文档"
+              placeholder={t("mcp.descPh")}
               className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
             />
           </div>
 
           <label className="flex items-center gap-2 text-[10px] text-slate-400 cursor-pointer">
             <input type="checkbox" checked={fEnabled} onChange={(e) => setFEnabled(e.target.checked)} className="accent-[var(--module-accent)]" />
-            全局启用（关闭则不部署到任何工具）
+            {t("mcp.globalEnable")}
           </label>
 
           <div className="flex justify-end gap-2 pt-1">
@@ -365,7 +367,7 @@ export default function McpManager() {
               onClick={() => { setShowForm(false); resetForm(); }}
               className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-400 hover:text-white cursor-pointer"
             >
-              取消
+              {t("mcp.cancel")}
             </button>
             <button
               onClick={handleSave}
@@ -373,7 +375,7 @@ export default function McpManager() {
               className="px-4 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-40 text-white text-[10px] font-semibold cursor-pointer flex items-center gap-1"
             >
               {saving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-              {saving ? "保存中..." : "保存并部署"}
+              {saving ? t("mcp.saving") : t("mcp.saveDeploy")}
             </button>
           </div>
         </div>
@@ -383,8 +385,8 @@ export default function McpManager() {
       {servers.length === 0 ? (
         <div className="h-48 border border-dashed border-white/5 rounded-2xl flex flex-col items-center justify-center text-slate-500">
           <Server className="w-8 h-8 text-slate-700 mb-2" />
-          <span className="text-xs font-bold text-slate-400">暂无 MCP 服务器</span>
-          <span className="text-[10px] text-slate-600 mt-1">点击「添加服务器」开始</span>
+          <span className="text-xs font-bold text-slate-400">{t("mcp.noServers")}</span>
+          <span className="text-[10px] text-slate-600 mt-1">{t("mcp.noServersHint")}</span>
         </div>
       ) : (
         <div className="space-y-2">
@@ -398,23 +400,23 @@ export default function McpManager() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-bold text-slate-200">{s.name}</span>
                     <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400">
-                      {TRANSPORT_LABEL[s.transport] || s.transport}
+                      {t(`mcp.${TRANSPORT_KEY[s.transport] || s.transport}`) || s.transport}
                     </span>
                     {!s.enabled && (
-                      <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-slate-600/30 text-slate-400">已停用</span>
+                      <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-slate-600/30 text-slate-400">{t("mcp.disabled")}</span>
                     )}
                     <div className="flex items-center gap-0.5 ml-auto flex-shrink-0">
                       <button
                         onClick={() => openEdit(s)}
                         className="p-1 rounded text-slate-600 hover:text-blue-400 hover:bg-blue-500/10 cursor-pointer transition-all"
-                        title="编辑"
+                        title={t("mcp.edit")}
                       >
                         <Edit3 className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => handleDelete(s.id)}
                         className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-red-500/10 cursor-pointer transition-all"
-                        title="删除"
+                        title={t("mcp.delete")}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -428,7 +430,7 @@ export default function McpManager() {
                   </p>
 
                   <div className="flex items-center gap-3 mt-3 pt-2 border-t border-white/[0.03]">
-                    <span className="text-[9px] text-slate-500 flex-shrink-0">部署到:</span>
+                    <span className="text-[9px] text-slate-500 flex-shrink-0">{t("mcp.deployTo")}</span>
                     <div className="flex flex-wrap gap-1.5">
                       {mcpTools.map((t) => {
                         const enabled = s.enabledTools.includes(t.id);
@@ -463,8 +465,8 @@ export default function McpManager() {
       {discovered.length > 0 && (
         <div className="p-3 rounded-xl bg-amber-500/5 border border-amber-500/20 space-y-2">
           <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-300">
-            <Search className="w-3.5 h-3.5" /> 发现 {discovered.length} 个工具内已有的 MCP 服务器
-            <span className="text-[9px] font-normal text-slate-500 ml-1">（纳入后可统一部署到多工具）</span>
+            <Search className="w-3.5 h-3.5" /> {t("mcp.discover", { count: discovered.length })}
+            <span className="text-[9px] font-normal text-slate-500 ml-1">{t("mcp.discoverHint")}</span>
           </div>
           <div className="space-y-1.5">
             {discovered.map((d) => (
@@ -472,7 +474,7 @@ export default function McpManager() {
                 <Plug className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
                 <span className="text-[10px] font-bold text-slate-200 font-mono truncate">{d.name}</span>
                 <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 flex-shrink-0">
-                  {TRANSPORT_LABEL[d.transport] || d.transport}
+                  {t(`mcp.${TRANSPORT_KEY[d.transport] || d.transport}`) || d.transport}
                 </span>
                 <span className="text-[9px] text-slate-500 truncate flex-1">
                   {mcpTools.find((t) => t.id === d.toolId)?.label ?? d.toolId}
@@ -481,7 +483,7 @@ export default function McpManager() {
                   onClick={() => handleAdopt(d)}
                   className="px-2 py-1 rounded-md text-[9px] font-semibold bg-amber-600 hover:bg-amber-500 text-white cursor-pointer transition-all flex items-center gap-1 flex-shrink-0"
                 >
-                  <Link2 className="w-2.5 h-2.5" /> 纳入管理
+                  <Link2 className="w-2.5 h-2.5" /> {t("mcp.adopt")}
                 </button>
               </div>
             ))}
@@ -491,8 +493,8 @@ export default function McpManager() {
 
       {/* Info */}
       <div className="p-3 rounded-xl bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] border border-[var(--module-accent-ring)] text-[10px] text-slate-400 space-y-1">
-        <p className="font-semibold text-[var(--module-accent)]">关于部署</p>
-        <p>保存后会按各工具格式写入其中心配置文件（如 Claude 的 ~/.claude.json、Qwen 的 ~/.qwen/settings.json、OpenCode 的 opencode.json），仅更新 mcpServers / mcp 字段，保留其它内容。重启对应工具即可生效。</p>
+        <p className="font-semibold text-[var(--module-accent)]">{t("mcp.aboutDeploy")}</p>
+        <p>{t("mcp.aboutDeployDesc")}</p>
       </div>
     </div>
   );

@@ -2,6 +2,7 @@
 // （URL 导入(剪贴板粘贴) / 打开本地文件 / 新建 YAML·JS / 卡片：远程更新+编辑信息+
 //   编辑文件+执行日志(js)+删除 / 双击编辑文件 / 排序(上下移替代拖拽) / global 标识）
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import MonacoEditor from "../../shared/MonacoEditor";
 import { RefreshCw, MoreVertical, Plus, ClipboardPaste, ArrowUp, ArrowDown } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
@@ -10,16 +11,17 @@ import { cardCls, Modal, btnSec, btnPrimary, inputCls, labelCls, tagCls, Toggle 
 const DEFAULT_YAML = "# https://clashparty.org/docs/guide/override/yaml\n";
 const DEFAULT_JS = "// https://clashparty.org/docs/guide/override/javascript\nfunction main(config) {\n  return config\n}";
 
-function fromNow(ts?: number): string {
+function fromNow(ts: number | undefined, t: (k: string, o?: any) => string): string {
   if (!ts) return "";
   const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
-  if (s < 60) return `${s} 秒前`;
-  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`;
-  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`;
-  return `${Math.floor(s / 86400)} 天前`;
+  if (s < 60) return t("overrides.secsAgo", { n: s });
+  if (s < 3600) return t("overrides.minsAgo", { n: Math.floor(s / 60) });
+  if (s < 86400) return t("overrides.hoursAgo", { n: Math.floor(s / 3600) });
+  return t("overrides.daysAgo", { n: Math.floor(s / 86400) });
 }
 
 export default function OverridesPanel() {
+  const { t } = useTranslation();
   const [items, setItems] = useState<any[]>([]);
   const [url, setUrl] = useState("");
   const [importing, setImporting] = useState(false);
@@ -51,7 +53,7 @@ export default function OverridesPanel() {
     setMsg("");
     try {
       const u = new URL(url);
-      const name = decodeURIComponent(u.pathname.split("/").pop() || "远程覆写");
+      const name = decodeURIComponent(u.pathname.split("/").pop() || t("overrides.remoteName"));
       const id = genId();
       const item = {
         id, name, type: "remote", url,
@@ -64,7 +66,7 @@ export default function OverridesPanel() {
       await addItem(item, content);
       setUrl("");
     } catch (e: any) {
-      setMsg(`导入失败: ${e}`);
+      setMsg(t("overrides.importFailed", { err: String(e) }));
     } finally { setImporting(false); }
   };
 
@@ -79,13 +81,13 @@ export default function OverridesPanel() {
       await mihomoApi.updateOverride({ ...item, updated: Math.floor(Date.now() / 1000) });
       await mihomoApi.updateRuntimeConfig();
       await refresh();
-    } catch (e: any) { setMsg(`更新失败: ${e}`); }
+    } catch (e: any) { setMsg(t("overrides.updateFailed", { err: String(e) })); }
     finally { setUpdating((s) => ({ ...s, [item.id]: false })); }
   };
 
   // 打开本地文件（复刻 actions.open）
   const onLocalFile = async (f: File) => {
-    if (!f.name.endsWith(".js") && !f.name.endsWith(".yaml")) { setMsg("仅支持 .js / .yaml 文件"); return; }
+    if (!f.name.endsWith(".js") && !f.name.endsWith(".yaml")) { setMsg(t("overrides.onlyJsYaml")); return; }
     const content = await f.text();
     await addItem({
       id: genId(), name: f.name, type: "local",
@@ -115,20 +117,20 @@ export default function OverridesPanel() {
         <div className="relative flex-1">
           <input
             className={`${inputCls} !pr-9`}
-            placeholder="覆写文件 URL"
+            placeholder={t("overrides.urlPlaceholder")}
             value={url}
             onChange={(e) => setUrl(e.target.value)}
           />
           <button
             className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
-            title="粘贴"
+            title={t("overrides.paste")}
             onClick={() => navigator.clipboard.readText().then(setUrl).catch(() => {})}
           >
             <ClipboardPaste className="w-3.5 h-3.5" />
           </button>
         </div>
         <button className={btnPrimary} disabled={!url || importing} onClick={handleImport}>
-          {importing ? "导入中..." : "导入"}
+          {importing ? t("overrides.importing") : t("overrides.import")}
         </button>
         <div className="relative">
           <button className={btnPrimary} onClick={(e) => { e.stopPropagation(); setAddMenu((p) => !p); }}>
@@ -138,9 +140,9 @@ export default function OverridesPanel() {
             <div className="absolute right-0 top-9 z-30 w-36 rounded-xl border border-white/10 bg-[#1a1f2d] shadow-xl overflow-hidden"
               onClick={(e) => e.stopPropagation()}>
               {[
-                ["打开文件", () => fileRef.current?.click()],
-                ["新建 YAML", () => addItem({ id: genId(), name: "新建 YAML", type: "local", ext: "yaml", global: false }, DEFAULT_YAML)],
-                ["新建 JS", () => addItem({ id: genId(), name: "新建 JS", type: "local", ext: "js", global: false }, DEFAULT_JS)],
+                [t("overrides.openFile"), () => fileRef.current?.click()],
+                [t("overrides.newYaml"), () => addItem({ id: genId(), name: t("overrides.newYaml"), type: "local", ext: "yaml", global: false }, DEFAULT_YAML)],
+                [t("overrides.newJs"), () => addItem({ id: genId(), name: t("overrides.newJs"), type: "local", ext: "js", global: false }, DEFAULT_JS)],
               ].map(([t, fn]: any) => (
                 <button key={t} className="w-full text-left px-3 py-2 text-[11px] text-slate-200 hover:bg-white/10 cursor-pointer"
                   onClick={() => { fn(); setAddMenu(false); }}>
@@ -167,16 +169,16 @@ export default function OverridesPanel() {
             <div className="flex items-center justify-between gap-1">
               <h3 className="text-[13px] font-bold text-white truncate" title={item.name}>{item.name}</h3>
               <div className="flex items-center flex-shrink-0">
-                <button className="p-1 rounded-md hover:bg-white/10 text-slate-400 cursor-pointer" title="上移"
+                <button className="p-1 rounded-md hover:bg-white/10 text-slate-400 cursor-pointer" title={t("overrides.moveUp")}
                   onClick={(e) => { e.stopPropagation(); move(index, -1); }}>
                   <ArrowUp className="w-3 h-3" />
                 </button>
-                <button className="p-1 rounded-md hover:bg-white/10 text-slate-400 cursor-pointer" title="下移"
+                <button className="p-1 rounded-md hover:bg-white/10 text-slate-400 cursor-pointer" title={t("overrides.moveDown")}
                   onClick={(e) => { e.stopPropagation(); move(index, 1); }}>
                   <ArrowDown className="w-3 h-3" />
                 </button>
                 {item.type === "remote" && (
-                  <button className="p-1 rounded-md hover:bg-white/10 text-slate-300 cursor-pointer" title="更新"
+                  <button className="p-1 rounded-md hover:bg-white/10 text-slate-300 cursor-pointer" title={t("overrides.update")}
                     onClick={(e) => { e.stopPropagation(); updateRemote(item); }}>
                     <RefreshCw className={`w-3.5 h-3.5 ${updating[item.id] ? "animate-spin" : ""}`} />
                   </button>
@@ -189,10 +191,10 @@ export default function OverridesPanel() {
             </div>
             <div className="mt-2 flex items-center justify-between">
               <div className="flex gap-1.5">
-                {item.global && <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">全局</span>}
+                {item.global && <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">{t("overrides.global")}</span>}
                 <span className={tagCls}>{item.ext === "yaml" ? "YAML" : "JavaScript"}</span>
               </div>
-              {item.type === "remote" && <span className="text-[10px] text-slate-500">{fromNow(item.updated)}</span>}
+              {item.type === "remote" && <span className="text-[10px] text-slate-500">{fromNow(item.updated, t)}</span>}
             </div>
 
             {/* 菜单（复刻 menuItems：编辑信息/编辑文件/执行日志(js)/删除） */}
@@ -200,22 +202,22 @@ export default function OverridesPanel() {
               <div className="absolute right-2 top-9 z-30 w-32 rounded-xl border border-white/10 bg-[#1a1f2d] shadow-xl overflow-hidden"
                 onClick={(e) => e.stopPropagation()}>
                 <button className="w-full text-left px-3 py-2 text-[11px] text-slate-200 hover:bg-white/10 cursor-pointer"
-                  onClick={() => { setEditInfo(item); setMenuFor(null); }}>编辑信息</button>
+                  onClick={() => { setEditInfo(item); setMenuFor(null); }}>{t("overrides.editInfo")}</button>
                 <button className="w-full text-left px-3 py-2 text-[11px] text-slate-200 hover:bg-white/10 cursor-pointer"
-                  onClick={() => { setEditFile(item); setMenuFor(null); }}>编辑文件</button>
+                  onClick={() => { setEditFile(item); setMenuFor(null); }}>{t("overrides.editFile")}</button>
                 {item.ext === "js" && (
                   <button className="w-full text-left px-3 py-2 text-[11px] text-slate-200 hover:bg-white/10 cursor-pointer border-b border-white/5"
-                    onClick={() => { setExecLog(item); setMenuFor(null); }}>执行日志</button>
+                    onClick={() => { setExecLog(item); setMenuFor(null); }}>{t("overrides.execLog")}</button>
                 )}
                 <button className="w-full text-left px-3 py-2 text-[11px] text-rose-300 hover:bg-rose-500/15 cursor-pointer"
-                  onClick={() => { remove(item.id); setMenuFor(null); }}>删除</button>
+                  onClick={() => { remove(item.id); setMenuFor(null); }}>{t("overrides.delete")}</button>
               </div>
             )}
           </div>
         ))}
         {items.length === 0 && (
           <div className={`${cardCls} p-6 text-center text-xs text-slate-400 col-span-full`}>
-            暂无覆写文件，可通过 URL 导入或新建
+            {t("overrides.empty")}
           </div>
         )}
       </div>
@@ -229,6 +231,7 @@ export default function OverridesPanel() {
 
 // 复刻 edit-info-modal：名称 / URL(remote) / 全局开关
 function EditOverrideInfoModal({ item, onClose, onSaved }: any) {
+  const { t } = useTranslation();
   const [name, setName] = useState(item.name || "");
   const [u, setU] = useState(item.url || "");
   const [global, setGlobal] = useState(!!item.global);
@@ -241,36 +244,37 @@ function EditOverrideInfoModal({ item, onClose, onSaved }: any) {
       onSaved();
       onClose();
     } catch (e: any) {
-      alert(`保存失败: ${e}`);
+      alert(t("overrides.saveFailed", { err: String(e) }));
     } finally {
       setSaving(false);
     }
   };
   return (
-    <Modal title="编辑信息" onClose={onClose} busy={saving} busyText="保存并重载配置…"
+    <Modal title={t("overrides.editInfo")} onClose={onClose} busy={saving} busyText={t("overrides.savingReload")}
       footer={
         <>
-          <button className={btnSec} disabled={saving} onClick={onClose}>取消</button>
-          <button className={btnPrimary} disabled={saving} onClick={save}>保存</button>
+          <button className={btnSec} disabled={saving} onClick={onClose}>{t("overrides.cancel")}</button>
+          <button className={btnPrimary} disabled={saving} onClick={save}>{t("overrides.save")}</button>
         </>
       }>
       <div>
-        <label className={labelCls}>名称</label>
+        <label className={labelCls}>{t("overrides.name")}</label>
         <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} />
       </div>
       {item.type === "remote" && (
         <div>
-          <label className={labelCls}>URL</label>
+          <label className={labelCls}>{t("overrides.url")}</label>
           <input className={inputCls} value={u} onChange={(e) => setU(e.target.value)} />
         </div>
       )}
-      <Toggle label="作用于所有订阅（全局）" v={global} onChange={setGlobal} />
+      <Toggle label={t("overrides.globalAllSubs")} v={global} onChange={setGlobal} />
     </Modal>
   );
 }
 
 // 复刻 edit-file-modal：编辑内容，保存后热重载
 function EditOverrideFileModal({ item, onClose }: any) {
+  const { t } = useTranslation();
   const [content, setContent] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -284,17 +288,17 @@ function EditOverrideFileModal({ item, onClose }: any) {
       await mihomoApi.updateRuntimeConfig();
       onClose();
     } catch (e: any) {
-      alert(`保存失败: ${e}`);
+      alert(t("overrides.saveFailed", { err: String(e) }));
     } finally {
       setSaving(false);
     }
   };
   return (
-    <Modal title={`编辑文件 - ${item.name}`} wide onClose={onClose} busy={saving} busyText="保存并重载配置…"
+    <Modal title={t("overrides.editFileTitle", { name: item.name })} wide onClose={onClose} busy={saving} busyText={t("overrides.savingReload")}
       footer={
         <>
-          <button className={btnSec} disabled={saving} onClick={onClose}>取消</button>
-          <button className={btnPrimary} disabled={saving} onClick={save}>保存</button>
+          <button className={btnSec} disabled={saving} onClick={onClose}>{t("overrides.cancel")}</button>
+          <button className={btnPrimary} disabled={saving} onClick={save}>{t("overrides.save")}</button>
         </>
       }>
       {loaded ? (
@@ -308,22 +312,23 @@ function EditOverrideFileModal({ item, onClose }: any) {
             options={{ minimap: { enabled: false }, fontSize: 12, scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true }}
           />
         </div>
-      ) : <div className="text-xs text-slate-400 p-4">加载中...</div>}
+      ) : <div className="text-xs text-slate-400 p-4">{t("overrides.loading")}</div>}
     </Modal>
   );
 }
 
 // 复刻 exec-log-modal：显示 JS 覆写执行日志
 function ExecLogModal({ item, onClose }: any) {
+  const { t } = useTranslation();
   const [log, setLog] = useState<string[]>([]);
   useEffect(() => {
     mihomoApi.getOverrideExecLog(item.id).then((l: string[]) => setLog(l || [])).catch(() => setLog([]));
   }, [item.id]);
   return (
-    <Modal title={`执行日志 - ${item.name}`} wide onClose={onClose}
-      footer={<button className={btnSec} onClick={onClose}>关闭</button>}>
+    <Modal title={t("overrides.execLogTitle", { name: item.name })} wide onClose={onClose}
+      footer={<button className={btnSec} onClick={onClose}>{t("overrides.close")}</button>}>
       <div className="max-h-96 overflow-y-auto font-mono text-[11px] text-slate-300 space-y-1">
-        {log.length === 0 && <div className="text-slate-500">暂无日志（配置生成时执行 JS 覆写会记录输出）</div>}
+        {log.length === 0 && <div className="text-slate-500">{t("overrides.logEmpty")}</div>}
         {log.map((l, i) => <div key={i} className="break-all select-text">{l}</div>)}
       </div>
     </Modal>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
@@ -41,9 +42,9 @@ function nodeColor(task: TaskItem): string {
   return moduleAccent();
 }
 
-function formatTaskTime(value: string): string {
+function formatTaskTime(value: string, unknown = "未知"): string {
   const parsed = new Date(value.includes(" ") ? value.replace(" ", "T") : value);
-  if (Number.isNaN(parsed.getTime())) return "未知";
+  if (Number.isNaN(parsed.getTime())) return unknown;
   return new Intl.DateTimeFormat("zh-CN", {
     year: "numeric",
     month: "2-digit",
@@ -77,6 +78,8 @@ function markdownImage(path: string): string {
 }
 
 export default function TaskPanel() {
+  const { t } = useTranslation();
+  const statusLabel = (status: TaskStatus) => t(`tasks.status${status.charAt(0).toUpperCase() + status.slice(1)}`);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [selectedSeries, setSelectedSeries] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -106,7 +109,7 @@ export default function TaskPanel() {
       setSelectedSeries((current) => current && result.some((task) => task.id === current) ? current : null);
       setSelectedTaskId((current) => current && result.some((task) => task.id === current) ? current : null);
     } catch (error) {
-      flash(`加载任务失败：${String(error)}`);
+      flash(t("tasks.loadFailed", { err: String(error) }));
     } finally {
       setLoading(false);
     }
@@ -120,7 +123,7 @@ export default function TaskPanel() {
       setTasks((current) => current.map((task) => task.id === id ? updated : task));
       return updated;
     } catch (error) {
-      flash(`更新任务失败：${String(error)}`);
+      flash(t("tasks.updateFailed", { err: String(error) }));
       return null;
     }
   }, [flash]);
@@ -130,7 +133,7 @@ export default function TaskPanel() {
   }, [updateTask]);
 
   const insertFile = useCallback(async (id: string, current: string) => {
-    const selected = await openDialog({ multiple: false, directory: false, title: "插入文件路径" });
+    const selected = await openDialog({ multiple: false, directory: false, title: t("tasks.insertFileTitle") });
     if (typeof selected !== "string") return undefined;
     const next = appendMarkdown(current, markdownFileLink(selected));
     const updated = await updateTask(id, { description: next });
@@ -138,14 +141,14 @@ export default function TaskPanel() {
   }, [updateTask]);
 
   const insertImage = useCallback(async (id: string, current: string) => {
-    const selected = await openDialog({ multiple: false, directory: false, title: "插入图片", filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"] }] });
+    const selected = await openDialog({ multiple: false, directory: false, title: t("tasks.insertImageTitle"), filters: [{ name: t("tasks.imageFilterName"), extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"] }] });
     if (typeof selected !== "string") return undefined;
     let path = selected;
     try {
       // 复制到软件数据目录（~/.any-version/tasks/images/），避免依赖原路径。
       path = await invoke<string>("tasks_copy_image", { sourcePath: selected });
     } catch (error) {
-      flash(`复制图片失败：${String(error)}`);
+      flash(t("tasks.copyImageFailed", { err: String(error) }));
       return undefined;
     }
     const next = appendMarkdown(current, markdownImage(path));
@@ -158,10 +161,10 @@ export default function TaskPanel() {
       const path = await invoke<string>("clipboard_save_latest_image_for_task");
       const next = appendMarkdown(current, markdownImage(path));
       const updated = await updateTask(id, { description: next });
-      flash("截图已插入任务内容");
+      flash(t("tasks.screenshotInserted"));
       return updated?.description ?? next;
     } catch (error) {
-      flash(`插入截图失败：${String(error)}`);
+      flash(t("tasks.insertScreenshotFailed", { err: String(error) }));
       return undefined;
     }
   }, [flash, updateTask]);
@@ -182,7 +185,7 @@ export default function TaskPanel() {
     try {
       const s = await stickersApi.create({ seriesId: selectedSeries, positionX: x, positionY: y });
       setStickers((prev) => [...prev, s]);
-    } catch (error) { flash(`创建贴纸失败：${String(error)}`); }
+    } catch (error) { flash(t("tasks.createStickerFailed", { err: String(error) })); }
   }, [flash, selectedSeries]);
 
   const updateSticker = useCallback(async (id: string, patch: { content?: string; color?: string; positionX?: number; positionY?: number }) => {
@@ -196,7 +199,7 @@ export default function TaskPanel() {
     try {
       await stickersApi.remove(id);
       setStickers((prev) => prev.filter((s) => s.id !== id));
-    } catch (error) { flash(`删除贴纸失败：${String(error)}`); }
+    } catch (error) { flash(t("tasks.deleteStickerFailed", { err: String(error) })); }
   }, [flash]);
 
   const saveStickerPosition = useCallback((id: string, position: { x: number; y: number }) => {
@@ -209,7 +212,7 @@ export default function TaskPanel() {
     let current = byId.get(parentId);
     while (current?.parentId) {
       if (current.parentId === childId) {
-        flash("不能连接为循环父子关系");
+        flash(t("tasks.cycleParent"));
         return;
       }
       current = byId.get(current.parentId);
@@ -224,7 +227,7 @@ export default function TaskPanel() {
       const updated = await tasksApi.setProgress(task.id, { progress });
       setTasks((current) => current.map((item) => item.id === updated.id ? updated : item));
     } catch (error) {
-      flash(`更新状态失败：${String(error)}`);
+      flash(t("tasks.updateStatusFailed", { err: String(error) }));
     }
   }, [flash]);
 
@@ -236,7 +239,7 @@ export default function TaskPanel() {
       if (selectedSeries === task.id) setSelectedSeries(null);
       setDeleteCandidate(null);
     } catch (error) {
-      flash(`删除失败：${String(error)}`);
+      flash(t("tasks.deleteFailed", { err: String(error) }));
     }
   }, [flash, selectedSeries, selectedTaskId]);
 
@@ -258,7 +261,7 @@ export default function TaskPanel() {
       setEditing(null);
       setDraftTitle("");
     } catch (error) {
-      flash(`保存任务失败：${String(error)}`);
+      flash(t("tasks.saveTaskFailed", { err: String(error) }));
     } finally {
       setBusy(false);
     }
@@ -273,27 +276,27 @@ export default function TaskPanel() {
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-slate-950/25 text-slate-200">
       <header className="flex min-h-12 shrink-0 items-center gap-2 border-b border-white/10 px-3">
-        <Network className="h-4 w-4 text-amber-300" /><span className="text-sm font-semibold text-white">任务画布</span>
-        <button type="button" className={iconButton} onClick={() => setShowTaskList((visible) => !visible)} title={showTaskList ? "隐藏任务列表" : "显示任务列表"} aria-label={showTaskList ? "隐藏任务列表" : "显示任务列表"}>{showTaskList ? <PanelLeftClose className="h-3.5 w-3.5" /> : <PanelLeftOpen className="h-3.5 w-3.5" />}</button>
-        <div className="ml-auto flex items-center gap-1.5"><div className="flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.04] px-2"><Search className="h-3 w-3 text-slate-500" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索任务" className="h-7 w-36 bg-transparent text-[11px] outline-none placeholder:text-slate-600" /></div><button type="button" className={button} title="双击画布空白处也可添加" onClick={() => addSticker(200, 60)}><StickyNote className="h-3 w-3" />贴纸</button><button type="button" className={button} onClick={() => { setEditing(null); setCreateParentId(null); setDraftTitle(""); setShowCreate(true); }}><Plus className="h-3 w-3" />新建系列</button></div>
+        <Network className="h-4 w-4 text-amber-300" /><span className="text-sm font-semibold text-white">{t("tasks.title")}</span>
+        <button type="button" className={iconButton} onClick={() => setShowTaskList((visible) => !visible)} title={showTaskList ? t("tasks.hideTaskList") : t("tasks.showTaskList")} aria-label={showTaskList ? t("tasks.hideTaskList") : t("tasks.showTaskList")}>{showTaskList ? <PanelLeftClose className="h-3.5 w-3.5" /> : <PanelLeftOpen className="h-3.5 w-3.5" />}</button>
+        <div className="ml-auto flex items-center gap-1.5"><div className="flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.04] px-2"><Search className="h-3 w-3 text-slate-500" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("tasks.searchPlaceholder")} className="h-7 w-36 bg-transparent text-[11px] outline-none placeholder:text-slate-600" /></div><button type="button" className={button} title={t("tasks.dblClickHint")} onClick={() => addSticker(200, 60)}><StickyNote className="h-3 w-3" />{t("tasks.sticker")}</button><button type="button" className={button} onClick={() => { setEditing(null); setCreateParentId(null); setDraftTitle(""); setShowCreate(true); }}><Plus className="h-3 w-3" />{t("tasks.newSeries")}</button></div>
       </header>
       <div className="flex min-h-0 flex-1">
         {showTaskList && <aside className="flex w-[220px] shrink-0 flex-col border-r border-white/10 bg-slate-950/30">
-          <div className="flex items-center gap-1 border-b border-white/10 p-2">{(["all", "todo", "inProgress", "done"] as const).map((filter) => <button key={filter} type="button" onClick={() => setStatusFilter(filter)} className={`flex-1 rounded px-1 py-1.5 text-[9px] ${statusFilter === filter ? "bg-amber-400 text-slate-950" : "text-slate-500 hover:bg-white/[0.06]"}`}>{filter === "all" ? "全部" : STATUS_META[filter].label}</button>)}</div>
+          <div className="flex items-center gap-1 border-b border-white/10 p-2">{(["all", "todo", "inProgress", "done"] as const).map((filter) => <button key={filter} type="button" onClick={() => setStatusFilter(filter)} className={`flex-1 rounded px-1 py-1.5 text-[9px] ${statusFilter === filter ? "bg-amber-400 text-slate-950" : "text-slate-500 hover:bg-white/[0.06]"}`}>{filter === "all" ? t("tasks.statusAll") : statusLabel(filter)}</button>)}</div>
           <div className="min-h-0 flex-1 overflow-y-auto p-2">
             {loading ? <div className="flex justify-center py-10 text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /></div> : series.map((task) => <div key={task.id} className={`mb-1.5 w-full rounded-md border px-2.5 py-2 text-left transition ${selectedSeries === task.id ? "border-[var(--module-accent-ring)] bg-[var(--module-accent-soft)]" : "border-white/10 bg-white/[0.02] hover:bg-white/[0.06]"}`}>
               <button type="button" onClick={() => { setSelectedSeries(task.id); setSelectedTaskId(task.id); }} className="w-full text-left">
                 <span className="flex items-center gap-1.5"><span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: nodeColor(task) }} /><span className="min-w-0 flex-1 truncate text-[11px] text-slate-200">{task.title}</span><span className="font-mono text-[9px] text-slate-500">{task.progress}%</span></span>
-                <span className="mt-1.5 grid grid-cols-1 gap-0.5 text-[9px] leading-4 text-slate-500"><span>新增：{formatTaskTime(task.createdAt)}</span><span>修改：{formatTaskTime(task.updatedAt)}</span></span>
+                <span className="mt-1.5 grid grid-cols-1 gap-0.5 text-[9px] leading-4 text-slate-500"><span>{t("tasks.createdAt")}{formatTaskTime(task.createdAt, t("tasks.unknown"))}</span><span>{t("tasks.updatedAt")}{formatTaskTime(task.updatedAt, t("tasks.unknown"))}</span></span>
               </button>
               <div className="mt-2 flex items-center gap-1.5 border-t border-white/[0.06] pt-1.5">
                 <select value={statusOf(task)} onChange={(event) => { const progress = event.target.value === "done" ? 100 : event.target.value === "inProgress" ? 50 : 0; void setProgress(task, progress); }} className="min-w-0 flex-1 rounded border border-white/10 bg-slate-950/70 px-1.5 py-1 text-[9px] text-slate-300 outline-none focus:border-[var(--module-accent-ring)]">
-                  {(Object.keys(STATUS_META) as TaskStatus[]).map((status) => <option key={status} value={status}>{STATUS_META[status].label}</option>)}
+                  {(Object.keys(STATUS_META) as TaskStatus[]).map((status) => <option key={status} value={status}>{statusLabel(status)}</option>)}
                 </select>
-                <button type="button" className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-red-400/20 text-red-300/70 transition hover:border-red-400/50 hover:bg-red-400/10 hover:text-red-200" onClick={() => setDeleteCandidate(task)} title="删除任务" aria-label={`删除任务：${task.title}`}><Trash2 className="h-3 w-3" /></button>
+                <button type="button" className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-red-400/20 text-red-300/70 transition hover:border-red-400/50 hover:bg-red-400/10 hover:text-red-200" onClick={() => setDeleteCandidate(task)} title={t("tasks.deleteTask")} aria-label={t("tasks.deleteTaskAria", { title: task.title })}><Trash2 className="h-3 w-3" /></button>
               </div>
             </div>)}
-            {!loading && series.length === 0 && <div className="py-10 text-center text-[10px] text-slate-600">没有匹配的系列</div>}
+            {!loading && series.length === 0 && <div className="py-10 text-center text-[10px] text-slate-600">{t("tasks.noSeries")}</div>}
           </div>
         </aside>}
         <main className="relative min-w-0 flex-1">
@@ -301,10 +304,10 @@ export default function TaskPanel() {
         </main>
       </div>
       {notice && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-[11px] text-slate-200 shadow-xl">{notice}</div>}
-      {showCreate && <div className="fixed inset-0 z-[100] modal-mask flex items-center justify-center bg-black/60 p-4"><div className="w-[360px] rounded-lg border border-white/10 bg-[#101827] p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-semibold text-white">{editing ? "编辑任务" : createParentId ? "添加子任务" : "新建系列"}</h3><button type="button" className={iconButton} onClick={() => setShowCreate(false)}><X className="h-3.5 w-3.5" /></button></div><input autoFocus value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void saveTask(); }} placeholder="任务名称" className={inputClass} /><div className="mt-3 flex justify-end gap-2"><button type="button" className={button} onClick={() => setShowCreate(false)}>取消</button><button type="button" className="inline-flex items-center gap-1 rounded-md bg-[var(--module-accent)] px-3 py-1.5 text-[10px] font-semibold text-white" disabled={busy || !draftTitle.trim()} onClick={() => void saveTask()}>{busy && <Loader2 className="h-3 w-3 animate-spin" />}保存</button></div></div></div>}
+      {showCreate && <div className="fixed inset-0 z-[100] modal-mask flex items-center justify-center bg-black/60 p-4"><div className="w-[360px] rounded-lg border border-white/10 bg-[#101827] p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-semibold text-white">{editing ? t("tasks.editTask") : createParentId ? t("tasks.addSubTask") : t("tasks.newSeriesTitle")}</h3><button type="button" className={iconButton} onClick={() => setShowCreate(false)}><X className="h-3.5 w-3.5" /></button></div><input autoFocus value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void saveTask(); }} placeholder={t("tasks.taskName")} className={inputClass} /><div className="mt-3 flex justify-end gap-2"><button type="button" className={button} onClick={() => setShowCreate(false)}>{t("tasks.cancel")}</button><button type="button" className="inline-flex items-center gap-1 rounded-md bg-[var(--module-accent)] px-3 py-1.5 text-[10px] font-semibold text-white" disabled={busy || !draftTitle.trim()} onClick={() => void saveTask()}>{busy && <Loader2 className="h-3 w-3 animate-spin" />}{t("tasks.save")}</button></div></div></div>}
       {deleteCandidate && <div className="fixed inset-0 z-[110] modal-mask flex items-center justify-center bg-black/65 p-4 backdrop-blur-[2px]"><div role="dialog" aria-modal="true" aria-labelledby="delete-task-title" className="w-full max-w-[380px] overflow-hidden rounded-xl border border-[var(--module-accent-ring)] bg-[#111827] shadow-2xl shadow-black/50" onClick={(event) => event.stopPropagation()}>
-        <div className="border-b border-white/10 px-5 pb-4 pt-5"><div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-red-400/10 text-red-300"><Trash2 className="h-5 w-5" /></div><h3 id="delete-task-title" className="text-sm font-semibold text-white">确认删除任务？</h3><p className="mt-1.5 text-[11px] leading-5 text-slate-400">将删除“<span className="font-medium text-slate-200">{deleteCandidate.title}</span>”。它的直接子任务会提升为顶层任务。</p></div>
-        <div className="flex justify-end gap-2 bg-[var(--module-accent-soft)] px-5 py-3"><button type="button" className={button} onClick={() => setDeleteCandidate(null)}>取消</button><button type="button" className="inline-flex items-center gap-1 rounded-md bg-red-500 px-3 py-1.5 text-[10px] font-semibold text-white transition hover:bg-red-400" onClick={() => void deleteTask(deleteCandidate)}><Trash2 className="h-3 w-3" />确认删除</button></div>
+        <div className="border-b border-white/10 px-5 pb-4 pt-5"><div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-red-400/10 text-red-300"><Trash2 className="h-5 w-5" /></div><h3 id="delete-task-title" className="text-sm font-semibold text-white">{t("tasks.confirmDeleteTitle")}</h3><p className="mt-1.5 text-[11px] leading-5 text-slate-400">{t("tasks.confirmDeleteDesc", { title: deleteCandidate.title })}</p></div>
+        <div className="flex justify-end gap-2 bg-[var(--module-accent-soft)] px-5 py-3"><button type="button" className={button} onClick={() => setDeleteCandidate(null)}>{t("tasks.cancel")}</button><button type="button" className="inline-flex items-center gap-1 rounded-md bg-red-500 px-3 py-1.5 text-[10px] font-semibold text-white transition hover:bg-red-400" onClick={() => void deleteTask(deleteCandidate)}><Trash2 className="h-3 w-3" />{t("tasks.confirmDelete")}</button></div>
       </div></div>}
     </div>
   );

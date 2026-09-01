@@ -113,56 +113,6 @@ pub fn net_connections() -> Result<Vec<NetConnection>, String> {
 }
 
 // ---------------------------------------------------------------------------
-// 网卡流量
-// ---------------------------------------------------------------------------
-
-#[derive(Serialize, Clone, Debug)]
-pub struct IfaceTraffic {
-    pub name: String,
-    pub received_bytes: u64,
-    pub sent_bytes: u64,
-}
-
-/// 网卡收发字节数（累计值；前端轮询计算速率）。
-#[tauri::command]
-pub fn net_iface_traffic() -> Result<Vec<IfaceTraffic>, String> {
-    // 直接调用 powershell（与 mihomo/netinfo.rs 同一套可靠模式），不再经 cmd 拼接
-    // `& powershell -Command` —— 那会在某些环境下被 cmd 拆成独立命令，导致
-    // powershell 收到 `-Command "..."` 作为脚本本体，报 "-Command 不是可识别的 cmdlet"。
-    let script = "$ErrorActionPreference='SilentlyContinue'; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $PSDefaultParameterValues['Out-File:Encoding']='utf8'; $OutputEncoding=[System.Text.Encoding]::UTF8; Get-NetAdapterStatistics | Where-Object { $_.Name -notmatch 'vEthernet|Loopback' } | Select-Object Name,ReceivedBytes,SentBytes | ConvertTo-Json -Compress";
-    let output = super::hidden_cmd::hidden_cmd("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script])
-        .output()
-        .map_err(|e| format!("执行 Get-NetAdapterStatistics 失败: {}", e))?;
-    if !output.status.success() {
-        return Err(format!(
-            "获取网卡统计失败: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let text_trim = text.trim();
-    if text_trim.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut out = Vec::new();
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(text_trim) {
-        let items: Vec<&serde_json::Value> = match &v {
-            serde_json::Value::Array(arr) => arr.iter().collect(),
-            serde_json::Value::Object(_) => vec![&v],
-            _ => vec![],
-        };
-        for it in items {
-            let name = it.get("Name").and_then(|n| n.as_str()).unwrap_or("Unknown").to_string();
-            let recv = it.get("ReceivedBytes").and_then(|n| n.as_u64()).unwrap_or(0);
-            let sent = it.get("SentBytes").and_then(|n| n.as_u64()).unwrap_or(0);
-            out.push(IfaceTraffic { name, received_bytes: recv, sent_bytes: sent });
-        }
-    }
-    Ok(out)
-}
-
-// ---------------------------------------------------------------------------
 // Ping
 // ---------------------------------------------------------------------------
 

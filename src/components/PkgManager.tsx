@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -25,6 +26,7 @@ const SDK_OPTIONS: { id: string; label: string; icon: React.ReactNode }[] = [
 ];
 
 export default function PkgManager() {
+  const { t } = useTranslation();
   const [activeSdk, setActiveSdk] = useState<"nodejs" | "python">("nodejs");
 
   // Package state
@@ -62,17 +64,17 @@ export default function PkgManager() {
     setErrorMsg(null);
     try {
       await invoke("upgrade_global_package", { sdkName: activeSdk, pkgName });
-      alert(`包 ${pkgName} 升级成功！`);
+      alert(t("pkgmgr2.upgraded", { name: pkgName }));
       await fetchPackages(activeSdk);
     } catch (e: any) {
-      setErrorMsg(`升级 ${pkgName} 失败: ${e}`);
+      setErrorMsg(t("pkgmgr2.upgradeFail", { name: pkgName, err: String(e) }));
     } finally {
       setUpgradingName(null);
     }
   };
 
   const handleUpgradeAll = async () => {
-    if (!confirm(`确定要升级全部 ${outdatedCount} 个过期包吗？`)) return;
+    if (!confirm(t("pkgmgr2.upgradeAllConfirm", { count: outdatedCount }))) return;
     setUpgradingAll(true);
     setErrorMsg(null);
     try {
@@ -82,11 +84,11 @@ export default function PkgManager() {
       );
       const failed = results.filter(r => !r.success);
       if (failed.length > 0) {
-        setErrorMsg(`部分包升级失败：${failed.map(f => `${f.name}(${f.error})`).join("、")}`);
+        setErrorMsg(t("pkgmgr2.partialFail", { names: failed.map(f => `${f.name}(${f.error})`).join("、") }));
       }
       await fetchPackages(activeSdk);
     } catch (e: any) {
-      setErrorMsg(`批量升级失败: ${e}`);
+      setErrorMsg(t("pkgmgr2.batchFail", { err: String(e) }));
     } finally {
       setUpgradingAll(false);
     }
@@ -96,13 +98,13 @@ export default function PkgManager() {
     if (pkg.status === "outdated") {
       return (
         <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-0.5 w-max">
-          可升级
+          {t("pkgmgr2.upgradable")}
         </span>
       );
     }
     return (
       <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-0.5 w-max">
-        已最新
+        {t("pkgmgr2.latest")}
       </span>
     );
   };
@@ -112,9 +114,9 @@ export default function PkgManager() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-white tracking-wide">全局包管理</h2>
+          <h2 className="text-xl font-semibold text-white tracking-wide">{t("pkgmgr2.title")}</h2>
           <p className="text-xs text-slate-400 mt-1">
-            列出并升级当前已安装的全局 NPM 包或 Pip 包依赖版本。
+            {t("pkgmgr2.subtitle")}
           </p>
         </div>
 
@@ -144,7 +146,7 @@ export default function PkgManager() {
               className="flex items-center gap-2 px-3.5 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all shadow-lg shadow-amber-500/10"
             >
               <Rocket className={`w-3.5 h-3.5 ${upgradingAll ? "animate-pulse" : ""}`} />
-              {upgradingAll ? "升级中..." : `全部升级 (${outdatedCount})`}
+              {upgradingAll ? t("pkgmgr2.upgradingAll") : t("pkgmgr2.upgradeAll", { count: outdatedCount })}
             </button>
           )}
 
@@ -154,7 +156,7 @@ export default function PkgManager() {
             className="flex items-center gap-2 px-3.5 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs border border-white/5 cursor-pointer transition-all"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-            刷新
+            {t("pkgmgr2.refresh")}
           </button>
         </div>
       </div>
@@ -173,11 +175,11 @@ export default function PkgManager() {
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-white/3 border-b border-white/5 text-slate-400 font-semibold">
-                <th className="p-4">依赖包名称</th>
-                <th className="p-4 w-32">当前安装版本</th>
-                <th className="p-4 w-32">最新可用版本</th>
-                <th className="p-4 w-28">更新状态</th>
-                <th className="p-4 w-28 text-center">操作</th>
+                <th className="p-4">{t("pkgmgr2.colPkg")}</th>
+                <th className="p-4 w-32">{t("pkgmgr2.colCurrent")}</th>
+                <th className="p-4 w-32">{t("pkgmgr2.colLatest")}</th>
+                <th className="p-4 w-28">{t("pkgmgr2.colStatus")}</th>
+                <th className="p-4 w-28 text-center">{t("pkgmgr2.colOps")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
@@ -185,13 +187,13 @@ export default function PkgManager() {
                 <tr>
                   <td colSpan={5} className="p-12 text-center text-slate-500 font-medium">
                     <RefreshCw className="w-6 h-6 animate-spin text-blue-400 mx-auto mb-3" />
-                    正在扫描全局依赖包列表...
+                    {t("pkgmgr2.scanning")}
                   </td>
                 </tr>
               ) : packages.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="p-12 text-center text-slate-500">
-                    无全局包依赖或环境未就绪
+                    {t("pkgmgr2.noPkgs")}
                   </td>
                 </tr>
               ) : (
@@ -202,7 +204,7 @@ export default function PkgManager() {
                       <td className="p-4 font-semibold text-slate-200">
                         <button
                           onClick={() => openUrl(pkg.homepage)}
-                          title={`在浏览器打开官网: ${pkg.homepage}`}
+                          title={t("pkgmgr2.openHome", { name: pkg.homepage })}
                           className="inline-flex items-center gap-1.5 hover:text-blue-400 transition-colors cursor-pointer group"
                         >
                           {pkg.name}
@@ -220,10 +222,10 @@ export default function PkgManager() {
                             className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-[10px] font-semibold cursor-pointer transition-all flex items-center justify-center gap-1 mx-auto"
                           >
                             <ArrowUpCircle className="w-3.5 h-3.5" />
-                            {isUpgrading ? "升级中..." : "升级包"}
+                            {isUpgrading ? t("pkgmgr2.upgrading") : t("pkgmgr2.upgradeBtn")}
                           </button>
                         ) : (
-                          <span className="text-[10px] text-slate-600">无需更新</span>
+                          <span className="text-[10px] text-slate-600">{t("pkgmgr2.noUpdate")}</span>
                         )}
                       </td>
                     </tr>

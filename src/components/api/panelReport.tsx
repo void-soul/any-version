@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { LoadTestReport } from "./types";
 
 // ─── 压测报告视图 ───
@@ -11,6 +12,7 @@ export function StatCard({ label, value, accent }: { label: string; value: strin
 }
 
 export function TimelineChart({ report }: { report: LoadTestReport }) {
+  const { t } = useTranslation();
   const maxQps = Math.max(1, ...report.timeline.map((t) => t.qps));
   const maxFail = Math.max(1, ...report.timeline.map((t) => t.failed));
   const maxMs = Math.max(1, ...report.timeline.map((t) => t.avg_ms));
@@ -62,30 +64,31 @@ export function TimelineChart({ report }: { report: LoadTestReport }) {
         <rect x={4} y={chartBottom + 8} width={8} height={6} fill="rgba(6,182,212,0.5)" rx={1} />
         <text x={15} y={chartBottom + 14}>QPS</text>
         <rect x={44} y={chartBottom + 8} width={8} height={6} fill="rgba(244,63,94,0.6)" rx={1} />
-        <text x={55} y={chartBottom + 14}>失败</text>
+        <text x={55} y={chartBottom + 14}>{t("report.legendFailed")}</text>
         <line x1={86} y1={chartBottom + 11} x2={100} y2={chartBottom + 11} stroke="#34d399" strokeWidth="1.4" />
-        <text x={104} y={chartBottom + 14}>成功率</text>
+        <text x={104} y={chartBottom + 14}>{t("report.legendSuccessRate")}</text>
         <line x1={142} y1={chartBottom + 11} x2={156} y2={chartBottom + 11} stroke="#fbbf24" strokeWidth="1.4" />
-        <text x={160} y={chartBottom + 14}>平均延迟</text>
-        <text x={width - 4} y={chartBottom + 14} textAnchor="end">峰值 {maxQps.toFixed(0)} QPS · 峰值延迟 {maxMs.toFixed(0)}ms</text>
+        <text x={160} y={chartBottom + 14}>{t("report.legendLatency")}</text>
+        <text x={width - 4} y={chartBottom + 14} textAnchor="end">{t("report.peakInfo", { qps: maxQps.toFixed(0), ms: maxMs.toFixed(0) })}</text>
       </g>
     </svg>
   );
 }
 
 export function LoadReportView({ report }: { report: LoadTestReport }) {
+  const { t } = useTranslation();
   const errRate = (report.error_rate * 100).toFixed(2);
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-4 gap-1.5">
-        <StatCard label="总请求" value={String(report.total)} />
-        <StatCard label="成功" value={String(report.success)} accent="#34d399" />
-        <StatCard label="失败" value={String(report.failed)} accent={report.failed > 0 ? "#fb7185" : undefined} />
-        <StatCard label="错误率" value={`${errRate}%`} accent={report.error_rate > 0.05 ? "#fb7185" : "#34d399"} />
-        <StatCard label="QPS 平均" value={report.qps_avg.toFixed(1)} accent="#22d3ee" />
-        <StatCard label="QPS 峰值" value={report.qps_max.toFixed(1)} />
-        <StatCard label="平均延迟" value={`${report.latency_avg_ms.toFixed(1)}ms`} />
-        <StatCard label="最大延迟" value={`${report.latency_max_ms.toFixed(1)}ms`} />
+        <StatCard label={t("report.total")} value={String(report.total)} />
+        <StatCard label={t("report.success")} value={String(report.success)} accent="#34d399" />
+        <StatCard label={t("report.failed")} value={String(report.failed)} accent={report.failed > 0 ? "#fb7185" : undefined} />
+        <StatCard label={t("report.errorRate")} value={`${errRate}%`} accent={report.error_rate > 0.05 ? "#fb7185" : "#34d399"} />
+        <StatCard label={t("report.qpsAvg")} value={report.qps_avg.toFixed(1)} accent="#22d3ee" />
+        <StatCard label={t("report.qpsPeak")} value={report.qps_max.toFixed(1)} />
+        <StatCard label={t("report.latencyAvg")} value={`${report.latency_avg_ms.toFixed(1)}ms`} />
+        <StatCard label={t("report.latencyMax")} value={`${report.latency_max_ms.toFixed(1)}ms`} />
         <StatCard label="p50" value={`${report.latency_p50_ms.toFixed(1)}ms`} />
         <StatCard label="p90" value={`${report.latency_p90_ms.toFixed(1)}ms`} />
         <StatCard label="p95" value={`${report.latency_p95_ms.toFixed(1)}ms`} />

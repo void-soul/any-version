@@ -26,6 +26,7 @@ import {
   Cable,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import i18n from "./i18n";
 
 /**
  * 统一模块注册表：Kira 的所有模块都是「平级」的，
@@ -271,6 +272,21 @@ export const MODULES: ModuleDef[] = [
 export const MODULE_MAP: Record<string, ModuleDef> = Object.fromEntries(
   MODULES.map((m) => [m.id, m])
 );
+
+/**
+ * 模块显示名：优先取 i18n 翻译（modules.<id>），翻译缺失时回退注册表里的 label。
+ * 避免在导航/设置等高频处硬编码，切换语言后模块名即时更新。
+ */
+export function moduleLabel(id: string): string {
+  const key = `modules.${id}`;
+  try {
+    const translated = i18n.t(key);
+    if (translated && translated !== key) return translated;
+  } catch {
+    /* 忽略：回退注册表 label */
+  }
+  return MODULE_MAP[id]?.label ?? id;
+}
 
 /** 默认模块顺序（未自定义时） */
 export const DEFAULT_MODULE_ORDER: string[] = MODULES.map((m) => m.id);

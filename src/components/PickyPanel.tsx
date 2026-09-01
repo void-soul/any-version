@@ -1,5 +1,6 @@
 // Picky 模块面板：收藏 / 归档页面（与 Flutter 端 picky 同一数据接口 + S3 云同步）
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -108,6 +109,7 @@ function hostOf(url?: string | null): string {
 type Tab = "all" | "active" | "archived";
 
 export default function PickyPanel() {
+  const { t } = useTranslation();
   const [state, setState] = useState<PickyState>({
     bookmarks: [],
     comments: [],
@@ -133,7 +135,7 @@ export default function PickyPanel() {
       setState(s);
     } catch (e) {
       console.error("加载 Picky 失败", e);
-      setNotice(`加载失败：${e}`);
+      setNotice(t("picky.loadFail", { err: String(e) }));
     } finally {
       setLoading(false);
     }
@@ -192,7 +194,7 @@ export default function PickyPanel() {
 
   // 打开链接
   const openLink = (url?: string | null) => {
-    if (url) openUrl(url).catch((e) => flash(`打开链接失败：${e}`));
+    if (url) openUrl(url).catch((e) => flash(t("picky.openLinkFail", { err: String(e) })));
   };
 
   // 添加 / 编辑
@@ -231,7 +233,7 @@ export default function PickyPanel() {
       setEditing(null);
       await load();
     } catch (e) {
-      flash(`保存失败：${e}`);
+      flash(t("picky.saveFail", { err: String(e) }));
     } finally {
       setBusy(false);
     }
@@ -242,29 +244,29 @@ export default function PickyPanel() {
       await invoke("picky_set_refined", { id: b.id, refined });
       await load();
     } catch (e) {
-      flash(`操作失败：${e}`);
+      flash(t("picky.opFail", { err: String(e) }));
     }
   };
 
   const refetchBookmark = async (b: PickyBookmark) => {
     try {
-      flash(`正在重新抓取「${b.title}」的元数据…`);
+      flash(t("picky.refetching", { title: b.title }));
       await invoke("picky_refetch_metadata", { id: b.id });
       await load();
-      flash(`已更新「${b.title}」的元数据`);
+      flash(t("picky.refetched", { title: b.title }));
     } catch (e) {
-      flash(`重新抓取失败：${e}`);
+      flash(t("picky.refetchFail", { err: String(e) }));
     }
   };
 
   const removeBookmark = (b: PickyBookmark) => {
     setConfirm({
-      title: "删除收藏",
-      message: `确定删除「${b.title}」？其评论与标签关联也会一并删除。`,
+      title: t("picky.delBookmarkTitle"),
+      message: t("picky.delBookmarkMsg", { title: b.title }),
       onConfirm: async () => {
         await invoke("picky_delete_bookmark", { id: b.id });
         await load();
-        flash("已删除");
+        flash(t("picky.deleted"));
       },
     });
   };
@@ -276,14 +278,14 @@ export default function PickyPanel() {
       await invoke("picky_add_comment", { bookmarkId, content, parentId: parentId || null });
       await load();
     } catch (e) {
-      flash(`评论失败：${e}`);
+      flash(t("picky.commentFail", { err: String(e) }));
     }
   };
 
   const removeComment = (c: PickyComment) => {
     setConfirm({
-      title: "删除评论",
-      message: "确定删除这条评论？（其回复会一并删除）",
+      title: t("picky.delCommentTitle"),
+      message: t("picky.delCommentMsg"),
       onConfirm: async () => {
         await invoke("picky_delete_comment", { id: c.id });
         await load();
@@ -293,7 +295,7 @@ export default function PickyPanel() {
 
   // 标签
   const toggleTag = async (bookmarkId: string, tagId: string) => {
-    await invoke("picky_toggle_bookmark_tag", { bookmarkId, tagId }).catch((e) => flash(`标签操作失败：${e}`));
+    await invoke("picky_toggle_bookmark_tag", { bookmarkId, tagId }).catch((e) => flash(t("picky.tagOpFail", { err: String(e) })));
     await load();
   };
 
@@ -302,16 +304,16 @@ export default function PickyPanel() {
       await invoke("picky_add_tag", { name });
       await load();
     } catch (e) {
-      flash(`新建标签失败：${e}`);
+      flash(t("picky.newTagFail", { err: String(e) }));
     }
   };
 
-  const removeTag = (t: PickyTag) => {
+  const removeTag = (tag: PickyTag) => {
     setConfirm({
-      title: "删除标签",
-      message: `确定删除标签「#${t.name}」？`,
+      title: t("picky.delTagTitle"),
+      message: t("picky.delTagMsg", { name: tag.name }),
       onConfirm: async () => {
-        await invoke("picky_delete_tag", { id: t.id });
+        await invoke("picky_delete_tag", { id: tag.id });
         await load();
       },
     });
@@ -322,8 +324,8 @@ export default function PickyPanel() {
       {/* 头部 */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 flex-shrink-0">
         <Bookmark className="w-4 h-4 text-[var(--module-accent)]" />
-        <span className="text-sm font-bold text-white">Picky 收藏</span>
-        <span className="text-[10px] text-slate-500">{state.bookmarks.length} 条</span>
+        <span className="text-sm font-bold text-white">{t("picky.title")}</span>
+        <span className="text-[10px] text-slate-500">{t("picky.count", { count: state.bookmarks.length })}</span>
         <div className="flex-1" />
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500 pointer-events-none" />
@@ -331,7 +333,7 @@ export default function PickyPanel() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜索标题 / 链接 / 标签"
+            placeholder={t("picky.searchPh")}
             className="glass-input pl-7 pr-2 py-1.5 text-xs bg-black/30 border border-white/10 rounded-lg w-52 focus:outline-none focus:border-[var(--module-accent)]/50"
           />
         </div>
@@ -339,7 +341,7 @@ export default function PickyPanel() {
         <div className="flex items-center gap-0.5 border border-white/10 rounded-lg p-0.5 flex-shrink-0">
           <button
             onClick={() => setViewMode("row")}
-            title="列表视图：一行一条，仅标题与操作"
+            title={t("picky.listViewTitle")}
             className={`p-1.5 rounded-md transition cursor-pointer flex items-center ${
               viewMode === "row" ? "bg-[var(--module-accent)]/20 text-[var(--module-accent)]" : "text-slate-500 hover:text-white hover:bg-white/10"
             }`}
@@ -348,7 +350,7 @@ export default function PickyPanel() {
           </button>
           <button
             onClick={() => setViewMode("grid")}
-            title="块状视图：一行多个信息块"
+            title={t("picky.gridViewTitle")}
             className={`p-1.5 rounded-md transition cursor-pointer flex items-center ${
               viewMode === "grid" ? "bg-[var(--module-accent)]/20 text-[var(--module-accent)]" : "text-slate-500 hover:text-white hover:bg-white/10"
             }`}
@@ -359,9 +361,9 @@ export default function PickyPanel() {
         <button
           onClick={() => setShowSync(true)}
           className="px-2.5 py-1.5 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition"
-          title="S3 云同步设置与操作"
+          title={t("picky.syncTitle")}
         >
-          <Cloud className="w-3 h-3" /> 同步
+          <Cloud className="w-3 h-3" /> {t("picky.sync")}
         </button>
         <button
           onClick={() => {
@@ -370,7 +372,7 @@ export default function PickyPanel() {
           }}
           className="px-2.5 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition"
         >
-          <Plus className="w-3 h-3" /> 添加收藏
+          <Plus className="w-3 h-3" /> {t("picky.add")}
         </button>
       </div>
 
@@ -378,9 +380,9 @@ export default function PickyPanel() {
       <div className="flex items-center gap-1 px-4 py-2 border-b border-white/5 flex-shrink-0">
         {(
           [
-            ["all", `全部 (${counts.all})`],
-            ["active", `收藏中 (${counts.active})`],
-            ["archived", `已归档 (${counts.archived})`],
+            ["all", t("picky.tabAll", { count: counts.all })],
+            ["active", t("picky.tabActive", { count: counts.active })],
+            ["archived", t("picky.tabArchived", { count: counts.archived })],
           ] as [Tab, string][]
         ).map(([t, label]) => (
           <button
@@ -408,13 +410,13 @@ export default function PickyPanel() {
       <div className="flex-1 overflow-y-auto p-4">
         {loading ? (
           <div className="h-full flex items-center justify-center text-slate-500 text-xs gap-2">
-            <Loader2 className="w-4 h-4 animate-spin" /> 加载中…
+            <Loader2 className="w-4 h-4 animate-spin" /> {t("picky.loading")}
           </div>
         ) : filtered.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-3">
             <Globe className="w-10 h-10 text-slate-600" />
             <p className="text-xs">
-              {state.bookmarks.length === 0 ? "还没有收藏，点击「添加收藏」开始，或从云端同步" : "没有匹配的收藏"}
+              {state.bookmarks.length === 0 ? t("picky.emptyAll") : t("picky.emptyFiltered")}
             </p>
           </div>
         ) : (
@@ -522,7 +524,7 @@ export default function PickyPanel() {
                 onClick={() => setConfirm(null)}
                 className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer"
               >
-                取消
+                {t("picky.cancel")}
               </button>
               <button
                 onClick={() => {
@@ -532,7 +534,7 @@ export default function PickyPanel() {
                 }}
                 className="px-3 py-1.5 rounded-lg text-[11px] bg-red-500/90 text-white font-semibold cursor-pointer hover:bg-red-500"
               >
-                确定
+                {t("picky.confirm")}
               </button>
             </div>
           </div>
@@ -573,6 +575,7 @@ function BookmarkCard({
   onDeleteComment: (c: PickyComment) => void;
   onRefetch: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       className={`rounded-xl border p-3 transition ${
@@ -591,9 +594,9 @@ function BookmarkCard({
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-[13px] font-semibold text-white truncate">{b.title || "未命名"}</span>
+            <span className="text-[13px] font-semibold text-white truncate">{b.title || t("picky.unnamed")}</span>
             {b.refined && (
-              <span className="text-[8px] px-1.5 py-0.5 rounded bg-white/10 text-slate-400 flex-shrink-0">已归档</span>
+              <span className="text-[8px] px-1.5 py-0.5 rounded bg-white/10 text-slate-400 flex-shrink-0">{t("picky.archived")}</span>
             )}
           </div>
           {b.url && (
@@ -608,8 +611,8 @@ function BookmarkCard({
           )}
           {b.description && <p className="text-[10px] text-slate-500 line-clamp-2 mt-0.5">{b.description}</p>}
           <div className="flex items-center gap-2 mt-1 text-[9px] text-slate-600">
-            <span>收藏于 {fmtTime(b.createdAt)}</span>
-            {b.updatedAt !== b.createdAt && <span>· 更新于 {fmtTime(b.updatedAt)}</span>}
+            <span>{t("picky.savedAt", { time: fmtTime(b.createdAt) })}</span>
+            {b.updatedAt !== b.createdAt && <span>{t("picky.updatedAt", { time: fmtTime(b.updatedAt) })}</span>}
           </div>
 
           {/* 标签 */}
@@ -630,26 +633,26 @@ function BookmarkCard({
 
         {/* 操作 */}
         <div className="flex items-center gap-0.5 flex-shrink-0">
-          <IconBtn title="打开链接" onClick={onOpen}>
+          <IconBtn title={t("picky.openLink")} onClick={onOpen}>
             <ExternalLink className="w-3 h-3" />
           </IconBtn>
-          <IconBtn title={expanded ? "收起评论" : `评论 (${comments.length})`} onClick={onToggleExpand} active={expanded}>
+          <IconBtn title={expanded ? t("picky.collapseComments") : t("picky.commentsCollapsed", { count: comments.length })} onClick={onToggleExpand} active={expanded}>
             <MessageSquare className="w-3 h-3" />
             <span className="text-[9px]">{comments.length > 0 ? comments.length : ""}</span>
           </IconBtn>
-          <IconBtn title="重新抓取元数据（支持 JS 渲染页面）" onClick={onRefetch}>
+          <IconBtn title={t("picky.refetch")} onClick={onRefetch}>
             <RefreshCw className="w-3 h-3" />
           </IconBtn>
-          <IconBtn title="标签" onClick={onTags}>
+          <IconBtn title={t("picky.tags")} onClick={onTags}>
             <Tag className="w-3 h-3" />
           </IconBtn>
-          <IconBtn title={b.refined ? "取消归档（移回收藏）" : "归档（炼化）"} onClick={onArchive}>
+          <IconBtn title={b.refined ? t("picky.unarchive") : t("picky.archive")} onClick={onArchive}>
             {b.refined ? <ArchiveRestore className="w-3 h-3" /> : <Archive className="w-3 h-3" />}
           </IconBtn>
-          <IconBtn title="编辑" onClick={onEdit}>
+          <IconBtn title={t("picky.edit")} onClick={onEdit}>
             <Pencil className="w-3 h-3" />
           </IconBtn>
-          <IconBtn title="删除" onClick={onDelete} danger>
+          <IconBtn title={t("picky.delete")} onClick={onDelete} danger>
             <Trash2 className="w-3 h-3" />
           </IconBtn>
         </div>
@@ -681,6 +684,7 @@ function BookmarkRow(props: {
   onDeleteComment: (c: PickyComment) => void;
   onRefetch: () => void;
 }) {
+  const { t } = useTranslation();
   const {
     bookmark: b,
     comments,
@@ -711,31 +715,31 @@ function BookmarkRow(props: {
           )}
         </div>
         <span className="text-xs font-semibold text-white truncate flex-1 min-w-0" title={b.title}>
-          {b.title || "未命名"}
+          {b.title || t("picky.unnamed")}
         </span>
         {b.refined && (
-          <span className="text-[8px] px-1.5 py-0.5 rounded bg-white/10 text-slate-400 flex-shrink-0">已归档</span>
+          <span className="text-[8px] px-1.5 py-0.5 rounded bg-white/10 text-slate-400 flex-shrink-0">{t("picky.archived")}</span>
         )}
         <div className="flex items-center gap-0.5 flex-shrink-0">
-          <IconBtn title="打开链接" onClick={onOpen}>
+          <IconBtn title={t("picky.openLink")} onClick={onOpen}>
             <ExternalLink className="w-3 h-3" />
           </IconBtn>
-          <IconBtn title={expanded ? "收起评论" : `评论 (${comments.length})`} onClick={onToggleExpand} active={expanded}>
+          <IconBtn title={expanded ? t("picky.collapseComments") : t("picky.commentsCollapsed", { count: comments.length })} onClick={onToggleExpand} active={expanded}>
             <MessageSquare className="w-3 h-3" />
             <span className="text-[9px]">{comments.length > 0 ? comments.length : ""}</span>
-          </IconBtn>          <IconBtn title="重新抓取元数据（支持 JS 渲染页面）" onClick={onRefetch}>
+          </IconBtn>          <IconBtn title={t("picky.refetch")} onClick={onRefetch}>
             <RefreshCw className="w-3 h-3" />
           </IconBtn>
-          <IconBtn title="标签" onClick={onTags}>
+          <IconBtn title={t("picky.tags")} onClick={onTags}>
             <Tag className="w-3 h-3" />
           </IconBtn>
-          <IconBtn title={b.refined ? "取消归档（移回收藏）" : "归档（炼化）"} onClick={onArchive}>
+          <IconBtn title={b.refined ? t("picky.unarchive") : t("picky.archive")} onClick={onArchive}>
             {b.refined ? <ArchiveRestore className="w-3 h-3" /> : <Archive className="w-3 h-3" />}
           </IconBtn>
-          <IconBtn title="编辑" onClick={onEdit}>
+          <IconBtn title={t("picky.edit")} onClick={onEdit}>
             <Pencil className="w-3 h-3" />
           </IconBtn>
-          <IconBtn title="删除" onClick={onDelete} danger>
+          <IconBtn title={t("picky.delete")} onClick={onDelete} danger>
             <Trash2 className="w-3 h-3" />
           </IconBtn>
         </div>
@@ -764,6 +768,7 @@ function CommentBlock({
   onSubmit: (content: string, parentId?: string) => void;
   onDelete: (c: PickyComment) => void;
 }) {
+  const { t } = useTranslation();
   const [commentText, setCommentText] = useState("");
   const [replyTo, setReplyTo] = useState<PickyComment | null>(null);
 
@@ -779,7 +784,7 @@ function CommentBlock({
 
   return (
     <div className="space-y-2">
-      {comments.length === 0 && <p className="text-[10px] text-slate-600">还没有评论</p>}
+      {comments.length === 0 && <p className="text-[10px] text-slate-600">{t("picky.noComments")}</p>}
       {topLevel.map((c) => (
         <div key={c.id} className="space-y-1.5">
           <CommentRow comment={c} depth={0} onReply={() => setReplyTo(replyTo?.id === c.id ? null : c)} onDelete={() => onDelete(c)} />
@@ -793,12 +798,12 @@ function CommentBlock({
           value={commentText}
           onChange={(e) => setCommentText(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submitComment()}
-          placeholder={replyTo ? `回复「${replyTo.content.slice(0, 20)}」…` : "写评论…"}
+          placeholder={replyTo ? t("picky.replyPh", { text: replyTo.content.slice(0, 20) }) : t("picky.commentPh")}
           className="flex-1 glass-input px-2.5 py-1.5 text-[11px] bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-[var(--module-accent)]/50"
         />
         {replyTo && (
           <button onClick={() => setReplyTo(null)} className="text-[10px] text-slate-500 hover:text-slate-300 cursor-pointer">
-            取消
+            {t("picky.cancel")}
           </button>
         )}
         <button
@@ -824,6 +829,7 @@ function CommentRow({
   onReply?: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       className="rounded-lg bg-white/[0.02] border border-white/5 p-2"
@@ -836,7 +842,7 @@ function CommentRow({
             <span>{fmtTime(comment.createdAt)}</span>
             {depth === 0 && onReply && (
               <button onClick={onReply} className="flex items-center gap-0.5 hover:text-slate-300 cursor-pointer">
-                <Reply className="w-2.5 h-2.5" /> 回复
+                <Reply className="w-2.5 h-2.5" /> {t("picky.reply")}
               </button>
             )}
           </div>
@@ -844,7 +850,7 @@ function CommentRow({
         <button
           onClick={onDelete}
           className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-red-500/10 cursor-pointer flex-shrink-0"
-          title="删除评论"
+          title={t("picky.delComment")}
         >
           <Trash2 className="w-2.5 h-2.5" />
         </button>
@@ -892,6 +898,7 @@ function BookmarkModal({
   onSave: (input: { id?: string; title: string; url: string; description: string }) => void;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const [title, setTitle] = useState(bookmark?.title || "");
   const [url, setUrl] = useState(bookmark?.url || "");
   const [description, setDescription] = useState(bookmark?.description || "");
@@ -926,18 +933,18 @@ function BookmarkModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-bold text-white">{bookmark ? "编辑收藏" : "添加收藏"}</h3>
+          <h3 className="text-sm font-bold text-white">{bookmark ? t("picky.editBookmark") : t("picky.addBookmark")}</h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/10 text-slate-400 cursor-pointer">
             <X className="w-4 h-4" />
           </button>
         </div>
         <div className="space-y-3">
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">标题</label>
+            <label className="text-[10px] text-slate-400 mb-1 block">{t("picky.titleLabel")}</label>
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="页面标题（留空则自动抓取或使用 URL）"
+              placeholder={t("picky.titlePh")}
               className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-[var(--module-accent)]/50"
             />
           </div>
@@ -956,17 +963,17 @@ function BookmarkModal({
                   disabled={fetching || !url.trim()}
                   className="px-3 py-2 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 cursor-pointer disabled:opacity-50 flex items-center gap-1 flex-shrink-0"
                 >
-                  {fetching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Globe className="w-3 h-3" />} 抓取
+                  {fetching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Globe className="w-3 h-3" />} {t("picky.fetch")}
                 </button>
               )}
             </div>
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">描述（可选）</label>
+            <label className="text-[10px] text-slate-400 mb-1 block">{t("picky.descLabel")}</label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="备注 / 摘要"
+              placeholder={t("picky.descPh")}
               rows={3}
               className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-[var(--module-accent)]/50 resize-none"
             />
@@ -974,14 +981,14 @@ function BookmarkModal({
         </div>
         <div className="flex justify-end gap-2 mt-4">
           <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer">
-            取消
+            {t("picky.cancel")}
           </button>
           <button
             onClick={submit}
             disabled={busy || (!title.trim() && !url.trim())}
             className="px-4 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
           >
-            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} 保存
+            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {t("picky.save")}
           </button>
         </div>
       </div>
@@ -1008,6 +1015,7 @@ function TagModal({
   onDelete: (t: PickyTag) => void;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const [newName, setNewName] = useState("");
 
   const submit = () => {
@@ -1023,32 +1031,32 @@ function TagModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-1">
-          <h3 className="text-sm font-bold text-white">标签</h3>
+          <h3 className="text-sm font-bold text-white">{t("picky.tagsTitle")}</h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/10 text-slate-400 cursor-pointer">
             <X className="w-4 h-4" />
           </button>
         </div>
-        <p className="text-[10px] text-slate-500 mb-3 truncate">「{bookmark.title}」 · 点击标签切换关联</p>
+        <p className="text-[10px] text-slate-500 mb-3 truncate">{t("picky.tagsHint", { title: bookmark.title })}</p>
 
         <div className="flex flex-wrap gap-1.5 min-h-[40px] max-h-[200px] overflow-y-auto mb-3">
-          {allTags.length === 0 && <p className="text-[10px] text-slate-600">还没有标签，在下方新建</p>}
-          {allTags.map((t) => {
-            const on = selectedIds.includes(t.id);
+          {allTags.length === 0 && <p className="text-[10px] text-slate-600">{t("picky.noTags")}</p>}
+          {allTags.map((tg) => {
+            const on = selectedIds.includes(tg.id);
             return (
-              <span key={t.id} className="inline-flex items-center gap-1">
+              <span key={tg.id} className="inline-flex items-center gap-1">
                 <button
-                  onClick={() => onToggle(t.id)}
+                  onClick={() => onToggle(tg.id)}
                   className={`vex-chip px-2.5 py-1 rounded-full text-[10px] border transition-colors cursor-pointer ${
                     on ? "bg-white/10 border-white/30 text-white" : "bg-white/[0.03] border-white/10 text-slate-400 hover:border-white/25"
                   }`}
-                  style={on ? { background: `${t.color}33`, borderColor: `${t.color}66`, color: t.color } : undefined}
+                  style={on ? { background: `${tg.color}33`, borderColor: `${tg.color}66`, color: tg.color } : undefined}
                 >
-                  {on ? "✓ " : ""}#{t.name}
+                  {on ? "✓ " : ""}#{tg.name}
                 </button>
                 <button
-                  onClick={() => onDelete(t)}
+                  onClick={() => onDelete(tg)}
                   className="p-0.5 text-slate-600 hover:text-red-400 cursor-pointer"
-                  title={`删除标签 #${t.name}`}
+                  title={t("picky.delTag", { name: tg.name })}
                 >
                   <Trash2 className="w-2.5 h-2.5" />
                 </button>
@@ -1062,7 +1070,7 @@ function TagModal({
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && submit()}
-            placeholder="新建标签名"
+            placeholder={t("picky.newTagPh")}
             className="flex-1 glass-input px-3 py-1.5 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-[var(--module-accent)]/50"
           />
           <button
@@ -1070,7 +1078,7 @@ function TagModal({
             disabled={!newName.trim()}
             className="px-3 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
           >
-            <Plus className="w-3 h-3" /> 新建
+            <Plus className="w-3 h-3" /> {t("picky.new")}
           </button>
         </div>
       </div>
@@ -1081,6 +1089,7 @@ function TagModal({
 // ─── 云同步设置 ───
 
 function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: string) => void }) {
+  const { t } = useTranslation();
   const [cfg, setCfg] = useState<PickySyncConfig | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -1088,14 +1097,14 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
   useEffect(() => {
     invoke<PickySyncConfig>("picky_get_sync_config")
       .then(setCfg)
-      .catch((e) => setMsg(`读取配置失败：${e}`));
+      .catch((e) => setMsg(t("picky.readCfgFail", { err: String(e) })));
   }, []);
 
   if (!cfg) {
     return (
-      <ModalShell onClose={onClose} title="云同步（S3）">
+      <ModalShell onClose={onClose} title={t("picky.syncModalTitle")}>
         <div className="flex items-center gap-2 text-xs text-slate-500">
-          <Loader2 className="w-4 h-4 animate-spin" /> 加载配置…
+          <Loader2 className="w-4 h-4 animate-spin" /> {t("picky.loadingCfg")}
         </div>
       </ModalShell>
     );
@@ -1105,16 +1114,16 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
 
   const save = async () => {
     if (!cfg.enabled) {
-      setMsg("请先勾选「启用云同步」才能保存参数");
+      setMsg(t("picky.needEnableSave"));
       return;
     }
     setBusy(true);
     setMsg("");
     try {
       await invoke("picky_save_sync_config", { config: cfg });
-      setMsg("配置已保存");
+      setMsg(t("picky.cfgSaved"));
     } catch (e) {
-      setMsg(`保存失败：${e}`);
+      setMsg(t("picky.saveFail", { err: String(e) }));
     } finally {
       setBusy(false);
     }
@@ -1123,7 +1132,7 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
   // 一个「同步」按钮 = 内部双向合并：先拉取云端合并到本地，再上传合并结果。
   const syncNow = async () => {
     if (!cfg.enabled) {
-      setMsg("请先勾选「启用云同步」再执行同步");
+      setMsg(t("picky.needEnableSync"));
       return;
     }
     setBusy(true);
@@ -1134,7 +1143,7 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
       setMsg(res);
       onDone(res);
     } catch (e) {
-      setMsg(`同步失败：${e}`);
+      setMsg(t("picky.syncFail", { err: String(e) }));
     } finally {
       setBusy(false);
     }
@@ -1143,7 +1152,7 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
   const field = "w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-[var(--module-accent)]/50";
 
   return (
-    <ModalShell onClose={onClose} title="云同步（S3 兼容存储）">
+    <ModalShell onClose={onClose} title={t("picky.syncModalTitle2")}>
       <div className="space-y-3">
         <label className="flex items-center gap-2 text-[11px] text-slate-300 cursor-pointer">
           <input
@@ -1152,17 +1161,17 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
             onChange={(e) => set("enabled", e.target.checked)}
             className="accent-[var(--module-accent)]"
           />
-          启用云同步
+          {t("picky.enableSync")}
         </label>
         {!cfg.enabled && (
           <p className="text-[10px] text-amber-400/90 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-2">
-            ⚠ 云同步未启用：先勾选上方「启用云同步」，才能编辑参数、保存配置和执行同步
+            {t("picky.syncDisabledWarn")}
           </p>
         )}
-        {cfg.lastSyncAt && <p className="text-[10px] text-slate-500">上次同步：{fmtTime(cfg.lastSyncAt)}</p>}
+        {cfg.lastSyncAt && <p className="text-[10px] text-slate-500">{t("picky.lastSync", { time: fmtTime(cfg.lastSyncAt) })}</p>}
 
         <div>
-          <label className="text-[10px] text-slate-400 mb-1 block">Endpoint（如 https://s3.amazonaws.com 或 MinIO 地址）</label>
+          <label className="text-[10px] text-slate-400 mb-1 block">{t("picky.endpointLabel")}</label>
           <input value={cfg.endpoint || ""} onChange={(e) => set("endpoint", e.target.value)} placeholder="https://s3.example.com" disabled={!cfg.enabled} className={field} />
         </div>
         <div className="grid grid-cols-2 gap-2">
@@ -1180,7 +1189,7 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
           <input value={cfg.accessKeyId} onChange={(e) => set("accessKeyId", e.target.value)} disabled={!cfg.enabled} className={field} />
         </div>
         <div>
-          <label className="text-[10px] text-slate-400 mb-1 block">SecretKey（加密存储）</label>
+          <label className="text-[10px] text-slate-400 mb-1 block">{t("picky.secretKey")}</label>
           <input
             type="password"
             value={cfg.secretAccessKey}
@@ -1191,15 +1200,15 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">前缀（可选）</label>
+            <label className="text-[10px] text-slate-400 mb-1 block">{t("picky.prefix")}</label>
             <input value={cfg.prefix || ""} onChange={(e) => set("prefix", e.target.value)} placeholder="picky/" disabled={!cfg.enabled} className={field} />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">寻址风格</label>
+            <label className="text-[10px] text-slate-400 mb-1 block">{t("picky.addrStyle")}</label>
             <select value={cfg.addressingStyle} onChange={(e) => set("addressingStyle", e.target.value)} disabled={!cfg.enabled} className={field}>
-              <option value="auto">auto（自动）</option>
-              <option value="path">path（路径式）</option>
-              <option value="virtual-host">virtual-host（虚拟主机式）</option>
+              <option value="auto">{t("picky.styleAuto")}</option>
+              <option value="path">{t("picky.stylePath")}</option>
+              <option value="virtual-host">{t("picky.styleVirtualHost")}</option>
             </select>
           </div>
         </div>
@@ -1211,12 +1220,11 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
             disabled={!cfg.enabled}
             className="accent-[var(--module-accent)]"
           />
-          校验 TLS 证书（自签名 / 内网 http 可关闭）
+          {t("picky.verifyTls")}
         </label>
 
         <p className="text-[10px] text-slate-600 leading-relaxed">
-          点击「同步」即完成双向合并：先拉取云端数据合并到本地（按更新时间后写覆盖），再上传合并后的
-          全量状态。两端各自增删改后点同步即可，不会互相覆盖、不丢数据。
+          {t("picky.syncDesc")}
         </p>
 
         {msg && <p className="text-[11px] text-[var(--module-accent)] break-words">{msg}</p>}
@@ -1227,14 +1235,14 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
             disabled={!cfg.enabled || busy}
             className="px-3 py-1.5 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 cursor-pointer disabled:opacity-50"
           >
-            保存配置
+            {t("picky.saveCfg")}
           </button>
           <button
             onClick={syncNow}
             disabled={!cfg.enabled || busy}
             className="px-4 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
           >
-            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Cloud className="w-3 h-3" />} 同步
+            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Cloud className="w-3 h-3" />} {t("picky.doSync")}
           </button>
         </div>
       </div>

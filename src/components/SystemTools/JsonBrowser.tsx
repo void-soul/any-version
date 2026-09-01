@@ -1,4 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { JsonFlowCanvas } from "../CanvasFlow";
 import MonacoEditor from "../shared/MonacoEditor";
 import { invoke } from "@tauri-apps/api/core";
@@ -260,6 +261,7 @@ function VirtualJsonTree({ value, searchMatches, collapsed, largeDocument, expan
   onToggle: (path: string) => void;
   onCopy: (value: string) => void;
 }) {
+  const { t } = useTranslation();
   const flat = useMemo(
     () => flattenTreeRows(value, searchMatches, collapsed, largeDocument, expandedPaths),
     [value, searchMatches, collapsed, largeDocument, expandedPaths],
@@ -312,8 +314,8 @@ function VirtualJsonTree({ value, searchMatches, collapsed, largeDocument, expan
                   type="button"
                   onClick={() => onToggle(row.path)}
                   className="flex h-4 w-4 items-center justify-center text-slate-500 hover:text-slate-200"
-                  aria-label={row.collapsed ? "展开" : "折叠"}
-                  title={row.collapsed ? "展开" : "折叠"}
+                  aria-label={row.collapsed ? t("jsonb.treeExpand") : t("jsonb.treeCollapse")}
+                  title={row.collapsed ? t("jsonb.treeExpand") : t("jsonb.treeCollapse")}
                 >
                   {row.collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                 </button>
@@ -330,8 +332,8 @@ function VirtualJsonTree({ value, searchMatches, collapsed, largeDocument, expan
                 type="button"
                 onClick={() => onCopy(copyValue(row.value))}
                 className="ml-1 opacity-0 transition-opacity group-hover:opacity-100 text-slate-500 hover:text-slate-200"
-                title={row.container ? "复制子树" : "复制值"}
-                aria-label={row.container ? "复制子树" : "复制值"}
+                title={row.container ? t("jsonb.copySubtree") : t("jsonb.copyValue")}
+                aria-label={row.container ? t("jsonb.copySubtree") : t("jsonb.copyValue")}
               >
                 <Copy className="h-3 w-3" />
               </button>
@@ -341,7 +343,7 @@ function VirtualJsonTree({ value, searchMatches, collapsed, largeDocument, expan
       </div>
       {flat.truncated && (
         <div className="sticky bottom-0 px-2 py-1 text-[10px] text-amber-200">
-          仅显示前 {rows.length.toLocaleString()} 行（超出部分已截断，请搜索或折叠以缩小范围）
+          {t("jsonb.truncated", { count: rows.length.toLocaleString() })}
         </div>
       )}
     </div>
@@ -349,6 +351,7 @@ function VirtualJsonTree({ value, searchMatches, collapsed, largeDocument, expan
 }
 
 export default function JsonBrowser() {
+  const { t } = useTranslation();
   const [tabs, setTabs] = useState<JsonTab[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("tree");
@@ -449,9 +452,9 @@ export default function JsonBrowser() {
     if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
   }, []);
 
-  const createTab = useCallback((name = "未命名.json", text = "") => {
+  const createTab = useCallback((name = t("jsonb.untitled"), text = "") => {
     if (tabs.length >= MAX_TABS) {
-      flash(`最多打开 ${MAX_TABS} 个文档`);
+      flash(t("jsonb.maxTabs", { max: MAX_TABS }));
       return null;
     }
     const id = `json-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -522,11 +525,11 @@ export default function JsonBrowser() {
       if (existing) {
         setActiveId(existing.id);
         updateActive({ text });
-        flash(`已重新加载 ${existing.name}`);
+        flash(t("jsonb.reloaded", { name: existing.name }));
         return;
       }
       if (tabs.length >= MAX_TABS) {
-        flash(`最多打开 ${MAX_TABS} 个文档`);
+        flash(t("jsonb.maxTabs", { max: MAX_TABS }));
         return;
       }
       const separator = path.includes("\\") ? "\\" : "/";
@@ -534,9 +537,9 @@ export default function JsonBrowser() {
       const id = `json-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       setTabs((previous) => [...previous, { id, path, name, text, savedText: text }]);
       setActiveId(id);
-      flash(`已打开 ${name}`);
+      flash(t("jsonb.opened", { name }));
     } catch (error) {
-      flash(`打开失败：${error instanceof Error ? error.message : String(error)}`);
+      flash(t("jsonb.openFailed", { err: error instanceof Error ? error.message : String(error) }));
     }
   }, [flash, tabs, updateActive]);
 
@@ -544,12 +547,12 @@ export default function JsonBrowser() {
     try {
       const selected = await open({
         multiple: false,
-        title: "打开 JSON 文档",
-        filters: [{ name: "JSON / Text", extensions: JSON_EXTENSIONS }],
+        title: t("jsonb.openTitle"),
+        filters: [{ name: t("jsonb.openFilter"), extensions: JSON_EXTENSIONS }],
       });
       if (typeof selected === "string") await openPath(selected);
     } catch (error) {
-      flash(`打开失败：${error instanceof Error ? error.message : String(error)}`);
+      flash(t("jsonb.openFailed", { err: error instanceof Error ? error.message : String(error) }));
     }
   }, [flash, openPath]);
 
@@ -559,9 +562,9 @@ export default function JsonBrowser() {
       let path = active.path;
       if (!path || saveAs) {
         const selected = await save({
-          title: saveAs ? "JSON 文档另存为" : "保存 JSON 文档",
+          title: saveAs ? t("jsonb.saveAsTitle") : t("jsonb.saveTitle"),
           defaultPath: active.name,
-          filters: [{ name: "JSON", extensions: ["json"] }],
+          filters: [{ name: t("jsonb.saveFilter"), extensions: ["json"] }],
         });
         if (typeof selected !== "string") return;
         path = selected;
@@ -569,21 +572,21 @@ export default function JsonBrowser() {
       await invoke("write_text_file", { path, content: active.text });
       const separator = path.includes("\\") ? "\\" : "/";
       updateActive({ path, name: path.slice(path.lastIndexOf(separator) + 1) || active.name, savedText: active.text });
-      flash(`已保存 ${path.slice(path.lastIndexOf(separator) + 1)}`);
+      flash(t("jsonb.saved", { name: path.slice(path.lastIndexOf(separator) + 1) }));
     } catch (error) {
-      flash(`保存失败：${error instanceof Error ? error.message : String(error)}`);
+      flash(t("jsonb.saveFailed", { err: error instanceof Error ? error.message : String(error) }));
     }
   }, [active, flash, updateActive]);
 
   const closeTab = useCallback((id: string) => {
     const target = tabs.find((tab) => tab.id === id);
     if (!target) return;
-    if (target.savedText !== null && target.savedText !== target.text && !window.confirm(`“${target.name}”有未保存修改，仍要关闭吗？`)) return;
+    if (target.savedText !== null && target.savedText !== target.text && !window.confirm(t("jsonb.unsavedClose", { name: target.name }))) return;
     const index = tabs.findIndex((tab) => tab.id === id);
     const next = tabs.filter((tab) => tab.id !== id);
     if (next.length === 0) {
       const newId = `json-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      setTabs([{ id: newId, path: null, name: "未命名.json", text: "", savedText: null }]);
+      setTabs([{ id: newId, path: null, name: t("jsonb.untitled"), text: "", savedText: null }]);
       setActiveId(newId);
       setCollapsed(new Set());
       return;
@@ -594,7 +597,7 @@ export default function JsonBrowser() {
 
   const applyParsed = useCallback((transform: (value: JsonValue) => JsonValue, pretty = true) => {
     if (parsed.value === null) {
-      flash("当前 JSON 无法解析");
+      flash(t("jsonb.invalidJson"));
       return;
     }
     updateActive({ text: JSON.stringify(transform(parsed.value), null, pretty ? 2 : 0) });
@@ -607,7 +610,7 @@ export default function JsonBrowser() {
   const escape = () => {
     if (!active?.text.trim()) return;
     updateActive({ text: JSON.stringify(active.text) });
-    flash("已转义为 JSON 字符串");
+    flash(t("jsonb.escaped"));
   };
 
   const unescape = () => {
@@ -615,9 +618,9 @@ export default function JsonBrowser() {
     try {
       const value = JSON.parse(active.text) as JsonValue;
       updateActive({ text: typeof value === "string" ? value : JSON.stringify(value, null, 2) });
-      flash("已取消转义");
+      flash(t("jsonb.unescaped"));
     } catch {
-      flash("取消转义失败：当前内容不是有效 JSON");
+      flash(t("jsonb.unescapeFailed"));
     }
   };
 
@@ -628,16 +631,16 @@ export default function JsonBrowser() {
       setCopyState(true);
       window.setTimeout(() => setCopyState(false), 1200);
     } catch {
-      flash("复制失败");
+      flash(t("jsonb.copyFailed"));
     }
   };
 
   const copyValue = async (value: string) => {
     try {
       await navigator.clipboard.writeText(value);
-      flash("已复制");
+      flash(t("jsonb.copied"));
     } catch {
-      flash("复制失败");
+      flash(t("jsonb.copyFailed"));
     }
   };
 
@@ -650,7 +653,7 @@ export default function JsonBrowser() {
       const id = createTab(file.name, text);
       if (id) setTabs((previous) => previous.map((tab) => tab.id === id ? { ...tab, savedText: text } : tab));
     } catch (error) {
-      flash(`读取拖放文件失败：${error instanceof Error ? error.message : String(error)}`);
+      flash(t("jsonb.dropFailed", { err: error instanceof Error ? error.message : String(error) }));
     }
   };
 
@@ -701,23 +704,23 @@ export default function JsonBrowser() {
   return (
     <div className="flex h-full min-h-0 flex-col bg-slate-950/30 text-slate-200" onDrop={handleDrop} onDragOver={(event) => event.preventDefault()}>
       <div className="flex min-h-11 flex-wrap items-center gap-1.5 border-b border-white/10 bg-slate-950/55 px-2.5 py-1.5">
-        <button type="button" className={iconButtonClass} onClick={() => createTab()} title="新建文档" aria-label="新建文档"><FilePlus2 className="h-3.5 w-3.5" /></button>
-        <button type="button" className={buttonClass} onClick={openFile}><FolderOpen className="h-3.5 w-3.5" />打开</button>
-        <button type="button" className={buttonClass} onClick={() => void saveActive()} disabled={!active}><Save className="h-3.5 w-3.5" />保存</button>
-        <button type="button" className={iconButtonClass} onClick={() => void saveActive(true)} disabled={!active} title="另存为" aria-label="另存为"><Download className="h-3.5 w-3.5" /></button>
+        <button type="button" className={iconButtonClass} onClick={() => createTab()} title={t("jsonb.newDoc")} aria-label={t("jsonb.newDoc")}><FilePlus2 className="h-3.5 w-3.5" /></button>
+        <button type="button" className={buttonClass} onClick={openFile}><FolderOpen className="h-3.5 w-3.5" />{t("jsonb.open")}</button>
+        <button type="button" className={buttonClass} onClick={() => void saveActive()} disabled={!active}><Save className="h-3.5 w-3.5" />{t("jsonb.save")}</button>
+        <button type="button" className={iconButtonClass} onClick={() => void saveActive(true)} disabled={!active} title={t("jsonb.saveAs")} aria-label={t("jsonb.saveAs")}><Download className="h-3.5 w-3.5" /></button>
         <span className="mx-1 h-4 w-px bg-white/10" />
-        <button type="button" className={buttonClass} onClick={format} disabled={!parsed.value}><Indent className="h-3.5 w-3.5" />格式化</button>
-        <button type="button" className={buttonClass} onClick={minify} disabled={!parsed.value}><Minimize2 className="h-3.5 w-3.5" />压缩</button>
-        <button type="button" className={iconButtonClass} onClick={sort} disabled={!parsed.value} title="按键名排序" aria-label="按键名排序"><Sparkles className="h-3.5 w-3.5" /></button>
-        <button type="button" className={iconButtonClass} onClick={escape} disabled={!active?.text} title="转义" aria-label="转义"><Braces className="h-3.5 w-3.5" /></button>
-        <button type="button" className={iconButtonClass} onClick={unescape} disabled={!active?.text} title="取消转义" aria-label="取消转义"><RefreshCw className="h-3.5 w-3.5" /></button>
+        <button type="button" className={buttonClass} onClick={format} disabled={!parsed.value}><Indent className="h-3.5 w-3.5" />{t("jsonb.format")}</button>
+        <button type="button" className={buttonClass} onClick={minify} disabled={!parsed.value}><Minimize2 className="h-3.5 w-3.5" />{t("jsonb.minify")}</button>
+        <button type="button" className={iconButtonClass} onClick={sort} disabled={!parsed.value} title={t("jsonb.sortKeys")} aria-label={t("jsonb.sortKeys")}><Sparkles className="h-3.5 w-3.5" /></button>
+        <button type="button" className={iconButtonClass} onClick={escape} disabled={!active?.text} title={t("jsonb.escape")} aria-label={t("jsonb.escape")}><Braces className="h-3.5 w-3.5" /></button>
+        <button type="button" className={iconButtonClass} onClick={unescape} disabled={!active?.text} title={t("jsonb.unescape")} aria-label={t("jsonb.unescape")}><RefreshCw className="h-3.5 w-3.5" /></button>
         <span className="mx-1 h-4 w-px bg-white/10" />
-        <button type="button" className={iconButtonClass} onClick={expandAll} disabled={!parsed.value} title="展开全部" aria-label="展开全部"><ChevronDown className="h-3.5 w-3.5" /></button>
-        <button type="button" className={iconButtonClass} onClick={collapseAll} disabled={!parsed.value} title="折叠全部" aria-label="折叠全部"><ChevronRight className="h-3.5 w-3.5" /></button>
-        <button type="button" className={iconButtonClass} onClick={() => void copySource()} disabled={!active} title="复制源文档" aria-label="复制源文档">{copyState ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Clipboard className="h-3.5 w-3.5" />}</button>
+        <button type="button" className={iconButtonClass} onClick={expandAll} disabled={!parsed.value} title={t("jsonb.expandAll")} aria-label={t("jsonb.expandAll")}><ChevronDown className="h-3.5 w-3.5" /></button>
+        <button type="button" className={iconButtonClass} onClick={collapseAll} disabled={!parsed.value} title={t("jsonb.collapseAll")} aria-label={t("jsonb.collapseAll")}><ChevronRight className="h-3.5 w-3.5" /></button>
+        <button type="button" className={iconButtonClass} onClick={() => void copySource()} disabled={!active} title={t("jsonb.copySource")} aria-label={t("jsonb.copySource")}>{copyState ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Clipboard className="h-3.5 w-3.5" />}</button>
         <div className="ml-auto flex min-w-[180px] max-w-[260px] flex-1 items-center gap-1 rounded-md border border-white/10 bg-white/[0.04] px-2">
           <Search className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索键名 / 路径 / 值" className="h-7 min-w-0 flex-1 bg-transparent text-[11px] outline-none placeholder:text-slate-600" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("jsonb.searchPlaceholder")} className="h-7 min-w-0 flex-1 bg-transparent text-[11px] outline-none placeholder:text-slate-600" />
         </div>
       </div>
 
@@ -725,17 +728,17 @@ export default function JsonBrowser() {
         {tabs.map((tab) => (
           <div key={tab.id} className={`group flex max-w-[220px] shrink-0 items-center gap-1 rounded-t-md border border-b-0 px-2 py-1 text-[11px] ${tab.id === activeId ? "border-white/10 bg-white/[0.08] text-white" : "border-transparent text-slate-500 hover:bg-white/[0.04] hover:text-slate-300"}`}>
             <button type="button" onClick={() => setActiveId(tab.id)} className="min-w-0 truncate" title={tab.path ?? tab.name}>{tab.name}{tab.savedText !== null && tab.savedText !== tab.text ? " •" : ""}</button>
-            <button type="button" onClick={() => closeTab(tab.id)} className="shrink-0 text-slate-600 opacity-0 transition-opacity hover:text-red-300 group-hover:opacity-100" title="关闭标签" aria-label={`关闭 ${tab.name}`}><X className="h-3 w-3" /></button>
+            <button type="button" onClick={() => closeTab(tab.id)} className="shrink-0 text-slate-600 opacity-0 transition-opacity hover:text-red-300 group-hover:opacity-100" title={t("jsonb.closeTab")} aria-label={t("jsonb.closeTabAria", { name: tab.name })}><X className="h-3 w-3" /></button>
           </div>
         ))}
-        {tabs.length < MAX_TABS && <button type="button" className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-white/[0.08] hover:text-white" onClick={() => createTab()} title="新建标签" aria-label="新建标签"><FilePlus2 className="h-3 w-3" /></button>}
+        {tabs.length < MAX_TABS && <button type="button" className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-white/[0.08] hover:text-white" onClick={() => createTab()} title={t("jsonb.newTab")} aria-label={t("jsonb.newTab")}><FilePlus2 className="h-3 w-3" /></button>}
       </div>
 
       <div className="flex min-h-0 flex-1">
         {showLeft && (
           <section className={`${showRight ? "w-1/2 border-r" : "w-full"} flex min-h-0 min-w-0 flex-col border-white/10`}>
             <div className="flex h-8 shrink-0 items-center justify-between border-b border-white/10 px-3 text-[10px] text-slate-500">
-              <span className="flex items-center gap-1"><FileJson className="h-3 w-3" />源编辑器{dirty && <span className="text-amber-400">· 未保存</span>}</span>
+              <span className="flex items-center gap-1"><FileJson className="h-3 w-3" />{t("jsonb.sourceEditor")}{dirty && <span className="text-amber-400">{t("jsonb.unsaved")}</span>}</span>
               <span>{active ? `${formatBytes(new Blob([active.text]).size)} · ${language}` : ""}</span>
             </div>
             <div className="min-h-0 flex-1" onScroll={(event) => scrollEditors("left", { scrollTop: event.currentTarget.scrollTop, scrollLeft: event.currentTarget.scrollLeft })}>
@@ -756,44 +759,44 @@ export default function JsonBrowser() {
                 options={{ minimap: { enabled: false }, fontSize: 12, lineNumbers: "on", wordWrap: "on", automaticLayout: true, tabSize: 2, padding: { top: 8, bottom: 8 } }}
               />
             </div>
-            {parsed.error && <div className="shrink-0 border-t border-red-500/20 bg-red-500/10 px-3 py-1.5 text-[10px] text-red-300">解析错误：{parsed.error}</div>}
+            {parsed.error && <div className="shrink-0 border-t border-red-500/20 bg-red-500/10 px-3 py-1.5 text-[10px] text-red-300">{t("jsonb.parseError", { err: parsed.error })}</div>}
           </section>
         )}
 
         {showRight && (
           <section className={`${showLeft ? "w-1/2" : "w-full"} flex min-h-0 min-w-0 flex-col bg-slate-950/20`}>
             <div className="flex h-8 shrink-0 items-center gap-1 border-b border-white/10 px-2 text-[10px] text-slate-500">
-              <button type="button" onClick={() => setViewMode("tree")} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "tree" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><ListTree className="h-3 w-3" />结构</button>
-              <button type="button" onClick={() => setViewMode("graph")} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "graph" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><MapIcon className="h-3 w-3" />图形树</button>
+              <button type="button" onClick={() => setViewMode("tree")} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "tree" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><ListTree className="h-3 w-3" />{t("jsonb.tree")}</button>
+              <button type="button" onClick={() => setViewMode("graph")} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "graph" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><MapIcon className="h-3 w-3" />{t("jsonb.graph")}</button>
               <span className="ml-auto flex items-center gap-2">
-                {oversizedDocument ? <span className="text-amber-300">超大型文档 · 结构视图已暂停</span> : parsed.value !== null && <span>{parsePending ? "解析中…" : `${topCount} 项 · ${nodes}${parsed.nodeCountCapped ? "+" : ""} 节点`}</span>}
-                <button type="button" onClick={() => setSyncScroll((value) => !value)} className={syncScroll ? "text-cyan-300" : "text-slate-600"} title={syncScroll ? "关闭同步滚动" : "开启同步滚动"} aria-label="同步滚动"><Split className="h-3.5 w-3.5" /></button>
-                <button type="button" onClick={() => setShowLeft((value) => !value)} className="hover:text-slate-200" title="切换左侧编辑器" aria-label="切换左侧编辑器"><PanelLeft className="h-3.5 w-3.5" /></button>
+                {oversizedDocument ? <span className="text-amber-300">{t("jsonb.oversizedPaused")}</span> : parsed.value !== null && <span>{parsePending ? t("jsonb.parsing") : t("jsonb.itemsNodes", { top: topCount, nodes, plus: parsed.nodeCountCapped ? "+" : "" })}</span>}
+                <button type="button" onClick={() => setSyncScroll((value) => !value)} className={syncScroll ? "text-cyan-300" : "text-slate-600"} title={syncScroll ? t("jsonb.syncScrollOn") : t("jsonb.syncScrollOff")} aria-label={t("jsonb.syncScrollAria")}><Split className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={() => setShowLeft((value) => !value)} className="hover:text-slate-200" title={t("jsonb.toggleLeft")} aria-label={t("jsonb.toggleLeft")}><PanelLeft className="h-3.5 w-3.5" /></button>
               </span>
             </div>
 
             {viewMode === "tree" && (
               <div className="min-h-0 flex-1 overflow-hidden p-2 font-mono">
-                {oversizedDocument ? <div className="py-10 text-center text-[11px] leading-5 text-amber-200">文件超过 20 MB，已切换为文本优先模式。<br />请使用左侧编辑器查看和编辑完整内容。</div> : parsed.value === null ? <div className="py-10 text-center text-[11px] text-slate-600">输入有效 JSON 后显示结构树</div> : <VirtualJsonTree value={parsed.value} searchMatches={searchMatches} collapsed={collapsed} largeDocument={largeDocument} expandedPaths={expandedPaths} onToggle={(path) => { if (largeDocument && path !== "root") { setExpandedPaths((previous) => { const next = new Set(previous); if (next.has(path)) next.delete(path); else next.add(path); return next; }); } else { setCollapsed((previous) => { const next = new Set(previous); if (next.has(path)) next.delete(path); else next.add(path); return next; }); } }} onCopy={(value) => void copyValue(value)} />}
+                {oversizedDocument ? <div className="py-10 text-center text-[11px] leading-5 text-amber-200">{t("jsonb.oversizedTree")}</div> : parsed.value === null ? <div className="py-10 text-center text-[11px] text-slate-600">{t("jsonb.treeEmpty")}</div> : <VirtualJsonTree value={parsed.value} searchMatches={searchMatches} collapsed={collapsed} largeDocument={largeDocument} expandedPaths={expandedPaths} onToggle={(path) => { if (largeDocument && path !== "root") { setExpandedPaths((previous) => { const next = new Set(previous); if (next.has(path)) next.delete(path); else next.add(path); return next; }); } else { setCollapsed((previous) => { const next = new Set(previous); if (next.has(path)) next.delete(path); else next.add(path); return next; }); } }} onCopy={(value) => void copyValue(value)} />}
               </div>
             )}
             {viewMode === "graph" && (
               <div className="min-h-0 flex-1">
-                {oversizedDocument ? <div className="flex h-full items-center justify-center px-6 text-center text-[11px] leading-5 text-amber-200">文件超过 20 MB，图形视图已暂停以保持界面响应。<br />可在文本编辑器中查看完整 JSON。</div> : parsed.value === null ? <div className="flex h-full items-center justify-center text-[11px] text-slate-600">输入有效 JSON 后显示图形树</div> : <JsonFlowCanvas value={parsed.value} selectedPath={selectedPath} searchMatches={searchMatches} onSelectPath={revealPathInEditor} onCopy={(value) => void copyValue(value)} collapseAllToken={collapseAllToken} />}
+                {oversizedDocument ? <div className="flex h-full items-center justify-center px-6 text-center text-[11px] leading-5 text-amber-200">{t("jsonb.oversizedGraph")}</div> : parsed.value === null ? <div className="flex h-full items-center justify-center text-[11px] text-slate-600">{t("jsonb.graphEmpty")}</div> : <JsonFlowCanvas value={parsed.value} selectedPath={selectedPath} searchMatches={searchMatches} onSelectPath={revealPathInEditor} onCopy={(value) => void copyValue(value)} collapseAllToken={collapseAllToken} />}
               </div>
             )}
           </section>
         )}
 
-        {!showLeft && !showRight && <div className="flex flex-1 items-center justify-center text-[11px] text-slate-600">至少打开一个面板</div>}
+        {!showLeft && !showRight && <div className="flex flex-1 items-center justify-center text-[11px] text-slate-600">{t("jsonb.needPanel")}</div>}
       </div>
 
       <div className="flex h-7 shrink-0 items-center gap-3 border-t border-white/10 bg-slate-950/55 px-3 text-[10px] text-slate-500">
-        <span className="flex items-center gap-1"><Play className="h-3 w-3 text-emerald-400" />{oversizedDocument ? "文本优先模式" : parsePending ? "解析中" : parsed.error ? "JSON 无效" : parsed.value === null ? "等待输入" : "JSON 有效"}</span>
-        <span>{active ? `${active.name}${active.path ? ` · ${active.path}` : ""}` : "无文档"}</span>
-        <span className="ml-auto">{active ? `${formatBytes(new Blob([active.text]).size)} · ${active.text.split(/\r?\n/).length} 行` : ""}</span>
-        <button type="button" className="hover:text-slate-200" onClick={() => setShowRight((value) => !value)} title={showRight ? "隐藏右侧面板" : "显示右侧面板"} aria-label={showRight ? "隐藏右侧面板" : "显示右侧面板"}>{showRight ? <PanelRight className="h-3.5 w-3.5" /> : <PanelRight className="h-3.5 w-3.5 opacity-50" />}</button>
-        <button type="button" className="hover:text-slate-200" onClick={() => { setShowLeft(true); setShowRight(true); }} title="恢复双栏" aria-label="恢复双栏"><Split className="h-3.5 w-3.5" /></button>
+        <span className="flex items-center gap-1"><Play className="h-3 w-3 text-emerald-400" />{oversizedDocument ? t("jsonb.modeText") : parsePending ? t("jsonb.modeParsing") : parsed.error ? t("jsonb.modeInvalid") : parsed.value === null ? t("jsonb.modeWaiting") : t("jsonb.modeValid")}</span>
+        <span>{active ? `${active.name}${active.path ? ` · ${active.path}` : ""}` : t("jsonb.noDoc")}</span>
+        <span className="ml-auto">{active ? `${formatBytes(new Blob([active.text]).size)} · ${t("jsonb.lines", { count: active.text.split(/\r?\n/).length })}` : ""}</span>
+        <button type="button" className="hover:text-slate-200" onClick={() => setShowRight((value) => !value)} title={showRight ? t("jsonb.hideRight") : t("jsonb.showRight")} aria-label={showRight ? t("jsonb.hideRight") : t("jsonb.showRight")}>{showRight ? <PanelRight className="h-3.5 w-3.5" /> : <PanelRight className="h-3.5 w-3.5 opacity-50" />}</button>
+        <button type="button" className="hover:text-slate-200" onClick={() => { setShowLeft(true); setShowRight(true); }} title={t("jsonb.restoreSplit")} aria-label={t("jsonb.restoreSplit")}><Split className="h-3.5 w-3.5" /></button>
       </div>
       {notice && <div className="pointer-events-none absolute bottom-10 left-1/2 z-30 -translate-x-1/2 rounded-md border border-white/10 bg-slate-900/95 px-3 py-2 text-[11px] text-slate-200 shadow-xl">{notice}</div>}
     </div>

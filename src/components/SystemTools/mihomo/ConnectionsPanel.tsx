@@ -1,6 +1,7 @@
 // 连接页 —— 1:1 复刻 clash-party src/renderer/src/pages/connections.tsx 行为
 // （进程图标/应用名依赖 Electron 原生 API，Tauri 侧省略）
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Pause, Play, X, Trash2, Search, ArrowUp, ArrowDown, Table2, List } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
 import { IMihomoConnection, openMihomoWs, closeConnection as apiClose, closeAllConnections, WsHandle } from "./ctrl";
@@ -10,35 +11,35 @@ const FILTER_KEY = "mihomo-connections-filter";
 
 type OrderBy = "time" | "upload" | "download" | "uploadSpeed" | "downloadSpeed";
 const ORDER_OPTIONS: { k: OrderBy; t: string }[] = [
-  { k: "time", t: "时间" },
-  { k: "upload", t: "上传量" },
-  { k: "download", t: "下载量" },
-  { k: "uploadSpeed", t: "上传速度" },
-  { k: "downloadSpeed", t: "下载速度" },
+  { k: "time", t: "connSortTime" },
+  { k: "upload", t: "connSortUpload" },
+  { k: "download", t: "connSortDownload" },
+  { k: "uploadSpeed", t: "connSortUploadSpeed" },
+  { k: "downloadSpeed", t: "connSortDownloadSpeed" },
 ];
 
 // 表格列（对齐 clash-party CONNECTION_TABLE_COLUMNS）
 const TABLE_COLUMNS: { key: string; t: string }[] = [
-  { key: "host", t: "主机" },
-  { key: "type", t: "类型" },
-  { key: "rule", t: "规则" },
-  { key: "chains", t: "代理链" },
-  { key: "process", t: "进程" },
-  { key: "upload", t: "上传" },
-  { key: "download", t: "下载" },
-  { key: "uploadSpeed", t: "上传速度" },
-  { key: "downloadSpeed", t: "下载速度" },
-  { key: "sourceIP", t: "来源 IP" },
-  { key: "destinationIP", t: "目标 IP" },
-  { key: "start", t: "时间" },
+  { key: "host", t: "connColHost" },
+  { key: "type", t: "connColType" },
+  { key: "rule", t: "connColRule" },
+  { key: "chains", t: "connColChains" },
+  { key: "process", t: "connColProcess" },
+  { key: "upload", t: "connColUpload" },
+  { key: "download", t: "connColDownload" },
+  { key: "uploadSpeed", t: "connColUploadSpeed" },
+  { key: "downloadSpeed", t: "connColDownloadSpeed" },
+  { key: "sourceIP", t: "connColSourceIP" },
+  { key: "destinationIP", t: "connColDestIP" },
+  { key: "start", t: "connColStart" },
 ];
 
-function timeAgo(iso: string): string {
+function timeAgo(iso: string, t: (k: string, o?: any) => string): string {
   const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-  if (s < 60) return `${s} 秒前`;
-  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`;
-  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`;
-  return `${Math.floor(s / 86400)} 天前`;
+  if (s < 60) return t("mihomo.timeAgoS", { n: s });
+  if (s < 3600) return t("mihomo.timeAgoM", { n: Math.floor(s / 60) });
+  if (s < 86400) return t("mihomo.timeAgoH", { n: Math.floor(s / 3600) });
+  return t("mihomo.timeAgoD", { n: Math.floor(s / 86400) });
 }
 
 function connHost(c: IMihomoConnection): string {
@@ -47,6 +48,7 @@ function connHost(c: IMihomoConnection): string {
 }
 
 export default function ConnectionsPanel({ info, running }: { info: any; running: boolean }) {
+  const { t } = useTranslation();
   const [filter, setFilter] = useState(() => localStorage.getItem(FILTER_KEY) || "");
   const [tab, setTab] = useState<"active" | "closed">("active");
   const [paused, setPaused] = useState(false);
@@ -143,7 +145,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
   };
 
   if (!running) {
-    return <div className={`${cardCls} p-6 text-center text-xs text-slate-400`}>核心未运行</div>;
+    return <div className={`${cardCls} p-6 text-center text-xs text-slate-400`}>{t("mihomo.coreNotRunning")}</div>;
   }
 
   return (
@@ -159,7 +161,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
                 tab === k ? (k === "active" ? "bg-[var(--module-accent)] text-white" : "bg-rose-500/60 text-white") : "text-slate-400 hover:text-slate-200"
               }`}
             >
-              {k === "active" ? `活动中 (${active.length})` : `已关闭 (${closed.length})`}
+              {k === "active" ? t("mihomo.connActive", { count: active.length }) : t("mihomo.connClosed", { count: closed.length })}
             </button>
           ))}
         </div>
@@ -167,7 +169,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             className="w-full h-8 pl-8 pr-2.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
-            placeholder="筛选连接"
+            placeholder={t("mihomo.connFilter")}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
@@ -179,26 +181,26 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
               value={orderBy}
               onChange={(e) => patchCfg({ connectionOrderBy: e.target.value })}
             >
-              {ORDER_OPTIONS.map((o) => <option key={o.k} value={o.k} className="bg-slate-800">{o.t}</option>)}
+              {ORDER_OPTIONS.map((o) => <option key={o.k} value={o.k} className="bg-slate-800">{t(`mihomo.${o.t}`)}</option>)}
             </select>
-            <button className={btnSec} title="排序方向" onClick={() => patchCfg({ connectionDirection: direction === "asc" ? "desc" : "asc" })}>
+            <button className={btnSec} title={t("mihomo.connSortDir")} onClick={() => patchCfg({ connectionDirection: direction === "asc" ? "desc" : "asc" })}>
               {direction === "asc" ? <ArrowUp className="w-3.5 h-3.5" /> : <ArrowDown className="w-3.5 h-3.5" />}
             </button>
           </>
         )}
-        <button className={btnSec} title={viewMode === "list" ? "切换表格视图" : "切换列表视图"} onClick={() => patchCfg({ connectionViewMode: viewMode === "list" ? "table" : "list" })}>
+        <button className={btnSec} title={viewMode === "list" ? t("mihomo.connViewTable") : t("mihomo.connViewList")} onClick={() => patchCfg({ connectionViewMode: viewMode === "list" ? "table" : "list" })}>
           {viewMode === "list" ? <Table2 className="w-3.5 h-3.5" /> : <List className="w-3.5 h-3.5" />}
         </button>
-        <button className={btnSec} title={paused ? "恢复" : "暂停"} onClick={() => setPaused((p) => !p)}>
+        <button className={btnSec} title={paused ? t("mihomo.connResume") : t("mihomo.connPause")} onClick={() => setPaused((p) => !p)}>
           {paused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
         </button>
-        <button className={btnSec} title={tab === "active" ? "关闭全部" : "清空记录"} onClick={closeAll}>
+        <button className={btnSec} title={tab === "active" ? t("mihomo.connCloseAll") : t("mihomo.connClear")} onClick={closeAll}>
           {tab === "active" ? <X className="w-3.5 h-3.5" /> : <Trash2 className="w-3.5 h-3.5" />}
         </button>
       </div>
 
       <div className="text-[11px] text-slate-400 px-1">
-        ↑ {calcTraffic(connInfo.uploadTotal)} &nbsp; ↓ {calcTraffic(connInfo.downloadTotal)} &nbsp;·&nbsp; {filtered.length} 条
+        ↑ {calcTraffic(connInfo.uploadTotal)} &nbsp; ↓ {calcTraffic(connInfo.downloadTotal)} &nbsp;·&nbsp; {t("mihomo.connCount", { count: filtered.length })}
       </div>
 
       {/* 内容 */}
@@ -222,7 +224,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
               <div className="text-[10px] text-slate-400 text-right flex-shrink-0 font-mono">
                 <div>↑ {calcTraffic(c.upload)} ↓ {calcTraffic(c.download)}</div>
                 <div>
-                  {(c.uploadSpeed || c.downloadSpeed) ? `↑ ${calcTraffic(c.uploadSpeed || 0)}/s ↓ ${calcTraffic(c.downloadSpeed || 0)}/s` : timeAgo(c.start)}
+                  {(c.uploadSpeed || c.downloadSpeed) ? `↑ ${calcTraffic(c.uploadSpeed || 0)}/s ↓ ${calcTraffic(c.downloadSpeed || 0)}/s` : timeAgo(c.start, t)}
                 </div>
               </div>
               <button
@@ -233,7 +235,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
               </button>
             </div>
           ))}
-          {filtered.length === 0 && <div className={`${cardCls} p-6 text-center text-xs text-slate-400`}>暂无连接</div>}
+          {filtered.length === 0 && <div className={`${cardCls} p-6 text-center text-xs text-slate-400`}>{t("mihomo.connEmpty")}</div>}
         </div>
       ) : (
         <div className={`${cardCls} overflow-auto max-h-[60vh]`}>
@@ -241,7 +243,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
             <thead className="sticky top-0 bg-[#11151f] z-10">
               <tr className="text-slate-400 text-left">
                 <th className="px-2 py-2 font-medium"></th>
-                {TABLE_COLUMNS.map((c) => <th key={c.key} className="px-2 py-2 font-medium">{c.t}</th>)}
+                {TABLE_COLUMNS.map((c) => <th key={c.key} className="px-2 py-2 font-medium">{t(`mihomo.${c.t}`)}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -263,36 +265,36 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
                   <td className="px-2 py-1.5 font-mono">{calcTraffic(c.downloadSpeed || 0)}/s</td>
                   <td className="px-2 py-1.5 font-mono">{c.metadata.sourceIP}</td>
                   <td className="px-2 py-1.5 font-mono">{c.metadata.destinationIP || c.metadata.remoteDestination || "-"}</td>
-                  <td className="px-2 py-1.5">{timeAgo(c.start)}</td>
+                  <td className="px-2 py-1.5">{timeAgo(c.start, t)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {filtered.length === 0 && <div className="p-6 text-center text-xs text-slate-400">暂无连接</div>}
+          {filtered.length === 0 && <div className="p-6 text-center text-xs text-slate-400">{t("mihomo.connEmpty")}</div>}
         </div>
       )}
 
       {/* 详情弹窗（复刻 connection-detail-modal：展示全部字段） */}
       {detail && (
-        <Modal title="连接详情" onClose={() => setDetail(null)}>
+        <Modal title={t("mihomo.connDetailTitle")} onClose={() => setDetail(null)}>
           <div className="space-y-1 text-[11px]">
             {[
-              ["ID", detail.id],
-              ["主机", connHost(detail)],
-              ["下载", calcTraffic(detail.download)],
-              ["上传", calcTraffic(detail.upload)],
-              ["下载速度", `${calcTraffic(detail.downloadSpeed || 0)}/s`],
-              ["上传速度", `${calcTraffic(detail.uploadSpeed || 0)}/s`],
-              ["连接建立时间", timeAgo(detail.start)],
-              ["规则", `${detail.rule}${detail.rulePayload ? `(${detail.rulePayload})` : ""}`],
-              ["代理链", (detail.chains || []).slice().reverse().join(" → ")],
-              ["连接类型", `${detail.metadata.type}(${detail.metadata.network})`],
-              ["来源", `${detail.metadata.sourceIP}:${detail.metadata.sourcePort}`],
-              ["目标", `${detail.metadata.destinationIP || detail.metadata.host}:${detail.metadata.destinationPort}`],
-              ["嗅探域名", detail.metadata.sniffHost || "-"],
-              ["进程", detail.metadata.process || "-"],
-              ["进程路径", detail.metadata.processPath || "-"],
-              ["远端目标", detail.metadata.remoteDestination || "-"],
+              [t("mihomo.connDId"), detail.id],
+              [t("mihomo.connDHost"), connHost(detail)],
+              [t("mihomo.connDDown"), calcTraffic(detail.download)],
+              [t("mihomo.connDUp"), calcTraffic(detail.upload)],
+              [t("mihomo.connDDownSpeed"), `${calcTraffic(detail.downloadSpeed || 0)}/s`],
+              [t("mihomo.connDUpSpeed"), `${calcTraffic(detail.uploadSpeed || 0)}/s`],
+              [t("mihomo.connDStart"), timeAgo(detail.start, t)],
+              [t("mihomo.connDRule"), `${detail.rule}${detail.rulePayload ? `(${detail.rulePayload})` : ""}`],
+              [t("mihomo.connDChains"), (detail.chains || []).slice().reverse().join(" → ")],
+              [t("mihomo.connDType"), `${detail.metadata.type}(${detail.metadata.network})`],
+              [t("mihomo.connDSource"), `${detail.metadata.sourceIP}:${detail.metadata.sourcePort}`],
+              [t("mihomo.connDTarget"), `${detail.metadata.destinationIP || detail.metadata.host}:${detail.metadata.destinationPort}`],
+              [t("mihomo.connDSniff"), detail.metadata.sniffHost || "-"],
+              [t("mihomo.connDProcess"), detail.metadata.process || "-"],
+              [t("mihomo.connDProcessPath"), detail.metadata.processPath || "-"],
+              [t("mihomo.connDRemote"), detail.metadata.remoteDestination || "-"],
               ["DSCP", String((detail.metadata as any).dscp ?? "-")],
             ].map(([k, v]) => (
               <div key={k as string} className="flex gap-2 py-1 border-b border-white/5">

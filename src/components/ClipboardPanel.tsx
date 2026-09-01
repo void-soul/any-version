@@ -1,5 +1,6 @@
 // 剪贴板历史面板（全宽紧凑列表 + 单行截断 + 固定行高虚拟滚动 + 触底加载）
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import VexEmptyState from "./VexEmptyState";
 import {
   Clipboard,
@@ -57,7 +58,7 @@ const OVERSCAN = 8;
 // 缩略图 data-url 缓存（虚拟滚动频繁进出视口时避免重复请求）
 const imageCache = new Map<number, string>();
 
-function fmtTime(ts: number): string {
+function fmtTime(ts: number, t: (key: string, opts?: Record<string, unknown>) => string): string {
   const d = new Date(ts * 1000);
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -65,8 +66,8 @@ function fmtTime(ts: number): string {
   if (d.toDateString() === now.toDateString()) return hm;
   const yest = new Date(now);
   yest.setDate(now.getDate() - 1);
-  if (d.toDateString() === yest.toDateString()) return `昨天 ${hm}`;
-  return `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
+  if (d.toDateString() === yest.toDateString()) return t("clip.yesterday", { hm });
+  return t("clip.date", { m: d.getMonth() + 1, d: d.getDate(), hm });
 }
 
 // 图片缩略图（带全局缓存）
@@ -104,6 +105,7 @@ function ImageThumb({ item }: { item: ClipboardItem }) {
 
 // 图片原图预览（thumb=false 加载原图；点击图片切换「适应窗口 / 实际大小」）
 function PreviewImage({ item }: { item: ClipboardItem }) {
+  const { t } = useTranslation();
   const [src, setSrc] = useState("");
   const [zoom, setZoom] = useState(false);
   useEffect(() => {
@@ -128,11 +130,11 @@ function PreviewImage({ item }: { item: ClipboardItem }) {
     <div
       className={`flex-1 min-h-0 overflow-auto bg-black/25 ${zoom ? "p-4" : "flex items-center justify-center p-4"}`}
       onClick={() => setZoom((z) => !z)}
-      title={zoom ? "点击适应窗口" : "点击查看实际大小（可滚动）"}
+      title={zoom ? t("clip.zoomFitTip") : t("clip.zoomActualTip")}
     >
       <img
         src={src}
-        alt="预览"
+        alt={t("clip.altPreview")}
         draggable={false}
         className={zoom ? "cursor-zoom-out rounded-md" : "max-w-full max-h-[58vh] object-contain cursor-zoom-in rounded-md"}
       />
@@ -152,6 +154,7 @@ function PreviewModal({
   onCopy: () => void;
   onPaste: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       className="fixed inset-0 z-[110] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
@@ -169,15 +172,15 @@ function PreviewModal({
               {item.kind === "image" ? <ImageIcon className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
             </div>
             <div className="min-w-0">
-              <h4 className="text-[13px] font-bold text-white">{item.kind === "image" ? "图片预览" : "文本预览"}</h4>
+              <h4 className="text-[13px] font-bold text-white">{item.kind === "image" ? t("clip.imagePreview") : t("clip.textPreview")}</h4>
               <p className="text-[10px] text-slate-500 truncate flex items-center gap-2 mt-0.5">
                 <span className="inline-flex items-center gap-1 min-w-0">
                   <AppWindow className="w-2.5 h-2.5 flex-shrink-0" />
-                  <span className="truncate">{item.sourceApp || "未知来源"}</span>
+                  <span className="truncate">{item.sourceApp || t("clip.unknownSource")}</span>
                 </span>
                 <span className="inline-flex items-center gap-1 flex-shrink-0">
                   <Clock className="w-2.5 h-2.5" />
-                  {fmtTime(item.createdAt)}
+                  {fmtTime(item.createdAt, t)}
                 </span>
               </p>
             </div>
@@ -193,7 +196,7 @@ function PreviewModal({
           <button
             onClick={onClose}
             className="p-1.5 rounded-md hover:bg-white/10 text-slate-500 hover:text-white transition-all cursor-pointer flex-shrink-0"
-            title="关闭 (Esc)"
+            title={t("clip.closeEsc")}
           >
             <X className="w-4 h-4" />
           </button>
@@ -203,7 +206,7 @@ function PreviewModal({
         {item.kind === "text" ? (
           <div className="p-4 overflow-y-auto flex-1 min-h-0 bg-black/20">
             <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-slate-200 select-text">
-              {item.content || "（空内容）"}
+              {item.content || t("clip.emptyContent")}
             </pre>
           </div>
         ) : (
@@ -217,27 +220,27 @@ function PreviewModal({
               <>
                 {item.width > 0 && item.height > 0 && <span>{item.width}×{item.height}</span>}
                 <span className="hidden sm:inline-flex items-center gap-1">
-                  <ZoomIn className="w-3 h-3" /> 点击图片切换实际大小
+                  <ZoomIn className="w-3 h-3" /> {t("clip.zoomBtn")}
                 </span>
               </>
             ) : (
-              item.content && <span>{item.content.length} 字符</span>
+              item.content && <span>{t("clip.charsCount", { n: item.content.length })}</span>
             )}
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={onCopy}
               className="px-3 h-8 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-slate-300 transition-all cursor-pointer flex items-center gap-1.5"
-              title="复制到剪贴板"
+              title={t("clip.copyTip")}
             >
-              <Copy className="w-3 h-3" /> 复制
+              <Copy className="w-3 h-3" /> {t("clip.copy")}
             </button>
             <button
               onClick={onPaste}
               className="px-3 h-8 rounded-lg bg-[var(--module-accent)] hover:opacity-85 text-[11px] font-semibold text-white transition-all cursor-pointer flex items-center gap-1.5"
-              title="复制并粘贴到之前的窗口"
+              title={t("clip.copyPasteTip")}
             >
-              <ClipboardPaste className="w-3 h-3" /> 复制并粘贴
+              <ClipboardPaste className="w-3 h-3" /> {t("clip.copyPaste")}
             </button>
           </div>
         </div>
@@ -264,6 +267,7 @@ function Row({
   onPin: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       onClick={onPaste}
@@ -272,7 +276,7 @@ function Row({
           ? "bg-amber-500/[0.06] border-amber-500/25"
           : "bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20"
       }`}
-      title="单击复制并粘贴到之前的窗口"
+      title={t("clip.rowTip")}
     >
       {/* 类型图标 / 缩略图 */}
       {item.kind === "image" ? (
@@ -290,7 +294,7 @@ function Row({
             className="text-[12px] text-slate-200 truncate font-mono"
             title={item.kind === "text" ? item.content || undefined : undefined}
           >
-            {item.kind === "text" ? item.content : item.width && item.height ? `图片 ${item.width}×${item.height}` : "图片内容"}
+            {item.kind === "text" ? item.content : item.width && item.height ? t("clip.imageSize", { w: item.width, h: item.height }) : t("clip.imageContent")}
           </p>
           {item.formats && item.formats.length > 0 && (
             <span
@@ -307,11 +311,11 @@ function Row({
       <div className="flex items-center gap-2 text-[10px] text-slate-500 whitespace-nowrap flex-shrink-0 hidden md:flex">
         <span className="inline-flex items-center gap-1">
           <AppWindow className="w-3 h-3" />
-          {item.sourceApp || "未知来源"}
+          {item.sourceApp || t("clip.unknownSource")}
         </span>
         <span className="inline-flex items-center gap-1">
           <Clock className="w-3 h-3" />
-          {fmtTime(item.createdAt)}
+          {fmtTime(item.createdAt, t)}
         </span>
       </div>
 
@@ -324,7 +328,7 @@ function Row({
             onPreview();
           }}
           className="p-1.5 rounded-md hover:bg-white/10 text-slate-400 hover:text-sky-300 transition-all cursor-pointer"
-          title="预览内容"
+          title={t("clip.previewContent")}
         >
           <ZoomIn className="w-3.5 h-3.5" />
         </button>
@@ -334,7 +338,7 @@ function Row({
             onCopy();
           }}
           className="p-1.5 rounded-md hover:bg-white/10 text-slate-400 hover:text-sky-300 transition-all cursor-pointer"
-          title="复制到剪贴板"
+          title={t("clip.copyTip")}
         >
           {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
         </button>
@@ -344,7 +348,7 @@ function Row({
             onPaste();
           }}
           className="p-1.5 rounded-md hover:bg-white/10 text-slate-400 hover:text-[var(--module-accent)] transition-all cursor-pointer"
-          title="复制并粘贴到之前的窗口"
+          title={t("clip.copyPasteTip")}
         >
           <ClipboardPaste className="w-3.5 h-3.5" />
         </button>
@@ -356,7 +360,7 @@ function Row({
           className={`p-1.5 rounded-md hover:bg-white/10 transition-all cursor-pointer ${
             item.pinned ? "text-amber-400" : "text-slate-400 hover:text-amber-300"
           }`}
-          title={item.pinned ? "取消置顶" : "置顶"}
+          title={item.pinned ? t("clip.unpinTip") : t("clip.pinTip")}
         >
           <Pin className="w-3.5 h-3.5" />
         </button>
@@ -366,7 +370,7 @@ function Row({
             onDelete();
           }}
           className="p-1.5 rounded-md hover:bg-red-500/15 text-slate-400 hover:text-red-400 transition-all cursor-pointer"
-          title="删除"
+          title={t("common.delete")}
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
@@ -376,6 +380,7 @@ function Row({
 }
 
 export default function ClipboardPanel() {
+  const { t } = useTranslation();
   const [items, setItems] = useState<ClipboardItem[]>([]);
   const [total, setTotal] = useState(0);
   const [keyword, setKeyword] = useState("");
@@ -498,9 +503,9 @@ export default function ClipboardPanel() {
       await invoke("clipboard_copy_item", { id });
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 1200);
-      showToast("ok", "已复制到剪贴板");
+      showToast("ok", t("clip.copiedToast"));
     } catch (e) {
-      const msg = `复制失败：${e}`;
+      const msg = t("clip.copyFail", { err: String(e) });
       showToast("err", msg);
       console.error(msg);
     }
@@ -511,9 +516,9 @@ export default function ClipboardPanel() {
     try {
       await invoke("clipboard_paste_item", { id });
       setPreview(null);
-      showToast("ok", "已复制并粘贴");
+      showToast("ok", t("clip.pastedToast"));
     } catch (e) {
-      const msg = `粘贴失败：${e}`;
+      const msg = t("clip.pasteFail", { err: String(e) });
       showToast("err", msg);
       console.error(msg);
     } finally {
@@ -542,7 +547,7 @@ export default function ClipboardPanel() {
   };
 
   const clearHistory = async () => {
-    if (!window.confirm("确定清空剪贴板历史吗？（置顶条目保留）")) return;
+    if (!window.confirm(t("clip.clearConfirm"))) return;
     try {
       await invoke("clipboard_clear_history", { keepPinned: true });
       load(true);
@@ -597,7 +602,7 @@ export default function ClipboardPanel() {
           </div>
           <div className="min-w-0">
             <h3 className="text-[14px] font-bold text-white flex items-center gap-2">
-              剪贴板历史
+              {t("clip.title")}
               <span
                 className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border ${
                   settings?.enabled
@@ -608,28 +613,27 @@ export default function ClipboardPanel() {
                 <span
                   className={`w-1.5 h-1.5 rounded-full ${settings?.enabled ? "bg-[var(--module-accent)] animate-pulse" : "bg-slate-500"}`}
                 />
-                {settings?.enabled ? "监控中" : "已暂停"}
+                {settings?.enabled ? t("clip.monitoring") : t("clip.paused")}
               </span>
             </h3>
             <p className="text-[10px] text-slate-400 mt-0.5 truncate">
-              {total} 条历史 · 单击设为活跃剪贴板，双击粘贴到之前的窗口
+              {t("clip.summary", { n: total })}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <button
             onClick={clearHistory}
-            className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-red-500/15 border border-white/10 text-[10px] text-slate-300 hover:text-red-300 transition-all cursor-pointer flex items-center gap-1.5"
-            title="清空历史（保留置顶）"
-          >
-            <Eraser className="w-3 h-3" /> 清空
+            className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-red-500/15 border border-white/10 text-[10px] text-slate-300 hover:text-red-300 transition-all cursor-pointer flex items-center gap-1.5"            title={t("clip.clearTip")}
+            >
+            <Eraser className="w-3 h-3" /> {t("clip.clear")}
           </button>
           <button
             onClick={() => setShowSettings(true)}
             className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] text-slate-300 transition-all cursor-pointer flex items-center gap-1.5"
-            title="设置"
+            title={t("clip.settingsTip")}
           >
-            <Settings2 className="w-3 h-3" /> 设置
+            <Settings2 className="w-3 h-3" /> {t("clip.settings")}
           </button>
         </div>
       </div>
@@ -648,15 +652,14 @@ export default function ClipboardPanel() {
                 setKeyword("");
               }
             }}
-            placeholder="输入关键词，回车或点搜索"
+            placeholder={t("clip.searchPh")}
             className="flex-1 bg-transparent outline-none text-[11.5px] text-slate-200 placeholder:text-slate-500"
           />
           <button
             onClick={handleSearch}
-            className="px-2 py-1 rounded-md bg-[var(--module-accent)] text-white text-[10.5px] font-semibold hover:opacity-90 cursor-pointer"
-            title="搜索"
-          >
-            搜索
+            className="px-2 py-1 rounded-md bg-[var(--module-accent)] text-white text-[10.5px] font-semibold hover:opacity-90 cursor-pointer"              title={t("common.search")}
+            >
+            {t("common.search")}
           </button>
           {searchInput && (
             <button
@@ -665,7 +668,7 @@ export default function ClipboardPanel() {
                 setKeyword("");
               }}
               className="text-slate-500 hover:text-slate-300 cursor-pointer"
-              title="清空"
+              title={t("clip.clearInput")}
             >
               <X className="w-3 h-3" />
             </button>
@@ -673,9 +676,9 @@ export default function ClipboardPanel() {
         </div>
         <div className="flex items-center gap-0.5 bg-white/5 border border-white/10 rounded-lg p-0.5">
           {[
-            { k: "", t: "全部" },
-            { k: "text", t: "文本" },
-            { k: "image", t: "图片" },
+            { k: "", t: t("clip.filterAll") },
+            { k: "text", t: t("clip.filterText") },
+            { k: "image", t: t("clip.filterImage") },
           ].map((f) => (
             <button
               key={f.k || "all"}
@@ -696,7 +699,7 @@ export default function ClipboardPanel() {
               : "bg-white/5 border-white/10 text-slate-400 hover:text-slate-200"
           }`}
         >
-          <Pin className="w-3 h-3" /> 仅置顶
+          <Pin className="w-3 h-3" /> {t("clip.pinnedOnly")}
         </button>
       </div>
 
@@ -704,9 +707,9 @@ export default function ClipboardPanel() {
       <div className="flex-grow min-h-0 overflow-y-auto" ref={listRef} onScroll={onListScroll}>
         {items.length === 0 && !loading && (
           <VexEmptyState
-            title="这里的剪贴板历史暂时是空的"
-            desc={keyword ? "换个关键词试试，没准就有结果了" : "复制点东西，历史会自动记在这儿"}
-            tick={keyword ? "换个词搜搜看" : "来，先复制点东西"}
+            title={t("clip.emptyTitle")}
+            desc={keyword ? t("clip.emptyDescKw") : t("clip.emptyDesc")}
+            tick={keyword ? t("clip.emptyTickKw") : t("clip.emptyTick")}
             avatarSize={40}
             className="!py-12"
           />
@@ -730,11 +733,11 @@ export default function ClipboardPanel() {
                   <div className="h-full flex items-center justify-center gap-2 text-[10.5px] text-slate-500">
                     {loading ? (
                       <>
-                        <Loader2 className="w-3 h-3 animate-spin" /> 加载中…
+                        <Loader2 className="w-3 h-3 animate-spin" /> {t("clip.loading")}
                       </>
                     ) : (
                       <button onClick={() => load(false)} className="hover:text-slate-300 transition cursor-pointer">
-                        加载更多
+                        {t("clip.loadMore")}
                       </button>
                     )}
                   </div>
@@ -762,29 +765,28 @@ export default function ClipboardPanel() {
           onClose={() => setShowSettings(false)}
           title={
             <span className="inline-flex items-center gap-2">
-              <Settings2 className="w-4 h-4 text-[var(--module-accent)]" /> 剪贴板设置
+              <Settings2 className="w-4 h-4 text-[var(--module-accent)]" /> {t("clip.settingsTitle")}
             </span>
           }
           width={480}
           bodyClass="space-y-5"
           footer={
-            <>
-              <SharedButton onClick={() => setShowSettings(false)}>取消</SharedButton>
-              <SharedButton onClick={saveSettings} variant="primary">保存</SharedButton>
+            <><SharedButton onClick={() => setShowSettings(false)}>{t("common.cancel")}</SharedButton>
+<SharedButton onClick={saveSettings} variant="primary">{t("common.save")}</SharedButton>
             </>
           }
         >
             {/* 监控开关 */}
             <div className="flex items-center justify-between rounded-xl bg-white/[0.03] border border-white/10 p-3">
               <div>
-                <p className="text-[12px] text-slate-200 font-medium">启用后台监控</p>
-                <p className="text-[10.5px] text-slate-500 mt-0.5">复制内容时自动记录到历史</p>
+                <p className="text-[12px] text-slate-200 font-medium">{t("clip.monitorOn")}</p>
+                <p className="text-[10.5px] text-slate-500 mt-0.5">{t("clip.monitorHint")}</p>
               </div>
               <button
                 onClick={() => setSettings({ ...settings, enabled: !settings.enabled })}
                 className={`w-10 rounded-full relative transition-all cursor-pointer ${settings.enabled ? "bg-[var(--module-accent)]" : "bg-white/15"}`}
                 style={{ height: 22 }}
-                title={settings.enabled ? "关闭" : "开启"}
+                title={settings.enabled ? t("clip.off") : t("clip.on")}
               >
                 <span
                   className={`absolute top-0.5 w-[18px] h-[18px] rounded-full bg-white shadow transition-all ${settings.enabled ? "left-[calc(100%-20px)]" : "left-0.5"}`}
@@ -795,7 +797,7 @@ export default function ClipboardPanel() {
             {/* 数字设置 */}
             <div className="grid grid-cols-2 gap-3">
               <label className="block">
-                <span className="text-[11px] text-slate-400">历史保留上限</span>
+                <span className="text-[11px] text-slate-400">{t("clip.historyCap")}</span>
                 <input
                   type="number"
                   min={50}
@@ -806,7 +808,7 @@ export default function ClipboardPanel() {
                 />
               </label>
               <div className="flex items-end pb-1">
-                <span className="text-[10px] text-slate-500">超出上限时自动清理最旧的条目</span>
+                <span className="text-[10px] text-slate-500">{t("clip.historyHint")}</span>
               </div>
             </div>
 

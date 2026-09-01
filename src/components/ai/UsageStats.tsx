@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Trash2,
@@ -63,11 +64,12 @@ function SortHeader({
   asc: boolean;
   onSort: (k: SortKey) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <th
       onClick={() => onSort(k)}
       className={`px-2 py-1.5 text-[9px] font-semibold text-slate-500 cursor-pointer select-none hover:text-slate-300 whitespace-nowrap ${align || "text-right"}`}
-      title="点击排序"
+      title={t("usagestats.clickSort")}
     >
       <span className="inline-flex items-center gap-0.5">
         {children}
@@ -81,12 +83,12 @@ function SortHeader({
 const DEFAULT_REFRESH_INTERVAL_MS = 30000;
 const REFRESH_INTERVAL_OPTIONS_MS = [0, 5000, 10000, 30000, 60000] as const;
 type RefreshIntervalOption = (typeof REFRESH_INTERVAL_OPTIONS_MS)[number];
-const REFRESH_INTERVAL_LABEL: Record<number, string> = {
-  0: "关闭",
-  5000: "5 秒",
-  10000: "10 秒",
-  30000: "30 秒",
-  60000: "60 秒",
+const REFRESH_INTERVAL_KEYS: Record<number, string> = {
+  0: "usagestats.interval0",
+  5000: "usagestats.interval5000",
+  10000: "usagestats.interval10000",
+  30000: "usagestats.interval30000",
+  60000: "usagestats.interval60000",
 };
 const LS_REFRESH_KEY = "usage_refresh_interval_ms";
 
@@ -124,6 +126,7 @@ function SortableTable({
   section: keyof typeof SECTION_STYLES;
   maxRows?: number;
 }) {
+  const { t } = useTranslation();
   const [sortKey, setSortKey] = useState<SortKey>("total");
   const [asc, setAsc] = useState(false);
   const style = SECTION_STYLES[section];
@@ -151,7 +154,7 @@ function SortableTable({
         <div className="flex items-center gap-1.5 px-3 py-2 text-[10px] font-bold text-slate-300">
           <span className={`p-1 rounded-md ${style.softClass} ${style.iconClass}`}>{icon}</span>
           {title}
-          <span className="text-[9px] font-normal text-slate-600 ml-1">（暂无数据）</span>
+          <span className="text-[9px] font-normal text-slate-600 ml-1">{t("usagestats.noData")}</span>
         </div>
       </div>
     );
@@ -168,17 +171,17 @@ function SortableTable({
       <div className="flex items-center gap-1.5 px-3 py-2 text-[10px] font-bold text-slate-200 border-b border-white/[0.04] bg-white/[0.015]">
         <span className={`p-1 rounded-md ${style.softClass} ${style.iconClass}`}>{icon}</span>
         {title}
-        <span className="text-[9px] font-normal text-slate-600 ml-1">（{rows.length}）</span>
+        <span className="text-[9px] font-normal text-slate-600 ml-1">{t("usagestats.rowsCount", { count: rows.length })}</span>
       </div>
       <table className="w-full border-collapse">
         <thead>
           <tr className="text-slate-500">
             <th className="w-4" />
             <th className="px-2 py-1 text-[9px] font-semibold text-left">{nameHeader}</th>
-            <SortHeader k="requests" sortKey={sortKey} asc={asc} onSort={setSort}>请求</SortHeader>
-            <SortHeader k="input" sortKey={sortKey} asc={asc} onSort={setSort}>输入</SortHeader>
-            <SortHeader k="output" sortKey={sortKey} asc={asc} onSort={setSort}>输出</SortHeader>
-            <SortHeader k="total" sortKey={sortKey} asc={asc} onSort={setSort}>总计</SortHeader>
+            <SortHeader k="requests" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colRequests")}</SortHeader>
+            <SortHeader k="input" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colInput")}</SortHeader>
+            <SortHeader k="output" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colOutput")}</SortHeader>
+            <SortHeader k="total" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colTotal")}</SortHeader>
           </tr>
         </thead>
         <tbody>
@@ -209,6 +212,7 @@ function SortableTable({
 }
 
 export default function UsageStats() {
+  const { t } = useTranslation();
   const [summary, setSummary] = useState<UsageSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshIntervalMs, setRefreshIntervalMs] = useState<number>(() => {
@@ -252,7 +256,7 @@ export default function UsageStats() {
   };
 
   const handleClear = async () => {
-    if (!confirm("确定要清空所有用量统计数据吗？")) return;
+    if (!confirm(t("usagestats.clearConfirm"))) return;
     await invoke("clear_usage");
     await load();
   };
@@ -275,8 +279,8 @@ export default function UsageStats() {
     total: m.total_tokens,
   }));
   const providerRows: Row[] = (summary?.by_provider || []).map(p => ({
-    key: p.provider || "（未知）",
-    label: p.provider || "（未知）",
+    key: p.provider || t("usagestats.unknown"),
+    label: p.provider || t("usagestats.unknown"),
     requests: p.request_count,
     input: p.input_tokens,
     output: p.output_tokens,
@@ -306,10 +310,10 @@ export default function UsageStats() {
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/5 flex-shrink-0">
         <div className="flex items-center gap-2">
           <Activity className="w-4 h-4 text-[var(--module-accent)]" />
-          <h3 className="text-sm font-bold text-white">用量统计</h3>
+          <h3 className="text-sm font-bold text-white">{t("usagestats.title")}</h3>
         </div>
         <div className="flex gap-1.5 items-center">
-          <div className="flex items-center gap-1 pr-1 text-slate-500" title="自动刷新间隔">
+          <div className="flex items-center gap-1 pr-1 text-slate-500" title={t("usagestats.refreshInterval")}>
             <Clock className="w-3 h-3" />
             <select
               value={refreshIntervalMs}
@@ -318,18 +322,18 @@ export default function UsageStats() {
             >
               {REFRESH_INTERVAL_OPTIONS_MS.map((ms) => (
                 <option key={ms} value={ms} className="bg-[#0e1220] text-slate-200">
-                  {REFRESH_INTERVAL_LABEL[ms as RefreshIntervalOption]}
+                  {t(REFRESH_INTERVAL_KEYS[ms as RefreshIntervalOption] ?? "usagestats.interval0")}
                 </option>
               ))}
             </select>
           </div>
           <button onClick={load} disabled={loading}
             className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-50">
-            <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} /> 刷新
+            <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} /> {t("usagestats.refresh")}
           </button>
           <button onClick={handleClear} disabled={!hasData}
             className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300 hover:text-red-400 hover:bg-red-500/10 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-30 disabled:cursor-not-allowed">
-            <Trash2 className="w-3 h-3" /> 清空
+            <Trash2 className="w-3 h-3" /> {t("usagestats.clear")}
           </button>
         </div>
       </div>
@@ -338,18 +342,18 @@ export default function UsageStats() {
         {loading ? (
           <div className="h-full flex items-center justify-center text-slate-500">
             <RefreshCw className="w-5 h-5 animate-spin mr-2" />
-            <span className="text-xs">加载中...</span>
+            <span className="text-xs">{t("usagestats.loading")}</span>
           </div>
         ) : !hasData ? (
           <div className="h-full flex flex-col items-center justify-center text-slate-500">
             <div className="p-4 rounded-2xl bg-slate-900/40 border border-white/5 mb-3">
               <Hash className="w-8 h-8 text-slate-700" />
             </div>
-            <span className="text-sm font-bold text-slate-400">暂无用量数据</span>
-            <span className="text-[10px] text-slate-600 mt-1">通过代理启动 AI 工具后，用量数据将自动记录</span>
+            <span className="text-sm font-bold text-slate-400">{t("usagestats.emptyTitle")}</span>
+            <span className="text-[10px] text-slate-600 mt-1">{t("usagestats.emptyDesc")}</span>
             <button onClick={load}
               className="mt-3 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex items-center gap-1">
-              <RefreshCw className="w-3 h-3" /> 刷新
+              <RefreshCw className="w-3 h-3" /> {t("usagestats.refresh")}
             </button>
           </div>
         ) : (
@@ -360,13 +364,13 @@ export default function UsageStats() {
               <div className="relative flex items-start justify-between">
                 <div>
                   <div className="text-[10px] text-slate-400 flex items-center gap-1">
-                    <Activity className="w-3 h-3 text-[var(--module-accent)]" /> 总 Token 消耗
+                    <Activity className="w-3 h-3 text-[var(--module-accent)]" /> {t("usagestats.totalTokens")}
                   </div>
                   <div className="text-3xl font-bold text-white tabular-nums mt-1 leading-none">
                     {formatTokens(totalTokens)}
                   </div>
                   <div className="text-[9px] text-slate-500 mt-1.5 tabular-nums">
-                    {formatFull(totalTokens)} tokens · {totalRecords} 次请求 · 平均 {formatTokens(avgPerReq)}/次
+                    {t("usagestats.summaryLine", { tokens: formatFull(totalTokens), count: totalRecords, avg: formatTokens(avgPerReq) })}
                   </div>
                 </div>
                 <div className="flex gap-1.5">
@@ -384,31 +388,31 @@ export default function UsageStats() {
                 <div className="bg-emerald-500/70" style={{ width: `${outputPct}%` }} />
               </div>
               <div className="relative flex justify-between text-[8px] mt-1.5 tabular-nums">
-                <span className="text-blue-300/80">输入 {inputPct}%</span>
-                <span className="text-emerald-300/80">输出 {outputPct}%</span>
+                <span className="text-blue-300/80">{t("usagestats.inputPct", { pct: inputPct })}</span>
+                <span className="text-emerald-300/80">{t("usagestats.outputPct", { pct: outputPct })}</span>
               </div>
             </div>
 
             {/* 指标卡 */}
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-xl bg-slate-900/30 border border-white/5 p-3">
-                <div className="text-[9px] text-slate-500 flex items-center gap-1"><Hash className="w-3 h-3 text-[var(--module-accent)]" />请求总数</div>
+                <div className="text-[9px] text-slate-500 flex items-center gap-1"><Hash className="w-3 h-3 text-[var(--module-accent)]" />{t("usagestats.reqTotal")}</div>
                 <div className="text-lg font-bold text-slate-100 tabular-nums mt-1">{formatTokens(totalRecords)}</div>
               </div>
               <div className="rounded-xl bg-slate-900/30 border border-white/5 p-3">
-                <div className="text-[9px] text-slate-500 flex items-center gap-1"><ArrowDownRight className="w-3 h-3 text-blue-400" />输入 Token</div>
+                <div className="text-[9px] text-slate-500 flex items-center gap-1"><ArrowDownRight className="w-3 h-3 text-blue-400" />{t("usagestats.inputTokens")}</div>
                 <div className="text-lg font-bold text-slate-100 tabular-nums mt-1">{formatTokens(totalInput)}</div>
               </div>
               <div className="rounded-xl bg-slate-900/30 border border-white/5 p-3">
-                <div className="text-[9px] text-slate-500 flex items-center gap-1"><ArrowUpRight className="w-3 h-3 text-emerald-400" />输出 Token</div>
+                <div className="text-[9px] text-slate-500 flex items-center gap-1"><ArrowUpRight className="w-3 h-3 text-emerald-400" />{t("usagestats.outputTokens")}</div>
                 <div className="text-lg font-bold text-slate-100 tabular-nums mt-1">{formatTokens(totalOutput)}</div>
               </div>
             </div>
 
-            <SortableTable title="最近 14 天" icon={<Clock className="w-3 h-3" />} section="recent" rows={recentRows} nameHeader="日期" />
-            <SortableTable title="工具" icon={<Boxes className="w-3 h-3" />} section="tool" rows={toolRows} nameHeader="工具" />
-            <SortableTable title="模型" icon={<Cpu className="w-3 h-3" />} section="model" rows={modelRows} nameHeader="模型" />
-            <SortableTable title="供应商" icon={<Server className="w-3 h-3" />} section="provider" rows={providerRows} nameHeader="供应商" />
+            <SortableTable title={t("usagestats.recent14")} icon={<Clock className="w-3 h-3" />} section="recent" rows={recentRows} nameHeader={t("usagestats.dateHeader")} />
+            <SortableTable title={t("usagestats.tools")} icon={<Boxes className="w-3 h-3" />} section="tool" rows={toolRows} nameHeader={t("usagestats.toolHeader")} />
+            <SortableTable title={t("usagestats.models")} icon={<Cpu className="w-3 h-3" />} section="model" rows={modelRows} nameHeader={t("usagestats.modelHeader")} />
+            <SortableTable title={t("usagestats.providers")} icon={<Server className="w-3 h-3" />} section="provider" rows={providerRows} nameHeader={t("usagestats.providerHeader")} />
           </>
         )}
       </div>

@@ -3,6 +3,7 @@
 //   系统代理开关卡片；TUN 开关卡片；连接卡片：traffic WS 速率 + 迷你趋势；
 //   内核卡片：memory WS 内存占用；订阅用量卡片）
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ArrowUpCircle, ArrowDownCircle, Cpu, Globe, Shield, Link2 } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
 import { openMihomoWs, patchRuntimeConfigs, closeAllConnections, WsHandle } from "./ctrl";
@@ -11,6 +12,7 @@ import { cardCls, Toggle, calcTraffic } from "./ui";
 export default function OverviewPanel({ info, running, onNavigate }: {
   info: any; running: boolean; onNavigate?: (tab: string) => void;
 }) {
+  const { t } = useTranslation();
   const [mode, setMode] = useState<string>("");
   const [app, setApp] = useState<any>({});
   const [c, setC] = useState<any>({});
@@ -95,11 +97,11 @@ export default function OverviewPanel({ info, running, onNavigate }: {
 
       {/* 出站模式（复刻 outbound-mode-switcher） */}
       <div className={`${cardCls} p-2 flex`}>
-        {([["rule", "规则"], ["global", "全局"], ["direct", "直连"]] as const).map(([k, t]) => (
+        {([["rule", "overview.rule"], ["global", "overview.global"], ["direct", "overview.direct"]] as const).map(([k, label]) => (
           <button key={k} onClick={() => onChangeMode(k)} disabled={!running}
             className={`flex-1 py-2 rounded-xl text-[12px] font-semibold cursor-pointer transition-all disabled:opacity-40 ${
               mode === k ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
-            }`}>{t}</button>
+            }`}>{t(label)}</button>
         ))}
       </div>
 
@@ -109,8 +111,8 @@ export default function OverviewPanel({ info, running, onNavigate }: {
           <div className="flex items-center gap-3">
             <Globe className="w-6 h-6 text-emerald-400" />
             <div>
-              <div className="text-[13px] font-bold text-white">系统代理</div>
-              <div className="text-[10px] text-slate-500">{sysProxyEnabled ? "已开启" : "未开启"}</div>
+              <div className="text-[13px] font-bold text-white">{t("overview.sysProxy")}</div>
+              <div className="text-[10px] text-slate-500">{sysProxyEnabled ? t("overview.on") : t("overview.off")}</div>
             </div>
           </div>
           <Toggle v={sysProxyEnabled} disabled={busy || !running} onChange={toggleSysProxy} />
@@ -121,8 +123,8 @@ export default function OverviewPanel({ info, running, onNavigate }: {
           <div className="flex items-center gap-3">
             <Shield className="w-6 h-6 text-sky-400" />
             <div>
-              <div className="text-[13px] font-bold text-white">虚拟网卡 (TUN)</div>
-              <div className="text-[10px] text-slate-500">{tunEnabled ? "已开启" : "未开启"}</div>
+              <div className="text-[13px] font-bold text-white">{t("overview.tun")}</div>
+              <div className="text-[10px] text-slate-500">{tunEnabled ? t("overview.on") : t("overview.off")}</div>
             </div>
           </div>
           <Toggle v={tunEnabled} disabled={busy || !running} onChange={toggleTun} />
@@ -147,7 +149,7 @@ export default function OverviewPanel({ info, running, onNavigate }: {
               </div>
             </div>
           </div>
-          <div className="text-[13px] font-bold text-white mt-3 relative">连接</div>
+          <div className="text-[13px] font-bold text-white mt-3 relative">{t("overview.connections")}</div>
         </div>
 
         {/* 内核卡片（内存） */}
@@ -156,8 +158,8 @@ export default function OverviewPanel({ info, running, onNavigate }: {
             <Cpu className="w-6 h-6 text-amber-400" />
             <div className="text-[12px] text-slate-200 font-mono">{running ? calcTraffic(memory) : "-"}</div>
           </div>
-          <div className="text-[13px] font-bold text-white mt-3">Mihomo 内核</div>
-          <div className="text-[10px] text-slate-500">{running ? "运行中 · 内存占用" : "未运行"}</div>
+          <div className="text-[13px] font-bold text-white mt-3">{t("overview.kernel")}</div>
+          <div className="text-[10px] text-slate-500">{running ? t("overview.runningMem") : t("overview.notRunning")}</div>
         </div>
       </div>
     </div>

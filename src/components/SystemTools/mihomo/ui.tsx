@@ -1,4 +1,5 @@
 // mihomo 模块共享 UI（沿用 SystemTools 统一风格）
+import { useTranslation } from "react-i18next";
 
 export const inputCls =
   "vex-input-cyan w-full h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none";
@@ -49,11 +50,12 @@ export function SettingItem({ title, children, divider = true }: { title: React.
 
 /** 局部加载遮罩：父容器需为 relative */
 export function BusyOverlay({ show, text }: { show: boolean; text?: string }) {
+  const { t } = useTranslation();
   if (!show) return null;
   return (
     <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl bg-[#0b0e15]/70 backdrop-blur-[2px]">
       <span className="w-6 h-6 rounded-full border-2 border-[var(--module-accent-ring)] border-t-[var(--module-accent)] animate-spin" />
-      <span className="text-[11px] text-slate-300">{text || "处理中…"}</span>
+      <span className="text-[11px] text-slate-300">{text || t("mihomoui.processing")}</span>
     </div>
   );
 }
@@ -104,7 +106,7 @@ export function delayColor(delay: number): string {
   return "text-rose-400";
 }
 export function delayText(delay: number): string {
-  if (delay === -1) return "未测试";
-  if (delay === 0) return "超时";
+  if (delay === -1) return "mihomoui.untested";
+  if (delay === 0) return "mihomoui.timeout";
   return `${delay} ms`;
 }

@@ -1,5 +1,6 @@
 // 订阅页（对齐 clash-party profiles.tsx + profile-item + edit-info-modal）
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import MonacoEditor from "../../shared/MonacoEditor";
 import {
   Download, FolderOpen, FilePlus2, RefreshCw, Trash2, Pencil, FileCode2,
@@ -34,18 +35,18 @@ type ProfileItem = {
   [k: string]: any;
 };
 
-const fmtTime = (sec?: number | null) => {
-  if (!sec) return "从未更新";
+const fmtTime = (sec: number | null | undefined, t: (k: string, o?: any) => string) => {
+  if (!sec) return t("subs.neverUpdated");
   const d = new Date(sec * 1000);
   const diff = Date.now() / 1000 - sec;
-  if (diff < 60) return "刚刚";
-  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
+  if (diff < 60) return t("subs.justNow");
+  if (diff < 3600) return t("subs.minsAgo", { n: Math.floor(diff / 60) });
+  if (diff < 86400) return t("subs.hoursAgo", { n: Math.floor(diff / 3600) });
   return d.toLocaleString("zh-CN", { hour12: false });
 };
 
-const fmtExpire = (sec?: number) => {
-  if (!sec) return "长期有效";
+const fmtExpire = (sec: number | undefined, t: (k: string, o?: any) => string) => {
+  if (!sec) return t("subs.longValid");
   return new Date(sec * 1000).toLocaleDateString("zh-CN");
 };
 
@@ -71,6 +72,16 @@ export default function SubscriptionsPanel({
   running?: boolean;
   onNavigate?: (tab: string) => void;
 }) {
+  const { t } = useTranslation();
+  const logTypeLabel = (type: string) => {
+    const map: Record<string, string> = {
+      "import": t("subs.logTypeImport"),
+      "update": t("subs.logTypeUpdate"),
+      "updateAll": t("subs.logTypeUpdateAll"),
+      "validate": t("subs.logTypeValidate"),
+    };
+    return map[type] || type;
+  };
   const [cfg, setCfg] = useState<{ current: string; items: ProfileItem[] }>({
     current: "default",
     items: [],
@@ -169,7 +180,7 @@ export default function SubscriptionsPanel({
       const imported: any = await mihomoApi.importSubscription(u);
       const ui = imported?.subscription_userinfo;
       pushLog({
-        type: "导入",
+        type: "import",
         name: u,
         proxy: !!imported?.use_proxy,
         ok: true,
@@ -180,10 +191,10 @@ export default function SubscriptionsPanel({
       });
       setUrl("");
       await load();
-      flash("导入成功");
+      flash(t("subs.importSuccess"));
     } catch (e: any) {
-      pushLog({ type: "导入", name: u, proxy: false, ok: false, msg: String(e) });
-      flash(`导入失败: ${e}`);
+      pushLog({ type: "import", name: u, proxy: false, ok: false, msg: String(e) });
+      flash(t("subs.importFailed", { err: String(e) }));
     }
     setBusy("");
   };
@@ -195,22 +206,22 @@ export default function SubscriptionsPanel({
     try {
       const v = await mihomoApi.validateSubscription(u);
       if (v && v.ok === false) {
-        pushLog({ type: "校验", name: u, proxy: false, ok: false, msg: v.message });
+        pushLog({ type: "validate", name: u, proxy: false, ok: false, msg: v.message });
         setBusy("");
         setConfirmBox({
-          title: "导入订阅",
-          msg: `订阅校验提示：${v.message}\n仍要导入吗？`,
+          title: t("subs.importSubTitle"),
+          msg: t("subs.validateHint", { msg: v.message }),
           onOk: () => runImport(u),
         });
         return;
       }
       if (v && v.message) {
-        pushLog({ type: "校验", name: u, proxy: false, ok: true, msg: v.message });
+        pushLog({ type: "validate", name: u, proxy: false, ok: true, msg: v.message });
       }
       await runImport(u);
     } catch (e: any) {
-      pushLog({ type: "导入", name: u, proxy: false, ok: false, msg: String(e) });
-      flash(`导入失败: ${e}`);
+      pushLog({ type: "import", name: u, proxy: false, ok: false, msg: String(e) });
+      flash(t("subs.importFailed", { err: String(e) }));
       setBusy("");
     }
   };
@@ -222,17 +233,17 @@ export default function SubscriptionsPanel({
   const doOpenFile = async () => {
     const p = await openDialog({
       multiple: false,
-      filters: [{ name: "Clash 配置", extensions: ["yaml", "yml"] }],
+      filters: [{ name: t("subs.clashConfig"), extensions: ["yaml", "yml"] }],
     });
     if (!p || typeof p !== "string") return;
     setBusy("file");
-    try { await mihomoApi.importFile(p); await load(); flash("导入成功"); }
-    catch (e: any) { flash(`导入失败: ${e}`); }
+    try { await mihomoApi.importFile(p); await load(); flash(t("subs.importSuccess")); }
+    catch (e: any) { flash(t("subs.importFailed", { err: String(e) })); }
     setBusy("");
   };
 
   const doNewBlank = async () => {
-    const name = prompt("新建配置名称", "新建配置");
+    const name = prompt(t("subs.newProfileName"), t("subs.newProfileDefault"));
     if (!name) return;
     const id = `local_${Date.now()}`;
     try {
@@ -244,19 +255,19 @@ export default function SubscriptionsPanel({
       });
       await mihomoApi.setProfileStr(id, "proxies: []\nproxy-groups: []\nrules: []\n");
       await load();
-      flash("已创建");
-    } catch (e: any) { flash(`创建失败: ${e}`); }
+      flash(t("subs.created"));
+    } catch (e: any) { flash(t("subs.createFailed", { err: String(e) })); }
   };
 
   const doUpdate = async (it: ProfileItem) => {
-    if (!it.url) { flash("该配置没有订阅地址"); return; }
+    if (!it.url) { flash(t("subs.noSubUrl")); return; }
     setBusy(it.id);
     try {
       const updated: any = await mihomoApi.updateSubscription(it.id);
       if (cfg.current === it.id) await mihomoApi.updateRuntimeConfig();
       const ui = updated?.subscription_userinfo;
       pushLog({
-        type: "更新",
+        type: "update",
         name: it.name,
         proxy: it.use_proxy,
         ok: true,
@@ -266,10 +277,10 @@ export default function SubscriptionsPanel({
         expire: ui?.expire,
       });
       await load();
-      flash("更新成功");
+      flash(t("subs.updateSuccess"));
     } catch (e: any) {
-      pushLog({ type: "更新", name: it.name, proxy: it.use_proxy, ok: false, msg: String(e) });
-      flash(`更新失败: ${e}`);
+      pushLog({ type: "update", name: it.name, proxy: it.use_proxy, ok: false, msg: String(e) });
+      flash(t("subs.updateFailed", { err: String(e) }));
     }
     setBusy("");
   };
@@ -283,7 +294,7 @@ export default function SubscriptionsPanel({
         const updated: any = await mihomoApi.updateSubscription(it.id);
         const ui = updated?.subscription_userinfo;
         pushLog({
-          type: "更新",
+          type: "update",
           name: it.name,
           proxy: it.use_proxy,
           ok: true,
@@ -294,20 +305,20 @@ export default function SubscriptionsPanel({
         });
         ok++;
       } catch (e: any) {
-        pushLog({ type: "更新", name: it.name, proxy: it.use_proxy, ok: false, msg: String(e) });
+        pushLog({ type: "update", name: it.name, proxy: it.use_proxy, ok: false, msg: String(e) });
         fail++;
       }
     }
     try { await mihomoApi.updateRuntimeConfig(); } catch {}
     await load();
     setBusy("");
-    flash(`更新完成：成功 ${ok}，失败 ${fail}`);
+    flash(t("subs.updateAllDone", { ok, fail }));
     pushLog({
-      type: "更新全部",
-      name: `${cfg.items.filter((i) => i.url).length} 个订阅`,
+      type: "updateAll",
+      name: t("subs.subsCount", { count: cfg.items.filter((i) => i.url).length }),
       proxy: false,
       ok: fail === 0,
-      msg: `成功 ${ok}，失败 ${fail}`,
+      msg: t("subs.okFail", { ok, fail }),
     });
   };
 
@@ -319,20 +330,20 @@ export default function SubscriptionsPanel({
       // 通知代理/规则页立即按新订阅刷新（核心已在后台 reload）
       window.dispatchEvent(new CustomEvent("mihomo:profile-changed", { detail: { id: it.id } }));
       await load();
-      flash(`已切换到 ${it.name}`);
+      flash(t("subs.switchedTo", { name: it.name }));
       onNavigate?.("proxies"); // 跳到代理页，直观看到该订阅的节点
     }
-    catch (e: any) { flash(`切换失败: ${e}`); }
+    catch (e: any) { flash(t("subs.switchFailed", { err: String(e) })); }
     setBusy("");
   };
 
   const doRemove = (it: ProfileItem) => {
     setConfirmBox({
-      title: "删除配置",
-      msg: `确认删除配置「${it.name}」？`,
+      title: t("subs.deleteTitle"),
+      msg: t("subs.deleteConfirm", { name: it.name }),
       onOk: async () => {
         try { await mihomoApi.removeProfile(it.id); await load(); }
-        catch (e: any) { flash(`删除失败: ${e}`); }
+        catch (e: any) { flash(t("subs.deleteFailed", { err: String(e) })); }
       },
     });
   };
@@ -348,12 +359,12 @@ export default function SubscriptionsPanel({
 
   const openEditFile = async (it: ProfileItem) => {
     try { setEditFile({ item: it, content: await mihomoApi.getProfileStr(it.id) }); }
-    catch (e: any) { flash(`读取失败: ${e}`); }
+    catch (e: any) { flash(t("subs.readFailed", { err: String(e) })); }
   };
 
   const openInExplorer = async (it: ProfileItem) => {
     try { await openPath(await mihomoApi.getProfileFilePath(it.id)); }
-    catch (e: any) { flash(`打开失败: ${e}`); }
+    catch (e: any) { flash(t("subs.openFailed", { err: String(e) })); }
   };
 
   return (
@@ -365,30 +376,30 @@ export default function SubscriptionsPanel({
             <Link2 className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
               className={`${inputCls} pl-8`}
-              placeholder="输入或粘贴订阅链接，回车导入"
+              placeholder={t("subs.importPlaceholder")}
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && doImport()}
             />
           </div>
-          <button className={btnSec} onClick={pasteUrl} title="从剪贴板粘贴">
+          <button className={btnSec} onClick={pasteUrl} title={t("subs.pasteFromClipboard")}>
             <Clipboard className="w-3.5 h-3.5" />
           </button>
           <button className={btnPrimary} onClick={doImport} disabled={busy === "import"}>
             <span className="flex items-center gap-1.5">
               <Download className="w-3.5 h-3.5" />
-              {busy === "import" ? "导入中…" : "导入"}
+              {busy === "import" ? t("subs.importing") : t("subs.import")}
             </span>
           </button>
-          <button className={btnSec} onClick={doOpenFile} title="打开本地 yaml">
-            <span className="flex items-center gap-1.5"><FolderOpen className="w-3.5 h-3.5" /> 本地文件</span>
+          <button className={btnSec} onClick={doOpenFile} title={t("subs.openLocalYaml")}>
+            <span className="flex items-center gap-1.5"><FolderOpen className="w-3.5 h-3.5" /> {t("subs.localFile")}</span>
           </button>
-          <button className={btnSec} onClick={doNewBlank} title="新建空白配置">
-            <span className="flex items-center gap-1.5"><FilePlus2 className="w-3.5 h-3.5" /> 新建</span>
+          <button className={btnSec} onClick={doNewBlank} title={t("subs.newBlank")}>
+            <span className="flex items-center gap-1.5"><FilePlus2 className="w-3.5 h-3.5" /> {t("subs.new")}</span>
           </button>
           <button className={btnSec} onClick={doUpdateAll} disabled={busy === "all"}>
             <span className="flex items-center gap-1.5">
-              <RefreshCw className={`w-3.5 h-3.5 ${busy === "all" ? "animate-spin" : ""}`} /> 更新全部
+              <RefreshCw className={`w-3.5 h-3.5 ${busy === "all" ? "animate-spin" : ""}`} /> {t("subs.updateAll")}
             </span>
           </button>
         </div>
@@ -415,10 +426,10 @@ export default function SubscriptionsPanel({
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
                     <span className={`text-[13px] font-semibold break-all ${cur ? "text-emerald-300" : "text-white"}`} title={it.name}>{it.name}</span>
-                    <span className={tagCls}>{it.url ? "订阅" : "本地"}</span>
+                    <span className={tagCls}>{it.url ? t("subs.tagSub") : t("subs.tagLocal")}</span>
                     {st && (
                       <span className={tagCls}>
-                        {st.available ? `${st.node_count} 节点` : "不可用"}
+                        {st.available ? t("subs.nodeCount", { count: st.node_count }) : t("subs.unavailable")}
                       </span>
                     )}
                   </div>
@@ -430,33 +441,33 @@ export default function SubscriptionsPanel({
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                   <button className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
-                    title="上移" onClick={() => move(idx, -1)}>
+                    title={t("subs.moveUp")} onClick={() => move(idx, -1)}>
                     <ChevronUp className="w-3.5 h-3.5" />
                   </button>
                   <button className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
-                    title="下移" onClick={() => move(idx, 1)}>
+                    title={t("subs.moveDown")} onClick={() => move(idx, 1)}>
                     <ChevronDown className="w-3.5 h-3.5" />
                   </button>
                   {it.url && (
                     <button className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-emerald-300 cursor-pointer"
-                      title="更新" onClick={() => doUpdate(it)}>
+                      title={t("subs.update")} onClick={() => doUpdate(it)}>
                       <RefreshCw className={`w-3.5 h-3.5 ${busy === it.id ? "animate-spin" : ""}`} />
                     </button>
                   )}
                   <button className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
-                    title="编辑信息" onClick={() => setEditInfo(it)}>
+                    title={t("subs.editInfo")} onClick={() => setEditInfo(it)}>
                     <Pencil className="w-3.5 h-3.5" />
                   </button>
                   <button className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
-                    title="编辑文件" onClick={() => openEditFile(it)}>
+                    title={t("subs.editFile")} onClick={() => openEditFile(it)}>
                     <FileCode2 className="w-3.5 h-3.5" />
                   </button>
                   <button className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
-                    title="在文件夹中打开" onClick={() => openInExplorer(it)}>
+                    title={t("subs.openFolder")} onClick={() => openInExplorer(it)}>
                     <FolderOpen className="w-3.5 h-3.5" />
                   </button>
                   <button className="p-1.5 rounded-lg hover:bg-rose-500/20 text-slate-400 hover:text-rose-300 cursor-pointer"
-                    title="删除" onClick={() => doRemove(it)}>
+                    title={t("subs.delete")} onClick={() => doRemove(it)}>
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -469,17 +480,17 @@ export default function SubscriptionsPanel({
                     <span>
                       {ui.total > 0 ? (
                         <>
-                          剩余{" "}
+                          {t("subs.remaining")}{" "}
                           <b className="text-emerald-300 font-semibold">
                             {calcTraffic(Math.max(0, ui.total - used))}
                           </b>{" "}
                           / {calcTraffic(ui.total)}
                         </>
                       ) : (
-                        <>已用 {calcTraffic(used)}</>
+                        <>{t("subs.used", { used: calcTraffic(used) })}</>
                       )}
                     </span>
-                    <span>到期 {fmtExpire(ui.expire)}</span>
+                    <span>{t("subs.expire", { expire: fmtExpire(ui.expire, t) })}</span>
                   </div>
                   {ui.total > 0 && (
                     <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
@@ -493,11 +504,11 @@ export default function SubscriptionsPanel({
               )}
 
               <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500">
-                <span>{fmtTime(it.updated_at)}</span>
+                <span>{fmtTime(it.updated_at, t)}</span>
                 <span className="flex items-center gap-2">
-                  {it.auto_update && <span className={tagCls}>自动更新 {Math.round((it.update_interval || 0) / 60)}m</span>}
-                  {it.use_proxy && <span className={tagCls}>走代理</span>}
-                  {(it.override_ids?.length || 0) > 0 && <span className={tagCls}>覆写 {it.override_ids.length}</span>}
+                  {it.auto_update && <span className={tagCls}>{t("subs.autoUpdateShort", { min: Math.round((it.update_interval || 0) / 60) })}</span>}
+                  {it.use_proxy && <span className={tagCls}>{t("subs.useProxy")}</span>}
+                  {(it.override_ids?.length || 0) > 0 && <span className={tagCls}>{t("subs.overrideCount", { count: it.override_ids.length })}</span>}
                 </span>
               </div>
             </div>
@@ -505,7 +516,7 @@ export default function SubscriptionsPanel({
         })}
         {cfg.items.length === 0 && (
           <div className="text-center text-xs text-slate-500 py-10 col-span-full">
-            暂无配置，粘贴订阅链接导入或打开本地 yaml 文件
+            {t("subs.empty")}
           </div>
         )}
       </div>
@@ -518,7 +529,7 @@ export default function SubscriptionsPanel({
         >
           <div className="flex items-center gap-2 text-[12px] font-semibold text-white">
             <ScrollText className="w-4 h-4 text-emerald-400" />
-            订阅请求日志
+            {t("subs.logTitle")}
             <span className={tagCls}>{logs.length}</span>
           </div>
           <div className="flex items-center gap-3">
@@ -527,7 +538,7 @@ export default function SubscriptionsPanel({
                 className="text-[11px] text-slate-400 hover:text-rose-300"
                 onClick={(e) => { e.stopPropagation(); setLogs([]); }}
               >
-                清空
+                {t("subs.clear")}
               </button>
             )}
             {showLog
@@ -539,7 +550,7 @@ export default function SubscriptionsPanel({
           <div className="mt-3 space-y-1 max-h-64 overflow-y-auto pr-1">
             {logs.length === 0 && (
               <div className="text-[11px] text-slate-500">
-                暂无请求记录（导入 / 更新 / 自动更新订阅时会自动记录，含代理与本月剩余流量）
+                {t("subs.logEmpty")}
               </div>
             )}
             {logs.map((l) => {
@@ -553,16 +564,16 @@ export default function SubscriptionsPanel({
                     {new Date(l.time).toLocaleTimeString("zh-CN", { hour12: false })}
                   </span>
                   <span className={`px-1.5 py-0.5 rounded shrink-0 ${l.ok ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"}`}>
-                    {l.type}
+                    {logTypeLabel(l.type)}
                   </span>
                   <span className="text-slate-300 truncate flex-1" title={l.name}>{l.name}</span>
-                  {l.proxy && <span className={tagCls}>代理</span>}
+                  {l.proxy && <span className={tagCls}>{t("subs.proxy")}</span>}
                   {typeof l.total === "number" && l.total > 0 ? (
                     <span className="text-slate-400 shrink-0">
-                      剩 {calcTraffic(Math.max(0, l.remaining || 0))} / {calcTraffic(l.total)}
+                      {t("subs.logRemain", { remain: calcTraffic(Math.max(0, l.remaining || 0)) })} / {calcTraffic(l.total)}
                     </span>
                   ) : typeof l.used === "number" ? (
-                    <span className="text-slate-400 shrink-0">已用 {calcTraffic(l.used)}</span>
+                    <span className="text-slate-400 shrink-0">{t("subs.logUsed", { used: calcTraffic(l.used) })}</span>
                   ) : null}
                   {l.msg && (
                     <span className="text-rose-300/80 shrink-0 max-w-[40%] truncate" title={l.msg}>{l.msg}</span>
@@ -579,7 +590,7 @@ export default function SubscriptionsPanel({
           item={editInfo}
           overrides={overrides}
           onClose={() => setEditInfo(null)}
-          onSaved={async () => { setEditInfo(null); await load(); flash("已保存"); }}
+          onSaved={async () => { setEditInfo(null); await load(); flash(t("subs.saved")); }}
         />
       )}
       {editFile && (
@@ -588,18 +599,18 @@ export default function SubscriptionsPanel({
           initial={editFile.content}
           isCurrent={cfg.current === editFile.item.id}
           onClose={() => setEditFile(null)}
-          onSaved={async () => { setEditFile(null); await load(); flash("已保存"); }}
+          onSaved={async () => { setEditFile(null); await load(); flash(t("subs.saved")); }}
         />
       )}
       {confirmBox && (
         <Modal
-          title={confirmBox.title || "确认"}
+          title={confirmBox.title || t("subs.confirm")}
           onClose={() => setConfirmBox(null)}
           footer={
             <div className="flex justify-end gap-2">
-              <button className={btnSec} onClick={() => setConfirmBox(null)}>取消</button>
+              <button className={btnSec} onClick={() => setConfirmBox(null)}>{t("subs.cancel")}</button>
               <button className={btnPrimary} onClick={() => { const cb = confirmBox; setConfirmBox(null); cb.onOk(); }}>
-                确定
+                {t("subs.ok")}
               </button>
             </div>
           }
@@ -613,6 +624,7 @@ export default function SubscriptionsPanel({
 
 // ---- 编辑信息弹窗（对齐 clash-party edit-info-modal）----
 function EditInfoModal({ item, overrides, onClose, onSaved }: any) {
+  const { t } = useTranslation();
   const [v, setV] = useState<ProfileItem>({ ...item });
   const [saving, setSaving] = useState(false);
   const set = (k: string, val: any) => setV((p) => ({ ...p, [k]: val }));
@@ -620,69 +632,69 @@ function EditInfoModal({ item, overrides, onClose, onSaved }: any) {
   const save = async () => {
     setSaving(true);
     try { await mihomoApi.updateProfile(v); onSaved(); }
-    catch (e: any) { alert(`保存失败: ${e}`); }
+    catch (e: any) { alert(t("subs.saveFailed", { err: String(e) })); }
     setSaving(false);
   };
 
   return (
     <Modal
-      title="编辑信息"
+      title={t("subs.editInfoTitle")}
       onClose={onClose}
       busy={saving}
-      busyText="保存中…"
+      busyText={t("subs.saving")}
       footer={
         <>
-          <button className={btnSec} onClick={onClose} disabled={saving}>取消</button>
-          <button className={btnPrimary} onClick={save} disabled={saving}>{saving ? "保存中…" : "保存"}</button>
+          <button className={btnSec} onClick={onClose} disabled={saving}>{t("subs.cancel")}</button>
+          <button className={btnPrimary} onClick={save} disabled={saving}>{saving ? t("subs.saving") : t("subs.save")}</button>
         </>
       }
     >
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2">
-          <label className={labelCls}>名称</label>
+          <label className={labelCls}>{t("subs.name")}</label>
           <input className={inputCls} value={v.name} onChange={(e) => set("name", e.target.value)} />
         </div>
         <div className="col-span-2">
-          <label className={labelCls}>订阅地址</label>
+          <label className={labelCls}>{t("subs.subUrl")}</label>
           <input className={inputCls} value={v.url || ""} placeholder="https://..."
             onChange={(e) => set("url", e.target.value)} />
         </div>
         <div>
-          <label className={labelCls}>User Agent</label>
+          <label className={labelCls}>{t("subs.userAgent")}</label>
           <input className={inputCls} value={v.user_agent || ""} placeholder="clash-verge/v1.7.0"
             onChange={(e) => set("user_agent", e.target.value)} />
         </div>
         <div>
-          <label className={labelCls}>授权令牌</label>
+          <label className={labelCls}>{t("subs.authToken")}</label>
           <input className={inputCls} value={v.auth_token || ""} placeholder="Bearer token"
             onChange={(e) => set("auth_token", e.target.value)} />
         </div>
         <div>
-          <label className={labelCls}>更新间隔（分钟）</label>
+          <label className={labelCls}>{t("subs.updateInterval")}</label>
           <input className={inputCls} type="number" min={1}
             value={Math.round((v.update_interval || 86400) / 60)}
             onChange={(e) => set("update_interval", Math.max(1, Number(e.target.value) || 1) * 60)} />
         </div>
         <div>
-          <label className={labelCls}>更新超时（秒）</label>
+          <label className={labelCls}>{t("subs.updateTimeout")}</label>
           <input className={inputCls} type="number" min={5}
             value={v.update_timeout || 30}
             onChange={(e) => set("update_timeout", Math.max(5, Number(e.target.value) || 30))} />
         </div>
         <div className="col-span-2">
-          <label className={labelCls}>Age 解密密钥（可选）</label>
+          <label className={labelCls}>{t("subs.ageSecret")}</label>
           <input className={inputCls} value={v.age_secret_key || ""} placeholder="AGE-SECRET-KEY-..."
             onChange={(e) => set("age_secret_key", e.target.value)} />
         </div>
         <div className="col-span-2 flex items-center gap-6 pt-1">
-          <Toggle label="自动更新" v={!!v.auto_update} onChange={(b) => set("auto_update", b)} />
-          <Toggle label="使用代理更新" v={!!v.use_proxy} onChange={(b) => set("use_proxy", b)} />
-          <Toggle label="跳过证书校验（仅本订阅）" v={!!v.skip_verify} onChange={(b) => set("skip_verify", b)} />
+          <Toggle label={t("subs.autoUpdate")} v={!!v.auto_update} onChange={(b) => set("auto_update", b)} />
+          <Toggle label={t("subs.updateViaProxy")} v={!!v.use_proxy} onChange={(b) => set("use_proxy", b)} />
+          <Toggle label={t("subs.skipVerify")} v={!!v.skip_verify} onChange={(b) => set("skip_verify", b)} />
         </div>
         <div className="col-span-2">
-          <label className={labelCls}>应用覆写</label>
+          <label className={labelCls}>{t("subs.applyOverrides")}</label>
           <div className="flex flex-wrap gap-2">
-            {overrides.length === 0 && <span className="text-[11px] text-slate-500">暂无覆写脚本</span>}
+            {overrides.length === 0 && <span className="text-[11px] text-slate-500">{t("subs.noOverrides")}</span>}
             {overrides.map((o: any) => {
               const on = (v.override_ids || []).includes(o.id);
               return (
@@ -712,6 +724,7 @@ function EditInfoModal({ item, overrides, onClose, onSaved }: any) {
 
 // ---- 编辑文件弹窗 ----
 function EditFileModal({ item, initial, isCurrent, onClose, onSaved }: any) {
+  const { t } = useTranslation();
   const [text, setText] = useState(initial);
   const [saving, setSaving] = useState(false);
   const lines = useMemo(() => text.split("\n").length, [text]);
@@ -722,22 +735,22 @@ function EditFileModal({ item, initial, isCurrent, onClose, onSaved }: any) {
       await mihomoApi.setProfileStr(item.id, text);
       if (isCurrent) await mihomoApi.updateRuntimeConfig();
       onSaved();
-    } catch (e: any) { alert(`保存失败: ${e}`); }
+    } catch (e: any) { alert(t("subs.saveFailed", { err: String(e) })); }
     setSaving(false);
   };
 
   return (
     <Modal
-      title={`编辑文件 - ${item.name}`}
+      title={t("subs.editFileTitle", { name: item.name })}
       wide
       onClose={onClose}
       busy={saving}
-      busyText="保存并重载配置…"
+      busyText={t("subs.savingReload")}
       footer={
         <>
-          <span className="text-[11px] text-slate-500 mr-auto">{lines} 行</span>
-          <button className={btnSec} onClick={onClose} disabled={saving}>取消</button>
-          <button className={btnPrimary} onClick={save} disabled={saving}>{saving ? "保存中…" : "保存"}</button>
+          <span className="text-[11px] text-slate-500 mr-auto">{t("subs.lines", { count: lines })}</span>
+          <button className={btnSec} onClick={onClose} disabled={saving}>{t("subs.cancel")}</button>
+          <button className={btnPrimary} onClick={save} disabled={saving}>{saving ? t("subs.saving") : t("subs.save")}</button>
         </>
       }
     >

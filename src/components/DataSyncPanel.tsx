@@ -2,6 +2,7 @@
 // 一键把全部模块配置/数据库（含 picky 数据与其云同步版本号）打包为单个压缩文件（gzip），
 // 全量导出到本地 / 从备份文件全量导入恢复，无任何勾选环节。
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { DatabaseBackup, Loader2, FolderDown, FolderUp } from "lucide-react";
@@ -29,6 +30,7 @@ function fmtTime(iso?: string | null): string {
 }
 
 export default function DataSyncPanel() {
+  const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [lastExport, setLastExport] = useState<ExportResult | null>(null);
@@ -37,9 +39,9 @@ export default function DataSyncPanel() {
   const exportSnapshot = async () => {
     try {
       const filePath = await saveDialog({
-        title: "导出 Kira 数据快照",
+        title: t("datasync.exportTitle"),
         defaultPath: `kira-state-${new Date().toISOString().slice(0, 10)}.json.gz`,
-        filters: [{ name: "Kira 数据快照 (压缩)", extensions: ["gz"] }],
+        filters: [{ name: t("datasync.exportFilter"), extensions: ["gz"] }],
       });
       if (!filePath || typeof filePath !== "string") return;
       setBusy(true);
@@ -47,12 +49,12 @@ export default function DataSyncPanel() {
       const res = await invoke<ExportResult>("state_sync_export", { targetPath: filePath });
       setLastExport(res);
       setMsg(
-        `已导出全量快照：${res.fileCount} 个文件 / ${fmtSize(res.sizeBytes)}（压缩后 ${fmtSize(res.compressedBytes)}）`,
+        t("datasync.exported", { count: res.fileCount, size: fmtSize(res.sizeBytes), comp: fmtSize(res.compressedBytes) }),
       );
-      vexSay("快照打包好了，数据都在，放心。📦", "success");
+      vexSay(t("datasync.vexExported"), "success");
     } catch (e) {
-      setMsg(`导出失败：${e}`);
-      vexSay("唔…导出这步卡住了，我帮你看看", "error");
+      setMsg(t("datasync.exportFail", { err: String(e) }));
+      vexSay(t("datasync.vexExportErr"), "error");
     } finally {
       setBusy(false);
     }
@@ -62,11 +64,11 @@ export default function DataSyncPanel() {
   const importAll = async () => {
     try {
       const selected = await openDialog({
-        title: "选择 Kira 数据快照文件",
+        title: t("datasync.importTitle"),
         filters: [
-          { name: "Kira 数据快照 (*.gz, *.json)", extensions: ["gz", "json"] },
-          { name: "压缩快照 (*.gz)", extensions: ["gz"] },
-          { name: "旧版 JSON 快照 (*.json)", extensions: ["json"] },
+          { name: t("datasync.importFilterAll"), extensions: ["gz", "json"] },
+          { name: t("datasync.importFilterGz"), extensions: ["gz"] },
+          { name: t("datasync.importFilterJson"), extensions: ["json"] },
         ],
       });
       if (!selected || typeof selected !== "string") return;
@@ -75,10 +77,10 @@ export default function DataSyncPanel() {
       setMsg("");
       const res = await invoke<string>("state_sync_import", { path: selected });
       setMsg(res);
-      vexSay("恢复完成，数据都归位了，我确认过了。✅", "success");
+      vexSay(t("datasync.vexRestored"), "success");
     } catch (e) {
-      setMsg(`导入失败：${e}`);
-      vexSay("唔…恢复这步卡住了，先别急，我看看备份还在不在", "error");
+      setMsg(t("datasync.importFail", { err: String(e) }));
+      vexSay(t("datasync.vexRestoreErr"), "error");
     } finally {
       setBusy(false);
     }
@@ -91,9 +93,9 @@ export default function DataSyncPanel() {
         <div className="flex items-center gap-2">
           <DatabaseBackup className="w-4 h-4 text-[var(--module-accent)]" />
           <div>
-            <h3 className="text-xs font-semibold text-white">数据备份</h3>
+            <h3 className="text-xs font-semibold text-white">{t("datasync.title")}</h3>
             <p className="text-[9px] text-slate-500 mt-0.5">
-              全部配置与数据（含 picky 收藏与同步版本号）打包为一个压缩快照，全量导出 / 导入
+              {t("datasync.desc")}
             </p>
           </div>
         </div>
@@ -110,36 +112,32 @@ export default function DataSyncPanel() {
       <div className="space-y-4">
         {/* 说明 */}
         <div className="bg-white/[0.03] border border-white/10 rounded-xl p-3.5 text-[11px] text-slate-400 leading-relaxed">
-          所有数据统一打包为<b className="text-slate-200">一个压缩快照文件</b>，不做任何勾选：
-          config.json / 各数据库 / AI 配置与会话 / 技能 / MCP / 协作 / 翻译配置 / 启动器 / 任务 / OTP /
-          剪贴板（含图片）/ 证书凭据 / mihomo 代理配置 / 环境备份 / 自定义字体 / 思维导图 / API 接口平台 /{" "}
-          <b className="text-slate-200">Picky 收藏数据（含其云同步版本号 lastSyncAt）</b>等。
-          导入时整体恢复（会覆盖当前数据），请谨慎操作。
+          {t("datasync.snapshotHint1")}<b className="text-slate-200">{t("datasync.snapshotHint2")}</b>{t("datasync.snapshotHint3")}{" "}
+          <b className="text-slate-200">{t("datasync.snapshotHintPicky")}</b>{t("datasync.snapshotHintTail")}
         </div>
 
         {/* 导出 */}
         <div className="bg-white/[0.03] border border-white/10 rounded-xl p-4 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
-              <FolderDown className="w-3.5 h-3.5 text-[var(--module-accent)]" /> 全量导出
+              <FolderDown className="w-3.5 h-3.5 text-[var(--module-accent)]" /> {t("datasync.exportAll")}
             </h3>
             <button
               onClick={exportSnapshot}
               disabled={busy}
               className="px-3 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
             >
-              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <FolderDown className="w-3 h-3" />} 导出快照
+              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <FolderDown className="w-3 h-3" />} {t("datasync.exportSnapshot")}
             </button>
           </div>
           <p className="text-[9px] text-slate-600">
-            选择存放位置后，把全部数据打包为一个 .gz 压缩文件（gzip，旧版明文 JSON 也能导入）。
+            {t("datasync.exportHint")}
           </p>
           {lastExport && (
             <p className="text-[10px] text-slate-500 break-all">
-              已导出：{lastExport.path}
+              {t("datasync.exportedPath", { path: lastExport.path })}
               <br />
-              {lastExport.fileCount} 个文件 · 原始 {fmtSize(lastExport.sizeBytes)} · 压缩后{" "}
-              {fmtSize(lastExport.compressedBytes)} · {fmtTime(lastExport.createdAt)}
+              {t("datasync.filesInfo", { count: lastExport.fileCount, size: fmtSize(lastExport.sizeBytes), comp: fmtSize(lastExport.compressedBytes), time: fmtTime(lastExport.createdAt) })}
             </p>
           )}
         </div>
@@ -148,19 +146,19 @@ export default function DataSyncPanel() {
         <div className="bg-white/[0.03] border border-white/10 rounded-xl p-4 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
-              <FolderUp className="w-3.5 h-3.5 text-[var(--module-accent)]" /> 全量导入恢复
+              <FolderUp className="w-3.5 h-3.5 text-[var(--module-accent)]" /> {t("datasync.importAll")}
             </h3>
             <button
               onClick={importAll}
               disabled={busy}
               className="px-3 py-1.5 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 cursor-pointer disabled:opacity-50 flex items-center gap-1"
             >
-              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <FolderUp className="w-3 h-3" />} 选择快照并恢复
+              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <FolderUp className="w-3 h-3" />} {t("datasync.chooseAndRestore")}
             </button>
           </div>
-          {importPath && <p className="text-[10px] text-slate-500 break-all">已选择：{importPath}</p>}
+          {importPath && <p className="text-[10px] text-slate-500 break-all">{t("datasync.selectedPath", { path: importPath })}</p>}
           <p className="text-[9px] text-amber-400/80">
-            ⚠ 恢复会整体覆盖当前所有数据（含 picky 收藏与同步版本号），操作前建议先导出一次备份。
+            {t("datasync.importWarn")}
           </p>
         </div>
       </div>

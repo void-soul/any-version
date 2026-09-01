@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import VexAvatar from "./VexAvatar";
 
 /**
@@ -5,8 +6,8 @@ import VexAvatar from "./VexAvatar";
  * 用于导图空文档 / 无订阅 / 无历史 / 无结果等空状态。
  */
 export default function VexEmptyState({
-  title = "这里暂时还空着",
-  desc = "没事，想到什么再回来就行。",
+  title,
+  desc,
   tick,
   tickColor = "text-[var(--module-accent)]",
   avatarSize = 48,
@@ -20,12 +21,13 @@ export default function VexEmptyState({
   avatarSize?: number;
   className?: string;
 }) {
+  const { t } = useTranslation();
   return (
     <div className={`flex flex-col items-center justify-center gap-3 py-14 text-center ${className}`}>
       <VexAvatar size={avatarSize} />
       <div>
-        <p className="text-xs text-slate-400">{title}</p>
-        {desc && <p className="mt-1 text-[11px] text-slate-600">{desc}</p>}
+        <p className="text-xs text-slate-400">{title ?? t("vex.defaultTitle")}</p>
+        {desc !== undefined && <p className="mt-1 text-[11px] text-slate-600">{desc ?? t("vex.defaultDesc")}</p>}
       </div>
       {tick && (
         <p className={`text-[10px] italic opacity-80 ${tickColor}`}>— {tick}</p>

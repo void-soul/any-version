@@ -1,12 +1,13 @@
 import VexAvatar from "./VexAvatar";
 import { VEX_CYBER_ACCENT, VEX_CYBER_CYAN } from "../utils/brand";
+import { useTranslation } from "react-i18next";
 
 /**
  * Kira 「忙碌小助手」：替代干巴巴的转圈，让 Kira 的面容 + 霓虹加载条 + 一句伴随语
  * 陪用户等待（导入 / 扫描 / AI 生成 / 翻译…）。
  */
 export default function VexBusy({
-  text = "稍等，我忙这一下，马上好。",
+  text,
   avatarSize = 34,
   barColor,
 }: {
@@ -16,6 +17,8 @@ export default function VexBusy({
   /** 加载条主色，默认跟随当前主题色（--module-accent）到青的渐变 */
   barColor?: string;
 }) {
+  const { t } = useTranslation();
+  const resolvedText = text ?? t("vexbusy.defaultText");
   const accent = `var(--module-accent, ${VEX_CYBER_ACCENT})`;
   return (
     <div className="flex items-center gap-3">
@@ -35,7 +38,7 @@ export default function VexBusy({
             }}
           />
         </div>
-        <p className="mt-1.5 truncate text-[10px] text-slate-400">{text}</p>
+        <p className="mt-1.5 truncate text-[10px] text-slate-400">{resolvedText}</p>
       </div>
     </div>
   );

@@ -55,6 +55,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { useTranslation } from "react-i18next";
 import {
   Classification,
   Item,
@@ -223,6 +224,7 @@ function SortableItem(props: {
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const { item, view, checkResults } = props;
+  const { t } = useTranslation();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: `item:${item.id}`,
     data: { type: "item", itemId: item.id },
@@ -242,7 +244,7 @@ function SortableItem(props: {
       onClick={props.onClick}
       onContextMenu={props.onContextMenu}
       className={cardClass(item, view, checkResults, isDragging ? "opacity-40" : "")}
-      title={missing ? `${item.name}（不存在）` : item.name}
+      title={missing ? `${item.name}${t("launcher.missingSuffix")}` : item.name}
     >
       <ItemCardBody item={item} view={view} checkResults={checkResults} />
     </div>
@@ -250,6 +252,7 @@ function SortableItem(props: {
 }
 
 export default function LauncherPanel() {
+  const { t } = useTranslation();
   const [classifications, setClassifications] = useState<Classification[]>([]);
   const [activeParentId, setActiveParentId] = useState<number | null>(null);
   const [allItems, setAllItems] = useState<Item[]>([]);
@@ -518,14 +521,14 @@ export default function LauncherPanel() {
         console.warn("Hide window on launch:", hideErr);
       }
     } catch (e) {
-      showToast(`启动失败: ${e}`);
+      showToast(t("launcher.launchFail", { err: String(e) }));
     }
   };
 
   // Save Category
   const handleSaveCategory = async (cat: Classification) => {
     await invoke("launcher_save_classification", { classification: cat });
-    showToast("分类已保存");
+    showToast(t("launcher.catSaved"));
     await loadData();
   };
 
@@ -540,11 +543,11 @@ export default function LauncherPanel() {
     setDeletingCategory(true);
     try {
       await invoke("launcher_delete_classification", { id: pendingDeleteCategory.id });
-      showToast("分类已删除");
+      showToast(t("launcher.catDeleted"));
       setPendingDeleteCategory(null);
       await loadData();
     } catch (e: any) {
-      showToast(`删除失败: ${e}`);
+      showToast(t("launcher.deleteFail", { err: String(e) }));
     } finally {
       setDeletingCategory(false);
     }
@@ -553,14 +556,14 @@ export default function LauncherPanel() {
   // Save Item
   const handleSaveItem = async (it: Item) => {
     await invoke("launcher_save_item", { item: it });
-    showToast("启动项已保存");
+    showToast(t("launcher.itemSaved"));
     await loadData();
   };
 
   // Delete Item
   const handleDeleteItem = async (id: number) => {
     await invoke("launcher_delete_item", { id });
-    showToast("启动项已删除");
+    showToast(t("launcher.itemDeleted"));
     await loadData();
   };
 
@@ -627,13 +630,13 @@ export default function LauncherPanel() {
         sourceId: moveItemsSource.id,
         targetId: moveItemsTarget,
       });
-      showToast(`已将 ${moved} 个子分类移动到目标分类`);
+      showToast(t("launcher.movedSubcats", { count: moved }));
       setMoveItemsModalOpen(false);
       setMoveItemsSource(null);
       setMoveItemsTarget(null);
       await loadData();
     } catch (e: any) {
-      showToast(`移动失败: ${e}`);
+      showToast(t("launcher.moveFail", { err: String(e) }));
     } finally {
       setMoveItemsLoading(false);
     }
@@ -652,9 +655,9 @@ export default function LauncherPanel() {
       if (res && res.categoryId) {
         setActiveParentId(res.categoryId);
       }
-      showToast(`成功导入 ${res?.count || 0} 个 ${browser === "edge" ? "Edge" : "Chrome"} 收藏夹书签`);
+      showToast(t("launcher.importedCount", { count: res?.count || 0, browser: browser === "edge" ? "Edge" : "Chrome" }));
     } catch (e: any) {
-      showToast(`导入失败: ${e}`);
+      showToast(t("launcher.importFail", { err: String(e) }));
     } finally {
       setImportingBookmark(false);
     }
@@ -694,10 +697,10 @@ export default function LauncherPanel() {
       if (newItems && newItems.length > 0) {
         setAllItems((prev) => [...prev, ...newItems]);
       }
-      showToast(`已成功添加 ${newItems.length} 个项目`);
+      showToast(t("launcher.addedItems", { count: newItems.length }));
     } catch (err: any) {
       console.error("处理拖入路径失败:", err);
-      showToast(`录入失败: ${err}`);
+      showToast(t("launcher.addFail", { err: String(err) }));
     } finally {
       isDroppingRef.current = false;
       setIsDragOver(false);
@@ -895,7 +898,7 @@ export default function LauncherPanel() {
         if (orders.length > 0) await invoke("launcher_reorder_items", { orders });
       }
     } catch (err) {
-      showToast(`保存排序失败: ${err}`);
+      showToast(t("launcher.saveOrderFail", { err: String(err) }));
     }
   };
 
@@ -1062,7 +1065,7 @@ export default function LauncherPanel() {
         if (p.stopped) {
           setChecking(false);
           setCheckProgress(null);
-          showToast("检测已停止");
+          showToast(t("launcher.checkStopped"));
           return;
         }
 
@@ -1102,12 +1105,12 @@ export default function LauncherPanel() {
   // 一键清理无效项目（检测为不存在），删除前询问确认
   const cleanupInvalidItems = async () => {
     if (missingCount === 0 && !allItems.some((it) => it.data.exists === false)) {
-      showToast("没有检测到无效项目");
+      showToast(t("launcher.noInvalid"));
       return;
     }
     const invalidCount = allItems.filter((it) => it.data.exists === false).length;
     const ok = window.confirm(
-      `确定删除 ${invalidCount} 个无效项目（检测为不存在的项目）？\n此操作不可撤销。`
+      t("launcher.confirmDeleteInvalid", { count: invalidCount })
     );
     if (!ok) return;
     try {
@@ -1116,10 +1119,10 @@ export default function LauncherPanel() {
       setAllItems((prev) => prev.filter((it) => it.data.exists !== false));
       setCheckResults({});
       setMissingCount(0);
-      showToast(`已删除 ${deleted} 个无效项目`);
+      showToast(t("launcher.deletedInvalid", { count: deleted }));
     } catch (e) {
       console.error("清理无效项目失败", e);
-      showToast("清理失败，请重试");
+      showToast(t("launcher.cleanFail"));
     }
   };
 
@@ -1143,10 +1146,10 @@ export default function LauncherPanel() {
       }
       setCheckResults(newResults);
       setMissingCount(missing);
-      showToast(`检测完成：${missing > 0 ? `${missing} 个项目不存在` : "全部项目正常"}`);
+      showToast(t("launcher.checkDone", { detail: missing > 0 ? t("launcher.checkDoneMissing", { count: missing }) : t("launcher.checkDoneOk") }));
     } catch (e) {
       console.error("检测失败", e);
-      showToast("检测失败，请重试");
+      showToast(t("launcher.checkFail"));
     } finally {
       setChecking(false);
       setCheckProgress(null);
@@ -1159,7 +1162,7 @@ export default function LauncherPanel() {
       const sub = classificationMap.get(targetDragSubId);
       if (sub) return sub.name;
     }
-    return activeTopCategory?.name || "当前分类";
+    return activeTopCategory?.name || t("launcher.currentCat");
   }, [targetDragSubId, classificationMap, activeTopCategory]);
 
   // ---- 全局视图设置：应用到所有分类的项目网格 ----
@@ -1244,7 +1247,7 @@ export default function LauncherPanel() {
             }}
             className="relative bg-[#0c101c] pr-4 pl-0.5 font-semibold text-slate-300 tracking-wide flex items-center gap-1 cursor-pointer hover:text-[var(--module-accent)] transition group-header"
             style={categoryNameStyle}
-            title="点击展开/收起，右键管理此分组"
+            title={t("launcher.clickManageGroup")}
           >
             <ChevronRight
               className={`w-3 h-3 text-slate-500 transition-transform duration-150 flex-shrink-0 ${
@@ -1300,7 +1303,7 @@ export default function LauncherPanel() {
             }}
             className="border border-dashed border-white/5 hover:border-[var(--module-accent-ring)] rounded-xl min-h-[64px] flex items-center justify-center py-3 text-center text-slate-600 hover:text-slate-400 text-[11px] cursor-pointer transition"
           >
-            + 点击为此分组添加项目，或直接拖入 .exe / 文件夹 / 任意文件
+            + {t("launcher.clickAddToGroup")}
           </div>
         ) : null}
 
@@ -1330,8 +1333,8 @@ export default function LauncherPanel() {
           <div className="bg-[color-mix(in_srgb,var(--module-accent)_90%,transparent)] backdrop-blur-md border border-[var(--module-accent)] text-white px-5 py-2.5 rounded-2xl shadow-[0_0_16px_color-mix(in_srgb,var(--module-accent)_45%,transparent),0_0_40px_color-mix(in_srgb,var(--module-accent)_25%,transparent)] flex items-center gap-2.5">
             <UploadCloud className="w-5 h-5 text-[var(--module-accent)] animate-bounce" />
             <div className="text-xs">
-              <span className="font-bold">松开鼠标立即添加至「{currentDragTargetName}」</span>
-              <span className="text-[var(--module-accent)] text-[10px] ml-1.5">(支持 .exe、文件夹、任意文件、快捷方式)</span>
+              <span className="font-bold">{t("launcher.dropAdd", { name: currentDragTargetName })}</span>
+              <span className="text-[var(--module-accent)] text-[10px] ml-1.5">{t("launcher.dropSupport")}</span>
             </div>
           </div>
         </div>
@@ -1342,7 +1345,7 @@ export default function LauncherPanel() {
         <div className="flex items-center gap-2">
           <span className="text-sm">{activeTopCategory?.data.icon || "📁"}</span>
           <span className="text-xs font-bold text-slate-200 tracking-wide">
-            {activeTopCategory?.name || "快捷启动"}
+            {activeTopCategory?.name || t("launcher.quickLaunch")}
           </span>
         </div>
 
@@ -1358,20 +1361,20 @@ export default function LauncherPanel() {
               isSearchOpen
                 ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white shadow-md shadow-[var(--module-accent-ring)]"
                 : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
-            }`}             title="搜索全部快捷方式 (Ctrl+F)"
+            }`}             title={t("launcher.searchAll")}
           >
             <Search className="w-3 h-3" />
-            <span className="text-[11px]">搜索</span>
+            <span className="text-[11px]">{t("launcher.search")}</span>
           </button>
 
           {/* Import Bookmarks */}
           <button
             onClick={() => setBookmarkModalOpen(true)}
             className="px-2.5 py-1 rounded-lg text-xs bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 hover:text-white transition cursor-pointer flex items-center gap-1.5"
-            title="导入 Edge / Chrome 浏览器收藏夹"
+            title={t("launcher.importBookmarksTitle")}
           >
             <Bookmark className="w-3 h-3 text-amber-400" />
-            <span className="text-[11px]">导入收藏夹</span>
+            <span className="text-[11px]">{t("launcher.importBookmarks")}</span>
           </button>
 
           {/* 检测 */}
@@ -1383,14 +1386,14 @@ export default function LauncherPanel() {
                 ? "bg-red-600/20 border-red-500/40 text-red-300 hover:bg-red-600/30"
                 : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
             } ${checking ? "opacity-60 cursor-wait" : ""}`}
-            title="检测项目是否存在：网页类自动更新链接图标，其余缺失项以红框标识"
+            title={t("launcher.checkTitle")}
           >
             {checking ? (
               <Loader2 className="w-3 h-3 animate-spin" />
             ) : (
               <ScanSearch className="w-3 h-3 text-emerald-400" />
             )}
-            <span className="text-[11px]">{checking ? "检测中" : "检测"}</span>
+            <span className="text-[11px]">{checking ? t("launcher.checking") : t("launcher.check")}</span>
             {missingCount > 0 && !checking && (
               <span className="w-3.5 h-3.5 rounded-full bg-red-500 text-[9px] text-white flex items-center justify-center font-bold">
                 {missingCount}
@@ -1410,10 +1413,10 @@ export default function LauncherPanel() {
                 ? "bg-red-600/20 border-red-500/40 text-red-300 hover:bg-red-600/30"
                 : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
             }`}
-            title="删除所有检测为不存在的项目（删除前询问）"
+            title={t("launcher.cleanInvalidTitle")}
           >
             <Trash2 className="w-3 h-3 text-red-400" />
-            <span className="text-[11px]">清理无效</span>
+            <span className="text-[11px]">{t("launcher.cleanInvalid")}</span>
           </button>
 
           {/* 收缩/展开全部子分组 */}
@@ -1425,14 +1428,14 @@ export default function LauncherPanel() {
                 ? "bg-[var(--module-accent)]/15 border-[var(--module-accent)]/40 text-[var(--module-accent)]"
                 : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
             }`}
-            title={isAllCollapsed ? "展开当前分类下的所有分组" : "收缩当前分类下的所有分组"}
+            title={isAllCollapsed ? t("launcher.expandAllTitle") : t("launcher.collapseAllTitle")}
           >
             {isAllCollapsed ? (
               <ChevronsDown className="w-3 h-3 text-cyan-400" />
             ) : (
               <ChevronsUp className="w-3 h-3 text-cyan-400" />
             )}
-            <span className="text-[11px]">{isAllCollapsed ? "展开全部" : "收缩全部"}</span>
+            <span className="text-[11px]">{isAllCollapsed ? t("launcher.expandAll") : t("launcher.collapseAll")}</span>
           </button>
 
           {/* 视图设置 */}
@@ -1444,10 +1447,10 @@ export default function LauncherPanel() {
                   ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white"
                   : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
               }`}
-              title="调整项目尺寸与外观"
+              title={t("launcher.viewTitle")}
             >
               <LayoutGrid className="w-3 h-3 text-cyan-400" />
-              <span className="text-[11px]">视图</span>
+              <span className="text-[11px]">{t("launcher.view")}</span>
             </button>
 
             {viewSettingsOpen && (
@@ -1455,14 +1458,14 @@ export default function LauncherPanel() {
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-slate-200 flex items-center gap-1">
                     <Settings2 className="w-3 h-3 text-[var(--module-accent)]" />
-                    全局视图设置
+                    {t("launcher.globalViewSettings")}
                   </span>
                 </div>
 
                 {/* 图标大小 */}
                 <div>
                   <label className="block text-[10px] text-slate-400 mb-1">
-                    图标大小：{settings.itemIconSize ?? 32}px
+                    {t("launcher.iconSize", { size: settings.itemIconSize ?? 32 })}
                   </label>
                   <input
                     type="range"
@@ -1477,7 +1480,7 @@ export default function LauncherPanel() {
 
                 {/* 网格列数 */}
                 <div>
-                  <label className="block text-[10px] text-slate-400 mb-1">每行列数</label>
+                  <label className="block text-[10px] text-slate-400 mb-1">{t("launcher.colsPerRow")}</label>
                   <div className="flex flex-wrap gap-1">
                     {[0, 3, 4, 5, 6, 7, 8].map((col) => (
                       <button
@@ -1489,7 +1492,7 @@ export default function LauncherPanel() {
                             : "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10"
                         }`}
                       >
-                        {col === 0 ? "自适应" : `${col}列`}
+                        {col === 0 ? t("launcher.adaptive") : t("launcher.colCount", { count: col })}
                       </button>
                     ))}
                   </div>
@@ -1497,12 +1500,12 @@ export default function LauncherPanel() {
 
                 {/* 卡片密度 */}
                 <div>
-                  <label className="block text-[10px] text-slate-400 mb-1">卡片密度</label>
+                  <label className="block text-[10px] text-slate-400 mb-1">{t("launcher.cardDensity")}</label>
                   <div className="grid grid-cols-3 gap-1">
                     {[
-                      { key: "compact", label: "紧凑" },
-                      { key: "cozy", label: "舒适" },
-                      { key: "spacious", label: "宽松" },
+                      { key: "compact", label: "launcher.compact" },
+                      { key: "cozy", label: "launcher.cozy" },
+                      { key: "spacious", label: "launcher.spacious" },
                     ].map((opt) => (
                       <button
                         key={opt.key}
@@ -1513,7 +1516,7 @@ export default function LauncherPanel() {
                             : "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10"
                         }`}
                       >
-                        {opt.label}
+                        {t(opt.label)}
                       </button>
                     ))}
                   </div>
@@ -1522,7 +1525,7 @@ export default function LauncherPanel() {
                 {/* 项目文字大小 */}
                 <div>
                   <label className="block text-[10px] text-slate-400 mb-1">
-                    项目文字大小：{settings.itemFontSize ?? 12}px
+                    {t("launcher.itemFontSize", { size: settings.itemFontSize ?? 12 })}
                   </label>
                   <input
                     type="range"
@@ -1538,7 +1541,7 @@ export default function LauncherPanel() {
                 {/* 分类文字大小 */}
                 <div>
                   <label className="block text-[10px] text-slate-400 mb-1">
-                    分类文字大小：{settings.categoryFontSize ?? 12}px
+                    {t("launcher.catFontSize", { size: settings.categoryFontSize ?? 12 })}
                   </label>
                   <input
                     type="range"
@@ -1554,7 +1557,7 @@ export default function LauncherPanel() {
                 {/* 项目圆角 */}
                 <div>
                   <label className="block text-[10px] text-slate-400 mb-1">
-                    项目圆角：{settings.itemRadius ?? 12}px
+                    {t("launcher.itemRadius", { size: settings.itemRadius ?? 12 })}
                   </label>
                   <input
                     type="range"
@@ -1570,7 +1573,7 @@ export default function LauncherPanel() {
                 {/* 分类间距 */}
                 <div>
                   <label className="block text-[10px] text-slate-400 mb-1">
-                    分类间距：{settings.categoryGap ?? 24}px
+                    {t("launcher.catGap", { size: settings.categoryGap ?? 24 })}
                   </label>
                   <input
                     type="range"
@@ -1586,13 +1589,13 @@ export default function LauncherPanel() {
                 {/* 开关 */}
                 <div className="space-y-1.5">
                   <label className="flex items-center justify-between cursor-pointer">
-                    <span className="text-[10px] text-slate-400">只显示有效项目</span>
+                    <span className="text-[10px] text-slate-400">{t("launcher.validOnly")}</span>
                     <button
                       onClick={() => saveViewSettings({ showOnlyValid: !(settings.showOnlyValid ?? false) })}
                       className={`w-7 h-4 rounded-full transition relative cursor-pointer ${
                         settings.showOnlyValid ?? false ? "bg-[var(--module-accent)]" : "bg-white/15"
                       }`}
-                      title="隐藏检测为不存在的项目（未检测过的项目始终显示）"
+                      title={t("launcher.hideMissingTitle")}
                     >
                       <span
                         className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${
@@ -1602,7 +1605,7 @@ export default function LauncherPanel() {
                     </button>
                   </label>
                   <label className="flex items-center justify-between cursor-pointer">
-                    <span className="text-[10px] text-slate-400">项目边框</span>
+                    <span className="text-[10px] text-slate-400">{t("launcher.itemBorder")}</span>
                     <button
                       onClick={() => saveViewSettings({ itemBorder: !(settings.itemBorder ?? true) })}
                       className={`w-7 h-4 rounded-full transition relative cursor-pointer ${
@@ -1617,7 +1620,7 @@ export default function LauncherPanel() {
                     </button>
                   </label>
                   <label className="flex items-center justify-between cursor-pointer">
-                    <span className="text-[10px] text-slate-400">显示项目名称</span>
+                    <span className="text-[10px] text-slate-400">{t("launcher.showItemName")}</span>
                     <button
                       onClick={() => saveViewSettings({ showItemName: !(settings.showItemName ?? true) })}
                       className={`w-7 h-4 rounded-full transition relative cursor-pointer ${
@@ -1632,7 +1635,7 @@ export default function LauncherPanel() {
                     </button>
                   </label>
                   <label className="flex items-center justify-between cursor-pointer">
-                    <span className="text-[10px] text-slate-400">图标背景色块</span>
+                    <span className="text-[10px] text-slate-400">{t("launcher.iconBgColor")}</span>
                     <button
                       onClick={() => saveViewSettings({ iconBackgroundColor: !(settings.iconBackgroundColor ?? false) })}
                       className={`w-7 h-4 rounded-full transition relative cursor-pointer ${
@@ -1661,7 +1664,7 @@ export default function LauncherPanel() {
             className="px-3 py-1 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-lg text-xs font-medium transition cursor-pointer shadow-md shadow-[var(--module-accent-ring)] flex items-center gap-1"
           >
             <Plus className="w-3 h-3" />
-            <span className="text-[11px]">添加项目</span>
+            <span className="text-[11px]">{t("launcher.addItem")}</span>
           </button>
         </div>
       </div>
@@ -1679,15 +1682,15 @@ export default function LauncherPanel() {
         <div className="flex items-center gap-2 px-4 py-1.5 bg-[#0c101c] border-b border-white/5 flex-shrink-0 animate-in slide-in-from-top-2 duration-150">
           <VexBusy
             avatarSize={26}
-            text={checkProgress.name ? <>正在检测 <span className="text-[var(--module-accent)]">{checkProgress.name}</span> · {checkProgress.done}/{checkProgress.total}</> : `正在检测 ${checkProgress.done}/${checkProgress.total}…`}
+            text={checkProgress.name ? <>{t("launcher.checkingItem")} <span className="text-[var(--module-accent)]">{checkProgress.name}</span> · {checkProgress.done}/{checkProgress.total}</> : `${t("launcher.checkingItem")} ${checkProgress.done}/${checkProgress.total}…`}
           />
           {checking && (
             <button
               onClick={stopCheck}
               className="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-medium bg-red-600/20 border border-red-500/40 text-red-300 hover:bg-red-600/30 transition cursor-pointer"
-              title="停止检测"
+              title={t("launcher.stopCheckTitle")}
             >
-              停止
+              {t("launcher.stop")}
             </button>
           )}
         </div>
@@ -1784,7 +1787,7 @@ export default function LauncherPanel() {
               className="w-full py-1.5 px-2 rounded-xl text-slate-400 hover:text-slate-200 hover:bg-white/5 text-[11px] font-medium flex items-center justify-center gap-1 border border-dashed border-white/10 hover:border-white/20 transition cursor-pointer"
             >
               <Plus className="w-3 h-3" />
-              <span>新建分类</span>
+              <span>{t("launcher.newCategory")}</span>
             </button>
           </div>
         </div>
@@ -1835,7 +1838,7 @@ export default function LauncherPanel() {
                       <span className="leading-none" style={{ fontSize: view.categoryFontSize + 2 }}>
                         {activeTopCategory?.data?.icon || "📁"}
                       </span>
-                      <span>其他项目</span>
+                      <span>{t("launcher.otherItems")}</span>
                       {directItems.length > 0 && (
                         <span className="text-[10px] text-slate-600 font-normal">
                           {directItems.length}
@@ -1872,10 +1875,10 @@ export default function LauncherPanel() {
                 ) : subCategories.length === 0 ? (
                   <div className="py-20 text-center text-slate-500 flex flex-col items-center justify-center">
                     <UploadCloud className="w-12 h-12 mb-3 opacity-30 text-[var(--module-accent)]" />
-                    <p className="text-sm font-medium text-slate-300">当前分类暂无项目</p>
+                    <p className="text-sm font-medium text-slate-300">{t("launcher.emptyCategory")}</p>
                     <p className="text-xs text-slate-500 mt-1 max-w-sm">
-                      您可以直接将 .exe、文件夹、任意文件或快捷方式
-                      <span className="text-[var(--module-accent)] font-medium">拖入此处</span>
+                      {t("launcher.emptyCategoryHint")}
+                      <span className="text-[var(--module-accent)] font-medium">{t("launcher.dragHere")}</span>
                     </p>
                     <div className="flex items-center gap-2 mt-4">
                       <button
@@ -1890,7 +1893,7 @@ export default function LauncherPanel() {
                         className="px-3.5 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-xs font-medium rounded-xl transition cursor-pointer flex items-center gap-1.5"
                       >
                         <Plus className="w-3.5 h-3.5" />
-                        添加项目
+                        {t("launcher.addItem")}
                       </button>
                       <button
                         onClick={() => {
@@ -1904,7 +1907,7 @@ export default function LauncherPanel() {
                         className="px-3.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-medium rounded-xl border border-white/10 transition cursor-pointer flex items-center gap-1.5"
                       >
                         <FolderPlus className="w-3.5 h-3.5 text-[var(--module-accent)]" />
-                        新建子分组
+                        {t("launcher.newSubCategory")}
                       </button>
                     </div>
                   </div>
@@ -1949,13 +1952,13 @@ export default function LauncherPanel() {
                       closeSearch();
                     }
                   }}
-                  placeholder="搜索名称 / 拼音首字母 / 网址..."
+                  placeholder={t("launcher.searchPlaceholder")}
                   className="w-full bg-white/5 border border-[var(--module-accent-ring)] rounded-xl pl-10 pr-10 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)] transition shadow-lg shadow-[var(--module-accent-ring)]"
                 />
                 <button
                   onClick={closeSearch}
                   className="absolute right-3 p-1 text-slate-400 hover:text-white rounded-lg hover:bg-white/10 transition cursor-pointer"
-                  title="关闭搜索 (ESC)"
+                  title={t("launcher.closeSearch")}
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -2021,14 +2024,14 @@ export default function LauncherPanel() {
                 <div className="py-14 text-center text-slate-500 text-xs flex flex-col items-center gap-3">
                   <VexAvatar size={44} className="opacity-80" />
                   <div>
-                    <p>未找到与「{searchQuery}」相关的快捷方式</p>
-                    <p className="text-[11px] text-slate-600 mt-1">嘿嘿，换个别名或拼音再试试？Kira 帮你想～</p>
+                    <p>{t("launcher.searchNoResult", { query: searchQuery })}</p>
+                    <p className="text-[11px] text-slate-600 mt-1">{t("launcher.searchNoResultHint")}</p>
                   </div>
                 </div>
               ) : (
                 <div className="py-12 text-center text-slate-500 text-xs space-y-1">
-                  <p>输入拼音、程序名称或网址实时查找</p>
-                  <p className="text-[11px] text-slate-600">支持 ↑ ↓ 方向键选择，Enter 键立即启动</p>
+                  <p>{t("launcher.searchHint")}</p>
+                  <p className="text-[11px] text-slate-600">{t("launcher.searchHintKeys")}</p>
                 </div>
               )}
             </div>
@@ -2067,7 +2070,7 @@ export default function LauncherPanel() {
             className="w-full px-3 py-1.5 rounded-lg text-left text-slate-200 hover:bg-[var(--module-accent)] hover:text-white flex items-center gap-2 cursor-pointer"
           >
             <ExternalLink className="w-3.5 h-3.5" />
-            <span>打开</span>
+            <span>{t("launcher.open")}</span>
           </button>
           <button
             onClick={() => {
@@ -2080,7 +2083,7 @@ export default function LauncherPanel() {
             className="w-full px-3 py-1.5 rounded-lg text-left text-amber-300 hover:bg-amber-600 hover:text-white flex items-center gap-2 cursor-pointer"
           >
             <Shield className="w-3.5 h-3.5" />
-            <span>以管理员身份运行</span>
+            <span>{t("launcher.runAsAdmin")}</span>
           </button>
           {itemContextMenu.item.data.target && (
             <button
@@ -2091,20 +2094,20 @@ export default function LauncherPanel() {
               className="w-full px-3 py-1.5 rounded-lg text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
             >
               <FolderOpen className="w-3.5 h-3.5" />
-              <span>打开文件所在位置</span>
+              <span>{t("launcher.openFileLocation")}</span>
             </button>
           )}
           {itemContextMenu.item.data.target && (
             <button
               onClick={() => {
                 navigator.clipboard.writeText(itemContextMenu.item.data.target || "");
-                showToast("已复制路径到剪贴板");
+                showToast(t("launcher.copiedPath"));
                 setItemContextMenu(null);
               }}
               className="w-full px-3 py-1.5 rounded-lg text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
             >
               <Copy className="w-3.5 h-3.5" />
-              <span>复制路径 / 网址</span>
+              <span>{t("launcher.copyPath")}</span>
             </button>
           )}
           <div className="h-px bg-white/10 my-1" />
@@ -2118,7 +2121,7 @@ export default function LauncherPanel() {
             className="w-full px-3 py-1.5 rounded-lg text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
           >
             <Edit2 className="w-3.5 h-3.5" />
-            <span>编辑属性</span>
+            <span>{t("launcher.editProperties")}</span>
           </button>
           <button
             onClick={() => {
@@ -2128,7 +2131,7 @@ export default function LauncherPanel() {
             className="w-full px-3 py-1.5 rounded-lg text-left text-red-400 hover:bg-red-500 hover:text-white flex items-center gap-2 cursor-pointer"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            <span>删除项目</span>
+            <span>{t("launcher.deleteItem")}</span>
           </button>
         </div>
       )}
@@ -2155,7 +2158,7 @@ export default function LauncherPanel() {
             className="w-full px-3 py-1.5 rounded-lg text-left text-slate-200 hover:bg-[var(--module-accent)] hover:text-white flex items-center gap-2 cursor-pointer"
           >
             <Edit2 className="w-3.5 h-3.5" />
-            <span>编辑分类</span>
+            <span>{t("launcher.editCategory")}</span>
           </button>
           <button
             onClick={() => {
@@ -2167,7 +2170,7 @@ export default function LauncherPanel() {
             className="w-full px-3 py-1.5 rounded-lg text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
           >
             <FolderPlus className="w-3.5 h-3.5" />
-            <span>添加子分组</span>
+            <span>{t("launcher.addSubCategory")}</span>
           </button>
           <button
             onClick={() => {
@@ -2179,15 +2182,15 @@ export default function LauncherPanel() {
             className="w-full px-3 py-1.5 rounded-lg text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>添加项目到此分类</span>
+            <span>{t("launcher.addItemToCategory")}</span>
           </button>
           <button
             onClick={() => openMoveItemsModal(categoryContextMenu.category)}
-            title="将此分类下的所有直接子分类（连同各自下级与项目，保留层级）整体移动到另一个分类下"
+            title={t("launcher.moveSubCategoriesTitle")}
             className="w-full px-3 py-1.5 rounded-lg text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
           >
             <ArrowRightLeft className="w-3.5 h-3.5 text-cyan-400" />
-            <span>移动所有子分类到...</span>
+            <span>{t("launcher.moveSubCategories")}</span>
           </button>
           <div className="h-px bg-white/10 my-1" />
           <button
@@ -2198,7 +2201,7 @@ export default function LauncherPanel() {
             className="w-full px-3 py-1.5 rounded-lg text-left text-red-400 hover:bg-red-500 hover:text-white flex items-center gap-2 cursor-pointer"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            <span>删除分类</span>
+            <span>{t("launcher.deleteCategory")}</span>
           </button>
         </div>
       )}
@@ -2215,7 +2218,7 @@ export default function LauncherPanel() {
             <div className="flex items-center justify-between pb-2 border-b border-white/10">
               <div className="flex items-center gap-2">
                 <ArrowRightLeft className="w-4 h-4 text-cyan-400" />
-                <h3 className="text-sm font-bold text-white">移动子分类</h3>
+                <h3 className="text-sm font-bold text-white">{t("launcher.moveSubCategoryTitle")}</h3>
               </div>
               <button
                 onClick={() => !moveItemsLoading && setMoveItemsModalOpen(false)}
@@ -2226,18 +2229,18 @@ export default function LauncherPanel() {
             </div>
 
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              将「
+              {t("launcher.moveExplain1")}
               <span className="text-slate-200 font-medium">{moveItemsSource.name}</span>
-              」下的
+              {t("launcher.moveExplain2")}
               <span className="text-cyan-300 font-medium">{moveItemsSourceCount}</span>
-              个直接子分类，连同它们各自的子分类和项目（完整保留上下级关系），整体移动到选中的目标分类下。源分类本身不会被删除。
+              {t("launcher.moveExplain3")}
             </p>
 
             <div>
-              <label className="block text-[11px] text-slate-400 mb-1.5">选择目标分类</label>
+              <label className="block text-[11px] text-slate-400 mb-1.5">{t("launcher.pickTargetCat")}</label>
               <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
                 {moveItemsTargetList.length === 0 ? (
-                  <p className="text-[11px] text-slate-500">没有可选的目标分类。</p>
+                  <p className="text-[11px] text-slate-500">{t("launcher.noTargetCat")}</p>
                 ) : (
                   moveItemsTargetList.map((c) => {
                     const depth = (() => {
@@ -2280,7 +2283,7 @@ export default function LauncherPanel() {
                 onClick={() => setMoveItemsModalOpen(false)}
                 className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer disabled:opacity-50"
               >
-                取消
+                {t("launcher.cancel")}
               </button>
               <button
                 type="button"
@@ -2289,7 +2292,7 @@ export default function LauncherPanel() {
                 className="px-5 py-2 rounded-xl text-xs font-semibold bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg shadow-cyan-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
               >
                 <ArrowRightLeft className="w-3.5 h-3.5" />
-                {moveItemsLoading ? "转移中..." : "确认转移"}
+                {moveItemsLoading ? t("launcher.moving") : t("launcher.confirmMove")}
               </button>
             </div>
           </div>
@@ -2308,7 +2311,7 @@ export default function LauncherPanel() {
             <div className="flex items-center justify-between pb-2 border-b border-white/10">
               <div className="flex items-center gap-2">
                 <Bookmark className="w-4 h-4 text-amber-400" />
-                <h3 className="text-sm font-bold text-white">导入浏览器收藏夹</h3>
+                <h3 className="text-sm font-bold text-white">{t("launcher.importBmTitle")}</h3>
               </div>
               <button
                 onClick={() => setBookmarkModalOpen(false)}
@@ -2330,7 +2333,7 @@ export default function LauncherPanel() {
               >
                 <Globe className="w-6 h-6 text-blue-400" />
                 <span className="font-bold text-xs">Microsoft Edge</span>
-                <span className="text-[9px] text-slate-500">一键导入书签</span>
+                <span className="text-[9px] text-slate-500">{t("launcher.importBmSub")}</span>
               </button>
 
               <button
@@ -2340,13 +2343,13 @@ export default function LauncherPanel() {
               >
                 <Globe className="w-6 h-6 text-emerald-400" />
                 <span className="font-bold text-xs">Google Chrome</span>
-                <span className="text-[9px] text-slate-500">一键导入书签</span>
+                <span className="text-[9px] text-slate-500">{t("launcher.importBmSub")}</span>
               </button>
             </div>
 
             {importingBookmark && (
               <p className="text-center text-[var(--module-accent)] text-xs animate-pulse">
-                正在解析并导入书签，请稍候...
+                {t("launcher.importBmParsing")}
               </p>
             )}
           </div>
@@ -2399,11 +2402,11 @@ export default function LauncherPanel() {
           >
             <div className="flex items-center gap-2.5 px-5 py-4 border-b border-white/10 bg-white/[0.02]">
               <span className="text-xl">{pendingDeleteCategory.data?.icon || "📁"}</span>
-              <h3 className="text-sm font-semibold text-white">删除分类</h3>
+              <h3 className="text-sm font-semibold text-white">{t("launcher.delCatTitle")}</h3>
             </div>
             <div className="p-5 space-y-4">
               <p className="text-xs leading-relaxed text-slate-300">
-                确定要删除分类
+                {t("launcher.delCatConfirm")}
                 <span
                   className="mx-1 px-1.5 py-0.5 rounded font-medium"
                   style={{

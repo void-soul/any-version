@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 
 /**
  * 大文件日志查看器（纯前端 / 虚拟滚动）。
@@ -8,6 +9,7 @@ import { useEffect, useRef } from "react";
  * - 级别过滤 / 服务无关的搜索 / ANSI 着色 / Auto Tail。
  */
 export default function LogViewer() {
+  const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -72,7 +74,7 @@ export default function LogViewer() {
         await buildIndex();
         finishLoad(file.name, file.size, false);
       } catch (e: any) {
-        $("#lv-overlayTxt").textContent = "读取失败: " + e.message;
+        $("#lv-overlayTxt").textContent = t("logview.readFail", { err: e.message });
         await sleep(1500);
       } finally {
         overlay.style.display = "none";
@@ -96,7 +98,7 @@ export default function LogViewer() {
         ($("#lv-overlayBar") as HTMLElement).style.width =
           Math.floor(p * 100) + "%";
         $("#lv-overlayTxt").textContent =
-          "正在解析文件… " + Math.floor(p * 100) + "%";
+          t("logview.parsingFile", { pct: Math.floor(p * 100) });
       };
 
       let i = 0;
@@ -439,7 +441,7 @@ export default function LogViewer() {
         const copyBtn = document.createElement("button");
         copyBtn.className = "lv-copy";
         copyBtn.type = "button";
-        copyBtn.title = "复制此行";
+        copyBtn.title = t("logview.copyLine");
         copyBtn.textContent = "⧉";
 
         div.appendChild(gut);
@@ -468,7 +470,7 @@ export default function LogViewer() {
       const re = new RegExp(escapeRegex(q), "i");
       let i = 0;
       const CHUNK = 20000;
-      $("#lv-infoText").textContent = "搜索中…";
+      $("#lv-infoText").textContent = t("logview.searching");
       while (i < len) {
         const end = Math.min(i + CHUNK, len);
         for (; i < end; i++) {
@@ -610,7 +612,7 @@ export default function LogViewer() {
     // ---------- Status bar ----------
     function updateStatus() {
       const len = viewLen();
-      $("#lv-statusLines").textContent = totalLines.toLocaleString() + " 行";
+      $("#lv-statusLines").textContent = t("logview.lines", { n: totalLines.toLocaleString() });
       $("#lv-statusErrors").textContent = errorCount.toLocaleString() + " errors";
       $("#lv-statusWarns").textContent = warnCount.toLocaleString() + " warnings";
       $("#lv-statusShown").textContent = viewIndices
@@ -740,9 +742,9 @@ export default function LogViewer() {
       <style>{CSS}</style>
 
       <div className="lv-toolbar">
-        <span className="lv-title">日志查看器</span>
+        <span className="lv-title">{t("logview.title")}</span>
         <button className="lv-btn" id="lv-btnOpen">
-          打开文件
+          {t("logview.openFile")}
         </button>
         <input
           type="file"
@@ -754,33 +756,33 @@ export default function LogViewer() {
           Auto Tail
         </button>
         <select className="lv-filter-select" id="lv-filterLevel" defaultValue="all">
-          <option value="all">全部</option>
-          <option value="error">仅错误</option>
-          <option value="warn">错误 + 警告</option>
-          <option value="info">仅普通</option>
+          <option value="all">{t("logview.filterAll")}</option>
+          <option value="error">{t("logview.filterError")}</option>
+          <option value="warn">{t("logview.filterWarn")}</option>
+          <option value="info">{t("logview.filterInfo")}</option>
         </select>
         <input
           className="lv-search-box"
           id="lv-searchBox"
-          placeholder="搜索... (Ctrl+F)"
+          placeholder={t("logview.searchPh")}
         />
-        <button className="lv-btn" id="lv-btnPrev" title="上一个">
+        <button className="lv-btn" id="lv-btnPrev" title={t("logview.prev")}>
           &#9650;
         </button>
-        <button className="lv-btn" id="lv-btnNext" title="下一个">
+        <button className="lv-btn" id="lv-btnNext" title={t("logview.next")}>
           &#9660;
         </button>
         <span className="lv-goto">
-          跳至
+          {t("logview.goto")}
           <input
             className="lv-goto-input"
             id="lv-gotoInput"
             type="number"
             min="1"
-            placeholder="行号"
+            placeholder={t("logview.lineNo")}
           />
           <button className="lv-btn" id="lv-btnGoto">
-            行
+            {t("logview.line")}
           </button>
         </span>
         <span className="lv-info" id="lv-infoText"></span>
@@ -789,9 +791,9 @@ export default function LogViewer() {
       <div className="lv-dropzone" id="lv-dropzone">
         <div style={{ textAlign: "center" }}>
           <div className="lv-icon">&#128196;</div>
-          <div>拖拽日志文件到此处</div>
+          <div>{t("logview.dropHint")}</div>
           <div style={{ fontSize: 12, marginTop: 6 }}>
-            或点击「打开文件」选择 &nbsp;·&nbsp; 支持 200MB+ 大文件
+            {t("logview.dropHint2")}
           </div>
         </div>
       </div>
@@ -801,8 +803,8 @@ export default function LogViewer() {
       </div>
 
       <div className="lv-statusbar">
-        <span id="lv-statusFile">未打开文件</span>
-        <span id="lv-statusLines">0 行</span>
+        <span id="lv-statusFile">{t("logview.noFile")}</span>
+        <span id="lv-statusLines">{t("logview.lines")}</span>
         <span id="lv-statusErrors" className="lv-badge lv-badge-error">
           0 errors
         </span>
@@ -815,7 +817,7 @@ export default function LogViewer() {
 
       <div id="lv-overlay">
         <div className="lv-txt" id="lv-overlayTxt">
-          正在解析文件…
+          {t("logview.parsingOverlay")}
         </div>
         <div className="lv-bar">
           <i id="lv-overlayBar"></i>

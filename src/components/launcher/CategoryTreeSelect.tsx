@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight, FolderTree } from "lucide-react";
 import { Classification } from "./types";
 
@@ -78,12 +79,13 @@ export default function CategoryTreeSelect({
   classifications,
   value,
   onChange,
-  placeholder = "选择分类",
+  placeholder,
   excludeId,
   allowNone = false,
-  noneLabel = "顶级分类 (无父级)",
+  noneLabel,
   hideDescendantsOfExclude = false,
 }: CategoryTreeSelectProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [search, setSearch] = useState("");
@@ -113,9 +115,10 @@ export default function CategoryTreeSelect({
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, [open]);
 
+  const resolvedNoneLabel = noneLabel ?? t("cattree.noParent");
   const selectedLabel = allowNone && value === 0
-    ? noneLabel
-    : resolvePath(classifications, value) || placeholder;
+    ? resolvedNoneLabel
+    : resolvePath(classifications, value) || placeholder || t("cattree.pickCategory");
 
   // 扁平化带深度信息，用于搜索与渲染
   const flatten = (nodes: TreeNode[], depth: number): Array<{ node: TreeNode; depth: number }> => {
@@ -182,7 +185,7 @@ export default function CategoryTreeSelect({
               spellCheck={false}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜索分类..."
+              placeholder={`${t("cattree.pickCategory")}...`}
               className="w-full bg-black/30 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
             />
           </div>
@@ -204,12 +207,12 @@ export default function CategoryTreeSelect({
                 }`}
               >
                 <span className="text-slate-500">—</span>
-                {noneLabel}
+                {resolvedNoneLabel}
               </button>
             )}
 
             {visibleList.length === 0 && !allowNone && (
-              <div className="px-2.5 py-4 text-center text-xs text-slate-500">未找到分类</div>
+              <div className="px-2.5 py-4 text-center text-xs text-slate-500">{t("cattree.noCategory")}</div>
             )}
 
             {visibleList.map(({ node, depth }) => {

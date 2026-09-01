@@ -4,6 +4,7 @@
 // - 用 createPortal 挂到 body，避免被父容器 overflow/transform 裁剪
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 
 import { X } from "lucide-react";
 
@@ -40,6 +41,7 @@ export function SharedModal({
   bodyClass = "",
   children,
 }: SharedModalProps) {
+  const { t } = useTranslation();
   // 弹框打开期间禁止 Esc 关闭（全 app 规则）
   useEffect(() => {
     if (!open) return;
@@ -72,7 +74,7 @@ export function SharedModal({
             <button
               className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-all cursor-pointer"
               onClick={onClose}
-              title="关闭"
+              title={t("common.dialogClose")}
             >
               <X className="w-4 h-4" />
             </button>

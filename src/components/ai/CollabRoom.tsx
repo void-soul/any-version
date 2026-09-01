@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { useTranslation } from "react-i18next";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import VexEmptyState from "../VexEmptyState";
@@ -78,6 +79,7 @@ function senderColor(sender: string, customColor?: string): string {
 
 // ─── 任务状态徽章（E 任务流） ───
 function TaskBadge({ status }: { status: string }) {
+  const { t } = useTranslation();
   const map: Record<string, string> = {
     open: "bg-slate-600",
     claimed: "bg-amber-600",
@@ -86,41 +88,28 @@ function TaskBadge({ status }: { status: string }) {
     done: "bg-emerald-600",
   };
   const label: Record<string, string> = {
-    open: "待认领",
-    claimed: "已认领",
-    in_progress: "进行中",
-    in_review: "评审中",
-    done: "已完成",
+    open: "collab.open",
+    claimed: "collab.claimed",
+    in_progress: "collab.inProgress",
+    in_review: "collab.inReview",
+    done: "collab.done",
   };
   return (
     <span className={`px-1.5 py-0.5 rounded text-[9px] text-white ${map[status] || "bg-slate-600"}`}>
-      {label[status] || status}
+      {label[status] ? t(label[status]) : status}
     </span>
   );
 }
 
 // ─── 人类化状态文案 ───
-// 运行中（思考/工作）的随机短语池
-const THINKING_PHRASES = [
-  "正在思考…",
-  "正在分析…",
-  "让我想想…",
-  "正在整理思路…",
-  "正在组织语言…",
-  "正在查阅资料…",
-  "正在编写代码…",
-  "正在检查细节…",
-  "正在推理…",
-  "正在构思方案…",
+// 运行中（思考/工作）的随机短语池（i18n 键）
+const THINKING_KEYS = [
+  "thinking", "analyzing", "letMeThink", "organizing", "wording",
+  "searching", "coding", "checking", "reasoning", "planning",
 ];
-// 错误时的随机短语池
-const ERROR_PHRASES = [
-  "出了点小问题",
-  "遇到了一些困难",
-  "好像哪里不对",
-  "需要一点帮助",
-  "处理时遇到了障碍",
-  "出了点意外",
+// 错误时的随机短语池（i18n 键）
+const ERROR_KEYS = [
+  "errOops", "errHard", "errWrong", "errHelp", "errBlocked", "errUnexpected",
 ];
 /// 随机选择一个短语
 function pickRandom(arr: string[]): string {
@@ -171,11 +160,11 @@ function agentDotClass(status?: string): string {
   if (status === "online") return "bg-emerald-500";
   return "bg-slate-600";
 }
-function agentStatusTitle(status?: string): string {
-  if (status === "working") return "工作中";
-  if (status === "thinking") return "思考中";
-  if (status === "online") return "在线";
-  return "离线";
+function agentStatusTitle(t: (k: string) => string, status?: string): string {
+  if (status === "working") return t("collab.statusWorking");
+  if (status === "thinking") return t("collab.statusThinking");
+  if (status === "online") return t("collab.statusOnline");
+  return t("collab.statusOffline");
 }
 
 // 从 open-tag 移植：按活动文本关键词映射工具图标（优先精确匹配，回退兜底）。
@@ -201,6 +190,7 @@ function ToolActivityIcon({ activity }: { activity: string }) {
 }
 
 export default function CollabRoom() {
+  const { t } = useTranslation();
   const [rooms, setRooms] = useState<CollabRoomT[]>([]);
   const [activeRoom, setActiveRoom] = useState<CollabRoomT | null>(null);
   const [messages, setMessages] = useState<CollabMessage[]>([]);
@@ -382,7 +372,7 @@ export default function CollabRoom() {
         const p = e.payload;
         if (p.room_id !== activeRoomIdRef.current) return;
         setProxyMap((prev) => ({ ...prev, [p.msg_id]: { text: "", status: "requesting" } }));
-        setActivityMap((prev) => ({ ...prev, [p.msg_id]: `代理请求: ${p.model} (${p.messages}条消息${p.stream ? ", 流式" : ""})` }));
+        setActivityMap((prev) => ({ ...prev, [p.msg_id]: t("collab.activityReq", { model: p.model, count: p.messages, stream: p.stream ? t("collab.activityStream") : "" }) }));
       });
       unlistenFns.push(unProxyReq);
       if (cancelled) { unProxyReq(); return; }
@@ -390,7 +380,7 @@ export default function CollabRoom() {
         const p = e.payload;
         if (p.room_id !== activeRoomIdRef.current) return;
         setProxyMap((prev) => ({ ...prev, [p.msg_id]: { text: prev[p.msg_id]?.text || "", status: `UPSTREAM ${p.status}` } }));
-        setActivityMap((prev) => ({ ...prev, [p.msg_id]: `上游响应 ${p.status} (${p.elapsed_ms}ms)` }));
+        setActivityMap((prev) => ({ ...prev, [p.msg_id]: t("collab.activityUpstream", { status: p.status, ms: p.elapsed_ms }) }));
       });
       unlistenFns.push(unProxyStart);
       if (cancelled) { unProxyStart(); return; }
@@ -410,7 +400,7 @@ export default function CollabRoom() {
         const p = e.payload;
         if (p.room_id !== activeRoomIdRef.current) return;
         setProxyMap((prev) => ({ ...prev, [p.msg_id]: { text: p.text, status: "complete", elapsed: p.elapsed_ms } }));
-        setActivityMap((prev) => ({ ...prev, [p.msg_id]: `代理已收到完整响应 (${p.text.length}字, ${p.elapsed_ms}ms)` }));
+        setActivityMap((prev) => ({ ...prev, [p.msg_id]: t("collab.activityComplete", { count: p.text.length, ms: p.elapsed_ms }) }));
       });
       unlistenFns.push(unProxyComplete);
       if (cancelled) { unProxyComplete(); return; }
@@ -418,7 +408,7 @@ export default function CollabRoom() {
         const p = e.payload;
         if (p.room_id !== activeRoomIdRef.current) return;
         setProxyMap((prev) => ({ ...prev, [p.msg_id]: { text: "", status: `error: ${p.status}` } }));
-        setActivityMap((prev) => ({ ...prev, [p.msg_id]: `代理错误 ${p.status}: ${p.error.slice(0, 100)}` }));
+        setActivityMap((prev) => ({ ...prev, [p.msg_id]: t("collab.activityError", { status: p.status, err: p.error.slice(0, 100) }) }));
       });
       unlistenFns.push(unProxyError);
       if (cancelled) { unProxyError(); return; }
@@ -616,7 +606,7 @@ export default function CollabRoom() {
 
   const handlePickProject = async () => {
     try {
-      const selected = await open({ directory: true, title: "选择项目目录" });
+      const selected = await open({ directory: true, title: t("collab.pickProjectDir") });
       if (selected) {
         const dir = selected as string;
         setNewProject(dir);
@@ -629,11 +619,11 @@ export default function CollabRoom() {
 
   const createRoom = async () => {
     if (!newProject.trim()) {
-      alert("请先选择项目目录");
+      alert(t("collab.needProjectDir"));
       return;
     }
     const room = await invoke<CollabRoomT>("collab_create_room", {
-      name: newName || "未命名会话",
+      name: newName || t("collab.unnamedSession"),
       projectPath: newProject.trim(),
     });
     await refreshRooms();
@@ -713,7 +703,7 @@ export default function CollabRoom() {
       const selected = await open({
         multiple: true,
         defaultPath: activeRoom.project_path,
-        title: "选择要附带的文件（@文件）",
+        title: t("collab.pickFilesTitle"),
       });
       if (!selected) return;
       const list = (Array.isArray(selected) ? selected : [selected]) as string[];
@@ -795,7 +785,7 @@ export default function CollabRoom() {
     if (busy || compacting) return;
     if (!content.trim() && references.length === 0 && files.length === 0) return;
     if (!selectedTool) {
-      alert("请先 @ 一个工具来接手任务");
+      alert(t("collab.needToolFirst"));
       return;
     }
     setBusy(true);
@@ -826,7 +816,7 @@ export default function CollabRoom() {
       setReferences([]);
       setFiles([]);
     } catch (e: unknown) {
-      alert(`发送失败: ${e}`);
+      alert(t("collab.sendFail", { err: String(e) }));
       setBusy(false);
     }
   };
@@ -841,7 +831,7 @@ export default function CollabRoom() {
 
   const resetSession = async () => {
     if (!activeRoom || !selectedTool) return;
-    if (!window.confirm("重置该工具在此会话中的续聊上下文？下次发送将开启全新会话。")) return;
+    if (!window.confirm(t("collab.resetCtxConfirm"))) return;
     await invoke("collab_reset_session", { roomId: activeRoom.id, toolId: selectedTool }).catch((e) =>
       console.error("[CollabRoom] 重置会话失败:", e)
     );
@@ -850,7 +840,7 @@ export default function CollabRoom() {
 
   const compact = async () => {
     if (!activeRoom || !selectedTool) return;
-    if (!window.confirm("压缩上下文？将请求 AI 总结当前会话并开启新会话。")) return;
+    if (!window.confirm(t("collab.compactConfirm"))) return;
     setCompacting(true);
     // 不支持模型设置的工具不传模型/供应商
     const toolObj = tools.find((t) => t.id === selectedTool);
@@ -870,7 +860,7 @@ export default function CollabRoom() {
         setHasSnapshot(true);
       }
     } catch (e: unknown) {
-      alert(`压缩失败: ${e}`);
+      alert(t("collab.compactFail", { err: String(e) }));
     } finally {
       setCompacting(false);
     }
@@ -885,11 +875,11 @@ export default function CollabRoom() {
       {/* 房间侧栏 */}
       <div className="w-48 flex-shrink-0 border-r border-white/5 py-3 px-2 flex flex-col">
         <div className="flex items-center justify-between px-1 mb-2">
-          <span className="text-[11px] font-bold text-slate-300">会话列表</span>
+          <span className="text-[11px] font-bold text-slate-300">{t("collab.sessionList")}</span>
           <button
             onClick={() => setCreating(true)}
             className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-[var(--module-accent)] cursor-pointer"
-            title="新建会话"
+            title={t("collab.newSession")}
           >
             <Plus className="w-3.5 h-3.5" />
           </button>
@@ -900,7 +890,7 @@ export default function CollabRoom() {
             <input
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              placeholder="会话名"
+              placeholder={t("collab.sessionNamePh")}
               className="w-full bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
             />
             <button
@@ -910,22 +900,22 @@ export default function CollabRoom() {
                   ? "bg-slate-800 text-slate-200"
                   : "bg-slate-800/60 text-slate-500 hover:text-slate-300"
               }`}
-              title={newProject || "选择项目目录"}
+              title={newProject || t("collab.pickProjectDir")}
             >
-              {newProject || "选择项目目录…"}
+              {newProject || `${t("collab.pickProjectDir")}…`}
             </button>
             <div className="flex gap-1">
               <button
                 onClick={createRoom}
                 className="flex-1 px-2 py-1 rounded bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-[10px] font-semibold cursor-pointer"
               >
-                创建
+                {t("collab.create")}
               </button>
               <button
                 onClick={() => setCreating(false)}
                 className="px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-[10px] cursor-pointer"
               >
-                取消
+                {t("collab.cancel")}
               </button>
             </div>
           </div>
@@ -934,9 +924,9 @@ export default function CollabRoom() {
         <div className="flex-1 overflow-y-auto space-y-0.5" onScroll={onRoomsScroll}>
           {rooms.length === 0 && !loadingMore && (
             <VexEmptyState
-              title="还没有会话"
-              desc="点上方 + 新建一个，把多个工具拉进同一个群。"
-              tick="开个群，热闹起来"
+              title={t("collab.noSessionTitle")}
+              desc={t("collab.noSessionDesc")}
+              tick={t("collab.noSessionTick")}
               avatarSize={34}
               className="!py-8"
             />
@@ -969,11 +959,11 @@ export default function CollabRoom() {
           ))}
           {loadingMore && (
             <div className="flex items-center justify-center gap-1.5 py-2 text-[9px] text-slate-500">
-              <Loader2 className="w-3 h-3 animate-spin" /> 加载中…
+              <Loader2 className="w-3 h-3 animate-spin" /> {t("collab.loading")}
             </div>
           )}
           {!hasMore && rooms.length > 0 && (
-            <p className="text-center text-[8px] text-slate-600 py-1">— 已到底 —</p>
+            <p className="text-center text-[8px] text-slate-600 py-1">{t("collab.endOfList")}</p>
           )}
         </div>
       </div>
@@ -983,7 +973,7 @@ export default function CollabRoom() {
         {!activeRoom ? (
           <div className="flex-1 flex flex-col items-center justify-center text-slate-500 gap-2">
             <MessagesSquare className="w-10 h-10 opacity-30" />
-            <p className="text-xs">选择一个会话，或新建一个开始多工具协作</p>
+            <p className="text-xs">{t("collab.pickSessionHint")}</p>
           </div>
         ) : (
           <>
@@ -1018,7 +1008,7 @@ export default function CollabRoom() {
               ))}
               {messages.length === 0 && (
                 <p className="text-[11px] text-slate-500 text-center mt-8">
-                  在下方输入任务，@ 一个工具并发送，它就会接手开始工作。
+                  {t("collab.emptyThreadHint")}
                 </p>
               )}
             </div>
@@ -1030,39 +1020,39 @@ export default function CollabRoom() {
                 className="w-full flex items-center justify-between px-3 py-1.5 text-[9px] text-slate-400 hover:text-slate-200 cursor-pointer transition-all"
               >
                 <span className="flex items-center gap-1.5 font-semibold">
-                  <ListChecks className="w-3 h-3" /> 任务 ({tasks.length})
+                  <ListChecks className="w-3 h-3" /> {t("collab.tasksTitle", { count: tasks.length })}
                 </span>
                 <ChevronDown className={`w-3 h-3 transition-transform ${tasksOpen ? "rotate-180" : ""}`} />
               </button>
               {tasksOpen && (
                 <div className="px-3 pb-3 space-y-2">
                   {tasks.length === 0 && (
-                    <p className="text-[10px] text-slate-500">暂无任务。输入标题创建，agent 可通过总线认领。</p>
+                    <p className="text-[10px] text-slate-500">{t("collab.noTasks")}</p>
                   )}
-                  {tasks.map((t) => (
-                    <div key={t.id} className="rounded border border-white/5 bg-slate-800/40 p-2 space-y-1">
+                  {tasks.map((task) => (
+                    <div key={task.id} className="rounded border border-white/5 bg-slate-800/40 p-2 space-y-1">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-[11px] text-slate-200 font-medium truncate">{t.title}</span>
-                        <TaskBadge status={t.status} />
+                        <span className="text-[11px] text-slate-200 font-medium truncate">{task.title}</span>
+                        <TaskBadge status={task.status} />
                       </div>
-                      {t.description && <p className="text-[10px] text-slate-400 line-clamp-2">{t.description}</p>}
+                      {task.description && <p className="text-[10px] text-slate-400 line-clamp-2">{task.description}</p>}
                       <div className="flex items-center justify-between text-[9px] text-slate-500">
-                        <span>{t.assignee ? `指派给 ${t.assignee}` : "未指派"}</span>
+                        <span>{task.assignee ? t("collab.assignedTo", { name: task.assignee }) : t("collab.unassigned")}</span>
                         <div className="flex gap-1">
-                          {t.status !== "done" && (
+                          {task.status !== "done" && (
                             <button
-                              onClick={() => taskAction("claim", t.id)}
+                              onClick={() => taskAction("claim", task.id)}
                               className="px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] text-white hover:bg-[var(--module-accent-strong)] cursor-pointer"
                             >
-                              认领
+                              {t("collab.claim")}
                             </button>
                           )}
-                          {t.status !== "done" && (
+                          {task.status !== "done" && (
                             <button
-                              onClick={() => taskAction("complete", t.id)}
+                              onClick={() => taskAction("complete", task.id)}
                               className="px-1.5 py-0.5 rounded bg-emerald-600/80 text-white hover:bg-emerald-500 cursor-pointer"
                             >
-                              完成
+                              {t("collab.complete")}
                             </button>
                           )}
                         </div>
@@ -1073,14 +1063,14 @@ export default function CollabRoom() {
                     <input
                       value={newTaskTitle}
                       onChange={(e) => setNewTaskTitle(e.target.value)}
-                      placeholder="新任务标题"
+                      placeholder={t("collab.taskTitlePh")}
                       className="flex-1 bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
                     />
                     <button
                       onClick={createTask}
                       className="px-2 py-1 rounded bg-[var(--module-accent)] text-white text-[10px] hover:bg-[var(--module-accent-strong)] cursor-pointer"
                     >
-                      创建
+                      {t("collab.create")}
                     </button>
                   </div>
                 </div>
@@ -1091,20 +1081,20 @@ export default function CollabRoom() {
             <div className="flex-shrink-0 border-t border-white/5 p-3 space-y-2 bg-slate-900/40">
               {/* @ 工具选择（单选） */}
               <div className="flex flex-wrap gap-1 items-center">
-                <span className="text-[9px] text-slate-500 mr-1">@工具</span>
-                {toolsLoading && <span className="text-[9px] text-slate-400 animate-pulse">加载中…</span>}
-                {tools.filter((t) => t.installed).map((t) => {
-                  const on = selectedTool === t.id;
-                  const avatar = getToolAvatar(tools, t.id);
-                  const nickname = getToolNickname(tools, t.id) || t.display_name;
+                <span className="text-[9px] text-slate-500 mr-1">{t("collab.atTool")}</span>
+                {toolsLoading && <span className="text-[9px] text-slate-400 animate-pulse">{t("collab.loading")}</span>}
+                {tools.filter((tl) => tl.installed).map((tl) => {
+                  const on = selectedTool === tl.id;
+                  const avatar = getToolAvatar(tools, tl.id);
+                  const nickname = getToolNickname(tools, tl.id) || tl.display_name;
                   return (
-                    <div key={t.id} className="relative flex items-center">
+                    <div key={tl.id} className="relative flex items-center">
                       <span
-                        className={`absolute -top-0.5 -right-0.5 z-10 w-2 h-2 rounded-full border border-slate-900 ${agentDotClass(agents[t.id]?.status)}`}
-                        title={agentStatusTitle(agents[t.id]?.status)}
+                        className={`absolute -top-0.5 -right-0.5 z-10 w-2 h-2 rounded-full border border-slate-900 ${agentDotClass(agents[tl.id]?.status)}`}
+                        title={agentStatusTitle(t, agents[tl.id]?.status)}
                       />
                       <button
-                        onClick={() => setSelectedTool(on ? "" : t.id)}
+                        onClick={() => setSelectedTool(on ? "" : tl.id)}
                         className={`px-2 py-0.5 rounded-full text-[9px] font-semibold transition-all cursor-pointer ${
                           on
                             ? "bg-[var(--module-accent)] text-white"
@@ -1159,7 +1149,7 @@ export default function CollabRoom() {
                       className="w-full flex items-center justify-between px-2.5 py-1.5 text-[9px] text-slate-400 hover:text-slate-200 cursor-pointer transition-all"
                     >
                       <span className="flex items-center gap-1.5 font-semibold">
-                        <Settings className="w-3 h-3" /> 高级设置
+                        <Settings className="w-3 h-3" /> {t("collab.advancedSettings")}
                       </span>
                       <ChevronDown className={`w-3 h-3 transition-transform ${showAdvanced ? "rotate-180" : ""}`} />
                     </button>
@@ -1168,7 +1158,7 @@ export default function CollabRoom() {
                         {/* 模型自定义启动参数（用户定义，运行时渲染为控件） */}
                         {currentModelCustomParams.length > 0 && (
                           <div className="space-y-1.5 pt-0.5">
-                            <div className="text-[9px] text-slate-500 font-semibold">模型自定义参数</div>
+                            <div className="text-[9px] text-slate-500 font-semibold">{t("collab.customParams")}</div>
                             {currentModelCustomParams.map(cp => (
                               <div key={cp.key} className="flex items-center gap-2">
                                 <label className="text-[9px] text-slate-400 w-20 flex-shrink-0 truncate" title={cp.key}>{cp.label || cp.key}</label>
@@ -1200,13 +1190,13 @@ export default function CollabRoom() {
                         {/* 模型伪装 */}
                         {tool.builtin_models.length > 0 && (
                           <div className="flex items-center gap-2">
-                            <span className="text-[9px] text-slate-500 w-16 flex-shrink-0">伪装模型</span>
+                            <span className="text-[9px] text-slate-500 w-16 flex-shrink-0">{t("collab.spoofModel")}</span>
                             <select
                               value={masqueradeModel}
                               onChange={(e) => setMasqueradeModel(e.target.value)}
                               className="flex-1 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-[9px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
                             >
-                              <option value="">不伪装（使用实际模型名）</option>
+                              <option value="">{t("collab.noSpoof")}</option>
                               {tool.builtin_models.map((m) => (
                                 <option key={m} value={m}>{m}</option>
                               ))}
@@ -1222,7 +1212,7 @@ export default function CollabRoom() {
                               onChange={(e) => setOneMContext(e.target.checked)}
                               className="w-3 h-3 rounded accent-[var(--module-accent)]"
                             />
-                            <span className="text-[9px] text-slate-400">1M 上下文窗口</span>
+                            <span className="text-[9px] text-slate-400">{t("collab.ctx1m")}</span>
                           </label>
                         )}
                         {/* 优化器 */}
@@ -1234,7 +1224,7 @@ export default function CollabRoom() {
                               onChange={(e) => setOptimizerEnabled(e.target.checked)}
                               className="w-3 h-3 rounded accent-[var(--module-accent)]"
                             />
-                            <span className="text-[9px] text-slate-400">优化器（缓存注入 / 思考优化 / DeepSeek 规范化）</span>
+                            <span className="text-[9px] text-slate-400">{t("collab.optimizer")}</span>
                           </label>
                         )}
                         {/* 整流器 */}
@@ -1246,7 +1236,7 @@ export default function CollabRoom() {
                               onChange={(e) => setRectifierEnabled(e.target.checked)}
                               className="w-3 h-3 rounded accent-[var(--module-accent)]"
                             />
-                            <span className="text-[9px] text-slate-400">整流器（抹平协议差异）</span>
+                            <span className="text-[9px] text-slate-400">{t("collab.rectifier")}</span>
                           </label>
                         )}
                       </div>
@@ -1289,7 +1279,7 @@ export default function CollabRoom() {
                   onChange={(e) => setContent(e.target.value)}
                   onKeyDown={onContentKeyDown}
                   rows={2}
-                  placeholder="输入任务内容…（回车发送；Ctrl/⌘+回车换行；输入 @ 附带文件；可选中上方消息点「引用」带入上下文）"
+                  placeholder={t("collab.inputPh")}
                   className="flex-1 bg-slate-800 border border-white/10 rounded-lg px-3 py-2 text-[11px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)] resize-none"
                 />
                 {busy ? (
@@ -1297,20 +1287,20 @@ export default function CollabRoom() {
                     onClick={stopDispatch}
                     className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
                   >
-                    <Square className="w-3.5 h-3.5" /> 停止
+                    <Square className="w-3.5 h-3.5" /> {t("collab.stop")}
                   </button>
                 ) : (
                   <button
                     onClick={send}
                     className="px-4 py-2 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
                   >
-                    <Send className="w-3.5 h-3.5" /> 发送
+                    <Send className="w-3.5 h-3.5" /> {t("collab.send")}
                   </button>
                 )}
                 <button
                   onClick={compact}
                   disabled={!selectedTool || busy || compacting}
-                  title="压缩上下文（生成摘要并开启新会话）"
+                  title={t("collab.compactTitle")}
                   className="px-2 py-2 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-40 text-slate-300 text-[10px] cursor-pointer"
                 >
                   {compacting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Archive className="w-3.5 h-3.5" />}
@@ -1318,19 +1308,19 @@ export default function CollabRoom() {
                 <button
                   onClick={resetSession}
                   disabled={!selectedTool}
-                  title="重置当前工具续聊上下文"
+                  title={t("collab.resetCtxTitle")}
                   className="px-2 py-2 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-40 text-slate-300 text-[10px] cursor-pointer"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                 </button>
               </div>
               <p className="text-[8px] text-slate-500">
-                同一会话内重复 @ 同一工具会绑定其原生会话 id 自动「续聊」，上下文连续；点 ⟳ 可重置。
+                {t("collab.continueHint")}
               </p>
               {hasSnapshot && (
                 <p className="text-[8px] text-cyan-400 flex items-center gap-1">
                   <Archive className="w-2.5 h-2.5" />
-                  已有上下文快照，下次发送将自动注入新会话
+                  {t("collab.snapshotHint")}
                 </p>
               )}
             </div>
@@ -1349,11 +1339,12 @@ function PromptResponse({
   prompt: { question: string; options: string[] };
   onRespond: (response: string) => void;
 }) {
+  const { t } = useTranslation();
   const [customResponse, setCustomResponse] = useState("");
   return (
     <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 space-y-2">
       <div className="flex items-start gap-1.5">
-        <span className="text-amber-400 text-[10px] font-bold mt-0.5">⚠ 询问</span>
+        <span className="text-amber-400 text-[10px] font-bold mt-0.5">{t("collab.askBadge")}</span>
         <span className="text-[10px] text-slate-300 whitespace-pre-wrap break-words flex-1">
           {prompt.question}
         </span>
@@ -1377,7 +1368,7 @@ function PromptResponse({
               setCustomResponse("");
             }
           }}
-          placeholder="自定义回复…"
+          placeholder={t("collab.customReplyPh")}
           className="flex-1 min-w-[80px] bg-slate-800 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-amber-500"
         />
         {customResponse.trim() && (
@@ -1388,11 +1379,11 @@ function PromptResponse({
             }}
             className="px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-200 text-[10px] cursor-pointer"
           >
-            发送
+            {t("collab.send")}
           </button>
         )}
       </div>
-      <p className="text-[8px] text-slate-500">120 秒无响应将自动选 y</p>
+      <p className="text-[8px] text-slate-500">{t("collab.autoYesHint")}</p>
     </div>
   );
 }
@@ -1421,9 +1412,13 @@ function MessageView({
   const isTool = !isUser;
 
   // 轮换思维短语（仅 running 状态时轮换）
-  const thinkingPhrase = useRotatingPhrase(THINKING_PHRASES, running && !m.content, 4000);
+  const { t } = useTranslation();
+  const thinkingPhrase = useRotatingPhrase(THINKING_KEYS.map((k) => t(`collab.${k}`)), running && !m.content, 4000);
   // 错误短语（仅 error 状态时使用，不轮换）
-  const errorPhrase = useMemo(() => pickRandom(ERROR_PHRASES), [m.id, isError]);
+  const errorPhrase = useMemo(() => {
+    const key = pickRandom(ERROR_KEYS);
+    return t(`collab.${key}`);
+  }, [m.id, isError, t]);
 
   // 头像：消息携带 > 工具配置 > null
   const avatar = isTool ? getToolAvatar(tools, m.sender, m.avatar) : null;
@@ -1529,10 +1524,10 @@ function MessageView({
               <Loader2 className="w-3 h-3 animate-spin" /> {thinkingPhrase}
             </span>
           ) : isUser ? (
-            m.content || <span className="text-slate-600">（空）</span>
+            m.content || <span className="text-slate-600">{t("collab.emptyContent")}</span>
           ) : isError ? (
             <div className="flex items-center gap-1.5 text-red-400">
-              <span className="text-[10px]">⚠ {errorPhrase}：</span>
+              <span className="text-[10px]">{t("collab.errPrefix", { phrase: errorPhrase })}</span>
               <span className="flex-1">
                 <MarkdownRenderer content={m.content} />
               </span>
@@ -1564,7 +1559,7 @@ function MessageView({
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-60"></span>
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500"></span>
               </span>
-              代理: {proxy.status}
+              {t("collab.proxyStatus", { status: proxy.status })}
             </span>
           </div>
         )}
@@ -1572,7 +1567,7 @@ function MessageView({
           <div className="mt-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2 py-1.5 text-[9px] text-emerald-300/80">
             <div className="flex items-center gap-1 mb-1">
               <Zap className="w-2.5 h-2.5" />
-              <span>代理已收到 LLM 响应 ({proxy.text.length}字{proxy.elapsed ? `, ${proxy.elapsed}ms` : ""})，等待工具处理…</span>
+              <span>{t("collab.proxyReceived", { count: proxy.text.length, elapsed: proxy.elapsed ? t("collab.elapsedMs", { ms: proxy.elapsed }) : "" })}</span>
             </div>
             <div className="text-[8px] text-slate-400 max-h-24 overflow-y-auto whitespace-pre-wrap break-words">
               {proxy.text.slice(0, 200)}{proxy.text.length > 200 ? "…" : ""}
@@ -1599,7 +1594,7 @@ function MessageView({
             onClick={() => onQuote(m)}
             className="flex items-center gap-1 text-[8px] text-slate-500 hover:text-[var(--module-accent)] cursor-pointer transition-colors"
           >
-            <Quote className="w-3 h-3" /> 引用
+            <Quote className="w-3 h-3" /> {t("collab.quote")}
           </button>
           <button
             onClick={handleCopyMessage}
@@ -1607,10 +1602,10 @@ function MessageView({
             className={`flex items-center gap-1 text-[8px] transition-colors cursor-pointer ${
               copied ? "text-emerald-400 font-medium" : "text-slate-500 hover:text-slate-300"
             }`}
-            title="复制消息内容"
+            title={t("collab.copyMsg")}
           >
             {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-            {copied ? "已复制" : "复制"}
+            {copied ? t("collab.copied") : t("collab.copy")}
           </button>
         </div>
       </div>
@@ -1631,6 +1626,7 @@ function ReferenceCard({
   onRemove?: () => void;
   variant?: "input" | "message";
 }) {
+  const { t } = useTranslation();
   const isInput = variant === "input";
   return (
     <div
@@ -1641,7 +1637,7 @@ function ReferenceCard({
       <Quote className="w-3 h-3 flex-shrink-0 mt-0.5 text-[var(--module-accent)]" />
       <div className="flex-1 min-w-0">
         <span className="font-semibold text-[var(--module-accent)]">
-          来自 {senderName}：
+          {t("collab.fromSender", { name: senderName })}
         </span>
         <span className={`whitespace-pre-wrap ${isInput ? "line-clamp-2" : "line-clamp-3"}`}>
           {excerpt}

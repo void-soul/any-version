@@ -9,6 +9,7 @@ import {
   FAKE_GROUP_TYPE,
 } from "./ctrl";
 import { btnSec, cardCls, delayColor, delayText, Toggle } from "./ui";
+import { useTranslation } from "react-i18next";
 import { nodeFlag } from "./flag";
 
 /** 节点国旗；识别不到时留出等宽占位，保证网格对齐 */
@@ -21,10 +22,11 @@ function Flag({ name }: { name: string }) {
 const DEFAULT_DELAY_URL = "https://www.gstatic.com/generate_204";
 
 type OrderMode = "default" | "delay" | "name";
-const ORDER_LABEL: Record<OrderMode, string> = { default: "默认排序", delay: "延迟排序", name: "名称排序" };
+const ORDER_LABEL: Record<OrderMode, string> = { default: "defaultOrder", delay: "delayOrder", name: "nameOrder" };
 const NEXT_ORDER: Record<OrderMode, OrderMode> = { default: "delay", delay: "name", name: "default" };
 
 export default function ProxiesPanel({ running }: { running: boolean }) {
+  const { t } = useTranslation();
   const [groups, setGroups] = useState<IMihomoMixedGroup[]>([]);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [search, setSearch] = useState<Record<string, string>>({});
@@ -77,7 +79,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
       setGroups(await getMixedGroups());
       setErr("");
     } catch (e: any) {
-      setErr(`刷新失败: ${e}`);
+      setErr(t("proxies.refreshFail", { err: String(e) }));
     } finally {
       setRefreshing(false);
     }
@@ -157,7 +159,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
     } catch (e: any) {
       delete pinnedRef.current[group.name];
       setGroups((gs) => gs.map((x) => (x.name === group.name ? { ...x, now: prevNow } : x)));
-      setErr(`切换「${proxy}」失败：${String(e).replace(/^Error:\s*/, "")}`);
+      setErr(t("proxies.switchFail", { proxy, err: String(e).replace(/^Error:\s*/, "") }));
       return;
     }
     // 将选中的节点持久化为「一级代理」（供二级代理作为 dialer-proxy 前置）
@@ -178,7 +180,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
     try {
       await unfixedProxy(group.name);
     } catch (e: any) {
-      setErr(`取消固定失败：${e}`);
+      setErr(t("proxies.unpinFail", { err: String(e) }));
     }
     refresh();
   };
@@ -206,7 +208,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
     try {
       await runDelay(group, names);
     } catch (e: any) {
-      setErr(`延迟测试失败：${e}`);
+      setErr(t("proxies.testGroupFail", { err: String(e) }));
     } finally {
       setTesting((s) => {
         const n = { ...s };
@@ -224,7 +226,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
     try {
       await Promise.all(
         groups.map((g) =>
-          runDelay(g, delayTargets(g)).catch((e: any) => setErr(`全部测速失败：${e}`))
+          runDelay(g, delayTargets(g)).catch((e: any) => setErr(t("proxies.testAllFail", { err: String(e) })))
         )
       );
     } finally {
@@ -237,7 +239,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
     try {
       await proxyDelay(name, group.testUrl || delayUrl, delayTimeout);
     } catch (e: any) {
-      setErr(`测试「${name}」失败：${e}`);
+      setErr(t("proxies.testNodeFail", { name, err: String(e) }));
     }
     refresh();
   };
@@ -252,7 +254,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
   };
 
   if (!running) {
-    return <div className={`${cardCls} p-6 text-center text-xs text-slate-400`}>核心未运行，启动后可查看代理组</div>;
+    return <div className={`${cardCls} p-6 text-center text-xs text-slate-400`}>{t("proxies.coreNotRunning")}</div>;
   }
 
   return (
@@ -260,14 +262,14 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
       {/* 顶栏：排序 / 显示模式 / 列数（对齐 clash-party 顶栏控制）*/}
       <div className="flex items-center gap-2 flex-wrap">
         <button className={btnSec} onClick={() => patchCfg({ proxyDisplayOrder: NEXT_ORDER[order] })}>
-          <span className="inline-flex items-center gap-1"><ArrowDownUp className="w-3 h-3" />{ORDER_LABEL[order]}</span>
+          <span className="inline-flex items-center gap-1"><ArrowDownUp className="w-3 h-3" />{t(`proxies.${ORDER_LABEL[order]}`)}</span>
         </button>
         <button className={btnSec} onClick={() => patchCfg({ proxyDisplayMode: mode === "full" ? "simple" : "full" })}>
-          {mode === "full" ? "详细信息" : "简洁模式"}
+          {mode === "full" ? t("proxies.detailMode") : t("proxies.simpleMode")}
         </button>
         {/* 列数切换：紧凑分段按钮，避免文字过大被截断 */}
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-slate-400">列数</span>
+          <span className="text-[10px] text-slate-400">{t("proxies.columns")}</span>
           <div className="flex items-center rounded-lg bg-white/10 p-0.5">
             {[1, 2, 3, 4].map((c) => (
               <button
@@ -285,17 +287,17 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
         <button className={btnSec} onClick={manualRefresh} disabled={refreshing}>
           <span className="inline-flex items-center gap-1">
             <RefreshCw className={`w-3 h-3 ${refreshing ? "animate-spin" : ""}`} />
-            刷新
+            {t("proxies.refresh")}
           </span>
         </button>
         <button className={btnSec} onClick={onTestAll} disabled={anyTesting() || groups.length === 0}>
           <span className="inline-flex items-center gap-1">
             <Zap className={`w-3 h-3 ${anyTesting() ? "animate-spin" : ""}`} />
-            全部测速
+            {t("proxies.testAll")}
           </span>
         </button>
         <div className="flex-1" />
-        <Toggle label="切换时断开旧连接" v={autoClose} onChange={(v) => patchCfg({ autoCloseConnection: v })} />
+        <Toggle label={t("proxies.autoClose")} v={autoClose} onChange={(v) => patchCfg({ autoCloseConnection: v })} />
       </div>
 
       {err && (
@@ -309,14 +311,14 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
 
       {groups.length === 0 && (
         <div className={`${cardCls} p-6 text-center text-sm text-slate-300 space-y-3`}>
-          <div className="text-base font-semibold text-white">当前配置无代理节点</div>
+          <div className="text-base font-semibold text-white">{t("proxies.noNodes")}</div>
           <div className="text-xs text-slate-400">
-            当前生效配置（{curProfile || "无"}）不含任何代理组/节点。
-            请先在「订阅」中导入含节点的订阅，并切换到该配置。
+            {t("proxies.noNodesDesc1", { profile: curProfile || t("common.none") })}
+            {t("proxies.noNodesDesc2")}
           </div>
           {profiles.filter((p) => p.id !== curProfile).length > 0 && (
             <div className="flex flex-wrap items-center justify-center gap-2">
-              <span className="text-[11px] text-slate-500">快速切换：</span>
+              <span className="text-[11px] text-slate-500">{t("proxies.quickSwitch")}</span>
               {profiles.filter((p) => p.id !== curProfile).map((p) => (
                 <button
                   key={p.id}
@@ -363,21 +365,21 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
               <span className="text-[11px] text-slate-500">{g.all.length}</span>
               <button
                 className="p-1.5 rounded-lg hover:bg-white/10 text-slate-300 cursor-pointer"
-                title="定位当前节点"
+                title={t("proxies.locateNode")}
                 onClick={(e) => { e.stopPropagation(); locate(g); }}
               >
                 <LocateFixed className="w-3.5 h-3.5" />
               </button>
               <button
                 className={`p-1.5 rounded-lg hover:bg-white/10 cursor-pointer ${g.fixed ? "text-amber-300" : "text-slate-500"}`}
-                title={g.fixed ? "取消固定（恢复自动选择）" : "当前分组未被手动固定"}
+                title={g.fixed ? t("proxies.unpin") : t("proxies.notPinned")}
                 onClick={(e) => { e.stopPropagation(); onUnfix(g); }}
               >
                 <Pin className={`w-3.5 h-3.5 ${g.fixed ? "fill-current" : ""}`} />
               </button>
               <button
                 className="p-1.5 rounded-lg hover:bg-white/10 text-[var(--module-accent)] cursor-pointer disabled:opacity-50"
-                title="延迟测试"
+                title={t("proxies.delayTest")}
                 disabled={!!testing[g.name]?.size}
                 onClick={(e) => { e.stopPropagation(); onGroupDelay(g); }}
               >
@@ -397,7 +399,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
                   <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
                   <input
                     className="w-full h-8 pl-8 pr-2.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
-                    placeholder="搜索节点"
+                    placeholder={t("proxies.searchNode")}
                     value={search[g.name] || ""}
                     onChange={(e) => setSearch((s) => ({ ...s, [g.name]: e.target.value }))}
                   />
@@ -424,13 +426,13 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
                           </span>
                           <button
                             className={`text-[10px] font-mono flex-shrink-0 cursor-pointer hover:underline ${delayColor(d)}`}
-                            title="测试此节点延迟"
+                            title={t("proxies.testDelay")}
                             onClick={(e) => { e.stopPropagation(); onProxyDelay(g, p.name); }}
                           >
                             {isTesting(g, p.name) ? (
                               <span className="inline-block w-3 h-3 rounded-full border border-white/30 border-t-white animate-spin align-middle" />
                             ) : (
-                              delayText(d)
+                              t(delayText(d))
                             )}
                           </button>
                         </div>

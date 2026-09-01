@@ -2,6 +2,7 @@
 // （GeoData：4 个 geox-url 编辑+确认 / db·dat 模式 / 自动更新+间隔 / 立即更新；
 //   代理集合 provider：全部更新/单个更新/订阅信息/复制链接；规则集合 provider 同理）
 import React, { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { RefreshCw } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
 import { proxyProviders as apiProxyProviders, ruleProviders as apiRuleProviders, updateProxyProvider, updateRuleProvider } from "./ctrl";
@@ -14,16 +15,10 @@ const DEFAULT_GEOX = {
   asn: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb",
 };
 
-function fromNow(iso?: string): string {
-  if (!iso) return "";
-  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-  if (s < 60) return `${s} 秒前`;
-  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`;
-  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`;
-  return `${Math.floor(s / 86400)} 天前`;
-}
+
 
 export default function ResourcesPanel({ running }: { running: boolean }) {
+  const { t } = useTranslation();
   const [c, setC] = useState<any>({});
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [updatingGeo, setUpdatingGeo] = useState(false);
@@ -75,11 +70,20 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
     finally { setUpdating((s) => ({ ...s, [key]: false })); }
   };
 
+  const fromNow = (iso?: string): string => {
+    if (!iso) return "";
+    const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+    if (s < 60) return t("resources.agoS", { n: s });
+    if (s < 3600) return t("resources.agoM", { n: Math.floor(s / 60) });
+    if (s < 86400) return t("resources.agoH", { n: Math.floor(s / 3600) });
+    return t("resources.agoD", { n: Math.floor(s / 86400) });
+  };
+
   const geoRow = (key: keyof typeof DEFAULT_GEOX, title: string) => (
     <SettingItem title={title}>
       <div className="flex items-center gap-2 w-[70%]">
         {inputs[key] !== geoxUrl[key] && (
-          <button className={btnPrimary} onClick={() => patchC({ "geox-url": { ...geoxUrl, [key]: inputs[key] } })}>确认</button>
+          <button className={btnPrimary} onClick={() => patchC({ "geox-url": { ...geoxUrl, [key]: inputs[key] } })}>{t("common.confirm")}</button>
         )}
         <input className={inputCls} value={inputs[key] || ""} onChange={(e) => setInputs((s) => ({ ...s, [key]: e.target.value }))} />
       </div>
@@ -92,12 +96,12 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
 
       {/* GeoData 卡片 */}
       <div className={`${cardCls} p-4`}>
-        <h3 className="text-sm font-bold text-white mb-1">Geo 数据库</h3>
+        <h3 className="text-sm font-bold text-white mb-1">{t("resources.geoTitle")}</h3>
         {geoRow("geoip", "GeoIP")}
         {geoRow("geosite", "GeoSite")}
         {geoRow("mmdb", "MMDB")}
         {geoRow("asn", "ASN")}
-        <SettingItem title="GeoData 模式">
+        <SettingItem title={t("resources.geoDataMode")}>
           <div className="flex rounded-lg bg-white/5 border border-white/10 overflow-hidden">
             {([["db", false], ["dat", true]] as const).map(([t, v]) => (
               <button key={t} onClick={() => patchC({ "geodata-mode": v })}
@@ -108,11 +112,11 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
           </div>
         </SettingItem>
         <SettingItem title={
-          <span className="inline-flex items-center gap-1.5">自动更新
-            <button className="p-0.5 rounded hover:bg-white/10 cursor-pointer" title="立即更新" onClick={async () => {
+          <span className="inline-flex items-center gap-1.5">{t("resources.autoUpdate")}
+            <button className="p-0.5 rounded hover:bg-white/10 cursor-pointer" title={t("resources.updateNow")} onClick={async () => {
               setUpdatingGeo(true);
-              try { await mihomoApi.upgradeGeo(); setMsg("Geo 数据库更新成功"); }
-              catch (e: any) { setMsg(`更新失败: ${e}`); }
+              try { await mihomoApi.upgradeGeo(); setMsg(t("resources.updatedOk")); }
+              catch (e: any) { setMsg(t("resources.updateFail", { err: String(e) })); }
               finally { setUpdatingGeo(false); }
             }}>
               <RefreshCw className={`w-3 h-3 text-slate-400 ${updatingGeo ? "animate-spin" : ""}`} />
@@ -122,7 +126,7 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
           <Toggle v={geoAutoUpdate} onChange={(v) => patchC({ "geo-auto-update": v })} />
         </SettingItem>
         {geoAutoUpdate && (
-          <SettingItem title="更新间隔（小时）" divider={false}>
+          <SettingItem title={t("resources.updateInterval")} divider={false}>
             <input className={`${inputCls} !w-24`} type="number" value={geoUpdateInterval}
               onChange={(e) => patchC({ "geo-update-interval": parseInt(e.target.value) || 24 })} />
           </SettingItem>
@@ -132,8 +136,8 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
       {/* 代理集合 provider */}
       {ppList.length > 0 && (
         <div className={`${cardCls} p-4`}>
-          <SettingItem title="代理集合">
-            <button className={btnPrimary} onClick={() => ppList.forEach(([name]) => doUpdate("proxy", name))}>全部更新</button>
+          <SettingItem title={t("resources.proxyProviders")}>
+            <button className={btnPrimary} onClick={() => ppList.forEach(([name]) => doUpdate("proxy", name))}>{t("resources.updateAll")}</button>
           </SettingItem>
           {ppList.map(([name, p], index) => (
             <React.Fragment key={name}>
@@ -145,7 +149,7 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
                 <div className="flex items-center gap-2 text-[11px] text-slate-400">
                   <span>{fromNow(p.updatedAt)}</span>
                   <span className={tagCls}>{p.vehicleType}</span>
-                  <button className={btnSec} title="更新" onClick={() => doUpdate("proxy", name)}>
+                  <button className={btnSec} title={t("resources.update")} onClick={() => doUpdate("proxy", name)}>
                     <RefreshCw className={`w-3 h-3 ${updating[`proxy:${name}`] ? "animate-spin" : ""}`} />
                   </button>
                 </div>
@@ -157,7 +161,7 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
                   </span>
                 } divider={index !== ppList.length - 1}>
                   <span className="text-[11px] text-slate-400">
-                    {p.subscriptionInfo.Expire ? new Date(p.subscriptionInfo.Expire * 1000).toLocaleDateString() : "长期有效"}
+                    {p.subscriptionInfo.Expire ? new Date(p.subscriptionInfo.Expire * 1000).toLocaleDateString() : t("resources.longTerm")}
                   </span>
                 </SettingItem>
               )}
@@ -169,8 +173,8 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
       {/* 规则集合 provider */}
       {rpList.length > 0 && (
         <div className={`${cardCls} p-4`}>
-          <SettingItem title="规则集合">
-            <button className={btnPrimary} onClick={() => rpList.forEach(([name]) => doUpdate("rule", name))}>全部更新</button>
+          <SettingItem title={t("resources.ruleProviders")}>
+            <button className={btnPrimary} onClick={() => rpList.forEach(([name]) => doUpdate("rule", name))}>{t("resources.updateAll")}</button>
           </SettingItem>
           {rpList.map(([name, p], index) => (
             <SettingItem key={name} title={
@@ -182,7 +186,7 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
                 <span>{fromNow(p.updatedAt)}</span>
                 <span className={tagCls}>{p.behavior}</span>
                 <span className={tagCls}>{p.vehicleType}</span>
-                <button className={btnSec} title="更新" onClick={() => doUpdate("rule", name)}>
+                <button className={btnSec} title={t("resources.update")} onClick={() => doUpdate("rule", name)}>
                   <RefreshCw className={`w-3 h-3 ${updating[`rule:${name}`] ? "animate-spin" : ""}`} />
                 </button>
               </div>
@@ -190,7 +194,7 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
           ))}
         </div>
       )}
-      {!running && <div className={`${cardCls} p-4 text-center text-xs text-slate-400`}>核心未运行，无法读取 provider 信息</div>}
+      {!running && <div className={`${cardCls} p-4 text-center text-xs text-slate-400`}>{t("resources.coreStopped")}</div>}
     </div>
   );
 }

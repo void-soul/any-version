@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { StickyNote, X } from "lucide-react";
@@ -12,6 +13,7 @@ const STICKER_PALETTE = ["#fef3c7", "#d4f5d4", "#dbeafe", "#fce7f3", "#e9d5ff", 
 /** 思维导图贴纸悬浮窗：必须先选择目标文档，再输入贴纸内容并记录。
  *  不再支持选择类型（节点/贴纸切换），此窗口只处理贴纸。 */
 export default function MindmapStickerPopup() {
+  const { t } = useTranslation();
   const [accent, setAccent] = useState(VEX_CYBER_ACCENT);
   useEffect(() => {
     (async () => {
@@ -85,7 +87,7 @@ export default function MindmapStickerPopup() {
     // 必须选择目标文档
     if (!content.trim() || busy) return;
     if (!docId && !newDocName.trim()) {
-      setError("请先选择目标文档或输入新文档名称");
+      setError(t("mmdpop.needDoc"));
       return;
     }
     setBusy(true);
@@ -98,7 +100,7 @@ export default function MindmapStickerPopup() {
         setDocId(doc.id);
       }
       const f = full && full.document.id === targetId ? full : await mmApi.load(targetId);
-      if (!f) throw new Error("文档加载失败");
+      if (!f) throw new Error(t("mmdpop.docLoadFail"));
       const now = new Date().toISOString();
       const id = `s${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const s: MindmapSticker = {
@@ -107,7 +109,7 @@ export default function MindmapStickerPopup() {
         positionY: 120 + (f.stickers.length % 5) * 24, createdAt: now, updatedAt: now,
       };
       await mmApi.upsertSticker({ documentId: targetId, sticker: s });
-      setDone(`贴纸已记入「${f.document.name}」`);
+      setDone(t("mmdpop.recordedTo", { name: f.document.name }));
       setContent("");
       window.setTimeout(() => { void hide(); }, 2500);
     } catch (e) { setError(String(e)); }
@@ -116,23 +118,15 @@ export default function MindmapStickerPopup() {
 
   useEffect(() => { inputRef.current?.focus(); }, [full, docId]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); void hide(); }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [hide]);
-
   return (
     <div className="h-screen w-screen overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl flex flex-col text-slate-200 select-none" style={themeVars}>
       {/* 标题栏 */}
       <div className="flex shrink-0 cursor-grab items-center gap-2 border-b border-white/10 px-3 py-2 active:cursor-grabbing" onMouseDown={onTitleMouseDown} style={{ backgroundColor: "var(--mm-accent-soft)" }}>
         <VexAvatar size={18} />
         <StickyNote className="h-4 w-4" style={{ color: "var(--mm-accent)" }} />
-        <span className="text-xs font-semibold text-white">思维导图贴纸</span>
+        <span className="text-xs font-semibold text-white">{t("mmdpop.stickerTitle")}</span>
         <div className="flex-1" />
-        <button className="rounded p-1 text-slate-400 hover:bg-white/10 hover:text-white" onClick={() => void hide()} title="关闭 (Esc)">
+        <button className="rounded p-1 text-slate-400 hover:bg-white/10 hover:text-white" onClick={() => void hide()} title={t("mmdpop.close")}>
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
@@ -148,38 +142,38 @@ export default function MindmapStickerPopup() {
         {/* 目标导图（必须选择） */}
         <div>
           <label className="mb-1 flex items-center justify-between text-[9px] uppercase font-semibold text-slate-500">
-            <span>目标文档</span>
-            <span className="font-normal normal-case text-amber-400/70">必选</span>
+            <span>{t("mmdpop.targetDoc")}</span>
+            <span className="font-normal normal-case text-amber-400/70">{t("mmdpop.required")}</span>
           </label>
           {docs && docs.length > 0 ? (
             <select value={docId} onChange={(e) => setDocId(e.target.value)} className="h-8 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]">
               {docs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           ) : docs && docs.length === 0 ? (
-            <input value={newDocName} onChange={(e) => setNewDocName(e.target.value)} placeholder="输入新文档名称"
+            <input value={newDocName} onChange={(e) => setNewDocName(e.target.value)} placeholder={t("mmdpop.newDocPh")}
               className="h-8 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
           ) : (
-            <div className="text-[10px] text-slate-600">加载中…</div>
+            <div className="text-[10px] text-slate-600">{t("mmdpop.loading")}</div>
           )}
         </div>
 
         {/* 贴纸内容 */}
         <div className="flex min-h-0 flex-1 flex-col">
-          <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">贴纸内容</label>
+          <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">{t("mmdpop.stickerContent")}</label>
           <textarea ref={inputRef} value={content} onChange={(e) => setContent(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void submit(); } }}
-            placeholder="贴纸上写点什么… (Ctrl+Enter 记录)"
+            placeholder={t("mmdpop.stickerPh")}
             className="min-h-[100px] flex-1 resize-none rounded-md border border-white/10 bg-slate-950/70 px-3 py-2 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
         </div>
 
         {/* 贴纸颜色 */}
         <div>
-          <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">颜色</label>
+          <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">{t("mmdpop.color")}</label>
           <div className="flex flex-wrap items-center gap-1.5">
             {STICKER_PALETTE.map((cl) => <button key={cl} type="button" className="h-5 w-5 rounded-full border border-white/20"
               style={{ backgroundColor: cl, boxShadow: color === cl ? `0 0 6px ${cl}` : "none" }}
               onClick={() => setColor(cl)} />)}
-            <label className="relative inline-flex h-5 w-5 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-white/30" title="自定义颜色">
+            <label className="relative inline-flex h-5 w-5 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-white/30" title={t("mmdpop.customColor")}>
               <input type="color" value={color} className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                 onChange={(e) => setColor(e.target.value)} />
               <span className="h-3 w-3 rounded-full" style={{ background: "conic-gradient(#f87171,#fbbf24,#34d399,#22d3ee,#a78bfa,#f87171)" }} />
@@ -193,7 +187,7 @@ export default function MindmapStickerPopup() {
         <button onClick={() => void submit()} disabled={busy || !content.trim() || (!docId && !newDocName.trim())}
           className="shrink-0 rounded-lg py-2 text-xs font-semibold text-white disabled:opacity-40"
           style={{ backgroundColor: "var(--mm-accent)" }}>
-          {busy ? "记录中…" : "记为贴纸"}
+          {busy ? t("mmdpop.recording") : t("mmdpop.asSticker")}
         </button>
       </div>
     </div>

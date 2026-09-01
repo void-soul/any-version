@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   X,
   FileText,
@@ -72,6 +73,7 @@ export default function AddItemModal({
   classificationId,
   classifications,
 }: AddItemModalProps) {
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<number>(
     editingItem ? (editingItem.itemType === 5 ? 6 : editingItem.itemType) : 0
   );
@@ -168,13 +170,13 @@ export default function AddItemModal({
       const selected = await openDialog({
         directory: true,
         multiple: false,
-        title: "选择目标目录",
+        title: t("additem.pickFolderTitle"),
       });
       if (selected && typeof selected === "string") {
         setTarget(selected);
         if (!name) {
           const parts = selected.split(/[\\/]/);
-          setName(parts[parts.length - 1] || "文件夹");
+          setName(parts[parts.length - 1] || t("additem.folderDefault"));
         }
         const extIcon = await invoke<string | null>("launcher_extract_icon", { path: selected });
         if (extIcon) setIcon(extIcon);
@@ -238,10 +240,10 @@ export default function AddItemModal({
       const selected = await openDialog({
         directory: false,
         multiple: false,
-        title: "选择图片作为项目图标",
+        title: t("additem.pickIconTitle"),
         filters: [
           {
-            name: "图片文件",
+            name: t("additem.imageFilter"),
             extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"],
           },
         ],
@@ -291,7 +293,7 @@ export default function AddItemModal({
     } catch (e: any) {
       console.error("下载网络图标失败:", e);
       // 把具体错误透传给用户，便于定位（保持弹窗打开方便重试）
-      setNetIconError(typeof e === "string" ? e : e?.message || "下载失败，请检查链接或网络");
+      setNetIconError(typeof e === "string" ? e : e?.message || t("additem.downloadFailedDefault"));
     } finally {
       setNetIconLoading(false);
     }
@@ -361,10 +363,10 @@ export default function AddItemModal({
             </div>
             <div>
               <h3 className="text-sm font-semibold text-white">
-                {editingItem ? "编辑启动项" : "添加启动项"}
+                {editingItem ? t("additem.editTitle") : t("additem.addTitle")}
               </h3>
               <p className="text-[11px] text-slate-400">
-                支持程序、文件、网址、系统工具及批量多项目
+                {t("additem.subtitle")}
               </p>
             </div>
           </div>
@@ -379,13 +381,13 @@ export default function AddItemModal({
         {/* Tab navigation */}
         <div className="flex items-center gap-1 px-5 py-2.5 border-b border-white/5 bg-white/[0.01] overflow-x-auto">
           {[
-            { id: 0, label: "文件/程序", icon: <FileText className="w-3.5 h-3.5" /> },
-            { id: 1, label: "文件夹", icon: <Folder className="w-3.5 h-3.5" /> },
-            { id: 2, label: "网址", icon: <Globe className="w-3.5 h-3.5" /> },
-            { id: 3, label: "系统工具", icon: <SettingsIcon className="w-3.5 h-3.5" /> },
-            { id: 4, label: "Appx 应用", icon: <Package className="w-3.5 h-3.5" /> },
-            { id: 5, label: "开始菜单", icon: <AppWindow className="w-3.5 h-3.5" /> },
-            { id: 6, label: "多项目连发", icon: <Layers className="w-3.5 h-3.5" /> },
+            { id: 0, label: t("additem.tabFile"), icon: <FileText className="w-3.5 h-3.5" /> },
+            { id: 1, label: t("additem.tabFolder"), icon: <Folder className="w-3.5 h-3.5" /> },
+            { id: 2, label: t("additem.tabUrl"), icon: <Globe className="w-3.5 h-3.5" /> },
+            { id: 3, label: t("additem.tabSystem"), icon: <SettingsIcon className="w-3.5 h-3.5" /> },
+            { id: 4, label: t("additem.tabAppx"), icon: <Package className="w-3.5 h-3.5" /> },
+            { id: 5, label: t("additem.tabStartMenu"), icon: <AppWindow className="w-3.5 h-3.5" /> },
+            { id: 6, label: t("additem.tabMulti"), icon: <Layers className="w-3.5 h-3.5" /> },
           ].map((t) => (
             <button
               type="button"
@@ -412,16 +414,16 @@ export default function AddItemModal({
           {/* Classification Selection */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">所属分类 *</label>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("additem.classification")}</label>
               <CategoryTreeSelect
                 classifications={classifications}
                 value={targetClassificationId}
                 onChange={setTargetClassificationId}
-                placeholder="选择分类"
+                placeholder={t("additem.selectCategory")}
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">项目名称 *</label>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("additem.itemName")}</label>
               <input
                 autoFocus
                 type="text"
@@ -430,7 +432,7 @@ export default function AddItemModal({
                 spellCheck={false}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="例如：Visual Studio Code"
+                placeholder={t("additem.nameExample")}
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text transition"
               />
             </div>
@@ -438,7 +440,7 @@ export default function AddItemModal({
 
           {/* 图标编辑（参考 DawnLauncher） */}
           <div className="pt-1">
-            <label className="block text-xs font-medium text-slate-400 mb-2">项目图标</label>
+            <label className="block text-xs font-medium text-slate-400 mb-2">{t("additem.itemIcon")}</label>
             <div className="flex items-center gap-3">
               {/* 图标预览 */}
               <div
@@ -460,11 +462,11 @@ export default function AddItemModal({
                 <button
                   type="button"
                   onClick={handleUploadIcon}
-                  title="从本地选择一张图片作为此项目图标"
+                  title={t("additem.uploadImageTitle")}
                   className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-lg transition cursor-pointer flex items-center gap-1.5"
                 >
                   <ImageIcon className="w-3.5 h-3.5 text-purple-400" />
-                  上传图片
+                  {t("additem.uploadImage")}
                 </button>
                 <button
                   type="button"
@@ -472,37 +474,37 @@ export default function AddItemModal({
                     setNetIconOpen((v) => !v);
                     if (!netIconUrl) setNetIconUrl(target.trim().startsWith("http") ? target.trim() : "");
                   }}
-                  title="输入远程图片链接（如网页 favicon）下载作为图标"
+                  title={t("additem.netIconTitle")}
                   className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-lg transition cursor-pointer flex items-center gap-1.5"
                 >
                   <Link2 className="w-3.5 h-3.5 text-blue-400" />
-                  网络图标
+                  {t("additem.netIcon")}
                 </button>
                 <button
                   type="button"
                   onClick={handleRestoreDefaultIcon}
                   disabled={!target.trim()}
-                  title="从目标程序/文件重新提取图标"
+                  title={t("additem.restoreDefaultTitle")}
                   className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-lg transition cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <RotateCcw className="w-3.5 h-3.5 text-cyan-400" />
-                  恢复默认
+                  {t("additem.restoreDefault")}
                 </button>
                 <button
                   type="button"
                   onClick={handleClearIcon}
                   disabled={!icon && !htmlIcon}
-                  title="清除自定义图标，恢复为按项目类型显示的默认图标"
+                  title={t("additem.clearIconTitle")}
                   className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-lg transition cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <X className="w-3.5 h-3.5 text-red-400" />
-                  清除图标
+                  {t("additem.clearIcon")}
                 </button>
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
                     onClick={() => setIconBg((v) => !v)}
-                    title="为图标添加背景色块"
+                    title={t("additem.iconBgTitle")}
                     className={`px-2.5 py-1.5 border text-xs rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
                       iconBg
                         ? "bg-white/10 border-[var(--module-accent-ring)] text-white"
@@ -513,12 +515,12 @@ export default function AddItemModal({
                       className="w-3 h-3 rounded-sm"
                       style={{ backgroundColor: iconBgValue }}
                     />
-                    背景色块
+                    {t("additem.iconBg")}
                   </button>
                   {iconBg && (
                     <label
                       className="w-8 h-8 rounded-lg overflow-hidden border border-white/10 cursor-pointer flex items-center justify-center hover:bg-white/10 transition"
-                      title="自定义背景色块颜色"
+                      title={t("additem.iconBgColorTitle")}
                     >
                       <input
                         type="color"
@@ -542,7 +544,7 @@ export default function AddItemModal({
                     spellCheck={false}
                     value={netIconUrl}
                     onChange={(e) => setNetIconUrl(e.target.value)}
-                    placeholder="粘贴图片链接，例如 https://example.com/favicon.ico"
+                    placeholder={t("additem.netIconPlaceholder")}
                     className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                   <button
@@ -552,18 +554,18 @@ export default function AddItemModal({
                     className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs rounded-xl transition cursor-pointer flex items-center gap-1.5"
                   >
                     <Download className={`w-3.5 h-3.5 ${netIconLoading ? "animate-pulse" : ""}`} />
-                    {netIconLoading ? "下载中..." : "下载"}
+                    {netIconLoading ? t("additem.downloading") : t("additem.download")}
                   </button>
                 </div>
                 {netIconError && (
                   <p className="mt-1.5 text-[11px] text-red-400 leading-relaxed break-all">
-                    下载失败：{netIconError}
+                    {t("additem.downloadFailed", { err: netIconError })}
                   </p>
                 )}
               </>
             )}
             <p className="text-[10px] text-slate-500 mt-1.5 leading-relaxed">
-              支持 png / jpg / gif / webp / ico / svg；也可在「文件/程序」「网址」等标签页选择目标后自动提取图标。
+              {t("additem.iconHint")}
             </p>
           </div>
 
@@ -571,7 +573,7 @@ export default function AddItemModal({
           {activeTab === 0 && (
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1.5">目标程序/文件路径 *</label>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("additem.fileTarget")}</label>
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
@@ -580,7 +582,7 @@ export default function AddItemModal({
                     spellCheck={false}
                     value={target}
                     onChange={(e) => setTarget(e.target.value)}
-                    placeholder="选择可执行程序、脚本或文档文件"
+                    placeholder={t("additem.fileTargetPlaceholder")}
                     className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                   <button
@@ -589,33 +591,33 @@ export default function AddItemModal({
                     className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded-xl transition cursor-pointer flex items-center gap-1.5"
                   >
                     <Upload className="w-3.5 h-3.5" />
-                    浏览文件
+                    {t("additem.browseFile")}
                   </button>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-400 mb-1.5">启动参数 (可选)</label>
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("additem.params")}</label>
                   <input
                     type="text"
                     autoComplete="off"
                     spellCheck={false}
                     value={params}
                     onChange={(e) => setParams(e.target.value)}
-                    placeholder="例如：--incognito 或 /admin"
+                    placeholder={t("additem.paramsExample")}
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-400 mb-1.5">起始目录 (可选)</label>
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("additem.startDir")}</label>
                   <input
                     type="text"
                     autoComplete="off"
                     spellCheck={false}
                     value={startLocation}
                     onChange={(e) => setStartLocation(e.target.value)}
-                    placeholder="运行工作目录"
+                    placeholder={t("additem.startDirPlaceholder")}
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                 </div>
@@ -626,7 +628,7 @@ export default function AddItemModal({
           {/* TAB 1: Folder */}
           {activeTab === 1 && (
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">目录路径 *</label>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("additem.folderTarget")}</label>
               <div className="flex items-center gap-2">
                 <input
                   type="text"
@@ -635,7 +637,7 @@ export default function AddItemModal({
                   spellCheck={false}
                   value={target}
                   onChange={(e) => setTarget(e.target.value)}
-                  placeholder="选择或输入本地目录路径"
+                  placeholder={t("additem.folderPlaceholder")}
                   className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                 />
                 <button
@@ -644,7 +646,7 @@ export default function AddItemModal({
                   className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded-xl transition cursor-pointer flex items-center gap-1.5"
                 >
                   <Folder className="w-3.5 h-3.5" />
-                  浏览目录
+                  {t("additem.browseFolder")}
                 </button>
               </div>
             </div>
@@ -654,7 +656,7 @@ export default function AddItemModal({
           {activeTab === 2 && (
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1.5">网址链接 (URL) *</label>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("additem.urlLabel")}</label>
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
@@ -663,7 +665,7 @@ export default function AddItemModal({
                     spellCheck={false}
                     value={target}
                     onChange={(e) => setTarget(e.target.value)}
-                    placeholder="例如：https://github.com 或 https://chatgpt.com"
+                    placeholder={t("additem.urlExample")}
                     className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                   <button
@@ -673,7 +675,7 @@ export default function AddItemModal({
                     className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs rounded-xl transition cursor-pointer flex items-center gap-1.5"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${urlFetching ? "animate-spin" : ""}`} />
-                    {urlFetching ? "抓取中..." : "一键抓取信息"}
+                    {urlFetching ? t("additem.fetching") : t("additem.fetchInfo")}
                   </button>
                 </div>
               </div>
@@ -683,19 +685,20 @@ export default function AddItemModal({
           {/* TAB 3: System Tools */}
           {activeTab === 3 && (
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">选择 Windows 内置系统工具</label>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("additem.pickSystemTool")}</label>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto p-1 bg-white/[0.02] border border-white/5 rounded-xl">
                 {PRESET_SYSTEM_TOOLS.map((sys) => (
                   <button
                     type="button"
                     key={sys.name}
                     onClick={() => {
-                      setName(sys.name);
+                      // 英文界面存储/显示英文名与说明（预设中文原义见词典 t(sys.name)/t(sys.desc)）
+                      setName(t(sys.name));
                       setTarget(sys.target);
                       setParams(sys.params);
                       setHtmlIcon(sys.icon);
                       setIcon(null);
-                      setRemark(sys.desc);
+                      setRemark(t(sys.desc));
                     }}
                     className={`p-2 rounded-xl text-left border transition cursor-pointer flex items-center gap-2 ${
                       target === sys.target
@@ -705,7 +708,7 @@ export default function AddItemModal({
                   >
                     <span className="text-lg">{sys.icon}</span>
                     <div className="min-w-0">
-                      <p className="text-xs font-medium truncate">{sys.name}</p>
+                      <p className="text-xs font-medium truncate">{t(sys.name)}</p>
                     </div>
                   </button>
                 ))}
@@ -717,7 +720,7 @@ export default function AddItemModal({
           {activeTab === 4 && (
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-slate-400">本机安装的 Appx / UWP 应用</label>
+                <label className="text-xs font-medium text-slate-400">{t("additem.appxLabel")}</label>
                 <button
                   type="button"
                   onClick={handleScanAppx}
@@ -725,7 +728,7 @@ export default function AddItemModal({
                   className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1 cursor-pointer"
                 >
                   <RefreshCw className={`w-3 h-3 ${appxScanning ? "animate-spin" : ""}`} />
-                  刷新扫描
+                  {t("additem.rescan")}
                 </button>
               </div>
 
@@ -737,7 +740,7 @@ export default function AddItemModal({
                   spellCheck={false}
                   value={appxSearch}
                   onChange={(e) => setAppxSearch(e.target.value)}
-                  placeholder="搜索已安装的 UWP 应用..."
+                  placeholder={t("additem.searchAppx")}
                   className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                 />
               </div>
@@ -784,7 +787,7 @@ export default function AddItemModal({
           {activeTab === 5 && (
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-slate-400">Windows 开始菜单程序库</label>
+                <label className="text-xs font-medium text-slate-400">{t("additem.startMenuLabel")}</label>
                 <button
                   type="button"
                   onClick={handleScanStartMenu}
@@ -792,7 +795,7 @@ export default function AddItemModal({
                   className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1 cursor-pointer"
                 >
                   <RefreshCw className={`w-3 h-3 ${startMenuScanning ? "animate-spin" : ""}`} />
-                  重新扫描
+                  {t("additem.rescanMenu")}
                 </button>
               </div>
 
@@ -804,7 +807,7 @@ export default function AddItemModal({
                   spellCheck={false}
                   value={startMenuSearch}
                   onChange={(e) => setStartMenuSearch(e.target.value)}
-                  placeholder="搜索开始菜单软件..."
+                  placeholder={t("additem.searchStartMenu")}
                   className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                 />
               </div>
@@ -851,19 +854,19 @@ export default function AddItemModal({
           {activeTab === 6 && (
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-slate-400">多项目连环批量启动序列</label>
+                <label className="text-xs font-medium text-slate-400">{t("additem.multiLabel")}</label>
                 <button
                   type="button"
                   onClick={() =>
                     setMultiItems((prev) => [
                       ...prev,
-                      { name: `子任务 ${prev.length + 1}`, target: "", params: "", runAsAdmin: false, delayMs: 500 },
+                      { name: t("additem.subTaskName", { n: prev.length + 1 }), target: "", params: "", runAsAdmin: false, delayMs: 500 },
                     ])
                   }
                   className="px-2.5 py-1 bg-purple-600/30 hover:bg-purple-600/50 text-purple-300 text-xs rounded-lg flex items-center gap-1 cursor-pointer"
                 >
                   <Plus className="w-3 h-3" />
-                  添加子项
+                  {t("additem.addSubItem")}
                 </button>
               </div>
 
@@ -881,7 +884,7 @@ export default function AddItemModal({
                         next[idx] = { ...next[idx], name: e.target.value };
                         setMultiItems(next);
                       }}
-                      placeholder="子项名称"
+                      placeholder={t("additem.subItemName")}
                       className="w-24 bg-black/20 border border-white/10 rounded-lg px-2 py-1 text-xs text-white select-text"
                     />
                     <input
@@ -894,11 +897,11 @@ export default function AddItemModal({
                         next[idx] = { ...next[idx], target: e.target.value };
                         setMultiItems(next);
                       }}
-                      placeholder="目标程序或命令"
+                      placeholder={t("additem.subTarget")}
                       className="flex-1 bg-black/20 border border-white/10 rounded-lg px-2 py-1 text-xs text-white select-text"
                     />
                     <div className="flex items-center gap-1">
-                      <span className="text-[10px] text-slate-400">延时:</span>
+                      <span className="text-[10px] text-slate-400">{t("additem.delay")}</span>
                       <input
                         type="number"
                         min={0}
@@ -924,7 +927,7 @@ export default function AddItemModal({
                         }}
                         className="rounded border-white/10 bg-white/5"
                       />
-                      提权
+                      {t("additem.elevate")}
                     </label>
                     <button
                       type="button"
@@ -950,7 +953,7 @@ export default function AddItemModal({
                   className="rounded border-amber-500/30 bg-amber-500/10 text-amber-500 focus:ring-0"
                 />
                 <Shield className="w-3.5 h-3.5" />
-                <span>以管理员身份运行 (UAC 提权启动)</span>
+                <span>{t("additem.runAsAdmin")}</span>
               </label>
             </div>
             <div>
@@ -960,7 +963,7 @@ export default function AddItemModal({
                 spellCheck={false}
                 value={remark}
                 onChange={(e) => setRemark(e.target.value)}
-                placeholder="备注信息 (支持作为搜索关键词)"
+                placeholder={t("additem.remarkPlaceholder")}
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
               />
             </div>
@@ -973,7 +976,7 @@ export default function AddItemModal({
               onClick={onClose}
               className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
             >
-              取消
+              {t("additem.cancel")}
             </button>
             <button
               type="submit"
@@ -981,7 +984,7 @@ export default function AddItemModal({
               className="px-5 py-2 rounded-xl text-xs font-semibold bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
             >
               <Check className="w-3.5 h-3.5" />
-              {saving ? "保存中..." : "保存启动项"}
+              {saving ? t("additem.saving") : t("additem.saveItem")}
             </button>
           </div>
         </form>

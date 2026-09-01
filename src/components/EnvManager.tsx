@@ -1,5 +1,6 @@
 // 环境变量模块：PATH 变量管理（排序/冲突检测）+ 环境变量备份还原（注册表）
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ListOrdered, ShieldCheck } from "lucide-react";
 import PathEnvManager from "./PathEnvManager";
 import EnvBackupManager from "./EnvBackupManager";
@@ -7,6 +8,7 @@ import EnvBackupManager from "./EnvBackupManager";
 type TabKey = "path" | "backup";
 
 export default function EnvManager() {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<TabKey>("path");
 
   const tabBtn = (key: TabKey, label: string, Icon: any) => (
@@ -27,12 +29,12 @@ export default function EnvManager() {
       {/* 模块头部 + 页签 */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 flex-shrink-0">
         <ShieldCheck className="w-4 h-4 text-[var(--module-accent)]" />
-        <span className="text-sm font-bold text-white">环境变量</span>
-        <span className="text-[10px] text-slate-500">PATH 排序管理与注册表备份还原</span>
+        <span className="text-sm font-bold text-white">{t("envmgr.title")}</span>
+        <span className="text-[10px] text-slate-500">{t("envmgr.subtitle")}</span>
         <div className="flex-1" />
         <div className="flex items-center gap-0.5 bg-white/5 border border-white/5 rounded-lg p-0.5">
-          {tabBtn("path", "PATH 变量", ListOrdered)}
-          {tabBtn("backup", "备份还原", ShieldCheck)}
+          {tabBtn("path", t("envmgr.pathTab"), ListOrdered)}
+          {tabBtn("backup", t("envmgr.backupTab"), ShieldCheck)}
         </div>
       </div>
 

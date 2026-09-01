@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { X, Folder, Check, Eraser } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Classification, ClassificationData } from "./types";
@@ -27,6 +28,7 @@ export default function CategoryModal({
   parentCategories,
   currentParentId,
 }: CategoryModalProps) {
+  const { t } = useTranslation();
   const [name, setName] = useState(editingCategory ? editingCategory.name : "");
   const [parentId, setParentId] = useState<number | null>(
     editingCategory ? editingCategory.parentId : (currentParentId || null)
@@ -77,13 +79,13 @@ export default function CategoryModal({
       const selected = await openDialog({
         directory: true,
         multiple: false,
-        title: "选择关联目录",
+        title: t("category.selectDirTitle"),
       });
       if (selected && typeof selected === "string") {
         setAssociateFolderPath(selected);
         if (!name) {
           const parts = selected.split(/[\\/]/);
-          setName(parts[parts.length - 1] || "关联文件夹");
+          setName(parts[parts.length - 1] || t("category.defaultFolderName"));
         }
       }
     } catch (e) {
@@ -139,7 +141,7 @@ export default function CategoryModal({
           <div className="flex items-center gap-2.5">
             <span className="text-xl">{icon}</span>
             <h3 className="text-sm font-semibold text-white">
-              {editingCategory ? "编辑分类" : "新增分类"}
+              {editingCategory ? t("category.editTitle") : t("category.addTitle")}
             </h3>
           </div>
           <button
@@ -155,27 +157,27 @@ export default function CategoryModal({
         <form onSubmit={handleSubmit} className="p-5 overflow-y-auto space-y-4 flex-1">
           {/* Classification Type Selector */}
           <div>
-            <label className="block text-xs font-medium text-slate-400 mb-1.5">分类类型</label>
+            <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("category.typeLabel")}</label>
             <div className="grid grid-cols-2 gap-2">
               {[
-                { type: 0, label: "普通分类", desc: "手动添加和管理项目" },
-                { type: 1, label: "关联文件夹", desc: "实时同步展示本地目录文件" },
-              ].map((t) => (
+                { type: 0, label: t("category.typeNormal"), desc: t("category.typeNormalDesc") },
+                { type: 1, label: t("category.typeFolder"), desc: t("category.typeFolderDesc") },
+              ].map((opt) => (
                 <button
                   type="button"
-                  key={t.type}
+                  key={opt.type}
                   onClick={() => {
-                    setClassificationType(t.type);
-                    if (t.type === 1 && icon === "📁") setIcon("📂");
+                    setClassificationType(opt.type);
+                    if (opt.type === 1 && icon === "📁") setIcon("📂");
                   }}
                   className={`p-2.5 rounded-xl border text-left transition cursor-pointer flex flex-col ${
-                    classificationType === t.type
+                    classificationType === opt.type
                       ? "bg-purple-600/20 border-purple-500/50 text-white"
                       : "bg-white/[0.02] border-white/5 text-slate-400 hover:bg-white/[0.05]"
                   }`}
                 >
-                  <span className="text-xs font-medium text-slate-200">{t.label}</span>
-                  <span className="text-[10px] text-slate-500 mt-0.5">{t.desc}</span>
+                  <span className="text-xs font-medium text-slate-200">{opt.label}</span>
+                  <span className="text-[10px] text-slate-500 mt-0.5">{opt.desc}</span>
                 </button>
               ))}
             </div>
@@ -184,7 +186,7 @@ export default function CategoryModal({
           {/* Name & Parent */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">分类名称 *</label>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("category.nameLabel")}</label>
               <input
                 autoFocus
                 type="text"
@@ -193,19 +195,19 @@ export default function CategoryModal({
                 spellCheck={false}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="例如：开发工具"
+                placeholder={t("category.namePh")}
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 transition select-text"
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">父级分类 (可选)</label>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("category.parentLabel")}</label>
               <CategoryTreeSelect
                 classifications={parentCategories}
                 value={parentId || 0}
                 onChange={(id) => setParentId(id === 0 ? null : id)}
-                placeholder="选择父级分类"
+                placeholder={t("category.parentPh")}
                 allowNone
-                noneLabel="顶级分类 (无父级)"
+                noneLabel={t("category.topLevel")}
                 excludeId={editingCategory ? editingCategory.id : null}
                 hideDescendantsOfExclude
               />
@@ -214,7 +216,7 @@ export default function CategoryModal({
 
           {/* Icon / Emoji Selection */}
           <div>
-            <label className="block text-xs font-medium text-slate-400 mb-1.5">分类图标 / Emoji</label>
+            <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("category.iconLabel")}</label>
             <div className="flex items-center gap-2 mb-2">
               <div className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-lg flex-shrink-0">
                 {icon || <span className="text-slate-600">∅</span>}
@@ -228,7 +230,7 @@ export default function CategoryModal({
                   setCustomEmoji(e.target.value);
                   if (e.target.value) setIcon(e.target.value);
                 }}
-                placeholder="输入任意 Emoji 或字符"
+                placeholder={t("category.iconPh")}
                 className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
               />
               <button
@@ -239,8 +241,8 @@ export default function CategoryModal({
                 }}
                 disabled={!icon}
                 className="w-9 h-9 rounded-xl border border-white/10 bg-white/5 text-slate-500 hover:text-white hover:bg-white/10 transition cursor-pointer disabled:cursor-not-allowed disabled:opacity-30 flex items-center justify-center"
-                title="清空分类图标"
-                aria-label="清空分类图标"
+                title={t("category.clearIcon")}
+                aria-label={t("category.clearIcon")}
               >
                 <Eraser className="w-3.5 h-3.5" />
               </button>
@@ -265,7 +267,7 @@ export default function CategoryModal({
           {classificationType === 1 && (
             <div className="p-3.5 rounded-xl bg-purple-500/5 border border-purple-500/20 space-y-3">
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">关联文件夹路径 *</label>
+                <label className="block text-xs font-medium text-slate-300 mb-1">{t("category.folderPathLabel")}</label>
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
@@ -274,7 +276,7 @@ export default function CategoryModal({
                     spellCheck={false}
                     value={associateFolderPath}
                     onChange={(e) => setAssociateFolderPath(e.target.value)}
-                    placeholder="选择或输入本地目录路径"
+                    placeholder={t("category.folderPathPh")}
                     className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                   <button
@@ -283,33 +285,33 @@ export default function CategoryModal({
                     className="px-3 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded-xl transition cursor-pointer flex items-center gap-1.5"
                   >
                     <Folder className="w-3.5 h-3.5" />
-                    浏览
+                    {t("category.browse")}
                   </button>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">仅显示</label>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">{t("category.showOnly")}</label>
                   <select
                     value={itemShowOnly}
                     onChange={(e: any) => setItemShowOnly(e.target.value)}
                     className="w-full bg-[#1e2436] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none"
                   >
-                    <option value="default">全部文件与子文件夹</option>
-                    <option value="file">仅文件 (隐藏文件夹)</option>
-                    <option value="folder">仅文件夹 (隐藏文件)</option>
+                    <option value="default">{t("category.optAll")}</option>
+                    <option value="file">{t("category.optFile")}</option>
+                    <option value="folder">{t("category.optFolder")}</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">隐藏项过滤 (逗号隔开)</label>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">{t("category.hideFilter")}</label>
                   <input
                     type="text"
                     autoComplete="off"
                     spellCheck={false}
                     value={associateFolderHiddenItems}
                     onChange={(e) => setAssociateFolderHiddenItems(e.target.value)}
-                    placeholder="如：.git, node_modules, tmp"
+                    placeholder={t("category.hideFilterPh")}
                     className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none select-text"
                   />
                 </div>
@@ -326,11 +328,11 @@ export default function CategoryModal({
                 onChange={(e) => setExcludeSearch(e.target.checked)}
                 className="rounded border-white/10 bg-white/5 text-purple-600 focus:ring-0"
               />
-              <span>在全局快速搜索中排除此分类下的项目</span>
+              <span>{t("category.excludeSearch")}</span>
             </label>
             <label
               className="flex items-start gap-2 cursor-pointer text-xs text-slate-300"
-              title="勾选后，每次打开启动器，此分类下的所有子分组默认处于折叠状态"
+              title={t("category.collapseTip")}
             >
               <input
                 type="checkbox"
@@ -339,9 +341,9 @@ export default function CategoryModal({
                 className="mt-0.5 rounded border-white/10 bg-white/5 text-purple-600 focus:ring-0"
               />
               <span>
-                默认收缩全部子分组
+                {t("category.collapseLabel")}
                 <span className="block text-[10px] text-slate-500 mt-0.5">
-                  打开启动器时此分类下的所有子分组默认折叠
+                  {t("category.collapseDesc")}
                 </span>
               </span>
             </label>
@@ -354,7 +356,7 @@ export default function CategoryModal({
               onClick={onClose}
               className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
             >
-              取消
+              {t("common.cancel")}
             </button>
             <button
               type="submit"
@@ -362,7 +364,7 @@ export default function CategoryModal({
               className="px-5 py-2 rounded-xl text-xs font-semibold bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
             >
               <Check className="w-3.5 h-3.5" />
-              {saving ? "保存中..." : "保存分类"}
+              {saving ? t("category.saving") : t("category.saveCategory")}
             </button>
           </div>
         </form>

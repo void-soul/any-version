@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import MonacoEditor from "../shared/MonacoEditor";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -86,6 +87,7 @@ export function VersionsTab({
   versionsUpdatedAt, onRefreshRemoteVersions,
   isOperating,
 }: SubTabProps) {
+  const { t } = useTranslation();
   const currentVersionNumber = installingVersion
     ? (installingVersion.includes(" · ") ? installingVersion.split(" · ")[1] : installingVersion).trim().split(" ")[0]
     : "";
@@ -99,25 +101,25 @@ export function VersionsTab({
             <div className="flex items-center gap-2">
               <Loader className="w-4 h-4 text-[var(--module-accent)] animate-spin" />
               <h4 className="text-xs font-semibold text-[var(--module-accent)]">
-                正在安装 {project.display_name} v{currentVersionNumber}
+                {t("projsub.installing", { name: project.display_name, ver: currentVersionNumber })}
               </h4>
             </div>
             {onCancelInstall && (
               <button
                 onClick={onCancelInstall}
                 className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 text-[11px] font-semibold border border-red-500/20 cursor-pointer transition-all"
-                title="取消安装"
+                title={t("projsub.cancelInstall")}
               >
-                <X className="w-3 h-3" /> 取消安装
+                <X className="w-3 h-3" /> {t("projsub.cancelInstall")}
               </button>
             )}
           </div>
 
           {/* 步骤指示器 */}
           <div className="flex items-center gap-1">
-            {["下载中", "解压中", "创建链接中", "完成"].map((step, idx) => {
-              const steps = ["下载中", "解压中", "创建链接中", "完成"];
-              const currentIdx = steps.indexOf(installStep);
+            {["stepDownload", "stepExtract", "stepLink", "stepDone"].map((stepKey, idx) => {
+              const step = t(`projsub.${stepKey}`);
+              const currentIdx = [t("projsub.stepDownload"), t("projsub.stepExtract"), t("projsub.stepLink"), t("projsub.stepDone")].indexOf(installStep);
               const isActive = step === installStep;
               const isCompleted = currentIdx > idx;
               return (
@@ -144,10 +146,10 @@ export function VersionsTab({
           </div>
 
           {/* 下载进度条 */}
-          {downloadProgress && installStep === "下载中" && (
+          {downloadProgress && installStep === t("projsub.stepDownload") && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-[13px]">
-                <span className="text-slate-400">下载进度 ({currentVersionNumber})</span>
+                <span className="text-slate-400">{t("projsub.downloadProgress", { ver: currentVersionNumber })}</span>
                 <div className="flex items-center gap-3">
                   {downloadProgress.speed_str && (
                     <span className="text-cyan-400 font-mono font-semibold text-[11px]">
@@ -172,10 +174,10 @@ export function VersionsTab({
 
           {/* 当前步骤文字说明 */}
           <p className="text-[13px] text-slate-400">
-            {installStep === "下载中" && `正在从远程服务器下载安装包 (v${currentVersionNumber})，请稍候...`}
-            {installStep === "解压中" && `下载完成，正在解压安装文件 (v${currentVersionNumber})...`}
-            {installStep === "创建链接中" && `解压完成，正在创建 Junction 链接 (v${currentVersionNumber})...`}
-            {installStep === "完成" && `v${currentVersionNumber} 安装成功！`}
+            {installStep === t("projsub.stepDownload") && t("projsub.dlHint", { ver: currentVersionNumber })}
+            {installStep === t("projsub.stepExtract") && t("projsub.extractHint", { ver: currentVersionNumber })}
+            {installStep === t("projsub.stepLink") && t("projsub.linkHint", { ver: currentVersionNumber })}
+            {installStep === t("projsub.stepDone") && t("projsub.doneHint", { ver: currentVersionNumber })}
           </p>
         </div>
       )}
@@ -183,11 +185,11 @@ export function VersionsTab({
       {/* 已安装版本 */}
       <div className="space-y-3">
         <div>
-          <h4 className="text-xs font-semibold text-slate-300">本地已安装版本</h4>
-          <p className="text-[13px] text-slate-500 mt-0.5">已下载到本机的版本，点击「启用」可切换当前使用的版本。</p>
+          <h4 className="text-xs font-semibold text-slate-300">{t("projsub.localVersionsTitle")}</h4>
+          <p className="text-[13px] text-slate-500 mt-0.5">{t("projsub.localVersionsDesc")}</p>
         </div>
         {!project.installed_versions || project.installed_versions.length === 0 ? (
-          <p className="text-[11px] text-slate-500">尚未安装任何版本。请从下方远程版本列表安装。</p>
+          <p className="text-[11px] text-slate-500">{t("projsub.noLocalVersions")}</p>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {project.installed_versions.map((v) => {
@@ -203,7 +205,7 @@ export function VersionsTab({
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-xs font-medium">{v}</span>
                     {isActive && (
-                      <span className="px-1.5 py-0.5 rounded text-[11px] bg-[var(--module-accent)] text-white font-bold">当前</span>
+                      <span className="px-1.5 py-0.5 rounded text-[11px] bg-[var(--module-accent)] text-white font-bold">{t("projsub.current")}</span>
                     )}
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -214,13 +216,13 @@ export function VersionsTab({
                         className="p-1.5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-slate-400 hover:text-slate-200 text-[13px] cursor-pointer transition-all flex items-center gap-0.5"
                         title={
                           !project.managed 
-                            ? "请先开启托管以启用此版本" 
+                            ? t("projsub.needHostToEnable") 
                             : !project.delegation?.version_control 
-                            ? "请先在参数配置中开启“版本控制与下载”以启用此版本" 
-                            : "启用此版本"
+                            ? t("projsub.needVerCtrlEnable") 
+                            : t("projsub.enableThis")
                         }
                       >
-                        <Check className="w-3.5 h-3.5" /> 启用
+                        <Check className="w-3.5 h-3.5" /> {t("projsub.enable")}
                       </button>
                     )}
                     <button
@@ -229,10 +231,10 @@ export function VersionsTab({
                       className="p-1.5 hover:bg-red-500/10 hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-slate-500 cursor-pointer transition-all"
                       title={
                         !project.managed 
-                          ? "请先开启托管以卸载此版本" 
+                          ? t("projsub.needHostToUninstall") 
                           : !project.delegation?.version_control 
-                          ? "请先在参数配置中开启“版本控制与下载”以卸载此版本" 
-                          : "卸载此版本"
+                          ? t("projsub.needVerCtrlUninstall") 
+                          : t("projsub.uninstallThis")
                       }
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -257,8 +259,8 @@ export function VersionsTab({
         disabled={!project.managed || !project.delegation?.version_control}
         disabledReason={
           !project.managed 
-            ? "项目尚未开启托管，请在底部开启托管后再进行在线安装。" 
-            : "项目尚未开启“版本控制与下载”功能，请在右侧“参数配置”中开启后重试。"
+            ? t("projsub.persistWarning1") 
+            : t("projsub.persistWarning2")
         }
       />
 
@@ -271,6 +273,7 @@ export function VersionsTab({
 //  环境变量
 // ═══════════════════════════════════════
 export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, repairingEnv, onRepairEnv, onRefresh }: SubTabProps) {
+  const { t } = useTranslation();
   const vars: EnvVarStatus[] = project.env_vars_status ?? [];
   const [isAdmin, setIsAdmin] = useState(true);
 
@@ -360,10 +363,10 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
   const browseWorkflowPath = async (setter: (v: string) => void) => {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({ directory: true, title: "选择文件夹" });
+      const selected = await open({ directory: true, title: t("projsub.pickFolder") });
       if (selected) setter(selected as string);
     } catch {
-      alert("文件夹选择器不可用，请手动输入路径。");
+      alert(t("projsub.pickerUnavailable"));
     }
   };
 
@@ -371,9 +374,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
     if (!workflowManagerId) return;
 
     if (!isAdmin) {
-      const confirmed = window.confirm(
-        `迁移缓存路径涉及创建系统级软链接 (Symlink/Junction)，这需要 Windows 管理员权限。\n当前 Any Version 未以管理员身份运行，操作可能会因“拒绝访问”而失败。\n\n是否继续？`
-      );
+      const confirmed = window.confirm(t("projsub.migrateAdminWarn"));
       if (!confirmed) return;
     }
 
@@ -383,7 +384,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
       === workflowActualPath.toLowerCase().replace(/[\\/]+$/, "");
 
     if (workflowFileAction === "move" && pathsSame) {
-      if (!confirm("源路径和目标路径相同，无需移动文件。将直接创建链接，继续？")) {
+      if (!confirm(t("projsub.samePathConfirm"))) {
         return;
       }
     }
@@ -418,7 +419,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
       onRefresh();
       setWorkflowStep("done");
     } catch (e: unknown) {
-      alert(`操作失败: ${e}`);
+      alert(t("projsub.opFail", { err: String(e) }));
       setWorkflowStep("confirm");
     } finally {
       unlisten();
@@ -429,9 +430,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
 
   const handleConflictAction = async (managerId: string, action: string) => {
     if (!isAdmin) {
-      const confirmed = window.confirm(
-        `操作系统冲突版本管理器 [${managerId}] 的状态需要 Windows 管理员权限。\n当前 Any Version 未以管理员身份运行，操作可能会因“拒绝访问”而失败。\n\n是否继续？`
-      );
+      const confirmed = window.confirm(t("projsub.conflictOpsWarn", { managerId }));
       if (!confirmed) return;
     }
     setOperatingManagerId(managerId);
@@ -442,11 +441,11 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
         action,
         targetPath: null
       });
-      alert("操作成功！");
+      alert(t("projsub.opSuccess"));
       await loadConflictManagers();
       onRefresh();
     } catch (e: any) {
-      alert(`操作失败: ${e}`);
+      alert(t("projsub.opFail", { err: String(e) }));
     } finally {
       setOperatingManagerId(null);
     }
@@ -460,11 +459,11 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
     const progressBarColor = "bg-amber-500/60";
 
     const stepLabels: Record<string, string> = {
-      method: "选择方式",
-      paths: "配置路径",
-      confirm: "确认预览",
-      executing: "执行中",
-      done: "已完成",
+      method: t("projsub.stepLabelsMethod"),
+      paths: t("projsub.stepLabelsPaths"),
+      confirm: t("projsub.stepLabelsConfirm"),
+      executing: t("projsub.stepLabelsExec"),
+      done: t("projsub.stepLabelsDone"),
     };
 
     const totalSteps = 4;
@@ -475,12 +474,12 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
         <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className={`text-[12px] font-semibold ${accentText}`}>
-              变更缓存配置 · Step 1/{totalSteps} · {stepLabels.method}
+              {t("projsub.wfTitle", { step: 1, total: totalSteps, label: stepLabels.method })}
             </span>
-            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">✕ 取消</button>
+            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
           </div>
           <div className="space-y-1.5">
-            <p className="text-[12px] text-slate-300">请选择变更方式：</p>
+            <p className="text-[12px] text-slate-300">{t("projsub.pickMethod")}</p>
             <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${workflowMethod === "junction"
               ? `${accentBorder} bg-white/5`
               : "border-white/5 hover:bg-white/[0.02]"
@@ -488,9 +487,9 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
               <input type="radio" name="wf_method" value="junction" checked={workflowMethod === "junction"}
                 onChange={() => setWorkflowMethod("junction")} className="mt-0.5" />
               <div>
-                <span className="text-[12px] font-semibold text-slate-200">A. Junction 链接</span>
+                <span className="text-[12px] font-semibold text-slate-200">{t("projsub.optAJunction")}</span>
                 <p className="text-[13px] text-slate-500 mt-0.5">
-                  创建一个目录链接，将缓存目录指向新位置。文件实际存储在新位置，原位置通过链接访问。
+                  {t("projsub.optADesc")}
                 </p>
               </div>
             </label>
@@ -501,9 +500,9 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
               <input type="radio" name="wf_method" value="point" checked={workflowMethod === "point"}
                 onChange={() => setWorkflowMethod("point")} className="mt-0.5" />
               <div>
-                <span className="text-[12px] font-semibold text-purple-300">B. 指向配置</span>
+                <span className="text-[12px] font-semibold text-purple-300">{t("projsub.optBPoint")}</span>
                 <p className="text-[13px] text-slate-500 mt-0.5">
-                  直接修改该控制器的环境变量，更改缓存目录路径。不改动已有文件。
+                  {t("projsub.optBDesc")}
                 </p>
               </div>
             </label>
@@ -511,7 +510,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
           <div className="flex justify-end">
             <button onClick={workflowNext}
               className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors`}>
-              下一步 →
+              {t("projsub.nextStep")}
             </button>
           </div>
         </div>
@@ -524,22 +523,22 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
         <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className={`text-[12px] font-semibold ${accentText}`}>
-              变更缓存配置 · Step 2/{totalSteps} · {stepLabels.paths}
+              {t("projsub.wfTitle", { step: 2, total: totalSteps, label: stepLabels.paths })}
             </span>
-            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">✕ 取消</button>
+            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
           </div>
 
           {workflowMethod === "junction" ? (
             <>
               <p className="text-[11px] text-slate-400">
-                <span className="font-semibold text-slate-300">Junction 链接模式</span> — ① 形式路径（链接所在位置）→ ② 实际路径（数据存放位置）
+                <span className="font-semibold text-slate-300">{t("projsub.junctionModeDesc")}</span> — {t("projsub.linkFrom")} → {t("projsub.linkTo")}
               </p>
               <div className="space-y-1.5">
                 <div>
-                  <label className="text-[13px] text-slate-500 block mb-0.5">① 形式路径（链接创建位置，即原始默认路径）</label>
+                  <label className="text-[13px] text-slate-500 block mb-0.5">{t("projsub.linkFrom")}</label>
                   <div className="flex items-center gap-1">
                     <input type="text" value={workflowLinkPath} onChange={(e) => setWorkflowLinkPath(e.target.value)}
-                      className="flex-1 glass-input px-1.5 py-1 text-[12px] font-mono" placeholder="缓存源路径" />
+                      className="flex-1 glass-input px-1.5 py-1 text-[12px] font-mono" placeholder={t("projsub.linkFromPh")} />
                     <button onClick={() => browseWorkflowPath(setWorkflowLinkPath)}
                       className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
                       <FolderOpen className="w-3 h-3" />
@@ -547,10 +546,10 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                   </div>
                 </div>
                 <div>
-                  <label className="text-[13px] text-slate-500 block mb-0.5">② 实际路径（数据真实存放位置，建议选非 C 盘）</label>
+                  <label className="text-[13px] text-slate-500 block mb-0.5">{t("projsub.linkTo")}</label>
                   <div className="flex items-center gap-1">
                     <input type="text" value={workflowActualPath} onChange={(e) => setWorkflowActualPath(e.target.value)}
-                      className="flex-1 glass-input px-1.5 py-1 text-[12px] font-mono" placeholder={`目标路径（如 D:\\any-version-caches\\${mgr.id}）`} />
+                      className="flex-1 glass-input px-1.5 py-1 text-[12px] font-mono" placeholder={t("projsub.linkToPh", { id: mgr.id })} />
                     <button onClick={() => browseWorkflowPath(setWorkflowActualPath)}
                       className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
                       <FolderOpen className="w-3 h-3" />
@@ -562,14 +561,14 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
           ) : (
             <>
               <p className="text-[11px] text-slate-400">
-                <span className="font-semibold text-purple-300">指向配置模式</span> — 直接修改对应的环境变量，指向新路径
+                <span className="font-semibold text-purple-300">{t("projsub.pointModeDesc")}</span> {t("projsub.pointModeHint")}
               </p>
               <div>
-                <label className="text-[13px] text-slate-500 block mb-0.5">指向路径（设置该管理器的缓存根目录）</label>
+                <label className="text-[13px] text-slate-500 block mb-0.5">{t("projsub.pointPathLabel")}</label>
                 <div className="flex items-center gap-1">
                   <input type="text" value={workflowPointPath} onChange={(e) => setWorkflowPointPath(e.target.value)}
                     className="flex-1 glass-input px-1.5 py-1 text-[12px] font-mono"
-                    placeholder={mgr.cache_path || "新路径"} />
+                    placeholder={mgr.cache_path || t("projsub.pointPathPh")} />
                   <button onClick={() => browseWorkflowPath(setWorkflowPointPath)}
                     className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
                     <FolderOpen className="w-3 h-3" />
@@ -581,21 +580,21 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
 
           {/* 旧文件处理方式（本卡片默认为移动/保留） */}
           <div className="pt-1 space-y-1">
-            <p className="text-[13px] text-slate-400 font-semibold">旧文件处理方式：</p>
+            <p className="text-[13px] text-slate-400 font-semibold">{t("projsub.oldFilesLabel")}</p>
             <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)]" : "border-white/5 hover:bg-white/[0.02]"}`}>
               <input type="radio" name="wf_file_action" value="move" checked={workflowFileAction === "move"}
                 onChange={() => setWorkflowFileAction("move")} className="mt-0.5" />
               <div>
-                <span className="text-[13px] font-semibold text-[var(--module-accent)]">移动旧文件到新目录</span>
-                <p className="text-[11px] text-slate-500 mt-0.5">将现有文件整体复制到新位置，完成后{workflowMethod === "junction" ? "创建链接" : "修改环境变量"}。保留所有已有工具链。</p>
+                <span className="text-[13px] font-semibold text-[var(--module-accent)]">{t("projsub.moveOld")}</span>
+                <p className="text-[11px] text-slate-500 mt-0.5">{t("projsub.moveOldDesc", { action: workflowMethod === "junction" ? t("projsub.actionCreateLink") : t("projsub.actionModifyEnv") })}</p>
               </div>
             </label>
             <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "keep" ? "border-slate-500/30 bg-slate-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
               <input type="radio" name="wf_file_action" value="keep" checked={workflowFileAction === "keep"}
                 onChange={() => setWorkflowFileAction("keep")} className="mt-0.5" />
               <div>
-                <span className="text-[13px] font-semibold text-slate-300">不做改动</span>
-                <p className="text-[11px] text-slate-500 mt-0.5">仅{workflowMethod === "junction" ? "创建链接指向新目录" : "修改环境变量"}，旧目录中的文件保持原样不动。</p>
+                <span className="text-[13px] font-semibold text-slate-300">{t("projsub.keepOld")}</span>
+                <p className="text-[11px] text-slate-500 mt-0.5">{t("projsub.keepOldDesc", { action: workflowMethod === "junction" ? t("projsub.actionLinkToNew") : t("projsub.actionModifyEnv") })}</p>
               </div>
             </label>
           </div>
@@ -603,14 +602,14 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
           <div className="flex justify-between">
             <button onClick={workflowPrev}
               className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[11px] font-semibold cursor-pointer transition-colors">
-              ← 上一步
+              {t("projsub.prevStep")}
             </button>
             <button onClick={workflowNext}
               disabled={workflowMethod === "junction"
                 ? (!workflowLinkPath || !workflowActualPath || workflowLinkPath === workflowActualPath)
                 : !workflowPointPath}
               className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed`}>
-              预览 →
+              {t("projsub.preview")}
             </button>
           </div>
         </div>
@@ -623,39 +622,39 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
         <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className={`text-[12px] font-semibold ${accentText}`}>
-              变更缓存配置 · Step 3/{totalSteps} · {stepLabels.confirm}
+              {t("projsub.wfTitle", { step: 3, total: totalSteps, label: stepLabels.confirm })}
             </span>
-            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">✕ 取消</button>
+            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
           </div>
 
           <div className="p-3 bg-black/20 rounded-lg border border-white/5 space-y-2">
-            <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">操作预览</p>
+            <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">{t("projsub.opPreview")}</p>
             <div className="text-[12px] text-slate-300 space-y-1 font-mono">
               {workflowMethod === "junction" ? (
                 <>
-                  <div><span className="text-slate-500">模式:</span> Junction 链接 (软链接)</div>
-                  <div className="break-all"><span className="text-slate-500">形式路径:</span> {workflowLinkPath}</div>
-                  <div className="break-all"><span className="text-slate-500">实际路径:</span> {workflowActualPath}</div>
+                  <div><span className="text-slate-500">{t("projsub.mode")}</span> {t("projsub.modeJunction")}</div>
+                  <div className="break-all"><span className="text-slate-500">{t("projsub.linkFromLabel")}</span> {workflowLinkPath}</div>
+                  <div className="break-all"><span className="text-slate-500">{t("projsub.linkToLabel")}</span> {workflowActualPath}</div>
                 </>
               ) : (
                 <>
-                  <div><span className="text-slate-500">模式:</span> 指向配置 (重定向环境变量)</div>
-                  <div className="break-all"><span className="text-slate-500">目标路径:</span> {workflowPointPath}</div>
+                  <div><span className="text-slate-500">{t("projsub.mode")}</span> {t("projsub.modePoint")}</div>
+                  <div className="break-all"><span className="text-slate-500">{t("projsub.targetPathLabel")}</span> {workflowPointPath}</div>
                 </>
               )}
-              <div><span className="text-slate-500">旧文件处理:</span> {workflowFileAction === "move" ? "复制移动到新路径" : "保持不动"}</div>
+              <div><span className="text-slate-500">{t("projsub.oldFileHandle")}</span> {workflowFileAction === "move" ? t("projsub.copyMove") : t("projsub.keepStatic")}</div>
             </div>
           </div>
 
           <div className="flex justify-between">
             <button onClick={workflowPrev}
               className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[11px] font-semibold cursor-pointer transition-colors">
-              ← 上一步
+              {t("projsub.prevStep")}
             </button>
             <button onClick={executeWorkflow}
               className={`px-4 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors flex items-center gap-1`}>
               <CheckCircle className="w-3 h-3" />
-              确认并执行
+              {t("projsub.confirmExec")}
             </button>
           </div>
         </div>
@@ -672,13 +671,13 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
         <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className={`text-[12px] font-semibold ${accentText}`}>
-              变更缓存配置 · Step 4/{totalSteps} · {stepLabels.executing}
+              {t("projsub.wfTitle", { step: 4, total: totalSteps, label: stepLabels.executing })}
             </span>
           </div>
 
           <div className="p-3 bg-black/20 rounded-lg border border-white/5 space-y-3">
             <div className="flex items-center justify-between text-xs text-slate-300">
-              <span>{workflowProgress?.stage || "正在执行操作..."}</span>
+              <span>{workflowProgress?.stage || t("projsub.executingStage")}</span>
               <span className="font-mono">{progressPercent}%</span>
             </div>
 
@@ -689,8 +688,8 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
 
             {workflowProgress && (
               <div className="text-[11px] text-slate-500 font-mono space-y-0.5">
-                <div className="truncate">文件: {workflowProgress.file_name || "无"}</div>
-                <div>进度: {workflowProgress.current} / {workflowProgress.total}</div>
+                <div className="truncate">{t("projsub.wfFile", { name: workflowProgress.file_name || "-" })}</div>
+                <div>{t("projsub.wfProgress", { cur: workflowProgress.current, total: workflowProgress.total })}</div>
               </div>
             )}
           </div>
@@ -704,22 +703,22 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
         <div className={`mt-3 p-3 rounded-xl border border-emerald-500/20 bg-emerald-500/10 space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className="text-[12px] font-semibold text-emerald-400">
-              变更缓存配置 · {stepLabels.done}
+              {t("projsub.wfDoneTitle", { label: stepLabels.done })}
             </span>
           </div>
 
           <div className="p-3 bg-black/20 rounded-lg border border-white/5 space-y-1">
             <p className="text-[12px] text-emerald-300 font-semibold flex items-center gap-1">
               <CheckCircle className="w-3.5 h-3.5" />
-              缓存路径变更操作已顺利完成！
+              {t("projsub.wfDoneMsg")}
             </p>
-            <p className="text-[11px] text-slate-500 mt-1">相关目录的 Junction 映射及环境变量配置已成功更新。</p>
+            <p className="text-[11px] text-slate-500 mt-1">{t("projsub.wfDoneDesc")}</p>
           </div>
 
           <div className="flex justify-end">
             <button onClick={closeWorkflow}
               className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-semibold cursor-pointer transition-colors">
-              关闭向导
+              {t("projsub.closeWizard")}
             </button>
           </div>
         </div>
@@ -779,7 +778,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
       setEditingVar(null);
       await loadUserVars();
     } catch (e: unknown) {
-      alert(`设置 ${name} 失败: ${e}`);
+      alert(t("projsub.setFail", { name, err: String(e) }));
     } finally {
       setSavingVar(null);
     }
@@ -793,7 +792,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
         <div className="flex items-start gap-2.5 p-3 rounded-xl border border-amber-500/20 bg-amber-500/10 text-[12.5px] text-amber-200">
           <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
           <span>
-            <strong>权限提示：</strong>修改系统环境变量、校准 PATH 或操作冲突版本管理器需要 Windows 管理员权限。当前程序未以管理员身份运行，操作可能会因“拒绝访问（系统错误 5）”而失败。若遇到操作报错，请尝试右键以管理员身份启动 Any Version。
+            <strong>{t("projsub.permHint")}</strong>{t("projsub.permHintDesc")}
           </span>
         </div>
       )}
@@ -802,38 +801,38 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <span className="text-xs font-semibold text-slate-300">项目关联环境变量</span>
-            <span className="text-[13px] text-slate-500 ml-1.5">{vars.length} 个变量</span>
-            <p className="text-[13px] text-slate-500 mt-0.5">路径类环境变量由 Kira 自动管理，不可手动修改。</p>
+            <span className="text-xs font-semibold text-slate-300">{t("projsub.envVarsTitle")}</span>
+            <span className="text-[13px] text-slate-500 ml-1.5">{t("projsub.envVarCount", { count: vars.length })}</span>
+            <p className="text-[13px] text-slate-500 mt-0.5">{t("projsub.envVarsDesc")}</p>
           </div>
           {onRepairEnv && (
             <button
               onClick={() => {
-                if (!isAdmin && !window.confirm("修复系统环境变量和 PATH 需要 Windows 管理员权限。当前未以管理员身份运行，操作可能会因“拒绝访问”而失败。是否继续？")) return;
+                if (!isAdmin && !window.confirm(t("projsub.repairConfirm"))) return;
                 onRepairEnv();
               }}
               disabled={isOperating || repairingEnv}
-              title="重新将环境变量和 PATH 校准到 Kira links 路径"
+              title={t("projsub.repairTitle")}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed text-amber-300 border border-amber-500/20 text-[13px] font-semibold cursor-pointer transition-all whitespace-nowrap"
             >
               {repairingEnv ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
-              修复环境变量
+              {t("projsub.repairEnv")}
             </button>
           )}
         </div>
         {vars.length === 0 ? (
-          <p className="text-[11px] text-slate-500">该项目无需配置路径类环境变量。</p>
+          <p className="text-[11px] text-slate-500">{t("projsub.noEnvVars")}</p>
         ) : (
           <div className="border border-white/5 rounded-xl overflow-hidden overflow-x-auto">
             <table className="w-full text-left border-collapse text-[13px] min-w-[450px]">
               <thead>
                 <tr className="bg-white/3 border-b border-white/5 text-slate-400 font-medium">
-                  <th className="p-2.5 w-32">变量名</th>
+                  <th className="p-2.5 w-32">{t("projsub.thVarName")}</th>
                   <th className="p-2.5 w-16">Tier</th>
-                  <th className="p-2.5 w-36">说明</th>
-                  <th className="p-2.5">当前配置值</th>
-                  <th className="p-2.5 w-28 whitespace-nowrap">来源</th>
-                  <th className="p-2.5 w-14">状态</th>
+                  <th className="p-2.5 w-36">{t("projsub.thDesc")}</th>
+                  <th className="p-2.5">{t("projsub.thValue")}</th>
+                  <th className="p-2.5 w-28 whitespace-nowrap">{t("projsub.thSource")}</th>
+                  <th className="p-2.5 w-14">{t("projsub.thStatus")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5 text-slate-300">
@@ -851,15 +850,15 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                     </td>
                     <td className="p-2.5 text-slate-400 font-sans">{v.desc}</td>
                     <td className="p-2.5 break-all select-text">
-                      {v.value || <span className="text-slate-600 font-sans">未配置</span>}
+                      {v.value || <span className="text-slate-600 font-sans">{t("projsub.notConfigured")}</span>}
                     </td>
                     <td className="p-2.5">
                       {v.source === "HKCU" ? (
-                        <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-[12px] font-semibold">用户级</span>
+                        <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-[12px] font-semibold">{t("projsub.userLevel")}</span>
                       ) : v.source === "HKLM" ? (
-                        <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[12px] font-semibold">系统级</span>
+                        <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[12px] font-semibold">{t("projsub.systemLevel")}</span>
                       ) : (
-                        <span className="px-1.5 py-0.5 rounded bg-white/5 text-slate-500 border border-white/5 text-[12px]">未设置</span>
+                        <span className="px-1.5 py-0.5 rounded bg-white/5 text-slate-500 border border-white/5 text-[12px]">{t("projsub.notSet")}</span>
                       )}
                     </td>
                     <td className="p-2.5">
@@ -890,34 +889,34 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
             >
               <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${advanced ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
             </button>
-            <span className="text-xs font-semibold text-slate-300">高级模式 - 运行时参数</span>
+            <span className="text-xs font-semibold text-slate-300">{t("projsub.advModeTitle")}</span>
             {advanced && (
-              <span className="px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 text-[11px] font-semibold">高级</span>
+              <span className="px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 text-[11px] font-semibold">{t("projsub.advBadge")}</span>
             )}
           </div>
           {advanced && (
             <button onClick={loadUserVars} disabled={loadingUserVars} className="flex items-center gap-1 px-2 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[13px] border border-white/5 cursor-pointer">
-              <RefreshCw className={`w-3 h-3 ${loadingUserVars ? "animate-spin" : ""}`} />刷新
+              <RefreshCw className={`w-3 h-3 ${loadingUserVars ? "animate-spin" : ""}`} />{t("projsub.refreshList")}
             </button>
           )}
         </div>
 
         {!advanced ? (
-          <p className="text-[13px] text-slate-500">开启后可设置 {def?.display_name || "项目"} 的运行时环境变量（如 NODE_OPTIONS、DEBUG 等），适用于高级用户。</p>
+          <p className="text-[13px] text-slate-500">{t("projsub.advDesc", { name: def?.display_name || t("projsub.project") })}</p>
         ) : loadingUserVars ? (
-          <div className="flex items-center gap-2 text-[13px] text-slate-400 py-4"><Loader className="w-3 h-3 animate-spin text-[var(--module-accent)]" />加载中...</div>
+          <div className="flex items-center gap-2 text-[13px] text-slate-400 py-4"><Loader className="w-3 h-3 animate-spin text-[var(--module-accent)]" />{t("projsub.loading")}</div>
         ) : userVars.length === 0 ? (
-          <p className="text-[13px] text-slate-500">该项目没有可配置的运行时环境变量。</p>
+          <p className="text-[13px] text-slate-500">{t("projsub.noRuntimeVars")}</p>
         ) : (
           <div className="border border-white/5 rounded-xl overflow-hidden overflow-x-auto">
             <table className="w-full text-left border-collapse text-[13px]">
               <thead>
                 <tr className="bg-white/3 border-b border-white/5 text-slate-400 font-medium">
-                  <th className="p-2.5 w-40">变量名</th>
-                  <th className="p-2.5">说明</th>
-                  <th className="p-2.5">当前值</th>
-                  <th className="p-2.5 w-24 whitespace-nowrap">来源</th>
-                  <th className="p-2.5 w-28 text-center">操作</th>
+                  <th className="p-2.5 w-40">{t("projsub.thVarName")}</th>
+                  <th className="p-2.5">{t("projsub.thDesc")}</th>
+                  <th className="p-2.5">{t("projsub.thCurrentVal")}</th>
+                  <th className="p-2.5 w-24 whitespace-nowrap">{t("projsub.thSource")}</th>
+                  <th className="p-2.5 w-28 text-center">{t("projsub.thAction")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5 text-slate-300">
@@ -932,14 +931,14 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                         {isEditing ? (
                           v.options ? (
                             <select value={editValue} onChange={(e) => setEditValue(e.target.value)} className="glass-input px-2 py-1 text-[13px] font-mono rounded w-full">
-                              <option value="">(未设置)</option>
+                              <option value="">{t("projsub.unsetOpt")}</option>
                               {v.options.map(o => <option key={o} value={o}>{o}</option>)}
                             </select>
                           ) : v.var_type === "boolean" ? (
                             <select value={editValue} onChange={(e) => setEditValue(e.target.value)} className="glass-input px-2 py-1 text-[13px] font-mono rounded w-full">
-                              <option value="">(未设置)</option>
-                              <option value="1">1 (启用)</option>
-                              <option value="0">0 (禁用)</option>
+                              <option value="">{t("projsub.unsetOpt")}</option>
+                              <option value="1">{t("projsub.enabled1")}</option>
+                              <option value="0">{t("projsub.disabled0")}</option>
                             </select>
                           ) : (
                             <input type="text" value={editValue} onChange={(e) => setEditValue(e.target.value)} className="glass-input px-2 py-1 text-[13px] font-mono rounded w-full" placeholder={v.placeholder} />
@@ -948,7 +947,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                           hasValue ? (
                             <span className="font-mono text-slate-200 break-all">{v.current_value}</span>
                           ) : (
-                            <span className="text-slate-600 font-sans">未设置</span>
+                            <span className="text-slate-600 font-sans">{t("projsub.notSet")}</span>
                           )
                         )}
                       </td>
@@ -959,13 +958,13 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                         {isEditing ? (
                           <div className="flex items-center gap-1 justify-center">
                             <button onClick={() => handleSetVar(v.name, editValue)} disabled={savingVar === v.name} className="px-2 py-0.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded text-[11px] font-semibold cursor-pointer">
-                              {savingVar === v.name ? "保存中" : "保存"}
+                              {savingVar === v.name ? t("projsub.saving") : t("projsub.save")}
                             </button>
-                            <button onClick={() => setEditingVar(null)} className="px-2 py-0.5 bg-white/5 hover:bg-white/10 text-slate-400 rounded text-[11px] cursor-pointer">取消</button>
+                            <button onClick={() => setEditingVar(null)} className="px-2 py-0.5 bg-white/5 hover:bg-white/10 text-slate-400 rounded text-[11px] cursor-pointer">{t("projsub.cancel")}</button>
                           </div>
                         ) : (
                           <button onClick={() => { setEditingVar(v.name); setEditValue(v.current_value || ""); }} className="px-2 py-0.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[11px] border border-white/5 cursor-pointer">
-                            {hasValue ? "修改" : "设置"}
+                            {hasValue ? t("projsub.modify") : t("projsub.set")}
                           </button>
                         )}
                       </td>
@@ -984,19 +983,19 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
           <div>
             <div className="flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-400" />
-              <h4 className="text-xs font-semibold text-slate-300">系统冲突版本管理器检测</h4>
+              <h4 className="text-xs font-semibold text-slate-300">{t("projsub.conflictTitle")}</h4>
             </div>
             <p className="text-[13px] text-slate-500 mt-0.5">
-              检测到本机系统上存在以下可能会与 Kira 产生冲突的官方或第三方版本管理器。推荐通过禁用它们的环境变量或将其缓存迁移，以实现 Kira 独占。
+              {t("projsub.conflictDesc")}
             </p>
           </div>
 
           {loadingConflicts ? (
             <div className="flex items-center gap-2 text-[13px] text-slate-400 py-2">
-              <Loader className="w-3.5 h-3.5 animate-spin text-[var(--module-accent)]" />正在扫描本地环境...
+              <Loader className="w-3.5 h-3.5 animate-spin text-[var(--module-accent)]" />{t("projsub.scanningEnv")}
             </div>
           ) : conflictManagers.length === 0 ? (
-            <p className="text-[13px] text-slate-500">未检测到任何冲突管理器配置。</p>
+            <p className="text-[13px] text-slate-500">{t("projsub.noConflict")}</p>
           ) : (
             <div className="space-y-4">
               {conflictManagers.map((mgr) => {
@@ -1015,11 +1014,11 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                     <div className="flex items-center justify-between pb-2 border-b border-white/3">
                       <span className="text-[14px] font-semibold text-slate-200">{mgr.display_name}</span>
                       {mgr.is_disabled ? (
-                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px] font-semibold">已停用/独占</span>
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px] font-semibold">{t("projsub.statusExclusive")}</span>
                       ) : mgr.installed ? (
-                        <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[11px] font-semibold animate-pulse">已激活 (潜在冲突)</span>
+                        <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[11px] font-semibold animate-pulse">{t("projsub.statusActive")}</span>
                       ) : (
-                        <span className="px-1.5 py-0.5 rounded bg-white/5 text-slate-500 border border-white/5 text-[11px] font-semibold">未检测到运行</span>
+                        <span className="px-1.5 py-0.5 rounded bg-white/5 text-slate-500 border border-white/5 text-[11px] font-semibold">{t("projsub.statusNotRunning")}</span>
                       )}
                     </div>
 
@@ -1028,7 +1027,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                       <div className="p-3 bg-white/2 rounded-xl border border-white/5 space-y-3">
                         <div className="flex items-center gap-1.5">
                           <HardDrive className="w-3.5 h-3.5 text-[var(--module-accent)]" />
-                          <span className="text-[12px] font-semibold text-slate-300">缓存与工具链目录管理</span>
+                          <span className="text-[12px] font-semibold text-slate-300">{t("projsub.cacheDirTitle")}</span>
                         </div>
                         
                         {/* 路径与大小状态 */}
@@ -1037,21 +1036,21 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                             <div className="flex items-center gap-2 flex-wrap">
                               {hasEnvConfigured ? (
                                 <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-[10px] inline-flex items-center font-mono">
-                                  已配置环境变量
+                                  {t("projsub.envConfigured")}
                                 </span>
                               ) : (
                                 <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 text-[10px] inline-flex items-center">
-                                  未配置环境变量
+                                  {t("projsub.envNotConfigured")}
                                 </span>
                               )}
                               
                               {isJunction ? (
                                 <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] inline-flex items-center font-semibold">
-                                  已迁移 (Junction)
+                                  {t("projsub.migratedJunction")}
                                 </span>
                               ) : (
                                 <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 text-[10px] inline-flex items-center">
-                                  默认路径
+                                  {t("projsub.defaultPath")}
                                 </span>
                               )}
                             </div>
@@ -1072,7 +1071,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all font-semibold text-[11px]"
                           >
                             <Trash2 className="w-3 h-3" />
-                            清理缓存
+                            {t("projsub.cleanCache")}
                           </button>
 
                           <button
@@ -1081,7 +1080,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 font-semibold text-[11px] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                           >
                             <FolderSync className="w-3 h-3" />
-                            开始变更 (迁移/指向)
+                            {t("projsub.startChange")}
                           </button>
                         </div>
 
@@ -1094,27 +1093,27 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                     <div className="p-3 bg-white/2 rounded-xl border border-white/5 space-y-3">
                       <div className="flex items-center gap-1.5">
                         <Wrench className="w-3.5 h-3.5 text-amber-400" />
-                        <span className="text-[12px] font-semibold text-slate-300">冲突环境变量与 PATH 管理</span>
+                        <span className="text-[12px] font-semibold text-slate-300">{t("projsub.conflictRegVars")}</span>
                       </div>
 
                       <div className="text-[12px] text-slate-400 space-y-1.5 bg-black/20 p-2.5 rounded-lg border border-white/3">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
-                          <span className="text-slate-500">注册表变量：</span>
+                          <span className="text-slate-500">{t("projsub.regVar")}</span>
                           {Object.entries(mgr.env_vars_status).map(([key, val]) => (
                             <span key={key} className="font-mono text-[11px] bg-white/3 px-1.5 py-0.5 rounded border border-white/5">
-                              {key}={val ? <span className="text-slate-300 break-all select-text">"{val as string}"</span> : <span className="text-slate-600 font-sans text-[10px]">未设置</span>}
+                              {key}={val ? <span className="text-slate-300 break-all select-text">"{val as string}"</span> : <span className="text-slate-600 font-sans text-[10px]">{t("projsub.notSet")}</span>}
                             </span>
                           ))}
                         </div>
                         {mgr.path_status.length > 0 ? (
                           <div className="pt-1">
-                            <span className="text-slate-500">在 PATH 中检测到冲突路径：</span>
+                            <span className="text-slate-500">{t("projsub.conflictPathInPath")}</span>
                             {mgr.path_status.map((p: string) => (
                               <div key={p} className="font-mono text-[11px] text-amber-300/80 break-all select-text ml-4 mt-0.5">• {p}</div>
                             ))}
                           </div>
                         ) : (
-                          <div className="text-emerald-400/80 font-semibold text-[11px] pt-1">✓ 在系统 PATH 中未检测到冲突路径</div>
+                          <div className="text-emerald-400/80 font-semibold text-[11px] pt-1">{t("projsub.noConflictPath")}</div>
                         )}
                       </div>
 
@@ -1124,16 +1123,16 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                             onClick={() => handleConflictAction(mgr.id, "disable")}
                             disabled={isOperating || isOperatingMgr}
                             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 text-orange-300 border border-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all font-semibold text-[11px]"
-                            title="注销环境变量并从系统的 PATH 中剔除它们，使该工具彻底退出生效以排除冲突"
+                            title={t("projsub.deactivateTitle")}
                           >
                             <X className="w-3.5 h-3.5" />
-                            一键停用 (解绑 PATH & 清理环境变量)
+                            {t("projsub.deactivateBtn")}
                           </button>
                         </div>
                       ) : (
                         <div className="text-[12px] text-emerald-400 font-semibold flex items-center gap-1 bg-emerald-500/5 p-2 rounded-lg border border-emerald-500/10">
                           <Check className="w-3.5 h-3.5 text-emerald-400" />
-                          已完全解除与本机的冲突。Kira 对此项目的版本拥有独占控制权。
+                          {t("projsub.exclusiveMsg")}
                         </div>
                       )}
                     </div>
@@ -1152,6 +1151,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
 //  服务管理
 // ═══════════════════════════════════════
 export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle, onActiveSubTabChange }: SubTabProps) {
+  const { t } = useTranslation();
   const [isAdmin, setIsAdmin] = useState(true);
 
   // 当切换到 services 标签页时通知父组件
@@ -1165,8 +1165,8 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
     return (
       <div className="p-8 text-center text-slate-500">
         <Activity className="w-10 h-10 mx-auto text-slate-600 mb-3" />
-        <p className="text-xs font-medium text-slate-400">未检测到服务信息</p>
-        <p className="text-[13px] text-slate-500 mt-1">该项目暂无可管理的本地服务。</p>
+        <p className="text-xs font-medium text-slate-400">{t("projsub.noSvcInfo")}</p>
+        <p className="text-[13px] text-slate-500 mt-1">{t("projsub.noSvcDesc")}</p>
       </div>
     );
   }
@@ -1183,7 +1183,7 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
         <div className="flex items-start gap-2.5 p-3 rounded-xl border border-amber-500/20 bg-amber-500/10 text-[12.5px] text-amber-200 animate-fadeIn">
           <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
           <span>
-            <strong>系统服务权限提示：</strong>检测到该项目在本地注册了 Windows 系统服务（服务名: {svc.system_service_name}）。启动或停止系统服务需要 Windows 管理员权限。当前程序未以管理员身份运行，操作可能会因“拒绝访问（系统错误 5）”而失败。若遇到报错，请尝试右键以管理员身份启动 Any Version。
+            <strong>{t("projsub.svcPermHint")}</strong>{t("projsub.svcPermDesc", { name: svc.system_service_name })}
           </span>
         </div>
       )}
@@ -1191,59 +1191,59 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
       <div className="glass-panel border border-white/5 rounded-2xl p-5 bg-white/2 space-y-4">
         <div className="flex items-center gap-2 border-b border-white/5 pb-3">
           <Activity className="w-4 h-4 text-[var(--module-accent)]" />
-          <h4 className="text-xs font-semibold text-white">本地服务控制台</h4>
+          <h4 className="text-xs font-semibold text-white">{t("projsub.svcConsole")}</h4>
         </div>
 
         {externallyRunning && (
           <div className="p-3 rounded-xl border border-sky-500/20 bg-sky-500/10 text-[12px] text-sky-200 flex items-start gap-2">
             <Info className="w-4 h-4 text-sky-400 flex-shrink-0 mt-0.5" />
-            <span>检测到服务正在外部运行{svc.process_name ? `（${svc.process_name}${svc.pid ? `，PID: ${svc.pid}` : ""}）` : ""}。Kira 只展示状态，不会接管或停止该外部进程。</span>
+            <span>{t("projsub.svcExternal", { proc: svc.process_name ? t("projsub.procInfo", { name: svc.process_name, pid: svc.pid ? t("projsub.pidInfo", { pid: svc.pid }) : "" }) : "" })}</span>
           </div>
         )}
 
         {hasConflict && (
           <div className="p-3 rounded-xl border border-amber-500/20 bg-amber-500/10 text-[12px] text-amber-200 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-            <span>端口 {svc.port || def?.default_port || "未知"} 已被 {svc.process_name || "其他进程"} 占用。为避免误停外部进程，已禁用启动/停止操作。</span>
+            <span>{t("projsub.portOccupied", { port: svc.port || def?.default_port || "?", proc: svc.process_name || t("projsub.otherProcess") })}</span>
           </div>
         )}
 
         {notInstalled && (
           <div className="p-3 rounded-xl border border-slate-500/20 bg-slate-500/10 text-[12px] text-slate-300 flex items-start gap-2">
             <Info className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
-            <span>未检测到安装目录。请在项目标题栏点击“手动指定目录”，选择已安装的服务根目录。</span>
+            <span>{t("projsub.noInstallDir")}</span>
           </div>
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
           <div className="p-3 bg-black/20 rounded-xl border border-white/5 space-y-1.5">
-            <span className="text-[13px] text-slate-400 font-semibold uppercase tracking-wider block">当前状态</span>
+            <span className="text-[13px] text-slate-400 font-semibold uppercase tracking-wider block">{t("projsub.curStatus")}</span>
             <div className="flex items-center gap-2">
               {externallyRunning ? (
                 <span className="px-2.5 py-1 rounded-lg bg-sky-500/10 text-sky-300 border border-sky-500/20 font-semibold flex items-center gap-1 animate-fadeIn">
                   <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-ping" />
-                  外部运行 {svc.pid ? `(PID: ${svc.pid})` : ""}
+                  {t("projsub.extRunning", { pid: svc.pid ? t("projsub.runningPid", { pid: svc.pid }) : "" })}
                 </span>
               ) : svc.running ? (
                 <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold flex items-center gap-1 animate-fadeIn">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                  运行中 {svc.pid ? `(PID: ${svc.pid})` : ""}
+                  {t("projsub.running", { pid: svc.pid ? t("projsub.runningPid", { pid: svc.pid }) : "" })}
                 </span>
               ) : hasConflict ? (
-                <span className="px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">端口冲突</span>
+                <span className="px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">{t("projsub.portConflictBadge")}</span>
               ) : notInstalled ? (
-                <span className="px-2.5 py-1 rounded-lg bg-slate-500/10 text-slate-400 border border-white/5 font-semibold">未配置</span>
+                <span className="px-2.5 py-1 rounded-lg bg-slate-500/10 text-slate-400 border border-white/5 font-semibold">{t("projsub.notSet")}</span>
               ) : (
-                <span className="px-2.5 py-1 rounded-lg bg-slate-500/10 text-slate-400 border border-white/5 font-semibold">已停止</span>
+                <span className="px-2.5 py-1 rounded-lg bg-slate-500/10 text-slate-400 border border-white/5 font-semibold">{t("projsub.stopped")}</span>
               )}
             </div>
           </div>
 
           <div className="p-3 bg-black/20 rounded-xl border border-white/5 space-y-1">
-            <span className="text-[13px] text-slate-400 font-semibold uppercase tracking-wider block">运行参数</span>
+            <span className="text-[13px] text-slate-400 font-semibold uppercase tracking-wider block">{t("projsub.runParams")}</span>
             <div className="text-slate-300 font-mono space-y-0.5">
-              <p>端口: {svc.port || def?.default_port || "无"}</p>
-              <p>进程: {svc.process_name || "未检测到"}</p>
+              <p>{t("projsub.port", { port: svc.port || def?.default_port || "-" })}</p>
+              <p>{t("projsub.process", { name: svc.process_name || t("projsub.notDetected") })}</p>
             </div>
           </div>
 
@@ -1253,7 +1253,7 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
               disabled={!canToggle}
               className={`px-4 py-2 ${svc.running ? "bg-red-600 hover:bg-red-500" : "bg-emerald-600 hover:bg-emerald-500"} disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-xl text-xs cursor-pointer shadow-md transition-all flex items-center gap-1`}
             >
-              {serviceCtrlLoading ? "操作中..." : externallyRunning ? "外部运行" : svc.running ? "停止服务" : "启动服务"}
+              {serviceCtrlLoading ? t("projsub.operating") : externallyRunning ? t("projsub.externalRun") : svc.running ? t("projsub.stopSvc") : t("projsub.startSvc")}
             </button>
           </div>
         </div>
@@ -1261,25 +1261,25 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs pt-2">
           {svc.install_root && (
             <div className="p-3 bg-black/20 rounded-xl border border-white/5">
-              <span className="text-[13px] text-slate-400 font-semibold block">安装目录</span>
+              <span className="text-[13px] text-slate-400 font-semibold block">{t("projsub.installDir")}</span>
               <p className="font-mono text-slate-300 truncate mt-1" title={svc.install_root}>{svc.install_root}</p>
             </div>
           )}
           {svc.config_file && (
             <div className="p-3 bg-black/20 rounded-xl border border-white/5">
-              <span className="text-[13px] text-slate-400 font-semibold block">配置文件</span>
+              <span className="text-[13px] text-slate-400 font-semibold block">{t("projsub.configFile")}</span>
               <p className="font-mono text-slate-300 truncate mt-1" title={svc.config_file}>{svc.config_file}</p>
             </div>
           )}
           {svc.data_dir && (
             <div className="p-3 bg-black/20 rounded-xl border border-white/5">
-              <span className="text-[13px] text-slate-400 font-semibold block">数据目录</span>
+              <span className="text-[13px] text-slate-400 font-semibold block">{t("projsub.dataDir")}</span>
               <p className="font-mono text-slate-300 truncate mt-1" title={svc.data_dir}>{svc.data_dir}</p>
             </div>
           )}
           {svc.log_dir && (
             <div className="p-3 bg-black/20 rounded-xl border border-white/5">
-              <span className="text-[13px] text-slate-400 font-semibold block">日志目录</span>
+              <span className="text-[13px] text-slate-400 font-semibold block">{t("projsub.logDir")}</span>
               <p className="font-mono text-slate-300 truncate mt-1" title={svc.log_dir}>{svc.log_dir}</p>
             </div>
           )}
@@ -1313,6 +1313,7 @@ function RemoteVersionSelector({
   disabled?: boolean;
   disabledReason?: string;
 }) {
+  const { t } = useTranslation();
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -1325,9 +1326,9 @@ function RemoteVersionSelector({
   const formatUpdatedAt = (ts: number | null | undefined): string => {
     if (!ts) return "";
     const diff = Math.floor(Date.now() / 1000) - ts;
-    if (diff < 60) return "刚刚";
-    if (diff < 3600) return `${Math.floor(diff / 60)}分钟前`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}小时前`;
+    if (diff < 60) return t("projsub.justNow");
+    if (diff < 3600) return t("projsub.minAgo", { n: Math.floor(diff / 60) });
+    if (diff < 86400) return t("projsub.hrAgo", { n: Math.floor(diff / 3600) });
     const d = new Date(ts * 1000);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
@@ -1360,24 +1361,24 @@ function RemoteVersionSelector({
       {/* 标题行：含上次更新时间和刷新按钮 */}
       <div className="flex items-center justify-between">
         <div>
-          <h4 className="text-xs font-semibold text-slate-300">在线安装远程版本</h4>
-          <p className="text-[13px] text-slate-500 mt-0.5">输入关键词过滤版本，从官方服务器下载并安装新版本。</p>
+          <h4 className="text-xs font-semibold text-slate-300">{t("projsub.remoteInstallTitle")}</h4>
+          <p className="text-[13px] text-slate-500 mt-0.5">{t("projsub.remoteInstallDesc")}</p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           {versionsUpdatedAt && !loadingRemote && (
             <span className="text-[11px] text-slate-600">
-              上次更新：{formatUpdatedAt(versionsUpdatedAt)}
+              {t("projsub.lastUpdate", { time: formatUpdatedAt(versionsUpdatedAt) })}
             </span>
           )}
           {onRefresh && (
             <button
               onClick={onRefresh}
               disabled={disabled || loadingRemote || !!installingVersion}
-              title={disabled ? disabledReason : "刷新版本列表"}
+              title={disabled ? disabledReason : t("projsub.refreshList")}
               className="flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300 rounded-lg text-[11px] border border-white/8 cursor-pointer transition-all"
             >
               <RefreshCw className={`w-3 h-3 ${loadingRemote ? "animate-spin text-[var(--module-accent)]" : ""}`} />
-              {loadingRemote ? "更新中..." : "更新列表"}
+              {loadingRemote ? t("projsub.updating") : t("projsub.updateList")}
             </button>
           )}
         </div>
@@ -1386,7 +1387,7 @@ function RemoteVersionSelector({
       {loadingRemote && remoteVersions.length === 0 ? (
         <div className="flex items-center gap-2 text-slate-400 text-xs py-2">
           <RefreshCw className="w-4 h-4 animate-spin text-[var(--module-accent)]" />
-          正在获取远程版本列表...
+          {t("projsub.fetchingRemote")}
         </div>
       ) : (
         <div className="space-y-2">
@@ -1406,7 +1407,7 @@ function RemoteVersionSelector({
                   disabled={disabled}
                   onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
                   onFocus={() => setOpen(true)}
-                  placeholder={disabled ? disabledReason : "输入关键词过滤版本，例如 18、LTS..."}
+                  placeholder={disabled ? disabledReason : t("projsub.remoteFilterPh")}
                   className="w-full glass-input pl-9 pr-9 py-2 text-xs"
                 />
                 {search && (
@@ -1421,11 +1422,11 @@ function RemoteVersionSelector({
               <button
                 onClick={handleInstall}
                 disabled={disabled || installingVersion !== null || isOperating || !search.trim() || !remoteVersions.includes(search.trim())}
-                title={disabled ? disabledReason : "一键安装"}
+                title={disabled ? disabledReason : t("projsub.oneClickInstall")}
                 className="px-5 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-md shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5"
               >
                 <Download className="w-3.5 h-3.5" />
-                {installingVersion ? "正在安装..." : "一键安装"}
+                {installingVersion ? t("projsub.installingVer") : t("projsub.oneClickInstall")}
               </button>
             </div>
 
@@ -1448,14 +1449,17 @@ function RemoteVersionSelector({
             {/* 无匹配提示 */}
             {open && search.trim() && filtered.length === 0 && (
               <div className="absolute z-50 mt-1 w-full glass-panel rounded-xl border border-white/10 bg-[#1a1f2e] shadow-2xl p-3 text-center">
-                <p className="text-[13px] text-slate-500">未找到匹配 <span className="text-slate-300 font-mono">{search}</span> 的版本</p>
+                <p className="text-[13px] text-slate-500">{t("projsub.noMatch", { kw: search })}</p>
               </div>
             )}
           </div>
 
           {/* 版本统计 */}
           <p className="text-[12px] text-slate-600">
-            共 {remoteVersions.length} 个远程版本{search.trim() && filtered.length !== remoteVersions.length ? `，匹配 ${filtered.length} 个` : ""}
+            {t("projsub.remoteCount", {
+              count: remoteVersions.length,
+              extra: search.trim() && filtered.length !== remoteVersions.length ? t("projsub.matchCount", { count: filtered.length }) : "",
+            })}
           </p>
         </div>
       )}
@@ -1468,6 +1472,7 @@ function RemoteVersionSelector({
 //  旧版数据（托管前备份的安装信息）
 // ═══════════════════════════════════════
 export function LegacyTab({ projectId }: { projectId: string }) {
+  const { t } = useTranslation();
   const [data, setData] = useState<{
     install_source?: string;
     install_root?: string;
@@ -1496,7 +1501,7 @@ export function LegacyTab({ projectId }: { projectId: string }) {
   if (loading) {
     return (
       <div className="flex items-center justify-center gap-2 text-xs text-slate-400 py-8">
-        <Loader className="w-4 h-4 animate-spin text-[var(--module-accent)]" /> 正在加载旧版数据...
+        <Loader className="w-4 h-4 animate-spin text-[var(--module-accent)]" /> {t("projsub.loadingOldData")}
       </div>
     );
   }
@@ -1505,8 +1510,8 @@ export function LegacyTab({ projectId }: { projectId: string }) {
     return (
       <div className="p-8 text-center text-slate-500">
         <FolderOpen className="w-10 h-10 mx-auto text-slate-600 mb-3" />
-        <p className="text-xs">暂无旧版安装数据备份</p>
-        <p className="text-[13px] text-slate-500 mt-1">托管时会自动备份之前通过其他工具安装的版本信息。</p>
+        <p className="text-xs">{t("projsub.noOldData")}</p>
+        <p className="text-[13px] text-slate-500 mt-1">{t("projsub.noOldDataDesc")}</p>
       </div>
     );
   }
@@ -1522,9 +1527,9 @@ export function LegacyTab({ projectId }: { projectId: string }) {
             <AlertTriangle className="w-4.5 h-4.5 text-amber-400" />
           </div>
           <div>
-            <h4 className="text-xs font-semibold text-amber-300">托管前旧版数据</h4>
+            <h4 className="text-xs font-semibold text-amber-300">{t("projsub.legacyTitle")}</h4>
             <p className="text-[13px] text-amber-400/60 mt-0.5">
-              以下数据来自 Kira 托管前的备份。取消托管时将从备份还原原始环境变量和 PATH 条目。
+              {t("projsub.legacyDesc")}
             </p>
           </div>
         </div>
@@ -1535,24 +1540,24 @@ export function LegacyTab({ projectId }: { projectId: string }) {
         <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             <Download className="w-4 h-4 text-slate-400" />
-            <h4 className="text-xs font-semibold text-white">旧版安装信息</h4>
+            <h4 className="text-xs font-semibold text-white">{t("projsub.oldInstallInfo")}</h4>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[13px]">
             {data.version && (
               <div className="p-2.5 bg-black/20 rounded-xl border border-white/5">
-                <span className="text-slate-500 block mb-0.5">版本号</span>
+                <span className="text-slate-500 block mb-0.5">{t("projsub.thVersion")}</span>
                 <span className="font-mono text-slate-200 font-semibold">{data.version}</span>
               </div>
             )}
             {data.install_source && (
               <div className="p-2.5 bg-black/20 rounded-xl border border-white/5">
-                <span className="text-slate-500 block mb-0.5">安装方式</span>
+                <span className="text-slate-500 block mb-0.5">{t("projsub.thInstallMethod")}</span>
                 <span className="font-mono text-slate-200">{data.install_source}</span>
               </div>
             )}
             {data.install_root && (
               <div className="p-2.5 bg-black/20 rounded-xl border border-white/5">
-                <span className="text-slate-500 block mb-0.5">安装路径</span>
+                <span className="text-slate-500 block mb-0.5">{t("projsub.thInstallPath")}</span>
                 <span className="font-mono text-slate-200 text-[12px] break-all">{data.install_root}</span>
               </div>
             )}
@@ -1565,17 +1570,17 @@ export function LegacyTab({ projectId }: { projectId: string }) {
         <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             <Globe className="w-4 h-4 text-[var(--module-accent)]" />
-            <h4 className="text-xs font-semibold text-white">备份的环境变量</h4>
-            <span className="text-[12px] text-slate-500">({envVarEntries.length} 个)</span>
+            <h4 className="text-xs font-semibold text-white">{t("projsub.backedEnv")}</h4>
+            <span className="text-[12px] text-slate-500">{t("projsub.envCount", { count: envVarEntries.length })}</span>
           </div>
           <div className="w-full">
             <table className="w-full text-left text-[13px]">
-              <thead><tr className="text-slate-500 border-b border-white/5"><th className="p-2 w-48">变量名</th><th className="p-2">原始值</th></tr></thead>
+              <thead><tr className="text-slate-500 border-b border-white/5"><th className="p-2 w-48">{t("projsub.thVarName")}</th><th className="p-2">{t("projsub.thOriginalVal")}</th></tr></thead>
               <tbody className="divide-y divide-white/5">
                 {envVarEntries.map(([name, val]) => (
                   <tr key={name} className="hover:bg-white/2 text-slate-300">
                     <td className="p-2 font-mono font-semibold">{name}</td>
-                    <td className="p-2 font-mono text-[12px] break-all text-slate-400">{val || "(空)"}</td>
+                    <td className="p-2 font-mono text-[12px] break-all text-slate-400">{val || t("projsub.emptyVal")}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1589,8 +1594,8 @@ export function LegacyTab({ projectId }: { projectId: string }) {
         <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             <Trash2 className="w-4 h-4 text-red-400" />
-            <h4 className="text-xs font-semibold text-white">移除的 PATH 条目</h4>
-            <span className="text-[12px] text-slate-500">({data.removed_path_entries.length} 条)</span>
+            <h4 className="text-xs font-semibold text-white">{t("projsub.removedPathEntries")}</h4>
+            <span className="text-[12px] text-slate-500">{t("projsub.entryCount", { count: data.removed_path_entries.length })}</span>
           </div>
           <div className="w-full space-y-1">
             {data.removed_path_entries.map((entry, idx) => (
@@ -1618,10 +1623,12 @@ export function PackageManagerTab(props: {
   installSource?: string | null;
   projectDef?: ProjectDef | null;
   projectStatus?: ProjectStatus | null;
+
 }) {
   return <PackageManagerTabModular {...props} />;
 }
 export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatus; def?: ProjectDef | null; onRefresh: () => Promise<void> }) {
+  const { t } = useTranslation();
   // 当前正在变更的目录 ID
   const [workflowDirId, setWorkflowDirId] = useState<string | null>(null);
   // steps: 'method' | 'paths' | 'confirm' | 'executing' | 'done'
@@ -1704,20 +1711,20 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
   const browseWorkflowPath = async (setter: (v: string) => void) => {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({ directory: true, title: "选择文件夹" });
+      const selected = await open({ directory: true, title: t("projsub.pickFolder") });
       if (selected) setter(selected as string);
     } catch {
-      alert("文件夹选择器不可用，请手动输入路径。");
+      alert(t("projsub.pickerUnavailable"));
     }
   };
 
   const executeWorkflow = async (dirId: string, oldPath: string, exists: boolean) => {
     if (workflowMethod === "junction" && !workflowActualPath) {
-      alert("请指定目标路径");
+      alert(t("projsub.needTargetPath"));
       return;
     }
     if (workflowMethod === "point" && !workflowPointPath) {
-      alert("请指定指向路径");
+      alert(t("projsub.needPointPath"));
       return;
     }
 
@@ -1749,7 +1756,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
       setWorkflowStep("done");
       await onRefresh();
     } catch (e: any) {
-      alert(`操作失败: ${e}`);
+      alert(t("projsub.opFail", { err: String(e) }));
       setWorkflowStep("confirm");
     } finally {
       setWorkflowExecuting(false);
@@ -1758,10 +1765,10 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
   };
 
   const handleDelete = async (path: string) => {
-    if (!confirm(`警告：该操作将永久删除以下目录及其全部数据：\n${path}\n\n该操作不可撤销，确定继续？`)) {
+    if (!confirm(t("projsub.warnDeleteDir", { path }))) {
       return;
     }
-    if (!confirm(`再次确认：确定要删除 ${path} 吗？`)) {
+    if (!confirm(t("projsub.confirmDeleteDir", { path }))) {
       return;
     }
     try {
@@ -1769,10 +1776,10 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
         projectId: project.id,
         path,
       });
-      alert("删除成功！");
+      alert(t("projsub.deleteSuccess"));
       await onRefresh();
     } catch (e: unknown) {
-      alert("删除失败: " + e);
+      alert(t("projsub.deleteFail", { err: String(e) }));
     }
   };
 
@@ -1784,11 +1791,11 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
     const progressBarColor = "bg-red-500/60";
 
     const stepLabels = {
-      method: "选择方式",
-      paths: "配置路径",
-      confirm: "确认预览",
-      executing: "执行中",
-      done: "已完成",
+      method: t("projsub.stepLabelsMethod"),
+      paths: t("projsub.stepLabelsPaths"),
+      confirm: t("projsub.stepLabelsConfirm"),
+      executing: t("projsub.stepLabelsExec"),
+      done: t("projsub.stepLabelsDone"),
     };
 
     const totalSteps = 4;
@@ -1801,12 +1808,12 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
         <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className={`text-[12px] font-semibold ${accentText}`}>
-              变更存储配置 · Step 1/{totalSteps} · {stepLabels.method}
+              {t("projsub.wfStoreTitle", { step: 1, total: totalSteps, label: stepLabels.method })}
             </span>
-            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">✕ 取消</button>
+            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
           </div>
           <div className="space-y-1.5">
-            <p className="text-[12px] text-slate-300">请选择变更方式：</p>
+            <p className="text-[12px] text-slate-300">{t("projsub.pickStoreMethod")}</p>
             <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${workflowMethod === "junction"
               ? `${accentBorder} bg-white/5`
               : "border-white/5 hover:bg-white/[0.02]"
@@ -1814,9 +1821,9 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
               <input type="radio" name="wf_method" value="junction" checked={workflowMethod === "junction"}
                 onChange={() => setWorkflowMethod("junction")} className="mt-0.5" />
               <div>
-                <span className="text-[12px] font-semibold text-slate-200">A. Junction 链接</span>
+                <span className="text-[12px] font-semibold text-slate-200">{t("projsub.optAStore")}</span>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  创建一个目录链接，将目录迁移并指向新位置。文件实际存储在新位置，原路径通过链接访问。
+                  {t("projsub.optAStoreDesc")}
                 </p>
               </div>
             </label>
@@ -1828,9 +1835,9 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                 <input type="radio" name="wf_method" value="point" checked={workflowMethod === "point"}
                   onChange={() => setWorkflowMethod("point")} className="mt-0.5" />
                 <div>
-                  <span className="text-[12px] font-semibold text-purple-300">B. 指向配置</span>
+                  <span className="text-[12px] font-semibold text-purple-300">{t("projsub.optBStore")}</span>
                   <p className="text-[11px] text-slate-500 mt-0.5">
-                    直接修改 {project.display_name} 的启动路径参数，使其指向新目录。
+                    {t("projsub.optBStoreDesc", { name: project.display_name })}
                   </p>
                 </div>
               </label>
@@ -1844,7 +1851,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
               setWorkflowStep("paths");
             }}
               className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors`}>
-              下一步 →
+              {t("projsub.nextStep")}
             </button>
           </div>
         </div>
@@ -1857,22 +1864,22 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
         <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className={`text-[12px] font-semibold ${accentText}`}>
-              变更存储配置 · Step 2/{totalSteps} · {stepLabels.paths}
+              {t("projsub.wfStoreTitle", { step: 2, total: totalSteps, label: stepLabels.paths })}
             </span>
-            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">✕ 取消</button>
+            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
           </div>
 
           {workflowMethod === "junction" ? (
             <>
               <p className="text-[11px] text-slate-400">
-                <span className="font-semibold text-slate-300">Junction 链接模式</span> — ① 形式路径（链接所在位置）→ ② 实际路径（数据存放位置）
+                <span className="font-semibold text-slate-300">{t("projsub.storeJunctionDesc")}</span> — {t("projsub.storeLinkFrom")} → {t("projsub.storeLinkTo")}
               </p>
               <div className="space-y-1.5">
                 <div>
-                  <label className="text-[11px] text-slate-500 block mb-0.5">① 形式路径（链接创建位置，即原始路径）</label>
+                  <label className="text-[11px] text-slate-500 block mb-0.5">{t("projsub.storeLinkFrom")}</label>
                   <div className="flex items-center gap-1">
                     <input type="text" value={workflowLinkPath} onChange={(e) => setWorkflowLinkPath(e.target.value)}
-                      className="flex-1 glass-input px-1.5 py-1 text-[11px] font-mono" placeholder="数据源路径" />
+                      className="flex-1 glass-input px-1.5 py-1 text-[11px] font-mono" placeholder={t("projsub.storeLinkFromPh")} />
                     <button onClick={() => browseWorkflowPath(setWorkflowLinkPath)}
                       className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
                       <FolderOpen className="w-3 h-3" />
@@ -1880,10 +1887,10 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                   </div>
                 </div>
                 <div>
-                  <label className="text-[11px] text-slate-500 block mb-0.5">② 实际路径（数据真实存放位置，建议选非 C 盘）</label>
+                  <label className="text-[11px] text-slate-500 block mb-0.5">{t("projsub.storeLinkTo")}</label>
                   <div className="flex items-center gap-1">
                     <input type="text" value={workflowActualPath} onChange={(e) => setWorkflowActualPath(e.target.value)}
-                      className="flex-1 glass-input px-1.5 py-1 text-[11px] font-mono" placeholder="目标路径" />
+                      className="flex-1 glass-input px-1.5 py-1 text-[11px] font-mono" placeholder={t("projsub.storeLinkToPh")} />
                     <button onClick={() => browseWorkflowPath(setWorkflowActualPath)}
                       className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
                       <FolderOpen className="w-3 h-3" />
@@ -1895,15 +1902,15 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
           ) : (
             <>
               <p className="text-[11px] text-slate-400">
-                <span className="font-semibold text-purple-300">指向配置模式</span> — 直接修改 {project.display_name} 启动参数指向新路径
+                <span className="font-semibold text-purple-300">{t("projsub.storePointDesc")}</span> {t("projsub.storePointHint", { name: project.display_name })}
               </p>
               <div className="space-y-1.5">
                 <div>
-                  <label className="text-[11px] text-slate-500 block mb-0.5">指向路径（服务读取的数据目录）</label>
+                  <label className="text-[11px] text-slate-500 block mb-0.5">{t("projsub.storePointLabel")}</label>
                   <div className="flex items-center gap-1">
                     <input type="text" value={workflowPointPath} onChange={(e) => setWorkflowPointPath(e.target.value)}
                       className="flex-1 glass-input px-1.5 py-1 text-[11px] font-mono"
-                      placeholder="新指向路径" />
+                      placeholder={t("projsub.storePointPh")} />
                     <button onClick={() => browseWorkflowPath(setWorkflowPointPath)}
                       className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
                       <FolderOpen className="w-3 h-3" />
@@ -1914,21 +1921,21 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                 {/* 旧文件处理方式（仅 Pointing 模式下） */}
                 {dir.exists && (
                   <div className="pt-1 space-y-1">
-                    <p className="text-[12px] text-slate-400 font-semibold">旧文件处理方式：</p>
+                    <p className="text-[12px] text-slate-400 font-semibold">{t("projsub.storeOldLabel")}</p>
                     <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)]" : "border-white/5 hover:bg-white/[0.02]"}`}>
                       <input type="radio" name="wf_file_action" value="move" checked={workflowFileAction === "move"}
                         onChange={() => setWorkflowFileAction("move")} className="mt-0.5" />
                       <div>
-                        <span className="text-[12px] font-semibold text-[var(--module-accent)]">移动旧文件到新目录</span>
-                        <p className="text-[10px] text-slate-500 mt-0.5">将现有文件整体复制到新位置。保留所有已有数据。</p>
+                        <span className="text-[12px] font-semibold text-[var(--module-accent)]">{t("projsub.storeMoveOld")}</span>
+                        <p className="text-[10px] text-slate-500 mt-0.5">{t("projsub.storeMoveOldDesc")}</p>
                       </div>
                     </label>
                     <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "keep" ? "border-slate-500/30 bg-slate-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
                       <input type="radio" name="wf_file_action" value="keep" checked={workflowFileAction === "keep"}
                         onChange={() => setWorkflowFileAction("keep")} className="mt-0.5" />
                       <div>
-                        <span className="text-[12px] font-semibold text-slate-300">不做改动</span>
-                        <p className="text-[10px] text-slate-500 mt-0.5">仅配置指向新路径，旧目录中的文件保持原样不动。</p>
+                        <span className="text-[12px] font-semibold text-slate-300">{t("projsub.storeKeepOld")}</span>
+                        <p className="text-[10px] text-slate-500 mt-0.5">{t("projsub.storeKeepOldDesc")}</p>
                       </div>
                     </label>
                   </div>
@@ -1940,14 +1947,14 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
           <div className="flex justify-between">
             <button onClick={workflowPrev}
               className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[11px] font-semibold cursor-pointer transition-colors">
-              ← 上一步
+              {t("projsub.prevStep")}
             </button>
             <button onClick={workflowNext}
               disabled={workflowMethod === "junction"
                 ? (!workflowLinkPath || !workflowActualPath || workflowLinkPath === workflowActualPath)
                 : !workflowPointPath}
               className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed`}>
-              预览 →
+              {t("projsub.preview")}
             </button>
           </div>
         </div>
@@ -1963,49 +1970,49 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
         <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className={`text-[12px] font-semibold ${accentText}`}>
-              变更存储配置 · Step 3/{totalSteps} · {stepLabels.confirm}
+              {t("projsub.wfStoreTitle", { step: 3, total: totalSteps, label: stepLabels.confirm })}
             </span>
-            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">✕ 取消</button>
+            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
           </div>
 
           <div className="p-3 bg-black/20 rounded-lg border border-white/5 space-y-2">
-            <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">操作预览</p>
+            <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">{t("projsub.storePreviewOp")}</p>
             <div className="space-y-1.5">
               <div className="flex items-center gap-2 text-[12px]">
                 <span className={`px-1.5 py-0.5 rounded text-[11px] font-semibold ${workflowMethod === "junction" ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "bg-purple-500/10 text-purple-400"
                   }`}>
-                  {workflowMethod === "junction" ? "Junction 链接" : "直接指向"}
+                  {workflowMethod === "junction" ? t("projsub.storeModeJunction") : t("projsub.storeModePoint")}
                 </span>
                 {workflowMethod === "junction" ? (
                   <div className="font-mono text-slate-300 space-y-0.5 text-[11px]">
                     <p className="flex items-center gap-1">
-                      <span className="text-slate-500 flex-shrink-0">原始路径：</span>
+                      <span className="text-slate-500 flex-shrink-0">{t("projsub.storeOrigPath")}</span>
                       <span className="break-all">{workflowLinkPath}</span>
                     </p>
                     <p className="flex items-center gap-1">
-                      <span className="text-[var(--module-accent)] flex-shrink-0">↓ 链接到</span>
+                      <span className="text-[var(--module-accent)] flex-shrink-0">{t("projsub.storeLinkTo")}</span>
                       <span className="text-[var(--module-accent)] break-all">{workflowActualPath}</span>
                     </p>
                   </div>
                 ) : (
                   <p className="font-mono text-slate-300 text-[11px] break-all">
-                    配置指向：{workflowPointPath}
+                    {t("projsub.storePointTo", { path: workflowPointPath })}
                   </p>
                 )}
               </div>
               {workflowMethod === "point" && dir.exists && (
                 <div className="flex items-center gap-2 text-[12px]">
-                  <span className="text-slate-500">旧文件处理：</span>
+                  <span className="text-slate-500">{t("projsub.storeOldHandle")}</span>
                   <span className={workflowFileAction === "move" ? "text-[var(--module-accent)] font-semibold" : "text-slate-400"}>
-                    {workflowFileAction === "move" ? "📦 移动到新目录" : "📌 不做改动"}
+                    {workflowFileAction === "move" ? t("projsub.storeMoveToNew") : t("projsub.storeKeep")}
                   </span>
                 </div>
               )}
               {workflowMethod === "junction" && (
                 <div className="flex items-center gap-2 text-[12px]">
-                  <span className="text-slate-500">文件迁移：</span>
+                  <span className="text-slate-500">{t("projsub.storeMigrate")}</span>
                   <span className="text-[var(--module-accent)] font-semibold">
-                    {pathsSame ? "📌 直接建立链接" : "📦 移动文件并建立链接"}
+                    {pathsSame ? t("projsub.storeDirectLink") : t("projsub.storeMoveLink")}
                   </span>
                 </div>
               )}
@@ -2015,11 +2022,11 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
           <div className="flex justify-between">
             <button onClick={workflowPrev}
               className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[11px] font-semibold cursor-pointer transition-colors">
-              ← 上一步
+              {t("projsub.prevStep")}
             </button>
             <button onClick={() => executeWorkflow(dir.id, dir.path, dir.exists)} disabled={workflowExecuting}
               className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors disabled:opacity-40`}>
-              确认执行
+              {t("projsub.storeConfirmExec")}
             </button>
           </div>
         </div>
@@ -2033,7 +2040,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
           <div className="flex items-center gap-2">
             <Loader className="w-3.5 h-3.5 animate-spin text-[var(--module-accent)]" />
             <span className={`text-[12px] font-semibold ${accentText}`}>
-              正在执行 · {workflowProgress?.stage || "准备中..."}
+              {t("projsub.storeExecuting", { stage: workflowProgress?.stage || t("projsub.storePreparing") })}
             </span>
           </div>
           {workflowProgress && (
@@ -2063,15 +2070,15 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
         <div className={`mt-3 p-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-3 animate-fadeIn`}>
           <div className="flex items-center gap-2">
             <CheckCircle className="w-4 h-4 text-emerald-400" />
-            <span className="text-[12px] font-semibold text-emerald-300">操作成功！</span>
+            <span className="text-[12px] font-semibold text-emerald-300">{t("projsub.storeSuccess")}</span>
           </div>
           <p className="text-[11px] text-emerald-400/70">
-            存储路径已成功变更，现状已更新。
+            {t("projsub.storeSuccessDesc")}
           </p>
           <div className="flex justify-end">
             <button onClick={closeWorkflow}
               className="px-3 py-1 bg-emerald-600/50 hover:bg-emerald-600 text-white rounded text-[11px] font-semibold cursor-pointer transition-colors">
-              关闭
+              {t("projsub.storeClose")}
             </button>
           </div>
         </div>
@@ -2089,13 +2096,13 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
         <div className="flex items-center gap-2">
           <HardDrive className="w-5 h-5 text-[var(--module-accent)]" />
           <div>
-            <h4 className="text-sm font-semibold text-white">数据文件与数据残留管理</h4>
-            <p className="text-[11px] text-slate-500 mt-0.5">扫描、迁移主数据文件或清除残留 of 旧版本数据以节省 C 盘空间。</p>
+            <h4 className="text-sm font-semibold text-white">{t("projsub.dataFilesTitle")}</h4>
+            <p className="text-[11px] text-slate-500 mt-0.5">{t("projsub.dataFilesDesc")}</p>
           </div>
         </div>
 
         {dataDirs.length === 0 ? (
-          <p className="text-[13px] text-slate-400 py-2">未配置数据目录规则或未扫描到对应路径。</p>
+          <p className="text-[13px] text-slate-400 py-2">{t("projsub.noDataRules")}</p>
         ) : (
           <div className="space-y-4">
             {dataDirs.map((dir) => {
@@ -2108,19 +2115,19 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                         <span className="text-[13px] font-semibold text-white">{dir.display_name}</span>
                         {dir.is_link && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">
-                            已迁移 (Junction)
+                            {t("projsub.migratedJunction")}
                           </span>
                         )}
                         {!dir.exists && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20">
-                            未发现路径
+                            {t("projsub.noPathFound")}
                           </span>
                         )}
                       </div>
                       <p className="font-mono text-[12px] text-slate-400 break-all">{dir.path}</p>
                       {dir.is_link && dir.real_target && (
                         <p className="font-mono text-[11px] text-slate-500 break-all">
-                          ↳ 实际指向: {dir.real_target}
+                          {t("projsub.realTarget", { path: dir.real_target })}
                         </p>
                       )}
                     </div>
@@ -2138,13 +2145,13 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                         onClick={() => openWorkflow(dir)}
                         className="px-3 py-1.5 bg-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] hover:bg-[var(--module-accent)] text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
                       >
-                        <FolderSync className="w-3.5 h-3.5" /> 开始变更
+                        <FolderSync className="w-3.5 h-3.5" /> {t("projsub.startChangeBtn")}
                       </button>
                       <button
                         onClick={() => handleDelete(dir.path)}
                         className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
                       >
-                        <Trash2 className="w-3.5 h-3.5" /> 删除数据
+                        <Trash2 className="w-3.5 h-3.5" /> {t("projsub.deleteData")}
                       </button>
                     </div>
                   )}
@@ -2171,6 +2178,7 @@ const globalRegistered = {
 };
 
 export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus; def: ProjectDef | null; onRefresh: () => Promise<void> }) {
+  const { t } = useTranslation();
   const [configContent, setConfigContent] = useState<string>("");
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
@@ -2203,10 +2211,10 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
     setSavingConfig(true);
     try {
       await invoke("write_service_config", { name: project.id, content: configContent });
-      alert("配置文件已保存成功！");
+      alert(t("projsub.configSaved"));
       await onRefresh();
     } catch (e: any) {
-      alert("保存失败: " + e);
+      alert(t("projsub.saveFail", { err: String(e) }));
     } finally {
       setSavingConfig(false);
     }
@@ -2360,13 +2368,13 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
         <div className="glass-panel border border-white/5 rounded-2xl p-5 bg-white/2 space-y-4">
           <div className="flex items-center gap-2 border-b border-white/5 pb-3">
             <Wrench className="w-4 h-4 text-[var(--module-accent)]" />
-            <h4 className="text-xs font-semibold text-white">服务运行时参数</h4>
+            <h4 className="text-xs font-semibold text-white">{t("projsub.runParamsTitle")}</h4>
           </div>
 
           <div className="flex items-center justify-between p-3 bg-black/20 rounded-xl border border-white/5">
             <div>
-              <span className="text-[13px] text-slate-400 font-semibold block">服务监听端口</span>
-              <span className="text-[11px] text-slate-500 mt-0.5">该参数已通过配置文件解析，如需更改请在下方编辑配置文件。</span>
+              <span className="text-[13px] text-slate-400 font-semibold block">{t("projsub.listenPort")}</span>
+              <span className="text-[11px] text-slate-500 mt-0.5">{t("projsub.listenPortDesc")}</span>
             </div>
             <span className="text-slate-300 font-mono text-[13px] font-bold bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] px-3 py-1 rounded-lg">
               {port}
@@ -2382,9 +2390,9 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
             <div className="flex items-center gap-2">
               <FileText className="w-4 h-4 text-[var(--module-accent)]" />
               <div>
-                <h4 className="text-xs font-semibold text-white">配置文件可视化编辑</h4>
+                <h4 className="text-xs font-semibold text-white">{t("projsub.visEditTitle")}</h4>
                 <p className="text-[10px] text-slate-500 mt-0.5 font-mono select-all break-all" title={configPath}>
-                  正在编辑: {configPath}
+                  {t("projsub.editingPath", { path: configPath })}
                 </p>
               </div>
             </div>
@@ -2395,23 +2403,23 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
                 className="px-3 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1 transition-all"
               >
                 {savingConfig ? <Loader className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-                保存配置
+                {t("projsub.saveConfig")}
               </button>
             )}
           </div>
 
           {loadingConfig ? (
             <div className="flex items-center justify-center gap-2 text-xs text-slate-400 py-12">
-              <Loader className="w-4 h-4 animate-spin text-[var(--module-accent)]" /> 正在读取配置文件...
+              <Loader className="w-4 h-4 animate-spin text-[var(--module-accent)]" /> {t("projsub.readingConfig")}
             </div>
           ) : errorMessage ? (
             <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-xs rounded-xl space-y-2">
-              <p>无法加载配置文件: {errorMessage}</p>
+              <p>{t("projsub.loadConfigFail", { err: errorMessage })}</p>
               <button
                 onClick={loadConfigContent}
                 className="px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/5 text-slate-300 rounded text-[11px] cursor-pointer"
               >
-                重试加载
+                {t("projsub.retryLoad")}
               </button>
             </div>
           ) : (
@@ -2437,7 +2445,7 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
                 />
               </div>
               <p className="text-[11px] text-slate-500">
-                提示：支持智能代码高亮与自动补全提示。修改配置后需要手动重启服务才会生效。
+                {t("projsub.editorHint")}
               </p>
             </div>
           )}

@@ -158,6 +158,9 @@ pub struct Config {
     /// 全局背景底图纹理（grid / dots / scanline / aurora / solid）。空 = 默认网格。
     #[serde(default)]
     pub background_texture: String,
+    /// 界面语言（"zh" / "en"），空 = 跟随系统。
+    #[serde(default)]
+    pub language: String,
 }
 
 pub fn get_base_dir() -> PathBuf {
@@ -309,6 +312,7 @@ fn default_config() -> Config {
         toolbar_modules: Vec::new(),
         disabled_modules: Vec::new(),
         background_texture: String::new(),
+        language: String::new(),
     }
 }
 
@@ -1216,6 +1220,7 @@ pub fn get_appearance_config() -> AppearanceConfig {
         toolbar_modules: config.toolbar_modules,
         disabled_modules: config.disabled_modules,
         background_texture: config.background_texture,
+        language: config.language,
     }
 }
 
@@ -1265,6 +1270,17 @@ pub fn set_background_texture(texture: String) -> Result<(), String> {
     let mut config = load_config();
     config.background_texture = texture;
     save_config(&config)
+}
+
+/// 设置界面语言（"zh" / "en"；空=跟随系统）。
+/// 语言变更后立即重建托盘菜单（菜单文案随语言切换）。
+#[tauri::command]
+pub fn set_language(language: String) -> Result<(), String> {
+    let mut config = load_config();
+    config.language = language;
+    save_config(&config)?;
+    let _ = crate::tray::rebuild_tray_menu_global();
+    Ok(())
 }
 
 /// 导入自定义字体文件：把 src 拷贝到数据目录 fonts/，返回字体家族名与目标路径
@@ -1417,5 +1433,7 @@ pub struct AppearanceConfig {
     pub disabled_modules: Vec<String>,
     /// 全局背景底图纹理。
     pub background_texture: String,
+    /// 界面语言（"zh" / "en"）。
+    pub language: String,
 }
 

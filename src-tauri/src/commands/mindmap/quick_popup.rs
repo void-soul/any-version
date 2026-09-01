@@ -1,8 +1,8 @@
-//! 悬浮窗「思维导图速记」：独立无边框窗口（`index.html?popup=mindmap`），
+//! 悬浮窗「思维导图速记」：独立无边框窗口（`index.html?popup=mindmap-node`），
 //! 从全局快捷键呼出后选择/新建导图，把内容记录为节点（子节点/根节点）或贴纸。
 //!
 //! 与划词翻译悬浮窗（translate.rs）同一模式：复用窗口、置顶、跳过任务栏、
-//! 定位到光标附近；前端以 `?popup=mindmap` 只渲染轻量的 MindmapQuickPopup。
+//! 定位到光标附近；前端以 `?popup=mindmap-node` 只渲染轻量的 MindmapNodePopup。
 
 use tauri::Manager;
 

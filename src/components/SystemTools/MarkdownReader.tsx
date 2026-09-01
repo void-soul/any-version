@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import ReactMarkdown from "react-markdown";
@@ -157,6 +158,7 @@ export default function MarkdownReader() {
   const [filter, setFilter] = useState("");
   const [showSidebar, setShowSidebar] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
+  const { t } = useTranslation();
   const [mode, setMode] = useState<"view" | "edit">("view"); // 默认预览
   const [split, setSplit] = useState(false);                 // 编辑+预览分栏
   const [saving, setSaving] = useState(false);
@@ -289,7 +291,7 @@ export default function MarkdownReader() {
     try {
       const dir = await open({
         directory: true,
-        title: "选择目录",
+        title: t("mdreader.selectDirTitle"),
       });
       if (!dir || typeof dir !== "string") return;
       setSiblingRoot(dir);
@@ -315,20 +317,20 @@ export default function MarkdownReader() {
   const createNewFile = useCallback(async () => {
     const baseDir = siblingRoot || active?.path;
     if (!baseDir) {
-      flashNotice("请先打开目录或文件");
+      flashNotice(t("mdreader.flashNoDir"));
       return;
     }
     const dir = active?.path ? active.path.slice(0, active.path.lastIndexOf(active.path.includes("\\") ? "\\" : "/")) : baseDir;
-    const name = window.prompt("文件名（不含扩展名）:");
+    const name = window.prompt(t("mdreader.promptFileName"));
     if (!name?.trim()) return;
     const sep = dir.includes("\\") ? "\\" : "/";
     const filePath = `${dir}${sep}${name.trim()}.md`;
     try {
       await invoke("write_text_file", { path: filePath, content: `# ${name.trim()}\n\n` });
       await openPath(filePath);
-      flashNotice(`已创建 ${name.trim()}.md`);
+      flashNotice(t("mdreader.createdOk", { name: name.trim() }));
     } catch (e) {
-      flashNotice(`创建失败: ${e}`);
+      flashNotice(t("mdreader.createFail", { err: String(e) }));
     }
   }, [siblingRoot, active, openPath, flashNotice]);
 
@@ -337,7 +339,7 @@ export default function MarkdownReader() {
     try {
       const selected = await open({
         multiple: true,
-        title: "打开 Markdown 文件",
+        title: t("mdreader.openMdTitle"),
         filters: [{ name: "Markdown", extensions: ["md", "markdown", "mdx", "mdown"] }],
       });
       if (!selected) return;
@@ -354,8 +356,8 @@ export default function MarkdownReader() {
     (path: string, e?: React.MouseEvent) => {
       e?.stopPropagation();
       setTabs((prev) => {
-        const t = prev.find((x) => x.path === path);
-        if (t?.dirty && !window.confirm(`「${t.name}」有未保存修改，确定关闭并丢弃？`)) return prev;
+        const tab = prev.find((x) => x.path === path);
+        if (tab?.dirty && !window.confirm(t("mdreader.dirtyCloseConfirm", { name: tab.name }))) return prev;
         const idx = prev.findIndex((x) => x.path === path);
         const next = prev.filter((x) => x.path !== path);
         // 关掉的是当前标签时，激活右邻居，没有则激活左邻居
@@ -422,9 +424,9 @@ export default function MarkdownReader() {
       setTabs((prev) =>
         prev.map((t) => (t.path === active.path ? { ...t, savedContent: t.content, dirty: false } : t))
       );
-      flashNotice("已保存");
+      flashNotice(t("mdreader.saved"));
     } catch (e) {
-      flashNotice(`保存失败: ${e}`);
+      flashNotice(t("mdreader.saveFail", { err: String(e) }));
     } finally {
       setSaving(false);
     }
@@ -440,7 +442,7 @@ export default function MarkdownReader() {
 
   const reloadActive = useCallback(async () => {
     if (!active) return;
-    if (active.dirty && !window.confirm("有未保存修改，重新加载将丢弃。继续？")) return;
+    if (active.dirty && !window.confirm(t("mdreader.reloadDirtyConfirm"))) return;
     const path = active.path;
     setTabs((prev) =>
       prev.map((t) => (t.path === path ? { ...t, loading: true, error: null } : t))
@@ -481,7 +483,7 @@ export default function MarkdownReader() {
         if (resolved) {
           await openPath(resolved);
         } else {
-          flashNotice(`未找到链接目标：${href}`);
+          flashNotice(t("mdreader.linkTargetNotFound", { href }));
         }
       } catch (err) {
         flashNotice(String(err));
@@ -681,36 +683,36 @@ export default function MarkdownReader() {
     <div className="flex flex-col min-h-0 flex-1">
       {/* 格式工具栏 */}
       <div className="flex-shrink-0 flex items-center gap-0.5 px-2 py-1.5 border-b border-white/5 overflow-x-auto">
-        <button className={tbtn} title="撤销 (Ctrl+Z)" disabled={active.undo.length === 0} onClick={undo}><Undo2 className="w-3.5 h-3.5" /></button>
-        <button className={tbtn} title="重做 (Ctrl+Y)" disabled={active.redo.length === 0} onClick={redo}><Redo2 className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title={t("mdreader.undoTitle")} disabled={active.undo.length === 0} onClick={undo}><Undo2 className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title={t("mdreader.redoTitle")} disabled={active.redo.length === 0} onClick={redo}><Redo2 className="w-3.5 h-3.5" /></button>
         <div className="w-px h-5 bg-white/10 mx-1" />
-        <button className={tbtn} title="标题 1" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "#"))}><Heading1 className="w-3.5 h-3.5" /></button>
-        <button className={tbtn} title="标题 2" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "##"))}><Heading2 className="w-3.5 h-3.5" /></button>
-        <button className={tbtn} title="标题 3" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "###"))}><Heading3 className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title={t("mdreader.h1")} onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "#"))}><Heading1 className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title={t("mdreader.h2")} onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "##"))}><Heading2 className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title={t("mdreader.h3")} onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "###"))}><Heading3 className="w-3.5 h-3.5" /></button>
         <div className="w-px h-5 bg-white/10 mx-1" />
-        <button className={tbtn} title="粗体 (Ctrl+B)" onClick={() => applyTransform((ta) => wrapSelection(ta, "**", "**", "粗体"))}><Bold className="w-3.5 h-3.5" /></button>
-        <button className={tbtn} title="斜体 (Ctrl+I)" onClick={() => applyTransform((ta) => wrapSelection(ta, "*", "*", "斜体"))}><Italic className="w-3.5 h-3.5" /></button>
-        <button className={tbtn} title="删除线" onClick={() => applyTransform((ta) => wrapSelection(ta, "~~", "~~", "删除"))}><Strikethrough className="w-3.5 h-3.5" /></button>
-        <button className={tbtn} title="行内代码" onClick={() => applyTransform((ta) => wrapSelection(ta, "`", "`", "代码"))}><Code className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title={t("mdreader.bold")} onClick={() => applyTransform((ta) => wrapSelection(ta, "**", "**", t("mdreader.boldPh")))}><Bold className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title={t("mdreader.italic")} onClick={() => applyTransform((ta) => wrapSelection(ta, "*", "*", t("mdreader.italicPh")))}><Italic className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title={t("mdreader.strike")} onClick={() => applyTransform((ta) => wrapSelection(ta, "~~", "~~", t("mdreader.strikePh")))}><Strikethrough className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title={t("mdreader.inlineCode")} onClick={() => applyTransform((ta) => wrapSelection(ta, "`", "`", t("mdreader.codePh")))}><Code className="w-3.5 h-3.5" /></button>
         <div className="w-px h-5 bg-white/10 mx-1" />
-        <button className={tbtn} title="无序列表" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "-"))}><List className="w-3.5 h-3.5" /></button>
-        <button className={tbtn} title="有序列表" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "1.", true))}><ListOrdered className="w-3.5 h-3.5" /></button>
-        <button className={tbtn} title="任务列表" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "- [ ]"))}><ListChecks className="w-3.5 h-3.5" /></button>
-        <button className={tbtn} title="引用" onClick={() => applyTransform((ta) => toggleLinePrefix(ta, ">"))}><Quote className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title={t("mdreader.ul")} onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "-"))}><List className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title={t("mdreader.ol")} onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "1.", true))}><ListOrdered className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title={t("mdreader.task")} onClick={() => applyTransform((ta) => toggleLinePrefix(ta, "- [ ]"))}><ListChecks className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title={t("mdreader.quote")} onClick={() => applyTransform((ta) => toggleLinePrefix(ta, ">"))}><Quote className="w-3.5 h-3.5" /></button>
         <div className="w-px h-5 bg-white/10 mx-1" />
-        <button className={tbtn} title="代码块" onClick={() => applyTransform((ta) => {
+        <button className={tbtn} title={t("mdreader.codeBlock")} onClick={() => applyTransform((ta) => {
           const { selectionStart: s, selectionEnd: e, value } = ta;
           const sel = value.slice(s, e) || "// code";
           const insert = `\n\`\`\`\n${sel}\n\`\`\`\n`;
           return { text: value.slice(0, s) + insert + value.slice(e), selStart: s + 4, selEnd: s + 4 + sel.length };
         })}><Square className="w-3.5 h-3.5" /></button>
-        <button className={tbtn} title="链接" onClick={() => applyTransform((ta) => wrapSelection(ta, "[", "](https://)", "链接文本"))}><Link className="w-3.5 h-3.5" /></button>
-        <button className={tbtn} title="表格" onClick={() => applyTransform((ta) => {
-          const tpl = "\n| 列1 | 列2 | 列3 |\n| --- | --- | --- |\n|  a  |  b  |  c  |\n";
+        <button className={tbtn} title={t("mdreader.link")} onClick={() => applyTransform((ta) => wrapSelection(ta, "[", "](https://)", t("mdreader.linkTextPh")))}><Link className="w-3.5 h-3.5" /></button>
+        <button className={tbtn} title={t("mdreader.table")} onClick={() => applyTransform((ta) => {
+          const tpl = `\n| ${t("mdreader.col1")} | ${t("mdreader.col2")} | ${t("mdreader.col3")} |\n| --- | --- | --- |\n|  a  |  b  |  c  |\n`;
           const { selectionStart: s, value } = ta;
           return { text: value.slice(0, s) + tpl + value.slice(s), selStart: s + 3, selEnd: s + 3 };
         })}><Table className="w-3.5 h-3.5" /></button>
-        <button className={tbtn} title="分隔线" onClick={() => applyTransform((ta) => {
+        <button className={tbtn} title={t("mdreader.hr")} onClick={() => applyTransform((ta) => {
           const { selectionStart: s, value } = ta;
           return { text: value.slice(0, s) + "\n---\n" + value.slice(s), selStart: s + 5, selEnd: s + 5 };
         })}><Minus className="w-3.5 h-3.5" /></button>
@@ -740,7 +742,7 @@ export default function MarkdownReader() {
           }}
           spellCheck={false}
           className={`min-h-0 flex-1 resize-none bg-transparent px-6 py-5 text-[12px] leading-6 text-slate-200 font-mono outline-none ${split ? "border-r border-white/10 max-w-[50%]" : ""}`}
-          placeholder="开始编辑 Markdown…"
+          placeholder={t("mdreader.editorPh")}
         />
         {split && (
           <div className="min-h-0 flex-1 overflow-y-auto">
@@ -752,16 +754,16 @@ export default function MarkdownReader() {
       <div className="flex-shrink-0 flex items-center gap-3 px-3 py-1 border-t border-white/5 bg-white/[0.02] text-[10px] text-slate-500 select-none">
         <span className="font-mono">Ln {cursor.line}, Col {cursor.col}</span>
         <span className="w-px h-3 bg-white/10" />
-        <span title="总字符数">{stats.chars} 字符</span>
-        <span title="不含空白字符数">{stats.noSpace} 非空</span>
-        <span title="中文字数">{stats.cjk} 中文</span>
-        <span title="英文单词数">{stats.words} 词</span>
-        <span>{stats.lines} 行</span>
+        <span title={t("mdreader.charsTip")}>{t("mdreader.statsChars", { n: stats.chars })}</span>
+        <span title={t("mdreader.noSpaceTip")}>{t("mdreader.statsNoSpace", { n: stats.noSpace })}</span>
+        <span title={t("mdreader.cjkTip")}>{t("mdreader.statsCjk", { n: stats.cjk })}</span>
+        <span title={t("mdreader.wordsTip")}>{t("mdreader.statsWords", { n: stats.words })}</span>
+        <span>{t("mdreader.statsLines", { n: stats.lines })}</span>
         <div className="flex-1" />
         {active.dirty ? (
-          <span className="text-amber-300/80">未保存</span>
+          <span className="text-amber-300/80">{t("mdreader.unsaved")}</span>
         ) : (
-          <span className="text-emerald-400/80">已保存</span>
+          <span className="text-emerald-400/80">{t("mdreader.saved")}</span>
         )}
         <span className="font-mono">UTF-8</span>
       </div>
@@ -774,19 +776,19 @@ export default function MarkdownReader() {
       <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2 border-b border-white/5">
         <button onClick={pickFiles} className={btn}>
           <FolderOpen className="w-3.5 h-3.5" />
-          打开文件
+          {t("mdreader.openFile")}
         </button>
-        <button onClick={() => void openDirectory()} className={btn} title="选择目录，列出所有 Markdown 文件">
+        <button onClick={() => void openDirectory()} className={btn} title={t("mdreader.openDirTip")}>
           <Folder className="w-3.5 h-3.5" />
-          打开目录
+          {t("mdreader.openDir")}
         </button>
-        <button onClick={() => void createNewFile()} className={btn} title="在当前目录下新建 .md 文件">
+        <button onClick={() => void createNewFile()} className={btn} title={t("mdreader.newFileTip")}>
           <FilePlus className="w-3.5 h-3.5" />
-          新建文件
+          {t("mdreader.newFile")}
         </button>
         <button onClick={reloadActive} disabled={!active} className={btn}>
           <RefreshCw className="w-3.5 h-3.5" />
-          重新加载
+          {t("mdreader.reload")}
         </button>
         <button onClick={() => setShowSidebar((s) => !s)} className={btn}>
           {showSidebar ? (
@@ -794,34 +796,34 @@ export default function MarkdownReader() {
           ) : (
             <PanelLeftOpen className="w-3.5 h-3.5" />
           )}
-          {showSidebar ? "隐藏目录" : "显示目录"}
+          {showSidebar ? t("mdreader.hideSidebar") : t("mdreader.showSidebar")}
         </button>
         <div className="w-px h-5 bg-white/10 mx-1" />
         {active && (
           <>
             <button onClick={() => setMode(mode === "view" ? "edit" : "view")}
               className={`${btn} ${mode === "edit" ? "!bg-emerald-600/25 !text-emerald-200" : ""}`}
-              title={mode === "view" ? "切换到编辑" : "切换到预览"}>
+              title={mode === "view" ? t("mdreader.switchEditTip") : t("mdreader.switchPreviewTip")}>
               {mode === "view" ? <Pencil className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-              {mode === "view" ? "编辑" : "预览"}
+              {mode === "view" ? t("mdreader.edit") : t("mdreader.preview")}
             </button>
             {mode === "edit" && (
               <button onClick={() => setSplit(!split)}
-                className={`${btn} ${split ? "!bg-emerald-600/25 !text-emerald-200" : ""}`} title="编辑+预览分栏">
+                className={`${btn} ${split ? "!bg-emerald-600/25 !text-emerald-200" : ""}`} title={t("mdreader.splitTip")}>
                 <Columns className="w-3.5 h-3.5" />
-                分栏
+                {t("mdreader.split")}
               </button>
             )}
-            <button onClick={() => void saveActive()} disabled={!active.dirty || saving} className={btn} title="保存 (Ctrl+S)">
+            <button onClick={() => void saveActive()} disabled={!active.dirty || saving} className={btn} title={t("mdreader.saveTip")}>
               {saving ? <LoaderCircle /> : active.dirty ? <Save className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5 text-emerald-400" />}
-              {active.dirty ? (saving ? "保存中…" : "保存") : "已保存"}
+              {active.dirty ? (saving ? t("mdreader.saving") : t("common.save")) : t("mdreader.saved")}
             </button>
           </>
         )}
         <div className="flex-1" />
-        <button onClick={() => setShowAssoc((s) => !s)} className={btn} title=".md 文件关联设置">
+        <button onClick={() => setShowAssoc((s) => !s)} className={btn} title={t("mdreader.assocTip")}>
           <FileText className="w-3.5 h-3.5" />
-          文件关联{assoc ? (assocAll ? " ✓" : "") : ""}
+          {t("mdreader.assocBtn")}{assoc ? (assocAll ? " ✓" : "") : ""}
         </button>
         {notice && (
           <div className="flex items-center gap-1 text-[10px] text-amber-300">
@@ -840,16 +842,16 @@ export default function MarkdownReader() {
       {showAssoc && (
         <div className="flex-shrink-0 px-4 py-2.5 border-b border-white/5 bg-white/[0.02] space-y-2">
           <div className="text-[10px] text-slate-400">
-            将 <span className="font-mono text-slate-200">.md</span> / <span className="font-mono text-slate-200">.markdown</span> 注册为系统打开方式（用户级注册表，无需管理员），并加入右键「打开方式」列表。
+            {t("mdreader.assocDesc")}
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => void toggleAssoc(true)} className={btn} disabled={assocAll}>
               <Check className="w-3.5 h-3.5" />
-              {assocAll ? "已注册" : "注册关联"}
+              {assocAll ? t("mdreader.registered") : t("mdreader.registerAssoc")}
             </button>
             <button onClick={() => void toggleAssoc(false)} className={btn} disabled={assoc ? !assoc.md && !assoc.markdown : false}>
               <X className="w-3.5 h-3.5" />
-              解除关联
+              {t("mdreader.unregisterAssoc")}
             </button>
             {assoc && (
               <span className="text-[10px] text-slate-500 font-mono truncate">
@@ -863,23 +865,23 @@ export default function MarkdownReader() {
       {/* 选项卡条 */}
       {tabs.length > 0 && (
         <div className="flex-shrink-0 flex items-stretch gap-0.5 px-2 pt-1.5 border-b border-white/5 overflow-x-auto">
-          {tabs.map((t) => (
+          {tabs.map((tab) => (
             <div
-              key={t.path}
-              onClick={() => { setActivePath(t.path); setMode("view"); }}
-              title={t.path}
+              key={tab.path}
+              onClick={() => { setActivePath(tab.path); setMode("view"); }}
+              title={tab.path}
               className={`group flex items-center gap-1.5 px-2.5 py-1.5 rounded-t-md text-[11px] whitespace-nowrap cursor-pointer transition-colors max-w-[200px] ${
-                t.path === activePath
+                tab.path === activePath
                   ? "bg-emerald-600/20 text-emerald-200 border-b-2 border-emerald-500"
                   : "text-slate-400 hover:text-slate-200 hover:bg-white/5 border-b-2 border-transparent"
               }`}
             >
               <FileText className="w-3 h-3 flex-shrink-0" />
-              <span className="truncate">{t.name}{t.dirty ? " •" : ""}</span>
+              <span className="truncate">{tab.name}{tab.dirty ? " •" : ""}</span>
               <button
-                onClick={(e) => closeTab(t.path, e)}
+                onClick={(e) => closeTab(tab.path, e)}
                 className="flex-shrink-0 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-300 transition-opacity"
-                title="关闭 (Ctrl+W)"
+                title={t("mdreader.closeTip")}
               >
                 <X className="w-3 h-3" />
               </button>
@@ -896,7 +898,7 @@ export default function MarkdownReader() {
               <div className="flex items-center gap-1.5 mb-1.5 text-[10px] text-slate-500">
                 <ListTree className="w-3 h-3" />
                 <span className="truncate" title={siblingRoot}>
-                  {siblingRoot ? siblingRoot.split(/[\\/]/).pop() : "文件列表"}
+                  {siblingRoot ? siblingRoot.split(/[\\/]/).pop() : t("mdreader.fileList")}
                 </span>
                 {scanning && <RefreshCw className="w-3 h-3 animate-spin ml-auto" />}
                 {!scanning && siblings.length > 0 && (
@@ -908,7 +910,7 @@ export default function MarkdownReader() {
                 <input
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
-                  placeholder="筛选文件"
+                  placeholder={t("mdreader.filterPh")}
                   className="w-full bg-white/5 rounded pl-6 pr-2 py-1 text-[10px] text-slate-200 placeholder:text-slate-600 outline-none focus:bg-white/10"
                 />
               </div>
@@ -916,7 +918,7 @@ export default function MarkdownReader() {
             <div className="flex-1 overflow-y-auto py-1">
               {filtered.length === 0 && (
                 <div className="px-3 py-4 text-[10px] text-slate-600 text-center">
-                  {siblings.length === 0 ? "打开文件后自动列出同目录" : "无匹配"}
+                  {siblings.length === 0 ? t("mdreader.siblingsEmpty") : t("mdreader.noMatch")}
                 </div>
               )}
               {filtered.map((s) => (
@@ -943,29 +945,29 @@ export default function MarkdownReader() {
           {!active && (
             <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-600">
               <FileText className="w-10 h-10 opacity-30" />
-              <div className="text-[11px]">尚未打开文档</div>
+              <div className="text-[11px]">{t("mdreader.noDocOpen")}</div>
               <div className="flex gap-2">
                 <button onClick={pickFiles} className={btn}>
                   <FolderOpen className="w-3.5 h-3.5" />
-                  打开文件
+                  {t("mdreader.openFile")}
                 </button>
                 <button onClick={() => void openDirectory()} className={btn}>
                   <Folder className="w-3.5 h-3.5" />
-                  打开目录
+                  {t("mdreader.openDir")}
                 </button>
                 <button onClick={() => void createNewFile()} className={btn}>
                   <FilePlus className="w-3.5 h-3.5" />
-                  新建文件
+                  {t("mdreader.newFile")}
                 </button>
               </div>
               <div className="text-[10px] text-slate-700 max-w-xs text-center leading-relaxed">
-                默认预览；点「编辑」进入编辑器（自动保存、撤销/重做、格式工具栏、分栏实时预览）。
-                支持打开目录列出所有文件、新建 .md 文件。可在「文件关联」中把 .md 注册为系统打开方式。
+                {t("mdreader.emptyDesc1")}
+                {t("mdreader.emptyDesc2")}
               </div>
             </div>
           )}
           {active?.loading && (
-            <div className="px-6 py-6 text-[11px] text-slate-500">加载中…</div>
+            <div className="px-6 py-6 text-[11px] text-slate-500">{t("mdreader.loading")}</div>
           )}
           {active?.error && (
             <div className="px-6 py-6 text-[11px] text-red-300 flex items-start gap-2">
@@ -981,7 +983,7 @@ export default function MarkdownReader() {
         {/* 右侧：大纲 */}
         {active && headings.length > 0 && (
           <div className="w-48 flex-shrink-0 border-l border-white/5 overflow-y-auto py-2">
-            <div className="px-3 pb-1.5 text-[10px] text-slate-500">大纲</div>
+            <div className="px-3 pb-1.5 text-[10px] text-slate-500">{t("mdreader.outline")}</div>
             {headings.map((h, i) => (
               <button
                 key={`${h.id}-${i}`}
@@ -1009,6 +1011,7 @@ function LoaderCircle() {
 
 /** 代码块：语言标签 + 语法高亮 + 一键复制 */
 function CodeBlock({ lang, children }: { lang: string; children: React.ReactNode }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const text = typeof children === "string" ? children : String(children);
 
@@ -1046,7 +1049,7 @@ function CodeBlock({ lang, children }: { lang: string; children: React.ReactNode
           onClick={handleCopy}
           className="text-[9px] text-slate-500 hover:text-slate-200 transition-colors cursor-pointer"
         >
-          {copied ? "✓ 已复制" : "复制"}
+          {copied ? t("mdreader.codeCopied") : t("mdreader.codeCopy")}
         </button>
       </div>
       <pre className="overflow-x-auto p-3 text-[11px] leading-relaxed">

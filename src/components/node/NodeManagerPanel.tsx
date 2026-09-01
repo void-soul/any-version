@@ -29,6 +29,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import VexAvatar from "../VexAvatar";
 import VexGreeting from "../VexGreeting";
+import { useTranslation } from "react-i18next";
 
 // ---- 类型（与后端 node_manager.rs 对应，serde camelCase）----
 
@@ -114,6 +115,7 @@ function isPortListening(st?: NodeProjectStatus): boolean {
 }
 
 export default function NodeManagerPanel() {
+  const { t } = useTranslation();
   const [projects, setProjects] = useState<NodeProjectDef[]>([]);
   const [loaded, setLoaded] = useState(false); // 首次列表是否已加载完成
   const [deps, setDeps] = useState<Record<string, DepCheckResult>>({});
@@ -296,13 +298,13 @@ export default function NodeManagerPanel() {
     if (!isPortListening(st)) {
       const stateLabel =
         st?.status === "not_installed"
-          ? "尚未安装"
+          ? t("nodeproj.notInstalled")
           : st?.status === "port_conflict"
-            ? "端口冲突"
-            : "未启动";
+            ? t("nodeproj.portConflict")
+            : t("nodeproj.notRunning");
       setError((prev) => ({
         ...prev,
-        [project.id]: `服务${stateLabel}（${resolvedWebPath(project)}），请先点击「启动」后再打开主页`,
+        [project.id]: t("nodeproj.serviceStateHint", { label: stateLabel, path: resolvedWebPath(project) }),
       }));
       return;
     }
@@ -329,14 +331,14 @@ export default function NodeManagerPanel() {
     if (!loaded) {
       return (
         <div className="h-full flex items-center justify-center text-slate-500 text-sm gap-2">
-          <Loader2 className="w-4 h-4 animate-spin" /> 加载中…
+          <Loader2 className="w-4 h-4 animate-spin" /> {t("nodeproj.loading")}
         </div>
       );
     }
     return (
       <div className="h-full flex items-center justify-center text-slate-500 text-sm gap-2">
-        <Boxes className="w-4 h-4" /> 暂无已配置的项目（node-projects/
-        目录下未发现定义）
+        <Boxes className="w-4 h-4" /> {t("nodeproj.noProjects")}
+        {t("nodeproj.noProjects2")}
       </div>
     );
   }
@@ -351,9 +353,9 @@ export default function NodeManagerPanel() {
         <div className="text-center space-y-4">
           <VexAvatar size={64} className="mx-auto" />
           <div>
-            <h1 className="text-lg font-bold text-white">服务</h1>
+            <h1 className="text-lg font-bold text-white">{t("nodeproj.servicesTitle")}</h1>
             <p className="text-[12px] text-slate-500 mt-1">
-              启动并管理 Node 服务应用，界面在主窗口内全屏呈现
+              {t("nodeproj.servicesDesc")}
             </p>
             <p className="text-[11px] text-slate-400 mt-2">
               <VexGreeting seconds={9} />
@@ -363,7 +365,7 @@ export default function NodeManagerPanel() {
             onClick={() => setManageOpen(true)}
             className="px-5 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-xl text-[13px] font-semibold flex items-center gap-2 mx-auto cursor-pointer transition-all"
           >
-            <Settings2 className="w-4 h-4" /> 打开服务管理
+            <Settings2 className="w-4 h-4" /> {t("nodeproj.openManage")}
           </button>
         </div>
       </div>
@@ -400,7 +402,7 @@ export default function NodeManagerPanel() {
                       closeTab(tab.id);
                     }}
                     className="ml-0.5 p-0.5 rounded hover:bg-white/15 text-slate-500 hover:text-white cursor-pointer"
-                    title="关闭"
+                    title={t("nodeproj.close")}
                   >
                     <X className="w-3 h-3" />
                   </span>
@@ -412,9 +414,9 @@ export default function NodeManagerPanel() {
             <button
               onClick={() => setManageOpen(true)}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex-shrink-0"
-              title="打开服务管理"
+              title={t("nodeproj.openManage")}
             >
-              <Settings2 className="w-3.5 h-3.5" /> 管理
+              <Settings2 className="w-3.5 h-3.5" /> {t("nodeproj.manage")}
             </button>
           </div>
 
@@ -429,7 +431,7 @@ export default function NodeManagerPanel() {
               />
             ) : (
               <div className="h-full flex items-center justify-center text-slate-500 text-sm gap-2">
-                <LayoutDashboard className="w-4 h-4" /> 选择上方标签查看应用界面
+                <LayoutDashboard className="w-4 h-4" /> {t("nodeproj.pickTab")}
               </div>
             )}
           </div>
@@ -448,15 +450,15 @@ export default function NodeManagerPanel() {
             {/* 弹窗头部 */}
             <div className="flex items-center gap-2 px-5 py-3.5 border-b border-white/10 bg-white/[0.02]">
               <Settings2 className="w-4 h-4 text-[var(--module-accent)]" />
-              <h2 className="text-sm font-bold text-white">服务管理</h2>
+              <h2 className="text-sm font-bold text-white">{t("nodeproj.manageTitle")}</h2>
               <span className="text-[10px] text-slate-500 ml-1">
-                安装 / 升级 / 装依赖 / 启动 / 停止
+                {t("nodeproj.manageSub")}
               </span>
               <div className="flex-1" />
               <button
                 onClick={() => setManageOpen(false)}
                 className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer transition-all"
-                title="关闭"
+                title={t("nodeproj.close")}
               >
                 <X className="w-4 h-4" />
               </button>
@@ -499,7 +501,7 @@ export default function NodeManagerPanel() {
               })}
               {managedProjects.length === 0 && (
                 <div className="py-10 text-center text-slate-500 text-sm">
-                  暂无可管理的服务项目
+                  {t("nodeproj.noManaged")}
                 </div>
               )}
             </div>
@@ -547,6 +549,7 @@ function ProjectCard({
   onCheckUpdate: (p: NodeProjectDef) => void;
   onToggleLog: () => void;
 }) {
+  const { t } = useTranslation();
   const Icon = ICONS[project.icon] ?? Bot;
   const installed = st?.installed;
   const running = st?.status === "running";
@@ -589,12 +592,12 @@ function ProjectCard({
               }`}
             >
               {portConflict
-                ? "端口冲突"
+                ? t("nodeproj.portConflict")
                 : running
-                  ? "运行中"
+                  ? t("nodeproj.running")
                   : installed
-                    ? "已停止"
-                    : "未安装"}
+                    ? t("nodeproj.stopped")
+                    : t("nodeproj.notInstalled")}
             </span>
           </div>
           {project.description && (
@@ -623,7 +626,7 @@ function ProjectCard({
           label={`node ${project.nodeRequirement || ""}`.trim()}
         />
         <EnvBadge dep={d?.packageManager} label={project.packageManager} />
-        {st?.port && <span className="text-slate-600">端口 {st.port}</span>}
+        {st?.port && <span className="text-slate-600">{t("nodeproj.portText", { port: st.port })}</span>}
       </div>
 
       {/* git 更新检查 */}
@@ -631,25 +634,25 @@ function ProjectCard({
         <div className="px-5 py-1.5 flex items-center gap-2 text-[11px]">
           {checkingUpdate ? (
             <span className="flex items-center gap-1.5 text-slate-400">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" /> 正在检查更新…
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("nodeproj.checkingUpdate")}
             </span>
           ) : updateInfo ? (
             updateInfo.error ? (
               <span className="flex items-center gap-1.5 text-amber-400">
-                <AlertTriangle className="w-3.5 h-3.5" /> 检查失败：
+                <AlertTriangle className="w-3.5 h-3.5" /> {t("nodeproj.checkFail")}
                 {updateInfo.error}
               </span>
             ) : updateInfo.hasUpdate ? (
               <span className="flex items-center gap-1.5 text-[var(--module-accent)]">
                 <RefreshCw className="w-3.5 h-3.5" />
-                有新版本（落后 {updateInfo.behind} 个提交），点「升级」更新
+                {t("nodeproj.hasUpdate", { behind: updateInfo.behind })}
                 <span className="text-slate-600">
                   {updateInfo.currentCommit} → {updateInfo.latestCommit}
                 </span>
               </span>
             ) : (
               <span className="flex items-center gap-1.5 text-emerald-400">
-                <CheckCircle2 className="w-3.5 h-3.5" /> 已是最新
+                <CheckCircle2 className="w-3.5 h-3.5" /> {t("nodeproj.upToDate")}
                 <span className="text-slate-600">
                   ({updateInfo.currentCommit})
                 </span>
@@ -661,7 +664,7 @@ function ProjectCard({
               disabled={isBusy || running}
               className="flex items-center gap-1.5 text-slate-400 hover:text-[var(--module-accent)] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <RefreshCw className="w-3 h-3" /> 检查更新
+              <RefreshCw className="w-3 h-3" /> {t("nodeproj.checkUpdate")}
             </button>
           )}
         </div>
@@ -673,20 +676,20 @@ function ProjectCard({
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
           <span>
             {prog?.phase === "done"
-              ? "完成"
+              ? t("nodeproj.phaseDone")
               : prog?.phase === "clone"
-                ? "克隆中"
+                ? t("nodeproj.phaseClone")
                 : prog?.phase === "pull"
-                  ? "拉取中"
+                  ? t("nodeproj.phasePull")
                   : prog?.phase === "install"
-                    ? "安装依赖中"
+                    ? t("nodeproj.phaseInstall")
                     : prog?.phase === "build"
-                      ? "构建中"
+                      ? t("nodeproj.phaseBuild")
                       : prog?.phase === "running"
-                        ? "启动中"
+                        ? t("nodeproj.phaseStart")
                         : prog?.phase === "starting"
-                          ? "启动中"
-                          : "处理中"}
+                          ? t("nodeproj.phaseStart")
+                          : t("nodeproj.phaseOther")}
             {prog?.detail ? `：${prog.detail}` : ""}
           </span>
         </div>
@@ -706,8 +709,8 @@ function ProjectCard({
             className="flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-300 cursor-pointer"
           >
             <Terminal className="w-3 h-3" />
-            {logOpen ? "收起日志" : "查看日志"}
-            <span className="text-slate-600">({logs.length} 行)</span>
+            {logOpen ? t("nodeproj.logsToggleOpen") : t("nodeproj.logsToggleClosed")}
+            <span className="text-slate-600">{t("nodeproj.logLines", { count: logs.length })}</span>
           </button>
           {logOpen && (
             <div
@@ -746,7 +749,7 @@ function ProjectCard({
           onClick={() => onAction(project, "install")}
           icon={Download}
           color="bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)]"
-          label="安装"
+          label={t("nodeproj.install")}
         />
         <ActionButton
           disabled={!canUpgrade || isBusy || running}
@@ -754,7 +757,7 @@ function ProjectCard({
           onClick={() => onAction(project, "upgrade")}
           icon={RefreshCw}
           color="bg-slate-700 hover:bg-slate-600"
-          label="升级"
+          label={t("nodeproj.upgrade")}
         />
         <ActionButton
           disabled={!canInstallDeps || isBusy || running}
@@ -762,8 +765,8 @@ function ProjectCard({
           onClick={() => onAction(project, "install_deps")}
           icon={Package}
           color="bg-sky-700 hover:bg-sky-600"
-          label="装依赖"
-          title="仅重新安装依赖（不拉取代码），依赖缺失时可单独补装"
+          label={t("nodeproj.installDeps")}
+          title={t("nodeproj.installDepsTitle")}
         />
         <ActionButton
           disabled={!installed || isBusy || running || portConflict}
@@ -771,7 +774,7 @@ function ProjectCard({
           onClick={() => onAction(project, "start")}
           icon={Play}
           color="bg-emerald-600 hover:bg-emerald-500"
-          label="启动"
+          label={t("nodeproj.start")}
         />
         <ActionButton
           disabled={!running || isBusy}
@@ -779,7 +782,7 @@ function ProjectCard({
           onClick={() => onAction(project, "stop")}
           icon={Square}
           color="bg-red-600 hover:bg-red-500"
-          label="停止"
+          label={t("nodeproj.stop")}
         />
         <ActionButton
           disabled={isBusy}
@@ -787,12 +790,12 @@ function ProjectCard({
           onClick={() => onOpenWeb(project)}
           icon={ExternalLink}
           color="bg-violet-600 hover:bg-violet-500"
-          label="打开主页"
+          label={t("nodeproj.openHome")}
         />
         <div className="flex-1" />
         {!d?.allReady && installed && (
           <span className="text-[10px] text-amber-400 flex items-center gap-1">
-            <AlertTriangle className="w-3 h-3" /> 依赖未就绪，无法升级/启动
+            <AlertTriangle className="w-3 h-3" /> {t("nodeproj.depsNotReady")}
           </span>
         )}
       </div>

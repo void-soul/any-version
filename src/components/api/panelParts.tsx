@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   Plus, ArrowDown, Trash2, RefreshCcw, Wrench, MoreHorizontal, FileText, Lock, ChevronsUpDown, ChevronDown, ChevronRight,
@@ -61,6 +62,7 @@ export function VarInput({ value, onChange, envVars, placeholder, className, dis
   // 随机变量行的展开说明（格式 + 示例）
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   const [hoverExample, setHoverExample] = useState<{ idx: number; value: string } | null>(null);
+  const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
 
   // 计算光标在输入框中的像素位置（用于定位下拉）
@@ -126,7 +128,7 @@ export function VarInput({ value, onChange, envVars, placeholder, className, dis
 
   // 候选：环境变量优先，随机变量在后；查询时按模糊评分排序
   const candidates = useMemo(() => {
-    const env = Object.entries(envVars).map(([name, val]) => ({ label: name, value: String(val), desc: "环境变量", token: `{{${name}}}` as string, format: undefined as string | undefined, example: undefined as (() => string) | undefined }));
+    const env = Object.entries(envVars).map(([name, val]) => ({ label: name, value: String(val), desc: t("apiparts.envVarDesc"), token: `{{${name}}}` as string, format: undefined as string | undefined, example: undefined as (() => string) | undefined }));
     const rnd = RANDOM_VARIABLES.map((r) => ({ label: r.token, value: "", desc: r.desc, token: r.token, format: r.format, example: r.example }));
     const all = [...env, ...rnd];
     const q = query.trim();
@@ -190,9 +192,9 @@ export function VarInput({ value, onChange, envVars, placeholder, className, dis
                   }}
                   title={
                     c.value
-                      ? `当前环境值：${c.value}`
+                      ? t("apiparts.envValTip", { v: c.value })
                       : isRandom
-                        ? (hoverExample?.idx === i ? `示例值：${hoverExample.value}` : c.format)
+                        ? (hoverExample?.idx === i ? t("apiparts.exampleValTip", { v: hoverExample.value }) : c.format)
                         : c.desc
                   }
                   className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] cursor-pointer ${i === activeIdx ? "bg-[color-mix(in_srgb,var(--module-accent)_15%,transparent)]" : ""}`}
@@ -203,7 +205,7 @@ export function VarInput({ value, onChange, envVars, placeholder, className, dis
                       tabIndex={-1}
                       onClick={(e) => { e.stopPropagation(); setExpandedIdx(expanded ? null : i); }}
                       className="shrink-0 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
-                      title={expanded ? "收起格式说明" : "展开格式说明"}
+                      title={expanded ? t("apiparts.collapseFormat") : t("apiparts.expandFormat")}
                     >
                       {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                     </span>
@@ -220,7 +222,7 @@ export function VarInput({ value, onChange, envVars, placeholder, className, dis
                   <div className="mx-2 mb-1 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-[10px] leading-relaxed">
                     <div className="text-slate-300">{c.format}</div>
                     <div className="mt-0.5 flex items-center gap-1.5">
-                      <span className="text-slate-500">示例：</span>
+                      <span className="text-slate-500">{t("apiparts.sample")}</span>
                       <code className="font-mono text-emerald-300 break-all">{exampleVal}</code>
                     </div>
                   </div>
@@ -333,7 +335,7 @@ export function ResponseBody({ body, mode }: { body: string; mode: "pretty" | "r
 }
 
 // ─── 键值编辑器（Key-value 编辑 / Bulk 编辑 / 描述） ───
-export function KvEditor({ items, onChange, placeholderKey = "名称", placeholderValue = "值", withDescription = true, envVars = {} }: {
+export function KvEditor({ items, onChange, placeholderKey, placeholderValue, withDescription = true, envVars = {} }: {
   items: KeyValueItem[];
   onChange: (items: KeyValueItem[]) => void;
   placeholderKey?: string;
@@ -343,6 +345,7 @@ export function KvEditor({ items, onChange, placeholderKey = "名称", placehold
   envVars?: Record<string, unknown>;
 }) {
   const [mode, setMode] = useState<"kv" | "bulk">("kv");
+  const { t } = useTranslation();
   const [bulkText, setBulkText] = useState(items.map((kv) => kv.enabled ? `${kv.key}:${kv.value}` : `// ${kv.key}:${kv.value}`).join("\n"));
 
   const update = (i: number, patch: Partial<KeyValueItem>) => {
@@ -382,18 +385,18 @@ export function KvEditor({ items, onChange, placeholderKey = "名称", placehold
           onClick={() => { setMode("kv"); setBulkText(items.map((kv) => kv.enabled ? `${kv.key}:${kv.value}` : `// ${kv.key}:${kv.value}`).join("\n")); }}
           className={`text-[10px] px-2 py-0.5 rounded cursor-pointer ${mode === "kv" ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
         >
-          Key-value 编辑
+          {t("apiparts.kvEdit")}
         </button>
         <button
           type="button"
           onClick={() => { setMode("bulk"); setBulkText(items.map((kv) => kv.enabled ? `${kv.key}:${kv.value}` : `// ${kv.key}:${kv.value}`).join("\n")); }}
           className={`text-[10px] px-2 py-0.5 rounded cursor-pointer ${mode === "bulk" ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
         >
-          Bulk 编辑
+          {t("apiparts.bulkEdit")}
         </button>
         {mode === "bulk" && (
           <button type="button" onClick={applyBulk} className="text-[10px] px-2 py-0.5 rounded bg-[var(--module-accent)]/20 text-[var(--module-accent)] cursor-pointer">
-            应用
+            {t("apiparts.apply")}
           </button>
         )}
       </div>
@@ -402,7 +405,7 @@ export function KvEditor({ items, onChange, placeholderKey = "名称", placehold
           value={bulkText}
           onChange={(e) => setBulkText(e.target.value)}
           rows={6}
-          placeholder={"每行一个 key:value；以 // 开头表示禁用"}
+          placeholder={t("apiparts.bulkPh")}
           className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
         />
       ) : (
@@ -417,16 +420,16 @@ export function KvEditor({ items, onChange, placeholderKey = "名称", placehold
                   disabled={locked}
                   onChange={(e) => update(i, { enabled: e.target.checked })}
                   className="accent-[var(--module-accent)] shrink-0 disabled:opacity-40"
-                  title={locked ? "模板继承项：启用状态由项目模板控制" : (kv.enabled ? "启用" : "禁用")}
+                  title={locked ? t("apiparts.templLockedTitle") : (kv.enabled ? t("apiparts.enable") : t("apiparts.disable"))}
                 />
-                {locked && <Lock className="w-3 h-3 shrink-0 text-[var(--module-accent)]" aria-label="继承自项目模板（只读）" />}
+                {locked && <Lock className="w-3 h-3 shrink-0 text-[var(--module-accent)]" aria-label={t("apiparts.templReadonlyAria")} />}
                 <input
                   value={kv.key}
                   disabled={locked}
                   onChange={(e) => update(i, { key: e.target.value })}
-                  placeholder={placeholderKey}
+                  placeholder={placeholderKey ?? t("apiparts.kvKeyPh")}
                   className={`w-1/4 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs focus:outline-none ${locked ? "text-[var(--module-accent)]/80 opacity-70 cursor-not-allowed" : "text-slate-200 focus:border-[var(--module-accent)]/60"}`}
-                  title={locked ? "继承自项目模板：名称在项目设置中修改" : undefined}
+                  title={locked ? t("apiparts.templKeyTitle") : undefined}
                 />
                 <div className="flex-1">
                   <VarInput
@@ -434,7 +437,7 @@ export function KvEditor({ items, onChange, placeholderKey = "名称", placehold
                     disabled={locked}
                     envVars={envVars}
                     onChange={(v) => update(i, { value: v })}
-                    placeholder={placeholderValue}
+                    placeholder={placeholderValue ?? t("apiparts.kvValuePh")}
                     className={`w-full bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs focus:outline-none ${locked ? "text-[var(--module-accent)]/80 opacity-70 cursor-not-allowed" : "text-slate-200 focus:border-[var(--module-accent)]/60"}`}
                   />
                 </div>
@@ -443,7 +446,7 @@ export function KvEditor({ items, onChange, placeholderKey = "名称", placehold
                     value={kv.description ?? ""}
                     disabled={locked}
                     onChange={(e) => update(i, { description: e.target.value })}
-                    placeholder="描述"
+                    placeholder={t("apiparts.descPh")}
                     className="w-1/4 hidden lg:block bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-500 focus:outline-none focus:border-[var(--module-accent)]/60 disabled:opacity-50"
                   />
                 )}
@@ -452,7 +455,7 @@ export function KvEditor({ items, onChange, placeholderKey = "名称", placehold
                   disabled={locked}
                   onClick={() => onChange(items.filter((_, idx) => idx !== i))}
                   className={`p-1 shrink-0 ${locked ? "text-slate-700 cursor-not-allowed" : "text-slate-500 hover:text-rose-400 cursor-pointer"}`}
-                  title={locked ? "模板继承项不可删除" : "删除"}
+                  title={locked ? t("apiparts.templNoDelete") : t("apiparts.delete")}
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
@@ -464,7 +467,7 @@ export function KvEditor({ items, onChange, placeholderKey = "名称", placehold
             onClick={() => onChange([...items, { key: "", value: "", enabled: true, description: "" }])}
             className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
           >
-            <Plus className="w-3 h-3" /> 添加
+            <Plus className="w-3 h-3" /> {t("apiparts.add")}
           </button>
         </div>
       )}
@@ -486,6 +489,7 @@ export function FormDataEditor({ items, onChange, envVars = {} }: { items: FormD
     const f = await openDialog({ multiple: false });
     if (f) update(i, { file_path: String(f), kind: "file" });
   };
+  const { t } = useTranslation();
   return (
     <div className="space-y-1">
       {items.map((kv, i) => {
@@ -498,16 +502,16 @@ export function FormDataEditor({ items, onChange, envVars = {} }: { items: FormD
               disabled={locked}
               onChange={(e) => update(i, { enabled: e.target.checked })}
               className="accent-[var(--module-accent)] shrink-0 disabled:opacity-40"
-              title={locked ? "继承自项目通用 Body 模板（只读）" : undefined}
+              title={locked ? t("apiparts.formTemplTitle") : undefined}
             />
-            {locked && <Lock className="w-3 h-3 shrink-0 text-[var(--module-accent)]" aria-label="继承自项目模板（只读）" />}
+            {locked && <Lock className="w-3 h-3 shrink-0 text-[var(--module-accent)]" aria-label={t("apiparts.templReadonlyAria")} />}
             <input
               value={kv.key}
               disabled={locked}
               onChange={(e) => update(i, { key: e.target.value })}
-              placeholder="字段名"
+              placeholder={t("apiparts.fieldPh")}
               className={`w-1/4 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs focus:outline-none ${locked ? "text-[var(--module-accent)]/80 opacity-70 cursor-not-allowed" : "text-slate-200"}`}
-              title={locked ? "继承自项目模板：名称在项目设置中修改" : undefined}
+              title={locked ? t("apiparts.inheritedTitle") : undefined}
             />
             {kv.kind === "file" ? (
               <button
@@ -518,7 +522,7 @@ export function FormDataEditor({ items, onChange, envVars = {} }: { items: FormD
                 title={kv.file_path}
               >
                 <FileText className="w-3 h-3 shrink-0" />
-                <span className="truncate">{kv.file_path || "选择文件…"}</span>
+                <span className="truncate">{kv.file_path || t("apiparts.pickFile")}</span>
               </button>
             ) : (
               <VarInput
@@ -526,7 +530,7 @@ export function FormDataEditor({ items, onChange, envVars = {} }: { items: FormD
                 envVars={envVars}
                 disabled={locked}
                 onChange={(v) => update(i, { value: v })}
-                placeholder="值（支持 {{$guid}} 等）"
+                placeholder={t("apiparts.valuePh", { v: "{{$guid}}" })}
                 className={`flex-1 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs focus:outline-none ${locked ? "text-[var(--module-accent)]/80 opacity-70 cursor-not-allowed" : "text-slate-200"}`}
               />
             )}
@@ -543,7 +547,7 @@ export function FormDataEditor({ items, onChange, envVars = {} }: { items: FormD
               value={kv.description ?? ""}
               disabled={locked}
               onChange={(e) => update(i, { description: e.target.value })}
-              placeholder="描述"
+              placeholder={t("apiparts.descPh")}
               className="w-1/4 hidden lg:block bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-500 focus:outline-none disabled:opacity-50"
             />
             <button
@@ -551,7 +555,7 @@ export function FormDataEditor({ items, onChange, envVars = {} }: { items: FormD
               disabled={locked}
               onClick={() => onChange(items.filter((_, idx) => idx !== i))}
               className={`p-1 shrink-0 ${locked ? "text-slate-700 cursor-not-allowed" : "text-slate-500 hover:text-rose-400 cursor-pointer"}`}
-              title={locked ? "模板继承项不可删除" : "删除"}
+              title={locked ? t("apiparts.templNoDelete") : t("apiparts.delete")}
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
@@ -563,7 +567,7 @@ export function FormDataEditor({ items, onChange, envVars = {} }: { items: FormD
         onClick={() => onChange([...items, { key: "", value: "", enabled: true, kind: "text", file_path: "", description: "" }])}
         className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
       >
-        <Plus className="w-3 h-3" /> 添加字段
+        <Plus className="w-3 h-3" /> {t("apiparts.addField")}
       </button>
     </div>
   );
@@ -571,6 +575,7 @@ export function FormDataEditor({ items, onChange, envVars = {} }: { items: FormD
 
 // ─── 认证面板 ───
 export function AuthPanel({ auth, onChange }: { auth: Authorization; onChange: (a: Authorization) => void }) {
+  const { t } = useTranslation();
   const set = (patch: Partial<Authorization>) => onChange({ ...auth, ...patch });
   return (
     <div className="space-y-2">
@@ -588,15 +593,15 @@ export function AuthPanel({ auth, onChange }: { auth: Authorization; onChange: (
       </div>
       {auth.type === "basic" && (
         <div className="grid grid-cols-2 gap-2">
-          <input value={auth.username} onChange={(e) => set({ username: e.target.value })} placeholder="用户名" className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
-          <input type="password" value={auth.password} onChange={(e) => set({ password: e.target.value })} placeholder="密码" className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
+          <input value={auth.username} onChange={(e) => set({ username: e.target.value })} placeholder={t("apiparts.usernamePh")} className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
+          <input type="password" value={auth.password} onChange={(e) => set({ password: e.target.value })} placeholder={t("apiparts.passwordPh")} className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
         </div>
       )}
       {auth.type === "bearer" && (
-        <input value={auth.token} onChange={(e) => set({ token: e.target.value })} placeholder="Token（支持 {{token}} 变量）" className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
+        <input value={auth.token} onChange={(e) => set({ token: e.target.value })} placeholder={t("apiparts.tokenPh", { v: "{{token}}" })} className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
       )}
       {auth.type === "jwt" && (
-        <input value={auth.jwt_token} onChange={(e) => set({ jwt_token: e.target.value })} placeholder="JWT Token（支持 {{jwt}} 变量）" className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
+        <input value={auth.jwt_token} onChange={(e) => set({ jwt_token: e.target.value })} placeholder={t("apiparts.jwtPh", { v: "{{jwt}}" })} className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
       )}
       {auth.type === "apiKey" && (
         <div className="grid grid-cols-[auto_1fr_1fr] gap-2 items-center">
@@ -604,11 +609,11 @@ export function AuthPanel({ auth, onChange }: { auth: Authorization; onChange: (
             <option value="header">Header</option>
             <option value="query">Query</option>
           </select>
-          <input value={auth.api_key_name} onChange={(e) => set({ api_key_name: e.target.value })} placeholder="Key 名（如 X-API-Key）" className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
-          <input value={auth.api_key_value} onChange={(e) => set({ api_key_value: e.target.value })} placeholder="Key 值" className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
+          <input value={auth.api_key_name} onChange={(e) => set({ api_key_name: e.target.value })} placeholder={t("apiparts.keyNamePh")} className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
+          <input value={auth.api_key_value} onChange={(e) => set({ api_key_value: e.target.value })} placeholder={t("apiparts.keyValuePh")} className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
         </div>
       )}
-      {auth.type === "none" && <div className="text-[10px] text-slate-500">不附加认证信息。</div>}
+      {auth.type === "none" && <div className="text-[10px] text-slate-500">{t("apiparts.noAuth")}</div>}
     </div>
   );
 }
@@ -620,6 +625,7 @@ export function SettingsPanel({ settings, timeoutMs, onChange, onTimeout }: {
   onChange: (s: RequestSettings) => void;
   onTimeout: (ms: number) => void;
 }) {
+  const { t } = useTranslation();
   const set = (patch: Partial<RequestSettings>) => onChange({ ...settings, ...patch });
   const Toggle = ({ label, value, on }: { label: string; value: boolean; on: (v: boolean) => void }) => (
     <label className="flex items-center gap-2 py-1 cursor-pointer">
@@ -637,7 +643,7 @@ export function SettingsPanel({ settings, timeoutMs, onChange, onTimeout }: {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <span className="text-[10px] text-slate-500 w-32">HTTP 版本</span>
+        <span className="text-[10px] text-slate-500 w-32">{t("apiparts.httpVersion")}</span>
         <select value={settings.http_version} onChange={(e) => set({ http_version: e.target.value as RequestSettings["http_version"] })} className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200 cursor-pointer">
           <option value="auto">Auto</option>
           <option value="http1">HTTP/1.x</option>
@@ -645,16 +651,16 @@ export function SettingsPanel({ settings, timeoutMs, onChange, onTimeout }: {
         </select>
       </div>
       <div className="flex items-center gap-2">
-        <span className="text-[10px] text-slate-500 w-32">超时时间(ms)</span>
+        <span className="text-[10px] text-slate-500 w-32">{t("apiparts.timeoutMs")}</span>
         <input type="number" min={100} value={timeoutMs} onChange={(e) => onTimeout(Number(e.target.value))} className="w-32 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
       </div>
       <div className="grid grid-cols-2 gap-x-4">
-        <Toggle label="启用 SSL 证书验证" value={settings.verify_ssl} on={(v) => set({ verify_ssl: v })} />
-        <Toggle label="自动跟随重定向" value={settings.follow_redirects} on={(v) => set({ follow_redirects: v })} />
-        <Toggle label="重定向时保持原始 HTTP 方法" value={settings.follow_original_method} on={(v) => set({ follow_original_method: v })} />
-        <Toggle label="重定向时携带 Authorization" value={settings.follow_authorization_header} on={(v) => set({ follow_authorization_header: v })} />
-        <Toggle label="重定向时移除 Referer" value={settings.remove_referer_on_redirect} on={(v) => set({ remove_referer_on_redirect: v })} />
-        <Toggle label="启用严格 HTTP 解析器" value={settings.strict_http_parser} on={(v) => set({ strict_http_parser: v })} />
+        <Toggle label={t("apiparts.verifySsl")} value={settings.verify_ssl} on={(v) => set({ verify_ssl: v })} />
+        <Toggle label={t("apiparts.followRedirects")} value={settings.follow_redirects} on={(v) => set({ follow_redirects: v })} />
+        <Toggle label={t("apiparts.keepOriginalMethod")} value={settings.follow_original_method} on={(v) => set({ follow_original_method: v })} />
+        <Toggle label={t("apiparts.keepAuth")} value={settings.follow_authorization_header} on={(v) => set({ follow_authorization_header: v })} />
+        <Toggle label={t("apiparts.removeReferer")} value={settings.remove_referer_on_redirect} on={(v) => set({ remove_referer_on_redirect: v })} />
+        <Toggle label={t("apiparts.strictParser")} value={settings.strict_http_parser} on={(v) => set({ strict_http_parser: v })} />
       </div>
     </div>
   );

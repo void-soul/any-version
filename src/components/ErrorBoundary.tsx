@@ -1,7 +1,13 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 
 interface State {
   error: Error | null;
+}
+
+function ErrorBoundaryText({ kind }: { kind: "title" | "reload" }) {
+  const { t } = useTranslation();
+  return kind === "title" ? <>{t("errbound.appError")}</> : <>{t("errbound.reload")}</>;
 }
 
 /**
@@ -55,7 +61,7 @@ export class ErrorBoundary extends React.Component<React.PropsWithChildren, Stat
             fontFamily: "system-ui, sans-serif",
           }}
         >
-          <h2 style={{ marginTop: 0 }}>应用发生错误</h2>
+          <h2 style={{ marginTop: 0 }}><ErrorBoundaryText kind="title" /></h2>
           <pre
             style={{
               maxWidth: 640,
@@ -82,7 +88,7 @@ export class ErrorBoundary extends React.Component<React.PropsWithChildren, Stat
               cursor: "pointer",
             }}
           >
-            重新加载
+            <ErrorBoundaryText kind="reload" />
           </button>
         </div>
       );

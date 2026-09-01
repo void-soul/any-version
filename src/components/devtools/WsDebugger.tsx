@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Cable, PlugZap, Unplug, Send, Trash2, Radio, Network } from "lucide-react";
@@ -26,6 +27,7 @@ const PROTO_TABS: Array<{ key: Proto; label: string }> = [
 
 /** WebSocket / SSE / TCP / UDP 调试器。 */
 export default function WsDebugger() {
+  const { t } = useTranslation();
   const [proto, setProto] = useState<Proto>("ws");
   const [connId, setConnId] = useState("conn-1");
   const [url, setUrl] = useState("ws://");
@@ -44,28 +46,28 @@ export default function WsDebugger() {
       un.push(
         await listen<{ id: string; kind?: string; data?: string; text?: string; hex?: string; from?: string }>("wstool://message", (e) => {
           if (e.payload.kind === "binary") {
-            push(setLogs, "rx", `[二进制 ${e.payload.hex?.split(" ").length ?? 0}B] ${e.payload.data ?? e.payload.text ?? ""}`);
+            push(setLogs, "rx", `${t("wsdebug.binary", { bytes: e.payload.hex?.split(" ").length ?? 0 })}${e.payload.data ?? e.payload.text ?? ""}`);
           } else {
-            push(setLogs, "rx", e.payload.from ? `[${e.payload.from}] ${e.payload.data ?? e.payload.text ?? ""}` : e.payload.data ?? e.payload.text ?? "");
+            push(setLogs, "rx", e.payload.from ? `${t("wsdebug.binaryPrefix", { from: e.payload.from })}${e.payload.data ?? e.payload.text ?? ""}` : e.payload.data ?? e.payload.text ?? "");
           }
         })
       );
       un.push(await listen<{ id: string; url?: string; proto?: string }>("wstool://open", (e) => {
         setConnected(true);
-        push(setLogs, "open", `连接已建立 (${e.payload.url ?? e.payload.id})`);
+        push(setLogs, "open", t("wsdebug.connected", { url: e.payload.url ?? e.payload.id }));
       }));
       un.push(await listen<{ id: string }>("wstool://closed", (e) => {
         setConnected(false);
-        push(setLogs, "close", `连接已关闭 (${e.payload.id})`);
+        push(setLogs, "close", t("wsdebug.closed", { id: e.payload.id }));
       }));
       un.push(await listen<{ id: string; raw: string }>("sstool://event", (e) => push(setLogs, "event", e.payload.raw)));
       un.push(await listen<{ id: string }>("sstool://open", (e) => {
         setConnected(true);
-        push(setLogs, "open", `SSE 已订阅 (${e.payload.id})`);
+        push(setLogs, "open", t("wsdebug.sseSubscribed", { id: e.payload.id }));
       }));
       un.push(await listen<{ id: string }>("sstool://closed", (e) => {
         setConnected(false);
-        push(setLogs, "close", `SSE 已断开 (${e.payload.id})`);
+        push(setLogs, "close", t("wsdebug.sseDisconnected", { id: e.payload.id }));
       }));
     })();
     return () => un.forEach((u) => u());
@@ -109,7 +111,7 @@ export default function WsDebugger() {
       /* 忽略 */
     }
     setConnected(false);
-    push(setLogs, "close", "已主动断开");
+    push(setLogs, "close", t("wsdebug.disconnectedByUser"));
   };
   const doSend = async () => {
     if (!sendData || !connected) return;
@@ -147,9 +149,9 @@ export default function WsDebugger() {
       {/* 标题 + 协议切换 */}
       <div className="flex items-center gap-3 shrink-0">
         <Cable className="w-4 h-4 text-indigo-400" />
-        <h1 className="text-base font-semibold">网络调试器</h1>
+        <h1 className="text-base font-semibold">{t("wsdebug.title")}</h1>
         <span className={`text-xs px-2 py-0.5 rounded-full ${connected ? "bg-emerald-900/60 text-emerald-300" : "bg-slate-800 text-slate-400"}`}>
-          {connected ? "已连接" : "未连接"}
+          {connected ? t("wsdebug.connectedState") : t("wsdebug.notConnected")}
         </span>
         <div className="ml-auto flex gap-1 rounded-md bg-slate-900 p-0.5 text-[11px]">
           {PROTO_TABS.map(({ key, label }) => (
@@ -170,13 +172,13 @@ export default function WsDebugger() {
           value={connId}
           onChange={(e) => setConnId(e.target.value)}
           className="w-24 bg-slate-800 border border-slate-700 rounded px-2 py-1.5 font-mono text-xs focus:outline-none focus:border-indigo-500"
-          title="连接 ID（多开时区分）"
+          title={t("wsdebug.connIdTitle")}
         />
         {(proto === "ws" || proto === "sse") && (
           <input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder={proto === "ws" ? "ws://localhost:8080/path 或 wss://…" : "https://example.com/stream"}
+            placeholder={proto === "ws" ? t("wsdebug.wsPlaceholder") : t("wsdebug.ssePlaceholder")}
             className="flex-1 bg-slate-800 border border-slate-700 rounded px-3 py-2 font-mono text-xs focus:outline-none focus:border-indigo-500"
           />
         )}
@@ -186,21 +188,21 @@ export default function WsDebugger() {
             <input
               value={host}
               onChange={(e) => setHost(e.target.value)}
-              placeholder="主机，如 127.0.0.1"
+              placeholder={t("wsdebug.hostPlaceholder")}
               className="flex-1 min-w-32 bg-slate-800 border border-slate-700 rounded px-3 py-2 font-mono text-xs focus:outline-none focus:border-indigo-500"
             />
             <span className="text-slate-500 text-sm">:</span>
             <input
               value={port}
               onChange={(e) => setPort(e.target.value.replace(/\D/g, ""))}
-              placeholder="端口"
+              placeholder={t("wsdebug.portPlaceholder")}
               className="w-24 bg-slate-800 border border-slate-700 rounded px-3 py-2 font-mono text-xs focus:outline-none focus:border-indigo-500"
             />
           </>
         )}
         {connected ? (
           <button onClick={doDisconnect} className="px-3 py-2 rounded-md bg-red-600 hover:bg-red-500 text-xs flex items-center gap-1">
-            <Unplug className="w-3.5 h-3.5" /> 断开
+            <Unplug className="w-3.5 h-3.5" /> {t("wsdebug.disconnect")}
           </button>
         ) : (
           <button
@@ -208,7 +210,7 @@ export default function WsDebugger() {
             disabled={(proto === "ws" || proto === "sse") ? !url : !host || !port}
             className="px-3 py-2 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-xs flex items-center gap-1"
           >
-            <PlugZap className="w-3.5 h-3.5" /> 连接
+            <PlugZap className="w-3.5 h-3.5" /> {t("wsdebug.connect")}
           </button>
         )}
       </div>
@@ -217,7 +219,7 @@ export default function WsDebugger() {
         <input
           value={headersText}
           onChange={(e) => setHeadersText(e.target.value)}
-          placeholder="附加请求头（可选，每行一条，格式 Key: Value）"
+          placeholder={t("wsdebug.headersPlaceholder")}
           className="shrink-0 bg-slate-800 border border-slate-700 rounded px-3 py-1.5 font-mono text-xs focus:outline-none focus:border-indigo-500"
         />
       )}
@@ -227,7 +229,7 @@ export default function WsDebugger() {
         {logs.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-600 select-none">
             <Network className="h-8 w-8 opacity-40" />
-            <span>{proto === "udp" ? "等待 UDP 数据报…（发送一条消息即可收到回显）" : "暂无消息…"}</span>
+            <span>{proto === "udp" ? t("wsdebug.emptyUdp") : t("wsdebug.empty")}</span>
           </div>
         )}
         <div className="flex flex-col gap-2">
@@ -239,7 +241,7 @@ export default function WsDebugger() {
                 <div className={`flex max-w-[86%] items-end gap-2 ${outgoing ? "flex-row-reverse" : ""}`}>
                   <span className="shrink-0 text-[10px] text-slate-600">{entry.time}</span>
                   <div className={`rounded-xl px-3 py-2 ${system ? "bg-slate-800/80" : outgoing ? "bg-indigo-500/15" : entry.dir === "event" ? "bg-violet-500/15" : "bg-emerald-500/10"} ${colorCls(entry.dir)}`}>
-                    <span className="mr-1.5 text-[10px] opacity-70">{entry.dir === "rx" ? "接收" : entry.dir === "tx" ? "发送" : entry.dir === "event" ? "事件" : entry.dir === "open" ? "连接" : entry.dir === "close" ? "断开" : "系统"}</span>
+                    <span className="mr-1.5 text-[10px] opacity-70">{entry.dir === "rx" ? t("wsdebug.dirRx") : entry.dir === "tx" ? t("wsdebug.dirTx") : entry.dir === "event" ? t("wsdebug.dirEvent") : entry.dir === "open" ? t("wsdebug.dirOpen") : entry.dir === "close" ? t("wsdebug.dirClose") : t("wsdebug.dirSys")}</span>
                     <span className="break-all whitespace-pre-wrap">{entry.text}</span>
                   </div>
                 </div>
@@ -262,23 +264,23 @@ export default function WsDebugger() {
               }
             }}
             rows={2}
-            placeholder={sendHex ? "HEX 字节，如 01 A0 FF" : "要发送的文本…"}
+            placeholder={sendHex ? t("wsdebug.sendHexPlaceholder") : t("wsdebug.sendTextPlaceholder")}
             className="flex-1 bg-slate-950 border border-slate-700 rounded-md p-2 font-mono text-xs resize-none focus:outline-none focus:border-indigo-500"
           />
           <label className="flex items-center gap-1 text-xs cursor-pointer text-slate-300">
             <input type="checkbox" checked={sendHex} onChange={(e) => setSendHex(e.target.checked)} className="accent-indigo-500" /> HEX
           </label>
           <button onClick={doSend} disabled={!connected || !sendData} className="px-3 py-2 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-xs flex items-center gap-1">
-            <Send className="w-3.5 h-3.5" /> 发送
+            <Send className="w-3.5 h-3.5" /> {t("wsdebug.send")}
           </button>
-          <button onClick={() => setLogs([])} className="p-2 rounded hover:bg-slate-800 text-slate-400 cursor-pointer" title="清空日志">
+          <button onClick={() => setLogs([])} className="p-2 rounded hover:bg-slate-800 text-slate-400 cursor-pointer" title={t("wsdebug.clearLog")}>
             <Trash2 className="w-4 h-4" />
           </button>
         </div>
       )}
       {proto === "sse" && (
         <div className="shrink-0 flex items-center gap-2 text-xs text-slate-500">
-          <Radio className="w-3.5 h-3.5" /> SSE 为单向订阅，服务端事件以原始格式展示在上方日志区。
+          <Radio className="w-3.5 h-3.5" /> {t("wsdebug.sseNote")}
         </div>
       )}
     </div>

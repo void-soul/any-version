@@ -5,6 +5,7 @@ import { Search, RefreshCw, Plus, Trash2, PencilLine } from "lucide-react";
 import { IMihomoRule, getRules, ruleProviders, updateRuleProvider } from "./ctrl";
 import { cardCls, tagCls, btnSec, btnPrimary, inputCls, labelCls, Modal } from "./ui";
 import { mihomoApi } from "../mihomoApi";
+import { useTranslation } from "react-i18next";
 
 const RULES_FILTER_KEY = "mihomo-rules-filter";
 
@@ -36,6 +37,7 @@ function RuleOverrideEditor({
   proxies: string[];
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const [data, setData] = useState<RuleOverride>({ prepend: [], append: [], delete: [] });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -67,7 +69,7 @@ function RuleOverrideEditor({
   const add = () => {
     const needPayload = !NO_PAYLOAD_TYPES.includes(type);
     if (needPayload && !payload.trim()) {
-      setErr("请填写规则内容");
+      setErr(t("rules.fillContent"));
       return;
     }
     let rule = needPayload ? `${type},${payload.trim()},${proxy}` : `${type},${proxy}`;
@@ -103,7 +105,7 @@ function RuleOverrideEditor({
         <span className="text-[10px] text-slate-500">{hint}</span>
       </div>
       <div className="rounded-xl border border-white/10 bg-white/[0.02] divide-y divide-white/5 max-h-32 overflow-y-auto">
-        {data[k].length === 0 && <div className="px-3 py-2 text-[11px] text-slate-500">暂无</div>}
+        {data[k].length === 0 && <div className="px-3 py-2 text-[11px] text-slate-500">{t("rules.empty")}</div>}
         {data[k].map((r, i) => (
           <div key={`${r}-${i}`} className="px-3 py-1.5 flex items-center gap-2">
             <span className="flex-1 text-[11px] text-slate-200 font-mono truncate select-text">{r}</span>
@@ -118,50 +120,50 @@ function RuleOverrideEditor({
 
   return (
     <Modal
-      title="规则覆写"
+      title={t("rules.overwrite")}
       onClose={onClose}
       wide
       busy={saving}
-      busyText="保存并重载配置…"
+      busyText={t("rules.saveReloadBusy")}
       footer={
         <>
-          <button className={btnSec} disabled={saving} onClick={onClose}>取消</button>
+          <button className={btnSec} disabled={saving} onClick={onClose}>{t("rules.cancel")}</button>
           <button className={btnPrimary} disabled={saving || loading} onClick={save}>
-            {saving ? "保存中…" : "保存并重载"}
+            {saving ? t("rules.saving") : t("rules.saveReload")}
           </button>
         </>
       }
     >
       {loading ? (
-        <div className="text-xs text-slate-400 py-6 text-center">加载中…</div>
+        <div className="text-xs text-slate-400 py-6 text-center">{t("rules.loading")}</div>
       ) : (
         <div className="space-y-3">
           <div className="grid grid-cols-12 gap-2 items-end">
             <div className="col-span-2">
-              <label className={labelCls}>位置</label>
+              <label className={labelCls}>{t("rules.position")}</label>
               <select className={inputCls} value={target} onChange={(e) => setTarget(e.target.value as any)}>
-                <option value="prepend">前置</option>
-                <option value="append">后置</option>
+                <option value="prepend">{t("rules.prepend")}</option>
+                <option value="append">{t("rules.append")}</option>
               </select>
             </div>
             <div className="col-span-3">
-              <label className={labelCls}>类型</label>
+              <label className={labelCls}>{t("rules.type")}</label>
               <select className={inputCls} value={type} onChange={(e) => setType(e.target.value)}>
                 {RULE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
             <div className="col-span-3">
-              <label className={labelCls}>内容</label>
+              <label className={labelCls}>{t("rules.content")}</label>
               <input
                 className={inputCls}
                 value={payload}
                 disabled={NO_PAYLOAD_TYPES.includes(type)}
-                placeholder={NO_PAYLOAD_TYPES.includes(type) ? "无需填写" : "example.com"}
+                placeholder={NO_PAYLOAD_TYPES.includes(type) ? t("rules.noPayload") : t("rules.payloadPh")}
                 onChange={(e) => setPayload(e.target.value)}
               />
             </div>
             <div className="col-span-2">
-              <label className={labelCls}>策略</label>
+              <label className={labelCls}>{t("rules.strategy")}</label>
               <input
                 className={inputCls}
                 list="mihomo-rule-proxies"
@@ -175,7 +177,7 @@ function RuleOverrideEditor({
               </datalist>
             </div>
             <div className="col-span-1">
-              <label className={labelCls}>偏移</label>
+              <label className={labelCls}>{t("rules.offset")}</label>
               <input className={inputCls} value={offset} placeholder="0" onChange={(e) => setOffset(e.target.value)} />
             </div>
             <div className="col-span-1">
@@ -187,15 +189,15 @@ function RuleOverrideEditor({
           {NO_RESOLVE_TYPES.includes(type) && (
             <label className="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer">
               <input type="checkbox" checked={noResolve} onChange={(e) => setNoResolve(e.target.checked)} />
-              no-resolve（不解析域名）
+              {t("rules.noResolve")}
             </label>
           )}
           {err && <div className="text-[11px] text-rose-400">{err}</div>}
-          <List k="prepend" title="前置规则" hint="插入到订阅规则之前" />
-          <List k="append" title="后置规则" hint="追加到订阅规则之后" />
-          <List k="delete" title="删除规则" hint="从订阅规则中移除完全匹配项" />
+          <List k="prepend" title={t("rules.prependTitle")} hint={t("rules.prependHint")} />
+          <List k="append" title={t("rules.appendTitle")} hint={t("rules.appendHint")} />
+          <List k="delete" title={t("rules.deleteTitle")} hint={t("rules.deleteHint")} />
           <div className="text-[10px] text-slate-500 leading-relaxed">
-            偏移量：填写数字可把规则插入到指定位置（前置从头计数、后置从尾计数）。保存后自动重载内核配置。
+            {t("rules.offsetDesc")}
           </div>
         </div>
       )}
@@ -204,6 +206,7 @@ function RuleOverrideEditor({
 }
 
 export default function RulesPanel({ running }: { running: boolean; onNavigate?: (t: string) => void }) {
+  const { t } = useTranslation();
   const [rules, setRules] = useState<IMihomoRule[]>([]);
   const [providers, setProviders] = useState<Record<string, any>>({});
   const [filter, setFilter] = useState(() => localStorage.getItem(RULES_FILTER_KEY) || "");
@@ -269,7 +272,7 @@ export default function RulesPanel({ running }: { running: boolean; onNavigate?:
     }
   };
 
-  if (!running) return <div className={`${cardCls} p-6 text-center text-xs text-slate-400`}>核心未运行</div>;
+  if (!running) return <div className={`${cardCls} p-6 text-center text-xs text-slate-400`}>{t("rules.coreNotRunning")}</div>;
 
   const providerList = Object.entries(providers);
 
@@ -280,7 +283,7 @@ export default function RulesPanel({ running }: { running: boolean; onNavigate?:
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             className="w-full h-8 pl-8 pr-2.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-            placeholder="筛选规则（匹配 内容/类型/策略）"
+            placeholder={t("rules.filterPh")}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
@@ -288,10 +291,10 @@ export default function RulesPanel({ running }: { running: boolean; onNavigate?:
         <button
           className={`${btnSec} flex items-center gap-1 h-8`}
           disabled={!current}
-          title={current ? "编辑当前订阅的规则覆写" : "请先选择订阅"}
+          title={current ? t("rules.editCurrent") : t("rules.selectSubFirst")}
           onClick={() => setEditOverride(true)}
         >
-          <PencilLine className="w-3 h-3" /> 规则覆写
+          <PencilLine className="w-3 h-3" /> {t("rules.overwrite")}
         </button>
       </div>
 
@@ -306,14 +309,14 @@ export default function RulesPanel({ running }: { running: boolean; onNavigate?:
       {/* 规则集 provider（对齐 clash-party resources 规则集更新能力，就近放规则页） */}
       {providerList.length > 0 && (
         <div className={`${cardCls} p-3`}>
-          <div className="text-[11px] text-slate-400 mb-2 font-semibold">规则集 ({providerList.length})</div>
+          <div className="text-[11px] text-slate-400 mb-2 font-semibold">{t("rules.ruleSets", { count: providerList.length })}</div>
           <div className="grid grid-cols-2 gap-1.5">
             {providerList.map(([name, p]) => (
               <div key={name} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-white/[0.03] border border-white/5">
                 <div className="min-w-0 flex-1">
                   <div className="text-[11px] text-slate-200 truncate">{name}</div>
                   <div className="text-[10px] text-slate-500">
-                    {p.ruleCount} 条 · {p.behavior} · {p.vehicleType}
+                    {t("rules.providerCount", { count: p.ruleCount })} · {p.behavior} · {p.vehicleType}
                   </div>
                 </div>
                 <button className={btnSec} disabled={!!updating[name]} onClick={() => onUpdateProvider(name)}>
@@ -325,7 +328,7 @@ export default function RulesPanel({ running }: { running: boolean; onNavigate?:
         </div>
       )}
 
-      <div className="text-[11px] text-slate-400 px-1">{filtered.length} 条规则</div>
+      <div className="text-[11px] text-slate-400 px-1">{t("rules.rulesCount", { count: filtered.length })}</div>
       <div className={`${cardCls} max-h-[56vh] overflow-y-auto divide-y divide-white/5`}>
         {filtered.slice(0, 2000).map((r, i) => (
           <div key={i} className="px-3 py-2 flex items-center gap-3 hover:bg-white/[0.02]">
@@ -334,13 +337,13 @@ export default function RulesPanel({ running }: { running: boolean; onNavigate?:
               <div className="text-[12px] text-slate-200 truncate select-text">{r.payload || "-"}</div>
               <div className="text-[10px] text-slate-500">
                 {r.type}
-                {typeof r.size === "number" && r.size >= 0 ? ` · ${r.size} 条` : ""}
+                {typeof r.size === "number" && r.size >= 0 ? t("rules.ruleCount", { count: r.size }) : ""}
               </div>
             </div>
             <span className={tagCls}>{r.proxy}</span>
           </div>
         ))}
-        {filtered.length === 0 && <div className="p-6 text-center text-xs text-slate-400">暂无匹配规则</div>}
+        {filtered.length === 0 && <div className="p-6 text-center text-xs text-slate-400">{t("rules.noMatch")}</div>}
       </div>
     </div>
   );

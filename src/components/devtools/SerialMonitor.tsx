@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -55,6 +56,7 @@ const emptyRule = (): SimRule => ({
 
 /** 串口调试器：真实串口（连接/HEX 收发/逐行/定时发送）+ 模拟设备（脚本应答）。 */
 export default function SerialMonitor() {
+  const { t } = useTranslation();
   const [mode, setMode] = useState<"real" | "sim">("real");
   const [ports, setPorts] = useState<PortInfo[]>([]);
   const [portName, setPortName] = useState("");
@@ -96,7 +98,7 @@ export default function SerialMonitor() {
       setPorts(list);
       if (!portName && list.length > 0) setPortName(list[0].name);
     } catch (e) {
-      setLogs((l) => [...l.slice(-500), { dir: "sys" as const, text: `枚举失败: ${e}`, time: now() }]);
+      setLogs((l) => [...l.slice(-500), { dir: "sys" as const, text: t("serial.sysEnumFail", { err: String(e) }), time: now() }]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -125,7 +127,7 @@ export default function SerialMonitor() {
         await listen<{ port: string }>("serial://closed", () => {
           setOpen(false);
           stopCycle();
-          setLogs((l) => [...l.slice(-500), { dir: "sys" as const, text: "端口已关闭", time: now() }]);
+          setLogs((l) => [...l.slice(-500), { dir: "sys" as const, text: t("serial.sysPortClosed"), time: now() }]);
         })
       );
     })();
@@ -161,7 +163,7 @@ export default function SerialMonitor() {
       setSimActive(false);
     }
     setMode(m);
-    addLog("sys", m === "sim" ? "切换到模拟设备模式" : "切换到真实串口模式");
+    addLog("sys", m === "sim" ? t("serial.sysSwitchSim") : t("serial.sysSwitchReal"));
   };
 
   // ── 真实串口 ──
@@ -169,9 +171,9 @@ export default function SerialMonitor() {
     try {
       await invoke("serial_open", { portName, baudRate: baud, dataBits, parity, stopBits, flowControl: flow });
       setOpen(true);
-      addLog("sys", `${portName} 已打开 @${baud}`);
+      addLog("sys", t("serial.sysOpened", { port: portName, baud }));
     } catch (e) {
-      addLog("sys", `打开失败: ${e}`);
+      addLog("sys", t("serial.sysOpenFail", { err: String(e) }));
     }
   };
   const doClose = async () => {
@@ -182,7 +184,7 @@ export default function SerialMonitor() {
       /* 忽略 */
     }
     setOpen(false);
-    addLog("sys", `${portName} 已关闭`);
+    addLog("sys", t("serial.sysClosed", { port: portName }));
   };
 
   // ── 模拟设备 ──
@@ -197,15 +199,15 @@ export default function SerialMonitor() {
         await invoke("serial_sim_stop");
       } catch { /* 忽略 */ }
       setSimActive(false);
-      addLog("sys", "模拟设备已停止");
+      addLog("sys", t("serial.sysSimStopped"));
       return;
     }
     try {
       const res = await invoke<{ rule_count: number }>("serial_sim_start", { rules: rulesRef.current });
       setSimActive(true);
-      addLog("sys", `模拟设备已启动（${res.rule_count} 条应答规则）`);
+      addLog("sys", t("serial.sysSimStarted", { count: res.rule_count }));
     } catch (e) {
-      addLog("sys", `启动失败: ${e}`);
+      addLog("sys", t("serial.sysStartFail", { err: String(e) }));
     }
   };
 
@@ -220,14 +222,14 @@ export default function SerialMonitor() {
           appendNewline: appendNl,
           rules: rulesRef.current,
         });
-        if (hit < 0) addLog("sys", "未命中任何规则（无应答）");
+        if (hit < 0) addLog("sys", t("serial.sysNoHit"));
         return true;
       }
       await invoke("serial_write", { portName, data: line, hexMode: sendHex, appendNewline: appendNl });
       addLog("tx", line);
       return true;
     } catch (e) {
-      addLog("sys", `发送失败: ${e}`);
+      addLog("sys", t("serial.sysSendFail", { err: String(e) }));
       return false;
     }
   };
@@ -284,9 +286,9 @@ export default function SerialMonitor() {
       const content = await invoke<string>("read_text_file", { path: f });
       setSendText(content);
       setLineIdx(0);
-      addLog("sys", `已导入 ${f.split(/[\\/]/).pop()}（${content.split("\n").filter((l) => l.trim()).length} 行）`);
+      addLog("sys", t("serial.sysImported", { file: f.split(/[\\/]/).pop() ?? "", lines: content.split("\n").filter((l) => l.trim()).length }));
     } catch (e) {
-      addLog("sys", `导入失败: ${e}`);
+      addLog("sys", t("serial.sysImportFail", { err: String(e) }));
     }
   };
 
@@ -299,20 +301,20 @@ export default function SerialMonitor() {
     <div className="h-full flex flex-col overflow-hidden p-3 gap-2.5 text-[12px]">
       <div className="flex items-center gap-2 shrink-0">
         <Usb className="w-4 h-4 text-teal-400" />
-        <h1 className="text-base font-semibold">串口调试器</h1>
+        <h1 className="text-base font-semibold">{t("serial.title")}</h1>
         {/* 模式切换 */}
         <div className="flex rounded-lg overflow-hidden border border-slate-700 text-[11px]">
           <button
             onClick={() => void switchMode("real")}
             className={`px-3 py-1 flex items-center gap-1 cursor-pointer ${mode === "real" ? "bg-teal-600 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"}`}
           >
-            <Cable className="w-3.5 h-3.5" /> 真实串口
+            <Cable className="w-3.5 h-3.5" /> {t("serial.modeReal")}
           </button>
           <button
             onClick={() => void switchMode("sim")}
             className={`px-3 py-1 flex items-center gap-1 cursor-pointer ${mode === "sim" ? "bg-violet-600 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"}`}
           >
-            <Bot className="w-3.5 h-3.5" /> 模拟设备
+            <Bot className="w-3.5 h-3.5" /> {t("serial.modeSim")}
           </button>
         </div>
         <span
@@ -324,15 +326,15 @@ export default function SerialMonitor() {
               : "bg-slate-800 text-slate-400"
           }`}
         >
-          {!active ? "未连接" : mode === "sim" ? "设备运行中" : "已连接"}
+          {!active ? t("serial.statusIdle") : mode === "sim" ? t("serial.statusSim") : t("serial.statusReal")}
         </span>
         <div className="ml-auto flex items-center gap-3 text-[11px] text-slate-500">
           <label className="flex items-center gap-1 cursor-pointer hover:text-slate-300">
             <input type="checkbox" checked={hexView} onChange={(e) => setHexView(e.target.checked)} className="accent-teal-500" />
-            HEX 视图
+            {t("serial.hexView")}
           </label>
           <button onClick={() => setLogs([])} className="flex items-center gap-1 hover:text-slate-300 cursor-pointer">
-            <Trash2 className="w-3.5 h-3.5" /> 清空日志
+            <Trash2 className="w-3.5 h-3.5" /> {t("serial.clearLog")}
           </button>
         </div>
       </div>
@@ -341,18 +343,18 @@ export default function SerialMonitor() {
       {mode === "real" ? (
         <div className="shrink-0 flex flex-wrap items-center gap-2 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
           <select value={portName} onChange={(e) => setPortName(e.target.value)} className={`${selectCls} min-w-44`}>
-            {ports.length === 0 && <option value="">（无可用串口）</option>}
+            {ports.length === 0 && <option value="">{t("serial.noPorts")}</option>}
             {ports.map((p) => (
               <option key={p.name} value={p.name}>
                 {p.name} · {p.description}
               </option>
             ))}
           </select>
-          <button onClick={refreshPorts} title="刷新端口列表" className="p-1.5 rounded hover:bg-slate-700 text-slate-400 cursor-pointer">
+          <button onClick={refreshPorts} title={t("serial.refreshPorts")} className="p-1.5 rounded hover:bg-slate-700 text-slate-400 cursor-pointer">
             <RefreshCw className="w-4 h-4" />
           </button>
           <label className="flex items-center gap-1 text-xs text-slate-400">
-            波特率
+            {t("serial.baud")}
             <select value={baud} onChange={(e) => setBaud(Number(e.target.value))} className={selectCls}>
               {[9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600].map((b) => (
                 <option key={b} value={b}>{b}</option>
@@ -360,7 +362,7 @@ export default function SerialMonitor() {
             </select>
           </label>
           <label className="flex items-center gap-1 text-xs text-slate-400">
-            数据位
+            {t("serial.dataBits")}
             <select value={dataBits} onChange={(e) => setDataBits(Number(e.target.value))} className={selectCls}>
               {[8, 7, 6, 5].map((v) => (
                 <option key={v} value={v}>{v}</option>
@@ -368,7 +370,7 @@ export default function SerialMonitor() {
             </select>
           </label>
           <label className="flex items-center gap-1 text-xs text-slate-400">
-            校验
+            {t("serial.parity")}
             <select value={parity} onChange={(e) => setParity(e.target.value as typeof parity)} className={selectCls}>
               <option value="none">None</option>
               <option value="even">Even</option>
@@ -376,7 +378,7 @@ export default function SerialMonitor() {
             </select>
           </label>
           <label className="flex items-center gap-1 text-xs text-slate-400">
-            停止位
+            {t("serial.stopBits")}
             <select value={stopBits} onChange={(e) => setStopBits(Number(e.target.value))} className={selectCls}>
               {[1, 2].map((v) => (
                 <option key={v} value={v}>{v}</option>
@@ -384,20 +386,20 @@ export default function SerialMonitor() {
             </select>
           </label>
           <label className="flex items-center gap-1 text-xs text-slate-400">
-            流控
+            {t("serial.flow")}
             <select value={flow} onChange={(e) => setFlow(e.target.value as typeof flow)} className={selectCls}>
-              <option value="none">无</option>
-              <option value="hardware">硬件 RTS/CTS</option>
-              <option value="software">软件 XON/XOFF</option>
+              <option value="none">{t("serial.flowNone")}</option>
+              <option value="hardware">{t("serial.flowHw")}</option>
+              <option value="software">{t("serial.flowSw")}</option>
             </select>
           </label>
           {open ? (
             <button onClick={doClose} className="ml-auto px-3 py-1.5 rounded-md bg-red-600 hover:bg-red-500 text-sm flex items-center gap-1 cursor-pointer">
-              <Square className="w-3.5 h-3.5" /> 断开
+              <Square className="w-3.5 h-3.5" /> {t("serial.disconnect")}
             </button>
           ) : (
             <button onClick={doOpen} disabled={!portName} className="ml-auto px-3 py-1.5 rounded-md bg-teal-600 hover:bg-teal-500 disabled:opacity-40 text-sm flex items-center gap-1 cursor-pointer">
-              <Play className="w-3.5 h-3.5" /> 连接
+              <Play className="w-3.5 h-3.5" /> {t("serial.connect")}
             </button>
           )}
         </div>
@@ -406,22 +408,22 @@ export default function SerialMonitor() {
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <Bot className="w-4 h-4 text-violet-400" />
             <span>
-              应答脚本：数据命中<b className="text-slate-200">第一条</b>匹配的规则后按延迟自动应答；不占用真实串口，用于调试上位机协议。
+              <span dangerouslySetInnerHTML={{ __html: t("serial.simDesc") }} />
             </span>
             <div className="ml-auto flex items-center gap-2">
               <button
                 onClick={() => setRules((rs) => [...rs, emptyRule()])}
                 className="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 flex items-center gap-1 cursor-pointer"
               >
-                <Plus className="w-3.5 h-3.5" /> 添加规则
+                <Plus className="w-3.5 h-3.5" /> {t("serial.addRule")}
               </button>
               {simActive ? (
                 <button onClick={() => void toggleSim()} className="px-3 py-1.5 rounded-md bg-red-600 hover:bg-red-500 flex items-center gap-1 cursor-pointer">
-                  <Square className="w-3.5 h-3.5" /> 停止设备
+                  <Square className="w-3.5 h-3.5" /> {t("serial.stopDevice")}
                 </button>
               ) : (
                 <button onClick={() => void toggleSim()} className="px-3 py-1.5 rounded-md bg-violet-600 hover:bg-violet-500 flex items-center gap-1 cursor-pointer">
-                  <Play className="w-3.5 h-3.5" /> 启动设备
+                  <Play className="w-3.5 h-3.5" /> {t("serial.startDevice")}
                 </button>
               )}
             </div>
@@ -429,10 +431,10 @@ export default function SerialMonitor() {
           {/* 表头 */}
           {rules.length > 0 && (
             <div className="grid grid-cols-[7rem_1fr_9rem_5rem_2rem] gap-2 text-[11px] text-slate-500 px-0.5">
-              <span>匹配方式</span>
-              <span>收到内容（匹配）</span>
-              <span>应答内容</span>
-              <span>延迟 ms</span>
+              <span>{t("serial.colMatch")}</span>
+              <span>{t("serial.colRecv")}</span>
+              <span>{t("serial.colResp")}</span>
+              <span>{t("serial.colDelay")}</span>
               <span />
             </div>
           )}
@@ -444,21 +446,21 @@ export default function SerialMonitor() {
                   onChange={(e) => updateRule(i, { match_type: e.target.value as SimRule["match_type"] })}
                   className={selectCls}
                 >
-                  <option value="contains">包含</option>
-                  <option value="prefix">前缀</option>
-                  <option value="exact">完全相等</option>
-                  <option value="regex">正则</option>
+                  <option value="contains">{t("serial.optContains")}</option>
+                  <option value="prefix">{t("serial.optPrefix")}</option>
+                  <option value="exact">{t("serial.optExact")}</option>
+                  <option value="regex">{t("serial.optRegex")}</option>
                 </select>
                 <div className="space-y-1">
                   <textarea
                     value={r.pattern}
                     onChange={(e) => updateRule(i, { pattern: e.target.value })}
                     rows={1}
-                    placeholder={r.pattern_hex ? "如 01 A0 FF" : "如 AT+CSQ"}
+                    placeholder={r.pattern_hex ? t("serial.hexPh") : t("serial.textPh")}
                     className={`${inputCls} w-full resize-y min-h-[2rem]`}
                   />
                   <label className="flex items-center gap-1 text-[11px] text-slate-500 cursor-pointer">
-                    <input type="checkbox" checked={r.pattern_hex} onChange={(e) => updateRule(i, { pattern_hex: e.target.checked })} className="accent-violet-500" /> HEX 匹配
+                    <input type="checkbox" checked={r.pattern_hex} onChange={(e) => updateRule(i, { pattern_hex: e.target.checked })} className="accent-violet-500" /> {t("serial.hexMatch")}
                   </label>
                 </div>
                 <div className="space-y-1">
@@ -466,14 +468,14 @@ export default function SerialMonitor() {
                     value={r.response}
                     onChange={(e) => updateRule(i, { response: e.target.value })}
                     rows={1}
-                    placeholder={r.response_hex ? "如 01 B0 00" : "如 OK"}
+                    placeholder={r.response_hex ? t("serial.respHexPh") : t("serial.respTextPh")}
                     className={`${inputCls} w-full resize-y min-h-[2rem]`}
                   />
                   <div className="flex items-center gap-2 text-[11px] text-slate-500">
                     <label className="flex items-center gap-1 cursor-pointer">
                       <input type="checkbox" checked={r.response_hex} onChange={(e) => updateRule(i, { response_hex: e.target.checked })} className="accent-violet-500" /> HEX
                     </label>
-                    <label className="flex items-center gap-1 cursor-pointer" title="应答末尾追加换行符 \n">
+                    <label className="flex items-center gap-1 cursor-pointer" title={t("serial.appendNlTip")}>
                       <input type="checkbox" checked={r.append_newline} onChange={(e) => updateRule(i, { append_newline: e.target.checked })} className="accent-violet-500" /> \n
                     </label>
                   </div>
@@ -489,7 +491,7 @@ export default function SerialMonitor() {
                 <button
                   onClick={() => removeRule(i)}
                   disabled={rules.length <= 1}
-                  title="删除此规则"
+                  title={t("serial.delRule")}
                   className="p-1.5 rounded text-slate-500 hover:text-red-400 hover:bg-slate-800 disabled:opacity-30 cursor-pointer"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -505,7 +507,7 @@ export default function SerialMonitor() {
         {logs.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center text-slate-600 gap-2 select-none">
             {mode === "sim" ? <Bot className="w-8 h-8 opacity-40" /> : <Usb className="w-8 h-8 opacity-40" />}
-            <span>{mode === "sim" ? "启动设备并发送数据，收到的内容与设备应答将显示在这里" : "连接串口后，收发数据将显示在这里"}</span>
+            <span>{mode === "sim" ? t("serial.logHintSim") : t("serial.logHintReal")}</span>
           </div>
         )}
         <div className="flex flex-col gap-2">
@@ -517,7 +519,7 @@ export default function SerialMonitor() {
                 <div className={`flex max-w-[86%] items-end gap-2 ${outgoing ? "flex-row-reverse" : ""}`}>
                   <span className="shrink-0 text-[10px] text-slate-600">{entry.time}</span>
                   <div className={`rounded-xl px-3 py-2 ${system ? "bg-slate-800/80 text-yellow-200" : outgoing ? "bg-cyan-500/15 text-cyan-100" : entry.dir === "dev" ? "bg-violet-500/15 text-violet-100" : "bg-emerald-500/10 text-slate-200"}`}>
-                    <span className="mr-1.5 text-[10px] opacity-70">{entry.dir === "rx" ? "设备" : entry.dir === "tx" ? "发送" : entry.dir === "dev" ? "应答" : "系统"}</span>
+                    <span className="mr-1.5 text-[10px] opacity-70">{entry.dir === "rx" ? t("serial.dirDevice") : entry.dir === "tx" ? t("serial.dirSend") : entry.dir === "dev" ? t("serial.dirResp") : t("serial.dirSys")}</span>
                     <span className="break-all whitespace-pre-wrap">{hexView && entry.hex !== undefined ? entry.hex : entry.text}</span>
                   </div>
                 </div>
@@ -534,10 +536,10 @@ export default function SerialMonitor() {
           <div className="flex items-center justify-between text-[11px] text-slate-500">
             <span className="flex items-center gap-1">
               <ListOrdered className="w-3.5 h-3.5" />
-              共 {lines.length} 行 · 游标在第 {Math.min(lineIdx + 1, lines.length)} 行：
+              {t("serial.cursorInfo", { lines: lines.length, idx: Math.min(lineIdx + 1, lines.length) })}
               <code className="px-1 rounded bg-slate-800 text-teal-300 truncate max-w-64 inline-block">{lines[Math.min(lineIdx, lines.length - 1)]}</code>
             </span>
-            <button onClick={() => setLineIdx(0)} className="hover:text-slate-300 cursor-pointer">重置游标</button>
+            <button onClick={() => setLineIdx(0)} className="hover:text-slate-300 cursor-pointer">{t("serial.resetCursor")}</button>
           </div>
         )}
         <textarea
@@ -551,8 +553,8 @@ export default function SerialMonitor() {
           }}
           placeholder={
             sendHex
-              ? "HEX 数据，如 01 A0 FF（多行时可用下方逐行发送）"
-              : "要发送的内容…支持多行：Enter 发送整段；Ctrl+Enter 换行；多行内容可逐行/定时发送"
+              ? t("serial.hexPlaceholder")
+              : t("serial.textPlaceholder")
           }
           rows={3}
           className="w-full bg-slate-950 border border-slate-700 rounded-md p-2 font-mono text-xs resize-none focus:outline-none focus:border-teal-500"
@@ -561,19 +563,19 @@ export default function SerialMonitor() {
           <label className="flex items-center gap-1 cursor-pointer">
             <input type="checkbox" checked={sendHex} onChange={(e) => setSendHex(e.target.checked)} className="accent-teal-500" /> HEX
           </label>
-          <label className="flex items-center gap-1 cursor-pointer" title="发送时在末尾追加换行符 \n">
-            <input type="checkbox" checked={appendNl} onChange={(e) => setAppendNl(e.target.checked)} className="accent-teal-500" /> 追加 \n
+          <label className="flex items-center gap-1 cursor-pointer" title={t("serial.appendNlTip")}>
+            <input type="checkbox" checked={appendNl} onChange={(e) => setAppendNl(e.target.checked)} className="accent-teal-500" /> {t("serial.appendNlLabel")}
           </label>
 
           <button onClick={() => void doSend()} disabled={!active || !sendText} className="px-3 py-1.5 rounded-md bg-teal-600 hover:bg-teal-500 disabled:opacity-40 flex items-center gap-1 cursor-pointer">
-            <Send className="w-3.5 h-3.5" /> 发送
+            <Send className="w-3.5 h-3.5" /> {t("serial.send")}
           </button>
 
           {/* 多行工具 */}
           <div className="flex items-center gap-1 ml-auto">
             <button
               onClick={() => void importLinesFile()}
-              title="从文本文件导入多行数据"
+              title={t("serial.importTitle")}
               className="p-1.5 rounded hover:bg-slate-700 text-slate-400 cursor-pointer"
             >
               <FileUp className="w-4 h-4" />
@@ -581,12 +583,12 @@ export default function SerialMonitor() {
             <button
               onClick={() => void sendAllLines()}
               disabled={!active || lines.length < 2}
-              title="从当前游标开始逐行发送剩余所有行"
+              title={t("serial.sendAllTitle")}
               className="px-2 py-1.5 rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-40 flex items-center gap-1 cursor-pointer"
             >
-              <ListOrdered className="w-3.5 h-3.5" /> 逐行发完
+              <ListOrdered className="w-3.5 h-3.5" /> {t("serial.sendAll")}
             </button>
-            <label className="flex items-center gap-1 text-slate-400" title="定时循环发送的间隔">
+            <label className="flex items-center gap-1 text-slate-400" title={t("serial.cycleTip")}>
               <Timer className="w-3.5 h-3.5" />
               <input
                 type="number"
@@ -602,13 +604,13 @@ export default function SerialMonitor() {
             <button
               onClick={toggleCycle}
               disabled={!active || lines.length < 1}
-              title="按间隔循环逐行发送（从当前游标开始）"
+              title={t("serial.cycleTitle")}
               className={`px-2 py-1.5 rounded disabled:opacity-40 flex items-center gap-1 cursor-pointer ${
                 cycling ? "bg-red-600 hover:bg-red-500" : "bg-slate-700 hover:bg-slate-600"
               }`}
             >
               {cycling ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-              {cycling ? "停止循环" : "定时循环"}
+              {cycling ? t("serial.cycleStop") : t("serial.cycleStart")}
             </button>
           </div>
         </div>

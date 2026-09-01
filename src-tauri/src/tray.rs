@@ -84,19 +84,54 @@ const TRAY_ID: &str = "main-tray";
 /// 推入后端，托盘悬停提示与托盘问候菜单都从这里取，避免文案散落多处。
 static TRAY_QUOTE: OnceLock<Mutex<String>> = OnceLock::new();
 
-/// 前端尚未推入时的励志兜底句。
-const TRAY_QUOTE_FALLBACK: &str = "心之所向，素履以往。加油，我陪你一起把事做成。";
+/// 前端尚未推入时的励志兜底句（按当前界面语言）。
+const TRAY_QUOTE_FALLBACK_ZH: &str = "心之所向，素履以往。加油，我陪你一起把事做成。";
+const TRAY_QUOTE_FALLBACK_EN: &str = "Where the heart goes, plain shoes will follow. Keep going — I've got your back.";
 
-/// 前端应用启动时调用：把统一函数库里的一句励志名言推给托盘（悬停提示 + 问候菜单共用）。
+/// 前端启动时推入的生效语言（解决「跟随系统」时 config.language 为空的场景）。
+static TRAY_UI_LANG: OnceLock<Mutex<String>> = OnceLock::new();
+
+/// 当前界面是否为英文：优先取后端持久化的 config.language（用户显式切换过
+/// 即生效，含重启保留）；为空（跟随系统）时回退到前端启动时推入的生效语言。
+fn is_ui_en() -> bool {
+    let lang = {
+        let cfg_lang = crate::commands::config::load_config().language;
+        if !cfg_lang.is_empty() {
+            cfg_lang
+        } else if let Some(slot) = TRAY_UI_LANG.get() {
+            slot.lock().map(|g| g.clone()).unwrap_or_default()
+        } else {
+            String::new()
+        }
+    };
+    lang.starts_with("en")
+}
+
+/// 界面语言为英文时取英文字符串，否则取中文（托盘原生菜单文案统一入口）。
+fn tr(zh: &str, en: &str) -> String {
+    if is_ui_en() { en.to_string() } else { zh.to_string() }
+}
+
+/// 前端应用启动时调用：把统一函数库里的一句励志名言推给托盘（悬停提示 + 问候菜单共用），
+/// 同时上报当前生效的界面语言（"zh" / "en"，解决跟随系统时 config.language 为空的场景），
+/// 让托盘原生菜单文案与前端语言保持一致。
 #[tauri::command]
-pub fn set_tray_quote(app: AppHandle, text: String) -> Result<(), String> {
+pub fn set_tray_quote(app: AppHandle, text: String, language: Option<String>) -> Result<(), String> {
     let slot = TRAY_QUOTE.get_or_init(|| Mutex::new(String::new()));
     if let Ok(mut g) = slot.lock() {
         *g = text.clone();
     }
+    if let Some(lang) = language {
+        let lang_slot = TRAY_UI_LANG.get_or_init(|| Mutex::new(String::new()));
+        if let Ok(mut g) = lang_slot.lock() {
+            *g = lang;
+        }
+    }
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let _ = tray.set_tooltip(Some(text));
     }
+    // 语言变化时立即按新语言重建菜单（文案随语言切换）
+    let _ = rebuild_tray_menu_global();
     Ok(())
 }
 
@@ -109,7 +144,11 @@ fn current_tray_quote() -> String {
             }
         }
     }
-    TRAY_QUOTE_FALLBACK.to_string()
+    if is_ui_en() {
+        TRAY_QUOTE_FALLBACK_EN.to_string()
+    } else {
+        TRAY_QUOTE_FALLBACK_ZH.to_string()
+    }
 }
 
 const ID_SHOW: &str = "show";
@@ -524,7 +563,7 @@ fn vex_greeting() -> String {
 }
 
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let show_item = MenuItemBuilder::with_id(ID_SHOW, "显示主窗口").build(app)?;
+    let show_item = MenuItemBuilder::with_id(ID_SHOW, tr("显示主窗口", "Show Main Window")).build(app)?;
     let mut builder = MenuBuilder::new(app).item(&show_item).separator();
     // vex 的问候：置灰失活项，展示角色存在感
     let vex_item = MenuItemBuilder::with_id(ID_VEX_GREETING, vex_greeting())
@@ -562,7 +601,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         let title = format!(
             "{} ({})",
             def.display_name,
-            active.clone().unwrap_or_else(|| "未激活".to_string())
+            active.clone().unwrap_or_else(|| tr("未激活", "not activated"))
         );
         let mut submenu = SubmenuBuilder::new(app, title);
 
@@ -582,7 +621,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     }
 
     if !any_managed {
-        let empty = MenuItemBuilder::with_id(ID_EMPTY, "(没有完全托管的项目)")
+        let empty = MenuItemBuilder::with_id(ID_EMPTY, tr("(没有完全托管的项目)", "(No fully managed projects)"))
             .enabled(false)
             .build(app)?;
         builder = builder.item(&empty);
@@ -639,25 +678,25 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         let (item_id, label, enabled) = if starting {
             (
                 format!("{}{}", ID_SERVICE_START_PREFIX, def.id),
-                format!("⋯ {} · 启动中", def.display_name),
+                format!("{} {} · {}", "⋯", def.display_name, tr("启动中", "starting")),
                 false,
             )
         } else if externally_running {
             (
                 format!("{}{}", ID_SERVICE_START_PREFIX, def.id),
-                format!("● {} · 外部运行", def.display_name),
+                format!("{} {} · {}", "●", def.display_name, tr("外部运行", "external")),
                 false,
             )
         } else if status.running {
             (
                 format!("{}{}", ID_SERVICE_STOP_PREFIX, def.id),
-                format!("■ {} · 停止{}", def.display_name, port_text),
+                format!("{} {} · {}{}", "■", def.display_name, tr("停止", "stop"), port_text),
                 true,
             )
         } else {
             (
                 format!("{}{}", ID_SERVICE_START_PREFIX, def.id),
-                format!("▶ {} · 启动", def.display_name),
+                format!("{} {} · {}", "▶", def.display_name, tr("启动", "start")),
                 true,
             )
         };
@@ -680,7 +719,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         }
     }
 
-    let quit_item = MenuItemBuilder::with_id(ID_QUIT, "退出 Kira").build(app)?;
+    let quit_item = MenuItemBuilder::with_id(ID_QUIT, tr("退出 Kira", "Exit Kira")).build(app)?;
     builder = builder.separator().item(&quit_item);
 
     builder.build()
@@ -701,9 +740,9 @@ fn build_mihomo_item(app: &AppHandle) -> tauri::Result<Option<tauri::menu::MenuI
 
     // 状态并入标题，一步切换启停，不套二级菜单
     let label = if running {
-        "■ Mihomo · 停止".to_string()
+        format!("■ Mihomo · {}", tr("停止", "stop"))
     } else {
-        "▶ Mihomo · 启动".to_string()
+        format!("▶ Mihomo · {}", tr("启动", "start"))
     };
     let item = MenuItemBuilder::with_id(ID_MIHOMO_TOGGLE, label).build(app)?;
     Ok(Some(item))

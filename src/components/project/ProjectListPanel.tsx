@@ -1,13 +1,14 @@
 
+import { useTranslation } from "react-i18next";
 import { Search, RefreshCw } from "lucide-react";
 import type { ProjectStatus, ProjectCategory } from "./types";
 import { categoryLabel } from "./types";
 
-const FILTERS: Array<{ key: ProjectCategory | "all"; label: string }> = [
-  { key: "all", label: "全部" },
-  { key: "language", label: "语言" },
-  { key: "tool", label: "工具" },
-  { key: "service", label: "服务" },
+const FILTERS: Array<{ key: ProjectCategory | "all"; labelKey: string }> = [
+  { key: "all", labelKey: "projlist.filterAll" },
+  { key: "language", labelKey: "projlist.filterLanguage" },
+  { key: "tool", labelKey: "projlist.filterTool" },
+  { key: "service", labelKey: "projlist.filterService" },
 ];
 
 interface Props {
@@ -26,6 +27,7 @@ export default function ProjectListPanel({
   projects, selectedId, onSelect, search, onSearchChange,
   filter, onFilterChange, loading, onRefresh,
 }: Props) {
+  const { t } = useTranslation();
   const filtered = projects.filter((p) => {
     if (filter !== "all" && p.category !== filter) return false;
     if (search && !p.display_name.toLowerCase().includes(search.toLowerCase())) return false;
@@ -40,7 +42,7 @@ export default function ProjectListPanel({
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500" />
             <input
               type="text"
-              placeholder="搜索..."
+              placeholder={t("projlist.searchPh")}
               value={search}
               onChange={(e) => onSearchChange(e.target.value)}
               className="w-full glass-input pl-7 pr-2 py-1 text-[11px]"
@@ -49,7 +51,7 @@ export default function ProjectListPanel({
           {onRefresh && (
             <button onClick={onRefresh} disabled={loading}
               className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-slate-200 cursor-pointer flex-shrink-0"
-              title="刷新">
+              title={t("common.refresh")}>
               <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
             </button>
           )}
@@ -60,7 +62,7 @@ export default function ProjectListPanel({
               className={`flex-1 py-0.5 rounded text-[11px] font-semibold transition-all cursor-pointer ${
                 filter === f.key ? "bg-[var(--module-accent)] text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"
               }`}>
-              {f.label}
+              {t(f.labelKey)}
             </button>
           ))}
         </div>
@@ -68,9 +70,9 @@ export default function ProjectListPanel({
 
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <div className="p-6 text-center text-slate-500 text-[11px]">加载中...</div>
+          <div className="p-6 text-center text-slate-500 text-[11px]">{t("projlist.loading")}</div>
         ) : filtered.length === 0 ? (
-          <div className="p-6 text-center text-slate-500 text-[11px]">未找到匹配项目</div>
+          <div className="p-6 text-center text-slate-500 text-[11px]">{t("projlist.noMatch")}</div>
         ) : (
           filtered.map((p) => {
             const isSelected = selectedId === p.id;
@@ -118,9 +120,9 @@ export default function ProjectListPanel({
                           ? "bg-sky-500/10 text-sky-300 border-sky-500/20"
                           : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                       }`}
-                      title={p.service_status.external ? "检测到外部进程正在运行" : "服务正在运行"}
+                      title={p.service_status.external ? t("projlist.externalRunning") : t("projlist.serviceRunning")}
                     >
-                      {p.service_status.external ? "外部运行" : "运行中"}
+                      {p.service_status.external ? t("projlist.externalRun") : t("projlist.running")}
                     </span>
                   )}
                   {p.installed ? (
@@ -129,10 +131,10 @@ export default function ProjectListPanel({
                         v{p.active_version}
                       </span>
                     ) : (
-                      <span className="px-1.5 py-px rounded text-[9px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">已安装</span>
+                      <span className="px-1.5 py-px rounded text-[9px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">{t("projlist.installed")}</span>
                     )
                   ) : (
-                    <span className="px-1.5 py-px rounded text-[9px] font-semibold bg-red-500/10 text-red-400 border border-red-500/20">未安装</span>
+                    <span className="px-1.5 py-px rounded text-[9px] font-semibold bg-red-500/10 text-red-400 border border-red-500/20">{t("projlist.notInstalled")}</span>
                   )}
                 </div>
               </div>

@@ -3,6 +3,7 @@
 //   WebUI 面板选择/更新/打开；IPv6；允许局域网+允许/禁止网段；用户验证；
 //   跳过验证前缀；RTT 延迟；TCP 并发；记住节点/FakeIP；日志等级；进程查找；核心升级）
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Shuffle, RefreshCw, Eye, EyeOff, Trash2, ExternalLink, CloudDownload } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
 import { cardCls, SettingItem, Toggle, btnSec, btnPrimary, inputCls } from "./ui";
@@ -36,6 +37,7 @@ const randomSecret = () => {
 };
 
 export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => void }) {
+  const { t } = useTranslation();
   const [app, setApp] = useState<any>({});
   const [c, setC] = useState<any>({});
   const [msg, setMsg] = useState("");
@@ -86,10 +88,10 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
     try {
       await mihomoApi.patchControledConfig(patch);
       await mihomoApi.restart();
-      setMsg("已应用并重启核心");
+      setMsg(t("mihomo.coreAppliedRestart"));
       onCoreChanged?.();
     } catch (e: any) {
-      setMsg(`应用失败: ${e}`);
+      setMsg(t("mihomo.coreApplyFailed", { err: String(e) }));
     }
     load();
   };
@@ -100,13 +102,13 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
       await mihomoApi.patchAppConfig(patch);
       if (needRestart) {
         await mihomoApi.restart();
-        setMsg("已应用并重启核心");
+        setMsg(t("mihomo.coreAppliedRestart"));
         onCoreChanged?.();
       } else {
-        setMsg("已保存");
+        setMsg(t("mihomo.coreSaved"));
       }
     } catch (e: any) {
-      setMsg(`保存失败: ${e}`);
+      setMsg(t("mihomo.coreSaveFailed", { err: String(e) }));
     }
     load();
   };
@@ -134,14 +136,14 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
       }
       window.open(url, "_blank", "noopener,noreferrer");
     } catch {
-      setMsg("外部控制器地址无效");
+      setMsg(t("mihomo.coreEcInvalid"));
     }
   };
 
   const upgradeUi = async () => {
     setUpgradingUi(true);
-    try { await mihomoApi.upgradeUi(); setMsg("WebUI 已更新"); }
-    catch (e: any) { setMsg(`WebUI 更新失败: ${e}`); }
+    try { await mihomoApi.upgradeUi(); setMsg(t("mihomo.coreUiUpdated")); }
+    catch (e: any) { setMsg(t("mihomo.coreUiUpdateFailed", { err: String(e) })); }
     finally { setUpgradingUi(false); }
   };
 
@@ -157,7 +159,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
       <SettingItem title={title}>
         <div className="flex items-center gap-2">
           {input !== current && enabled && (
-            <button className={btnPrimary} onClick={() => onChangeNeedRestart({ [cKey]: input })}>确认</button>
+            <button className={btnPrimary} onClick={() => onChangeNeedRestart({ [cKey]: input })}>{t("mihomo.coreConfirm")}</button>
           )}
           <input
             className={`${inputCls} !w-24`} type="number" min={0} max={65535}
@@ -168,7 +170,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
               if (!isNaN(p) && p >= 0 && p <= 65535) setPortInputs((s) => ({ ...s, [key]: p }));
             }}
           />
-          <button className={btnSec} title="随机端口" onClick={() => setPortInputs((s) => ({ ...s, [key]: randomPort() }))}>
+          <button className={btnSec} title={t("mihomo.coreRandomPort")} onClick={() => setPortInputs((s) => ({ ...s, [key]: randomPort() }))}>
             <Shuffle className="w-3.5 h-3.5" />
           </button>
           <Toggle v={enabled} onChange={async (v) => {
@@ -187,7 +189,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
   ) => (
     <>
       {JSON.stringify(list) !== JSON.stringify(saved) && (
-        <div className="flex justify-end mb-1"><button className={btnPrimary} onClick={onConfirm}>确认</button></div>
+        <div className="flex justify-end mb-1"><button className={btnPrimary} onClick={onConfirm}>{t("mihomo.coreConfirm")}</button></div>
       )}
       {[...list, ""].map((item, index) => (
         <div key={index} className="flex mb-1.5 gap-2">
@@ -221,13 +223,13 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
       {/* 内核版本切换：三个内核随程序预置于 bin/mihomo，无需联网安装 */}
       <div className={`${cardCls} p-4`}>
         <div className="flex items-center justify-between mb-1">
-          <h3 className="text-sm font-bold text-white">内核版本</h3>
-          <span className="text-[10px] text-slate-500">内核已随程序预置，直接切换即可</span>
+          <h3 className="text-sm font-bold text-white">{t("mihomo.coreVersion")}</h3>
+          <span className="text-[10px] text-slate-500">{t("mihomo.corePreinstalled")}</span>
         </div>
         {[
-          ["mihomo", "稳定版", "MetaCubeX/mihomo Release"],
-          ["mihomo-alpha", "预览版", "MetaCubeX/mihomo Alpha"],
-          ["mihomo-smart", "Smart 版", "vernesong/mihomo 智能内核"],
+          ["mihomo", t("mihomo.coreStable"), t("mihomo.coreStableDesc")],
+          ["mihomo-alpha", t("mihomo.corePreview"), t("mihomo.corePreviewDesc")],
+          ["mihomo-smart", t("mihomo.coreSmart"), t("mihomo.coreSmartDesc")],
         ].map(([id, name, desc], idx, arr) => {
           const info = variants.find((v) => v.id === id);
           const active = currentVariant === id;
@@ -238,22 +240,22 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
               title={
                 <span className="inline-flex items-center gap-2">
                   {name}
-                  {active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)]">使用中</span>}
+                  {active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)]">{t("mihomo.coreInUse")}</span>}
                   <span className="text-[10px] text-slate-500">{info?.version || desc}</span>
                 </span>
               }
             >
               <div className="flex items-center gap-2">
                 <span className={`text-[10px] ${info?.installed ? "text-slate-500" : "text-rose-400"}`}>
-                  {info?.installed ? "已就绪" : "文件缺失"}
+                  {info?.installed ? t("mihomo.coreReady") : t("mihomo.coreMissing")}
                 </span>
                 <button
                   className={btnPrimary}
                   disabled={active || !info?.installed}
-                  title={info?.installed ? "" : `内核文件不存在：${info?.path || ""}`}
+                  title={info?.installed ? "" : t("mihomo.coreFileMissing", { path: info?.path || "" })}
                   onClick={() => patchApp({ core: id }, true)}
                 >
-                  切换
+                  {t("mihomo.coreSwitch")}
                 </button>
               </div>
             </SettingItem>
@@ -264,11 +266,11 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
       {/* Smart 内核参数（对齐 clash-party enableSmartOverride 系列设置） */}
       {isSmartCore && (
         <div className={`${cardCls} p-4`}>
-          <h3 className="text-sm font-bold text-white mb-1">Smart 内核</h3>
-          <SettingItem title={<span title="自动把 url-test / load-balance 组转换为 smart 组">启用 Smart 覆写</span>}>
+          <h3 className="text-sm font-bold text-white mb-1">{t("mihomo.coreSmartTitle")}</h3>
+          <SettingItem title={<span title={t("mihomo.coreSmartOverrideTip")}>{t("mihomo.coreSmartOverride")}</span>}>
             <Toggle v={app?.enableSmartOverride !== false} onChange={(v) => patchApp({ enableSmartOverride: v }, true)} />
           </SettingItem>
-          <SettingItem title="策略">
+          <SettingItem title={t("mihomo.coreStrategy")}>
             <select
               className="h-8 px-2 rounded-lg bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
               value={app?.smartCoreStrategy ?? "sticky-sessions"}
@@ -279,13 +281,13 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
               ))}
             </select>
           </SettingItem>
-          <SettingItem title={<span title="使用 LightGBM 模型进行决策">使用 LightGBM</span>}>
+          <SettingItem title={<span title={t("mihomo.coreLightGBMTip")}>{t("mihomo.coreLightGBM")}</span>}>
             <Toggle v={!!app?.smartCoreUseLightGBM} onChange={(v) => patchApp({ smartCoreUseLightGBM: v }, true)} />
           </SettingItem>
-          <SettingItem title={<span title="收集连接数据用于模型训练">收集训练数据</span>}>
+          <SettingItem title={<span title={t("mihomo.coreCollectDataTip")}>{t("mihomo.coreCollectData")}</span>}>
             <Toggle v={!!app?.smartCoreCollectData} onChange={(v) => patchApp({ smartCoreCollectData: v }, true)} />
           </SettingItem>
-          <SettingItem title="采集器大小 (MB)" divider={false}>
+          <SettingItem title={t("mihomo.coreCollectorSize")} divider={false}>
             <input
               className={`${inputCls} !w-24`}
               type="number"
@@ -301,7 +303,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
 
       <div className={`${cardCls} p-4`}>
         <div className="flex items-center justify-between mb-1">
-          <h3 className="text-sm font-bold text-white">内核设置</h3>
+          <h3 className="text-sm font-bold text-white">{t("mihomo.coreSettings")}</h3>
           <div className="flex items-center gap-2">
             {msg && <span className="text-[11px] text-slate-400">{msg}</span>}
             <button
@@ -309,26 +311,26 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
               disabled={upgrading}
               onClick={async () => {
                 setUpgrading(true);
-                try { await mihomoApi.upgradeCore(); setMsg("核心升级完成"); onCoreChanged?.(); }
-                catch (e: any) { setMsg(String(e).includes("already") ? "已是最新版本" : `升级失败: ${e}`); }
+                try { await mihomoApi.upgradeCore(); setMsg(t("mihomo.coreUpgraded")); onCoreChanged?.(); }
+                catch (e: any) { setMsg(String(e).includes("already") ? t("mihomo.coreUpToDate") : t("mihomo.coreUpgradeFailed", { err: String(e) })); }
                 finally { setUpgrading(false); }
               }}
             >
               <span className="inline-flex items-center gap-1">
-                <CloudDownload className={`w-3.5 h-3.5 ${upgrading ? "animate-bounce" : ""}`} />升级核心
+                <CloudDownload className={`w-3.5 h-3.5 ${upgrading ? "animate-bounce" : ""}`} />{t("mihomo.coreUpgrade")}
               </span>
             </button>
           </div>
         </div>
 
-        {renderPortRow("混合端口", "mixed", "mixed-port", "enableMixedPort", DEFAULT_PORTS.mixed)}
-        {renderPortRow("Socks 端口", "socks", "socks-port", "enableSocksPort", DEFAULT_PORTS.socks)}
-        {renderPortRow("HTTP 端口", "http", "port", "enableHttpPort", DEFAULT_PORTS.http)}
+        {renderPortRow(t("mihomo.coreMixedPort"), "mixed", "mixed-port", "enableMixedPort", DEFAULT_PORTS.mixed)}
+        {renderPortRow(t("mihomo.coreSocksPort"), "socks", "socks-port", "enableSocksPort", DEFAULT_PORTS.socks)}
+        {renderPortRow(t("mihomo.coreHttpPort"), "http", "port", "enableHttpPort", DEFAULT_PORTS.http)}
 
-        <SettingItem title="外部控制器">
+        <SettingItem title={t("mihomo.coreEc")}>
           <div className="flex items-center gap-2">
             {ecInput !== (c?.["external-controller"] || "") && ecValid && (
-              <button className={btnPrimary} onClick={() => onChangeNeedRestart({ "external-controller": ecInput })}>确认</button>
+              <button className={btnPrimary} onClick={() => onChangeNeedRestart({ "external-controller": ecInput })}>{t("mihomo.coreConfirm")}</button>
             )}
             <input
               className={`${inputCls} !w-52 ${!ecValid && ecInput ? "!border-rose-500" : ""}`}
@@ -339,13 +341,13 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
           </div>
         </SettingItem>
 
-        <SettingItem title={<span className="inline-flex items-center gap-1">外部控制器密钥
-          <button className="p-0.5 rounded hover:bg-white/10 cursor-pointer" title="随机生成" onClick={() => setSecretInput(randomSecret())}>
+        <SettingItem title={<span className="inline-flex items-center gap-1">{t("mihomo.coreSecret")}
+          <button className="p-0.5 rounded hover:bg-white/10 cursor-pointer" title={t("mihomo.coreRandomGen")} onClick={() => setSecretInput(randomSecret())}>
             <RefreshCw className="w-3 h-3 text-slate-400" />
           </button></span>}>
           <div className="flex items-center gap-2">
             {secretInput !== (c?.secret || "") && (
-              <button className={btnPrimary} onClick={() => onChangeNeedRestart({ secret: secretInput })}>确认</button>
+              <button className={btnPrimary} onClick={() => onChangeNeedRestart({ secret: secretInput })}>{t("mihomo.coreConfirm")}</button>
             )}
             <div className="relative">
               <input
@@ -364,15 +366,15 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
 
         {!!c?.["external-controller"] && (
           <>
-            <SettingItem title="WebUI 面板">
+            <SettingItem title={t("mihomo.coreWebui")}>
               <Toggle v={externalUiEnabled} onChange={(v) => onChangeNeedRestart({ "external-ui": v ? "ui" : "" })} />
             </SettingItem>
             {externalUiEnabled && (
-              <SettingItem title={<span className="inline-flex items-center gap-1">面板选择
-                <button className="p-0.5 rounded hover:bg-white/10 cursor-pointer" title="更新面板" onClick={upgradeUi}>
+              <SettingItem title={<span className="inline-flex items-center gap-1">{t("mihomo.corePanelSelect")}
+                <button className="p-0.5 rounded hover:bg-white/10 cursor-pointer" title={t("mihomo.corePanelUpdate")} onClick={upgradeUi}>
                   <CloudDownload className={`w-3 h-3 text-slate-400 ${upgradingUi ? "animate-bounce" : ""}`} />
                 </button>
-                <button className="p-0.5 rounded hover:bg-white/10 cursor-pointer" title="打开面板" onClick={openExternalUi}>
+                <button className="p-0.5 rounded hover:bg-white/10 cursor-pointer" title={t("mihomo.corePanelOpen")} onClick={openExternalUi}>
                   <ExternalLink className="w-3 h-3 text-slate-400" />
                 </button></span>}>
                 <select
@@ -385,7 +387,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
                 >
                   {(WEBUI_PANELS.some((p) => p.url === externalUiUrl)
                     ? WEBUI_PANELS
-                    : [{ name: "自定义面板", url: externalUiUrl }, ...WEBUI_PANELS]
+                    : [{ name: t("mihomo.coreCustomPanel"), url: externalUiUrl }, ...WEBUI_PANELS]
                   ).map((p) => <option key={p.url} value={p.url} className="bg-slate-800">{p.name}</option>)}
                 </select>
               </SettingItem>
@@ -393,24 +395,24 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
           </>
         )}
 
-        <SettingItem title="IPv6">
+        <SettingItem title={t("mihomo.coreIpv6")}>
           <Toggle v={!!c?.ipv6} onChange={(v) => onChangeNeedRestart({ ipv6: v })} />
         </SettingItem>
 
-        <SettingItem title="允许局域网连接">
+        <SettingItem title={t("mihomo.coreAllowLan")}>
           <Toggle v={!!c?.["allow-lan"]} onChange={(v) => onChangeNeedRestart({ "allow-lan": v })} />
         </SettingItem>
         {!!c?.["allow-lan"] && (
           <>
             <div className="py-2 border-b border-white/5">
-              <h4 className="text-[12px] text-slate-300 font-semibold mb-1">允许连接的 IP 段</h4>
-              {renderList(lanAllowed, setLanAllowed, "例: 192.168.1.0/24",
+              <h4 className="text-[12px] text-slate-300 font-semibold mb-1">{t("mihomo.coreLanAllowed")}</h4>
+              {renderList(lanAllowed, setLanAllowed, t("mihomo.coreLanExample"),
                 c?.["lan-allowed-ips"] ?? DEFAULT_LAN_ALLOWED,
                 () => onChangeNeedRestart({ "lan-allowed-ips": lanAllowed }))}
             </div>
             <div className="py-2 border-b border-white/5">
-              <h4 className="text-[12px] text-slate-300 font-semibold mb-1">禁止连接的 IP 段</h4>
-              {renderList(lanDisallowed, setLanDisallowed, "例: 192.168.1.0/24",
+              <h4 className="text-[12px] text-slate-300 font-semibold mb-1">{t("mihomo.coreLanDisallowed")}</h4>
+              {renderList(lanDisallowed, setLanDisallowed, t("mihomo.coreLanExample"),
                 c?.["lan-disallowed-ips"] ?? [],
                 () => onChangeNeedRestart({ "lan-disallowed-ips": lanDisallowed }))}
             </div>
@@ -420,9 +422,9 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
         {/* 用户验证（user:pass 双输入，复刻 authentication） */}
         <div className="py-2 border-b border-white/5">
           <div className="flex items-center justify-between mb-1">
-            <h4 className="text-[12px] text-slate-300 font-semibold">用户验证</h4>
+            <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.coreAuth")}</h4>
             {JSON.stringify(auth) !== JSON.stringify(c?.authentication ?? []) && (
-              <button className={btnPrimary} onClick={() => onChangeNeedRestart({ authentication: auth })}>确认</button>
+              <button className={btnPrimary} onClick={() => onChangeNeedRestart({ authentication: auth })}>{t("mihomo.coreConfirm")}</button>
             )}
           </div>
           {[...auth, ""].map((a, index) => {
@@ -436,9 +438,9 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
             };
             return (
               <div key={index} className="flex mb-1.5 items-center gap-2">
-                <input className={`${inputCls} !w-2/5`} placeholder="用户名" value={user} onChange={(e) => upd(e.target.value, pass)} />
+                <input className={`${inputCls} !w-2/5`} placeholder={t("mihomo.coreUser")} value={user} onChange={(e) => upd(e.target.value, pass)} />
                 <span className="text-slate-500">:</span>
-                <input className={inputCls} placeholder="密码" value={pass} onChange={(e) => upd(user, e.target.value)} />
+                <input className={inputCls} placeholder={t("mihomo.corePass")} value={pass} onChange={(e) => upd(user, e.target.value)} />
                 {index < auth.length && (
                   <button className={btnSec} onClick={() => setAuth(auth.filter((_, i) => i !== index))}>
                     <Trash2 className="w-3.5 h-3.5 text-amber-300" />
@@ -450,26 +452,26 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
         </div>
 
         <div className="py-2 border-b border-white/5">
-          <h4 className="text-[12px] text-slate-300 font-semibold mb-1">跳过验证前缀（前两项固定）</h4>
-          {renderList(skipAuth, setSkipAuth, "例: 10.0.0.0/8",
+          <h4 className="text-[12px] text-slate-300 font-semibold mb-1">{t("mihomo.coreSkipAuth")}</h4>
+          {renderList(skipAuth, setSkipAuth, t("mihomo.coreSkipAuthExample"),
             c?.["skip-auth-prefixes"] ?? DEFAULT_SKIP_AUTH,
             () => onChangeNeedRestart({ "skip-auth-prefixes": skipAuth }), true)}
         </div>
 
-        <SettingItem title="使用 RTT 延迟测试 (unified-delay)">
+        <SettingItem title={t("mihomo.coreRtt")}>
           <Toggle v={!!c?.["unified-delay"]} onChange={(v) => onChangeNeedRestart({ "unified-delay": v })} />
         </SettingItem>
-        <SettingItem title="TCP 并发">
+        <SettingItem title={t("mihomo.coreTcpConcurrent")}>
           <Toggle v={!!c?.["tcp-concurrent"]} onChange={(v) => onChangeNeedRestart({ "tcp-concurrent": v })} />
         </SettingItem>
-        <SettingItem title="记住选择的节点 (store-selected)">
+        <SettingItem title={t("mihomo.coreStoreSelected")}>
           <Toggle v={!!c?.profile?.["store-selected"]} onChange={(v) => onChangeNeedRestart({ profile: { "store-selected": v } })} />
         </SettingItem>
-        <SettingItem title="记住 FakeIP 映射 (store-fake-ip)">
+        <SettingItem title={t("mihomo.coreStoreFakeIp")}>
           <Toggle v={!!c?.profile?.["store-fake-ip"]} onChange={(v) => onChangeNeedRestart({ profile: { "store-fake-ip": v } })} />
         </SettingItem>
 
-        <SettingItem title="日志等级">
+        <SettingItem title={t("mihomo.coreLogLevel")}>
           <select
             className="h-8 px-2 rounded-lg bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
             value={c?.["log-level"] ?? "info"}
@@ -480,7 +482,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
             ))}
           </select>
         </SettingItem>
-        <SettingItem title="查找进程 (find-process-mode)" divider={false}>
+        <SettingItem title={t("mihomo.coreFindProcess")} divider={false}>
           <select
             className="h-8 px-2 rounded-lg bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
             value={c?.["find-process-mode"] ?? "strict"}
@@ -495,68 +497,68 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
 
       {/* 进程与配置生成（对齐 clash-party 内核进程 / 配置工厂相关设置） */}
       <div className={`${cardCls} p-4`}>
-        <h3 className="text-sm font-bold text-white mb-1">进程与配置</h3>
+        <h3 className="text-sm font-bold text-white mb-1">{t("mihomo.coreProcessConfig")}</h3>
 
-        <SettingItem title="内核 CPU 优先级">
+        <SettingItem title={t("mihomo.coreCpuPriority")}>
           <select
             className="h-8 px-2 rounded-lg bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
             value={app?.cpuPriority ?? "NORMAL_PRIORITY_CLASS"}
             onChange={(e) => patchApp({ cpuPriority: e.target.value }, true)}
           >
             {[
-              ["REALTIME_PRIORITY_CLASS", "实时"],
-              ["HIGH_PRIORITY_CLASS", "高"],
-              ["ABOVE_NORMAL_PRIORITY_CLASS", "高于正常"],
-              ["NORMAL_PRIORITY_CLASS", "正常"],
-              ["BELOW_NORMAL_PRIORITY_CLASS", "低于正常"],
-              ["IDLE_PRIORITY_CLASS", "低"],
+              ["REALTIME_PRIORITY_CLASS", t("mihomo.cpuRealtime")],
+              ["HIGH_PRIORITY_CLASS", t("mihomo.cpuHigh")],
+              ["ABOVE_NORMAL_PRIORITY_CLASS", t("mihomo.cpuAboveNormal")],
+              ["NORMAL_PRIORITY_CLASS", t("mihomo.cpuNormal")],
+              ["BELOW_NORMAL_PRIORITY_CLASS", t("mihomo.cpuBelowNormal")],
+              ["IDLE_PRIORITY_CLASS", t("mihomo.cpuIdle")],
             ].map(([v, l]) => <option key={v} value={v} className="bg-slate-800">{l}</option>)}
           </select>
         </SettingItem>
 
-        <SettingItem title={<span title="启动前用 mihomo -t 预校验配置，可提前发现错误">启动前校验配置</span>}>
+        <SettingItem title={<span title={t("mihomo.coreTestOnStartTip")}>{t("mihomo.coreTestOnStart")}</span>}>
           <Toggle
             v={app?.testProfileOnStart !== false}
             onChange={(v) => patchApp({ testProfileOnStart: v })}
           />
         </SettingItem>
 
-        <SettingItem title={<span title="每个订阅使用独立的内核工作目录，避免缓存互相污染">独立工作目录</span>}>
+        <SettingItem title={<span title={t("mihomo.coreDiffWorkDirTip")}>{t("mihomo.coreDiffWorkDir")}</span>}>
           <Toggle v={!!app?.diff_work_dir} onChange={(v) => patchApp({ diff_work_dir: v }, true)} />
         </SettingItem>
 
-        <SettingItem title={<span title="关闭后生成配置时会移除 dns.nameserver-policy">应用 nameserver-policy</span>}>
+        <SettingItem title={<span title={t("mihomo.coreUseNamespacePolicyTip")}>{t("mihomo.coreUseNamespacePolicy")}</span>}>
           <Toggle
             v={app?.use_nameserver_policy !== false}
             onChange={(v) => patchApp({ use_nameserver_policy: v }, true)}
           />
         </SettingItem>
 
-        <SettingItem title="崩溃后自动拉起内核">
+        <SettingItem title={t("mihomo.coreKeepAlive")}>
           <Toggle v={!!app?.keep_profile_alive} onChange={(v) => patchApp({ keep_profile_alive: v })} />
         </SettingItem>
 
-        <SettingItem title="配置维护" divider={false}>
+        <SettingItem title={t("mihomo.coreConfigMaintain")} divider={false}>
           <div className="flex items-center gap-2">
             <button
               className={btnSec}
-              title="不重启进程，直接让内核重新加载配置文件"
+              title={t("mihomo.coreHotReloadTip")}
               onClick={async () => {
-                try { await mihomoApi.hotReloadConfig(); setMsg("已热重载配置"); }
-                catch (e: any) { setMsg(`热重载失败: ${e}`); }
+                try { await mihomoApi.hotReloadConfig(); setMsg(t("mihomo.coreHotReloaded")); }
+                catch (e: any) { setMsg(t("mihomo.coreHotReloadFailed", { err: String(e) })); }
               }}
             >
-              热重载配置
+              {t("mihomo.coreHotReload")}
             </button>
             <button
               className={btnSec}
-              title="清空 Smart 内核的学习缓存"
+              title={t("mihomo.coreFlushSmartTip")}
               onClick={async () => {
-                try { await mihomoApi.smartFlushCache(); setMsg("已清空 Smart 缓存"); }
-                catch (e: any) { setMsg(`清空失败: ${e}`); }
+                try { await mihomoApi.smartFlushCache(); setMsg(t("mihomo.coreSmartFlushed")); }
+                catch (e: any) { setMsg(t("mihomo.coreFlushFailed", { err: String(e) })); }
               }}
             >
-              清空 Smart 缓存
+              {t("mihomo.coreFlushSmart")}
             </button>
           </div>
         </SettingItem>

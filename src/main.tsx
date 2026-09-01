@@ -55,13 +55,18 @@ if (POPUP_KIND === "translate" || POPUP_KIND === "mindmap-node" || POPUP_KIND ==
   // 不再在启动路径上 import("./monacoSetup")（那会连带拉取 ~3.5MB monaco 核心），
   // 而是由共享 MonacoEditor 组件在首个编辑器真正挂载时才依次加载
   // monacoSetup（配置本地 worker）→ @monaco-editor/react → monaco 核心。
-  import("./App").then(({ default: App }) => {
-    ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-      <React.StrictMode>
-        <ErrorBoundary>
-          <App />
-        </ErrorBoundary>
-      </React.StrictMode>,
-    );
+  // 国际化：先读取后端语言偏好（config.language）初始化 i18n，再挂载 App。
+  import("./i18n").then(async ({ loadAppLanguage, initI18n }) => {
+    const lang = await loadAppLanguage();
+    await initI18n(lang);
+    import("./App").then(({ default: App }) => {
+      ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+        <React.StrictMode>
+          <ErrorBoundary>
+            <App />
+          </ErrorBoundary>
+        </React.StrictMode>,
+      );
+    });
   });
 }

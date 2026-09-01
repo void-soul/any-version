@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { useTranslation } from "react-i18next";
 
 interface OtpToken {
   id: number;
@@ -182,6 +183,7 @@ function formatCode(code: string): string {
 }
 
 export default function OtpPanel() {
+  const { t } = useTranslation();
   const [tokens, setTokens] = useState<OtpToken[]>([]);
   const [search, setSearch] = useState("");
   const [now, setNow] = useState(Date.now());
@@ -242,8 +244,8 @@ export default function OtpPanel() {
   const scanQr = async () => {
     try {
       const selected = await openDialog({
-        title: "选择包含二维码的图片",
-        filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "bmp", "gif", "webp"] }],
+        title: t("otp.scanPickTitle"),
+        filters: [{ name: t("otp.pickImage"), extensions: ["png", "jpg", "jpeg", "bmp", "gif", "webp"] }],
       });
       if (!selected) return;
       setBusy(true);
@@ -256,13 +258,13 @@ export default function OtpPanel() {
         const added = await invoke<OtpToken[]>("otp_import_uri", { text });
         load();
         if (added.length === 0) {
-          alert("二维码内容不是有效的 otpauth 链接");
+          alert(t("otp.scanNotOtpauth"));
         }
       } else {
-        alert(`二维码内容：\n${text}\n\n非 otpauth 链接，已忽略。`);
+        alert(t("otp.scanIgnored", { text }));
       }
     } catch (e) {
-      alert(`扫码失败：${e}`);
+      alert(t("otp.scanFail", { err: String(e) }));
     } finally {
       setBusy(false);
     }
@@ -286,13 +288,13 @@ export default function OtpPanel() {
       setCatModal(null);
       load();
     } catch (e) {
-      alert(`保存分类失败：${e}`);
+      alert(t("otp.catSaveFail", { err: String(e) }));
     }
   };
   const deleteCategory = (cat: OtpCategory) => {
     setConfirmModal({
-      title: "删除分类",
-      message: `确定删除分类「${cat.title}」？该操作不会删除其中的令牌。`,
+      title: t("otp.delCatTitle"),
+      message: t("otp.delCatMsg", { title: cat.title }),
       danger: true,
       onConfirm: async () => {
         await invoke("otp_delete_category", { id: cat.id });
@@ -308,10 +310,10 @@ export default function OtpPanel() {
   };
 
   const deleteToken = (token: OtpToken) => {
-    const label = [token.issuer, token.account].filter(Boolean).join(" ") || "此令牌";
+    const label = [token.issuer, token.account].filter(Boolean).join(" ") || t("otp.thisToken");
     setConfirmModal({
-      title: "删除令牌",
-      message: `确定删除「${label}」？删除后无法恢复。`,
+      title: t("otp.delTokenTitle"),
+      message: t("otp.delTokenMsg", { label }),
       danger: true,
       onConfirm: async () => {
         await invoke("otp_delete", { id: token.id });
@@ -337,7 +339,7 @@ export default function OtpPanel() {
       setEditing(null);
       load();
     } catch (e) {
-      alert(`保存失败：${e}`);
+      alert(t("otp.saveFail", { err: String(e) }));
     } finally {
       setBusy(false);
     }
@@ -350,9 +352,9 @@ export default function OtpPanel() {
       setShowImport(false);
       setImportText("");
       load();
-      if (added.length === 0) alert("未识别到有效的 otpauth:// 链接");
+      if (added.length === 0) alert(t("otp.noValidOtpauth"));
     } catch (e) {
-      alert(`导入失败：${e}`);
+      alert(t("otp.importFail", { err: String(e) }));
     } finally {
       setBusy(false);
     }
@@ -377,8 +379,8 @@ export default function OtpPanel() {
       {/* 头部 */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 flex-shrink-0">
         <KeyRound className="w-4 h-4 text-[var(--module-accent)]" />
-        <span className="text-sm font-bold text-white">OTP 验证器</span>
-        <span className="text-[10px] text-slate-500">{tokens.length} 个令牌</span>
+        <span className="text-sm font-bold text-white">{t("otp.title")}</span>
+        <span className="text-[10px] text-slate-500">{t("otp.tokenCount", { count: tokens.length })}</span>
         <div className="flex-1" />
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500 pointer-events-none" />
@@ -386,7 +388,7 @@ export default function OtpPanel() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜索令牌"
+            placeholder={t("otp.searchPh")}
             className="glass-input pl-7 pr-2 py-1.5 text-xs bg-black/30 border border-white/10 rounded-lg w-40 focus:outline-none focus:border-sky-400/50"
           />
         </div>
@@ -394,15 +396,15 @@ export default function OtpPanel() {
           onClick={scanQr}
           disabled={busy}
           className="px-2.5 py-1.5 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
-          title="从图片识别二维码（otpauth）"
+          title={t("otp.scanTitle")}
         >
-          {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <ScanLine className="w-3 h-3" />} 扫码
+          {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <ScanLine className="w-3 h-3" />} {t("otp.scan")}
         </button>
         <button
           onClick={() => setShowImport(true)}
           className="px-2.5 py-1.5 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition"
         >
-          <Import className="w-3 h-3" /> 导入
+          <Import className="w-3 h-3" /> {t("otp.import")}
         </button>
         <button
           onClick={() => {
@@ -411,7 +413,7 @@ export default function OtpPanel() {
           }}
           className="px-2.5 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition"
         >
-          <Plus className="w-3 h-3" /> 添加
+          <Plus className="w-3 h-3" /> {t("otp.add")}
         </button>
       </div>
 
@@ -428,7 +430,7 @@ export default function OtpPanel() {
                   : "text-slate-400 hover:bg-white/5"
               }`}
             >
-              <Tag className="w-3 h-3" /> 全部 ({tokens.length})
+              <Tag className="w-3 h-3" /> {t("otp.all", { count: tokens.length })}
             </button>
             {categories.map((cat) => (
               <div
@@ -463,7 +465,7 @@ export default function OtpPanel() {
               onClick={addCategory}
               className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] text-slate-500 hover:text-slate-300 hover:bg-white/5 transition cursor-pointer"
             >
-              <FolderPlus className="w-3 h-3" /> 新建分类
+              <FolderPlus className="w-3 h-3" /> {t("otp.newCat")}
             </button>
           </div>
         </div>
@@ -473,7 +475,7 @@ export default function OtpPanel() {
           {filtered.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-3">
               <KeyRound className="w-10 h-10 text-slate-600" />
-              <p className="text-xs">暂无令牌，点击「添加」或「导入」开始</p>
+              <p className="text-xs">{t("otp.noTokens")}</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
@@ -517,7 +519,7 @@ export default function OtpPanel() {
         <div className="fixed inset-0 z-[110] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
           <div className="w-[480px] max-w-[95vw] rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl p-5" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-white">导入 otpauth 链接</h3>
+              <h3 className="text-sm font-bold text-white">{t("otp.importTitle")}</h3>
               <button onClick={() => setShowImport(false)} className="p-1 rounded hover:bg-white/10 text-slate-400 cursor-pointer">
                 <X className="w-4 h-4" />
               </button>
@@ -525,17 +527,17 @@ export default function OtpPanel() {
             <textarea
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
-              placeholder={"粘贴 otpauth:// 链接（每行一条）或 otpauth-migration:// 批量迁移负载：\notpauth://totp/Example:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example\notpauth-migration://offline?data=..."}
+              placeholder={t("otp.importPh")}
               className="w-full h-32 glass-input px-3 py-2 text-xs font-mono bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-sky-400/50 resize-none"
             />
             <div className="flex justify-end gap-2 mt-3">
-              <button onClick={() => setShowImport(false)} className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer">取消</button>
+              <button onClick={() => setShowImport(false)} className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer">{t("otp.cancel")}</button>
               <button
                 onClick={doImport}
                 disabled={busy}
                 className="px-3 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
               >
-                {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Import className="w-3 h-3" />} 导入
+                {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Import className="w-3 h-3" />} {t("otp.import")}
               </button>
             </div>
           </div>
@@ -595,6 +597,7 @@ function BrandIcon({ token }: { token: OtpToken }) {
 function TokenCard({
   token,
   now,
+
   copied,
   categories,
   onCopy,
@@ -611,6 +614,7 @@ function TokenCard({
   onDelete: () => void;
   onEdit: () => void;
 }) {
+  const { t } = useTranslation();
   const [code, setCode] = useState("------");
   const [remain, setRemain] = useState(30);
 
@@ -636,14 +640,14 @@ function TokenCard({
           : "bg-white/[0.03] border-white/10 hover:bg-white/[0.05] hover:border-white/20"
       }`}
       onClick={onCopy}
-      title="点击复制验证码"
+      title={t("otp.copyCode")}
     >
       <div className="flex items-start gap-2">
         <BrandIcon token={token} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             <span className="text-[13px] font-semibold text-white truncate">
-              {token.issuer || "未知"}
+              {token.issuer || t("otp.unknown")}
             </span>
             {token.pinned && <Pin className="w-3 h-3 text-amber-400 flex-shrink-0" />}
           </div>
@@ -720,21 +724,21 @@ function TokenCard({
         <button
           onClick={(e) => { e.stopPropagation(); onEdit(); }}
           className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
-          title="编辑"
+          title={t("otp.edit")}
         >
           <Pencil className="w-3 h-3" />
         </button>
         <button
           onClick={(e) => { e.stopPropagation(); onTogglePin(); }}
           className={`p-1 rounded hover:bg-white/10 cursor-pointer ${token.pinned ? "text-amber-400" : "text-slate-400 hover:text-amber-300"}`}
-          title={token.pinned ? "取消置顶" : "置顶"}
+          title={token.pinned ? t("otp.unpin") : t("otp.pin")}
         >
           <Pin className="w-3 h-3" />
         </button>
         <button
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
           className="p-1 rounded hover:bg-red-500/15 text-slate-400 hover:text-red-400 cursor-pointer"
-          title="删除"
+          title={t("otp.delete")}
         >
           <Trash2 className="w-3 h-3" />
         </button>
@@ -757,6 +761,7 @@ function TokenForm({
   onClose: () => void;
   busy: boolean;
 }) {
+  const { t } = useTranslation();
   const [form, setForm] = useState<OtpToken>(
     token || {
       id: 0,
@@ -795,7 +800,7 @@ function TokenForm({
 
   const submit = () => {
     if (!form.secret.trim()) {
-      alert("请填写密钥 (secret)");
+      alert(t("otp.needSecret"));
       return;
     }
     onSave(form, selectedCatIds);
@@ -810,7 +815,7 @@ function TokenForm({
     <div className="fixed inset-0 z-[110] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
       <div className="w-[460px] max-w-[95vw] max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl p-5" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-bold text-white">{token ? "编辑令牌" : "添加令牌"}</h3>
+          <h3 className="text-sm font-bold text-white">{token ? t("otp.editToken") : t("otp.addToken")}</h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/10 text-slate-400 cursor-pointer">
             <X className="w-4 h-4" />
           </button>
@@ -818,7 +823,7 @@ function TokenForm({
 
         <div className="space-y-3">
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">类型</label>
+            <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.type")}</label>
             <select
               value={form.tokenType}
               onChange={(e) => {
@@ -832,9 +837,9 @@ function TokenForm({
               }}
               className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
             >
-              <option value="TOTP">TOTP（时间型）</option>
-              <option value="HOTP">HOTP（计数器型）</option>
-              <option value="MOTP">MOTP（Mobile-OTP）</option>
+              <option value="TOTP">{t("otp.totp")}</option>
+              <option value="HOTP">{t("otp.hotp")}</option>
+              <option value="MOTP">{t("otp.motp")}</option>
               <option value="Steam">Steam</option>
               <option value="Yandex">Yandex</option>
             </select>
@@ -842,41 +847,41 @@ function TokenForm({
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="text-[10px] text-slate-400 mb-1 block">签发方 (issuer)</label>
+              <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.issuer")}</label>
               <input
                 value={form.issuer}
                 onChange={(e) => set("issuer", e.target.value)}
-                placeholder="如 GitHub"
+                placeholder={t("otp.issuerPh")}
                 className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
               />
             </div>
             <div>
-              <label className="text-[10px] text-slate-400 mb-1 block">账号 (account)</label>
+              <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.account")}</label>
               <input
                 value={form.account}
                 onChange={(e) => set("account", e.target.value)}
-                placeholder="如 alice@example.com"
+                placeholder={t("otp.accountPh")}
                 className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
               />
             </div>
           </div>
 
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">密钥 (secret, Base32)</label>
+            <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.secret")}</label>
             <input
               value={form.secret}
               onChange={(e) => set("secret", e.target.value)}
-              placeholder="如 JBSWY3DPEHPK3PXP"
+              placeholder={t("otp.secretPh")}
               className="w-full glass-input px-3 py-2 text-xs font-mono bg-black/30 border border-white/10 rounded-lg focus:outline-none"
             />
           </div>
 
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">描述 (可选)</label>
+            <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.desc")}</label>
             <input
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
-              placeholder="备注说明"
+              placeholder={t("otp.descPh")}
               className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
             />
           </div>
@@ -884,10 +889,10 @@ function TokenForm({
           {/* 分类多选 */}
           <div>
             <label className="text-[10px] text-slate-400 mb-1 block">
-              分类 {selectedCatIds.length > 0 && <span className="text-slate-500">(已选 {selectedCatIds.length})</span>}
+              {t("otp.category", { count: selectedCatIds.length })} {selectedCatIds.length > 0 && <span className="text-slate-500">({t("otp.selected", { count: selectedCatIds.length })})</span>}
             </label>
             {categories.length === 0 ? (
-              <p className="text-[10px] text-slate-500">暂无分类，可在 OTP 面板左侧「新建分类」后再分配。</p>
+              <p className="text-[10px] text-slate-500">{t("otp.categoryHint")}</p>
             ) : (
               <div className="flex flex-wrap gap-1.5">
                 {categories.map((c) => {
@@ -913,20 +918,20 @@ function TokenForm({
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="text-[10px] text-slate-400 mb-1 block">标签 (逗号分隔)</label>
+              <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.tags")}</label>
               <input
                 value={form.tags}
                 onChange={(e) => set("tags", e.target.value)}
-                placeholder="工作, 个人"
+                placeholder={t("otp.tagsPh")}
                 className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
               />
             </div>
             <div>
-              <label className="text-[10px] text-slate-400 mb-1 block">图标字符 (可选)</label>
+              <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.iconChar")}</label>
               <input
                 value={form.customIcon}
                 onChange={(e) => set("customIcon", e.target.value)}
-                placeholder="如 G 或 🔑"
+                placeholder={t("otp.iconPh")}
                 className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
               />
             </div>
@@ -935,7 +940,7 @@ function TokenForm({
           {!isSteam && !isYandex && !isMotp && (
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-[10px] text-slate-400 mb-1 block">算法</label>
+                <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.algorithm")}</label>
                 <select
                   value={form.algorithm}
                   onChange={(e) => set("algorithm", e.target.value)}
@@ -947,14 +952,14 @@ function TokenForm({
                 </select>
               </div>
               <div>
-                <label className="text-[10px] text-slate-400 mb-1 block">位数</label>
+                <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.digits")}</label>
                 <select
                   value={form.digits}
                   onChange={(e) => set("digits", Number(e.target.value))}
                   className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
                 >
                   {[5, 6, 7, 8].map((d) => (
-                    <option key={d} value={d}>{d} 位</option>
+                    <option key={d} value={d}>{t("otp.digitsCount", { count: d })}</option>
                   ))}
                 </select>
               </div>
@@ -963,7 +968,7 @@ function TokenForm({
 
           {isHotp ? (
             <div>
-              <label className="text-[10px] text-slate-400 mb-1 block">计数器 (counter)</label>
+              <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.counter")}</label>
               <input
                 type="number"
                 value={form.counter}
@@ -973,7 +978,7 @@ function TokenForm({
             </div>
           ) : !isSteam && !isYandex ? (
             <div>
-              <label className="text-[10px] text-slate-400 mb-1 block">周期 (period, 秒)</label>
+              <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.period")}</label>
               <input
                 type="number"
                 value={form.period}
@@ -989,7 +994,7 @@ function TokenForm({
               <input
                 value={form.pin}
                 onChange={(e) => set("pin", e.target.value)}
-                placeholder={isMotp ? "4 位 PIN" : "PIN"}
+                placeholder={isMotp ? t("otp.pinPh") : t("otp.pinPhShort")}
                 className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
               />
             </div>
@@ -997,13 +1002,13 @@ function TokenForm({
         </div>
 
         <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer">取消</button>
+          <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer">{t("otp.cancel")}</button>
           <button
             onClick={submit}
             disabled={busy}
             className="px-3 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
           >
-            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} 保存
+            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {t("otp.save")}
           </button>
         </div>
       </div>
@@ -1025,12 +1030,13 @@ function CategoryModal({
   onSubmit: (title: string) => void;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const [name, setName] = useState(initial);
 
   const submit = () => {
-    const t = name.trim();
-    if (!t) return;
-    onSubmit(t);
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    onSubmit(trimmed);
   };
 
   const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -1055,10 +1061,10 @@ function CategoryModal({
           </div>
           <div className="flex-1">
             <h3 className="text-sm font-bold text-white">
-              {mode === "add" ? "新建分类" : "重命名分类"}
+              {mode === "add" ? t("otp.newCatTitle") : t("otp.renameCatTitle")}
             </h3>
             <p className="text-[10px] text-slate-500">
-              {mode === "add" ? "创建后可在令牌编辑弹窗中分配" : "修改后所有关联令牌同步更新"}
+              {mode === "add" ? t("otp.catHintAdd") : t("otp.catHintRename")}
             </p>
           </div>
           <button
@@ -1074,7 +1080,7 @@ function CategoryModal({
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={onKey}
-          placeholder="输入分类名称"
+          placeholder={t("otp.catNamePh")}
           className="w-full glass-input px-3 py-2.5 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-[var(--module-accent)]/60 placeholder:text-slate-600"
         />
 
@@ -1083,14 +1089,14 @@ function CategoryModal({
             onClick={onClose}
             className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer"
           >
-            取消
+            {t("otp.cancel")}
           </button>
           <button
             onClick={submit}
             disabled={busy || !name.trim()}
             className="px-4 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
           >
-            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} 保存
+            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {t("otp.save")}
           </button>
         </div>
       </div>
@@ -1112,6 +1118,7 @@ function ConfirmModal({
   onConfirm: () => void;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       className="fixed inset-0 z-[130] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
@@ -1133,7 +1140,7 @@ function ConfirmModal({
           <div className="flex-1">
             <h3 className="text-sm font-bold text-white">{title}</h3>
             <p className="text-[10px] text-slate-500">
-              {danger ? "此操作不可撤销，请确认" : "请确认您的操作"}
+              {danger ? t("otp.confirmDanger") : t("otp.confirmNormal")}
             </p>
           </div>
           <button
@@ -1151,7 +1158,7 @@ function ConfirmModal({
             onClick={onClose}
             className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer"
           >
-            取消
+            {t("otp.cancel")}
           </button>
           <button
             onClick={onConfirm}
@@ -1161,7 +1168,7 @@ function ConfirmModal({
                 : "bg-[var(--module-accent)] hover:opacity-85"
             }`}
           >
-            <Trash2 className="w-3 h-3" /> 删除
+            <Trash2 className="w-3 h-3" /> {t("otp.delete")}
           </button>
         </div>
       </div>

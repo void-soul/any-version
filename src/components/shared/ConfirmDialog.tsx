@@ -3,6 +3,7 @@
 // 全 app 规则自动继承（无 Esc/遮罩关闭）。
 import { SharedButton } from "./Button";
 import { SharedModal } from "./Modal";
+import { useTranslation } from "react-i18next";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -20,26 +21,30 @@ export function ConfirmDialog({
   open,
   onCancel,
   onConfirm,
-  title = "确认操作",
+  title,
   desc,
-  confirmText = "确认",
-  cancelText = "取消",
+  confirmText,
+  cancelText,
   danger = false,
   width = 380,
 }: ConfirmDialogProps) {
+  const { t } = useTranslation();
+  const resolvedTitle = title ?? t("dialog.confirmTitle");
+  const resolvedConfirm = confirmText ?? t("common.confirm");
+  const resolvedCancel = cancelText ?? t("common.cancel");
   return (
     <SharedModal
       open={open}
       onClose={onCancel}
-      title={title}
+      title={resolvedTitle}
       width={width}
       footer={
         <>
           <SharedButton onClick={onCancel} variant="secondary">
-            {cancelText}
+            {resolvedCancel}
           </SharedButton>
           <SharedButton onClick={onConfirm} variant={danger ? "danger" : "primary"} autoFocus>
-            {confirmText}
+            {resolvedConfirm}
           </SharedButton>
         </>
       }

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import { useTranslation } from "react-i18next";
 import {
   HardDrive,
   FolderOpen,
@@ -13,6 +14,7 @@ import {
 import type { DetectedAiTool, AiToolCacheInfo } from "./types";
 
 export default function AiCacheManager() {
+  const { t } = useTranslation();
   const [cacheInfos, setCacheInfos] = useState<AiToolCacheInfo[]>([]);
   const [tools, setTools] = useState<DetectedAiTool[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,15 +49,15 @@ export default function AiCacheManager() {
 
   const handleMigrate = async (toolId: string, dirName: string, fullPath: string) => {
     try {
-      const selected = await open({ directory: true, title: "选择新的缓存目录（仅支持 Junction）" });
+      const selected = await open({ directory: true, title: t("aicache.pickNewCacheDir") });
       if (!selected) return;
       const targetPath = selected as string;
       if (targetPath.toLowerCase().startsWith("c:")) {
-        alert("错误：AI 工具缓存只能迁移到非 C 盘，禁止直接指向 C 盘目录。");
+        alert(t("aicache.nonCDir"));
         return;
       }
       if (normalizePath(targetPath) === normalizePath(fullPath)) {
-        alert("错误：目标路径与原路径相同。");
+        alert(t("aicache.samePath"));
         return;
       }
       const key = `${toolId}:${dirName}`;
@@ -79,7 +81,7 @@ export default function AiCacheManager() {
     } catch (e: any) {
       setMigrating(null);
       setMigrateProgress(null);
-      alert(`迁移失败: ${e}`);
+      alert(t("aicache.migrateFail", { err: String(e) }));
     }
   };
 
@@ -122,7 +124,7 @@ export default function AiCacheManager() {
     return (
       <div className="h-full flex items-center justify-center text-slate-500">
         <RefreshCw className="w-5 h-5 animate-spin mr-2" />
-        <span className="text-xs">加载中...</span>
+        <span className="text-xs">{t("aicache.loading")}</span>
       </div>
     );
   }
@@ -134,14 +136,14 @@ export default function AiCacheManager() {
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-semibold text-emerald-300 flex items-center gap-1.5">
               <FolderSync className="w-3.5 h-3.5 animate-spin" />
-              {migrateProgress?.stage || "正在迁移..."}
+              {migrateProgress?.stage || t("aicache.migrating")}
             </span>
             {migrateProgress && migrateProgress.total > 0 && (
               <span className="text-[11px] font-mono text-emerald-400">
                 {Math.round((migrateProgress.current / migrateProgress.total) * 100)}%
               </span>
             )}
-            {migrateProgress?.stage === "已完成" && (
+            {migrateProgress?.stage === t("aicache.done") && (
               <CheckCircle className="w-4 h-4 text-emerald-400" />
             )}
           </div>
@@ -163,7 +165,7 @@ export default function AiCacheManager() {
           {!migrateProgress && (
             <div className="flex items-center gap-2 text-[10px] text-slate-500">
               <RefreshCw className="w-3 h-3 animate-spin" />
-              准备中...
+              {t("aicache.preparing")}
             </div>
           )}
         </div>
@@ -172,22 +174,22 @@ export default function AiCacheManager() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-bold text-white">缓存路径</h3>
+          <h3 className="text-sm font-bold text-white">{t("aicache.cachePath")}</h3>
           <p className="text-[10px] text-slate-500 mt-0.5">
-            {cacheInfos.length} 个缓存目录 · 总计 {totalSize}
-            {junctionCount > 0 && <span className="text-blue-400"> · {junctionCount} 个 JUNCTION</span>}
+            {t("aicache.summary", { count: cacheInfos.length, size: totalSize })}
+            {junctionCount > 0 && <span className="text-blue-400">{t("aicache.junctionCount", { count: junctionCount })}</span>}
           </p>
         </div>
         <button onClick={load} className="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-400 hover:text-white cursor-pointer transition-all flex items-center gap-1">
-          <RefreshCw className="w-3 h-3" /> 刷新
+          <RefreshCw className="w-3 h-3" /> {t("aicache.refresh")}
         </button>
       </div>
 
       {cacheInfos.length === 0 ? (
         <div className="h-48 border border-dashed border-white/5 rounded-2xl flex flex-col items-center justify-center text-slate-500">
           <HardDrive className="w-8 h-8 text-slate-700 mb-2" />
-          <span className="text-xs font-bold text-slate-400">暂无缓存数据</span>
-          <span className="text-[10px] text-slate-600 mt-1">AI 工具启动后会自动生成缓存目录</span>
+          <span className="text-xs font-bold text-slate-400">{t("aicache.noCache")}</span>
+          <span className="text-[10px] text-slate-600 mt-1">{t("aicache.noCacheHint")}</span>
         </div>
       ) : (
         <div className="space-y-4">
@@ -222,7 +224,7 @@ export default function AiCacheManager() {
                             {cache.is_junction && (
                               <span
                                 className="text-[8px] font-bold bg-blue-500/15 text-blue-400 px-1.5 py-0.5 rounded cursor-help"
-                                title={`JUNCTION → ${cache.junction_target}`}
+                                title={t("aicache.junctionTarget", { path: cache.junction_target })}
                               >
                                 <Link2 className="w-2.5 h-2.5 inline mr-0.5" />
                                 JUNCTION
@@ -234,7 +236,7 @@ export default function AiCacheManager() {
                               {cache.full_path}
                             </span>
                             <span className={`text-[9px] font-semibold ${cache.size_bytes > 0 ? "text-amber-400" : "text-slate-600"}`}>
-                              {cache.exists ? cache.size : "不存在"}
+                              {cache.exists ? cache.size : t("aicache.notExists")}
                             </span>
                           </div>
                           {/* Junction 目标路径 */}
@@ -251,7 +253,7 @@ export default function AiCacheManager() {
                             <button
                               onClick={() => handleOpen(cache.dir_name)}
                               className="p-1.5 rounded text-slate-600 hover:text-blue-400 hover:bg-blue-500/10 cursor-pointer transition-all"
-                              title="打开目录"
+                              title={t("aicache.openDir")}
                             >
                               <FolderOpen className="w-3.5 h-3.5" />
                             </button>
@@ -259,7 +261,7 @@ export default function AiCacheManager() {
                               onClick={() => handleMigrate(cache.tool_id, cache.dir_name, cache.full_path)}
                               disabled={migrating === key}
                               className="p-1.5 rounded text-slate-600 hover:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer transition-all disabled:opacity-50"
-                              title="迁移到新位置（JUNCTION）"
+                              title={t("aicache.migrateTo")}
                             >
                               {migrating === key ? (
                                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -283,10 +285,10 @@ export default function AiCacheManager() {
       {/* 说明 */}
       <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/10 text-[10px] text-slate-400 space-y-1">
         <p className="font-semibold text-blue-300 flex items-center gap-1">
-          <Link2 className="w-3 h-3" /> 仅支持 Junction 迁移
+          <Link2 className="w-3 h-3" /> {t("aicache.junctionOnly")}
         </p>
-        <p>迁移会在新位置保存数据，原位置替换为 NTFS JUNCTION 目录链接。AI 工具仍访问原路径，数据实际存储在新位置。</p>
-        <p className="text-amber-400/80">禁止直接指向目录：请勿通过修改配置文件把缓存路径直接改到新目录，必须保持原路径并通过 Junction 重定向。</p>
+        <p>{t("aicache.desc1")}</p>
+        <p className="text-amber-400/80">{t("aicache.desc2")}</p>
       </div>
     </div>
   );

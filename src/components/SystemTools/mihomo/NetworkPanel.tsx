@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
 import { cardCls, btnSec, btnPrimary, inputCls } from "./ui";
+import { useTranslation } from "react-i18next";
 
 // ─── 常量 ────────────────────────────────────────────────────────────────────
 const IP_PROVIDERS = [
@@ -197,6 +198,7 @@ const TopoNodeRow: React.FC<{
   collapsed: Set<string>;
   toggle: (id: string) => void;
 }> = ({ node, depth, collapsed, toggle }) => {
+  const { t } = useTranslation();
   const hasChildren = !!node.children && node.children.length > 0;
   const isCollapsed = collapsed.has(node.id);
   const showChildren = hasChildren && !isCollapsed;
@@ -212,7 +214,7 @@ const TopoNodeRow: React.FC<{
         <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${TYPE_DOT[node.type]}`} />
         <span className={`text-[12px] font-semibold ${TYPE_COLORS[node.type]}`}>{node.name}</span>
         <span className="text-[10px] text-slate-500 bg-white/5 rounded px-1.5 py-0.5">
-          {node.connections} 连接
+          {t("network.connections", { count: node.connections })}
         </span>
         {node.traffic > 0 && (
           <span className="text-[10px] text-slate-500">{fmtTraffic(node.traffic)}</span>
@@ -231,6 +233,7 @@ const TopoNodeRow: React.FC<{
 
 // ─── 主面板 ───────────────────────────────────────────────────────────────────
 export default function NetworkPanel() {
+  const { t } = useTranslation();
   // 出口 IP
   const [ipInfos, setIpInfos] = useState<Record<string, any>>({});
   const [loadingIp, setLoadingIp] = useState(false);
@@ -410,9 +413,9 @@ export default function NetworkPanel() {
           ) : (
             <Cloud className="w-3.5 h-3.5 text-emerald-300" />
           )}
-          {type === "direct" ? "直连接口" : "经代理出口"}
+          {type === "direct" ? t("network.directIf") : t("network.proxyIf")}
         </span>
-        <span className="text-[10px] text-slate-500">{type === "direct" ? "绕过代理" : "通过代理"}</span>
+        <span className="text-[10px] text-slate-500">{type === "direct" ? t("network.bypass") : t("network.thruProxy")}</span>
       </div>
       {IP_PROVIDERS.map((p) => {
         const info = ipInfos[p.key]?.[type];
@@ -422,7 +425,7 @@ export default function NetworkPanel() {
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-slate-400">{p.label}</span>
               {info?.ip && (
-                <button onClick={() => copy(info.ip)} title="复制 IP">
+                <button onClick={() => copy(info.ip)} title={t("network.copyIp")}>
                   <Copy className="w-3 h-3 text-slate-500 hover:text-slate-200" />
                 </button>
               )}
@@ -437,7 +440,7 @@ export default function NetworkPanel() {
                 )}
               </div>
             ) : (
-              <div className="text-[11px] text-slate-500">查询中…</div>
+              <div className="text-[11px] text-slate-500">{t("network.querying")}</div>
             )}
           </div>
         );
@@ -452,7 +455,7 @@ export default function NetworkPanel() {
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-bold text-white flex items-center gap-2">
             <Globe className="w-4 h-4 text-emerald-400" />
-            出口 IP 信息
+            {t("network.egressIp")}
           </h3>
           <div className="flex items-center gap-2">
             <button
@@ -464,13 +467,13 @@ export default function NetworkPanel() {
                   return v;
                 });
               }}
-              title={hideIp ? "显示 IP" : "隐藏 IP"}
+              title={hideIp ? t("network.showIp") : t("network.hideIp")}
             >
               {hideIp ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
             </button>
             <button className={btnPrimary} onClick={refreshIp} disabled={loadingIp}>
               <RefreshCw className={`w-3.5 h-3.5 ${loadingIp ? "animate-spin" : ""}`} />
-              刷新
+              {t("network.refresh")}
             </button>
           </div>
         </div>
@@ -485,11 +488,11 @@ export default function NetworkPanel() {
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-bold text-white flex items-center gap-2">
             <Activity className="w-4 h-4 text-emerald-400" />
-            延迟测试
+            {t("network.latencyTest")}
           </h3>
           <button className={btnPrimary} onClick={runLatency} disabled={testingLatency}>
             <RefreshCw className={`w-3.5 h-3.5 ${testingLatency ? "animate-spin" : ""}`} />
-            测试
+            {t("network.test")}
           </button>
         </div>
         <div className="space-y-1.5">
@@ -528,7 +531,7 @@ export default function NetworkPanel() {
           <div className="flex items-center gap-2 pt-1">
             <input
               className={`${inputCls} !w-28`}
-              placeholder="名称"
+              placeholder={t("network.namePh")}
               value={targetDraft.name}
               onChange={(e) => setTargetDraft((d) => ({ ...d, name: e.target.value }))}
             />
@@ -550,15 +553,15 @@ export default function NetworkPanel() {
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-bold text-white flex items-center gap-2">
             <Network className="w-4 h-4 text-emerald-400" />
-            网络拓扑
+            {t("network.topology")}
           </h3>
           <div className="flex items-center gap-3">
             <div className="flex flex-wrap gap-x-2 text-[11px] text-slate-500">
-              <span>{stats.clientCount} 客户端</span>·<span>{stats.ruleCount} 规则</span>·<span>
-                {stats.groupCount} 代理组
-              </span>·<span>{stats.proxyCount} 节点</span>·<span>{fmtTraffic(stats.totalTraffic)}</span>
+              <span>{t("network.clients", { count: stats.clientCount })}</span>·<span>{t("network.rules", { count: stats.ruleCount })}</span>·<span>
+                {t("network.groups", { count: stats.groupCount })}
+              </span>·<span>{t("network.proxies", { count: stats.proxyCount })}</span>·<span>{fmtTraffic(stats.totalTraffic)}</span>
             </div>
-            <button className={btnSec} onClick={togglePause} title={isPaused ? "继续" : "暂停"}>
+            <button className={btnSec} onClick={togglePause} title={isPaused ? t("network.resume") : t("network.pause")}>
               {isPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
             </button>
           </div>
@@ -566,29 +569,29 @@ export default function NetworkPanel() {
         <div className="flex flex-wrap gap-3 text-[11px] text-slate-400 mb-2">
           <span className="flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />
-            代理组
+            {t("network.legendGroup")}
           </span>
           <span className="flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-rose-400 inline-block" />
-            代理节点
+            {t("network.legendProxy")}
           </span>
           <span className="flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-sky-400 inline-block" />
-            规则
+            {t("network.legendRule")}
           </span>
           <span className="flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
-            源 IP
+            {t("network.legendSrcIp")}
           </span>
           <span className="flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-slate-500 inline-block" />
-            源端口
+            {t("network.legendSrcPort")}
           </span>
         </div>
         {currentConnections.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-10 text-slate-500">
             <Network className="w-8 h-8 mb-2 animate-pulse" />
-            <span className="text-sm">等待连接数据…</span>
+            <span className="text-sm">{t("network.waiting")}</span>
           </div>
         ) : (
           <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
@@ -604,15 +607,15 @@ export default function NetworkPanel() {
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-bold text-white flex items-center gap-2">
             <Router className="w-4 h-4 text-emerald-400" />
-            网络接口
+            {t("network.ifaceTitle")}
           </h3>
           <button className={btnSec} onClick={() => refreshInterfaces(true)} disabled={loadingItf}>
             <RefreshCw className={`w-3.5 h-3.5 ${loadingItf ? "animate-spin" : ""}`} />
-            刷新
+            {t("network.refreshBtn")}
           </button>
         </div>
         {interfaces.length === 0 ? (
-          <div className="text-[12px] text-slate-500">{loadingItf ? "正在枚举网络接口…" : "未检测到网络接口"}</div>
+          <div className="text-[12px] text-slate-500">{loadingItf ? t("network.ifaceLoading") : t("network.ifaceNone")}</div>
         ) : (
           <div className="space-y-2">
             {interfaces.map((itf, i) => (
@@ -633,7 +636,7 @@ export default function NetworkPanel() {
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
                   <span className="text-slate-500">MAC</span>
                   <span className="text-slate-300 font-mono">{itf.mac || "—"}</span>
-                  <span className="text-slate-500">速率</span>
+                  <span className="text-slate-500">{t("network.ifaceSpeed")}</span>
                   <span className="text-slate-300">{itf.speed || "—"}</span>
                   <span className="text-slate-500">IPv4</span>
                   <span className="text-slate-300 font-mono">
@@ -643,7 +646,7 @@ export default function NetworkPanel() {
                   <span className="text-slate-300 font-mono break-all">
                     {(itf.ipv6 || []).map((x: any) => x.address).join(", ") || "—"}
                   </span>
-                  <span className="text-slate-500">网关</span>
+                  <span className="text-slate-500">{t("network.ifaceGateway")}</span>
                   <span className="text-slate-300 font-mono">{itf.gateway || "—"}</span>
                   <span className="text-slate-500">DNS</span>
                   <span className="text-slate-300 font-mono">{(itf.dns || []).join(", ") || "—"}</span>

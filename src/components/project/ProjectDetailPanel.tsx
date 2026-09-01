@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -32,13 +33,13 @@ import {
 
 type SubTab = "versions" | "envvars" | "services" | "config" | string;
 
-const baseTabLabels: Record<string, string> = {
-  versions: "版本管理",
-  envvars: "环境变量",
-  legacy: "旧版数据",
-  services: "服务管理",
-  data_dirs: "数据管理",
-  config: "参数配置",
+const baseTabKeys: Record<string, string> = {
+  versions: "projdetail.tabVersions",
+  envvars: "projdetail.tabEnvVars",
+  legacy: "projdetail.tabLegacy",
+  services: "projdetail.tabServices",
+  data_dirs: "projdetail.tabDataDirs",
+  config: "projdetail.tabConfig",
 };
 
 // 判断项目是否支持版本管理（下载多版本 / Git 仓库 / 版本前缀 URL 映射 / npm 包）。
@@ -150,6 +151,7 @@ export default function ProjectDetailPanel({
   onRefresh,
   onProjectUpdate,
 }: Props) {
+  const { t } = useTranslation();
   const [uiMap, setUiMap] = useState<Record<string, ProjectUIState>>({});
   const eventProjectRef = useRef<string | null>(null);
 
@@ -191,7 +193,7 @@ export default function ProjectDetailPanel({
         const sdkId = step?.sdk;
         if (!sdkId) return;
         patch(sdkId, { installStep: step.step });
-        if (step.step === "完成") {
+        if (step.step === t("projdetail.stepDone")) {
           setTimeout(() => {
             patch(sdkId, { installingVersion: null, downloadProgress: null, installStep: "" });
           }, 1500);
@@ -264,7 +266,7 @@ export default function ProjectDetailPanel({
       const selected = await open({
         directory: true,
         multiple: false,
-        title: "选择安装目录",
+        title: t("projdetail.pickInstallDir"),
       });
       if (selected && typeof selected === "string") {
         await invoke("project_set_custom_path", { id: pid, path: selected });
@@ -301,7 +303,7 @@ export default function ProjectDetailPanel({
 
     // 步骤1：加载项目详情（版本、环境变量等）
     steps.push({
-      label: `正在检测 ${proj.display_name} 安装状态...`,
+      label: t("projdetail.detecting", { name: proj.display_name }),
       run: async () => {
         try {
           const d = await invoke<ProjectDetail>("project_detail", { id });
@@ -314,7 +316,7 @@ export default function ProjectDetailPanel({
 
     // 步骤2：获取远程版本列表（优先读缓存）
     steps.push({
-      label: `正在获取 ${proj.display_name} 远程版本列表...`,
+      label: t("projdetail.fetchingVersions", { name: proj.display_name }),
       run: async () => {
         try {
           const result = await invoke<{ versions: string[]; updated_at: number; from_cache: boolean }>(
@@ -362,14 +364,14 @@ export default function ProjectDetailPanel({
   const handleInstall = useCallback(async (version: string) => {
     if (!pid) return;
     eventProjectRef.current = pid;
-    patch(pid, { installingVersion: version, installStep: "下载中", downloadProgress: null });
+    patch(pid, { installingVersion: version, installStep: t("projdetail.stepDownloading"), downloadProgress: null });
     try {
       const parts = version.includes(" · ") ? version.split(" · ")[1] : version;
       const cleanVer = parts.trim().split(" ")[0];
       await invoke("project_install_version", { id: pid, version: cleanVer });
       await refreshSingle(pid);
     } catch (e: unknown) {
-      alert("安装失败: " + e);
+      alert(t("projdetail.installFail", { err: String(e) }));
     } finally {
       setTimeout(() => {
         if (eventProjectRef.current === pid) {
@@ -401,32 +403,32 @@ export default function ProjectDetailPanel({
       );
       patch(pid, { remoteVersions: result.versions, versionsUpdatedAt: result.updated_at, loadingRemote: false });
     } catch (e: unknown) {
-      alert("刷新版本列表失败: " + e);
+      alert(t("projdetail.refreshVersionsFail", { err: String(e) }));
       patch(pid, { loadingRemote: false });
     }
   }, [pid, patch]);
 
   const handleUninstall = useCallback(async (version: string) => {
     if (!pid || !ui.detail) return;
-    if (!confirm("确定卸载 " + ui.detail.status.display_name + " v" + version + " 吗？")) return;
+    if (!confirm(t("projdetail.uninstallConfirm", { name: ui.detail.status.display_name, version }))) return;
     try {
       await invoke("project_uninstall_version", { id: pid, version });
       await refreshSingle(pid);
     } catch (e: unknown) {
-      alert("卸载失败: " + e);
+      alert(t("projdetail.uninstallFail", { err: String(e) }));
     }
   }, [pid, ui.detail, loadDetail, onRefresh]);
 
   const handleUse = useCallback(async (version: string) => {
     if (!pid) return;
-    patch(pid, { switchingVersion: version, detectStep: `正在切换到 ${version}...` });
+    patch(pid, { switchingVersion: version, detectStep: t("projdetail.switching", { version }) });
     try {
       await invoke("project_use_version", { id: pid, version });
       const detail = await invoke<ProjectDetail>("project_detail", { id: pid });
       patch(pid, { detail, switchingVersion: null, detectStep: "" });
       if (onProjectUpdate) await onProjectUpdate(pid);
     } catch (e: unknown) {
-      alert("切换版本失败: " + e);
+      alert(t("projdetail.switchFail", { err: String(e) }));
       patch(pid, { switchingVersion: null, detectStep: "" });
     }
   }, [pid, patch, loadDetail, onRefresh]);
@@ -437,9 +439,9 @@ export default function ProjectDetailPanel({
     try {
       await invoke("project_repair_env_vars", { id: pid });
       await refreshSingle(pid);
-      alert("环境变量和 PATH 已重新校准");
+      alert(t("projdetail.envFixed"));
     } catch (e: unknown) {
-      alert("修复环境变量失败: " + e);
+      alert(t("projdetail.envFixFail", { err: String(e) }));
     } finally {
       patch(pid, { repairingEnv: false });
     }
@@ -488,7 +490,7 @@ export default function ProjectDetailPanel({
       patch(pid, { showManagePreview: false, managePreview: null, managing: false });
       await refreshSingle(pid);
     } catch (e: unknown) {
-      alert("托管操作失败: " + e);
+      alert(t("projdetail.manageFail", { err: String(e) }));
       patch(pid, { managing: false });
     }
   }, [pid, patch, localDelegation, refreshSingle]);
@@ -511,7 +513,7 @@ export default function ProjectDetailPanel({
       patch(pid, { showManagePreview: false, managePreview: null });
       await refreshSingle(pid);
     } catch (e: unknown) {
-      alert("取消托管失败: " + e);
+      alert(t("projdetail.unmanageFail", { err: String(e) }));
     } finally {
       patch(pid, { unmanaging: false });
     }
@@ -524,7 +526,7 @@ export default function ProjectDetailPanel({
 
     if (!isAdmin && Array.isArray(ui.detail.def.service_names) && ui.detail.def.service_names.length > 0) {
       const confirmed = window.confirm(
-        `操作 Windows 系统服务需要管理员权限。当前程序未以管理员身份运行，操作可能会因“拒绝访问（系统错误 5）”而失败。\n\n是否继续？`
+        t("projdetail.adminWarn")
       );
       if (!confirmed) return;
     }
@@ -537,14 +539,14 @@ export default function ProjectDetailPanel({
         } catch (stopErr) {
           const msg = String(stopErr);
           const confirmed = window.confirm(
-            `安全停止失败：\n${msg}\n\n是否强制终止 ${pid} 服务进程？`
+            t("projdetail.stopFailConfirm", { msg, pid })
           );
           if (!confirmed) throw stopErr;
           await invoke("force_stop_service", { name: pid });
         }
       } else {
         if (!simpleService && !ui.detail.status.active_version) {
-          alert("请先启用一个版本，然后才能启动服务");
+          alert(t("projdetail.needEnableFirst"));
           patch(pid, { serviceCtrlLoading: false });
           return;
         }
@@ -556,7 +558,7 @@ export default function ProjectDetailPanel({
       await invoke("refresh_tray_menu");
       await refreshSingle(pid);
     } catch (e: unknown) {
-      alert("服务操作失败: " + e);
+      alert(t("projdetail.serviceOpFail", { err: String(e) }));
     } finally {
       patch(pid, { serviceCtrlLoading: false });
     }
@@ -595,7 +597,7 @@ export default function ProjectDetailPanel({
     const s = uiMap[pid];
     if (!s || !s.cacheDestPath) return;
     if (s.cacheDestPath.toLowerCase().startsWith("c:")) {
-      alert("目标路径必须位于非 C 盘");
+      alert(t("projdetail.nonCDir"));
       return;
     }
     patch(pid, { migratingCache: true });
@@ -603,7 +605,7 @@ export default function ProjectDetailPanel({
       await invoke("migrate_cache_path", { name: pid, newPath: s.cacheDestPath });
       await loadDetail(pid);
     } catch (e: unknown) {
-      alert("缓存迁移失败: " + e);
+      alert(t("projdetail.migrateCacheFail", { err: String(e) }));
     } finally {
       patch(pid, { migratingCache: false });
     }
@@ -616,7 +618,7 @@ export default function ProjectDetailPanel({
       await invoke("upgrade_global_package", { sdkName: pid, pkgName });
       await loadPackages(pid);
     } catch (e: unknown) {
-      patch(pid, { packageError: "升级 " + pkgName + " 失败: " + e });
+      patch(pid, { packageError: t("projdetail.upgradePkgFail", { name: pkgName, err: String(e) }) });
     } finally {
       patch(pid, { upgradingPackage: null });
     }
@@ -643,8 +645,8 @@ export default function ProjectDetailPanel({
     return (
       <div className="h-full flex flex-col items-center justify-center text-slate-500">
         <Info className="w-8 h-8 text-slate-700 mb-2" />
-        <span className="text-xs font-bold text-slate-400">请在左侧选择项目</span>
-        <span className="text-[10px] text-slate-600 mt-1">从列表中点击一个项目查看详情</span>
+        <span className="text-xs font-bold text-slate-400">{t("projdetail.selectLeftHint")}</span>
+        <span className="text-[10px] text-slate-600 mt-1">{t("projdetail.selectLeftDesc")}</span>
       </div>
     );
   }
@@ -694,7 +696,7 @@ export default function ProjectDetailPanel({
   }
 
   // Tab 标签映射（基础 + 动态）
-  const tabLabels: Record<string, string> = { ...baseTabLabels };
+  const tabLabels: Record<string, string> = { ...Object.fromEntries(Object.entries(baseTabKeys).map(([k, v]) => [k, t(v)])) };
   for (const pt of pmTabs) {
     tabLabels[pt.id] = pt.label;
   }
@@ -757,16 +759,16 @@ export default function ProjectDetailPanel({
               {status.managed ? (
                 status.is_simple_managed ? (
                   <span className="px-1.5 py-0.5 rounded text-[9px] bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold flex items-center gap-0.5">
-                    <ShieldCheck className="w-2.5 h-2.5" /> {"简单托管中"}
+                    <ShieldCheck className="w-2.5 h-2.5" /> {t("projdetail.simpleManaging")}
                   </span>
                 ) : (
                   <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold flex items-center gap-0.5">
-                    <ShieldCheck className="w-2.5 h-2.5" /> {"托管中"}
+                    <ShieldCheck className="w-2.5 h-2.5" /> {t("projdetail.managing")}
                   </span>
                 )
               ) : (
                 <span className="px-1.5 py-0.5 rounded text-[9px] bg-slate-500/10 text-slate-400 border border-slate-500/20 font-medium">
-                  {"未托管"}
+                  {t("projdetail.notManaged")}
                 </span>
               )}
               {status.installed ? (
@@ -776,26 +778,26 @@ export default function ProjectDetailPanel({
                   </span>
                 ) : (
                   <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                    {"已安装"}
+                    {t("projdetail.installed")}
                   </span>
                 )
               ) : (
                 <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-red-500/10 text-red-400 border border-red-500/20">
-                  {"未安装"}
+                  {t("projdetail.notInstalled")}
                 </span>
               )}
             </div>
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
               {def?.official_website && (
                 <button onClick={() => openUrl(def.official_website)} className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-0.5 cursor-pointer mr-1">
-                  {"官方网站"} <ExternalLink className="w-2.5 h-2.5" />
+                  {t("projdetail.officialSite")} <ExternalLink className="w-2.5 h-2.5" />
                 </button>
               )}
               {status.install_source && (
-                <><span className="text-slate-600 text-[10px]">.</span><span className="text-[10px] text-slate-400">{"安装方式"}: {status.install_source}</span></>
+                <><span className="text-slate-600 text-[10px]">.</span><span className="text-[10px] text-slate-400">{t("projdetail.installMethod")}: {status.install_source}</span></>
               )}
               {status.install_root && (
-                <><span className="text-slate-600 text-[10px]">.</span><span className="text-[10px] text-slate-400 font-mono truncate max-w-[300px]" title={status.install_root}>{"安装路径"}: {status.install_root}</span></>
+                <><span className="text-slate-600 text-[10px]">.</span><span className="text-[10px] text-slate-400 font-mono truncate max-w-[300px]" title={status.install_root}>{t("projdetail.installPath")}: {status.install_root}</span></>
               )}
               {(!status.managed || status.is_simple_managed) && (!status.install_root || status.install_source === "手动指定") && (
                 <>
@@ -804,7 +806,7 @@ export default function ProjectDetailPanel({
                     onClick={handleSelectCustomPath}
                     className="text-[10px] text-blue-400 hover:text-blue-300 hover:underline transition-colors flex items-center gap-0.5 cursor-pointer font-medium"
                   >
-                    {status.install_root ? "修改路径" : "手动指定目录"}
+                    {status.install_root ? t("projdetail.modifyPath") : t("projdetail.manualSpecifyDir")}
                   </button>
                   {status.install_source === "手动指定" && (
                     <>
@@ -813,7 +815,7 @@ export default function ProjectDetailPanel({
                         onClick={handleClearCustomPath}
                         className="text-[10px] text-amber-500 hover:text-amber-400 hover:underline transition-colors flex items-center gap-0.5 cursor-pointer font-medium"
                       >
-                        {"恢复自动检测"}
+                        {t("projdetail.restoreAutoDetect")}
                       </button>
                     </>
                   )}
@@ -830,9 +832,9 @@ export default function ProjectDetailPanel({
                     ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white" 
                     : "bg-white/5 border-white/5 text-slate-300 hover:bg-white/10"
                 }`}
-                title="托盘右键菜单显示配置"
+                title={t("projdetail.trayConfigTitle")}
               >
-                <Settings className="w-3 h-3" /> {"托盘配置"}
+                <Settings className="w-3 h-3" /> {t("projdetail.trayConfig")}
               </button>
             )}
             <button
@@ -840,7 +842,7 @@ export default function ProjectDetailPanel({
               disabled={ui.detailLoading}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-[10px] border border-white/5 cursor-pointer"
             >
-              <RefreshCw className={`w-3 h-3 ${ui.detailLoading ? "animate-spin" : ""}`} /> {"刷新"}
+              <RefreshCw className={`w-3 h-3 ${ui.detailLoading ? "animate-spin" : ""}`} /> {t("projdetail.refresh")}
             </button>
           </div>
         </div>
@@ -852,13 +854,13 @@ export default function ProjectDetailPanel({
           <div className="flex items-center justify-between border-b border-white/5 pb-2">
             <span className="text-xs font-semibold text-white flex items-center gap-1.5">
               <Settings className="w-3.5 h-3.5 text-[var(--module-accent)]" />
-              右键托盘菜单显示配置
+              {t("projdetail.trayConfigTitle")}
             </span>
             <button 
               onClick={() => setShowMenuConfig(false)}
               className="text-[10px] text-slate-400 hover:text-slate-200 cursor-pointer"
             >
-              关闭
+              {t("projdetail.close")}
             </button>
           </div>
           <div className="flex flex-wrap gap-6 py-1">
@@ -878,7 +880,7 @@ export default function ProjectDetailPanel({
                 }}
                 className="rounded border-white/10 bg-black/40 text-[var(--module-accent)] focus:ring-[var(--module-accent)] w-3.5 h-3.5 cursor-pointer"
               />
-              显示版本切换控制
+              {t("projdetail.showVersionSwitch")}
             </label>
             {(def?.category === "service" || def?.is_service) && (
               <>
@@ -898,7 +900,7 @@ export default function ProjectDetailPanel({
                     }}
                     className="rounded border-white/10 bg-black/40 text-[var(--module-accent)] focus:ring-[var(--module-accent)] w-3.5 h-3.5 cursor-pointer"
                   />
-                  显示服务启动/停止控制
+                  {t("projdetail.showServiceControl")}
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 select-none">
                   <input
@@ -916,14 +918,14 @@ export default function ProjectDetailPanel({
                     className="rounded border-white/10 bg-black/40 text-red-500 focus:ring-red-500 w-3.5 h-3.5 cursor-pointer"
                   />
                   <span className={pid && autoStartServices.includes(pid) ? "text-red-400 font-semibold" : ""}>
-                    软件启动时自动运行此服务
+                    {t("projdetail.autoStartService")}
                   </span>
                 </label>
               </>
             )}
           </div>
           <p className="text-[10px] text-slate-500 leading-normal">
-            提示：此配置将决定该项目在托盘菜单中的展示以及是否随 Kira 启动自动在后台拉起。
+            {t("projdetail.trayHint")}
           </p>
         </div>
       )}
@@ -934,9 +936,9 @@ export default function ProjectDetailPanel({
             <Settings className="w-8 h-8 text-[var(--module-accent)]" />
           </div>
           <div>
-            <p className="text-sm font-medium text-slate-300">{"未检测到本地安装目录"}</p>
+            <p className="text-sm font-medium text-slate-300">{t("projdetail.noLocalInstall")}</p>
             <p className="text-[11px] text-slate-500 mt-1 max-w-sm">
-              {"该项目为简单托管项目，Kira 不提供版本下载与安装服务。请先手动指定本地已安装的目录以进行托管管理。"}
+              {t("projdetail.simpleManagedHint")}
             </p>
           </div>
           <button
@@ -952,9 +954,9 @@ export default function ProjectDetailPanel({
             <div className="mx-5 mt-4 p-3 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-xl flex items-start gap-2.5 text-xs text-[var(--module-accent)]">
               <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="font-semibold text-slate-200">{"此项目尚未开启托管"}</p>
+                <p className="font-semibold text-slate-200">{t("projdetail.notManagedTitle")}</p>
                 <p className="text-[10px] text-slate-400 mt-0.5">
-                  {"Kira 尚未为此项目接管系统环境变量或目录链接。你可以直接在下方“版本列表”中下载和使用版本。如果需要，可在底部点击“托管此项目”开启。"}
+                  {t("projdetail.notManagedDesc")}
                 </p>
               </div>
             </div>
@@ -980,10 +982,10 @@ export default function ProjectDetailPanel({
               <div className="flex flex-col items-center justify-center py-12 space-y-4">
                 <Loader className="w-6 h-6 animate-spin text-[var(--module-accent)]" />
                 <div className="text-center space-y-2 max-w-sm">
-                  <p className="text-xs text-[var(--module-accent)] font-medium">{ui.detectStep || `正在切换到 ${ui.switchingVersion}...`}</p>
+                  <p className="text-xs text-[var(--module-accent)] font-medium">{ui.detectStep || t("projdetail.switching", { version: ui.switchingVersion })}</p>
                   <div className="w-64 mx-auto">
                     <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1">
-                      <span>检测进度</span>
+                      <span>{t("projdetail.detectStep")}</span>
                       <span>{ui.detectIndex}/{ui.detectTotal}</span>
                     </div>
                     <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
@@ -993,12 +995,12 @@ export default function ProjectDetailPanel({
                       />
                     </div>
                   </div>
-                  <p className="text-[10px] text-slate-500">首次打开需要全面检测，请稍候...</p>
+                  <p className="text-[10px] text-slate-500">{t("projdetail.firstScanHint")}</p>
                 </div>
               </div>
             ) : ui.detailLoading && !ui.detailLoaded ? (
               <div className="flex items-center justify-center gap-2 text-xs text-slate-400 py-8">
-                <Loader className="w-4 h-4 animate-spin text-[var(--module-accent)]" /> {"正在加载项目详情..."}
+                <Loader className="w-4 h-4 animate-spin text-[var(--module-accent)]" /> {t("projdetail.loadingDetail")}
               </div>
             ) : (
               <>
@@ -1063,7 +1065,7 @@ export default function ProjectDetailPanel({
                 <div className="flex-shrink-0 px-4 py-3 border-b border-white/10 bg-white/[0.02] flex items-center justify-between">
                   <h4 className={`text-xs font-semibold flex items-center gap-1.5 ${isUnmanage ? "text-red-300" : "text-[var(--module-accent)]"}`}>
                     <Info className="w-3.5 h-3.5" />
-                    {isUnmanage ? "取消托管预览" : "托管配置选项"}
+                    {isUnmanage ? t("projdetail.unmanagePreview") : t("projdetail.manageOptions")}
                   </h4>
                   <button onClick={() => patch(pid!, { showManagePreview: false, managePreview: null })} className="text-slate-500 hover:text-slate-300 cursor-pointer">
                     <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
@@ -1072,11 +1074,11 @@ export default function ProjectDetailPanel({
                 {/* 滚动内容区 */}
                 <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
                   {isUnmanage && (
-                    <p className="text-[11px] text-slate-400">将执行以下操作：</p>
+                    <p className="text-[11px] text-slate-400">{t("projdetail.willExecute")}</p>
                   )}
               {!isUnmanage && localDelegation && (
                 <div className="p-3 bg-white/5 border border-white/10 rounded-xl space-y-3">
-                  <span className="text-[11px] font-semibold text-slate-300 block">选择需要托管的功能选项：</span>
+                  <span className="text-[11px] font-semibold text-slate-300 block">{t("projdetail.chooseOptions")}</span>
                   
                   <div className="grid grid-cols-2 gap-3 text-xs">
                     {/* 1. 环境变量 */}
@@ -1095,7 +1097,7 @@ export default function ProjectDetailPanel({
                               handleCheckboxChange({ env_vars: updatedEnvVars });
                             }}
                           />
-                          <span>接管系统环境变量 ({envVars.filter(v => v.tier !== "compat").length})</span>
+                          <span>{t("projdetail.takeEnvVars", { count: envVars.filter(v => v.tier !== "compat").length })}</span>
                         </label>
                         <div className="pl-6 grid grid-cols-2 gap-2 mt-1">
                           {envVars.filter(v => v.tier !== "compat").map(v => (
@@ -1132,7 +1134,7 @@ export default function ProjectDetailPanel({
                               handleCheckboxChange({ path_vars: updatedPaths });
                             }}
                           />
-                          <span>加入系统 PATH 目录 ({def.bin_dirs.length})</span>
+                          <span>{t("projdetail.addToPath", { count: def.bin_dirs.length })}</span>
                         </label>
                         <div className="pl-6 grid grid-cols-2 gap-2 mt-1">
                           {def.bin_dirs.map(binDir => (
@@ -1148,7 +1150,7 @@ export default function ProjectDetailPanel({
                                   handleCheckboxChange({ path_vars: updated });
                                 }}
                               />
-                              <span className="truncate">{binDir === "" ? "项目主目录 (bin)" : `子目录: ${binDir}`}</span>
+                              <span className="truncate">{binDir === "" ? t("projdetail.mainBinDir") : t("projdetail.subDir", { dir: binDir })}</span>
                             </label>
                           ))}
                         </div>
@@ -1168,8 +1170,8 @@ export default function ProjectDetailPanel({
                             }}
                           />
                           <div className="flex flex-col">
-                            <span>版本控制与下载</span>
-                            <span className="text-[9px] text-slate-400 font-normal">允许在 Kira 内下载多版本</span>
+                            <span>{t("projdetail.versionControl")}</span>
+                            <span className="text-[9px] text-slate-400 font-normal">{t("projdetail.versionControlDesc")}</span>
                           </div>
                         </label>
                       </div>
@@ -1187,8 +1189,8 @@ export default function ProjectDetailPanel({
                           }}
                         />
                         <div className="flex flex-col">
-                          <span>创建目录链接 (Junction)</span>
-                          <span className="text-[9px] text-slate-400 font-normal">从映射路径切换到当前激活版本</span>
+                          <span>{t("projdetail.createLink")}</span>
+                          <span className="text-[9px] text-slate-400 font-normal">{t("projdetail.createLinkDesc")}</span>
                         </div>
                       </label>
                     </div>
@@ -1205,8 +1207,8 @@ export default function ProjectDetailPanel({
                           }}
                         />
                         <div className="flex flex-col">
-                          <span>管理本地安装目录</span>
-                          <span className="text-[9px] text-slate-400 font-normal">支持注册本地已下载的 SDK 路径</span>
+                          <span>{t("projdetail.manageInstallDir")}</span>
+                          <span className="text-[9px] text-slate-400 font-normal">{t("projdetail.manageInstallDirDesc")}</span>
                         </div>
                       </label>
                     </div>
@@ -1224,8 +1226,8 @@ export default function ProjectDetailPanel({
                             }}
                           />
                           <div className="flex flex-col">
-                            <span>重定向数据目录</span>
-                            <span className="text-[9px] text-slate-400 font-normal">分离并重定向工作/日志/数据路径</span>
+                            <span>{t("projdetail.redirectDataDir")}</span>
+                            <span className="text-[9px] text-slate-400 font-normal">{t("projdetail.redirectDataDirDesc")}</span>
                           </div>
                         </label>
                       </div>
@@ -1244,8 +1246,8 @@ export default function ProjectDetailPanel({
                             }}
                           />
                           <div className="flex flex-col">
-                            <span>重定向缓存目录</span>
-                            <span className="text-[9px] text-slate-400 font-normal">分离并重定向第三方依赖/下载缓存</span>
+                            <span>{t("projdetail.redirectCacheDir")}</span>
+                            <span className="text-[9px] text-slate-400 font-normal">{t("projdetail.redirectCacheDirDesc")}</span>
                           </div>
                         </label>
                       </div>
@@ -1268,8 +1270,8 @@ export default function ProjectDetailPanel({
                             }}
                           />
                           <div className="flex flex-col">
-                            <span>管理附带工具 ({pm.display_name})</span>
-                            <span className="text-[9px] text-slate-400 font-normal">管理并在选项卡中展示 {pm.display_name} 状态</span>
+                            <span>{t("projdetail.manageTools", { name: pm.display_name })}</span>
+                            <span className="text-[9px] text-slate-400 font-normal">{t("projdetail.manageToolsDesc", { name: pm.display_name })}</span>
                           </div>
                         </label>
                       </div>
@@ -1280,7 +1282,7 @@ export default function ProjectDetailPanel({
 
               {/* 动态步骤预览 */}
               <div className="space-y-2">
-                <span className="text-xs font-semibold text-slate-300 block">将要执行的操作步骤：</span>
+                <span className="text-xs font-semibold text-slate-300 block">{t("projdetail.stepPreview")}</span>
                 {preview?.steps?.map((step, idx) => (
                   <div key={idx} className="flex items-start gap-2 text-[11px]">
                     <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5 ${stepColorMap[step.action] || "bg-[var(--module-accent-soft)] text-[var(--module-accent)]"}`}>
@@ -1295,32 +1297,32 @@ export default function ProjectDetailPanel({
                   </div>
                 ))}
                 {(!preview?.steps || preview.steps.length === 0) && (
-                  <p className="text-[11px] text-slate-500 italic pl-1">暂无需要执行的托管步骤（请勾选上方选项）</p>
+                  <p className="text-[11px] text-slate-500 italic pl-1">{t("projdetail.noSteps")}</p>
                 )}
               </div>
 
               {preview?.has_local_install && (
                 <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-[10px]">
-                  <span className="text-emerald-300 font-medium">检测到本地已安装版本</span>
+                  <span className="text-emerald-300 font-medium">{t("projdetail.detectedLocal")}</span>
                   {preview.local_install_root && (
-                    <p className="text-slate-400 mt-0.5">路径: {preview.local_install_root}</p>
+                    <p className="text-slate-400 mt-0.5">{t("projdetail.pathLabel", { path: preview.local_install_root })}</p>
                   )}
                   {preview.local_install_source && (
-                    <p className="text-slate-500">来源: {preview.local_install_source}</p>
+                    <p className="text-slate-500">{t("projdetail.sourceLabel", { source: preview.local_install_source })}</p>
                   )}
-                  <p className="text-amber-400/80 mt-1">托管后可在版本管理中扫描并注册本地版本</p>
+                  <p className="text-amber-400/80 mt-1">{t("projdetail.scanLocalHint")}</p>
                 </div>
               )}
 
               {!(ui.isSimpleManage || status.is_simple_managed) && (
                 <div className="p-2.5 rounded-lg bg-black/20 border border-white/5 text-[10px] space-y-1.5">
                   <div className="flex items-center gap-1.5 text-slate-300">
-                    <span className="font-semibold text-slate-200">{"备份文件位置："}</span>
+                    <span className="font-semibold text-slate-200">{t("projdetail.backupLocation")}</span>
                     <span className="font-mono text-[var(--module-accent)]">%USERPROFILE%\\.any-version\\backup\\manage_{pid}_*.json</span>
                   </div>
                   <div className="flex items-center gap-1.5 text-slate-300">
-                    <span className="font-semibold text-slate-200">{isUnmanage ? "托管时已备份：" : "取消托管时："}</span>
-                    <span>{isUnmanage ? "将从备份还原所有环境变量" : "将从备份还原所有环境变量"}</span>
+                    <span className="font-semibold text-slate-200">{isUnmanage ? t("projdetail.backedUpWhenManaged") : t("projdetail.whenUnmanage")}</span>
+                    <span>{t("projdetail.restoreEnvFromBackup")}</span>
                   </div>
                 </div>
               )}
@@ -1330,15 +1332,15 @@ export default function ProjectDetailPanel({
                 <div className="flex-shrink-0 px-4 py-3 border-t border-white/10 bg-white/[0.02] flex items-center gap-2">
                   {isUnmanage ? (
                     <button onClick={handleUnmanage} disabled={ui.unmanaging} className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all">
-                      {ui.unmanaging ? "正在执行..." : "确认取消托管"}
+                      {ui.unmanaging ? t("projdetail.executing") : t("projdetail.confirmUnmanage")}
                     </button>
                   ) : (
                     <button onClick={() => handleManage()} disabled={ui.managing} className="px-4 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all">
-                      {ui.managing ? "正在执行..." : "确认托管"}
+                      {ui.managing ? t("projdetail.executing") : t("projdetail.confirmManage")}
                     </button>
                   )}
                   <button onClick={() => patch(pid!, { showManagePreview: false, managePreview: null })} className="px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs font-medium cursor-pointer border border-white/10">
-                    {"取消"}
+                    {t("projdetail.cancel")}
                   </button>
                 </div>
               </div>
@@ -1350,18 +1352,18 @@ export default function ProjectDetailPanel({
           <div className="text-[10px] text-slate-500">
             {status.managed 
               ? status.is_simple_managed 
-                ? "简单托管中: 环境变量、代理和缓存已配置，不接管版本" 
-                : "托管中: 环境变量和 PATH 已由 Kira 管理" 
-              : "未托管: 环境变量由系统或手动管理"}
+                ? t("projdetail.simpleManagingDesc") 
+                : t("projdetail.managingDesc") 
+              : t("projdetail.unmanagedDesc")}
           </div>
           <div className="flex items-center gap-2">
             {status.managed ? (
               <button onClick={handlePreviewUnmanage} disabled={ui.unmanaging || isOperating} className="px-4 py-2 bg-red-600/80 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5">
-                {ui.unmanaging ? "取消托管中..." : "取消托管"}
+                {ui.unmanaging ? t("projdetail.unmanaging") : t("projdetail.unmanage")}
               </button>
             ) : (
               <button onClick={() => handlePreviewManage()} disabled={ui.managing} className="px-5 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]">
-                {ui.managing ? "托管中..." : "托管此项目"}
+                {ui.managing ? t("projdetail.managingBtn") : t("projdetail.manageProject")}
               </button>
             )}
           </div>

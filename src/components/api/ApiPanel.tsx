@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
@@ -41,6 +42,7 @@ function MoveModuleModal({ module, modules, onClose, onMoved }: {
   onMoved: (targetId: string) => void;
 }) {
   const [targetId, setTargetId] = useState("");
+  const { t } = useTranslation();
   const targets = modules.filter((m) => m.id !== module.id);
   return (
     <SharedModal
@@ -49,27 +51,27 @@ function MoveModuleModal({ module, modules, onClose, onMoved }: {
       width={420}
       title={
         <span className="inline-flex items-center gap-2">
-          <FolderInput className="w-4 h-4" style={{ color: ACCENT }} /> 移动模块内容
+          <FolderInput className="w-4 h-4" style={{ color: ACCENT }} /> {t("api.moveTitle")}
         </span>
       }
       footer={
         <>
-          <SharedButton onClick={onClose}>取消</SharedButton>
+          <SharedButton onClick={onClose}>{t("common.cancel")}</SharedButton>
           <SharedButton onClick={() => onMoved(targetId)} variant="primary" disabled={!targetId}>
-            移动
+            {t("api.move")}
           </SharedButton>
         </>
       }
     >
       <p className="text-xs leading-relaxed text-slate-400 mb-3">
-        将「{module.name}」下的全部接口转移到其他模块。
+        {t("api.moveDesc", { name: module.name })}
       </p>
       <select
         value={targetId}
         onChange={(e) => setTargetId(e.target.value)}
         className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60 cursor-pointer"
       >
-        <option value="">请选择目标模块…</option>
+        <option value="">{t("api.selectTarget")}</option>
         {targets.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
       </select>
     </SharedModal>
@@ -77,6 +79,7 @@ function MoveModuleModal({ module, modules, onClose, onMoved }: {
 }
 
 export default function ApiPanel() {
+  const { t } = useTranslation();
   const [projects, setProjects] = useState<ApiProject[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [envs, setEnvs] = useState<ApiEnvironment[]>([]);
@@ -346,7 +349,7 @@ export default function ApiPanel() {
         } catch { /* 历史记录失败不影响请求 */ }
       }
     } catch (e) {
-      setResponse({ ok: false, status: 0, status_text: "错误", headers: [], body: String(e), body_truncated: false, time_ms: 0, size_bytes: 0 });
+      setResponse({ ok: false, status: 0, status_text: t("api.statusError"), headers: [], body: String(e), body_truncated: false, time_ms: 0, size_bytes: 0 });
     } finally {
       setSending(false);
     }
@@ -434,18 +437,18 @@ export default function ApiPanel() {
     if (!draft) return;
     const ep = draft;
     let md = `# ${ep.name}\n\n> \`${ep.method} ${ep.url}\`\n`;
-    if (ep.authorization.type !== "none") md += `\n**认证：** ${ep.authorization.type}\n`;
+    if (ep.authorization.type !== "none") md += `\n**${t("apisubs.auth")}：** ${ep.authorization.type}\n`;
     const kvMd = (list: KeyValueItem[], title: string) => {
       const rows = list.filter((k) => k.enabled && k.key).map((k) => `| \`${k.key}\` | \`${k.value}\` | ${k.description ?? ""} |`);
-      if (rows.length) md += `\n### ${title}\n\n| 参数 | 值 | 说明 |\n|------|------|------|\n${rows.join("\n")}\n`;
+      if (rows.length) md += `\n### ${title}\n\n| ${t("apisubs.param")} | ${t("apisubs.value")} | ${t("apisubs.desc")} |\n|------|------|------|\n${rows.join("\n")}\n`;
     };
-    kvMd(ep.query_params, "查询参数");
-    kvMd(ep.headers, "请求头");
+    kvMd(ep.query_params, t("apisubs.queryParams"));
+    kvMd(ep.headers, t("apisubs.reqHeaders"));
     if (ep.body_type !== "none" && ep.body.trim()) {
       md += `\n### Body（${ep.body_type}）\n\n\`\`\`\n${ep.body}\n\`\`\`\n`;
     }
     if (response) {
-      md += `\n## 响应示例（HTTP ${response.status} · ${fmtTime(response.time_ms)}）\n\n\`\`\`json\n${prettyJson(response.body)}\n\`\`\`\n`;
+      md += `\n## ${t("apisubs.respExample", { status: response.status, time: fmtTime(response.time_ms) })}\n\n\`\`\`json\n${prettyJson(response.body)}\n\`\`\`\n`;
     }
     await saveDraft({ docs_md: md });
     setActiveTab("docs");
@@ -472,18 +475,18 @@ export default function ApiPanel() {
       } catch { /* non-json body */ }
     }
     if (assertions.length === 0) {
-      window.alert("请先发送请求，以便从响应生成断言");
+      window.alert(t("api.alertSendFirst"));
       return;
     }
     const test: UnitTest = {
-      id: "", endpoint_id: selectedId, name: `从请求衍生 ${new Date().toLocaleTimeString()}`,
+      id: "", endpoint_id: selectedId, name: t("apisubs.fromRequest", { time: new Date().toLocaleTimeString() }),
       assertions, created_at: "",
     };
     await invoke("api_save_unit_test", { test });
-    const t = await invoke<UnitTest[]>("api_list_unit_tests", { endpointId: selectedId });
-    setTests(t);
+    const testList = await invoke<UnitTest[]>("api_list_unit_tests", { endpointId: selectedId });
+    setTests(testList);
     setActiveTab("tests");
-    window.alert("已从当前请求/响应生成单测断言");
+    window.alert(t("api.alertTestGenerated"));
   };
 
   // 应用预设 Headers 到当前接口
@@ -600,10 +603,10 @@ export default function ApiPanel() {
   const deleteEndpoint = async (id: string) => {
     const ep = endpoints.find((e) => e.id === id);
     setConfirm({
-      title: "删除接口",
-      message: `确定删除接口「${ep?.name ?? ""}」？其单测、压测记录将一并删除，且不可恢复。`,
+      title: t("api.confirmDeleteEndpointTitle"),
+      message: t("api.confirmDeleteEndpointMsg", { name: ep?.name ?? "" }),
       danger: true,
-      confirmText: "删除",
+      confirmText: t("common.delete"),
       onConfirm: async () => {
         await invoke("api_delete_endpoint", { endpointId: id });
         if (selectedId === id) {
@@ -619,10 +622,10 @@ export default function ApiPanel() {
     const mod = modules.find((m) => m.id === id);
     const count = endpoints.filter((e) => e.module_id === id).length;
     setConfirm({
-      title: "删除模块",
-      message: `确定删除模块「${mod?.name ?? ""}」？其下 ${count} 个接口将一并删除，且不可恢复。`,
+      title: t("api.confirmDeleteModuleTitle"),
+      message: t("api.confirmDeleteModuleMsg", { name: mod?.name ?? "", count }),
       danger: true,
-      confirmText: "删除",
+      confirmText: t("common.delete"),
       onConfirm: async () => {
         await invoke("api_delete_module", { moduleId: id });
         setModules(modules.filter((m) => m.id !== id));
@@ -635,10 +638,10 @@ export default function ApiPanel() {
   const deleteProject = async (id: string) => {
     const p = projects.find((x) => x.id === id);
     setConfirm({
-      title: "删除项目",
-      message: `确定删除项目「${p?.name ?? ""}」？项目下所有模块、接口、变量集合与历史记录将一并删除，且不可恢复。`,
+      title: t("api.confirmDeleteProjectTitle"),
+      message: t("api.confirmDeleteProjectMsg", { name: p?.name ?? "" }),
       danger: true,
-      confirmText: "删除",
+      confirmText: t("common.delete"),
       onConfirm: async () => {
         await invoke("api_delete_project", { projectId: id });
         const list = projects.filter((x) => x.id !== id);
@@ -659,17 +662,17 @@ export default function ApiPanel() {
       setMoveModule(null);
       refreshEndpoints();
       setConfirm({
-        title: "移动完成",
-        message: `已将 ${n} 个接口从「${moveModule.name}」转移到目标模块。`,
-        confirmText: "知道了",
+        title: t("api.moveDoneTitle"),
+        message: t("api.moveDoneMsg", { n, name: moveModule.name }),
+        confirmText: t("api.gotIt"),
         onConfirm: () => setConfirm(null),
       });
     } catch (e) {
       setConfirm({
-        title: "移动失败",
+        title: t("api.moveFailTitle"),
         message: String(e),
         danger: true,
-        confirmText: "知道了",
+        confirmText: t("api.gotIt"),
         onConfirm: () => setConfirm(null),
       });
     }
@@ -708,7 +711,7 @@ export default function ApiPanel() {
           <div className="mb-1">
             <div className="flex items-center gap-1 px-1.5 pt-1 pb-0.5">
               <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
-              <span className="text-[10px] font-semibold text-slate-500">收藏</span>
+              <span className="text-[10px] font-semibold text-slate-500">{t("api.fav")}</span>
             </div>
             {favs.map(row)}
           </div>
@@ -727,28 +730,28 @@ export default function ApiPanel() {
                 <button
                   onClick={(e) => { e.stopPropagation(); openEditModule(m); }}
                   className="hidden group-hover:block p-0.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
-                  title="编辑模块"
+                  title={t("api.editModuleTip")}
                 >
                   <Pencil className="w-3 h-3" />
                 </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); createEndpoint(m.id); }}
                   className="hidden group-hover:block p-0.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
-                  title="新增接口"
+                  title={t("api.addEndpoint")}
                 >
                   <Plus className="w-3 h-3" />
                 </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); setMoveModule(m); }}
                   className="hidden group-hover:block p-0.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
-                  title="移动到其他模块"
+                  title={t("api.moveToModule")}
                 >
                   <FolderInput className="w-3 h-3" />
                 </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); deleteModule(m.id); }}
                   className="hidden group-hover:block p-0.5 text-slate-500 hover:text-rose-400 cursor-pointer"
-                  title="删除模块（其下接口一并删除）"
+                  title={t("api.deleteModuleTip")}
                 >
                   <Trash2 className="w-3 h-3" />
                 </button>
@@ -764,7 +767,7 @@ export default function ApiPanel() {
                       <div className="text-[10px] text-slate-500/90 leading-snug px-1.5 py-0.5 border-l border-white/10 ml-1">{m.description}</div>
                     )}
                     {children.map(row)}
-                    {children.length === 0 && <div className="text-[10px] text-slate-600 px-2 py-0.5">（空模块）</div>}
+                    {children.length === 0 && <div className="text-[10px] text-slate-600 px-2 py-0.5">{t("api.emptyModule")}</div>}
                   </div>
                 </div>
               </div>
@@ -773,7 +776,7 @@ export default function ApiPanel() {
         })}
         {loose.map(row)}
         {modules.length === 0 && endpoints.length === 0 && (
-          <div className="text-[10px] text-slate-600 px-2 py-2">暂无接口，点击下方按钮新建</div>
+          <div className="text-[10px] text-slate-600 px-2 py-2">{t("api.noEndpoints")}</div>
         )}
       </div>
     );
@@ -781,7 +784,7 @@ export default function ApiPanel() {
 
   const statusBadge = response ? (
     <span className={`text-xs font-bold px-2 py-0.5 rounded-md border ${response.status === 0 ? "text-rose-300 border-rose-500/40 bg-rose-500/10" : response.status < 300 ? "text-emerald-300 border-emerald-500/40 bg-emerald-500/10" : response.status < 500 ? "text-amber-300 border-amber-500/40 bg-amber-500/10" : "text-rose-300 border-rose-500/40 bg-rose-500/10"}`}>
-      {response.status === 0 ? "错误" : response.status}
+      {response.status === 0 ? t("api.statusError") : response.status}
     </span>
   ) : null;
 
@@ -797,10 +800,10 @@ export default function ApiPanel() {
                 <button
                   onClick={() => { setProjectPop((v) => !v); setEnvPop(false); }}
                   className="flex w-full items-center gap-1.5 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs text-slate-200 hover:border-white/25 cursor-pointer"
-                  title="点击切换项目"
+                  title={t("api.switchProjectTip")}
                 >
                   <FlaskConical className="w-3.5 h-3.5 shrink-0" style={{ color: ACCENT }} />
-                  <span className="flex-1 truncate text-left">{currentProject?.name ?? "选择项目"}</span>
+                  <span className="flex-1 truncate text-left">{currentProject?.name ?? t("api.selectProject")}</span>
                   <ChevronDown className="w-3 h-3 shrink-0 text-slate-500" />
                 </button>
                 {projectPop && (
@@ -808,13 +811,13 @@ export default function ApiPanel() {
                     <div className="fixed inset-0 z-30" onClick={() => setProjectPop(false)} />
                     <div className="absolute left-0 top-full z-40 mt-1.5 w-56 overflow-hidden rounded-xl border border-white/10 shadow-2xl" style={{ background: "linear-gradient(160deg, rgba(13,21,36,0.99), rgba(13,21,36,0.95))" }}>
                       <div className="flex items-center justify-between border-b border-white/10 px-3 py-1.5">
-                        <span className="text-[10px] font-semibold text-slate-500">API 项目</span>
-                        <button onClick={openCreateProject} className="p-0.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer" title="新建项目">
+                        <span className="text-[10px] font-semibold text-slate-500">{t("api.apiProjects")}</span>
+                        <button onClick={openCreateProject} className="p-0.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer" title={t("api.newProjectTip")}>
                           <Plus className="w-3 h-3" />
                         </button>
                       </div>
                       <div className="max-h-56 overflow-y-auto p-1 space-y-0.5">
-                        {projects.length === 0 && <div className="px-2 py-1 text-[10px] text-slate-600">暂无项目</div>}
+                        {projects.length === 0 && <div className="px-2 py-1 text-[10px] text-slate-600">{t("api.noProjects")}</div>}
                         {projects.map((p) => (
                           <div
                             key={p.id}
@@ -824,7 +827,7 @@ export default function ApiPanel() {
                             <FlaskConical className="w-3 h-3 shrink-0" style={{ color: p.id === activeProjectId ? ACCENT : undefined }} />
                             <span className="flex-1 text-xs truncate" title={p.description || undefined}>{p.name}</span>
                             {p.id === activeProjectId && (
-                              <span className="rounded-full px-1.5 py-px text-[9px] font-semibold" style={{ background: "color-mix(in srgb, var(--module-accent) 25%, transparent)", color: ACCENT }}>当前</span>
+                              <span className="rounded-full px-1.5 py-px text-[9px] font-semibold" style={{ background: "color-mix(in srgb, var(--module-accent) 25%, transparent)", color: ACCENT }}>{t("api.current")}</span>
                             )}
                           </div>
                         ))}
@@ -835,15 +838,15 @@ export default function ApiPanel() {
               </div>
               {currentProject && (
                 <>
-                  <button onClick={() => openEditProject(currentProject)} className="p-1.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer" title="编辑项目">
+                  <button onClick={() => openEditProject(currentProject)} className="p-1.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer" title={t("api.editProjectTip")}>
                     <Pencil className="w-3.5 h-3.5" />
                   </button>
-                  <button onClick={() => deleteProject(currentProject.id)} className="p-1.5 text-slate-500 hover:text-rose-400 cursor-pointer" title="删除项目">
+                  <button onClick={() => deleteProject(currentProject.id)} className="p-1.5 text-slate-500 hover:text-rose-400 cursor-pointer" title={t("api.deleteProjectTip")}>
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </>
               )}
-              <button onClick={openCreateProject} className="p-1.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer" title="新建项目">
+              <button onClick={openCreateProject} className="p-1.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer" title={t("api.newProjectTip")}>
                 <Plus className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -858,19 +861,19 @@ export default function ApiPanel() {
                     <button
                       onClick={() => { setEnvPop((v) => !v); setProjectPop(false); }}
                       className="flex w-full items-center gap-1.5 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-slate-200 hover:border-white/25 cursor-pointer"
-                      title="点击切换变量集合"
+                      title={t("api.switchEnvTip")}
                     >
                       <Database className="w-3 h-3 shrink-0 text-slate-500" />
-                      <span className="flex-1 truncate text-left">{activeEnv?.name ?? "无环境"}</span>
+                      <span className="flex-1 truncate text-left">{activeEnv?.name ?? t("api.noEnv")}</span>
                       <ChevronDown className="w-3 h-3 shrink-0 text-slate-500" />
                     </button>
                     {envPop && (
                       <>
                         <div className="fixed inset-0 z-30" onClick={() => setEnvPop(false)} />
                         <div className="absolute left-0 top-full z-40 mt-1.5 min-w-full w-max max-w-[260px] overflow-hidden rounded-xl border border-white/10 shadow-2xl" style={{ background: "linear-gradient(160deg, rgba(13,21,36,0.99), rgba(13,21,36,0.95))" }}>
-                          <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-500">变量集合（环境）· 点击切换</div>
+                          <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-500">{t("api.envSwitchTitle")}</div>
                           <div className="max-h-52 overflow-y-auto p-1 space-y-0.5">
-                            {envs.length === 0 && <div className="px-2 py-1 text-[10px] text-slate-600">暂无环境，点「变量维护」新建</div>}
+                            {envs.length === 0 && <div className="px-2 py-1 text-[10px] text-slate-600">{t("api.noEnvHint")}</div>}
                             {envs.map((e) => (
                               <button
                                 key={e.id}
@@ -886,9 +889,9 @@ export default function ApiPanel() {
                       </>
                     )}
                   </div>
-                  <button onClick={() => setEnvModal(true)} className="flex items-center gap-1 rounded-md border border-white/10 bg-black/30 px-1.5 py-1.5 text-[10px] text-slate-400 hover:text-white hover:border-white/25 cursor-pointer" title="管理变量集合">
+                  <button onClick={() => setEnvModal(true)} className="flex items-center gap-1 rounded-md border border-white/10 bg-black/30 px-1.5 py-1.5 text-[10px] text-slate-400 hover:text-white hover:border-white/25 cursor-pointer" title={t("api.manageEnvsTip")}>
                     <Settings2 className="w-3 h-3" />
-                    变量维护
+                    {t("api.envMaintain")}
                   </button>
                 </div>
               </div>
@@ -900,7 +903,7 @@ export default function ApiPanel() {
                   className={`flex flex-1 items-center gap-1 rounded-md px-2 py-1 text-[11px] cursor-pointer transition-colors ${sideTab === "tree" ? "bg-[color-mix(in_srgb,var(--module-accent)_14%,transparent)] text-white" : "text-slate-400 hover:bg-white/5 hover:text-slate-300"}`}
                 >
                   <Braces className="w-3 h-3" style={sideTab === "tree" ? { color: ACCENT } : undefined} />
-                  接口
+                  {t("api.tabTree")}
                   <span className="ml-auto text-[9px] tabular-nums text-slate-500">{endpoints.length}</span>
                 </button>
                 <button
@@ -908,18 +911,18 @@ export default function ApiPanel() {
                   className={`flex flex-1 items-center gap-1 rounded-md px-2 py-1 text-[11px] cursor-pointer transition-colors ${sideTab === "history" ? "bg-[color-mix(in_srgb,var(--module-accent)_14%,transparent)] text-white" : "text-slate-400 hover:bg-white/5 hover:text-slate-300"}`}
                 >
                   <History className="w-3 h-3" style={sideTab === "history" ? { color: ACCENT } : undefined} />
-                  历史
+                  {t("api.tabHistory")}
                   <span className="ml-auto text-[9px] tabular-nums text-slate-500">{history.length}</span>
                 </button>
                 {sideTab === "history" && history.length > 0 && (
                   <button
                     onClick={async () => {
-                      if (!window.confirm("清空该项目全部请求历史？")) return;
+                      if (!window.confirm(t("api.clearHistoryConfirm"))) return;
                       await invoke("api_clear_history", { projectId: activeProjectId });
                       setHistory([]);
                     }}
                     className="p-1 text-slate-600 hover:text-rose-400 cursor-pointer"
-                    title="清空历史"
+                    title={t("api.clearHistoryTip")}
                   >
                     <Eraser className="w-3 h-3" />
                   </button>
@@ -946,7 +949,7 @@ export default function ApiPanel() {
                         </button>
                       );
                     })}
-                    {history.length === 0 && <div className="text-[10px] text-slate-600 px-1.5 py-1">发送请求后自动记录</div>}
+                    {history.length === 0 && <div className="text-[10px] text-slate-600 px-1.5 py-1">{t("api.historyEmpty")}</div>}
                   </div>
                 )}
               </div>
@@ -954,28 +957,28 @@ export default function ApiPanel() {
               {/* 底部工具栏（布局对齐思维导图：2×2 网格） */}
               <div className="p-2 border-t border-white/10 space-y-1.5">
                 <div className="grid grid-cols-2 gap-1.5">
-                  <button onClick={openCreateModule} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title="新建模块">
-                    <FolderPlus className="w-3.5 h-3.5" /> 模块
+                  <button onClick={openCreateModule} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title={t("pmodals.newModule")}>
+                    <FolderPlus className="w-3.5 h-3.5" /> {t("api.newModuleBtn")}
                   </button>
-                  <button onClick={() => createEndpoint(null)} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title="新建接口">
-                    <FilePlus2 className="w-3.5 h-3.5" /> 接口
+                  <button onClick={() => createEndpoint(null)} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title={t("api.addEndpoint")}>
+                    <FilePlus2 className="w-3.5 h-3.5" /> {t("api.newEndpointBtn")}
                   </button>
                 </div>
                 <div className="grid grid-cols-2 gap-1.5">
-                  <button onClick={() => setImportModal(true)} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title="导入 (Postman/cURL)">
-                    <Upload className="w-3.5 h-3.5" /> 导入
+                  <button onClick={() => setImportModal(true)} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title={t("api.importTip")}>
+                    <Upload className="w-3.5 h-3.5" /> {t("api.importBtn")}
                   </button>
-                  <button onClick={exportPostman} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title="导出 Postman 集合">
-                    <Download className="w-3.5 h-3.5" /> 导出
+                  <button onClick={exportPostman} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title={t("api.exportTip")}>
+                    <Download className="w-3.5 h-3.5" /> {t("api.exportBtn")}
                   </button>
                 </div>
               </div>
             </>
           ) : (
             <VexEmptyState
-              title="这里还没有项目"
-              desc="点上方「 + 」新建第一个"
-              tick="从建一个项目开始"
+              title={t("api.emptyTitle")}
+              desc={t("api.emptyDesc")}
+              tick={t("api.emptyTick")}
               avatarSize={38}
               className="flex-1 !py-10"
             />
@@ -984,7 +987,7 @@ export default function ApiPanel() {
           {/* 宽度拖拽把手 + 收起按钮（侧边栏右侧） */}
           <div
             className="absolute -right-1 top-0 z-10 flex h-full w-2.5 cursor-col-resize items-center justify-center hover:bg-white/[0.06]"
-            title="拖动调整宽度"
+            title={t("api.resizeTip")}
             onMouseDown={(e) => {
               if (e.button !== 0) return;
               e.preventDefault();
@@ -999,7 +1002,7 @@ export default function ApiPanel() {
             <button
               type="button"
               className="flex h-6 w-2.5 items-center justify-center rounded-l bg-slate-800/80 text-slate-400 opacity-0 transition group-hover/sb:opacity-100 pointer-events-none group-hover/sb:pointer-events-auto hover:text-white cursor-pointer"
-              title="收起侧栏"
+              title={t("api.collapseSidebar")}
               onClick={(e) => { e.stopPropagation(); if (!sbResizeRef.current.moved) setSidebarCollapsed(true); }}
             >
               <ChevronLeft className="h-3 w-3" />
@@ -1012,7 +1015,7 @@ export default function ApiPanel() {
           type="button"
           className="absolute left-2 top-2 z-20 inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/10 bg-slate-900/90 text-slate-300 shadow-lg transition hover:text-white cursor-pointer"
           onClick={() => setSidebarCollapsed(false)}
-          title="展开侧栏"
+          title={t("api.expandSidebar")}
         >
           <ChevronRight className="h-4 w-4" />
         </button>
@@ -1034,7 +1037,7 @@ export default function ApiPanel() {
               value={draft.name}
               onChange={(e) => updateDraft({ name: e.target.value })}
               className="w-40 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200 focus:outline-none"
-              placeholder="接口名称"
+              placeholder={t("api.endpointNamePh")}
             />
             <VarInput
               value={draft.url}
@@ -1049,10 +1052,10 @@ export default function ApiPanel() {
                 <button
                   onClick={() => setShowTplPanel((v) => !v)}
                   className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs cursor-pointer transition-colors ${showTplPanel ? "border-[var(--module-accent)]/50 bg-[color-mix(in_srgb,var(--module-accent)_12%,transparent)] text-[var(--module-accent)]" : "border-[color-mix(in_srgb,var(--module-accent)_35%,transparent)] bg-[color-mix(in_srgb,var(--module-accent)_8%,transparent)] text-[var(--module-accent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_14%,transparent)]"} ${tplItems.outOfSync > 0 ? "!border-rose-500/60" : ""}`}
-                  title={tplItems.outOfSync > 0 ? `${tplItems.outOfSync} 项模板参数已变化，重新加载接口后同步` : "点击查看继承自项目模板的参数"}
+                  title={tplItems.outOfSync > 0 ? t("api.tplOutOfSyncTip", { n: tplItems.outOfSync }) : t("api.tplViewTip")}
                 >
                   <Link2 className="w-3.5 h-3.5" />
-                  模板继承
+                  {t("api.tplInherit")}
                   <span
                     className="rounded-full px-1.5 py-px text-[10px] font-bold text-white tabular-nums"
                     style={{ background: tplItems.outOfSync > 0 ? "#f43f5e" : "var(--module-accent)" }}
@@ -1063,7 +1066,7 @@ export default function ApiPanel() {
                     <span
                       className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold text-white shadow"
                       style={{ background: "#e11d48" }}
-                      title={`${tplItems.outOfSync} 项待同步`}
+                      title={t("api.tplPendingTip", { n: tplItems.outOfSync })}
                     >
                       {tplItems.outOfSync}
                     </span>
@@ -1076,7 +1079,7 @@ export default function ApiPanel() {
                       <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
                         <span className="flex items-center gap-1.5 text-[11px] font-semibold text-white">
                           <Link2 className="w-3 h-3" style={{ color: "var(--module-accent)" }} />
-                          继承自项目模板的参数（只读）
+                          {t("api.tplPanelTitle")}
                         </span>
                         <button onClick={() => setShowTplPanel(false)} className="p-0.5 text-slate-500 hover:text-white cursor-pointer">
                           <X className="w-3.5 h-3.5" />
@@ -1087,14 +1090,14 @@ export default function ApiPanel() {
                           <div className="flex items-center gap-2 rounded-md border border-rose-500/40 bg-rose-500/10 px-2.5 py-2">
                             <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-rose-400" />
                             <span className="flex-1 text-[10px] leading-snug text-rose-300">
-                              项目模板已修改，{tplItems.outOfSync} 项尚未同步到本接口。
+                              {t("api.tplOutOfSyncDesc", { n: tplItems.outOfSync })}
                             </span>
                             <button
                               onClick={reloadCurrent}
                               className="shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold text-white cursor-pointer hover:opacity-85"
                               style={{ background: "#e11d48" }}
                             >
-                              重新加载
+                              {t("api.reload")}
                             </button>
                           </div>
                         )}
@@ -1107,8 +1110,8 @@ export default function ApiPanel() {
                                   <Lock className={`w-3 h-3 shrink-0 ${it.synced ? "text-[var(--module-accent)]" : "text-rose-400"}`} />
                                   <code className="font-mono text-[10px] text-slate-200 truncate">{it.key}</code>
                                   <span className="text-[10px] text-slate-500">=</span>
-                                  <code className={`font-mono text-[10px] truncate ${it.synced ? "text-[var(--module-accent)]/90" : "text-rose-300"}`} title={it.value}>{it.value || "（空）"}</code>
-                                  {!it.synced && <span className="ml-auto shrink-0 text-[9px] font-semibold text-rose-400">待同步</span>}
+                                  <code className={`font-mono text-[10px] truncate ${it.synced ? "text-[var(--module-accent)]/90" : "text-rose-300"}`} title={it.value}>{it.value || t("api.emptyVal")}</code>
+                                  {!it.synced && <span className="ml-auto shrink-0 text-[9px] font-semibold text-rose-400">{t("api.pendingSync")}</span>}
                                 </div>
                               ))}
                             </div>
@@ -1120,9 +1123,9 @@ export default function ApiPanel() {
                             className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[10px] font-semibold text-slate-200 hover:bg-white/10 hover:text-white cursor-pointer transition-colors"
                           >
                             <Settings2 className="w-3 h-3" style={{ color: "var(--module-accent)" }} />
-                            打开项目模板
+                            {t("api.openProjectTpl")}
                           </button>
-                          <div className="text-center text-[9px] text-slate-500">在模板中修改后，所有接口自动同步。</div>
+                          <div className="text-center text-[9px] text-slate-500">{t("api.tplSyncHint")}</div>
                         </div>
                       </div>
                     </div>
@@ -1137,25 +1140,25 @@ export default function ApiPanel() {
               style={{ background: ACCENT }}
             >
               {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              {sending ? "发送中" : "发送"}
+              {sending ? t("api.sending") : t("api.send")}
             </button>
             <button onClick={() => saveDraft()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
-              <Save className="w-3.5 h-3.5" /> 保存
+              <Save className="w-3.5 h-3.5" /> {t("common.save")}
             </button>
             {selectedId && (
               <button
                 onClick={() => toggleFavorite(draft)}
-                title={draft.is_favorite ? "取消收藏" : "收藏此接口"}
+                title={draft.is_favorite ? t("api.unfavorite") : t("api.favThis")}
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs cursor-pointer ${draft.is_favorite ? "text-amber-400 bg-amber-500/10" : "text-slate-400 bg-white/5 hover:bg-white/10"}`}
               >
-                <Star className={`w-3.5 h-3.5 ${draft.is_favorite ? "fill-amber-400" : ""}`} /> {draft.is_favorite ? "已收藏" : "收藏"}
+                <Star className={`w-3.5 h-3.5 ${draft.is_favorite ? "fill-amber-400" : ""}`} /> {draft.is_favorite ? t("api.favorited") : t("api.fav")}
               </button>
             )}
-            <button onClick={saveAsDoc} title="把当前请求参数 + 返回结果保存为 Markdown 文档" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
-              <BookOpen className="w-3.5 h-3.5" /> 存为文档
+            <button onClick={saveAsDoc} title={t("api.saveAsDocTip")} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
+              <BookOpen className="w-3.5 h-3.5" /> {t("api.saveAsDoc")}
             </button>
-            <button onClick={saveAsTest} title="根据当前请求与返回结果自动生成单测断言" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
-              <TestTube2 className="w-3.5 h-3.5" /> 存为单测
+            <button onClick={saveAsTest} title={t("api.saveAsTestTip")} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
+              <TestTube2 className="w-3.5 h-3.5" /> {t("api.saveAsTest")}
             </button>
           </div>
 
@@ -1175,7 +1178,7 @@ export default function ApiPanel() {
                   <input
                     value={draft.description}
                     onChange={(e) => updateDraft({ description: e.target.value })}
-                    placeholder="接口简介：这个接口做什么？用途、注意事项…（随保存持久化）"
+                    placeholder={t("api.descPh")}
                     className="flex-1 min-w-0 bg-transparent border border-transparent hover:border-white/10 focus:border-[var(--module-accent)]/40 rounded-md px-2 py-1 text-[11px] text-slate-300 placeholder:text-slate-600 focus:outline-none"
                   />
                 </>
@@ -1186,10 +1189,10 @@ export default function ApiPanel() {
           {/* 功能页签 */}
           <div className="flex items-center gap-1 px-3 pt-1.5">
             {([
-              ["request", "请求", Send],
-              ["tests", "单测", ListChecks],
-              ["load", "压测", Gauge],
-              ["docs", "文档", BookOpen],
+              ["request", t("api.tabRequest"), Send],
+              ["tests", t("api.tabTests"), ListChecks],
+              ["load", t("api.tabLoad"), Gauge],
+              ["docs", t("api.tabDocs"), BookOpen],
             ] as const).map(([key, label, Icon]) => (
               <button
                 key={key}
@@ -1210,7 +1213,7 @@ export default function ApiPanel() {
                     ["auth", "Authorization", KeyRound],
                     ["headers", "Headers", Link2],
                     ["body", "Body", FileText],
-                    ["settings", "设置", SlidersHorizontal],
+                    ["settings", t("api.subSettings"), SlidersHorizontal],
                     ["cookies", "Cookies", Cookie],
                   ] as const).map(([key, label, Icon]) => (
                     <button
@@ -1227,7 +1230,7 @@ export default function ApiPanel() {
                     items={draft.query_params}
                     onChange={(v) => updateDraft({ query_params: v })}
                     envVars={variables}
-                    placeholderValue="值（支持 {{baseUrl}} / {{$guid}}）"
+                    placeholderValue={t("api.valuePh", { guid: "{{$guid}}" })}
                   />
                 )}
                 {subTab === "auth" && (
@@ -1238,18 +1241,18 @@ export default function ApiPanel() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <label className="flex items-center gap-1.5 text-[10px] text-slate-400 cursor-pointer">
                         <input type="checkbox" checked={hideCommonHeaders} onChange={(e) => setHideCommonHeaders(e.target.checked)} className="accent-[var(--module-accent)]" />
-                        隐藏常见自动附加头（Content-Type/Length、Host、User-Agent、Accept…）
+                        {t("api.hideCommonHeaders")}
                       </label>
                       <select
                         value=""
                         onChange={(e) => { if (e.target.value) applyPreset(e.target.value); }}
                         className="bg-black/30 border border-white/10 rounded-md px-1.5 py-1 text-[10px] text-slate-300 cursor-pointer"
                       >
-                        <option value="">应用预设 Headers…</option>
+                        <option value="">{t("api.applyPreset")}</option>
                         {presetSets.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
                       <button onClick={() => setPresetModal(true)} className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">
-                        <Settings2 className="w-3 h-3" /> 管理预设
+                        <Settings2 className="w-3 h-3" /> {t("api.managePreset")}
                       </button>
                     </div>
                     <KvEditor
@@ -1263,9 +1266,9 @@ export default function ApiPanel() {
                           updateDraft({ headers: v });
                         }
                       }}
-                      placeholderKey="Header 名"
+                      placeholderKey={t("api.headerPh")}
                       envVars={variables}
-                      placeholderValue="值（如 Bearer {{token}}）"
+                      placeholderValue={t("api.bearerValuePh", { token: "{{token}}" })}
                     />
                   </div>
                 )}
@@ -1315,7 +1318,7 @@ export default function ApiPanel() {
                         <input
                           value={draft.body}
                           onChange={(e) => updateDraft({ body: e.target.value })}
-                          placeholder="本地文件路径"
+                          placeholder={t("api.localFilePathPh")}
                           className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200"
                         />
                         <button
@@ -1325,7 +1328,7 @@ export default function ApiPanel() {
                           }}
                           className="text-[11px] px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer"
                         >
-                          选择文件
+                          {t("api.chooseFile")}
                         </button>
                       </div>
                     )}
@@ -1337,7 +1340,7 @@ export default function ApiPanel() {
                         envVars={variables}
                         onChange={(v) => updateDraft({ body: v })}
                         className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
-                        placeholder={draft.body_type === "json" ? '{"name": "{{random:string:6}}", "age": {{random:int:18:60}}}' : "原始内容"}
+                        placeholder={draft.body_type === "json" ? '{"name": "{{random:string:6}}", "age": {{random:int:18:60}}}' : t("api.rawBodyPh")}
                       />
                     )}
                   </div>
@@ -1352,8 +1355,8 @@ export default function ApiPanel() {
                 )}
                 {subTab === "cookies" && (
                   <div className="space-y-1.5">
-                    <KvEditor items={draft.cookies} onChange={(v) => updateDraft({ cookies: v })} envVars={variables} placeholderKey="Cookie 名" placeholderValue="值" />
-                    <div className="text-[10px] text-slate-500">独立设置的 Cookie 会随请求发送。</div>
+                    <KvEditor items={draft.cookies} onChange={(v) => updateDraft({ cookies: v })} envVars={variables} placeholderKey={t("api.cookiePh")} placeholderValue={t("apiparts.kvValuePh")} />
+                    <div className="text-[10px] text-slate-500">{t("api.cookieHint")}</div>
                   </div>
                 )}
               </div>
@@ -1374,10 +1377,10 @@ export default function ApiPanel() {
               <div className="space-y-3">
                 <div className="grid grid-cols-4 gap-2">
                   {([
-                    ["concurrency", "并发数", loadConfig.concurrency, (v: number) => setLoadConfig({ ...loadConfig, concurrency: v })],
-                    ["duration_secs", "时长(秒)", loadConfig.duration_secs, (v: number) => setLoadConfig({ ...loadConfig, duration_secs: v })],
-                    ["ramp_up_secs", "Ramp-up(秒)", loadConfig.ramp_up_secs, (v: number) => setLoadConfig({ ...loadConfig, ramp_up_secs: v })],
-                    ["rps_limit", "RPS 上限(0=不限)", loadConfig.rps_limit, (v: number) => setLoadConfig({ ...loadConfig, rps_limit: v })],
+                    ["concurrency", t("api.concurrency"), loadConfig.concurrency, (v: number) => setLoadConfig({ ...loadConfig, concurrency: v })],
+                    ["duration_secs", t("api.duration"), loadConfig.duration_secs, (v: number) => setLoadConfig({ ...loadConfig, duration_secs: v })],
+                    ["ramp_up_secs", t("api.rampUp"), loadConfig.ramp_up_secs, (v: number) => setLoadConfig({ ...loadConfig, ramp_up_secs: v })],
+                    ["rps_limit", t("api.rpsLimit"), loadConfig.rps_limit, (v: number) => setLoadConfig({ ...loadConfig, rps_limit: v })],
                   ] as const).map(([key, label, value, set]) => (
                     <label key={key} className="block">
                       <span className="text-[10px] text-slate-500">{label}</span>
@@ -1391,7 +1394,7 @@ export default function ApiPanel() {
                     </label>
                   ))}
                 </div>
-                <div className="text-[10px] text-slate-500">压测使用当前请求配置（含认证/Cookie/随机变量，每次请求重新生成随机值）。</div>
+                <div className="text-[10px] text-slate-500">{t("api.loadHint")}</div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={startLoadTest}
@@ -1400,11 +1403,11 @@ export default function ApiPanel() {
                     style={{ background: ACCENT }}
                   >
                     <Play className="w-3.5 h-3.5" />
-                    {runningRunId ? "压测进行中…" : "开始压测"}
+                    {runningRunId ? t("api.loadRunning") : t("api.startLoad")}
                   </button>
                   {runningRunId && loadStatus && (
                     <div className="flex-1 text-[11px] text-slate-300">
-                      已运行 {loadStatus.elapsed_secs}s · 请求 {loadStatus.total} · 成功 {loadStatus.success} · 失败 {loadStatus.failed} · QPS {loadStatus.qps.toFixed(1)} · p95 {loadStatus.latency_p95_ms.toFixed(1)}ms
+                      {t("api.loadStatus", { s: loadStatus.elapsed_secs, total: loadStatus.total, ok: loadStatus.success, fail: loadStatus.failed, qps: loadStatus.qps.toFixed(1), p95: loadStatus.latency_p95_ms.toFixed(1) })}
                     </div>
                   )}
                 </div>
@@ -1412,14 +1415,14 @@ export default function ApiPanel() {
                 {runningRunId && <div className="h-1.5 rounded-full bg-white/10 overflow-hidden"><div className="h-full bg-[var(--module-accent)]" style={{ width: `${Math.min(100, (loadStatus?.elapsed_secs ?? 0) / Math.max(1, loadConfig.duration_secs) * 100)}%` }} /></div>}
                 {loadRuns.length > 0 && !runningRunId && (
                   <div className="space-y-1.5">
-                    <div className="text-[11px] font-semibold text-slate-400">历史压测报告</div>
+                    <div className="text-[11px] font-semibold text-slate-400">{t("api.loadHistory")}</div>
                     {loadRuns.map((run) => (
                       <div key={run.id} className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2 text-xs text-slate-300">
                             <span className="font-semibold">{run.name || draft.name}</span>
                             <span className="text-[10px] text-slate-500">{run.created_at.replace("T", " ").slice(0, 19)}</span>
-                            <span className="text-[10px] text-slate-500">并发 {run.config.concurrency} · {run.config.duration_secs}s</span>
+                            <span className="text-[10px] text-slate-500">{t("api.loadConfigInfo", { c: run.config.concurrency, d: run.config.duration_secs })}</span>
                           </div>
                           <button
                             onClick={async () => {
@@ -1447,12 +1450,12 @@ export default function ApiPanel() {
           {/* 响应区 */}
           <div className="shrink-0 h-64 border-t border-white/10 flex flex-col">
             <div className="flex items-center gap-2 px-3 py-1.5 border-b border-white/10">
-              <span className="text-[11px] font-semibold text-slate-400">响应</span>
+              <span className="text-[11px] font-semibold text-slate-400">{t("api.response")}</span>
               {statusBadge}                  {response && (
                     <>
                       <span className="text-[10px] text-slate-500">{fmtTime(response.time_ms)}</span>
                   <span className="text-[10px] text-slate-500">{response.size_bytes > 1024 * 1024 ? `${(response.size_bytes / 1024 / 1024).toFixed(1)}MB` : `${(response.size_bytes / 1024).toFixed(1)}KB`}</span>
-                  {response.body_truncated && <span className="text-[10px] text-amber-400">Body 已截断（2MB 上限）</span>}
+                  {response.body_truncated && <span className="text-[10px] text-amber-400">{t("api.bodyTruncated")}</span>}
                   <div className="ml-auto flex items-center gap-2">
                     <div className="flex gap-0.5 bg-black/30 rounded p-0.5">
                       {(["pretty", "raw"] as const).map((m) => (
@@ -1461,12 +1464,12 @@ export default function ApiPanel() {
                           onClick={() => setBodyMode(m)}
                           className={`px-1.5 py-0.5 rounded text-[10px] cursor-pointer ${bodyMode === m ? "bg-white/10 text-cyan-300" : "text-slate-500 hover:text-slate-300"}`}
                         >
-                          {m === "pretty" ? "美化" : "原始"}
+                          {m === "pretty" ? t("api.pretty") : t("api.raw")}
                         </button>
                       ))}
                     </div>
                     <button onClick={copyBody} className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">
-                      {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />} {copied ? "已复制" : "复制 Body"}
+                      {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />} {copied ? t("api.copied") : t("api.copyBody")}
                     </button>
                   </div>
                 </>
@@ -1480,32 +1483,32 @@ export default function ApiPanel() {
                     <span className="w-1/2 text-slate-300 truncate" title={h.value}>{h.value}</span>
                   </div>
                 ))}
-                {response && response.headers.length === 0 && <div className="text-[10px] text-slate-600">无响应头</div>}
+                {response && response.headers.length === 0 && <div className="text-[10px] text-slate-600">{t("api.noHeaders")}</div>}
               </div>
               {sending ? (
                 <div className="flex flex-col items-center justify-center h-full gap-2 text-slate-500 select-none">
                   <Loader2 className="w-5 h-5 animate-spin text-cyan-400" />
-                  <span className="text-[11px]">请求发送中…</span>
+                  <span className="text-[11px]">{t("api.sendingWait")}</span>
                 </div>
               ) : response ? (
                 <ResponseBody body={response.body} mode={bodyMode} />
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-slate-600 gap-2 select-none">
                   <Send className="w-6 h-6 opacity-40" />
-                  <span className="text-[11px]">发送请求后在此查看响应</span>
+                  <span className="text-[11px]">{t("api.noResponseYet")}</span>
                 </div>
               )}
               {/* 响应注释 */}
               <div className="border-l border-white/10 flex flex-col">
                 <div className="flex items-center gap-1 px-2 py-1 border-b border-white/10">
                   <StickyNote className="w-3 h-3 text-slate-500" />
-                  <span className="text-[10px] text-slate-500">响应注释</span>
-                  <button onClick={saveComment} className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">保存</button>
+                  <span className="text-[10px] text-slate-500">{t("api.comment")}</span>
+                  <button onClick={saveComment} className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">{t("common.save")}</button>
                 </div>
                 <textarea
                   value={commentDraft}
                   onChange={(e) => setCommentDraft(e.target.value)}
-                  placeholder="记录本次返回结果的含义、注意事项…"
+                  placeholder={t("api.commentPh")}
                   className="flex-1 bg-transparent p-2 text-[11px] text-slate-300 resize-none focus:outline-none"
                 />
               </div>
@@ -1516,8 +1519,8 @@ export default function ApiPanel() {
         <div className="flex-1 flex items-center justify-center text-sm text-slate-500">
           <div className="text-center space-y-2">
             <FlaskConical className="w-10 h-10 mx-auto opacity-40" />
-            <p>选择左侧接口开始调试，或新建项目/接口</p>
-            <p className="text-[10px] text-slate-600">支持 {'{{\"变量名\"}}'}、{'{{$guid}}'} 等随机变量 · 单测断言 · 并发压测 · Markdown 文档 · Postman 导入导出</p>
+            <p>{t("api.emptyMain")}</p>
+            <p className="text-[10px] text-slate-600">{t("api.emptyHint2", { vars: '{{"变量名"}}', guid: "{{$guid}}" })}</p>
           </div>
         </div>
       )}

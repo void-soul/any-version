@@ -2,12 +2,14 @@
 // 链路：网络请求 → 一级代理（在「代理」页选中） → 二级代理（本页启用） → 目标
 // 界面与「代理」页统一：网格列数可调、选中绿色背景+绿色边框、支持测速
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Plus, Pencil, Trash2, Zap, RefreshCw, Info, Layers, Check, ChevronDown, Filter, X } from "lucide-react";
 import { mihomoApi, SecondaryProxy } from "../mihomoApi";
 import { cardCls, Modal, btnSec, btnPrimary, inputCls, labelCls, delayColor, delayText } from "./ui";
 import { ctrlGet, proxyDelay, lastDelay } from "./ctrl";
 
 export default function SecondaryProxiesPanel({ running }: { running: boolean }) {
+  const { t } = useTranslation();
   const [items, setItems] = useState<SecondaryProxy[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [cfg, setCfg] = useState<any>({});
@@ -74,19 +76,19 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
   // 启用/停用二级代理；id 无效时停用全部（不使用二级代理）
   const toggleActive = (id: string) => {
     const nextActive = activeId === id ? null : id; // 再点一次取消
-    persist(items, nextActive, nextActive ? "已启用二级代理" : "已停用二级代理");
+    persist(items, nextActive, nextActive ? t("secproxy.enabledMsg") : t("secproxy.disabledMsg"));
   };
 
   const saveEdit = async (patch: SecondaryProxy) => {
-    if (!patch.name.trim()) { setMsg("请填写二级代理名称"); return; }
-    if (!patch.host.trim() || !patch.port) { setMsg("请填写 IP/域名 与 端口"); return; }
+    if (!patch.name.trim()) { setMsg(t("secproxy.nameRequired")); return; }
+    if (!patch.host.trim() || !patch.port) { setMsg(t("secproxy.hostRequired")); return; }
     let list: SecondaryProxy[];
     if (isNew) {
       list = [...items, { ...patch, id: patch.id || genId() }];
     } else {
       list = items.map((s) => (s.id === patch.id ? patch : s));
     }
-    await persist(list, activeId, isNew ? "已新增二级代理" : "已保存修改");
+    await persist(list, activeId, isNew ? t("secproxy.addedMsg") : t("secproxy.savedMsg"));
     setEditing(null);
     setIsNew(false);
   };
@@ -94,7 +96,7 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
   const remove = async (id: string) => {
     const list = items.filter((s) => s.id !== id);
     const active = activeId === id ? null : activeId;
-    await persist(list, active, "已删除二级代理");
+    await persist(list, active, t("secproxy.deletedMsg"));
   };
 
   // 全部测速
@@ -129,12 +131,12 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex items-center gap-2 text-xs text-slate-400 min-w-0">
           <Info className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
-          <span className="truncate">链路：一级代理（代理页选中：{currentProxy || "未设置"}） → 二级代理 → 目标</span>
+          <span className="truncate">{t("secproxy.chainLabel", { name: currentProxy || t("secproxy.notSet") })}</span>
         </div>
         <div className="flex-1" />
         {/* 列数切换（与代理页一致） */}
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-slate-400">列数</span>
+          <span className="text-[10px] text-slate-400">{t("secproxy.colsLabel")}</span>
           <div className="flex items-center rounded-lg bg-white/10 p-0.5">
             {[1, 2, 3, 4].map((c) => (
               <button
@@ -150,18 +152,18 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
           </div>
         </div>
         <button className={btnSec} onClick={fetchLive} disabled={!running}>
-          <span className="inline-flex items-center gap-1"><RefreshCw className="w-3 h-3" />刷新</span>
+          <span className="inline-flex items-center gap-1"><RefreshCw className="w-3 h-3" />{t("secproxy.refresh")}</span>
         </button>
         <button className={btnSec} onClick={onTestAll} disabled={!running || items.length === 0}>
           <span className="inline-flex items-center gap-1">
-            <Zap className={`w-3 h-3 ${Object.keys(testing).length ? "animate-spin" : ""}`} />全部测速
+            <Zap className={`w-3 h-3 ${Object.keys(testing).length ? "animate-spin" : ""}`} />{t("secproxy.testAll")}
           </span>
         </button>
         <button
           className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[12px] font-semibold cursor-pointer transition-all whitespace-nowrap"
           onClick={() => { setEditing({ id: genId(), name: "", host: "", port: 0, username: "", password: "" }); setIsNew(true); }}
         >
-          <Plus className="w-4 h-4" /> 新增二级代理
+          <Plus className="w-4 h-4" /> {t("secproxy.addSec")}
         </button>
       </div>
       {msg && <div className="text-[11px] text-emerald-300 px-1">{msg}</div>}
@@ -178,10 +180,10 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
           <div className="flex items-center gap-1.5">
             <Layers className={`w-3.5 h-3.5 flex-shrink-0 ${empty ? "text-emerald-300" : "text-slate-400"}`} />
             <span className={`text-[12px] truncate flex-1 ${empty ? "text-emerald-300 font-semibold" : "text-slate-200"}`}>
-              不使用二级代理
+              {t("secproxy.noSec")}
             </span>
           </div>
-          <div className="mt-0.5 text-[10px] text-slate-500 truncate">请求直接经一级代理出站</div>
+          <div className="mt-0.5 text-[10px] text-slate-500 truncate">{t("secproxy.noSecDesc")}</div>
         </div>
 
         {items.map((s) => {
@@ -204,14 +206,14 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
                 </span>
                 <button
                   className={`text-[10px] font-mono flex-shrink-0 cursor-pointer hover:underline ${delayColor(d)}`}
-                  title="测试此二级代理延迟"
+                  title={t("secproxy.testTip")}
                   disabled={testingNow}
                   onClick={(e) => { e.stopPropagation(); onProxyDelay(s); }}
                 >
                   {testingNow ? (
                     <span className="inline-block w-3 h-3 rounded-full border border-white/30 border-t-white animate-spin align-middle" />
                   ) : (
-                    delayText(d)
+                    t(delayText(d))
                   )}
                 </button>
               </div>
@@ -220,14 +222,14 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
               </div>
               <div className="mt-1 flex items-center justify-between">
                 <span className={`text-[9px] px-1.5 py-0.5 rounded ${isActive ? "bg-emerald-500/15 text-emerald-300" : "bg-white/5 text-slate-500"}`}>
-                  {isActive ? "使用中" : "未启用"}
+                  {isActive ? t("secproxy.inUse") : t("secproxy.notEnabled")}
                 </span>
                 <div className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
-                  <button className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer" title="编辑"
+                  <button className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer" title={t("common.edit")}
                     onClick={() => { setEditing({ ...s }); setIsNew(false); }}>
                     <Pencil className="w-3 h-3" />
                   </button>
-                  <button className="p-1 rounded hover:bg-rose-500/15 text-slate-400 hover:text-rose-300 cursor-pointer" title="删除"
+                  <button className="p-1 rounded hover:bg-rose-500/15 text-slate-400 hover:text-rose-300 cursor-pointer" title={t("common.delete")}
                     onClick={() => remove(s.id)}>
                     <Trash2 className="w-3 h-3" />
                   </button>
@@ -243,11 +245,11 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
 
       {/* 使用说明 */}
       <div className={`${cardCls} p-3 text-[11px] text-slate-400 space-y-1`}>
-        <div className="text-slate-300 font-semibold">使用方法</div>
-        <div>1. 在「代理」页选中一个节点作为一级代理（例如德国节点），自动作为二级代理的前置。</div>
-        <div>2. 在本页点击卡片即可选中/切换二级代理；点「不使用二级代理」则关闭。</div>
-        <div>3. 链路：请求 → 一级代理 → 二级代理 → 网站。</div>
-        <div>4. 启用后出现「二级代理」策略组：全局模式切到它即全局走二级；规则模式可用规则分流；直连模式不走代理。</div>
+        <div className="text-slate-300 font-semibold">{t("secproxy.usageTitle")}</div>
+        <div>{t("secproxy.usage1")}</div>
+        <div>{t("secproxy.usage2")}</div>
+        <div>{t("secproxy.usage3")}</div>
+        <div>{t("secproxy.usage4")}</div>
       </div>
 
       {editing && (
@@ -267,38 +269,39 @@ function EditSecondaryModal({ item, isNew, busy, onCancel, onSave }: {
   item: SecondaryProxy; isNew: boolean; busy: boolean;
   onCancel: () => void; onSave: (patch: SecondaryProxy) => void;
 }) {
+  const { t } = useTranslation();
   const [form, setForm] = useState<SecondaryProxy>({ ...item });
   return (
-    <Modal title={isNew ? "新增二级代理" : "编辑二级代理"} onClose={onCancel} busy={busy} busyText="保存中…"
+    <Modal title={isNew ? t("secproxy.modalNew") : t("secproxy.modalEdit")} onClose={onCancel} busy={busy} busyText={t("secproxy.busyText")}
       footer={
         <>
-          <button className={btnSec} disabled={busy} onClick={onCancel}>取消</button>
-          <button className={btnPrimary} disabled={busy} onClick={() => onSave(form)}>保存</button>
+          <button className={btnSec} disabled={busy} onClick={onCancel}>{t("common.cancel")}</button>
+          <button className={btnPrimary} disabled={busy} onClick={() => onSave(form)}>{t("common.save")}</button>
         </>
       }>
       <div>
-        <label className={labelCls}>名称</label>
-        <input className={inputCls} placeholder="如：美国1号" value={form.name}
+        <label className={labelCls}>{t("secproxy.nameLabel")}</label>
+        <input className={inputCls} placeholder={t("secproxy.namePh")} value={form.name}
           onChange={(e) => setForm({ ...form, name: e.target.value })} />
       </div>
       <div>
-        <label className={labelCls}>地址 (IP/域名)</label>
-        <input className={inputCls} placeholder="1.2.3.4 或 home.example.com" value={form.host}
+        <label className={labelCls}>{t("secproxy.hostLabel")}</label>
+        <input className={inputCls} placeholder={t("secproxy.hostPh")} value={form.host}
           onChange={(e) => setForm({ ...form, host: e.target.value })} />
       </div>
       <div>
-        <label className={labelCls}>端口</label>
+        <label className={labelCls}>{t("secproxy.portLabel")}</label>
         <input className={inputCls} type="number" placeholder="1080" value={form.port || ""}
           onChange={(e) => setForm({ ...form, port: Number(e.target.value) || 0 })} />
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className={labelCls}>账号（可选）</label>
+          <label className={labelCls}>{t("secproxy.userLabel")}</label>
           <input className={inputCls} autoComplete="off" value={form.username || ""}
             onChange={(e) => setForm({ ...form, username: e.target.value })} />
         </div>
         <div>
-          <label className={labelCls}>密码（可选）</label>
+          <label className={labelCls}>{t("secproxy.passLabel")}</label>
           <input className={inputCls} type="password" autoComplete="off" value={form.password || ""}
             onChange={(e) => setForm({ ...form, password: e.target.value })} />
         </div>
@@ -318,6 +321,7 @@ const SECONDARY_PRESETS: { cat: string; domains: string[] }[] = [
 ];
 
 function SecondaryPresetPanel({ profileId }: { running: boolean; profileId: string }) {
+  const { t } = useTranslation();
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -357,7 +361,7 @@ function SecondaryPresetPanel({ profileId }: { running: boolean; profileId: stri
   // 生成规则写入当前订阅的规则覆写 prepend
   const applyRules = async () => {
     if (!checked.size) return;
-    if (!profileId) { setErr("未检测到当前订阅，无法写入规则覆写"); return; }
+    if (!profileId) { setErr(t("secproxy.noProfileErr")); return; }
     setBusy(true);
     setErr("");
     try {
@@ -391,7 +395,7 @@ function SecondaryPresetPanel({ profileId }: { running: boolean; profileId: stri
   // 移除已应用到二级代理的规则（从 prepend 中删除对应 DOMAIN-SUFFIX,xxx,二级代理）
   const removeRules = async () => {
     if (!checked.size) return;
-    if (!profileId) { setErr("未检测到当前订阅"); return; }
+    if (!profileId) { setErr(t("secproxy.noProfileErr2")); return; }
     setBusy(true);
     setErr("");
     try {
@@ -422,22 +426,22 @@ function SecondaryPresetPanel({ profileId }: { running: boolean; profileId: stri
         <div className="flex items-center gap-2">
           <Filter className="w-3.5 h-3.5 text-emerald-400" />
           <div>
-            <div className="text-[13px] font-bold text-white">常用分流预设</div>
-            <div className="text-[10px] text-slate-500">勾选常用海外网站，一键让它们走「二级代理」</div>
+            <div className="text-[13px] font-bold text-white">{t("secproxy.presetTitle")}</div>
+            <div className="text-[10px] text-slate-500">{t("secproxy.presetDesc")}</div>
           </div>
         </div>
         <div className="flex items-center gap-1.5">
           <button className={btnSec} disabled={busy || !checked.size} onClick={removeRules}>
-            <span className="inline-flex items-center gap-1"><X className="w-3 h-3" />移除已选</span>
+            <span className="inline-flex items-center gap-1"><X className="w-3 h-3" />{t("secproxy.removeSelected")}</span>
           </button>
           <button className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[12px] font-semibold cursor-pointer disabled:opacity-40"
             disabled={busy || !checked.size} onClick={applyRules}>
-            <Check className="w-3.5 h-3.5" /> 添加 {totalChecked ? `(${totalChecked})` : ""} 到二级代理
+            <Check className="w-3.5 h-3.5" /> {t("secproxy.addToSec", { n: totalChecked ? `(${totalChecked})` : "" })}
           </button>
         </div>
       </div>
       {err && <div className="mt-1.5 text-[11px] text-rose-300">{err}</div>}
-      {applied && <div className="mt-1.5 text-[11px] text-emerald-300">已应用，请到「规则」页查看或重启内核生效</div>}
+      {applied && <div className="mt-1.5 text-[11px] text-emerald-300">{t("secproxy.appliedMsg")}</div>}
 
       <div className="mt-2.5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
         {SECONDARY_PRESETS.map((item) => {
@@ -455,7 +459,7 @@ function SecondaryPresetPanel({ profileId }: { running: boolean; profileId: stri
                 />
                 <button className="flex-1 text-left text-[12px] font-semibold text-white cursor-pointer flex items-center gap-1"
                   onClick={() => toggleCollapse(item.cat)}>
-                  {item.cat}
+                  {t(item.cat)}
                   <span className="text-[9px] font-normal text-slate-500">{cnt}/{item.domains.length}</span>
                   <ChevronDown className={`w-3 h-3 text-slate-500 transition-transform ${isOpen ? "rotate-180" : ""}`} />
                 </button>
@@ -478,7 +482,7 @@ function SecondaryPresetPanel({ profileId }: { running: boolean; profileId: stri
         })}
       </div>
       <div className="mt-2 text-[10px] text-slate-500">
-        规则为 DOMAIN-SUFFIX，写入当前订阅的「规则覆写」前置，优先于订阅自带规则。可随时「移除已选」回退。
+        {t("secproxy.presetHint")}
       </div>
     </div>
   );

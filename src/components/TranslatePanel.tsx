@@ -12,6 +12,7 @@ import {
   Search,
   X,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 // ─── 类型 ───
 
@@ -71,6 +72,7 @@ function doTranslate(text: string, providerId: string | null, modelId: string | 
 // ─── 面板 ───
 
 export default function TranslatePanel() {
+  const { t } = useTranslation();
   const [providers, setProviders] = useState<AiProvider[]>([]);
   const [source, setSource] = useState("");
   const [target, setTarget] = useState("中文");
@@ -252,9 +254,9 @@ export default function TranslatePanel() {
             <Languages className="w-4 h-4 text-[var(--module-accent)]" />
           </div>
           <div>
-            <h2 className="text-sm font-bold text-white tracking-wide">翻译</h2>
+            <h2 className="text-sm font-bold text-white tracking-wide">{t("tranpanel.title")}</h2>
             <p className="text-[10px] text-slate-500">
-              使用 AI 模块已配置的模型供应商，选中文本后按划词热键或手动输入翻译
+              {t("tranpanel.subtitle")}
             </p>
           </div>
         </div>
@@ -263,14 +265,14 @@ export default function TranslatePanel() {
       {/* 模型选择 */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label className="text-[10px] text-slate-400 mb-1 block">翻译供应商</label>
+          <label className="text-[10px] text-slate-400 mb-1 block">{t("tranpanel.provider")}</label>
           <select
             value={providerId}
             onChange={(e) => changeProvider(e.target.value)}
             disabled={!modelInitialized || providers.length === 0}
             className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60 disabled:opacity-50"
           >
-            {providers.length === 0 && <option value="">（无已配置供应商，请先在 AI 模块配置）</option>}
+            {providers.length === 0 && <option value="">{t("tranpanel.noProviderCfg")}</option>}
             {providers.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -279,7 +281,7 @@ export default function TranslatePanel() {
           </select>
         </div>
         <div>
-          <label className="text-[10px] text-slate-400 mb-1 block">翻译模型</label>
+          <label className="text-[10px] text-slate-400 mb-1 block">{t("tranpanel.model")}</label>
           <select
             value={modelId}
             onChange={(e) => changeModel(e.target.value)}
@@ -300,20 +302,20 @@ export default function TranslatePanel() {
         {/* 原文 */}
         <div className="bg-white/[0.03] border border-white/10 rounded-xl p-3 flex flex-col">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] font-semibold text-slate-400">原文</span>
+            <span className="text-[10px] font-semibold text-slate-400">{t("tranpanel.source")}</span>
             <button
               onClick={() => setSource("")}
               disabled={!source}
               className="text-[10px] text-slate-500 hover:text-slate-300 cursor-pointer disabled:opacity-40 flex items-center gap-1"
             >
-              <X className="w-3 h-3" /> 清空
+              <X className="w-3 h-3" /> {t("tranpanel.clear")}
             </button>
           </div>
           <textarea
             ref={textRef}
             value={source}
             onChange={(e) => setSource(e.target.value)}
-            placeholder="输入或粘贴要翻译的文本，也可在任意程序选中文字后按划词热键"
+            placeholder={t("tranpanel.phInput")}
             className="w-full flex-1 min-h-[180px] bg-transparent text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none resize-none leading-relaxed"
             onKeyDown={(e) => {
               if ((e.ctrlKey || e.metaKey) && e.key === "Enter") translate();
@@ -324,7 +326,7 @@ export default function TranslatePanel() {
         {/* 结果 */}
         <div className="bg-white/[0.03] border border-white/10 rounded-xl p-3 flex flex-col">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] font-semibold text-slate-400">译文</span>
+            <span className="text-[10px] font-semibold text-slate-400">{t("tranpanel.translated")}</span>
             <div className="flex items-center gap-1.5">
               <select
                 value={target}
@@ -341,7 +343,7 @@ export default function TranslatePanel() {
                 <button
                   onClick={copyResult}
                   className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-white/10 cursor-pointer"
-                  title="复制译文"
+                  title={t("tranpanel.copyResult")}
                 >
                   {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
@@ -351,28 +353,28 @@ export default function TranslatePanel() {
           {translating ? (
             <div className="flex-1 flex items-center justify-center gap-2 text-slate-400 text-xs">
               <Loader2 className="w-4 h-4 animate-spin text-[var(--module-accent)]" />
-              翻译中…
+              {t("tranpanel.translating")}
             </div>
           ) : error ? (
             <div className="flex-1 text-xs text-red-400 leading-relaxed break-words">{error}</div>
           ) : result ? (
             <div className="flex-1 text-xs text-slate-100 leading-relaxed whitespace-pre-wrap break-words">{result}</div>
           ) : (
-            <div className="flex-1 flex items-center justify-center text-slate-600 text-xs">译文将显示在这里</div>
+            <div className="flex-1 flex items-center justify-center text-slate-600 text-xs">{t("tranpanel.resultPlaceholder")}</div>
           )}
         </div>
       </div>
 
       {/* 翻译按钮 */}
       <div className="flex items-center justify-end gap-2">
-        <span className="text-[10px] text-slate-500">Ctrl+Enter 快速翻译</span>
+        <span className="text-[10px] text-slate-500">{t("tranpanel.quickKey")}</span>
         <button
           onClick={translate}
           disabled={translating || !isConfigured || !source.trim()}
           className="px-5 py-2 rounded-xl text-xs font-semibold bg-[var(--module-accent)] text-white shadow-lg shadow-[var(--module-accent-ring)] hover:opacity-85 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
         >
           <ArrowRightLeft className="w-3.5 h-3.5" />
-          {translating ? "翻译中…" : "翻译"}
+          {translating ? t("tranpanel.translating") : t("tranpanel.translate")}
         </button>
       </div>
 
@@ -380,13 +382,13 @@ export default function TranslatePanel() {
       {history.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-semibold text-slate-400">翻译历史</span>
+            <span className="text-[10px] font-semibold text-slate-400">{t("tranpanel.history")}</span>
             <button
               onClick={clearHistory}
-              title="清空历史（置顶条目保留）"
+              title={t("tranpanel.clearHistory")}
               className="text-[10px] text-slate-500 hover:text-red-400 cursor-pointer flex items-center gap-1"
             >
-              <Trash2 className="w-3 h-3" /> 清空（置顶保留）
+              <Trash2 className="w-3 h-3" /> {t("tranpanel.clearPinned")}
             </button>
           </div>
 
@@ -403,15 +405,15 @@ export default function TranslatePanel() {
                   setKeyword("");
                 }
               }}
-              placeholder="输入关键词，回车或点搜索"
+              placeholder={t("tranpanel.historyPh")}
               className="flex-1 bg-transparent outline-none text-[10.5px] text-slate-200 placeholder:text-slate-500"
             />
             <button
               onClick={handleSearch}
               className="px-2 py-0.5 rounded-md bg-[var(--module-accent)] text-white text-[9.5px] font-semibold hover:opacity-90 cursor-pointer"
-              title="搜索"
+              title={t("tranpanel.search")}
             >
-              搜索
+              {t("tranpanel.search")}
             </button>
             {searchInput && (
               <button
@@ -420,7 +422,7 @@ export default function TranslatePanel() {
                   setKeyword("");
                 }}
                 className="text-slate-500 hover:text-slate-300 cursor-pointer"
-                title="清空"
+                title={t("tranpanel.clearTitle")}
               >
                 <X className="w-3 h-3" />
               </button>
@@ -441,7 +443,7 @@ export default function TranslatePanel() {
                     <span className="mr-1">{new Date(h.ts).toLocaleTimeString()}</span>
                     <button
                       onClick={() => copyEntry(h, "source")}
-                      title="复制原文"
+                      title={t("tranpanel.copySource")}
                       className="px-1.5 py-0.5 rounded bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white cursor-pointer flex items-center gap-1"
                     >
                       {copiedEntry === h.id + ":source" ? (
@@ -453,7 +455,7 @@ export default function TranslatePanel() {
                     </button>
                     <button
                       onClick={() => copyEntry(h, "result")}
-                      title="复制译文"
+                      title={t("tranpanel.copyResult")}
                       className="px-1.5 py-0.5 rounded bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white cursor-pointer flex items-center gap-1"
                     >
                       {copiedEntry === h.id + ":result" ? (
@@ -465,7 +467,7 @@ export default function TranslatePanel() {
                     </button>
                     <button
                       onClick={() => togglePin(h.id)}
-                      title={h.pinned ? "取消置顶" : "置顶"}
+                      title={h.pinned ? t("tranpanel.pinOff") : t("tranpanel.pinOn")}
                       className={`p-1 rounded hover:bg-white/10 cursor-pointer ${
                         h.pinned ? "text-emerald-400" : "hover:text-white"
                       }`}
@@ -474,7 +476,7 @@ export default function TranslatePanel() {
                     </button>
                     <button
                       onClick={() => deleteEntry(h.id)}
-                      title="删除"
+                      title={t("tranpanel.delete")}
                       className="p-1 rounded hover:bg-red-500/20 hover:text-red-400 cursor-pointer"
                     >
                       <Trash2 className="w-3 h-3" />
@@ -487,7 +489,7 @@ export default function TranslatePanel() {
             ))}
             {filteredHistory.length === 0 && (
               <p className="text-[11px] text-slate-500 text-center py-3">
-                未找到与「{keyword.trim()}」匹配的历史记录
+                {t("tranpanel.noHistoryMatch", { keyword: keyword.trim() })}
               </p>
             )}
           </div>
@@ -497,7 +499,7 @@ export default function TranslatePanel() {
       {!isConfigured && (
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-[11px] text-amber-300 flex items-center gap-2">
           <Pin className="w-3.5 h-3.5" />
-          尚未在 AI 模块配置模型供应商（需有 API Key 且配置 OpenAI 兼容端点）。配置后即可使用翻译。
+          {t("tranpanel.noProviderDesc")}
         </div>
       )}
     </div>

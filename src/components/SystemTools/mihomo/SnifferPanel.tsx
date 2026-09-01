@@ -2,6 +2,7 @@
 // （开关 / 覆盖目标 / 强制 DNS 映射 / 纯 IP 解析 / HTTP·TLS·QUIC 端口 /
 //   跳过域名 / 强制嗅探域名 / 跳过目标·来源地址）
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Trash2 } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
 import { cardCls, SettingItem, Toggle, btnSec, btnPrimary, inputCls } from "./ui";
@@ -28,6 +29,7 @@ const DEFAULT_SNIFFER = {
 };
 
 export default function SnifferPanel() {
+  const { t } = useTranslation();
   const [values, originSetValues] = useState<any>(structuredClone(DEFAULT_SNIFFER));
   const [changed, setChanged] = useState(false);
   const [controlSniff, setControlSniff] = useState(false);
@@ -109,26 +111,26 @@ export default function SnifferPanel() {
           "skip-src-address": values.skipSrcAddress,
         },
       });
-      setMsg(controlSniff ? "已保存并生效" : "已保存（未开启嗅探接管，仅保存）");
+      setMsg(controlSniff ? t("mihomo.sniffSavedEffective") : t("mihomo.sniffSavedOnly"));
     } catch (e: any) {
-      setMsg(`保存失败: ${e}`);
+      setMsg(t("mihomo.sniffSaveFailed", { err: String(e) }));
     }
   };
 
   return (
     <div className={`${cardCls} p-4`}>
       <div className="flex items-center justify-between mb-1">
-        <h3 className="text-sm font-bold text-white">域名嗅探设置</h3>
+        <h3 className="text-sm font-bold text-white">{t("mihomo.sniffTitle")}</h3>
         <div className="flex items-center gap-2">
           {msg && <span className="text-[11px] text-slate-400">{msg}</span>}
-          {changed && <button className={btnPrimary} onClick={onSave}>{controlSniff ? "保存" : "仅保存"}</button>}
+          {changed && <button className={btnPrimary} onClick={onSave}>{controlSniff ? t("mihomo.sniffSave") : t("mihomo.sniffSaveOnly")}</button>}
         </div>
       </div>
 
-      <SettingItem title="启用域名嗅探">
+      <SettingItem title={t("mihomo.sniffEnable")}>
         <Toggle v={values.enable} onChange={(v) => setValues({ ...values, enable: v })} />
       </SettingItem>
-      <SettingItem title="覆盖连接目标地址">
+      <SettingItem title={t("mihomo.sniffOverrideDest")}>
         <Toggle v={values.overrideDestination} onChange={(v) =>
           setValues({
             ...values,
@@ -140,41 +142,41 @@ export default function SnifferPanel() {
           })
         } />
       </SettingItem>
-      <SettingItem title="强制 DNS 映射嗅探">
+      <SettingItem title={t("mihomo.sniffForceDns")}>
         <Toggle v={values.forceDNSMapping} onChange={(v) => setValues({ ...values, forceDNSMapping: v })} />
       </SettingItem>
-      <SettingItem title="对真实 IP 嗅探">
+      <SettingItem title={t("mihomo.sniffParsePureIp")}>
         <Toggle v={values.parsePureIP} onChange={(v) => setValues({ ...values, parsePureIP: v })} />
       </SettingItem>
 
-      <SettingItem title="HTTP 端口">
+      <SettingItem title={t("mihomo.sniffHttpPort")}>
         <input className={`${inputCls} !w-64`} placeholder="80,443"
           value={values.sniff.HTTP?.ports.join(",")} onChange={(e) => handleSniffPortChange("HTTP", e.target.value)} />
       </SettingItem>
-      <SettingItem title="TLS 端口">
+      <SettingItem title={t("mihomo.sniffTlsPort")}>
         <input className={`${inputCls} !w-64`} placeholder="443"
           value={values.sniff.TLS?.ports.join(",")} onChange={(e) => handleSniffPortChange("TLS", e.target.value)} />
       </SettingItem>
-      <SettingItem title="QUIC 端口">
+      <SettingItem title={t("mihomo.sniffQuicPort")}>
         <input className={`${inputCls} !w-64`} placeholder="443"
           value={values.sniff.QUIC?.ports.join(",")} onChange={(e) => handleSniffPortChange("QUIC", e.target.value)} />
       </SettingItem>
 
       <div className="py-2 border-b border-white/5">
-        <h4 className="text-[12px] text-slate-300 font-semibold">跳过嗅探域名</h4>
-        {renderListInputs("skipDomain", "例: +.push.apple.com")}
+        <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.sniffSkipDomain")}</h4>
+        {renderListInputs("skipDomain", t("mihomo.sniffEg", { example: "+.push.apple.com" }))}
       </div>
       <div className="py-2 border-b border-white/5">
-        <h4 className="text-[12px] text-slate-300 font-semibold">强制嗅探域名</h4>
-        {renderListInputs("forceDomain", "例: +.v2ex.com")}
+        <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.sniffForceDomain")}</h4>
+        {renderListInputs("forceDomain", t("mihomo.sniffEg", { example: "+.v2ex.com" }))}
       </div>
       <div className="py-2 border-b border-white/5">
-        <h4 className="text-[12px] text-slate-300 font-semibold">跳过嗅探目标地址</h4>
-        {renderListInputs("skipDstAddress", "例: 91.105.192.0/23")}
+        <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.sniffSkipDst")}</h4>
+        {renderListInputs("skipDstAddress", t("mihomo.sniffEg", { example: "91.105.192.0/23" }))}
       </div>
       <div className="py-2">
-        <h4 className="text-[12px] text-slate-300 font-semibold">跳过嗅探来源地址</h4>
-        {renderListInputs("skipSrcAddress", "例: 192.168.1.0/24")}
+        <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.sniffSkipSrc")}</h4>
+        {renderListInputs("skipSrcAddress", t("mihomo.sniffEgSrc", { example: "192.168.1.0/24" }))}
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -49,7 +50,7 @@ const PROTOCOL_LABELS: Record<string, string> = {
   openai: "OpenAI",
   both: "OpenAI + Anthropic",
   google: "Google",
-  none: "仅支持官方模型",
+  none: "", // 渲染时用 toollaunch.modelNone 翻译
 };
 
 /// 由供应商已配置的协议 URL 推导出站协议：若供应商支持工具原生协议则同协议直连，
@@ -66,7 +67,7 @@ function getOutboundProtocol(tool: DetectedAiTool | null, provider: AiProvider |
 }
 
 /// 格式化相对时间（如 "3小时前", "昨天", "2天前"）
-function formatRelativeTime(isoString: string): string {
+function formatRelativeTime(isoString: string, t: (k: string, o?: any) => string): string {
   try {
     const date = new Date(isoString);
     const now = new Date();
@@ -74,11 +75,11 @@ function formatRelativeTime(isoString: string): string {
     const diffMin = Math.floor(diffMs / 60000);
     const diffHour = Math.floor(diffMs / 3600000);
     const diffDay = Math.floor(diffMs / 86400000);
-    if (diffMin < 1) return "刚刚";
-    if (diffMin < 60) return `${diffMin}分钟前`;
-    if (diffHour < 24) return `${diffHour}小时前`;
-    if (diffDay === 1) return "昨天";
-    if (diffDay < 7) return `${diffDay}天前`;
+    if (diffMin < 1) return t("toollaunch.justNow");
+    if (diffMin < 60) return t("toollaunch.minAgo", { count: diffMin });
+    if (diffHour < 24) return t("toollaunch.hourAgo", { count: diffHour });
+    if (diffDay === 1) return t("toollaunch.yesterday");
+    if (diffDay < 7) return t("toollaunch.dayAgo", { count: diffDay });
     return date.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
   } catch {
     return "";
@@ -140,6 +141,7 @@ function getProxyInfo(
 }
 
 export default function ToolLauncher() {
+  const { t } = useTranslation();
   const [tools, setTools] = useState<DetectedAiTool[]>([]);
   const [config, setConfig] = useState<AiConfig | null>(null);
   const [terminals, setTerminals] = useState<TerminalInfo[]>([]);
@@ -317,7 +319,7 @@ export default function ToolLauncher() {
         avatar: pAvatar.trim() || null,
         nickname: pNick.trim() || null,
       });
-      setProfileMsg({ ok: true, msg: "已保存，将同步到协同对话" });
+      setProfileMsg({ ok: true, msg: t("toollaunch.profileSaved") });
       setEditProfile(false);
       await reloadTools();
     } catch (e) {
@@ -380,7 +382,7 @@ export default function ToolLauncher() {
 
   const handleBrowse = async () => {
     try {
-      const selected = await open({ directory: true, title: "选择项目目录" });
+      const selected = await open({ directory: true, title: t("toollaunch.pickProjectDir") });
       if (selected) setProjectPath(selected as string);
     } catch { /* ignore */ }
   };
@@ -480,7 +482,7 @@ export default function ToolLauncher() {
   };
 
   const handleUninstall = async (tool: DetectedAiTool) => {
-    if (!confirm(`确定要从本机卸载 ${tool.display_name} 吗？此操作不可恢复。`)) return;
+    if (!confirm(t("toollaunch.uninstallConfirm", { name: tool.display_name }))) return;
     setUninstallingTool(tool.id);
     setUninstallResult(null);
     try {
@@ -503,22 +505,22 @@ export default function ToolLauncher() {
 
   const handleMigrateCache = async (toolId: string, dirName: string, _fullPath: string) => {
     try {
-      const selected = await open({ directory: true, title: "选择新的缓存目录" });
+      const selected = await open({ directory: true, title: t("toollaunch.pickCacheDir") });
       if (!selected) return;
       setMigratingCache(`${toolId}:${dirName}`);
       await invoke("migrate_ai_tool_cache", { toolId, dirName, newPath: selected as string });
       await loadCacheInfos();
-    } catch (e: any) { alert(`迁移失败: ${e}`); }
+    } catch (e: any) { alert(t("toollaunch.migrateFail", { err: String(e) })); }
     finally { setMigratingCache(null); }
   };
 
   const handleCleanCache = async (toolId: string, dirName: string) => {
-    if (!confirm(`确定要清理 ${dirName} 的所有缓存数据吗？此操作不可恢复。`)) return;
+    if (!confirm(t("toollaunch.clearCacheConfirm", { name: dirName }))) return;
     setCleaningCache(`${toolId}:${dirName}`);
     try {
       await invoke("clean_ai_tool_cache", { toolId, dirName });
       await loadCacheInfos();
-    } catch (e: any) { alert(`清理失败: ${e}`); }
+    } catch (e: any) { alert(t("toollaunch.clearFail", { err: String(e) })); }
     finally { setCleaningCache(null); }
   };
 
@@ -541,7 +543,7 @@ export default function ToolLauncher() {
   const sessionDirGroups = React.useMemo(() => {
     const groups = new Map<string, { dir: string; label: string; sessions: ToolSession[] }>();
     for (const s of filteredSessions) {
-      const dir = s.project_path || "未知目录";
+      const dir = s.project_path || t("toollaunch.unknownDir");
       const label = dir.split(/[\\/]/).pop() || dir;
       if (!groups.has(dir)) groups.set(dir, { dir, label, sessions: [] });
       groups.get(dir)!.sessions.push(s);
@@ -551,7 +553,7 @@ export default function ToolLauncher() {
 
   const handleDeleteSessions = async () => {
     if (selectedSessionIds.size === 0) return;
-    if (!confirm(`确定要删除 ${selectedSessionIds.size} 个会话记录吗？此操作不可恢复。`)) return;
+    if (!confirm(t("toollaunch.delSessionsConfirm", { count: selectedSessionIds.size }))) return;
     for (const sid of selectedSessionIds) {
       const s = sessions.find(x => x.session_id === sid);
       if (s) {
@@ -583,15 +585,15 @@ export default function ToolLauncher() {
   };
 
   if (loading) {
-    return <div className="h-full flex items-center justify-center text-slate-500"><RefreshCw className="w-5 h-5 animate-spin mr-2" /><span className="text-xs">加载中...</span></div>;
+    return <div className="h-full flex items-center justify-center text-slate-500"><RefreshCw className="w-5 h-5 animate-spin mr-2" /><span className="text-xs">{t("toollaunch.loading")}</span></div>;
   }
 
   const getVerStatus = (toolId: string): { label: string; color: string; icon: React.ReactNode } | null => {
     const vs = versionStatuses[toolId];
     if (!vs) return null;
     switch (vs.status) {
-      case "outdated": return { label: "可升级", color: "text-amber-400", icon: <ArrowUpCircle className="w-2.5 h-2.5" /> };
-      case "latest": return { label: "最新", color: "text-emerald-400", icon: <CheckCircle className="w-2.5 h-2.5" /> };
+      case "outdated": return { label: t("toollaunch.upgradable"), color: "text-amber-400", icon: <ArrowUpCircle className="w-2.5 h-2.5" /> };
+      case "latest": return { label: t("toollaunch.latest"), color: "text-emerald-400", icon: <CheckCircle className="w-2.5 h-2.5" /> };
       case "unknown": return null;
       case "not_installed": return null;
       default: return null;
@@ -618,10 +620,10 @@ export default function ToolLauncher() {
       {/* ── 左侧工具列表 ── */}
       <div className="w-52 flex-shrink-0 border-r border-white/5 py-3 px-2 overflow-y-auto space-y-0.5 flex flex-col">
         <div className="flex items-center justify-between px-1 mb-1">
-          <span className="text-[9px] font-bold text-slate-500 uppercase">AI 工具</span>
+          <span className="text-[9px] font-bold text-slate-500 uppercase">{t("toollaunch.aiTools")}</span>
           <button onClick={checkVersions} disabled={checkingVersions}
             className="p-0.5 rounded text-slate-600 hover:text-slate-400 cursor-pointer"
-            title="检测版本">
+            title={t("toollaunch.checkVersion")}>
             <RefreshCw className={`w-3 h-3 ${checkingVersions ? "animate-spin" : ""}`} />
           </button>
         </div>
@@ -716,7 +718,7 @@ export default function ToolLauncher() {
                 {getBusy(tool.id) ? (
                   <span className="text-[9px] font-semibold flex items-center gap-0.5 ml-auto flex-shrink-0 text-blue-300">
                     <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-                    {getBusy(tool.id) === "upgrading" ? "升级中" : getBusy(tool.id) === "installing" ? "安装中" : "卸载中"}
+                    {getBusy(tool.id) === "upgrading" ? t("toollaunch.upgrading") : getBusy(tool.id) === "installing" ? t("toollaunch.installing") : t("toollaunch.uninstalling")}
                   </span>
                 ) : vs && (
                   <span className={`text-[9px] font-semibold flex items-center gap-0.5 ml-auto flex-shrink-0 ${vs.color}`}>
@@ -727,22 +729,22 @@ export default function ToolLauncher() {
               </div>
               <div className="flex items-center gap-1.5 mt-0.5 ml-5.5">
                 {getBusy(tool.id) === "installing" ? (
-                  <span className="text-[9px] text-blue-300 animate-pulse">安装中...</span>
+                  <span className="text-[9px] text-blue-300 animate-pulse">{t("toollaunch.installing")}...</span>
                 ) : getBusy(tool.id) === "upgrading" ? (
-                  <span className="text-[9px] text-blue-300 animate-pulse">升级中...</span>
+                  <span className="text-[9px] text-blue-300 animate-pulse">{t("toollaunch.upgrading")}...</span>
                 ) : getBusy(tool.id) === "uninstalling" ? (
-                  <span className="text-[9px] text-blue-300 animate-pulse">卸载中...</span>
+                  <span className="text-[9px] text-blue-300 animate-pulse">{t("toollaunch.uninstalling")}...</span>
                 ) : tool.installed ? (
                   <span className={`text-[9px] ${selectedToolId === tool.id ? "text-[var(--module-accent)]" : "text-slate-500"} font-mono`}>
-                    {tool.version || "已安装"}
+                    {tool.version || t("toollaunch.installed")}
                   </span>
                 ) : (
-                  <span className="text-[9px] text-slate-600">未安装</span>
+                  <span className="text-[9px] text-slate-600">{t("toollaunch.notInstalled")}</span>
                 )}
                 {lastLaunchConfigs[tool.id] && tool.installed && (
                   <div className={`flex items-center gap-1 mt-0.5 ml-5.5 flex-wrap ${selectedToolId === tool.id ? "text-[color-mix(in_srgb,var(--module-accent)_70%,transparent)]" : "text-slate-600"}`}>
                     {lastLaunchConfigs[tool.id].use_official_model ? (
-                      <span className="text-[9px]">官方</span>
+                      <span className="text-[9px]">{t("toollaunch.official")}</span>
                     ) : (
                       <>
                         <span className="text-[9px] truncate max-w-[60px]">
@@ -762,7 +764,7 @@ export default function ToolLauncher() {
                     )}
                     {lastLaunchConfigs[tool.id].last_launched_at && (
                       <span className="text-[9px] opacity-50 ml-auto">
-                        {formatRelativeTime(lastLaunchConfigs[tool.id].last_launched_at)}
+                        {formatRelativeTime(lastLaunchConfigs[tool.id].last_launched_at, t)}
                       </span>
                     )}
                   </div>
@@ -778,7 +780,7 @@ export default function ToolLauncher() {
         {!selectedTool ? (
           <div className="h-full flex flex-col items-center justify-center text-slate-500">
             <Bot className="w-8 h-8 text-slate-700 mb-2" />
-            <span className="text-xs font-bold text-slate-400">在左侧选择一个 AI 工具</span>
+            <span className="text-xs font-bold text-slate-400">{t("toollaunch.selectToolHint")}</span>
           </div>
         ) : (
           <>
@@ -794,44 +796,44 @@ export default function ToolLauncher() {
                     {getBusy(selectedTool.id) && (
                       <span className="flex items-center gap-1 text-[10px] font-semibold text-blue-300">
                         <RefreshCw className="w-3 h-3 animate-spin" />
-                        {getBusy(selectedTool.id) === "upgrading" ? "升级中..." : getBusy(selectedTool.id) === "installing" ? "安装中..." : "卸载中..."}
+                        {getBusy(selectedTool.id) === "upgrading" ? `${t("toollaunch.upgrading")}...` : getBusy(selectedTool.id) === "installing" ? `${t("toollaunch.installing")}...` : `${t("toollaunch.uninstalling")}...`}
                       </span>
                     )}
                     {selectedTool.installed ? (
                       <>
-                        <span className="text-[10px] text-emerald-400"><CheckCircle className="w-3 h-3 inline mr-0.5" />{selectedTool.version || "已安装"}</span>
+                        <span className="text-[10px] text-emerald-400"><CheckCircle className="w-3 h-3 inline mr-0.5" />{selectedTool.version || t("toollaunch.installed")}</span>
                         {!getBusy(selectedTool.id) && versionStatuses[selectedTool.id]?.latest && versionStatuses[selectedTool.id]?.status === "outdated" && (
                           <>
-                            <span className="text-[10px] text-amber-400 ml-1">→ 最新: {versionStatuses[selectedTool.id].latest}</span>
+                            <span className="text-[10px] text-amber-400 ml-1">→ {t("toollaunch.latest")}: {versionStatuses[selectedTool.id].latest}</span>
                             <button
                               onClick={() => handleUpgrade(selectedTool)}
                               disabled={getBusy(selectedTool.id) === "upgrading"}
                               className="px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-[9px] font-semibold text-emerald-400 cursor-pointer transition-all flex items-center gap-0.5 disabled:opacity-50"
-                              title="升级到最新版"
+                              title={t("toollaunch.upgradeLatest")}
                             >
                               <Download className={`w-3 h-3 ${getBusy(selectedTool.id) === "upgrading" ? "animate-spin" : ""}`} />
-                              {getBusy(selectedTool.id) === "upgrading" ? "升级中..." : "升级"}
+                              {getBusy(selectedTool.id) === "upgrading" ? `${t("toollaunch.upgrading")}...` : t("toollaunch.upgrade")}
                             </button>
                             <button
                               onClick={() => handleUninstall(selectedTool)}
                               disabled={getBusy(selectedTool.id) === "uninstalling"}
                               className="px-2 py-0.5 rounded-md bg-red-500/10 hover:bg-red-500/20 text-[9px] font-semibold text-red-400 cursor-pointer transition-all flex items-center gap-0.5 disabled:opacity-50"
-                              title="从本机卸载"
+                              title={t("toollaunch.uninstallTitle")}
                             >
                               <Trash2 className={`w-3 h-3 ${getBusy(selectedTool.id) === "uninstalling" ? "animate-spin" : ""}`} />
-                              {getBusy(selectedTool.id) === "uninstalling" ? "卸载中..." : "卸载"}
+                              {getBusy(selectedTool.id) === "uninstalling" ? `${t("toollaunch.uninstalling")}...` : t("toollaunch.uninstall")}
                             </button>
                           </>
                         )}
                       </>
                     ) : (
-                      <span className="text-[10px] text-slate-500">未安装</span>
+                      <span className="text-[10px] text-slate-500">{t("toollaunch.notInstalled")}</span>
                     )}
-                    <span className="text-[10px] text-slate-500">· {PROTOCOL_LABELS[selectedTool.api_protocol]}</span>
+                    <span className="text-[10px] text-slate-500">· {selectedTool.api_protocol === "none" ? t("toollaunch.modelNone") : PROTOCOL_LABELS[selectedTool.api_protocol]}</span>
                     <a href={selectedTool.website} target="_blank" rel="noopener noreferrer"
                       className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-0.5 ml-1"
-                      title="打开官方网站">
-                      <ExternalLink className="w-3 h-3" /> 官网
+                      title={t("toollaunch.openSite")}>
+                      <ExternalLink className="w-3 h-3" /> {t("toollaunch.site")}
                     </a>
                   </div>
                 </div>
@@ -841,16 +843,16 @@ export default function ToolLauncher() {
                 <div className="mt-2 px-2 py-1.5 rounded-lg bg-slate-800/50 border border-white/5">
                   <div className="flex items-center gap-1 mb-1">
                     <History className="w-3 h-3 text-slate-500" />
-                    <span className="text-[9px] text-slate-500 font-semibold">上次启动</span>
+                    <span className="text-[9px] text-slate-500 font-semibold">{t("toollaunch.lastLaunch")}</span>
                     {lastLaunchConfigs[selectedTool.id].last_launched_at && (
                       <span className="text-[9px] text-slate-600 ml-auto">
-                        {formatRelativeTime(lastLaunchConfigs[selectedTool.id].last_launched_at)}
+                        {formatRelativeTime(lastLaunchConfigs[selectedTool.id].last_launched_at, t)}
                       </span>
                     )}
                   </div>
                   <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[9px]">
                     {lastLaunchConfigs[selectedTool.id].use_official_model ? (
-                      <span className="text-slate-400">官方模型</span>
+                      <span className="text-slate-400">{t("toollaunch.officialModel")}</span>
                     ) : (
                       <>
                         <span className="text-slate-400">
@@ -862,19 +864,19 @@ export default function ToolLauncher() {
                           </span>
                         )}
                         {lastLaunchConfigs[selectedTool.id].fallback_model_id && (
-                          <span className="text-amber-400/80 truncate max-w-[120px]" title={`副模型: ${lastLaunchConfigs[selectedTool.id].fallback_model_id}`}>
+                          <span className="text-amber-400/80 truncate max-w-[120px]" title={t("toollaunch.fallbackModel", { name: lastLaunchConfigs[selectedTool.id].fallback_model_id })}>
                             ※ {lastLaunchConfigs[selectedTool.id].fallback_model_id}
                           </span>
                         )}
                       </>
                     )}
                     {lastLaunchConfigs[selectedTool.id].masquerade_model && (
-                      <span className="text-cyan-400/60" title="伪装模型">
+                      <span className="text-cyan-400/60" title={t("toollaunch.masquerade")}>
                         🎭 {lastLaunchConfigs[selectedTool.id].masquerade_model}
                       </span>
                     )}
                     {lastLaunchConfigs[selectedTool.id].one_m_context && (
-                      <span className="text-emerald-400/60" title="1M 上下文">1M</span>
+                      <span className="text-emerald-400/60" title={t("toollaunch.oneM")}>1M</span>
                     )}
                   </div>
                 </div>
@@ -886,10 +888,10 @@ export default function ToolLauncher() {
                     onClick={() => handleInstall(selectedTool)}
                     disabled={getBusy(selectedTool.id) === "installing"}
                     className="px-2 py-1.5 rounded-md bg-[var(--module-accent-soft)] hover:bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[10px] text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] cursor-pointer transition-all flex items-center gap-1 flex-shrink-0 disabled:opacity-50"
-                    title="一键安装"
+                    title={t("toollaunch.installTitle")}
                   >
                     <Download className={`w-3.5 h-3.5 ${getBusy(selectedTool.id) === "installing" ? "animate-spin" : ""}`} />
-                    {getBusy(selectedTool.id) === "installing" ? "安装中..." : "安装"}
+                    {getBusy(selectedTool.id) === "installing" ? `${t("toollaunch.installing")}...` : t("toollaunch.install")}
                   </button>
                   <button onClick={() => navigator.clipboard.writeText(selectedTool.install_cmd)}
                     className="px-2 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-[10px] text-slate-400 hover:text-white cursor-pointer transition-all flex-shrink-0">
@@ -903,12 +905,12 @@ export default function ToolLauncher() {
             <div className="p-3 rounded-xl bg-slate-900/30 border border-white/5 space-y-2">
               <div className="flex items-center justify-between">
                 <div className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                  <Bot className="w-3.5 h-3.5" /> 协同身份
+                  <Bot className="w-3.5 h-3.5" /> {t("toollaunch.coopIdentity")}
                 </div>
                 {!editProfile && (
                   <button onClick={openProfile}
                     className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-white/10 text-[10px] text-slate-300 flex items-center gap-1">
-                    <Pencil className="w-3 h-3" /> 编辑
+                    <Pencil className="w-3 h-3" /> {t("toollaunch.edit")}
                   </button>
                 )}
               </div>
@@ -919,7 +921,7 @@ export default function ToolLauncher() {
                   </span>
                   <div className="min-w-0">
                     <div className="text-sm text-slate-200 truncate">{selectedTool.nickname || selectedTool.display_name}</div>
-                    <div className="text-[10px] text-slate-500">作为协同对话中的头像与昵称</div>
+                    <div className="text-[10px] text-slate-500">{t("toollaunch.coopHint")}</div>
                   </div>
                 </div>
               ) : (
@@ -927,16 +929,16 @@ export default function ToolLauncher() {
                   <div className="flex items-center gap-2">
                     <input value={pAvatar} onChange={(e) => setPAvatar(e.target.value)} maxLength={4} placeholder="🤖"
                       className="w-12 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-sm text-center focus:outline-none focus:border-emerald-500/50" />
-                    <input value={pNick} onChange={(e) => setPNick(e.target.value)} placeholder="昵称"
+                    <input value={pNick} onChange={(e) => setPNick(e.target.value)} placeholder={t("toollaunch.nickPh")}
                       className="flex-1 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[11px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500/50" />
                   </div>
                   <div className="flex items-center gap-2">
                     <button onClick={saveProfile}
                       className="px-2 py-1 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 text-[10px] text-emerald-200 flex items-center gap-1">
-                      <Check className="w-3 h-3" /> 保存
+                      <Check className="w-3 h-3" /> {t("toollaunch.save")}
                     </button>
                     <button onClick={() => setEditProfile(false)}
-                      className="px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-[10px] text-slate-300">取消</button>
+                      className="px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-[10px] text-slate-300">{t("toollaunch.cancel")}</button>
                   </div>
                   {profileMsg && (
                     <div className={`text-[10px] ${profileMsg.ok ? "text-emerald-400" : "text-red-400"}`}>{profileMsg.msg}</div>
@@ -959,9 +961,9 @@ export default function ToolLauncher() {
                   >
                     <div className="flex items-center gap-2">
                       <HardDrive className="w-3.5 h-3.5" />
-                      <span className="font-semibold">缓存管理</span>
+                      <span className="font-semibold">{t("toollaunch.cacheMgr")}</span>
                       {selectedToolCaches.length > 0 && (
-                        <span className="text-[8px] text-slate-500">({selectedToolCaches.length} 个缓存目录)</span>
+                        <span className="text-[8px] text-slate-500">{t("toollaunch.cacheDirs", { count: selectedToolCaches.length })}</span>
                       )}
                     </div>
                     <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showCacheManager ? "rotate-180" : ""}`} />
@@ -971,9 +973,9 @@ export default function ToolLauncher() {
                     <div className="mt-2 rounded-lg border border-white/5 bg-slate-900/30 overflow-hidden">
                       <div className="max-h-56 overflow-y-auto divide-y divide-white/[0.03]">
                         {cacheInfos.length === 0 ? (
-                          <div className="px-3 py-4 text-[10px] text-slate-600 text-center">加载中...</div>
+                          <div className="px-3 py-4 text-[10px] text-slate-600 text-center">{t("toollaunch.loading")}</div>
                         ) : selectedToolCaches.length === 0 ? (
-                          <div className="px-3 py-4 text-[10px] text-slate-600 text-center">此工具无缓存目录</div>
+                          <div className="px-3 py-4 text-[10px] text-slate-600 text-center">{t("toollaunch.noCache")}</div>
                         ) : (
                           selectedToolCaches.map(cache => (
                             <div key={`${cache.tool_id}:${cache.dir_name}`} className="px-3 py-2 flex items-center gap-3">
@@ -986,7 +988,7 @@ export default function ToolLauncher() {
                                   )}
                                 </div>
                                 <div className="text-[9px] text-slate-500 font-mono truncate mt-0.5" title={cache.full_path}>
-                                  {cache.exists ? cache.full_path : "不存在"}
+                                  {cache.exists ? cache.full_path : t("toollaunch.notExists")}
                                 </div>
                                 {cache.is_junction && cache.junction_target && (
                                   <div className="text-[8px] text-blue-400/70 font-mono truncate mt-0.5" title={cache.junction_target}>
@@ -999,19 +1001,19 @@ export default function ToolLauncher() {
                                 <div className="flex items-center gap-1 flex-shrink-0">
                                   <button onClick={() => handleOpenCacheDir(cache.full_path)}
                                     className="p-1 rounded text-slate-600 hover:text-blue-400 hover:bg-blue-500/10 cursor-pointer"
-                                    title="打开目录">
+                                    title={t("toollaunch.openDir")}>
                                     <FolderOpen className="w-3 h-3" />
                                   </button>
                                   <button onClick={() => handleMigrateCache(cache.tool_id, cache.dir_name, cache.full_path)}
                                     disabled={migratingCache === `${cache.tool_id}:${cache.dir_name}`}
                                     className="p-1 rounded text-slate-600 hover:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer disabled:opacity-50"
-                                    title="迁移缓存">
+                                    title={t("toollaunch.migrateCache")}>
                                     <FolderSync className="w-3 h-3" />
                                   </button>
                                   <button onClick={() => handleCleanCache(cache.tool_id, cache.dir_name)}
                                     disabled={cleaningCache === `${cache.tool_id}:${cache.dir_name}`}
                                     className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-red-500/10 cursor-pointer disabled:opacity-50"
-                                    title="清理缓存">
+                                    title={t("toollaunch.clearCache")}>
                                     <Trash2 className="w-3 h-3" />
                                   </button>
                                 </div>
@@ -1030,14 +1032,14 @@ export default function ToolLauncher() {
                     <div className="flex items-center gap-2">
                       <Cpu className="w-3.5 h-3.5 text-blue-400" />
                       <div>
-                        <span className="text-[10px] font-semibold text-blue-300">使用官方模型</span>
-                        <p className="text-[8px] text-slate-500 mt-0.5">使用工具的官方 API Key，而不是 Kira 配置的模型</p>
+                        <span className="text-[10px] font-semibold text-blue-300">{t("toollaunch.useOfficial")}</span>
+                        <p className="text-[8px] text-slate-500 mt-0.5">{t("toollaunch.useOfficialHint")}</p>
                       </div>
                     </div>
                     <button
                       onClick={() => setUseOfficialModel(!useOfficialModel)}
                       className={`p-1 rounded-md cursor-pointer transition-all ${useOfficialModel ? "text-blue-400" : "text-slate-600 hover:text-slate-400"}`}
-                      title={useOfficialModel ? "使用官方模型" : "使用 Kira 模型"}
+                      title={useOfficialModel ? t("toollaunch.useOfficialTitle") : t("toollaunch.useKiraModel")}
                     >
                       {useOfficialModel ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
                     </button>
@@ -1050,7 +1052,7 @@ export default function ToolLauncher() {
                     {/* 模型供应商 — 统一列表（代理自动转换协议，任意供应商可选） */}
                     {eligibleProviders.length > 0 && (
                       <div>
-                        <label className="text-xs font-bold text-slate-300 mb-1.5 block">模型供应商</label>
+                        <label className="text-xs font-bold text-slate-300 mb-1.5 block">{t("toollaunch.modelVendor")}</label>
                         <div className="rounded-lg border border-white/5 bg-slate-900/30">
                           {eligibleProviders.map(group => {
                             const isSelected = selectedModelProvider === group.provider_id;
@@ -1068,7 +1070,7 @@ export default function ToolLauncher() {
                                   <div className="flex items-center gap-2 min-w-0">
                                     <ChevronRight className={`w-3 h-3 text-slate-500 transition-transform ${expanded ? "rotate-90" : ""}`} />
                                     <span className="font-semibold text-slate-400">{group.provider_name}</span>
-                                    <span className="text-[8px] text-slate-600">{group.models.length} 个模型</span>
+                                    <span className="text-[8px] text-slate-600">{t("toollaunch.modelsCount", { count: group.models.length })}</span>
                                     {providerProtocolBadges(config?.providers.find(p => p.id === group.provider_id))}
                                   </div>
                                   {isSelected && selectedModel && (
@@ -1102,13 +1104,13 @@ export default function ToolLauncher() {
                           })}
                         </div>
                         {selectedModel && (
-                          <div className="mt-1 text-[10px] text-[var(--module-accent)]">已选: <span className="font-mono">{selectedModel}</span> <span className="text-slate-500">（{config?.providers.find(p => p.id === selectedModelProvider)?.name}）</span></div>
+                          <div className="mt-1 text-[10px] text-[var(--module-accent)]">{t("toollaunch.selected")}<span className="font-mono">{selectedModel}</span> <span className="text-slate-500">（{config?.providers.find(p => p.id === selectedModelProvider)?.name}）</span></div>
                         )}
 
                         {/* 模型自定义启动参数（用户定义，运行时渲染为控件） */}
                         {currentModelCustomParams.length > 0 && (
                           <div className="mt-3 space-y-2">
-                            <div className="text-[10px] text-slate-500 font-semibold">模型自定义参数</div>
+                            <div className="text-[10px] text-slate-500 font-semibold">{t("toollaunch.customParams")}</div>
                             {currentModelCustomParams.map(cp => (
                               <div key={cp.key} className="flex items-center gap-2">
                                 <label className="text-[10px] text-slate-400 w-28 flex-shrink-0 truncate" title={cp.key}>{cp.label || cp.key}</label>
@@ -1144,18 +1146,18 @@ export default function ToolLauncher() {
                     {eligibleProviders.length === 0 && (
                       <div className="p-3 rounded-xl border border-amber-500/20 bg-amber-500/5 text-[10px] text-amber-400 flex items-center gap-2">
                         <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                        <span>没有可用的模型，请在模型配置中添加 Provider</span>
+                        <span>{t("toollaunch.noModelsWarn")}</span>
                       </div>
                     )}
 
                     {/* 模型伪装（仅当工具内置模型名列表非空） */}
                     {selectedModel && selectedTool.builtin_models.length > 0 && (
                       <div className="mt-3">
-                        <label className="text-xs font-bold text-slate-300 mb-1.5 block">伪装模型名称 <span className="text-[9px] text-slate-500 font-normal">（可选，可手动输入）</span></label>
-                        <p className="text-[9px] text-slate-500 mb-1.5">让工具以为自己调用以下内置模型，代理实际转发到 <span className="font-mono text-slate-400">{selectedModel}</span>。列表仅为建议，可直接输入任意模型名。</p>
+                        <label className="text-xs font-bold text-slate-300 mb-1.5 block">{t("toollaunch.masqueradeLabel")} <span className="text-[9px] text-slate-500 font-normal">{t("toollaunch.optional")}</span></label>
+                        <p className="text-[9px] text-slate-500 mb-1.5">{t("toollaunch.masqueradeHint", { model: selectedModel })}</p>
                         <input type="text" list={`masq-list-${selectedTool.id}`} value={masqueradeModel}
                           onChange={e => setMasqueradeModel(e.target.value)}
-                          placeholder={`不伪装（直接使用 ${selectedModel}）`}
+                          placeholder={t("toollaunch.noMasqueradePh", { model: selectedModel })}
                           className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                         <datalist id={`masq-list-${selectedTool.id}`}>
                           {selectedTool.builtin_models.map(c => (
@@ -1171,13 +1173,13 @@ export default function ToolLauncher() {
                 {selectedTool.supports_fallback_model && selectedTool.installed && !useOfficialModel && fallbackGroups.length > 0 && (
                   <div>
                     <label className="text-xs font-bold text-slate-300 mb-2 block">
-                      Fallback 模型
-                      <span className="text-[9px] text-slate-500 font-normal ml-1">（处理简单任务，节省费用）</span>
+                      {t("toollaunch.fallbackLabel")}
+                      <span className="text-[9px] text-slate-500 font-normal ml-1">{t("toollaunch.fallbackHint")}</span>
                     </label>
                     <div className="rounded-lg border border-white/5 bg-slate-900/30 overflow-hidden">
                       <div className="px-3 py-1.5 text-[9px] text-slate-600 font-mono cursor-pointer hover:bg-white/[0.05] border-b border-white/[0.03]"
                         onClick={() => { setSelectedFallbackModel(""); setSelectedFallbackProvider(""); setFallbackOneMContext(false); }}>
-                        不使用 fallback 模型
+                        {t("toollaunch.noFallback")}
                       </div>
                       {fallbackGroups.map(group => {
                         const expanded = expandedFallbackGroups.has(group.provider_id);
@@ -1195,7 +1197,7 @@ export default function ToolLauncher() {
                               <div className="flex items-center gap-2">
                                 <ChevronRight className={`w-3 h-3 text-slate-500 transition-transform ${expanded ? "rotate-90" : ""}`} />
                                 <span className="font-semibold text-slate-400">{group.provider_name}</span>
-                                <span className="text-[8px] text-slate-600">{group.models.length} 个</span>
+                                <span className="text-[8px] text-slate-600">{t("toollaunch.itemsCount", { count: group.models.length })}</span>
                               </div>
                               {selectedInGroup && (
                                 <span className="text-[9px] text-amber-400 font-mono truncate ml-2">{selectedFallbackModel}</span>
@@ -1227,11 +1229,11 @@ export default function ToolLauncher() {
                     </div>
                     {selectedFallbackModel && selectedTool.builtin_models.length > 0 && (
                       <div className="mt-3">
-                        <label className="text-[11px] font-bold text-slate-300 mb-1.5 block">Fallback 伪装名称 <span className="text-[9px] text-slate-500 font-normal">（可选，可手动输入）</span></label>
-                        <p className="text-[9px] text-slate-500 mb-1.5">让工具以为 fallback 调用以下内置模型，代理实际转发到 <span className="font-mono text-slate-400">{selectedFallbackModel}</span>。列表仅为建议，可直接输入任意模型名。</p>
+                        <label className="text-[11px] font-bold text-slate-300 mb-1.5 block">{t("toollaunch.fallbackMqLabel")} <span className="text-[9px] text-slate-500 font-normal">{t("toollaunch.optional")}</span></label>
+                        <p className="text-[9px] text-slate-500 mb-1.5">{t("toollaunch.fallbackMqHint", { model: selectedFallbackModel })}</p>
                         <input type="text" list={`fb-masq-list-${selectedTool.id}`} value={fallbackMasqueradeModel}
                           onChange={e => setFallbackMasqueradeModel(e.target.value)}
-                          placeholder={`不伪装（直接使用 ${selectedFallbackModel}）`}
+                          placeholder={t("toollaunch.noFallbackMqPh", { model: selectedFallbackModel })}
                           className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                         <datalist id={`fb-masq-list-${selectedTool.id}`}>
                           {selectedTool.builtin_models.map(c => (
@@ -1246,10 +1248,10 @@ export default function ToolLauncher() {
                           <label className="flex items-center gap-2 mt-2 text-[10px] text-slate-400 cursor-pointer select-none">
                             <input type="checkbox" checked={fallbackOneMContext} onChange={e => setFallbackOneMContext(e.target.checked)}
                               className="accent-[var(--module-accent)]" />
-                            为 Fallback 模型追加 [1m]（1M 上下文，独立勾选）
+                            {t("toollaunch.fallbackOneM")}
                           </label>
                         )}
-                        <div className="mt-1 text-[10px] text-amber-400">Fallback: <span className="font-mono">{selectedFallbackModel}{fallbackOneMContext ? "[1m]" : ""}</span>{fallbackMasqueradeModel && <>(伪装为 <span className="font-mono">{fallbackMasqueradeModel}{fallbackOneMContext ? "[1m]" : ""}</span>)</>}</div>
+                        <div className="mt-1 text-[10px] text-amber-400">{t("toollaunch.fallbackPreview", { model: `${selectedFallbackModel}${fallbackOneMContext ? "[1m]" : ""}` })}{fallbackMasqueradeModel && <>{t("toollaunch.masqueradeAs", { model: `${fallbackMasqueradeModel}${fallbackOneMContext ? "[1m]" : ""}` })}</>}</div>
                       </>
                     )}
                   </div>
@@ -1260,7 +1262,7 @@ export default function ToolLauncher() {
                   <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-900/30 border border-white/5">
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] font-semibold text-slate-300">1M Context</span>
-                      <span className="text-[8px] text-slate-500 hidden sm:inline">给模型 ID 追加 [1m] 后缀</span>
+                      <span className="text-[8px] text-slate-500 hidden sm:inline">{t("toollaunch.oneMHint")}</span>
                     </div>
                     <button
                       onClick={() => setOneMContext(!oneMContext)}
@@ -1276,8 +1278,8 @@ export default function ToolLauncher() {
                   <div className="rounded-lg bg-slate-900/30 border border-white/5 overflow-hidden">
                     <div className="flex items-center justify-between p-2.5">
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-semibold text-slate-300">实时网络搜索</span>
-                        <span className="text-[8px] text-slate-500 hidden sm:inline">写入 web_search="live"，让 Codex 真正联网检索（默认关）</span>
+                        <span className="text-[10px] font-semibold text-slate-300">{t("toollaunch.liveSearch")}</span>
+                        <span className="text-[8px] text-slate-500 hidden sm:inline">{t("toollaunch.liveSearchHint")}</span>
                       </div>
                       <button onClick={() => setWebSearchEnabled(!webSearchEnabled)}
                         className={`p-1 rounded-md cursor-pointer transition-all ${webSearchEnabled ? "text-emerald-400" : "text-slate-600 hover:text-slate-400"}`}>
@@ -1294,8 +1296,8 @@ export default function ToolLauncher() {
                       <div className="rounded-lg bg-slate-900/30 border border-white/5 overflow-hidden">
                         <div className="flex items-center justify-between p-2.5">
                           <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-semibold text-slate-300">请求优化器</span>
-                            <span className="text-[8px] text-slate-500 hidden sm:inline">缓存注入 / 思考优化 / DeepSeek 归一</span>
+                            <span className="text-[10px] font-semibold text-slate-300">{t("toollaunch.optimizer")}</span>
+                            <span className="text-[8px] text-slate-500 hidden sm:inline">{t("toollaunch.optimizerHint")}</span>
                           </div>
                           <button onClick={() => setOptimizerEnabled(!optimizerEnabled)}
                             className={`p-1 rounded-md cursor-pointer transition-all ${optimizerEnabled ? "text-[var(--module-accent)]" : "text-slate-600 hover:text-slate-400"}`}>
@@ -1305,9 +1307,9 @@ export default function ToolLauncher() {
                         {optimizerEnabled && (
                           <div className="px-3 pb-2.5 space-y-1.5 border-t border-white/5 pt-2">
                             {[
-                              { key: "cache_injection" as const, label: "Prompt 缓存注入", desc: "注入 cache_control 断点降低 API 费用" },
-                              { key: "thinking_optimizer" as const, label: "Thinking 参数优化", desc: "按模型自适应配置 thinking 参数" },
-                              { key: "deepseek_normalize" as const, label: "DeepSeek 兼容", desc: "为 DeepSeek/Moonshot 等端点规范化 thinking 块" },
+                              { key: "cache_injection" as const, label: t("toollaunch.optCacheInjection"), desc: t("toollaunch.optCacheInjectionDesc") },
+                              { key: "thinking_optimizer" as const, label: t("toollaunch.optThinking"), desc: t("toollaunch.optThinkingDesc") },
+                              { key: "deepseek_normalize" as const, label: t("toollaunch.optDeepseek"), desc: t("toollaunch.optDeepseekDesc") },
                             ].map(item => (
                               <label key={item.key} className="flex items-center gap-2 cursor-pointer">
                                 <input
@@ -1328,8 +1330,8 @@ export default function ToolLauncher() {
                       <div className="rounded-lg bg-slate-900/30 border border-white/5 overflow-hidden">
                         <div className="flex items-center justify-between p-2.5">
                           <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-semibold text-slate-300">协议整流器</span>
-                            <span className="text-[8px] text-slate-500 hidden sm:inline">抹平协议差异</span>
+                            <span className="text-[10px] font-semibold text-slate-300">{t("toollaunch.rectifier")}</span>
+                            <span className="text-[8px] text-slate-500 hidden sm:inline">{t("toollaunch.rectifierHint")}</span>
                           </div>
                           <button onClick={() => setRectifierEnabled(!rectifierEnabled)}
                             className={`p-1 rounded-md cursor-pointer transition-all ${rectifierEnabled ? "text-[var(--module-accent)]" : "text-slate-600 hover:text-slate-400"}`}>
@@ -1339,10 +1341,10 @@ export default function ToolLauncher() {
                         {rectifierEnabled && (
                           <div className="px-3 pb-2.5 space-y-1.5 border-t border-white/5 pt-2">
                             {[
-                              { key: "thinking_signature" as const, label: "Thinking 签名修复", desc: "thinking block 签名无效时自动剥离并重试" },
-                              { key: "thinking_budget" as const, label: "Thinking 预算修复", desc: "budget_tokens 太小时自动修正为 32000" },
-                              { key: "media_fallback" as const, label: "图片降级", desc: "上游不支持图片时自动替换为文本标记" },
-                              { key: "protocol_mismatch" as const, label: "协议不匹配修复", desc: "协议转换后残留专有字段被上游拒绝时自动剥离并重试" },
+                              { key: "thinking_signature" as const, label: t("toollaunch.recThinkingSig"), desc: t("toollaunch.recThinkingSigDesc") },
+                              { key: "thinking_budget" as const, label: t("toollaunch.recThinkingBudget"), desc: t("toollaunch.recThinkingBudgetDesc") },
+                              { key: "media_fallback" as const, label: t("toollaunch.recMedia"), desc: t("toollaunch.recMediaDesc") },
+                              { key: "protocol_mismatch" as const, label: t("toollaunch.recProtocol"), desc: t("toollaunch.recProtocolDesc") },
                             ].map(item => (
                               <label key={item.key} className="flex items-center gap-2 cursor-pointer">
                                 <input
@@ -1365,13 +1367,13 @@ export default function ToolLauncher() {
                 {/* 会话 */}
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs font-bold text-slate-300">会话</label>
+                    <label className="text-xs font-bold text-slate-300">{t("toollaunch.sessions")}</label>
                     {sessions.length > 0 && (
                       <div className="flex items-center gap-1">
                         <button
                           onClick={() => setSessionViewMode(sessionViewMode === "flat" ? "grouped" : "flat")}
                           className="p-1 rounded text-slate-500 hover:text-slate-300 cursor-pointer transition-all"
-                          title={sessionViewMode === "flat" ? "分组视图" : "列表视图"}
+                          title={sessionViewMode === "flat" ? t("toollaunch.groupView") : t("toollaunch.listView")}
                         >
                           {sessionViewMode === "flat" ? <ListTree className="w-3.5 h-3.5" /> : <List className="w-3.5 h-3.5" />}
                         </button>
@@ -1390,14 +1392,14 @@ export default function ToolLauncher() {
                       className={`px-3 py-1.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-all ${
                         sessionMode === "new" ? "bg-[var(--module-accent)] text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"
                       }`}>
-                      使用新会话
+                      {t("toollaunch.newSession")}
                     </button>
                     {sessions.length > 0 && (
                       <button onClick={() => { setSessionMode("resume"); setShowSessionPicker(!showSessionPicker); setSelectedSession(null); }}
                         className={`px-3 py-1.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-all ${
                           sessionMode === "resume" ? "bg-[var(--module-accent)] text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"
                         }`}>
-                        <Clock className="w-3 h-3" /> 历史会话 ({sessions.length})
+                        <Clock className="w-3 h-3" /> {t("toollaunch.historySessions", { count: sessions.length })}
                       </button>
                     )}
                   </div>
@@ -1408,7 +1410,7 @@ export default function ToolLauncher() {
                         <div className="flex-1 relative">
                           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500" />
                           <input value={sessionSearch} onChange={e => setSessionSearch(e.target.value)}
-                            placeholder="搜索会话..." className="w-full bg-slate-900 border border-white/10 rounded-lg pl-7 pr-7 py-1.5 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
+                            placeholder={t("toollaunch.searchSessions")} className="w-full bg-slate-900 border border-white/10 rounded-lg pl-7 pr-7 py-1.5 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
                           {sessionSearch && (
                             <button onClick={() => setSessionSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
                               <X className="w-3 h-3" />
@@ -1418,11 +1420,11 @@ export default function ToolLauncher() {
                         {selectionMode && (
                           <>
                             <button onClick={handleSelectAll} className="px-2 py-1 rounded text-[9px] font-semibold bg-white/5 text-slate-400 hover:text-slate-200 cursor-pointer whitespace-nowrap">
-                              {selectedSessionIds.size === filteredSessions.length ? "取消全选" : "全选"}
+                              {selectedSessionIds.size === filteredSessions.length ? t("toollaunch.cancelSelectAll") : t("toollaunch.selectAll")}
                             </button>
                             <button onClick={handleDeleteSessions} disabled={selectedSessionIds.size === 0}
                               className="px-2 py-1 rounded text-[9px] font-semibold bg-red-500/10 text-red-400 hover:bg-red-500/20 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed whitespace-nowrap flex items-center gap-1">
-                              <Trash2 className="w-3 h-3" /> 删除 ({selectedSessionIds.size})
+                              <Trash2 className="w-3 h-3" /> {t("toollaunch.delete", { count: selectedSessionIds.size })}
                             </button>
                           </>
                         )}
@@ -1435,7 +1437,7 @@ export default function ToolLauncher() {
                       <div className="max-h-72 overflow-y-auto divide-y divide-white/[0.03]">
                         {filteredSessions.length === 0 ? (
                           <div className="px-3 py-6 text-[10px] text-slate-600 text-center">
-                            {sessionSearch ? "无匹配的会话" : "暂无历史会话"}
+                            {sessionSearch ? t("toollaunch.noMatchSessions") : t("toollaunch.noHistorySessions")}
                           </div>
                         ) : sessionViewMode === "flat" ? (
                           filteredSessions.map(s => (
@@ -1506,7 +1508,7 @@ export default function ToolLauncher() {
                   {sessionMode === "resume" && selectedSession && (
                     <div className="mt-2 p-2 rounded-lg bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] border border-[var(--module-accent-ring)] text-[10px] text-[var(--module-accent)] flex items-center gap-2">
                       <CheckCircle className="w-3 h-3 flex-shrink-0" />
-                      <span className="truncate">将恢复 <span className="font-mono">{selectedSession.project_path}</span></span>
+                      <span className="truncate">{t("toollaunch.willRestore", { path: selectedSession.project_path })}</span>
                     </div>
                   )}
                 </div>
@@ -1514,9 +1516,9 @@ export default function ToolLauncher() {
                 {/* 项目目录 */}
                 {sessionMode === "new" && (
                   <div>
-                    <label className="text-xs font-bold text-slate-300 mb-2 block">项目目录</label>
+                    <label className="text-xs font-bold text-slate-300 mb-2 block">{t("toollaunch.projectDir")}</label>
                     <div className="flex gap-2">
-                      <input value={projectPath} onChange={e => setProjectPath(e.target.value)} placeholder="选择或输入项目目录..."
+                      <input value={projectPath} onChange={e => setProjectPath(e.target.value)} placeholder={t("toollaunch.projectDirPh")}
                         className="flex-1 bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                       <button onClick={handleBrowse}
                         className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:bg-white/10 cursor-pointer transition-all">
@@ -1529,7 +1531,7 @@ export default function ToolLauncher() {
                 {/* 终端 */}
                 {terminals.length > 0 && (
                   <div>
-                    <label className="text-xs font-bold text-slate-300 mb-2 block">终端</label>
+                    <label className="text-xs font-bold text-slate-300 mb-2 block">{t("toollaunch.terminal")}</label>
                     <select value={selectedTerminal} onChange={e => setSelectedTerminal(e.target.value)}
                       className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]">
                       {terminals.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -1554,26 +1556,26 @@ export default function ToolLauncher() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <Shield className="w-3.5 h-3.5 text-[var(--module-accent)] flex-shrink-0" />
                         <span className="text-slate-300">
-                          入站 <span className="font-semibold text-[var(--module-accent)]">{PROTOCOL_LABELS[proxyInfo.inbound]}</span>
+                          {t("toollaunch.inbound")} <span className="font-semibold text-[var(--module-accent)]">{proxyInfo.inbound === "none" ? t("toollaunch.modelNone") : PROTOCOL_LABELS[proxyInfo.inbound]}</span>
                           <span className="mx-1 text-slate-500">→</span>
-                          出站 <span className="font-semibold text-[var(--module-accent)]">{PROTOCOL_LABELS[proxyInfo.outbound]}</span>
+                          {t("toollaunch.outbound")} <span className="font-semibold text-[var(--module-accent)]">{proxyInfo.outbound === "none" ? t("toollaunch.modelNone") : PROTOCOL_LABELS[proxyInfo.outbound]}</span>
                         </span>
                         {proxyInfo.converted ? (
-                          <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[9px] font-semibold">自动转换</span>
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[9px] font-semibold">{t("toollaunch.autoConvert")}</span>
                         ) : (
-                          <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[9px] font-semibold">同协议直连</span>
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[9px] font-semibold">{t("toollaunch.sameProtocol")}</span>
                         )}
-                        <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300 text-[9px] font-semibold">统计已开启</span>
+                        <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300 text-[9px] font-semibold">{t("toollaunch.statsOn")}</span>
                         {selectedTool.supports_optimizer && optimizerEnabled && config?.optimizer.enabled && (
-                          <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] text-[9px] font-semibold">优化器</span>
+                          <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] text-[9px] font-semibold">{t("toollaunch.optimizerBadge")}</span>
                         )}
                         {selectedTool.supports_rectifier && rectifierEnabled && config?.rectifier.enabled && (
-                          <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] text-[9px] font-semibold">整流器</span>
+                          <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] text-[9px] font-semibold">{t("toollaunch.rectifierBadge")}</span>
                         )}
                       </div>
                       {proxyInfo.aliasEntries.length > 0 && (
                         <div className="flex items-center gap-1.5 flex-wrap text-slate-400">
-                          <span className="text-slate-500">伪装:</span>
+                          <span className="text-slate-500">{t("toollaunch.masqueradeLabel2")}</span>
                           {proxyInfo.aliasEntries.map(([k, v]) => (
                             <span key={k} className="font-mono text-[9px] bg-slate-700/40 px-1.5 py-0.5 rounded">{k} → {v}</span>
                           ))}
@@ -1587,11 +1589,11 @@ export default function ToolLauncher() {
                 <button onClick={handleLaunch} disabled={launching || !canLaunch}
                   className="w-full py-3 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-all shadow-lg shadow-[var(--module-accent-ring)]">
                   {launching ? (
-                    <><RefreshCw className="w-4 h-4 animate-spin" /> 启动中...</>
+                    <><RefreshCw className="w-4 h-4 animate-spin" /> {t("toollaunch.starting")}</>
                   ) : sessionMode === "resume" && selectedSession ? (
-                    <><Play className="w-4 h-4" /> 恢复会话</>
+                    <><Play className="w-4 h-4" /> {t("toollaunch.restoreSession")}</>
                   ) : (
-                    <><Rocket className="w-4 h-4" /> 启动 {selectedTool.display_name}</>
+                    <><Rocket className="w-4 h-4" /> {t("toollaunch.launch", { name: selectedTool.display_name })}</>
                   )}
                 </button>
               </>

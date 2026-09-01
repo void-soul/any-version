@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
 import ReactMarkdown from "react-markdown";
@@ -37,6 +38,7 @@ function slugify(text: string): string {
 // ─── 本地图片：通过 image_to_base64 读取为 data URL（不依赖 asset 协议作用域） ───
 
 function LocalImage({ path, alt, onOpenFile }: { path: string; alt: string; onOpenFile: (p: string) => void }) {
+  const { t } = useTranslation();
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -48,12 +50,12 @@ function LocalImage({ path, alt, onOpenFile }: { path: string; alt: string; onOp
     return () => { cancelled = true; };
   }, [path]);
   if (failed) {
-    return <button type="button" className="my-2 block max-w-full text-left text-[9px] text-red-300" onClick={() => onOpenFile(path)} title="打开文件">图片加载失败，点击打开文件</button>;
+    return <button type="button" className="my-2 block max-w-full text-left text-[9px] text-red-300" onClick={() => onOpenFile(path)} title={t("mmdmark.openFile")}>{t("mmdmark.imgLoadFail")}</button>;
   }
   if (!src) {
     return <div className="my-2 h-16 animate-pulse rounded border border-white/10 bg-slate-900/60" />;
   }
-  return <button type="button" className="my-2 block max-w-full text-left" onClick={() => onOpenFile(path)} title="打开图片"><img src={src} alt={alt} className="max-h-64 max-w-full rounded border border-white/10 object-contain" /></button>;
+  return <button type="button" className="my-2 block max-w-full text-left" onClick={() => onOpenFile(path)} title={t("mmdmark.openImg")}><img src={src} alt={alt} className="max-h-64 max-w-full rounded border border-white/10 object-contain" /></button>;
 }
 
 // ─── 内置思维导图（```mindmap 代码块：缩进列表 → 可折叠树） ───
@@ -81,6 +83,7 @@ function parseMindmapTree(lines: string[]): MmTree[] {
 const TREE_DEPTH_COLORS = ["#22d3ee", "#34d399", "#fbbf24", "#a78bfa", "#fb7185", "#60a5fa"];
 
 function TreeItem({ node, depth }: { node: MmTree; depth: number }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(true);
   const hasChildren = node.children.length > 0;
   const dot = TREE_DEPTH_COLORS[depth % TREE_DEPTH_COLORS.length];
@@ -89,7 +92,7 @@ function TreeItem({ node, depth }: { node: MmTree; depth: number }) {
       <div className="flex items-center gap-1.5 py-0.5">
         {hasChildren ? (
           <button type="button" className="nodrag nopan inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-slate-400 hover:text-white"
-            onClick={() => setOpen(!open)} title={open ? "折叠" : "展开"}>
+            onClick={() => setOpen(!open)} title={open ? t("mmdmark.collapse") : t("mmdmark.expand")}>
             {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
           </button>
         ) : <span className="inline-block w-3.5 shrink-0" />}
@@ -106,13 +109,14 @@ function TreeItem({ node, depth }: { node: MmTree; depth: number }) {
 }
 
 function MindmapBlock({ code }: { code: string }) {
+  const { t } = useTranslation();
   const tree = useMemo(() => parseMindmapTree(code.split("\n")), [code]);
   return (
     <div className="my-2 rounded-lg border border-cyan-400/20 bg-slate-950/70 p-2.5">
       <div className="mb-1.5 flex items-center gap-1 text-[9px] uppercase tracking-wide text-cyan-300/80">
-        <ListTree className="h-3 w-3" />内置思维导图
+        <ListTree className="h-3 w-3" />{t("mmdmark.builtinMindmap")}
       </div>
-      {tree.length === 0 ? <div className="text-[10px] text-slate-500">（空）</div> : tree.map((n, i) => <TreeItem key={i} node={n} depth={0} />)}
+      {tree.length === 0 ? <div className="text-[10px] text-slate-500">{t("mmdmark.empty")}</div> : tree.map((n, i) => <TreeItem key={i} node={n} depth={0} />)}
     </div>
   );
 }
@@ -139,6 +143,7 @@ function extractToc(content: string): TocItem[] {
 // ─── 主渲染器 ───
 
 export const MindmapMarkdown = memo(function MindmapMarkdown({ content }: { content: string }) {
+  const { t } = useTranslation();
   const toc = useMemo(() => extractToc(content), [content]);
   const [showToc, setShowToc] = useState(true);
   // 与 toc 顺序对齐的标题计数器（react-markdown 按文档顺序调用标题渲染器）
@@ -175,7 +180,7 @@ export const MindmapMarkdown = memo(function MindmapMarkdown({ content }: { cont
         <div className="mb-3 rounded-lg border border-white/10 bg-slate-900/60">
           <button type="button" className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-[9px] uppercase tracking-wide text-slate-400 hover:text-slate-200"
             onClick={() => setShowToc(!showToc)}>
-            <PanelRight className="h-3 w-3" />章节目录
+            <PanelRight className="h-3 w-3" />{t("mmdmark.toc")}
             {showToc ? <ChevronDown className="h-3 w-3 ml-auto" /> : <ChevronRight className="h-3 w-3 ml-auto" />}
           </button>
           {showToc && (
@@ -238,7 +243,7 @@ export const MindmapMarkdown = memo(function MindmapMarkdown({ content }: { cont
           strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
           del: ({ children }) => <del className="text-slate-500">{children}</del>,
         }}
-      >{content || "暂无内容"}</ReactMarkdown>
+      >{content || t("mindmap.emptyContent")}</ReactMarkdown>
     </div>
   );
 });

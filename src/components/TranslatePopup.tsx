@@ -7,6 +7,7 @@ import VexAvatar from "./VexAvatar";
 import VexGreeting from "./VexGreeting";
 import VexBusy from "./VexBusy";
 import { VEX_CYBER_ACCENT, resolveThemeAccent } from "../utils/brand";
+import { useTranslation } from "react-i18next";
 
 interface TranslateResult {
   source?: string;
@@ -30,6 +31,7 @@ interface AiConfig {
 const TARGETS = ["中文", "English", "日本語", "한국어", "Français", "Deutsch", "Русский", "Español"];
 
 export default function TranslatePopup() {
+  const { t } = useTranslation();
   const [result, setResult] = useState<TranslateResult | null>(null);
   const [copyOk, setCopyOk] = useState(false);
   const [translating, setTranslating] = useState(false);
@@ -332,10 +334,10 @@ export default function TranslatePopup() {
           <div className="flex items-center gap-1.5 text-slate-300">
             <VexAvatar size={16} />
             <Languages className="w-3.5 h-3.5 text-[var(--tl-accent)]" />
-            <span className="text-[11px] font-semibold tracking-wide">翻译</span>
+            <span className="text-[11px] font-semibold tracking-wide">{t("translate.title")}</span>
             {result?.target && (
               <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/10 text-slate-400">
-                目标：{result.target}
+                {t("translate.target", { lang: result.target })}
               </span>
             )}
           </div>
@@ -345,7 +347,7 @@ export default function TranslatePopup() {
               <button
                 onClick={copyResult}
                 className="p-1.5 rounded-md text-slate-400 hover:bg-white/10 hover:text-white cursor-pointer"
-                title="复制译文"
+                title={t("translate.copyResult")}
               >
                 {copyOk ? <Check className="w-3.5 h-3.5 text-[var(--tl-accent)]" /> : <Copy className="w-3.5 h-3.5" />}
               </button>
@@ -354,7 +356,7 @@ export default function TranslatePopup() {
             <button
               onClick={hidePopup}
               className="p-1.5 rounded-md text-slate-400 hover:bg-red-500/20 hover:text-red-400 cursor-pointer"
-              title="关闭"
+              title={t("translate.close")}
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -378,9 +380,9 @@ export default function TranslatePopup() {
             onChange={(e) => changeProvider(e.target.value)}
             disabled={translating || providers.length === 0}
             className="text-[9px] px-1.5 py-0.5 rounded bg-white/10 text-slate-300 border border-white/10 focus:outline-none disabled:opacity-50 cursor-pointer min-w-0 flex-1"
-            title="翻译供应商"
+            title={t("translate.provider")}
           >
-            {providers.length === 0 && <option value="">（无供应商）</option>}
+            {providers.length === 0 && <option value="">{t("translate.noProvider")}</option>}
             {providers.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -394,7 +396,7 @@ export default function TranslatePopup() {
             onChange={(e) => changeModel(e.target.value)}
             disabled={translating || !provId}
             className="text-[9px] px-1.5 py-0.5 rounded bg-white/10 text-slate-300 border border-white/10 focus:outline-none disabled:opacity-50 cursor-pointer min-w-0 flex-1"
-            title="翻译模型"
+            title={t("translate.model")}
           >
             {(providers.find((p) => p.id === provId)?.models || []).map((m) => (
               <option key={m.id} value={m.id}>
@@ -409,7 +411,7 @@ export default function TranslatePopup() {
             onChange={(e) => changeTarget(e.target.value)}
             disabled={translating}
             className="text-[9px] px-1.5 py-0.5 rounded bg-white/10 text-slate-300 border border-white/10 focus:outline-none disabled:opacity-50 cursor-pointer shrink-0"
-            title="目标语言"
+            title={t("translate.targetLang")}
           >
             {TARGETS.map((t) => (
               <option key={t} value={t}>
@@ -424,12 +426,12 @@ export default function TranslatePopup() {
           {/* 原文：可编辑 textarea */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <span className="text-[9px] text-slate-500">原文</span>
+              <span className="text-[9px] text-slate-500">{t("translate.source")}</span>
               {(sourceText || result?.source) && (
                 <button
                   onClick={copySource}
                   className="text-slate-500 hover:text-white hover:bg-white/10 rounded p-1 cursor-pointer"
-                  title="复制原文"
+                  title={t("translate.copySource")}
                 >
                   {copySourceOk ? <Check className="w-3 h-3 text-[var(--tl-accent)]" /> : <Copy className="w-3 h-3" />}
                 </button>
@@ -441,7 +443,7 @@ export default function TranslatePopup() {
                 manualTranslationSourceRef.current = e.target.value;
                 setSourceText(e.target.value);
               }}
-              placeholder="输入或选中文本后按划词热键"
+              placeholder={t("translate.phInput")}
               className="w-full min-h-[60px] bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-[var(--tl-accent)] resize-none leading-relaxed"
             />
           </div>
@@ -449,7 +451,7 @@ export default function TranslatePopup() {
           {/* 翻译按钮 */}
           <div className="flex items-center justify-end gap-1.5">
             <span className="text-[9px] text-slate-600">
-              目标：{result?.target || "中文"}
+              {t("translate.target", { lang: result?.target || "中文" })}
             </span>
             <button
               onClick={doTranslate}
@@ -457,33 +459,33 @@ export default function TranslatePopup() {
               className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-[var(--tl-accent)] text-white hover:bg-[var(--tl-accent-strong)] transition cursor-pointer disabled:opacity-50 flex items-center gap-1"
             >
               <ArrowRightLeft className="w-3 h-3" />
-              {translating ? "翻译中…" : "翻译"}
+              {translating ? t("translate.translating") : t("translate.translate")}
             </button>
           </div>
 
           {/* 译文 */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <span className="text-[9px] text-slate-500">译文</span>
+              <span className="text-[9px] text-slate-500">{t("translate.translated")}</span>
               {result?.result && (
                 <button
                   onClick={copyResult}
                   className="text-slate-500 hover:text-white hover:bg-white/10 rounded p-1 cursor-pointer"
-                  title="复制译文"
+                  title={t("translate.copyResult")}
                 >
                   {copyOk ? <Check className="w-3 h-3 text-[var(--tl-accent)]" /> : <Copy className="w-3 h-3" />}
                 </button>
               )}
             </div>
             {translating ? (
-              <VexBusy text="正在翻译，稍等一下…" avatarSize={32} />
+              <VexBusy text={t("translate.busy")} avatarSize={32} />
             ) : result?.error ? (
               <div className="text-[11px] text-red-400 leading-relaxed whitespace-pre-wrap break-words">
                 {result.result}
               </div>
             ) : (
               <div className="text-[12px] text-slate-100 leading-relaxed whitespace-pre-wrap break-words">
-                {result?.result || (sourceText ? "等待翻译…" : "请选中文本后按划词热键")}
+                {result?.result || (sourceText ? t("translate.waiting") : t("translate.selectFirst"))}
               </div>
             )}
           </div>

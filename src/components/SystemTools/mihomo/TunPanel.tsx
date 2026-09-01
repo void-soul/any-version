@@ -2,6 +2,7 @@
 // （防火墙重置 / 栈 gvisor·mixed·system / 设备名 / 严格路由 / 自动路由 /
 //   自动选择接口 / MTU / DNS 劫持 / 排除路由地址（CIDR 校验））
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Trash2 } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
 import { cardCls, SettingItem, Toggle, btnSec, btnPrimary, inputCls } from "./ui";
@@ -27,6 +28,7 @@ function ipCIDRValidator(s: string): boolean {
 }
 
 export default function TunPanel() {
+  const { t } = useTranslation();
   const [values, originSetValues] = useState({ ...DEFAULT_TUN });
   const [changed, setChanged] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -98,12 +100,12 @@ export default function TunPanel() {
       if (nameChanged) {
         loadedDeviceRef.current = values.device;
         await mihomoApi.restart();
-        setMsg("已保存并重启内核以应用新网卡名");
+        setMsg(t("tun.savedRestart"));
       } else {
-        setMsg("已保存并热重载");
+        setMsg(t("tun.savedReload"));
       }
     } catch (e: any) {
-      setMsg(`保存失败: ${e}`);
+      setMsg(t("tun.saveFail", { err: String(e) }));
     } finally {
       setChanged(false);
     }
@@ -112,14 +114,14 @@ export default function TunPanel() {
   return (
     <div className={`${cardCls} p-4`}>
       <div className="flex items-center justify-between mb-1">
-        <h3 className="text-sm font-bold text-white">TUN 设置</h3>
+        <h3 className="text-sm font-bold text-white">{t("tun.title")}</h3>
         <div className="flex items-center gap-2">
           {msg && <span className="text-[11px] text-slate-400">{msg}</span>}
-          {changed && <button className={btnPrimary} onClick={onSave}>保存</button>}
+          {changed && <button className={btnPrimary} onClick={onSave}>{t("common.save")}</button>}
         </div>
       </div>
 
-      <SettingItem title="重置防火墙">
+      <SettingItem title={t("tun.resetFirewall")}>
         <button
           className={btnSec}
           disabled={loading}
@@ -127,17 +129,17 @@ export default function TunPanel() {
             setLoading(true);
             try {
               await mihomoApi.setupFirewall();
-              setMsg("防火墙已重置");
+              setMsg(t("tun.firewallResetOk"));
               await mihomoApi.restart();
-            } catch (e: any) { setMsg(`防火墙设置失败: ${e}`); }
+            } catch (e: any) { setMsg(t("tun.firewallFail", { err: String(e) })); }
             finally { setLoading(false); }
           }}
         >
-          {loading ? "处理中..." : "重置"}
+          {loading ? t("tun.processing") : t("tun.reset")}
         </button>
       </SettingItem>
 
-      <SettingItem title="TUN 模式堆栈">
+      <SettingItem title={t("tun.stack")}>
         <div className="flex rounded-lg bg-white/5 border border-white/10 overflow-hidden">
           {(["gvisor", "mixed", "system"] as const).map((k) => (
             <button
@@ -153,18 +155,18 @@ export default function TunPanel() {
         </div>
       </SettingItem>
 
-      <SettingItem title="TUN 网卡名称">
+      <SettingItem title={t("tun.device")}>
         <input className={`${inputCls} !w-40`} placeholder="Mihomo" value={values.device}
           onChange={(e) => setValues({ ...values, device: e.target.value })} />
       </SettingItem>
 
-      <SettingItem title="严格路由">
+      <SettingItem title={t("tun.strictRoute")}>
         <Toggle v={values.strictRoute} onChange={(v) => setValues({ ...values, strictRoute: v })} />
       </SettingItem>
-      <SettingItem title="自动设置全局路由">
+      <SettingItem title={t("tun.autoRoute")}>
         <Toggle v={values.autoRoute} onChange={(v) => setValues({ ...values, autoRoute: v })} />
       </SettingItem>
-      <SettingItem title="自动选择流量出口接口">
+      <SettingItem title={t("tun.autoDetect")}>
         <Toggle v={values.autoDetectInterface} onChange={(v) => setValues({ ...values, autoDetectInterface: v })} />
       </SettingItem>
 
@@ -175,7 +177,7 @@ export default function TunPanel() {
         />
       </SettingItem>
 
-      <SettingItem title="DNS 劫持">
+      <SettingItem title={t("tun.dnsHijack")}>
         <input
           className={`${inputCls} !w-64`} placeholder="any:53"
           value={values.dnsHijack.join(",")}
@@ -184,7 +186,7 @@ export default function TunPanel() {
       </SettingItem>
 
       <div className="pt-3">
-        <h4 className="text-[12px] text-slate-300 font-semibold mb-2">排除自定义网段</h4>
+        <h4 className="text-[12px] text-slate-300 font-semibold mb-2">{t("tun.excludeCidrs")}</h4>
         {excludeInputs.map((address, index) => {
           const invalid = address.trim() !== "" && !ipCIDRValidator(address.trim());
           return (
@@ -192,7 +194,7 @@ export default function TunPanel() {
               <div className="flex gap-2">
                 <input
                   className={`${inputCls} ${invalid ? "!border-rose-500" : ""}`}
-                  placeholder="例: 192.168.1.0/24"
+                  placeholder={t("tun.cidrPlaceholder")}
                   value={address}
                   onChange={(e) => handleExcludeChange(e.target.value, index)}
                 />
@@ -202,11 +204,11 @@ export default function TunPanel() {
                   </button>
                 )}
               </div>
-              {invalid && <div className="text-[10px] text-rose-400 mt-0.5 px-1">无效的 IP/CIDR</div>}
+              {invalid && <div className="text-[10px] text-rose-400 mt-0.5 px-1">{t("tun.invalidCidr")}</div>}
             </div>
           );
         })}
-        {hasInvalid && <div className="text-[10px] text-rose-400 px-1">存在无效条目，本列表暂不保存（其它设置正常保存）</div>}
+        {hasInvalid && <div className="text-[10px] text-rose-400 px-1">{t("tun.invalidEntries")}</div>}
       </div>
     </div>
   );

@@ -3,6 +3,7 @@
 //   IPv6 / respect-rules / 4 组 nameserver 列表 / nameserver-policy /
 //   系统 hosts / 自定义 hosts / fallback + fallback-filter）
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Trash2 } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
 import { cardCls, SettingItem, Toggle, btnSec, btnPrimary, inputCls } from "./ui";
@@ -47,6 +48,7 @@ function SegTabs({ options, value, onChange }: { options: [string, string][]; va
 }
 
 export default function DnsPanel() {
+  const { t } = useTranslation();
   const [values, originSetValues] = useState<any>({
     ...DEFAULT_DNS,
     useNameserverPolicy: false,
@@ -189,9 +191,9 @@ export default function DnsPanel() {
     try {
       await mihomoApi.patchAppConfig({ nameserverPolicy: nsPolicy, useNameserverPolicy: values.useNameserverPolicy });
       await mihomoApi.patchControledConfig(patch);
-      setMsg(controlDns ? "已保存并生效" : "已保存（未开启 DNS 接管，仅保存）");
+      setMsg(controlDns ? t("mihomo.dnsSavedEffective") : t("mihomo.dnsSavedOnly"));
     } catch (e: any) {
-      setMsg(`保存失败: ${e}`);
+      setMsg(t("mihomo.dnsSaveFailed", { err: String(e) }));
     }
   };
 
@@ -199,19 +201,19 @@ export default function DnsPanel() {
     <div className="space-y-3">
       <div className={`${cardCls} p-4`}>
         <div className="flex items-center justify-between mb-1">
-          <h3 className="text-sm font-bold text-white">DNS 设置</h3>
+          <h3 className="text-sm font-bold text-white">{t("mihomo.dnsTitle")}</h3>
           <div className="flex items-center gap-2">
             {msg && <span className="text-[11px] text-slate-400">{msg}</span>}
-            {changed && <button className={btnPrimary} onClick={onSave}>{controlDns ? "保存" : "仅保存"}</button>}
+            {changed && <button className={btnPrimary} onClick={onSave}>{controlDns ? t("mihomo.dnsSave") : t("mihomo.dnsSaveOnly")}</button>}
           </div>
         </div>
 
-        <SettingItem title="启用 DNS 模块">
+        <SettingItem title={t("mihomo.dnsEnable")}>
           <Toggle v={values.enable} onChange={(v) => setValues({ ...values, enable: v })} />
         </SettingItem>
-        <SettingItem title="增强模式">
+        <SettingItem title={t("mihomo.dnsEnhancedMode")}>
           <SegTabs
-            options={[["fake-ip", "虚假 IP"], ["redir-host", "真实 IP"], ["normal", "取消映射"]]}
+            options={[["fake-ip", t("mihomo.dnsFakeIp")], ["redir-host", t("mihomo.dnsRedirHost")], ["normal", t("mihomo.dnsNormal")]]}
             value={values.enhancedMode}
             onChange={(k) => setValues({ ...values, enhancedMode: k })}
           />
@@ -219,94 +221,94 @@ export default function DnsPanel() {
 
         {values.enhancedMode === "fake-ip" && (
           <>
-            <SettingItem title="虚假 IP 范围">
+            <SettingItem title={t("mihomo.dnsFakeIpRange")}>
               <input className={`${inputCls} !w-64`} placeholder="198.18.0.1/16" value={values.fakeIPRange}
                 onChange={(e) => setValues({ ...values, fakeIPRange: e.target.value })} />
             </SettingItem>
-            <SettingItem title="过滤模式">
+            <SettingItem title={t("mihomo.dnsFilterMode")}>
               <SegTabs
-                options={[["blacklist", "黑名单"], ["whitelist", "白名单"], ["rule", "规则"]]}
+                options={[["blacklist", t("mihomo.dnsBlacklist")], ["whitelist", t("mihomo.dnsWhitelist")], ["rule", t("mihomo.dnsRule")]]}
                 value={values.fakeIPFilterMode}
                 onChange={(k) => setValues({ ...values, fakeIPFilterMode: k })}
               />
             </SettingItem>
             <div className="py-2 border-b border-white/5">
-              <h4 className="text-[12px] text-slate-300 font-semibold">真实 IP 回应</h4>
-              {renderListInputs("fakeIPFilter", values.fakeIPFilterMode === "rule" ? "例: RULE-SET,cn" : "例: +.lan")}
+              <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.dnsRealIpRespond")}</h4>
+              {renderListInputs("fakeIPFilter", values.fakeIPFilterMode === "rule" ? t("mihomo.dnsExampleRuleSet") : t("mihomo.dnsExampleLan"))}
             </div>
           </>
         )}
 
-        <SettingItem title="IPv6">
+        <SettingItem title={t("mihomo.dnsIpv6")}>
           <Toggle v={values.ipv6} onChange={(v) => setValues({ ...values, ipv6: v })} />
         </SettingItem>
-        <SettingItem title="连接遵守规则">
+        <SettingItem title={t("mihomo.dnsRespectRules")}>
           <Toggle v={values.respectRules} onChange={(v) => setValues({ ...values, respectRules: v })} />
         </SettingItem>
 
         <div className="py-2 border-b border-white/5">
-          <h4 className="text-[12px] text-slate-300 font-semibold">默认域名解析服务器 (default-nameserver)</h4>
-          {renderListInputs("defaultNameserver", "例: tls://223.5.5.5")}
+          <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.dnsDefaultNs")}</h4>
+          {renderListInputs("defaultNameserver", t("mihomo.dnsExampleTls"))}
         </div>
         <div className="py-2 border-b border-white/5">
-          <h4 className="text-[12px] text-slate-300 font-semibold">代理节点域名解析服务器 (proxy-server-nameserver)</h4>
-          {renderListInputs("proxyServerNameserver", "例: https://doh.pub/dns-query")}
+          <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.dnsProxyNs")}</h4>
+          {renderListInputs("proxyServerNameserver", t("mihomo.dnsExampleDoh"))}
         </div>
         <div className="py-2 border-b border-white/5">
-          <h4 className="text-[12px] text-slate-300 font-semibold">域名解析服务器 (nameserver)</h4>
-          {renderListInputs("nameserver", "例: https://doh.pub/dns-query")}
+          <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.dnsNs")}</h4>
+          {renderListInputs("nameserver", t("mihomo.dnsExampleDoh"))}
         </div>
         <div className="py-2 border-b border-white/5">
-          <h4 className="text-[12px] text-slate-300 font-semibold">直连域名解析服务器 (direct-nameserver)</h4>
-          {renderListInputs("directNameserver", "例: system")}
+          <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.dnsDirectNs")}</h4>
+          {renderListInputs("directNameserver", t("mihomo.dnsExampleSystem"))}
         </div>
 
-        <SettingItem title="覆盖 DNS 策略">
+        <SettingItem title={t("mihomo.dnsUsePolicy")}>
           <Toggle v={values.useNameserverPolicy} onChange={(v) => setValues({ ...values, useNameserverPolicy: v })} />
         </SettingItem>
         {values.useNameserverPolicy && (
           <div className="py-2 border-b border-white/5">
-            <h4 className="text-[12px] text-slate-300 font-semibold mb-2">DNS 策略列表</h4>
-            {renderKvInputs("nameserverPolicy", "域名（例: +.example.com）", "服务器，多个逗号分隔")}
+            <h4 className="text-[12px] text-slate-300 font-semibold mb-2">{t("mihomo.dnsPolicyList")}</h4>
+            {renderKvInputs("nameserverPolicy", t("mihomo.dnsPolicyDomainPh"), t("mihomo.dnsPolicyValuePh"))}
           </div>
         )}
 
-        <SettingItem title="使用系统 Hosts">
+        <SettingItem title={t("mihomo.dnsUseSystemHosts")}>
           <Toggle v={values.useSystemHosts} onChange={(v) => setValues({ ...values, useSystemHosts: v })} />
         </SettingItem>
-        <SettingItem title="自定义 Hosts">
+        <SettingItem title={t("mihomo.dnsUseCustomHosts")}>
           <Toggle v={values.useHosts} onChange={(v) => setValues({ ...values, useHosts: v })} />
         </SettingItem>
         {values.useHosts && (
           <div className="py-2 border-b border-white/5">
-            <h4 className="text-[12px] text-slate-300 font-semibold mb-2">Hosts 列表</h4>
-            {renderKvInputs("hosts", "域名", "IP/域名，多个逗号分隔")}
+            <h4 className="text-[12px] text-slate-300 font-semibold mb-2">{t("mihomo.dnsHostsList")}</h4>
+            {renderKvInputs("hosts", t("mihomo.dnsDomain"), t("mihomo.dnsHostsValuePh"))}
           </div>
         )}
 
         <div className="py-2">
-          <h4 className="text-[12px] text-slate-300 font-semibold">后备域名解析服务器 (fallback)</h4>
-          {renderListInputs("fallback", "例: tls://8.8.4.4")}
+          <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.dnsFallback")}</h4>
+          {renderListInputs("fallback", t("mihomo.dnsExampleTls8844"))}
         </div>
       </div>
 
       {/* fallback-filter 卡片（复刻第二个 SettingCard） */}
       <div className={`${cardCls} p-4`}>
-        <h3 className="text-sm font-bold text-white mb-1">后备过滤 (fallback-filter)</h3>
-        <SettingItem title="GeoIP 过滤">
+        <h3 className="text-sm font-bold text-white mb-1">{t("mihomo.dnsFallbackFilter")}</h3>
+        <SettingItem title={t("mihomo.dnsGeoipFilter")}>
           <Toggle v={!!values.fallbackGeoip} onChange={(v) => setValues({ ...values, fallbackGeoip: v })} />
         </SettingItem>
-        <SettingItem title="GeoIP 代码">
+        <SettingItem title={t("mihomo.dnsGeoipCode")}>
           <input className={`${inputCls} !w-28`} placeholder="CN" value={values.fallbackGeoipCode}
             onChange={(e) => setValues({ ...values, fallbackGeoipCode: e.target.value })} />
         </SettingItem>
         <div className="py-2 border-b border-white/5">
-          <h4 className="text-[12px] text-slate-300 font-semibold">IP 段过滤 (ipcidr)</h4>
-          {renderListInputs("fallbackIpcidr", "例: 240.0.0.0/4")}
+          <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.dnsIpcidr")}</h4>
+          {renderListInputs("fallbackIpcidr", t("mihomo.dnsExampleIpcidr"))}
         </div>
         <div className="py-2">
-          <h4 className="text-[12px] text-slate-300 font-semibold">域名过滤 (domain)</h4>
-          {renderListInputs("fallbackDomain", "例: +.google.com")}
+          <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.dnsDomainFilter")}</h4>
+          {renderListInputs("fallbackDomain", t("mihomo.dnsExampleDomain"))}
         </div>
       </div>
     </div>

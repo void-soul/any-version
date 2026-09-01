@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { useTranslation } from "react-i18next";
 import { 
   Rss, 
   Settings2, 
@@ -36,11 +37,12 @@ interface RssConfig {
 
 /** 来源徽标：首字母头像 + 来源名 */
 function SourceBadge({ source }: { source: string }) {
+  const { t } = useTranslation();
   const initial = (source.trim().charAt(0) || "?").toUpperCase();
   return (
     <span
       className="px-1 py-0.5 rounded-md flex items-center gap-1 text-[8px] font-bold border bg-white/5 border-white/10 text-slate-300"
-      title="RSS 来源"
+      title={t("rss.sourceBadge")}
     >
       <span className="w-3.5 h-3.5 rounded flex items-center justify-center text-[7px] font-black shrink-0 bg-slate-600/40 text-slate-300">
         {initial}
@@ -69,13 +71,13 @@ function parseRssXml(xmlStr: string, _feedUrl: string, customName?: string): Rss
   }
 
   // 优先使用用户自定义名称，否则回退到 feed 标题
-  let feedTitle = "未定义源";
+  let feedTitle = "";
   if (customName && customName.trim()) {
     feedTitle = customName.trim();
   } else {
     const titleNode = xmlDoc.querySelector("channel > title, feed > title");
     if (titleNode) {
-      feedTitle = titleNode.textContent || "未定义源";
+      feedTitle = titleNode.textContent || "";
     }
   }
 
@@ -85,7 +87,7 @@ function parseRssXml(xmlStr: string, _feedUrl: string, customName?: string): Rss
   const items = xmlDoc.querySelectorAll("item");
   if (items.length > 0) {
     items.forEach((item) => {
-      const title = item.querySelector("title")?.textContent || "无标题";
+      const title = item.querySelector("title")?.textContent || "";
       
       let link = item.querySelector("link")?.textContent || "";
       if (!link) {
@@ -129,7 +131,7 @@ function parseRssXml(xmlStr: string, _feedUrl: string, customName?: string): Rss
   const entries = xmlDoc.querySelectorAll("entry");
   if (entries.length > 0) {
     entries.forEach((entry) => {
-      const title = entry.querySelector("title")?.textContent || "无标题";
+      const title = entry.querySelector("title")?.textContent || "";
       
       let link = "";
       const linkNode = entry.querySelector("link");
@@ -168,6 +170,7 @@ function parseRssXml(xmlStr: string, _feedUrl: string, customName?: string): Rss
 }
 
 export default function RssReader() {
+  const { t } = useTranslation();
   const [sources, setSources] = useState<RssSource[]>([]);
   const [articles, setArticles] = useState<RssArticle[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
@@ -271,7 +274,7 @@ export default function RssReader() {
       setEditSources(res.sources);
       return res.sources;
     } catch (err: any) {
-      setError(`加载 RSS 配置失败: ${err.message || err}`);
+      setError(t("rss.loadCfgFail", { err: err.message || err }));
       return [];
     }
   };
@@ -280,7 +283,7 @@ export default function RssReader() {
   const fetchAllFeeds = async (feedSources: RssSource[], force = false) => {
     if (feedSources.length === 0) {
       setArticles([]);
-      setError("未配置 RSS 订阅源，点击右上角设置配置订阅源。");
+      setError(t("rss.noSources"));
       return;
     }
 
@@ -362,9 +365,9 @@ export default function RssReader() {
     setLoading(false);
 
     if (errors.length > 0 && allArticles.length === 0) {
-      setError(`所有订阅源加载失败:\n${errors.join("\n")}`);
+      setError(t("rss.allFeedsFail", { errors: errors.join("\n") }));
     } else if (errors.length > 0) {
-      setError(`部分订阅源加载失败，已加载部分资讯。`);
+      setError(t("rss.partialFail"));
     }
   };
 
@@ -463,7 +466,7 @@ export default function RssReader() {
     const trimmed = newSourceUrl.trim();
     if (!trimmed) return;
     if (editSources.some((s) => s.url === trimmed)) {
-      setConfigMessage("该订阅源已在列表中");
+      setConfigMessage(t("rss.alreadyInList"));
       return;
     }
     setEditSources([...editSources, { url: trimmed, name: newSourceName.trim() }]);
@@ -499,13 +502,13 @@ export default function RssReader() {
       setConfigMessage(null);
       fetchAllFeeds(cleaned);
     } catch (err: any) {
-      setConfigMessage(`保存失败: ${err.message || err}`);
+      setConfigMessage(t("rss.saveFail", { err: err.message || err }));
     }
   };
 
   // Format date helper
   const formatDate = (date: Date | null) => {
-    if (!date) return "最新";
+    if (!date) return t("rss.newest");
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, "0");
     const d = String(date.getDate()).padStart(2, "0");
@@ -527,7 +530,7 @@ export default function RssReader() {
             }`}
           >
             <Rss className="w-3 h-3" />
-            全部资讯
+            {t("rss.allNews")}
           </button>
           <button
             onClick={() => setView("favorites")}
@@ -536,7 +539,7 @@ export default function RssReader() {
             }`}
           >
             <Bookmark className="w-3 h-3" />
-            我的收藏
+            {t("rss.myFavs")}
             {favorites.size > 0 && (
               <span className={`text-[9px] font-bold px-1 rounded ${
                 view === "favorites" ? "bg-[color-mix(in_srgb,var(--module-accent)_70%,black)] text-[var(--module-accent)]" : "bg-white/10 text-slate-400"
@@ -554,7 +557,7 @@ export default function RssReader() {
           className="px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
         >
           <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
-          刷新
+          {t("rss.refresh")}
         </button>
         <button
           onClick={() => {
@@ -564,7 +567,7 @@ export default function RssReader() {
           className="px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all flex items-center gap-1 cursor-pointer"
         >
           <Settings2 className="w-3 h-3" />
-          配置源
+          {t("rss.configSources")}
         </button>
 
         <div className="w-px h-3 bg-white/10" />
@@ -577,9 +580,9 @@ export default function RssReader() {
               value={sourceFilter}
               onChange={(e) => setSourceFilter(e.target.value)}
               className="bg-slate-900 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-300 focus:outline-none focus:border-[var(--module-accent)] cursor-pointer max-w-[140px]"
-              title="按来源名称筛选"
+              title={t("rss.filterBySource")}
             >
-              <option value="">全部来源</option>
+              <option value="">{t("rss.allSources")}</option>
               {availableSources.map((name) => (
                 <option key={name} value={name}>{name}</option>
               ))}
@@ -596,11 +599,11 @@ export default function RssReader() {
               <Clock className="w-3 h-3" />
             </span>
             {[
-              { key: "all", label: "全部" },
-              { key: "today", label: "今天" },
-              { key: "3days", label: "三天内" },
-              { key: "week", label: "本周" },
-              { key: "custom", label: "自定义" }
+              { key: "all", label: t("rss.filterAll") },
+              { key: "today", label: t("rss.filterToday") },
+              { key: "3days", label: t("rss.filter3d") },
+              { key: "week", label: t("rss.filterWeek") },
+              { key: "custom", label: t("rss.filterCustom") }
             ].map((item) => (
               <button
                 key={item.key}
@@ -622,10 +625,10 @@ export default function RssReader() {
           <button
             onClick={handleRestoreArticles}
             className="px-2 py-1 rounded-md text-[10px] font-medium text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] hover:bg-[var(--module-accent-soft)] transition-all cursor-pointer flex items-center gap-1 flex-shrink-0"
-            title="恢复所有已删除（已读过）的资讯"
+            title={t("rss.restoreReadTitle")}
           >
             <RefreshCw className="w-3 h-3" />
-            恢复已读 ({deletedLinks.size})
+            {t("rss.restoreRead", { count: deletedLinks.size })}
           </button>
         )}
 
@@ -665,9 +668,9 @@ export default function RssReader() {
           favorites.size === 0 ? (
             <div className="h-64 border border-dashed border-white/5 rounded-2xl flex flex-col items-center justify-center text-slate-500 p-8 text-center bg-white/[0.01]">
               <Bookmark className="w-10 h-10 text-slate-700 mb-3" />
-              <span className="text-xs font-bold text-slate-400">暂无收藏</span>
+              <span className="text-xs font-bold text-slate-400">{t("rss.noFavs")}</span>
               <span className="text-[10px] text-slate-600 mt-1 max-w-[260px]">
-                在资讯列表中悬停卡片，点击右上角的 <BookmarkCheck className="w-3 h-3 inline mx-0.5" /> 即可收藏感兴趣的文章。
+                {t("rss.noFavsDesc", { icon: "" })}
               </span>
             </div>
           ) : (
@@ -692,7 +695,7 @@ export default function RssReader() {
                       <button
                         onClick={(e) => handleRemoveFavorite(articleId, e)}
                         className="p-1 rounded-md text-amber-500/50 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all duration-200 cursor-pointer"
-                        title="移除收藏"
+                        title={t("rss.unfav")}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -701,7 +704,7 @@ export default function RssReader() {
                     </div>
                   </div>
                   <h3 className="text-xs font-bold text-slate-200 group-hover:text-white transition-all leading-relaxed">
-                    {article.title}
+                    {article.title || t("rss.noTitle")}
                   </h3>
                   {article.summary && (
                     <p className="text-[10px] text-slate-400 leading-relaxed font-sans line-clamp-2">
@@ -717,14 +720,14 @@ export default function RssReader() {
           loading ? (
             <div className="h-48 flex flex-col items-center justify-center text-slate-500">
               <RefreshCw className="w-8 h-8 animate-spin mb-2 text-blue-500" />
-              <span className="text-[11px]">正在解析并抓取资讯列表中，请稍候...</span>
+              <span className="text-[11px]">{t("rss.parsing")}</span>
             </div>
           ) : filteredArticles.length === 0 ? (
             <div className="h-64 border border-dashed border-white/5 rounded-2xl flex flex-col items-center justify-center text-slate-500 p-8 text-center bg-white/[0.01]">
               <Rss className="w-10 h-10 text-slate-700 mb-2 animate-pulse" />
-              <span className="text-xs font-bold text-slate-400">暂无资讯数据</span>
+              <span className="text-xs font-bold text-slate-400">{t("rss.noNews")}</span>
               <span className="text-[10px] text-slate-600 mt-1 max-w-[280px]">
-                没有匹配到当前的日期过滤条件，或是当前订阅源中没有文章。您也可以点击右上角“配置源”添加其他 RSS 源。
+                {t("rss.noNewsDesc")}
               </span>
             </div>
           ) : (
@@ -756,7 +759,7 @@ export default function RssReader() {
                             ? "text-amber-400 hover:text-amber-300 hover:bg-amber-500/10"
                             : "text-slate-500 hover:text-amber-400 hover:bg-amber-500/10 opacity-0 group-hover:opacity-100"
                         }`}
-                        title={isFavorited ? "取消收藏" : "收藏此文章"}
+                        title={isFavorited ? t("rss.unfavTitle") : t("rss.favTitle")}
                       >
                         {isFavorited
                           ? <BookmarkCheck className="w-3.5 h-3.5" />
@@ -765,7 +768,7 @@ export default function RssReader() {
                       <button
                         onClick={(e) => handleDeleteArticle(articleId, e)}
                         className="p-1 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all duration-200 cursor-pointer"
-                        title="删除此条资讯 (标记为已读)"
+                        title={t("rss.deleteTitle")}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -773,7 +776,7 @@ export default function RssReader() {
                     </div>
                   </div>
                   <h3 className="text-xs font-bold text-slate-200 group-hover:text-white transition-all leading-relaxed">
-                    {article.title}
+                    {article.title || t("rss.noTitle")}
                   </h3>
                   {article.summary && (
                     <p className="text-[10px] text-slate-400 leading-relaxed font-sans line-clamp-2">
@@ -795,7 +798,7 @@ export default function RssReader() {
             <div className="p-4 border-b border-white/5 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Settings2 className="w-4.5 h-4.5 text-blue-400" />
-                <h3 className="text-xs font-bold text-slate-200">资讯源管理</h3>
+                <h3 className="text-xs font-bold text-slate-200">{t("rss.feedManage")}</h3>
               </div>
               <button 
                 onClick={() => {
@@ -804,7 +807,7 @@ export default function RssReader() {
                 }}
                 className="text-slate-500 hover:text-slate-300 text-xs"
               >
-                关闭
+                {t("rss.close")}
               </button>
             </div>
 
@@ -813,14 +816,14 @@ export default function RssReader() {
               <div className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="来源名称（可选，如：36氪）"
+                  placeholder={t("rss.namePh")}
                   value={newSourceName}
                   onChange={(e) => setNewSourceName(e.target.value)}
                   className="w-[130px] flex-shrink-0 bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-[10.5px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
                 />
                 <input
                   type="text"
-                  placeholder="RSS 订阅源 URL（例如：https://36kr.com/feed）"
+                  placeholder={t("rss.urlPh")}
                   value={newSourceUrl}
                   onChange={(e) => setNewSourceUrl(e.target.value)}
                   className="flex-1 bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-[10.5px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
@@ -830,14 +833,14 @@ export default function RssReader() {
                   disabled={!newSourceUrl.trim()}
                   className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] text-slate-300 disabled:opacity-40 cursor-pointer flex-shrink-0"
                 >
-                  测试链接
+                  {t("rss.testLink")}
                 </button>
                 <button
                   onClick={handleAddSource}
                   disabled={!newSourceUrl.trim()}
                   className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-semibold disabled:opacity-40 cursor-pointer flex-shrink-0 flex items-center gap-0.5"
                 >
-                  <Plus className="w-3 h-3" /> 添加
+                  <Plus className="w-3 h-3" /> {t("rss.add")}
                 </button>
               </div>
               {configMessage && (
@@ -850,9 +853,9 @@ export default function RssReader() {
 
             {/* List */}
             <div className="flex-grow overflow-y-auto p-4 space-y-2">
-              <div className="text-[10px] font-bold text-slate-500 mb-1">当前资讯源 ({editSources.length})</div>
+              <div className="text-[10px] font-bold text-slate-500 mb-1">{t("rss.curSources", { count: editSources.length })}</div>
               {editSources.length === 0 ? (
-                <div className="py-8 text-center text-[10.5px] text-slate-600">无订阅源，请在上方添加新的订阅地址。</div>
+                <div className="py-8 text-center text-[10.5px] text-slate-600">{t("rss.noFeeds")}</div>
               ) : (
                 editSources.map(({ url, name }) => {
                   const status = testStatus[url];
@@ -865,7 +868,7 @@ export default function RssReader() {
                         <input
                           type="text"
                           value={name}
-                          placeholder="来源名称（留空则用 feed 标题）"
+                          placeholder={t("rss.editNamePh")}
                           onChange={(e) => handleUpdateSourceName(url, e.target.value)}
                           className="w-full max-w-[200px] bg-slate-900 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
                         />
@@ -881,19 +884,19 @@ export default function RssReader() {
                         {status === "testing" && (
                           <span className="text-yellow-500 font-semibold flex items-center gap-0.5">
                             <RefreshCw className="w-3 h-3 animate-spin" />
-                            测试中
+                            {t("rss.testing")}
                           </span>
                         )}
                         {status === "success" && (
                           <span className="text-green-400 font-semibold flex items-center gap-0.5">
                             <CheckCircle className="w-3 h-3" />
-                            有效
+                            {t("rss.valid")}
                           </span>
                         )}
                         {status === "error" && (
                           <span className="text-red-400 font-semibold flex items-center gap-0.5">
                             <AlertTriangle className="w-3 h-3" />
-                            无效
+                            {t("rss.invalid")}
                           </span>
                         )}
                         {!status && (
@@ -901,14 +904,14 @@ export default function RssReader() {
                             onClick={() => testRssUrl(url)}
                             className="text-slate-400 hover:text-slate-200 underline cursor-pointer"
                           >
-                            测试
+                            {t("rss.test")}
                           </button>
                         )}
                         
                         <button
                           onClick={() => handleRemoveSource(url)}
                           className="p-1 hover:bg-red-500/10 rounded text-slate-400 hover:text-red-400 transition-all cursor-pointer"
-                          title="删除订阅"
+                          title={t("rss.deleteFeed")}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -928,13 +931,13 @@ export default function RssReader() {
                 }}
                 className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer"
               >
-                取消
+                {t("rss.cancel")}
               </button>
               <button
                 onClick={handleSaveConfig}
                 className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-semibold cursor-pointer"
               >
-                保存修改
+                {t("rss.saveChanges")}
               </button>
             </div>
           </div>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import ModelConfig from "./ModelConfig";
 import ToolLauncher from "./ToolLauncher";
 import UsageStats from "./UsageStats";
@@ -10,15 +11,16 @@ import { Settings2, Rocket, BarChart3, Puzzle, Plug, MessagesSquare } from "luci
 type AiSubTab = "model" | "launcher" | "usage" | "skills" | "mcp" | "collab";
 
 const TABS = [
-  { key: "model" as AiSubTab, label: "模型", icon: Settings2 },
-  { key: "launcher" as AiSubTab, label: "工具", icon: Rocket },
-  { key: "skills" as AiSubTab, label: "技能", icon: Puzzle },
+  { key: "model" as AiSubTab, label: "aipanel.model", icon: Settings2 },
+  { key: "launcher" as AiSubTab, label: "aipanel.tools", icon: Rocket },
+  { key: "skills" as AiSubTab, label: "aipanel.skills", icon: Puzzle },
   { key: "mcp" as AiSubTab, label: "MCP", icon: Plug },
-  { key: "collab" as AiSubTab, label: "协同", icon: MessagesSquare },
-  { key: "usage" as AiSubTab, label: "用量", icon: BarChart3 }
+  { key: "collab" as AiSubTab, label: "aipanel.collab", icon: MessagesSquare },
+  { key: "usage" as AiSubTab, label: "aipanel.usage", icon: BarChart3 }
 ];
 
 export default function AiPanel() {
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<AiSubTab>("model");
   // 懒挂载：仅渲染至少被访问过一次的 tab，避免全部子组件同时初始化
   const [mountedTabs, setMountedTabs] = useState<Set<AiSubTab>>(new Set(["model"]));
@@ -47,7 +49,7 @@ export default function AiPanel() {
             }`}
           >
             <Icon className="w-3.5 h-3.5 flex-shrink-0" />
-            {label}
+            {t(label)}
           </button>
         ))}
       </div>
