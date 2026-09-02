@@ -24,12 +24,14 @@ import {
   X,
   LayoutDashboard,
   Settings2,
+  Trash2,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import VexAvatar from "../VexAvatar";
 import VexGreeting from "../VexGreeting";
 import { useTranslation } from "react-i18next";
+import { ConfirmDialog } from "../shared/ConfirmDialog";
 
 // ---- 类型（与后端 node_manager.rs 对应，serde camelCase）----
 
@@ -47,6 +49,8 @@ interface NodeProjectDef {
   buildScript: string;
   startCmd: string[];
   managed: boolean;
+  npxPackage: string;
+  npxBin: string;
 }
 
 interface DepCheck {
@@ -73,6 +77,7 @@ interface NodeProjectStatus {
   port?: number | null;
   pid?: number | null;
   gitVersion?: string | null;
+  localVersion?: string | null;
   error?: string | null;
 }
 
@@ -81,6 +86,8 @@ interface NodeUpdateInfo {
   currentCommit: string;
   latestCommit: string;
   behind: number;
+  currentVersion?: string | null;
+  latestVersion?: string | null;
   error?: string | null;
 }
 
@@ -275,6 +282,8 @@ export default function NodeManagerPanel() {
           currentCommit: "",
           latestCommit: "",
           behind: 0,
+          currentVersion: null,
+          latestVersion: null,
           error: typeof e === "string" ? e : String(e),
         },
       }));
@@ -551,17 +560,22 @@ function ProjectCard({
 }) {
   const { t } = useTranslation();
   const Icon = ICONS[project.icon] ?? Bot;
+  // npx 模式：配置了 npxPackage，安装/升级/启动直接用 npm install --prefix / npx --prefix
+  const isNpx = !!project.npxPackage?.trim();
   const installed = st?.installed;
   const running = st?.status === "running";
   const portConflict = st?.status === "port_conflict";
   const isBusy =
     busy === `install:${project.id}` ||
     busy === `upgrade:${project.id}` ||
-    busy === `install_deps:${project.id}`;
+    busy === `install_deps:${project.id}` ||
+    busy === `uninstall:${project.id}`;
   const canInstallUpgrade = !!d?.allReady && !installed;
   const canUpgrade = !!d?.allReady && !!installed;
   // 安装依赖：已安装即可单独重装依赖（不依赖 allReady，依赖缺失时可补装）
   const canInstallDeps = !!installed;
+  // 卸载确认弹窗状态
+  const [confirmUninstall, setConfirmUninstall] = useState(false);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -580,6 +594,14 @@ function ProjectCard({
             <span className="text-[14px] font-bold text-white">
               {project.displayName}
             </span>
+            {isNpx && (
+              <span
+                className="px-1.5 py-0.5 rounded-md text-[9px] font-mono font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
+                title={t("nodeproj.npxBadgeTitle")}
+              >
+                npx
+              </span>
+            )}
             <span
               className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                 portConflict
@@ -612,24 +634,36 @@ function ProjectCard({
               <Terminal className="w-3 h-3" /> PID {st.pid}
             </span>
           )}
-          <span className="flex items-center gap-1">
-            <GitBranch className="w-3 h-3" /> {st?.gitVersion ?? "—"}
-          </span>
+          {isNpx ? (
+            <span className="flex items-center gap-1" title={project.npxPackage}>
+              <Package className="w-3 h-3" /> {project.npxPackage}
+              {st?.localVersion && (
+                <span className="text-slate-600">v{st.localVersion}</span>
+              )}
+            </span>
+          ) : (
+            <span className="flex items-center gap-1">
+              <GitBranch className="w-3 h-3" /> {st?.gitVersion ?? "—"}
+            </span>
+          )}
         </div>
       </div>
 
       {/* 环境检测条 */}
       <div className="px-5 pb-2 flex flex-wrap items-center gap-3 text-[10px]">
-        <EnvBadge dep={d?.git} label="git" />
+        {!isNpx && <EnvBadge dep={d?.git} label="git" />}
         <EnvBadge
           dep={d?.node}
           label={`node ${project.nodeRequirement || ""}`.trim()}
         />
-        <EnvBadge dep={d?.packageManager} label={project.packageManager} />
+        <EnvBadge
+          dep={d?.packageManager}
+          label={isNpx ? "npm" : project.packageManager}
+        />
         {st?.port && <span className="text-slate-600">{t("nodeproj.portText", { port: st.port })}</span>}
       </div>
 
-      {/* git 更新检查 */}
+      {/* 更新检查：git 模式对比 commit；npx 模式对比本地版本与 npm registry 远程版本 */}
       {installed && (
         <div className="px-5 py-1.5 flex items-center gap-2 text-[11px]">
           {checkingUpdate ? (
@@ -642,6 +676,23 @@ function ProjectCard({
                 <AlertTriangle className="w-3.5 h-3.5" /> {t("nodeproj.checkFail")}
                 {updateInfo.error}
               </span>
+            ) : isNpx ? (
+              updateInfo.hasUpdate ? (
+                <span className="flex items-center gap-1.5 text-[var(--module-accent)]">
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  {t("nodeproj.npxHasUpdate", {
+                    local: updateInfo.currentVersion ?? "?",
+                    latest: updateInfo.latestVersion ?? "?",
+                  })}
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 text-emerald-400">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  {t("nodeproj.npxUpToDate", {
+                    version: updateInfo.currentVersion ?? "?",
+                  })}
+                </span>
+              )
             ) : updateInfo.hasUpdate ? (
               <span className="flex items-center gap-1.5 text-[var(--module-accent)]">
                 <RefreshCw className="w-3.5 h-3.5" />
@@ -681,15 +732,17 @@ function ProjectCard({
                 ? t("nodeproj.phaseClone")
                 : prog?.phase === "pull"
                   ? t("nodeproj.phasePull")
-                  : prog?.phase === "install"
-                    ? t("nodeproj.phaseInstall")
-                    : prog?.phase === "build"
-                      ? t("nodeproj.phaseBuild")
-                      : prog?.phase === "running"
-                        ? t("nodeproj.phaseStart")
-                        : prog?.phase === "starting"
+                  : prog?.phase === "npx"
+                    ? t("nodeproj.phaseNpx")
+                    : prog?.phase === "install"
+                      ? t("nodeproj.phaseInstall")
+                      : prog?.phase === "build"
+                        ? t("nodeproj.phaseBuild")
+                        : prog?.phase === "running"
                           ? t("nodeproj.phaseStart")
-                          : t("nodeproj.phaseOther")}
+                          : prog?.phase === "starting"
+                            ? t("nodeproj.phaseStart")
+                            : t("nodeproj.phaseOther")}
             {prog?.detail ? `：${prog.detail}` : ""}
           </span>
         </div>
@@ -759,15 +812,17 @@ function ProjectCard({
           color="bg-slate-700 hover:bg-slate-600"
           label={t("nodeproj.upgrade")}
         />
-        <ActionButton
-          disabled={!canInstallDeps || isBusy || running}
-          busy={isBusy && busy === `install_deps:${project.id}`}
-          onClick={() => onAction(project, "install_deps")}
-          icon={Package}
-          color="bg-sky-700 hover:bg-sky-600"
-          label={t("nodeproj.installDeps")}
-          title={t("nodeproj.installDepsTitle")}
-        />
+        {!isNpx && (
+          <ActionButton
+            disabled={!canInstallDeps || isBusy || running}
+            busy={isBusy && busy === `install_deps:${project.id}`}
+            onClick={() => onAction(project, "install_deps")}
+            icon={Package}
+            color="bg-sky-700 hover:bg-sky-600"
+            label={t("nodeproj.installDeps")}
+            title={t("nodeproj.installDepsTitle")}
+          />
+        )}
         <ActionButton
           disabled={!installed || isBusy || running || portConflict}
           busy={isStarting}
@@ -785,6 +840,15 @@ function ProjectCard({
           label={t("nodeproj.stop")}
         />
         <ActionButton
+          disabled={!installed || isBusy}
+          busy={isBusy && busy === `uninstall:${project.id}`}
+          onClick={() => setConfirmUninstall(true)}
+          icon={Trash2}
+          color="bg-red-950/70 hover:bg-red-900/80"
+          label={t("nodeproj.uninstall")}
+          title={t("nodeproj.uninstallTitle")}
+        />
+        <ActionButton
           disabled={isBusy}
           busy={false}
           onClick={() => onOpenWeb(project)}
@@ -799,6 +863,20 @@ function ProjectCard({
           </span>
         )}
       </div>
+
+      {/* 卸载确认弹窗 */}
+      <ConfirmDialog
+        open={confirmUninstall}
+        onCancel={() => setConfirmUninstall(false)}
+        onConfirm={() => {
+          setConfirmUninstall(false);
+          onAction(project, "uninstall");
+        }}
+        title={t("nodeproj.uninstallConfirmTitle")}
+        desc={t("nodeproj.uninstallConfirmDesc", { name: project.displayName })}
+        confirmText={t("nodeproj.uninstall")}
+        danger
+      />
     </div>
   );
 }

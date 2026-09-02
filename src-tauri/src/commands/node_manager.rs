@@ -4,6 +4,11 @@
 //! 安装、升级、启动、停止、打开主页面。新增项目 = 在 node-projects/
 //! 目录添加一个 JSON 定义，零代码改动。
 //!
+//! 两种安装方式（由配置决定）：
+//! - git 模式（默认）：git clone → 包管理器 install → build
+//! - npx 模式（配置 npxPackage）：`npm install --prefix <托管目录> <包名>` 一步到位，
+//!   免 git clone / 依赖安装 / 编译；启动用 `npx --prefix <托管目录> <bin> <args...>`。
+//!
 //! 配置目录查找逻辑复用 ai-tools 的候选目录扫描机制（资源目录 / exe
 //! 同级 / cwd / ~/.any-version）。
 
@@ -51,6 +56,14 @@ pub struct NodeProjectDef {
     /// 是否显示在顶级导航列表
     #[serde(default = "default_true")]
     pub managed: bool,
+    /// npx 模式：npm 包名（如 `@deepseek-ai/dsh`）。非空时改用 npx 流程：
+    /// 安装/升级 = `npm install --prefix <托管目录> <包名>`，启动 = `npx --prefix <托管目录> <bin> <args...>`，
+    /// 无需 git clone / 依赖安装 / 编译（前提是包已发布预编译产物）。
+    #[serde(default)]
+    pub npx_package: String,
+    /// npx 模式下的可执行名；为空时取包名最后一段（`@scope/name` → `name`）。
+    #[serde(default)]
+    pub npx_bin: String,
 }
 
 fn default_port() -> u16 { 3000 }
@@ -71,8 +84,43 @@ impl NodeProjectDef {
         crate::commands::config::get_node_projects_dir().join(&self.id)
     }
 
-    /// 判断是否已安装（托管目录存在且含 package.json）。
+    /// 是否使用 npx 模式（配置了 npxPackage）。
+    pub fn is_npx(&self) -> bool {
+        !self.npx_package.trim().is_empty()
+    }
+
+    /// npx 模式下实际执行的 bin 名；未配置 npxBin 时取包名最后一段。
+    pub fn npx_bin_name(&self) -> String {
+        let bin = self.npx_bin.trim();
+        if !bin.is_empty() {
+            return bin.to_string();
+        }
+        self.npx_package
+            .trim()
+            .rsplit('/')
+            .next()
+            .unwrap_or("")
+            .to_string()
+    }
+
+    /// npx 模式下判断包是否已安装到托管目录（node_modules/<包名> 存在，scoped 包含 @scope 前缀路径）。
+    pub fn npx_installed(&self) -> bool {
+        let pkg = self.npx_package.trim();
+        if pkg.is_empty() {
+            return false;
+        }
+        let mut rel = PathBuf::from("node_modules");
+        for part in pkg.split('/') {
+            rel.push(part);
+        }
+        self.managed_dir().join(rel).exists()
+    }
+
+    /// 判断是否已安装：git 模式看 package.json，npx 模式看 node_modules 里的包。
     pub fn installed(&self) -> bool {
+        if self.is_npx() {
+            return self.npx_installed();
+        }
         let dir = self.managed_dir();
         dir.join("package.json").exists()
     }
@@ -120,6 +168,9 @@ pub struct NodeProjectStatus {
     pub pid: Option<u32>,
     #[serde(default)]
     pub git_version: Option<String>,
+    /// npx 模式：本地已装 npm 包版本号（`node_modules/<pkg>/package.json` 的 version）。
+    #[serde(default)]
+    pub local_version: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
 }
@@ -488,10 +539,14 @@ fn cmd_exe_path() -> String {
         .unwrap_or_else(|_| "C:\\Windows\\System32\\cmd.exe".to_string())
 }
 
-fn resolve_pm_invocation(def: &NodeProjectDef) -> Result<(String, Vec<String>), String> {
-    let pm = &def.package_manager;
-    let path = find_in_path(pm)
-        .ok_or_else(|| format!("无法定位 {}（未在 PATH 中找到），请先安装或启用 corepack", pm))?;
+/// 解析任意命令为「可直接被 Command::new 执行」的调用方式 `(program, prefix_args)`。
+/// 不能直接用裸命令名执行：npm/npx/pnpm 在 Windows 上通常是 `.cmd` 脚本，
+/// 既不在应用进程 PATH 的裸名解析范围内，也需经 `cmd.exe /c` 才能执行。
+/// 返回的 program 为绝对路径，prefix_args 为执行前需插入的参数（脚本类为 `/c` 前缀）。
+/// not_found_hint：命令不在 PATH 时的提示语。
+fn resolve_exe_invocation(exe: &str, not_found_hint: &str) -> Result<(String, Vec<String>), String> {
+    let path = find_in_path(exe)
+        .ok_or_else(|| format!("无法定位 {}（未在 PATH 中找到），{}", exe, not_found_hint))?;
     let p_str = path.to_string_lossy().to_string();
     let lower = p_str.to_lowercase();
     // Windows 上只有 .exe/.com 这类 PE 文件能被 CreateProcess 直接执行；
@@ -509,10 +564,14 @@ fn resolve_pm_invocation(def: &NodeProjectDef) -> Result<(String, Vec<String>), 
         (p_str, Vec::new())
     };
     eprintln!(
-        "[node_manager] resolve_pm_invocation({}) -> prog={:?}, prefix={:?}",
-        pm, result.0, result.1
+        "[node_manager] resolve_exe_invocation({}) -> prog={:?}, prefix={:?}",
+        exe, result.0, result.1
     );
     Ok(result)
+}
+
+fn resolve_pm_invocation(def: &NodeProjectDef) -> Result<(String, Vec<String>), String> {
+    resolve_exe_invocation(&def.package_manager, "请先安装或启用 corepack")
 }
 
 /// 在托管目录执行包管理器 install。
@@ -551,9 +610,68 @@ fn pm_build(app: &tauri::AppHandle, def: &NodeProjectDef, dir: &Path) -> Result<
     Ok(())
 }
 
+/// 从包描述中剥离版本段（`@scope/name@1.0.0` → `@scope/name`；`name@1.0.0` → `name`），
+/// 用于升级时拼 `@latest`。无版本段时原样返回。
+fn strip_pkg_version(pkg: &str) -> &str {
+    match pkg.rfind('@') {
+        Some(idx) if idx > 0 => &pkg[..idx],
+        _ => pkg,
+    }
+}
+
+/// npx 模式安装/升级：`npm install --prefix <托管目录> <包名>`。
+/// 一步到位（免 git clone / 依赖安装 / 编译）；`latest=true` 时强制取最新版（升级语义）。
+fn npx_install(
+    app: &tauri::AppHandle,
+    def: &NodeProjectDef,
+    dir: &Path,
+    latest: bool,
+) -> Result<(), String> {
+    let pkg = def.npx_package.trim();
+    let spec = if latest {
+        format!("{}@latest", strip_pkg_version(pkg))
+    } else {
+        pkg.to_string()
+    };
+    emit_progress(app, &def.id, "npx", &format!("正在通过 npx 安装 {} …", pkg));
+    let _ = fs::create_dir_all(dir);
+    let (prog, prefix) = resolve_exe_invocation("npm", "请先安装 Node.js (https://nodejs.org)")?;
+    let mut args = prefix;
+    args.push("install".to_string());
+    args.push("--prefix".to_string());
+    args.push(dir.to_string_lossy().to_string());
+    args.push(spec);
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, last_err) = run_capture_live(app, &def.id, "npx", &prog, &arg_refs, None);
+    if !ok {
+        let msg = last_err.trim();
+        return Err(format!("npx 安装失败: {}", if msg.is_empty() { "未知错误" } else { msg }));
+    }
+    if !def.npx_installed() {
+        let _ = fs::remove_dir_all(dir);
+        return Err(format!("安装完成但未找到包 {}，请检查 npxPackage 是否拼写正确", pkg));
+    }
+    emit_progress(app, &def.id, "done", "npx 安装完成");
+    Ok(())
+}
+
 /// 安装前检查依赖是否就绪，并返回 deps 结果用于报错。
 fn ensure_deps_ready(def: &NodeProjectDef) -> Result<DepCheckResult, String> {
     let deps = check_deps(def);
+    // npx 模式只需 Node（npm/npx 随 Node 提供），无需 git / 独立包管理器
+    if def.is_npx() {
+        if !deps.node.exists {
+            return Err("未检测到 node，请先安装 Node.js (https://nodejs.org)".to_string());
+        }
+        if !deps.node.satisfies {
+            return Err(format!(
+                "Node 版本 {} 不满足要求 {}，请升级 Node.js",
+                deps.node.version.as_deref().unwrap_or("未知"),
+                deps.node.requirement.as_deref().unwrap_or("")
+            ));
+        }
+        return Ok(deps);
+    }
     if !deps.git.exists {
         return Err("未检测到 git，请先安装 Git for Windows (https://git-scm.com)".to_string());
     }
@@ -582,9 +700,14 @@ pub async fn npm_install(app: tauri::AppHandle, project_id: String) -> Result<()
     ensure_deps_ready(&def)?;
 
     let dir = def.managed_dir();
-    // 已 clone 过则报错（避免覆盖；升级请走 npm_upgrade）
+    // 已安装过则报错（避免覆盖；升级请走 npm_upgrade）
     if def.installed() {
         return Err("项目已安装，如需更新请使用「升级」".to_string());
+    }
+
+    // npx 模式：直接 npm install --prefix，一步到位，无需 git clone / 依赖安装 / 编译
+    if def.is_npx() {
+        return npx_install(&app, &def, &dir, false);
     }
 
     emit_progress(&app, &def.id, "clone", &format!("正在克隆 {} …", def.repo));
@@ -627,8 +750,13 @@ pub async fn npm_upgrade(app: tauri::AppHandle, project_id: String) -> Result<()
     ensure_deps_ready(&def)?;
 
     let dir = def.managed_dir();
-    // 先停止运行中的进程，避免 pull 冲突
+    // 先停止运行中的进程，避免 pull / 文件占用冲突
     let _ = stop_project_process(&def);
+
+    // npx 模式：重新 npm install 即更新到最新版
+    if def.is_npx() {
+        return npx_install(&app, &def, &dir, true);
+    }
 
     emit_progress(&app, &def.id, "pull", "正在拉取最新代码 (git pull)…");
     let (ok, last_err) = run_capture_live(&app, &def.id, "pull", "git", &["pull"], Some(&dir));
@@ -654,6 +782,10 @@ pub async fn npm_install_deps(app: tauri::AppHandle, project_id: String) -> Resu
     ensure_deps_ready(&def)?;
 
     let dir = def.managed_dir();
+    // npx 模式没有独立依赖步骤：重新安装即拉取最新版
+    if def.is_npx() {
+        return npx_install(&app, &def, &dir, true);
+    }
     pm_install(&app, &def, &dir)?;
     pm_build(&app, &def, &dir)?;
     emit_progress(&app, &def.id, "done", "依赖安装完成");
@@ -717,10 +849,39 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
     }
 
     let dir = def.managed_dir();
-    let (prog, prefix) = resolve_pm_invocation(&def)?;
-    let mut args = prefix;
-    args.push(def.start_cmd[0].clone());
-    args.extend_from_slice(&def.start_cmd[1..]);
+
+    // npx 模式：启动前自动拉取远程最新版（每次启动即自动加载最新版本）。
+    // 更新失败时若本地已有包则回退本地版本继续启动，避免离线/网络异常导致无法启动。
+    if def.is_npx() {
+        match npx_install(&app, &def, &dir, true) {
+            Ok(()) => {}
+            Err(e) => {
+                if def.npx_installed() {
+                    emit_log(&app, &def.id, "stderr", &format!("自动更新到最新版失败，使用本地已装版本启动: {}", e));
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    // 组装启动命令：git 模式 `pnpm dsh web`；npx 模式 `npx -y --prefix <托管目录> <bin> <args...>`
+    let (prog, args) = if def.is_npx() {
+        let (p, prefix) = resolve_exe_invocation("npx", "请先安装 Node.js (https://nodejs.org)")?;
+        let mut a = prefix;
+        a.push("-y".to_string());
+        a.push("--prefix".to_string());
+        a.push(dir.to_string_lossy().to_string());
+        a.push(def.npx_bin_name());
+        a.extend(def.start_cmd.iter().cloned());
+        (p, a)
+    } else {
+        let (p, prefix) = resolve_pm_invocation(&def)?;
+        let mut a = prefix;
+        a.push(def.start_cmd[0].clone());
+        a.extend_from_slice(&def.start_cmd[1..]);
+        (p, a)
+    };
 
     // 启动后台进程（CREATE_NO_WINDOW），记录 PID
     let mut cmd = hidden_cmd(&prog);
@@ -807,6 +968,38 @@ pub async fn npm_stop(project_id: String) -> Result<(), String> {
     stop_project_process(&def)
 }
 
+/// 卸载：停止进程并清空托管目录（{node_projects_dir}/{id}）。
+/// 用于 npx 模式切换 / 重装前一键清理旧目录（含 node_modules 等残留）。
+#[tauri::command]
+pub async fn npm_uninstall(project_id: String) -> Result<(), String> {
+    let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
+    // 先停止运行中的进程，避免文件被占用导致删除失败
+    let _ = stop_project_process(&def);
+
+    let base = crate::commands::config::get_node_projects_dir();
+    let dir = def.managed_dir();
+    // 安全防护：托管目录必须是托管根目录的子目录（防配置异常/非法 id 误删其它目录）
+    let base_c = base.canonicalize().unwrap_or_else(|_| base.clone());
+    let dir_c = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+    if !dir_c.starts_with(&base_c) {
+        return Err(format!(
+            "拒绝卸载：托管目录 {} 不在托管根目录 {} 内",
+            dir.to_string_lossy(),
+            base.to_string_lossy()
+        ));
+    }
+    if !dir.exists() {
+        return Err(format!(
+            "托管目录不存在（可能尚未安装）：{}",
+            dir.to_string_lossy()
+        ));
+    }
+    // 标准删除失败（只读/锁定）时用 `cmd /c rmdir /s /q` 兜底
+    crate::commands::cache::remove_dir_all_forced(&dir)
+        .map_err(|e| format!("清空托管目录失败: {}", e))?;
+    Ok(())
+}
+
 // ─── 打开主页面 ───
 
 #[tauri::command]
@@ -853,8 +1046,21 @@ fn check_deps(def: &NodeProjectDef) -> DepCheckResult {
         node.satisfies = false;
         node.requirement = Some(def.node_requirement.clone());
     }
-    let pm = check_dep(&def.package_manager, &["--version"]);
-    let all_ready = git.exists && node.exists && node.satisfies && pm.exists;
+    // npx 模式：npm/npx 随 Node 分发，node 就绪即视为包管理器就绪；无需 git。
+    let pm = if def.is_npx() {
+        let mut p = check_dep("npm", &["--version"]);
+        p.name = "npm".to_string();
+        p.requirement = Some("随 node 提供".to_string());
+        p.satisfies = node.exists && node.satisfies;
+        p
+    } else {
+        check_dep(&def.package_manager, &["--version"])
+    };
+    let all_ready = if def.is_npx() {
+        node.exists && node.satisfies
+    } else {
+        git.exists && node.exists && node.satisfies && pm.exists
+    };
     DepCheckResult {
         git,
         node,
@@ -871,7 +1077,7 @@ pub fn npm_status(project_id: String) -> Result<NodeProjectStatus, String> {
     Ok(status_for(&def))
 }
 
-/// git 更新检查结果（是否有新版）。
+/// 更新检查结果：git 模式比较 commit；npx 模式比较本地已装版本与 npm registry 远程版本。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeUpdateInfo {
@@ -879,7 +1085,80 @@ pub struct NodeUpdateInfo {
     pub current_commit: String,
     pub latest_commit: String,
     pub behind: i64,
+    /// npx 模式：本地已装版本号。
+    #[serde(default)]
+    pub current_version: Option<String>,
+    /// npx 模式：npm registry 远程最新版本号。
+    #[serde(default)]
+    pub latest_version: Option<String>,
     pub error: Option<String>,
+}
+
+/// npx 模式读取本地已装版本：`node_modules/<包名>/package.json` 的 version 字段。
+/// scoped 包会按 `@scope/name` 拆成多级目录；pnpm 符号链接也能读到目标文件。
+fn npx_local_version(def: &NodeProjectDef) -> Option<String> {
+    let pkg = def.npx_package.trim();
+    if pkg.is_empty() {
+        return None;
+    }
+    let mut rel = PathBuf::from("node_modules");
+    for part in pkg.split('/') {
+        rel.push(part);
+    }
+    let pkg_json = def.managed_dir().join(rel).join("package.json");
+    let data = fs::read_to_string(pkg_json).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&data).ok()?;
+    v.get("version")
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_string())
+}
+
+/// 查询 npm registry 上包的最新版本：`npm view <pkg> version`。
+/// 网络不可用 / npm 不在 PATH / 包不存在时返回 None。
+fn npm_remote_version(pkg: &str) -> Option<String> {
+    let (prog, prefix) =
+        match resolve_exe_invocation("npm", "请先安装 Node.js (https://nodejs.org)") {
+            Ok(x) => x,
+            Err(_) => return None,
+        };
+    let mut args = prefix;
+    args.push("view".to_string());
+    args.push(pkg.to_string());
+    args.push("version".to_string());
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let mut cmd = hidden_cmd(&prog);
+    cmd.args(&arg_refs);
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.lines()
+        .map(|l| l.trim().to_string())
+        .find(|l| !l.is_empty())
+}
+
+/// 简单 semver 比较：`version_gt(a, b)` 判断 a > b（数字段逐一比较，忽略前置 v）。
+/// 无法解析的段按 0 处理；相等或 a < b 返回 false。
+fn version_gt(a: &str, b: &str) -> bool {
+    fn digit_parts(v: &str) -> Vec<i64> {
+        v.trim_start_matches('v')
+            .split(|c: char| c != '.' && !c.is_ascii_digit())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse::<i64>().unwrap_or(0))
+            .collect()
+    }
+    let (pa, pb) = (digit_parts(a), digit_parts(b));
+    for i in 0..pa.len().max(pb.len()) {
+        let (x, y) = (
+            pa.get(i).copied().unwrap_or(0),
+            pb.get(i).copied().unwrap_or(0),
+        );
+        if x != y {
+            return x > y;
+        }
+    }
+    false
 }
 
 fn git_cmd(dir: &Path, args: &[&str]) -> Result<String, String> {
@@ -908,11 +1187,33 @@ pub fn npm_check_update(project_id: String) -> NodeUpdateInfo {
         current_commit: String::new(),
         latest_commit: String::new(),
         behind: 0,
+        current_version: None,
+        latest_version: None,
         error: Some(e),
     };
     let Some(def) = find_project(&project_id) else {
         return empty(format!("未找到项目: {}", project_id));
     };
+    // npx 模式：比较本地已装版本与 npm registry 远程最新版本
+    if def.is_npx() {
+        let current = npx_local_version(&def);
+        let latest = npm_remote_version(&def.npx_package.trim().to_string());
+        let has_update = match (&current, &latest) {
+            (Some(c), Some(l)) => c != l && version_gt(l, c),
+            _ => false,
+        };
+        return NodeUpdateInfo {
+            has_update,
+            current_commit: String::new(),
+            latest_commit: String::new(),
+            behind: if has_update { 1 } else { 0 },
+            current_version: current,
+            latest_version: latest.clone(),
+            error: latest
+                .is_none()
+                .then(|| "无法获取远程版本，请检查网络 / npm registry 可达性".to_string()),
+        };
+    }
     let dir = def.managed_dir();
     if !dir.exists() {
         return empty("项目尚未安装".to_string());
@@ -952,6 +1253,8 @@ pub fn npm_check_update(project_id: String) -> NodeUpdateInfo {
         current_commit: current,
         latest_commit: latest,
         behind,
+        current_version: None,
+        latest_version: None,
         error: None,
     }
 }
@@ -967,12 +1270,19 @@ fn status_for(def: &NodeProjectDef) -> NodeProjectStatus {
             port: Some(def.default_port),
             pid: None,
             git_version: None,
+            local_version: None,
             error: None,
         };
     }
 
     let git_version = command_version("git", &["-C", &def.managed_dir().to_string_lossy(), "rev-parse", "--short", "HEAD"]);
     let git_version = git_version.filter(|v| !v.is_empty());
+    // npx 模式：从本地 node_modules 读取已装包版本号
+    let local_version = if def.is_npx() {
+        npx_local_version(def)
+    } else {
+        None
+    };
 
     // 运行状态：端口被我们的进程占用 → running；被其他进程占用 → port_conflict
     let mut status = "stopped".to_string();
@@ -1004,6 +1314,7 @@ fn status_for(def: &NodeProjectDef) -> NodeProjectStatus {
         port: Some(def.default_port),
         pid,
         git_version,
+        local_version,
         error: None,
     }
 }
@@ -1106,6 +1417,8 @@ mod tests {
             build_script: String::new(),
             start_cmd: Vec::new(),
             managed: true,
+            npx_package: String::new(),
+            npx_bin: String::new(),
         };
         assert_eq!(def.resolved_web_path(), "http://127.0.0.1:3080");
     }
@@ -1115,5 +1428,49 @@ mod tests {
         assert_eq!(parse_version_parts("20.11.0"), vec![20, 11, 0]);
         assert_eq!(parse_version_parts("v22"), vec![22]);
         assert_eq!(parse_version_parts("0"), vec![0]);
+    }
+
+    fn npx_def(pkg: &str, bin: &str) -> NodeProjectDef {
+        NodeProjectDef {
+            id: "harness".into(),
+            display_name: "t".into(),
+            repo: String::new(),
+            website: String::new(),
+            icon: String::new(),
+            description: String::new(),
+            default_port: 3080,
+            web_path: "http://127.0.0.1:{port}".into(),
+            node_requirement: String::new(),
+            package_manager: String::new(),
+            build_script: String::new(),
+            start_cmd: Vec::new(),
+            managed: true,
+            npx_package: pkg.into(),
+            npx_bin: bin.into(),
+        }
+    }
+
+    #[test]
+    fn test_npx_bin_name() {
+        assert_eq!(npx_def("cowsay", "").npx_bin_name(), "cowsay");
+        assert_eq!(npx_def("@scope/name", "").npx_bin_name(), "name");
+        assert_eq!(npx_def("@scope/name", "custom-bin").npx_bin_name(), "custom-bin");
+        assert_eq!(npx_def("deepseek-harness", "dsh").npx_bin_name(), "dsh");
+    }
+
+    #[test]
+    fn test_strip_pkg_version() {
+        assert_eq!(strip_pkg_version("cowsay"), "cowsay");
+        assert_eq!(strip_pkg_version("cowsay@1.5.0"), "cowsay");
+        assert_eq!(strip_pkg_version("@scope/name"), "@scope/name");
+        assert_eq!(strip_pkg_version("@scope/name@0.0.1-rc.1"), "@scope/name");
+    }
+
+    #[test]
+    fn test_npx_installed_path() {
+        // 无实际安装时不视为已安装
+        assert!(!npx_def("cowsay", "").installed());
+        assert!(!npx_def("", "").is_npx());
+        assert!(npx_def("@scope/name", "").is_npx());
     }
 }

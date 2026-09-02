@@ -10,6 +10,8 @@
   "nodeRequirement": ">=20",
   "packageManager": "pnpm",
   "buildScript": "build",
-  "startCmd": ["dsh", "web"],
-  "managed": true
+  "startCmd": ["web"],
+  "managed": true,
+  "npxPackage": "@deepseek-ai/dsh",
+  "npxBin": "dsh"
 }
