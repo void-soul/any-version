@@ -379,6 +379,54 @@ pub fn shell_execute(
         get_default_work_dir(file)
     };
 
+    // runas + 脚本文件（cmd/bat/ps1）：不能把脚本路径直接作为 lpFile 提权执行——
+    // ShellExecuteW 的 runas 只对 lpFile 本身提权，脚本关联宿主（cmd.exe / powershell.exe）
+    // 不会被提升，导致「黑屏一闪、内容不执行」。改为提权启动脚本宿主并执行脚本
+    //（与「右键 → 以管理员身份运行」的真实语义一致：提权的是脚本宿主）。
+    if actual_op == "runas" && (ext == "cmd" || ext == "bat" || ext == "ps1") {
+        // 脚本路径含空格时必须整体加引号，否则宿主会把它拆成多个参数；
+        // 提权后的工作目录默认为 C:\Windows\System32，必须显式传脚本所在目录。
+        let quoted = format!("\"{}\"", file);
+        let (host, host_args) = if ext == "ps1" {
+            // PowerShell：-ExecutionPolicy Bypass 绕过执行策略限制（管理员主动运行的
+            // 脚本不应被策略拦截）；-NoProfile 跳过用户 profile（提权环境更快更干净，
+            // 也避免 profile 脚本报错吞掉真实输出）；-File 后接脚本与参数。
+            // 注：powershell -File 的参数解析不信任引号内空格，参数统一用引号包裹，
+            // 与 Explorer 右键「使用 PowerShell 运行」行为一致。
+            (
+                "powershell.exe",
+                format!(
+                    "-NoProfile -ExecutionPolicy Bypass -File {}{}",
+                    quoted,
+                    if params.trim().is_empty() { String::new() } else { format!(" {}", params) }
+                ),
+            )
+        } else {
+            // cmd/bat：/d 忽略 AutoRun 注册表（提权环境下避免 AutoRun 脚本干扰）；
+            // bat 用 call 保证批间控制权返回。
+            let prefix = if ext == "bat" { "/d /c call " } else { "/d /c " };
+            (
+                "cmd.exe",
+                format!(
+                    "{}{}{}",
+                    prefix,
+                    quoted,
+                    if params.trim().is_empty() { String::new() } else { format!(" {}", params) }
+                ),
+            )
+        };
+        crate::exit_log::exit_log(&format!(
+            "shell_execute: runas 脚本代理 {} {}（work_dir={}）",
+            host, host_args, work_dir
+        ));
+        return shell_execute(
+            "runas",
+            host,
+            &host_args,
+            Some(if work_dir.is_empty() { "C:\\Windows\\System32" } else { &work_dir }),
+        );
+    }
+
     // 降权代理：若 AnyVersion 自身以管理员(elevated)运行，非 runas 的 open/explore 操作
     // 改用 explorer.exe(普通权限系统 Shell)代理启动，使子进程不继承管理员令牌，
     // 且与 AnyVersion 生命周期完全独立(由系统托管)。
