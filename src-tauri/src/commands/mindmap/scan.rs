@@ -122,6 +122,9 @@ struct Entry {
 }
 
 fn collect_entries(root: &Path) -> Vec<Entry> {
+    // Project-authored ignore rules (.gitignore / .claudeignore / .git/info/exclude)
+    // take precedence: anything they ignore is never scanned or read.
+    let ignore = crate::commands::mindmap::ignore_rules::IgnoreRules::load(root);
     let mut out: Vec<Entry> = Vec::new();
     let mut iter = WalkDir::new(root)
         .min_depth(1)
@@ -154,7 +157,16 @@ fn collect_entries(root: &Path) -> Vec<Entry> {
                 if rel.is_empty() {
                     continue;
                 }
-                out.push(Entry { rel, is_dir: e.file_type().is_dir() });
+                // Project ignore rules: skip ignored files and prune ignored
+                // directories (their contents are ignored implicitly).
+                let is_dir = e.file_type().is_dir();
+                if ignore.is_ignored(&rel, is_dir) {
+                    if is_dir {
+                        iter.skip_current_dir();
+                    }
+                    continue;
+                }
+                out.push(Entry { rel, is_dir });
             }
             Some(Err(_)) => continue,
             None => break,
@@ -836,6 +848,37 @@ pub fn collect_project_files(path: &str) -> Result<ProjectFiles, String> {
     })
 }
 
+/// CLAUDE.md / AGENTS.md: project-authored guidance for AI agents.
+/// Included verbatim (truncated) — it describes what the project *is* and
+/// how its modules relate, exactly the context a mindmap needs.
+fn agent_docs(root: &Path) -> String {
+    const DOCS: &[&str] = &["CLAUDE.md", "AGENTS.md", ".claude/CLAUDE.md"];
+    let mut parts: Vec<String> = Vec::new();
+    for name in DOCS {
+        let path = root.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        let Ok(data) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let t = data.trim();
+        if t.is_empty() {
+            continue;
+        }
+        const MAX_DOC_CHARS: usize = 4000;
+        let take: String = t.chars().take(MAX_DOC_CHARS).collect();
+        let truncated = t.chars().count() > MAX_DOC_CHARS;
+        parts.push(format!(
+            "=== {} ==={}\n{}",
+            name,
+            if truncated { "（已截断）" } else { "" },
+            take
+        ));
+    }
+    parts.join("\n\n")
+}
+
 /// 生成完整扫描上下文（仓库证据 + 目录树 + 关键文件）。
 pub fn scan_project(path: &str) -> Result<String, String> {
     let root = Path::new(path);
@@ -869,9 +912,144 @@ pub fn scan_project(path: &str) -> Result<String, String> {
         parts.push(format!("## README 结构\n{readme}"));
     }
     parts.push(format!("## 项目标记\n{markers}"));
+    let agents = agent_docs(root);
+    if !agents.is_empty() {
+        parts.push(format!("## 项目自述（CLAUDE.md / AGENTS.md）\n{agents}"));
+    }
     parts.push(format!("## 目录结构\n{tree}"));
     parts.push(format!("## 关键文件\n{files}"));
     Ok(parts.join("\n\n"))
+}
+
+// ─── AI-driven deep read（多轮探索：AI 请求文件批次，工具读取并压缩内容） ───
+
+/// 从 AI 请求 JSON 提取合法相对路径：
+/// - paths: 数组字符串（去 ./ 前缀、反斜杠→正斜杠、去重）
+/// - dirs: 目录路径 → 展开/标记为「目录请求」（不读内容，只确认存在）
+/// 返回 (files, dirs)，均过滤为存在于文件集内的路径。
+pub fn parse_ai_file_request(
+    json: &serde_json::Value,
+    project: &ProjectFiles,
+) -> (Vec<String>, Vec<String>) {
+    let mut files: Vec<String> = Vec::new();
+    let mut dirs: Vec<String> = Vec::new();
+    let normalize = |s: &str| -> String {
+        s.trim()
+            .trim_start_matches("./")
+            .replace('\\', "/")
+            .trim_end_matches('/')
+            .to_string()
+    };
+    if let Some(arr) = json.get("paths").and_then(|v| v.as_array()) {
+        for p in arr.iter().filter_map(|x| x.as_str()) {
+            let rel = normalize(p);
+            if rel.is_empty() || files.contains(&rel) {
+                continue;
+            }
+            if project.files.contains(&rel) {
+                files.push(rel);
+            }
+        }
+    }
+    if let Some(arr) = json.get("dirs").and_then(|v| v.as_array()) {
+        for d in arr.iter().filter_map(|x| x.as_str()) {
+            let rel = normalize(d);
+            if rel.is_empty() || dirs.contains(&rel) {
+                continue;
+            }
+            // 目录请求：确认真实存在（有文件以它为前缀）
+            if project.files.iter().any(|f| f.starts_with(&format!("{}/", rel))) {
+                dirs.push(rel);
+            }
+        }
+    }
+    (files, dirs)
+}
+
+/// 读取单个文件并压缩为上下文文本（去尾部空白、压缩连续空行、截断）。
+/// 返回 (文本, 是否被截断)。不可读（二进制/超大）返回 (None, false)。
+pub fn read_file_compressed(
+    root: &Path,
+    rel: &str,
+    max_chars: usize,
+) -> (Option<String>, bool) {
+    let path = root.join(rel);
+    let meta = match std::fs::metadata(&path) {
+        Ok(m) => m,
+        Err(_) => return (None, false),
+    };
+    if meta.len() > 256 * 1024 {
+        return (None, false); // 二进制/超大：不可读
+    }
+    let Ok(data) = std::fs::read_to_string(&path) else {
+        return (None, false); // 二进制/非 UTF-8
+    };
+    // 压缩：去行尾空白、折叠 2+ 连续空行为 1、去行首空白
+    let mut compressed = String::with_capacity(data.len());
+    let mut blank_run = 0usize;
+    for line in data.lines() {
+        let t = line.trim_end();
+        if t.is_empty() {
+            blank_run += 1;
+            if blank_run > 1 {
+                continue;
+            }
+            compressed.push('\n');
+        } else {
+            blank_run = 0;
+            compressed.push_str(t);
+            compressed.push('\n');
+        }
+    }
+    let truncated = compressed.chars().count() > max_chars;
+    let text: String = compressed.chars().take(max_chars).collect();
+    (Some(text), truncated)
+}
+
+/// 把一批文件读取结果压缩为 AI 上下文文本块。
+/// files: (rel, content, truncated)；dirs: 目录确认列表。
+pub fn format_file_batch(
+    files: &[(String, Option<String>, bool)],
+    dirs: &[String],
+) -> String {
+    let mut out = String::new();
+    if !dirs.is_empty() {
+        out.push_str(&format!("## 目录确认\n{}\n\n", dirs.join("\n")));
+    }
+    if files.is_empty() {
+        out.push_str("## 文件内容\n（本次请求没有可读文件）\n");
+        return out;
+    }
+    out.push_str("## 文件内容\n");
+    for (rel, content, truncated) in files {
+        match content {
+            Some(text) => {
+                out.push_str(&format!(
+                    "\n=== {} ==={}\n{}\n",
+                    rel,
+                    if *truncated { "（已截断）" } else { "" },
+                    text
+                ));
+            }
+            None => {
+                out.push_str(&format!("\n=== {} ===\n（不可读：二进制或超出大小限制）\n", rel));
+            }
+        }
+    }
+    out
+}
+
+/// 带用户自定义提示的扫描：`user_hint` 作为附加指令追加到扫描上下文末尾，
+/// 例如让 AI 忽略特定目录（node_modules/debug 等）或聚焦某模块。
+pub fn scan_project_with_hint(path: &str, user_hint: Option<&str>) -> Result<String, String> {
+    let mut context = scan_project(path)?;
+    if let Some(hint) = user_hint {
+        let hint = hint.trim();
+        if !hint.is_empty() {
+            context.push_str(&format!("\n\n## 用户附加说明（必须遵守）\n{}", hint));
+        }
+    }
+    Ok(context)
 }
 
 #[cfg(test)]
@@ -980,5 +1158,69 @@ mod tests {
         extract_line_imports("use super::*;", "rust", &mut r);
         extract_line_imports("use std::io;", "rust", &mut r);
         assert_eq!(r, vec!["crate::commands::network", "super::*", "std::io"]);
+    }
+
+    #[test]
+    fn parse_request_filters_and_normalizes_paths() {
+        let dir = tmp_project("reqparse");
+        std::fs::create_dir_all(dir.join("src/services")).unwrap();
+        std::fs::write(dir.join("src/services/order.ts"), "export class Order {}\n").unwrap();
+        let pf = collect_project_files(dir.to_str().unwrap()).unwrap();
+        let json = serde_json::json!({
+            "paths": ["./src/services/order.ts", "src\\services\\order.ts", "src/services/order.ts", "src/missing.ts", "", "src/services/order.ts"],
+            "dirs": ["src/services", "src/missing", "src/services/"]
+        });
+        let (files, dirs) = parse_ai_file_request(&json, &pf);
+        let _ = std::fs::remove_dir_all(&dir);
+        // 去重 + 归一化（./ 前缀与反斜杠等价）+ 不在文件集内的路径被过滤
+        assert_eq!(files, vec!["src/services/order.ts"], "got: {files:?}");
+        assert_eq!(dirs, vec!["src/services"], "got: {dirs:?}");
+    }
+
+    #[test]
+    fn read_file_compressed_and_guarded() {
+        let dir = tmp_project("readguard");
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(
+            dir.join("src/a.ts"),
+            "line1\n\n\n\nline2   \n  indented\n",
+        )
+        .unwrap();
+        let (text, truncated) = read_file_compressed(&dir, "src/a.ts", 10_000);
+        assert_eq!(
+            text.as_deref(),
+            Some("line1\n\nline2\n  indented\n"),
+            "连续空行应折叠，行尾空白应去除"
+        );
+        assert!(!truncated);
+        // 截断标记
+        let (text2, truncated2) = read_file_compressed(&dir, "src/a.ts", 5);
+        assert!(truncated2);
+        assert_eq!(text2.as_deref().map(|t| t.chars().count()), Some(5));
+        // 不可读路径
+        let (missing, _) = read_file_compressed(&dir, "src/missing.ts", 1000);
+        assert!(missing.is_none());
+        // 超大文件不可读
+        let big = dir.join("src/big.ts");
+        std::fs::write(&big, "x".repeat(300 * 1024)).unwrap();
+        let (big_text, _) = read_file_compressed(&dir, "src/big.ts", 1000);
+        assert!(big_text.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn format_batch_reports_unreadable_and_dirs() {
+        let files = vec![
+            ("src/a.ts".to_string(), Some("code".to_string()), false),
+            ("src/bin.dat".to_string(), None, false),
+        ];
+        let out = format_file_batch(&files, &["src/services".to_string()]);
+        assert!(out.contains("## 目录确认"));
+        assert!(out.contains("src/services"));
+        assert!(out.contains("=== src/a.ts ==="));
+        assert!(out.contains("code"));
+        assert!(out.contains("不可读"));
+        let empty = format_file_batch(&[], &[]);
+        assert!(empty.contains("没有可读文件"));
     }
 }

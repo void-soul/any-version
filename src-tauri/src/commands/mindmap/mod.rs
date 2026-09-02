@@ -2,6 +2,7 @@
 pub mod models;
 pub mod db;
 pub mod scan;
+pub mod ignore_rules;
 pub mod commands;
 pub mod quick_popup;
 

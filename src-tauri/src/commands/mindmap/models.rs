@@ -15,6 +15,16 @@ pub struct MindmapFolder {
     pub updated_at: String,
 }
 
+/// 一次 AI 导入运行（或单个视图）的 token 消耗统计。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageStats {
+    pub requests: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MindmapDocument {
@@ -35,6 +45,15 @@ pub struct MindmapDocument {
     /// 布局方向：lr=左→右（默认） rl=右→左 tb=上→下 bt=下→上
     #[serde(default = "default_layout_dir")]
     pub layout_dir: String,
+    /// 累计 AI 导入次数（token 消耗留痕）
+    #[serde(default)]
+    pub ai_imports: i64,
+    /// 累计输入 token
+    #[serde(default)]
+    pub ai_input_tokens: i64,
+    /// 累计输出 token
+    #[serde(default)]
+    pub ai_output_tokens: i64,
 }
 
 fn default_background_texture() -> String { "dots".to_string() }
@@ -104,6 +123,24 @@ pub struct MindmapSticker {
     pub color: String,
     pub position_x: f64,
     pub position_y: f64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+// ─── 额外连线（多输入 DAG：节点除树形父节点外，还可从任意节点接多条输入） ───
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MindmapLink {
+    pub id: String,
+    pub document_id: String,
+    /// 来源（输出）节点
+    pub source_id: String,
+    /// 目标（输入）节点
+    pub target_id: String,
+    /// 输入端名称（如「模型」「正面条件」）；空时前端用来源节点名
+    #[serde(default)]
+    pub label: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -195,6 +232,19 @@ pub struct DeleteStickerInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UpsertLinkInput {
+    pub link: MindmapLink,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteLinkInput {
+    pub document_id: String,
+    pub link_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AiGenerateInput {
     pub document_id: String,
     pub provider_id: Option<String>,
@@ -208,6 +258,12 @@ pub struct AiGenerateProjectInput {
     pub project_path: String,
     pub provider_id: Option<String>,
     pub model_id: Option<String>,
+    /// User-supplied additional prompt: extra context/instructions appended to the scan context.
+    #[serde(default)]
+    pub user_hint: Option<String>,
+    /// 本次运行的取消标识（前端生成 UUID 传入；取消命令 mm_ai_cancel 按此中断）。
+    #[serde(default)]
+    pub run_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -218,6 +274,9 @@ pub struct AiGenerateTextInput {
     pub title: String,
     pub provider_id: Option<String>,
     pub model_id: Option<String>,
+    /// 本次运行的取消标识（同 AiGenerateProjectInput.run_id）。
+    #[serde(default)]
+    pub run_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -236,6 +295,8 @@ pub struct DocumentFull {
     pub document: MindmapDocument,
     pub nodes: Vec<MindmapNode>,
     pub stickers: Vec<MindmapSticker>,
+    /// 额外连线（多输入），节点主父级仍由 parent_id 承担
+    pub links: Vec<MindmapLink>,
 }
 
 /// 指定日期范围内的具体计划发生记录（计划日历聚合展示用）。
@@ -301,6 +362,9 @@ pub struct AiImportReport {
     pub evidence_verified: bool,
     /// 有证据的节点数（无证据节点 = node_count - evidence_nodes，即纯 AI 推断）
     pub evidence_nodes: usize,
+    /// 该视图生成消耗的 token（请求数/输入/输出/总量）
+    #[serde(default)]
+    pub usage: UsageStats,
 }
 
 /// AI 类型路由导入结果：一次生成多个视图，各自落在独立文档。
@@ -317,4 +381,7 @@ pub struct AiImportResult {
     /// 各视图的校验报告
     #[serde(default)]
     pub reports: Vec<AiImportReport>,
+    /// 本次运行的总体消耗（含类型路由与探索阶段）
+    #[serde(default)]
+    pub usage: UsageStats,
 }
