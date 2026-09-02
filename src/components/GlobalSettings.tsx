@@ -1792,6 +1792,15 @@ export default function GlobalSettings() {
               { value: "scanline", label: "settings.textureScanline", cls: "app-bg-scanline" },
               { value: "aurora", label: "settings.textureAurora", cls: "app-bg-aurora" },
               { value: "solid", label: "settings.textureSolid", cls: "app-bg-solid" },
+              { value: "diagonal", label: "settings.textureDiagonal", cls: "app-bg-diagonal" },
+              { value: "cross", label: "settings.textureCross", cls: "app-bg-cross" },
+              { value: "paper", label: "settings.texturePaper", cls: "app-bg-paper" },
+              { value: "hex", label: "settings.textureHex", cls: "app-bg-hex" },
+              { value: "circuit", label: "settings.textureCircuit", cls: "app-bg-circuit" },
+              { value: "waves", label: "settings.textureWaves", cls: "app-bg-waves" },
+              { value: "noise", label: "settings.textureNoise", cls: "app-bg-noise" },
+              { value: "vignette", label: "settings.textureVignette", cls: "app-bg-vignette" },
+              { value: "neonline", label: "settings.textureNeonline", cls: "app-bg-neonline" },
             ].map((tc) => {
               const active = (appearance.backgroundTexture || "") === tc.value;
               return (

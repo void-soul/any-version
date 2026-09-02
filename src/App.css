@@ -405,6 +405,56 @@ button[class*="module-accent"]:active:not(:disabled) {
     radial-gradient(800px 600px at 108% 8%, rgba(34,211,238,0.16), transparent 55%);
 }
 .app-bg-solid { background: transparent; }
+.app-bg-diagonal { background-image: repeating-linear-gradient(135deg, rgba(255,255,255,0.04) 0 1px, transparent 1px 16px); background-size: 16px 16px; }
+.app-bg-cross {
+  background-image:
+    linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+  background-size: 12px 12px;
+}
+.app-bg-paper {
+  background-image:
+    radial-gradient(rgba(148,163,184,0.10) 0.7px, transparent 0.8px),
+    radial-gradient(rgba(15,23,42,0.18) 0.7px, transparent 0.8px);
+  background-position: 0 0, 7px 8px;
+  background-size: 15px 15px;
+}
+.app-bg-hex {
+  background-color: transparent;
+  background-image:
+    radial-gradient(circle at 50% 50%, rgba(255,255,255,0.04) 1.2px, transparent 1.4px),
+    radial-gradient(circle at 0% 50%, rgba(255,255,255,0.03) 1.2px, transparent 1.4px);
+  background-size: 20px 12px, 20px 12px;
+  background-position: 0 0, 10px 6px;
+}
+.app-bg-circuit {
+  background-image:
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px),
+    radial-gradient(circle, color-mix(in srgb, var(--module-accent) 18%, transparent) 1px, transparent 1.5px);
+  background-size: 32px 32px, 32px 32px, 32px 32px;
+}
+.app-bg-waves {
+  background-image: repeating-radial-gradient(circle at 50% 120%, rgba(255,255,255,0.035) 0 1px, transparent 1px 28px);
+}
+.app-bg-noise {
+  background-image:
+    radial-gradient(rgba(255,255,255,0.05) 0.5px, transparent 0.6px),
+    radial-gradient(rgba(255,255,255,0.03) 0.4px, transparent 0.5px),
+    radial-gradient(rgba(34,211,238,0.05) 0.4px, transparent 0.5px);
+  background-position: 0 0, 3px 4px, 6px 2px;
+  background-size: 7px 7px, 9px 9px, 11px 11px;
+}
+.app-bg-vignette {
+  background:
+    radial-gradient(1200px 700px at 50% 45%, transparent 55%, rgba(0,0,0,0.45) 100%),
+    radial-gradient(800px 500px at 50% 40%, color-mix(in srgb, var(--module-accent) 10%, transparent), transparent 65%);
+}
+.app-bg-neonline {
+  background-image:
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--module-accent) 14%, transparent) 0 1px, transparent 1px 48px),
+    repeating-linear-gradient(0deg, rgba(34,211,238,0.08) 0 1px, transparent 1px 48px);
+}
 
 /* 微扫描线（CRT 质感，低透明度常驻覆盖） */
 .cyber-scanline {
@@ -486,7 +536,7 @@ select,
   color: #f1f5f9 !important;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
-  padding: 0.5rem 0.625rem;
+  padding: 0.25rem 0.625rem;
   font-size: 12px;
   outline: none;
   -webkit-appearance: none;

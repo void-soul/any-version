@@ -19,12 +19,18 @@ if (POPUP_KIND === "translate" || POPUP_KIND === "mindmap-node" || POPUP_KIND ==
     : POPUP_KIND === "mindmap-sticker"
     ? import("./components/mindmap/MindmapStickerPopup")
     : import("./components/mindmap/MindmapNodePopup");
-  void mod.then(({ default: Popup }) => {
-    ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-      <React.StrictMode>
-        <Popup />
-      </React.StrictMode>,
-    );
+  // 悬浮窗同样需要 i18n：与主应用一致，先读后端语言偏好初始化，
+  // 否则 useTranslation 只会返回原始 key。
+  import("./i18n").then(async ({ loadAppLanguage, initI18n }) => {
+    const lang = await loadAppLanguage();
+    await initI18n(lang);
+    void mod.then(({ default: Popup }) => {
+      ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+        <React.StrictMode>
+          <Popup />
+        </React.StrictMode>,
+      );
+    });
   });
 } else {
   // 禁止 WebView 默认快捷键：F3（页面搜索）、F5（刷新）。
