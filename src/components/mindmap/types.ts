@@ -28,6 +28,12 @@ export interface MindmapDocument {
   backgroundTexture: string;
   /** 布局方向：lr=左→右（默认） rl=右→左 tb=上→下 bt=下→上 */
   layoutDir: string;
+  /** 累计 AI 导入次数（token 消耗留痕） */
+  aiImports: number;
+  /** 累计输入 token */
+  aiInputTokens: number;
+  /** 累计输出 token */
+  aiOutputTokens: number;
 }
 
 // ─── 节点 ───
@@ -71,12 +77,37 @@ export interface MindmapSticker {
   updatedAt: string;
 }
 
+// ─── 额外连线（多输入 DAG：节点除树形父节点外，还可从任意节点接多条输入） ───
+
+export interface MindmapLink {
+  id: string;
+  documentId: string;
+  /** 来源（输出）节点 */
+  sourceId: string;
+  /** 目标（输入）节点 */
+  targetId: string;
+  /** 输入端名称（如「模型」「正面条件」）；空时用来源节点名 */
+  label: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ─── 完整负载 ───
 
 export interface DocumentFull {
   document: MindmapDocument;
   nodes: MindmapNode[];
   stickers: MindmapSticker[];
+  /** 额外连线（多输入）；节点主父级仍由 parentId 承担 */
+  links: MindmapLink[];
+}
+
+/** 一次 AI 导入运行（或单个视图）的 token 消耗统计。 */
+export interface UsageStats {
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
 }
 
 /** 某个视图生成失败的原因（不影响其它已成功的视图） */
@@ -104,6 +135,8 @@ export interface AiImportReport {
   evidenceVerified: boolean;
   /** 有证据的节点数（无证据节点 = nodeCount - evidenceNodes，即纯 AI 推断） */
   evidenceNodes: number;
+  /** 该视图生成消耗的 token */
+  usage: UsageStats;
 }
 
 /** AI 类型路由导入结果：一次生成多个视图，各自落在独立文档 */
@@ -113,6 +146,8 @@ export interface AiImportResult {
   primaryId: string;
   failures: AiImportFailure[];
   reports: AiImportReport[];
+  /** 本次运行的总体消耗（含类型路由与探索阶段） */
+  usage: UsageStats;
 }
 
 // ─── 输入类型 ───
@@ -157,11 +192,23 @@ export interface DeleteStickerInput {
   stickerId: string;
 }
 
+export interface UpsertLinkInput {
+  link: MindmapLink;
+}
+
+export interface DeleteLinkInput {
+  documentId: string;
+  linkId: string;
+}
+
 export interface AiProjectInput {
   documentId: string;
   projectPath: string;
   providerId?: string | null;
   modelId?: string | null;
+  userHint?: string | null;
+  /** 本次运行的取消标识：前端生成 UUID 传入，点「停止」时按此中断导入 */
+  runId: string;
 }
 
 export interface AiTextInput {
@@ -170,6 +217,8 @@ export interface AiTextInput {
   title: string;
   providerId?: string | null;
   modelId?: string | null;
+  /** 本次运行的取消标识：同 AiProjectInput.runId */
+  runId: string;
 }
 
 export interface RegenerateInput {
@@ -252,9 +301,13 @@ export const mmApi = {
   upsertSticker: (i: UpsertStickerInput) => invoke<void>("mm_upsert_sticker", { input: i }),
   deleteSticker: (i: DeleteStickerInput) => invoke<void>("mm_delete_sticker", { input: i }),
 
+  upsertLink: (i: UpsertLinkInput) => invoke<void>("mm_upsert_link", { input: i }),
+  deleteLink: (i: DeleteLinkInput) => invoke<void>("mm_delete_link", { input: i }),
+
   exportMd: (id: string) => invoke<string>("mm_export_markdown", { documentId: id }),
   aiFromProject: (i: AiProjectInput) => invoke<AiImportResult>("mm_ai_from_project", { input: i }),
   aiFromText: (i: AiTextInput) => invoke<AiImportResult>("mm_ai_from_text", { input: i }),
+  aiCancel: (runId: string) => invoke<void>("mm_ai_cancel", { runId }),
   regenerateNode: (i: RegenerateInput) => invoke<DocumentFull>("mm_regenerate_node", { input: i }),
 
   plannedOccurrences: (start: string, end: string) => invoke<PlannedOccurrence[]>("mm_planned_occurrences", { start, end }),

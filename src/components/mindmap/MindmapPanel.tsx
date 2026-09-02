@@ -2,11 +2,12 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
 import {
-  Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, ReactFlowProvider, getBezierPath, useReactFlow,
-  type Connection, type Edge, type EdgeProps, type Node, type NodeChange, type NodeProps,
+  Controls, EdgeLabelRenderer, Handle, MarkerType, MiniMap, Position, ReactFlow, ReactFlowProvider, getBezierPath, useReactFlow,
+  type Connection, type Edge, type EdgeProps, type Node, type NodeChange, type NodeProps, type Viewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { MindmapMarkdown } from "./MindmapMarkdown";
@@ -14,12 +15,12 @@ import { MarkdownFieldEditor } from "./MarkdownFieldEditor";
 import { NodeFormFields } from "./NodeFormFields";
 import VexEmptyState from "../VexEmptyState";
 import {
-  AlertTriangle, Brain, File, Folder, FolderOpen, LayoutGrid, Lightbulb, Loader2,
+  AlertTriangle, BarChart3, Brain, Coins, File, Folder, FolderOpen, LayoutGrid, Lightbulb, Loader2, Terminal,
   ScrollText, Sparkles, StickyNote, Image, Trash2, X, Plus, Pencil, Eye,
-  ChevronDown, ChevronRight, ChevronLeft, FolderPlus, Search, Maximize2, Minimize2, Code2, FileText, ListTree, Palette, RotateCcw, RotateCw, Calendar,
+  ChevronDown, ChevronRight, ChevronLeft, FolderPlus, Search, Maximize2, Minimize2, Code2, FileText, ListTree, RotateCcw, RotateCw, Calendar, Link2, ArrowRight, Ban, Square,
 } from "lucide-react";
 import type { AiConfig } from "../ai/types";
-import { AiImportResult, DocumentFull, MindmapDocument, MindmapFolder, MindmapNode, MindmapSticker, PlannedOccurrence, PositionInput, kindColor, mmApi } from "./types";
+import { AiImportResult, DocumentFull, MindmapDocument, MindmapFolder, MindmapLink, MindmapNode, MindmapSticker, PlannedOccurrence, PositionInput, kindColor, mmApi } from "./types";
 import { moduleAccent } from "../../utils/theme";
 
 const ACCENT = moduleAccent();
@@ -68,6 +69,51 @@ function normalizeHexColor(value: string | null | undefined): string | null {
 
 const effectiveNodeColor = (node: MindmapNode) => normalizeHexColor(node.color) ?? kindColor(node.kind);
 
+/** 在资源管理器中定位项目内文件（证据文件 / AI 探索读取的文件共用） */
+function openSourceFile(projectRoot: string, src: string) {
+  const p = `${projectRoot.replace(/\\/g, "/")}/${src}`;
+  void invoke("launcher_open_file_location", { path: p }).catch(() => {});
+}
+
+// 节点类别 → 本地化 key（ComfyUI 式端口标签用）
+const KIND_KEYS: Record<string, string> = {
+  root: "mindmap.kindRoot",
+  module: "mindmap.kindModule",
+  component: "mindmap.kindComponent",
+  service: "mindmap.kindService",
+  route: "mindmap.kindRoute",
+  config: "mindmap.kindConfig",
+  file: "mindmap.kindFile",
+  requirement: "mindmap.kindRequirement",
+  task: "mindmap.kindTask",
+  constraint: "mindmap.kindConstraint",
+  risk: "mindmap.kindRisk",
+  other: "mindmap.kindOther",
+};
+
+/** 缩小到这个缩放比以下时，节点文字全部隐藏（ComfyUI 式缩略）。 */
+const ZOOM_HIDE_TEXT = 0.45;
+
+/** 端口标签小胶囊：依附在节点边缘的输入/输出连接点上，带类别色点。 */
+function PortChip({ label, color, side }: { label: string; color: string; side: "l" | "r" | "t" | "b" }) {
+  const inner = (<>
+    <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
+    <span className="whitespace-nowrap leading-none">{label}</span>
+  </>);
+  const pos = side === "l"
+    ? "left-0.5 top-1/2 -translate-y-1/2"
+    : side === "r"
+      ? "right-0.5 top-1/2 -translate-y-1/2"
+      : side === "t"
+        ? "top-0.5 left-1/2 -translate-x-1/2 flex-col"
+        : "bottom-0.5 left-1/2 -translate-x-1/2 flex-col-reverse";
+  return (
+    <span className={`pointer-events-none absolute z-[5] inline-flex items-center gap-1 rounded-sm bg-[#0d1524]/90 px-1 py-0.5 text-[8px] text-slate-400 shadow ring-1 ring-white/10 ${pos}`}>
+      {inner}
+    </span>
+  );
+}
+
 /** 计划时间徽标的短文本：ISO 串 → MM-DD HH:MM */
 function planShort(value: string): string {
   const d = new Date(value);
@@ -81,16 +127,56 @@ function planShort(value: string): string {
 
 // ════════════ 节点 ════════════
 
-type FlowNodeData = { node: MindmapNode; selected: boolean; hasChildren: boolean; collapsed: boolean; targetPosition: Position; sourcePosition: Position; onSelect: () => void; onOpenDetail: () => void; onToggle: () => void; onAddChild: () => void; onPreview: (e: React.MouseEvent) => void; onPreviewEnd: () => void; onDelete: () => void; onContextMenu: (e: React.MouseEvent) => void; };
+/** 额外连线端口：「谁连进来 / 连向谁」+ 输入端名称 + 端口色 */
+type LinkPort = { id: string; label: string; otherName: string; color: string };
+const EMPTY_LINKS: LinkPort[] = [];
+
+/** 节点内各个端口行的锚点计算：标题栏固定高度 + 逐行下移（左/右端口），或沿顶/底边横排（上/下端口）。 */
+const LINK_ROW_H = 18;
+const LINK_HEAD_H = 31;
+const linkHandleOffset = (i: number, vert: boolean) => (vert ? `${12 + i * 26}px` : `${LINK_HEAD_H + 4 + i * LINK_ROW_H}px`);
+
+function LinkPortHandle({ id, portType, position, color, offset }: { id: string; portType: "source" | "target"; position: Position; color: string; offset: string }) {
+  const style: React.CSSProperties = { background: color, minWidth: 0, minHeight: 0 };
+  if (position === Position.Left || position === Position.Right) style.top = offset;
+  else style.left = offset;
+  return <Handle id={`link-${id}`} type={portType} position={position} isConnectable className="!h-2.5 !w-2.5 !min-h-0 !min-w-0 !border !border-[#0d1524]" style={style} />;
+}
+
+type FlowNodeData = { node: MindmapNode; selected: boolean; hasChildren: boolean; collapsed: boolean; hideText: boolean; parentColor: string | null; parentKind: string | null; linkInputs: LinkPort[]; linkOutputs: LinkPort[]; targetPosition: Position; sourcePosition: Position; onSelect: () => void; onOpenDetail: () => void; onToggle: () => void; onAddChild: () => void; onPreview: (e: React.MouseEvent) => void; onPreviewEnd: () => void; onDelete: () => void; onContextMenu: (e: React.MouseEvent) => void; };
 
 const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>) {
   const { t } = useTranslation();
-  const { node, selected, hasChildren, collapsed, targetPosition, sourcePosition, onSelect, onOpenDetail, onToggle, onAddChild, onPreview, onPreviewEnd, onDelete, onContextMenu } = data;
+  const { node, selected, hasChildren, collapsed, hideText, parentColor, parentKind, linkInputs, linkOutputs, targetPosition, sourcePosition, onSelect, onOpenDetail, onToggle, onAddChild, onPreview, onPreviewEnd, onDelete, onContextMenu } = data;
   const c = effectiveNodeColor(node);
+  const kindL = (k: string | null | undefined) => (k ? t(KIND_KEYS[k] ?? KIND_KEYS.other) : t(KIND_KEYS.other));
+  const vert = targetPosition === Position.Top || targetPosition === Position.Bottom;
+  // 额外连线的输入/输出连接点（标签文本显示在连线中段，端口处只留圆点）
+  const anchored = (ports: LinkPort[], side: "in" | "out", compact = false) => ports.map((lk, i) => {
+    const pos = side === "in" ? targetPosition : sourcePosition;
+    const offset = compact ? (vert ? `${12 + i * 26}px` : "13px") : linkHandleOffset(i, vert);
+    return <LinkPortHandle key={lk.id} id={lk.id} portType={side === "in" ? "target" : "source"} position={pos} color={lk.color} offset={offset} />;
+  });
+
+  // 大幅缩小 → 隐藏全部文字，只留彩色连接点与色条（ComfyUI 式缩略）。
+  if (hideText) {
+    return (
+      <article className="group relative h-[26px] w-[96px] cursor-pointer rounded-md border shadow-lg transition-shadow"
+        style={{ borderColor: `${c}99`, backgroundColor: "#0d1524" }} onClick={onSelect} onDoubleClick={(e) => { e.stopPropagation(); onOpenDetail(); }}
+        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e); }}>
+        <Handle id="in" type="target" position={targetPosition} isConnectable className="!h-3 !w-3 !border-2 !border-[#0d1524]" style={{ background: parentColor ?? "#64748b" }} />
+        {anchored(linkInputs, "in", true)}
+        <div className="absolute inset-x-1 bottom-0.5 top-0.5 rounded-sm" style={{ background: `linear-gradient(100deg, ${c}66, ${c}14)` }} />
+        {anchored(linkOutputs, "out", true)}
+        <Handle id="out" type="source" position={sourcePosition} isConnectable className="!h-3 !w-3 !border-2 !border-[#0d1524]" style={{ background: c }} />
+      </article>
+    );
+  }
+
   return (
     <article className={`group relative w-[200px] rounded-xl border shadow-lg transition-shadow cursor-pointer ${selected ? "shadow-cyan-500/30 ring-1 ring-cyan-400/40" : "hover:shadow-xl"}`}
       style={{ borderColor: selected ? c : `${c}55`, backgroundColor: "#0d1524" }} onClick={onSelect} onDoubleClick={(e) => { e.stopPropagation(); onOpenDetail(); }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e); }}>
-      <Handle type="target" position={targetPosition} isConnectable className="!h-2.5 !w-2.5 !border-2 !border-slate-950" style={{ background: c }} />
+      <Handle id="in" type="target" position={targetPosition} isConnectable className="!h-3 !w-3 !border-2 !border-[#0d1524]" style={{ background: parentColor ?? "#64748b" }} />
       {/* 节点右上角悬浮按钮：预览（气泡）+ 删除 */}
       <div className="nodrag nopan absolute right-1 top-1 z-10 hidden items-center gap-0.5 group-hover:flex">
         <button type="button" className="rounded p-0.5 text-slate-500 transition hover:bg-white/10 hover:text-cyan-300"
@@ -102,8 +188,8 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>)
           <Trash2 className="h-3 w-3" />
         </button>
       </div>
-      {/* 节点右侧悬浮 + 按钮：给当前节点直接添加子节点 */}
-      <button type="button" className="nodrag nopan absolute -right-2.5 top-1/2 z-10 hidden h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border transition group-hover:flex hover:scale-110"
+      {/* 节点右下角悬浮 + 按钮：给当前节点直接添加子节点（避开右侧输出口） */}
+      <button type="button" className="nodrag nopan absolute -right-2.5 bottom-1.5 z-10 hidden h-5 w-5 items-center justify-center rounded-full border transition group-hover:flex hover:scale-110"
         style={{ backgroundColor: "#0d1524", borderColor: `${c}66`, color: c, boxShadow: `0 0 8px ${c}44` }}
         onClick={(e) => { e.stopPropagation(); onAddChild(); }} title={t("mindmap.addChild")}>
         <Plus className="h-3.5 w-3.5" />
@@ -115,7 +201,19 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>)
         </button>}
         <span className="min-w-0 flex-1 truncate text-[11px] font-semibold" style={{ color: c }}>{node.name}</span>
       </div>
-      <div className="mx-1.5 mt-1.5 min-h-[38px] rounded-md border border-white/[0.06] bg-slate-900/80 px-2 py-1.5 text-[9px] leading-4 text-slate-300">
+      {/* 默认端口语义标签：贴在节点左右/上下边缘的连接点旁，标出「接入什么 / 向外输出什么」。
+          左右布局时给描述区预留空间，避免标签盖住文字。 */}
+      {targetPosition === Position.Left && <PortChip label={kindL(parentKind)} color={parentColor ?? "#64748b"} side="l" />}
+      {targetPosition === Position.Right && <PortChip label={kindL(parentKind)} color={parentColor ?? "#64748b"} side="r" />}
+      {sourcePosition === Position.Left && <PortChip label={kindL(node.kind)} color={c} side="l" />}
+      {sourcePosition === Position.Right && <PortChip label={kindL(node.kind)} color={c} side="r" />}
+      {targetPosition === Position.Top && <><PortChip label={kindL(parentKind)} color={parentColor ?? "#64748b"} side="t" /><PortChip label={kindL(node.kind)} color={c} side="b" /></>}
+      {targetPosition === Position.Bottom && <><PortChip label={kindL(parentKind)} color={parentColor ?? "#64748b"} side="b" /><PortChip label={kindL(node.kind)} color={c} side="t" /></>}
+      {/* 额外连线端口：连接点圆点（标签在连线中段显示） */}
+      {anchored(linkInputs, "in")}
+      {anchored(linkOutputs, "out")}
+
+      <div className={`mx-1.5 mt-1.5 min-h-[38px] rounded-md border border-white/[0.06] bg-slate-900/80 px-2 py-1.5 text-[9px] leading-4 text-slate-300 ${targetPosition === Position.Left ? "ml-10" : targetPosition === Position.Right ? "mr-10" : ""}`}>
         <span className={node.description ? "line-clamp-2" : "italic text-slate-600"}>{node.description || t("mindmap.noDesc")}</span>
       </div>
       <div className="flex items-center gap-1.5 px-2.5 pt-1.5">
@@ -124,7 +222,7 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>)
         {(node.sources?.length ?? 0) > 0 && <span className="inline-flex items-center gap-0.5 text-[8px] text-cyan-300/70" title={t("mindmap.evidenceTitle", { count: node.sources!.length, names: node.sources!.join("、") })}><File className="h-2.5 w-2.5" />{node.sources!.length}</span>}
       </div>
       {node.progress > 0 && <div className="mx-2.5 mb-2 mt-1 h-1 overflow-hidden rounded-full bg-slate-800/80"><div className="h-full rounded-full transition-all" style={{ width: `${node.progress}%`, backgroundColor: c, boxShadow: `0 0 6px ${c}66` }} /></div>}
-      <Handle type="source" position={sourcePosition} isConnectable className="!h-2.5 !w-2.5 !border-2 !border-slate-950" style={{ background: c }} />
+      <Handle id="out" type="source" position={sourcePosition} isConnectable className="!h-3 !w-3 !border-2 !border-[#0d1524]" style={{ background: c }} />
     </article>
   );
 });
@@ -134,7 +232,60 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>)
 const ColorEdge = memo(function ColorEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps) {
   const [path] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, curvature: 0.28 });
   const color = (data?.color as string | undefined) ?? "#22d3ee";
+  const isLink = Boolean(data?.link);
+  const label0 = (data?.label as string | undefined) ?? "";
+  const editing = Boolean(data?.editing);
+  const onCommit = data?.onCommit as ((l: string) => void) | undefined;
+  const onStartEdit = data?.onStartEdit as (() => void) | undefined;
+  const onCancel = (data?.onCancel as (() => void) | undefined) ?? (() => {});
   const gid = `mm-edge-${id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  // 连线中段标签：双击进入编辑（输入框直接落在连线上），回车/失焦保存、Esc 取消。
+  const [value, setValue] = useState(label0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const cancelledRef = useRef(false);
+  useEffect(() => {
+    if (!editing) return;
+    cancelledRef.current = false;
+    setValue(label0);
+    const t = window.setTimeout(() => { inputRef.current?.focus(); inputRef.current?.select(); }, 0);
+    return () => window.clearTimeout(t);
+  }, [editing, label0]);
+  const commitEdit = () => { if (cancelledRef.current) return; onCommit?.(value.trim()); };
+  const cancelEdit = () => { cancelledRef.current = true; setValue(label0); onCancel?.(); };
+
+  // 额外连线（多输入）：单条虚线，色 = 来源节点类别色，不发散渐变，与树形实线区分；
+  // 输入端名称显示在连线中段的小标签上（缩小隐藏文字时一并隐藏）。
+  if (isLink) {
+    const showLabel = Boolean(label0) && !data?.hideText;
+    const mx = (sourceX + targetX) / 2;
+    const my = (sourceY + targetY) / 2;
+    return (<>
+      <path d={path} fill="none" stroke={color} strokeWidth={1.5} strokeDasharray="7 5" strokeLinecap="round" opacity={0.85} markerEnd={`url(#arrowlink-${gid})`} />
+      <marker id={`arrowlink-${gid}`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill={color} /></marker>
+      {showLabel && (
+        <EdgeLabelRenderer>
+          {editing ? (
+            <input ref={inputRef} value={value} onChange={(e) => setValue(e.target.value)}
+              onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") commitEdit(); else if (e.key === "Escape") cancelEdit(); }}
+              onBlur={commitEdit}
+              className="nodrag nopan w-[150px] rounded-md border border-cyan-400/70 bg-slate-950 px-2 py-1 text-[10px] text-slate-100 shadow-lg outline-none"
+              style={{ position: "absolute", transform: `translate(-50%, -50%) translate(${mx}px, ${my}px)`, pointerEvents: "all", zIndex: 12 }} />
+          ) : (
+            <div onClick={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); onStartEdit?.(); }}
+              className="nodrag nopan cursor-pointer rounded-md border bg-[#0d1524]/95 px-2 py-0.5 text-[9.5px] leading-4 text-slate-300 shadow transition hover:border-cyan-400/70 hover:text-white"
+              style={{ borderColor: `${color}66`, position: "absolute", transform: `translate(-50%, -50%) translate(${mx}px, ${my}px)`, pointerEvents: "all", zIndex: 11 }}>
+              <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
+                {label0}
+              </span>
+            </div>
+          )}
+        </EdgeLabelRenderer>
+      )}
+    </>);
+  }
   return (<>
     <defs><linearGradient id={gid} x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor={color} /><stop offset="100%" stopColor="#f8fafc" /></linearGradient></defs>
     <path d={path} fill="none" stroke={color} strokeWidth={3} opacity={0.12} />
@@ -227,46 +378,6 @@ type LayoutDir = "lr" | "rl" | "tb" | "bt";
 const LAYOUT_DIR_KEYS: Record<LayoutDir, string> = { lr: "mindmap.dirLr", rl: "mindmap.dirRl", tb: "mindmap.dirTb", bt: "mindmap.dirBt" };
 const isLayoutDir = (v: string): v is LayoutDir => v === "lr" || v === "rl" || v === "tb" || v === "bt";
 
-type BackgroundTexture = "none" | "grid" | "dots" | "diagonal" | "cross" | "paper";
-const BACKGROUND_TEXTURE_KEYS: Record<BackgroundTexture, string> = {
-  none: "mindmap.texNone",
-  grid: "mindmap.texGrid",
-  dots: "mindmap.texDots",
-  diagonal: "mindmap.texDiagonal",
-  cross: "mindmap.texCross",
-  paper: "mindmap.texPaper",
-};
-
-const BACKGROUND_TEXTURE_STYLES: Record<BackgroundTexture, React.CSSProperties> = {
-  none: { backgroundColor: "#080f1c" },
-  grid: {
-    backgroundColor: "#080f1c",
-    backgroundImage: "linear-gradient(rgba(100,116,139,.12) 1px, transparent 1px), linear-gradient(90deg, rgba(100,116,139,.12) 1px, transparent 1px)",
-    backgroundSize: "24px 24px",
-  },
-  dots: {
-    backgroundColor: "#080f1c",
-    backgroundImage: "radial-gradient(rgba(100,116,139,.28) 1px, transparent 1px)",
-    backgroundSize: "24px 24px",
-  },
-  diagonal: {
-    backgroundColor: "#080f1c",
-    backgroundImage: "repeating-linear-gradient(135deg, rgba(100,116,139,.10) 0 1px, transparent 1px 14px)",
-    backgroundSize: "14px 14px",
-  },
-  cross: {
-    backgroundColor: "#080f1c",
-    backgroundImage: "linear-gradient(rgba(100,116,139,.12) 1px, transparent 1px), linear-gradient(90deg, rgba(100,116,139,.12) 1px, transparent 1px)",
-    backgroundSize: "12px 12px",
-  },
-  paper: {
-    backgroundColor: "#111827",
-    backgroundImage: "radial-gradient(rgba(148,163,184,.10) .7px, transparent .8px), radial-gradient(rgba(15,23,42,.18) .7px, transparent .8px)",
-    backgroundPosition: "0 0, 7px 8px",
-    backgroundSize: "15px 15px",
-  },
-};
-
 function layoutTree(nodes: MindmapNode[], dir: LayoutDir = "lr"): Map<string, { x: number; y: number }> {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const children = new Map<string, string[]>();
@@ -329,15 +440,29 @@ function ancestorChain(nodeId: string, nodes: MindmapNode[]): string[] {
 
 // ════════════ 详细弹窗（拖拽分隔条 + 全屏） ════════════
 
-function DetailModal({ node, onUpdate, onClose, projectRoot }: { node: MindmapNode; accent?: string; onUpdate: (patch: Partial<MindmapNode>) => void; onClose: () => void; projectRoot?: string }) {
+function DetailModal({ node, onUpdate, onClose, projectRoot, links, nodes, onUpsertLink, onDeleteLink }: { node: MindmapNode; accent?: string; onUpdate: (patch: Partial<MindmapNode>) => void; onClose: () => void; projectRoot?: string; links: MindmapLink[]; nodes: MindmapNode[]; onUpsertLink: (lk: MindmapLink) => void; onDeleteLink: (id: string) => void }) {
   const { t } = useTranslation();
   // 证据文件点击：在资源管理器中定位（项目根路径来自文档 sourceDesc）
   const openSource = (src: string) => {
     if (!projectRoot) return;
-    const p = `${projectRoot.replace(/\\/g, "/")}/${src}`;
-    void invoke("launcher_open_file_location", { path: p }).catch(() => {});
+    openSourceFile(projectRoot, src);
   };
   const sources = node.sources ?? [];
+  const [linkSource, setLinkSource] = useState("");
+  const [linkTarget, setLinkTarget] = useState("");
+  const nodeName = (id: string) => nodes.find(n => n.id === id)?.name ?? id;
+  const addLink = (sourceId: string) => {
+    if (!sourceId) return;
+    if (links.some(l => l.sourceId === sourceId && l.targetId === node.id)) return;
+    const now = new Date().toISOString();
+    onUpsertLink({ id: `lk${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, documentId: node.documentId, sourceId, targetId: node.id, label: nodeName(sourceId) || "", createdAt: now, updatedAt: now });
+  };
+  const addLinkOut = (targetId: string) => {
+    if (!targetId) return;
+    if (links.some(l => l.sourceId === node.id && l.targetId === targetId)) return;
+    const now = new Date().toISOString();
+    onUpsertLink({ id: `lk${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, documentId: node.documentId, sourceId: node.id, targetId, label: "", createdAt: now, updatedAt: now });
+  };
   // 双击节点进入详情后直接可编辑；预览/分栏交给下方 MarkdownFieldEditor 自带工具栏。
   const [detail, setDetail] = useState(node.detail);
   const [description, setDescription] = useState(node.description);
@@ -421,6 +546,41 @@ function DetailModal({ node, onUpdate, onClose, projectRoot }: { node: MindmapNo
             </div>
           </div>
         )}
+        {/* 额外连线（多输入）：列出与本节点相关的连线，可改名/删除/新增 */}
+        <div className="border-b border-white/5 bg-white/[0.02] px-4 py-2">
+          <div className="mb-1 flex items-center gap-1 text-[9px] text-slate-500"><Link2 className="h-2.5 w-2.5" />{t("mindmap.extraLinks")}</div>
+          {links.length === 0 ? (
+            <div className="text-[9px] italic text-slate-600">{t("mindmap.noLinks")}</div>
+          ) : (
+            <div className="space-y-1">
+              {links.map(lk => {
+                const incoming = lk.targetId === node.id;
+                return (
+                  <div key={lk.id} className="flex items-center gap-1.5">
+                    <span className="min-w-0 flex-1 truncate text-[9px] text-slate-400" title={`${nodeName(lk.sourceId)} → ${nodeName(lk.targetId)}`}>
+                      <span className="text-slate-500">{incoming ? nodeName(lk.sourceId) : t("mindmap.thisNode")}</span>
+                      <ArrowRight className="mx-0.5 inline h-2.5 w-2.5 text-slate-600" />
+                      <span className="text-slate-500">{incoming ? t("mindmap.thisNode") : nodeName(lk.targetId)}</span>
+                    </span>
+                    <input className="w-28 min-w-0 rounded border border-white/10 bg-slate-950/70 px-1.5 py-0.5 text-[9px] text-slate-200 outline-none focus:border-cyan-400/60" value={lk.label}
+                      placeholder={t("mindmap.linkSlotPh")} onChange={(e) => onUpsertLink({ ...lk, label: e.target.value })} title={lk.label || t("mindmap.linkSlotPh")} />
+                    <button type="button" className="rounded p-0.5 text-slate-500 transition hover:bg-white/10 hover:text-red-400" title={t("mindmap.deleteLink")} onClick={() => onDeleteLink(lk.id)}><X className="h-3 w-3" /></button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="mt-1.5 flex items-center gap-1.5">
+            <select className="min-w-0 flex-1 rounded border border-white/10 bg-slate-950/70 px-1.5 py-1 text-[9px] text-slate-300 outline-none focus:border-cyan-400/60" value={linkSource} onChange={(e) => { setLinkSource(e.target.value); if (e.target.value) { addLink(e.target.value); setLinkSource(""); } }}>
+              <option value="">{t("mindmap.linkFrom")}</option>
+              {nodes.filter(n => n.id !== node.id).map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
+            </select>
+            <select className="min-w-0 flex-1 rounded border border-white/10 bg-slate-950/70 px-1.5 py-1 text-[9px] text-slate-300 outline-none focus:border-cyan-400/60" value={linkTarget} onChange={(e) => { setLinkTarget(e.target.value); if (e.target.value) { addLinkOut(e.target.value); setLinkTarget(""); } }}>
+              <option value="">{t("mindmap.linkTo")}</option>
+              {nodes.filter(n => n.id !== node.id).map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
+            </select>
+          </div>
+        </div>
         {/* 表单字段区（与速记悬浮窗一致的压缩布局）：描述 + 进度/计划时间/重复/颜色单行卡片 */}
         <div className="shrink-0 space-y-2.5 overflow-y-auto p-3" style={{ maxHeight: "42%" }}>
           <div>
@@ -832,6 +992,243 @@ function PlanCalendarModal({ onPick, onClose, onAddPlan, onMoveOccurrence }: {
     </div>, document.body);
 }
 
+// ════════════ AI 工作过程日志（实时） ════════════
+
+/** 后端推送的进度事件（mm-ai-progress）：step 标记阶段，其余字段按步骤类型取用 */
+interface AiProgressEntry {
+  step: "scan" | "explore" | "read" | "route" | "view" | "repair" | "fail" | "usage" | "stream" | "cancel" | string;
+  round?: number;
+  total?: number;
+  reason?: string;
+  done?: boolean;
+  files?: string[];
+  views?: string[];
+  view?: string;
+  count?: number;
+  rounds?: number;
+  detail?: string;
+  // token 用量（step=usage）
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  model?: string;
+  // 流式输出（step=stream）：累计字符数与末尾预览
+  length?: number;
+  text?: string;
+  // 前端收到时打的时间戳（ms）
+  at?: number;
+}
+
+const STEP_ICONS: Record<string, React.ReactNode> = {
+  scan: <Search className="h-3 w-3 text-cyan-300" />,
+  explore: <Brain className="h-3 w-3 text-violet-300" />,
+  read: <File className="h-3 w-3 text-emerald-300" />,
+  route: <LayoutGrid className="h-3 w-3 text-amber-300" />,
+  view: <Sparkles className="h-3 w-3 text-cyan-300" />,
+  repair: <RotateCcw className="h-3 w-3 text-amber-300" />,
+  fail: <AlertTriangle className="h-3 w-3 text-red-300" />,
+  usage: <Coins className="h-3 w-3 text-emerald-300" />,
+  stream: <Terminal className="h-3 w-3 text-emerald-300" />,
+  cancel: <Ban className="h-3 w-3 text-red-300" />,
+};
+
+const fmtNum = (n: number) => n.toLocaleString();
+const fmtDur = (ms: number) => {
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+};
+const fmtClock = (ts: number) => {
+  const d = new Date(ts);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+};
+
+/** 把结构化进度事件转为一行可读文本（i18n） */
+function progressText(e: AiProgressEntry, t: (k: string, o?: any) => string): string {
+  switch (e.step) {
+    case "scan":
+      return e.done ? t("mindmap.aiStepScanDone") : t("mindmap.aiStepScan");
+    case "explore":
+      return t("mindmap.aiStepExplore", {
+        n: e.round,
+        total: e.total,
+        reason: e.reason || "",
+        done: e.done ? ` — ${t("mindmap.aiExploreDone")}` : "",
+      });
+    case "read":
+      return t("mindmap.aiStepReading", { files: (e.files ?? []).join(", ") });
+    case "route":
+      return e.views
+        ? t("mindmap.aiStepViews", { views: e.views.map(v => viewLabel(t, v)).join(", ") })
+        : t("mindmap.aiStepRouting");
+    case "view":
+      return t("mindmap.aiStepView", { view: viewLabel(t, e.view ?? "") });
+    case "repair":
+      return t("mindmap.aiStepRepair", { count: e.count ?? 0, rounds: e.rounds ?? 0 });
+    case "fail":
+      return t("mindmap.aiStepFail", { msg: e.detail ?? "" });
+    case "usage":
+      return t("mindmap.aiStepUsage", { model: e.model ?? "" });
+    case "stream":
+      return e.done ? t("mindmap.aiStepStreamDone", { n: e.length ?? 0 }) : t("mindmap.aiStepStream");
+    case "cancel":
+      return t("mindmap.aiCancelled");
+    default:
+      return e.detail ?? e.step;
+  }
+}
+
+/** IDE 式实时过程面板：AI 导入期间的每一步（扫描、每轮探索、读取的文件、视图生成、
+ *  修复轮次、每次请求的 token 用量）+ 实时累计统计（请求数/输入/输出/总 token/用时）。
+ *  后端通过 Tauri 事件 "mm-ai-progress" 推送结构化步骤，token 事件来自响应里的 usage 字段。 */
+function AiProgressLog({ projectRoot, onStop }: { projectRoot?: string | null; onStop?: () => void }) {
+  const { t } = useTranslation();
+  const [entries, setEntries] = useState<AiProgressEntry[]>([]);
+  const [totals, setTotals] = useState({ req: 0, in: 0, out: 0, total: 0 });
+  const [model, setModel] = useState("");
+  const [streamInfo, setStreamInfo] = useState<{ length: number; text: string } | null>(null);
+  const [cancelled, setCancelled] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  const boxRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const un = listen<AiProgressEntry>("mm-ai-progress", (e) => {
+      const p = { ...e.payload, at: Date.now() };
+      // 用户点「停止」：后端各循环/流式块边界会推送 cancel 事件
+      if (p.step === "cancel") {
+        setCancelled(true);
+        setStreamInfo(null);
+        setEntries(prev => [...prev.slice(-199), p]);
+        return;
+      }
+      // 流式输出：只更新时间线里的开始/完成两条，其余节流帧只更新实时预览区
+      if (p.step === "stream") {
+        if (p.done) {
+          setStreamInfo(null);
+          setEntries(prev => [...prev.slice(-199), { step: "stream", done: true, length: p.length, at: p.at }]);
+          return;
+        }
+        setStreamInfo({ length: p.length ?? 0, text: p.text ?? "" });
+        setEntries(prev => {
+          const l = prev[prev.length - 1];
+          if (l && l.step === "stream") return prev;
+          return [...prev.slice(-199), { step: "stream", at: p.at }];
+        });
+        return;
+      }
+      setStreamInfo(null);
+      setEntries(prev => [...prev.slice(-199), p]);
+      if (p.step === "usage") {
+        const inT = p.prompt_tokens ?? 0;
+        const outT = p.completion_tokens ?? 0;
+        setTotals(prev => ({ req: prev.req + 1, in: prev.in + inT, out: prev.out + outT, total: prev.total + (p.total_tokens ?? inT + outT) }));
+        if (p.model) setModel(p.model);
+      }
+    });
+    return () => { void un.then(f => f()); };
+  }, []);
+
+  // 用时秒表：每秒刷新当前时间，驱动总耗时跳动
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
+  }, [entries]);
+
+  const last = entries[entries.length - 1];
+  const startedAt = entries[0]?.at ?? now;
+  const elapsed = entries.length ? now - startedAt : 0;
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-white/10 bg-slate-950/90" title={t("mindmap.aiProgressLog")}>
+      {/* 头部：标题 + 模型 + 实时统计 */}
+      <div className="flex items-center gap-2 border-b border-white/10 px-2.5 py-1.5">
+        <span className="inline-flex shrink-0 items-center gap-1 text-[9px] font-semibold uppercase tracking-wide text-slate-400">
+          <Brain className="h-3 w-3 animate-pulse text-cyan-300" />{t("mindmap.aiProgressTitle")}
+        </span>
+        {model && <span className="min-w-0 truncate rounded bg-white/[0.06] px-1.5 py-px font-mono text-[8px] text-slate-400" title={model}>{model}</span>}
+        <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[8px] tabular-nums text-slate-400">
+          <span>{t("mindmap.aiStatRequests", { count: totals.req })}</span>
+          <span className="text-emerald-300/90">↑{fmtNum(totals.in)}</span>
+          <span className="text-cyan-300/90">↓{fmtNum(totals.out)}</span>
+          <span className="text-slate-200">{fmtNum(totals.total)}</span>
+          <span className="text-slate-500">{t("mindmap.aiStatElapsed", { s: fmtDur(elapsed) })}</span>
+        </span>
+        {onStop && (
+          <button type="button" onClick={onStop} disabled={cancelled}
+            className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded border border-red-400/40 bg-red-500/10 px-2 py-0.5 text-[8px] font-semibold text-red-300 transition hover:border-red-400/80 hover:bg-red-500/25 hover:text-red-200 disabled:cursor-default disabled:opacity-40"
+            title={t("mindmap.aiStopTitle")}>
+            <Square className="h-2.5 w-2.5 fill-current" />{cancelled ? t("mindmap.aiStopped") : t("mindmap.aiStop")}
+          </button>
+        )}
+      </div>
+      {/* 当前活动行：流式输出时实时显示 AI 正在写的内容，否则显示最后一步 + 闪烁光标；
+          取消后定格在「已取消」状态，不再闪烁 */}
+      <div className="flex items-center gap-1.5 border-b border-white/5 px-2.5 py-1 text-[9px] text-slate-300">
+        {cancelled ? (<>
+          <span className="shrink-0"><Ban className="h-3 w-3 text-red-300" /></span>
+          <span className="min-w-0 flex-1 truncate font-semibold text-red-300">{t("mindmap.aiCancelled")}</span>
+        </>) : streamInfo ? (<>
+          <span className="shrink-0">{STEP_ICONS.stream}</span>
+          <span className="min-w-0 flex-1 truncate font-mono text-emerald-300/90">
+            <span className="text-slate-500">⏵</span> {streamInfo.text || t("mindmap.aiStepStream")}
+            <span className="animate-pulse text-emerald-300">▍</span>
+          </span>
+          <span className="shrink-0 font-mono text-[8px] tabular-nums text-slate-500">{fmtNum(streamInfo.length)}</span>
+        </>) : last ? (<>
+          <span className="shrink-0">{STEP_ICONS[last.step] ?? <Sparkles className="h-3 w-3 text-slate-400" />}</span>
+          <span className="min-w-0 flex-1 truncate">{progressText(last, t)}</span>
+          <span className="animate-pulse text-cyan-300">▍</span>
+        </>) : (
+          <span className="text-slate-600">{t("mindmap.aiStepScan")}</span>
+        )}
+      </div>
+      {/* 时间线：时间戳 + 步骤图标 + 文本 + 每步耗时 */}
+      <div ref={boxRef} className="max-h-44 space-y-0.5 overflow-y-auto px-2.5 py-1.5 font-mono text-[9px] leading-relaxed">
+        {entries.map((e, i) => {
+          const prev = entries[i - 1];
+          const dt = prev && e.at !== undefined ? e.at - (prev.at ?? e.at) : 0;
+          return (
+            <div key={i} className="flex items-baseline gap-1.5">
+              <span className="shrink-0 text-slate-600 tabular-nums">{fmtClock(e.at ?? Date.now())}</span>
+              <span className="mt-0.5 shrink-0 self-center">{STEP_ICONS[e.step] ?? <Sparkles className="h-3 w-3 text-slate-400" />}</span>
+              <span className={`min-w-0 flex-1 break-words ${e.step === "fail" || e.step === "cancel" ? "text-red-300" : e.step === "usage" ? "text-slate-400" : "text-slate-300"}`}>
+                {e.step === "usage" ? (
+                  <span className="inline-flex items-center gap-1">
+                    <span className="text-emerald-300/90">+{fmtNum(e.prompt_tokens ?? 0)}</span>
+                    <span className="text-cyan-300/90">−{fmtNum(e.completion_tokens ?? 0)}</span>
+                    <span className="text-slate-500">＝{fmtNum(e.total_tokens ?? 0)}</span>
+                  </span>
+                ) : e.step === "read" && projectRoot && (e.files?.length ?? 0) > 0 ? (
+                  // 探索阶段读取的文件：可点击，直接定位到源码（复用证据文件的定位能力）
+                  <span className="inline-flex min-w-0 flex-wrap items-center gap-1">
+                    <span className="text-slate-500">{t("mindmap.aiStepReadFiles", { count: (e.files ?? []).length })}</span>
+                    {(e.files ?? []).map((f, j) => (
+                      <button key={j} type="button"
+                        onClick={(ev) => { ev.stopPropagation(); openSourceFile(projectRoot, f); }}
+                        className="inline-flex max-w-[190px] cursor-pointer items-center gap-0.5 truncate rounded border border-cyan-400/25 bg-cyan-400/[0.07] px-1 py-px font-normal text-cyan-200 transition hover:border-cyan-400/60 hover:bg-cyan-400/15"
+                        title={f}>
+                        <File className="h-2.5 w-2.5 shrink-0" />
+                        <span className="truncate">{f}</span>
+                      </button>
+                    ))}
+                  </span>
+                ) : progressText(e, t)}
+              </span>
+              <span className="shrink-0 text-slate-600 tabular-nums">{dt > 0 ? fmtDur(dt) : ""}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ════════════ AI 导入校验报告 ════════════
 
 const VIEW_LABEL_KEYS: Record<string, string> = {
@@ -858,6 +1255,14 @@ function AiImportReportModal({ result, onClose, onOpenDoc }: {
           <h3 className="flex items-center gap-2 text-sm font-semibold text-white"><Sparkles className="h-4 w-4 text-cyan-400" />{t("mindmap.aiReportTitle")}</h3>
           <button type="button" className="cursor-pointer rounded p-1 text-slate-400 hover:text-white" onClick={onClose} title={t("mindmap.close")}><X className="h-4 w-4" /></button>
         </div>
+        {/* 本次运行总消耗（含路由/探索阶段，来自后端累计） */}
+        {result.usage && (result.usage.requests > 0 || result.usage.totalTokens > 0) && (
+          <div className="mb-2 flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[9px]">
+            <BarChart3 className="h-3 w-3 shrink-0 text-emerald-300" />
+            <span className="shrink-0 font-semibold text-slate-300">{t("mindmap.aiRunUsage")}</span>
+            <span className="font-mono tabular-nums text-slate-400">{t("mindmap.aiRunUsageLine", { req: result.usage.requests, in: fmtNum(result.usage.inputTokens), out: fmtNum(result.usage.outputTokens), total: fmtNum(result.usage.totalTokens) })}</span>
+          </div>
+        )}
         <div className="max-h-[60vh] space-y-2 overflow-y-auto pr-1">
           {result.reports.length === 0 && (
             <p className="py-4 text-center text-[10px] text-slate-500">{t("mindmap.noViewsGenerated")}</p>
@@ -879,6 +1284,12 @@ function AiImportReportModal({ result, onClose, onOpenDoc }: {
                 </div>
                 <div className="mt-1 text-[9px] text-slate-500">
                   {t("mindmap.nodeCount", { count: r.nodeCount })} · {r.repairRounds === 1 ? t("mindmap.repairFirstPass") : t("mindmap.repairRound", { count: r.repairRounds })}
+                  {(r.usage?.requests ?? 0) > 0 && (
+                    <span className="ml-1 font-mono text-emerald-300/80" title={t("mindmap.aiRunUsage")}>⚡ {fmtNum(r.usage?.totalTokens ?? 0)} tok</span>
+                  )}
+                  {(doc?.document.aiImports ?? 0) > 0 && (
+                    <span className="ml-1 text-slate-600">{t("mindmap.aiDocUsage", { imports: doc!.document.aiImports, tokens: fmtNum((doc!.document.aiInputTokens ?? 0) + (doc!.document.aiOutputTokens ?? 0)) })}</span>
+                  )}
                 </div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[9px]">
                   <span className="text-slate-500">{t("mindmap.evidenceStats", { nodes: r.evidenceNodes, count: r.evidenceCount })}</span>
@@ -932,6 +1343,11 @@ type NodeCacheEntry = {
   selected: boolean;
   hasChildren: boolean;
   collapsed: boolean;
+  hideText: boolean;
+  parentColor: string | null;
+  parentKind: string | null;
+  linkInputs: LinkPort[] | null;
+  linkOutputs: LinkPort[] | null;
   obj: Node;
 };
 
@@ -956,6 +1372,26 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   // RF 实测的节点尺寸（dimensions 变更写入）。adoptUserNodes 只认 userNode.measured，
   // 缺了它 RF 会在拖动中每帧重测 → 节点尺寸塌陷/恢复 → 闪烁。
   const [measuredMap, setMeasuredMap] = useState<Record<string, { width: number; height: number }>>({});
+  // 视口缩放：低于阈值时节点文字整体隐藏（ComfyUI 式缩略）。
+  // 只在跨阈值瞬间 setState，避免 onMove 每帧触发整树重染。
+  const zoomHideRef = useRef(false);
+  const [zoomHide, setZoomHide] = useState(false);
+  const onViewportMove = useCallback((_e: unknown, vp: Viewport) => {
+    const hide = vp.zoom < ZOOM_HIDE_TEXT;
+    if (hide !== zoomHideRef.current) { zoomHideRef.current = hide; setZoomHide(hide); }
+  }, []);
+  // 连线中段标签的编辑状态：同一时刻只允许编辑一条连线
+  const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
+  // Alt 拖拽 = 强制创建额外连线：一旦按下 Alt（拖拽中或开始时）即按连线处理。
+  const altDragRef = useRef(false);
+  const connectStartAltRef = useRef(false);
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (e.key === "Alt" || e.key === "F10") altDragRef.current = true; };
+    const up = (e: KeyboardEvent) => { if (e.key === "Alt" || e.key === "F10") altDragRef.current = false; };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
+  }, []);
   // 切换文档时清空位置覆盖（新文档用其自身已保存坐标或自动布局）
   useEffect(() => { setPosOverrides({}); }, [full.document.id]);
   // 切换文档时恢复该文档保存的布局方向（避免沿用上一份导图的方向）
@@ -976,9 +1412,6 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
 
   const graphNodes = full.nodes;
   const stickers = full.stickers;
-  const backgroundTexture = (full.document.backgroundTexture in BACKGROUND_TEXTURE_KEYS
-    ? full.document.backgroundTexture
-    : "dots") as BackgroundTexture;
   const byId = useMemo(() => new Map(graphNodes.map((n) => [n.id, n])), [graphNodes]);
   // focusRequest effect 需要读取最新节点但又不依赖 byId 变化（避免弹窗被重开），用 ref 镜像
   const byIdRef = useRef(byId);
@@ -1040,7 +1473,26 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     const source = connection.source;
     const target = connection.target;
     if (!source || !target || source === target || !byId.has(source) || !byId.has(target)) return;
-    // 不能把节点连到自己的后代，否则会形成环，布局和折叠都会失效。
+    // 连到额外输入口：该端口已有连线（槽位被占用），忽略以防歧义。
+    if (connection.targetHandle?.startsWith("link-")) return;
+    const child = byId.get(target)!;
+    const links = full.links ?? [];
+    // 按住 Alt 拖拽 = 强制创建额外连线；否则按「目标是否已有父节点」自动判断。
+    const forceLink = connectStartAltRef.current || altDragRef.current;
+    if (forceLink || child.parentId) {
+      if (links.some(l => l.sourceId === source && l.targetId === target)) return;
+      const now = new Date().toISOString();
+      const link: MindmapLink = {
+        id: `lk${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        documentId: full.document.id, sourceId: source, targetId: target,
+        label: byId.get(source)?.name ?? "", createdAt: now, updatedAt: now,
+      };
+      onHistoryPush();
+      void mmApi.upsertLink({ link });
+      onDocumentUpdate({ ...full, links: [...links, link] });
+      return;
+    }
+    // 目标没有父节点且未按 Alt → 连为树形父节点（原有逻辑）；不能连到自己的后代，否则成环。
     let cursor: string | null = source;
     const seen = new Set<string>();
     while (cursor && !seen.has(cursor)) {
@@ -1048,12 +1500,25 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       seen.add(cursor);
       cursor = byId.get(cursor)?.parentId ?? null;
     }
-    const child = byId.get(target)!;
     onHistoryPush();
     const updated = { ...child, parentId: source, kind: child.kind === "root" ? "other" : child.kind, updatedAt: new Date().toISOString() };
     void mmApi.upsertNode({ documentId: full.document.id, node: updated });
     onDocumentUpdate({ ...full, nodes: full.nodes.map(n => n.id === target ? updated : n) });
   }, [byId, full, onDocumentUpdate, onHistoryPush]);
+
+  // 额外连线增删（画布 + 详情弹窗共用）
+  const upsertLink = useCallback((link: MindmapLink) => {
+    void mmApi.upsertLink({ link });
+    onDocumentUpdate({
+      ...full,
+      links: full.links?.some(x => x.id === link.id) ? full.links.map(x => (x.id === link.id ? link : x)) : [...(full.links ?? []), link],
+    });
+  }, [full, onDocumentUpdate]);
+
+  const deleteLink = useCallback((linkId: string) => {
+    void mmApi.deleteLink({ documentId: full.document.id, linkId });
+    onDocumentUpdate({ ...full, links: (full.links ?? []).filter(x => x.id !== linkId) });
+  }, [full, onDocumentUpdate]);
 
   const deleteNode = useCallback((nodeId: string) => {
     onHistoryPush();
@@ -1066,7 +1531,9 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
         if (n.parentId && removed.has(n.parentId) && !removed.has(n.id)) { removed.add(n.id); changed = true; }
       }
     }
-    onDocumentUpdate({ ...full, nodes: full.nodes.filter(n => !removed.has(n.id)) });
+    const removedLinks = (full.links ?? []).filter(l => removed.has(l.sourceId) || removed.has(l.targetId));
+    for (const l of removedLinks) void mmApi.deleteLink({ documentId: full.document.id, linkId: l.id });
+    onDocumentUpdate({ ...full, nodes: full.nodes.filter(n => !removed.has(n.id)), links: (full.links ?? []).filter(l => !removed.has(l.sourceId) && !removed.has(l.targetId)) });
     if (selectedId === nodeId) setSelectedId(null);
     if (detailNode?.id === nodeId) setDetailNode(null);
     setPreview(null);
@@ -1084,6 +1551,25 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   // 缓存键含 `full` 引用：full 变化（拖放结束/编辑保存）时全部失效重建，避免闭包捕获过期数据。
   const nodeObjCache = useRef(new Map<string, NodeCacheEntry>());
 
+  // 额外连线端口索引：按节点 id 聚合输入/输出端口。
+  // 独立 useMemo（依赖 full/visibleNodes）保证数组引用稳定——若在 flowNodes 里每次新建，
+  // 拖拽时所有节点 data 都会因 linkInputs 新引用而重建 → 全量重渲染闪烁。
+  const linkPorts = useMemo(() => {
+    const inBy = new Map<string, LinkPort[]>();
+    const outBy = new Map<string, LinkPort[]>();
+    for (const l of full.links ?? []) {
+      if (!byId.has(l.sourceId) || !byId.has(l.targetId)) continue;
+      const src = byId.get(l.sourceId)!;
+      const tgt = byId.get(l.targetId)!;
+      const label = l.label.trim() || src.name;
+      const inp: LinkPort = { id: l.id, label, otherName: src.name, color: effectiveNodeColor(src) };
+      const out: LinkPort = { id: l.id, label, otherName: tgt.name, color: effectiveNodeColor(tgt) };
+      (inBy.get(l.targetId) ?? inBy.set(l.targetId, []).get(l.targetId)!).push(inp);
+      (outBy.get(l.sourceId) ?? outBy.set(l.sourceId, []).get(l.sourceId)!).push(out);
+    }
+    return { inBy, outBy };
+  }, [full, byId]);
+
   const flowNodes = useMemo<Node<FlowNodeData | StickerNodeData>[]>(() => {
     const cache = nodeObjCache.current;
     const alive = new Set<string>();
@@ -1096,8 +1582,15 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       const selected = selectedId === n.id || highlightChain.includes(n.id);
       const hasChildren = (childrenCount.get(n.id) ?? 0) > 0;
       const isCollapsed = collapsed.has(n.id);
+      // ComfyUI 式连接点：输入口取父节点类别色/类别名，输出口取本节点类别色/类别名
+      const parent = n.parentId ? byId.get(n.parentId) : undefined;
+      const parentColor = parent ? effectiveNodeColor(parent) : null;
+      const parentKind = parent ? parent.kind : null;
+      // 额外连线端口（多输入）：聚合为该节点的输入/输出端口列表
+      const linkInputs = linkPorts.inBy.get(n.id) ?? EMPTY_LINKS;
+      const linkOutputs = linkPorts.outBy.get(n.id) ?? EMPTY_LINKS;
       const prev = cache.get(n.id);
-      if (prev && prev.full === full && prev.node === n && prev.px === p.x && prev.py === p.y && prev.selected === selected && prev.hasChildren === hasChildren && prev.collapsed === isCollapsed) {
+      if (prev && prev.full === full && prev.node === n && prev.px === p.x && prev.py === p.y && prev.selected === selected && prev.hasChildren === hasChildren && prev.collapsed === isCollapsed && prev.hideText === zoomHide && prev.parentColor === parentColor && prev.parentKind === parentKind && prev.linkInputs === linkInputs && prev.linkOutputs === linkOutputs) {
         main.push(prev.obj as Node<FlowNodeData>);
         continue;
       }
@@ -1107,8 +1600,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       // 因此 full 一旦变化就必须重建 data，否则复用旧 data 会让回调闭包停留在旧状态——
       // 例如连续点「+」加子节点时，第 3 次会用第 1 次渲染时的旧 full，把第 2 个子节点覆盖掉。
       const prevData = prev ? (prev.obj as Node<FlowNodeData>).data : null;
-      const dataChanged = !prevData || prev!.full !== full || prev!.node !== n || prev!.selected !== selected || prev!.hasChildren !== hasChildren || prev!.collapsed !== isCollapsed || prevData.targetPosition !== endpointPositions.target || prevData.sourcePosition !== endpointPositions.source;
-      const data: FlowNodeData = dataChanged          ? { node: n, selected, hasChildren, collapsed: isCollapsed, targetPosition: endpointPositions.target, sourcePosition: endpointPositions.source,
+      const dataChanged = !prevData || prev!.full !== full || prev!.node !== n || prev!.selected !== selected || prev!.hasChildren !== hasChildren || prev!.collapsed !== isCollapsed || prevData.targetPosition !== endpointPositions.target || prevData.sourcePosition !== endpointPositions.source || prevData.hideText !== zoomHide || prevData.parentColor !== parentColor || prevData.parentKind !== parentKind || prevData.linkInputs !== linkInputs || prevData.linkOutputs !== linkOutputs;
+      const data: FlowNodeData = dataChanged          ? { node: n, selected, hasChildren, collapsed: isCollapsed, hideText: zoomHide, parentColor, parentKind, linkInputs, linkOutputs, targetPosition: endpointPositions.target, sourcePosition: endpointPositions.source,
             onSelect: () => setSelectedId(n.id), onOpenDetail: () => openDetail(n),
             onToggle: () => setCollapsed(cur => { const nx = new Set(cur); nx.has(n.id) ? nx.delete(n.id) : nx.add(n.id); return nx; }),
             onAddChild: () => addChildNode(n.id),
@@ -1122,7 +1615,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       const obj: Node<FlowNodeData> = prevObj
         ? { ...prevObj, position: p, data, measured, sourcePosition: endpointPositions.source, targetPosition: endpointPositions.target }
         : { id: n.id, type: "mmNode", position: p, data, measured, sourcePosition: endpointPositions.source, targetPosition: endpointPositions.target };
-      cache.set(n.id, { node: n, full, px: p.x, py: p.y, selected, hasChildren, collapsed: isCollapsed, obj });
+      cache.set(n.id, { node: n, full, px: p.x, py: p.y, selected, hasChildren, collapsed: isCollapsed, hideText: zoomHide, parentColor, parentKind, linkInputs, linkOutputs, obj });
       main.push(obj);
     }
     const stickerNodes: Node<StickerNodeData>[] = [];
@@ -1170,20 +1663,39 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       const obj: Node<StickerNodeData> = prevObj
         ? { ...prevObj, position: p, data, measured }
         : { id: sid, type: "stickerNode", position: p, data, measured };
-      cache.set(sid, { node: s, full, px: p.x, py: p.y, selected: false, hasChildren: false, collapsed: false, obj });
+      cache.set(sid, { node: s, full, px: p.x, py: p.y, selected: false, hasChildren: false, collapsed: false, hideText: false, parentColor: null, parentKind: null, linkInputs: null, linkOutputs: null, obj });
       stickerNodes.push(obj);
     }
     // 清理不再显示的缓存项
     for (const k of cache.keys()) if (!alive.has(k)) cache.delete(k);
     return [...main, ...stickerNodes];
-  }, [visibleNodes, layout, selectedId, collapsed, childrenCount, stickers, full, onDocumentUpdate, highlightChain, posOverrides, measuredMap, addChildNode, deleteNode, openDetail, endpointPositions]);
+  }, [visibleNodes, layout, selectedId, collapsed, childrenCount, stickers, full, onDocumentUpdate, highlightChain, posOverrides, measuredMap, addChildNode, deleteNode, openDetail, endpointPositions, zoomHide, byId]);
 
-  const edges = useMemo<Edge[]>(() => visibleNodes.flatMap(n => {
-    if (!n.parentId || !visibleNodes.some(p => p.id === n.parentId)) return [];
-    const isOnChain = highlightChain.includes(n.id) && highlightChain.includes(n.parentId);
-    return [{ id: `mm-e-${n.id}`, source: n.parentId, target: n.id, type: "colorE", style: isOnChain ? { strokeWidth: 2, opacity: 0.9 } : {},
-      data: { color: effectiveNodeColor(n) }, markerEnd: { type: MarkerType.ArrowClosed, color: "#f8fafc" } } as Edge];
-  }), [visibleNodes, highlightChain]);
+  const edges = useMemo<Edge[]>(() => {
+    const visible = new Set(visibleNodes.map(n => n.id));
+    const out: Edge[] = [];
+    // 树形主连线（实线，走主输入/输出口）
+    for (const n of visibleNodes) {
+      if (!n.parentId || !visible.has(n.parentId)) continue;
+      const isOnChain = highlightChain.includes(n.id) && highlightChain.includes(n.parentId);
+      out.push({ id: `mm-e-${n.id}`, source: n.parentId, target: n.id, sourceHandle: "out", targetHandle: "in", type: "colorE", style: isOnChain ? { strokeWidth: 2, opacity: 0.9 } : {},
+        data: { color: effectiveNodeColor(n) }, markerEnd: { type: MarkerType.ArrowClosed, color: "#f8fafc" } } as Edge);
+    }
+    // 额外连线（虚线，进对应端口）
+    for (const l of full.links ?? []) {
+      if (!visible.has(l.sourceId) || !visible.has(l.targetId)) continue;
+      out.push({ id: `mm-l-${l.id}`, source: l.sourceId, target: l.targetId, sourceHandle: `link-${l.id}`, targetHandle: `link-${l.id}`, type: "colorE",
+        data: {
+          color: effectiveNodeColor(byId.get(l.sourceId)!), link: true,
+          label: l.label.trim() || (byId.get(l.sourceId)?.name ?? ""), hideText: zoomHide,
+          editing: editingLinkId === l.id,
+          onStartEdit: () => setEditingLinkId(l.id),
+          onCommit: (lb: string) => { setEditingLinkId(null); upsertLink({ ...l, label: lb }); },
+          onCancel: () => setEditingLinkId(null),
+        } } as Edge);
+    }
+    return out;
+  }, [visibleNodes, full, byId, highlightChain, zoomHide, editingLinkId, upsertLink]);
 
   // 受控节点：React Flow 拖放时把位置写入 posOverrides。仅处理 position 变更，
   // 选择由 selectedId 管理。一次 setState → 一次渲染 → 收敛，无反馈循环。
@@ -1345,15 +1857,6 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     window.setTimeout(() => fitView({ padding: 0.2, duration: 260 }), 30);
   }, [dir, flowNodes, full, fitView]);
 
-  const changeBackgroundTexture = useCallback((texture: BackgroundTexture) => {
-    if (texture === backgroundTexture) return;
-    onHistoryPush();
-    const now = new Date().toISOString();
-    const document = { ...full.document, backgroundTexture: texture, updatedAt: now };
-    void mmApi.updateBackgroundTexture(full.document.id, texture);
-    onDocumentUpdate({ ...full, document });
-  }, [backgroundTexture, full, onDocumentUpdate, onHistoryPush]);
-
   const onNodeContextMenu = useCallback((event: React.MouseEvent, node: Node) => {
     event.preventDefault();
     if (!node.id.startsWith("sticker-") && byId.has(node.id)) { setSelectedId(node.id); setCtxMenu({ x: event.clientX, y: event.clientY, nodeId: node.id }); }
@@ -1376,9 +1879,10 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   }, [selectedId, detailNode, deleteSelected, addChildNode, byId]);
 
   return (
-    <div className="relative h-full min-h-0" style={BACKGROUND_TEXTURE_STYLES[backgroundTexture]}>
+    <div className="relative h-full min-h-0">
       <ReactFlow nodes={flowNodes} edges={edges} nodeTypes={mmNodeTypes} edgeTypes={mmEdgeTypes}
-        onNodesChange={onNodesChange} onNodeDragStop={onNodeDragStop} onConnect={onConnect}
+        onNodesChange={onNodesChange} onNodeDragStop={onNodeDragStop} onConnect={onConnect} onMove={onViewportMove}
+        onConnectStart={(e) => { connectStartAltRef.current = Boolean((e as MouseEvent).altKey); }} onConnectEnd={() => { connectStartAltRef.current = false; }}
         onNodeContextMenu={(e, n) => onNodeContextMenu(e, n as Node)} minZoom={0.1} maxZoom={2.5} nodesConnectable
         proOptions={{ hideAttribution: true }}>
         <MiniMap style={{ backgroundColor: "#080f1c", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95"
@@ -1387,6 +1891,13 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
         <Controls className="canvas-flow-controls" showInteractive={false} />
       </ReactFlow>
 
+      {/* 连线规则提示：拖拽＝按目标状态自动判断；按住 Alt 拖拽＝强制创建额外连线 */}
+      <div className="pointer-events-none absolute bottom-2 left-1/2 z-10 -translate-x-1/2">
+        <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-white/10 bg-slate-900/80 px-2.5 py-1 text-[9px] text-slate-400 shadow backdrop-blur">
+          <Link2 className="h-2.5 w-2.5 text-cyan-300/80" />{t("mindmap.connectHint")}
+        </span>
+      </div>
+
       {/* Compact floating toolbar */}
       <div className="absolute right-4 top-4 z-10 flex flex-col gap-1">
         <div className="rounded-lg border border-white/10 bg-slate-900/95 p-1 shadow-lg flex flex-col gap-0.5">
@@ -1394,13 +1905,6 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
           <select className="w-full rounded border border-white/10 bg-slate-900/95 px-1.5 py-1 text-[10px] text-slate-300 outline-none focus:border-cyan-400/60" value={dir} onChange={(e) => changeDir(e.target.value as LayoutDir)} title={t("mindmap.layoutDir")}>
             {Object.entries(LAYOUT_DIR_KEYS).map(([k, v]) => <option key={k} value={k}>{t(v)}</option>)}
           </select>
-          <label className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300" title={t("mindmap.bgTexture")}>
-            <Palette className="h-3 w-3 shrink-0 text-slate-400" />
-            <span className="shrink-0">{t("mindmap.bg")}</span>
-            <select className="min-w-0 flex-1 rounded border border-white/10 bg-slate-900 px-1 py-0.5 text-[10px] text-slate-300 outline-none focus:border-cyan-400/60" value={backgroundTexture} onChange={(e) => changeBackgroundTexture(e.target.value as BackgroundTexture)}>
-              {Object.entries(BACKGROUND_TEXTURE_KEYS).map(([k, v]) => <option key={k} value={k}>{t(v)}</option>)}
-            </select>
-          </label>
           <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={onOpenCalendar} title={t("mindmap.planCalendarBtn")}><Calendar className="h-3 w-3" />{t("mindmap.planCalendar")}</button>
           <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => addChildNode()} title={t("mindmap.addChild")}><Plus className="h-3 w-3" />{t("mindmap.childNode")}</button>
           <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={() => addNode(null)} title={t("mindmap.newRootNode")}><ListTree className="h-3 w-3" />{t("mindmap.newRootNode")}</button>
@@ -1481,7 +1985,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
           </div>
         );
       })()}
-      {detailNode && <DetailModal node={detailNode} accent={accent} projectRoot={full.document.sourceDesc} onUpdate={updateNode} onClose={() => setDetailNode(null)} />}
+      {detailNode && <DetailModal node={detailNode} accent={accent} projectRoot={full.document.sourceDesc} links={(full.links ?? []).filter(l => l.sourceId === detailNode.id || l.targetId === detailNode.id)} nodes={full.nodes} onUpsertLink={upsertLink} onDeleteLink={deleteLink} onUpdate={updateNode} onClose={() => setDetailNode(null)} />}
     </div>
   );
 }
@@ -1556,7 +2060,9 @@ export default function MindmapPanel() {
   const [textInput, setTextInput] = useState("");
   const [textTitle, setTextTitle] = useState("");
   const [projectPath, setProjectPath] = useState("");
+  const [aiProjectHint, setAiProjectHint] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
+  const aiRunIdRef = useRef<string | null>(null); // 当前 AI 导入运行的取消标识
   const [search, setSearch] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarW, setSidebarW] = useState(260);
@@ -1612,9 +2118,6 @@ export default function MindmapPanel() {
         const snapStickers = new Set(snap.stickers.map(s => s.id));
         for (const s of cur.stickers) if (!snapStickers.has(s.id)) { await mmApi.deleteSticker({ documentId: snap.document.id, stickerId: s.id }); }
         for (const s of snap.stickers) { await mmApi.upsertSticker({ documentId: snap.document.id, sticker: s }); }
-        if (snap.document.backgroundTexture !== cur.document.backgroundTexture) {
-          await mmApi.updateBackgroundTexture(snap.document.id, snap.document.backgroundTexture || "dots");
-        }
       } catch (e) {
         // 本地已恢复，但持久化失败：明确告知用户，避免数据丢失后无从排查
         console.error("[mindmap] 撤销/重做持久化失败:", e);
@@ -2002,21 +2505,39 @@ export default function MindmapPanel() {
 
   const runAiProject = useCallback(async () => {
     if (!full || !projectPath || !providerId || !modelId) return;
+    const runId = crypto.randomUUID ? crypto.randomUUID() : `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    aiRunIdRef.current = runId;
     setAiLoading(true); setError("");
     try {
-      const r = await mmApi.aiFromProject({ documentId: full.document.id, projectPath, providerId: providerId || null, modelId: modelId || null });
+      const r = await mmApi.aiFromProject({ documentId: full.document.id, projectPath, providerId: providerId || null, modelId: modelId || null, userHint: aiProjectHint.trim() || null, runId });
       applyAiImport(r);
-    } catch (e) { setError(String(e)); } finally { setAiLoading(false); }
-  }, [full, projectPath, providerId, modelId, applyAiImport]);
+    } catch (e) {
+      const msg = String(e);
+      // 用户主动停止：不当作错误红字提示，仅日志面板展示
+      if (msg.includes("已取消")) flash(t("mindmap.aiCancelled")); else setError(msg);
+    } finally { aiRunIdRef.current = null; setAiLoading(false); }
+  }, [full, projectPath, providerId, modelId, applyAiImport, flash]);
 
   const runAiText = useCallback(async () => {
     if (!full || !textInput.trim() || !providerId || !modelId) return;
+    const runId = crypto.randomUUID ? crypto.randomUUID() : `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    aiRunIdRef.current = runId;
     setAiLoading(true); setError("");
     try {
-      const r = await mmApi.aiFromText({ documentId: full.document.id, text: textInput, title: textTitle || full.document.name, providerId: providerId || null, modelId: modelId || null });
+      const r = await mmApi.aiFromText({ documentId: full.document.id, text: textInput, title: textTitle || full.document.name, providerId: providerId || null, modelId: modelId || null, runId });
       applyAiImport(r);
-    } catch (e) { setError(String(e)); } finally { setAiLoading(false); }
-  }, [full, textInput, textTitle, providerId, modelId, applyAiImport]);
+    } catch (e) {
+      const msg = String(e);
+      if (msg.includes("已取消")) flash(t("mindmap.aiCancelled")); else setError(msg);
+    } finally { aiRunIdRef.current = null; setAiLoading(false); }
+  }, [full, textInput, textTitle, providerId, modelId, applyAiImport, flash]);
+
+  // IDE 式「停止」：给当前导入运行打取消标志，后端各循环/流式块边界随即中断
+  const stopAi = useCallback(async () => {
+    const rid = aiRunIdRef.current;
+    if (!rid) return;
+    try { await mmApi.aiCancel(rid); } catch { /* 取消请求本身失败可忽略：运行自然结束时 ref 会被清空 */ }
+  }, []);
 
   const exportMd = useCallback(async () => {
     if (!full) return;
@@ -2172,8 +2693,9 @@ export default function MindmapPanel() {
                 <select className={selectClass} value={modelId} onChange={e => setModelId(e.target.value)} disabled={!providerId}>
                   <option value="">{t("mindmap.pickModel")}</option>{(providers.find(p => p.id === providerId)?.models ?? []).map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
                 </select>
+                <textarea className="w-full h-20 rounded-xl bg-slate-900 border border-white/10 px-3 py-2 text-xs text-white outline-none resize-none" value={aiProjectHint} onChange={e => setAiProjectHint(e.target.value)} placeholder={t("mindmap.aiProjectHintPh")} />
                 <p className="text-[10px] text-slate-500">{t("mindmap.aiAppendHint")}</p>
-                <button type="button" className="w-full rounded-lg py-2 text-[11px] font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }} disabled={!projectPath || !providerId || !modelId || aiLoading} onClick={() => void runAiProject()}>{aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" /> : <Sparkles className="h-3.5 w-3.5 inline mr-1" />}{aiLoading ? t("mindmap.aiAnalyzing") : t("mindmap.importProject")}</button>
+                <button type="button" className="w-full rounded-lg py-2 text-[11px] font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }} disabled={!projectPath || !providerId || !modelId || aiLoading} onClick={() => void runAiProject()}>{aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" /> : <Sparkles className="h-3.5 w-3.5 inline mr-1" />}{aiLoading ? t("mindmap.aiAnalyzing") : t("mindmap.importProject")}</button>                  {aiLoading && <AiProgressLog projectRoot={projectPath} onStop={stopAi} />}
                 <button type="button" className="text-[10px] text-slate-500 hover:text-white" onClick={() => setShowAi(null)}>{t("mindmap.backToCanvas")}</button>
               </div>
             </div>
@@ -2194,7 +2716,7 @@ export default function MindmapPanel() {
                   disabled={!textInput.trim() || !providerId || !modelId || aiLoading} onClick={() => void runAiText()}>
                   {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" /> : <Sparkles className="h-3.5 w-3.5 inline mr-1" />}
                   {aiLoading ? t("mindmap.aiExtracting") : t("mindmap.aiExtract")}
-                </button>
+                </button>                  {aiLoading && <AiProgressLog onStop={stopAi} />}
                 <button type="button" className="text-[10px] text-slate-500 hover:text-white" onClick={() => setShowAi(null)}>{t("mindmap.skipManual")}</button>
               </div>
             </div>
