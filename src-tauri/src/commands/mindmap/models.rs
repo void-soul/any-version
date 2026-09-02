@@ -341,6 +341,26 @@ pub struct AiImportFailure {
     pub reason: String,
 }
 
+/// AI 项目探索的单轮记录：AI 为什么读这批文件、实际读了什么（导入报告展示用）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiExploreRound {
+    /// 轮次（从 1 开始）
+    pub round: usize,
+    /// AI 给出的本轮读取理由（一句话；空串 = 模型未提供）
+    #[serde(default)]
+    pub reason: String,
+    /// 本轮实际读取的文件（相对路径，已去重/白名单校验）
+    #[serde(default)]
+    pub files: Vec<String>,
+    /// 本轮 AI 请求确认存在的目录（不读取内容）
+    #[serde(default)]
+    pub dirs: Vec<String>,
+    /// 本轮读取是否触达单批字符预算（文件被截断时为 true）
+    #[serde(default)]
+    pub truncated: bool,
+}
+
 /// 单个视图的校验报告（导入完成弹窗展示用）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -384,4 +404,7 @@ pub struct AiImportResult {
     /// 本次运行的总体消耗（含类型路由与探索阶段）
     #[serde(default)]
     pub usage: UsageStats,
+    /// 项目探索过程：每轮读取的文件清单与理由（文本模式 / 探索失败时为空）
+    #[serde(default)]
+    pub exploration: Vec<AiExploreRound>,
 }

@@ -885,14 +885,23 @@ pub fn scan_project(path: &str) -> Result<String, String> {
     if !root.is_dir() {
         return Err(format!("项目目录不存在: {}", path));
     }
-    let name = project_name(path);
     let entries = collect_entries(root);
-    let tree = build_tree(&entries);
+    scan_project_from_entries(path, root, &entries)
+}
+
+/// 从已收集的条目集构建扫描上下文（供缓存路径复用同一次目录遍历）。
+fn scan_project_from_entries(
+    path: &str,
+    root: &Path,
+    entries: &[Entry],
+) -> Result<String, String> {
+    let name = project_name(path);
+    let tree = build_tree(entries);
     let deps = scan_deps(root);
-    let dirs = top_dir_stats(&entries);
-    let coupling = analyze_coupling(root, &entries);
+    let dirs = top_dir_stats(entries);
+    let coupling = analyze_coupling(root, entries);
     let readme = readme_structure(root);
-    let markers = project_markers(root, &entries);
+    let markers = project_markers(root, entries);
     let files = key_files(root);
 
     let mut parts = vec![
@@ -926,13 +935,15 @@ pub fn scan_project(path: &str) -> Result<String, String> {
 /// 从 AI 请求 JSON 提取合法相对路径：
 /// - paths: 数组字符串（去 ./ 前缀、反斜杠→正斜杠、去重）
 /// - dirs: 目录路径 → 展开/标记为「目录请求」（不读内容，只确认存在）
-/// 返回 (files, dirs)，均过滤为存在于文件集内的路径。
+/// 返回 (files, dirs, rejected)：前两者均过滤为存在于文件集内的路径；
+/// rejected 是模型点了但文件集里不存在/格式无效的路径（回执给模型改点）。
 pub fn parse_ai_file_request(
     json: &serde_json::Value,
     project: &ProjectFiles,
-) -> (Vec<String>, Vec<String>) {
+) -> (Vec<String>, Vec<String>, Vec<String>) {
     let mut files: Vec<String> = Vec::new();
     let mut dirs: Vec<String> = Vec::new();
+    let mut rejected: Vec<String> = Vec::new();
     let normalize = |s: &str| -> String {
         s.trim()
             .trim_start_matches("./")
@@ -948,6 +959,8 @@ pub fn parse_ai_file_request(
             }
             if project.files.contains(&rel) {
                 files.push(rel);
+            } else {
+                rejected.push(rel);
             }
         }
     }
@@ -960,10 +973,12 @@ pub fn parse_ai_file_request(
             // 目录请求：确认真实存在（有文件以它为前缀）
             if project.files.iter().any(|f| f.starts_with(&format!("{}/", rel))) {
                 dirs.push(rel);
+            } else {
+                rejected.push(rel);
             }
         }
     }
-    (files, dirs)
+    (files, dirs, rejected)
 }
 
 /// 读取单个文件并压缩为上下文文本（去尾部空白、压缩连续空行、截断）。
@@ -1008,11 +1023,25 @@ pub fn read_file_compressed(
 
 /// 把一批文件读取结果压缩为 AI 上下文文本块。
 /// files: (rel, content, truncated)；dirs: 目录确认列表。
+/// 请求回执段：AI 点单中「在文件集里找不到/格式无效」的路径，反馈给模型让它
+/// 下一轮改点真实存在的文件（否则模型可能反复点同一批不存在的路径，白白烧轮次）。
+fn format_request_rejected(rejected: &[String]) -> String {
+    if rejected.is_empty() {
+        return String::new();
+    }
+    format!(
+        "## 请求回执（以下路径不在目录结构中或格式无效，未被读取；请改点『目录结构』中真实存在的文件）\n{}\n\n",
+        rejected.join("\n")
+    )
+}
+
 pub fn format_file_batch(
     files: &[(String, Option<String>, bool)],
     dirs: &[String],
+    rejected: &[String],
 ) -> String {
     let mut out = String::new();
+    out.push_str(&format_request_rejected(rejected));
     if !dirs.is_empty() {
         out.push_str(&format!("## 目录确认\n{}\n\n", dirs.join("\n")));
     }
@@ -1041,20 +1070,212 @@ pub fn format_file_batch(
 
 /// 带用户自定义提示的扫描：`user_hint` 作为附加指令追加到扫描上下文末尾，
 /// 例如让 AI 忽略特定目录（node_modules/debug 等）或聚焦某模块。
+// ─── 扫描结果缓存（同一项目重复导入时跳过全盘扫描，加快二次分析） ───
+
+/// 扫描器逻辑版本：目录树/统计/证据等产出的组织方式变更时递增，自动作废旧缓存。
+const SCAN_CACHE_VERSION: u32 = 1;
+/// 缓存目录：数据目录下 scan-cache/<指纹 md5>.json；上限 N 份，超出后淘汰最旧的 mtime。
+const SCAN_CACHE_MAX_ENTRIES: usize = 16;
+
+fn scan_cache_dir() -> std::path::PathBuf {
+    crate::commands::config::get_data_dir().join("scan-cache")
+}
+
+/// 计算单个条目的指纹贡献：相对路径 + mtime + 大小。
+/// 文件/目录都参与——目录 mtime 变化也能捕捉到无文件增删的改名场景。
+fn fingerprint_entry(out: &mut String, root: &Path, rel: &str) {
+    let meta = std::fs::metadata(root.join(rel));
+    match meta {
+        Ok(m) => {
+            let mtime = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            out.push_str(&format!("{}|{}|{}\n", rel, mtime, m.len()));
+        }
+        Err(_) => out.push_str(&format!("{}|gone\n", rel)),
+    }
+}
+
+/// 扫描输入指纹：覆盖「会影响扫描产出」的全部输入——
+/// 扫描器版本、规范化路径、条目集（含每个条目的 mtime/大小）、ignore 规则文件内容。
+/// 注意不含 user_hint：提示语是拼在扫描文本之后的，缓存的是纯扫描产出。
+fn scan_fingerprint(root: &Path, entries: &[Entry]) -> String {
+    let mut body = format!("v{}\n", SCAN_CACHE_VERSION);
+    let canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    body.push_str(&canon.to_string_lossy());
+    body.push('\n');
+    for e in entries {
+        fingerprint_entry(&mut body, root, &e.rel);
+    }
+    // ignore 规则内容参与指纹：规则变更（哪怕条目集恰好不变）也作废缓存
+    for name in [".gitignore", ".claudeignore", ".git/info/exclude"] {
+        if let Ok(data) = std::fs::read_to_string(root.join(name)) {
+            body.push_str(&format!("--{name}\n{data}"));
+        }
+    }
+    format!("{:x}", md5::compute(body.as_bytes()))
+}
+
+/// 缓存条目落盘格式。
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ScanCacheEntry {
+    /// 与指纹一同校验，防手改/串文件
+    fingerprint: String,
+    saved_at_ms: u128,
+    context: String,
+}
+
+fn read_scan_cache(fp: &str) -> Option<String> {
+    let path = scan_cache_dir().join(format!("{}.json", fp));
+    let data = std::fs::read_to_string(&path).ok()?;
+    let entry: ScanCacheEntry = serde_json::from_str(&data).ok()?;
+    if entry.fingerprint != fp {
+        return None;
+    }
+    Some(entry.context)
+}
+
+fn write_scan_cache(fp: &str, context: &str) {
+    let dir = scan_cache_dir();
+    if crate::commands::config::atomic_write_file(
+        &dir.join(format!("{}.json", fp)),
+        serde_json::to_vec(&ScanCacheEntry {
+            fingerprint: fp.to_string(),
+            saved_at_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0),
+            context: context.to_string(),
+        })
+        .unwrap_or_default()
+        .as_slice(),
+    )
+    .is_err()
+    {
+        return; // 缓存写失败不影响主流程
+    }
+    prune_scan_cache();
+}
+
+/// 上限淘汰：缓存份数超过 SCAN_CACHE_MAX_ENTRIES 时按 saved_at 删最旧的。
+fn prune_scan_cache() {
+    let dir = scan_cache_dir();
+    let Ok(rd) = std::fs::read_dir(&dir) else { return };
+    let mut items: Vec<(std::path::PathBuf, u128)> = rd
+        .filter_map(|e| {
+            let p = e.ok()?.path();
+            if p.extension().and_then(|x| x.to_str()) != Some("json") {
+                return None;
+            }
+            let data = std::fs::read_to_string(&p).ok()?;
+            let v: serde_json::Value = serde_json::from_str(&data).ok()?;
+            let ts = v.get("savedAtMs").and_then(|x| x.as_u64()).unwrap_or(0) as u128;
+            Some((p, ts))
+        })
+        .collect();
+    if items.len() <= SCAN_CACHE_MAX_ENTRIES {
+        return;
+    }
+    items.sort_by_key(|(_, ts)| *ts);
+    let extra = items.len() - SCAN_CACHE_MAX_ENTRIES;
+    for (p, _) in items.into_iter().take(extra) {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+/// 带缓存的项目扫描：指纹命中且缓存可读时直接回放上次扫描文本（微秒级），
+/// 否则全盘扫描后写缓存。指纹覆盖 scanner 版本/路径/条目集 mtime+size/ignore 规则，
+/// 任何会影响产出的变更都会自动失效。user_hint 不参与指纹（拼接在缓存文本之后）。
 pub fn scan_project_with_hint(path: &str, user_hint: Option<&str>) -> Result<String, String> {
-    let mut context = scan_project(path)?;
+    let root = Path::new(path);
+    if !root.is_dir() {
+        return Err(format!("项目目录不存在: {}", path));
+    }
+    // 指纹计算需要条目集；为避免「先收集一次算指纹、未命中再收集一次」的双重遍历，
+    // 直接复用同一份条目集：collect_entries 是扫描的第一步，代价可接受。
+    let entries = collect_entries(root);
+    let fp = scan_fingerprint(root, &entries);
+    if let Some(cached) = read_scan_cache(&fp) {
+        return Ok(append_hint(cached, user_hint));
+    }
+    let context = scan_project_from_entries(path, root, &entries)?;
+    write_scan_cache(&fp, &context);
+    Ok(append_hint(context, user_hint))
+}
+
+fn append_hint(context: String, user_hint: Option<&str>) -> String {
+    let mut ctx = context;
     if let Some(hint) = user_hint {
         let hint = hint.trim();
         if !hint.is_empty() {
-            context.push_str(&format!("\n\n## 用户附加说明（必须遵守）\n{}", hint));
+            ctx.push_str(&format!("\n\n## 用户附加说明（必须遵守）\n{}", hint));
         }
     }
-    Ok(context)
+    ctx
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fingerprint_is_stable_and_change_sensitive() {
+        let dir = std::env::temp_dir().join(format!("mm_scan_fp_{}", std::process::id()));
+        let src = dir.join("src");
+        let _ = std::fs::create_dir_all(&src);
+        std::fs::write(src.join("a.ts"), "export const a = 1;\n").unwrap();
+        let entries = collect_entries(&dir);
+        let fp1 = scan_fingerprint(&dir, &entries);
+        // 同状态重复计算 → 稳定
+        let fp2 = scan_fingerprint(&dir, &collect_entries(&dir));
+        assert_eq!(fp1, fp2, "同一状态的指纹应稳定");
+        // 修改文件内容（mtime/size 变化）→ 指纹变化
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(src.join("a.ts"), "export const a = 2;\n").unwrap();
+        let fp3 = scan_fingerprint(&dir, &collect_entries(&dir));
+        assert_ne!(fp1, fp3, "文件内容变更应使指纹变化");
+        // 新增文件 → 指纹变化
+        std::fs::write(src.join("b.ts"), "export const b = 1;\n").unwrap();
+        let fp4 = scan_fingerprint(&dir, &collect_entries(&dir));
+        assert_ne!(fp3, fp4, "新增文件应使指纹变化");
+        // ignore 规则变更 → 指纹变化（即使条目集不变）
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(dir.join(".gitignore"), "b.ts\n").unwrap();
+        let fp5 = scan_fingerprint(&dir, &collect_entries(&dir));
+        assert_ne!(fp4, fp5, "ignore 规则变更应使指纹变化");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cache_roundtrip_replays_context() {
+        let fp = "deadbeef_cache_roundtrip";
+        assert!(read_scan_cache(fp).is_none(), "未写入时不应命中");
+        write_scan_cache(fp, "## 目录结构\n（缓存的上下文）");
+        let hit = read_scan_cache(fp).expect("写入后应命中");
+        assert!(hit.contains("缓存的上下文"));
+        // 指纹不匹配的缓存应被拒绝（防串文件/手改）
+        let path = scan_cache_dir().join(format!("{}.json", fp));
+        let mut v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        v["fingerprint"] = "tampered".into();
+        std::fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        assert!(read_scan_cache(fp).is_none(), "指纹不匹配应拒绝");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn scan_with_hint_not_cached_verbatim() {
+        // user_hint 不参与指纹：命中缓存的文本 + 运行时拼接 hint
+        let s = append_hint("BASE".to_string(), Some(" 聚焦 src "));
+        assert!(s.contains("BASE"));
+        assert!(s.contains("聚焦 src"));
+        assert!(s.contains("用户附加说明"));
+        // 空/空白 hint 不应追加任何标记
+        assert_eq!(append_hint("BASE".to_string(), Some("   ")), "BASE");
+    }
 
     #[test]
     fn project_name_from_path() {
@@ -1170,11 +1391,12 @@ mod tests {
             "paths": ["./src/services/order.ts", "src\\services\\order.ts", "src/services/order.ts", "src/missing.ts", "", "src/services/order.ts"],
             "dirs": ["src/services", "src/missing", "src/services/"]
         });
-        let (files, dirs) = parse_ai_file_request(&json, &pf);
+        let (files, dirs, rejected) = parse_ai_file_request(&json, &pf);
         let _ = std::fs::remove_dir_all(&dir);
-        // 去重 + 归一化（./ 前缀与反斜杠等价）+ 不在文件集内的路径被过滤
+        // 去重 + 归一化（./ 前缀与反斜杠等价）+ 不在文件集内的路径被过滤进 rejected
         assert_eq!(files, vec!["src/services/order.ts"], "got: {files:?}");
         assert_eq!(dirs, vec!["src/services"], "got: {dirs:?}");
+        assert_eq!(rejected, vec!["src/missing.ts", "src/missing"], "got: {rejected:?}");
     }
 
     #[test]
@@ -1214,13 +1436,13 @@ mod tests {
             ("src/a.ts".to_string(), Some("code".to_string()), false),
             ("src/bin.dat".to_string(), None, false),
         ];
-        let out = format_file_batch(&files, &["src/services".to_string()]);
+        let out = format_file_batch(&files, &["src/services".to_string()], &[]);
         assert!(out.contains("## 目录确认"));
         assert!(out.contains("src/services"));
         assert!(out.contains("=== src/a.ts ==="));
         assert!(out.contains("code"));
         assert!(out.contains("不可读"));
-        let empty = format_file_batch(&[], &[]);
+        let empty = format_file_batch(&[], &[], &[]);
         assert!(empty.contains("没有可读文件"));
     }
 }

@@ -1,7 +1,6 @@
 //! Tauri 命令：思维导图 CRUD + AI 生成 + 导出。
 
 use crate::commands::ai;
-use std::time::Duration;
 use tauri::Emitter;
 use super::models::*;
 
@@ -91,110 +90,82 @@ impl UsageAcc {
     }
 }
 
+/// 思维导图 AI 导入的供应商/模型解析：优先级与翻译等其它 AI 功能一致——
+/// 1. 显式传入（面板当前选择）
+/// 2. 全局默认 AI 模型（全局设置中选择，存于 translate_config.json）——校验可用性，
+///    失效时静默回退首个可用供应商
+/// 3. 首个有 api_key 且配置了 OpenAI 端点的供应商
 fn resolve_provider_model(pid: &Option<String>, mid: &Option<String>) -> Result<(ai::models::AiProvider, String), String> {
     let cfg = ai::config::load_ai_config();
-    let p = if let Some(id) = pid { cfg.providers.iter().find(|x| &x.id == id).cloned().ok_or_else(|| format!("未找到供应商: {}", id))? }
-    else { cfg.providers.iter().find(|x| !x.api_key.is_empty() && !x.openai_url.is_empty()).cloned().ok_or("无可用供应商")? };
+    let default_cfg = ai::translate::load_translate_config();
+    let (p, explicit_mid) = if let Some(id) = pid {
+        (cfg.providers.iter().find(|x| &x.id == id).cloned().ok_or_else(|| format!("未找到供应商: {}", id))?, mid.clone())
+    } else {
+        // 全局默认供应商可用（存在且配了端点与 key）才采用；否则回退首个可用供应商。
+        // 默认模型只与默认供应商成对使用，避免跨供应商拼出不存在的模型 id。
+        match (&default_cfg.provider_id, mid) {
+            (Some(gpid), _) => match cfg.providers.iter().find(|x| &x.id == gpid) {
+                Some(p) if !p.openai_url.is_empty() && !p.api_key.is_empty() =>
+                    (p.clone(), mid.clone().or(default_cfg.model_id.clone())),
+                _ => (first_usable_provider(&cfg)?, None),
+            },
+            _ => (first_usable_provider(&cfg)?, None),
+        }
+    };
     if p.openai_url.is_empty() { return Err(format!("供应商 '{}' 未配置端点", p.name)); }
     if p.api_key.is_empty() { return Err(format!("供应商 '{}' 未配置 Key", p.name)); }
-    let m = mid.clone().or_else(|| p.active_model_id.clone()).or_else(|| p.models.first().map(|m| m.id.clone())).ok_or("无可用模型")?;
+    let m = explicit_mid.or_else(|| p.active_model_id.clone()).or_else(|| p.models.first().map(|m| m.id.clone())).ok_or("无可用模型")?;
     Ok((p, m))
 }
 
-fn completion_url(base: &str) -> String {
-    let t = base.trim_end_matches('/');
-    if t.ends_with("/v1") { format!("{}/chat/completions", t) } else { format!("{}/v1/chat/completions", t) }
+/// 首个有 api_key 且配置了 OpenAI 端点的供应商（全局默认失效/缺省时的回退）。
+fn first_usable_provider(cfg: &ai::models::AiConfig) -> Result<ai::models::AiProvider, String> {
+    cfg.providers.iter().find(|x| !x.api_key.is_empty() && !x.openai_url.is_empty()).cloned().ok_or("无可用供应商".to_string())
 }
 
 /// 把 serde_json 的错误定位（行/列）换算为原文上下文窗口，便于直接看出坏在哪。
-fn json_error_context(slice: &str, err: &serde_json::Error) -> String {
-    let line = err.line();
-    let col = err.column();
-    // 定位到错误所在行的起始字节
-    let mut line_start = 0usize;
-    for _ in 1..line.max(1) {
-        match slice[line_start..].find('\n') {
-            Some(i) => line_start += i + 1,
-            None => break,
+/// 宽容 JSON 解析已上提到共享通道（供 tool-call 降级等场景复用）。
+use ai::channel::parse_json;
+
+/// 探索点单专用请求：走共享通道的原生 tool-calling（request_files 工具 + tool_choice
+/// 强制点名）。网关不支持 tools 时通道自动降级为纯文本 JSON 协议（system prompt 中的
+/// 输出格式约定仍然生效，降级路径无需额外处理）。
+/// 其余业务收尾与 [`call_ai_json`] 相同：usage 记账、失败日志。
+async fn call_ai_json_for_explorer(
+    app: &Option<tauri::AppHandle>,
+    acc: &UsageAcc,
+    cancel: &std::sync::atomic::AtomicBool,
+    provider: &ai::models::AiProvider,
+    model: &str,
+    system: &str,
+    user: &str,
+) -> Result<serde_json::Value, String> {
+    cancel_err(app, cancel)?;
+    let hooks = MmHooks { app, cancel };
+    let outcome = ai::channel::complete_chat_json(
+        &hooks,
+        provider,
+        model,
+        system,
+        user,
+        0.3,
+        ai::channel::EXPLORER_TOOL_SPEC,
+    )
+    .await;
+    let (json, usage) = match outcome {
+        Ok(x) => x,
+        Err(e) => {
+            log_ai_transport_failure(app, model, &e);
+            return Err(e);
         }
+    };
+    if let Some(u) = usage {
+        record_and_emit_usage(app, acc, model, &u);
     }
-    let pos = line_start.saturating_add(col.saturating_sub(1));
-    let from = pos.saturating_sub(60);
-    let to = (pos + 80).min(slice.len());
-    // serde 的列按字节计，需要对齐到 UTF-8 字符边界再切片
-    let from = { let mut i = from.min(slice.len()); while i > 0 && !slice.is_char_boundary(i) { i -= 1; } i };
-    let to = { let mut i = to.min(slice.len()); while i < slice.len() && !slice.is_char_boundary(i) { i += 1; } i };
-    let win: String = slice[from..to].chars().collect();
-    format!("{}（第 {} 行第 {} 列，附近上下文：…{}…）", err, line, col, win)
+    Ok(json)
 }
 
-/// 宽容修复：把字符串里的非法转义序列（如 Windows 路径 C:\Users、Markdown 残留反斜杠）
-/// 转义为字面反斜杠。LLM 输出的 JSON 损坏最常见的就是这一类。
-/// 仅当确实发生改动时返回 Some(修复后文本)。
-fn repair_invalid_escapes(s: &str) -> Option<String> {
-    let chars: Vec<char> = s.chars().collect();
-    let mut out = String::with_capacity(s.len() + 8);
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut changed = false;
-    let mut i = 0usize;
-    while i < chars.len() {
-        let c = chars[i];
-        if escaped {
-            // 上一个字节是字符串内的反斜杠：当前字符必须构成合法 JSON 转义
-            let valid = matches!(c, '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' | 'u');
-            if !valid {
-                out.push('\\');
-                changed = true;
-            }
-            if c == 'u' && valid {
-                // \uXXXX 需后随 4 个十六进制字符；不是则按字面转义（如 \users、\u{...}）
-                let hex_ok = i + 4 < chars.len()
-                    && chars[i + 1..i + 5].iter().all(|x| x.is_ascii_hexdigit());
-                if !hex_ok {
-                    out.push('\\');
-                    changed = true;
-                }
-            }
-            out.push(c);
-            escaped = false;
-            i += 1;
-            continue;
-        }
-        match c {
-            '"' => { in_string = !in_string; out.push(c); }
-            '\\' if in_string => { escaped = true; out.push(c); }
-            _ => out.push(c),
-        }
-        i += 1;
-    }
-    if escaped {
-        out.push('\\'); // 尾部孤立反斜杠（截断/损坏），补一层转义让解析通过
-        changed = true;
-    }
-    changed.then_some(out)
-}
-
-fn parse_json(text: &str) -> Result<serde_json::Value, String> {
-    let t = text.trim();
-    let s = t.find('{').ok_or("无 JSON")?;
-    let e = t.rfind('}').ok_or("无 JSON")?;
-    let slice = &t[s..=e];
-    match serde_json::from_str(slice) {
-        Ok(v) => Ok(v),
-        Err(err) => {
-            let ctx = json_error_context(slice, &err);
-            // 自动修复非法转义后重试（成功时记录日志，不再当错误抛出）
-            if let Some(patched) = repair_invalid_escapes(slice) {
-                if let Ok(v) = serde_json::from_str(&patched) {
-                    tracing::warn!("[mindmap] AI JSON 非法转义已自动修复，原始错误: {}", ctx);
-                    return Ok(v);
-                }
-            }
-            Err(format!("JSON: {}", ctx))
-        }
-    }
-}
+/// 通用 JSON 对象请求（流式，文本协议）。
 
 fn json_to_mindmap_nodes(json: &serde_json::Value, document_id: &str, id_prefix: &str) -> Vec<MindmapNode> {
     let arr = match json.get("nodes").and_then(|v| v.as_array()) { Some(a) => a, None => return vec![] };
@@ -730,94 +701,26 @@ fn validate_ai_nodes_json(
     errs
 }
 
-async fn post_chat_json(
-    client: &reqwest::Client,
-    url: &str,
-    provider: &ai::models::AiProvider,
-    body: &serde_json::Value,
-) -> Result<reqwest::Response, String> {
-    client
-        .post(url)
-        .header("Authorization", format!("Bearer {}", provider.api_key))
-        .header("Content-Type", "application/json")
-        .json(body)
-        .timeout(Duration::from_secs(180))
-        .send()
-        .await
-        .map_err(|e| format!("请求失败: {}", e))
+// ─── AI 请求通道（共享实现见 crate::commands::ai::channel） ───
+//
+// TTFB 超时 / send 重试 / 流式断点续写 / SSE 消费 / stream_options 兼容等传输韧性
+// 已收编到共享模块；本文件只保留两件事：
+// 1. MmHooks：把通道进度事件接到 "mm-ai-progress"，把取消检查接到 run_id 取消标志；
+// 2. call_ai_json：思维导图业务收尾（token 统计、stream done 事件、宽容 JSON 解析与日志）。
+
+/// 思维导图 AI 通道钩子：进度 → "mm-ai-progress"；取消 → run_id AtomicBool。
+struct MmHooks<'a> {
+    app: &'a Option<tauri::AppHandle>,
+    cancel: &'a std::sync::atomic::AtomicBool,
 }
 
-fn api_error_message(val: &serde_json::Value) -> String {
-    val.get("error")
-        .and_then(|e| e.get("message"))
-        .and_then(|m| m.as_str())
-        .unwrap_or("?")
-        .to_string()
-}
-
-/// 解析一行 SSE data 载荷：累积 delta.content、记录 usage、识别 error。
-fn process_sse_line(line: &str, acc: &mut String, usage: &mut Option<serde_json::Value>) -> Result<(), String> {
-    let data = line.strip_prefix("data:").map(str::trim).unwrap_or("");
-    if data.is_empty() || data == "[DONE]" {
-        return Ok(());
+impl<'a> ai::channel::ChannelHooks for MmHooks<'a> {
+    fn on_progress(&self, step: &str, extra: serde_json::Value) {
+        emit_progress(self.app, step, extra);
     }
-    let v: serde_json::Value = match serde_json::from_str(data) {
-        Ok(v) => v,
-        Err(_) => return Ok(()), // 非 JSON 行（ping/event 等）忽略
-    };
-    if let Some(err) = v.get("error") {
-        let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("流式响应中的错误");
-        return Err(format!("AI错误: {}", msg));
+    fn check_cancel(&self) -> Result<(), String> {
+        cancel_err(self.app, self.cancel)
     }
-    if let Some(d) = v.pointer("/choices/0/delta/content").and_then(|c| c.as_str()) {
-        acc.push_str(d);
-    }
-    if let Some(u) = v.get("usage") {
-        *usage = Some(u.clone());
-    }
-    Ok(())
-}
-
-/// 消费 SSE 应答流：跨包拼行、累积 content，节流推送实时进度事件
-/// （"mm-ai-progress" step=stream：累计长度 + 末尾 120 字符预览）。
-/// 返回 (完整文本, usage)。
-async fn consume_sse(
-    app: &Option<tauri::AppHandle>,
-    cancel: &std::sync::atomic::AtomicBool,
-    model: &str,
-    resp: reqwest::Response,
-) -> Result<(String, Option<serde_json::Value>), String> {
-    use futures_util::StreamExt;
-    let mut acc = String::new();
-    let mut usage: Option<serde_json::Value> = None;
-    let mut line_buf = String::new();
-    let mut last_emit = std::time::Instant::now();
-    let mut last_len = 0usize;
-    let mut stream = resp.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        // 逐块检查取消：用户点「停止」后流式请求随即中断，不再等 AI 写完
-        cancel_err(app, cancel)?;
-        let chunk = chunk.map_err(|e| format!("流式中断: {}", e))?;
-        line_buf.push_str(&String::from_utf8_lossy(&chunk));
-        while let Some(pos) = line_buf.find('\n') {
-            let line = line_buf[..pos].trim().to_string();
-            line_buf.drain(..=pos);
-            process_sse_line(&line, &mut acc, &mut usage)?;
-        }
-        // 节流：每积累约 400 字符或 200ms 推送一次，保持实时又不刷屏
-        let cur = acc.chars().count();
-        if cur.saturating_sub(last_len) >= 400 || last_emit.elapsed().as_millis() >= 200 {
-            last_emit = std::time::Instant::now();
-            last_len = cur;
-            let tail: String = acc.chars().rev().take(120).collect::<Vec<_>>().into_iter().rev().collect();
-            emit_progress(app, "stream", serde_json::json!({ "length": cur, "text": tail }));
-        }
-    }
-    // 收尾：缓冲区里剩余的最后一行（可能没有换行符结尾）
-    if !line_buf.trim().is_empty() {
-        process_sse_line(line_buf.trim(), &mut acc, &mut usage)?;
-    }
-    Ok((acc, usage))
 }
 
 /// 从 usage JSON 提取 token 数：累计进本次运行计数器，并推送 step=usage 事件（前端实时统计）。
@@ -843,13 +746,10 @@ fn record_and_emit_usage(app: &Option<tauri::AppHandle>, acc: &UsageAcc, model: 
     }
 }
 
-/// 请求一次 AI 并解析出 JSON 对象（流式）。请求/格式失败直接返回错误。
-///
-/// 流式（SSE, stream=true）：逐段推送实时进度事件（step=stream，前端像 IDE 一样
-/// 实时看到 AI 正在输出的内容）；请求结束推送 step=stream done 与 token 用量
-/// （step=usage，来自流式响应末块的 usage 字段，已请求 stream_options.include_usage），
-/// 并同时累计进 acc（供完成报告与文档留痕）。
-/// 个别网关不识别 stream_options/include_usage 时会 400/422，此时自动去掉该参数重试一次。
+/// 请求一次 AI 并解析出 JSON 对象（流式）。传输韧性（TTFB 超时 / send 重试 /
+/// 断点续写 / stream_options 兼容）由共享通道 ai::channel 提供；本函数只做
+/// 思维导图业务收尾：token 统计（step=usage + 累计进 acc）、stream done 事件、
+/// 宽容 JSON 解析（失败时把 AI 原始输出落盘到滚动日志便于定位）。
 async fn call_ai_json(
     app: &Option<tauri::AppHandle>,
     acc: &UsageAcc,
@@ -860,53 +760,24 @@ async fn call_ai_json(
     user: &str,
 ) -> Result<serde_json::Value, String> {
     cancel_err(app, cancel)?;
-    let url = completion_url(&provider.openai_url);
-    let mut body = serde_json::json!({
-        "model": model, "stream": true, "temperature": 0.3,
-        "stream_options": { "include_usage": true },
-        "messages": [{ "role": "system", "content": system }, { "role": "user", "content": user }]
-    });
-    let client = reqwest::Client::new();
-    let resp = post_chat_json(&client, &url, provider, &body).await?;
-    let st = resp.status();
-    if !st.is_success() {
-        let val: serde_json::Value = resp.json().await.map_err(|e| format!("解析失败: {}", e))?;
-        let msg = api_error_message(&val);
-        // 网关不认 stream_options/include_usage → 去掉该参数重试一次（此时无 usage 事件，仅进度）
-        let unknown_param = (st.as_u16() == 400 || st.as_u16() == 422)
-            && (msg.contains("stream_options")
-                || msg.contains("include_usage")
-                || msg.to_lowercase().contains("unknown parameter"));
-        if !unknown_param {
-            return Err(format!("AI错误 {}: {}", st.as_u16(), msg));
+    let hooks = MmHooks { app, cancel };
+    let outcome = ai::channel::stream_chat_with_resume(
+        &hooks, provider, model, system, user,
+        0.3,
+        |len, tail| emit_progress(app, "stream", serde_json::json!({ "length": len, "text": tail })),
+    )
+    .await;
+    let outcome = match outcome {
+        Ok(o) => o,
+        Err(e) => {
+            log_ai_transport_failure(app, model, &e);
+            return Err(e);
         }
-        if let Some(obj) = body.as_object_mut() {
-            obj.remove("stream_options");
-        }
-        let resp2 = post_chat_json(&client, &url, provider, &body).await?;
-        let st2 = resp2.status();
-        if !st2.is_success() {
-            let val2: serde_json::Value = resp2.json().await.map_err(|e| format!("解析失败: {}", e))?;
-            return Err(format!("AI错误 {}: {}", st2.as_u16(), api_error_message(&val2)));
-        }
-        let (streamed, usage2) = consume_sse(app, cancel, model, resp2).await?;
-        return finish_stream(app, acc, model, streamed, usage2);
-    }
-    let (streamed, usage) = consume_sse(app, cancel, model, resp).await?;
-    finish_stream(app, acc, model, streamed, usage)
-}
-
-/// 流式结束收尾：累计 token 用量 + 推送 done、usage 事件，宽容解析完整文本为 JSON。
-fn finish_stream(
-    app: &Option<tauri::AppHandle>,
-    acc: &UsageAcc,
-    model: &str,
-    streamed: String,
-    usage: Option<serde_json::Value>,
-) -> Result<serde_json::Value, String> {
-    if let Some(u) = usage {
+    };
+    if let Some(u) = outcome.usage {
         record_and_emit_usage(app, acc, model, &u);
     }
+    let streamed = outcome.text;
     emit_progress(app, "stream", serde_json::json!({ "done": true, "length": streamed.chars().count() }));
     if streamed.trim().is_empty() {
         return Err("AI返回空".into());
@@ -919,12 +790,21 @@ fn finish_stream(
             let len = streamed.chars().count();
             let head: String = streamed.chars().take(3000).collect();
             tracing::error!(
-                "[mindmap] AI JSON 解析失败 (len={}): {}；\nAI 原始输出开头:\n{}",
+                "[mindmap] AI JSON 解析失败 (len={}): {}；
+AI 原始输出开头:
+{}",
                 len, e, head
             );
             Err(e)
         }
     }
+}
+
+/// 网络类/传输类失败统一落盘到滚动日志（any-version.log），并推送 fail 事件
+/// 让前端进度日志展示原始原因（不再只有「视图生成失败」一句话）。
+fn log_ai_transport_failure(app: &Option<tauri::AppHandle>, model: &str, err: &str) {
+    tracing::error!("[mindmap] AI 请求失败（model={}）：{}", model, err);
+    emit_progress(app, "fail", serde_json::json!({ "detail": format!("网络错误（将按可恢复策略处理）：{}", err) }));
 }
 
 /// 带校验修复循环的 AI 生成（借鉴 Archify 的 validate→repair）：
@@ -1097,7 +977,7 @@ fn view_prompt(mode: &str, view: &str) -> String {
 }
 
 /// 多轮探索 prompt（system）：AI 请求要读取的文件批次；返回 done 表示探索结束。
-fn explorer_prompt(mode: &str) -> String {
+fn explorer_prompt(mode: &str, max_files: usize) -> String {
     format!(
         r##"你是软件架构师，正在深入分析{subject}。每一轮你会收到：项目结构（目录树、技术栈、模块耦合等）以及上一轮请求的文件内容（已压缩）。
 你的任务：决定下一步要读取哪些文件，以便理解项目真实的模块、模块内的功能与业务流程——而不仅是目录结构。每轮最多请求 {max_files} 个文件。
@@ -1116,17 +996,16 @@ fn explorer_prompt(mode: &str) -> String {
 - 优先读取：入口文件、路由/服务定义、核心模块实现、配置文件
 - 不要重复请求已读过的文件"##,
         subject = if mode == "project" { "一个项目" } else { "一段需求" },
-        max_files = EXPLORER_MAX_FILES_PER_ROUND,
+        max_files = max_files,
     )
 }
 
-const EXPLORER_MAX_ROUNDS: usize = 6;
-const EXPLORER_MAX_FILES_PER_ROUND: usize = 8;
-const EXPLORER_MAX_CHARS_PER_FILE: usize = 4000;
-const EXPLORER_MAX_BATCH_CHARS: usize = 24000;
+// 探索参数已开放为全局设置（mindmap_settings.json），见 super::settings::ExplorerSettings；
+// 此处保留 use 便于后续扩展。
+use super::settings::ExplorerSettings;
 
 /// 多轮探索循环：AI 每轮请求一批文件，工具读取并压缩内容作为下一轮上下文。
-/// 返回 (最终上下文, 实际探索轮数, 累计读取文件数)。
+/// 返回 (最终上下文, 实际探索轮数, 累计读取文件数, 每轮日志)。
 async fn ai_explore_project(
     app: &Option<tauri::AppHandle>,
     acc: &UsageAcc,
@@ -1135,27 +1014,42 @@ async fn ai_explore_project(
     model: &str,
     initial_context: &str,
     project: &super::scan::ProjectFiles,
-) -> Result<(String, usize, usize), String> {
+    cfg: &ExplorerSettings,
+) -> Result<(String, usize, usize, Vec<AiExploreRound>), String> {
     let mut context = initial_context.to_string();
     let mut requested: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut rounds = 0usize;
     let mut files_read = 0usize;
-    for _round in 0..EXPLORER_MAX_ROUNDS {
+    let mut round_log: Vec<AiExploreRound> = Vec::new();
+    for _round in 0..cfg.explorer_rounds as usize {
         cancel_err(app, cancel)?;
-        let req = call_ai_json(
+        let req = call_ai_json_for_explorer(
             app,
             acc,
             cancel,
             provider,
             model,
-            &explorer_prompt("project"),
+            &explorer_prompt("project", cfg.explorer_files_per_round as usize),
             &context,
         )
         .await?;
         rounds += 1;
         let done = req.get("done").and_then(|v| v.as_bool()).unwrap_or(false);
         let reason = req.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let (files, dirs) = super::scan::parse_ai_file_request(&req, project);
+        // 解析顺序很重要：先按设置硬截断（防模型超量点单），再做去重标记——
+        // 若先标记后截断，被截掉的文件会被误标为「已读」，下轮点它会遭到错误去重。
+        let (files, dirs, rejected) = super::scan::parse_ai_file_request(&req, project);
+        let max_n = cfg.explorer_files_per_round as usize;
+        let (files, dirs) = if files.len() > max_n || dirs.len() > max_n {
+            let mut f = files;
+            f.truncate(max_n);
+            let mut d = dirs;
+            d.truncate(max_n);
+            (f, d)
+        } else {
+            (files, dirs)
+        };
+        // 去重：只把「本轮真正会读」的文件记入已读集合
         let fresh: Vec<String> = files
             .into_iter()
             .filter(|f| requested.insert(f.clone()))
@@ -1167,7 +1061,7 @@ async fn ai_explore_project(
             "explore",
             serde_json::json!({
                 "round": rounds,
-                "total": EXPLORER_MAX_ROUNDS,
+                "total": cfg.explorer_rounds as usize,
                 "reason": reason,
                 "done": done,
             }),
@@ -1176,28 +1070,57 @@ async fn ai_explore_project(
             emit_progress(app, "read", serde_json::json!({ "files": fresh }));
         }
         if done || (fresh.is_empty() && dirs.is_empty()) {
+            // 探索结束：done=true 时记录 AI 的收尾理由与最后一批请求（不再读取）
+            if done && !fresh.is_empty() {
+                round_log.push(AiExploreRound {
+                    round: rounds,
+                    reason: reason.clone(),
+                    files: fresh.iter().cloned().collect(),
+                    dirs: dirs.iter().cloned().collect(),
+                    truncated: false,
+                });
+            }
             break;
         }
-        // 读取并压缩这一批文件，作为下一轮上下文（结构 + 已读内容）
+        // 读取并压缩这一批文件，作为下一轮上下文（结构 + 已读内容 + 无效路径回执）
         let mut batch: Vec<(String, Option<String>, bool)> = Vec::new();
         let mut batch_chars = 0usize;
+        let mut batch_truncated = false;
         for rel in &fresh {
-            let per_file = EXPLORER_MAX_CHARS_PER_FILE
-                .min(EXPLORER_MAX_BATCH_CHARS.saturating_sub(batch_chars));
+            let per_file = (cfg.explorer_chars_per_file as usize)
+                .min((cfg.explorer_batch_chars as usize).saturating_sub(batch_chars));
             if per_file == 0 {
                 break;
             }
             let (content, truncated) = super::scan::read_file_compressed(&project.root, rel, per_file);
+            batch_truncated |= truncated;
             batch_chars += content.as_ref().map(|t| t.chars().count()).unwrap_or(0);
             batch.push((rel.clone(), content, truncated));
+        }
+        // 回执：模型点了但不存在/无效的路径明确反馈（含 done 收尾轮，否则模型可能
+        // 反复点同一批不存在的文件白白烧轮次）。
+        if !rejected.is_empty() {
+            emit_progress(
+                app,
+                "reject",
+                serde_json::json!({ "round": rounds, "paths": rejected }),
+            );
         }
         context = format!(
             "{}\n\n{}",
             context,
-            super::scan::format_file_batch(&batch, &dirs)
+            super::scan::format_file_batch(&batch, &dirs, &rejected)
         );
+        // 本轮记录：理由 + 实际读取清单（供导入报告展示探索过程）
+        round_log.push(AiExploreRound {
+            round: rounds,
+            reason: reason.clone(),
+            files: fresh.iter().cloned().collect(),
+            dirs: dirs.iter().cloned().collect(),
+            truncated: batch_truncated,
+        });
     }
-    Ok((context, rounds, files_read))
+    Ok((context, rounds, files_read, round_log))
 }
 
 /// 类型路由主流程：分类 → 逐视图生成（各建独立文档），单个视图失败不影响其它视图。
@@ -1223,35 +1146,64 @@ async fn run_ai_router(
         None => None,
     };
     // 多轮探索（仅项目模式）：AI 每轮请求一批文件，工具读取并压缩内容追加到上下文。
-    // 探索失败不阻断生成，回退为纯结构扫描上下文。
+    // 探索失败不阻断生成，回退为纯结构扫描上下文；但会推送 fail 事件——否则前端
+    // 只看到 AI 停在「扫描完成」很久没有动静，不知道探索已失败、正在走降级路径。
     let mut context = context.to_string();
+    let mut exploration: Vec<AiExploreRound> = Vec::new();
+    // 探索预算来自全局设置（每轮点单上限随 prompt 一起告知 AI）
+    let explorer_cfg = super::settings::load_explorer_settings();
     if let Some(pf) = &project_files {
-        if let Ok((enriched, _rounds, files_read)) =
-            ai_explore_project(app, &usage, cancel, provider, model, &context, pf).await
+        match ai_explore_project(
+            app,
+            &usage,
+            cancel,
+            provider,
+            model,
+            &context,
+            pf,
+            &explorer_cfg,
+        )
+        .await
         {
-            context = enriched;
-            let _ = files_read; // 统计信息目前仅用于日志/调试
+            Ok((enriched, _rounds, files_read, round_log)) => {
+                context = enriched;
+                exploration = round_log;
+                let _ = files_read; // 统计信息目前仅用于日志/调试
+            }
+            Err(e) => {
+                log_ai_transport_failure(app, model, &format!("探索阶段失败（回退为纯结构扫描继续）: {}", e));
+            }
         }
     }
     let context = context.as_str();
-    // 1. 类型路由：判断适合哪些视图（分类失败则回退为单架构视图）
+    // 1. 类型路由：判断适合哪些视图（分类失败则回退为单架构视图；推送 fail
+    // 事件告知前端降级原因，避免长时间「无动静」的假死观感）
     emit_progress(app, "route", serde_json::json!({}));
     let mut views: Vec<String> = vec!["architecture".to_string()];
-    if let Ok(router_json) = call_ai_json(app, &usage, cancel, provider, model, &router_prompt(mode), context).await {
-        if let Some(arr) = router_json.get("views").and_then(|v| v.as_array()) {
-            let picked: Vec<String> = arr
-                .iter()
-                .filter_map(|v| v.get("type").and_then(|t| t.as_str()).map(|s| s.to_string()))
-                .filter(|t| VIEW_LABELS.iter().any(|(k, _)| k == t))
-                .collect();
-            let mut seen = std::collections::HashSet::new();
-            views = picked
-                .into_iter()
-                .filter(|t| seen.insert(t.clone()))
-                .take(3)
-                .collect();
-            if views.is_empty() {
-                views = vec!["architecture".to_string()];
+    match call_ai_json(app, &usage, cancel, provider, model, &router_prompt(mode), context).await {
+        Ok(router_json) => {
+            if let Some(arr) = router_json.get("views").and_then(|v| v.as_array()) {
+                let picked: Vec<String> = arr
+                    .iter()
+                    .filter_map(|v| v.get("type").and_then(|t| t.as_str()).map(|s| s.to_string()))
+                    .filter(|t| VIEW_LABELS.iter().any(|(k, _)| k == t))
+                    .collect();
+                let mut seen = std::collections::HashSet::new();
+                views = picked
+                    .into_iter()
+                    .filter(|t| seen.insert(t.clone()))
+                    .take(3)
+                    .collect();
+                if views.is_empty() {
+                    views = vec!["architecture".to_string()];
+                }
+            }
+        }
+        Err(e) => {
+            // 取消不算降级（run 已被用户终止，后续 cancel 检查会统一处理）；
+            // 其余失败推送 fail 并走单「架构」视图回退，前端进度面板有交代。
+            if !is_cancelled(cancel) {
+                log_ai_transport_failure(app, model, &format!("视图路由失败（回退为单架构视图）: {}", e));
             }
         }
     }
@@ -1391,6 +1343,7 @@ async fn run_ai_router(
         failures,
         reports,
         usage: usage.snapshot(),
+        exploration,
     })
 }
 
@@ -1690,4 +1643,9 @@ mod tests {
         assert!(!is_cancelled(&b2), "drop 后重新创建应为干净标志");
         ai_drop_flag("run-a");
     }
+
+
+
+
+
 }

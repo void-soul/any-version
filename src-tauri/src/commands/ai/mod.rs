@@ -2,6 +2,7 @@
 // 所有 #[tauri::command] 通过 glob 重新导出，lib.rs 的 commands::ai::* 注册保持不变。
 
 pub mod models;
+pub mod channel;
 pub mod config;
 pub mod detect;
 pub mod skills;

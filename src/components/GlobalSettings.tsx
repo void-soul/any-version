@@ -192,6 +192,22 @@ interface Config {
 import type { AiConfig } from "./ai/types";
 import type { ProjectStatus } from "./project/types";
 
+/** 思维导图 AI 探索参数（与后端 ExplorerSettings 对应，camelCase） */
+interface ExplorerSettings {
+  explorerRounds: number;
+  explorerFilesPerRound: number;
+  explorerCharsPerFile: number;
+  explorerBatchChars: number;
+}
+
+/** 各参数的硬钳制范围（与后端一致，前端先拦截明显错误） */
+const EXPLORER_LIMITS = {
+  explorerRounds: { min: 1, max: 12 },
+  explorerFilesPerRound: { min: 1, max: 24 },
+  explorerCharsPerFile: { min: 500, max: 20000 },
+  explorerBatchChars: { min: 4000, max: 60000 },
+} as const;
+
 interface MigrateResult {
   moved_versions: boolean;
   moved_links: boolean;
@@ -253,9 +269,11 @@ export default function GlobalSettings() {
   const [aiDefaultPath, setAiDefaultPath] = useState("");
   const [savingAi, setSavingAi] = useState(false);
   const [aiSaved, setAiSaved] = useState(false);
-  // 划词翻译默认模型（provider + model，持久化到 translate_config.json）
+  // 全局默认 AI 模型（provider + model，持久化到 translate_config.json，
+  // 影响划词翻译/翻译模块、思维导图 AI 导入等未显式指定模型的 AI 功能）
   const [translateProvId, setTranslateProvId] = useState("");
   const [translateModelId, setTranslateModelId] = useState("");
+  const [explorerCfg, setExplorerCfg] = useState<ExplorerSettings | null>(null);
   const [skillProgress, setSkillProgress] =
     useState<SkillMigrateProgress | null>(null);
   const [skillMigrated, setSkillMigrated] = useState(false);
@@ -350,23 +368,27 @@ export default function GlobalSettings() {
 
   const fetchAiConfig = async () => {
     try {
-      const [cfg, tCfg] = await Promise.all([
+      const [cfg, tCfg, exCfg] = await Promise.all([
         invoke<AiConfig>("get_ai_config"),
         invoke<{ providerId: string | null; modelId: string | null; targetLang: string | null }>(
           "get_translate_config",
         ),
+        invoke<ExplorerSettings>("mm_get_explorer_settings"),
       ]);
       setAiConfig(cfg);
+      setExplorerCfg(exCfg);
       setAiDefaultPath(cfg.default_project_path || "");
-      // 划词翻译默认模型：优先使用已保存的，否则默认第一个可用 provider + 其模型
+      // 全局默认模型：优先已保存的；否则回退第一个配置了 OpenAI 端点的供应商（修反了
+      // 的过滤条件）+ 其模型，与后端 resolve 的回退规则保持一致
+      const usable = cfg.providers.filter((p) => p.openai_url && p.api_key);
       const defProv = tCfg.providerId && cfg.providers.some((p) => p.id === tCfg.providerId)
         ? tCfg.providerId!
-        : (cfg.providers.find((p) => !p.openai_url)?.id || cfg.providers[0]?.id || "");
+        : (usable[0]?.id || cfg.providers[0]?.id || "");
       setTranslateProvId(defProv);
       const selP = cfg.providers.find((p) => p.id === defProv);
       const defModel = tCfg.modelId && selP?.models.some((m) => m.id === tCfg.modelId)
         ? tCfg.modelId!
-        : (selP?.models[0]?.id || "");
+        : (selP?.active_model_id && selP.models.some((m) => m.id === selP.active_model_id) ? selP.active_model_id! : selP?.models[0]?.id || "");
       setTranslateModelId(defModel);
     } catch (e) {
       console.error(e);
@@ -401,6 +423,17 @@ export default function GlobalSettings() {
       if (result.skill_migrated) {
         setSkillMigrated(true);
       }
+      // 探索参数与 AI 配置一起保存（失败不阻断主配置保存）
+      if (explorerCfg) {
+        try {
+          const saved = await invoke<ExplorerSettings>("mm_save_explorer_settings", {
+            settings: explorerCfg,
+          });
+          setExplorerCfg(saved);
+        } catch (e) {
+          console.error("保存探索参数失败:", e);
+        }
+      }
       setTimeout(() => setAiSaved(false), 3000);
       setTimeout(() => setSkillMigrated(false), 6000);
     } catch (e: any) {
@@ -412,14 +445,17 @@ export default function GlobalSettings() {
     }
   };
 
-  // 保存划词翻译默认模型
+  // 保存全局默认 AI 模型：走专用命令只写 provider/model 两个字段，
+  // 不触碰同一配置文件里的划词目标语言（旧实现整份覆盖会把它抹掉），
+  // 后端同时广播 global-default-model-changed 让已挂载的 AI 面板即时刷新预填。
   const saveTranslateConfig = async (provId: string, modelId: string) => {
     try {
-      await invoke("save_translate_config", {
-        config: { providerId: provId, modelId: modelId, targetLang: null },
+      await invoke("save_global_default_model", {
+        providerId: provId,
+        modelId,
       });
     } catch (e: any) {
-      console.error("保存翻译默认模型失败:", e);
+      console.error("保存全局默认模型失败:", e);
     }
   };
 
@@ -2066,15 +2102,15 @@ export default function GlobalSettings() {
           </p>
         </div>
 
-        {/* 翻译默认模型 */}
+        {/* 全局默认 AI 模型（影响翻译/划词翻译、思维导图 AI 导入等） */}
         <div className="space-y-2 pt-3 border-t border-white/5">
           <div>
             <label className="text-[10px] text-slate-300 uppercase font-semibold flex items-center gap-1">
-              <Languages className="w-3 h-3 text-emerald-400" />
-              {t("settings.translateDefaultModel")}
+              <Brain className="w-3 h-3 text-violet-400" />
+              {t("settings.globalDefaultModel")}
             </label>
             <p className="text-[9px] text-slate-600 mt-0.5">
-              {t("settings.translateModelHint")}
+              {t("settings.globalModelHint")}
             </p>
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -2109,6 +2145,54 @@ export default function GlobalSettings() {
             </select>
           </div>
         </div>
+
+        {/* 思维导图 AI 探索参数：分析深度与每轮读取预算 */}
+        {explorerCfg && (
+          <div className="space-y-2 pt-3 border-t border-white/5">
+            <div>
+              <label className="text-[10px] text-slate-300 uppercase font-semibold flex items-center gap-1">
+                <Search className="w-3 h-3 text-cyan-400" />
+                {t("settings.explorerParams")}
+              </label>
+              <p className="text-[9px] text-slate-600 mt-0.5">
+                {t("settings.explorerParamsHint")}
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                ["explorerRounds", "settings.explorerRounds", "settings.explorerRoundsHint"],
+                ["explorerFilesPerRound", "settings.explorerFilesHint", ""],
+                ["explorerCharsPerFile", "settings.explorerCharsFile", ""],
+                ["explorerBatchChars", "settings.explorerCharsBatch", ""],
+              ] as const).map(([key, label, hint]) => {
+                const lim = EXPLORER_LIMITS[key];
+                return (
+                  <div key={key}>
+                    <label className="text-[9px] text-slate-400">{t(label)}</label>
+                    <input
+                      type="number"
+                      min={lim.min}
+                      max={lim.max}
+                      value={explorerCfg[key]}
+                      onChange={(e) => {
+                        const n = Number(e.target.value);
+                        if (Number.isNaN(n)) return;
+                        setExplorerCfg({ ...explorerCfg, [key]: n });
+                      }}
+                      onBlur={(e) => {
+                        // 失焦时钳制到合法范围（后端还会再硬钳制一次）
+                        const n = Math.min(lim.max, Math.max(lim.min, Number(e.target.value) || lim.min));
+                        setExplorerCfg({ ...explorerCfg, [key]: n });
+                      }}
+                      className="glass-input px-3 py-2 text-xs font-mono"
+                    />
+                    {hint && <p className="text-[8px] text-slate-600 mt-0.5">{t(hint)}</p>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* 技能市场配置 */}
         <div className="space-y-2 pt-3 border-t border-white/5">

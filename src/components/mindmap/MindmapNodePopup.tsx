@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
-import { Brain, X } from "lucide-react";
+import { Brain, ChevronDown, ListTree, Plus, X } from "lucide-react";
 import { mmApi, type MindmapDocument, type DocumentFull, type MindmapNode, kindColor } from "./types";
 import { MarkdownFieldEditor } from "./MarkdownFieldEditor";
 import { NodeFormFields } from "./NodeFormFields";
@@ -146,6 +146,47 @@ export default function MindmapNodePopup() {
 
   const roots = useMemo(() => full?.nodes.filter((n) => !n.parentId) ?? [], [full]);
 
+  // 「选择归属」树形菜单：三个入口 —— 各文档（含其节点树）、新增根节点。
+  // 树形渲染：文档为一级，节点按深度缩进；选中文档仅切换 docId，
+  // 选中节点切换 (docId, parentId)；「新增根节点」创建新文档并把节点作为其根。
+  const [pickOpen, setPickOpen] = useState(false);
+  const [creatingRoot, setCreatingRoot] = useState(false);
+  const pickRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!pickOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!pickRef.current?.contains(e.target as globalThis.Node)) setPickOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPickOpen(false); };
+    document.addEventListener("mousedown", onDocClick);
+    window.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDocClick); window.removeEventListener("keydown", onKey); };
+  }, [pickOpen]);
+
+  const currentMapLabel = creatingRoot
+    ? t("mmdpop.newFile")
+    : docId
+      ? docs?.find((d) => d.id === docId)?.name ?? t("mmdpop.map")
+      : t("mmdpop.newFile");
+
+  const pickNewRoot = () => {
+    setCreatingRoot(true);
+    setDocId("");
+    setParentId("");
+    setPickOpen(false);
+  };
+  const pickDoc = (id: string) => {
+    setCreatingRoot(false);
+    setDocId(id);
+    setParentId("");
+    setPickOpen(false);
+  };
+  const pickNode = (id: string) => {
+    setCreatingRoot(false);
+    setParentId(id);
+    setPickOpen(false);
+  };
+
   const hide = useCallback(async () => {
     try { await invoke("hide_mindmap_quick_popup"); } catch { /* 窗口可能已关 */ }
   }, []);
@@ -161,12 +202,14 @@ export default function MindmapNodePopup() {
         const doc = await mmApi.create({ name: docName, description: "", sourceType: "manual", folderId: null });
         targetId = doc.id;
         setDocId(doc.id);
+        setCreatingRoot(false);
       }
       const f = full && full.document.id === targetId ? full : await mmApi.load(targetId);
       if (!f) throw new Error(t("mindmap.docLoadFail"));
       const now = new Date().toISOString();
       const c = normalizeHex(color) ?? kindColor("other");
-      const pid = parentId || roots[0]?.id || null;
+      // 明确选择「新文件」时不自动挂到已有根节点，节点作为新文档的根
+      const pid = creatingRoot ? null : (parentId || roots[0]?.id || null);
       const n: MindmapNode = {
         id: `n${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         documentId: targetId, parentId: pid, name: name.trim(), description: description.trim(), detail,
@@ -180,7 +223,7 @@ export default function MindmapNodePopup() {
       window.setTimeout(() => { void hide(); }, 2500);
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); }
-  }, [name, description, detail, busy, docId, newDocName, full, parentId, roots, progress, planAt, repeat, color, hide]);
+  }, [name, description, detail, busy, docId, newDocName, full, parentId, roots, progress, planAt, repeat, color, creatingRoot, hide]);
 
   useEffect(() => { inputRef.current?.focus(); }, [full, docId]);
 
@@ -198,30 +241,64 @@ export default function MindmapNodePopup() {
       </div>
 
       <div ref={contentRef} className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2.5">
-        {/* 目标导图 + 上级节点：同一行双列 */}
-        <div className="grid grid-cols-2 gap-2">
-          <div className="min-w-0">
-            <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">{t("mmdpop.map")}</label>
-            {docs && docs.length > 0 ? (
-              <select value={docId} onChange={(e) => setDocId(e.target.value)} className="h-7 w-full truncate rounded-md border border-white/10 bg-slate-950/70 px-2 text-[11px] text-slate-200 outline-none focus:border-[var(--mm-accent)]">
-                {docs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-            ) : (
-              <input value={newDocName} onChange={(e) => setNewDocName(e.target.value)} placeholder={t("mmdpop.newDocPh2")}
-                className="h-7 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-[11px] text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
-            )}
-          </div>
-          <div className="min-w-0">
-            <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">{t("mmdpop.parentNode")}</label>
-            {loadingDoc ? (
-              <div className="text-[10px] text-slate-600">{t("mmdpop.loading")}</div>
-            ) : childTargets.length > 0 ? (
-              <select value={parentId} onChange={(e) => setParentId(e.target.value)} className="h-7 w-full truncate rounded-md border border-white/10 bg-slate-950/70 px-2 text-[11px] text-slate-200 outline-none focus:border-[var(--mm-accent)]">
-                {childTargets.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-              </select>
-            ) : (
-              <div className="text-[10px] text-slate-600">{t("mmdpop.emptyMapRoot")}</div>
-            )}
+        {/* 目标导图 + 上级节点：树形选择器（文档 → 节点树 / 新文件） */}
+        <div ref={pickRef} className="relative">
+          <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">{t("mmdpop.map")}</label>
+          <button type="button" onClick={() => setPickOpen((v) => !v)}
+            className="flex h-7 w-full items-center justify-between gap-1 truncate rounded-md border border-white/10 bg-slate-950/70 px-2 text-[11px] text-slate-200 outline-none hover:border-[var(--mm-accent)] focus:border-[var(--mm-accent)]">
+            <span className="min-w-0 truncate">{currentMapLabel}{!creatingRoot && parentId ? ` · ${childTargets.find((c) => c.id === parentId)?.label?.trim() ?? ""}` : ""}</span>
+            <ChevronDown className={`h-3 w-3 shrink-0 text-slate-500 transition-transform ${pickOpen ? "rotate-180" : ""}`} />
+          </button>
+          {pickOpen && (
+            <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto rounded-md border border-white/10 bg-[#101827] shadow-2xl shadow-black/50">
+              {/* 新增根节点：创建新文档，节点作为根 */}
+              <button type="button" onClick={pickNewRoot}
+                className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[11px] hover:bg-white/[0.06] ${creatingRoot ? "text-[var(--mm-accent)]" : "text-slate-300"}`}>
+                <Plus className="h-3 w-3 shrink-0 text-emerald-400" />
+                {t("mmdpop.newFile")}
+              </button>
+              {(docs ?? []).map((d) => {
+                return (
+                  <div key={d.id}>
+                    <button type="button" onClick={() => pickDoc(d.id)}
+                      className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[11px] hover:bg-white/[0.06] ${docId === d.id && !creatingRoot ? "text-[var(--mm-accent)]" : "text-slate-200"}`}>
+                      <ListTree className="h-3 w-3 shrink-0 text-slate-500" />
+                      <span className="min-w-0 flex-1 truncate">{d.name}</span>
+                    </button>
+                    {/* 仅当前已加载文档展开节点树（其他文档按需加载：选中即展开） */}
+                    {docId === d.id && childTargets.length > 0 && (
+                      <div className="border-t border-white/5 bg-black/20 py-0.5">
+                        {childTargets.map((ct) => {
+                          const depth = (ct.label.length - ct.label.trimStart().length);
+                          const indent = Math.floor(depth / 2) + 1;
+                          const isCurrent = parentId === ct.id && !creatingRoot;
+                          return (
+                            <button key={ct.id} type="button" onClick={() => pickNode(ct.id)}
+                              className={`flex w-full items-center gap-1 py-1 pr-2 text-left text-[10px] hover:bg-white/[0.06] ${isCurrent ? "text-[var(--mm-accent)]" : "text-slate-400"}`}
+                              style={{ paddingLeft: 10 + indent * 12 }}>
+                              <span className="h-1 w-1 shrink-0 rounded-full" style={{ background: isCurrent ? "var(--mm-accent)" : "#64748b" }} />
+                              <span className="min-w-0 flex-1 truncate">{ct.label.trim()}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {/* 新文件命名（选择「新文件」时显示） */}
+          {creatingRoot && (
+            <input value={newDocName} onChange={(e) => setNewDocName(e.target.value)} placeholder={t("mmdpop.newDocPh2")}
+              className="mt-1 h-7 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-[11px] text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
+          )}
+        </div>
+        {/* 上级节点（只读展示当前选择；节点选择在上方树形菜单完成） */}
+        <div>
+          <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">{t("mmdpop.parentNode")}</label>
+          <div className="flex h-7 w-full items-center truncate rounded-md border border-white/10 bg-slate-950/70 px-2 text-[11px] text-slate-400">
+            {loadingDoc ? t("mmdpop.loading") : creatingRoot ? t("mmdpop.rootNodePh") : parentId ? (childTargets.find((c) => c.id === parentId)?.label?.trim() ?? t("mmdpop.rootNodePh")) : t("mmdpop.rootNodePh")}
           </div>
         </div>
 

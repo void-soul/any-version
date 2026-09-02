@@ -5,6 +5,7 @@ pub mod scan;
 pub mod ignore_rules;
 pub mod commands;
 pub mod quick_popup;
+pub mod settings;
 
 pub use models::*;
 pub use commands::*;

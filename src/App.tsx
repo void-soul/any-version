@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { Activity } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
@@ -7,7 +8,7 @@ import { X, Minus, Square, Download, AlertTriangle, Loader2, FolderOpen, Chevron
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { MODULES, MODULE_MAP, resolveModuleLayout } from "./moduleRegistry";
 import VexAvatar from "./components/VexAvatar";
-import { VEX_CYBER_CYAN, resolveThemeAccent } from "./utils/brand";
+import { VEX_CYBER_ACCENT, VEX_CYBER_CYAN, resolveThemeAccent } from "./utils/brand";
 import { moduleLabel } from "./moduleRegistry";
 import { kiraQuoteLine } from "./utils/kiraQuotes";
 import { vexSay, onVexSay, type VexSayKind } from "./utils/vexSay";
@@ -339,7 +340,7 @@ export default function App() {
   return (
     <div
       className={`w-screen h-screen overflow-hidden bg-[#0d111d] text-slate-100 flex flex-col ${bgTextureClass}`}
-      style={{ fontFamily: effectiveFontFamily }}
+      style={{ fontFamily: effectiveFontFamily, ...moduleThemeVars }}
     >
       {fontFaceCss && <style>{fontFaceCss}</style>}
 
@@ -491,7 +492,7 @@ export default function App() {
                       ? "vex-nav-tab-active text-white"
                       : "text-slate-400 hover:text-slate-200"
                   }`}
-                  style={{ "--neon": (moreModules.find((x) => x.id === activePage)?.color) ?? "#ff2d95" } as React.CSSProperties}
+                  style={{ "--neon": (moreModules.find((x) => x.id === activePage)?.color) ?? VEX_CYBER_ACCENT } as React.CSSProperties}
                   title="更多模块"
                 >
                   <span className="w-3 h-3 flex items-center justify-center">⋯</span>
@@ -583,15 +584,19 @@ export default function App() {
             m.id === "settings"
               ? "h-full w-full flex flex-col overflow-y-auto"
               : "h-full w-full flex flex-col";
-          // 内存优化：默认只渲染当前激活模块，切走即卸载（对应组件内的事件监听/定时器随
-          // unmount 释放；后台服务如 RTSP/HTTP/剪贴板/全局快捷键/mihomo 都由 Rust 后端承载，
-          // 卸载前端面板不影响其运行）。settings/launcher 高频切换，保留常驻避免重新拉数据。
-          const keepAlive = m.id === "settings" || m.id === "launcher";
-          if (!isActive && !keepAlive) return null;
+          // 页面持久化（keep-alive）：用 React 19.2 的 <Activity> 包裹模块。
+          // 切走时 mode="hidden"：UI 状态与 DOM 原样保留（display:none），但组件内的
+          // 事件监听/定时器 Effects 会被销毁，后台零轮询、零开销；切回时恢复状态并重建
+          // Effects（各面板挂载时的拉数据逻辑会自然刷新一次，保证数据不过期）。
+          // 长任务（思维导图 AI 项目/AI 文档、翻译等）不再因切页而中断前端展示——
+          // 进度事件由 utils/eventBuffer 的模块级订阅者缓冲，切回后完整重放。
+          // mountedPages 懒挂载语义保持不变：启动时只挂 launcher，首次访问才挂载对应模块。
           return (
-            <div key={m.id} className={isActive ? containerClass : "hidden"}>
-              <Comp {...extraProps} />
-            </div>
+            <Activity key={m.id} mode={isActive ? "visible" : "hidden"}>
+              <div className={isActive ? containerClass : "hidden"}>
+                <Comp {...extraProps} />
+              </div>
+            </Activity>
           );
         })}
 

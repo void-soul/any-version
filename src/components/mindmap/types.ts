@@ -110,6 +110,20 @@ export interface UsageStats {
   totalTokens: number;
 }
 
+/** AI 项目探索的单轮记录：AI 为什么读这批文件、实际读了什么 */
+export interface AiExploreRound {
+  /** 轮次（从 1 开始） */
+  round: number;
+  /** AI 给出的本轮读取理由（一句话；空串 = 模型未提供） */
+  reason: string;
+  /** 本轮实际读取的文件（相对路径） */
+  files: string[];
+  /** 本轮 AI 请求确认存在的目录（不读取内容） */
+  dirs: string[];
+  /** 本轮读取是否触达单批字符预算（文件被截断时为 true） */
+  truncated: boolean;
+}
+
 /** 某个视图生成失败的原因（不影响其它已成功的视图） */
 export interface AiImportFailure {
   view: string;
@@ -146,6 +160,8 @@ export interface AiImportResult {
   primaryId: string;
   failures: AiImportFailure[];
   reports: AiImportReport[];
+  /** 项目探索过程：每轮读取的文件清单与理由（文本模式 / 探索失败时为空） */
+  exploration: AiExploreRound[];
   /** 本次运行的总体消耗（含类型路由与探索阶段） */
   usage: UsageStats;
 }

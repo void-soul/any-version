@@ -2,7 +2,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
 import {
@@ -22,9 +21,22 @@ import {
 import type { AiConfig } from "../ai/types";
 import { AiImportResult, DocumentFull, MindmapDocument, MindmapFolder, MindmapLink, MindmapNode, MindmapSticker, PlannedOccurrence, PositionInput, kindColor, mmApi } from "./types";
 import { moduleAccent } from "../../utils/theme";
+import { VEX_CYBER_CYAN } from "../../utils/brand";
+import { createEventBuffer, useEventBufferSnapshot, type EventBuffer } from "../../utils/eventBuffer";
 
 const ACCENT = moduleAccent();
 const MM_LAST_DOC_KEY = "any_version_mindmap_last_doc";
+
+// AI 导入进度事件缓冲（模块级，App 生命周期内常驻）：思维导图面板切走/隐藏后，
+// 组件内的 mm-ai-progress 订阅随 Effects 销毁，后端即发即弃的事件会丢；
+// 由缓冲在模块作用域统一订阅并保存载荷，面板重新可见时完整重放（长任务不断流）。
+const mmAiProgressBuffer: EventBuffer<AiProgressEntry> = createEventBuffer<AiProgressEntry>(
+  "mm-ai-progress",
+  {
+    transform: (p) => ({ ...(p as Omit<AiProgressEntry, "at">), at: Date.now() }),
+    limit: 500,
+  }
+);
 const button = "inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.05] px-2 py-1.5 text-[10px] text-slate-300 transition hover:bg-white/[0.1] hover:text-white disabled:opacity-40";
 const selectClass = "h-8 min-w-[110px] rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400/60";
 const DOC_SOURCE_ICONS: Record<string, (cls: string) => React.ReactNode> = {
@@ -231,30 +243,13 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>)
 
 const ColorEdge = memo(function ColorEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps) {
   const [path] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, curvature: 0.28 });
-  const color = (data?.color as string | undefined) ?? "#22d3ee";
+  const color = (data?.color as string | undefined) ?? VEX_CYBER_CYAN;
   const isLink = Boolean(data?.link);
   const label0 = (data?.label as string | undefined) ?? "";
-  const editing = Boolean(data?.editing);
-  const onCommit = data?.onCommit as ((l: string) => void) | undefined;
-  const onStartEdit = data?.onStartEdit as (() => void) | undefined;
-  const onCancel = (data?.onCancel as (() => void) | undefined) ?? (() => {});
   const gid = `mm-edge-${id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-  // 连线中段标签：双击进入编辑（输入框直接落在连线上），回车/失焦保存、Esc 取消。
-  const [value, setValue] = useState(label0);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const cancelledRef = useRef(false);
-  useEffect(() => {
-    if (!editing) return;
-    cancelledRef.current = false;
-    setValue(label0);
-    const t = window.setTimeout(() => { inputRef.current?.focus(); inputRef.current?.select(); }, 0);
-    return () => window.clearTimeout(t);
-  }, [editing, label0]);
-  const commitEdit = () => { if (cancelledRef.current) return; onCommit?.(value.trim()); };
-  const cancelEdit = () => { cancelledRef.current = true; setValue(label0); onCancel?.(); };
 
-  // 额外连线（多输入）：单条虚线，色 = 来源节点类别色，不发散渐变，与树形实线区分；
-  // 输入端名称显示在连线中段的小标签上（缩小隐藏文字时一并隐藏）。
+  // 额外连线（多输入）：单条虚线，色 = 来源节点类别色，与树形实线区分。
+  // 中段标签只读展示来源节点名（不可编辑、不可交互）。
   if (isLink) {
     const showLabel = Boolean(label0) && !data?.hideText;
     const mx = (sourceX + targetX) / 2;
@@ -264,24 +259,13 @@ const ColorEdge = memo(function ColorEdge({ id, sourceX, sourceY, targetX, targe
       <marker id={`arrowlink-${gid}`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill={color} /></marker>
       {showLabel && (
         <EdgeLabelRenderer>
-          {editing ? (
-            <input ref={inputRef} value={value} onChange={(e) => setValue(e.target.value)}
-              onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") commitEdit(); else if (e.key === "Escape") cancelEdit(); }}
-              onBlur={commitEdit}
-              className="nodrag nopan w-[150px] rounded-md border border-cyan-400/70 bg-slate-950 px-2 py-1 text-[10px] text-slate-100 shadow-lg outline-none"
-              style={{ position: "absolute", transform: `translate(-50%, -50%) translate(${mx}px, ${my}px)`, pointerEvents: "all", zIndex: 12 }} />
-          ) : (
-            <div onClick={(e) => e.stopPropagation()}
-              onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); onStartEdit?.(); }}
-              className="nodrag nopan cursor-pointer rounded-md border bg-[#0d1524]/95 px-2 py-0.5 text-[9.5px] leading-4 text-slate-300 shadow transition hover:border-cyan-400/70 hover:text-white"
-              style={{ borderColor: `${color}66`, position: "absolute", transform: `translate(-50%, -50%) translate(${mx}px, ${my}px)`, pointerEvents: "all", zIndex: 11 }}>
-              <span className="inline-flex items-center gap-1 whitespace-nowrap">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
-                {label0}
-              </span>
-            </div>
-          )}
+          <div className="nodrag nopan rounded-md border bg-[#0d1524]/95 px-2 py-0.5 text-[9.5px] leading-4 text-slate-300 shadow"
+            style={{ borderColor: `${color}66`, position: "absolute", transform: `translate(-50%, -50%) translate(${mx}px, ${my}px)`, pointerEvents: "none", zIndex: 11 }}>
+            <span className="inline-flex items-center gap-1 whitespace-nowrap">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
+              {label0}
+            </span>
+          </div>
         </EdgeLabelRenderer>
       )}
     </>);
@@ -1015,6 +999,14 @@ interface AiProgressEntry {
   // 流式输出（step=stream）：累计字符数与末尾预览
   length?: number;
   text?: string;
+  // 断流重连（step=reconnect）：第几次续写/重发、上限、已收到的字符数、是否携带断点续写；
+  // send=true 表示「连接阶段」重试（请求未成功发出/未拿到响应头），否则为断点续写
+  attempt?: number;
+  max?: number;
+  resume?: boolean;
+  send?: boolean;
+  // 无效点单回执（step=reject）：AI 本轮请求了目录结构里不存在的路径
+  paths?: string[];
   // 前端收到时打的时间戳（ms）
   at?: number;
 }
@@ -1024,8 +1016,10 @@ const STEP_ICONS: Record<string, React.ReactNode> = {
   explore: <Brain className="h-3 w-3 text-violet-300" />,
   read: <File className="h-3 w-3 text-emerald-300" />,
   route: <LayoutGrid className="h-3 w-3 text-amber-300" />,
+  reconnect: <RotateCcw className="h-3 w-3 text-orange-300" />,
   view: <Sparkles className="h-3 w-3 text-cyan-300" />,
   repair: <RotateCcw className="h-3 w-3 text-amber-300" />,
+  reject: <AlertTriangle className="h-3 w-3 text-yellow-300" />,
   fail: <AlertTriangle className="h-3 w-3 text-red-300" />,
   usage: <Coins className="h-3 w-3 text-emerald-300" />,
   stream: <Terminal className="h-3 w-3 text-emerald-300" />,
@@ -1065,8 +1059,14 @@ function progressText(e: AiProgressEntry, t: (k: string, o?: any) => string): st
         : t("mindmap.aiStepRouting");
     case "view":
       return t("mindmap.aiStepView", { view: viewLabel(t, e.view ?? "") });
+    case "reconnect":
+      return e.send
+        ? t("mindmap.aiStepReconnectSend", { n: e.attempt ?? 0, max: e.max ?? 0, msg: e.detail ?? "" })
+        : t("mindmap.aiStepReconnectResume", { n: e.attempt ?? 0, max: e.max ?? 0, chars: e.length ?? 0 });
     case "repair":
       return t("mindmap.aiStepRepair", { count: e.count ?? 0, rounds: e.rounds ?? 0 });
+    case "reject":
+      return t("mindmap.aiStepReject", { paths: (e.paths ?? []).join(", ") });
     case "fail":
       return t("mindmap.aiStepFail", { msg: e.detail ?? "" });
     case "usage":
@@ -1082,10 +1082,12 @@ function progressText(e: AiProgressEntry, t: (k: string, o?: any) => string): st
 
 /** IDE 式实时过程面板：AI 导入期间的每一步（扫描、每轮探索、读取的文件、视图生成、
  *  修复轮次、每次请求的 token 用量）+ 实时累计统计（请求数/输入/输出/总 token/用时）。
- *  后端通过 Tauri 事件 "mm-ai-progress" 推送结构化步骤，token 事件来自响应里的 usage 字段。 */
+ *  后端通过 Tauri 事件 "mm-ai-progress" 推送结构化步骤，token 事件来自响应里的 usage 字段。
+ *  事件由模块级缓冲（mmAiProgressBuffer）统一接收：面板切走再切回时历史完整重放，
+ *  不会因隐藏期间订阅失效而丢失任何进度。 */
 function AiProgressLog({ projectRoot, onStop }: { projectRoot?: string | null; onStop?: () => void }) {
   const { t } = useTranslation();
-  const [entries, setEntries] = useState<AiProgressEntry[]>([]);
+  const entries = useEventBufferSnapshot(mmAiProgressBuffer);
   const [totals, setTotals] = useState({ req: 0, in: 0, out: 0, total: 0 });
   const [model, setModel] = useState("");
   const [streamInfo, setStreamInfo] = useState<{ length: number; text: string } | null>(null);
@@ -1093,42 +1095,41 @@ function AiProgressLog({ projectRoot, onStop }: { projectRoot?: string | null; o
   const [now, setNow] = useState(() => Date.now());
   const boxRef = useRef<HTMLDivElement | null>(null);
 
+  // 从缓冲重放：初始化 totals/model/stream/cancelled 状态（组件挂载或切回时跑一次，
+  // 覆盖隐藏期间到达的事件，保证统计与最终状态与实际任务进度一致）。
+  // 依赖 buffer.version：缓冲内容变化（含 clear）时重新演算一遍。
+  const replayRef = useRef(-1);
   useEffect(() => {
-    const un = listen<AiProgressEntry>("mm-ai-progress", (e) => {
-      const p = { ...e.payload, at: Date.now() };
-      // 用户点「停止」：后端各循环/流式块边界会推送 cancel 事件
+    if (replayRef.current === mmAiProgressBuffer.version()) return;
+    replayRef.current = mmAiProgressBuffer.version();
+    const list = mmAiProgressBuffer.snapshot();
+    setTotals({ req: 0, in: 0, out: 0, total: 0 });
+    setModel("");
+    setCancelled(false);
+    setStreamInfo(null);
+    for (const p of list) {
       if (p.step === "cancel") {
         setCancelled(true);
         setStreamInfo(null);
-        setEntries(prev => [...prev.slice(-199), p]);
-        return;
+        continue;
       }
-      // 流式输出：只更新时间线里的开始/完成两条，其余节流帧只更新实时预览区
       if (p.step === "stream") {
         if (p.done) {
           setStreamInfo(null);
-          setEntries(prev => [...prev.slice(-199), { step: "stream", done: true, length: p.length, at: p.at }]);
-          return;
+          continue;
         }
         setStreamInfo({ length: p.length ?? 0, text: p.text ?? "" });
-        setEntries(prev => {
-          const l = prev[prev.length - 1];
-          if (l && l.step === "stream") return prev;
-          return [...prev.slice(-199), { step: "stream", at: p.at }];
-        });
-        return;
+        continue;
       }
       setStreamInfo(null);
-      setEntries(prev => [...prev.slice(-199), p]);
       if (p.step === "usage") {
         const inT = p.prompt_tokens ?? 0;
         const outT = p.completion_tokens ?? 0;
         setTotals(prev => ({ req: prev.req + 1, in: prev.in + inT, out: prev.out + outT, total: prev.total + (p.total_tokens ?? inT + outT) }));
         if (p.model) setModel(p.model);
       }
-    });
-    return () => { void un.then(f => f()); };
-  }, []);
+    }
+  }, [entries]);
 
   // 用时秒表：每秒刷新当前时间，驱动总耗时跳动
   useEffect(() => {
@@ -1140,9 +1141,23 @@ function AiProgressLog({ projectRoot, onStop }: { projectRoot?: string | null; o
     if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
   }, [entries]);
 
-  const last = entries[entries.length - 1];
-  const startedAt = entries[0]?.at ?? now;
-  const elapsed = entries.length ? now - startedAt : 0;
+  // 时间线视图：把缓冲里的节流 stream 帧折叠为「开始 + 完成」两行（与旧组件内订阅
+  // 行为一致），其余步骤原样保留；中间帧只用于实时预览区（streamInfo）。
+  const timeline = useMemo(() => {
+    const out: AiProgressEntry[] = [];
+    for (const p of entries) {
+      if (p.step === "stream" && !p.done) {
+        const l = out[out.length - 1];
+        if (l && l.step === "stream" && !l.done) continue;
+      }
+      out.push(p);
+    }
+    return out;
+  }, [entries]);
+
+  const last = timeline[timeline.length - 1];
+  const startedAt = timeline[0]?.at ?? now;
+  const elapsed = timeline.length ? now - startedAt : 0;
 
   return (
     <div className="overflow-hidden rounded-lg border border-white/10 bg-slate-950/90" title={t("mindmap.aiProgressLog")}>
@@ -1190,8 +1205,8 @@ function AiProgressLog({ projectRoot, onStop }: { projectRoot?: string | null; o
       </div>
       {/* 时间线：时间戳 + 步骤图标 + 文本 + 每步耗时 */}
       <div ref={boxRef} className="max-h-44 space-y-0.5 overflow-y-auto px-2.5 py-1.5 font-mono text-[9px] leading-relaxed">
-        {entries.map((e, i) => {
-          const prev = entries[i - 1];
+        {timeline.map((e, i) => {
+          const prev = timeline[i - 1];
           const dt = prev && e.at !== undefined ? e.at - (prev.at ?? e.at) : 0;
           return (
             <div key={i} className="flex items-baseline gap-1.5">
@@ -1247,6 +1262,7 @@ function AiImportReportModal({ result, onClose, onOpenDoc }: {
   onOpenDoc: (id: string) => void;
 }) {
   const { t } = useTranslation();
+  const [expOpen, setExpOpen] = useState(false);
   const allOk = result.reports.length > 0 && result.reports.every(r => r.diagnostics.length === 0) && result.failures.length === 0;
   return createPortal(
     <div className="fixed inset-0 z-[210] modal-mask flex items-center justify-center bg-black/70 p-4 backdrop-blur-[3px]" onClick={onClose}>
@@ -1263,6 +1279,45 @@ function AiImportReportModal({ result, onClose, onOpenDoc }: {
             <span className="font-mono tabular-nums text-slate-400">{t("mindmap.aiRunUsageLine", { req: result.usage.requests, in: fmtNum(result.usage.inputTokens), out: fmtNum(result.usage.outputTokens), total: fmtNum(result.usage.totalTokens) })}</span>
           </div>
         )}
+        {/* 项目探索过程：每轮 AI 点单的理由 + 实际读取的文件清单（可折叠） */}
+        {result.exploration && result.exploration.length > 0 && (() => {
+          const expFiles = result.exploration.reduce((n, r) => n + r.files.length, 0);
+          return (
+            <div className="mb-2 rounded-lg border border-white/10 bg-white/[0.03]">
+              <button type="button"
+                onClick={() => setExpOpen(v => !v)}
+                className="flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-left">
+                <span className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-300">
+                  <Search className="h-3 w-3 text-cyan-300" />
+                  {t("mindmap.aiExploreTitle", { rounds: result.exploration.length, files: expFiles })}
+                </span>
+                {expOpen ? <ChevronDown className="h-3 w-3 shrink-0 text-slate-400" /> : <ChevronRight className="h-3 w-3 shrink-0 text-slate-400" />}
+              </button>
+              {expOpen && (
+                <div className="space-y-1.5 border-t border-white/5 px-3 py-2">
+                  {result.exploration.map(r => (
+                    <div key={r.round}>
+                      <div className="text-[9px] text-slate-400">
+                        <span className="mr-1 rounded border border-cyan-400/30 bg-cyan-400/10 px-1 py-px font-mono text-cyan-300">#{r.round}</span>
+                        {r.reason || t("mindmap.aiExploreNoReason")}
+                      </div>
+                      {(r.files.length > 0 || r.dirs.length > 0) && (
+                        <div className="mt-0.5 flex flex-wrap gap-1">
+                          {r.files.map(f => (
+                            <span key={f} className="rounded bg-white/[0.05] px-1 py-px font-mono text-[8px] text-slate-400" title={f}>{f}</span>
+                          ))}
+                          {r.dirs.map(d => (
+                            <span key={d} className="rounded bg-white/[0.05] px-1 py-px font-mono text-[8px] text-slate-500" title={d}>{d}/</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
         <div className="max-h-[60vh] space-y-2 overflow-y-auto pr-1">
           {result.reports.length === 0 && (
             <p className="py-4 text-center text-[10px] text-slate-500">{t("mindmap.noViewsGenerated")}</p>
@@ -1380,18 +1435,6 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     const hide = vp.zoom < ZOOM_HIDE_TEXT;
     if (hide !== zoomHideRef.current) { zoomHideRef.current = hide; setZoomHide(hide); }
   }, []);
-  // 连线中段标签的编辑状态：同一时刻只允许编辑一条连线
-  const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
-  // Alt 拖拽 = 强制创建额外连线：一旦按下 Alt（拖拽中或开始时）即按连线处理。
-  const altDragRef = useRef(false);
-  const connectStartAltRef = useRef(false);
-  useEffect(() => {
-    const down = (e: KeyboardEvent) => { if (e.key === "Alt" || e.key === "F10") altDragRef.current = true; };
-    const up = (e: KeyboardEvent) => { if (e.key === "Alt" || e.key === "F10") altDragRef.current = false; };
-    window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
-    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
-  }, []);
   // 切换文档时清空位置覆盖（新文档用其自身已保存坐标或自动布局）
   useEffect(() => { setPosOverrides({}); }, [full.document.id]);
   // 切换文档时恢复该文档保存的布局方向（避免沿用上一份导图的方向）
@@ -1473,26 +1516,10 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     const source = connection.source;
     const target = connection.target;
     if (!source || !target || source === target || !byId.has(source) || !byId.has(target)) return;
-    // 连到额外输入口：该端口已有连线（槽位被占用），忽略以防歧义。
-    if (connection.targetHandle?.startsWith("link-")) return;
+    // 单父约束：一个节点只允许一个入口（树形结构）。目标已有父节点时忽略本次连线。
     const child = byId.get(target)!;
-    const links = full.links ?? [];
-    // 按住 Alt 拖拽 = 强制创建额外连线；否则按「目标是否已有父节点」自动判断。
-    const forceLink = connectStartAltRef.current || altDragRef.current;
-    if (forceLink || child.parentId) {
-      if (links.some(l => l.sourceId === source && l.targetId === target)) return;
-      const now = new Date().toISOString();
-      const link: MindmapLink = {
-        id: `lk${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        documentId: full.document.id, sourceId: source, targetId: target,
-        label: byId.get(source)?.name ?? "", createdAt: now, updatedAt: now,
-      };
-      onHistoryPush();
-      void mmApi.upsertLink({ link });
-      onDocumentUpdate({ ...full, links: [...links, link] });
-      return;
-    }
-    // 目标没有父节点且未按 Alt → 连为树形父节点（原有逻辑）；不能连到自己的后代，否则成环。
+    if (child.parentId) return;
+    // 不能连到自己的后代，否则成环。
     let cursor: string | null = source;
     const seen = new Set<string>();
     while (cursor && !seen.has(cursor)) {
@@ -1681,21 +1708,17 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       out.push({ id: `mm-e-${n.id}`, source: n.parentId, target: n.id, sourceHandle: "out", targetHandle: "in", type: "colorE", style: isOnChain ? { strokeWidth: 2, opacity: 0.9 } : {},
         data: { color: effectiveNodeColor(n) }, markerEnd: { type: MarkerType.ArrowClosed, color: "#f8fafc" } } as Edge);
     }
-    // 额外连线（虚线，进对应端口）
+    // 额外连线（虚线，进对应端口）。只读展示：标签 = 来源节点名，无编辑操作
     for (const l of full.links ?? []) {
       if (!visible.has(l.sourceId) || !visible.has(l.targetId)) continue;
       out.push({ id: `mm-l-${l.id}`, source: l.sourceId, target: l.targetId, sourceHandle: `link-${l.id}`, targetHandle: `link-${l.id}`, type: "colorE",
         data: {
           color: effectiveNodeColor(byId.get(l.sourceId)!), link: true,
-          label: l.label.trim() || (byId.get(l.sourceId)?.name ?? ""), hideText: zoomHide,
-          editing: editingLinkId === l.id,
-          onStartEdit: () => setEditingLinkId(l.id),
-          onCommit: (lb: string) => { setEditingLinkId(null); upsertLink({ ...l, label: lb }); },
-          onCancel: () => setEditingLinkId(null),
+          label: byId.get(l.sourceId)?.name ?? "", hideText: zoomHide,
         } } as Edge);
     }
     return out;
-  }, [visibleNodes, full, byId, highlightChain, zoomHide, editingLinkId, upsertLink]);
+  }, [visibleNodes, full, byId, highlightChain, zoomHide]);
 
   // 受控节点：React Flow 拖放时把位置写入 posOverrides。仅处理 position 变更，
   // 选择由 selectedId 管理。一次 setState → 一次渲染 → 收敛，无反馈循环。
@@ -1882,7 +1905,6 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     <div className="relative h-full min-h-0">
       <ReactFlow nodes={flowNodes} edges={edges} nodeTypes={mmNodeTypes} edgeTypes={mmEdgeTypes}
         onNodesChange={onNodesChange} onNodeDragStop={onNodeDragStop} onConnect={onConnect} onMove={onViewportMove}
-        onConnectStart={(e) => { connectStartAltRef.current = Boolean((e as MouseEvent).altKey); }} onConnectEnd={() => { connectStartAltRef.current = false; }}
         onNodeContextMenu={(e, n) => onNodeContextMenu(e, n as Node)} minZoom={0.1} maxZoom={2.5} nodesConnectable
         proOptions={{ hideAttribution: true }}>
         <MiniMap style={{ backgroundColor: "#080f1c", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95"
@@ -1891,7 +1913,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
         <Controls className="canvas-flow-controls" showInteractive={false} />
       </ReactFlow>
 
-      {/* 连线规则提示：拖拽＝按目标状态自动判断；按住 Alt 拖拽＝强制创建额外连线 */}
+      {/* 连线规则提示：拖拽连线 = 设置父节点；一个节点只能有一个父节点 */}
       <div className="pointer-events-none absolute bottom-2 left-1/2 z-10 -translate-x-1/2">
         <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-white/10 bg-slate-900/80 px-2.5 py-1 text-[9px] text-slate-400 shadow backdrop-blur">
           <Link2 className="h-2.5 w-2.5 text-cyan-300/80" />{t("mindmap.connectHint")}
@@ -2180,10 +2202,23 @@ export default function MindmapPanel() {
     }).catch(() => {});
     // 同步后端：更新托盘小红点（今天有计划时点亮），系统通知同一天只弹一次
     void invoke("mm_refresh_plan_badge").catch(() => {});
-    void invoke<AiConfig>("get_ai_config").then(cfg => {
+    // AI 供应商/模型预填：优先全局默认 AI 模型（全局设置中选择，与翻译/划词翻译共享），
+    // 失效或未设置时回退第一个可用供应商（与后端 resolve 的回退规则一致）。
+    void Promise.all([
+      invoke<AiConfig>("get_ai_config"),
+      invoke<{ providerId: string | null; modelId: string | null }>("get_translate_config").catch(() => ({ providerId: null, modelId: null })),
+    ]).then(([cfg, gDef]) => {
       setConfig(cfg);
-      const p = cfg.providers.find(x => x.api_key && x.openai_url) ?? cfg.providers[0];
-      if (p) { setProviderId(p.id); setModelId(p.active_model_id ?? p.models[0]?.id ?? ""); }
+      const usable = cfg.providers.filter(x => x.api_key && x.openai_url);
+      const p = (gDef.providerId && cfg.providers.find(x => x.id === gDef.providerId && x.api_key && x.openai_url))
+        ?? usable[0]
+        ?? cfg.providers[0];
+      if (!p) return;
+      setProviderId(p.id);
+      // 模型：全局默认模型（校验仍属于该供应商）> 供应商激活模型 > 第一个模型
+      const mid = (gDef.modelId && p.models.some(m => m.id === gDef.modelId) ? gDef.modelId : null)
+        ?? p.active_model_id ?? p.models[0]?.id ?? "";
+      setModelId(mid);
     }).catch(() => setError(t("mindmap.aiCfgFail")));
   }, []);
 
@@ -2507,6 +2542,7 @@ export default function MindmapPanel() {
     if (!full || !projectPath || !providerId || !modelId) return;
     const runId = crypto.randomUUID ? crypto.randomUUID() : `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     aiRunIdRef.current = runId;
+    mmAiProgressBuffer.clear(); // 新一轮导入：清空进度缓冲，日志面板从零开始
     setAiLoading(true); setError("");
     try {
       const r = await mmApi.aiFromProject({ documentId: full.document.id, projectPath, providerId: providerId || null, modelId: modelId || null, userHint: aiProjectHint.trim() || null, runId });
@@ -2522,6 +2558,7 @@ export default function MindmapPanel() {
     if (!full || !textInput.trim() || !providerId || !modelId) return;
     const runId = crypto.randomUUID ? crypto.randomUUID() : `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     aiRunIdRef.current = runId;
+    mmAiProgressBuffer.clear(); // 新一轮导入：清空进度缓冲，日志面板从零开始
     setAiLoading(true); setError("");
     try {
       const r = await mmApi.aiFromText({ documentId: full.document.id, text: textInput, title: textTitle || full.document.name, providerId: providerId || null, modelId: modelId || null, runId });

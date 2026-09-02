@@ -2,10 +2,20 @@
 
 /* ─── vex 赛博电子风全局 token ───
    双色体系：紫红主（--vex-primary，即签名主色）＋ 青点缀（--vex-cyan）。
-   全 App 的 --module-accent 已统一为紫红主色；青色只做描边/点缀，形成明确 duo-tone。 */
+   全 App 的 --module-accent 已统一为紫红主色；青色只做描边/点缀，形成明确 duo-tone。
+
+   回退色集中管理：所有 var() 回退值统一引用下面的 --vex-fallback-primary /
+   --vex-fallback-cyan（定义在 :root，全局可见），不再散落硬编码 hex。
+   改签名色只需改这两处（加上 brand.ts 的 TS 常量）。 */
 @theme {
   --color-vex-primary: #ff2d95;
   --color-vex-cyan: #22d3ee;
+}
+
+:root {
+  /* var() 回退色唯一出处（CSS 侧）：各处 var(--neon, var(--vex-fallback-primary)) */
+  --vex-fallback-primary: #ff2d95;
+  --vex-fallback-cyan: #22d3ee;
 }
 
 /* 皮肤语义 token：统一应用层明暗皮肤。
@@ -80,8 +90,8 @@
 /* 霓虹发光：给激活态/头像/卡片统一辉光 */
 .vex-neon {
   box-shadow:
-    0 0 8px color-mix(in srgb, var(--vex-primary, #ff2d95) 45%, transparent),
-    0 0 22px color-mix(in srgb, var(--vex-primary, #ff2d95) 22%, transparent);
+    0 0 8px color-mix(in srgb, var(--vex-primary, var(--vex-fallback-primary)) 45%, transparent),
+    0 0 22px color-mix(in srgb, var(--vex-primary, var(--vex-fallback-primary)) 22%, transparent);
 }
 
 /* ── 赛博霓虹灯增强 ──
@@ -92,27 +102,27 @@
 .vex-neon-text {
   color: #fdeff7;
   text-shadow:
-    0 0 6px color-mix(in srgb, var(--neon, var(--vex-primary, #ff2d95)) 90%, transparent),
-    0 0 18px color-mix(in srgb, var(--neon, var(--vex-primary, #ff2d95)) 55%, transparent),
-    0 0 42px color-mix(in srgb, var(--neon, var(--vex-primary, #ff2d95)) 30%, transparent);
+    0 0 6px color-mix(in srgb, var(--neon, var(--vex-primary, var(--vex-fallback-primary))) 90%, transparent),
+    0 0 18px color-mix(in srgb, var(--neon, var(--vex-primary, var(--vex-fallback-primary))) 55%, transparent),
+    0 0 42px color-mix(in srgb, var(--neon, var(--vex-primary, var(--vex-fallback-primary))) 30%, transparent);
 }
 
 /* 青色霓虹文字（点缀句） */
 .vex-neon-text-cyan {
   color: #d9fbff;
   text-shadow:
-    0 0 6px color-mix(in srgb, var(--cyan, var(--vex-cyan, #22d3ee)) 90%, transparent),
-    0 0 18px color-mix(in srgb, var(--cyan, var(--vex-cyan, #22d3ee)) 55%, transparent),
-    0 0 40px color-mix(in srgb, var(--cyan, var(--vex-cyan, #22d3ee)) 30%, transparent);
+    0 0 6px color-mix(in srgb, var(--cyan, var(--vex-cyan, var(--vex-fallback-cyan))) 90%, transparent),
+    0 0 18px color-mix(in srgb, var(--cyan, var(--vex-cyan, var(--vex-fallback-cyan))) 55%, transparent),
+    0 0 40px color-mix(in srgb, var(--cyan, var(--vex-cyan, var(--vex-fallback-cyan))) 30%, transparent);
 }
 
 /* 激活态霓虹发光：主色辉光环（模块胶囊 / 图标按钮激活态） */
 .vex-neon-ring {
   box-shadow:
-    inset 0 0 8px color-mix(in srgb, var(--neon, #ff2d95) 35%, transparent),
-    0 0 6px color-mix(in srgb, var(--neon, #ff2d95) 50%, transparent),
-    0 0 16px color-mix(in srgb, var(--neon, #ff2d95) 32%, transparent),
-    0 0 30px color-mix(in srgb, var(--neon, #ff2d95) 15%, transparent);
+    inset 0 0 8px color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 35%, transparent),
+    0 0 6px color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 50%, transparent),
+    0 0 16px color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 32%, transparent),
+    0 0 30px color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 15%, transparent);
 }
 
 /* 悬停霓虹：交互元素鼠标移过泛光（青描边为主，避免喧宾夺主） */
@@ -121,8 +131,8 @@
 }
 .vex-neon-hover:hover {
   box-shadow:
-    0 0 8px color-mix(in srgb, var(--cyan, var(--vex-cyan, #22d3ee)) 40%, transparent),
-    0 0 20px color-mix(in srgb, var(--cyan, var(--vex-cyan, #22d3ee)) 22%, transparent);
+    0 0 8px color-mix(in srgb, var(--cyan, var(--vex-cyan, var(--vex-fallback-cyan))) 40%, transparent),
+    0 0 20px color-mix(in srgb, var(--cyan, var(--vex-cyan, var(--vex-fallback-cyan))) 22%, transparent);
 }
 
 /* ── 共享按钮霓虹：统一注入到 shared/Button.tsx 的四类按钮 ──
@@ -133,8 +143,8 @@
 }
 .vex-btn-neon:hover:not(:disabled) {
   box-shadow:
-    0 0 8px color-mix(in srgb, var(--neon, var(--vex-primary, #ff2d95)) 45%, transparent),
-    0 0 18px color-mix(in srgb, var(--neon, var(--vex-primary, #ff2d95)) 26%, transparent);
+    0 0 8px color-mix(in srgb, var(--neon, var(--vex-primary, var(--vex-fallback-primary))) 45%, transparent),
+    0 0 18px color-mix(in srgb, var(--neon, var(--vex-primary, var(--vex-fallback-primary))) 26%, transparent);
 }
 .vex-btn-neon:active:not(:disabled) {
   transform: translateY(0.5px);
@@ -144,14 +154,14 @@
 .vex-btn-neon-primary:not(:disabled) {
   box-shadow:
     inset 0 0 6px color-mix(in srgb, white 18%, transparent),
-    0 0 8px color-mix(in srgb, var(--neon, var(--vex-primary, #ff2d95)) 40%, transparent),
-    0 0 18px color-mix(in srgb, var(--neon, var(--vex-primary, #ff2d95)) 22%, transparent);
+    0 0 8px color-mix(in srgb, var(--neon, var(--vex-primary, var(--vex-fallback-primary))) 40%, transparent),
+    0 0 18px color-mix(in srgb, var(--neon, var(--vex-primary, var(--vex-fallback-primary))) 22%, transparent);
 }
 .vex-btn-neon-primary:hover:not(:disabled) {
   box-shadow:
     inset 0 0 6px color-mix(in srgb, white 24%, transparent),
-    0 0 12px color-mix(in srgb, var(--neon, var(--vex-primary, #ff2d95)) 60%, transparent),
-    0 0 30px color-mix(in srgb, var(--neon, var(--vex-primary, #ff2d95)) 36%, transparent);
+    0 0 12px color-mix(in srgb, var(--neon, var(--vex-primary, var(--vex-fallback-primary))) 60%, transparent),
+    0 0 30px color-mix(in srgb, var(--neon, var(--vex-primary, var(--vex-fallback-primary))) 36%, transparent);
 }
 
 /* 危险按钮：玫红辉光 */
@@ -168,8 +178,8 @@ button[class*="module-accent"] {
 }
 button[class*="module-accent"]:hover:not(:disabled) {
   box-shadow:
-    0 0 8px color-mix(in srgb, var(--neon, var(--vex-primary, #ff2d95)) 48%, transparent),
-    0 0 20px color-mix(in srgb, var(--neon, var(--vex-primary, #ff2d95)) 28%, transparent);
+    0 0 8px color-mix(in srgb, var(--neon, var(--vex-primary, var(--vex-fallback-primary))) 48%, transparent),
+    0 0 20px color-mix(in srgb, var(--neon, var(--vex-primary, var(--vex-fallback-primary))) 28%, transparent);
 }
 button[class*="module-accent"]:active:not(:disabled) {
   transform: translateY(0.5px);
@@ -179,8 +189,8 @@ button[class*="module-accent"]:active:not(:disabled) {
 [class*="rounded-full"][class*="bg-[var(--module-accent)]"]:not(:disabled) {
   box-shadow:
     inset 0 0 5px color-mix(in srgb, white 16%, transparent),
-    0 0 7px color-mix(in srgb, var(--neon, var(--vex-primary, #ff2d95)) 52%, transparent),
-    0 0 18px color-mix(in srgb, var(--neon, var(--vex-primary, #ff2d95)) 30%, transparent);
+    0 0 7px color-mix(in srgb, var(--neon, var(--vex-primary, var(--vex-fallback-primary))) 52%, transparent),
+    0 0 18px color-mix(in srgb, var(--neon, var(--vex-primary, var(--vex-fallback-primary))) 30%, transparent);
 }
 
 /* 隐藏滚动条但保留滚动能力（顶栏导航胶囊溢出时用） */
@@ -201,26 +211,26 @@ button[class*="module-accent"]:active:not(:disabled) {
 }
 .vex-nav-tab:hover:not(:disabled) {
   color: #eef2ff;
-  background-color: color-mix(in srgb, var(--neon, #ff2d95) 12%, transparent);
+  background-color: color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 12%, transparent);
   box-shadow:
-    inset 0 0 8px color-mix(in srgb, var(--neon, #ff2d95) 14%, transparent),
-    0 0 8px color-mix(in srgb, var(--neon, #ff2d95) 28%, transparent);
+    inset 0 0 8px color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 14%, transparent),
+    0 0 8px color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 28%, transparent);
 }
 .vex-nav-tab:hover:not(:disabled) svg,
 .vex-nav-tab:focus-visible svg {
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--neon, #ff2d95) 85%, transparent));
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 85%, transparent));
 }
 .vex-nav-tab-active,
 .vex-nav-tab-active:hover {
   color: #fff;
   background-image:
-    radial-gradient(130% 160% at 50% -25%, color-mix(in srgb, var(--neon, #ff2d95) 45%, transparent), transparent 66%),
-    linear-gradient(180deg, color-mix(in srgb, var(--neon, #ff2d95) 24%, transparent), color-mix(in srgb, var(--neon, #ff2d95) 7%, transparent));
+    radial-gradient(130% 160% at 50% -25%, color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 45%, transparent), transparent 66%),
+    linear-gradient(180deg, color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 24%, transparent), color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 7%, transparent));
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, white 24%, transparent),
-    inset 0 0 10px color-mix(in srgb, var(--neon, #ff2d95) 30%, transparent),
-    0 0 8px color-mix(in srgb, var(--neon, #ff2d95) 55%, transparent),
-    0 0 20px color-mix(in srgb, var(--neon, #ff2d95) 30%, transparent);
+    inset 0 0 10px color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 30%, transparent),
+    0 0 8px color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 55%, transparent),
+    0 0 20px color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 30%, transparent);
 }
 .vex-nav-tab-active::after {
   content: "";
@@ -230,26 +240,26 @@ button[class*="module-accent"]:active:not(:disabled) {
   bottom: 1px;
   height: 2px;
   border-radius: 2px;
-  background: linear-gradient(90deg, transparent, var(--neon, #ff2d95), var(--cyan, #22d3ee), transparent);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--neon, #ff2d95) 90%, transparent);
+  background: linear-gradient(90deg, transparent, var(--neon, var(--vex-fallback-primary)), var(--cyan, var(--vex-fallback-cyan)), transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 90%, transparent);
 }
 .vex-nav-tab-active svg {
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--neon, #ff2d95) 90%, transparent));
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 90%, transparent));
 }
 
 /* 霓虹细线（顶栏底部 / 分隔）：紫到青的渐变辉光 hairline */
 .vex-neon-line {
-  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--neon, #ff2d95) 65%, transparent), color-mix(in srgb, var(--cyan, #22d3ee) 55%, transparent), transparent);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 65%, transparent), color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 55%, transparent), transparent);
   opacity: 0.9;
 }
 
 /* 呼吸辉光：像霓虹灯在低压时轻微闪动 */
 @keyframes vex-neon-breathe {
   0%, 100% {
-    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--neon, #ff2d95) 60%, transparent)) drop-shadow(0 0 12px color-mix(in srgb, var(--neon, #ff2d95) 35%, transparent));
+    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 60%, transparent)) drop-shadow(0 0 12px color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 35%, transparent));
   }
   50% {
-    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--neon, #ff2d95) 85%, transparent)) drop-shadow(0 0 20px color-mix(in srgb, var(--neon, #ff2d95) 50%, transparent));
+    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 85%, transparent)) drop-shadow(0 0 20px color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 50%, transparent));
   }
 }
 .vex-neon-breathe {
@@ -260,11 +270,11 @@ button[class*="module-accent"]:active:not(:disabled) {
    所有文本录入与轻选择类交互统一用青色，与主色高亮按钮形成 duo-tone 分工：
    青 = 输入/选中/悬停交互，主色 = 高亮动作按钮。 */
 .vex-input-cyan:focus {
-  border-color: var(--cyan, #22d3ee) !important;
+  border-color: var(--cyan, var(--vex-fallback-cyan)) !important;
   box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--cyan, #22d3ee) 26%, transparent),
-    0 0 12px color-mix(in srgb, var(--cyan, #22d3ee) 34%, transparent),
-    0 0 26px color-mix(in srgb, var(--cyan, #22d3ee) 16%, transparent) !important;
+    0 0 0 2px color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 26%, transparent),
+    0 0 12px color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 34%, transparent),
+    0 0 26px color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 16%, transparent) !important;
   outline: none;
 }
 
@@ -274,26 +284,26 @@ button[class*="module-accent"]:active:not(:disabled) {
 }
 .vex-chip:hover {
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--cyan, #22d3ee) 40%, transparent),
-    0 0 10px color-mix(in srgb, var(--cyan, #22d3ee) 28%, transparent);
+    0 0 0 1px color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 40%, transparent),
+    0 0 10px color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 28%, transparent);
 }
 .vex-chip-active {
-  border-color: var(--cyan, #22d3ee) !important;
-  color: color-mix(in srgb, var(--cyan, #22d3ee) 70%, white) !important;
+  border-color: var(--cyan, var(--vex-fallback-cyan)) !important;
+  color: color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 70%, white) !important;
   box-shadow:
-    0 0 8px color-mix(in srgb, var(--cyan, #22d3ee) 40%, transparent),
-    0 0 20px color-mix(in srgb, var(--cyan, #22d3ee) 22%, transparent) !important;
+    0 0 8px color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 40%, transparent),
+    0 0 20px color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 22%, transparent) !important;
 }
 
 /* 选中态 tab（分段/页签）：青色霓虹辉光 */
 .vex-tab-active {
-  border-color: var(--cyan, #22d3ee) !important;
-  color: color-mix(in srgb, var(--cyan, #22d3ee) 72%, white) !important;
-  background: color-mix(in srgb, var(--cyan, #22d3ee) 14%, transparent) !important;
+  border-color: var(--cyan, var(--vex-fallback-cyan)) !important;
+  color: color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 72%, white) !important;
+  background: color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 14%, transparent) !important;
   box-shadow:
-    inset 0 0 6px color-mix(in srgb, var(--cyan, #22d3ee) 16%, transparent),
-    0 0 10px color-mix(in srgb, var(--cyan, #22d3ee) 32%, transparent),
-    0 0 24px color-mix(in srgb, var(--cyan, #22d3ee) 18%, transparent) !important;
+    inset 0 0 6px color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 16%, transparent),
+    0 0 10px color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 32%, transparent),
+    0 0 24px color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 18%, transparent) !important;
 }
 
 /* 报错 Toast 辉光双闪：弹出瞬间亮-灭-稳两段衰减，像紧急警报灯闪两下后停稳，
@@ -356,9 +366,9 @@ button[class*="module-accent"]:active:not(:disabled) {
 /* 环境光晕：内容区两侧淡淡的霓虹氛围光（叠在底图之上），随 --neon 色同步 */
 .vex-neon-ambient {
   background:
-    radial-gradient(700px 420px at 8% -8%, color-mix(in srgb, var(--neon, #ff2d95) 14%, transparent), transparent 62%),
-    radial-gradient(720px 460px at 104% 16%, color-mix(in srgb, var(--cyan, #22d3ee) 12%, transparent), transparent 60%),
-    radial-gradient(760px 520px at 88% 108%, color-mix(in srgb, var(--neon, #ff2d95) 10%, transparent), transparent 66%);
+    radial-gradient(700px 420px at 8% -8%, color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 14%, transparent), transparent 62%),
+    radial-gradient(720px 460px at 104% 16%, color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 12%, transparent), transparent 60%),
+    radial-gradient(760px 520px at 88% 108%, color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 10%, transparent), transparent 66%);
   pointer-events: none;
 }
 
@@ -368,10 +378,10 @@ button[class*="module-accent"]:active:not(:disabled) {
   border: 1px solid transparent;
   background:
     linear-gradient(var(--color-surface-modal, #101827), var(--color-surface-modal, #101827)) padding-box,
-    linear-gradient(135deg, var(--vex-primary, #ff2d95), var(--vex-cyan, #22d3ee)) border-box;
+    linear-gradient(135deg, var(--vex-primary, var(--vex-fallback-primary)), var(--vex-cyan, var(--vex-fallback-cyan))) border-box;
   box-shadow:
-    0 0 14px color-mix(in srgb, var(--vex-primary, #ff2d95) 16%, transparent),
-    0 0 34px color-mix(in srgb, var(--vex-cyan, #22d3ee) 12%, transparent);
+    0 0 14px color-mix(in srgb, var(--vex-primary, var(--vex-fallback-primary)) 16%, transparent),
+    0 0 34px color-mix(in srgb, var(--vex-cyan, var(--vex-fallback-cyan)) 12%, transparent);
 }
 
 /* 霓虹渐变描边（仅描边，不铺底色）：叠在气泡/卡片原有半透明底之上，
@@ -381,10 +391,10 @@ button[class*="module-accent"]:active:not(:disabled) {
   border: 1px solid transparent;
   background:
     linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0)) padding-box,
-    linear-gradient(135deg, var(--vex-primary, #ff2d95), var(--vex-cyan, #22d3ee)) border-box;
+    linear-gradient(135deg, var(--vex-primary, var(--vex-fallback-primary)), var(--vex-cyan, var(--vex-fallback-cyan))) border-box;
   box-shadow:
-    0 0 10px color-mix(in srgb, var(--vex-primary, #ff2d95) 22%, transparent),
-    0 0 26px color-mix(in srgb, var(--vex-cyan, #22d3ee) 14%, transparent);
+    0 0 10px color-mix(in srgb, var(--vex-primary, var(--vex-fallback-primary)) 22%, transparent),
+    0 0 26px color-mix(in srgb, var(--vex-cyan, var(--vex-fallback-cyan)) 14%, transparent);
 }
 
 /* 赛博网格暗纹背景（tile 网格） */
@@ -399,9 +409,11 @@ button[class*="module-accent"]:active:not(:disabled) {
 .app-bg-grid { background-image: linear-gradient(rgba(255,255,255,0.035) 1px,transparent 1px), linear-gradient(90deg,rgba(255,255,255,0.035) 1px,transparent 1px); background-size: 28px 28px; }
 .app-bg-dots { background-image: radial-gradient(rgba(148,163,184,0.14) 1px, transparent 1.5px); background-size: 18px 18px; }
 .app-bg-scanline { background-image: repeating-linear-gradient(to bottom, rgba(255,255,255,0.05) 0 1px, transparent 1px 3px); background-size: 100% 3px; }
+/* 极光：radial 光晕。用 background-image + color-mix 回退色，
+   --module-accent 未定义时不至于整条声明失效。 */
 .app-bg-aurora {
-  background:
-    radial-gradient(900px 520px at 12% -6%, color-mix(in srgb, var(--module-accent) 26%, transparent), transparent 60%),
+  background-image:
+    radial-gradient(900px 520px at 12% -6%, color-mix(in srgb, var(--module-accent, var(--vex-fallback-primary)) 26%, transparent), transparent 60%),
     radial-gradient(800px 600px at 108% 8%, rgba(34,211,238,0.16), transparent 55%);
 }
 .app-bg-solid { background: transparent; }
@@ -431,7 +443,7 @@ button[class*="module-accent"]:active:not(:disabled) {
   background-image:
     linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px),
-    radial-gradient(circle, color-mix(in srgb, var(--module-accent) 18%, transparent) 1px, transparent 1.5px);
+    radial-gradient(circle, color-mix(in srgb, var(--module-accent, var(--vex-fallback-primary)) 18%, transparent) 1px, transparent 1.5px);
   background-size: 32px 32px, 32px 32px, 32px 32px;
 }
 .app-bg-waves {
@@ -446,13 +458,13 @@ button[class*="module-accent"]:active:not(:disabled) {
   background-size: 7px 7px, 9px 9px, 11px 11px;
 }
 .app-bg-vignette {
-  background:
+  background-image:
     radial-gradient(1200px 700px at 50% 45%, transparent 55%, rgba(0,0,0,0.45) 100%),
-    radial-gradient(800px 500px at 50% 40%, color-mix(in srgb, var(--module-accent) 10%, transparent), transparent 65%);
+    radial-gradient(800px 500px at 50% 40%, color-mix(in srgb, var(--module-accent, var(--vex-fallback-primary)) 10%, transparent), transparent 65%);
 }
 .app-bg-neonline {
   background-image:
-    repeating-linear-gradient(90deg, color-mix(in srgb, var(--module-accent) 14%, transparent) 0 1px, transparent 1px 48px),
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--module-accent, var(--vex-fallback-primary)) 14%, transparent) 0 1px, transparent 1px 48px),
     repeating-linear-gradient(0deg, rgba(34,211,238,0.08) 0 1px, transparent 1px 48px);
 }
 
@@ -520,11 +532,11 @@ button[class*="module-accent"]:active:not(:disabled) {
 }
 
 .glass-input:focus {
-  border-color: var(--cyan, #22d3ee);
+  border-color: var(--cyan, var(--vex-fallback-cyan));
   box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--cyan, #22d3ee) 26%, transparent),
-    0 0 12px color-mix(in srgb, var(--cyan, #22d3ee) 34%, transparent),
-    0 0 26px color-mix(in srgb, var(--cyan, #22d3ee) 16%, transparent);
+    0 0 0 2px color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 26%, transparent),
+    0 0 12px color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 34%, transparent),
+    0 0 26px color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 16%, transparent);
   outline: none;
 }
 
@@ -544,11 +556,11 @@ select,
 }
 select:focus,
 .glass-panel select:focus {
-  border-color: var(--cyan, #22d3ee);
+  border-color: var(--cyan, var(--vex-fallback-cyan));
   box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--cyan, #22d3ee) 26%, transparent),
-    0 0 12px color-mix(in srgb, var(--cyan, #22d3ee) 34%, transparent),
-    0 0 26px color-mix(in srgb, var(--cyan, #22d3ee) 16%, transparent);
+    0 0 0 2px color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 26%, transparent),
+    0 0 12px color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 34%, transparent),
+    0 0 26px color-mix(in srgb, var(--cyan, var(--vex-fallback-cyan)) 16%, transparent);
 }
 select option,
 .glass-panel select option {

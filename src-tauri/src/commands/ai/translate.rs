@@ -9,14 +9,19 @@
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 use super::config::load_ai_config;
+use super::channel;
 
-/// 划词翻译的独立配置（provider + model + 目标语言）。
+/// 全局默认 AI 模型配置（provider + model）+ 划词翻译目标语言。
+///
+/// 此配置在全局设置中选择，是所有未显式指定模型的 AI 功能的默认取值，
+/// 当前影响：划词翻译/翻译模块、思维导图 AI 导入（AI 项目/AI 文档）。
+/// future：新 AI 功能接入时优先复用此默认，避免逐模块重复选择。
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TranslateConfig {
-    /// 选中的供应商 id；为空 = 默认取第一个可用供应商
+    /// 全局默认供应商 id；为空 = 默认取第一个可用供应商
     pub provider_id: Option<String>,
-    /// 选中的模型 id（该供应商下的一个模型）
+    /// 全局默认模型 id（该供应商下的一个模型）
     pub model_id: Option<String>,
     /// 划词翻译默认目标语言（如 "中文"、"English"）；为空 = 中文
     pub target_lang: Option<String>,
@@ -226,32 +231,64 @@ pub fn save_translate_config(config: TranslateConfig) -> Result<(), String> {
     crate::commands::config::atomic_write_file(&translate_config_path(), data.as_bytes())
 }
 
+/// 保存全局默认 AI 模型（仅 provider + model，不触碰 target_lang），
+/// 并广播 "global-default-model-changed" 事件，让翻译模块/思维导图等
+/// 依赖默认模型的已挂载面板即时刷新预填。
+#[tauri::command]
+pub fn save_global_default_model(
+    app: tauri::AppHandle,
+    provider_id: String,
+    model_id: String,
+) -> Result<(), String> {
+    let mut cfg = load_translate_config();
+    cfg.provider_id = Some(provider_id);
+    cfg.model_id = Some(model_id);
+    save_translate_config(cfg)?;
+    let saved = load_translate_config();
+    let _ = app.emit(
+        "global-default-model-changed",
+        serde_json::json!({ "providerId": saved.provider_id, "modelId": saved.model_id }),
+    );
+    Ok(())
+}
+
 /// 从 AiConfig 解析出一个可用的 (provider, model_id)，按优先级：
-/// 1. 显式传入的 provider_id + model_id
-/// 2. 保存的划词翻译配置
+/// 1. 显式传入的 provider_id + model_id（如面板当前选择）
+/// 2. 全局默认 AI 模型（translate_config.json，全局设置中选择）——校验其可用性，
+///    供应商被删/未配 key 或模型不存在时静默回退到第 3 级，不让功能直接报错
 /// 3. 任意第一个有 api_key 且配置了 OpenAI 端点的供应商 + 其 active_model_id
-fn resolve_translation_target(
+///
+/// `saved` 由调用方传入（生产环境 = load_translate_config()；测试可注入任意值），
+/// 保证本函数纯函数化、可离线单测。
+fn resolve_translation_target_with(
     cfg: &crate::commands::ai::models::AiConfig,
+    saved: &TranslateConfig,
     provider_id: &Option<String>,
     model_id: &Option<String>,
 ) -> Result<(crate::commands::ai::models::AiProvider, String), String> {
-    let saved = load_translate_config();
-    let pid = provider_id.clone().or(saved.provider_id);
-    let mid = model_id.clone().or(saved.model_id);
-
-    let provider = if let Some(pid) = &pid {
-        cfg.providers
-            .iter()
-            .find(|p| &p.id == pid)
-            .cloned()
-            .ok_or_else(|| format!("未找到供应商: {}", pid))?
-    } else {
-        cfg.providers
-            .iter()
-            .find(|p| !p.api_key.is_empty() && !p.openai_url.is_empty())
-            .cloned()
-            .ok_or_else(|| "没有配置了 OpenAI 端点和 API Key 的供应商".to_string())?
-    };
+    // 全局默认供应商可用（存在且配置了端点与 key）才采用；否则回退首个可用供应商。
+    // 注意：默认模型必须与其所属供应商一起回退——跨供应商拼 (默认供应商, 显式模型 id)
+    // 可能命中不存在的模型 id。
+    let (provider, mid): (crate::commands::ai::models::AiProvider, Option<String>) =
+        if let Some(pid) = provider_id {
+            let p = cfg
+                .providers
+                .iter()
+                .find(|p| &p.id == pid)
+                .cloned()
+                .ok_or_else(|| format!("未找到供应商: {}", pid))?;
+            (p, model_id.clone())
+        } else {
+            match &saved.provider_id {
+                Some(gpid) => match cfg.providers.iter().find(|p| &p.id == gpid) {
+                    Some(p) if !p.openai_url.is_empty() && !p.api_key.is_empty() => {
+                        (p.clone(), model_id.clone().or(saved.model_id.clone()))
+                    }
+                    _ => fallback_provider(cfg)?,
+                },
+                None => fallback_provider(cfg)?,
+            }
+        };
 
     if provider.openai_url.is_empty() {
         return Err(format!("供应商「{}」未配置 OpenAI 兼容端点", provider.name));
@@ -260,7 +297,7 @@ fn resolve_translation_target(
         return Err(format!("供应商「{}」未配置 API Key", provider.name));
     }
 
-    // 模型：显式 model_id > 该供应商 active_model_id > 该供应商第一个模型 > 报错
+    // 模型：显式 model_id / 全局默认 model_id > 该供应商 active_model_id > 该供应商第一个模型 > 报错
     let model = mid
         .clone()
         .or_else(|| provider.active_model_id.clone())
@@ -270,7 +307,26 @@ fn resolve_translation_target(
     Ok((provider, model))
 }
 
-/// 翻译文本。`target_lang` 为目标语言描述（如 "中文"、"English"、"日文"）；
+/// 回退供应商：第一个有 api_key 且配置了 OpenAI 端点的供应商。
+fn fallback_provider(cfg: &crate::commands::ai::models::AiConfig) -> Result<(crate::commands::ai::models::AiProvider, Option<String>), String> {
+    let p = cfg
+        .providers
+        .iter()
+        .find(|p| !p.api_key.is_empty() && !p.openai_url.is_empty())
+        .cloned()
+        .ok_or_else(|| "没有配置了 OpenAI 端点和 API Key 的供应商".to_string())?;
+    Ok((p, None))
+}
+
+/// 生产入口：读取磁盘上的全局默认配置后委托给纯函数 resolve_translation_target_with。
+fn resolve_translation_target(
+    cfg: &crate::commands::ai::models::AiConfig,
+    provider_id: &Option<String>,
+    model_id: &Option<String>,
+) -> Result<(crate::commands::ai::models::AiProvider, String), String> {
+    let saved = load_translate_config();
+    resolve_translation_target_with(cfg, &saved, provider_id, model_id)
+}
 /// 为空则让模型自动判断源语言并翻译成中文。
 /// 成功后自动写入翻译历史（面板 / 划词悬浮窗统一入口）。
 #[tauri::command]
@@ -302,85 +358,29 @@ pub async fn translate_text(
         target
     );
 
-    let base_url = provider.openai_url.trim_end_matches('/').to_string();
-    let url = if base_url.ends_with("/v1") {
-        format!("{}/chat/completions", base_url)
-    } else {
-        format!("{}/v1/chat/completions", base_url)
-    };
-
-    let body = serde_json::json!({
-        "model": model,
-        "messages": [
-            { "role": "system", "content": system_prompt },
-            { "role": "user", "content": text }
-        ],
-        "stream": false,
-        "temperature": 0.3,
-    });
-
-    // 诊断：记录实际使用的供应商、模型、请求地址与参数
+    // 诊断：记录实际使用的供应商与模型（请求地址由共享通道按端点推导）
     crate::exit_log!(
         "[翻译] provider_id={} provider_name={} model={}",
         provider.id,
         provider.name,
         model
     );
-    crate::exit_log!("[翻译] 请求地址: {}", url);
-    crate::exit_log!(
-        "[翻译] 请求体(截断): {}",
-        serde_json::to_string(&body).unwrap_or_default().chars().take(300).collect::<String>()
-    );
+    crate::exit_log!("[翻译] 请求地址: {}", channel::completion_url(&provider.openai_url));
 
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", provider.api_key))
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .timeout(std::time::Duration::from_secs(120))
-        .send()
+    // 共享 AI 请求通道（ai/channel.rs）：TTFB 超时 + send 重试提供连接韧性；
+    // 非流式调用无断点续写能力，失败时在错误上补齐供应商上下文便于定位。
+    let outcome = channel::complete_chat(&channel::NoHooks, &provider, &model, &system_prompt, &text, 0.3, None)
         .await
-        .map_err(|e| format!("翻译请求失败: {}", e))?;
-
-    let status = resp.status();
-    let value: serde_json::Value = resp.json().await.map_err(|e| format!("解析响应失败: {}", e))?;
-
-    if !status.is_success() {
-        let msg = value
-            .get("error")
-            .and_then(|e| e.get("message"))
-            .and_then(|m| m.as_str())
-            .unwrap_or("未知错误");
-        crate::exit_log!(
-            "[翻译] 接口错误 ({}): {} 完整响应: {}",
-            status.as_u16(),
-            msg,
-            serde_json::to_string(&value).unwrap_or_default()
-        );
-        return Err(format!(
-            "翻译接口返回错误 ({}): {}（供应商: {}，模型: {}，地址: {}）",
-            status.as_u16(),
-            msg,
-            provider.name,
-            model,
-            url
-        ));
-    }
-
-    let content = value
-        .get("choices")
-        .and_then(|c| c.get(0))
-        .and_then(|ch| ch.get("message"))
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-
-    if content.is_empty() {
-        return Err("翻译结果为空".to_string());
-    }
+        .map_err(|e| {
+            format!(
+                "{}（供应商: {}，模型: {}，地址: {}）",
+                e,
+                provider.name,
+                model,
+                channel::completion_url(&provider.openai_url)
+            )
+        })?;
+    let content = outcome.text;
 
     // 记录翻译历史（面板 / 悬浮窗共用），并通知前端刷新
     let ts = std::time::SystemTime::now()
@@ -657,13 +657,15 @@ pub async fn trigger_selection_translate(
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 
-    // 3. 目标语言：显式传入 > 文本语言自动判断 > 划词翻译配置 > 默认中文。
-    // 快捷键通常用于把选中的中文翻译成英文，因此中文文本默认目标设为 English。
+    // 3. 目标语言：显式传入 > 文本语言自动判断。
+    // 含中文 → 英文；不含中文 → 中文。
+    // 注意：不再回退 translate_config.target_lang —— 旧配置残留（如 "English"）
+    // 会让英文选中文本永远翻译成英文，覆盖不了「按语言自动判断」的预期。
     let target = target_lang
         .filter(|s| !s.trim().is_empty())
-        .or_else(|| contains_cjk(&text).then(|| "English".to_string()))
-        .or_else(|| load_translate_config().target_lang.filter(|s| !s.trim().is_empty()))
-        .unwrap_or_else(|| "中文".to_string());
+        .unwrap_or_else(|| {
+            if contains_cjk(&text) { "English".to_string() } else { "中文".to_string() }
+        });
     let request_id = TRANSLATE_REQUEST_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
 
     // 窗口操作（show/set_focus）与事件推送必须在 Tauri 主线程执行，
@@ -744,4 +746,107 @@ pub async fn show_translate_result(app: tauri::AppHandle, source: String, result
     });
     emit_translate_payload(&app, &payload);
     Ok(())
+}
+
+#[cfg(test)]
+mod global_default_tests {
+    use super::*;
+    use crate::commands::ai::models::{AiConfig, AiProvider, ModelEntry};
+
+    fn provider(id: &str, key: &str, url: &str, models: &[&str], active: Option<&str>) -> AiProvider {
+        AiProvider {
+            id: id.to_string(),
+            name: id.to_string(),
+            category: "provider".to_string(),
+            api_key: key.to_string(),
+            website: String::new(),
+            openai_url: url.to_string(),
+            anthropic_url: String::new(),
+            google_url: String::new(),
+            models: models
+                .iter()
+                .map(|m| ModelEntry { id: m.to_string(), name: m.to_string(), custom_params: vec![] })
+                .collect(),
+            active_model_id: active.map(|s| s.to_string()),
+        }
+    }
+
+    fn config(providers: Vec<AiProvider>) -> AiConfig {
+        AiConfig {
+            providers,
+            proxy_port: 15721,
+            default_project_path: String::new(),
+            rectifier: Default::default(),
+            optimizer: Default::default(),
+            skills_dir: String::new(),
+            tool_symlinks: Default::default(),
+        }
+    }
+
+    /// 全局默认指向已删除的供应商 → 回退首个可用供应商（且不携带默认 model_id）
+    #[test]
+    fn fallback_when_default_provider_missing() {
+        let cfg = config(vec![
+            provider("a", "", "https://x/v1", &["m1"], None),     // 无 key，不可用
+            provider("b", "sk-1", "https://y/v1", &["m2"], None), // 首个可用
+        ]);
+        let saved = TranslateConfig { provider_id: Some("gone".into()), model_id: Some("mx".into()), target_lang: None };
+        let (p, m) = resolve_translation_target_with(&cfg, &saved, &None, &None).unwrap();
+        assert_eq!(p.id, "b");
+        assert_eq!(m, "m2");
+    }
+
+    /// 全局默认供应商可用 → 采用默认供应商 + 默认模型
+    #[test]
+    fn uses_global_default_when_valid() {
+        let cfg = config(vec![
+            provider("a", "sk-1", "https://x/v1", &["m1", "m2"], Some("m1")),
+            provider("b", "sk-2", "https://y/v1", &["m3"], None),
+        ]);
+        let saved = TranslateConfig { provider_id: Some("b".into()), model_id: Some("m3".into()), target_lang: None };
+        let (p, m) = resolve_translation_target_with(&cfg, &saved, &None, &None).unwrap();
+        assert_eq!(p.id, "b");
+        assert_eq!(m, "m3");
+    }
+
+    /// 显式传入的模型优先于全局默认
+    #[test]
+    fn explicit_params_win_over_default() {
+        let cfg = config(vec![provider("a", "sk-1", "https://x/v1", &["m1", "m2"], None)]);
+        let saved = TranslateConfig { provider_id: Some("a".into()), model_id: Some("m1".into()), target_lang: None };
+        let (p, m) = resolve_translation_target_with(&cfg, &saved, &Some("a".into()), &Some("m2".into())).unwrap();
+        assert_eq!(p.id, "a");
+        assert_eq!(m, "m2");
+    }
+
+    /// 全局默认供应商存在但未配 key → 回退首个可用
+    #[test]
+    fn fallback_when_default_provider_not_ready() {
+        let cfg = config(vec![
+            provider("a", "sk-1", "https://x/v1", &["m1"], None),
+            provider("b", "", "https://y/v1", &["m2"], None), // 默认指向 b（无 key）
+        ]);
+        let saved = TranslateConfig { provider_id: Some("b".into()), model_id: Some("m2".into()), target_lang: None };
+        let (p, m) = resolve_translation_target_with(&cfg, &saved, &None, &None).unwrap();
+        assert_eq!(p.id, "a");
+        assert_eq!(m, "m1");
+    }
+
+    /// 无默认配置时（全新安装）回退首个可用供应商
+    #[test]
+    fn fallback_when_no_default_saved() {
+        let cfg = config(vec![provider("a", "sk-1", "https://x/v1", &["m1"], None)]);
+        let saved = TranslateConfig::default();
+        let (p, m) = resolve_translation_target_with(&cfg, &saved, &None, &None).unwrap();
+        assert_eq!(p.id, "a");
+        assert_eq!(m, "m1");
+    }
+
+    /// 没有任何可用供应商时明确报错
+    #[test]
+    fn errors_when_no_usable_provider() {
+        let cfg = config(vec![provider("a", "", "https://x/v1", &["m1"], None)]);
+        let saved = TranslateConfig::default();
+        assert!(resolve_translation_target_with(&cfg, &saved, &None, &None).is_err());
+    }
 }

@@ -167,11 +167,12 @@ export default function TranslatePopup() {
     if (sourceText) retranslate({ modelId: mid });
   };
 
-  // 保存模型选择（作为全局默认，逻辑同翻译模块）
+  // 保存模型选择（全局默认 AI 模型；专用命令不触碰划词目标语言配置）
   const saveTranslateModel = (pid: string, mid: string) => {
-    invoke("save_translate_config", {
-      config: { providerId: pid, modelId: mid, targetLang: null },
-    }).catch((e) => console.error("保存翻译默认模型失败:", e));
+    invoke("save_global_default_model", {
+      providerId: pid,
+      modelId: mid,
+    }).catch((e) => console.error("保存全局默认模型失败:", e));
   };
 
   useEffect(() => {
@@ -421,8 +422,10 @@ export default function TranslatePopup() {
           </select>
         </div>
 
-        {/* 内容区：原文(可编辑) + 译文 + 翻译按钮 */}
-        <div className="px-3 py-2.5 space-y-2.5 max-h-[360px] overflow-y-auto">
+        {/* 内容区：原文(可编辑) + 译文 + 翻译按钮。
+            scrollbar-gutter:stable 让滚动条槽位常驻——loading 与译文高度不同时
+            滚动条出现/消失不再引起内容宽度跳变（窗口元素抖动）。 */}
+        <div className="px-3 py-2.5 space-y-2.5 max-h-[360px] overflow-y-auto [scrollbar-gutter:stable]">
           {/* 原文：可编辑 textarea */}
           <div>
             <div className="flex items-center justify-between mb-1">
@@ -463,8 +466,9 @@ export default function TranslatePopup() {
             </button>
           </div>
 
-          {/* 译文 */}
-          <div>
+          {/* 译文：固定最小高度，loading（进度条）与结果切换时高度不变，
+              避免内容区高度变化引发滚动条/宽度抖动 */}
+          <div className="min-h-[46px] flex flex-col justify-start">
             <div className="flex items-center justify-between mb-1">
               <span className="text-[9px] text-slate-500">{t("translate.translated")}</span>
               {result?.result && (

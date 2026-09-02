@@ -4,10 +4,8 @@
 //! 调用 AI 模块（AiConfig）中用户选定的供应商+模型，让 AI 按 Postman
 //! Collection v2.1 标准输出 JSON → 程序解析并导入（复用 api_import_postman 链路）。
 //!
-//! 与外部 AI 工具无关，仅通过用户已配置的供应商（含 api_key、openai_url）发起
-//! 一次非流式 chat/completions 请求，与 ai/translate.rs 同一套模式。
-
-use serde_json::Value;
+//! 与外部 AI 工具无关，通过用户已配置的供应商（含 api_key、openai_url）
+//! 发起非流式 chat/completions 请求（共享通道 ai/channel.rs，与 ai/translate.rs 同一套模式）。
 
 use super::models::ApiProject;
 use super::commands::{api_import_postman, load_project_template};
@@ -198,63 +196,25 @@ pub async fn api_import_with_ai(
         project.name
     ));
 
-    let base_url = provider.openai_url.trim_end_matches('/').to_string();
-    let url = if base_url.ends_with("/v1") {
-        format!("{}/chat/completions", base_url)
-    } else {
-        format!("{}/v1/chat/completions", base_url)
-    };
-    let body = serde_json::json!({
-        "model": model,
-        "messages": [
-            { "role": "system", "content": "你是接口分析专家，只输出 Postman Collection v2.1 格式的合法 JSON。" },
-            { "role": "user", "content": prompt }
-        ],
-        "stream": false,
-        "temperature": 0.2,
-    });
-
+    // 共享 AI 请求通道（ai/channel.rs）：TTFB 超时 + send 重试提供连接韧性。
     crate::exit_log!(
-        "[api-ai-import] provider={} model={} url={} prompt_chars={}",
+        "[api-ai-import] provider={} model={} prompt_chars={}",
         provider.name,
         model,
-        url,
         prompt.len()
     );
 
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", provider.api_key))
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .timeout(std::time::Duration::from_secs(600))
-        .send()
-        .await
-        .map_err(|e| format!("AI 请求失败: {}", e))?;
-
-    let status = resp.status();
-    let value: Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析 AI 响应失败: {}", e))?;
-    if !status.is_success() {
-        let msg = value
-            .get("error")
-            .and_then(|e| e.get("message"))
-            .and_then(|m| m.as_str())
-            .unwrap_or("未知错误");
-        return Err(format!("AI 供应商返回错误 ({}): {}", status, msg));
-    }
-    let content = value
-        .get("choices")
-        .and_then(|c| c.as_array())
-        .and_then(|c| c.first())
-        .and_then(|c| c.get("message"))
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-        .ok_or("AI 响应中没有内容字段")?
-        .to_string();
+    let outcome = crate::commands::ai::channel::complete_chat(
+        &crate::commands::ai::channel::NoHooks,
+        &provider,
+        &model,
+        "你是接口分析专家，只输出 Postman Collection v2.1 格式的合法 JSON。",
+        &prompt,
+        0.2,
+        None,
+    )
+    .await?;
+    let content = outcome.text;
 
     // 5. 提取 JSON 并导入
     let json = extract_json(&content)?;
@@ -273,6 +233,7 @@ pub async fn api_import_with_ai(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     #[test]
     fn extract_json_strips_markdown_fence() {

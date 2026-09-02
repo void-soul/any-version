@@ -627,6 +627,7 @@ pub fn run() {
             commands::ai::translate::translate_text,
             commands::ai::translate::get_translate_config,
             commands::ai::translate::save_translate_config,
+            commands::ai::translate::save_global_default_model,
             commands::ai::translate::trigger_selection_translate,
             commands::ai::translate::hide_translate_popup,
             commands::ai::translate::show_translate_result,
@@ -858,6 +859,8 @@ pub fn run() {
                 commands::tasks::tasks_delete_sticker,
 
                 // ---- 思维导图模块（统一画布：需求 + 任务 + AI） ----
+                commands::mindmap::settings::mm_get_explorer_settings,
+                commands::mindmap::settings::mm_save_explorer_settings,
                 commands::mindmap::mm_init,
                 commands::mindmap::mm_list_documents,
                 commands::mindmap::mm_create_document,
