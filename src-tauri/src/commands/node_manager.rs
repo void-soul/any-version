@@ -813,6 +813,68 @@ fn npx_install_args(prefix: Vec<String>, runtime_dir: &Path, spec: String) -> Ve
     args
 }
 
+/// pnpm 安装参数：`pnpm add --dir <运行目录> --ignore-workspace <spec>`。
+///
+/// `--ignore-workspace` 必须加：运行目录位于托管目录内部，而托管目录可能残留旧版
+/// Git checkout 的 `pnpm-workspace.yaml`，pnpm 会向上识别为 workspace 而对本次安装报错。
+const PNPM_OUTPUT_ARGS: &[&str] = &["--ignore-workspace"];
+
+/// 按包管理器名组装 npx 模式的安装参数。
+/// pnpm → `pnpm add --dir <dir> --ignore-workspace <spec>`
+/// yarn → `yarn --cwd <dir> add <spec>`
+/// npm  → `npm install --prefix <dir> <flags> <spec>`
+fn npx_pm_args(pm: &str, prefix: Vec<String>, runtime_dir: &Path, spec: String) -> Vec<String> {
+    match pm {
+        "pnpm" => {
+            let mut a = prefix;
+            a.push("add".to_string());
+            a.push("--dir".to_string());
+            a.push(runtime_dir.to_string_lossy().to_string());
+            a.extend(PNPM_OUTPUT_ARGS.iter().map(|arg| (*arg).to_string()));
+            a.push(spec);
+            a
+        }
+        "yarn" => {
+            let mut a = prefix;
+            a.push("--cwd".to_string());
+            a.push(runtime_dir.to_string_lossy().to_string());
+            a.push("add".to_string());
+            a.push(spec);
+            a
+        }
+        _ => npx_install_args(prefix, runtime_dir, spec),
+    }
+}
+
+/// 选择 npx 模式的安装器：优先项目配置的包管理器（harness 为 pnpm），未安装则回退 npm。
+///
+/// 必须优先 pnpm 的原因（实测 @deepseek-ai/dsh）：该包有 62 个直接依赖、505 个
+/// 传递包，且**全部是预发布版本**（`0.1.1-rc.2` + `^0.1.1-rc.2` 范围）。npm 的依赖
+/// 解析（idealTree/placeDep）在这种图上会组合爆炸：CPU 跑满、内存涨到 2.4GB 且不
+/// 收敛，15 分钟仍停在同一个 placeDep 步骤（与网络无关，换镜像/代理都一样）。
+/// pnpm 的解析器可在 1 分钟内完成同样的安装，且用硬链接复用全局 store，更省磁盘。
+fn npx_installer(
+    app: &tauri::AppHandle,
+    def: &NodeProjectDef,
+) -> Result<(String, String, Vec<String>), String> {
+    let configured = def.package_manager.trim().to_lowercase();
+    if !configured.is_empty() && configured != "npm" {
+        match resolve_exe_invocation(&configured, "") {
+            Ok((prog, prefix)) => return Ok((configured, prog, prefix)),
+            Err(_) => {
+                emit_log(
+                    app,
+                    &def.id,
+                    "npx",
+                    &format!("未检测到 {}，回退使用 npm 安装", configured),
+                );
+            }
+        }
+    }
+    let (prog, prefix) = resolve_exe_invocation("npm", "请先安装 Node.js (https://nodejs.org)")?;
+    Ok(("npm".to_string(), prog, prefix))
+}
+
 fn npx_install(
     app: &tauri::AppHandle,
     def: &NodeProjectDef,
@@ -825,23 +887,29 @@ fn npx_install(
         pkg.to_string()
     };
     emit_progress(app, &def.id, "npx", &format!("正在通过 npx 安装 {} …", pkg));
-    // 不要把 Git workspace 根目录作为 npm prefix：旧版 harness checkout 中包含
+    // 不要把 Git workspace 根目录作为安装 prefix：旧版 harness checkout 中包含
     // `workspace:^`，npm 即使收到 --workspaces=false 也会先解析该根 package.json。
     let runtime_dir = def.npx_runtime_dir();
     fs::create_dir_all(&runtime_dir).map_err(|e| format!("创建 npx 运行目录失败: {}", e))?;
-    // 预先创建最小 package.json，阻止 npm 向上冒泡到 managed_dir 的 workspace 元数据。
+    // 预先创建最小 package.json，阻止包管理器向上冒泡到 managed_dir 的 workspace 元数据。
     let runtime_manifest = runtime_dir.join("package.json");
     if !runtime_manifest.exists() {
         fs::write(&runtime_manifest, "{\"private\":true}\n")
             .map_err(|e| format!("初始化 npx 运行目录失败: {}", e))?;
     }
-    let (prog, prefix) = resolve_exe_invocation("npm", "请先安装 Node.js (https://nodejs.org)")?;
-    let args = npx_install_args(prefix, &runtime_dir, spec);
+    let (pm_name, prog, prefix) = npx_installer(app, def)?;
+    emit_progress(
+        app,
+        &def.id,
+        "npx",
+        &format!("使用 {} 安装 {} …", pm_name, spec),
+    );
+    let args = npx_pm_args(&pm_name, prefix, &runtime_dir, spec);
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let (ok, last_err) = run_capture_live(app, &def.id, "npx", &prog, &arg_refs, None, NPM_ISOLATION_ENV, Some(Duration::from_secs(900)));
     if !ok {
         let msg = last_err.trim();
-        return Err(format!("npx 安装失败: {}", if msg.is_empty() { "未知错误" } else { msg }));
+        return Err(format!("{} 安装失败: {}", pm_name, if msg.is_empty() { "未知错误" } else { msg }));
     }
     if !def.npx_installed() {
         let _ = fs::remove_dir_all(&runtime_dir);
@@ -1753,6 +1821,49 @@ mod tests {
         assert!(args.contains(&"--foreground-scripts".to_string()));
         assert!(args.contains(&"--timing".to_string()));
         assert_eq!(args.last().map(String::as_str), Some("@scope/pkg@latest"));
+    }
+
+    #[test]
+    fn test_npx_pnpm_args_use_add_and_ignore_workspace() {
+        let args = npx_pm_args(
+            "pnpm",
+            vec!["/c".into(), "pnpm.cmd".into()],
+            Path::new("runtime"),
+            "@scope/pkg@latest".into(),
+        );
+        assert_eq!(args[2], "add");
+        assert_eq!(args[3], "--dir");
+        assert_eq!(args[4], "runtime");
+        assert!(args.contains(&"--ignore-workspace".to_string()));
+        assert_eq!(args.last().map(String::as_str), Some("@scope/pkg@latest"));
+    }
+
+    #[test]
+    fn test_npx_npm_args_use_install_prefix() {
+        let args = npx_pm_args(
+            "npm",
+            vec!["/c".into(), "npm.cmd".into()],
+            Path::new("runtime"),
+            "pkg".into(),
+        );
+        assert_eq!(args[2], "install");
+        assert_eq!(args[3], "--prefix");
+        assert_eq!(args[4], "runtime");
+        assert_eq!(args.last().map(String::as_str), Some("pkg"));
+    }
+
+    #[test]
+    fn test_npx_yarn_args_use_cwd() {
+        let args = npx_pm_args(
+            "yarn",
+            vec!["/c".into(), "yarn.cmd".into()],
+            Path::new("runtime"),
+            "pkg".into(),
+        );
+        assert_eq!(args[2], "--cwd");
+        assert_eq!(args[3], "runtime");
+        assert_eq!(args[4], "add");
+        assert_eq!(args.last().map(String::as_str), Some("pkg"));
     }
 
     #[test]
