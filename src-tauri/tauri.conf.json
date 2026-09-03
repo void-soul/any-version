@@ -39,7 +39,8 @@
       "_up_/ai-tools/*.json",
       "_up_/ai-tools/*/*.json",
       "_up_/projects/*/*.json",
-      "_up_/node-projects/*.json"
+      "_up_/node-projects/*.json",
+      "_up_/page-agent-bridge/page-agent-bridge.iife.js"
     ]
   },
   "plugins": {

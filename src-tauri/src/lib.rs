@@ -257,6 +257,7 @@ pub fn run() {
         .manage(commands::serialtool::SerialState::default())
         .manage(commands::serialtool::SimState::default())
         .manage(commands::wstool::WsState::default())
+        .manage(commands::page_agent::PageAgentState::default())
         .setup(|app| {
             if let Ok(res_dir) = app.path().resource_dir() {
                 crate::commands::utils::set_resource_dir(res_dir);
@@ -908,6 +909,11 @@ pub fn run() {
                 commands::node_manager::get_node_projects_dir,
                 commands::node_manager::update_node_projects_dir,
                 commands::node_manager::npm_check_update,
+
+                // ---- Page 交互式页面任务 ----
+                commands::page_agent::page_agent_run,
+                commands::page_agent::page_agent_answer,
+                commands::page_agent::page_agent_stop,
 
                 // ---- 启动器模块（复刻 DawnLauncher） ----
                 commands::launcher::commands::launcher_get_classifications,
