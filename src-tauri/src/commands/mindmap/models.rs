@@ -69,8 +69,6 @@ pub struct MindmapNode {
     #[serde(default)]
     pub parent_id: Option<String>,
     pub name: String,
-    #[serde(default)]
-    pub description: String,
     /// 详细 Markdown
     #[serde(default)]
     pub detail: String,
@@ -80,9 +78,6 @@ pub struct MindmapNode {
     /// 节点颜色 (hex)
     #[serde(default = "default_color")]
     pub color: String,
-    /// 进度 0-100
-    #[serde(default)]
-    pub progress: i32,
     /// 计划时间（ISO 8601 字符串，可空；旧数据为 None）
     #[serde(default)]
     pub plan_at: Option<String>,
@@ -123,24 +118,6 @@ pub struct MindmapSticker {
     pub color: String,
     pub position_x: f64,
     pub position_y: f64,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-// ─── 额外连线（多输入 DAG：节点除树形父节点外，还可从任意节点接多条输入） ───
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MindmapLink {
-    pub id: String,
-    pub document_id: String,
-    /// 来源（输出）节点
-    pub source_id: String,
-    /// 目标（输入）节点
-    pub target_id: String,
-    /// 输入端名称（如「模型」「正面条件」）；空时前端用来源节点名
-    #[serde(default)]
-    pub label: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -232,19 +209,6 @@ pub struct DeleteStickerInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UpsertLinkInput {
-    pub link: MindmapLink,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeleteLinkInput {
-    pub document_id: String,
-    pub link_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct AiGenerateInput {
     pub document_id: String,
     pub provider_id: Option<String>,
@@ -261,10 +225,18 @@ pub struct AiGenerateProjectInput {
     /// User-supplied additional prompt: extra context/instructions appended to the scan context.
     #[serde(default)]
     pub user_hint: Option<String>,
+    /// 产物深度（1=最浅 只列清单 … 5=最深 含业务流走向/判定方式）；缺省 3 = 中等（默认行为）。
+    #[serde(default = "default_depth")]
+    pub depth: u8,
+    /// 要生成的视图开关（architecture/workflow/dataflow）；空 = 交给 AI 类型路由自动判断。
+    #[serde(default)]
+    pub views: Vec<String>,
     /// 本次运行的取消标识（前端生成 UUID 传入；取消命令 mm_ai_cancel 按此中断）。
     #[serde(default)]
     pub run_id: String,
 }
+
+fn default_depth() -> u8 { 3 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -295,8 +267,6 @@ pub struct DocumentFull {
     pub document: MindmapDocument,
     pub nodes: Vec<MindmapNode>,
     pub stickers: Vec<MindmapSticker>,
-    /// 额外连线（多输入），节点主父级仍由 parent_id 承担
-    pub links: Vec<MindmapLink>,
 }
 
 /// 指定日期范围内的具体计划发生记录（计划日历聚合展示用）。

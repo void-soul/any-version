@@ -1,7 +1,8 @@
 // Picky 模块面板：收藏 / 归档页面（与 Flutter 端 picky 同一数据接口 + S3 云同步）
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Bookmark,
@@ -129,10 +130,17 @@ export default function PickyPanel() {
   const [notice, setNotice] = useState("");
   const [confirm, setConfirm] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
 
+  // 后端为兼容 Flutter 云同步（state.json 用 0/1），序列化 refined/metaFetched 为整数；
+  // 前端归一化为真实布尔，否则 {b.refined && <jsx/>} 会把数字 0 直接渲染成 "0"。
+  const asBool = (v: unknown): boolean => v === true || v === 1 || v === "1" || v === "true";
+
   const load = async () => {
     try {
       const s = await invoke<PickyState>("picky_get_state");
-      setState(s);
+      setState({
+        ...s,
+        bookmarks: s.bookmarks.map((b) => ({ ...b, refined: asBool(b.refined), metaFetched: asBool(b.metaFetched) })),
+      });
     } catch (e) {
       console.error("加载 Picky 失败", e);
       setNotice(t("picky.loadFail", { err: String(e) }));
@@ -143,6 +151,14 @@ export default function PickyPanel() {
 
   useEffect(() => {
     load();
+  }, []);
+
+  // 后台自动补全元数据完成 → 刷新列表（新增收藏后无需手动点「刷新元数据」）
+  const loadRef = useRef(load);
+  useEffect(() => { loadRef.current = load; });
+  useEffect(() => {
+    const un = listen<string>("picky-bookmark-updated", () => { loadRef.current(); });
+    return () => { void un.then((f) => f()); };
   }, []);
 
   const flash = (msg: string) => {

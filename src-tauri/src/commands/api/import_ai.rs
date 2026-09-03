@@ -216,6 +216,11 @@ pub async fn api_import_with_ai(
     .await?;
     let content = outcome.text;
 
+    // 用量统计：直连共享通道不经代理，把 usage 归入 AI 模块用量面板（tool_id=api-import）
+    if let Some(u) = &outcome.usage {
+        crate::commands::ai::usage::log_usage_from_json("api-import", &model, Some(&provider.id), u);
+    }
+
     // 5. 提取 JSON 并导入
     let json = extract_json(&content)?;
     if json.len() > AI_JSON_MAX_BYTES {

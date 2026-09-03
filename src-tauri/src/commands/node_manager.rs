@@ -469,11 +469,15 @@ fn run_capture_live(
     program: &str,
     args: &[&str],
     cwd: Option<&Path>,
+    extra_env: &[(&str, &str)],
 ) -> (bool, String) {
     let mut cmd = hidden_cmd(program);
     cmd.args(args);
     if let Some(d) = cwd {
         cmd.current_dir(d);
+    }
+    for (k, v) in extra_env {
+        cmd.env(k, v);
     }
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
@@ -582,7 +586,7 @@ fn pm_install(app: &tauri::AppHandle, def: &NodeProjectDef, dir: &Path) -> Resul
     let mut args = prefix;
     args.push("install".to_string());
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let (ok, last_err) = run_capture_live(app, &def.id, "install", &prog, &arg_refs, Some(dir));
+    let (ok, last_err) = run_capture_live(app, &def.id, "install", &prog, &arg_refs, Some(dir), &[]);
     if !ok {
         let msg = last_err.trim();
         return Err(format!("`{} install` 失败: {}", pm, if msg.is_empty() { "未知错误" } else { msg }));
@@ -602,7 +606,7 @@ fn pm_build(app: &tauri::AppHandle, def: &NodeProjectDef, dir: &Path) -> Result<
     args.push("run".to_string());
     args.push(def.build_script.clone());
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let (ok, last_err) = run_capture_live(app, &def.id, "build", &prog, &arg_refs, Some(dir));
+    let (ok, last_err) = run_capture_live(app, &def.id, "build", &prog, &arg_refs, Some(dir), &[]);
     if !ok {
         let msg = last_err.trim();
         return Err(format!("`{} run {}` 失败: {}", pm, def.build_script, if msg.is_empty() { "未知错误" } else { msg }));
@@ -621,12 +625,32 @@ fn strip_pkg_version(pkg: &str) -> &str {
 
 /// npx 模式安装/升级：`npm install --prefix <托管目录> <包名>`。
 /// 一步到位（免 git clone / 依赖安装 / 编译）；`latest=true` 时强制取最新版（升级语义）。
+///
+/// 安装进程在 AnyVersion 的 CWD（通常是仓库根）里继承环境，npm 7+ 会向上查找
+/// package.json / pnpm-workspace.yaml 把安装当 workspace 操作处理——仓库用的
+/// pnpm `workspace:*` 协议依赖会触发 `EUNSUPPORTEDPROTOCOL Unsupported URL Type
+/// "workspace:"`（npm 不认识 pnpm 的协议）。因此显式传 `--prefix` 指向托管目录
+/// 并注入 `npm_config_workspaces=false` + `npm_config_workspaces_update=false`
+/// 彻底禁用 workspace 模式；同时清理继承的 npm/pnpm 环境变量，防止宿主 shell
+/// 的 `npm_config_*` 覆盖本次安装行为。
 fn npx_install(
     app: &tauri::AppHandle,
     def: &NodeProjectDef,
     dir: &Path,
     latest: bool,
 ) -> Result<(), String> {
+    const NPM_ISOLATION_ENV: &[(&str, &str)] = &[
+        // 显式关闭 workspaces 解析（含向上冒泡查找），npm 7+ 生效
+        ("npm_config_workspaces", "false"),
+        ("npm_config_workspaces_update", "false"),
+        ("npm_config_workspaces_install", "false"),
+        // pnpm 环境变量若被继承会改变依赖解析行为，清掉
+        ("npm_config_shared_workspace_lockfile", "false"),
+        ("npm_config_shell_emulator", "false"),
+        // 关闭 fund/audit 提示：减少网络调用与日志噪音（安装的是托管依赖包，无需审计）
+        ("npm_config_fund", "false"),
+        ("npm_config_audit", "false"),
+    ];
     let pkg = def.npx_package.trim();
     let spec = if latest {
         format!("{}@latest", strip_pkg_version(pkg))
@@ -640,9 +664,14 @@ fn npx_install(
     args.push("install".to_string());
     args.push("--prefix".to_string());
     args.push(dir.to_string_lossy().to_string());
+    // 双保险：环境变量之外再加 CLI 级禁用（npm 7+ 识别 --workspaces=false，
+    // 老版本 npm 会忽略该 flag 不报错）
+    args.push("--workspaces=false".to_string());
+    args.push("--no-fund".to_string());
+    args.push("--no-audit".to_string());
     args.push(spec);
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let (ok, last_err) = run_capture_live(app, &def.id, "npx", &prog, &arg_refs, None);
+    let (ok, last_err) = run_capture_live(app, &def.id, "npx", &prog, &arg_refs, None, NPM_ISOLATION_ENV);
     if !ok {
         let msg = last_err.trim();
         return Err(format!("npx 安装失败: {}", if msg.is_empty() { "未知错误" } else { msg }));
@@ -724,7 +753,7 @@ pub async fn npm_install(app: tauri::AppHandle, project_id: String) -> Result<()
         dir.to_string_lossy().to_string(),
     ];
     let arg_refs: Vec<&str> = clone_args.iter().map(|s| s.as_str()).collect();
-    let (ok, last_err) = run_capture_live(&app, &def.id, "clone", "git", &arg_refs, Some(parent));
+    let (ok, last_err) = run_capture_live(&app, &def.id, "clone", "git", &arg_refs, Some(parent), &[]);
     if !ok {
         let msg = last_err.trim();
         return Err(format!("git clone 失败: {}", if msg.is_empty() { "未知错误" } else { msg }));
@@ -759,7 +788,7 @@ pub async fn npm_upgrade(app: tauri::AppHandle, project_id: String) -> Result<()
     }
 
     emit_progress(&app, &def.id, "pull", "正在拉取最新代码 (git pull)…");
-    let (ok, last_err) = run_capture_live(&app, &def.id, "pull", "git", &["pull"], Some(&dir));
+    let (ok, last_err) = run_capture_live(&app, &def.id, "pull", "git", &["pull"], Some(&dir), &[]);
     if !ok {
         let msg = last_err.trim();
         return Err(format!("git pull 失败: {}", if msg.is_empty() { "未知错误" } else { msg }));

@@ -3,7 +3,7 @@
 // 项目列表来自后端 node-projects/ 配置注册表，新增项目无需改前端代码。
 //
 // 布局说明：
-// - 未打开任何服务时：全屏引导页，可点「打开服务管理」进入管理弹窗。
+// - 无已打开服务 Tab 时：自动弹出服务管理弹窗（无需再手动点一次）；弹窗可关闭查看引导页。
 // - 打开服务后：iframe 全屏占满页面；顶部 Tab 栏含「管理」按钮，可随时弹出服务管理弹窗。
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
@@ -29,7 +29,6 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import VexAvatar from "../VexAvatar";
-import VexGreeting from "../VexGreeting";
 import { useTranslation } from "react-i18next";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 
@@ -138,8 +137,9 @@ export default function NodeManagerPanel() {
   // 内部主页 Tab 管理（在主窗口内 iframe 打开各 Node 应用界面，服务区全屏）
   const [tabs, setTabs] = useState<NodeProjectDef[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  // 服务管理弹窗
-  const [manageOpen, setManageOpen] = useState(false);
+  // 服务管理弹窗：默认打开——进入面板没有正在运行的服务时直接展示管理界面，
+  // 省去「先看引导页 → 再手动点一次」的步骤。用户可关闭弹窗查看引导页。
+  const [manageOpen, setManageOpen] = useState(true);
   // git 更新检查
   const [updateInfo, setUpdateInfo] = useState<Record<string, NodeUpdateInfo>>(
     {},
@@ -365,9 +365,6 @@ export default function NodeManagerPanel() {
             <h1 className="text-lg font-bold text-white">{t("nodeproj.servicesTitle")}</h1>
             <p className="text-[12px] text-slate-500 mt-1">
               {t("nodeproj.servicesDesc")}
-            </p>
-            <p className="text-[11px] text-slate-400 mt-2">
-              <VexGreeting seconds={9} />
             </p>
           </div>
           <button

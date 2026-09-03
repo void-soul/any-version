@@ -382,6 +382,12 @@ pub async fn translate_text(
         })?;
     let content = outcome.text;
 
+    // 用量统计：翻译不经代理，直连共享通道；这里把 usage 归入 AI 模块的用量面板
+    //（tool_id=translate），保证 AI 模块的用量统计完整覆盖所有 AI 调用方。
+    if let Some(u) = &outcome.usage {
+        crate::commands::ai::usage::log_usage_from_json("translate", &model, Some(&provider.id), u);
+    }
+
     // 记录翻译历史（面板 / 悬浮窗共用），并通知前端刷新
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

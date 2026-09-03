@@ -1,20 +1,18 @@
 import { useTranslation } from "react-i18next";
 import { PlanDateTimePicker } from "./MindmapPanel";
 
-/** 思维导图节点表单的「进度 · 计划时间 · 重复 + 颜色」整块。
+/** 思维导图节点表单的「计划时间 · 重复 + 颜色」整块。
  *  画布内 DetailModal（ns="mindmap"）与速记悬浮窗（ns="mmdpop"）共用，
  *  差异仅翻译键命名空间与是否显示 hex 输入框。
  *  颜色精简为一行内联：自定义取色器 + 恢复默认，不再单独占一行。 */
 export function NodeFormFields({
-  ns, progress, planAt, repeat, color,
-  onProgress, onPlanAt, onRepeat, onColor, showHexInput = true,
+  ns, planAt, repeat, color,
+  onPlanAt, onRepeat, onColor, showHexInput = true,
 }: {
   ns: "mindmap" | "mmdpop";
-  progress: number;
   planAt: string;
   repeat: string;
   color: string;
-  onProgress: (v: number) => void;
   onPlanAt: (iso: string | null) => void;
   onRepeat: (v: string) => void;
   onColor: (v: string) => void;
@@ -24,7 +22,6 @@ export function NodeFormFields({
   const { t } = useTranslation();
   const isMm = ns === "mindmap";
   const focusCls = isMm ? "focus:border-cyan-400/60" : "focus:border-[var(--mm-accent)]";
-  const accentCls = isMm ? "accent-cyan-400" : "accent-[var(--mm-accent)]";
   // 两个命名空间的键名不同：mindmap 用 XxxLabel/planRepeat，mmdpop 用 短键。
   const planTimeKey = isMm ? "mindmap.planTimeLabel" : "mmdpop.planTime";
   const repeatKey = isMm ? "mindmap.planRepeat" : "mmdpop.repeat";
@@ -33,13 +30,6 @@ export function NodeFormFields({
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md border border-white/5 bg-white/[0.02] px-2.5 py-2">
-      {/* 进度 */}
-      <label className="flex items-center gap-1.5 text-[9px] uppercase font-semibold text-slate-500">
-        {isMm ? t("mindmap.progressLabel") : t("mmdpop.progress", { value: progress })}
-        <input type="range" min={0} max={100} value={progress} onChange={(e) => onProgress(Number(e.target.value))}
-          className={`h-6 w-20 cursor-pointer ${accentCls}`} />
-        {isMm && <span className="text-[10px] text-slate-400">{progress}%</span>}
-      </label>
       {/* 计划时间 */}
       <label className="flex items-center gap-1.5 text-[9px] uppercase font-semibold text-slate-500">{t(planTimeKey)}
         <PlanDateTimePicker value={planAt} onChange={onPlanAt} />

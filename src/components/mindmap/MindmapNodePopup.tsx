@@ -42,8 +42,6 @@ export default function MindmapNodePopup() {
   const [loadingDoc, setLoadingDoc] = useState(false);
   const [parentId, setParentId] = useState<string>("");
   const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [progress, setProgress] = useState(0);
   const [planAt, setPlanAt] = useState("");
   const [repeat, setRepeat] = useState("none");
   const [color, setColor] = useState("");
@@ -91,7 +89,8 @@ export default function MindmapNodePopup() {
 
   const onTitleMouseDown = useCallback((e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest("button")) return;
-    void getCurrentWindow().startDragging();
+    // 拖动失败（如窗口缺权限）时至少在控制台留痕，避免无提示失效难排查。
+    void getCurrentWindow().startDragging().catch((err) => console.warn("startDragging failed:", err));
   }, []);
 
   useEffect(() => {
@@ -109,7 +108,9 @@ export default function MindmapNodePopup() {
     void (async () => {
       try {
         const sel = await invoke<string | null>("take_mindmap_quick_selection");
-        if (sel) setDescription((cur) => (cur.trim() ? cur : sel));
+        // 选中文字 → 详细内容（detail）。与贴纸悬浮窗（内容）保持一致：
+        // 划词呼出时用户选中的就是要记录的正文，而不是一句话描述。
+        if (sel) setDetail((cur) => (cur.trim() ? cur : sel));
       } catch { /* 无捕获或后端未支持时保持为空 */ }
     })();
   }, []);
@@ -212,18 +213,18 @@ export default function MindmapNodePopup() {
       const pid = creatingRoot ? null : (parentId || roots[0]?.id || null);
       const n: MindmapNode = {
         id: `n${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        documentId: targetId, parentId: pid, name: name.trim(), description: description.trim(), detail,
-        kind: "other", color: c, progress, planAt: planAt.trim() || null, repeat,
+        documentId: targetId, parentId: pid, name: name.trim(), detail,
+        kind: "other", color: c, planAt: planAt.trim() || null, repeat,
         positionX: 0, positionY: 0, createdAt: now, updatedAt: now,
       };
       await mmApi.upsertNode({ documentId: targetId, node: n });
       const pname = pid ? f.nodes.find((x) => x.id === pid)?.name ?? "" : t("mmdpop.rootNodePh");
       setDone(t("mmdpop.recordedTo2", { name: f.document.name, parent: pname }));
-      setName(""); setDescription(""); setDetail(""); setPlanAt("");
+      setName(""); setDetail(""); setPlanAt("");
       window.setTimeout(() => { void hide(); }, 2500);
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); }
-  }, [name, description, detail, busy, docId, newDocName, full, parentId, roots, progress, planAt, repeat, color, creatingRoot, hide]);
+  }, [name, detail, busy, docId, newDocName, full, parentId, roots, planAt, repeat, color, creatingRoot, hide]);
 
   useEffect(() => { inputRef.current?.focus(); }, [full, docId]);
 
@@ -311,17 +312,10 @@ export default function MindmapNodePopup() {
               placeholder={t("mmdpop.contentPh")}
               className="min-h-[56px] resize-none rounded-md border border-white/10 bg-slate-950/70 px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
           </div>
-          <div className="flex min-h-0 flex-col">
-            <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">{t("mmdpop.desc")}</label>
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2}
-              placeholder={t("mmdpop.descPh2")}
-              className="min-h-[56px] resize-none rounded-md border border-white/10 bg-slate-950/70 px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
-          </div>
         </div>
 
         <NodeFormFields ns="mmdpop"
-          progress={progress} planAt={planAt} repeat={repeat} color={color}
-          onProgress={setProgress}
+          planAt={planAt} repeat={repeat} color={color}
           onPlanAt={(iso) => setPlanAt(iso ?? "")}
           onRepeat={setRepeat}
           onColor={setColor}

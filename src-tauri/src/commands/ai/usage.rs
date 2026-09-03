@@ -93,6 +93,28 @@ pub fn log_usage_db(
     Ok(())
 }
 
+/// 从 OpenAI 风格 usage JSON 提取 token 数并落库（兼容 prompt/completion 与 input/output 两种命名）。
+/// 供不经代理、直连共享 AI 通道（ai/channel.rs）的调用方使用：翻译、思维导图、API 智能导入等。
+/// usage 缺失或 token 全为 0 时不记录（与代理侧「有用量才落库」的口径一致）。
+pub fn log_usage_from_json(tool_id: &str, model: &str, provider_id: Option<&str>, usage: &serde_json::Value) {
+    let in_t = usage
+        .get("prompt_tokens")
+        .or_else(|| usage.get("input_tokens"))
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0);
+    let out_t = usage
+        .get("completion_tokens")
+        .or_else(|| usage.get("output_tokens"))
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0);
+    if in_t == 0 && out_t == 0 {
+        return;
+    }
+    if let Err(e) = log_usage_db(tool_id, model, provider_id, in_t, out_t) {
+        eprintln!("[ai-usage] 记录用量失败 (tool_id={}): {}", tool_id, e);
+    }
+}
+
 /// 从数据库聚合查询用量摘要
 pub fn get_usage_summary_db() -> Result<UsageSummary, String> {
     get_db()?;

@@ -160,7 +160,7 @@ async fn call_ai_json_for_explorer(
         }
     };
     if let Some(u) = usage {
-        record_and_emit_usage(app, acc, model, &u);
+        record_and_emit_usage(app, acc, model, &provider.id, &u);
     }
     Ok(json)
 }
@@ -189,11 +189,10 @@ fn json_to_mindmap_nodes(json: &serde_json::Value, document_id: &str, id_prefix:
             // 只引用同一批导入节点，未知父级自动成为新的根节点，避免挂到旧树或丢失。
             parent_id,
             name: v.get("name").and_then(|x| x.as_str()).unwrap_or("未命名").to_string(),
-            description: v.get("description").and_then(|x| x.as_str()).unwrap_or("").to_string(),
             detail: {
                 let d = v.get("detail").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
                 if d.is_empty() {
-                    // 详情留空时用说明补全，保证每个节点的详情里都有模块说明
+                    // 详情留空时用旧的 description 字段补全（兼容旧数据/AI 仍输出的说明），保证每个节点的详情里都有模块说明
                     let desc = v.get("description").and_then(|x| x.as_str()).unwrap_or("").trim();
                     if desc.is_empty() { String::new() } else { desc.to_string() }
                 } else {
@@ -202,7 +201,6 @@ fn json_to_mindmap_nodes(json: &serde_json::Value, document_id: &str, id_prefix:
             },
             kind: if is_root { "root".to_string() } else { v.get("kind").and_then(|x| x.as_str()).unwrap_or("other").to_string() },
             color: v.get("color").and_then(|x| x.as_str()).unwrap_or(c).to_string(),
-            progress: v.get("progress").and_then(|x| x.as_i64()).unwrap_or(0).clamp(0, 100) as i32,
             plan_at: v.get("plan_at").or_else(|| v.get("planAt")).and_then(|x| x.as_str()).map(|s| s.to_string()),
             repeat: v.get("repeat").and_then(|x| x.as_str()).unwrap_or("none").to_string(),
             // 证据锚定：sources 数组（项目相对路径），去重、去空、限 6 个
@@ -232,8 +230,8 @@ fn ensure_import_root(nodes: &mut Vec<MindmapNode>, document_id: &str, id_prefix
     let ts = super::db::now_ts();
     nodes.insert(0, MindmapNode {
         id: format!("{}root", id_prefix), document_id: document_id.to_string(), parent_id: None,
-        name: name.to_string(), description: "AI 导入根节点".to_string(), detail: summary.to_string(),
-        kind: "root".to_string(), color: "#f8fafc".to_string(), progress: 0, plan_at: None, repeat: "none".to_string(), sources: Vec::new(),
+        name: name.to_string(), detail: if summary.is_empty() { "AI 导入根节点".to_string() } else { summary.to_string() },
+        kind: "root".to_string(), color: "#f8fafc".to_string(), plan_at: None, repeat: "none".to_string(), sources: Vec::new(),
         position_x: 0.0, position_y: 0.0, created_at: ts.clone(), updated_at: ts,
     });
 }
@@ -391,14 +389,6 @@ pub fn mm_upsert_sticker(input: UpsertStickerInput) -> Result<(), String> { supe
 #[tauri::command]
 pub fn mm_delete_sticker(input: DeleteStickerInput) -> Result<(), String> { super::db::delete_sticker(&input.document_id, &input.sticker_id) }
 
-// ─── 额外连线（多输入 DAG） ───
-
-#[tauri::command]
-pub fn mm_upsert_link(input: UpsertLinkInput) -> Result<(), String> { super::db::upsert_link(&input.link) }
-
-#[tauri::command]
-pub fn mm_delete_link(input: DeleteLinkInput) -> Result<(), String> { super::db::delete_link(&input.document_id, &input.link_id) }
-
 // ─── 导出 ───
 
 #[tauri::command]
@@ -436,8 +426,7 @@ pub fn mm_export_markdown(document_id: String) -> Result<String, String> {
             for n in l {
                 if !path.insert(n.id.clone()) { continue; }
                 let h = "#".repeat((d + 2).min(6));
-                out.push_str(&format!("{} {} ({} {}%)\n\n", h, n.name, n.kind, n.progress));
-                if !n.description.is_empty() { out.push_str(&format!("> {}\n\n", n.description)); }
+                out.push_str(&format!("{} {} ({})\n\n", h, n.name, n.kind));
                 if !n.detail.is_empty() { out.push_str(&format!("{}\n\n", n.detail)); }
                 append_sources(out, n);
                 nodes(out, Some(&n.id), ch, d + 1, path);
@@ -465,8 +454,7 @@ pub fn mm_export_markdown(document_id: String) -> Result<String, String> {
     for n in &full.nodes {
         if known_roots.contains(n.id.as_str()) && !exported_roots.contains(n.id.as_str()) {
             let h = "##";
-            out.push_str(&format!("{} {} ({} {}%)\n\n", h, n.name, n.kind, n.progress));
-            if !n.description.is_empty() { out.push_str(&format!("> {}\n\n", n.description)); }
+            out.push_str(&format!("{} {} ({})\n\n", h, n.name, n.kind));
             if !n.detail.is_empty() { out.push_str(&format!("{}\n\n", n.detail)); }
             append_sources(&mut out, n);
         }
@@ -481,16 +469,6 @@ pub fn mm_export_markdown(document_id: String) -> Result<String, String> {
             if !sticker.content.is_empty() {
                 out.push_str(&format!("{}\n\n", sticker.content));
             }
-        }
-    }
-    // 额外连线（多输入）：源节点 → 目标节点，附输入端名称
-    if !full.links.is_empty() {
-        out.push_str("\n---\n\n## 额外连线\n\n");
-        for l in &full.links {
-            let sname = full.nodes.iter().find(|n| n.id == l.source_id).map(|n| n.name.as_str()).unwrap_or(l.source_id.as_str());
-            let tname = full.nodes.iter().find(|n| n.id == l.target_id).map(|n| n.name.as_str()).unwrap_or(l.target_id.as_str());
-            let label = if l.label.is_empty() { String::new() } else { format!("（{}）", l.label) };
-            out.push_str(&format!("- `{}` → `{}`{}\n", sname, tname, label));
         }
     }
     out.push_str("\n---\n*由 Kira 思维导图生成*\n");
@@ -606,11 +584,6 @@ fn validate_ai_nodes_json(
                 errs.push(format!("{}：color '{}' 需为 #RRGGBB", tag, c));
             }
         }
-        if let Some(p) = n.get("progress").and_then(|x| x.as_i64()) {
-            if !(0..=100).contains(&p) {
-                errs.push(format!("{}：progress {} 超出 0-100", tag, p));
-            }
-        }
         let raw_id = n.get("id").and_then(|x| x.as_str()).unwrap_or("");
         if raw_id.trim().is_empty() {
             errs.push(format!("{}：id 为空", tag));
@@ -661,8 +634,10 @@ fn validate_ai_nodes_json(
                 continue;
             };
             let name = n.get("name").and_then(|x| x.as_str()).unwrap_or("");
+            // 旧数据/AI 兼容：description 已废弃，内容并入 detail 后用于关键词
             let desc = n.get("description").and_then(|x| x.as_str()).unwrap_or("");
-            let kws: Vec<String> = node_keywords(name, desc).into_iter().map(|k| k.to_lowercase()).collect();
+            let detail = n.get("detail").and_then(|x| x.as_str()).unwrap_or("");
+            let kws: Vec<String> = node_keywords(name, &format!("{desc} {detail}")).into_iter().map(|k| k.to_lowercase()).collect();
             let tag = format!("节点 #{}（{}）", i + 1, name);
             for s in srcs.iter().filter_map(|x| x.as_str()) {
                 let p = s.trim().trim_start_matches("./").to_string();
@@ -724,7 +699,9 @@ impl<'a> ai::channel::ChannelHooks for MmHooks<'a> {
 }
 
 /// 从 usage JSON 提取 token 数：累计进本次运行计数器，并推送 step=usage 事件（前端实时统计）。
-fn record_and_emit_usage(app: &Option<tauri::AppHandle>, acc: &UsageAcc, model: &str, u: &serde_json::Value) {
+/// 同时落库到 AI 模块的全局用量统计（tool_id=mindmap）：思维导图不经代理、直连共享通道，
+/// 不落库的话 AI 模块用量面板看不到这部分消耗。
+fn record_and_emit_usage(app: &Option<tauri::AppHandle>, acc: &UsageAcc, model: &str, provider_id: &str, u: &serde_json::Value) {
     use std::sync::atomic::Ordering;
     let prompt_tokens = u.get("prompt_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
     let completion_tokens = u.get("completion_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
@@ -737,6 +714,8 @@ fn record_and_emit_usage(app: &Option<tauri::AppHandle>, acc: &UsageAcc, model: 
         acc.input.fetch_add(prompt_tokens, Ordering::Relaxed);
         acc.output.fetch_add(completion_tokens, Ordering::Relaxed);
         acc.total.fetch_add(total_tokens, Ordering::Relaxed);
+        // 全局用量统计（AI 模块用量面板）：按供应商归属；落库失败不阻断导入流程
+        let _ = ai::usage::log_usage_db("mindmap", model, Some(provider_id), prompt_tokens, completion_tokens);
         emit_progress(app, "usage", serde_json::json!({
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
@@ -775,7 +754,7 @@ async fn call_ai_json(
         }
     };
     if let Some(u) = outcome.usage {
-        record_and_emit_usage(app, acc, model, &u);
+        record_and_emit_usage(app, acc, model, &provider.id, &u);
     }
     let streamed = outcome.text;
     emit_progress(app, "stream", serde_json::json!({ "done": true, "length": streamed.chars().count() }));
@@ -885,11 +864,23 @@ async fn import_ai_nodes(
 
 const VIEW_LABELS: &[(&str, &str)] = &[
     ("architecture", "架构"),
-    ("workflow", "流程"),
+    ("workflow", "业务流"),
     ("dataflow", "数据流"),
     ("sequence", "时序"),
     ("lifecycle", "生命周期"),
 ];
+
+/// 产物深度等级（1 最浅 → 5 最深）对应的生成要求文案，拼进视图级 prompt。
+/// 1：只列清单（项目/模块/文件各自的功能一句话）；5：完整业务流走向 + 分支判定方式。
+fn depth_requirement(depth: u8) -> &'static str {
+    match depth {
+        1 => "深度要求（最浅）：只输出清单。每个子项目、每个模块、每个文件各占一个节点，detail 用一句话说明其功能；不要展开内部结构，不要分析业务流。节点总数宁少勿滥。",
+        2 => "深度要求（较浅）：模块清单 + 每个模块的功能列表。模块下直接列它提供的功能/接口（每个节点 detail 一句话），不需要展开步骤与数据。",
+        3 => "深度要求（中等）：模块清单 + 功能，且每个模块的 detail 中简述该模块的关键执行路径（输入→处理→输出）。",
+        4 => "深度要求（较深）：在模块/功能之上，整理出主要业务流的完整走向（触发→步骤→分支→结果），每条业务流一个子树，分支处写明判定条件。",
+        _ => "深度要求（最深）：完整还原业务流走向与判定方式。每条业务流一个子树：触发条件、逐步骤、每个分支/判断节点必须写明判定依据（什么条件下走哪条路）、异常与回退路径；模块清单退居其次，只为业务流中引用到的模块保留。",
+    }
+}
 
 fn view_label(view: &str) -> String {
     VIEW_LABELS
@@ -914,7 +905,7 @@ fn view_guidance(view: &str) -> &'static str {
 /// (Wymusza produkt, nie strukture katalogow.)
 const VIEW_SUBSTANCE_REQ: &str = r##"
 TREŚĆ (obowiązkowa, ważniejsza niż struktura katalogów):
-- Każdy węzeł-moduł to PRAWDZIWY moduł, który zaistniał w przeczytanych plikach (nazwa z kodu/katalogu, nie wymyślona). W description napisz, CO ten moduł robi — konkretna funkcjonalność, nie „zarządza danymi".
+- Każdy węzeł-moduł to PRAWDZIWY moduł, który zaistniał w przeczytanych plikach (nazwa z kodu/katalogu, nie wymyślona). W detail napisz, CO ten moduł robi — konkretna funkcjonalność, nie „zarządza danymi".
 - Pod każdym modułem dodaj 2-4 węzły-funkcje/operacje biznesowe, które ten moduł realizuje (np. „rejestracja użytkownika", „generowanie faktury", „odświeżanie tokenu") — z pliku lub kodu, który o tym świadeczy.
 - Jeśli z przeczytanych plików wynika przepływ biznesowy (kto → co → z czym → rezultat), dodaj podkorzeń „przepływ" lub opisz go w detail modułu: wejście, kroki, wynik. Nazwij realne funkcje/endpointy/tabele, które widziałeś.
 - detail każdego modułu: co robi, na czym polega implementacja (biblioteka, wzorzec, endpoint, model danych), z czym się łączy. Czerp z treści plików, nie z domysłów.
@@ -938,7 +929,8 @@ fn router_prompt(mode: &str) -> String {
 }
 
 /// 视图级生成 prompt（system）：按指定视角组织导图。
-fn view_prompt(mode: &str, view: &str) -> String {
+/// depth：产物深度（见 depth_requirement）；project 模式下拼进生成要求。
+fn view_prompt(mode: &str, view: &str, depth: u8) -> String {
     let (kinds, count) = if mode == "project" {
         ("root|module|component|service|route|config|file|other", "10 到 30")
     } else {
@@ -955,11 +947,17 @@ fn view_prompt(mode: &str, view: &str) -> String {
         format!("你是一位产品经理和系统分析师。请从用户需求文本中提取「{}」视角的思维导图 JSON。", view_label(view))
     };
     let guidance = view_guidance(view);
+    // 深度要求仅项目模式生效（需求文本无“扫描产物”概念，保持原行为）
+    let depth_req = if mode == "project" {
+        format!("\n{}", depth_requirement(depth))
+    } else {
+        String::new()
+    };
     let tpl = r##"{opener}
 只允许输出一个 JSON 对象，不要 Markdown 代码围栏、解释文字或尾随逗号：
-{{"summary":"该视角的简明概述","nodes":[{{"id":"唯一稳定短 ID","name":"节点名称","parent_id":null,"description":"一句话职责","detail":"详细说明，可使用 Markdown","kind":"{kinds}","color":"#RRGGBB","progress":0,"sources":["项目相对路径"]}}]}}
-组织要求：{guidance}{evidence}
-结构要求：至少一个根节点，根节点 parent_id 必须为 null；其余节点只能通过 parent_id 引用本次输出中的 id；每个节点的 detail 必须写明该模块/节点的说明（职责、边界、与相邻模块的关系，可用 Markdown），不得为空；description 保持一句话概述；progress 必须是 0 到 100 的整数，color 必须是 6 位十六进制颜色；节点总数控制在 {count} 个；只输出 JSON。{evidence_req}
+{{"summary":"该视角的简明概述","nodes":[{{"id":"唯一稳定短 ID","name":"节点名称","parent_id":null,"detail":"节点说明：一句话职责 + 具体功能，可使用 Markdown","kind":"{kinds}","color":"#RRGGBB","sources":["项目相对路径"]}}]}}
+组织要求：{guidance}{evidence}{depth_req}
+结构要求：至少一个根节点，根节点 parent_id 必须为 null；其余节点只能通过 parent_id 引用本次输出中的 id；每个节点的 detail 必须写明该模块/节点的说明（职责、边界、与相邻模块的关系，可用 Markdown），不得为空；color 必须是 6 位十六进制颜色；节点总数控制在 {count} 个；只输出 JSON。{evidence_req}
 {substance}"##;
     let evidence_req = if mode == "project" {
         "\n证据要求：关键模块/组件/服务节点用 sources 字段标注 1 到 3 个真实文件（项目相对路径，必须在『目录结构』中出现），文件/配置类节点标注自身路径；sources 最多 6 个，只填真实存在的路径，不要臆造。"
@@ -972,6 +970,7 @@ fn view_prompt(mode: &str, view: &str) -> String {
         .replace("{count}", count)
         .replace("{guidance}", guidance)
         .replace("{evidence}", evidence)
+        .replace("{depth_req}", &depth_req)
         .replace("{evidence_req}", evidence_req)
         .replace("{substance}", substance)
 }
@@ -1134,6 +1133,8 @@ async fn run_ai_router(
     project_root: Option<&str>,
     app: &Option<tauri::AppHandle>,
     cancel: &std::sync::atomic::AtomicBool,
+    depth: u8,
+    requested_views: &[String],
 ) -> Result<AiImportResult, String> {
     // 本次运行的总 token 累计器（逐请求记录 + 完成时随报告返回、随文档留痕）
     let usage = UsageAcc::default();
@@ -1176,35 +1177,49 @@ async fn run_ai_router(
         }
     }
     let context = context.as_str();
-    // 1. 类型路由：判断适合哪些视图（分类失败则回退为单架构视图；推送 fail
-    // 事件告知前端降级原因，避免长时间「无动静」的假死观感）
-    emit_progress(app, "route", serde_json::json!({}));
-    let mut views: Vec<String> = vec!["architecture".to_string()];
-    match call_ai_json(app, &usage, cancel, provider, model, &router_prompt(mode), context).await {
-        Ok(router_json) => {
-            if let Some(arr) = router_json.get("views").and_then(|v| v.as_array()) {
-                let picked: Vec<String> = arr
-                    .iter()
-                    .filter_map(|v| v.get("type").and_then(|t| t.as_str()).map(|s| s.to_string()))
-                    .filter(|t| VIEW_LABELS.iter().any(|(k, _)| k == t))
-                    .collect();
-                let mut seen = std::collections::HashSet::new();
-                views = picked
-                    .into_iter()
-                    .filter(|t| seen.insert(t.clone()))
-                    .take(3)
-                    .collect();
-                if views.is_empty() {
-                    views = vec!["architecture".to_string()];
+    // 1. 确定要生成的视图：用户显式勾选时直接采用（跳过 AI 路由，省一次请求）；
+    // 未勾选时走 AI 类型路由判断，失败回退单架构视图（推送 fail 事件告知前端降级原因）。
+    let mut views: Vec<String> = Vec::new();
+    if !requested_views.is_empty() {
+        // 过滤为合法视图名并保持用户勾选顺序
+        let mut seen = std::collections::HashSet::new();
+        views = requested_views
+            .iter()
+            .filter(|v| VIEW_LABELS.iter().any(|(k, _)| k == *v))
+            .filter(|v| seen.insert((*v).clone()))
+            .cloned()
+            .collect();
+        emit_progress(app, "route", serde_json::json!({ "views": views }));
+    }
+    if views.is_empty() {
+        emit_progress(app, "route", serde_json::json!({}));
+        views = vec!["architecture".to_string()];
+        match call_ai_json(app, &usage, cancel, provider, model, &router_prompt(mode), context).await {
+            Ok(router_json) => {
+                if let Some(arr) = router_json.get("views").and_then(|v| v.as_array()) {
+                    let picked: Vec<String> = arr
+                        .iter()
+                        .filter_map(|v| v.get("type").and_then(|t| t.as_str()).map(|s| s.to_string()))
+                        .filter(|t| VIEW_LABELS.iter().any(|(k, _)| k == t))
+                        .collect();
+                    let mut seen = std::collections::HashSet::new();
+                    views = picked
+                        .into_iter()
+                        .filter(|t| seen.insert(t.clone()))
+                        .take(3)
+                        .collect();
+                    if views.is_empty() {
+                        views = vec!["architecture".to_string()];
+                    }
                 }
             }
-        }
         Err(e) => {
             // 取消不算降级（run 已被用户终止，后续 cancel 检查会统一处理）；
             // 其余失败推送 fail 并走单「架构」视图回退，前端进度面板有交代。
             if !is_cancelled(cancel) {
                 log_ai_transport_failure(app, model, &format!("视图路由失败（回退为单架构视图）: {}", e));
             }
+        }
         }
     }
     emit_progress(app, "route", serde_json::json!({ "views": views }));
@@ -1248,7 +1263,7 @@ async fn run_ai_router(
                 cancel,
                 provider,
                 model,
-                &view_prompt(mode, view),
+                &view_prompt(mode, view, depth),
                 &user,
                 3,
                 project_files.as_ref(),
@@ -1324,6 +1339,13 @@ async fn run_ai_router(
                     usage: view_usage,
                 });
                 docs.push(full);
+                // 视图落库即广播：前端可「边生成边绘制」，不必等全部视图结束。
+                // 携带文档 id + 视图名，前端按需拉取 DocumentFull 增量渲染。
+                emit_progress(
+                    app,
+                    "view_done",
+                    serde_json::json!({ "doc_id": doc.id, "view": view, "index": docs.len() - 1 }),
+                );
             }
             Err(e) => {
                 let _ = super::db::delete_document(&doc.id);
@@ -1369,7 +1391,7 @@ pub async fn mm_ai_from_project(app: tauri::AppHandle, input: AiGenerateProjectI
         let context = super::scan::scan_project_with_hint(&pp, input.user_hint.as_deref())?;
         emit_progress(&app_opt, "scan", serde_json::json!({ "done": true }));
         let (provider, model) = resolve_provider_model(&input.provider_id, &input.model_id)?;
-        run_ai_router(&provider, &model, "project", &context, &pname, Some(&pp), &app_opt, &cancel).await
+        run_ai_router(&provider, &model, "project", &context, &pname, Some(&pp), &app_opt, &cancel, input.depth.clamp(1, 5), &input.views).await
     }
     .await;
     ai_drop_flag(if input.run_id.trim().is_empty() { "import" } else { &input.run_id });
@@ -1384,7 +1406,7 @@ pub async fn mm_ai_from_text(app: tauri::AppHandle, input: AiGenerateTextInput) 
     let (provider, model) = resolve_provider_model(&input.provider_id, &input.model_id)?;
     let app_opt = Some(app);
     let cancel = ai_cancel_flag(if input.run_id.trim().is_empty() { "import" } else { &input.run_id });
-    let result = run_ai_router(&provider, &model, "text", &text, title, None, &app_opt, &cancel).await;
+    let result = run_ai_router(&provider, &model, "text", &text, title, None, &app_opt, &cancel, 3, &[]).await;
     ai_drop_flag(if input.run_id.trim().is_empty() { "import" } else { &input.run_id });
     result
 }
@@ -1395,8 +1417,8 @@ pub async fn mm_ai_from_text(app: tauri::AppHandle, input: AiGenerateTextInput) 
 fn regenerate_prompt() -> String {
     r##"你是一位资深软件架构师。请分析指定模块的内部结构，生成可直接导入思维导图的 JSON。
 只允许输出一个 JSON 对象，不要 Markdown 代码围栏、解释文字或尾随逗号：
-{"nodes":[{"id":"唯一稳定短 ID","name":"节点名称","parent_id":null,"description":"一句话职责","detail":"详细说明，可使用 Markdown","kind":"root|module|component|service|route|config|file|task|requirement|constraint|risk|other","color":"#RRGGBB","progress":0}]}
-要求：第一个节点是该模块自身（parent_id 必须为 null，kind 用 root 或 module），其余 3 到 12 个节点是其子结构；所有子节点只能通过 parent_id 引用本批输出中的 id；每个节点的 detail 必须写明该模块/子模块的说明（职责、边界、与相邻模块的关系，可用 Markdown），不得为空；description 保持一句话概述；kind 必须在允许列表内；progress 必须是 0 到 100 的整数；color 必须是 6 位十六进制颜色；只输出 JSON。"##.to_string()
+{"nodes":[{"id":"唯一稳定短 ID","name":"节点名称","parent_id":null,"detail":"节点说明：职责、边界与相邻模块关系，可使用 Markdown","kind":"root|module|component|service|route|config|file|task|requirement|constraint|risk|other","color":"#RRGGBB"}]}
+要求：第一个节点是该模块自身（parent_id 必须为 null，kind 用 root 或 module），其余 3 到 12 个节点是其子结构；所有子节点只能通过 parent_id 引用本批输出中的 id；每个节点的 detail 必须写明该模块/子模块的说明（职责、边界、与相邻模块的关系，可用 Markdown），不得为空；kind 必须在允许列表内；color 必须是 6 位十六进制颜色；只输出 JSON。"##.to_string()
 }
 
 #[tauri::command]
@@ -1420,12 +1442,10 @@ pub async fn mm_regenerate_node(app: tauri::AppHandle, input: RegenerateNodeInpu
         direct_children.join("、")
     };
     let user = format!(
-        "请分析「{}」模块（位于文档「{}」，类型 {}，进度 {}%）的内部结构。\n模块描述：{}\n模块详情：{}\n现有子节点：{}",
+        "请分析「{}」模块（位于文档「{}」，类型 {}）的内部结构。\n模块详情：{}\n现有子节点：{}",
         target.name,
         full.document.name,
         target.kind,
-        target.progress,
-        target.description,
         if detail_take.is_empty() { "（无）".to_string() } else { detail_take },
         children_txt,
     );
@@ -1455,7 +1475,7 @@ pub async fn mm_regenerate_node(app: tauri::AppHandle, input: RegenerateNodeInpu
                 errs.join("；")
             ));
         }
-        super::db::with_conn(|c| { super::db::sql(c.execute("UPDATE mindmap_nodes SET description=?1, detail=?2, updated_at=?3 WHERE id=?4", rusqlite::params![r.description, detail, super::db::now_ts(), target.id]))?; Ok(()) })?;
+        super::db::with_conn(|c| { super::db::sql(c.execute("UPDATE mindmap_nodes SET detail=?1, updated_at=?2 WHERE id=?3", rusqlite::params![detail, super::db::now_ts(), target.id]))?; Ok(()) })?;
     }
     let root_ai = new_children.iter().find(|n| n.parent_id.is_none()).map(|n| n.id.clone()).unwrap_or_default();
     // 删旧后代（带 visited 防环：AI 生成的父指针若成环，无保护会无限循环卡死）

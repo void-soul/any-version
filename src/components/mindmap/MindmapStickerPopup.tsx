@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { StickyNote, X } from "lucide-react";
 import { mmApi, type MindmapDocument, type DocumentFull, type MindmapSticker } from "./types";
 import VexAvatar from "../VexAvatar";
@@ -45,8 +45,43 @@ export default function MindmapStickerPopup() {
 
   const onTitleMouseDown = useCallback((e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest("button")) return;
-    void getCurrentWindow().startDragging();
+    // 拖动失败（如窗口缺权限）时至少在控制台留痕，避免无提示失效难排查。
+    void getCurrentWindow().startDragging().catch((err) => console.warn("startDragging failed:", err));
   }, []);
+
+  // 窗口高度随内容自适应：与节点速记悬浮窗同一机制同一参数（min 430 / max 屏高-40），
+  // 初始 900px 太高（贴纸表单只有标题栏 + 提示 + 文档选择 + 内容框 + 颜色 + 按钮）。
+  const titleRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const fitWindow = useCallback(() => {
+    try {
+      const el = contentRef.current;
+      if (!el) return;
+      const titleH = titleRef.current?.offsetHeight ?? 36;
+      let contentH = 0;
+      const kids = Array.from(el.children) as HTMLElement[];
+      for (const k of kids) contentH += k.getBoundingClientRect().height;
+      const gaps = Math.max(0, kids.length - 1) * 10; // gap-2.5
+      const pad = 34; // 内容区 p-3 上下 24px + 提示行
+      const maxH = Math.max(420, window.screen.availHeight - 40);
+      const minH = Math.min(430, maxH);
+      const desired = Math.round(Math.min(maxH, Math.max(minH, titleH + contentH + gaps + pad + 2)));
+      if (Math.abs(desired - window.innerHeight) < 16) return;
+      void getCurrentWindow().setSize(new LogicalSize(window.innerWidth, desired)).catch(() => {/* 忽略 */});
+    } catch { /* 浏览器预览等无 Tauri 环境静默降级 */ }
+  }, []);
+
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    let raf = 0;
+    const schedule = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(fitWindow); };
+    const ro = new ResizeObserver(schedule);
+    ro.observe(el);
+    for (const k of el.children) ro.observe(k);
+    schedule();
+    return () => { ro.disconnect(); cancelAnimationFrame(raf); };
+  }, [fitWindow]);
 
   useEffect(() => {
     void (async () => {
@@ -121,7 +156,7 @@ export default function MindmapStickerPopup() {
   return (
     <div className="h-screen w-screen overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl flex flex-col text-slate-200 select-none" style={themeVars}>
       {/* 标题栏 */}
-      <div className="flex shrink-0 cursor-grab items-center gap-2 border-b border-white/10 px-3 py-2 active:cursor-grabbing" onMouseDown={onTitleMouseDown} style={{ backgroundColor: "var(--mm-accent-soft)" }}>
+      <div ref={titleRef} className="flex shrink-0 cursor-grab items-center gap-2 border-b border-white/10 px-3 py-2 active:cursor-grabbing" onMouseDown={onTitleMouseDown} style={{ backgroundColor: "var(--mm-accent-soft)" }}>
         <VexAvatar size={18} />
         <StickyNote className="h-4 w-4" style={{ color: "var(--mm-accent)" }} />
         <span className="text-xs font-semibold text-white">{t("mmdpop.stickerTitle")}</span>
@@ -138,7 +173,7 @@ export default function MindmapStickerPopup() {
         </span>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
+      <div ref={contentRef} className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
         {/* 目标导图（必须选择） */}
         <div>
           <label className="mb-1 flex items-center justify-between text-[9px] uppercase font-semibold text-slate-500">

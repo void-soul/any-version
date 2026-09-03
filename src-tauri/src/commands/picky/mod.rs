@@ -18,6 +18,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::commands::config::get_data_dir;
@@ -261,28 +262,42 @@ fn get_bookmark(conn: &rusqlite::Connection, id: &str) -> Result<Bookmark, Strin
 /// `--virtual-time-budget` 让浏览器快进虚拟时间并等待异步内容（SPA/懒加载）落定。
 /// Edge 不存在或超时返回 None，调用方再决定是否回退普通 HTTP。
 async fn render_dom_via_browser(url: &str) -> Option<String> {
-    let edge_path = find_msedge()?;
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(25),
-        tokio::process::Command::new(&edge_path)
-            .args([
-                "--headless",
-                "--disable-gpu",
-                "--no-sandbox",
-                "--disable-extensions",
-                "--virtual-time-budget=8000",
-                "--dump-dom",
-                url,
-            ])
-            .output(),
-    )
-    .await
-    .ok()?
-    .ok()?;
+    let browser_path = find_browser()?;
+    // 独立临时 user-data-dir：避免与用户日常浏览器实例/自动化任务争抢同一 profile 锁
+    //（锁被占用时无头进程静默失败，返回空 DOM → 之前被误判为「该站不支持渲染」）。
+    let tmp_profile = std::env::temp_dir().join(format!("kira-picky-profile-{}", std::process::id()));
+    let args = [
+        "--headless",
+        "--disable-gpu",
+        "--no-sandbox",
+        "--disable-extensions",
+        // 隐藏自动化特征：无头浏览器默认 UA 带 HeadlessChrome，部分站点据此返回空壳/拦截
+        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0",
+        "--window-size=1280,900",
+        "--virtual-time-budget=12000",
+        "--dump-dom",
+        url,
+    ];
+    let run = |path: &std::path::PathBuf| {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(35),
+            tokio::process::Command::new(path)
+                .args(&args)
+                .arg(format!("--user-data-dir={}", tmp_profile.display()))
+                .output(),
+        )
+    };
+    let mut output = run(&browser_path).await.ok()?.ok()?;
+    // 首次启动可能因冷启动/首建用户目录超时或无输出：有预算再试一次
+    if !output.status.success() || String::from_utf8_lossy(&output.stdout).trim().is_empty() {
+        output = run(&browser_path).await.ok()?.ok()?;
+    }
     if !output.status.success() {
         return None;
     }
     let body = String::from_utf8_lossy(&output.stdout).to_string();
+    // 清理临时 profile（失败不影响结果，下次进程 id 不同会新建）
+    let _ = std::fs::remove_dir_all(&tmp_profile);
     if body.trim().is_empty() {
         None
     } else {
@@ -290,24 +305,68 @@ async fn render_dom_via_browser(url: &str) -> Option<String> {
     }
 }
 
-/// 定位 Edge 可执行文件（Windows 自带，无需安装额外依赖）。
-fn find_msedge() -> Option<std::path::PathBuf> {
+/// 定位本机可用的浏览器可执行文件（Windows 自带 Edge；无 Edge 时尝试 Chrome）。
+/// 探测顺序：Edge x86 → Edge x64 → Edge 用户级安装 → 注册表 App Paths → Chrome 同序。
+fn find_browser() -> Option<std::path::PathBuf> {
     #[cfg(windows)]
     {
-        std::env::var("ProgramFiles(x86)")
-            .or_else(|_| std::env::var("ProgramFiles"))
-            .ok()
-            .map(|pf| {
-                let p = std::path::Path::new(&pf).join("Microsoft/Edge/Application/msedge.exe");
-                if p.exists() { Some(p) } else { None }
-            })
-            .flatten()
+        let candidates = |name: &str| -> Vec<std::path::PathBuf> {
+            let app_rel = format!("Microsoft\\Edge\\Application\\{}.exe", name);
+            let chrome_rel = format!("Google\\Chrome\\Application\\{}.exe", name);
+            let mut v = Vec::new();
+            for var in ["ProgramFiles(x86)", "ProgramFiles", "LocalAppData"] {
+                if let Some(root) = std::env::var_os(var) {
+                    v.push(std::path::PathBuf::from(&root).join(&app_rel));
+                    v.push(std::path::PathBuf::from(root).join(&chrome_rel));
+                }
+            }
+            v
+        };
+        for p in candidates("msedge") {
+            if p.exists() { return Some(p); }
+        }
+        // 注册表 App Paths 兜底（覆盖自定义安装路径；msedge 与 chrome 都查）
+        for exe in ["msedge.exe", "chrome.exe"] {
+            if let Some(p) = app_paths_lookup(exe) {
+                return Some(p);
+            }
+        }
+        for p in candidates("chrome") {
+            if p.exists() { return Some(p); }
+        }
+        None
     }
     #[cfg(not(windows))]
     {
+        for name in ["msedge", "google-chrome", "chromium", "chrome"] {
+            if let Ok(out) = std::process::Command::new("which").arg(name).output() {
+                if out.status.success() {
+                    let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if !p.is_empty() { return Some(std::path::PathBuf::from(p)); }
+                }
+            }
+        }
         None
     }
 }
+
+/// 读取注册表 App Paths 中浏览器的安装路径（HKLM 与 HKCU 都查）。
+#[cfg(windows)]
+fn app_paths_lookup(exe: &str) -> Option<std::path::PathBuf> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    use winreg::RegKey;
+    let key = format!("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\{}", exe);
+    for hive in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
+        if let Ok(k) = RegKey::predef(hive).open_subkey(&key) {
+            if let Ok(p) = k.get_value::<String, _>("") {
+                let p = std::path::PathBuf::from(p.trim().trim_matches('"'));
+                if p.exists() { return Some(p); }
+            }
+        }
+    }
+    None
+}
+
 
 /// 从 HTML 里取 `<meta name/property="X" content="...">` 的 content 值。
 /// 逐个 `<meta ...>` 标签手写解析属性，不依赖正则回引用（Rust regex 不支持），
@@ -806,8 +865,11 @@ pub fn picky_get_state() -> Result<PickyState, String> {
 }
 
 /// 新增收藏。title 为空时用 url 兜底；可传入从网页抓取的元数据（imageUrl/faviconUrl）。
+/// 添加后若有 URL，立即在后台走浏览器渲染链路自动补全元数据（JS 页面也能抓到），
+/// 用户无需再手动点「刷新元数据」。
 #[tauri::command]
 pub fn picky_add_bookmark(
+    app: tauri::AppHandle,
     title: Option<String>,
     url: Option<String>,
     description: Option<String>,
@@ -826,8 +888,20 @@ pub fn picky_add_bookmark(
     if bm.title.is_empty() {
         bm.title = bm.url.clone().unwrap_or_else(|| "未命名收藏".to_string());
     }
+    let bookmark_id = bm.id.clone();
     insert_bookmark(&conn, &bm)?;
+    drop(conn);
     schedule_auto_sync();
+    // 后台自动补全元数据：只对「当前标题仍是裸 URL/空描述」的收藏生效（refetch 内部会覆盖）。
+    // 用独立任务跑，添加操作本身立即返回，不阻塞 UI。
+    if bm.url.is_some() {
+        tauri::async_runtime::spawn(async move {
+            match picky_refetch_metadata_inner(&bookmark_id).await {
+                Ok(_) => { let _ = app.emit("picky-bookmark-updated", &bookmark_id); }
+                Err(_) => { /* 自动补全失败静默：用户仍可手动刷新 */ }
+            }
+        });
+    }
     Ok(bm)
 }
 
@@ -865,8 +939,13 @@ pub fn picky_set_refined(id: String, refined: bool) -> Result<(), String> {
 /// 提取标题/描述/图片/favicon；仅当本机没有 Edge 时，才退回普通 HTTP 抓取兜底。
 #[tauri::command]
 pub async fn picky_refetch_metadata(id: String) -> Result<Bookmark, String> {
+    picky_refetch_metadata_inner(&id).await
+}
+
+/// 实际的元数据重抓实现（供命令与新增后的自动补全共用）。
+async fn picky_refetch_metadata_inner(id: &str) -> Result<Bookmark, String> {
     let conn = open_db()?;
-    let bm = get_bookmark(&conn, &id)?;
+    let bm = get_bookmark(&conn, id)?;
     let url = bm.url.clone().ok_or_else(|| "该收藏无 URL".to_string())?;
 
     // 1) 浏览器模拟抓取（首选）：渲染后 DOM 含 JS 动态内容

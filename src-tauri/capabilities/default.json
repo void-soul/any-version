@@ -5,7 +5,8 @@
   "windows": [
     "main",
     "translate-popup",
-    "mindmap-quick-popup"
+    "mindmap-quick-popup",
+    "mindmap-sticker-popup"
   ],
   "permissions": [
     "core:default",

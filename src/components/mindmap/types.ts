@@ -43,11 +43,9 @@ export interface MindmapNode {
   documentId: string;
   parentId: string | null;
   name: string;
-  description: string;
   detail: string;       // Markdown 详细内容
   kind: string;          // root/task/requirement/module/constraint/risk/other...
   color: string;         // hex
-  progress: number;      // 0-100
   /** 计划时间（ISO 8601，可空） */
   planAt?: string | null;
   /** 计划重复：none=不重复 / daily=每天 / weekly=每周 */
@@ -77,29 +75,12 @@ export interface MindmapSticker {
   updatedAt: string;
 }
 
-// ─── 额外连线（多输入 DAG：节点除树形父节点外，还可从任意节点接多条输入） ───
-
-export interface MindmapLink {
-  id: string;
-  documentId: string;
-  /** 来源（输出）节点 */
-  sourceId: string;
-  /** 目标（输入）节点 */
-  targetId: string;
-  /** 输入端名称（如「模型」「正面条件」）；空时用来源节点名 */
-  label: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
 // ─── 完整负载 ───
 
 export interface DocumentFull {
   document: MindmapDocument;
   nodes: MindmapNode[];
   stickers: MindmapSticker[];
-  /** 额外连线（多输入）；节点主父级仍由 parentId 承担 */
-  links: MindmapLink[];
 }
 
 /** 一次 AI 导入运行（或单个视图）的 token 消耗统计。 */
@@ -208,21 +189,16 @@ export interface DeleteStickerInput {
   stickerId: string;
 }
 
-export interface UpsertLinkInput {
-  link: MindmapLink;
-}
-
-export interface DeleteLinkInput {
-  documentId: string;
-  linkId: string;
-}
-
 export interface AiProjectInput {
   documentId: string;
   projectPath: string;
   providerId?: string | null;
   modelId?: string | null;
   userHint?: string | null;
+  /** 产物深度 1（最浅清单）→ 5（最深业务流+判定方式）；缺省 3 */
+  depth?: number;
+  /** 要生成的视图（architecture/workflow/dataflow）；空 = AI 自动判断 */
+  views?: string[];
   /** 本次运行的取消标识：前端生成 UUID 传入，点「停止」时按此中断导入 */
   runId: string;
 }
@@ -316,9 +292,6 @@ export const mmApi = {
 
   upsertSticker: (i: UpsertStickerInput) => invoke<void>("mm_upsert_sticker", { input: i }),
   deleteSticker: (i: DeleteStickerInput) => invoke<void>("mm_delete_sticker", { input: i }),
-
-  upsertLink: (i: UpsertLinkInput) => invoke<void>("mm_upsert_link", { input: i }),
-  deleteLink: (i: DeleteLinkInput) => invoke<void>("mm_delete_link", { input: i }),
 
   exportMd: (id: string) => invoke<string>("mm_export_markdown", { documentId: id }),
   aiFromProject: (i: AiProjectInput) => invoke<AiImportResult>("mm_ai_from_project", { input: i }),

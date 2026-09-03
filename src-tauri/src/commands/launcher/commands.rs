@@ -11,6 +11,7 @@ use super::models::{
 use super::windows::{
     extract_file_icon, fetch_url_metadata, fetch_url_metadata_with_timeout, resolve_shortcut,
     scan_appx_list, scan_associated_folder, scan_start_menu, shell_execute, system_item_execute,
+    CommandExtDetached,
 };
 
 #[tauri::command]
@@ -172,6 +173,42 @@ pub async fn launcher_open_file_location(path: String) -> Result<(), String> {
     } else {
         Err(format!("文件不存在: {}", path))
     }
+}
+
+/// 在资源管理器中定位文件（证据文件/项目文件专用）。
+///
+/// 不走 `shell_execute` 的通用链路：那条链在管理员运行时会降权代理给已运行的
+/// explorer 实例，带引号的 `/select,"path"` 参数会被已运行的 explorer 误判为
+/// 可执行路径，退化为打开「我的文档」。这里直接 spawn explorer（系统 Shell，
+/// 单实例自动复用），参数拆分为两个参数传递，避免引号被二次解析：
+/// `/select,` 与路径分开 —— 引号仅包路径，与 Explorer 右键「打开文件位置」语义一致。
+#[tauri::command]
+pub async fn launcher_reveal_file(path: String) -> Result<(), String> {
+    use std::process::Command;
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err(format!("文件不存在: {}", path));
+    }
+    let canonical = p.canonicalize().map(|c| c.to_string_lossy().to_string()).unwrap_or_else(|_| path.clone());
+    let param = format!("/select,{}", canonical);
+    crate::exit_log::exit_log(&format!("launcher_reveal_file: explorer.exe {}", param));
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        Command::new("explorer.exe")
+            .raw_arg(param)
+            .creation_flags_detached()
+            .spawn()
+            .map_err(|e| format!("打开资源管理器失败: {}", e))?;
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new("xdg-open")
+            .arg(p.parent().map(|d| d.to_path_buf()).unwrap_or_default())
+            .spawn()
+            .map_err(|e| format!("打开资源管理器失败: {}", e))?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
