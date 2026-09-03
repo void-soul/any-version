@@ -15,6 +15,8 @@ import {
   ChevronUp,
   Activity,
 } from "lucide-react";
+import { MODULE_MAP, moduleLabel } from "../../moduleRegistry";
+import type { DetectedAiTool } from "./types";
 
 interface UsageSummary {
   total_records: number;
@@ -33,6 +35,8 @@ interface Row {
   key: string;
   label: string;
   sub?: string;
+  /** 友好展示图标（模块 Lucide 图标或 AI 工具 emoji 头像）；缺省不渲染 */
+  icon?: React.ReactNode;
   requests: number;
   input: number;
   output: number;
@@ -96,6 +100,33 @@ function normalizeInterval(value: number | null | undefined): number {
   return (REFRESH_INTERVAL_OPTIONS_MS as readonly number[]).includes(value ?? -1)
     ? (value as number)
     : DEFAULT_REFRESH_INTERVAL_MS;
+}
+
+// ─── tool_id → 友好名称 + 图标 ───
+// 三级解析：应用模块注册表 → 别名（tool_id ≠ 模块 id 的直连调用方）→ AI CLI 工具注册表
+// （detect_ai_tools，displayName + emoji 头像）。都未命中时回退原始 id。
+// 未来新模块只要把 tool_id 取成模块 id（或在别名表里登记），即可自动获得友好展示。
+
+/** 直连 AI 通道的调用方：tool_id 与模块 id 不一致时在此登记（→ 模块 id） */
+const TOOL_ID_ALIASES: Record<string, string> = {
+  "api-import": "api", // API 智能导入 → api 模块
+};
+
+function toolDisplay(rawId: string, aiTools: DetectedAiTool[]): { label: string; icon?: React.ReactNode } {
+  const moduleId = TOOL_ID_ALIASES[rawId] ?? rawId;
+  const mod = MODULE_MAP[moduleId];
+  if (mod) {
+    const Icon = mod.icon;
+    return { label: moduleLabel(moduleId), icon: <Icon className="w-3 h-3" style={{ color: mod.color }} /> };
+  }
+  const aiTool = aiTools.find(x => x.id === rawId);
+  if (aiTool) {
+    return {
+      label: aiTool.nickname || aiTool.display_name,
+      icon: aiTool.avatar ? <span className="text-[10px] leading-none">{aiTool.avatar}</span> : undefined,
+    };
+  }
+  return { label: rawId };
 }
 
 interface SectionStyle {
@@ -189,7 +220,10 @@ function SortableTable({
             <tr key={r.key} className="border-t border-white/[0.03] hover:bg-white/[0.025] transition-colors">
               <td className="pl-2 py-1.5">{rankBadge(idx)}</td>
               <td className="px-2 py-1.5 max-w-[180px]">
-                <div className="text-[10px] text-slate-200 font-mono truncate" title={r.label}>{r.label}</div>
+                <div className="flex items-center gap-1 min-w-0">
+                  {r.icon && <span className="flex-shrink-0 flex items-center justify-center w-3.5">{r.icon}</span>}
+                  <div className={`text-[10px] truncate ${r.icon ? "text-slate-100" : "text-slate-200 font-mono"}`} title={r.label}>{r.label}</div>
+                </div>
                 {r.sub && <div className="text-[8px] text-slate-600 truncate">{r.sub}</div>}
               </td>
               <td className="px-2 py-1.5 text-[10px] text-[var(--module-accent)] text-right font-semibold tabular-nums">{r.requests}</td>
@@ -215,6 +249,8 @@ export default function UsageStats() {
   const { t } = useTranslation();
   const [summary, setSummary] = useState<UsageSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  // AI CLI 工具注册表（Claude Code 等）：为代理启动的工具提供显示名 + emoji 头像
+  const [aiTools, setAiTools] = useState<DetectedAiTool[]>([]);
   const [refreshIntervalMs, setRefreshIntervalMs] = useState<number>(() => {
     try {
       const saved = localStorage.getItem(LS_REFRESH_KEY);
@@ -237,6 +273,11 @@ export default function UsageStats() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // AI CLI 工具注册表加载失败不致命：回退显示原始 tool_id
+  useEffect(() => {
+    invoke<DetectedAiTool[]>("detect_ai_tools").then(setAiTools).catch(() => setAiTools([]));
+  }, []);
 
   // 自动刷新：间隔 > 0 时定时拉取；切走页面 / 关闭后由 cleanup 取消
   useEffect(() => {
@@ -261,14 +302,19 @@ export default function UsageStats() {
     await load();
   };
 
-  const toolRows: Row[] = (summary?.by_tool || []).map(t => ({
-    key: t.tool_id,
-    label: t.tool_id,
-    requests: t.request_count,
-    input: t.input_tokens,
-    output: t.output_tokens,
-    total: t.total_tokens,
-  }));
+  const toolRows: Row[] = (summary?.by_tool || []).map(tool => {
+    const d = toolDisplay(tool.tool_id, aiTools);
+    return {
+      key: tool.tool_id,
+      label: d.label,
+      sub: d.label !== tool.tool_id ? tool.tool_id : undefined,
+      icon: d.icon,
+      requests: tool.request_count,
+      input: tool.input_tokens,
+      output: tool.output_tokens,
+      total: tool.total_tokens,
+    };
+  });
   const modelRows: Row[] = (summary?.by_model || []).map(m => ({
     key: m.model + "|" + m.provider,
     label: m.model,

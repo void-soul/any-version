@@ -103,7 +103,16 @@ impl NodeProjectDef {
             .to_string()
     }
 
-    /// npx 模式下判断包是否已安装到托管目录（node_modules/<包名> 存在，scoped 包含 @scope 前缀路径）。
+    /// npx 模式的干净运行目录：不复用可能是 Git workspace 的项目根目录。
+    ///
+    /// npm 会沿 `--prefix` 向上读取 package.json；如果直接把托管目录作为 prefix，
+    /// 旧版 Git 安装留下的 workspace:^ 依赖会再次被 npm 解析。专用子目录只放发布包，
+    /// 从根上隔离这种 workspace 元数据。
+    pub fn npx_runtime_dir(&self) -> PathBuf {
+        self.managed_dir().join(".npx-runtime")
+    }
+
+    /// npx 模式下判断包是否已安装到干净运行目录。
     pub fn npx_installed(&self) -> bool {
         let pkg = self.npx_package.trim();
         if pkg.is_empty() {
@@ -113,7 +122,7 @@ impl NodeProjectDef {
         for part in pkg.split('/') {
             rel.push(part);
         }
-        self.managed_dir().join(rel).exists()
+        self.npx_runtime_dir().join(rel).exists()
     }
 
     /// 判断是否已安装：git 模式看 package.json，npx 模式看 node_modules 里的包。
@@ -451,17 +460,104 @@ pub struct NodeLog {
 }
 
 fn emit_log(app: &tauri::AppHandle, project_id: &str, phase: &str, line: &str) {
+    let line = line.trim_end_matches(['\r', '\n']);
+    if line.is_empty() {
+        return;
+    }
     let _ = app.emit(
         "npm-log",
         NodeLog {
             project_id: project_id.to_string(),
             phase: phase.to_string(),
-            line: line.trim_end().to_string(),
+            line: line.to_string(),
         },
     );
 }
 
-/// 执行命令并把 stdout/stderr 逐行实时 emit（phase 归类）。返回 (是否成功, 末尾错误行)。
+fn format_command(program: &str, args: &[&str]) -> String {
+    let mut command = program.to_string();
+    for arg in args {
+        if arg.is_empty() || arg.chars().any(|c| c.is_whitespace() || c == '"') {
+            command.push(' ');
+            command.push('"');
+            command.push_str(&arg.replace('"', "\\\""));
+            command.push('"');
+        } else {
+            command.push(' ');
+            command.push_str(arg);
+        }
+    }
+    command
+}
+
+/// 按换行或回车分隔实时读取命令输出。npm 的进度渲染通常只使用 `\\r`，
+/// `BufRead::lines()` 会一直等到 `\\n`，导致前端看起来像卡住；这里两种分隔符都立即转发。
+fn emit_reader_live<R: std::io::Read>(
+    reader: R,
+    app: &tauri::AppHandle,
+    project_id: &str,
+    phase: &str,
+) -> String {
+    use std::io::Read;
+
+    let mut reader = std::io::BufReader::new(reader);
+    let mut bytes = [0u8; 4096];
+    let mut pending = Vec::new();
+    let mut last = String::new();
+    let mut previous_was_cr = false;
+
+    loop {
+        let count = match reader.read(&mut bytes) {
+            Ok(0) => break,
+            Ok(count) => count,
+            Err(_) => break,
+        };
+        for byte in &bytes[..count] {
+            if *byte == b'\r' || *byte == b'\n' {
+                // CRLF 只作为一条记录；单独的 CR（npm 进度条）也要立即发送。
+                if !pending.is_empty() {
+                    let line = String::from_utf8_lossy(&pending).to_string();
+                    if !line.trim().is_empty() {
+                        last = line.clone();
+                        emit_log(app, project_id, phase, &line);
+                    }
+                    pending.clear();
+                }
+                previous_was_cr = *byte == b'\r';
+            } else {
+                // 某些程序会在 CR 后紧接新内容；previous_was_cr 仅用于说明分隔已处理。
+                previous_was_cr = false;
+                pending.push(*byte);
+            }
+        }
+    }
+    if !pending.is_empty() {
+        let line = String::from_utf8_lossy(&pending).to_string();
+        if !line.trim().is_empty() {
+            last = line.clone();
+            emit_log(app, project_id, phase, &line);
+        }
+    }
+    let _ = previous_was_cr;
+    last
+}
+
+/// 杀掉子进程及其整棵进程树（npm/npx 经 `cmd /c` 启动，真正的 node 进程是孙进程，
+/// 仅 `child.kill()` 会留下孤儿的 npm/node 进程继续占用网络与文件）。
+fn kill_process_tree(child: &mut std::process::Child) {
+    let pid = child.id().to_string();
+    #[cfg(windows)]
+    {
+        let _ = run_capture("taskkill", &["/f", "/t", "/pid", &pid], None);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = child.kill();
+    }
+}
+
+/// 执行命令并把 stdout/stderr 实时 emit（支持 newline/CR 分隔）。返回 (是否成功, 末尾错误行)。
+/// `timeout`：总超时；超时后杀掉整棵进程树并返回失败（npm 网络请求挂死时避免永久转圈）。
 fn run_capture_live(
     app: &tauri::AppHandle,
     project_id: &str,
@@ -470,7 +566,19 @@ fn run_capture_live(
     args: &[&str],
     cwd: Option<&Path>,
     extra_env: &[(&str, &str)],
+    timeout: Option<Duration>,
 ) -> (bool, String) {
+    let command = format_command(program, args);
+    emit_log(
+        app,
+        project_id,
+        phase,
+        &format!("$ {}", command),
+    );
+    if let Some(dir) = cwd {
+        emit_log(app, project_id, phase, &format!("工作目录: {}", dir.display()));
+    }
+
     let mut cmd = hidden_cmd(program);
     cmd.args(args);
     if let Some(d) = cwd {
@@ -490,41 +598,70 @@ fn run_capture_live(
         }
     };
 
-    let app_out = app.clone();
-    let pid = project_id.to_string();
-    let ph = phase.to_string();
-    let stdout = child.stdout.take();
-    if let Some(mut so) = stdout {
-        std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader};
-            let reader = BufReader::new(&mut so);
-            for line in reader.lines().map_while(|l| l.ok()) {
-                emit_log(&app_out, &pid, &ph, &line);
-            }
-        });
-    }
-    let app_err = app.clone();
-    let pid_e = project_id.to_string();
-    let ph_e = phase.to_string();
-    let stderr = child.stderr.take();
-    let last_err = if let Some(mut se) = stderr {
-        let (tx, rx) = std::sync::mpsc::channel::<String>();
-        std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader};
-            let reader = BufReader::new(&mut se);
-            let mut last = String::new();
-            for line in reader.lines().map_while(|l| l.ok()) {
-                emit_log(&app_err, &pid_e, &ph_e, &line);
-                last = line;
-            }
-            let _ = tx.send(last);
-        });
-        rx.recv().unwrap_or_default()
-    } else {
-        String::new()
-    };
+    let stdout_thread = child.stdout.take().map(|so| {
+        let app_out = app.clone();
+        let pid = project_id.to_string();
+        let ph = phase.to_string();
+        std::thread::spawn(move || emit_reader_live(so, &app_out, &pid, &ph))
+    });
+    let stderr_thread = child.stderr.take().map(|se| {
+        let app_err = app.clone();
+        let pid = project_id.to_string();
+        let ph = phase.to_string();
+        std::thread::spawn(move || emit_reader_live(se, &app_err, &pid, &ph))
+    });
 
-    let status = child.wait();
+    // npm 在解析依赖、下载大文件时可能暂时没有任何输出；定期发送心跳，
+    // 让服务面板明确知道进程仍在运行，而不是看起来像卡死。
+    let started_at = Instant::now();
+    let mut last_report = Instant::now();
+    let mut timed_out = false;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) => {
+                if let Some(t) = timeout {
+                    if started_at.elapsed() >= t {
+                        emit_log(
+                            app,
+                            project_id,
+                            phase,
+                            &format!("命令超时（{} 秒），终止进程树…", t.as_secs()),
+                        );
+                        kill_process_tree(&mut child);
+                        timed_out = true;
+                        break child.wait();
+                    }
+                }
+                if last_report.elapsed() >= Duration::from_secs(5) {
+                    emit_progress(
+                        app,
+                        project_id,
+                        phase,
+                        &format!(
+                            "命令仍在运行…已用时 {} 秒：{}",
+                            started_at.elapsed().as_secs(),
+                            command
+                        ),
+                    );
+                    last_report = Instant::now();
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            Err(error) => break Err(error),
+        }
+    };
+    let _ = stdout_thread.and_then(|thread| thread.join().ok());
+    let last_err = stderr_thread
+        .and_then(|thread| thread.join().ok())
+        .unwrap_or_default();
+    if timed_out {
+        let secs = timeout.map(|t| t.as_secs()).unwrap_or(0);
+        return (
+            false,
+            format!("命令超时（{} 秒）已终止，请检查网络后重试", secs),
+        );
+    }
     let ok = matches!(status, Ok(s) if s.success());
     (ok, last_err)
 }
@@ -586,7 +723,7 @@ fn pm_install(app: &tauri::AppHandle, def: &NodeProjectDef, dir: &Path) -> Resul
     let mut args = prefix;
     args.push("install".to_string());
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let (ok, last_err) = run_capture_live(app, &def.id, "install", &prog, &arg_refs, Some(dir), &[]);
+    let (ok, last_err) = run_capture_live(app, &def.id, "install", &prog, &arg_refs, Some(dir), &[], None);
     if !ok {
         let msg = last_err.trim();
         return Err(format!("`{} install` 失败: {}", pm, if msg.is_empty() { "未知错误" } else { msg }));
@@ -606,7 +743,7 @@ fn pm_build(app: &tauri::AppHandle, def: &NodeProjectDef, dir: &Path) -> Result<
     args.push("run".to_string());
     args.push(def.build_script.clone());
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let (ok, last_err) = run_capture_live(app, &def.id, "build", &prog, &arg_refs, Some(dir), &[]);
+    let (ok, last_err) = run_capture_live(app, &def.id, "build", &prog, &arg_refs, Some(dir), &[], None);
     if !ok {
         let msg = last_err.trim();
         return Err(format!("`{} run {}` 失败: {}", pm, def.build_script, if msg.is_empty() { "未知错误" } else { msg }));
@@ -633,24 +770,54 @@ fn strip_pkg_version(pkg: &str) -> &str {
 /// 并注入 `npm_config_workspaces=false` + `npm_config_workspaces_update=false`
 /// 彻底禁用 workspace 模式；同时清理继承的 npm/pnpm 环境变量，防止宿主 shell
 /// 的 `npm_config_*` 覆盖本次安装行为。
+const NPM_ISOLATION_ENV: &[(&str, &str)] = &[
+    // 显式关闭 workspaces 解析（含向上冒泡查找），npm 7+ 生效
+    ("npm_config_workspaces", "false"),
+    ("npm_config_workspaces_update", "false"),
+    ("npm_config_workspaces_install", "false"),
+    // pnpm 环境变量若被继承会改变依赖解析行为，清掉
+    ("npm_config_shared_workspace_lockfile", "false"),
+    ("npm_config_shell_emulator", "false"),
+    // 关闭 fund/audit，同时强制 npm 输出可被前端逐条显示的详细日志。
+    ("npm_config_fund", "false"),
+    ("npm_config_audit", "false"),
+    ("npm_config_loglevel", "verbose"),
+    ("npm_config_progress", "true"),
+    ("npm_config_foreground_scripts", "true"),
+    ("npm_config_timing", "true"),
+    ("npm_config_update_notifier", "false"),
+];
+
+const NPM_OUTPUT_ARGS: &[&str] = &[
+    "--workspaces=false",
+    "--no-fund",
+    "--no-audit",
+    "--loglevel=verbose",
+    "--progress=true",
+    "--foreground-scripts",
+    "--timing",
+    // 显式 fetch 超时/重试，缓解 npm(undici) 网络请求 CloseWait 挂死问题
+    "--fetch-timeout=60000",
+    "--fetch-retries=2",
+    "--fetch-retry-mintimeout=10000",
+    "--fetch-retry-maxtimeout=60000",
+];
+
+fn npx_install_args(prefix: Vec<String>, runtime_dir: &Path, spec: String) -> Vec<String> {
+    let mut args = prefix;
+    args.push("install".to_string());
+    args.push("--prefix".to_string());
+    args.push(runtime_dir.to_string_lossy().to_string());
+    args.extend(NPM_OUTPUT_ARGS.iter().map(|arg| (*arg).to_string()));
+    args.push(spec);
+    args
+}
+
 fn npx_install(
     app: &tauri::AppHandle,
     def: &NodeProjectDef,
-    dir: &Path,
     latest: bool,
 ) -> Result<(), String> {
-    const NPM_ISOLATION_ENV: &[(&str, &str)] = &[
-        // 显式关闭 workspaces 解析（含向上冒泡查找），npm 7+ 生效
-        ("npm_config_workspaces", "false"),
-        ("npm_config_workspaces_update", "false"),
-        ("npm_config_workspaces_install", "false"),
-        // pnpm 环境变量若被继承会改变依赖解析行为，清掉
-        ("npm_config_shared_workspace_lockfile", "false"),
-        ("npm_config_shell_emulator", "false"),
-        // 关闭 fund/audit 提示：减少网络调用与日志噪音（安装的是托管依赖包，无需审计）
-        ("npm_config_fund", "false"),
-        ("npm_config_audit", "false"),
-    ];
     let pkg = def.npx_package.trim();
     let spec = if latest {
         format!("{}@latest", strip_pkg_version(pkg))
@@ -658,26 +825,26 @@ fn npx_install(
         pkg.to_string()
     };
     emit_progress(app, &def.id, "npx", &format!("正在通过 npx 安装 {} …", pkg));
-    let _ = fs::create_dir_all(dir);
+    // 不要把 Git workspace 根目录作为 npm prefix：旧版 harness checkout 中包含
+    // `workspace:^`，npm 即使收到 --workspaces=false 也会先解析该根 package.json。
+    let runtime_dir = def.npx_runtime_dir();
+    fs::create_dir_all(&runtime_dir).map_err(|e| format!("创建 npx 运行目录失败: {}", e))?;
+    // 预先创建最小 package.json，阻止 npm 向上冒泡到 managed_dir 的 workspace 元数据。
+    let runtime_manifest = runtime_dir.join("package.json");
+    if !runtime_manifest.exists() {
+        fs::write(&runtime_manifest, "{\"private\":true}\n")
+            .map_err(|e| format!("初始化 npx 运行目录失败: {}", e))?;
+    }
     let (prog, prefix) = resolve_exe_invocation("npm", "请先安装 Node.js (https://nodejs.org)")?;
-    let mut args = prefix;
-    args.push("install".to_string());
-    args.push("--prefix".to_string());
-    args.push(dir.to_string_lossy().to_string());
-    // 双保险：环境变量之外再加 CLI 级禁用（npm 7+ 识别 --workspaces=false，
-    // 老版本 npm 会忽略该 flag 不报错）
-    args.push("--workspaces=false".to_string());
-    args.push("--no-fund".to_string());
-    args.push("--no-audit".to_string());
-    args.push(spec);
+    let args = npx_install_args(prefix, &runtime_dir, spec);
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let (ok, last_err) = run_capture_live(app, &def.id, "npx", &prog, &arg_refs, None, NPM_ISOLATION_ENV);
+    let (ok, last_err) = run_capture_live(app, &def.id, "npx", &prog, &arg_refs, None, NPM_ISOLATION_ENV, Some(Duration::from_secs(900)));
     if !ok {
         let msg = last_err.trim();
         return Err(format!("npx 安装失败: {}", if msg.is_empty() { "未知错误" } else { msg }));
     }
     if !def.npx_installed() {
-        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(&runtime_dir);
         return Err(format!("安装完成但未找到包 {}，请检查 npxPackage 是否拼写正确", pkg));
     }
     emit_progress(app, &def.id, "done", "npx 安装完成");
@@ -736,7 +903,7 @@ pub async fn npm_install(app: tauri::AppHandle, project_id: String) -> Result<()
 
     // npx 模式：直接 npm install --prefix，一步到位，无需 git clone / 依赖安装 / 编译
     if def.is_npx() {
-        return npx_install(&app, &def, &dir, false);
+        return npx_install(&app, &def, false);
     }
 
     emit_progress(&app, &def.id, "clone", &format!("正在克隆 {} …", def.repo));
@@ -753,7 +920,7 @@ pub async fn npm_install(app: tauri::AppHandle, project_id: String) -> Result<()
         dir.to_string_lossy().to_string(),
     ];
     let arg_refs: Vec<&str> = clone_args.iter().map(|s| s.as_str()).collect();
-    let (ok, last_err) = run_capture_live(&app, &def.id, "clone", "git", &arg_refs, Some(parent), &[]);
+    let (ok, last_err) = run_capture_live(&app, &def.id, "clone", "git", &arg_refs, Some(parent), &[], None);
     if !ok {
         let msg = last_err.trim();
         return Err(format!("git clone 失败: {}", if msg.is_empty() { "未知错误" } else { msg }));
@@ -784,11 +951,11 @@ pub async fn npm_upgrade(app: tauri::AppHandle, project_id: String) -> Result<()
 
     // npx 模式：重新 npm install 即更新到最新版
     if def.is_npx() {
-        return npx_install(&app, &def, &dir, true);
+        return npx_install(&app, &def, true);
     }
 
     emit_progress(&app, &def.id, "pull", "正在拉取最新代码 (git pull)…");
-    let (ok, last_err) = run_capture_live(&app, &def.id, "pull", "git", &["pull"], Some(&dir), &[]);
+    let (ok, last_err) = run_capture_live(&app, &def.id, "pull", "git", &["pull"], Some(&dir), &[], None);
     if !ok {
         let msg = last_err.trim();
         return Err(format!("git pull 失败: {}", if msg.is_empty() { "未知错误" } else { msg }));
@@ -813,7 +980,7 @@ pub async fn npm_install_deps(app: tauri::AppHandle, project_id: String) -> Resu
     let dir = def.managed_dir();
     // npx 模式没有独立依赖步骤：重新安装即拉取最新版
     if def.is_npx() {
-        return npx_install(&app, &def, &dir, true);
+        return npx_install(&app, &def, true);
     }
     pm_install(&app, &def, &dir)?;
     pm_build(&app, &def, &dir)?;
@@ -879,16 +1046,41 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
 
     let dir = def.managed_dir();
 
-    // npx 模式：启动前自动拉取远程最新版（每次启动即自动加载最新版本）。
-    // 更新失败时若本地已有包则回退本地版本继续启动，避免离线/网络异常导致无法启动。
+    // npx 模式启动策略：
+    // - 未安装 → 先完整安装（npx_install 内部带 15 分钟超时兜底，网络挂死时
+    //   不会永久卡住，超时会终止进程树并返回失败）。
+    // - 已安装 → 先用 `npm view`（30s 超时）快速比对远程最新版，仅在有新版时
+    //   才重新安装；比对失败/超时/离线则直接用本地已装版本启动，保证可启动性。
+    //   之前「每次启动都全量 npm install pkg@latest」在网络慢或 npm fetch 挂死时
+    //   会导致服务永远起不来，且正常情况下也要先花数分钟下载校验才能启动。
     if def.is_npx() {
-        match npx_install(&app, &def, &dir, true) {
-            Ok(()) => {}
-            Err(e) => {
-                if def.npx_installed() {
-                    emit_log(&app, &def.id, "stderr", &format!("自动更新到最新版失败，使用本地已装版本启动: {}", e));
-                } else {
-                    return Err(e);
+        if !def.npx_installed() {
+            npx_install(&app, &def, false)?;
+        } else {
+            let current = npx_local_version(&def);
+            let latest = npm_remote_version(def.npx_package.trim());
+            let outdated = match (&current, &latest) {
+                (Some(c), Some(l)) => version_gt(l, c),
+                _ => false,
+            };
+            if outdated {
+                emit_progress(
+                    &app,
+                    &def.id,
+                    "npx",
+                    &format!(
+                        "发现新版本 {}（本地 {}），正在更新…",
+                        latest.as_deref().unwrap_or("?"),
+                        current.as_deref().unwrap_or("?")
+                    ),
+                );
+                if let Err(e) = npx_install(&app, &def, true) {
+                    emit_log(
+                        &app,
+                        &def.id,
+                        "stderr",
+                        &format!("更新到最新版失败，使用本地已装版本启动: {}", e),
+                    );
                 }
             }
         }
@@ -900,7 +1092,7 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
         let mut a = prefix;
         a.push("-y".to_string());
         a.push("--prefix".to_string());
-        a.push(dir.to_string_lossy().to_string());
+        a.push(def.npx_runtime_dir().to_string_lossy().to_string());
         a.push(def.npx_bin_name());
         a.extend(def.start_cmd.iter().cloned());
         (p, a)
@@ -912,10 +1104,17 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
         (p, a)
     };
 
+    // npx 发布包运行在隔离 prefix 中，避免从旧 workspace checkout 读取配置。
+    let runtime_cwd = if def.is_npx() {
+        def.npx_runtime_dir()
+    } else {
+        dir.clone()
+    };
+
     // 启动后台进程（CREATE_NO_WINDOW），记录 PID
     let mut cmd = hidden_cmd(&prog);
     cmd.args(&args);
-    cmd.current_dir(&dir);
+    cmd.current_dir(&runtime_cwd);
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
@@ -1123,7 +1322,7 @@ pub struct NodeUpdateInfo {
     pub error: Option<String>,
 }
 
-/// npx 模式读取本地已装版本：`node_modules/<包名>/package.json` 的 version 字段。
+/// npx 模式读取本地已装版本：`.npx-runtime/node_modules/<包名>/package.json` 的 version 字段。
 /// scoped 包会按 `@scope/name` 拆成多级目录；pnpm 符号链接也能读到目标文件。
 fn npx_local_version(def: &NodeProjectDef) -> Option<String> {
     let pkg = def.npx_package.trim();
@@ -1134,7 +1333,7 @@ fn npx_local_version(def: &NodeProjectDef) -> Option<String> {
     for part in pkg.split('/') {
         rel.push(part);
     }
-    let pkg_json = def.managed_dir().join(rel).join("package.json");
+    let pkg_json = def.npx_runtime_dir().join(rel).join("package.json");
     let data = fs::read_to_string(pkg_json).ok()?;
     let v: serde_json::Value = serde_json::from_str(&data).ok()?;
     v.get("version")
@@ -1143,8 +1342,13 @@ fn npx_local_version(def: &NodeProjectDef) -> Option<String> {
 }
 
 /// 查询 npm registry 上包的最新版本：`npm view <pkg> version`。
-/// 网络不可用 / npm 不在 PATH / 包不存在时返回 None。
+/// 带超时（npm view 的网络请求同样可能挂死）；网络不可用 / 超时 / npm 不在
+/// PATH / 包不存在时返回 None。
 fn npm_remote_version(pkg: &str) -> Option<String> {
+    npm_remote_version_with_timeout(pkg, Duration::from_secs(30))
+}
+
+fn npm_remote_version_with_timeout(pkg: &str, timeout: Duration) -> Option<String> {
     let (prog, prefix) =
         match resolve_exe_invocation("npm", "请先安装 Node.js (https://nodejs.org)") {
             Ok(x) => x,
@@ -1157,14 +1361,37 @@ fn npm_remote_version(pkg: &str) -> Option<String> {
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let mut cmd = hidden_cmd(&prog);
     cmd.args(&arg_refs);
-    let out = cmd.output().ok()?;
-    if !out.status.success() {
-        return None;
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::null());
+    let mut child = cmd.spawn().ok()?;
+    let started_at = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return None;
+                }
+                let mut out = String::new();
+                if let Some(mut so) = child.stdout.take() {
+                    use std::io::Read;
+                    let _ = so.read_to_string(&mut out);
+                }
+                return out
+                    .lines()
+                    .map(|l| l.trim().to_string())
+                    .find(|l| !l.is_empty());
+            }
+            Ok(None) => {
+                if started_at.elapsed() >= timeout {
+                    kill_process_tree(&mut child);
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(_) => return None,
+        }
     }
-    let text = String::from_utf8_lossy(&out.stdout);
-    text.lines()
-        .map(|l| l.trim().to_string())
-        .find(|l| !l.is_empty())
 }
 
 /// 简单 semver 比较：`version_gt(a, b)` 判断 a > b（数字段逐一比较，忽略前置 v）。
@@ -1501,5 +1728,42 @@ mod tests {
         assert!(!npx_def("cowsay", "").installed());
         assert!(!npx_def("", "").is_npx());
         assert!(npx_def("@scope/name", "").is_npx());
+    }
+
+    #[test]
+    fn test_npx_runtime_dir_isolated_from_managed_root() {
+        let def = npx_def("@deepseek-ai/dsh", "dsh");
+        let runtime = def.npx_runtime_dir();
+        assert_eq!(runtime.file_name().and_then(|x| x.to_str()), Some(".npx-runtime"));
+        assert!(runtime.starts_with(def.managed_dir()));
+        assert_ne!(runtime, def.managed_dir());
+    }
+
+    #[test]
+    fn test_npx_install_shows_verbose_output_flags() {
+        let args = npx_install_args(
+            vec!["/c".into(), "npm.cmd".into()],
+            Path::new("runtime"),
+            "@scope/pkg@latest".into(),
+        );
+        assert_eq!(args[2], "install");
+        assert_eq!(args[3], "--prefix");
+        assert!(args.contains(&"--loglevel=verbose".to_string()));
+        assert!(args.contains(&"--progress=true".to_string()));
+        assert!(args.contains(&"--foreground-scripts".to_string()));
+        assert!(args.contains(&"--timing".to_string()));
+        assert_eq!(args.last().map(String::as_str), Some("@scope/pkg@latest"));
+    }
+
+    #[test]
+    fn test_format_command_quotes_paths() {
+        let command = format_command(
+            "npm.cmd",
+            &["install", "--prefix", "C:\\Program Files\\Kira", "pkg"],
+        );
+        assert_eq!(
+            command,
+            "npm.cmd install --prefix \"C:\\Program Files\\Kira\" pkg"
+        );
     }
 }

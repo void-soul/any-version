@@ -262,10 +262,24 @@ fn get_bookmark(conn: &rusqlite::Connection, id: &str) -> Result<Bookmark, Strin
 /// `--virtual-time-budget` 让浏览器快进虚拟时间并等待异步内容（SPA/懒加载）落定。
 /// Edge 不存在或超时返回 None，调用方再决定是否回退普通 HTTP。
 async fn render_dom_via_browser(url: &str) -> Option<String> {
-    let browser_path = find_browser()?;
-    // 独立临时 user-data-dir：避免与用户日常浏览器实例/自动化任务争抢同一 profile 锁
-    //（锁被占用时无头进程静默失败，返回空 DOM → 之前被误判为「该站不支持渲染」）。
-    let tmp_profile = std::env::temp_dir().join(format!("kira-picky-profile-{}", std::process::id()));
+    let browser_path = match find_browser() {
+        Some(p) => p,
+        None => {
+            crate::exit_log::exit_log("[picky-render] 未找到可用浏览器（Edge/Chrome），跳过渲染");
+            return None;
+        }
+    };
+    // 每次渲染用全新的临时 user-data-dir（进程 id + 纳秒时间戳）：
+    // profile 锁被占用时无头进程会「静默失败」（退出码 0、0 字节输出、无 stderr），
+    // 复用同一目录在并发抓取（新增收藏自动补全元数据）或上次渲染超时残留孤儿进程时必然踩锁。
+    let tmp_profile = std::env::temp_dir().join(format!(
+        "kira-picky-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
     let args = [
         "--headless",
         "--disable-gpu",
@@ -283,24 +297,49 @@ async fn render_dom_via_browser(url: &str) -> Option<String> {
             std::time::Duration::from_secs(35),
             tokio::process::Command::new(path)
                 .args(&args)
+                // 超时/取消时终止浏览器进程，避免孤儿无头浏览器占住 profile 影响后续抓取
+                .kill_on_drop(true)
                 .arg(format!("--user-data-dir={}", tmp_profile.display()))
                 .output(),
         )
     };
-    let mut output = run(&browser_path).await.ok()?.ok()?;
+    let mut output = match run(&browser_path).await {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => {
+            crate::exit_log::exit_log(&format!("[picky-render] spawn失败: {e} url={url}"));
+            return None;
+        }
+        Err(_) => {
+            crate::exit_log::exit_log(&format!("[picky-render] 超时(35s) url={url}"));
+            return None;
+        }
+    };
     // 首次启动可能因冷启动/首建用户目录超时或无输出：有预算再试一次
     if !output.status.success() || String::from_utf8_lossy(&output.stdout).trim().is_empty() {
-        output = run(&browser_path).await.ok()?.ok()?;
+        output = match run(&browser_path).await {
+            Ok(Ok(o)) => o,
+            _ => {
+                crate::exit_log::exit_log(&format!("[picky-render] 重试失败 url={url}"));
+                return None;
+            }
+        };
     }
     if !output.status.success() {
+        crate::exit_log::exit_log(&format!(
+            "[picky-render] 非零退出 code={:?} stderr={} url={url}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).chars().take(200).collect::<String>()
+        ));
         return None;
     }
     let body = String::from_utf8_lossy(&output.stdout).to_string();
-    // 清理临时 profile（失败不影响结果，下次进程 id 不同会新建）
+    // 清理临时 profile（失败不影响结果；目录含纳秒时间戳，残留不占锁）
     let _ = std::fs::remove_dir_all(&tmp_profile);
     if body.trim().is_empty() {
+        crate::exit_log::exit_log(&format!("[picky-render] DOM为空 url={url}"));
         None
     } else {
+        crate::exit_log::exit_log(&format!("[picky-render] 成功 {} 字节 url={url}", body.len()));
         Some(body)
     }
 }
@@ -947,6 +986,7 @@ async fn picky_refetch_metadata_inner(id: &str) -> Result<Bookmark, String> {
     let conn = open_db()?;
     let bm = get_bookmark(&conn, id)?;
     let url = bm.url.clone().ok_or_else(|| "该收藏无 URL".to_string())?;
+    crate::exit_log::exit_log(&format!("[picky-meta] 开始 refetch id={id} url={url}"));
 
     // 1) 浏览器模拟抓取（首选）：渲染后 DOM 含 JS 动态内容
     let rendered = render_dom_via_browser(&url).await;
@@ -982,7 +1022,26 @@ async fn picky_refetch_metadata_inner(id: &str) -> Result<Bookmark, String> {
         }
         None => {
             if let Some(m) = &http_fallback {
-                if m.title != url && !m.title.is_empty() {
+                // 防降级污染：HTTP 兜底在某些站点（如知乎）只能拿到裸 host（如 "www.zhihu.com"），
+                // 用它覆盖标题只会产生垃圾数据 —— host 形态（无空白、含点、纯 ASCII 可打印）或与
+                // URL 主机相同的「标题」一律拒绝。
+                let hostlike = |t: &str| {
+                    !t.is_empty()
+                        && !t.chars().any(char::is_whitespace)
+                        && t.contains('.')
+                        && t.chars().all(|c| c.is_ascii_graphic())
+                };
+                let url_host = url
+                    .split_once("://")
+                    .map(|(_, rest)| rest.split(['/', '?', ':']).next().unwrap_or(""))
+                    .unwrap_or("");
+                let matches_host = !url_host.is_empty()
+                    && m.title.trim_start_matches("www.") == url_host.trim_start_matches("www.");
+                if m.title != url
+                    && !m.title.is_empty()
+                    && !hostlike(&m.title)
+                    && !matches_host
+                {
                     updated.title = m.title.clone();
                 }
                 if let Some(icon) = m.icon.clone() {
@@ -996,6 +1055,12 @@ async fn picky_refetch_metadata_inner(id: &str) -> Result<Bookmark, String> {
     insert_bookmark(&conn, &updated)?;
     drop(conn);
     schedule_auto_sync();
+    crate::exit_log::exit_log(&format!(
+        "[picky-meta] 完成 id={id} 来源={} title={:?} desc={}",
+        if rich.is_some() { "browser" } else if http_fallback.is_some() { "http" } else { "none" },
+        updated.title,
+        updated.description.as_deref().map(|d| d.chars().take(60).collect::<String>()).unwrap_or_default(),
+    ));
     Ok(updated)
 }
 
