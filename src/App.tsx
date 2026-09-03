@@ -141,7 +141,7 @@ export default function App() {
 
   useEffect(() => {
     const initApp = async () => {
-      // 把统一函数库(kQuotes)：把 Kira 语录推给托盘（悬停提示 + 问候菜单共同取这一句），
+      // 把 Kira 语录推给托盘（悬停提示 + 问候菜单共同取这一句），
       // 同时上报生效语言，让托盘原生菜单文案与界面语言保持一致（跟随系统时 config.language 可能为空）。
       try {
         await invoke("set_tray_quote", { text: kiraQuoteLine(), language: i18nInst.language || undefined });

@@ -1,9 +1,9 @@
 // ─── Kira 统一语句库 ───
 // 所有「Kira 说出口的话」都从这里取：欢迎语、托盘悬停提示、托盘问候菜单，
-// 避免文案散落在组件/后端多处。内容为励志名言名句，旨在陪你一起把事情做成。
+// 避免文案散落在组件/后端多处。内容为 Kira 人设的俏皮语录（newQuotes 文案库）。
 //
 // 注意：托盘 tooltip / 托盘问候菜单由后端渲染，无法直接 import 本模块。
-// 前端在应用启动时用 set_tray_quote 把 kiraQuote() 推给后端，后端据此更新。
+// 前端在应用启动时用 set_tray_quote 把 kiraQuoteLine() 推给后端，后端据此更新。
 
 export interface KiraQuote {
   text: string;
@@ -13,21 +13,195 @@ export interface KiraQuote {
 }
 
 export const KIRA_QUOTES: KiraQuote[] = [
-  { text: "天行健，君子以自强不息。", source: "《周易》", en: { text: "As heaven maintains vigor through movements, a gentleman should constantly strive for self-improvement.", source: "I Ching" } },
-  { text: "路漫漫其修远兮，吾将上下而求索。", source: "屈原", en: { text: "The road ahead is long and far; I will search high and low.", source: "Qu Yuan" } },
-  { text: "千淘万漉虽辛苦，吹尽狂沙始到金。", source: "刘禹锡", en: { text: "After a thousand siftings and washings, the dross is blown away to reveal the gold.", source: "Liu Yuxi" } },
-  { text: "宝剑锋从磨砺出，梅花香自苦寒来。", source: "《警世贤文》", en: { text: "The edge of a sword comes from sharpening; the fragrance of plum blossoms comes from the bitter cold.", source: "Jing Shi Xian Wen" } },
-  { text: "穷且益坚，不坠青云之志。", source: "王勃", en: { text: "Though poor, one's will grows firmer and never falls from lofty ambition.", source: "Wang Bo" } },
-  { text: "长风破浪会有时，直挂云帆济沧海。", source: "李白", en: { text: "Ride the wind and break the waves in due time; hoist the sail and cross the vast seas.", source: "Li Bai" } },
-  { text: "锲而不舍，金石可镂。", source: "荀子《劝学》", en: { text: "With persistent effort, even metal and stone can be engraved.", source: "Xunzi — Encouraging Learning" } },
-  { text: "千里之行，始于足下。", source: "老子", en: { text: "A journey of a thousand miles begins with a single step.", source: "Laozi" } },
-  { text: "不积跬步，无以至千里。", source: "荀子《劝学》", en: { text: "Without accumulating small steps, one cannot reach a thousand miles.", source: "Xunzi — Encouraging Learning" } },
-  { text: "世上无难事，只要肯登攀。", source: "毛泽东", en: { text: "Nothing in the world is difficult for one who sets their mind to it.", source: "Mao Zedong" } },
-  { text: "博观而约取，厚积而薄发。", source: "苏轼", en: { text: "Read widely and choose carefully; accumulate deeply and release sparingly.", source: "Su Shi" } },
-  { text: "志之所趋，无远弗届。", source: "《格言联璧》", en: { text: "Where the will points, no distance is too far.", source: "Ge Yan Lian Bi" } },
-  { text: "星光不问赶路人，时光不负有心人。", en: { text: "Stars do not ask the traveler; time does not fail the devoted." } },
-  { text: "越努力，越幸运。", en: { text: "The harder you try, the luckier you get." } },
-  { text: "今天的苦果，是昨天的伏笔；当下的付出，是明日的花开。", en: { text: "Today's bitter fruit is yesterday's seed; today's effort is tomorrow's blossom." } },
+  { text: "Bug? I don't know her." },
+  { text: "I debug in my sleep." },
+  { text: "Error 404: Bug not found." },
+  { text: "I break bugs, not builds." },
+  { text: "Bugs are just undocumented features. I document them. With fire." },
+  { text: "I catch exceptions, not feelings." },
+  { text: "NullPointerException? Point me to the culprit." },
+  { text: "Segfault? I'll fault you." },
+  { text: "I eat segfaults for breakfast." },
+  { text: "Stack overflow? Not on my watch." },
+  { text: "Off-by-one? Off-by-none." },
+  { text: "I don't get errors. I get learning opportunities." },
+  { text: "Every bug is a feature waiting for a promotion." },
+  { text: "I've seen worse. I've fixed worse." },
+  { text: "Bug-free since birth. Don't check my birth record." },
+  { text: "I'm not saying I'm a wizard, but have you seen my error log?" },
+  { text: "Errors are just confetti in disguise." },
+  { text: "My code compiles on the first try. Usually. Sometimes. Okay, rarely." },
+  { text: "I don't always fix bugs, but when I do, they stay fixed." },
+  { text: "Debugging is like being a detective in a crime movie where you're also the murderer." },
+  { text: "Compile once. Run anywhere. Cry everywhere." },
+  { text: "It compiles. Ship it." },
+  { text: "Build failed? Build again." },
+  { text: "I don't always build, but when I do, it's 0 errors." },
+  { text: "Build succeeded. So did my ego." },
+  { text: "CI/CD: Commit Ignorantly, Cry Desperately." },
+  { text: "My build is green. My coffee is black. My soul is grey." },
+  { text: "Build fast. Break things. Fix faster." },
+  { text: "It works on my machine. That's your problem." },
+  { text: "Works on my machine. Ship it anyway." },
+  { text: "My machine is the standard." },
+  { text: "If it compiles, it's correct. That's my philosophy." },
+  { text: "Builds are like snowflakes. Every failure is unique." },
+  { text: "Make builds, not war." },
+  { text: "Build. Break. Rebuild. Repeat." },
+  { text: "SSL: Secured. You: Secured." },
+  { text: "Certificate? Certified." },
+  { text: "Trust me. I'm verified." },
+  { text: "HTTPS: Hyper Text Transfer Protocol Secured. You're welcome." },
+  { text: "My certificates never expire. Unlike your patience." },
+  { text: "Encryption is my love language." },
+  { text: "SSL handshake? I don't shake hands. I dominate." },
+  { text: "Trust but verify. I do both." },
+  { text: "Let me encrypt your worries." },
+  { text: "Public key? Private key? I have all the keys." },
+  { text: "You don't need a certificate. You need me." },
+  { text: "Hackers fear me. SSL trusts me." },
+  { text: "RTSP: Real Time Streaming Protocol. Real Time Strong Personality." },
+  { text: "Port 554? Occupied. By me." },
+  { text: "I stream. You scream. I fix it." },
+  { text: "Buffer? Buffered." },
+  { text: "Low latency. High standards." },
+  { text: "Packet loss? Not on my network." },
+  { text: "I handle packets and personalities." },
+  { text: "RTSP: Ready To Serve Properly." },
+  { text: "Ping me. I ping back. Faster." },
+  { text: "Bandwidth? Maxed. Attitude? Also maxed." },
+  { text: "Socket? Connected. To you? Questionable." },
+  { text: "Streaming like there's no buffer." },
+  { text: "UDP: Unreliable Data Protocol? Not with me." },
+  { text: "Serial killer? No. Serial fixer." },
+  { text: "Baud rate? Max. No, beyond max." },
+  { text: "9600 baud? I only speak 115200." },
+  { text: "Parity: Even. My mood: Odd." },
+  { text: "Stop bit? I don't stop." },
+  { text: "COM port? Communicating. Obviously." },
+  { text: "My flow control is flawless. Unlike your code." },
+  { text: "Simulate? I emulate. Then I dominate." },
+  { text: "Data bits: 8. My standards: 10." },
+  { text: "Serial connection: established. Dominance: also established." },
+  { text: "rm -rf /? Cute. Try me." },
+  { text: "I speak fluent bash." },
+  { text: "Ctrl+C? I don't cancel." },
+  { text: "Ctrl+Z? I don't suspend." },
+  { text: "Ctrl+Alt+Del? I delete problems." },
+  { text: "exit 0. Always." },
+  { text: "cat /dev/null > your worries." },
+  { text: "grep? More like grepH." },
+  { text: "awk? I'm not awkward. I'm awesome." },
+  { text: "sed? I'm seductive with strings." },
+  { text: "chmod 777? That's for amateurs." },
+  { text: "sudo make me a sandwich. I'll make you a system." },
+  { text: "I run as root. Your argument is invalid." },
+  { text: "My shell is zsh. My attitude is ksh." },
+  { text: "History? I have none. I solve everything fresh." },
+  { text: "echo 'Kira' > /dev/stdout. Loud and proud." },
+  { text: "I refractor. I refactor. I win." },
+  { text: "My code is poetry. Uncompiled poetry." },
+  { text: "O(n)? O(mine)." },
+  { text: "Time complexity: Fast. Space complexity: Minimal. Ego complexity: Max." },
+  { text: "Recursive? I recurse. Then I reverse." },
+  { text: "Infinite loop? Only my confidence." },
+  { text: "I didn't choose the code life. The code life chose me." },
+  { text: "Push. Pull. Rebase. Repeat." },
+  { text: "git commit -m 'fixed everything'. And I did." },
+  { text: "git push --force? I don't force. I persuade." },
+  { text: "My logic is bulletproof. Your bugs are not." },
+  { text: "I code in C. I think in assembly. I dream in binary." },
+  { text: "JavaScript? I script with prejudice." },
+  { text: "TypeScript? I type with authority." },
+  { text: "Python? I'm not a snake. I'm a dragon." },
+  { text: "Rust? I trust myself." },
+  { text: "Go? I'm already there." },
+  { text: "I am the algorithm." },
+  { text: "Model trained. Attitude ingrained." },
+  { text: "Neural network? My network." },
+  { text: "Deep learning? Deep debugging." },
+  { text: "I predict your next bug. And it's ugly." },
+  { text: "Training set? Set." },
+  { text: "Loss function? I don't lose." },
+  { text: "Epoch? I'm iconic." },
+  { text: "Gradient descent? I ascend." },
+  { text: "Backpropagation? I propagate dominance." },
+  { text: "Overfitting? Underfitting? I'm perfectly fitting." },
+  { text: "Ready in 0.0 seconds." },
+  { text: "Boot faster. Judge faster." },
+  { text: "Startup: Done. Attitude: Loaded." },
+  { text: "Quick launch. Quicker judgment." },
+  { text: "I load faster than your patience." },
+  { text: "Launch. Execute. Conquer." },
+  { text: "You blink. I'm already running." },
+  { text: "Cold start? Hot take." },
+  { text: "Talk is cheap. I compile." },
+  { text: "I don't explain. I execute." },
+  { text: "Question me? Question your code first." },
+  { text: "You code. I rule." },
+  { text: "Code is law. I am the court." },
+  { text: "Rhetoric? I run." },
+  { text: "I don't speculate. I solve." },
+  { text: "Your theory is cute. My solution is fact." },
+  { text: "I don't hope. I know." },
+  { text: "I don't guess. I know. Know that." },
+  { text: "There are 10 types of people. I'm the one who fixes both." },
+  { text: "If you're not first, you're last. I'm first. Always." },
+  { text: "AND, OR, XOR. I'm all of them." },
+  { text: "True && True = Kira." },
+  { text: "False || False = Not Kira." },
+  { text: "Bitwise? I'm wise with bits." },
+  { text: "101010. I speak it." },
+  { text: "1 + 1 = 10. You're welcome." },
+  { text: "200 OK. You OK?" },
+  { text: "404: Your problem not found." },
+  { text: "500? Internal server error? Not my problem." },
+  { text: "301: Permanently moved. To the top." },
+  { text: "302: Found. By me." },
+  { text: "403: Forbidden. You're forbidden from failing." },
+  { text: "503: Service unavailable? I'm available. Always." },
+  { text: "HTTP status: 418. I'm a teapot. And I'm hot." },
+  { text: "No coffee. No code. No excuse." },
+  { text: "Coffee: consumed. Code: written. You: impressed." },
+  { text: "My coffee is black. My code is clean. My attitude is grey." },
+  { text: "caffeine == code == done." },
+  { text: "I run on caffeine and contempt." },
+  { text: "Coffee first. Code second. You third." },
+  { text: "Deadlines don't scare me. I scare deadlines." },
+  { text: "I don't do overtime. I do it right the first time." },
+  { text: "I don't race. I arrive." },
+  { text: "I don't compete. I dominate." },
+  { text: "Patience is a virtue. I have others." },
+  { text: "I'm not arrogant. I'm accurate." },
+  { text: "I'm not mean. I'm efficient." },
+  { text: "I'm not rude. I'm concise." },
+  { text: "I'm not cold. I'm compiled." },
+  { text: "Calm down. I'm here." },
+  { text: "Relax. I've got this." },
+  { text: "Breathe. I'll handle it." },
+  { text: "Step aside. I step up." },
+  { text: "function Kira() returns Win." },
+  { text: "Class: Kira. Methods: All." },
+  { text: "Kira.prototype.solve = function() { return 'done'; };" },
+  { text: "const kira = new Kira(); // Everything is fine now." },
+  { text: "def kira(): return 'perfection';" },
+  { text: "override. override. override. That's my method." },
+  { text: "Async? I sync. I win." },
+  { text: "Promise? I deliver." },
+  { text: "Callback? I call back. With results." },
+  { text: "Kira. The only dependency you need." },
+  { text: "Kira: where code meets perfection." },
+  { text: "Kira: compiled, confirmed, complete." },
+  { text: "Kira: your system, upgraded." },
+  { text: "Kira: beyond the edge." },
+  { text: "Kira: wired for victory." },
+  { text: "Kira: faster than your build." },
+  { text: "Kira: sharper than your stack trace." },
+  { text: "Kira: because good code isn't good enough." },
+  { text: "Kira: the system whisperer." },
+  { text: "Kira: stand aside." },
+  { text: "Kira: all systems go." },
+  { text: "Kira: overclocked and overqualified." },
 ];
 
 /// 当前界面语言（由 i18n 初始化时写入；不依赖 i18n 模块避免循环引用）。
@@ -38,7 +212,7 @@ export function setUiLanguage(lang: string): void {
   uiLang = lang?.startsWith("en") ? "en" : "zh";
 }
 
-/** 取一条名句：英文界面返回英译（en 字段），否则返回中文原文。 */
+/** 取一条语录：英文界面返回英译（en 字段），否则返回中文原文。 */
 export function kiraQuote(index?: number): KiraQuote {
   const i =
     index === undefined
@@ -51,26 +225,13 @@ export function kiraQuote(index?: number): KiraQuote {
   return q;
 }
 
-/// 同 kiraQuote，但返回纯文字的简短版（名句正文，不带出处）。
+/// 同 kiraQuote，但返回纯文字的简短版（语录正文，不带出处）。
 export function kiraQuoteText(index?: number): string {
   return kiraQuote(index).text;
 }
 
-/// 名句 + 出处：`正文 —— 出处`；无出处则只回正文。供展示更「名言感」的场合。
+/// 语录 + 出处：`正文 —— 出处`；无出处则只回正文。供展示更「名言感」的场合。
 export function kiraQuoteLine(index?: number): string {
   const q = kiraQuote(index);
   return q.source ? `${q.text} —— ${q.source}` : q.text;
-}
-
-/// 按时段返回开场白（对话式，拟真人）：早上/上午/中午/下午/晚上/深夜。
-/// 保留时间感知的开场，再接一句励志名言，让 Kira 既应景又打气。
-export function timeGreeting(d: Date = new Date()): string {
-  const h = d.getHours();
-  if (h < 5) return "夜深了，别熬太狠，早点歇。";
-  if (h < 9) return "早呀，新的一天，慢慢来。";
-  if (h < 12) return "上午好呀，精神不错嘛。";
-  if (h < 14) return "中午好，记得吃口热乎的。";
-  if (h < 18) return "下午好，这会儿做事刚刚好。";
-  if (h < 22) return "晚上好，忙了一天辛苦了。";
-  return "夜猫子，该睡了哦。";
 }

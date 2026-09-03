@@ -1,25 +1,22 @@
 import { useEffect, useState } from "react";
-import { greetingAt, timeGreeting } from "../utils/brand";
+import { greetingAt } from "../utils/brand";
 
 /**
- * 轮换的 Kira 打招呼文案 + 打字机效果。任意界面丢一个即可，让 Kira 的形象与语气「活」在更多角落。
- * 默认带按时段开场白（早/午/晚），拟真人感；文案逐字打出后停留，再换下一句。
+ * 轮换的 Kira 语录 + 打字机效果。任意界面丢一个即可，让 Kira 的形象与语气「活」在更多角落。
+ * 文案逐字打出后停留，再换下一句。语录统一来自 kiraQuotes.ts（newQuotes 文案库）。
  */
 export default function VexGreeting({
   seconds = 8,
   nameColor,
-  time = true,
 }: {
   /** 换一句话的间隔（秒） */
   seconds?: number;
   /** 「Kira」名字的颜色（默认取当前模块主题色 var(--module-accent)） */
   nameColor?: string;
-  /** 是否附加按时段开场白（早上好/晚上好…），默认开 */
-  time?: boolean;
 }) {
   const [idx, setIdx] = useState(0);
   const [shown, setShown] = useState(0);
-  const full = `${time ? timeGreeting() : ""}${time ? " " : ""}${greetingAt(idx)}`;
+  const full = greetingAt(idx);
 
   // 换句轮换
   useEffect(() => {

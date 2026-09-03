@@ -84,9 +84,9 @@ const TRAY_ID: &str = "main-tray";
 /// 推入后端，托盘悬停提示与托盘问候菜单都从这里取，避免文案散落多处。
 static TRAY_QUOTE: OnceLock<Mutex<String>> = OnceLock::new();
 
-/// 前端尚未推入时的励志兜底句（按当前界面语言）。
-const TRAY_QUOTE_FALLBACK_ZH: &str = "心之所向，素履以往。加油，我陪你一起把事做成。";
-const TRAY_QUOTE_FALLBACK_EN: &str = "Where the heart goes, plain shoes will follow. Keep going — I've got your back.";
+/// 前端尚未推入时的 Kira 语录兜底句。
+const TRAY_QUOTE_FALLBACK_ZH: &str = "Kira: all systems go.";
+const TRAY_QUOTE_FALLBACK_EN: &str = "Kira: all systems go.";
 
 /// 前端启动时推入的生效语言（解决「跟随系统」时 config.language 为空的场景）。
 static TRAY_UI_LANG: OnceLock<Mutex<String>> = OnceLock::new();
@@ -135,7 +135,7 @@ pub fn set_tray_quote(app: AppHandle, text: String, language: Option<String>) ->
     Ok(())
 }
 
-/// 读取最近由前端推入的 Kira 语句；未设置时用励志兜底句。
+/// 读取最近由前端推入的 Kira 语句；未设置时用兜底句。
 fn current_tray_quote() -> String {
     if let Some(slot) = TRAY_QUOTE.get() {
         if let Ok(g) = slot.lock() {

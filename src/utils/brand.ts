@@ -3,7 +3,7 @@
 // 头像资源固定从 public/logo.png 读取（/logo.png）——想换头像，直接替换
 // public 下的 logo.png 即可，代码无需改动，全 App 头像同步更新。
 
-import { KIRA_QUOTES, kiraQuoteText, timeGreeting as kiraTimeGreeting } from "./kiraQuotes";
+import { KIRA_QUOTES, kiraQuoteText } from "./kiraQuotes";
 
 /// 头像固定路径（public/logo.png）。换资源只替换该文件。
 export const VEX_AVATAR = "/logo.png";
@@ -23,12 +23,6 @@ export const VEX_GREETINGS: string[] = [
 /// 随 index 取一条轮换欢迎语（防越界）。来自 kiraQuotes 统一库。
 export function greetingAt(index: number): string {
   return kiraQuoteText(index);
-}
-
-/// 按时段返回开场白（对话式，拟真人）：早上/上午/中午/下午/晚上/深夜。
-/// 供启动欢迎 toast 与时间感知问候使用。统一来自 kiraQuotes。
-export function timeGreeting(d: Date = new Date()): string {
-  return kiraTimeGreeting(d);
 }
 
 // ─── 签名赛博电子风主题（统一主色，可在设置里动态改） ───
