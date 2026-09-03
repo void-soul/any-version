@@ -25,6 +25,7 @@ import {
   LayoutDashboard,
   Settings2,
   Trash2,
+  Hammer,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -566,6 +567,7 @@ function ProjectCard({
     busy === `install:${project.id}` ||
     busy === `upgrade:${project.id}` ||
     busy === `install_deps:${project.id}` ||
+    busy === `build_native:${project.id}` ||
     busy === `uninstall:${project.id}`;
   const canInstallUpgrade = !!d?.allReady && !installed;
   const canUpgrade = !!d?.allReady && !!installed;
@@ -735,8 +737,10 @@ function ProjectCard({
                       ? t("nodeproj.phaseInstall")
                       : prog?.phase === "build"
                         ? t("nodeproj.phaseBuild")
-                        : prog?.phase === "running"
-                          ? t("nodeproj.phaseStart")
+                        : prog?.phase === "native"
+                          ? t("nodeproj.phaseNative")
+                          : prog?.phase === "running"
+                            ? t("nodeproj.phaseStart")
                           : prog?.phase === "starting"
                             ? t("nodeproj.phaseStart")
                             : t("nodeproj.phaseOther")}
@@ -818,6 +822,17 @@ function ProjectCard({
             color="bg-sky-700 hover:bg-sky-600"
             label={t("nodeproj.installDeps")}
             title={t("nodeproj.installDepsTitle")}
+          />
+        )}
+        {isNpx && installed && (
+          <ActionButton
+            disabled={!installed || isBusy || running}
+            busy={isBusy && busy === `build_native:${project.id}`}
+            onClick={() => onAction(project, "build_native")}
+            icon={Hammer}
+            color="bg-amber-700 hover:bg-amber-600"
+            label={t("nodeproj.buildNative")}
+            title={t("nodeproj.buildNativeTitle")}
           />
         )}
         <ActionButton

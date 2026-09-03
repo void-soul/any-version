@@ -492,18 +492,21 @@ fn format_command(program: &str, args: &[&str]) -> String {
 
 /// 按换行或回车分隔实时读取命令输出。npm 的进度渲染通常只使用 `\\r`，
 /// `BufRead::lines()` 会一直等到 `\\n`，导致前端看起来像卡住；这里两种分隔符都立即转发。
+/// 返回 (最后一行, 完整输出)。完整输出用于判断命令是否只是「警告性」失败
+/// （如 pnpm 跳过构建脚本），仅看最后一行会漏掉真正的错误码。
 fn emit_reader_live<R: std::io::Read>(
     reader: R,
     app: &tauri::AppHandle,
     project_id: &str,
     phase: &str,
-) -> String {
+) -> (String, String) {
     use std::io::Read;
 
     let mut reader = std::io::BufReader::new(reader);
     let mut bytes = [0u8; 4096];
     let mut pending = Vec::new();
     let mut last = String::new();
+    let mut full = String::new();
     let mut previous_was_cr = false;
 
     loop {
@@ -519,6 +522,8 @@ fn emit_reader_live<R: std::io::Read>(
                     let line = String::from_utf8_lossy(&pending).to_string();
                     if !line.trim().is_empty() {
                         last = line.clone();
+                        full.push_str(&line);
+                        full.push('\n');
                         emit_log(app, project_id, phase, &line);
                     }
                     pending.clear();
@@ -535,11 +540,13 @@ fn emit_reader_live<R: std::io::Read>(
         let line = String::from_utf8_lossy(&pending).to_string();
         if !line.trim().is_empty() {
             last = line.clone();
+            full.push_str(&line);
+            full.push('\n');
             emit_log(app, project_id, phase, &line);
         }
     }
     let _ = previous_was_cr;
-    last
+    (last, full)
 }
 
 /// 杀掉子进程及其整棵进程树（npm/npx 经 `cmd /c` 启动，真正的 node 进程是孙进程，
@@ -556,7 +563,8 @@ fn kill_process_tree(child: &mut std::process::Child) {
     }
 }
 
-/// 执行命令并把 stdout/stderr 实时 emit（支持 newline/CR 分隔）。返回 (是否成功, 末尾错误行)。
+/// 执行命令并把 stdout/stderr 实时 emit（支持 newline/CR 分隔）。
+/// 返回 (是否成功, 末尾错误行, stdout+stderr 完整输出)。
 /// `timeout`：总超时；超时后杀掉整棵进程树并返回失败（npm 网络请求挂死时避免永久转圈）。
 fn run_capture_live(
     app: &tauri::AppHandle,
@@ -567,7 +575,7 @@ fn run_capture_live(
     cwd: Option<&Path>,
     extra_env: &[(&str, &str)],
     timeout: Option<Duration>,
-) -> (bool, String) {
+) -> (bool, String, String) {
     let command = format_command(program, args);
     emit_log(
         app,
@@ -594,7 +602,8 @@ fn run_capture_live(
         Ok(c) => c,
         Err(e) => {
             emit_log(app, project_id, phase, &format!("无法执行 {}: {}", program, e));
-            return (false, format!("无法执行 {}: {}", program, e));
+            let msg = format!("无法执行 {}: {}", program, e);
+            return (false, msg.clone(), msg);
         }
     };
 
@@ -651,19 +660,26 @@ fn run_capture_live(
             Err(error) => break Err(error),
         }
     };
-    let _ = stdout_thread.and_then(|thread| thread.join().ok());
-    let last_err = stderr_thread
+    let stdout_all = stdout_thread
         .and_then(|thread| thread.join().ok())
-        .unwrap_or_default();
+        .unwrap_or((String::new(), String::new()));
+    let stderr_all = stderr_thread
+        .and_then(|thread| thread.join().ok())
+        .unwrap_or((String::new(), String::new()));
+    let mut full = stdout_all.1;
+    full.push_str(&stderr_all.1);
+    let last_err = if stderr_all.0.trim().is_empty() {
+        stdout_all.0
+    } else {
+        stderr_all.0
+    };
     if timed_out {
         let secs = timeout.map(|t| t.as_secs()).unwrap_or(0);
-        return (
-            false,
-            format!("命令超时（{} 秒）已终止，请检查网络后重试", secs),
-        );
+        let msg = format!("命令超时（{} 秒）已终止，请检查网络后重试", secs);
+        return (false, msg.clone(), full);
     }
     let ok = matches!(status, Ok(s) if s.success());
-    (ok, last_err)
+    (ok, last_err, full)
 }
 
 // ─── 安装 / 升级 ───
@@ -723,7 +739,7 @@ fn pm_install(app: &tauri::AppHandle, def: &NodeProjectDef, dir: &Path) -> Resul
     let mut args = prefix;
     args.push("install".to_string());
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let (ok, last_err) = run_capture_live(app, &def.id, "install", &prog, &arg_refs, Some(dir), &[], None);
+    let (ok, last_err, _out) = run_capture_live(app, &def.id, "install", &prog, &arg_refs, Some(dir), &[], None);
     if !ok {
         let msg = last_err.trim();
         return Err(format!("`{} install` 失败: {}", pm, if msg.is_empty() { "未知错误" } else { msg }));
@@ -743,7 +759,7 @@ fn pm_build(app: &tauri::AppHandle, def: &NodeProjectDef, dir: &Path) -> Result<
     args.push("run".to_string());
     args.push(def.build_script.clone());
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let (ok, last_err) = run_capture_live(app, &def.id, "build", &prog, &arg_refs, Some(dir), &[], None);
+    let (ok, last_err, _out) = run_capture_live(app, &def.id, "build", &prog, &arg_refs, Some(dir), &[], None);
     if !ok {
         let msg = last_err.trim();
         return Err(format!("`{} run {}` 失败: {}", pm, def.build_script, if msg.is_empty() { "未知错误" } else { msg }));
@@ -906,10 +922,27 @@ fn npx_install(
     );
     let args = npx_pm_args(&pm_name, prefix, &runtime_dir, spec);
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let (ok, last_err) = run_capture_live(app, &def.id, "npx", &prog, &arg_refs, None, NPM_ISOLATION_ENV, Some(Duration::from_secs(900)));
+    let (ok, last_err, full_output) = run_capture_live(app, &def.id, "npx", &prog, &arg_refs, None, NPM_ISOLATION_ENV, Some(Duration::from_secs(900)));
     if !ok {
         let msg = last_err.trim();
-        return Err(format!("{} 安装失败: {}", pm_name, if msg.is_empty() { "未知错误" } else { msg }));
+        // pnpm 10+ 默认不执行依赖的构建脚本，并会以 ERR_PNPM_IGNORED_BUILDS
+        // 非零码退出——但包本身已完整安装，只是原生模块（node-pty/koffi 等）未编译。
+        // 这类失败不构成安装失败：批准构建需要本机 C++ 工具链（node-gyp + MSVC），
+        // 在无构建环境的机器上强制开启会让安装彻底失败；而绝大多数服务
+        // （实测 dsh web）并不依赖这些原生模块即可正常运行。
+        // 仅当「确实是构建被跳过」且「包已安装」时才降级为警告。
+        let ignored_builds = full_output.contains("ERR_PNPM_IGNORED_BUILDS")
+            || msg.contains("ERR_PNPM_IGNORED_BUILDS")
+            || full_output.contains("Ignored build scripts");
+        if !(ignored_builds && def.npx_installed()) {
+            return Err(format!("{} 安装失败: {}", pm_name, if msg.is_empty() { "未知错误" } else { msg }));
+        }
+        emit_log(
+            app,
+            &def.id,
+            "npx",
+            "已跳过部分原生模块构建（需本机 C++ 构建工具链），服务仍可启动；如确需原生模块，请安装构建工具后手动执行 pnpm approve-builds",
+        );
     }
     if !def.npx_installed() {
         let _ = fs::remove_dir_all(&runtime_dir);
@@ -988,7 +1021,7 @@ pub async fn npm_install(app: tauri::AppHandle, project_id: String) -> Result<()
         dir.to_string_lossy().to_string(),
     ];
     let arg_refs: Vec<&str> = clone_args.iter().map(|s| s.as_str()).collect();
-    let (ok, last_err) = run_capture_live(&app, &def.id, "clone", "git", &arg_refs, Some(parent), &[], None);
+    let (ok, last_err, _out) = run_capture_live(&app, &def.id, "clone", "git", &arg_refs, Some(parent), &[], None);
     if !ok {
         let msg = last_err.trim();
         return Err(format!("git clone 失败: {}", if msg.is_empty() { "未知错误" } else { msg }));
@@ -1023,7 +1056,7 @@ pub async fn npm_upgrade(app: tauri::AppHandle, project_id: String) -> Result<()
     }
 
     emit_progress(&app, &def.id, "pull", "正在拉取最新代码 (git pull)…");
-    let (ok, last_err) = run_capture_live(&app, &def.id, "pull", "git", &["pull"], Some(&dir), &[], None);
+    let (ok, last_err, _out) = run_capture_live(&app, &def.id, "pull", "git", &["pull"], Some(&dir), &[], None);
     if !ok {
         let msg = last_err.trim();
         return Err(format!("git pull 失败: {}", if msg.is_empty() { "未知错误" } else { msg }));
@@ -1053,6 +1086,74 @@ pub async fn npm_install_deps(app: tauri::AppHandle, project_id: String) -> Resu
     pm_install(&app, &def, &dir)?;
     pm_build(&app, &def, &dir)?;
     emit_progress(&app, &def.id, "done", "依赖安装完成");
+    Ok(())
+}
+
+/// 编译原生模块（npx 模式专用）。
+///
+/// pnpm 10+ 默认跳过依赖的构建脚本，安装时会以 ERR_PNPM_IGNORED_BUILDS 非零码
+/// 结束（包已完整安装，仅原生模块未编译）。本命令执行
+/// `pnpm approve-builds --all`：非交互批准全部待构建依赖**并立即执行其构建脚本**
+/// （实测 node-pty/koffi 等会当场完成 postinstall/编译；需要本机 C++ 工具链）。
+/// npm 本身默认执行构建脚本，重跑用 `npm rebuild`；yarn 1 无拦截，重跑 `yarn rebuild`。
+#[tauri::command]
+pub async fn npm_build_native(app: tauri::AppHandle, project_id: String) -> Result<(), String> {
+    let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
+    if !def.installed() {
+        return Err("项目尚未安装，请先「安装」".to_string());
+    }
+    if !def.is_npx() {
+        return Err("仅 npx 模式的项目需要单独编译原生模块".to_string());
+    }
+    let runtime_dir = def.npx_runtime_dir();
+    let (pm_name, prog, prefix) = npx_installer(&app, &def)?;
+    emit_progress(
+        &app,
+        &def.id,
+        "native",
+        &format!("使用 {} 编译原生模块…", pm_name),
+    );
+    let args = if pm_name == "pnpm" {
+        let mut a = prefix;
+        a.push("approve-builds".to_string());
+        a.push("--all".to_string());
+        a.push("--dir".to_string());
+        a.push(runtime_dir.to_string_lossy().to_string());
+        a
+    } else if pm_name == "yarn" {
+        let mut a = prefix;
+        a.push("--cwd".to_string());
+        a.push(runtime_dir.to_string_lossy().to_string());
+        a.push("rebuild".to_string());
+        a
+    } else {
+        let mut a = prefix;
+        a.push("rebuild".to_string());
+        a.push("--prefix".to_string());
+        a.push(runtime_dir.to_string_lossy().to_string());
+        a
+    };
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    // pnpm 用 --dir、npm 用 --prefix、yarn 用 --cwd 指定运行目录，均无需额外 cwd
+    let (ok, last_err, _out) = run_capture_live(
+        &app,
+        &def.id,
+        "native",
+        &prog,
+        &arg_refs,
+        None,
+        NPM_ISOLATION_ENV,
+        Some(Duration::from_secs(900)),
+    );
+    if !ok {
+        let msg = last_err.trim();
+        return Err(format!(
+            "{} 编译原生模块失败: {}",
+            pm_name,
+            if msg.is_empty() { "未知错误" } else { msg }
+        ));
+    }
+    emit_progress(&app, &def.id, "done", "原生模块编译完成");
     Ok(())
 }
 

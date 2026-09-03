@@ -902,6 +902,7 @@ pub fn run() {
                 commands::node_manager::npm_install,
                 commands::node_manager::npm_upgrade,
                 commands::node_manager::npm_install_deps,
+commands::node_manager::npm_build_native,
                 commands::node_manager::npm_start,
                 commands::node_manager::npm_stop,
                 commands::node_manager::npm_uninstall,
