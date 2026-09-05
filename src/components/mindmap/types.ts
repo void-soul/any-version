@@ -297,6 +297,7 @@ export const mmApi = {
   aiFromProject: (i: AiProjectInput) => invoke<AiImportResult>("mm_ai_from_project", { input: i }),
   aiFromText: (i: AiTextInput) => invoke<AiImportResult>("mm_ai_from_text", { input: i }),
   aiCancel: (runId: string) => invoke<void>("mm_ai_cancel", { runId }),
+  aiAnswer: (runId: string, answer: Record<string, unknown> | string) => invoke<void>("mm_ai_answer", { runId, answer }),
   regenerateNode: (i: RegenerateInput) => invoke<DocumentFull>("mm_regenerate_node", { input: i }),
 
   plannedOccurrences: (start: string, end: string) => invoke<PlannedOccurrence[]>("mm_planned_occurrences", { start, end }),

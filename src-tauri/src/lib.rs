@@ -889,6 +889,7 @@ pub fn run() {
                 commands::mindmap::mm_ai_from_project,
                 commands::mindmap::mm_ai_from_text,
                 commands::mindmap::mm_ai_cancel,
+                commands::mindmap::mm_ai_answer,
                 commands::mindmap::mm_regenerate_node,
                 commands::mindmap::mm_planned_occurrences,
                 commands::mindmap::mm_move_plan_occurrence,

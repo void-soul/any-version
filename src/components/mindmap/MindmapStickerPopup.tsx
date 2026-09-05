@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { StickyNote, X } from "lucide-react";
 import { mmApi, type MindmapDocument, type DocumentFull, type MindmapSticker } from "./types";
+import { usePopupSize } from "./usePopupSize";
 import VexAvatar from "../VexAvatar";
 import VexGreeting from "../VexGreeting";
 import { VEX_CYBER_ACCENT, resolveThemeAccent } from "../../utils/brand";
@@ -42,46 +43,17 @@ export default function MindmapStickerPopup() {
   const [newDocName, setNewDocName] = useState("");
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  // 高度管理：默认自动贴合内容（贴纸表单内容少，不再停在过高的初始窗口）；
+  // 底部把手可手动拖拽调整高度（双击恢复自动）。
+  const { manualH, gripHandlers } = usePopupSize({ kind: "sticker", rootRef, contentRef, minH: 260 });
 
   const onTitleMouseDown = useCallback((e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest("button")) return;
     // 拖动失败（如窗口缺权限）时至少在控制台留痕，避免无提示失效难排查。
     void getCurrentWindow().startDragging().catch((err) => console.warn("startDragging failed:", err));
   }, []);
-
-  // 窗口高度随内容自适应：与节点速记悬浮窗同一机制同一参数（min 430 / max 屏高-40），
-  // 初始 900px 太高（贴纸表单只有标题栏 + 提示 + 文档选择 + 内容框 + 颜色 + 按钮）。
-  const titleRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const fitWindow = useCallback(() => {
-    try {
-      const el = contentRef.current;
-      if (!el) return;
-      const titleH = titleRef.current?.offsetHeight ?? 36;
-      let contentH = 0;
-      const kids = Array.from(el.children) as HTMLElement[];
-      for (const k of kids) contentH += k.getBoundingClientRect().height;
-      const gaps = Math.max(0, kids.length - 1) * 10; // gap-2.5
-      const pad = 34; // 内容区 p-3 上下 24px + 提示行
-      const maxH = Math.max(420, window.screen.availHeight - 40);
-      const minH = Math.min(430, maxH);
-      const desired = Math.round(Math.min(maxH, Math.max(minH, titleH + contentH + gaps + pad + 2)));
-      if (Math.abs(desired - window.innerHeight) < 16) return;
-      void getCurrentWindow().setSize(new LogicalSize(window.innerWidth, desired)).catch(() => {/* 忽略 */});
-    } catch { /* 浏览器预览等无 Tauri 环境静默降级 */ }
-  }, []);
-
-  useEffect(() => {
-    const el = contentRef.current;
-    if (!el) return;
-    let raf = 0;
-    const schedule = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(fitWindow); };
-    const ro = new ResizeObserver(schedule);
-    ro.observe(el);
-    for (const k of el.children) ro.observe(k);
-    schedule();
-    return () => { ro.disconnect(); cancelAnimationFrame(raf); };
-  }, [fitWindow]);
 
   useEffect(() => {
     void (async () => {
@@ -94,14 +66,23 @@ export default function MindmapStickerPopup() {
     })();
   }, []);
 
-  // 呼出时若后台有选中文本，默认填入贴纸内容。
+  // 呼出时把后台捕获的选中文本默认填入贴纸内容。
+  // 窗口是复用的（hide/show 不重挂载），挂载时的一次性拉取只覆盖首次创建——
+  // 因此监听「tauri://focus」：每次热键呼出/聚焦窗口都重新拉取
+  // （take 拉取即清空后端槽位，无新选区时返回 null，不误覆盖用户输入）。
   useEffect(() => {
-    void (async () => {
+    let un: (() => void) | undefined;
+    const pull = async () => {
       try {
         const sel = await invoke<string | null>("take_mindmap_quick_selection");
         if (sel) setContent((cur) => (cur.trim() ? cur : sel));
       } catch { /* 无捕获或后端未支持时保持为空 */ }
-    })();
+    };
+    void pull();
+    try {
+      void getCurrentWindow().listen("tauri://focus", () => { void pull(); }).then((u) => { un = u; });
+    } catch { /* 浏览器预览无 Tauri 窗口事件 */ }
+    return () => { un?.(); };
   }, []);
 
   useEffect(() => {
@@ -154,9 +135,9 @@ export default function MindmapStickerPopup() {
   useEffect(() => { inputRef.current?.focus(); }, [full, docId]);
 
   return (
-    <div className="h-screen w-screen overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl flex flex-col text-slate-200 select-none" style={themeVars}>
+    <div ref={rootRef} className="h-screen w-screen overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl flex flex-col text-slate-200 select-none" style={themeVars}>
       {/* 标题栏 */}
-      <div ref={titleRef} className="flex shrink-0 cursor-grab items-center gap-2 border-b border-white/10 px-3 py-2 active:cursor-grabbing" onMouseDown={onTitleMouseDown} style={{ backgroundColor: "var(--mm-accent-soft)" }}>
+      <div className="flex shrink-0 cursor-grab items-center gap-2 border-b border-white/10 px-3 py-2 active:cursor-grabbing" onMouseDown={onTitleMouseDown} style={{ backgroundColor: "var(--mm-accent-soft)" }}>
         <VexAvatar size={18} />
         <StickyNote className="h-4 w-4" style={{ color: "var(--mm-accent)" }} />
         <span className="text-xs font-semibold text-white">{t("mmdpop.stickerTitle")}</span>
@@ -224,6 +205,13 @@ export default function MindmapStickerPopup() {
           style={{ backgroundColor: "var(--mm-accent)" }}>
           {busy ? t("mmdpop.recording") : t("mmdpop.asSticker")}
         </button>
+      </div>
+
+      {/* 底部高度拖拽把手：手动调整窗口高度（双击恢复自动贴合） */}
+      <div {...gripHandlers}
+        className="flex h-2.5 shrink-0 cursor-ns-resize touch-none select-none items-center justify-center"
+        title={manualH ? t("mmdpop.resizeTipManual") : t("mmdpop.resizeTipAuto")}>
+        <div className="h-0.5 w-10 rounded-full bg-white/20 transition hover:bg-[var(--mm-accent)]" />
       </div>
     </div>
   );

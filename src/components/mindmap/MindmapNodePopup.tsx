@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Brain, ChevronDown, ListTree, Plus, X } from "lucide-react";
 import { mmApi, type MindmapDocument, type DocumentFull, type MindmapNode, kindColor } from "./types";
 import { MarkdownFieldEditor } from "./MarkdownFieldEditor";
 import { NodeFormFields } from "./NodeFormFields";
+import { usePopupSize } from "./usePopupSize";
 import VexAvatar from "../VexAvatar";
 import { VEX_CYBER_ACCENT, resolveThemeAccent } from "../../utils/brand";
 
@@ -52,40 +53,10 @@ export default function MindmapNodePopup() {
   const [newDocName, setNewDocName] = useState("");
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const titleRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-
-  // 窗口高度随内容自动伸缩：测量「标题栏 + 各字段块自然高度」,
-  // 调用 setSize 让悬浮窗贴合内容；超出屏幕可用高度后由内部滚动兜底。
-  const fitWindow = useCallback(() => {
-    try {
-      const el = contentRef.current;
-      if (!el) return;
-      const titleH = titleRef.current?.offsetHeight ?? 36;
-      let contentH = 0;
-      const kids = Array.from(el.children) as HTMLElement[];
-      for (const k of kids) contentH += k.getBoundingClientRect().height;
-      const gaps = Math.max(0, kids.length - 1) * 8; // gap-2
-      const pad = 20; // p-2.5 上下各 10px
-      const maxH = Math.max(420, window.screen.availHeight - 40);
-      const minH = Math.min(430, maxH);
-      const desired = Math.round(Math.min(maxH, Math.max(minH, titleH + contentH + gaps + pad + 2)));
-      if (Math.abs(desired - window.innerHeight) < 16) return;
-      void getCurrentWindow().setSize(new LogicalSize(window.innerWidth, desired)).catch(() => {/* 忽略 */});
-    } catch { /* 浏览器预览等无 Tauri 环境静默降级 */ }
-  }, []);
-
-  useEffect(() => {
-    const el = contentRef.current;
-    if (!el) return;
-    let raf = 0;
-    const schedule = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(fitWindow); };
-    const ro = new ResizeObserver(schedule);
-    ro.observe(el);
-    for (const k of el.children) ro.observe(k);
-    schedule();
-    return () => { ro.disconnect(); cancelAnimationFrame(raf); };
-  }, [fitWindow]);
+  // 高度管理：默认自动贴合内容；底部把手可手动拖拽调整高度（双击恢复自动）。
+  const { manualH, gripHandlers } = usePopupSize({ kind: "node", rootRef, contentRef, minH: 380 });
 
   const onTitleMouseDown = useCallback((e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest("button")) return;
@@ -104,15 +75,23 @@ export default function MindmapNodePopup() {
     })();
   }, []);
 
+  // 呼出时把后台捕获的选中文本默认带入「描述」（详细内容，而非名称）。
+  // 窗口是复用的（hide/show 不重挂载），挂载时的一次性拉取只覆盖首次创建——
+  // 因此监听「tauri://focus」：每次热键呼出/聚焦窗口都重新拉取
+  // （take 拉取即清空后端槽位，无新选区时返回 null，不误覆盖用户输入）。
   useEffect(() => {
-    void (async () => {
+    let un: (() => void) | undefined;
+    const pull = async () => {
       try {
         const sel = await invoke<string | null>("take_mindmap_quick_selection");
-        // 选中文字 → 详细内容（detail）。与贴纸悬浮窗（内容）保持一致：
-        // 划词呼出时用户选中的就是要记录的正文，而不是一句话描述。
         if (sel) setDetail((cur) => (cur.trim() ? cur : sel));
       } catch { /* 无捕获或后端未支持时保持为空 */ }
-    })();
+    };
+    void pull();
+    try {
+      void getCurrentWindow().listen("tauri://focus", () => { void pull(); }).then((u) => { un = u; });
+    } catch { /* 浏览器预览无 Tauri 窗口事件 */ }
+    return () => { un?.(); };
   }, []);
 
   useEffect(() => {
@@ -229,9 +208,9 @@ export default function MindmapNodePopup() {
   useEffect(() => { inputRef.current?.focus(); }, [full, docId]);
 
   return (
-    <div className="h-screen w-screen overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl flex flex-col text-slate-200 select-none" style={themeVars}>
+    <div ref={rootRef} className="h-screen w-screen overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl flex flex-col text-slate-200 select-none" style={themeVars}>
       {/* 标题栏 */}
-      <div ref={titleRef} className="flex shrink-0 cursor-grab items-center gap-2 border-b border-white/10 px-3 py-2 active:cursor-grabbing" onMouseDown={onTitleMouseDown} style={{ backgroundColor: "var(--mm-accent-soft)" }}>
+      <div className="flex shrink-0 cursor-grab items-center gap-2 border-b border-white/10 px-3 py-2 active:cursor-grabbing" onMouseDown={onTitleMouseDown} style={{ backgroundColor: "var(--mm-accent-soft)" }}>
         <VexAvatar size={18} />
         <Brain className="h-4 w-4" style={{ color: "var(--mm-accent)" }} />
         <span className="text-xs font-semibold text-white">{t("mmdpop.nodeTitle")}</span>
@@ -338,6 +317,13 @@ export default function MindmapNodePopup() {
           style={{ backgroundColor: "var(--mm-accent)" }}>
           {busy ? t("mmdpop.recording") : t("mmdpop.recordNode")}
         </button>
+      </div>
+
+      {/* 底部高度拖拽把手：手动调整窗口高度（双击恢复自动贴合） */}
+      <div {...gripHandlers}
+        className="flex h-2.5 shrink-0 cursor-ns-resize touch-none select-none items-center justify-center"
+        title={manualH ? t("mmdpop.resizeTipManual") : t("mmdpop.resizeTipAuto")}>
+        <div className="h-0.5 w-10 rounded-full bg-white/20 transition hover:bg-[var(--mm-accent)]" />
       </div>
     </div>
   );

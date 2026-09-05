@@ -18,7 +18,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
 const POPUP_LABEL: &str = "mindmap-quick-popup";
 const STICKER_POPUP_LABEL: &str = "mindmap-sticker-popup";
 const WIN_W: f64 = 520.0;
-const WIN_H: f64 = 900.0;
+/// 各悬浮窗的初始高度：创建后前端 fitWindow 会立刻贴合内容/用户上次调整的
+/// 高度，这里只决定首帧尺寸（避免 900px 的默认高度闪现「太高」的空窗）。
+const WIN_H_NODE: f64 = 520.0;
+const WIN_H_STICKER: f64 = 400.0;
 
 /// 当前鼠标位置（虚拟屏物理像素坐标，多显示器可为负值）。
 #[cfg(windows)]
@@ -72,7 +75,9 @@ fn popup_position(win_w: i32, win_h: i32) -> Option<(i32, i32)> {
 /// 把悬浮窗移动到鼠标当前位置（复用窗口时调用）。
 #[cfg(windows)]
 fn position_popup_at_cursor(win: &tauri::WebviewWindow) {
-    let size = win.outer_size().unwrap_or(tauri::PhysicalSize::new(WIN_W as u32, WIN_H as u32));
+    let size = win
+        .outer_size()
+        .unwrap_or(tauri::PhysicalSize::new(WIN_W as u32, WIN_H_NODE as u32));
     if let Some((x, y)) = popup_position(size.width as i32, size.height as i32) {
         let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
     }
@@ -108,16 +113,16 @@ fn open_popup_generic(app: &tauri::AppHandle, label: &str, capture_sel: bool) ->
 
 /// 确保悬浮窗存在并返回其句柄（存在则复用）。
 fn ensure_quick_popup(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
-    ensure_popup(app, POPUP_LABEL, "index.html?popup=mindmap-node", "思维导图速记")
+    ensure_popup(app, POPUP_LABEL, "index.html?popup=mindmap-node", "思维导图速记", WIN_H_NODE)
 }
 
 /// 确保贴纸悬浮窗存在并返回其句柄（存在则复用）。
 fn ensure_sticker_popup(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
-    ensure_popup(app, STICKER_POPUP_LABEL, "index.html?popup=mindmap-sticker", "思维导图贴纸")
+    ensure_popup(app, STICKER_POPUP_LABEL, "index.html?popup=mindmap-sticker", "思维导图贴纸", WIN_H_STICKER)
 }
 
 /// 通用悬浮窗创建/复用。
-fn ensure_popup(app: &tauri::AppHandle, label: &str, url: &str, title: &str) -> Result<tauri::WebviewWindow, String> {
+fn ensure_popup(app: &tauri::AppHandle, label: &str, url: &str, title: &str, win_h: f64) -> Result<tauri::WebviewWindow, String> {
     if let Some(win) = app.get_webview_window(label) {
         return Ok(win);
     }
@@ -127,7 +132,7 @@ fn ensure_popup(app: &tauri::AppHandle, label: &str, url: &str, title: &str) -> 
         tauri::WebviewUrl::App(url.into()),
     )
     .title(title)
-    .inner_size(WIN_W, WIN_H)
+    .inner_size(WIN_W, win_h)
     .decorations(false)
     .transparent(true)
     .always_on_top(true)
@@ -138,7 +143,7 @@ fn ensure_popup(app: &tauri::AppHandle, label: &str, url: &str, title: &str) -> 
     .shadow(false);
     // 悬浮窗跟随鼠标：创建时定位到光标附近
     #[cfg(windows)]
-    if let Some((x, y)) = popup_position(WIN_W as i32, WIN_H as i32) {
+    if let Some((x, y)) = popup_position(WIN_W as i32, win_h as i32) {
         builder = builder.position(x as f64, y as f64);
     }
     let win = builder

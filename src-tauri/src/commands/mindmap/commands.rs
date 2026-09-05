@@ -56,6 +56,83 @@ fn cancel_err(app: &Option<tauri::AppHandle>, flag: &std::sync::atomic::AtomicBo
     Ok(())
 }
 
+// ─── AI 询问通道（ask-user）───
+// AI 在生成中遇到信息不足/歧义时，可输出 {"ask": {...}} 向用户提问；
+// 后端注册一个 oneshot 发送端（按 run_id 索引），阻塞等待前端 mm_ai_answer 回填，
+// 然后把用户回答追加进提示词继续生成。取消时（mm_ai_cancel）会向该通道发送
+// Null 标记把等待解除，避免用户点「停止」后运行卡死在提问处。
+fn ask_register(run_id: &str, tx: tokio::sync::oneshot::Sender<serde_json::Value>) {
+    static ASKS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>>> = std::sync::OnceLock::new();
+    ASKS.get_or_init(Default::default)
+        .lock().unwrap()
+        .insert(run_id.to_string(), tx);
+}
+
+/// 用户回填询问答案（mm_ai_answer 调用）。无等待中的询问时返回 Err。
+fn ask_send_answer(run_id: &str, answer: serde_json::Value) -> Result<(), String> {
+    static ASKS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>>> = std::sync::OnceLock::new();
+    match ASKS.get_or_init(Default::default).lock().unwrap().remove(run_id) {
+        Some(tx) => tx.send(answer).map_err(|_| "询问已结束".into()),
+        None => Err("当前没有等待中的询问".into()),
+    }
+}
+
+/// 取消时解除等待中的询问（mm_ai_cancel 调用，尽力而为）。
+fn ask_send_cancel(run_id: &str) {
+    static ASKS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>>> = std::sync::OnceLock::new();
+    if let Some(tx) = ASKS.get_or_init(Default::default).lock().unwrap().remove(run_id) {
+        let _ = tx.send(serde_json::Value::Null);
+    }
+}
+
+/// 把 AI 输出的 ask 归一化为 { question, fields:[{key,label,type,options,default}] }。
+fn normalize_ask(ask: &serde_json::Value) -> serde_json::Value {
+    match ask {
+        serde_json::Value::String(s) => serde_json::json!({ "question": s, "fields": [] }),
+        serde_json::Value::Object(_) => {
+            let mut obj = ask.as_object().unwrap().clone();
+            if !obj.contains_key("question") {
+                obj.insert("question".into(), serde_json::Value::String("请补充以下信息".into()));
+            }
+            if !obj.contains_key("fields") || !obj.get("fields").map(|v| v.is_array()).unwrap_or(false) {
+                obj.insert("fields".into(), serde_json::json!([]));
+            }
+            serde_json::Value::Object(obj)
+        }
+        _ => serde_json::json!({ "question": "请补充以下信息", "fields": [] }),
+    }
+}
+
+/// 把「询问 + 用户回答」格式化为追加进提示词的文本人话。
+fn format_ask_answer(ask: &serde_json::Value, answer: &serde_json::Value) -> String {
+    let mut out = String::new();
+    let q = ask.get("question").and_then(|x| x.as_str()).unwrap_or("");
+    if !q.is_empty() { out.push_str(&format!("问题：{}\n", q)); }
+    let fields = ask.get("fields").and_then(|x| x.as_array());
+    match (fields, answer) {
+        (Some(fs), a) if !fs.is_empty() => {
+            out.push_str("回答：\n");
+            for f in fs {
+                let key = f.get("key").and_then(|x| x.as_str()).unwrap_or("");
+                let label = f.get("label").and_then(|x| x.as_str()).unwrap_or(key);
+                let val = a.get(key).map(|v| match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                }).unwrap_or_default();
+                out.push_str(&format!("- {}：{}\n", label, val));
+            }
+        }
+        (_, serde_json::Value::String(s)) if !s.trim().is_empty() => {
+            out.push_str(&format!("回答：{}\n", s));
+        }
+        (_, a) if !a.is_null() => {
+            out.push_str(&format!("回答：{}\n", a));
+        }
+        _ => { out.push_str("回答：（用户未填写，请基于现有信息合理推断并继续）\n"); }
+    }
+    out
+}
+
 // ─── 工具 ───
 
 /// 一次 AI 运行（路由/探索/逐视图生成）的 token 累计器：原子计数，异步任务间安全共享。
@@ -791,6 +868,10 @@ fn log_ai_transport_failure(app: &Option<tauri::AppHandle>, model: &str, err: &s
 /// 保留错误数最少的一版。返回 (最终 JSON, 剩余校验错误, 实际调用轮数)；
 /// 错误为空即完全通过，轮数 = 1 表示首次即通过。
 /// project：项目文件集上下文，非空时校验 sources 证据真实性（存在性 + 内容相关度）。
+/// 询问机制：AI 遇到信息不足/歧义时可输出 {"ask": {...}} 向用户提问（最多 3 次），
+/// 后端推送 step=ask 事件并阻塞等待前端 mm_ai_answer 回填，再把回答追加进提示词继续。
+const MAX_ASK_ROUNDS: usize = 3;
+
 async fn ai_generate_with_repair(
     app: &Option<tauri::AppHandle>,
     acc: &UsageAcc,
@@ -801,24 +882,60 @@ async fn ai_generate_with_repair(
     user: &str,
     max_rounds: usize,
     project: Option<&super::scan::ProjectFiles>,
+    run_id: &str,
 ) -> Result<(serde_json::Value, Vec<String>, usize), String> {
     let mut prompt = user.to_string();
     let mut best: Option<(serde_json::Value, Vec<String>, usize)> = None;
-    for round in 0..max_rounds {
+    let mut ask_calls = 0usize;
+    let mut repair_calls = 0usize;
+    loop {
         cancel_err(app, cancel)?;
         let json = call_ai_json(app, acc, cancel, provider, model, system, &prompt).await?;
+        // 询问机制：AI 返回 ask（且未同时给 nodes）时，先让用户填表，再基于回答继续。
+        // 询问不计入修复预算；询问次数封顶 MAX_ASK_ROUNDS，防止 AI 反复提问卡死。
+        if let Some(ask_raw) = json.get("ask") {
+            if ask_calls < MAX_ASK_ROUNDS && json.get("nodes").is_none() {
+                ask_calls += 1;
+                let ask = normalize_ask(ask_raw);
+                emit_progress(app, "ask", serde_json::json!({
+                    "ask": ask.clone(),
+                    "round": ask_calls,
+                    "max": MAX_ASK_ROUNDS,
+                }));
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                ask_register(run_id, tx);
+                let answer = match rx.await {
+                    Ok(v) => v,
+                    // 发送端被丢弃（理论上仅出现在运行被强制终止时）：按未填写处理
+                    Err(_) => serde_json::Value::Null,
+                };
+                if is_cancelled(cancel) {
+                    emit_progress(app, "cancel", serde_json::json!({}));
+                    return Err(ERR_CANCELLED.into());
+                }
+                let answer_txt = format_ask_answer(&ask, &answer);
+                prompt = format!(
+                    "{}\n\n—— 用户回答 ——\n{}\n请基于以上回答继续生成（只输出完整 JSON，不要解释或 Markdown）。",
+                    user, answer_txt
+                );
+                continue;
+            }
+        }
+        // 校验 / 修复
+        repair_calls += 1;
         let errs = validate_ai_nodes_json(&json, project);
+        let total_calls = ask_calls + repair_calls;
         if errs.is_empty() {
-            return Ok((json, Vec::new(), round + 1));
+            return Ok((json, Vec::new(), total_calls));
         }
         let is_better = best
             .as_ref()
             .map(|(_, e, _)| errs.len() < e.len())
             .unwrap_or(true);
         if is_better {
-            best = Some((json.clone(), errs.clone(), round + 1));
+            best = Some((json.clone(), errs.clone(), total_calls));
         }
-        if round + 1 >= max_rounds {
+        if repair_calls >= max_rounds {
             break;
         }
         prompt = format!(
@@ -828,7 +945,7 @@ async fn ai_generate_with_repair(
         );
     }
     let (json, errs, rounds) = best.unwrap_or_else(|| {
-        (serde_json::json!({ "nodes": [] }), vec!["AI 未返回可用 JSON".into()], max_rounds)
+        (serde_json::json!({ "nodes": [] }), vec!["AI 未返回可用 JSON".into()], ask_calls + repair_calls)
     });
     Ok((json, errs, rounds))
 }
@@ -911,6 +1028,16 @@ TREŚĆ (obowiązkowa, ważniejsza niż struktura katalogów):
 - detail każdego modułu: co robi, na czym polega implementacja (biblioteka, wzorzec, endpoint, model danych), z czym się łączy. Czerp z treści plików, nie z domysłów.
 - Zakaz pustych ogólników typu „warstwa logiki", „moduł pomocniczy" — jeśli nie wiesz, co moduł robi, powiedz to wprost w detail, zamiast zmyślać."##;
 
+/// 询问机制说明：AI 遇到信息不足/歧义时优先向用户提问（而非臆造）。
+/// 输出 {"ask": {...}} 时由后端弹出表单让用户填写，回答会回填后继续生成；
+/// 每轮最多问 1 次、整个生成最多问 3 次（后端封顶），问完必须基于回答继续产出节点。
+const ASK_REQ: &str = r##"
+
+询问机制（重要）：当且仅当信息不足以可靠生成、且存在实质性歧义时（例如：无法确定模块边界/某个关键业务流走向、需求文本缺少关键约束、同一功能有多种合理解释），不要臆造，而是改输出一个询问对象（不要输出 nodes）：
+{"ask":{"question":"你要问用户的问题（一句话，说清缺什么、为什么需要）","fields":[{"key":"字段键（英文蛇形）","label":"字段名","type":"text","options":[],"default":""}]}}
+type 取值：text（单行）、textarea（多行）、select（单选，配 options 选项数组）。fields 最多 4 个，能一句话问清就别用字段（fields 留空 []）。
+用户会填写后你再基于回答继续生成。注意：只有在真正卡住、且猜错会显著影响结果时才提问；能从上下文合理推断的就直接推断并在 detail 中说明依据，不要为了提问而提问。"##;
+
 /// 类型路由分类 prompt：让 AI 先判断适用哪些视图。
 fn router_prompt(mode: &str) -> String {
     let subject = if mode == "project" { "项目扫描结果" } else { "需求文本" };
@@ -955,16 +1082,17 @@ fn view_prompt(mode: &str, view: &str, depth: u8) -> String {
     };
     let tpl = r##"{opener}
 只允许输出一个 JSON 对象，不要 Markdown 代码围栏、解释文字或尾随逗号：
-{{"summary":"该视角的简明概述","nodes":[{{"id":"唯一稳定短 ID","name":"节点名称","parent_id":null,"detail":"节点说明：一句话职责 + 具体功能，可使用 Markdown","kind":"{kinds}","color":"#RRGGBB","sources":["项目相对路径"]}}]}}
+{{"summary":"该视角的简明概述","nodes":[{{"id":"唯一稳定短 ID","name":"节点名称","parent_id":null,"detail":"节点说明：一句话职责 + 具体功能，可使用 Markdown","kind":"{kinds}","color":"#RRGGBB","plan_at":null,"repeat":"none","sources":["项目相对路径"]}}]}}
 组织要求：{guidance}{evidence}{depth_req}
-结构要求：至少一个根节点，根节点 parent_id 必须为 null；其余节点只能通过 parent_id 引用本次输出中的 id；每个节点的 detail 必须写明该模块/节点的说明（职责、边界、与相邻模块的关系，可用 Markdown），不得为空；color 必须是 6 位十六进制颜色；节点总数控制在 {count} 个；只输出 JSON。{evidence_req}
-{substance}"##;
+结构要求：节点字段与思维导图节点数据结构一一对应（id/name/parent_id/detail/kind/color/plan_at/repeat/sources，其中 plan_at、repeat、sources 可省略）；至少一个根节点，根节点 parent_id 必须为 null；其余节点只能通过 parent_id 引用本次输出中的 id；每个节点的 detail 必须写明该模块/节点的说明（职责、边界、与相邻模块的关系，可用 Markdown），不得为空；color 必须是 6 位十六进制颜色；plan_at 为计划时间（ISO 8601 字符串，无计划填 null 或省略）；repeat 为重复周期（none/daily/weekly，无则 none 或省略）；节点总数控制在 {count} 个；只输出 JSON。{evidence_req}
+{substance}{ask_req}"##;
     let evidence_req = if mode == "project" {
         "\n证据要求：关键模块/组件/服务节点用 sources 字段标注 1 到 3 个真实文件（项目相对路径，必须在『目录结构』中出现），文件/配置类节点标注自身路径；sources 最多 6 个，只填真实存在的路径，不要臆造。"
     } else {
         ""
     };
     let substance = if mode == "project" { VIEW_SUBSTANCE_REQ } else { "" };
+    let ask_req = ASK_REQ;
     tpl.replace("{opener}", &opener)
         .replace("{kinds}", kinds)
         .replace("{count}", count)
@@ -973,6 +1101,7 @@ fn view_prompt(mode: &str, view: &str, depth: u8) -> String {
         .replace("{depth_req}", &depth_req)
         .replace("{evidence_req}", evidence_req)
         .replace("{substance}", substance)
+        .replace("{ask_req}", ask_req)
 }
 
 /// 多轮探索 prompt（system）：AI 请求要读取的文件批次；返回 done 表示探索结束。
@@ -1135,6 +1264,7 @@ async fn run_ai_router(
     cancel: &std::sync::atomic::AtomicBool,
     depth: u8,
     requested_views: &[String],
+    run_id: &str,
 ) -> Result<AiImportResult, String> {
     // 本次运行的总 token 累计器（逐请求记录 + 完成时随报告返回、随文档留痕）
     let usage = UsageAcc::default();
@@ -1267,6 +1397,7 @@ async fn run_ai_router(
                 &user,
                 3,
                 project_files.as_ref(),
+                run_id,
             )
             .await?;
             Ok::<_, String>((parsed, errs, rounds))
@@ -1370,11 +1501,21 @@ async fn run_ai_router(
 }
 
 /// 取消指定 run_id 的 AI 导入运行（前端点「停止」时调用；各循环/流式块边界会检查标志并中断）。
+/// 若运行正阻塞在「询问用户」等待上，同时向询问通道发送取消标记解除阻塞，避免卡死。
 #[tauri::command]
 pub fn mm_ai_cancel(run_id: String) -> Result<(), String> {
     if run_id.trim().is_empty() { return Err("run_id 为空".into()); }
     ai_cancel_flag(&run_id).store(true, std::sync::atomic::Ordering::Relaxed);
+    ask_send_cancel(&run_id);
     Ok(())
+}
+
+/// 回填 AI 询问的用户答案（前端 AgentWorkbench 的询问表单提交时调用）。
+/// answer 为 JSON 对象（字段键→值）或字符串；后端把回答追加进提示词后继续生成。
+#[tauri::command]
+pub fn mm_ai_answer(run_id: String, answer: serde_json::Value) -> Result<(), String> {
+    if run_id.trim().is_empty() { return Err("run_id 为空".into()); }
+    ask_send_answer(&run_id, answer)
 }
 
 #[tauri::command]
@@ -1384,17 +1525,18 @@ pub async fn mm_ai_from_project(app: tauri::AppHandle, input: AiGenerateProjectI
     let pname = std::path::Path::new(&pp).file_name().and_then(|n| n.to_str()).unwrap_or("项目").to_string();
     let app_opt = Some(app);
     // 本次运行的取消标志：按 run_id 独立，前后端共用同一标识
-    let cancel = ai_cancel_flag(if input.run_id.trim().is_empty() { "import" } else { &input.run_id });
+    let run_id = if input.run_id.trim().is_empty() { "import".to_string() } else { input.run_id.clone() };
+    let cancel = ai_cancel_flag(&run_id);
     let result = async {
         emit_progress(&app_opt, "scan", serde_json::json!({}));
         // 扫描（含技术栈/目录规模/标记等仓库证据）
         let context = super::scan::scan_project_with_hint(&pp, input.user_hint.as_deref())?;
         emit_progress(&app_opt, "scan", serde_json::json!({ "done": true }));
         let (provider, model) = resolve_provider_model(&input.provider_id, &input.model_id)?;
-        run_ai_router(&provider, &model, "project", &context, &pname, Some(&pp), &app_opt, &cancel, input.depth.clamp(1, 5), &input.views).await
+        run_ai_router(&provider, &model, "project", &context, &pname, Some(&pp), &app_opt, &cancel, input.depth.clamp(1, 5), &input.views, &run_id).await
     }
     .await;
-    ai_drop_flag(if input.run_id.trim().is_empty() { "import" } else { &input.run_id });
+    ai_drop_flag(&run_id);
     result
 }
 
@@ -1405,9 +1547,10 @@ pub async fn mm_ai_from_text(app: tauri::AppHandle, input: AiGenerateTextInput) 
     let title = if input.title.trim().is_empty() { "需求分析" } else { input.title.trim() };
     let (provider, model) = resolve_provider_model(&input.provider_id, &input.model_id)?;
     let app_opt = Some(app);
-    let cancel = ai_cancel_flag(if input.run_id.trim().is_empty() { "import" } else { &input.run_id });
-    let result = run_ai_router(&provider, &model, "text", &text, title, None, &app_opt, &cancel, 3, &[]).await;
-    ai_drop_flag(if input.run_id.trim().is_empty() { "import" } else { &input.run_id });
+    let run_id = if input.run_id.trim().is_empty() { "import".to_string() } else { input.run_id.clone() };
+    let cancel = ai_cancel_flag(&run_id);
+    let result = run_ai_router(&provider, &model, "text", &text, title, None, &app_opt, &cancel, 3, &[], &run_id).await;
+    ai_drop_flag(&run_id);
     result
 }
 
@@ -1417,8 +1560,8 @@ pub async fn mm_ai_from_text(app: tauri::AppHandle, input: AiGenerateTextInput) 
 fn regenerate_prompt() -> String {
     r##"你是一位资深软件架构师。请分析指定模块的内部结构，生成可直接导入思维导图的 JSON。
 只允许输出一个 JSON 对象，不要 Markdown 代码围栏、解释文字或尾随逗号：
-{"nodes":[{"id":"唯一稳定短 ID","name":"节点名称","parent_id":null,"detail":"节点说明：职责、边界与相邻模块关系，可使用 Markdown","kind":"root|module|component|service|route|config|file|task|requirement|constraint|risk|other","color":"#RRGGBB"}]}
-要求：第一个节点是该模块自身（parent_id 必须为 null，kind 用 root 或 module），其余 3 到 12 个节点是其子结构；所有子节点只能通过 parent_id 引用本批输出中的 id；每个节点的 detail 必须写明该模块/子模块的说明（职责、边界、与相邻模块的关系，可用 Markdown），不得为空；kind 必须在允许列表内；color 必须是 6 位十六进制颜色；只输出 JSON。"##.to_string()
+{"nodes":[{"id":"唯一稳定短 ID","name":"节点名称","parent_id":null,"detail":"节点说明：职责、边界与相邻模块关系，可使用 Markdown","kind":"root|module|component|service|route|config|file|task|requirement|constraint|risk|other","color":"#RRGGBB","plan_at":null,"repeat":"none"}]}
+要求：节点字段与思维导图节点数据结构一一对应（id/name/parent_id/detail/kind/color/plan_at/repeat，其中 plan_at、repeat 可省略）；第一个节点是该模块自身（parent_id 必须为 null，kind 用 root 或 module），其余 3 到 12 个节点是其子结构；所有子节点只能通过 parent_id 引用本批输出中的 id；每个节点的 detail 必须写明该模块/子模块的说明（职责、边界、与相邻模块的关系，可用 Markdown），不得为空；kind 必须在允许列表内；color 必须是 6 位十六进制颜色；plan_at 为计划时间（ISO 8601 字符串，无计划填 null 或省略）；repeat 为重复周期（none/daily/weekly，无则 none 或省略）；只输出 JSON。"##.to_string()
 }
 
 #[tauri::command]
@@ -1455,7 +1598,7 @@ pub async fn mm_regenerate_node(app: tauri::AppHandle, input: RegenerateNodeInpu
     let regen_run = format!("regen-{}", super::db::new_id("run"));
     let cancel = ai_cancel_flag(&regen_run);
     let (parsed, errs, _rounds) = ai_generate_with_repair(
-        &app_opt, &usage, &cancel, &provider, &model, &regenerate_prompt(), &user, 3, None,
+        &app_opt, &usage, &cancel, &provider, &model, &regenerate_prompt(), &user, 3, None, &regen_run,
     )
     .await?;
     ai_drop_flag(&regen_run);

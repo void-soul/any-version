@@ -13,33 +13,34 @@ import { MarkdownFieldEditor } from "./MarkdownFieldEditor";
 import { NodeFormFields } from "./NodeFormFields";
 import VexEmptyState from "../VexEmptyState";
 import {
-  AlertTriangle, BarChart3, Brain, Coins, File, Folder, FolderOpen, LayoutGrid, Loader2, Terminal,
+  AlertTriangle, BarChart3, Brain, File, Folder, FolderOpen, LayoutGrid, Loader2,
   ScrollText, Sparkles, StickyNote, Image, Trash2, X, Plus, Pencil, Eye,
-  ChevronDown, ChevronRight, ChevronLeft, FolderPlus, Search, Maximize2, Minimize2, Code2, FileText, ListTree, RotateCcw, RotateCw, Calendar, Link2, Ban, Square,
+  ChevronDown, ChevronRight, ChevronsRight, ChevronLeft, FolderPlus, Search, Maximize2, Minimize2, Code2, FileText, ListTree, RotateCcw, RotateCw, Calendar, Link2, Square, MessageCircle,
 } from "lucide-react";
 import type { AiConfig } from "../ai/types";
 import { AiImportResult, DocumentFull, MindmapDocument, MindmapFolder, MindmapNode, MindmapSticker, PlannedOccurrence, PositionInput, kindColor, mmApi } from "./types";
 import { moduleAccent } from "../../utils/theme";
 import { VEX_CYBER_CYAN } from "../../utils/brand";
-import { createEventBuffer, useEventBufferSnapshot, type EventBuffer } from "../../utils/eventBuffer";
+import { useEventBufferSnapshot } from "../../utils/eventBuffer";
 import { SharedModal } from "../shared/Modal";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
+import {
+  AgentWorkbench,
+  clearAgentMessages,
+  clearAnsweredAsks,
+  mmAiProgressBuffer,
+  openSourceFile,
+  progressText,
+  fmtNum,
+  fmtDur,
+  viewLabel,
+  useAnsweredAsks,
+} from "./agentShared";
 
 const ACCENT = moduleAccent();
 const MM_LAST_DOC_KEY = "any_version_mindmap_last_doc";
 
-// AI 导入进度事件缓冲（模块级，App 生命周期内常驻）：思维导图面板切走/隐藏后，
-// 组件内的 mm-ai-progress 订阅随 Effects 销毁，后端即发即弃的事件会丢；
-// 由缓冲在模块作用域统一订阅并保存载荷，面板重新可见时完整重放（长任务不断流）。
-const mmAiProgressBuffer: EventBuffer<AiProgressEntry> = createEventBuffer<AiProgressEntry>(
-  "mm-ai-progress",
-  {
-    transform: (p) => ({ ...(p as Omit<AiProgressEntry, "at">), at: Date.now() }),
-    limit: 500,
-  }
-);
 const button = "inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.05] px-2 py-1.5 text-[10px] text-slate-300 transition hover:bg-white/[0.1] hover:text-white disabled:opacity-40";
-const selectClass = "h-8 min-w-[110px] rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400/60";
 const DOC_SOURCE_ICONS: Record<string, (cls: string) => React.ReactNode> = {
   manual: (c) => <ListTree className={c} />,
   ai_project: (c) => <Code2 className={c} />,
@@ -71,6 +72,17 @@ function stickerWidth(id: string): number {
   return 170 + (Math.abs(hash) % 4) * 12;
 }
 
+/** 贴纸「展开/收缩」状态（模块级，节点重挂载不丢）：默认收缩只显示 3 行，
+ *  展开后显示并编辑全文。图片贴纸不受影响（本身无文字行限制）。 */
+const stickerExpandedSet = new Set<string>();
+function isStickerExpanded(id: string) {
+  return stickerExpandedSet.has(id);
+}
+function setStickerExpanded(id: string, v: boolean) {
+  if (v) stickerExpandedSet.add(id);
+  else stickerExpandedSet.delete(id);
+}
+
 function normalizeHexColor(value: string | null | undefined): string | null {
   const raw = value?.trim() ?? "";
   if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw;
@@ -82,52 +94,8 @@ function normalizeHexColor(value: string | null | undefined): string | null {
 
 const effectiveNodeColor = (node: MindmapNode) => normalizeHexColor(node.color) ?? kindColor(node.kind);
 
-/** 在资源管理器中定位项目内文件（证据文件 / AI 探索读取的文件共用）。
- *  统一走 launcher_reveal_file：explorer /select 直启动，不经降权代理，
- *  避免被已运行 explorer 误判参数而打开「我的文档」。 */
-function openSourceFile(projectRoot: string, src: string) {
-  const p = `${projectRoot.replace(/\\/g, "/")}/${src}`;
-  void invoke("launcher_reveal_file", { path: p }).catch((e) => console.error("定位文件失败:", p, e));
-}
-
-// 节点类别 → 本地化 key（ComfyUI 式端口标签用）
-const KIND_KEYS: Record<string, string> = {
-  root: "mindmap.kindRoot",
-  module: "mindmap.kindModule",
-  component: "mindmap.kindComponent",
-  service: "mindmap.kindService",
-  route: "mindmap.kindRoute",
-  config: "mindmap.kindConfig",
-  file: "mindmap.kindFile",
-  requirement: "mindmap.kindRequirement",
-  task: "mindmap.kindTask",
-  constraint: "mindmap.kindConstraint",
-  risk: "mindmap.kindRisk",
-  other: "mindmap.kindOther",
-};
-
 /** 缩小到这个缩放比以下时，节点文字全部隐藏（ComfyUI 式缩略）。 */
 const ZOOM_HIDE_TEXT = 0.45;
-
-/** 端口标签小胶囊：依附在节点边缘的输入/输出连接点上，带类别色点。 */
-function PortChip({ label, color, side }: { label: string; color: string; side: "l" | "r" | "t" | "b" }) {
-  const inner = (<>
-    <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
-    <span className="whitespace-nowrap leading-none">{label}</span>
-  </>);
-  const pos = side === "l"
-    ? "left-0.5 top-1/2 -translate-y-1/2"
-    : side === "r"
-      ? "right-0.5 top-1/2 -translate-y-1/2"
-      : side === "t"
-        ? "top-0.5 left-1/2 -translate-x-1/2 flex-col"
-        : "bottom-0.5 left-1/2 -translate-x-1/2 flex-col-reverse";
-  return (
-    <span className={`pointer-events-none absolute z-[5] inline-flex items-center gap-1 rounded-sm bg-[#0d1524]/90 px-1 py-0.5 text-[8px] text-slate-400 shadow ring-1 ring-white/10 ${pos}`}>
-      {inner}
-    </span>
-  );
-}
 
 /** 计划时间徽标的短文本：ISO 串 → MM-DD HH:MM */
 function planShort(value: string): string {
@@ -142,14 +110,16 @@ function planShort(value: string): string {
 
 // ════════════ 节点 ════════════
 
-/** 额外连线端口：「谁连进来 / 连向谁」+ 输入端名称 + 端口色 */
-type FlowNodeData = { node: MindmapNode; selected: boolean; hasChildren: boolean; collapsed: boolean; hideText: boolean; parentColor: string | null; parentKind: string | null; targetPosition: Position; sourcePosition: Position; onSelect: () => void; onOpenDetail: () => void; onToggle: () => void; onAddChild: () => void; onPreview: (e: React.MouseEvent) => void; onPreviewEnd: () => void; onDelete: () => void; onContextMenu: (e: React.MouseEvent) => void; };
+/** 节点卡片数据：标题 + 描述区（文件列表可点击跳转）。
+ *  连线不再带文字标签（旧 PortChip 类别胶囊已移除，仅保留连接点色块）。 */
+type FlowNodeData = { node: MindmapNode; selected: boolean; hasChildren: boolean; collapsed: boolean; hiddenCount: number; hideText: boolean; parentColor: string | null; targetPosition: Position; sourcePosition: Position; projectRoot: string | null; onSelect: () => void; onOpenDetail: () => void; onToggle: () => void; onAddChild: () => void; onPreview: (e: React.MouseEvent) => void; onPreviewEnd: () => void; onDelete: () => void; onContextMenu: (e: React.MouseEvent) => void; };
 
 const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>) {
   const { t } = useTranslation();
-  const { node, selected, hasChildren, collapsed, hideText, parentColor, parentKind, targetPosition, sourcePosition, onSelect, onOpenDetail, onToggle, onAddChild, onPreview, onPreviewEnd, onDelete, onContextMenu } = data;
+  const { node, selected, hasChildren, collapsed, hiddenCount, hideText, parentColor, targetPosition, sourcePosition, projectRoot, onSelect, onOpenDetail, onToggle, onAddChild, onPreview, onPreviewEnd, onDelete, onContextMenu } = data;
   const c = effectiveNodeColor(node);
-  const kindL = (k: string | null | undefined) => (k ? t(KIND_KEYS[k] ?? KIND_KEYS.other) : t(KIND_KEYS.other));
+  // 折叠态视觉：折叠了子节点的节点要「看起来特殊」——更醒目的边框/辉光 + 琥珀色「折叠徽标」。
+  const isFolded = collapsed && hiddenCount > 0;
   // 大幅缩小 → 隐藏全部文字，只留色条与连接点（ComfyUI 式缩略）。
   if (hideText) {
     return (
@@ -164,8 +134,16 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>)
   }
 
   return (
-    <article className={`group relative w-[200px] rounded-xl border shadow-lg transition-shadow cursor-pointer ${selected ? "shadow-cyan-500/30 ring-1 ring-cyan-400/40" : "hover:shadow-xl"}`}
-      style={{ borderColor: selected ? c : `${c}55`, backgroundColor: "#0d1524" }} onClick={onSelect} onDoubleClick={(e) => { e.stopPropagation(); onOpenDetail(); }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e); }}>
+    <article
+      className={`group relative w-[200px] rounded-xl border shadow-lg transition-all cursor-pointer ${selected ? "shadow-cyan-500/30 ring-1 ring-cyan-400/40" : isFolded ? "" : "hover:shadow-xl"}`}
+      style={{
+        borderColor: isFolded ? c : selected ? c : `${c}55`,
+        borderWidth: isFolded ? 2 : 1,
+        backgroundColor: isFolded ? "#141d33" : "#0d1524",
+        // 折叠态：琥珀描边辉光，让「折叠了子节点」的节点一眼可辨
+        boxShadow: isFolded ? `0 0 0 1.5px ${c}88, 0 0 16px ${c}66, 0 0 0 3px rgba(251,191,36,0.18)` : undefined,
+      }}
+      onClick={onSelect} onDoubleClick={(e) => { e.stopPropagation(); onOpenDetail(); }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e); }}>
       <Handle id="in" type="target" position={targetPosition} isConnectable className="!h-3 !w-3 !border-2 !border-[#0d1524]" style={{ background: parentColor ?? "#64748b" }} />
       {/* 节点右上角悬浮按钮：预览（气泡）+ 删除 */}
       <div className="nodrag nopan absolute right-1 top-1 z-10 hidden items-center gap-0.5 group-hover:flex">
@@ -184,24 +162,45 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>)
         onClick={(e) => { e.stopPropagation(); onAddChild(); }} title={t("mindmap.addChild")}>
         <Plus className="h-3.5 w-3.5" />
       </button>
-      {/* 标题栏与描述区使用不同背景，节点信息层次保持稳定。 */}
-      <div className="flex items-center gap-1.5 rounded-t-[11px] border-b px-2.5 py-2 pr-8" style={{ borderColor: `${c}35`, backgroundColor: `${c}20` }}>
-        {hasChildren && <button type="button" className="nodrag nopan inline-flex h-4 w-4 items-center justify-center text-slate-400 hover:text-white" onClick={(e) => { e.stopPropagation(); onToggle(); }} title={collapsed ? t("mindmap.expand") : t("mindmap.collapse")}>
-          {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-        </button>}
+      {/* 标题栏与描述区使用不同背景，节点信息层次保持稳定。折叠态：琥珀箭头 + 折叠徽标 */}
+      <div className="flex items-center gap-1.5 rounded-t-[11px] border-b px-2.5 py-2 pr-8" style={{ borderColor: isFolded ? `${c}55` : `${c}35`, backgroundColor: isFolded ? `${c}33` : `${c}20` }}>
+        {hasChildren && (
+          <button type="button"
+            className={`nodrag nopan inline-flex h-4 w-4 items-center justify-center rounded transition ${isFolded ? "bg-amber-400/20 text-amber-300 hover:bg-amber-400/30" : "text-slate-400 hover:bg-white/10 hover:text-white"}`}
+            onClick={(e) => { e.stopPropagation(); onToggle(); }} title={collapsed ? t("mindmap.expand") : t("mindmap.collapse")}>
+            {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </button>
+        )}
         <span className="min-w-0 flex-1 truncate text-[11px] font-semibold" style={{ color: c }}>{node.name}</span>
+        {/* 折叠徽标：一眼看出该节点折叠隐藏了多少子节点（点击箭头可展开） */}
+        {isFolded && (
+          <span className="nodrag nopan shrink-0 inline-flex items-center gap-0.5 rounded-full border border-amber-400/50 bg-amber-400/15 px-1.5 py-0.5 text-[8px] font-bold text-amber-300 shadow-[0_0_8px_rgba(251,191,36,0.35)]"
+            title={t("mindmap.collapsedHint", { count: hiddenCount })}>
+            <ChevronsRight className="h-2.5 w-2.5" />+{hiddenCount}
+          </span>
+        )}
       </div>
-      {/* 默认端口语义标签：贴在节点左右/上下边缘的连接点旁，标出「接入什么 / 向外输出什么」。
-          左右布局时给描述区预留空间，避免标签盖住文字。 */}
-      {targetPosition === Position.Left && <PortChip label={kindL(parentKind)} color={parentColor ?? "#64748b"} side="l" />}
-      {targetPosition === Position.Right && <PortChip label={kindL(parentKind)} color={parentColor ?? "#64748b"} side="r" />}
-      {sourcePosition === Position.Left && <PortChip label={kindL(node.kind)} color={c} side="l" />}
-      {sourcePosition === Position.Right && <PortChip label={kindL(node.kind)} color={c} side="r" />}
-      {targetPosition === Position.Top && <><PortChip label={kindL(parentKind)} color={parentColor ?? "#64748b"} side="t" /><PortChip label={kindL(node.kind)} color={c} side="b" /></>}
-      {targetPosition === Position.Bottom && <><PortChip label={kindL(parentKind)} color={parentColor ?? "#64748b"} side="b" /><PortChip label={kindL(node.kind)} color={c} side="t" /></>}
-      <div className="flex items-center gap-1.5 px-2.5 pt-1.5">
-        {node.planAt && <span className="text-[8px] text-slate-400 font-mono">{t("mindmap.planAt", { time: planShort(node.planAt) })}</span>}
-        {(node.sources?.length ?? 0) > 0 && <span className="inline-flex items-center gap-0.5 text-[8px] text-cyan-300/70" title={t("mindmap.evidenceTitle", { count: node.sources!.length, names: node.sources!.join("、") })}><File className="h-2.5 w-2.5" />{node.sources!.length}</span>}
+      {/* 描述区：展示节点的文件（原证据文件），点击直接用编辑器打开/定位（最多 3 个，超出折叠） */}
+      <div className="space-y-0.5 px-2.5 py-1.5">
+        {(node.sources?.length ?? 0) > 0 ? (
+          <>
+            {node.sources!.slice(0, 3).map((f) => (
+              <button key={f} type="button"
+                onClick={(e) => { e.stopPropagation(); if (projectRoot) openSourceFile(projectRoot, f); }}
+                className={`nodrag nopan flex w-full items-center gap-1 rounded border border-cyan-400/20 bg-cyan-400/[0.06] px-1 py-px text-left text-[8px] font-mono text-cyan-200/90 ${projectRoot ? "cursor-pointer transition hover:border-cyan-400/60 hover:bg-cyan-400/15" : "opacity-60"}`}
+                title={projectRoot ? f : undefined}>
+                <File className="h-2.5 w-2.5 shrink-0" />
+                <span className="min-w-0 truncate">{f.split(/[\\/]/).pop()}</span>
+              </button>
+            ))}
+            {(node.sources!.length > 3) && (
+              <div className="px-1 text-[8px] text-slate-500" title={node.sources!.slice(3).join("、")}>{t("mindmap.moreFiles", { count: node.sources!.length - 3 })}</div>
+            )}
+          </>
+        ) : node.planAt ? null : (
+          <div className="truncate px-0.5 text-[8px] text-slate-600">{t("mindmap.nodeNoFile")}</div>
+        )}
+        {node.planAt && <div className="text-[8px] text-slate-400 font-mono">{t("mindmap.planAt", { time: planShort(node.planAt) })}</div>}
       </div>
       <Handle id="out" type="source" position={sourcePosition} isConnectable className="!h-3 !w-3 !border-2 !border-[#0d1524]" style={{ background: c }} />
     </article>
@@ -238,6 +237,18 @@ const StickerFlowNode = memo(function StickerFlowNode({ data }: NodeProps<Node<S
   const { t } = useTranslation();
   const rotation = sticker.rotation ?? stickerRotation(sticker.id);
   const isImage = Boolean(sticker.imageData);
+  // 展开/收缩：默认只显示 3 行文字（收缩态）；展开后显示并编辑全文。
+  // 状态存模块级集合，ReactFlow 节点重挂载后仍保留展开状态。
+  const [expanded, setExpanded] = useState(() => isStickerExpanded(sticker.id));
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const toggleExpand = useCallback(() => {
+    setExpanded((prev) => { const next = !prev; setStickerExpanded(sticker.id, next); return next; });
+  }, [sticker.id]);
+  // 展开时把输入框高度贴合内容（自动增高，不出现滚动条）
+  useEffect(() => {
+    const el = taRef.current;
+    if (el && expanded) { el.style.height = "auto"; el.style.height = `${el.scrollHeight}px`; }
+  }, [expanded, sticker.content]);
   return (<div className="group relative border border-black/10 p-3 transition-shadow hover:z-10 hover:shadow-2xl" style={{
     width: isImage ? Math.max(stickerWidth(sticker.id), 220) : stickerWidth(sticker.id),
     backgroundColor: bg,
@@ -251,6 +262,7 @@ const StickerFlowNode = memo(function StickerFlowNode({ data }: NodeProps<Node<S
       <button type="button" className="rounded p-1 text-slate-500 hover:bg-black/10 hover:text-slate-800" onClick={(e) => { e.stopPropagation(); onRotate(-5); }} title={t("mindmap.rotateCcw")}><RotateCcw className="h-3 w-3" /></button>
       <button type="button" className="rounded p-1 text-slate-500 hover:bg-black/10 hover:text-slate-800" onClick={(e) => { e.stopPropagation(); onRotate(5); }} title={t("mindmap.rotateCw")}><RotateCw className="h-3 w-3" /></button>
       {isImage && <button type="button" className="rounded p-1 text-slate-500 hover:bg-black/10 hover:text-slate-800" onClick={(e) => { e.stopPropagation(); onReplaceImage(); }} title={t("mindmap.replaceImage")}><Image className="h-3 w-3" /></button>}
+      {!isImage && <button type="button" className="rounded p-1 text-slate-500 hover:bg-black/10 hover:text-slate-800" onClick={(e) => { e.stopPropagation(); toggleExpand(); }} title={expanded ? t("mindmap.stickerCollapseHint") : t("mindmap.stickerExpandHint")}><ChevronDown className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`} /></button>}
       <button type="button" className="rounded p-1 text-slate-400 hover:bg-black/10 hover:text-red-500" onClick={(e) => { e.stopPropagation(); onDelete(); }} title={t("mindmap.deleteSticker")}><X className="h-3 w-3" /></button>
     </div>
     {isImage ? (
@@ -262,8 +274,21 @@ const StickerFlowNode = memo(function StickerFlowNode({ data }: NodeProps<Node<S
           onChange={(e) => onUpdate({ content: e.target.value })} rows={2} placeholder={t("mindmap.imageCaptionPh")} />
       </>
     ) : (
-      <textarea className="nodrag nowheel w-full resize-none bg-transparent text-[10px] leading-4 text-slate-800 outline-none" value={sticker.content}
-        onChange={(e) => onUpdate({ content: e.target.value })} rows={3} placeholder={t("mindmap.stickerPh")} style={{ minHeight: 50 }} />
+      <div
+        className="relative min-h-[50px] cursor-pointer"
+        onDoubleClick={(e) => { e.stopPropagation(); if (!expanded) toggleExpand(); }}
+        title={expanded ? t("mindmap.stickerCollapseHint") : t("mindmap.stickerExpandHint")}
+      >
+        {expanded ? (
+          <textarea ref={taRef} className="nodrag nowheel w-full resize-none bg-transparent text-[10px] leading-4 text-slate-800 outline-none" value={sticker.content}
+            onChange={(e) => onUpdate({ content: e.target.value })}
+            rows={Math.max(3, sticker.content.split("\n").length)} placeholder={t("mindmap.stickerPh")} />
+        ) : (
+          <div className="line-clamp-3 whitespace-pre-wrap break-words text-[10px] leading-4 text-slate-800">
+            {sticker.content || <span className="text-slate-500">{t("mindmap.stickerPh")}</span>}
+          </div>
+        )}
+      </div>
     )}
     {/* 贴纸颜色：预设淡色 + 自定义取色器（与节点同一套机制，颜色更浅） */}
     <div className="mt-1.5 flex items-center gap-1 opacity-60 transition group-hover:opacity-100">
@@ -370,12 +395,15 @@ function ancestorChain(nodeId: string, nodes: MindmapNode[]): string[] {
 
 function DetailModal({ node, onUpdate, onClose, projectRoot }: { node: MindmapNode; accent?: string; onUpdate: (patch: Partial<MindmapNode>) => void; onClose: () => void; projectRoot?: string }) {
   const { t } = useTranslation();
-  // 证据文件点击：在资源管理器中定位（项目根路径来自文档 sourceDesc）
+  // 文件点击：用全局配置的编辑器打开（未配置时回退资源管理器定位）
   const openSource = (src: string) => {
     if (!projectRoot) return;
     openSourceFile(projectRoot, src);
   };
-  const sources = node.sources ?? [];
+  // 文件（原「证据文件」）：本地可编辑状态，增删后随防抖自动保存落库。
+  // 存储路径优先项目相对路径；项目外文件存绝对路径（openSourceFile 兼容）。
+  const [sources, setSources] = useState<string[]>(node.sources ?? []);
+  const [srcInput, setSrcInput] = useState("");
   // 双击节点进入详情后直接可编辑；预览/分栏交给下方 MarkdownFieldEditor 自带工具栏。
   const [detail, setDetail] = useState(node.detail);
   const [name, setName] = useState(node.name);
@@ -385,9 +413,31 @@ function DetailModal({ node, onUpdate, onClose, projectRoot }: { node: MindmapNo
   const [fullscreen, setFullscreen] = useState(false);
   const c = normalizeHexColor(color) ?? kindColor(node.kind);
 
+  const toStoredPath = useCallback((p: string): string => {
+    const norm = p.trim().replace(/\\/g, "/");
+    const root = projectRoot ? projectRoot.replace(/[\\/]+$/, "").replace(/\\/g, "/") : "";
+    if (root && norm.toLowerCase().startsWith(root.toLowerCase() + "/")) return norm.slice(root.length + 1);
+    return norm;
+  }, [projectRoot]);
+
+  const addSource = useCallback(() => {
+    const raw = srcInput.trim();
+    if (!raw) return;
+    const norm = toStoredPath(raw);
+    setSources(prev => (prev.includes(norm) ? prev : [...prev, norm]));
+    setSrcInput("");
+  }, [srcInput, toStoredPath]);
+
+  const pickSourceFile = useCallback(async () => {
+    const sel = await openDialog({ multiple: false, title: t("mindmap.pickFileBtn") });
+    if (typeof sel !== "string") return;
+    const norm = toStoredPath(sel);
+    setSources(prev => (prev.includes(norm) ? prev : [...prev, norm]));
+  }, [t, toStoredPath]);
+
   const save = useCallback(() => {
-    onUpdate({ name, color, detail, planAt: planAt.trim() ? planAt.trim() : null, repeat });
-  }, [name, color, detail, planAt, repeat, onUpdate]);
+    onUpdate({ name, color, detail, planAt: planAt.trim() ? planAt.trim() : null, repeat, sources });
+  }, [name, color, detail, planAt, repeat, sources, onUpdate]);
 
   // Auto-save on unmount（用 ref 保存最新 save，避免 save 身份变化时
   // cleanup 反复触发 save → 父级 setState → 新 save → 无限循环卡死）
@@ -395,12 +445,12 @@ function DetailModal({ node, onUpdate, onClose, projectRoot }: { node: MindmapNo
   useEffect(() => { saveRef.current = save; });
   useEffect(() => () => { saveRef.current(); }, []);
 
-  // 文本字段输入防抖自动保存（800ms 无输入后落盘），不再只依赖 blur/关闭。
-  // 依赖仅文本值，saveRef 取最新 save，不会因 save 身份变化陷入循环。
+  // 文本字段/文件列表输入防抖自动保存（800ms 无变化后落盘），不再只依赖 blur/关闭。
+  // 依赖仅内容值，saveRef 取最新 save，不会因 save 身份变化陷入循环。
   useEffect(() => {
     const t = window.setTimeout(() => { saveRef.current(); }, 800);
     return () => window.clearTimeout(t);
-  }, [name, detail]);
+  }, [name, detail, sources]);
 
   // 弹窗高度随内容自动伸缩（与速记悬浮窗一致）：先以 height:auto 测量各子块
   // 自然高度（标题栏 + 证据 + 表单 + 详情编辑器），再把弹窗高度设为
@@ -442,21 +492,46 @@ function DetailModal({ node, onUpdate, onClose, projectRoot }: { node: MindmapNo
             <button type="button" className="nodrag nopan rounded p-1 text-slate-400 hover:text-white" onClick={onClose}><X className="h-4 w-4" /></button>
           </div>
         </div>
-        {sources.length > 0 && (
-          <div className="border-b border-white/5 bg-white/[0.02] px-4 py-2">
-            <div className="mb-1 flex items-center gap-1 text-[9px] text-slate-500"><File className="h-2.5 w-2.5" />{t("mindmap.evidence", { count: sources.length })}{t("mindmap.evidenceHint")}</div>
-            <div className="flex flex-wrap gap-1">
+        {/* 文件（原「证据文件」）：点击用编辑器打开；可增删（手动输入路径或从项目内选择文件） */}
+        <div className="shrink-0 border-b border-white/5 bg-white/[0.02] px-4 py-2">
+          <div className="mb-1 flex items-center gap-1 text-[9px] text-slate-500">
+            <File className="h-2.5 w-2.5" />{t("mindmap.evidence", { count: sources.length })}
+            <span className="text-slate-600">{t("mindmap.evidenceHintEdit")}</span>
+          </div>
+          {sources.length > 0 && (
+            <div className="mb-1.5 flex flex-wrap gap-1">
               {sources.map(s => (
-                <button key={s} type="button" onClick={() => openSource(s)}
-                  className={`nodrag nopan inline-flex max-w-[220px] cursor-pointer items-center gap-1 truncate rounded border border-cyan-400/25 bg-cyan-400/[0.07] px-1.5 py-0.5 font-mono text-[8px] text-cyan-200 transition hover:border-cyan-400/60 hover:bg-cyan-400/15 ${projectRoot ? "" : "cursor-default opacity-70"}`}
-                  title={s}>
-                  <File className="h-2.5 w-2.5 shrink-0" />
-                  <span className="truncate">{s}</span>
-                </button>
+                <span key={s} className={`nodrag nopan inline-flex max-w-[280px] items-center gap-0.5 rounded border border-cyan-400/25 bg-cyan-400/[0.07] py-0.5 pl-1.5 pr-0.5 font-mono text-[8px] text-cyan-200 ${projectRoot ? "" : "opacity-70"}`}>
+                  <button type="button" onClick={() => openSource(s)} className={`min-w-0 truncate ${projectRoot ? "cursor-pointer transition hover:text-white" : "cursor-default"}`} title={s}>
+                    <File className="mr-0.5 inline h-2.5 w-2.5 shrink-0" />{s}
+                  </button>
+                  <button type="button" onClick={() => setSources(prev => prev.filter(x => x !== s))}
+                    className="nodrag nopan shrink-0 rounded p-0.5 text-slate-500 transition hover:text-red-400" title={t("mindmap.fileRemove")}>
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </span>
               ))}
             </div>
+          )}
+          <div className="flex items-center gap-1">
+            <input value={srcInput} onChange={(e) => setSrcInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSource(); } }}
+              placeholder={t("mindmap.filePh")}
+              className="h-6 min-w-0 flex-1 rounded border border-white/10 bg-slate-950/70 px-2 font-mono text-[8px] text-slate-200 outline-none focus:border-cyan-400/60" />
+            <button type="button" onClick={addSource} disabled={!srcInput.trim()}
+              className="nodrag nopan shrink-0 rounded border border-white/10 bg-white/[0.05] px-2 py-0.5 text-[8px] text-slate-300 transition hover:bg-white/10 hover:text-white disabled:opacity-40"
+              title={t("mindmap.fileAdd")}>
+              ＋ {t("mindmap.fileAdd")}
+            </button>
+            {projectRoot && (
+              <button type="button" onClick={() => void pickSourceFile()}
+                className="nodrag nopan shrink-0 rounded border border-white/10 bg-white/[0.05] p-1 text-slate-300 transition hover:bg-white/10 hover:text-white"
+                title={t("mindmap.pickFileBtn")}>
+                <FolderOpen className="h-3 w-3" />
+              </button>
+            )}
           </div>
-        )}
+        </div>
         {/* 表单字段区（与速记悬浮窗一致的压缩布局）：进度/计划时间/重复/颜色单行卡片 */}
         <div className="shrink-0 space-y-2.5 overflow-y-auto p-3" style={{ maxHeight: "42%" }}>
           <NodeFormFields ns="mindmap"
@@ -863,50 +938,14 @@ function PlanCalendarModal({ onPick, onClose, onAddPlan, onMoveOccurrence }: {
     </div>, document.body);
 }
 
-// ════════════ AI 工作过程日志（实时） ════════════
+// ════════════ AI 智能体（进度缓冲/事件渲染/工作台见 agentShared.tsx） ════════════
 
-/** 后端推送的进度事件（mm-ai-progress）：step 标记阶段，其余字段按步骤类型取用 */
-interface AiProgressEntry {
-  step: "scan" | "explore" | "read" | "route" | "view" | "view_done" | "repair" | "fail" | "usage" | "stream" | "cancel" | string;
-  // 视图落库完成（step=view_done）：文档 id，前端据此增量拉取渲染
-  // （后端 emit 原样发 doc_id，事件缓冲不做 key 转换，故两种命名都要兼容）
-  docId?: string;
-  doc_id?: string;
-  index?: number;
-  round?: number;
-  total?: number;
-  reason?: string;
-  done?: boolean;
-  files?: string[];
-  views?: string[];
-  view?: string;
-  count?: number;
-  rounds?: number;
-  detail?: string;
-  // token 用量（step=usage）
-  prompt_tokens?: number;
-  completion_tokens?: number;
-  total_tokens?: number;
-  model?: string;
-  // 流式输出（step=stream）：累计字符数与末尾预览
-  length?: number;
-  text?: string;
-  // 断流重连（step=reconnect）：第几次续写/重发、上限、已收到的字符数、是否携带断点续写；
-  // send=true 表示「连接阶段」重试（请求未成功发出/未拿到响应头），否则为断点续写
-  attempt?: number;
-  max?: number;
-  resume?: boolean;
-  send?: boolean;
-  // 无效点单回执（step=reject）：AI 本轮请求了目录结构里不存在的路径
-  paths?: string[];
-  // 前端收到时打的时间戳（ms）
-  at?: number;
-}
-
-/** AI 弹窗最小化后的画布悬浮胶囊：显示后台任务仍在进行（最新进度 + 用时），点击恢复弹窗。 */
+/** AI 弹窗最小化后的画布悬浮胶囊：显示后台任务仍在进行（最新进度 + 用时），点击恢复弹窗。
+ *  由画布右上角统一列布局承载（与节点树/浮动工具栏垂直排布，互不重叠）。 */
 function AiRunningPill({ onRestore, onStop }: { onRestore: () => void; onStop: () => void }) {
   const { t } = useTranslation();
   const entries = useEventBufferSnapshot(mmAiProgressBuffer);
+  const answeredAsks = useAnsweredAsks();
   const [now, setNow] = useState(() => Date.now());
   // 秒表：进度事件稀疏（长视图生成中）时用时也要跳动
   useEffect(() => {
@@ -915,11 +954,16 @@ function AiRunningPill({ onRestore, onStop }: { onRestore: () => void; onStop: (
   }, []);
   const last = entries[entries.length - 1];
   const elapsed = entries.length ? now - (entries[0].at ?? now) : 0;
+  // AI 正在等待用户回答询问（最后一条是未回答的 ask）→ 胶囊醒目标记，
+  // 提示用户恢复弹窗填写表单，而不是误以为还在后台计算。
+  const waitingForAnswer = Boolean(last && last.step === "ask" && !answeredAsks.has(last.at ?? 0));
   return (
-    <div className="absolute right-4 top-4 z-50 flex items-center gap-2 rounded-full border border-cyan-400/25 bg-slate-900/90 px-3 py-1.5 shadow-xl backdrop-blur-sm">
-      <Brain className="h-3.5 w-3.5 shrink-0 animate-pulse text-cyan-300" />
+    <div className={`flex items-center gap-2 rounded-full border bg-slate-900/90 px-3 py-1.5 shadow-xl backdrop-blur-sm ${waitingForAnswer ? "border-amber-400/50 ring-1 ring-amber-400/30" : "border-cyan-400/25"}`}>
+      {waitingForAnswer
+        ? <MessageCircle className="h-3.5 w-3.5 shrink-0 animate-pulse text-amber-300" />
+        : <Brain className="h-3.5 w-3.5 shrink-0 animate-pulse text-cyan-300" />}
       <div className="min-w-0 text-left">
-        <div className="text-[10px] font-semibold leading-tight text-white">{t("aiMinimized.running")}</div>
+        <div className={`text-[10px] font-semibold leading-tight ${waitingForAnswer ? "text-amber-200" : "text-white"}`}>{waitingForAnswer ? t("aiMinimized.waiting") : t("aiMinimized.running")}</div>
         <div className="max-w-[240px] truncate text-[9px] leading-tight text-slate-400" title={last ? progressText(last, t) : ""}>
           {last ? progressText(last, t) : "…"} · {t("aiMinimized.elapsed")} {fmtDur(elapsed)}
         </div>
@@ -936,252 +980,7 @@ function AiRunningPill({ onRestore, onStop }: { onRestore: () => void; onStop: (
   );
 }
 
-const STEP_ICONS: Record<string, React.ReactNode> = {
-  scan: <Search className="h-3 w-3 text-cyan-300" />,
-  explore: <Brain className="h-3 w-3 text-violet-300" />,
-  read: <File className="h-3 w-3 text-emerald-300" />,
-  route: <LayoutGrid className="h-3 w-3 text-amber-300" />,
-  reconnect: <RotateCcw className="h-3 w-3 text-orange-300" />,
-  view: <Sparkles className="h-3 w-3 text-cyan-300" />,
-  view_done: <Sparkles className="h-3 w-3 text-emerald-300" />,
-  repair: <RotateCcw className="h-3 w-3 text-amber-300" />,
-  reject: <AlertTriangle className="h-3 w-3 text-yellow-300" />,
-  fail: <AlertTriangle className="h-3 w-3 text-red-300" />,
-  usage: <Coins className="h-3 w-3 text-emerald-300" />,
-  stream: <Terminal className="h-3 w-3 text-emerald-300" />,
-  cancel: <Ban className="h-3 w-3 text-red-300" />,
-};
-
-const fmtNum = (n: number) => n.toLocaleString();
-const fmtDur = (ms: number) => {
-  if (ms < 1000) return `${ms}ms`;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(1)}s`;
-  return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
-};
-const fmtClock = (ts: number) => {
-  const d = new Date(ts);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-};
-
-/** 把结构化进度事件转为一行可读文本（i18n） */
-function progressText(e: AiProgressEntry, t: (k: string, o?: any) => string): string {
-  switch (e.step) {
-    case "scan":
-      return e.done ? t("mindmap.aiStepScanDone") : t("mindmap.aiStepScan");
-    case "explore":
-      return t("mindmap.aiStepExplore", {
-        n: e.round,
-        total: e.total,
-        reason: e.reason || "",
-        done: e.done ? ` — ${t("mindmap.aiExploreDone")}` : "",
-      });
-    case "read":
-      return t("mindmap.aiStepReading", { files: (e.files ?? []).join(", ") });
-    case "route":
-      return e.views
-        ? t("mindmap.aiStepViews", { views: e.views.map(v => viewLabel(t, v)).join(", ") })
-        : t("mindmap.aiStepRouting");
-    case "view":
-      return t("mindmap.aiStepView", { view: viewLabel(t, e.view ?? "") });
-    case "view_done":
-      return t("mindmap.aiStepViewDone", { view: viewLabel(t, e.view ?? "") });
-    case "reconnect":
-      return e.send
-        ? t("mindmap.aiStepReconnectSend", { n: e.attempt ?? 0, max: e.max ?? 0, msg: e.detail ?? "" })
-        : t("mindmap.aiStepReconnectResume", { n: e.attempt ?? 0, max: e.max ?? 0, chars: e.length ?? 0 });
-    case "repair":
-      return t("mindmap.aiStepRepair", { count: e.count ?? 0, rounds: e.rounds ?? 0 });
-    case "reject":
-      return t("mindmap.aiStepReject", { paths: (e.paths ?? []).join(", ") });
-    case "fail":
-      return t("mindmap.aiStepFail", { msg: e.detail ?? "" });
-    case "usage":
-      return t("mindmap.aiStepUsage", { model: e.model ?? "" });
-    case "stream":
-      return e.done ? t("mindmap.aiStepStreamDone", { n: e.length ?? 0 }) : t("mindmap.aiStepStream");
-    case "cancel":
-      return t("mindmap.aiCancelled");
-    default:
-      return e.detail ?? e.step;
-  }
-}
-
-/** IDE 式实时过程面板：AI 导入期间的每一步（扫描、每轮探索、读取的文件、视图生成、
- *  修复轮次、每次请求的 token 用量）+ 实时累计统计（请求数/输入/输出/总 token/用时）。
- *  后端通过 Tauri 事件 "mm-ai-progress" 推送结构化步骤，token 事件来自响应里的 usage 字段。
- *  事件由模块级缓冲（mmAiProgressBuffer）统一接收：面板切走再切回时历史完整重放，
- *  不会因隐藏期间订阅失效而丢失任何进度。 */
-function AiProgressLog({ projectRoot, onStop }: { projectRoot?: string | null; onStop?: () => void }) {
-  const { t } = useTranslation();
-  const entries = useEventBufferSnapshot(mmAiProgressBuffer);
-  const [totals, setTotals] = useState({ req: 0, in: 0, out: 0, total: 0 });
-  const [model, setModel] = useState("");
-  const [streamInfo, setStreamInfo] = useState<{ length: number; text: string } | null>(null);
-  const [cancelled, setCancelled] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-  const boxRef = useRef<HTMLDivElement | null>(null);
-
-  // 从缓冲重放：初始化 totals/model/stream/cancelled 状态（组件挂载或切回时跑一次，
-  // 覆盖隐藏期间到达的事件，保证统计与最终状态与实际任务进度一致）。
-  // 依赖 buffer.version：缓冲内容变化（含 clear）时重新演算一遍。
-  const replayRef = useRef(-1);
-  useEffect(() => {
-    if (replayRef.current === mmAiProgressBuffer.version()) return;
-    replayRef.current = mmAiProgressBuffer.version();
-    const list = mmAiProgressBuffer.snapshot();
-    setTotals({ req: 0, in: 0, out: 0, total: 0 });
-    setModel("");
-    setCancelled(false);
-    setStreamInfo(null);
-    for (const p of list) {
-      if (p.step === "cancel") {
-        setCancelled(true);
-        setStreamInfo(null);
-        continue;
-      }
-      if (p.step === "stream") {
-        if (p.done) {
-          setStreamInfo(null);
-          continue;
-        }
-        setStreamInfo({ length: p.length ?? 0, text: p.text ?? "" });
-        continue;
-      }
-      setStreamInfo(null);
-      if (p.step === "usage") {
-        const inT = p.prompt_tokens ?? 0;
-        const outT = p.completion_tokens ?? 0;
-        setTotals(prev => ({ req: prev.req + 1, in: prev.in + inT, out: prev.out + outT, total: prev.total + (p.total_tokens ?? inT + outT) }));
-        if (p.model) setModel(p.model);
-      }
-    }
-  }, [entries]);
-
-  // 用时秒表：每秒刷新当前时间，驱动总耗时跳动
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, []);
-
-  useEffect(() => {
-    if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
-  }, [entries]);
-
-  // 时间线视图：把缓冲里的节流 stream 帧折叠为「开始 + 完成」两行（与旧组件内订阅
-  // 行为一致），其余步骤原样保留；中间帧只用于实时预览区（streamInfo）。
-  const timeline = useMemo(() => {
-    const out: AiProgressEntry[] = [];
-    for (const p of entries) {
-      if (p.step === "stream" && !p.done) {
-        const l = out[out.length - 1];
-        if (l && l.step === "stream" && !l.done) continue;
-      }
-      out.push(p);
-    }
-    return out;
-  }, [entries]);
-
-  const last = timeline[timeline.length - 1];
-  const startedAt = timeline[0]?.at ?? now;
-  const elapsed = timeline.length ? now - startedAt : 0;
-
-  return (
-    <div className="overflow-hidden rounded-lg border border-white/10 bg-slate-950/90" title={t("mindmap.aiProgressLog")}>
-      {/* 头部：标题 + 模型 + 实时统计 */}
-      <div className="flex items-center gap-2 border-b border-white/10 px-2.5 py-1.5">
-        <span className="inline-flex shrink-0 items-center gap-1 text-[9px] font-semibold uppercase tracking-wide text-slate-400">
-          <Brain className="h-3 w-3 animate-pulse text-cyan-300" />{t("mindmap.aiProgressTitle")}
-        </span>
-        {model && <span className="min-w-0 truncate rounded bg-white/[0.06] px-1.5 py-px font-mono text-[8px] text-slate-400" title={model}>{model}</span>}
-        <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[8px] tabular-nums text-slate-400">
-          <span>{t("mindmap.aiStatRequests", { count: totals.req })}</span>
-          <span className="text-emerald-300/90">↑{fmtNum(totals.in)}</span>
-          <span className="text-cyan-300/90">↓{fmtNum(totals.out)}</span>
-          <span className="text-slate-200">{fmtNum(totals.total)}</span>
-          <span className="text-slate-500">{t("mindmap.aiStatElapsed", { s: fmtDur(elapsed) })}</span>
-        </span>
-        {onStop && (
-          <button type="button" onClick={onStop} disabled={cancelled}
-            className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded border border-red-400/40 bg-red-500/10 px-2 py-0.5 text-[8px] font-semibold text-red-300 transition hover:border-red-400/80 hover:bg-red-500/25 hover:text-red-200 disabled:cursor-default disabled:opacity-40"
-            title={t("mindmap.aiStopTitle")}>
-            <Square className="h-2.5 w-2.5 fill-current" />{cancelled ? t("mindmap.aiStopped") : t("mindmap.aiStop")}
-          </button>
-        )}
-      </div>
-      {/* 当前活动行：流式输出时实时显示 AI 正在写的内容，否则显示最后一步 + 闪烁光标；
-          取消后定格在「已取消」状态，不再闪烁 */}
-      <div className="flex items-center gap-1.5 border-b border-white/5 px-2.5 py-1 text-[9px] text-slate-300">
-        {cancelled ? (<>
-          <span className="shrink-0"><Ban className="h-3 w-3 text-red-300" /></span>
-          <span className="min-w-0 flex-1 truncate font-semibold text-red-300">{t("mindmap.aiCancelled")}</span>
-        </>) : streamInfo ? (<>
-          <span className="shrink-0">{STEP_ICONS.stream}</span>
-          <span className="min-w-0 flex-1 truncate font-mono text-emerald-300/90">
-            <span className="text-slate-500">⏵</span> {streamInfo.text || t("mindmap.aiStepStream")}
-            <span className="animate-pulse text-emerald-300">▍</span>
-          </span>
-          <span className="shrink-0 font-mono text-[8px] tabular-nums text-slate-500">{fmtNum(streamInfo.length)}</span>
-        </>) : last ? (<>
-          <span className="shrink-0">{STEP_ICONS[last.step] ?? <Sparkles className="h-3 w-3 text-slate-400" />}</span>
-          <span className="min-w-0 flex-1 truncate">{progressText(last, t)}</span>
-          <span className="animate-pulse text-cyan-300">▍</span>
-        </>) : (
-          <span className="text-slate-600">{t("mindmap.aiStepScan")}</span>
-        )}
-      </div>
-      {/* 时间线：时间戳 + 步骤图标 + 文本 + 每步耗时 */}
-      <div ref={boxRef} className="max-h-44 space-y-0.5 overflow-y-auto px-2.5 py-1.5 font-mono text-[9px] leading-relaxed">
-        {timeline.map((e, i) => {
-          const prev = timeline[i - 1];
-          const dt = prev && e.at !== undefined ? e.at - (prev.at ?? e.at) : 0;
-          return (
-            <div key={i} className="flex items-baseline gap-1.5">
-              <span className="shrink-0 text-slate-600 tabular-nums">{fmtClock(e.at ?? Date.now())}</span>
-              <span className="mt-0.5 shrink-0 self-center">{STEP_ICONS[e.step] ?? <Sparkles className="h-3 w-3 text-slate-400" />}</span>
-              <span className={`min-w-0 flex-1 break-words ${e.step === "fail" || e.step === "cancel" ? "text-red-300" : e.step === "usage" ? "text-slate-400" : "text-slate-300"}`}>
-                {e.step === "usage" ? (
-                  <span className="inline-flex items-center gap-1">
-                    <span className="text-emerald-300/90">+{fmtNum(e.prompt_tokens ?? 0)}</span>
-                    <span className="text-cyan-300/90">−{fmtNum(e.completion_tokens ?? 0)}</span>
-                    <span className="text-slate-500">＝{fmtNum(e.total_tokens ?? 0)}</span>
-                  </span>
-                ) : e.step === "read" && projectRoot && (e.files?.length ?? 0) > 0 ? (
-                  // 探索阶段读取的文件：可点击，直接定位到源码（复用证据文件的定位能力）
-                  <span className="inline-flex min-w-0 flex-wrap items-center gap-1">
-                    <span className="text-slate-500">{t("mindmap.aiStepReadFiles", { count: (e.files ?? []).length })}</span>
-                    {(e.files ?? []).map((f, j) => (
-                      <button key={j} type="button"
-                        onClick={(ev) => { ev.stopPropagation(); openSourceFile(projectRoot, f); }}
-                        className="inline-flex max-w-[190px] cursor-pointer items-center gap-0.5 truncate rounded border border-cyan-400/25 bg-cyan-400/[0.07] px-1 py-px font-normal text-cyan-200 transition hover:border-cyan-400/60 hover:bg-cyan-400/15"
-                        title={f}>
-                        <File className="h-2.5 w-2.5 shrink-0" />
-                        <span className="truncate">{f}</span>
-                      </button>
-                    ))}
-                  </span>
-                ) : progressText(e, t)}
-              </span>
-              <span className="shrink-0 text-slate-600 tabular-nums">{dt > 0 ? fmtDur(dt) : ""}</span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 // ════════════ AI 导入校验报告 ════════════
-
-const VIEW_LABEL_KEYS: Record<string, string> = {
-  architecture: "mindmap.viewArchitecture",
-  workflow: "mindmap.viewWorkflow",
-  dataflow: "mindmap.viewDataflow",
-  sequence: "mindmap.viewSequence",
-  lifecycle: "mindmap.viewLifecycle",
-};
-const viewLabel = (t: (k: string, o?: any) => string, v: string) => t(VIEW_LABEL_KEYS[v] ?? v);
 
 /** 导入完成弹窗：逐视图展示节点数、修复轮数与残留校验诊断；点击条目跳转到对应文档 */
 function AiImportReportModal({ result, onClose, onOpenDoc }: {
@@ -1326,13 +1125,13 @@ type NodeCacheEntry = {
   selected: boolean;
   hasChildren: boolean;
   collapsed: boolean;
+  hiddenCount: number;
   hideText: boolean;
   parentColor: string | null;
-  parentKind: string | null;
   obj: Node;
 };
 
-function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onAiText, onError, onOpenCalendar, focusRequest, onFocusHandled }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onAiText: () => void; onError: (message: string) => void; onOpenCalendar: () => void; focusRequest: { nodeId: string; ts: number } | null; onFocusHandled: () => void }) {
+function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onAiText, onError, onOpenCalendar, focusRequest, onFocusHandled, aiPill }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onAiText: () => void; onError: (message: string) => void; onOpenCalendar: () => void; focusRequest: { nodeId: string; ts: number } | null; onFocusHandled: () => void; aiPill?: React.ReactNode }) {
   const { t } = useTranslation();
   const { fitView } = useReactFlow();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -1399,22 +1198,53 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
         ? { target: Position.Right, source: Position.Left }
         : { target: Position.Left, source: Position.Right };
   const childrenCount = useMemo(() => { const m = new Map<string, number>(); for (const n of graphNodes) { if (n.parentId) m.set(n.parentId, (m.get(n.parentId) ?? 0) + 1); } return m; }, [graphNodes]);
+  // 每个节点的全部后代数（折叠徽标用：折叠后隐藏了多少个节点）
+  const descendantCount = useMemo(() => {
+    const children = new Map<string, string[]>();
+    for (const n of graphNodes) { if (n.parentId) { const l = children.get(n.parentId) ?? []; l.push(n.id); children.set(n.parentId, l); } }
+    const memo = new Map<string, number>();
+    const count = (id: string, seen: Set<string>): number => {
+      const cached = memo.get(id); if (cached !== undefined) return cached;
+      seen.add(id);
+      let total = 0;
+      for (const c of children.get(id) ?? []) { if (!seen.has(c)) total += 1 + count(c, seen); }
+      memo.set(id, total);
+      return total;
+    };
+    const m = new Map<string, number>();
+    for (const n of graphNodes) m.set(n.id, count(n.id, new Set()));
+    return m;
+  }, [graphNodes]);
 
   // Ancestor chain for selected node
   const highlightChain = useMemo(() => selectedId ? ancestorChain(selectedId, graphNodes) : [], [selectedId, graphNodes]);
 
   const visibleNodes = useMemo(() => {
-    const result: MindmapNode[] = [];
-    const visited = new Set<string>();
-    const visit = (n: MindmapNode) => {
-      if (visited.has(n.id)) return;
-      visited.add(n.id); result.push(n);
-      if (!collapsed.has(n.id)) graphNodes.filter(c => c.parentId === n.id && c.parentId !== c.id && !visited.has(c.id)).forEach(visit);
+    // 一个节点可见 ⟺ 它的所有祖先都未被折叠（节点自身的折叠状态只隐藏其后代，不隐藏自己）。
+    // 用记忆化 DFS 判定，O(N)。
+    //
+    // 旧实现用「从根 visit + 环/孤立节点兜底 forEach visit」，兜底循环会把「被折叠节点
+    // 的子节点」也重新 visit 加回可见集（因为它们此时尚未 visited），导致折叠只高亮、
+    // 子节点仍显示。这里改为独立判定每个节点的可见性，从根上消除该 bug。
+    const visMemo = new Map<string, boolean>();
+    const isVisible = (n: MindmapNode): boolean => {
+      const cached = visMemo.get(n.id);
+      if (cached !== undefined) return cached;
+      // 先占位 true 防环（思维导图本应是树；万一有环按可见处理，避免无限递归）
+      visMemo.set(n.id, true);
+      let visible = true;
+      if (n.parentId && n.parentId !== n.id) {
+        const parent = byId.get(n.parentId);
+        if (parent) {
+          // 父节点被折叠 → 本节点（及其整棵子树）隐藏；否则继承父节点可见性
+          visible = collapsed.has(parent.id) ? false : isVisible(parent);
+        }
+        // 父节点不存在（孤儿节点）→ 可见
+      }
+      visMemo.set(n.id, visible);
+      return visible;
     };
-    graphNodes.filter(n => !n.parentId || !byId.has(n.parentId) || n.parentId === n.id).forEach(visit);
-    // 环内/孤立节点兜底
-    graphNodes.forEach(n => { if (!visited.has(n.id)) visit(n); });
-    return result;
+    return graphNodes.filter((n) => isVisible(n));
   }, [graphNodes, collapsed, byId]);
 
   // ══════ 节点树导航（右侧面板） ══════
@@ -1429,7 +1259,22 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       if (!collapsed.has(n.id)) graphNodes.filter(c => c.parentId === n.id && c.parentId !== c.id && !visited.has(c.id)).forEach(c => visit(c, depth + 1));
     };
     graphNodes.filter(n => !n.parentId || !byId.has(n.parentId) || n.parentId === n.id).forEach(n => visit(n, 0));
-    graphNodes.forEach(n => { if (!visited.has(n.id)) visit(n, 0); }); // 环/孤立节点兑底
+    // 环/孤立节点兜底：仅访问「未被折叠祖先隐藏」的节点。
+    // 旧实现无此判断，会把「被折叠节点的子节点」也 visit 回来（它们此时尚未 visited），
+    // 导致折叠后右侧树里子节点仍显示。
+    const hiddenByCollapsedAncestor = (n: MindmapNode): boolean => {
+      let cur = n;
+      const seen = new Set<string>();
+      while (cur.parentId && cur.parentId !== cur.id && !seen.has(cur.parentId)) {
+        seen.add(cur.id);
+        if (collapsed.has(cur.parentId)) return true;
+        const parent = byId.get(cur.parentId);
+        if (!parent) return false; // 孤儿（父不存在）→ 不被折叠隐藏
+        cur = parent;
+      }
+      return false;
+    };
+    graphNodes.forEach(n => { if (!visited.has(n.id) && !hiddenByCollapsedAncestor(n)) visit(n, 0); });
     return out;
   }, [graphNodes, collapsed, byId]);
 
@@ -1548,12 +1393,13 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       const selected = selectedId === n.id || highlightChain.includes(n.id);
       const hasChildren = (childrenCount.get(n.id) ?? 0) > 0;
       const isCollapsed = collapsed.has(n.id);
-      // ComfyUI 式连接点：输入口取父节点类别色/类别名，输出口取本节点类别色/类别名
+      const hiddenCount = descendantCount.get(n.id) ?? 0;
+      // ComfyUI 式连接点：输入口取父节点类别色，输出口取本节点类别色
       const parent = n.parentId ? byId.get(n.parentId) : undefined;
       const parentColor = parent ? effectiveNodeColor(parent) : null;
-      const parentKind = parent ? parent.kind : null;
+      const projectRoot = full.document.sourceDesc || null;
       const prev = cache.get(n.id);
-      if (prev && prev.full === full && prev.node === n && prev.px === p.x && prev.py === p.y && prev.selected === selected && prev.hasChildren === hasChildren && prev.collapsed === isCollapsed && prev.hideText === zoomHide && prev.parentColor === parentColor && prev.parentKind === parentKind) {
+      if (prev && prev.full === full && prev.node === n && prev.px === p.x && prev.py === p.y && prev.selected === selected && prev.hasChildren === hasChildren && prev.collapsed === isCollapsed && prev.hiddenCount === hiddenCount && prev.hideText === zoomHide && prev.parentColor === parentColor) {
         main.push(prev.obj as Node<FlowNodeData>);
         continue;
       }
@@ -1563,8 +1409,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       // 因此 full 一旦变化就必须重建 data，否则复用旧 data 会让回调闭包停留在旧状态——
       // 例如连续点「+」加子节点时，第 3 次会用第 1 次渲染时的旧 full，把第 2 个子节点覆盖掉。
       const prevData = prev ? (prev.obj as Node<FlowNodeData>).data : null;
-      const dataChanged = !prevData || prev!.full !== full || prev!.node !== n || prev!.selected !== selected || prev!.hasChildren !== hasChildren || prev!.collapsed !== isCollapsed || prevData.targetPosition !== endpointPositions.target || prevData.sourcePosition !== endpointPositions.source || prevData.hideText !== zoomHide || prevData.parentColor !== parentColor || prevData.parentKind !== parentKind;
-      const data: FlowNodeData = dataChanged          ? { node: n, selected, hasChildren, collapsed: isCollapsed, hideText: zoomHide, parentColor, parentKind, targetPosition: endpointPositions.target, sourcePosition: endpointPositions.source,
+      const dataChanged = !prevData || prev!.full !== full || prev!.node !== n || prev!.selected !== selected || prev!.hasChildren !== hasChildren || prev!.collapsed !== isCollapsed || prev!.hiddenCount !== hiddenCount || prevData.targetPosition !== endpointPositions.target || prevData.sourcePosition !== endpointPositions.source || prevData.hideText !== zoomHide || prevData.parentColor !== parentColor;
+      const data: FlowNodeData = dataChanged ? { node: n, selected, hasChildren, collapsed: isCollapsed, hiddenCount, hideText: zoomHide, parentColor, projectRoot, targetPosition: endpointPositions.target, sourcePosition: endpointPositions.source,
             onSelect: () => setSelectedId(n.id), onOpenDetail: () => openDetail(n),
             onToggle: () => setCollapsed(cur => { const nx = new Set(cur); nx.has(n.id) ? nx.delete(n.id) : nx.add(n.id); return nx; }),
             onAddChild: () => addChildNode(n.id),
@@ -1578,7 +1424,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       const obj: Node<FlowNodeData> = prevObj
         ? { ...prevObj, position: p, data, measured, sourcePosition: endpointPositions.source, targetPosition: endpointPositions.target }
         : { id: n.id, type: "mmNode", position: p, data, measured, sourcePosition: endpointPositions.source, targetPosition: endpointPositions.target };
-      cache.set(n.id, { node: n, full, px: p.x, py: p.y, selected, hasChildren, collapsed: isCollapsed, hideText: zoomHide, parentColor, parentKind, obj });
+      cache.set(n.id, { node: n, full, px: p.x, py: p.y, selected, hasChildren, collapsed: isCollapsed, hiddenCount, hideText: zoomHide, parentColor, obj });
       main.push(obj);
     }
     const stickerNodes: Node<StickerNodeData>[] = [];
@@ -1626,7 +1472,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       const obj: Node<StickerNodeData> = prevObj
         ? { ...prevObj, position: p, data, measured }
         : { id: sid, type: "stickerNode", position: p, data, measured };
-      cache.set(sid, { node: s, full, px: p.x, py: p.y, selected: false, hasChildren: false, collapsed: false, hideText: false, parentColor: null, parentKind: null, obj });
+      cache.set(sid, { node: s, full, px: p.x, py: p.y, selected: false, hasChildren: false, collapsed: false, hiddenCount: 0, hideText: false, parentColor: null, obj });
       stickerNodes.push(obj);
     }
     // 清理不再显示的缓存项
@@ -1677,7 +1523,11 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     }
   }, []);
 
-  useEffect(() => { const t = window.setTimeout(() => fitView({ padding: 0.2, duration: 260 }), 0); return () => window.clearTimeout(t); }, [fitView, full.document.id, collapsed]);
+  // 视口初始对齐：仅在切换文档时 fitView。
+  // 注意：不能把 collapsed 放进依赖——点击节点折叠/展开按钮时 collapsed 变化会触发
+  // 全图 fitView（整屏缩放），用户感知为「点折叠按钮却缩放全屏」；
+  // 折叠本应只是局部收缩子节点，不应扰动当前视口。
+  useEffect(() => { const t = window.setTimeout(() => fitView({ padding: 0.2, duration: 260 }), 0); return () => window.clearTimeout(t); }, [fitView, full.document.id]);
 
   // 计划日历点击节点 → 选中并打开详情，同时把视口聚焦到该节点（重复点击用 ts 区分）。
   // 只用 ref 读取节点、不依赖 byId：处理完立即回调清除 focusRequest，避免 byId 变化时
@@ -1847,16 +1697,22 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
         </span>
       </div>
 
-      {/* 节点树导航（右侧）：与悬浮窗树形选择同交互 —— 点击即导航到该节点 */}
-      <div className="absolute right-4 top-4 z-20 flex flex-col items-end" style={{ maxWidth: "46%" }}>
-        {!treeOpen && (
-          <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-slate-900/95 px-2 py-1.5 text-[10px] text-slate-300 shadow-lg hover:bg-white/[0.08] hover:text-white"
-            onClick={() => setTreeOpen(true)} title={t("mindmap.treeNavShow")}>
-            <ListTree className="h-3 w-3" />{t("mindmap.treeNavShow")}
-          </button>
-        )}
-        {treeOpen && (
-          <div className="flex max-h-full w-52 flex-col rounded-lg border border-white/10 bg-[#0d1524]/95 shadow-2xl shadow-black/40 backdrop-blur">
+      {/* 右上角统一列：AI 后台运行胶囊（顶，条件出现）+ 行内「节点树（左）| 浮动工具栏（右）」。
+          原先三者都锚定 right-4 top-4 互相重叠，现改为垂直/水平排布互不遮挡；
+          外层 pointer-events-none 让空白区不挡画布交互，各交互块自身 pointer-events-auto。 */}
+      <div className="pointer-events-none absolute right-4 top-4 z-20 flex max-h-[calc(100%-2rem)] flex-col items-end gap-2">
+        {aiPill && <div className="pointer-events-auto">{aiPill}</div>}
+        <div className="flex items-start gap-2">
+          {/* 节点树导航：与悬浮窗树形选择同交互 —— 点击即导航到该节点 */}
+          <div className="pointer-events-auto flex flex-col items-end" style={{ maxWidth: "46%" }}>
+            {!treeOpen && (
+              <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-slate-900/95 px-2 py-1.5 text-[10px] text-slate-300 shadow-lg hover:bg-white/[0.08] hover:text-white"
+                onClick={() => setTreeOpen(true)} title={t("mindmap.treeNavShow")}>
+                <ListTree className="h-3 w-3" />{t("mindmap.treeNavShow")}
+              </button>
+            )}
+            {treeOpen && (
+              <div className="flex max-h-full w-52 flex-col rounded-lg border border-white/10 bg-[#0d1524]/95 shadow-2xl shadow-black/40 backdrop-blur">
             <div className="flex items-center gap-1.5 border-b border-white/10 px-2 py-1.5">
               <ListTree className="h-3 w-3 shrink-0 text-slate-500" />
               <span className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-wide text-slate-400">{t("mindmap.treeNavTitle")}</span>
@@ -1907,37 +1763,39 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
             </div>
           </div>
         )}
-      </div>
-      {/* Compact floating toolbar */}
-      <div className="absolute right-4 top-4 z-10 flex flex-col gap-1">
-        <div className="rounded-lg border border-white/10 bg-slate-900/95 p-1 shadow-lg flex flex-col gap-0.5">
-          <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={relayout} title={t("mindmap.autoLayout")}><LayoutGrid className="h-3 w-3" />{t("mindmap.layout")}</button>
-          <select className="w-full rounded border border-white/10 bg-slate-900/95 px-1.5 py-1 text-[10px] text-slate-300 outline-none focus:border-cyan-400/60" value={dir} onChange={(e) => changeDir(e.target.value as LayoutDir)} title={t("mindmap.layoutDir")}>
-            {Object.entries(LAYOUT_DIR_KEYS).map(([k, v]) => <option key={k} value={k}>{t(v)}</option>)}
-          </select>
-          <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={onOpenCalendar} title={t("mindmap.planCalendarBtn")}><Calendar className="h-3 w-3" />{t("mindmap.planCalendar")}</button>
-          <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => addChildNode()} title={t("mindmap.addChild")}><Plus className="h-3 w-3" />{t("mindmap.childNode")}</button>
-          <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={() => addNode(null)} title={t("mindmap.newRootNode")}><ListTree className="h-3 w-3" />{t("mindmap.newRootNode")}</button>
-          <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={onAiProject} title={t("mindmap.aiProject")}><Code2 className="h-3 w-3" />{t("mindmap.aiProject")}</button>
-          <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={onAiText} title={t("mindmap.aiParseDoc")}><FileText className="h-3 w-3" />{t("mindmap.aiParseDoc")}</button>
-          <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => addSticker()} title={t("mindmap.textSticker")}><StickyNote className="h-3 w-3" />{t("mindmap.textSticker")}</button>
-          <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => void addImageSticker()} title={t("mindmap.imageSticker")}><Image className="h-3 w-3" />{t("mindmap.imageSticker")}</button>
+          </div>
+          {/* Compact floating toolbar */}
+          <div className="pointer-events-auto flex flex-col gap-1">
+            <div className="rounded-lg border border-white/10 bg-slate-900/95 p-1 shadow-lg flex flex-col gap-0.5">
+              <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={relayout} title={t("mindmap.autoLayout")}><LayoutGrid className="h-3 w-3" />{t("mindmap.layout")}</button>
+              <select className="w-full rounded border border-white/10 bg-slate-900/95 px-1.5 py-1 text-[10px] text-slate-300 outline-none focus:border-cyan-400/60" value={dir} onChange={(e) => changeDir(e.target.value as LayoutDir)} title={t("mindmap.layoutDir")}>
+                {Object.entries(LAYOUT_DIR_KEYS).map(([k, v]) => <option key={k} value={k}>{t(v)}</option>)}
+              </select>
+              <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={onOpenCalendar} title={t("mindmap.planCalendarBtn")}><Calendar className="h-3 w-3" />{t("mindmap.planCalendar")}</button>
+              <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => addChildNode()} title={t("mindmap.addChild")}><Plus className="h-3 w-3" />{t("mindmap.childNode")}</button>
+              <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={() => addNode(null)} title={t("mindmap.newRootNode")}><ListTree className="h-3 w-3" />{t("mindmap.newRootNode")}</button>
+              <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={onAiProject} title={t("mindmap.aiProject")}><Code2 className="h-3 w-3" />{t("mindmap.aiProject")}</button>
+              <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={onAiText} title={t("mindmap.aiParseDoc")}><FileText className="h-3 w-3" />{t("mindmap.aiParseDoc")}</button>
+              <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => addSticker()} title={t("mindmap.textSticker")}><StickyNote className="h-3 w-3" />{t("mindmap.textSticker")}</button>
+              <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => void addImageSticker()} title={t("mindmap.imageSticker")}><Image className="h-3 w-3" />{t("mindmap.imageSticker")}</button>
+            </div>
+            {/* 自动保存指示 */}
+            {lastSaved && (
+              <div className="rounded-lg border border-emerald-400/20 bg-emerald-950/60 px-2 py-1 text-[8px] text-emerald-300 shadow-lg">
+                {t("mindmap.autoSaved", { time: new Date(lastSaved).toLocaleTimeString("zh-CN", { hour12: false }) })}
+              </div>
+            )}
+            {/* Keyboard hints */}
+            {selectedId && (
+              <div className="rounded-lg border border-white/10 bg-slate-900/95 p-1.5 shadow-lg text-[8px] text-slate-600 leading-relaxed">
+                <div><kbd className="rounded border border-white/15 px-1 py-0.5 text-[7px] text-slate-400">Tab</kbd> {t("mindmap.kbdChild")}</div>
+                <div><kbd className="rounded border border-white/15 px-1 py-0.5 text-[7px] text-slate-400">Enter</kbd> {t("mindmap.kbdDetail")}</div>
+                <div><kbd className="rounded border border-white/15 px-1 py-0.5 text-[7px] text-slate-400">Del</kbd> {t("mindmap.kbdDelete")}</div>
+                <div><kbd className="rounded border border-white/15 px-1 py-0.5 text-[7px] text-slate-400">Esc</kbd> {t("mindmap.kbdCancel")}</div>
+              </div>
+            )}
+          </div>
         </div>
-        {/* 自动保存指示 */}
-        {lastSaved && (
-          <div className="rounded-lg border border-emerald-400/20 bg-emerald-950/60 px-2 py-1 text-[8px] text-emerald-300 shadow-lg">
-            {t("mindmap.autoSaved", { time: new Date(lastSaved).toLocaleTimeString("zh-CN", { hour12: false }) })}
-          </div>
-        )}
-        {/* Keyboard hints */}
-        {selectedId && (
-          <div className="rounded-lg border border-white/10 bg-slate-900/95 p-1.5 shadow-lg text-[8px] text-slate-600 leading-relaxed">
-            <div><kbd className="rounded border border-white/15 px-1 py-0.5 text-[7px] text-slate-400">Tab</kbd> {t("mindmap.kbdChild")}</div>
-            <div><kbd className="rounded border border-white/15 px-1 py-0.5 text-[7px] text-slate-400">Enter</kbd> {t("mindmap.kbdDetail")}</div>
-            <div><kbd className="rounded border border-white/15 px-1 py-0.5 text-[7px] text-slate-400">Del</kbd> {t("mindmap.kbdDelete")}</div>
-            <div><kbd className="rounded border border-white/15 px-1 py-0.5 text-[7px] text-slate-400">Esc</kbd> {t("mindmap.kbdCancel")}</div>
-          </div>
-        )}
       </div>
 
       {ctxMenu && (
@@ -1999,8 +1857,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   );
 }
 
-function Canvas({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onAiText, onError, onOpenCalendar, focusRequest, onFocusHandled }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onAiText: () => void; onError: (message: string) => void; onOpenCalendar: () => void; focusRequest: { nodeId: string; ts: number } | null; onFocusHandled: () => void }) {
-  return <div className="h-full min-h-0 bg-[#080f1c]"><ReactFlowProvider><CanvasInner full={full} accent={accent} onDocumentUpdate={onDocumentUpdate} onHistoryPush={onHistoryPush} historyVersion={historyVersion} onAiProject={onAiProject} onAiText={onAiText} onError={onError} onOpenCalendar={onOpenCalendar} focusRequest={focusRequest} onFocusHandled={onFocusHandled} /></ReactFlowProvider></div>;
+function Canvas({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onAiText, onError, onOpenCalendar, focusRequest, onFocusHandled, aiPill }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onAiText: () => void; onError: (message: string) => void; onOpenCalendar: () => void; focusRequest: { nodeId: string; ts: number } | null; onFocusHandled: () => void; aiPill?: React.ReactNode }) {
+  return <div className="h-full min-h-0 bg-[#080f1c]"><ReactFlowProvider><CanvasInner full={full} accent={accent} onDocumentUpdate={onDocumentUpdate} onHistoryPush={onHistoryPush} historyVersion={historyVersion} onAiProject={onAiProject} onAiText={onAiText} onError={onError} onOpenCalendar={onOpenCalendar} focusRequest={focusRequest} onFocusHandled={onFocusHandled} aiPill={aiPill} /></ReactFlowProvider></div>;
 }
 
 // ════════════ 主面板 ════════════
@@ -2066,10 +1924,11 @@ export default function MindmapPanel() {
   const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
   const [renameDocName, setRenameDocName] = useState("");
   const [showAi, setShowAi] = useState<"project" | "text" | null>(null);
-  const [textInput, setTextInput] = useState("");
   const [textTitle, setTextTitle] = useState("");
   const [projectPath, setProjectPath] = useState("");
-  const [aiProjectHint, setAiProjectHint] = useState("");
+  // 最近一次 AI 运行结果：工作台结果卡展示（与校验报告弹窗 aiReport 分离——
+  // 结果卡常驻工作台，报告弹窗仅在用户点「查看校验报告」时打开）
+  const [lastAiResult, setLastAiResult] = useState<AiImportResult | null>(null);
   // AI 项目导入产物选项：深度（1 最浅清单 → 5 最深业务流）+ 视图开关（空 = AI 自动判断）
   const [aiDepth, setAiDepth] = useState(3);
   const [aiViews, setAiViews] = useState<string[]>([]);
@@ -2228,7 +2087,8 @@ export default function MindmapPanel() {
 
   const providers = useMemo(() => (config?.providers ?? []).filter(p => p.api_key && p.openai_url), [config]);
 
-  // AI 导入入口：无当前文档时先自动新建空白文档承载导入结果（可导入并新建）
+  // AI 导入入口：无当前文档时先自动新建空白文档承载导入结果（可导入并新建）。
+  // 切换类型（项目↔文本）时开新会话（清对话与结果卡）；恢复上次最小化状态。
   const openAiImport = useCallback(async (kind: "project" | "text") => {
     if (!full) {
       try {
@@ -2239,8 +2099,10 @@ export default function MindmapPanel() {
         void refreshFolders();
       } catch (e) { flash(String(e)); return; }
     }
+    if (showAi && showAi !== kind) { clearAgentMessages(); setLastAiResult(null); }
+    setAiMinimized(false);
     setShowAi(kind);
-  }, [full, flash, refreshFolders]);
+  }, [full, showAi, flash, refreshFolders]);
 
   const loadDocument = useCallback(async (id: string) => {
     setError("");
@@ -2328,8 +2190,20 @@ export default function MindmapPanel() {
 
   const executeRemoveDoc = useCallback(async (id: string) => {
     setConfirmState(null);
-    try { await mmApi.remove(id); setDocs(prev => prev.filter(d => d.id !== id)); if (full?.document.id === id) setFull(null); refreshFolders(); } catch (e) { flash(String(e)); }
-  }, [full, flash]);
+    try {
+      await mmApi.remove(id);
+      setDocs(prev => prev.filter(d => d.id !== id));
+      // 右侧若正打开被删文档 → 同步关闭（函数式更新，不依赖闭包 full，杜绝闭包过期导致漏关）
+      setFull(prev => {
+        if (prev?.document.id === id) {
+          try { localStorage.removeItem(MM_LAST_DOC_KEY); } catch { /* 忽略 */ }
+          return null;
+        }
+        return prev;
+      });
+      refreshFolders();
+    } catch (e) { flash(String(e)); }
+  }, [flash, refreshFolders]);
 
   const createFolder = useCallback(async () => {
     if (!folderName.trim()) return;
@@ -2529,9 +2403,9 @@ export default function MindmapPanel() {
     const names = r.documents.map(d => d.document.name).join("、");
     const failTxt = r.failures.length ? t("mindmap.viewFailures", { count: r.failures.length, names: r.failures.map(f => f.view).join("、") }) : "";
     flash(t("mindmap.viewsGenerated", { count: r.documents.length, names: names ? `：${names}` : "", failures: failTxt }));
-    setShowAi(null);
+    // Agent 工作台保持打开：结果卡展示在本轮会话内（不自动关窗/自动弹报告）
+    setLastAiResult(r);
     setAiMinimized(false);
-    setAiReport(r);
     void refreshFolders();
   }, [flash, refreshFolders]);
 
@@ -2567,36 +2441,40 @@ export default function MindmapPanel() {
     if (aiLoading) { drawnDocIdsRef.current = new Set(); firstViewDrawnRef.current = false; }
   }, [aiLoading]);
 
-  const runAiProject = useCallback(async () => {
+  const runAiProject = useCallback(async (instruction: string) => {
     if (!full || !projectPath || !providerId || !modelId) return;
     const runId = crypto.randomUUID ? crypto.randomUUID() : `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     aiRunIdRef.current = runId;
     mmAiProgressBuffer.clear(); // 新一轮导入：清空进度缓冲，日志面板从零开始
+    clearAnsweredAsks(); // 同步清空已回答询问标记，避免旧时间戳误匹配新一轮询问
     setAiLoading(true); setError("");
     try {
-      const r = await mmApi.aiFromProject({ documentId: full.document.id, projectPath, providerId: providerId || null, modelId: modelId || null, userHint: aiProjectHint.trim() || null, depth: aiDepth, views: aiViews, runId });
+      // instruction 来自工作台指令框（首轮可空 = 纯配置驱动；追问轮 = 追加指令）
+      const r = await mmApi.aiFromProject({ documentId: full.document.id, projectPath, providerId: providerId || null, modelId: modelId || null, userHint: instruction.trim() || null, depth: aiDepth, views: aiViews, runId });
       applyAiImport(r);
     } catch (e) {
       const msg = String(e);
-      // 用户主动停止：不当作错误红字提示，仅日志面板展示
+      // 用户主动停止：不当作错误红字提示，仅工作台展示
       if (msg.includes("已取消")) flash(t("mindmap.aiCancelled")); else setError(msg);
     } finally { aiRunIdRef.current = null; setAiLoading(false); }
   }, [full, projectPath, providerId, modelId, aiDepth, aiViews, applyAiImport, flash]);
 
-  const runAiText = useCallback(async () => {
-    if (!full || !textInput.trim() || !providerId || !modelId) return;
+  const runAiText = useCallback(async (instruction: string) => {
+    if (!full || !instruction.trim() || !providerId || !modelId) return;
     const runId = crypto.randomUUID ? crypto.randomUUID() : `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     aiRunIdRef.current = runId;
     mmAiProgressBuffer.clear(); // 新一轮导入：清空进度缓冲，日志面板从零开始
+    clearAnsweredAsks(); // 同步清空已回答询问标记，避免旧时间戳误匹配新一轮询问
     setAiLoading(true); setError("");
     try {
-      const r = await mmApi.aiFromText({ documentId: full.document.id, text: textInput, title: textTitle || full.document.name, providerId: providerId || null, modelId: modelId || null, runId });
+      // instruction = 需求文本（首轮）或追问补充（增量追加到当前画布）
+      const r = await mmApi.aiFromText({ documentId: full.document.id, text: instruction, title: textTitle || full.document.name, providerId: providerId || null, modelId: modelId || null, runId });
       applyAiImport(r);
     } catch (e) {
       const msg = String(e);
       if (msg.includes("已取消")) flash(t("mindmap.aiCancelled")); else setError(msg);
     } finally { aiRunIdRef.current = null; setAiLoading(false); }
-  }, [full, textInput, textTitle, providerId, modelId, applyAiImport, flash]);
+  }, [full, textTitle, providerId, modelId, applyAiImport, flash]);
 
   // IDE 式「停止」：给当前导入运行打取消标志，后端各循环/流式块边界随即中断
   const stopAi = useCallback(async () => {
@@ -2761,89 +2639,46 @@ export default function MindmapPanel() {
           </button>
         )}
         <main className="relative min-w-0 flex-1">
-          {showAi === "project" && !aiMinimized && (
-            <SharedModal open onClose={requestCloseAi} width={560} headerActions={
+          {/* AI 智能体工作台（项目/文档共用）：会话式多轮 + 阶段计划 + 工具透明 + 流式反馈 */}
+          {showAi && !aiMinimized && (
+            <SharedModal open onClose={requestCloseAi} width={680} bodyClass="!p-0" headerActions={
               <button type="button" onClick={() => setAiMinimized(true)} title={t("aiMinimized.minimize")}
                 className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 transition hover:bg-white/10 hover:text-white">
                 <Minimize2 className="w-3.5 h-3.5" />
               </button>
-            } title={t("mindmap.aiProjectTitle")}>
-              <div className="flex w-full flex-col gap-3">
-                <div className="flex gap-2">
-                  <button type="button" className={button} onClick={async () => { const d = await openDialog({ directory: true, multiple: false, title: t("mindmap.pickDir") }); if (typeof d === "string") setProjectPath(d); }}><FolderOpen className="h-3 w-3" />{projectPath ? projectPath.split(/[\\\\/]/).pop() : t("mindmap.pickDir")}</button>
-                  <select className={`${selectClass} flex-1`} value={providerId} onChange={e => { const p = providers.find(x => x.id === e.target.value); setProviderId(e.target.value); setModelId(p?.active_model_id ?? p?.models[0]?.id ?? ""); }}>
-                    <option value="">{t("mindmap.pickProvider")}</option>{providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
-                </div>
-                <select className={selectClass} value={modelId} onChange={e => setModelId(e.target.value)} disabled={!providerId}>
-                  <option value="">{t("mindmap.pickModel")}</option>{(providers.find(p => p.id === providerId)?.models ?? []).map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
-                </select>
-                <textarea className="w-full h-20 rounded-xl bg-slate-900 border border-white/10 px-3 py-2 text-xs text-white outline-none resize-none" value={aiProjectHint} onChange={e => setAiProjectHint(e.target.value)} placeholder={t("mindmap.aiProjectHintPh")} />
-                <p className="text-[10px] text-slate-500">{t("mindmap.aiAppendHint")}</p>
-                {/* 产物深度：1 最浅清单 → 5 最深业务流与判定方式 */}
-                <div className="rounded-xl border border-white/10 bg-slate-900/60 px-3 py-2">
-                  <div className="mb-1 flex items-center justify-between">
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{t("mindmap.aiDepthTitle")}</span>
-                    <span className="text-[10px] font-semibold" style={{ color: ACCENT }}>{t(`mindmap.aiDepth${aiDepth}`)}</span>
-                  </div>
-                  <input type="range" min={1} max={5} step={1} value={aiDepth} onChange={e => setAiDepth(Number(e.target.value))} className="w-full accent-cyan-400" />
-                  <div className="mt-0.5 flex justify-between text-[9px] text-slate-500">
-                    <span>{t("mindmap.aiDepthMin")}</span>
-                    <span>{t("mindmap.aiDepthMax")}</span>
-                  </div>
-                  <p className="mt-1 text-[10px] leading-4 text-slate-500">{t(`mindmap.aiDepthDesc${aiDepth}`)}</p>
-                </div>
-                {/* 生成哪些视图：不勾选 = 交给 AI 自动判断 */}
-                <div className="rounded-xl border border-white/10 bg-slate-900/60 px-3 py-2">
-                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">{t("mindmap.aiViewsTitle")}</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {["architecture", "workflow", "dataflow"].map(v => {
-                      const on = aiViews.includes(v);
-                      return (
-                        <button key={v} type="button"
-                          className={`rounded-md border px-2 py-1 text-[10px] transition ${on ? "text-white" : "border-white/10 bg-slate-950/60 text-slate-400 hover:text-slate-200"}`}
-                          style={on ? { borderColor: ACCENT, backgroundColor: `${ACCENT}22` } : undefined}
-                          onClick={() => setAiViews(prev => on ? prev.filter(x => x !== v) : [...prev, v])}>
-                          {viewLabel(t, v)}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <p className="mt-1 text-[10px] leading-4 text-slate-500">{aiViews.length ? t("mindmap.aiViewsPicked", { count: aiViews.length }) : t("mindmap.aiViewsAuto")}</p>
-                </div>
-                <button type="button" className="w-full rounded-lg py-2 text-[11px] font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }} disabled={!projectPath || !providerId || !modelId || aiLoading} onClick={() => void runAiProject()}>{aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" /> : <Sparkles className="h-3.5 w-3.5 inline mr-1" />}{aiLoading ? t("mindmap.aiAnalyzing") : t("mindmap.importProject")}</button>                  {aiLoading && <AiProgressLog projectRoot={projectPath} onStop={stopAi} />}
-              </div>
-            </SharedModal>
-          )}
-          {showAi === "text" && !aiMinimized && (
-            <SharedModal open onClose={requestCloseAi} width={560} headerActions={
-              <button type="button" onClick={() => setAiMinimized(true)} title={t("aiMinimized.minimize")}
-                className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 transition hover:bg-white/10 hover:text-white">
-                <Minimize2 className="w-3.5 h-3.5" />
-              </button>
-            } title={t("mindmap.aiTextTitle")}>
-              <div className="flex w-full flex-col gap-3">
-                <input className="h-9 w-full rounded-xl bg-slate-900 border border-white/10 px-3 text-xs text-white outline-none" value={textTitle} onChange={e => setTextTitle(e.target.value)} placeholder={t("mindmap.reqTitlePh")} />
-                <textarea className="w-full h-40 rounded-xl bg-slate-900 border border-white/10 px-3 py-2 text-xs text-white outline-none resize-none" value={textInput} onChange={e => setTextInput(e.target.value)} placeholder={t("mindmap.reqTextPh")} />
-                <select className={selectClass} value={providerId} onChange={e => { const p = providers.find(x => x.id === e.target.value); setProviderId(e.target.value); setModelId(p?.active_model_id ?? p?.models[0]?.id ?? ""); }}>
-                  <option value="">{t("mindmap.pickProvider")}</option>{providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-                <select className={selectClass} value={modelId} onChange={e => setModelId(e.target.value)} disabled={!providerId}>
-                  <option value="">{t("mindmap.pickModel")}</option>{(providers.find(p => p.id === providerId)?.models ?? []).map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
-                </select>
-                <p className="text-[10px] text-slate-500">{t("mindmap.aiTextAppendHint")}</p>
-                <button type="button" className="w-full rounded-lg py-2 text-[11px] font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }}
-                  disabled={!textInput.trim() || !providerId || !modelId || aiLoading} onClick={() => void runAiText()}>
-                  {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" /> : <Sparkles className="h-3.5 w-3.5 inline mr-1" />}
-                  {aiLoading ? t("mindmap.aiExtracting") : t("mindmap.aiExtract")}
-                </button>                  {aiLoading && <AiProgressLog onStop={stopAi} />}
-              </div>
+            } title={showAi === "project" ? t("mindmap.aiProjectTitle") : t("mindmap.aiTextTitle")}>
+              <AgentWorkbench
+                mode={showAi}
+                providers={providers}
+                providerId={providerId}
+                modelId={modelId}
+                onProviderChange={(pid) => { setProviderId(pid); const p = providers.find(x => x.id === pid); setModelId(p?.active_model_id ?? p?.models[0]?.id ?? ""); }}
+                onModelChange={setModelId}
+                projectPath={projectPath}
+                onPickProject={() => void (async () => { const d = await openDialog({ directory: true, multiple: false, title: t("mindmap.pickDir") }); if (typeof d === "string") setProjectPath(d); })()}
+                aiDepth={aiDepth}
+                onDepthChange={setAiDepth}
+                aiViews={aiViews}
+                onViewsChange={setAiViews}
+                textTitle={textTitle}
+                onTextTitleChange={setTextTitle}
+                loading={aiLoading}
+                onRun={(instruction) => { if (showAi === "project") void runAiProject(instruction); else void runAiText(instruction); }}
+                onStop={() => void stopAi()}
+                onAnswer={(answer) => { const rid = aiRunIdRef.current; if (rid) void mmApi.aiAnswer(rid, answer).catch((e) => console.error("回答询问失败:", e)); }}
+                result={lastAiResult}
+                runError={error}
+                onShowReport={() => { if (lastAiResult) setAiReport(lastAiResult); }}
+                onNewSession={() => { setLastAiResult(null); setError(""); }}
+                projectRoot={showAi === "project" ? projectPath : null}
+              />
             </SharedModal>
           )}
           {/* 画布常驻：AI 弹框打开/最小化时也保持挂载，边生成边绘制。
               弹框打开期间设置 modal-mask 抑制全局快捷键，画布仅作背景展示。 */}
           {(full ? (
-            <Canvas full={full} accent={ACCENT} onDocumentUpdate={onDocumentUpdated} onHistoryPush={commitHistory} historyVersion={historyVersion} onAiProject={() => setShowAi("project")} onAiText={() => setShowAi("text")} onError={setError} onOpenCalendar={openCalendar} focusRequest={calFocus} onFocusHandled={() => setCalFocus(null)} />
+            <Canvas full={full} accent={ACCENT} onDocumentUpdate={onDocumentUpdated} onHistoryPush={commitHistory} historyVersion={historyVersion} onAiProject={() => void openAiImport("project")} onAiText={() => void openAiImport("text")} onError={setError} onOpenCalendar={openCalendar} focusRequest={calFocus} onFocusHandled={() => setCalFocus(null)}
+              aiPill={aiMinimized && aiLoading && showAi ? <AiRunningPill onRestore={() => setAiMinimized(false)} onStop={() => void stopAi()} /> : null} />
           ) : (
             <VexEmptyState
               title={t("mindmap.emptyTitle")}
@@ -2853,10 +2688,6 @@ export default function MindmapPanel() {
               className="h-full"
             />
           ))}
-          {/* 最小化后的后台运行指示：画布右上角悬浮胶囊，点击恢复弹窗 */}
-          {aiMinimized && aiLoading && showAi && (
-            <AiRunningPill onRestore={() => setAiMinimized(false)} onStop={() => void stopAi()} />
-          )}
           {error && !showAi && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 max-w-md rounded-md border border-red-400/20 bg-slate-900 px-3 py-2 text-[11px] text-red-300 shadow-xl">{error}<button type="button" className="ml-2 text-slate-400 hover:text-white" onClick={() => setError("")}>✕</button></div>}
         </main>
       </div>
