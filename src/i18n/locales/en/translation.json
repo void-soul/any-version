@@ -371,7 +371,15 @@
     "skillMigrated": "Skills migrated to the new directory; tool links updated.",
     "saved": "Saved",
     "save": "Save",
-    "svcEmptyTip": "💡 Tip: after installing and hosting services (MySQL, Redis, MongoDB, Nginx, etc.) in the SDK module, autostart switches will appear here automatically."
+    "svcEmptyTip": "💡 Tip: after installing and hosting services (MySQL, Redis, MongoDB, Nginx, etc.) in the SDK module, autostart switches will appear here automatically.",
+    "externalEditor": "External editor",
+    "externalEditorHint": "Used first when clicking node files in the mind map; falls back to File Explorer when unset",
+    "externalEditorPh": "e.g. code or C:\\Users\\me\\Code.exe (supports {file} placeholder)",
+    "externalEditorExample": "e.g. code {file} (command template) or C:\\Program Files\\Microsoft VS Code\\Code.exe (direct program)",
+    "editorPickTitle": "Select editor executable",
+    "editorExeFilter": "Executables",
+    "chooseEditorExe": "Browse executable",
+    "clearExternalEditor": "Clear editor config"
   },
   "mihomo": {
     "connSortTime": "Time",
@@ -2142,7 +2150,20 @@
     "loadFail": "Failed to load: {{err}}",
     "close": "Close",
     "filesCount": "{{count}} file(s)",
-    "copyContent": "Copy content"
+    "copyContent": "Copy content",
+    "deployToTool": "Deploy to tool",
+    "noTools": "No detected AI tools",
+    "deployedUndeploy": "Deployed · remove",
+    "deployedDeploy": "Deploy",
+    "deployedTo": "Deployed to {{tool}}",
+    "undeployedFrom": "Removed from {{tool}}",
+    "deployAllDone": "Deployed {{count}} skill(s) to this tool",
+    "undeployAllDone": "Removed {{count}} skill(s) from this tool",
+    "deployedCount": "{{count}} deployed",
+    "deployAll": "Deploy all",
+    "undeployAll": "Undeploy all",
+    "deployAllTitle": "Deploy all store skills to this tool via junction (non-destructive, keeps user's own skills)",
+    "undeployAllTitle": "Remove deployed store skills from this tool (junctions only, real dirs untouched)"
   },
   "toollaunch": {
     "officialOnly": "Official models only",
@@ -2343,7 +2364,8 @@
     "runningNow": "Running…",
     "runAll": "Run All Now",
     "history": "History",
-    "noRecords": "No records"
+    "noRecords": "No records",
+    "pemEmpty": "No PEM file yet (not issued successfully; click Issue to generate)"
   },
   "projdetail": {
     "tabVersions": "Versions",
@@ -3129,6 +3151,10 @@
     "installDepsTitle": "Only reinstall dependencies (no code pull); use when dependencies are missing",
     "buildNative": "Build native",
     "buildNativeTitle": "Approve and run native build scripts skipped by pnpm (e.g. node-pty/koffi); requires a local C++ toolchain",
+    "execPlaceholder": "e.g. dsh plugin --profile web add",
+    "exec": "Run",
+    "execTitle": "Run a command inside the service runtime directory (project-local commands work without global install)",
+    "phaseExec": "Running command",
     "start": "Start",
     "stop": "Stop",
     "openHome": "Open homepage",
@@ -3212,7 +3238,8 @@
     "pinOn": "Pin",
     "delete": "Delete",
     "noHistoryMatch": "No history entries matching \"{{keyword}}\"",
-    "noProviderDesc": "No model provider is configured in the AI module yet (requires an API key and an OpenAI-compatible endpoint). Configure one to use translation."
+    "noProviderDesc": "No model provider is configured in the AI module yet (requires an API key and an OpenAI-compatible endpoint). Configure one to use translation.",
+    "backToTop": "Back to top"
   },
   "otp": {
     "scanPickTitle": "Select an image containing a QR code",

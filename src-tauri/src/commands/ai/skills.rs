@@ -192,6 +192,9 @@ pub struct SkillToolStatusView {
     pub symlink_enabled: bool,
     /// 该工具是否原生读取公共技能库 ~/.agents/skills
     pub reads_agents_skills: bool,
+    /// 该工具中已 per-skill 部署（junction 指向仓库）的技能数量
+    #[serde(default)]
+    pub deployed_count: usize,
 }
 
 /// 一键管理所有工具的结果
@@ -315,6 +318,9 @@ pub fn get_skill_tools_status() -> Result<Vec<SkillToolStatusView>, String> {
             .cloned()
             .unwrap_or(!reads_agents);
 
+        // per-skill 已部署数量（junction 指向仓库的技能）
+        let deployed_count = get_tool_deployed_skills(tool_id.clone()).unwrap_or_default().len();
+
         out.push(SkillToolStatusView {
             tool_id: tool_id.clone(),
             label,
@@ -323,6 +329,7 @@ pub fn get_skill_tools_status() -> Result<Vec<SkillToolStatusView>, String> {
             skill_count,
             symlink_enabled,
             reads_agents_skills: reads_agents,
+            deployed_count,
         });
     }
 
@@ -377,7 +384,11 @@ fn manage_tool_skills_forced(tool_id: String) -> Result<(), String> {
         let _ = fs::create_dir_all(parent);
     }
 
-    create_junction(&store, &dir).map_err(|e| format!("创建软链接失败: {}", e))
+    // 关键：junction 方向必须是「工具目录(link) → 公共技能仓库(target)」。
+    // 曾误写为 create_junction(&store, &dir)：会把公共仓库 store 当作 link，
+    // 而 store 是真实目录 → create_junction 内部 remove_dir_all(store) 会清空整个
+    // ~/.agents/skills 技能库，再建一个指向已删除工具目录的悬空 junction（数据丢失）。
+    create_junction(&dir, &store).map_err(|e| format!("创建软链接失败: {}", e))
 }
 
 /// 统计目录中的技能数量（子目录数，跳过文件和隐藏目录）
@@ -481,6 +492,130 @@ pub fn manage_all_tool_skills() -> Result<ManageAllResult, String> {
     }
 
     Ok(ManageAllResult { managed_count, skipped_count, errors })
+}
+
+// ─── 单技能按工具部署（per-skill junction，非破坏性） ───
+//
+// 与「整目录 junction」（manage_tool_skills_forced）互补：
+// - 整目录 junction：工具技能目录整体成为指向仓库的链接，仓库里所有技能对工具可见，
+//   但会接管/迁移工具目录原有内容。
+// - per-skill junction：工具技能目录保持真实目录，仅为「要部署的技能」在目录内建
+//   {skill_id} → 仓库/{skill_id} 的 junction。可选择性部署、不破坏用户自有技能，
+//   与注册表预留的 get_tool_skill_dir / resolve_skill_junction_target 对应（此前未接线）。
+
+/// 部署单个技能到某工具：在工具技能目录内为该技能创建 junction → 仓库技能目录。
+/// 非破坏性：目标若已是 junction 则重建（更新指向）；若是用户真实目录则拒绝覆盖。
+#[tauri::command]
+pub fn deploy_skill_to_tool(tool_id: String, skill_id: String) -> Result<(), String> {
+    let store = skills_dir();
+    let skill_src = store.join(&skill_id);
+    if !skill_src.exists() || !skill_src.is_dir() {
+        return Err(format!("技能仓库中不存在技能「{}」", skill_id));
+    }
+    let tool_dir = resolve_tool_skills_dir(&tool_id)
+        .ok_or_else(|| format!("工具 {} 未配置技能目录", tool_id))?;
+    let _ = fs::create_dir_all(&tool_dir);
+    let link = tool_dir.join(&skill_id);
+    if link.exists() || link.is_symlink() {
+        if is_junction(&link) {
+            // 已部署：移除旧 junction 后重建（更新指向）
+            fs::remove_dir(&link).map_err(|e| format!("移除旧软链接失败: {}", e))?;
+        } else {
+            // 用户真实目录：保护数据，拒绝覆盖
+            return Err(format!(
+                "工具技能目录中已存在同名真实目录「{}」（非软链接），为避免覆盖用户数据已拒绝部署。请先手动移除该目录。",
+                skill_id
+            ));
+        }
+    }
+    create_junction(&link, &skill_src).map_err(|e| format!("创建软链接失败: {}", e))
+}
+
+/// 从某工具移除单个技能部署：仅移除 junction，绝不删除用户真实目录。
+#[tauri::command]
+pub fn undeploy_skill_from_tool(tool_id: String, skill_id: String) -> Result<(), String> {
+    let tool_dir = resolve_tool_skills_dir(&tool_id)
+        .ok_or_else(|| format!("工具 {} 未配置技能目录", tool_id))?;
+    let link = tool_dir.join(&skill_id);
+    if is_junction(&link) {
+        fs::remove_dir(&link).map_err(|e| format!("移除软链接失败: {}", e))?;
+    } else if link.exists() {
+        return Err(format!(
+            "「{}」是真实目录（非软链接），不会自动删除用户数据，请手动处理",
+            skill_id
+        ));
+    }
+    Ok(())
+}
+
+/// 列出某工具中「已部署」（junction 且指向技能仓库内技能）的技能 id 列表。
+#[tauri::command]
+pub fn get_tool_deployed_skills(tool_id: String) -> Result<Vec<String>, String> {
+    let tool_dir = resolve_tool_skills_dir(&tool_id)
+        .ok_or_else(|| format!("工具 {} 未配置技能目录", tool_id))?;
+    if !tool_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let store = skills_dir();
+    let mut out: Vec<String> = Vec::new();
+    if let Ok(entries) = fs::read_dir(&tool_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !is_junction(&path) {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            // 仅统计指向仓库内技能的 junction（排除指向别处的链接）
+            if store.join(&name).exists() {
+                out.push(name);
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// 一键把技能仓库内全部技能部署到某工具（逐个 per-skill junction，非破坏性）。
+/// 返回成功部署的数量；与用户真实目录冲突的技能自动跳过。
+#[tauri::command]
+pub fn deploy_all_skills_to_tool(tool_id: String) -> Result<usize, String> {
+    let store = skills_dir();
+    if !store.exists() {
+        return Ok(0);
+    }
+    let mut count = 0usize;
+    if let Ok(entries) = fs::read_dir(&store) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            if deploy_skill_to_tool(tool_id.clone(), name).is_ok() {
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
+}
+
+/// 一键移除某工具中全部「已部署」的仓库技能（仅移除 junction）。返回移除数量。
+#[tauri::command]
+pub fn undeploy_all_skills_from_tool(tool_id: String) -> Result<usize, String> {
+    let deployed = get_tool_deployed_skills(tool_id.clone())?;
+    let mut count = 0usize;
+    for id in deployed {
+        if undeploy_skill_from_tool(tool_id.clone(), id).is_ok() {
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 // ─── 技能列表（仓库扫描） ───

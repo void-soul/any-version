@@ -198,6 +198,12 @@ pub struct LauncherSetting {
     /// 分类（分组）之间的垂直间距（px），默认 24
     #[serde(default = "default_category_gap")]
     pub category_gap: i32,
+    /// 全局外部编辑器（可执行文件路径或 PATH 上的命令，如 "code"）。
+    /// 思维导图节点「文件」点击时优先用它打开：支持 `{file}` 占位符（替换为文件
+    /// 绝对路径）；未包含占位符时把文件路径追加为最后一个参数。
+    /// 空串 = 未配置，回退资源管理器定位（launcher_reveal_file）。
+    #[serde(default)]
+    pub external_editor: String,
 }
 
 fn default_module_hotkeys() -> HashMap<String, String> {
@@ -258,6 +264,7 @@ impl Default for LauncherSetting {
             item_border: default_item_border(),
             category_font_size: default_category_font_size(),
             category_gap: default_category_gap(),
+            external_editor: String::new(),
         }
     }
 }

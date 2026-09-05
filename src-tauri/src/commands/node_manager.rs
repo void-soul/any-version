@@ -595,14 +595,27 @@ fn run_capture_live(
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
+    run_cmd_live(app, project_id, phase, &command, cmd, timeout)
+}
+
+/// 执行调用方预构建的 `Command`（npm_exec 等需要 raw_arg / 自定义 env 的场景）。
+/// 与 run_capture_live 相同：实时转发 stdout/stderr、心跳、超时杀进程树。
+fn run_cmd_live(
+    app: &tauri::AppHandle,
+    project_id: &str,
+    phase: &str,
+    display_command: &str,
+    mut cmd: std::process::Command,
+    timeout: Option<Duration>,
+) -> (bool, String, String) {
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
-            emit_log(app, project_id, phase, &format!("无法执行 {}: {}", program, e));
-            let msg = format!("无法执行 {}: {}", program, e);
+            emit_log(app, project_id, phase, &format!("无法执行命令: {}", e));
+            let msg = format!("无法执行命令: {}", e);
             return (false, msg.clone(), msg);
         }
     };
@@ -650,7 +663,7 @@ fn run_capture_live(
                         &format!(
                             "命令仍在运行…已用时 {} 秒：{}",
                             started_at.elapsed().as_secs(),
-                            command
+                            display_command
                         ),
                     );
                     last_report = Instant::now();
@@ -1154,6 +1167,86 @@ pub async fn npm_build_native(app: tauri::AppHandle, project_id: String) -> Resu
         ));
     }
     emit_progress(&app, &def.id, "done", "原生模块编译完成");
+    Ok(())
+}
+
+/// 在服务的运行目录中执行任意命令行。
+///
+/// npx 模式的服务不做全局安装，`dsh plugin --profile web add` 这类命令无法在
+/// 系统任意位置使用；本命令把运行目录下的 `node_modules/.bin` 前置到 PATH 后
+/// 在运行目录（npx = .npx-runtime，git = 托管目录）内执行整条命令行，
+/// 项目自带命令与任意命令均可直接运行。
+///
+/// Windows 上用 `raw_arg` 传递整条命令行：若走普通 arg，Rust 会给含空格的命令
+/// 加引号，触发 cmd.exe「首字符为引号时剥离首尾引号」的规则，把命令拆坏。
+#[tauri::command]
+pub async fn npm_exec(
+    app: tauri::AppHandle,
+    project_id: String,
+    command: String,
+) -> Result<(), String> {
+    let command = command.trim().to_string();
+    if command.is_empty() {
+        return Err("命令不能为空".to_string());
+    }
+    let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
+    if !def.installed() {
+        return Err("项目尚未安装，请先「安装」".to_string());
+    }
+    let cwd = if def.is_npx() {
+        def.npx_runtime_dir()
+    } else {
+        def.managed_dir()
+    };
+    if !cwd.exists() {
+        return Err(format!("运行目录不存在: {}", cwd.display()));
+    }
+
+    #[cfg(windows)]
+    let mut cmd = {
+        use std::os::windows::process::CommandExt;
+        let mut c = hidden_cmd(&cmd_exe_path());
+        c.arg("/c");
+        c.raw_arg(&command);
+        c
+    };
+    #[cfg(not(windows))]
+    let mut cmd = {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c");
+        c.arg(&command);
+        c
+    };
+    cmd.current_dir(&cwd);
+    // 前置 node_modules/.bin，使项目自带命令（如 dsh）无需全局安装即可调用
+    let bin_dir = cwd.join("node_modules").join(".bin");
+    if bin_dir.exists() {
+        let path = std::env::var("PATH").unwrap_or_default();
+        if let Ok(joined) = std::env::join_paths(
+            std::iter::once(bin_dir).chain(std::env::split_paths(&path)),
+        ) {
+            cmd.env("PATH", joined);
+        }
+    }
+
+    emit_log(&app, &def.id, "exec", &format!("$ {}", command));
+    emit_log(&app, &def.id, "exec", &format!("工作目录: {}", cwd.display()));
+    let (ok, last_err, _out) = run_cmd_live(
+        &app,
+        &def.id,
+        "exec",
+        &command,
+        cmd,
+        Some(Duration::from_secs(600)),
+    );
+    if !ok {
+        let msg = last_err.trim();
+        return Err(format!(
+            "命令执行失败（退出码非 0）: {}",
+            if msg.is_empty() { "未知错误" } else { msg }
+        ));
+    }
+    emit_progress(&app, &def.id, "done", "命令执行完成");
     Ok(())
 }
 

@@ -112,7 +112,7 @@ const NODE_FIELDS: Record<string, FieldSpec[]> = {
     { key: "reload_cmd", label: "重载命令", type: "text", placeholder: "nginx -s reload" },
   ],
   windows: [
-    { key: "url", label: "接收端地址", type: "text", placeholder: "http://192.168.1.10:9000/push" },
+    { key: "url", label: "接收端地址", type: "text", placeholder: "http://192.168.1.10:9000（/push 可省略）" },
     { key: "token", label: "共享 Token", type: "password" },
   ],
 };
@@ -272,7 +272,11 @@ function CertList() {
     refresh();
   };
   const viewPem = async (id: string) => {
-    setPem(await invoke<Record<string, string>>("cert_get_pem", { id }));
+    try {
+      setPem(await invoke<Record<string, string>>("cert_get_pem", { id }));
+    } catch (e) {
+      alert(String(e));
+    }
   };
 
   return (
@@ -351,6 +355,9 @@ function CertList() {
               <span className="text-xs font-bold text-slate-200">{t("certmgr.pemTitle")}</span>
               <button onClick={() => setPem(null)} className="text-slate-400 hover:text-slate-200">{t("certmgr.close")}</button>
             </div>
+            {Object.keys(pem).length === 0 && (
+              <div className="text-[11px] text-slate-500 py-2">{t("certmgr.pemEmpty")}</div>
+            )}
             {Object.entries(pem).map(([name, content]) => (
               <div key={name} className="mb-3">
                 <div className="text-[10px] text-slate-400 mb-1">{name}</div>
@@ -782,8 +789,12 @@ function SchedulerView() {
   }, [refresh]);
 
   const toggle = async (enabled: boolean) => {
-    await invoke("cert_scheduler_set", { enabled, intervalMinutes: state?.interval_minutes || 360 });
-    refresh();
+    try {
+      await invoke("cert_scheduler_set", { enabled, intervalMinutes: state?.interval_minutes || 360 });
+      await refresh();
+    } catch (e) {
+      alert(String(e));
+    }
   };
   const runNow = async () => {
     setRunning(true);

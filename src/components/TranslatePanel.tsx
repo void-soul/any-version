@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import {
   Languages,
   ArrowRightLeft,
+  ArrowUp,
   Copy,
   Check,
   Trash2,
@@ -93,6 +94,19 @@ export default function TranslatePanel() {
   const [modelInitialized, setModelInitialized] = useState(false);
 
   const textRef = useRef<HTMLTextAreaElement>(null);
+
+  // 全屏滚动：整个面板（含头部/输入/结果/历史）作为一个滚动区，
+  // 不再只有历史列表内部滚动；滚动超过阈值时显示「返回顶部」按钮。
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [showTop, setShowTop] = useState(false);
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setShowTop(el.scrollTop > 300);
+  };
+  const scrollToTop = () => {
+    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   // 加载 AI 配置 + 划词翻译已保存的选择 + 翻译历史（含悬浮窗产生的记录）
   useEffect(() => {
@@ -246,6 +260,7 @@ export default function TranslatePanel() {
   const isConfigured = providers.length > 0 && selectedProvider;
 
   return (
+    <div ref={scrollRef} onScroll={onScroll} className="h-full w-full overflow-y-auto">
     <div className="w-full px-6 py-4 max-w-[1100px] mx-auto space-y-5 select-none text-slate-200">
       {/* 头部 */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-white/10 pb-4">
@@ -429,7 +444,7 @@ export default function TranslatePanel() {
             )}
           </div>
 
-          <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+          <div className="space-y-2 pr-1">
             {filteredHistory.map((h) => (
               <div
                 key={h.id}
@@ -501,6 +516,18 @@ export default function TranslatePanel() {
           <Pin className="w-3.5 h-3.5" />
           {t("tranpanel.noProviderDesc")}
         </div>
+      )}
+    </div>
+
+      {/* 返回顶部：滚动超过阈值后浮现，平滑滚回顶部 */}
+      {showTop && (
+        <button
+          onClick={scrollToTop}
+          title={t("tranpanel.backToTop")}
+          className="fixed bottom-8 right-8 z-40 flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-[#0d1524]/90 text-slate-300 shadow-xl backdrop-blur transition hover:text-white hover:border-[var(--module-accent)]/60 cursor-pointer"
+        >
+          <ArrowUp className="w-4 h-4" />
+        </button>
       )}
     </div>
   );

@@ -41,6 +41,7 @@ import {
   Languages,
   Brain,
   StickyNote,
+  Code2,
 } from "lucide-react";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -533,6 +534,9 @@ export default function GlobalSettings() {
   }, [launcherCfg]);
   const [_savingLauncher, setSavingLauncher] = useState(false);
   const [_launcherSaved, setLauncherSaved] = useState(false);
+  // 外部编辑器（编辑缓冲，失焦/按钮保存到 launcherCfg.externalEditor）
+  const [editorCmd, setEditorCmd] = useState("");
+  useEffect(() => { setEditorCmd(launcherCfg.externalEditor ?? ""); }, [launcherCfg.externalEditor]);
 
   // ---- 外观：模块主题色 + 全局字体 + 模块顺序 + 模块布局 ----
   const [appearance, setAppearance] = useState<{
@@ -1078,6 +1082,22 @@ export default function GlobalSettings() {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({ directory: true, title: t("settings.chooseFolder") });
       if (selected) setter(selected as string);
+    } catch {
+      alert(t("settings.folderPickerUnavailable"));
+    }
+  };
+
+  // 浏览选择外部编辑器可执行文件（也可手填 PATH 命令如 code / nvim）
+  const handleBrowseEditorExe = async () => {
+    try {
+      const selected = await openDialog({
+        multiple: false,
+        title: t("settings.editorPickTitle"),
+        filters: [
+          { name: t("settings.editorExeFilter"), extensions: ["exe", "cmd", "bat"] },
+        ],
+      });
+      if (typeof selected === "string") setEditorCmd(selected);
     } catch {
       alert(t("settings.folderPickerUnavailable"));
     }
@@ -2054,6 +2074,47 @@ export default function GlobalSettings() {
                     : t("settings.clickToRecord")}
               </button>
             </div>
+          </div>
+
+          {/* 全局外部编辑器：思维导图节点「文件」等点击时用它打开（未配置回退资源管理器定位） */}
+          <div className="mt-2 px-3 py-2.5 rounded-lg border border-white/5 bg-white/[0.02] space-y-1.5">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center shrink-0">
+                <Code2 className="w-3.5 h-3.5 text-cyan-400" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-medium text-slate-200">{t("settings.externalEditor")}</p>
+                <p className="text-[9px] text-slate-500">{t("settings.externalEditorHint")}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={editorCmd}
+                onChange={(e) => setEditorCmd(e.target.value)}
+                onBlur={() => { if ((launcherCfg.externalEditor ?? "") !== editorCmd.trim()) handleSaveLauncherConfig({ externalEditor: editorCmd.trim() }); }}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }}
+                className="flex-1 min-w-0 glass-input px-3 py-2 text-xs font-mono"
+                placeholder={t("settings.externalEditorPh")}
+              />
+              <button
+                onClick={() => void handleBrowseEditorExe()}
+                className="p-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-lg border border-white/5 cursor-pointer transition-all flex-shrink-0"
+                title={t("settings.chooseEditorExe")}
+              >
+                <FolderOpen className="w-4 h-4" />
+              </button>
+              {editorCmd.trim() && (
+                <button
+                  onClick={() => { setEditorCmd(""); handleSaveLauncherConfig({ externalEditor: "" }); }}
+                  className="p-2 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 cursor-pointer transition flex-shrink-0"
+                  title={t("settings.clearExternalEditor")}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            <p className="text-[9px] text-slate-600">{t("settings.externalEditorExample")}</p>
           </div>
           <div className="flex items-center justify-between">
             <button

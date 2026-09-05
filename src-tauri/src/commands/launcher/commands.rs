@@ -216,6 +216,66 @@ pub async fn launcher_extract_icon(path: String) -> Result<Option<String>, Strin
     Ok(extract_file_icon(&path))
 }
 
+/// 用全局配置的外部编辑器打开文件（思维导图节点「文件」/ AI 探索读取的文件共用）。
+///
+/// - 读取 `LauncherSetting.external_editor`；未配置时回退 `launcher_reveal_file`
+///   （资源管理器定位，与旧行为一致）。
+/// - 编辑器命令包含 `{file}` 占位符 → 整行经 `cmd /C` 执行（支持 PATH 命令、
+///   自带参数与引号组合）；不含占位符 → 编辑器作为可执行文件直接 spawn，
+///   文件路径追加为最后一个参数。
+/// - 编辑器不存在/启动失败时返回错误，前端可提示改用资源管理器定位。
+#[tauri::command]
+pub async fn launcher_open_with_editor(path: String) -> Result<(), String> {
+    use std::process::Command;
+
+    let editor = db::get_settings()
+        .map(|s| s.external_editor.trim().to_string())
+        .unwrap_or_default();
+    if editor.is_empty() {
+        // 未配置编辑器：回退资源管理器定位（旧行为）
+        return launcher_reveal_file(path).await;
+    }
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err(format!("文件不存在: {}", path));
+    }
+    let canonical = p
+        .canonicalize()
+        .map(|c| c.to_string_lossy().to_string())
+        .unwrap_or_else(|_| path.clone());
+    crate::exit_log::exit_log(&format!(
+        "launcher_open_with_editor: editor=`{}`, file=`{}`",
+        editor, canonical
+    ));
+    if editor.contains("{file}") {
+        // 命令行模板模式：{file} 替换为带引号的绝对路径后整行执行
+        let line = editor.replace("{file}", &format!("\"{}\"", canonical));
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            Command::new("cmd.exe")
+                .raw_arg(format!("/C {}", line))
+                .creation_flags_detached()
+                .spawn()
+                .map_err(|e| format!("启动编辑器失败: {}", e))?;
+        }
+        #[cfg(not(windows))]
+        {
+            Command::new("sh")
+                .arg("-c")
+                .arg(line.replace(&format!("\"{}\"", canonical), &canonical))
+                .spawn()
+                .map_err(|e| format!("启动编辑器失败: {}", e))?;
+        }
+    } else {
+        // 直接程序模式：编辑器作为可执行文件，文件路径作为参数
+        let mut cmd = Command::new(&editor);
+        cmd.arg(&canonical).creation_flags_detached();
+        cmd.spawn().map_err(|e| format!("启动编辑器失败（{}）: {}", editor, e))?;
+    }
+    Ok(())
+}
+
 /// 读取本地图片文件并转为 Base64 data URL 作为项目图标（支持 png/jpg/jpeg/gif/webp/bmp/ico/svg）。
 /// 用于「修改图标 → 上传本地图片」。
 #[tauri::command]

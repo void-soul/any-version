@@ -31,6 +31,8 @@ interface SkillToolStatusView {
   skillCount: number;
   symlinkEnabled: boolean;
   readsAgentsSkills: boolean;
+  /** per-skill 已部署（junction 指向仓库）的技能数量 */
+  deployedCount?: number;
 }
 
 type TabKey = 'skills' | 'tools' | 'market';
@@ -72,6 +74,93 @@ export default function SkillManager() {
   const [toolMsg, setToolMsg] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
   const [togglingToolId, setTogglingToolId] = useState<string | null>(null);
 
+  // ── per-skill 部署（junction 指向仓库，非破坏性） ──
+  // toolId -> 已部署技能 id 列表；deployingKey = "toolId:skillId" 或 "toolId:*"（全量）
+  const [deployedMap, setDeployedMap] = useState<Record<string, string[]>>({});
+  const [deployingKey, setDeployingKey] = useState<string | null>(null);
+  const [deployTargetSkill, setDeployTargetSkill] = useState<string | null>(null); // 卡片内展开部署选择的技能
+
+  const loadDeployed = async () => {
+    try {
+      const list = await invoke<SkillToolStatusView[]>('get_skill_tools_status');
+      const map: Record<string, string[]> = {};
+      for (const s of list) {
+        const ids = await invoke<string[]>('get_tool_deployed_skills', { toolId: s.toolId });
+        map[s.toolId] = ids;
+      }
+      setDeployedMap(map);
+    } catch (e) {
+      console.error('加载技能部署状态失败:', e);
+    }
+  };
+
+  const setDeployMsg = (key: string, msg: string, ok: boolean) => {
+    // 复用 skillMsg / toolMsg：技能级消息挂到技能 id，工具级挂到工具 id
+    if (key.endsWith(':*')) {
+      setToolMsg({ id: key.slice(0, -2), msg, ok });
+    } else {
+      setSkillMsg({ id: key.split(':')[1], msg, ok });
+    }
+  };
+
+  const deploySkillToTool = async (skillId: string, toolId: string) => {
+    const key = `${toolId}:${skillId}`;
+    setDeployingKey(key);
+    try {
+      await invoke('deploy_skill_to_tool', { toolId, skillId });
+      setDeployMsg(key, t('skillmgr.deployedTo', { tool: toolId }), true);
+      setDeployedMap((m) => ({ ...m, [toolId]: [...new Set([...(m[toolId] || []), skillId])] }));
+      loadTools();
+    } catch (e) {
+      setDeployMsg(key, String(e), false);
+    } finally {
+      setDeployingKey(null);
+    }
+  };
+
+  const undeploySkillFromTool = async (skillId: string, toolId: string) => {
+    const key = `${toolId}:${skillId}`;
+    setDeployingKey(key);
+    try {
+      await invoke('undeploy_skill_from_tool', { toolId, skillId });
+      setDeployMsg(key, t('skillmgr.undeployedFrom', { tool: toolId }), true);
+      setDeployedMap((m) => ({ ...m, [toolId]: (m[toolId] || []).filter((x) => x !== skillId) }));
+      loadTools();
+    } catch (e) {
+      setDeployMsg(key, String(e), false);
+    } finally {
+      setDeployingKey(null);
+    }
+  };
+
+  const deployAllToTool = async (toolId: string) => {
+    setDeployingKey(`${toolId}:*`);
+    try {
+      const n = await invoke<number>('deploy_all_skills_to_tool', { toolId });
+      setToolMsg({ id: toolId, msg: t('skillmgr.deployAllDone', { count: n }), ok: true });
+      await loadDeployed();
+      loadTools();
+    } catch (e) {
+      setToolMsg({ id: toolId, msg: String(e), ok: false });
+    } finally {
+      setDeployingKey(null);
+    }
+  };
+
+  const undeployAllFromTool = async (toolId: string) => {
+    setDeployingKey(`${toolId}:*`);
+    try {
+      const n = await invoke<number>('undeploy_all_skills_from_tool', { toolId });
+      setToolMsg({ id: toolId, msg: t('skillmgr.undeployAllDone', { count: n }), ok: true });
+      await loadDeployed();
+      loadTools();
+    } catch (e) {
+      setToolMsg({ id: toolId, msg: String(e), ok: false });
+    } finally {
+      setDeployingKey(null);
+    }
+  };
+
   // ── 市场安装 ──
   const [installInput, setInstallInput] = useState('');
   const [installing, setInstalling] = useState(false);
@@ -108,6 +197,7 @@ export default function SkillManager() {
   useEffect(() => {
     loadSkills();
     loadTools();
+    loadDeployed();
   }, []);
 
   // 监听安装进度
@@ -368,6 +458,13 @@ export default function SkillManager() {
                   <div className="flex items-center justify-between pt-2 border-t border-white/5 text-[10px] text-slate-500">
                     <span>{s.installMethod === 'managed' ? t("skillmgr.managedLib") : s.installMethod}</span>
                     <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setDeployTargetSkill(deployTargetSkill === s.id ? null : s.id)}
+                        className={`cursor-pointer ${deployTargetSkill === s.id ? 'text-[var(--module-accent)]' : 'text-slate-400 hover:text-[var(--module-accent)]'}`}
+                        title={t("skillmgr.deployToTool")}
+                      >
+                        <Link2 className="w-3.5 h-3.5" />
+                      </button>
                       <button onClick={() => openEdit(s)} className="text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
                         <Settings2 className="w-3.5 h-3.5" />
                       </button>
@@ -376,6 +473,42 @@ export default function SkillManager() {
                       </button>
                     </div>
                   </div>
+                  {deployTargetSkill === s.id && (
+                    <div className="rounded-lg bg-black/20 border border-white/5 p-2 space-y-1">
+                      <div className="text-[9px] text-slate-500 font-semibold">{t("skillmgr.deployToTool")}</div>
+                      {toolStatus.length === 0 && (
+                        <div className="text-[9px] text-slate-600">{t("skillmgr.noTools")}</div>
+                      )}
+                      {toolStatus.map((ts) => {
+                        const deployed = (deployedMap[ts.toolId] || []).includes(s.id);
+                        const busy = deployingKey === `${ts.toolId}:${s.id}`;
+                        return (
+                          <div key={ts.toolId} className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-slate-300 truncate" title={ts.skillsDir}>
+                              {ts.label}
+                            </span>
+                            <button
+                              disabled={busy}
+                              onClick={() => (deployed ? undeploySkillFromTool(s.id, ts.toolId) : deploySkillToTool(s.id, ts.toolId))}
+                              className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-semibold cursor-pointer transition disabled:opacity-50 ${
+                                deployed
+                                  ? 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
+                                  : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200'
+                              }`}
+                            >
+                              {busy ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : deployed ? (
+                                <><Unlink className="w-2.5 h-2.5" />{t("skillmgr.deployedUndeploy")}</>
+                              ) : (
+                                <><Link2 className="w-2.5 h-2.5" />{t("skillmgr.deployedDeploy")}</>
+                              )}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                   {skillMsg?.id === s.id && (
                     <div className={`text-[10px] ${skillMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>{skillMsg.msg}</div>
                   )}
@@ -436,6 +569,34 @@ export default function SkillManager() {
                               <span>{t("skillmgr.builtinHint")}</span>
                             </div>
                           )}
+                          {/* per-skill 部署：部署仓库全部技能到此工具 / 移除（非破坏性，不动用户自有技能） */}
+                          <div className="flex items-center gap-2 mt-1.5">
+                            <span className="text-[9px] text-slate-500 font-mono">
+                              {t("skillmgr.deployedCount", { count: (deployedMap[tool.id] || []).length })}
+                            </span>
+                            <button
+                              onClick={() => deployAllToTool(tool.id)}
+                              disabled={deployingKey === `${tool.id}:*`}
+                              className="flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-semibold bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white cursor-pointer transition disabled:opacity-50"
+                              title={t("skillmgr.deployAllTitle")}
+                            >
+                              {deployingKey === `${tool.id}:*` ? (
+                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                              ) : (
+                                <Link2 className="w-2.5 h-2.5" />
+                              )}
+                              {t("skillmgr.deployAll")}
+                            </button>
+                            <button
+                              onClick={() => undeployAllFromTool(tool.id)}
+                              disabled={deployingKey === `${tool.id}:*` || (deployedMap[tool.id] || []).length === 0}
+                              className="flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-semibold bg-white/5 text-slate-400 hover:bg-white/10 hover:text-red-300 cursor-pointer transition disabled:opacity-40"
+                              title={t("skillmgr.undeployAllTitle")}
+                            >
+                              <Unlink className="w-2.5 h-2.5" />
+                              {t("skillmgr.undeployAll")}
+                            </button>
+                          </div>
                         </div>
                       </div>
 

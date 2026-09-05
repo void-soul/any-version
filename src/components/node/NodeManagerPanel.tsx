@@ -262,6 +262,32 @@ export default function NodeManagerPanel() {
     }
   };
 
+  // 在服务运行目录中执行任意命令行（如 `dsh plugin --profile web add`）
+  const execCommand = async (project: NodeProjectDef, command: string) => {
+    const key = `exec:${project.id}`;
+    setBusy(key);
+    setError((prev) => ({ ...prev, [project.id]: "" }));
+    // 执行命令必然产生日志，自动展开日志区
+    setLogOpen((prev) => ({ ...prev, [project.id]: true }));
+    try {
+      await invoke("npm_exec", { projectId: project.id, command });
+      await refreshStatus(project.id);
+    } catch (e) {
+      setError((prev) => ({
+        ...prev,
+        [project.id]: typeof e === "string" ? e : String(e),
+      }));
+    } finally {
+      setBusy("");
+      setProgress((prev) => {
+        if (!prev[project.id]) return prev;
+        const next = { ...prev };
+        delete next[project.id];
+        return next;
+      });
+    }
+  };
+
   // 检查 git 是否有新版（fetch 后比较）
   const checkUpdate = async (project: NodeProjectDef) => {
     setCheckingUpdate(project.id);
@@ -495,6 +521,7 @@ export default function NodeManagerPanel() {
                     updateInfo={updateInfo[project.id]}
                     checkingUpdate={checkingUpdate === project.id}
                     onAction={runAction}
+                    onExec={execCommand}
                     onOpenWeb={openWeb}
                     onCheckUpdate={checkUpdate}
                     onToggleLog={() =>
@@ -535,6 +562,7 @@ function ProjectCard({
   updateInfo,
   checkingUpdate,
   onAction,
+  onExec,
   onOpenWeb,
   onCheckUpdate,
   onToggleLog,
@@ -552,6 +580,7 @@ function ProjectCard({
   updateInfo?: NodeUpdateInfo;
   checkingUpdate: boolean;
   onAction: (p: NodeProjectDef, action: string) => void;
+  onExec: (p: NodeProjectDef, command: string) => void;
   onOpenWeb: (p: NodeProjectDef) => void;
   onCheckUpdate: (p: NodeProjectDef) => void;
   onToggleLog: () => void;
@@ -568,7 +597,17 @@ function ProjectCard({
     busy === `upgrade:${project.id}` ||
     busy === `install_deps:${project.id}` ||
     busy === `build_native:${project.id}` ||
+    busy === `exec:${project.id}` ||
     busy === `uninstall:${project.id}`;
+  const isExecBusy = busy === `exec:${project.id}`;
+  // 命令输入框内容（每个服务独立）
+  const [cmdInput, setCmdInput] = useState("");
+  const submitCommand = () => {
+    const cmd = cmdInput.trim();
+    if (!cmd || isExecBusy) return;
+    setCmdInput("");
+    onExec(project, cmd);
+  };
   const canInstallUpgrade = !!d?.allReady && !installed;
   const canUpgrade = !!d?.allReady && !!installed;
   // 安装依赖：已安装即可单独重装依赖（不依赖 allReady，依赖缺失时可补装）
@@ -739,11 +778,13 @@ function ProjectCard({
                         ? t("nodeproj.phaseBuild")
                         : prog?.phase === "native"
                           ? t("nodeproj.phaseNative")
-                          : prog?.phase === "running"
-                            ? t("nodeproj.phaseStart")
-                          : prog?.phase === "starting"
-                            ? t("nodeproj.phaseStart")
-                            : t("nodeproj.phaseOther")}
+                          : prog?.phase === "exec"
+                            ? t("nodeproj.phaseExec")
+                              : prog?.phase === "running"
+                                ? t("nodeproj.phaseStart")
+                                : prog?.phase === "starting"
+                                  ? t("nodeproj.phaseStart")
+                                  : t("nodeproj.phaseOther")}
             {prog?.detail ? `：${prog.detail}` : ""}
           </span>
         </div>
@@ -792,6 +833,34 @@ function ProjectCard({
               />
             </div>
           )}
+        </div>
+      )}
+
+      {/* 命令执行：在服务运行目录内执行任意命令（PATH 已含 node_modules/.bin） */}
+      {installed && (
+        <div className="px-5 py-2 flex items-center gap-2">
+          <div className="flex-1 flex items-center gap-1.5 bg-black/20 border border-white/10 rounded-lg px-2.5 py-1.5 focus-within:border-[var(--module-accent)] transition-all">
+            <Terminal className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+            <input
+              value={cmdInput}
+              onChange={(e) => setCmdInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submitCommand();
+              }}
+              placeholder={t("nodeproj.execPlaceholder")}
+              className="flex-1 bg-transparent outline-none text-[12px] text-slate-200 placeholder:text-slate-600 font-mono"
+              spellCheck={false}
+            />
+          </div>
+          <ActionButton
+            disabled={!cmdInput.trim() || isBusy}
+            busy={isExecBusy}
+            onClick={submitCommand}
+            icon={Terminal}
+            color="bg-slate-700 hover:bg-slate-600"
+            label={t("nodeproj.exec")}
+            title={t("nodeproj.execTitle")}
+          />
         </div>
       )}
 

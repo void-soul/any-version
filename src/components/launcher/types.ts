@@ -79,6 +79,7 @@ export interface LauncherSetting {
   itemBorder?: boolean; // 是否显示项目卡片边框，默认 true
   categoryFontSize?: number; // 分类文字大小 (px)，默认 12
   categoryGap?: number; // 分类（分组）之间的垂直间距 (px)，默认 24
+  externalEditor?: string; // 全局外部编辑器（路径或 PATH 命令，如 "code"；支持 {file} 占位符；空 = 未配置，回退资源管理器定位）
 }
 
 export interface ItemCheckResult {

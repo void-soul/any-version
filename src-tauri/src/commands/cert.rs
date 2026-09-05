@@ -179,7 +179,16 @@ fn save_json<T: Serialize>(name: &str, v: &[T]) {
 }
 
 fn gen_id(prefix: &str) -> String {
-    format!("{}-{}", prefix, Utc::now().timestamp_millis())
+    // 毫秒时间戳 + 4 字节随机数：凭据/节点 id 被证书外键引用，
+    // 同毫秒内连续创建（快速点击/脚本批量）不得碰撞
+    let mut buf = [0u8; 4];
+    let _ = getrandom::getrandom(&mut buf[..]);
+    format!(
+        "{}-{:x}-{:02x}{:02x}{:02x}{:02x}",
+        prefix,
+        Utc::now().timestamp_millis(),
+        buf[0], buf[1], buf[2], buf[3]
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -590,6 +599,23 @@ async fn deploy_to_node(
     }
 }
 
+/// 把 Windows 接收端 URL 归一化为「基础地址」（不含 /push 段、无结尾斜杠）。
+/// 兼容用户三种输入：`http://h:9000` / `http://h:9000/` / `http://h:9000/push`。
+/// 部署与连通性测试必须从同一基础地址派生（/push 与 /health），
+/// 否则按占位提示输入完整 /push URL 时，连通测试会打到 `.../push/health`（404）。
+fn windows_base_url(url: &str) -> String {
+    let mut u = url.trim().to_string();
+    while u.ends_with('/') {
+        u.pop();
+    }
+    if let Some(idx) = u.rfind('/') {
+        if u[idx..].eq_ignore_ascii_case("/push") {
+            u.truncate(idx);
+        }
+    }
+    u
+}
+
 async fn deploy_windows(
     node: &DeployNode,
     cert: &Certificate,
@@ -597,9 +623,16 @@ async fn deploy_windows(
 ) -> Result<(), String> {
     let url = node.config.get("url").cloned().unwrap_or_default();
     let token = node.config.get("token").cloned().unwrap_or_default();
-    if url.is_empty() {
+    let base = windows_base_url(&url);
+    if base.is_empty() {
         return Err("windows 节点缺少 url".into());
     }
+    // Token 与接收端（cert-receiver.toml）必须一致；空 Token 提前报错，
+    // 避免发出 `Bearer `（空凭据）被接收端 401 拒绝后难以定位
+    if token.is_empty() {
+        return Err("windows 节点缺少共享 Token（需与 cert-receiver 配置的 token 一致）".into());
+    }
+    let push_url = format!("{}/push", base);
     let body = serde_json::json!({
         "domain": cert.domains.first().cloned().unwrap_or_default(),
         "cert": pems.0,
@@ -612,8 +645,8 @@ async fn deploy_windows(
         .build()
         .map_err(|e| e.to_string())?;
     let resp = client
-        .post(&url)
-        .bearer_auth(token)
+        .post(&push_url)
+        .bearer_auth(&token)
         .json(&body)
         .send()
         .await
@@ -934,8 +967,16 @@ fn extract_validity(crt: &str) -> (Option<String>, Option<String>) {
         Some((0x30, v)) => v,
         _ => return (None, None),
     };
+    // 外层子项的第一个才是 TBSCertificate（其后的 signatureAlgorithm /
+    // signatureValue 不是 TBSCertificate 字段）。必须再下降一层，
+    // 否则会拿 tbs/sigAlg/sigValue 当字段遍历，validity 永远找不到 →
+    // 有效期恒为 None → 调度器因 not_after 缺失永不触发自动续期。
+    let tbs = match DerReader::new(cert_val).read_tlv() {
+        Some((0x30, v)) => v,
+        _ => return (None, None),
+    };
     // TBSCertificate ::= SEQUENCE { version?, serialNumber, signature, issuer, validity, ... }
-    let mut tr = DerReader::new(cert_val);
+    let mut tr = DerReader::new(tbs);
     let children = tr.read_children();
     let mut seq_idx = 0usize;
     let mut validity: Option<&[u8]> = None;
@@ -974,9 +1015,14 @@ fn extract_validity(crt: &str) -> (Option<String>, Option<String>) {
 // ---------------------------------------------------------------------------
 
 /// 启动应用内后台调度器（在 lib.rs setup 中调用）。
+/// 节奏：启动 60 秒后先做首次扫描（避免到期证书要等满一个间隔——默认 6 小时——
+/// 才被检查；也让调度页尽快有 last_run/next_run 可显示），之后按配置间隔循环。
 pub fn start_scheduler(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let app = app;
+        // 首轮仅延迟 60s（尽快做首次扫描 + 让调度页有 last_run/next_run 可显示）；
+        // 之后每次睡眠前读取最新 interval，用户在睡眠期间修改间隔时下一轮立即生效。
+        let mut first = true;
         loop {
             // 读取间隔（短锁，不跨 await）
             let interval = {
@@ -984,7 +1030,9 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                 let s = st.state.lock().unwrap();
                 s.interval_minutes
             };
-            tokio::time::sleep(std::time::Duration::from_secs(interval * 60)).await;
+            let delay_secs = if first { 60u64 } else { interval.saturating_mul(60).max(60) };
+            first = false;
+            tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
 
             // 收集本周期需要续期的证书（短锁，不跨 await）
             let due_certs: Vec<String> = {
@@ -1225,12 +1273,18 @@ pub async fn deploy_node_test(id: String) -> Result<String, String> {
         "windows" => {
             let url = node.config.get("url").cloned().unwrap_or_default();
             let token = node.config.get("token").cloned().unwrap_or_default();
+            let base = windows_base_url(&url);
+            if base.is_empty() {
+                return Err("windows 节点缺少 url".into());
+            }
+            // 与 deploy_windows 同一基础地址派生 /health（兼容用户填写的 /push 后缀）
+            let health = format!("{}/health", base);
             let resp = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
                 .connect_timeout(std::time::Duration::from_secs(5))
                 .build()
                 .map_err(|e| e.to_string())?
-                .get(if url.ends_with('/') { format!("{}health", url) } else { format!("{}/health", url) })
+                .get(&health)
                 .bearer_auth(token)
                 .send()
                 .await
@@ -1326,4 +1380,125 @@ pub async fn cert_scheduler_run_now() -> Result<Vec<String>, String> {
         }
     }
     Ok(results)
+}
+
+// ---------------------------------------------------------------------------
+// 测试：有效期解析 / Windows 接收端 URL 归一化
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 构造最小 DER TLV（测试数据用，兼容长格式长度）
+    fn der_tlv(tag: u8, value: &[u8]) -> Vec<u8> {
+        let mut out = vec![tag];
+        let len = value.len();
+        if len < 0x80 {
+            out.push(len as u8);
+        } else {
+            let mut bytes = Vec::new();
+            let mut l = len;
+            while l > 0 {
+                bytes.insert(0, (l & 0xff) as u8);
+                l >>= 8;
+            }
+            out.push(0x80 | bytes.len() as u8);
+            out.extend(bytes);
+        }
+        out.extend(value);
+        out
+    }
+
+    /// 构造结构完整的 X.509 证书 DER（解析器只走 TLV 结构，签名内容可为假）。
+    /// `with_version` = false 模拟 v1 证书（TBSCertificate 无 [0] version 字段）。
+    fn test_cert_der(nb: &[u8], na: &[u8], with_version: bool) -> Vec<u8> {
+        let mut validity_inner = Vec::new();
+        validity_inner.extend(der_tlv(0x17, nb));
+        validity_inner.extend(der_tlv(0x17, na));
+        let validity = der_tlv(0x30, &validity_inner);
+        let serial = der_tlv(0x02, &[0, 1]);
+        let sig_alg = der_tlv(0x30, &der_tlv(0x06, &[43, 14, 3, 2, 26]));
+        let issuer = der_tlv(0x30, &der_tlv(0x06, &[0x55, 0x04, 0x03, 3]));
+        let subject = der_tlv(0x30, &der_tlv(0x06, &[0x55, 0x04, 0x03, 3]));
+        let mut tbs_inner = Vec::new();
+        if with_version {
+            tbs_inner.extend(der_tlv(0xA0, &der_tlv(0x02, &[2]))); // v3
+        }
+        tbs_inner.extend(&serial);
+        tbs_inner.extend(&sig_alg);
+        tbs_inner.extend(&issuer);
+        tbs_inner.extend(&validity);
+        tbs_inner.extend(&subject);
+        let tbs = der_tlv(0x30, &tbs_inner);
+        // Certificate ::= SEQUENCE { tbsCertificate, signatureAlgorithm, signatureValue }
+        let mut cert_inner = Vec::new();
+        cert_inner.extend(&tbs);
+        cert_inner.extend(&sig_alg);
+        cert_inner.extend(der_tlv(0x03, &[0])); // BIT STRING（空签名）
+        der_tlv(0x30, &cert_inner)
+    }
+
+    fn der_to_pem(der: &[u8]) -> String {
+        let b64 = B64.encode(der);
+        let mut pem = String::from("-----BEGIN CERTIFICATE-----\n");
+        for chunk in b64.as_bytes().chunks(64) {
+            pem.push_str(std::str::from_utf8(chunk).unwrap());
+            pem.push('\n');
+        }
+        pem.push_str("-----END CERTIFICATE-----\n");
+        pem
+    }
+
+    /// 回归：extract_validity 必须从真实 X.509 结构（外层 Certificate → tbsCertificate
+    /// → validity）解析出有效期。曾有一版直接读外层子项（tbs/sigAlg/sigValue），
+    /// 导致有效期永远解析为 None → 调度器因 not_after 缺失永不触发自动续期。
+    #[test]
+    fn extract_validity_parses_real_cert_structure() {
+        let pem = der_to_pem(&test_cert_der(b"250801120000Z", b"260801120000Z", true));
+        let (nb, na) = extract_validity(&pem);
+        assert_eq!(nb.as_deref(), Some("2025-08-01T12:00:00+00:00"));
+        assert_eq!(na.as_deref(), Some("2026-08-01T12:00:00+00:00"));
+    }
+
+    /// v1 证书（无 version 字段）同样可解析
+    #[test]
+    fn extract_validity_without_version_field() {
+        let pem = der_to_pem(&test_cert_der(b"240101000000Z", b"241001000000Z", false));
+        let (nb, na) = extract_validity(&pem);
+        assert_eq!(nb.as_deref(), Some("2024-01-01T00:00:00+00:00"));
+        assert_eq!(na.as_deref(), Some("2024-10-01T00:00:00+00:00"));
+    }
+
+    /// GeneralizedTime（14 位，2050 年后证书常见）
+    #[test]
+    fn extract_validity_generalized_time() {
+        let pem = der_to_pem(&test_cert_der(b"250101000000Z", b"20801231235959Z", true));
+        let (_, na) = extract_validity(&pem);
+        assert_eq!(na.as_deref(), Some("2080-12-31T23:59:59+00:00"));
+    }
+
+    #[test]
+    fn parse_der_time_utc_and_generalized() {
+        let d = parse_der_time(b"250801120000Z").unwrap();
+        assert_eq!(d.to_rfc3339(), "2025-08-01T12:00:00+00:00");
+        let d = parse_der_time(b"20491231235959Z").unwrap();
+        assert_eq!(d.to_rfc3339(), "2049-12-31T23:59:59+00:00");
+    }
+
+    /// Windows 接收端 URL 归一化：部署（/push）与连通测试（/health）
+    /// 必须从同一基础地址派生；兼容用户填写的 /push 后缀与结尾斜杠。
+    #[test]
+    fn windows_base_url_normalization() {
+        assert_eq!(windows_base_url("http://h:9000"), "http://h:9000");
+        assert_eq!(windows_base_url("http://h:9000/"), "http://h:9000");
+        assert_eq!(windows_base_url("http://h:9000/push"), "http://h:9000");
+        assert_eq!(windows_base_url("http://h:9000/push/"), "http://h:9000");
+        assert_eq!(windows_base_url("http://h:9000/PUSH"), "http://h:9000");
+        assert_eq!(windows_base_url("  http://h:9000/push  "), "http://h:9000");
+        assert_eq!(windows_base_url(""), "");
+        // 结尾的 /push 段一律剥离（含反向代理子路径场景）：
+        // 部署与连通测试从同一 base 派生，保证两者指向同一个接收端
+        assert_eq!(windows_base_url("http://h:9000/api/push"), "http://h:9000/api");
+    }
 }

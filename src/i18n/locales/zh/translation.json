@@ -377,7 +377,15 @@
     "skillMigrated": "技能已迁移到新目录，工具链接已更新。",
     "saved": "已保存",
     "save": "保存",
-    "svcEmptyTip": "💡 提示：在「SDK」模块中安装并托管 MySQL、Redis、MongoDB、Nginx 等服务后，将自动在此处显示自启开关。"
+    "svcEmptyTip": "💡 提示：在「SDK」模块中安装并托管 MySQL、Redis、MongoDB、Nginx 等服务后，将自动在此处显示自启开关。",
+    "externalEditor": "外部编辑器",
+    "externalEditorHint": "思维导图节点「文件」点击时优先用它打开；未配置则回退资源管理器定位",
+    "externalEditorPh": "如 code 或 C:\\Users\\me\\Code.exe（支持 {file} 占位符）",
+    "externalEditorExample": "示例：code {file}（命令行模板）或 C:\\Program Files\\Microsoft VS Code\\Code.exe（直接程序）",
+    "editorPickTitle": "选择编辑器可执行文件",
+    "editorExeFilter": "可执行文件",
+    "chooseEditorExe": "浏览可执行文件",
+    "clearExternalEditor": "清除编辑器配置"
   },
   "mihomo": {
     "connSortTime": "时间",
@@ -2148,7 +2156,20 @@
     "loadFail": "加载失败: {{err}}",
     "close": "关闭",
     "filesCount": "{{count}} 个文件",
-    "copyContent": "复制内容"
+    "copyContent": "复制内容",
+    "deployToTool": "部署到工具",
+    "noTools": "暂无已检测的 AI 工具",
+    "deployedUndeploy": "已部署 · 移除",
+    "deployedDeploy": "部署",
+    "deployedTo": "已部署到 {{tool}}",
+    "undeployedFrom": "已从 {{tool}} 移除",
+    "deployAllDone": "已部署 {{count}} 个技能到此工具",
+    "undeployAllDone": "已从该工具移除 {{count}} 个技能",
+    "deployedCount": "已部署 {{count}} 个",
+    "deployAll": "部署全部",
+    "undeployAll": "移除全部",
+    "deployAllTitle": "将技能仓库全部技能以软链接部署到此工具（非破坏性，保留用户自有技能）",
+    "undeployAllTitle": "移除此工具中已部署的仓库技能（仅软链接，不动真实目录）"
   },
   "toollaunch": {
     "officialOnly": "仅支持官方模型",
@@ -2349,7 +2370,8 @@
     "runningNow": "执行中…",
     "runAll": "立即运行全部",
     "history": "历史记录",
-    "noRecords": "暂无记录"
+    "noRecords": "暂无记录",
+    "pemEmpty": "暂无 PEM 文件（证书尚未申请成功，点「申请」后生成）"
   },
   "projdetail": {
     "tabVersions": "版本管理",
@@ -3135,6 +3157,10 @@
     "installDepsTitle": "仅重新安装依赖（不拉取代码），依赖缺失时可单独补装",
     "buildNative": "编译原生模块",
     "buildNativeTitle": "批准并执行被 pnpm 跳过的原生模块构建脚本（如 node-pty/koffi），需要本机 C++ 构建工具链",
+    "execPlaceholder": "如：dsh plugin --profile web add",
+    "exec": "执行",
+    "execTitle": "在服务运行目录中执行命令（项目自带命令可直接使用，无需全局安装）",
+    "phaseExec": "执行命令中",
     "start": "启动",
     "stop": "停止",
     "openHome": "打开主页",
@@ -3218,7 +3244,8 @@
     "pinOn": "置顶",
     "delete": "删除",
     "noHistoryMatch": "未找到与「{{keyword}}」匹配的历史记录",
-    "noProviderDesc": "尚未在 AI 模块配置模型供应商（需有 API Key 且配置 OpenAI 兼容端点）。配置后即可使用翻译。"
+    "noProviderDesc": "尚未在 AI 模块配置模型供应商（需有 API Key 且配置 OpenAI 兼容端点）。配置后即可使用翻译。",
+    "backToTop": "返回顶部"
   },
   "otp": {
     "scanPickTitle": "选择包含二维码的图片",
