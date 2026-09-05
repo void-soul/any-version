@@ -24,7 +24,6 @@ import {
   FlaskConical,
   Usb,
   Cable,
-  Globe2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import i18n from "./i18n";
@@ -175,14 +174,6 @@ export const MODULES: ModuleDef[] = [
     color: "#e11d48",
     defaultToolbar: false,
     Component: lazyLoad(() => import("./components/PickyPanel")),
-  },
-  {
-    id: "page",
-    label: "Page",
-    icon: Globe2,
-    color: "#06b6d4",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/PagePanel")),
   },
   {
     id: "settings",

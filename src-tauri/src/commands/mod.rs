@@ -35,5 +35,4 @@ pub mod api;
 pub mod mindmap;
 pub mod serialtool;
 pub mod wstool;
-pub mod page_agent;
 
