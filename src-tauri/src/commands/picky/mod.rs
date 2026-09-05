@@ -18,7 +18,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::commands::config::get_data_dir;
@@ -71,6 +71,10 @@ pub struct Bookmark {
     pub refined: bool,
     #[serde(default, deserialize_with = "de_bool_01", serialize_with = "ser_bool_01")]
     pub meta_fetched: bool,
+    /// 页面正文（纯文本）。PC 端与专用 APP 均通过 S3 同步此字段；
+    /// 由抓取链路（WebView/无头浏览器）提取主内容后回填。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
     /// 保留 Flutter 端的个性化等未知字段（lingzuCode / aiCopy 等），同步时原样带回。
     #[serde(flatten)]
     pub extra: JsonMap<String, JsonValue>,
@@ -90,6 +94,7 @@ impl Default for Bookmark {
             updated_at: now,
             refined: false,
             meta_fetched: false,
+            content: None,
             extra: JsonMap::new(),
         }
     }
@@ -186,7 +191,8 @@ fn open_db() -> Result<rusqlite::Connection, String> {
             updated_at TEXT NOT NULL DEFAULT '',
             refined INTEGER NOT NULL DEFAULT 0,
             meta_fetched INTEGER NOT NULL DEFAULT 0,
-            extra TEXT NOT NULL DEFAULT '{}'
+            extra TEXT NOT NULL DEFAULT '{}',
+            content TEXT
         );
         CREATE TABLE IF NOT EXISTS picky_comments (
             id TEXT PRIMARY KEY,
@@ -224,6 +230,16 @@ fn open_db() -> Result<rusqlite::Connection, String> {
         );",
     )
     .map_err(|e| format!("初始化 Picky 表失败: {}", e))?;
+    // 迁移：旧库无 content 列（正文）时补上，保证正文随书签 S3 同步互通。
+    let has_content: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('picky_bookmarks') WHERE name = 'content'")
+        .and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0)))
+        .map(|v| v != 0)
+        .unwrap_or(false);
+    if !has_content {
+        conn.execute("ALTER TABLE picky_bookmarks ADD COLUMN content TEXT", [])
+            .map_err(|e| format!("迁移 picky_bookmarks.content 列失败: {}", e))?;
+    }
     Ok(conn)
 }
 
@@ -244,13 +260,17 @@ fn bookmark_from_row(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         refined: row.get::<_, i64>(8)? != 0,
         meta_fetched: row.get::<_, i64>(9)? != 0,
         extra,
+        content: {
+            let raw: String = row.get(11)?;
+            if raw.trim().is_empty() { None } else { Some(raw) }
+        },
     })
 }
 
 /// 按 id 读取单条收藏（用于 refetch 等场景）。
 fn get_bookmark(conn: &rusqlite::Connection, id: &str) -> Result<Bookmark, String> {
     conn.query_row(
-        "SELECT id,title,description,url,image_url,favicon_url,created_at,updated_at,refined,meta_fetched,extra FROM picky_bookmarks WHERE id=?1",
+        "SELECT id,title,description,url,image_url,favicon_url,created_at,updated_at,refined,meta_fetched,extra,content FROM picky_bookmarks WHERE id=?1",
         [id],
         |row| bookmark_from_row(row),
     )
@@ -504,6 +524,314 @@ fn parse_attrs(tag: &str, mut on_attr: impl FnMut(String, String)) {
     }
 }
 
+// ─── 应用内隐藏 WebView 抓取（Tauri 版「iframe」方案） ───
+//
+// 为什么不用纯 iframe：跨域页面的 iframe 受浏览器同源策略限制，父文档读不到
+// 其 DOM，无法提取 title/OG 标签。Tauri 的等价实现是「隐藏 WebviewWindow」：
+// 复用 App 自身的 WebView2 引擎，在后端直接对窗口 evaluate_script 取回数据。
+// 相比外部无头 Edge 进程的优势：
+// - 无 profile 锁 / 冷启动 / 孤儿进程 / HeadlessChrome UA 被检测等问题
+// - 即本机真实 WebView 环境，对反爬/懒加载 SPA 兼容性更好
+// 提取 JS 必须 try/catch 后返回 JSON 字符串（Windows 下 eval 异常会被吞，
+// 文档明确要求自行捕获并返回字符串）。
+
+const FETCH_VIEW_LABEL: &str = "picky-fetch-view";
+
+const WEBVIEW_EXTRACT_JS: &str = r#"(function () {
+  try {
+    function meta(p) {
+      var el = document.querySelector('meta[property="' + p + '"]') || document.querySelector('meta[name="' + p + '"]');
+      return el ? (el.getAttribute('content') || '').trim() : null;
+    }
+    function og(names) { for (var i = 0; i < names.length; i++) { var v = meta(names[i]); if (v) return v; } return null; }
+    function abs(u) { if (!u) return null; try { return new URL(u, location.href).href; } catch (e) { return null; } }
+    var iconEl = document.querySelector('link[rel~="icon"]') || document.querySelector('link[rel~="shortcut icon"]') || document.querySelector('link[rel~="apple-touch-icon"]');
+    var imgLink = document.querySelector('link[rel="image_src"]');
+
+    // ── 正文提取（与专用 APP WebView 引擎同一套启发式）──
+    function cleanText(s){ return (s||'').replace(/\s+/g,' ').trim(); }
+    function extractContent() {
+      try {
+        var host = (location.hostname||'').toLowerCase();
+        var isZhihu = /zhihu\.com$/.test(host);
+        var isWechat = /qq\.com$/.test(host);
+        var root = null;
+        if (isZhihu) {
+          root = document.querySelector('.RichText')
+              || document.querySelector('.QuestionAnswer-content')
+              || document.querySelector('.Post-RichText')
+              || document.querySelector('.QuestionHeader-description');
+        } else if (isWechat) {
+          root = document.querySelector('#js_content');
+        }
+        if (!root) {
+          var sels = ['article','main','[role="main"]',
+            '.content','.post-content','.article','.article-content','.article-body',
+            '.markdown-body','.post-body','.entry-content','.rich-text','.richtext',
+            '.news-content','.article-detail','.read-content','.post-text',
+            '.article-text','.text-content','#content','#article',
+            '#articleContent','#main-content'];
+          for (var i=0;i<sels.length;i++){ var e=document.querySelector(sels[i]); if(e && cleanText(e.innerText)){ root=e; break; } }
+        }
+        if (!root) {
+          var blocks = document.querySelectorAll('div,section,article,main');
+          var best=null, bestScore=0;
+          for (var j=0;j<blocks.length;j++){
+            var b=blocks[j]; var t=cleanText(b.innerText);
+            if (t.length < 40) continue;
+            var p=b.querySelectorAll('p').length;
+            var score=t.length + p*120;
+            if (score>bestScore){ bestScore=score; best=b; }
+          }
+          root=best;
+        }
+        if (!root) root = document.body;
+        if (!root) return '';
+        var c = root.cloneNode(true);
+        var junk = [];
+        if (isZhihu) {
+          junk = ['script','style','noscript','iframe','svg','button','[role="button"]',
+            '.VoteButton','.ContentItem-actions','.AuthorInfo','.CommentArea',
+            '.Sticky','.GlobalSideBar','.Pc-card','.QuestionHeader','.Modal-wrapper',
+            '.Topbar','.CornerButtons','.HotspotModal','.KfeCollection','.ListHeader',
+            '.Question-main .List','.RelatedReadings','.Promotions'];
+        } else if (isWechat) {
+          junk = ['script','style','noscript','iframe','svg','button','[role="button"]',
+            '.rich_media_tool','.qr_code_pc','.reward_area','.discuss_container',
+            '.share_area','.bottom_container','.ct_mpda_wrp','#js_sg_bar',
+            '#js_pc_qr_code','.mpda_bottom_container','.recommend_area',
+            '.related-article','.comment_input'];
+        } else {
+          junk = ['script','style','noscript','iframe','svg','nav','header','footer',
+            'aside','form','button','[role="button"]','.ad','.ads','.comment',
+            '.comments','[aria-hidden="true"]'];
+        }
+        for (var x=0;x<junk.length;x++){
+          var ns = c.querySelectorAll(junk[x]);
+          for (var k=0;k<ns.length;k++){ if(ns[k] && ns[k].parentNode) ns[k].parentNode.removeChild(ns[k]); }
+        }
+        var as = c.querySelectorAll('a');
+        for (var m=0;m<as.length;m++){
+          var a = as[m];
+          var at = cleanText(a.textContent);
+          if (at.length <= 10 && /(展开|收起|全文|编辑于|阅读原文|查看|更多|详情|登录|关注|赞同|反对|赞|收藏|分享|评论|举报|投诉)/.test(at)) {
+            if (a.parentNode) a.parentNode.removeChild(a);
+          } else {
+            a.replaceWith(document.createTextNode(a.textContent));
+          }
+        }
+        return (c.innerText || '').trim();
+      } catch (e) { return ''; }
+    }
+    var content = extractContent();
+
+    return JSON.stringify({
+      title: (document.title || '').trim() || null,
+      description: og(['og:description', 'description', 'twitter:description']),
+      image_url: abs(og(['og:image', 'twitter:image']) || (imgLink && imgLink.getAttribute('href'))),
+      favicon_url: abs(iconEl && iconEl.getAttribute('href')),
+      content: content || null
+    });
+  } catch (e) {
+    return JSON.stringify({ error: String(e) });
+  }
+})();
+"#;
+
+/// 串行化元数据抓取（新增收藏自动补全与手动重抓共用同一隐藏窗口，避免并发建窗）。
+static WEBVIEW_FETCH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// 用应用内隐藏 WebView 抓取页面元数据。
+/// 流程：建隐藏窗口 → 轮询 document.readyState 至 complete（≤18s）→ 静置 2.5s
+/// （等 SPA 标题/OG 落定）→ eval_with_callback 提取 JSON → 销毁窗口。
+/// 总预算约 26s；任一步失败返回 None，由调用方决定是否走无头浏览器/HTTP 兜底。
+async fn fetch_meta_via_webview(app: &tauri::AppHandle, url: &str) -> Option<UrlMetadataRich> {
+    use tokio::sync::oneshot;
+
+    let _guard = WEBVIEW_FETCH_LOCK.lock().await;
+
+    // 每次用全新窗口（destroy 旧窗避免上一页面状态残留；等待其真正销毁再建同名窗）
+    if let Some(w) = app.get_webview_window(FETCH_VIEW_LABEL) {
+        let _ = w.destroy();
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+
+    let parsed = reqwest::Url::parse(url).ok()?;
+    let w = match tauri::WebviewWindowBuilder::new(app, FETCH_VIEW_LABEL, tauri::WebviewUrl::External(parsed))
+        .title("picky-fetch")
+        .inner_size(1280.0, 900.0)
+        .visible(false)
+        .decorations(false)
+        .skip_taskbar(true)
+        .build()
+    {
+        Ok(w) => w,
+        Err(e) => {
+            crate::exit_log::exit_log(&format!("[picky-wv] 隐藏窗口创建失败: {e} url={url}"));
+            return None;
+        }
+    };
+    let cleanup = |app: &tauri::AppHandle| {
+        if let Some(w) = app.get_webview_window(FETCH_VIEW_LABEL) {
+            let _ = w.destroy();
+        }
+    };
+
+    // 1) 等文档 complete（隐藏窗口中 JS 正常执行；readyState 轮询经 eval_with_callback 回传）
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(18);
+    let mut ready = false;
+    loop {
+        let (tx, rx) = oneshot::channel::<String>();
+        // eval_with_callback 的回调是 Fn（可能被调用多次），用 Arc<Mutex<Option>> 保证只发一次
+        let send = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+        let send2 = send.clone();
+        if w.eval_with_callback("document.readyState", move |s| {
+            if let Some(t) = send2.lock().unwrap().take() { let _ = t.send(s); }
+        }).is_err() {
+            cleanup(app);
+            return None;
+        }
+        match tokio::time::timeout(std::time::Duration::from_secs(3), rx).await {
+            Ok(Ok(s)) if s.contains("complete") => { ready = true; break; }
+            Ok(Ok(_)) => { /* loading / interactive：继续轮询 */ }
+            _ => { /* 回传超时：继续直到 deadline */ }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    if !ready {
+        crate::exit_log::exit_log(&format!("[picky-wv] 等待 complete 超时 url={url}"));
+        cleanup(app);
+        return None;
+    }
+
+    // 2) 静置：SPA 常在 DOM complete 后才写入 title/OG 标签
+    tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+
+    // 3) 提取元数据（eval 结果会被再序列化一层：JS 返回字符串 → 回调收到带引号的 JSON 串）
+    let (tx, rx) = oneshot::channel::<String>();
+    let send = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+    let send2 = send.clone();
+    if w.eval_with_callback(WEBVIEW_EXTRACT_JS, move |s| {
+        if let Some(t) = send2.lock().unwrap().take() { let _ = t.send(s); }
+    }).is_err() {
+        cleanup(app);
+        return None;
+    }
+    let raw = match tokio::time::timeout(std::time::Duration::from_secs(6), rx).await {
+        Ok(Ok(s)) => s,
+        _ => {
+            crate::exit_log::exit_log(&format!("[picky-wv] 提取回传超时 url={url}"));
+            cleanup(app);
+            return None;
+        }
+    };
+    cleanup(app);
+
+    let outer: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+    let inner: serde_json::Value = match outer {
+        serde_json::Value::String(s) => match serde_json::from_str(&s) {
+            Ok(v) => v,
+            Err(_) => return None,
+        },
+        other => other,
+    };
+    if inner.get("error").is_some() {
+        crate::exit_log::exit_log(&format!("[picky-wv] 页面提取异常: {} url={url}", inner.get("error").and_then(|v| v.as_str()).unwrap_or("")));
+        return None;
+    }
+    let meta = UrlMetadataRich {
+        title: inner.get("title").and_then(|v| v.as_str()).map(String::from).filter(|s| !s.trim().is_empty()),
+        description: inner.get("description").and_then(|v| v.as_str()).map(String::from).filter(|s| !s.trim().is_empty()),
+        image_url: inner.get("image_url").and_then(|v| v.as_str()).map(String::from).filter(|s| !s.is_empty()),
+        favicon_url: inner.get("favicon_url").and_then(|v| v.as_str()).map(String::from).filter(|s| !s.is_empty()),
+        content: inner.get("content").and_then(|v| v.as_str()).map(String::from).filter(|s| !s.trim().is_empty()),
+    };
+    if meta.title.is_none() && meta.description.is_none() && meta.image_url.is_none() && meta.content.is_none() {
+        crate::exit_log::exit_log(&format!("[picky-wv] 未提取到有效元数据 url={url}"));
+        return None;
+    }
+    crate::exit_log::exit_log(&format!(
+        "[picky-wv] 成功 title={:?} content_len={} url={url}",
+        meta.title.as_deref().map(|t| t.chars().take(40).collect::<String>()),
+        meta.content.as_ref().map(|c| c.len()).unwrap_or(0)
+    ));
+    Some(meta)
+}
+
+/// 抓取 URL 元数据的完整链路结果（命令返回结构）。
+#[derive(serde::Serialize, Clone, Debug, Default)]
+pub struct FetchedMeta {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub image_url: Option<String>,
+    pub favicon_url: Option<String>,
+    /// 页面正文（纯文本，提取自主内容区）；无法提取时为 None
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    /// 命中来源：webview（应用内隐藏窗口）/ browser（无头渲染）/ http（普通请求）/ none
+    pub source: String,
+}
+
+impl From<UrlMetadataRich> for FetchedMeta {
+    fn from(r: UrlMetadataRich) -> Self {
+        FetchedMeta {
+            title: r.title,
+            description: r.description,
+            image_url: r.image_url,
+            favicon_url: r.favicon_url,
+            content: r.content,
+            source: "none".into(),
+        }
+    }
+}
+
+/// 抓取 URL 元数据（完整链路：应用内隐藏 WebView → 无头浏览器渲染 → 普通 HTTP）。
+/// 供「新增收藏」表单的抓取按钮使用——原先只走单次 HTTP 请求，JS 渲染页面拿不到
+/// 真实标题；现与书签「刷新元数据」共用同一链路。
+#[tauri::command]
+pub async fn picky_fetch_url_meta(app: tauri::AppHandle, url: String) -> Result<FetchedMeta, String> {
+    let mut url = url.trim().to_string();
+    if url.is_empty() {
+        return Err("URL 不能为空".into());
+    }
+    if !url.contains("://") {
+        url = format!("https://{url}");
+    }
+    // 1) 应用内隐藏 WebView（首选）
+    if let Some(r) = fetch_meta_via_webview(&app, &url).await {
+        let mut m: FetchedMeta = r.into();
+        m.source = "webview".into();
+        return Ok(m);
+    }
+    // 2) 无头浏览器渲染
+    if let Some(dom) = render_dom_via_browser(&url).await {
+        let r = parse_rendered_meta(&dom, &url);
+        if r.title.is_some() || r.description.is_some() || r.image_url.is_some() {
+            let mut m: FetchedMeta = r.into();
+            m.source = "browser".into();
+            return Ok(m);
+        }
+    }
+    // 3) 普通 HTTP（窄兜底：仅标题/favicon）
+    if let Ok(m) = crate::commands::launcher::windows::fetch_url_metadata_with_timeout(&url, std::time::Duration::from_secs(10)).await {
+        if !m.title.is_empty() {
+            return Ok(FetchedMeta {
+                title: Some(m.title),
+                favicon_url: m.icon,
+                source: "http".into(),
+                ..Default::default()
+            });
+        }
+    }
+    Err("无法抓取页面元数据（站点可能拦截了请求，或需要登录）".into())
+}
+
 /// 解析渲染后 DOM 的元数据：标题 / 描述 / 图片 / favicon。
 /// 全部来自浏览器渲染结果（可抓 JS SPA），返回相对路径均已按 base 展开。
 fn parse_rendered_meta(dom: &str, url: &str) -> UrlMetadataRich {
@@ -558,7 +886,112 @@ fn parse_rendered_meta(dom: &str, url: &str) -> UrlMetadataRich {
             .or_else(|| base.as_ref().and_then(|b| b.join("/favicon.ico").ok().map(|u| u.to_string())))
     };
 
-    UrlMetadataRich { title, description, image_url, favicon_url }
+    // 正文（无头浏览器兜底路径）：从渲染后 DOM 提取主内容纯文本
+    let content = extract_content_from_dom(dom).filter(|s| !s.trim().is_empty());
+
+    UrlMetadataRich { title, description, image_url, favicon_url, content }
+}
+
+/// 从渲染后的 HTML DOM 提取正文纯文本（无头浏览器兜底路径用）。
+/// 启发式（与 WebView JS 主路径对齐的简化版）：
+/// 1) 优先取 `<article>` / `<main>` / `[role=main]` 的内部；
+/// 2) 否则剥离 script/style/nav/header/footer/aside/form/按钮等噪声块后取整页文本；
+/// 3) 去除 HTML 标签、解码实体、折叠空白。提取不到有意义文本时返回 None。
+fn extract_content_from_dom(dom: &str) -> Option<String> {
+    let lower = dom.to_ascii_lowercase();
+
+    // 1) 定位主内容容器（article / main / role=main）
+    let main_inner = || -> Option<String> {
+        for pat in [
+            r"(?is)<article\b[^>]*>(.*?)</article>",
+            r"(?is)<main\b[^>]*>(.*?)</main>",
+            r#"(?is)<[^>]+\brole=["']main["'][^>]*>(.*?)</[^>]+>"#,
+        ] {
+            if let Ok(re) = regex::Regex::new(pat) {
+                if let Some(caps) = re.captures(&lower) {
+                    if let Some(m) = caps.get(1) {
+                        let text = html_to_text(m.as_str());
+                        if text.chars().count() >= 40 {
+                            return Some(text);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    };
+    if let Some(text) = main_inner() {
+        return Some(text);
+    }
+
+    // 2) 剥离噪声块，再取整页文本
+    let mut cleaned = dom.to_string();
+    for tag in ["script", "style", "noscript", "iframe", "svg", "nav", "header", "footer", "aside", "form", "button"] {
+        if let Ok(re) = regex::Regex::new(&format!(r"(?is)<{tag}\b[^>]*>.*?</{tag}>")) {
+            cleaned = re.replace_all(&cleaned, "").to_string();
+        }
+    }
+    let text = html_to_text(&cleaned);
+    if text.chars().count() >= 40 {
+        Some(text)
+    } else {
+        None
+    }
+}
+
+/// 把一段 HTML 片段转为纯文本：去标签、解码常见实体、折叠空白。
+fn html_to_text(html: &str) -> String {
+    let mut s = html.to_string();
+    // 块级标签转换行（保留段落结构）
+    if let Ok(re) = regex::Regex::new(r"(?i)</?(p|div|section|article|li|h[1-6]|br|tr|blockquote|pre)[^>]*>") {
+        s = re.replace_all(&s, "\n").to_string();
+    }
+    // 去除所有标签
+    if let Ok(re) = regex::Regex::new(r"(?s)<[^>]+>") {
+        s = re.replace_all(&s, " ").to_string();
+    }
+    // 解码常见 HTML 实体
+    for (ent, ch) in [
+        ("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
+        ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"), ("&mdash;", "—"),
+        ("&ndash;", "–"), ("&hellip;", "…"),
+    ] {
+        s = s.replace(ent, ch);
+    }
+    // 十进制/十六进制字符实体
+    if let Ok(re) = regex::Regex::new(r"&#(\d+);") {
+        s = re.replace_all(&s, |c: &regex::Captures| {
+            let n: u32 = c.get(1).map(|m| m.as_str().parse().unwrap_or(0)).unwrap_or(0);
+            char::from_u32(n).map(|ch| ch.to_string()).unwrap_or_default()
+        }).to_string();
+    }
+    if let Ok(re) = regex::Regex::new(r"&#x([0-9a-fA-F]+);") {
+        s = re.replace_all(&s, |c: &regex::Captures| {
+            let n = u32::from_str_radix(c.get(1).map(|m| m.as_str()).unwrap_or(""), 16).unwrap_or(0);
+            char::from_u32(n).map(|ch| ch.to_string()).unwrap_or_default()
+        }).to_string();
+    }
+    // 折叠空白：行内空白合并为单空格，多余空行合并
+    let lines: Vec<String> = s
+        .lines()
+        .map(|l| {
+            let l = l.split_whitespace().collect::<Vec<_>>().join(" ");
+            l
+        })
+        .collect();
+    let mut out = String::new();
+    let mut prev_empty = false;
+    for l in lines {
+        if l.is_empty() {
+            if !prev_empty { out.push('\n'); }
+            prev_empty = true;
+        } else {
+            if !out.is_empty() { out.push('\n'); }
+            out.push_str(&l);
+            prev_empty = false;
+        }
+    }
+    out.trim().to_string()
 }
 
 #[derive(Default, Clone, Debug)]
@@ -567,13 +1000,14 @@ struct UrlMetadataRich {
     description: Option<String>,
     image_url: Option<String>,
     favicon_url: Option<String>,
+    content: Option<String>,
 }
 
 fn insert_bookmark(conn: &rusqlite::Connection, bm: &Bookmark) -> Result<(), String> {
     conn.execute(
         "INSERT OR REPLACE INTO picky_bookmarks
-         (id, title, description, url, image_url, favicon_url, created_at, updated_at, refined, meta_fetched, extra)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+         (id, title, description, url, image_url, favicon_url, created_at, updated_at, refined, meta_fetched, extra, content)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
         rusqlite::params![
             bm.id,
             bm.title,
@@ -586,6 +1020,7 @@ fn insert_bookmark(conn: &rusqlite::Connection, bm: &Bookmark) -> Result<(), Str
             bm.refined as i64,
             bm.meta_fetched as i64,
             serde_json::to_string(&bm.extra).unwrap_or_else(|_| "{}".to_string()),
+            bm.content,
         ],
     )
     .map_err(|e| format!("写入收藏失败: {}", e))?;
@@ -674,7 +1109,7 @@ fn state_to_json(conn: &rusqlite::Connection) -> Result<PickyState, String> {
     let mut bookmarks = Vec::new();
     {
         let mut stmt = conn
-            .prepare("SELECT id,title,description,url,image_url,favicon_url,created_at,updated_at,refined,meta_fetched,extra FROM picky_bookmarks")
+            .prepare("SELECT id,title,description,url,image_url,favicon_url,created_at,updated_at,refined,meta_fetched,extra,content FROM picky_bookmarks")
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map([], |row| bookmark_from_row(row))
@@ -935,7 +1370,7 @@ pub fn picky_add_bookmark(
     // 用独立任务跑，添加操作本身立即返回，不阻塞 UI。
     if bm.url.is_some() {
         tauri::async_runtime::spawn(async move {
-            match picky_refetch_metadata_inner(&bookmark_id).await {
+            match picky_refetch_metadata_inner(&app, &bookmark_id).await {
                 Ok(_) => { let _ = app.emit("picky-bookmark-updated", &bookmark_id); }
                 Err(_) => { /* 自动补全失败静默：用户仍可手动刷新 */ }
             }
@@ -977,22 +1412,30 @@ pub fn picky_set_refined(id: String, refined: bool) -> Result<(), String> {
 /// 因此这里先调 Edge 无头渲染（`--dump-dom` + 虚拟时间快进），从渲染后的完整 DOM
 /// 提取标题/描述/图片/favicon；仅当本机没有 Edge 时，才退回普通 HTTP 抓取兜底。
 #[tauri::command]
-pub async fn picky_refetch_metadata(id: String) -> Result<Bookmark, String> {
-    picky_refetch_metadata_inner(&id).await
+pub async fn picky_refetch_metadata(app: tauri::AppHandle, id: String) -> Result<Bookmark, String> {
+    picky_refetch_metadata_inner(&app, &id).await
 }
 
 /// 实际的元数据重抓实现（供命令与新增后的自动补全共用）。
-async fn picky_refetch_metadata_inner(id: &str) -> Result<Bookmark, String> {
+async fn picky_refetch_metadata_inner(app: &tauri::AppHandle, id: &str) -> Result<Bookmark, String> {
     let conn = open_db()?;
     let bm = get_bookmark(&conn, id)?;
     let url = bm.url.clone().ok_or_else(|| "该收藏无 URL".to_string())?;
     crate::exit_log::exit_log(&format!("[picky-meta] 开始 refetch id={id} url={url}"));
 
-    // 1) 浏览器模拟抓取（首选）：渲染后 DOM 含 JS 动态内容
-    let rendered = render_dom_via_browser(&url).await;
-    let rich = rendered.as_deref().map(|dom| parse_rendered_meta(dom, &url));
+    // 1) 应用内隐藏 WebView 抓取（首选：Tauri「iframe」方案，比外部无头进程稳）
+    let mut rich = fetch_meta_via_webview(app, &url).await;
+    let mut source = if rich.is_some() { "webview" } else { "" };
 
-    // 2) 若没有浏览器可用，退回普通 HTTP 抓取的标题/favicon（仅做窄兜底）
+    // 2) WebView 失败 → 无头浏览器渲染（渲染后 DOM 含 JS 动态内容）
+    if rich.is_none() {
+        if let Some(dom) = render_dom_via_browser(&url).await {
+            rich = Some(parse_rendered_meta(&dom, &url));
+            source = "browser";
+        }
+    }
+
+    // 3) 两者都没有 → 退回普通 HTTP 抓取的标题/favicon（仅做窄兜底）
     let http_fallback = if rich.is_none() {
         crate::commands::launcher::windows::fetch_url_metadata_with_timeout(
             &url,
@@ -1018,6 +1461,13 @@ async fn picky_refetch_metadata_inner(id: &str) -> Result<Bookmark, String> {
             }
             if let Some(f) = &r.favicon_url {
                 updated.favicon_url = Some(f.clone());
+            }
+            // 正文：仅在成功提取到非空正文时回填（不覆盖已有正文为空的情况——
+            // 页面可能本次没渲染出正文，保留上次抓到的）
+            if let Some(c) = &r.content {
+                if !c.trim().is_empty() {
+                    updated.content = Some(c.clone());
+                }
             }
         }
         None => {
@@ -1057,7 +1507,7 @@ async fn picky_refetch_metadata_inner(id: &str) -> Result<Bookmark, String> {
     schedule_auto_sync();
     crate::exit_log::exit_log(&format!(
         "[picky-meta] 完成 id={id} 来源={} title={:?} desc={}",
-        if rich.is_some() { "browser" } else if http_fallback.is_some() { "http" } else { "none" },
+        if http_fallback.is_some() { "http" } else { source },
         updated.title,
         updated.description.as_deref().map(|d| d.chars().take(60).collect::<String>()).unwrap_or_default(),
     ));

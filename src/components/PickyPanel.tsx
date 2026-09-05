@@ -25,6 +25,7 @@ import {
   Cloud,
   List,
   LayoutGrid,
+  BookOpen,
 } from "lucide-react";
 
 // ─── 类型（camelCase，与后端 / Flutter 端一致） ───
@@ -40,6 +41,8 @@ interface PickyBookmark {
   updatedAt: string;
   refined: boolean;
   metaFetched: boolean;
+  /** 页面正文（纯文本）：PC 端与专用 APP 通过 S3 同步此字段；为空表示尚未抓取 */
+  content?: string | null;
   [key: string]: unknown;
 }
 
@@ -129,6 +132,9 @@ export default function PickyPanel() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [confirm, setConfirm] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
+  // 阅读正文弹窗：reading 为当前打开的书签；readingLoading 表示正文正在后台抓取
+  const [reading, setReading] = useState<PickyBookmark | null>(null);
+  const [readingLoading, setReadingLoading] = useState(false);
 
   // 后端为兼容 Flutter 云同步（state.json 用 0/1），序列化 refined/metaFetched 为整数；
   // 前端归一化为真实布尔，否则 {b.refined && <jsx/>} 会把数字 0 直接渲染成 "0"。
@@ -272,6 +278,28 @@ export default function PickyPanel() {
       flash(t("picky.refetched", { title: b.title }));
     } catch (e) {
       flash(t("picky.refetchFail", { err: String(e) }));
+    }
+  };
+
+  // 打开「阅读正文」：已抓过正文直接显示；否则后台走抓取链路（与刷新元数据同源，
+  // 会一并补全标题/描述/图片/正文）拉取并保存，完成后把最新正文回填到弹窗。
+  const openReading = async (b: PickyBookmark) => {
+    setReading(b);
+    if ((b.content ?? "").trim()) return; // 已有正文，直接展示
+    if (!b.url) {
+      // 无 URL 无法抓取：保持弹窗展示「无正文」空态
+      return;
+    }
+    setReadingLoading(true);
+    try {
+      const updated = await invoke<PickyBookmark>("picky_refetch_metadata", { id: b.id });
+      await load();
+      // 用最新抓取结果回填弹窗（content 可能仍为空 = 站点未渲染出正文）
+      setReading({ ...updated, refined: asBool(updated.refined), metaFetched: asBool(updated.metaFetched) });
+    } catch (e) {
+      flash(t("picky.contentFetchFail", { err: String(e) }));
+    } finally {
+      setReadingLoading(false);
     }
   };
 
@@ -462,6 +490,7 @@ export default function PickyPanel() {
                   onAddComment={(content, parentId) => addComment(b.id, content, parentId)}
                   onDeleteComment={removeComment}
                   onRefetch={() => refetchBookmark(b)}
+                  onRead={() => void openReading(b)}
                 />
               ) : (
                 <BookmarkCard
@@ -482,6 +511,7 @@ export default function PickyPanel() {
                   onAddComment={(content, parentId) => addComment(b.id, content, parentId)}
                   onDeleteComment={removeComment}
                   onRefetch={() => refetchBookmark(b)}
+                  onRead={() => void openReading(b)}
                 />
               )
             )}
@@ -522,6 +552,15 @@ export default function PickyPanel() {
             flash(msg);
             load();
           }}
+        />
+      )}
+
+      {reading && (
+        <ReadingModal
+          bookmark={reading}
+          loading={readingLoading}
+          onClose={() => setReading(null)}
+          onRefetch={() => void openReading(reading)}
         />
       )}
 
@@ -576,6 +615,7 @@ function BookmarkCard({
   onAddComment,
   onDeleteComment,
   onRefetch,
+  onRead,
 }: {
   bookmark: PickyBookmark;
   tags: PickyTag[];
@@ -590,6 +630,7 @@ function BookmarkCard({
   onAddComment: (content: string, parentId?: string) => void;
   onDeleteComment: (c: PickyComment) => void;
   onRefetch: () => void;
+  onRead: () => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -652,6 +693,9 @@ function BookmarkCard({
           <IconBtn title={t("picky.openLink")} onClick={onOpen}>
             <ExternalLink className="w-3 h-3" />
           </IconBtn>
+          <IconBtn title={t("picky.readContent")} onClick={onRead} active={Boolean((b.content ?? "").trim())}>
+            <BookOpen className="w-3 h-3" />
+          </IconBtn>
           <IconBtn title={expanded ? t("picky.collapseComments") : t("picky.commentsCollapsed", { count: comments.length })} onClick={onToggleExpand} active={expanded}>
             <MessageSquare className="w-3 h-3" />
             <span className="text-[9px]">{comments.length > 0 ? comments.length : ""}</span>
@@ -699,6 +743,7 @@ function BookmarkRow(props: {
   onAddComment: (content: string, parentId?: string) => void;
   onDeleteComment: (c: PickyComment) => void;
   onRefetch: () => void;
+  onRead: () => void;
 }) {
   const { t } = useTranslation();
   const {
@@ -714,6 +759,7 @@ function BookmarkRow(props: {
     onAddComment,
     onDeleteComment,
     onRefetch,
+    onRead,
   } = props;
 
   return (
@@ -740,10 +786,14 @@ function BookmarkRow(props: {
           <IconBtn title={t("picky.openLink")} onClick={onOpen}>
             <ExternalLink className="w-3 h-3" />
           </IconBtn>
+          <IconBtn title={t("picky.readContent")} onClick={onRead} active={Boolean((b.content ?? "").trim())}>
+            <BookOpen className="w-3 h-3" />
+          </IconBtn>
           <IconBtn title={expanded ? t("picky.collapseComments") : t("picky.commentsCollapsed", { count: comments.length })} onClick={onToggleExpand} active={expanded}>
             <MessageSquare className="w-3 h-3" />
             <span className="text-[9px]">{comments.length > 0 ? comments.length : ""}</span>
-          </IconBtn>          <IconBtn title={t("picky.refetch")} onClick={onRefetch}>
+          </IconBtn>
+          <IconBtn title={t("picky.refetch")} onClick={onRefetch}>
             <RefreshCw className="w-3 h-3" />
           </IconBtn>
           <IconBtn title={t("picky.tags")} onClick={onTags}>
@@ -911,7 +961,7 @@ function BookmarkModal({
 }: {
   bookmark: PickyBookmark | null;
   busy: boolean;
-  onSave: (input: { id?: string; title: string; url: string; description: string }) => void;
+  onSave: (input: { id?: string; title: string; url: string; description: string; imageUrl?: string; faviconUrl?: string }) => void;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -919,17 +969,23 @@ function BookmarkModal({
   const [url, setUrl] = useState(bookmark?.url || "");
   const [description, setDescription] = useState(bookmark?.description || "");
   const [fetching, setFetching] = useState(false);
+  // 抓取到的富元数据（保存时随表单传给后端，用于补全图片/favicon）
+  const [fetched, setFetched] = useState<{ imageUrl?: string; faviconUrl?: string } | null>(null);
 
-  // 抓取网页元数据（标题）
+  // 抓取网页元数据（完整链路：应用内隐藏 WebView → 无头渲染 → HTTP）。
+  // 原先只走单次 HTTP 请求（launcher_fetch_url_info），JS 渲染页面拿不到真实标题；
+  // 现与书签「刷新元数据」共用同一链路（picky_fetch_url_meta）。
   const fetchMeta = async () => {
     if (!url.trim()) return;
     setFetching(true);
     try {
-      const meta = await invoke<{ title?: string; icon?: string; url?: string }>("launcher_fetch_url_info", {
+      const meta = await invoke<{ title?: string; description?: string; image_url?: string; favicon_url?: string; source?: string }>("picky_fetch_url_meta", {
         url: url.trim(),
       });
       if (meta?.title && !title.trim()) setTitle(meta.title);
       if (!meta?.title) setTitle(url.trim());
+      if (meta?.description && !description.trim()) setDescription(meta.description);
+      setFetched({ imageUrl: meta?.image_url, faviconUrl: meta?.favicon_url });
     } catch {
       if (!title.trim()) setTitle(url.trim());
     } finally {
@@ -939,7 +995,7 @@ function BookmarkModal({
 
   const submit = () => {
     if (!title.trim() && !url.trim()) return;
-    onSave({ id: bookmark?.id, title: title || url, url, description });
+    onSave({ id: bookmark?.id, title: title || url, url, description, imageUrl: fetched?.imageUrl, faviconUrl: fetched?.faviconUrl });
   };
 
   return (
@@ -1263,6 +1319,81 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
         </div>
       </div>
     </ModalShell>
+  );
+}
+
+// ─── 阅读正文弹窗：展示书签抓取到的正文（纯文本），支持加载/空态/刷新 ───
+
+function ReadingModal({
+  bookmark: b,
+  loading,
+  onClose,
+  onRefetch,
+}: {
+  bookmark: PickyBookmark;
+  loading: boolean;
+  onClose: () => void;
+  onRefetch: () => void;
+}) {
+  const { t } = useTranslation();
+  const content = (b.content ?? "").trim();
+  const wordCount = content ? content.replace(/\s+/g, " ").trim().split(" ").length : 0;
+  return (
+    <div className="fixed inset-0 z-[110] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+      <div
+        className="w-[720px] max-w-[95vw] max-h-[90vh] flex flex-col rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* 头部：标题 + 操作 */}
+        <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3 flex-shrink-0">
+          <BookOpen className="w-4 h-4 text-[var(--module-accent)] flex-shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-bold text-white truncate" title={b.title}>{b.title || t("picky.unnamed")}</div>
+            {b.url && (
+              <button onClick={() => void openUrl(b.url!)} className="text-[10px] text-sky-400/80 hover:text-sky-300 truncate block max-w-full cursor-pointer" title={b.url}>
+                {hostOf(b.url)}
+              </button>
+            )}
+          </div>
+          {content && !loading && (
+            <span className="text-[9px] text-slate-500 flex-shrink-0">{t("picky.contentWords", { count: wordCount })}</span>
+          )}
+          <button onClick={onRefetch} disabled={loading}
+            className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white disabled:opacity-40 cursor-pointer flex-shrink-0"
+            title={t("picky.readRefetch")}>
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+          </button>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer flex-shrink-0">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* 正文区 */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-500">
+              <Loader2 className="w-6 h-6 animate-spin text-[var(--module-accent)]" />
+              <span className="text-xs">{t("picky.contentLoading")}</span>
+            </div>
+          ) : content ? (
+            <article className="text-[13px] leading-7 text-slate-200 whitespace-pre-wrap break-words font-[system-ui]">
+              {content}
+            </article>
+          ) : (
+            <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-500">
+              <BookOpen className="w-8 h-8 opacity-40" />
+              <span className="text-xs text-center">{t("picky.contentEmpty")}</span>
+              {b.url && (
+                <button onClick={onRefetch}
+                  className="mt-1 px-3 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)]/15 border border-[var(--module-accent)]/30 text-[var(--module-accent)] hover:bg-[var(--module-accent)]/25 cursor-pointer">
+                  {t("picky.readRefetch")}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
