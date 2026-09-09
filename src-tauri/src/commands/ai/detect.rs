@@ -13,6 +13,23 @@ use super::config::DetectedAiTool;
 /// 全局缓存的 semver 提取正则表达式（避免每次调用都重新编译）
 static SEMVER_RE: OnceLock<regex::Regex> = OnceLock::new();
 
+/// 官网地址三级解析（抄作业自 EchoBird）：homepage > website > github，
+/// 过滤空白值；全部缺省时返回空字符串。
+/// 用途：未安装工具在列表中展示官网入口，避免 website 指向仓库时把用户带到 GitHub。
+fn resolve_tool_website(
+    homepage: Option<&str>,
+    website: Option<&str>,
+    github: Option<&str>,
+) -> String {
+    [homepage, website, github]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|url| !url.is_empty())
+        .unwrap_or_default()
+        .to_string()
+}
+
 fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool {
     eprintln!("[detect] ========== {} ({}) ==========", config.display_name, config.id);
 
@@ -33,7 +50,7 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
         install_cmd: paths.install_cmd.clone(),
         upgrade_cmd,
         uninstall_cmd: String::new(),
-        website: config.website.clone(),
+        website: resolve_tool_website(config.homepage.as_deref(), Some(&config.website), config.github.as_deref()),
         api_protocol: config.api_protocol.clone(),
         supports_model: config.support_model,
         supports_fallback_model: config.support_fallback_model,
@@ -553,3 +570,42 @@ async fn fetch_pypi_latest_version(package: &str) -> Option<String> {
 
 // ─── skills / usage 文件路径 ───
 
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_tool_website;
+
+    #[test]
+    fn website_prefers_homepage_over_website_and_github() {
+        assert_eq!(
+            resolve_tool_website(
+                Some("https://omp.sh/"),
+                Some("https://github.com/can1357/oh-my-pi"),
+                Some("https://github.com/can1357/oh-my-pi"),
+            ),
+            "https://omp.sh/"
+        );
+    }
+
+    #[test]
+    fn website_keeps_website_when_no_homepage() {
+        assert_eq!(
+            resolve_tool_website(None, Some("https://claude.ai/code"), Some("https://github.com/anthropics/claude-code")),
+            "https://claude.ai/code"
+        );
+    }
+
+    #[test]
+    fn website_falls_back_to_github_when_others_blank() {
+        assert_eq!(
+            resolve_tool_website(Some("  "), Some(""), Some("https://github.com/openai/codex")),
+            "https://github.com/openai/codex"
+        );
+    }
+
+    #[test]
+    fn website_empty_without_any_source() {
+        assert_eq!(resolve_tool_website(None, None, None), "");
+        assert_eq!(resolve_tool_website(None, Some(""), None), "");
+    }
+}

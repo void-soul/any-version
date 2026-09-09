@@ -357,6 +357,7 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                         &req.custom_params,
                         &req.custom_param_values,
                         req.web_search_enabled,
+                        &chosen_outbound,
                     ) {
                         Ok(_) => {
                             eprintln!("[config_file] ✓ 配置文件写入完成");
@@ -627,9 +628,10 @@ pub(crate) fn write_tool_config_from_spec(
     custom_params: &[ModelCustomParam],
     custom_param_values: &HashMap<String, String>,
     web_search: bool,
+    chosen_protocol: &str,
 ) -> Result<(), String> {
     // write_tool_config_generic 内部会检查 config_file 是否存在，无 configFile 时直接返回 Ok(())
-    write_tool_config_generic(tool_config, model_id, claimed_model, base_url, api_key, fallback_model_id, fallback_masquerade_model, one_m_context, fallback_one_m_context, proxy_mode, custom_params, custom_param_values, web_search)
+    write_tool_config_generic(tool_config, model_id, claimed_model, base_url, api_key, fallback_model_id, fallback_masquerade_model, one_m_context, fallback_one_m_context, proxy_mode, custom_params, custom_param_values, web_search, chosen_protocol)
 }
 
 /// 从 config_file.write 映射中提取 env.* 前缀的键，构建环境变量 HashMap。
@@ -714,6 +716,7 @@ fn write_tool_config_generic(
     custom_params: &[ModelCustomParam],
     custom_param_values: &HashMap<String, String>,
     web_search: bool,
+    chosen_protocol: &str,
 ) -> Result<(), String> {
     let cfg = match &tool_config.config_file {
         Some(c) => c,
@@ -749,9 +752,11 @@ fn write_tool_config_generic(
         && tool_config.support_one_m_context
         && (tool_config.api_protocol == "anthropic" || tool_config.api_protocol == "both");
 
-    // 组装待写入的 (路径, 值) 列表
-    // 组装待写入的 (路径, 值) 列表；值可以是标量字符串或 JSON 数组（如 pi 的 models）
-    let mut writes: Vec<(String, serde_json::Value)> = Vec::new();
+    // 组装待写入的 (目标文件, 路径, 值) 列表；值可以是标量字符串或 JSON 数组（如 pi 的 models）
+    // 目标文件默认为 configFile.path；路径带 "文件#子路径" 前缀时可写入同目录的兄弟文件
+    // （如 omp 的 config.yml#modelRoles.default → ~/.omp/agent/config.yml）。
+    let main_config_path = resolved_path.clone();
+    let mut writes: Vec<(String, String, serde_json::Value)> = Vec::new();
     // 声明模型名 C 优先；否则回退到实际模型 B
     let effective_model_id = claimed_model.or(model_id);
     let has_model = effective_model_id.is_some();
@@ -790,7 +795,25 @@ fn write_tool_config_generic(
             eprintln!("[config_file] skip {} (no fallback model)", path);
             continue;
         }
-        let resolved_path = path
+        // "文件#子路径"：写入 configFile 同目录的兄弟文件（子路径为 # 之后部分）
+        let target_file = if let Some((file, _)) = path.split_once('#') {
+            let f = file.trim();
+            if f.is_empty() {
+                main_config_path.clone()
+            } else {
+                main_config_path
+                    .parent()
+                    .map(|p| p.join(f))
+                    .unwrap_or_else(|| main_config_path.clone())
+            }
+        } else {
+            main_config_path.clone()
+        };
+        let sub_path = path
+            .split_once('#')
+            .map(|(_, s)| s.to_string())
+            .unwrap_or_else(|| path.clone());
+        let resolved_path = sub_path
             .replace("{model_name}", &model_name.replace('.', MODEL_NAME_DOT_ESCAPE))
             .replace("{fallback_model_name}", &fallback_model_name.replace('.', MODEL_NAME_DOT_ESCAPE));
         let value: serde_json::Value = match value_template.as_str() {
@@ -843,6 +866,26 @@ fn write_tool_config_generic(
                 }
                 serde_json::json!("live")
             },
+            // omp (Oh My Pi)：providers.<p>.api 协议标识（openai-completions / anthropic-messages）
+            "ompApiProtocol" => serde_json::json!(
+                if chosen_protocol == "anthropic" { "anthropic-messages" } else { "openai-completions" }
+            ),
+            // omp：无凭证的供应商写 auth: none（有 key 时不写，交给 apiKey 模板）
+            "ompAuthNone" => {
+                if !api_key.is_empty() {
+                    eprintln!("[config_file] skip {} (有 apiKey，不需要 auth: none)", resolved_path);
+                    continue;
+                }
+                serde_json::json!("none")
+            },
+            // omp：modelRoles.default = echobird/<model>，指向 models.yml 中受管 provider
+            "ompModelRole" => {
+                if !has_model {
+                    eprintln!("[config_file] skip {} (no model)", resolved_path);
+                    continue;
+                }
+                serde_json::json!(format!("echobird/{}", model.clone()))
+            },
             "apiKey" => {
                 // API Key 为空时不写入配置文件，避免写入空字符串被解析器判定为非法凭证
                 if api_key.is_empty() {
@@ -860,7 +903,7 @@ fn write_tool_config_generic(
             "<json>".to_string()
         };
         eprintln!("[config_file] set {} = {}", resolved_path, log);
-        writes.push((resolved_path, value));
+        writes.push((target_file.display().to_string(), resolved_path, value));
     }
 
     // 追加模型自定义的「config 目标」启动参数（写入工具配置文件指定 JSON 路径）
@@ -875,21 +918,31 @@ fn write_tool_config_generic(
             .or_else(|| cp.default_value.clone())
             .unwrap_or_default();
         eprintln!("[config_file] set (custom) {} = {}", path, mask_secret(&value));
-        writes.push((path, serde_json::json!(value)));
+        writes.push((main_config_path.display().to_string(), path, serde_json::json!(value)));
     }
 
-    let existing = if resolved_path.exists() {
-        fs::read_to_string(&resolved_path).unwrap_or_default()
-    } else {
-        String::new()
-    };
-
-    eprintln!("[config_file] 目标路径: {} (format={})", resolved_path.display(), cfg.format);
-    match cfg.format.as_str() {
-        "toml" => write_toml_config(&resolved_path, &existing, &writes)?,
-        _ => write_json_config(&resolved_path, &existing, &writes, cfg.schema.as_deref(), tool_config)?,
+    // 按目标文件分组（主配置文件 + "文件#子路径" 的兄弟文件），逐文件落盘
+    let mut by_file: std::collections::BTreeMap<String, Vec<(String, serde_json::Value)>> =
+        std::collections::BTreeMap::new();
+    for (file, sub, v) in writes {
+        by_file.entry(file).or_default().push((sub, v));
     }
-    eprintln!("[config_file] ✓ 已写入配置到 {}", resolved_path.display());
+
+    for (file, ws) in by_file {
+        let p = PathBuf::from(&file);
+        let existing = if p.exists() {
+            fs::read_to_string(&p).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        eprintln!("[config_file] 目标路径: {} (format={})", p.display(), cfg.format);
+        match cfg.format.as_str() {
+            "toml" => write_toml_config(&p, &existing, &ws)?,
+            "yaml" => write_yaml_config(&p, &existing, &ws)?,
+            _ => write_json_config(&p, &existing, &ws, cfg.schema.as_deref(), tool_config)?,
+        }
+        eprintln!("[config_file] ✓ 已写入配置到 {}", p.display());
+    }
     Ok(())
 }
 
@@ -1056,6 +1109,91 @@ fn toml_scalar(v: &serde_json::Value) -> String {
     match v {
         serde_json::Value::String(s) => s.clone(),
         other => other.to_string(),
+    }
+}
+
+/// 写入 YAML 配置文件（如 omp 的 models.yml / config.yml）。
+/// 读取失败或空文件按空文档处理；dotted path 语义与 set_json_path 一致。
+fn write_yaml_config(
+    path: &PathBuf,
+    existing: &str,
+    writes: &[(String, serde_json::Value)],
+) -> Result<(), String> {
+    let mut doc: serde_yaml::Value = if existing.trim().is_empty() {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    } else {
+        serde_yaml::from_str(existing).unwrap_or_else(|_| {
+            serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+        })
+    };
+    for (p, v) in writes {
+        set_yaml_path(&mut doc, p, json_value_to_yaml(v));
+    }
+    let content = serde_yaml::to_string(&doc)
+        .map_err(|e| format!("序列化 YAML 配置失败: {}", e))?;
+    crate::commands::config::atomic_write_file(path, content.as_bytes())
+        .map_err(|e| format!("写入 {} 失败: {}", path.display(), e))
+}
+
+/// serde_json::Value → serde_yaml::Value（配置模板产物都是 JSON 值）
+fn json_value_to_yaml(v: &serde_json::Value) -> serde_yaml::Value {
+    match v {
+        serde_json::Value::Null => serde_yaml::Value::Null,
+        serde_json::Value::Bool(b) => serde_yaml::Value::Bool(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                serde_yaml::Value::Number(i.into())
+            } else if let Some(f) = n.as_f64() {
+                serde_yaml::Value::Number(serde_yaml::Number::from(f))
+            } else {
+                serde_yaml::Value::Null
+            }
+        }
+        serde_json::Value::String(s) => serde_yaml::Value::String(s.clone()),
+        serde_json::Value::Array(a) => serde_yaml::Value::Sequence(
+            a.iter().map(json_value_to_yaml).collect(),
+        ),
+        serde_json::Value::Object(o) => {
+            let mut m = serde_yaml::Mapping::new();
+            for (k, val) in o {
+                m.insert(serde_yaml::Value::String(k.clone()), json_value_to_yaml(val));
+            }
+            serde_yaml::Value::Mapping(m)
+        }
+    }
+}
+
+/// 按 dotted path 设置 YAML 值（与 set_json_path 同语义，模型名 "." 转义占位符同理还原）
+fn set_yaml_path(doc: &mut serde_yaml::Value, path: &str, value: serde_yaml::Value) {
+    let parts: Vec<&str> = path.split('.').collect();
+    if parts.is_empty() {
+        return;
+    }
+    let mut cur = doc;
+    for (i, p) in parts.iter().enumerate() {
+        let key = serde_yaml::Value::String(p.replace(MODEL_NAME_DOT_ESCAPE, "."));
+        if i == parts.len() - 1 {
+            if !cur.is_mapping() {
+                *cur = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+            }
+            cur.as_mapping_mut().unwrap().insert(key, value);
+            return;
+        }
+        if !cur.is_mapping() {
+            *cur = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+        }
+        let map = cur.as_mapping_mut().unwrap();
+        let next = map
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+        let next = if next.is_mapping() {
+            next
+        } else {
+            serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+        };
+        map.insert(key.clone(), next.clone());
+        cur = map.get_mut(&key).unwrap();
     }
 }
 
@@ -1259,3 +1397,62 @@ async fn wait_for_proxy_ready(listen_address: &str, port: u16) -> bool {
 }
 
 
+
+#[cfg(test)]
+mod tests {
+    use super::{json_value_to_yaml, set_yaml_path, write_yaml_config};
+    use std::path::PathBuf;
+
+    #[test]
+    fn set_yaml_path_creates_nested_mapping() {
+        let mut doc = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+        set_yaml_path(&mut doc, "providers.echobird.baseUrl", serde_yaml::Value::String("http://127.0.0.1:1234".into()));
+        set_yaml_path(&mut doc, "providers.echobird.api", serde_yaml::Value::String("openai-completions".into()));
+        set_yaml_path(&mut doc, "modelRoles.default", serde_yaml::Value::String("echobird/gpt-5".into()));
+        let providers = doc.get("providers").unwrap().get("echobird").unwrap();
+        assert_eq!(providers.get("baseUrl").unwrap().as_str(), Some("http://127.0.0.1:1234"));
+        assert_eq!(providers.get("api").unwrap().as_str(), Some("openai-completions"));
+        assert_eq!(doc.get("modelRoles").unwrap().get("default").unwrap().as_str(), Some("echobird/gpt-5"));
+    }
+
+    #[test]
+    fn set_yaml_path_replaces_existing_scalar_with_mapping() {
+        let mut doc = serde_yaml::from_str::<serde_yaml::Value>("providers: junk\n").unwrap();
+        set_yaml_path(&mut doc, "providers.echobird.apiKey", serde_yaml::Value::String("sk-test".into()));
+        assert!(doc.get("providers").unwrap().is_mapping());
+        assert_eq!(doc["providers"]["echobird"]["apiKey"].as_str(), Some("sk-test"));
+    }
+
+    #[test]
+    fn yaml_config_round_trip_preserves_unrelated_keys() {
+        let dir = std::env::temp_dir().join(format!("kira_launch_yaml_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path: PathBuf = dir.join("models.yml");
+        std::fs::write(&path, "providers:\n  personal:\n    apiKey: PERSONAL_KEY\n").unwrap();
+        let writes = vec![
+            ("providers.echobird.baseUrl".to_string(), serde_json::json!("http://127.0.0.1:9")),
+            ("providers.echobird.models".to_string(), serde_json::json!([{"id": "gpt-5", "name": "gpt-5"}])),
+        ];
+        write_yaml_config(&path, &std::fs::read_to_string(&path).unwrap(), &writes).unwrap();
+        let out: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        // 其它 provider 保留
+        assert_eq!(out["providers"]["personal"]["apiKey"].as_str(), Some("PERSONAL_KEY"));
+        // 新 provider 写入
+        assert_eq!(out["providers"]["echobird"]["baseUrl"].as_str(), Some("http://127.0.0.1:9"));
+        assert_eq!(out["providers"]["echobird"]["models"][0]["id"].as_str(), Some("gpt-5"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn json_value_to_yaml_converts_objects_and_arrays() {
+        let jv = serde_json::json!({
+            "a": "x",
+            "b": [1, 2],
+            "c": { "nested": true }
+        });
+        let yv = json_value_to_yaml(&jv);
+        assert_eq!(yv["a"].as_str(), Some("x"));
+        assert_eq!(yv["b"][1].as_i64(), Some(2));
+        assert_eq!(yv["c"]["nested"].as_bool(), Some(true));
+    }
+}

@@ -1,0 +1,42 @@
+{
+  "id": "omp",
+  "displayName": "Oh My Pi",
+  "avatar": "🐚",
+  "nickname": "OMP",
+  "category": "开源社区",
+  "homepage": "https://omp.sh/",
+  "website": "https://github.com/can1357/oh-my-pi",
+  "apiProtocol": "both",
+  "supportModel": true,
+  "supportFallbackModel": false,
+
+  "supportsOpenai": true,
+  "supportsAnthropic": true,
+  "supportsGoogle": false,
+  "builtinModels": [],
+  "supportsOptimizer": true,
+  "supportsRectifier": true,
+
+  "resumeCmd": null,
+  "continueCmd": null,
+  "dispatchCmd": null,
+  "runner": null,
+  "promptMode": "arg",
+  "pkgManager": "npm",
+  "pkgName": "@oh-my-pi/pi-coding-agent",
+  "configFile": {
+    "path": "~/.omp/agent/models.yml",
+    "format": "yaml",
+    "write": {
+      "providers.echobird.baseUrl": "baseUrl",
+      "providers.echobird.api": "ompApiProtocol",
+      "providers.echobird.models": "piModels",
+      "providers.echobird.apiKey": "apiKey",
+      "providers.echobird.auth": "ompAuthNone",
+      "config.yml#modelRoles.default": "ompModelRole"
+    }
+  },
+  "sessions": {
+    "type": "none"
+  }
+}

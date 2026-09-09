@@ -4,6 +4,7 @@
   "avatar": "🥧",
   "nickname": "Pi",
   "category": "开源社区",
+  "homepage": "https://pi.dev/",
   "website": "https://github.com/earendil-works/pi-coding-agent",
   "apiProtocol": "openai",
   "supportModel": true,

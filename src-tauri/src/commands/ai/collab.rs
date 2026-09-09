@@ -1335,6 +1335,8 @@ async fn ensure_room_proxy(
             let claimed_model = options.masquerade_model.clone()
                 .filter(|c| !c.is_empty())
                 .or_else(|| model_id.map(|s| s.to_string()));
+            // 出站协议：collab 派发的工具均为单协议 JSON runner，native_protocol 即所选协议
+            let chosen_protocol = tool_config.native_protocol();
             if let Err(e) = super::launch::write_tool_config_from_spec(
                 tool_config,
                 model_id,
@@ -1349,6 +1351,7 @@ async fn ensure_room_proxy(
                 &options.custom_params,
                 &options.custom_param_values,
                 options.web_search,
+                &chosen_protocol,
             ) {
                 eprintln!("[collab] ⚠ 写入工具配置文件失败: {}", e);
             } else {

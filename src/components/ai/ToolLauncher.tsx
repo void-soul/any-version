@@ -739,7 +739,17 @@ export default function ToolLauncher() {
                     {tool.version || t("toollaunch.installed")}
                   </span>
                 ) : (
-                  <span className="text-[9px] text-slate-600">{t("toollaunch.notInstalled")}</span>
+                  <span className="flex items-center gap-1">
+                    <span className="text-[9px] text-slate-600">{t("toollaunch.notInstalled")}</span>
+                    {tool.website && (
+                      <a href={tool.website} target="_blank" rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-blue-400/70 hover:text-blue-300 transition-colors flex items-center"
+                        title={t("toollaunch.openSite")}>
+                        <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
+                    )}
+                  </span>
                 )}
                 {lastLaunchConfigs[tool.id] && tool.installed && (
                   <div className={`flex items-center gap-1 mt-0.5 ml-5.5 flex-wrap ${selectedToolId === tool.id ? "text-[color-mix(in_srgb,var(--module-accent)_70%,transparent)]" : "text-slate-600"}`}>

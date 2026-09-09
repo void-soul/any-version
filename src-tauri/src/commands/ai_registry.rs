@@ -23,6 +23,12 @@ pub struct ToolConfig {
     pub nickname: Option<String>,
     pub category: String,
     pub website: String,
+    /// 官网地址（优先于 website；website 可能指向 GitHub 仓库）
+    #[serde(default)]
+    pub homepage: Option<String>,
+    /// GitHub 仓库地址（homepage / website 均缺省时兜底）
+    #[serde(default)]
+    pub github: Option<String>,
     /// 工具「原生」协议（兼容旧逻辑：one_m 后缀、配置清理判定）。
     /// 新逻辑以 supports_openai/anthropic/google 三标志为准。
     pub api_protocol: String,
