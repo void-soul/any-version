@@ -1494,6 +1494,14 @@ impl RunnerAdapter for GeminiRunner {
     }
 }
 
+/// Cline CLI（`--json`）适配器
+struct ClineRunner;
+impl RunnerAdapter for ClineRunner {
+    fn parse(&self, line: &str) -> Option<(StreamEvent, Option<String>)> {
+        parse_cline_json(line)
+    }
+}
+
 /// reasonix（`reasonix-json`）适配器
 struct ReasonixRunner;
 impl RunnerAdapter for ReasonixRunner {
@@ -1521,6 +1529,7 @@ fn runner_adapter(runner: &str) -> Box<dyn RunnerAdapter> {
         "codex-json" => Box::new(CodexRunner),
         "opencode-json" => Box::new(OpenCodeRunner),
         "gemini-json" => Box::new(GeminiRunner),
+        "cline-json" => Box::new(ClineRunner),
         "reasonix-json" => Box::new(ReasonixRunner),
         _ => Box::new(GenericRunner),
     }
@@ -1751,6 +1760,66 @@ fn parse_gemini_json(line: &str) -> Option<(StreamEvent, Option<String>)> {
         Some("user") => {
             // 用户消息回显 → 忽略
             Some((StreamEvent::Ignore, sid))
+        }
+        _ => Some((StreamEvent::Ignore, sid)),
+    }
+}
+
+/// Cline `--json` 事件解析。
+/// 文本事件使用 `partial=true` 增量推送，最终非 partial 文本作为 Result，
+/// 这样即使 Cline 在收尾时重复发送完整文本，也不会导致前端重复显示。
+fn parse_cline_json(line: &str) -> Option<(StreamEvent, Option<String>)> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    let sid = v.get("session_id")
+        .or_else(|| v.get("sessionId"))
+        .or_else(|| v.get("session"))
+        .and_then(|s| s.as_str())
+        .map(|s| s.to_string());
+    let ty = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    let partial = v.get("partial").and_then(|p| p.as_bool()).unwrap_or(false);
+
+    match ty {
+        "say" => {
+            let subtype = v.get("say").and_then(|s| s.as_str()).unwrap_or("");
+            let text = v.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+            if text.is_empty() {
+                return Some((StreamEvent::Ignore, sid));
+            }
+            if subtype == "text" || subtype.is_empty() {
+                if partial {
+                    Some((StreamEvent::Delta(text), sid))
+                } else {
+                    Some((StreamEvent::Result(text, None), sid))
+                }
+            } else if subtype == "api_req_started" || subtype == "api_req_retried" {
+                Some((StreamEvent::Activity("请求模型…".to_string()), sid))
+            } else {
+                Some((StreamEvent::Activity(format!("{}", subtype)), sid))
+            }
+        }
+        "ask" => {
+            let question = v.get("text").and_then(|t| t.as_str()).unwrap_or("");
+            if question.is_empty() {
+                Some((StreamEvent::Ignore, sid))
+            } else {
+                Some((StreamEvent::Activity(format!("等待输入: {}", question)), sid))
+            }
+        }
+        "error" => {
+            let text = v.get("text")
+                .or_else(|| v.get("message"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("Cline 返回错误")
+                .to_string();
+            Some((StreamEvent::Result(format!("[error] {}", text), None), sid))
+        }
+        "completion_result" | "result" | "done" => {
+            let text = v.get("text")
+                .or_else(|| v.get("result"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some((StreamEvent::Result(text, None), sid))
         }
         _ => Some((StreamEvent::Ignore, sid)),
     }
@@ -3311,6 +3380,25 @@ pub fn collab_respond_prompt(msg_id: String, response: String) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_cline_json_supports_partial_and_final_text() {
+        let partial = parse_cline_json(r#"{"type":"say","say":"text","text":"hello ","partial":true,"session_id":"s1"}"#).unwrap();
+        assert_eq!(partial.1.as_deref(), Some("s1"));
+        assert!(matches!(partial.0, StreamEvent::Delta(ref text) if text == "hello "));
+
+        let final_event = parse_cline_json(r#"{"type":"say","say":"text","text":"hello world","partial":false,"session_id":"s1"}"#).unwrap();
+        assert!(matches!(final_event.0, StreamEvent::Result(ref text, None) if text == "hello world"));
+    }
+
+    #[test]
+    fn parse_cline_json_reports_activity_and_errors() {
+        let activity = parse_cline_json(r#"{"type":"say","say":"api_req_started","text":"requesting"}"#).unwrap();
+        assert!(matches!(activity.0, StreamEvent::Activity(ref text) if text == "请求模型…"));
+
+        let error = parse_cline_json(r#"{"type":"error","text":"bad request"}"#).unwrap();
+        assert!(matches!(error.0, StreamEvent::Result(ref text, None) if text == "[error] bad request"));
+    }
 
     #[test]
     fn escape_cmd_arg_wraps_value_in_double_quotes() {

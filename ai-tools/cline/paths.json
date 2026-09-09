@@ -1,0 +1,25 @@
+{
+  "name": "Cline",
+  "category": "CLI Code",
+  "apiProtocol": ["openai"],
+  "command": "cline",
+  "startCommand": "cline",
+  "detectCmd": "cline --version",
+  "installCmd": "npm install -g cline@latest",
+  "paths": {
+    "win32": [
+      "%APPDATA%/npm/cline.cmd",
+      "%USERPROFILE%/scoop/shims/cline.cmd",
+      "%USERPROFILE%/.bun/bin/cline.cmd",
+      "%LOCALAPPDATA%/pnpm/cline.cmd"
+    ],
+    "darwin": [
+      "/usr/local/bin/cline",
+      "~/.bun/bin/cline"
+    ],
+    "linux": [
+      "/usr/local/bin/cline",
+      "~/.bun/bin/cline"
+    ]
+  }
+}
