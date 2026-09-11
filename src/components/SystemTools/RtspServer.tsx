@@ -804,62 +804,6 @@ export default function RtspServer() {
                               </select>
                             </div>
 
-                            {/* 音频/麦克风设置 */}
-                            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-2">
-                              <label className="flex items-center justify-between cursor-pointer">
-                                <span className="text-[11px] text-slate-300 flex items-center gap-1.5">
-                                  {inst.config.includeAudio ? (
-                                    <Mic className="w-3.5 h-3.5 text-[var(--module-accent)]" />
-                                  ) : (
-                                    <MicOff className="w-3.5 h-3.5 text-slate-500" />
-                                  )}
-                                  {t("rtsp.enableAudio")}
-                                </span>
-                                <button
-                                  type="button"
-                                  role="switch"
-                                  aria-checked={inst.config.includeAudio}
-                                  disabled={isLocked}
-                                  onClick={() =>
-                                    updateInstanceConfig(inst.id, { includeAudio: !inst.config.includeAudio })
-                                  }
-                                  className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer ${
-                                    inst.config.includeAudio ? "bg-[var(--module-accent)]" : "bg-white/15"
-                                  } ${isLocked ? "opacity-50 cursor-not-allowed" : ""}`}
-                                >
-                                  <span
-                                    className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
-                                      inst.config.includeAudio ? "translate-x-4" : "translate-x-0.5"
-                                    }`}
-                                  />
-                                </button>
-                              </label>
-
-                              {inst.config.includeAudio && (
-                                <div>
-                                  <span className="text-[10px] text-slate-400 block mb-1">{t("rtsp.selectMic")}</span>
-                                  <select
-                                    value={inst.config.audioDevice || ""}
-                                    disabled={isLocked}
-                                    onChange={(e) => updateInstanceConfig(inst.id, { audioDevice: e.target.value })}
-                                    className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
-                                  >
-                                    {devices.audioDevices.length === 0 ? (
-                                      <option value="">{t("rtsp.noMicFound")}</option>
-                                    ) : (
-                                      devices.audioDevices.map((d) => (
-                                        <option key={d} value={d}>
-                                          {d}
-                                        </option>
-                                      ))
-                                    )}
-                                  </select>
-                                  <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
-                                    {t("rtsp.audioHint")}
-                                  </p>
-                                </div>
-                              )}
-                            </div>
                           </>
                         )}
 
@@ -892,6 +836,71 @@ export default function RtspServer() {
                               />
                               {t("rtsp.loopVideo")}
                             </label>
+                          </div>
+                        )}
+
+                        {/* 音频设置：摄像头模式可选麦克风；测试画幅模式推送 1kHz 合成测试音 */}
+                        {(inst.config.sourceType === "camera" || inst.config.sourceType === "testsrc") && (
+                          <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-2">
+                            <label className="flex items-center justify-between cursor-pointer">
+                              <span className="text-[11px] text-slate-300 flex items-center gap-1.5">
+                                {inst.config.includeAudio ? (
+                                  <Mic className="w-3.5 h-3.5 text-[var(--module-accent)]" />
+                                ) : (
+                                  <MicOff className="w-3.5 h-3.5 text-slate-500" />
+                                )}
+                                {t("rtsp.enableAudio")}
+                              </span>
+                              <button
+                                type="button"
+                                role="switch"
+                                aria-checked={inst.config.includeAudio}
+                                disabled={isLocked}
+                                onClick={() =>
+                                  updateInstanceConfig(inst.id, { includeAudio: !inst.config.includeAudio })
+                                }
+                                className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer ${
+                                  inst.config.includeAudio ? "bg-[var(--module-accent)]" : "bg-white/15"
+                                } ${isLocked ? "opacity-50 cursor-not-allowed" : ""}`}
+                              >
+                                <span
+                                  className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
+                                    inst.config.includeAudio ? "translate-x-4" : "translate-x-0.5"
+                                  }`}
+                                />
+                              </button>
+                            </label>
+
+                            {inst.config.includeAudio && inst.config.sourceType === "camera" && (
+                              <div>
+                                <span className="text-[10px] text-slate-400 block mb-1">{t("rtsp.selectMic")}</span>
+                                <select
+                                  value={inst.config.audioDevice || ""}
+                                  disabled={isLocked}
+                                  onChange={(e) => updateInstanceConfig(inst.id, { audioDevice: e.target.value })}
+                                  className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
+                                >
+                                  {devices.audioDevices.length === 0 ? (
+                                    <option value="">{t("rtsp.noMicFound")}</option>
+                                  ) : (
+                                    devices.audioDevices.map((d) => (
+                                      <option key={d} value={d}>
+                                        {d}
+                                      </option>
+                                    ))
+                                  )}
+                                </select>
+                                <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                                  {t("rtsp.audioHint")}
+                                </p>
+                              </div>
+                            )}
+
+                            {inst.config.includeAudio && inst.config.sourceType === "testsrc" && (
+                              <p className="text-[10px] text-slate-500 leading-relaxed">
+                                {t("rtsp.testsrcAudioHint")}
+                              </p>
+                            )}
                           </div>
                         )}
 

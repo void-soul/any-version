@@ -303,6 +303,14 @@ pub fn start_rtsp_server(
             "-f".to_string(), "lavfi".to_string(),
             "-i".to_string(), format!("testsrc=size={}:rate={}", size, rate),
         ]);
+        // 测试画幅没有音频输入设备，用 lavfi 合成一路 1kHz 正弦音作为第二个输入，
+        // 便于在没有麦克风的情况下验证音频链路是否正常（开启「包含音频」时生效）。
+        if config.include_audio {
+            args.extend(vec![
+                "-f".to_string(), "lavfi".to_string(),
+                "-i".to_string(), "sine=frequency=1000:sample_rate=44100".to_string(),
+            ]);
+        }
     } else if config.source_type == "camera" {
         let cam = config.camera_name.as_deref().unwrap_or("");
         if cam.is_empty() {
@@ -419,6 +427,10 @@ pub fn start_rtsp_server(
     // 4. 音频编码
     if config.include_audio {
         args.extend(vec!["-c:a".to_string(), "aac".to_string(), "-ar".to_string(), "44100".to_string()]);
+        // 测试音是满幅正弦波，直接推流非常刺耳，衰减到 50% 再编码
+        if config.source_type == "testsrc" {
+            args.extend(vec!["-af".to_string(), "volume=0.5".to_string()]);
+        }
     } else {
         args.push("-an".to_string());
     }
