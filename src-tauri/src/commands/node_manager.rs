@@ -64,6 +64,22 @@ pub struct NodeProjectDef {
     /// npx 模式下的可执行名；为空时取包名最后一段（`@scope/name` → `name`）。
     #[serde(default)]
     pub npx_bin: String,
+    /// 启动后从控制台输出（stdout/stderr）提取「带凭据主页地址」的正则。
+    /// 第 1 捕获组 = URL（如 dsh: `"dsh web: (http\\S+)"`）。
+    /// 为空表示不提取。适用于启动时在控制台打印带 token 认证地址、
+    /// 且该地址无法用普通 webPath 直接访问的服务（iframe 会被鉴权拒绝）。
+    #[serde(default)]
+    pub console_url_pattern: String,
+    /// 提取到控制台 URL 后是否自动用系统默认浏览器打开。
+    #[serde(default)]
+    pub auto_open_console_url: bool,
+}
+
+impl NodeProjectDef {
+    /// 是否启用控制台 URL 提取。
+    pub fn has_console_url_pattern(&self) -> bool {
+        !self.console_url_pattern.trim().is_empty()
+    }
 }
 
 fn default_port() -> u16 { 3000 }
@@ -472,6 +488,111 @@ fn emit_log(app: &tauri::AppHandle, project_id: &str, phase: &str, line: &str) {
             line: line.to_string(),
         },
     );
+}
+
+// ─── 控制台 URL 捕获（带凭据主页地址）───
+
+/// 控制台 URL 事件：从启动输出中捕获到带凭据地址时通知前端。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeConsoleUrl {
+    pub project_id: String,
+    pub url: String,
+}
+
+fn emit_console_url(app: &tauri::AppHandle, project_id: &str, url: &str) {
+    let _ = app.emit(
+        "npm-console-url",
+        NodeConsoleUrl {
+            project_id: project_id.to_string(),
+            url: url.to_string(),
+        },
+    );
+}
+
+/// 各项目最近一次捕获的控制台 URL（进程级状态；服务重启后由新输出覆盖）。
+static CONSOLE_URLS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+
+fn console_urls() -> std::sync::MutexGuard<'static, Option<HashMap<String, String>>> {
+    CONSOLE_URLS.lock().unwrap()
+}
+
+/// 单锁内完成「与已捕获值比较 + 覆盖记录」，返回是否发生变化。
+/// stdout/stderr 两个读取线程可能并发命中同一 URL，原子比较避免重复自动打开浏览器。
+fn record_console_url_if_changed(project_id: &str, url: &str) -> bool {
+    let mut g = console_urls();
+    let m = g.get_or_insert_with(HashMap::new);
+    let changed = m.get(project_id).map(String::as_str) != Some(url);
+    m.insert(project_id.to_string(), url.to_string());
+    changed
+}
+
+/// 读取某项目最近捕获的控制台 URL。
+fn console_url_of(project_id: &str) -> Option<String> {
+    console_urls().as_ref().and_then(|m| m.get(project_id).cloned())
+}
+
+/// 清除某项目捕获的控制台 URL（停止/卸载时调用）。
+fn clear_console_url(project_id: &str) {
+    if let Some(m) = console_urls().as_mut() {
+        m.remove(project_id);
+    }
+}
+
+/// 在控制台输出行中提取捕获组 URL；无 pattern 或不匹配返回 None。
+fn extract_console_url(pattern: &str, line: &str) -> Option<String> {
+    let re = regex::Regex::new(pattern).ok()?;
+    let m = re.captures(line)?;
+    let url = m.get(1)?.as_str().trim().trim_end_matches([')', ';', ',']);
+    if url.starts_with("http://") || url.starts_with("https://") {
+        Some(url.to_string())
+    } else {
+        None
+    }
+}
+
+/// 尝试从一行控制台输出中捕获带凭据主页地址。
+/// pattern 为空时直接返回；捕获到则覆盖记录、通知前端，并按配置自动打开。
+/// 同一行最多命中一次；同一次输出的重复行以后出现的为准（服务重启后 token 会更新）。
+fn maybe_capture_console_url(
+    app: &tauri::AppHandle,
+    project_id: &str,
+    pattern: &str,
+    auto_open: bool,
+    line: &str,
+) {
+    if pattern.trim().is_empty() {
+        return;
+    }
+    let Some(url) = extract_console_url(pattern, line) else {
+        return;
+    };
+    // 原子「比较+记录」：仅当地址变化（服务重启后 token 更新）时自动打开，
+    // stdout/stderr 并发命中同一行不会重复打开浏览器。
+    let changed = record_console_url_if_changed(project_id, &url);
+    emit_console_url(app, project_id, &url);
+    if changed && auto_open {
+        open_url_in_browser(&url);
+    }
+}
+
+/// 用系统默认浏览器打开 URL（explorer 优先，cmd start 兜底）。
+fn open_url_in_browser(url: &str) {
+    if let Some(path) = find_in_path("explorer") {
+        let _ = std::process::Command::new(path).arg(url).spawn();
+        return;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut c = std::process::Command::new("cmd");
+        c.creation_flags(0x08000000);
+        let _ = c.args(&["/c", "start", "", url]).spawn();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = std::process::Command::new("open").arg(url).spawn();
+    }
 }
 
 fn format_command(program: &str, args: &[&str]) -> String {
@@ -1268,8 +1389,10 @@ fn recorded_pid(id: &str) -> Option<u32> {
     running_pids().as_ref().and_then(|m| m.get(id).copied())
 }
 
-/// 停止项目进程树。
+/// 停止项目进程树，并清除该项目的控制台 URL 捕获记录。
 pub(crate) fn stop_project_process(def: &NodeProjectDef) -> Result<(), String> {
+    // 控制台 URL 随进程失效（重启后由新输出重新捕获）
+    clear_console_url(&def.id);
     // 1) 优先杀本应用记录的 PID 进程树
     if let Some(pid) = recorded_pid(&def.id) {
         let (_, stderr, ok) = run_capture("taskkill", &["/f", "/t", "/pid", &pid.to_string()], None);
@@ -1388,26 +1511,34 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
         .map_err(|e| format!("启动失败: {}", e))?;
     record_pid(&def.id, child.id());
 
-    // 实时回传启动日志（进程常驻，子线程持续读取 stdout/stderr 直到进程退出）
+    // 实时回传启动日志（进程常驻，子线程持续读取 stdout/stderr 直到进程退出）。
+    // 配置了 consoleUrlPattern 的项目，同时在输出行中提取带凭据主页地址：
+    // 捕获到新地址（以最后一次输出为准）时记录、通知前端，并按配置自动打开。
     emit_progress(&app, &def.id, "start", &format!("启动命令: {}", def.start_cmd.join(" ")));
     let app_out = app.clone();
     let pid_out = def.id.clone();
+    let pattern_out = def.console_url_pattern.clone();
+    let auto_open_out = def.auto_open_console_url;
     if let Some(mut so) = child.stdout.take() {
         std::thread::spawn(move || {
             use std::io::{BufRead, BufReader};
             let reader = BufReader::new(&mut so);
             for line in reader.lines().map_while(|l| l.ok()) {
+                maybe_capture_console_url(&app_out, &pid_out, &pattern_out, auto_open_out, &line);
                 emit_log(&app_out, &pid_out, "stdout", &line);
             }
         });
     }
     let app_err = app.clone();
     let pid_err = def.id.clone();
+    let pattern_err = def.console_url_pattern.clone();
+    let auto_open_err = def.auto_open_console_url;
     if let Some(mut se) = child.stderr.take() {
         std::thread::spawn(move || {
             use std::io::{BufRead, BufReader};
             let reader = BufReader::new(&mut se);
             for line in reader.lines().map_while(|l| l.ok()) {
+                maybe_capture_console_url(&app_err, &pid_err, &pattern_err, auto_open_err, &line);
                 emit_log(&app_err, &pid_err, "stderr", &line);
             }
         });
@@ -1492,27 +1623,122 @@ pub async fn npm_uninstall(project_id: String) -> Result<(), String> {
 
 // ─── 打开主页面 ───
 
+/// 查询某项目最近捕获的控制台 URL（带凭据主页地址）。
+/// 未配置 consoleUrlPattern 或尚未捕获时返回 None。
+#[tauri::command]
+pub fn npm_console_url(project_id: String) -> Result<Option<String>, String> {
+    let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
+    if !def.has_console_url_pattern() {
+        return Ok(None);
+    }
+    Ok(console_url_of(&def.id))
+}
+
 #[tauri::command]
 pub async fn npm_open(project_id: String) -> Result<(), String> {
     let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
-    let url = def.resolved_web_path();
-    if let Some(path) = find_in_path("explorer") {
-        let _ = std::process::Command::new(path).arg(&url).spawn();
-        return Ok(());
+    // 配置了控制台 URL 提取的项目优先用捕获的带凭据地址（token 随每次启动变化）；
+    // 尚未捕获时回退普通 webPath（服务自己无鉴权时也能直接打开）。
+    let url = if def.has_console_url_pattern() {
+        console_url_of(&def.id).unwrap_or_else(|| def.resolved_web_path())
+    } else {
+        def.resolved_web_path()
+    };
+    open_url_in_browser(&url);
+    Ok(())
+}
+
+// ─── 开发者模式打开主页面 ───
+
+/// 返回浏览器的常见安装位置。
+/// Windows 桌面应用通常不会把 Edge/Chrome 加入 Kira 进程的 PATH，
+/// 仅调用 find_in_path 会导致「开发者模式」看起来完全没有反应。
+fn browser_candidates(name: &str) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(path) = find_in_path(name) {
+        out.push(path);
     }
-    // 兜底：用系统默认浏览器
+
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
-        let mut c = std::process::Command::new("cmd");
-        c.creation_flags(0x08000000);
-        let _ = c.args(&["/c", "start", "", &url]).spawn();
+        let (relative, exe) = match name.to_ascii_lowercase().as_str() {
+            "msedge" | "msedge.exe" => ("Microsoft\\Edge\\Application", "msedge.exe"),
+            "chrome" | "chrome.exe" => ("Google\\Chrome\\Application", "chrome.exe"),
+            _ => return out,
+        };
+        for env_name in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
+            if let Ok(root) = std::env::var(env_name) {
+                out.push(PathBuf::from(root).join(relative).join(exe));
+            }
+        }
+    }
+    out
+}
+
+fn find_browser(name: &str) -> Option<PathBuf> {
+    browser_candidates(name).into_iter().find(|p| p.is_file())
+}
+
+/// 生成独立浏览器实例的启动参数。
+/// 使用独立 profile 是关键：如果复用已运行的 Edge/Chrome，浏览器可能把 URL
+/// 转发给旧进程并忽略 `--auto-open-devtools-for-tabs`。
+fn devtools_browser_args(url: &str, profile_dir: &Path) -> Vec<String> {
+    vec![
+        "--new-window".to_string(),
+        "--auto-open-devtools-for-tabs".to_string(),
+        "--no-first-run".to_string(),
+        "--no-default-browser-check".to_string(),
+        format!("--user-data-dir={}", profile_dir.to_string_lossy()),
+        url.to_string(),
+    ]
+}
+
+/// 在系统浏览器中打开服务首页，并请求自动打开 DevTools。
+/// 内嵌 iframe 无法跨域控制浏览器 DevTools，因此开发者模式使用独立浏览器窗口，
+/// 同时保留服务管理器里的内嵌首页作为日常查看入口。
+#[tauri::command]
+pub async fn npm_open_devtools(project_id: String) -> Result<(), String> {
+    let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
+    let url = def.resolved_web_path();
+
+    #[cfg(target_os = "windows")]
+    {
+        let browser = find_browser("msedge").or_else(|| find_browser("chrome"));
+        let path = browser.ok_or_else(|| {
+            "未找到 Edge 或 Chrome。请确认浏览器已安装，或将浏览器目录加入 PATH 后重试".to_string()
+        })?;
+        let profile = std::env::temp_dir()
+            .join("any-version-devtools")
+            .join(format!("{}-{}", project_id, std::process::id()));
+        let args = devtools_browser_args(&url, &profile);
+        eprintln!("[node_manager] 开发者模式: {} {:?}", path.display(), args);
+        std::process::Command::new(&path)
+            .args(&args)
+            .spawn()
+            .map_err(|e| format!("启动开发者模式浏览器失败（{}）: {}", path.display(), e))?;
         return Ok(());
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("open").arg(&url).spawn();
-        Ok(())
+        let args = devtools_browser_args(&url, &std::env::temp_dir().join("any-version-devtools"));
+        std::process::Command::new("open")
+            .args(["-na", "Google Chrome", "--args"])
+            .args(&args)
+            .spawn()
+            .map_err(|e| format!("启动开发者模式浏览器失败: {}", e))?;
+        return Ok(());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let browser = find_browser("google-chrome")
+            .or_else(|| find_browser("chromium"))
+            .ok_or_else(|| "未找到 Google Chrome 或 Chromium，无法打开开发者模式".to_string())?;
+        let args = devtools_browser_args(&url, &std::env::temp_dir().join("any-version-devtools"));
+        std::process::Command::new(browser)
+            .args(&args)
+            .spawn()
+            .map_err(|e| format!("启动开发者模式浏览器失败: {}", e))?;
+        return Ok(());
     }
 }
 
@@ -1937,6 +2163,8 @@ mod tests {
             managed: true,
             npx_package: String::new(),
             npx_bin: String::new(),
+            console_url_pattern: String::new(),
+            auto_open_console_url: false,
         };
         assert_eq!(def.resolved_web_path(), "http://127.0.0.1:3080");
     }
@@ -1965,6 +2193,8 @@ mod tests {
             managed: true,
             npx_package: pkg.into(),
             npx_bin: bin.into(),
+            console_url_pattern: String::new(),
+            auto_open_console_url: false,
         }
     }
 
@@ -2061,6 +2291,29 @@ mod tests {
     }
 
     #[test]
+    fn test_devtools_browser_args_isolated_profile() {
+        let args = devtools_browser_args("http://127.0.0.1:3080", Path::new("C:\\Temp\\Kira DevTools"));
+        assert!(args.contains(&"--new-window".to_string()));
+        assert!(args.contains(&"--auto-open-devtools-for-tabs".to_string()));
+        assert!(args.contains(&"--no-first-run".to_string()));
+        assert!(args.contains(&"--no-default-browser-check".to_string()));
+        assert!(args.iter().any(|x| x == "--user-data-dir=C:\\Temp\\Kira DevTools"));
+        assert_eq!(args.last().map(String::as_str), Some("http://127.0.0.1:3080"));
+    }
+
+    #[test]
+    fn test_browser_candidates_keep_path_lookup_first() {
+        // 不依赖本机是否安装浏览器：候选列表至少保持可由 PATH 命中的结果优先，
+        // Windows 上再追加 Program Files / LOCALAPPDATA 的标准目录。
+        let candidates = browser_candidates("a-browser-that-is-not-installed");
+        assert!(candidates.is_empty());
+        let candidates = browser_candidates("chrome");
+        if !candidates.is_empty() {
+            assert!(candidates.iter().any(|p| p.to_string_lossy().to_lowercase().contains("chrome")));
+        }
+    }
+
+    #[test]
     fn test_format_command_quotes_paths() {
         let command = format_command(
             "npm.cmd",
@@ -2070,5 +2323,66 @@ mod tests {
             command,
             "npm.cmd install --prefix \"C:\\Program Files\\Kira\" pkg"
         );
+    }
+
+    // ─── 控制台 URL 捕获 ───
+
+    #[test]
+    fn test_extract_console_url_dsh_line() {
+        // dsh web 启动时打印：dsh web: http://127.0.0.1:3080/?token=xxx（可能带 LAN 后缀）
+        let line = "dsh web: http://127.0.0.1:3080/?token=dV2LhQhkX5yF18tf9baCDDsdbIfeLslc2g8P8wiTMNY";
+        assert_eq!(
+            extract_console_url("dsh web: (http\\S+)", line).as_deref(),
+            Some("http://127.0.0.1:3080/?token=dV2LhQhkX5yF18tf9baCDDsdbIfeLslc2g8P8wiTMNY")
+        );
+        // 行尾括号包裹的 URL 也要剥干净
+        let line2 = "dsh web: http://127.0.0.1:3080/?token=abc123)";
+        assert_eq!(
+            extract_console_url("dsh web: (http\\S+)", line2).as_deref(),
+            Some("http://127.0.0.1:3080/?token=abc123")
+        );
+        // 无匹配行 / 非 http 开头捕获组 → None
+        assert_eq!(extract_console_url("dsh web: (http\\S+)", "some other log line"), None);
+        assert_eq!(extract_console_url("found at (\\S+)", "found at ftp://x"), None);
+        // 空 pattern → None
+        assert_eq!(extract_console_url("", "dsh web: http://x"), None);
+        // 非法 regex → None（不 panic）
+        assert_eq!(extract_console_url("(unclosed", "anything"), None);
+    }
+
+    #[test]
+    fn test_console_url_lifecycle() {
+        let id = "test-console-url-lifecycle";
+        // 初始为空
+        clear_console_url(id);
+        assert_eq!(console_url_of(id), None);
+        // 首次记录：changed = true，且可读回
+        assert!(record_console_url_if_changed(id, "http://127.0.0.1:3080/?token=first"));
+        assert_eq!(console_url_of(id).as_deref(), Some("http://127.0.0.1:3080/?token=first"));
+        // 重复命中同一 URL：changed = false（不重复自动打开浏览器）
+        assert!(!record_console_url_if_changed(id, "http://127.0.0.1:3080/?token=first"));
+        // 覆盖（服务重启后新 token）：changed = true
+        assert!(record_console_url_if_changed(id, "http://127.0.0.1:3080/?token=second"));
+        assert_eq!(console_url_of(id).as_deref(), Some("http://127.0.0.1:3080/?token=second"));
+        // 清除后为空（停止服务）
+        clear_console_url(id);
+        assert_eq!(console_url_of(id), None);
+    }
+
+    #[test]
+    fn test_def_console_url_flags() {
+        let mut def = npx_def("@deepseek-ai/dsh", "dsh");
+        assert!(!def.has_console_url_pattern());
+        def.console_url_pattern = "dsh web: (http\\S+)".into();
+        assert!(def.has_console_url_pattern());
+        // 配置文件 JSON 反序列化：camelCase 字段映射
+        let json = r#"{
+            "id": "x", "displayName": "X", "defaultPort": 1,
+            "consoleUrlPattern": "dsh web: (http\\S+)", "autoOpenConsoleUrl": true
+        }"#;
+        let def: NodeProjectDef = serde_json::from_str(json).unwrap();
+        assert_eq!(def.console_url_pattern, "dsh web: (http\\S+)");
+        assert!(def.auto_open_console_url);
+        assert!(def.has_console_url_pattern());
     }
 }

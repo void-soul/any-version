@@ -24,6 +24,7 @@ import {
   ScanSearch,
   LayoutGrid,
   Settings2,
+  BarChart3,
   Loader2,
   ArrowRightLeft,
 } from "lucide-react";
@@ -63,6 +64,7 @@ import {
   LauncherSetting,
 } from "./types";
 import { matchPinyin } from "./pinyin";
+import { sortLauncherItemsByUsage } from "./usageStats";
 import CategoryModal from "./CategoryModal";
 import AddItemModal from "./AddItemModal";
 import VexAvatar from "../VexAvatar";
@@ -287,6 +289,7 @@ export default function LauncherPanel() {
 
   // 视图设置面板开关
   const [viewSettingsOpen, setViewSettingsOpen] = useState(false);
+  const [usageStatsOpen, setUsageStatsOpen] = useState(false);
 
   const viewSettingsRef = useRef<HTMLDivElement>(null);
 
@@ -997,6 +1000,8 @@ export default function LauncherPanel() {
     );
   }, [visibleItems, searchQuery]);
 
+  const usageStats = useMemo(() => sortLauncherItemsByUsage(allItems), [allItems]);
+
   // Open / Close Search
   const openSearch = () => {
     setIsSearchOpen(true);
@@ -1436,6 +1441,20 @@ export default function LauncherPanel() {
               <ChevronsUp className="w-3 h-3 text-cyan-400" />
             )}
             <span className="text-[11px]">{isAllCollapsed ? t("launcher.expandAll") : t("launcher.collapseAll")}</span>
+          </button>
+
+          {/* 使用统计 */}
+          <button
+            onClick={() => setUsageStatsOpen((v) => !v)}
+            className={`px-2.5 py-1 rounded-lg text-xs flex items-center gap-1.5 border transition cursor-pointer ${
+              usageStatsOpen
+                ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white"
+                : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
+            }`}
+            title={t("launcher.usageStatsTitle")}
+          >
+            <BarChart3 className="w-3 h-3 text-amber-400" />
+            <span className="text-[11px]">{t("launcher.usageStats")}</span>
           </button>
 
           {/* 视图设置 */}
@@ -1916,6 +1935,50 @@ export default function LauncherPanel() {
             );
           })()}
         </div>
+
+        {usageStatsOpen && (
+          <div className="absolute inset-y-0 left-0 right-0 z-30 bg-[#0c101c]/98 backdrop-blur-md flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between border-b border-white/10 px-5 py-3">
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-amber-400" />
+                <div>
+                  <h3 className="text-sm font-bold text-white">{t("launcher.usageStats")}</h3>
+                  <p className="text-[10px] text-slate-500">{t("launcher.usageStatsHint")}</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setUsageStatsOpen(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white" title={t("launcher.closeUsageStats")}>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-5">
+              {usageStats.length === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-slate-500">
+                  <BarChart3 className="w-10 h-10 opacity-30" />
+                  <p className="text-xs">{t("launcher.noUsageStats")}</p>
+                </div>
+              ) : (
+                <div className="mx-auto grid max-w-3xl grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {usageStats.map((item, index) => {
+                    const cat = classificationMap.get(item.classificationId);
+                    return (
+                      <button key={item.id} type="button" onClick={() => { setUsageStatsOpen(false); setActiveParentId(cat?.parentId ?? cat?.id ?? activeParentId); handleExecuteItem(item); }} className="group flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-left transition hover:border-[var(--module-accent-ring)] hover:bg-[var(--module-accent-soft)]">
+                        <span className="w-6 shrink-0 text-center font-mono text-[10px] text-slate-600">{index + 1}</span>
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white/10">
+                          {item.data.icon ? <img src={item.data.icon} className="h-7 w-7 object-contain" alt="" /> : item.data.htmlIcon ? <span className="text-lg">{item.data.htmlIcon}</span> : <FileText className="h-5 w-5 text-[var(--module-accent)]" />}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-xs font-medium text-slate-200 group-hover:text-white">{item.name}</div>
+                          <div className="truncate text-[9px] text-slate-500">{cat?.data.icon ?? "📁"} {cat?.name ?? t("launcher.currentCat")}</div>
+                        </div>
+                        <span className="shrink-0 rounded-md bg-amber-400/10 px-1.5 py-1 font-mono text-[10px] font-bold text-amber-300">{t("launcher.openCount", { count: item.data.openNumber ?? 0 })}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Figure 2: Unified Search Overlay */}
         {isSearchOpen && (

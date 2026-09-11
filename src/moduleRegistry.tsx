@@ -24,6 +24,7 @@ import {
   FlaskConical,
   Usb,
   Cable,
+  UserRoundCog,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import i18n from "./i18n";
@@ -174,6 +175,14 @@ export const MODULES: ModuleDef[] = [
     color: "#e11d48",
     defaultToolbar: false,
     Component: lazyLoad(() => import("./components/PickyPanel")),
+  },
+  {
+    id: "buddy",
+    label: "Buddy",
+    icon: UserRoundCog,
+    color: "#0d9488",
+    defaultToolbar: false,
+    Component: lazyLoad(() => import("./components/buddy/BuddyPanel")),
   },
   {
     id: "settings",

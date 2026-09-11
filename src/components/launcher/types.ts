@@ -59,6 +59,8 @@ export interface ItemData {
   multiItems?: MultiItemEntry[];
   exists?: boolean | null; // 最近一次检测是否存在（持久化，null=未检测）
   checkedAt?: number | null; // 最近一次检测时间（unix 秒）
+  openNumber?: number; // 启动次数
+  lastOpen?: number; // 最近一次启动时间（unix 毫秒）
 }
 
 export interface LauncherSetting {

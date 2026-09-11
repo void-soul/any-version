@@ -102,6 +102,12 @@ pub struct ItemData {
     /// 最近一次检测时间（unix 秒），None=未检测
     #[serde(default)]
     pub checked_at: Option<i64>,
+    /// 启动次数（由数据库 open_number 累计）
+    #[serde(default)]
+    pub open_number: i64,
+    /// 最近一次启动时间（unix 毫秒）
+    #[serde(default)]
+    pub last_open: i64,
 }
 
 /// 启动项检测结果

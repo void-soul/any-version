@@ -26,6 +26,7 @@ pub mod node_manager;
 pub mod launcher;
 pub mod clipboard;
 pub mod otp;
+pub mod buddy;
 pub mod picky;
 pub mod secrets;
 pub mod s3_common;

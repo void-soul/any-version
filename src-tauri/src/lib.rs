@@ -384,6 +384,8 @@ pub fn run() {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 commands::picky::picky_sync_if_enabled().await;
             });
+            // Buddy 自动签到调度器（WorkBuddy / CodeBuddy CN 后台签到）
+            commands::buddy::start_auto_checkin_scheduler(app.handle().clone());
             if let Ok(setting) = commands::launcher::db::get_settings() {
                 let mut hotkeys = setting.module_hotkeys.clone();
                 if !setting.selection_translate_hotkey.trim().is_empty() {
@@ -674,6 +676,7 @@ pub fn run() {
             commands::rtsp_server::get_all_local_ips,
             commands::file_io::read_text_file,
             commands::file_io::write_text_file,
+            commands::file_io::file_io_save_text,
             commands::file_io::list_sibling_markdown,
             commands::file_io::resolve_markdown_link,
             commands::file_io::markdown_assoc_status,
@@ -913,6 +916,8 @@ commands::node_manager::npm_exec,
                 commands::node_manager::npm_stop,
                 commands::node_manager::npm_uninstall,
                 commands::node_manager::npm_open,
+                commands::node_manager::npm_open_devtools,
+                commands::node_manager::npm_console_url,
                 commands::node_manager::get_node_projects_dir,
                 commands::node_manager::update_node_projects_dir,
                 commands::node_manager::npm_check_update,
@@ -959,6 +964,7 @@ commands::node_manager::npm_exec,
                 commands::clipboard::clipboard_pin_item,
                 commands::clipboard::clipboard_clear_history,
                 commands::clipboard::clipboard_copy_item,
+                commands::clipboard::clipboard_paste_text,
                 commands::clipboard::clipboard_paste_item,
                 commands::clipboard::clipboard_get_settings,
                 commands::clipboard::clipboard_save_settings,
@@ -985,6 +991,39 @@ commands::node_manager::npm_exec,
                 commands::otp::otp_list_brands,
                 commands::otp::otp_match_brand,
                 commands::otp::otp_scan_qr,
+
+                // ---- Buddy 账号管理（WorkBuddy / CodeBuddy CN：切换/用量/签到/会话） ----
+                commands::buddy::buddy_list_accounts,
+                commands::buddy::buddy_delete_account,
+                commands::buddy::buddy_get_expiry_columns,
+                commands::buddy::buddy_set_expiry_columns,
+                commands::buddy::buddy_set_expiry_times,
+                commands::buddy::buddy_delete_accounts,
+                commands::buddy::buddy_export_accounts,
+                commands::buddy::buddy_import_accounts,
+                commands::buddy::buddy_sync_accounts,
+                commands::buddy::buddy_import_from_local,
+                commands::buddy::buddy_get_current_account_id,
+                commands::buddy::buddy_switch_account,
+                commands::buddy::buddy_get_paths,
+                commands::buddy::buddy_refresh_token,
+                commands::buddy::buddy_refresh_all_tokens,
+                commands::buddy::buddy_query_usage,
+                commands::buddy::buddy_query_all_usage,
+                commands::buddy::buddy_oauth_start,
+                commands::buddy::buddy_oauth_complete,
+                commands::buddy::buddy_oauth_cancel,
+                commands::buddy::buddy_add_account_with_token,
+                commands::buddy::buddy_checkin,
+                commands::buddy::buddy_checkin_status,
+                commands::buddy::buddy_auto_checkin_get_config,
+                commands::buddy::buddy_auto_checkin_save_config,
+                commands::buddy::buddy_auto_checkin_logs,
+                commands::buddy::buddy_auto_checkin_clear_logs,
+                commands::buddy::buddy_auto_checkin_run,
+                commands::buddy::buddy_list_sessions,
+                commands::buddy::buddy_get_client_paths,
+                commands::buddy::buddy_set_client_path,
 
                 // ---- Picky 收藏/归档（与 Flutter 端同数据接口 + S3 同步） ----
                 commands::picky::picky_get_state,

@@ -129,6 +129,34 @@ pub async fn clipboard_copy_item(
     Ok(())
 }
 
+/// 将文本写入剪贴板、隐藏主窗口，并模拟 Ctrl+V 粘贴到唤起本窗口前的活动窗口。
+/// 供 OTP 等瞬时工具复用，避免各模块自行实现窗口隐藏和前台窗口恢复。
+#[tauri::command]
+pub async fn clipboard_paste_text(
+    app: AppHandle,
+    state: State<'_, ClipboardState>,
+    text: String,
+) -> Result<(), String> {
+    if text.is_empty() {
+        return Err("不能粘贴空文本".into());
+    }
+
+    let st = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _wl = st.clipboard_write_lock.lock().map_err(|e| e.to_string())?;
+        paste::write_multi(&[(super::CF_UNICODETEXT, paste::text_to_utf16_bytes(&text))])
+    })
+    .await
+    .map_err(|e| format!("写入剪贴板任务异常: {}", e))??;
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+
+    let target = super::monitor_take_previous_window();
+    paste::simulate_paste(target)
+}
+
 #[tauri::command]
 pub async fn clipboard_paste_item(
     app: AppHandle,

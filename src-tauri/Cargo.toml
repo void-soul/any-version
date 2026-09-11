@@ -26,6 +26,7 @@ tauri-plugin-process = "2"
 serde = { version = "1.0", features = ["derive"] }
 regex = "1.10"
 serde_json = "1.0"
+url = "2.5"
 winreg = "0.52"
 walkdir = "2.5"
 reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli"] }
@@ -94,5 +95,11 @@ windows-sys = { version = "0.59", features = [
   "Win32_System_RemoteDesktop",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Registry",
+  "Win32_Security_Cryptography",
 ] }
+# 定位用户主目录/系统数据目录（Buddy 账号模块读取本地 IDE 认证存储）
+dirs = "5"
+# VS Code safe storage 解密（macOS/Linux：AES-128-CBC + PBKDF2）
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
 

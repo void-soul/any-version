@@ -15,7 +15,7 @@ import VexEmptyState from "../VexEmptyState";
 import {
   AlertTriangle, BarChart3, Brain, File, Folder, FolderOpen, LayoutGrid, Loader2,
   ScrollText, Sparkles, StickyNote, Image, Trash2, X, Plus, Pencil, Eye,
-  ChevronDown, ChevronRight, ChevronsRight, ChevronLeft, FolderPlus, Search, Maximize2, Minimize2, Code2, FileText, ListTree, RotateCcw, RotateCw, Calendar, Link2, Square, MessageCircle,
+  ChevronDown, ChevronRight, ChevronsRight, ChevronLeft, FolderPlus, Search, Maximize2, Minimize2, Code2, FileText, ListTree, RotateCcw, RotateCw, Calendar, Link2, Square, MessageCircle, LocateFixed,
 } from "lucide-react";
 import type { AiConfig } from "../ai/types";
 import { AiImportResult, DocumentFull, MindmapDocument, MindmapFolder, MindmapNode, MindmapSticker, PlannedOccurrence, PositionInput, kindColor, mmApi } from "./types";
@@ -26,7 +26,6 @@ import { SharedModal } from "../shared/Modal";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import {
   AgentWorkbench,
-  clearAgentMessages,
   clearAnsweredAsks,
   mmAiProgressBuffer,
   openSourceFile,
@@ -992,7 +991,7 @@ function AiImportReportModal({ result, onClose, onOpenDoc }: {
   const [expOpen, setExpOpen] = useState(false);
   const allOk = result.reports.length > 0 && result.reports.every(r => r.diagnostics.length === 0) && result.failures.length === 0;
   return createPortal(
-    <div className="fixed inset-0 z-[210] modal-mask flex items-center justify-center bg-black/70 p-4 backdrop-blur-[3px]" onClick={onClose}>
+    <div className="fixed inset-0 z-[410] modal-mask flex items-center justify-center bg-black/70 p-4 backdrop-blur-[3px]" onClick={onClose}>
       <div className="w-[min(94vw,560px)] rounded-xl border border-white/10 bg-[#0d1524] p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-white"><Sparkles className="h-4 w-4 text-cyan-400" />{t("mindmap.aiReportTitle")}</h3>
@@ -1131,7 +1130,7 @@ type NodeCacheEntry = {
   obj: Node;
 };
 
-function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onAiText, onError, onOpenCalendar, focusRequest, onFocusHandled, aiPill }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onAiText: () => void; onError: (message: string) => void; onOpenCalendar: () => void; focusRequest: { nodeId: string; ts: number } | null; onFocusHandled: () => void; aiPill?: React.ReactNode }) {
+function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onError, onOpenCalendar, focusRequest, onFocusHandled, aiPill }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onError: (message: string) => void; onOpenCalendar: () => void; focusRequest: { nodeId: string; ts: number } | null; onFocusHandled: () => void; aiPill?: React.ReactNode }) {
   const { t } = useTranslation();
   const { fitView } = useReactFlow();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -1296,6 +1295,12 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     // 等展开生效（节点出现在 visibleNodes/flowNodes 并被 RF 测量）后再聚焦
     window.setTimeout(() => fitView({ nodes: [{ id }], padding: 0.4, duration: 300, maxZoom: 1.2 }), 60);
   }, [byId, fitView]);
+
+  // 聚焦当前节点：保留当前缩放级别上限，避免单节点定位后突然放大到难以回看全局。
+  const focusSelected = useCallback(() => {
+    if (!selectedId || !byId.has(selectedId)) return;
+    fitView({ nodes: [{ id: selectedId }], padding: 0.4, duration: 300, maxZoom: 1.2 });
+  }, [selectedId, byId, fitView]);
 
   // 当前选中节点变化（画布点选/键盘导航）→ 树面板滚动到对应行，保持两侧行为同步。
   const selectedTreeIdx = navTree.findIndex(x => x.node.id === selectedId);
@@ -1628,6 +1633,28 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     deleteNode(selectedId);
   }, [selectedId, deleteNode]);
 
+  // 键盘方向键按树关系移动：上=父节点，下=首个子节点，左右=前后同级节点。
+  // 这比按画布几何位置猜测更稳定，尤其适用于自动布局和手动拖动混用的导图。
+  const navigateByKey = useCallback((key: string) => {
+    if (!selectedId) return;
+    const current = byId.get(selectedId);
+    if (!current) return;
+    let nextId: string | null = null;
+    if (key === "ArrowUp") {
+      nextId = current.parentId && byId.has(current.parentId) ? current.parentId : null;
+    } else if (key === "ArrowDown") {
+      nextId = graphNodes.find(n => n.parentId === current.id)?.id ?? null;
+    } else if (key === "ArrowLeft" || key === "ArrowRight") {
+      const siblings = graphNodes.filter(n => (n.parentId ?? null) === (current.parentId ?? null));
+      const index = siblings.findIndex(n => n.id === current.id);
+      if (index >= 0) {
+        const offset = key === "ArrowLeft" ? -1 : 1;
+        nextId = siblings[index + offset]?.id ?? null;
+      }
+    }
+    if (nextId) navToNode(nextId);
+  }, [selectedId, byId, graphNodes, navToNode]);
+
   const relayout = useCallback(() => {
     const lp = layoutTree(full.nodes, dir);
     const n2 = flowNodes.filter(n => !n.id.startsWith("sticker-")).map(n => ({ nodeId: n.id, x: lp.get(n.id)?.x ?? 0, y: lp.get(n.id)?.y ?? 0 }));
@@ -1672,16 +1699,18 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       if (e.key === "Delete" || e.key === "Backspace") { if (selectedId) { e.preventDefault(); deleteSelected(); } }
       else if (e.key === "Tab") { e.preventDefault(); addChildNode(); }
       else if (e.key === "Enter") { if (selectedId) { e.preventDefault(); const n = byId.get(selectedId); if (n) setDetailNode(n); } }
-      else if (e.key === "Escape") { setSelectedId(null); setCtxMenu(null); }
+      else if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) { e.preventDefault(); navigateByKey(e.key); }
+      else if (e.key === "Escape") { setSelectedId(null); setCtxMenu(null); setPreview(null); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedId, detailNode, deleteSelected, addChildNode, byId]);
+  }, [selectedId, detailNode, deleteSelected, addChildNode, byId, navigateByKey]);
 
   return (
     <div className="relative h-full min-h-0">
       <ReactFlow nodes={flowNodes} edges={edges} nodeTypes={mmNodeTypes} edgeTypes={mmEdgeTypes}
         onNodesChange={onNodesChange} onNodeDragStop={onNodeDragStop} onConnect={onConnect} onMove={onViewportMove}
+        onPaneClick={() => { setSelectedId(null); setCtxMenu(null); setPreview(null); }}
         onNodeContextMenu={(e, n) => onNodeContextMenu(e, n as Node)} minZoom={0.1} maxZoom={2.5} nodesConnectable
         proOptions={{ hideAttribution: true }}>
         <MiniMap style={{ backgroundColor: "#080f1c", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95"
@@ -1768,14 +1797,14 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
           <div className="pointer-events-auto flex flex-col gap-1">
             <div className="rounded-lg border border-white/10 bg-slate-900/95 p-1 shadow-lg flex flex-col gap-0.5">
               <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={relayout} title={t("mindmap.autoLayout")}><LayoutGrid className="h-3 w-3" />{t("mindmap.layout")}</button>
+              <button type="button" disabled={!selectedId} className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={focusSelected} title={t("mindmap.focusSelected")}><LocateFixed className="h-3 w-3" />{t("mindmap.focusSelected")}</button>
               <select className="w-full rounded border border-white/10 bg-slate-900/95 px-1.5 py-1 text-[10px] text-slate-300 outline-none focus:border-cyan-400/60" value={dir} onChange={(e) => changeDir(e.target.value as LayoutDir)} title={t("mindmap.layoutDir")}>
                 {Object.entries(LAYOUT_DIR_KEYS).map(([k, v]) => <option key={k} value={k}>{t(v)}</option>)}
               </select>
               <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={onOpenCalendar} title={t("mindmap.planCalendarBtn")}><Calendar className="h-3 w-3" />{t("mindmap.planCalendar")}</button>
               <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => addChildNode()} title={t("mindmap.addChild")}><Plus className="h-3 w-3" />{t("mindmap.childNode")}</button>
               <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={() => addNode(null)} title={t("mindmap.newRootNode")}><ListTree className="h-3 w-3" />{t("mindmap.newRootNode")}</button>
-              <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={onAiProject} title={t("mindmap.aiProject")}><Code2 className="h-3 w-3" />{t("mindmap.aiProject")}</button>
-              <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={onAiText} title={t("mindmap.aiParseDoc")}><FileText className="h-3 w-3" />{t("mindmap.aiParseDoc")}</button>
+              <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={onAiProject} title={t("mindmap.aiUnifiedTitle")}><Brain className="h-3 w-3" />{t("mindmap.aiUnifiedBtn")}</button>
               <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => addSticker()} title={t("mindmap.textSticker")}><StickyNote className="h-3 w-3" />{t("mindmap.textSticker")}</button>
               <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => void addImageSticker()} title={t("mindmap.imageSticker")}><Image className="h-3 w-3" />{t("mindmap.imageSticker")}</button>
             </div>
@@ -1789,6 +1818,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
             {selectedId && (
               <div className="rounded-lg border border-white/10 bg-slate-900/95 p-1.5 shadow-lg text-[8px] text-slate-600 leading-relaxed">
                 <div><kbd className="rounded border border-white/15 px-1 py-0.5 text-[7px] text-slate-400">Tab</kbd> {t("mindmap.kbdChild")}</div>
+                <div><kbd className="rounded border border-white/15 px-1 py-0.5 text-[7px] text-slate-400">↑↓←→</kbd> {t("mindmap.kbdNavigate")}</div>
                 <div><kbd className="rounded border border-white/15 px-1 py-0.5 text-[7px] text-slate-400">Enter</kbd> {t("mindmap.kbdDetail")}</div>
                 <div><kbd className="rounded border border-white/15 px-1 py-0.5 text-[7px] text-slate-400">Del</kbd> {t("mindmap.kbdDelete")}</div>
                 <div><kbd className="rounded border border-white/15 px-1 py-0.5 text-[7px] text-slate-400">Esc</kbd> {t("mindmap.kbdCancel")}</div>
@@ -1857,8 +1887,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   );
 }
 
-function Canvas({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onAiText, onError, onOpenCalendar, focusRequest, onFocusHandled, aiPill }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onAiText: () => void; onError: (message: string) => void; onOpenCalendar: () => void; focusRequest: { nodeId: string; ts: number } | null; onFocusHandled: () => void; aiPill?: React.ReactNode }) {
-  return <div className="h-full min-h-0 bg-[#080f1c]"><ReactFlowProvider><CanvasInner full={full} accent={accent} onDocumentUpdate={onDocumentUpdate} onHistoryPush={onHistoryPush} historyVersion={historyVersion} onAiProject={onAiProject} onAiText={onAiText} onError={onError} onOpenCalendar={onOpenCalendar} focusRequest={focusRequest} onFocusHandled={onFocusHandled} aiPill={aiPill} /></ReactFlowProvider></div>;
+function Canvas({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onError, onOpenCalendar, focusRequest, onFocusHandled, aiPill }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onError: (message: string) => void; onOpenCalendar: () => void; focusRequest: { nodeId: string; ts: number } | null; onFocusHandled: () => void; aiPill?: React.ReactNode }) {
+  return <div className="h-full min-h-0 bg-[#080f1c]"><ReactFlowProvider><CanvasInner full={full} accent={accent} onDocumentUpdate={onDocumentUpdate} onHistoryPush={onHistoryPush} historyVersion={historyVersion} onAiProject={onAiProject} onError={onError} onOpenCalendar={onOpenCalendar} focusRequest={focusRequest} onFocusHandled={onFocusHandled} aiPill={aiPill} /></ReactFlowProvider></div>;
 }
 
 // ════════════ 主面板 ════════════
@@ -1923,7 +1953,9 @@ export default function MindmapPanel() {
   const [folderName, setFolderName] = useState("");
   const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
   const [renameDocName, setRenameDocName] = useState("");
-  const [showAi, setShowAi] = useState<"project" | "text" | null>(null);
+  const [showAi, setShowAi] = useState(false);
+  const [aiMode, setAiMode] = useState<"project" | "text">("text");
+  const [targetDocumentId, setTargetDocumentId] = useState<string>("");
   const [textTitle, setTextTitle] = useState("");
   const [projectPath, setProjectPath] = useState("");
   // 最近一次 AI 运行结果：工作台结果卡展示（与校验报告弹窗 aiReport 分离——
@@ -1932,6 +1964,7 @@ export default function MindmapPanel() {
   // AI 项目导入产物选项：深度（1 最浅清单 → 5 最深业务流）+ 视图开关（空 = AI 自动判断）
   const [aiDepth, setAiDepth] = useState(3);
   const [aiViews, setAiViews] = useState<string[]>([]);
+  const aiHasRunRef = useRef(false);
   const [aiLoading, setAiLoading] = useState(false);
   const aiRunIdRef = useRef<string | null>(null); // 当前 AI 导入运行的取消标识
   const [search, setSearch] = useState("");
@@ -2087,34 +2120,44 @@ export default function MindmapPanel() {
 
   const providers = useMemo(() => (config?.providers ?? []).filter(p => p.api_key && p.openai_url), [config]);
 
-  // AI 导入入口：无当前文档时先自动新建空白文档承载导入结果（可导入并新建）。
-  // 切换类型（项目↔文本）时开新会话（清对话与结果卡）；恢复上次最小化状态。
-  const openAiImport = useCallback(async (kind: "project" | "text") => {
+  // 统一 AI 入口：项目/文本是工作台内的任务类型，不再拆成两个入口。
+  const openAiImport = useCallback(async () => {
     if (!full) {
       try {
-        const doc = await mmApi.create({ name: kind === "project" ? t("mindmap.aiProjectDoc") : t("mindmap.aiTextDoc"), description: "", sourceType: kind === "project" ? "ai_project" : "ai_text", folderId: null });
+        const doc = await mmApi.create({ name: t("mindmap.aiTextDoc"), description: "", sourceType: "ai_text", folderId: null });
         setDocs(prev => [doc, ...prev]);
         const f = await mmApi.load(doc.id);
-        if (f) setFull(f);
+        if (f) { setFull(f); setTargetDocumentId(f.document.id); }
         void refreshFolders();
       } catch (e) { flash(String(e)); return; }
+    } else {
+      setTargetDocumentId(full.document.id);
     }
-    if (showAi && showAi !== kind) { clearAgentMessages(); setLastAiResult(null); }
     setAiMinimized(false);
-    setShowAi(kind);
-  }, [full, showAi, flash, refreshFolders]);
+    setShowAi(true);
+  }, [full, flash, refreshFolders]);
+
+  const selectAiTarget = useCallback(async (id: string) => {
+    setTargetDocumentId(id);
+    if (!id || full?.document.id === id) return;
+    try {
+      const f = await mmApi.load(id);
+      if (f) setFull(f);
+      else flash(t("mindmap.docNotFound"));
+    } catch (e) { setError(String(e)); }
+  }, [full?.document.id, flash]);
 
   const loadDocument = useCallback(async (id: string) => {
     setError("");
     try {
       const f = await mmApi.load(id);
-      if (f) { setFull(f); } else { flash(t("mindmap.docNotFound")); }
+      if (f) { setFull(f); setTargetDocumentId(id); } else { flash(t("mindmap.docNotFound")); }
     } catch (e) { setError(String(e)); }
   }, [flash]);
-
   // 从校验报告弹窗跳转到对应视图文档
   const openReportDoc = useCallback(async (id: string) => {
     setAiReport(null);
+    setTargetDocumentId(id);
     try {
       const f = await mmApi.load(id);
       if (f) setFull(f); else flash(t("mindmap.docNotFound"));
@@ -2436,45 +2479,55 @@ export default function MindmapPanel() {
     }
   }, [aiLoading, aiProgress]);
 
-  // 新一轮导入开始：重置增量绘制标记
+  useEffect(() => {
+    if (full?.document.id && !targetDocumentId) setTargetDocumentId(full.document.id);
+  }, [full?.document.id, targetDocumentId]);
+
+  // 新一轮 AI 导入开始：重置增量绘制标记
   useEffect(() => {
     if (aiLoading) { drawnDocIdsRef.current = new Set(); firstViewDrawnRef.current = false; }
   }, [aiLoading]);
 
   const runAiProject = useCallback(async (instruction: string) => {
-    if (!full || !projectPath || !providerId || !modelId) return;
+    const targetId = targetDocumentId || full?.document.id;
+    if (!targetId || !projectPath || !providerId || !modelId) return;
     const runId = crypto.randomUUID ? crypto.randomUUID() : `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     aiRunIdRef.current = runId;
     mmAiProgressBuffer.clear(); // 新一轮导入：清空进度缓冲，日志面板从零开始
-    clearAnsweredAsks(); // 同步清空已回答询问标记，避免旧时间戳误匹配新一轮询问
     setAiLoading(true); setError("");
+    clearAnsweredAsks(); // 每次请求重新启用新的询问表单
+    const replaceExisting = aiHasRunRef.current;
+    aiHasRunRef.current = true;
     try {
       // instruction 来自工作台指令框（首轮可空 = 纯配置驱动；追问轮 = 追加指令）
-      const r = await mmApi.aiFromProject({ documentId: full.document.id, projectPath, providerId: providerId || null, modelId: modelId || null, userHint: instruction.trim() || null, depth: aiDepth, views: aiViews, runId });
+      const r = await mmApi.aiFromProject({ documentId: targetId, projectPath, providerId: providerId || null, modelId: modelId || null, userHint: instruction.trim() || null, depth: aiDepth, views: aiViews, replaceExisting, runId });
       applyAiImport(r);
     } catch (e) {
       const msg = String(e);
       // 用户主动停止：不当作错误红字提示，仅工作台展示
       if (msg.includes("已取消")) flash(t("mindmap.aiCancelled")); else setError(msg);
     } finally { aiRunIdRef.current = null; setAiLoading(false); }
-  }, [full, projectPath, providerId, modelId, aiDepth, aiViews, applyAiImport, flash]);
+  }, [full?.document.id, targetDocumentId, projectPath, providerId, modelId, aiDepth, aiViews, applyAiImport, flash, t]);
 
   const runAiText = useCallback(async (instruction: string) => {
-    if (!full || !instruction.trim() || !providerId || !modelId) return;
+    const targetId = targetDocumentId || full?.document.id;
+    if (!targetId || !instruction.trim() || !providerId || !modelId) return;
     const runId = crypto.randomUUID ? crypto.randomUUID() : `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     aiRunIdRef.current = runId;
     mmAiProgressBuffer.clear(); // 新一轮导入：清空进度缓冲，日志面板从零开始
-    clearAnsweredAsks(); // 同步清空已回答询问标记，避免旧时间戳误匹配新一轮询问
     setAiLoading(true); setError("");
+    clearAnsweredAsks(); // 每次请求重新启用新的询问表单
+    const replaceExisting = aiHasRunRef.current;
+    aiHasRunRef.current = true;
     try {
-      // instruction = 需求文本（首轮）或追问补充（增量追加到当前画布）
-      const r = await mmApi.aiFromText({ documentId: full.document.id, text: instruction, title: textTitle || full.document.name, providerId: providerId || null, modelId: modelId || null, runId });
+      // instruction 是首轮需求或完成后的修改指令；后端会在追问轮替换目标文档节点。
+      const r = await mmApi.aiFromText({ documentId: targetId, text: instruction, title: textTitle || full?.document.name || t("mindmap.aiTextDoc"), providerId: providerId || null, modelId: modelId || null, replaceExisting, runId });
       applyAiImport(r);
     } catch (e) {
       const msg = String(e);
       if (msg.includes("已取消")) flash(t("mindmap.aiCancelled")); else setError(msg);
     } finally { aiRunIdRef.current = null; setAiLoading(false); }
-  }, [full, textTitle, providerId, modelId, applyAiImport, flash]);
+  }, [full?.document.id, full?.document.name, targetDocumentId, textTitle, providerId, modelId, applyAiImport, flash, t]);
 
   // IDE 式「停止」：给当前导入运行打取消标志，后端各循环/流式块边界随即中断
   const stopAi = useCallback(async () => {
@@ -2487,14 +2540,14 @@ export default function MindmapPanel() {
   // 只有右上角 ✕ / footer 按钮会走到这里；弹框本身无 Esc/遮罩关闭。
   const requestCloseAi = useCallback(() => {
     if (aiLoading) { setAiCloseGuard(true); return; }
-    setShowAi(null);
+    setShowAi(false);
     setAiMinimized(false);
   }, [aiLoading]);
 
   const confirmCloseAi = useCallback(async () => {
     setAiCloseGuard(false);
     await stopAi();
-    setShowAi(null);
+    setShowAi(false);
     setAiMinimized(false);
   }, [stopAi]);
 
@@ -2608,8 +2661,7 @@ export default function MindmapPanel() {
                 <button type="button" className={button} onClick={() => setShowCreate(true)} title={t("mindmap.newDoc")}><Plus className="h-3 w-3" />{t("mindmap.doc")}</button>
               </div>
               <div className="grid grid-cols-2 gap-1.5">
-                <button type="button" className={`${button} hover:bg-white/10`} style={{ color: ACCENT, borderColor: `${ACCENT}55` }} onClick={() => void openAiImport("project")} title={t("mindmap.aiProject")}><FolderOpen className="h-3 w-3" />{t("mindmap.aiProjectBtn")}</button>
-                <button type="button" className={`${button} hover:bg-white/10`} style={{ color: ACCENT, borderColor: `${ACCENT}55` }} onClick={() => void openAiImport("text")} title={t("mindmap.aiParseDoc")}><Sparkles className="h-3 w-3" />{t("mindmap.aiTextBtn")}</button>
+              <button type="button" className={`${button} hover:bg-white/10`} style={{ color: ACCENT, borderColor: `${ACCENT}55` }} onClick={() => void openAiImport()} title={t("mindmap.aiUnifiedTitle")}><Brain className="h-3 w-3" />{t("mindmap.aiUnifiedBtn")}</button>
               </div>
               <button type="button" className={button} onClick={() => void openCalendar()} title={t("mindmap.planCalendarBtn")}><Calendar className="h-3 w-3" />{t("mindmap.planCalendar")}</button>
               {full && <div className="flex items-center justify-between px-0.5 text-[9px] text-slate-500"><span className="truncate">{t("mindmap.nodesCount", { name: full.document.name, count: full.nodes.length })}</span><button type="button" className={button} onClick={exportMd} title={t("mindmap.exportMd")}><ScrollText className="h-3 w-3" /></button></div>}
@@ -2646,9 +2698,13 @@ export default function MindmapPanel() {
                 className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 transition hover:bg-white/10 hover:text-white">
                 <Minimize2 className="w-3.5 h-3.5" />
               </button>
-            } title={showAi === "project" ? t("mindmap.aiProjectTitle") : t("mindmap.aiTextTitle")}>
+            } title={t("mindmap.aiUnifiedTitle")}>
               <AgentWorkbench
-                mode={showAi}
+                mode={aiMode}
+                onModeChange={setAiMode}
+                documents={docs.map(d => ({ id: d.id, name: d.name, sourceType: d.sourceType }))}
+                targetDocumentId={targetDocumentId}
+                onTargetDocumentChange={(id) => void selectAiTarget(id)}
                 providers={providers}
                 providerId={providerId}
                 modelId={modelId}
@@ -2663,21 +2719,21 @@ export default function MindmapPanel() {
                 textTitle={textTitle}
                 onTextTitleChange={setTextTitle}
                 loading={aiLoading}
-                onRun={(instruction) => { if (showAi === "project") void runAiProject(instruction); else void runAiText(instruction); }}
+                onRun={(instruction) => { if (aiMode === "project") void runAiProject(instruction); else void runAiText(instruction); }}
                 onStop={() => void stopAi()}
                 onAnswer={(answer) => { const rid = aiRunIdRef.current; if (rid) void mmApi.aiAnswer(rid, answer).catch((e) => console.error("回答询问失败:", e)); }}
                 result={lastAiResult}
                 runError={error}
                 onShowReport={() => { if (lastAiResult) setAiReport(lastAiResult); }}
-                onNewSession={() => { setLastAiResult(null); setError(""); }}
-                projectRoot={showAi === "project" ? projectPath : null}
+                onNewSession={() => { aiHasRunRef.current = false; setLastAiResult(null); setError(""); }}
+                projectRoot={aiMode === "project" ? projectPath : null}
               />
             </SharedModal>
           )}
           {/* 画布常驻：AI 弹框打开/最小化时也保持挂载，边生成边绘制。
               弹框打开期间设置 modal-mask 抑制全局快捷键，画布仅作背景展示。 */}
           {(full ? (
-            <Canvas full={full} accent={ACCENT} onDocumentUpdate={onDocumentUpdated} onHistoryPush={commitHistory} historyVersion={historyVersion} onAiProject={() => void openAiImport("project")} onAiText={() => void openAiImport("text")} onError={setError} onOpenCalendar={openCalendar} focusRequest={calFocus} onFocusHandled={() => setCalFocus(null)}
+            <Canvas full={full} accent={ACCENT} onDocumentUpdate={onDocumentUpdated} onHistoryPush={commitHistory} historyVersion={historyVersion} onAiProject={() => void openAiImport()} onError={setError} onOpenCalendar={openCalendar} focusRequest={calFocus} onFocusHandled={() => setCalFocus(null)}
               aiPill={aiMinimized && aiLoading && showAi ? <AiRunningPill onRestore={() => setAiMinimized(false)} onStop={() => void stopAi()} /> : null} />
           ) : (
             <VexEmptyState

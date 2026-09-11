@@ -231,6 +231,9 @@ pub struct AiGenerateProjectInput {
     /// 要生成的视图开关（architecture/workflow/dataflow）；空 = 交给 AI 类型路由自动判断。
     #[serde(default)]
     pub views: Vec<String>,
+    /// 追问修改已有思维导图时，按生成结果替换目标文档节点；首轮为 false。
+    #[serde(default)]
+    pub replace_existing: bool,
     /// 本次运行的取消标识（前端生成 UUID 传入；取消命令 mm_ai_cancel 按此中断）。
     #[serde(default)]
     pub run_id: String,
@@ -246,6 +249,9 @@ pub struct AiGenerateTextInput {
     pub title: String,
     pub provider_id: Option<String>,
     pub model_id: Option<String>,
+    /// 追问修改已有思维导图时，按生成结果替换目标文档节点；首轮为 false。
+    #[serde(default)]
+    pub replace_existing: bool,
     /// 本次运行的取消标识（同 AiGenerateProjectInput.run_id）。
     #[serde(default)]
     pub run_id: String,

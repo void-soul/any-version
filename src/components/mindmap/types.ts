@@ -199,6 +199,8 @@ export interface AiProjectInput {
   depth?: number;
   /** 要生成的视图（architecture/workflow/dataflow）；空 = AI 自动判断 */
   views?: string[];
+  /** 追问修改已有思维导图时，按完整结果替换目标文档节点；首轮为 false */
+  replaceExisting?: boolean;
   /** 本次运行的取消标识：前端生成 UUID 传入，点「停止」时按此中断导入 */
   runId: string;
 }
@@ -209,6 +211,8 @@ export interface AiTextInput {
   title: string;
   providerId?: string | null;
   modelId?: string | null;
+  /** 追问修改已有思维导图时，按完整结果替换目标文档节点；首轮为 false */
+  replaceExisting?: boolean;
   /** 本次运行的取消标识：同 AiProjectInput.runId */
   runId: string;
 }

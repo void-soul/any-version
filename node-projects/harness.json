@@ -10,8 +10,10 @@
   "nodeRequirement": ">=20",
   "packageManager": "pnpm",
   "buildScript": "build",
-  "startCmd": ["web"],
+  "startCmd": ["web", "--no-open"],
   "managed": true,
   "npxPackage": "@deepseek-ai/dsh",
-  "npxBin": "dsh"
+  "npxBin": "dsh",
+  "consoleUrlPattern": "dsh web: (http\\S+)",
+  "autoOpenConsoleUrl": true
 }

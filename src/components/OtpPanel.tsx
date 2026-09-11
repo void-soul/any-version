@@ -229,7 +229,9 @@ export default function OtpPanel() {
   const copyCode = async (token: OtpToken) => {
     const code = await generateCode(token, Date.now());
     try {
-      await navigator.clipboard.writeText(code);
+      // 复用剪贴板模块的「写入 → 隐藏 → 粘贴」通道：
+      // 目标窗口取自唤起 Kira 前的活动窗口，避免把验证码粘回 OTP 面板。
+      await invoke("clipboard_paste_text", { text: code });
       setCopiedId(token.id);
       setTimeout(() => setCopiedId(null), 1500);
       // 更新复制统计

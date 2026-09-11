@@ -15,6 +15,7 @@ import {
   Download,
   RefreshCw,
   ExternalLink,
+  Code2,
   CheckCircle2,
   XCircle,
   Loader2,
@@ -51,6 +52,10 @@ interface NodeProjectDef {
   managed: boolean;
   npxPackage: string;
   npxBin: string;
+  /// 控制台 URL 提取正则（第 1 捕获组 = 带凭据主页地址）；空 = 不提取。
+  consoleUrlPattern: string;
+  /// 捕获到控制台 URL 后是否自动用系统浏览器打开。
+  autoOpenConsoleUrl: boolean;
 }
 
 interface DepCheck {
@@ -103,6 +108,12 @@ interface NodeLog {
   line: string;
 }
 
+/// 控制台 URL 捕获事件（npm-console-url）。
+interface NodeConsoleUrl {
+  projectId: string;
+  url: string;
+}
+
 /// 每个项目日志保留的最大行数。
 const MAX_LOG_LINES = 800;
 
@@ -135,9 +146,12 @@ export default function NodeManagerPanel() {
   const [logs, setLogs] = useState<Record<string, string[]>>({});
   const [logOpen, setLogOpen] = useState<Record<string, boolean>>({});
   const logEndRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  // 各项目最近捕获的控制台 URL（带凭据主页地址，随服务重启更新）
+  const [consoleUrls, setConsoleUrls] = useState<Record<string, string>>({});
   // 内部主页 Tab 管理（在主窗口内 iframe 打开各 Node 应用界面，服务区全屏）
   const [tabs, setTabs] = useState<NodeProjectDef[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [tabReload, setTabReload] = useState<Record<string, number>>({});
   // 服务管理弹窗：默认打开——进入面板没有正在运行的服务时直接展示管理界面，
   // 省去「先看引导页 → 再手动点一次」的步骤。用户可关闭弹窗查看引导页。
   const [manageOpen, setManageOpen] = useState(true);
@@ -225,6 +239,20 @@ export default function NodeManagerPanel() {
         setLogOpen((prev) =>
           prev[projectId] ? prev : { ...prev, [projectId]: true },
         );
+      });
+    };
+    setup();
+    return () => unlisten?.();
+  }, []);
+
+  // 监听控制台 URL 捕获（dsh web 等在启动输出里打印带 token 的认证地址）
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    const setup = async () => {
+      unlisten = await listen<NodeConsoleUrl>("npm-console-url", (e) => {
+        const { projectId, url } = e.payload;
+        if (!projectId || !url) return;
+        setConsoleUrls((prev) => ({ ...prev, [projectId]: url }));
       });
     };
     setup();
@@ -319,9 +347,45 @@ export default function NodeManagerPanel() {
     }
   };
 
-  // 在主窗口内部打开应用主页（iframe 全屏）。打开前校验端口是否监听。
+  // 打开应用主页。
+  // - 普通服务：主窗口内 iframe 全屏（打开前校验端口是否监听）。
+  // - 配置了 consoleUrlPattern 的服务（如 dsh web）：控制台打印的带 token 地址
+  //   是唯一可用入口（直接访问 webPath 会 401，iframe 内也无法完成认证），
+  //   改为用系统默认浏览器打开后端捕获的最新地址；尚未捕获时提示稍候。
   const openWeb = async (project: NodeProjectDef) => {
     setError((prev) => ({ ...prev, [project.id]: "" }));
+    if (project.consoleUrlPattern?.trim()) {
+      const captured = consoleUrls[project.id];
+      if (!captured) {
+        const st = await invoke<NodeProjectStatus>("npm_status", {
+          projectId: project.id,
+        }).catch(() => undefined);
+        if (st && !isPortListening(st)) {
+          setError((prev) => ({
+            ...prev,
+            [project.id]: t("nodeproj.serviceStateHint", {
+              label: t("nodeproj.notRunning"),
+              path: resolvedWebPath(project),
+            }),
+          }));
+          return;
+        }
+        setError((prev) => ({
+          ...prev,
+          [project.id]: t("nodeproj.consoleUrlPending"),
+        }));
+        return;
+      }
+      try {
+        await invoke("npm_open", { projectId: project.id });
+      } catch (e) {
+        setError((prev) => ({
+          ...prev,
+          [project.id]: typeof e === "string" ? e : String(e),
+        }));
+      }
+      return;
+    }
     if (tabs.some((t) => t.id === project.id)) {
       setActiveTabId(project.id);
       setManageOpen(false);
@@ -349,6 +413,18 @@ export default function NodeManagerPanel() {
     );
     setActiveTabId(project.id);
     setManageOpen(false);
+  };
+
+  const reloadTab = (id: string) => {
+    setTabReload((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
+  };
+
+  const openDevTools = async (project: NodeProjectDef) => {
+    try {
+      await invoke("npm_open_devtools", { projectId: project.id });
+    } catch (e) {
+      setError((prev) => ({ ...prev, [project.id]: typeof e === "string" ? e : String(e) }));
+    }
   };
 
   const closeTab = (id: string) => {
@@ -443,6 +519,22 @@ export default function NodeManagerPanel() {
               );
             })}
             <div className="flex-1" />
+            <button
+              onClick={() => activeTab && reloadTab(activeTab.id)}
+              disabled={!activeTab}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={t("nodeproj.refreshHomeTitle")}
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> {t("nodeproj.refreshHome")}
+            </button>
+            <button
+              onClick={() => activeTab && void openDevTools(activeTab)}
+              disabled={!activeTab}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={t("nodeproj.devToolsTitle")}
+            >
+              <Code2 className="w-3.5 h-3.5" /> {t("nodeproj.devTools")}
+            </button>
             {/* 管理按钮 */}
             <button
               onClick={() => setManageOpen(true)}
@@ -457,8 +549,8 @@ export default function NodeManagerPanel() {
           <div className="flex-1 min-h-0">
             {activeTab ? (
               <iframe
-                key={activeTab.id}
                 src={resolvedWebPath(activeTab)}
+                key={`${activeTab.id}:${tabReload[activeTab.id] ?? 0}`}
                 className="w-full h-full border-0 bg-white"
                 title={activeTab.displayName}
               />
@@ -520,6 +612,7 @@ export default function NodeManagerPanel() {
                     error={error[project.id]}
                     updateInfo={updateInfo[project.id]}
                     checkingUpdate={checkingUpdate === project.id}
+                    consoleUrl={consoleUrls[project.id]}
                     onAction={runAction}
                     onExec={execCommand}
                     onOpenWeb={openWeb}
@@ -561,6 +654,7 @@ function ProjectCard({
   error,
   updateInfo,
   checkingUpdate,
+  consoleUrl,
   onAction,
   onExec,
   onOpenWeb,
@@ -579,6 +673,8 @@ function ProjectCard({
   error?: string;
   updateInfo?: NodeUpdateInfo;
   checkingUpdate: boolean;
+  /// 最近捕获的控制台 URL（带凭据主页地址）；未捕获为 undefined。
+  consoleUrl?: string;
   onAction: (p: NodeProjectDef, action: string) => void;
   onExec: (p: NodeProjectDef, command: string) => void;
   onOpenWeb: (p: NodeProjectDef) => void;
@@ -589,6 +685,8 @@ function ProjectCard({
   const Icon = ICONS[project.icon] ?? Bot;
   // npx 模式：配置了 npxPackage，安装/升级/启动直接用 npm install --prefix / npx --prefix
   const isNpx = !!project.npxPackage?.trim();
+  // 控制台 URL 模式：服务通过启动输出里打印的带 token 地址访问（iframe 不可用）
+  const consoleUrlMode = !!project.consoleUrlPattern?.trim();
   const installed = st?.installed;
   const running = st?.status === "running";
   const portConflict = st?.status === "port_conflict";
@@ -930,13 +1028,28 @@ function ProjectCard({
           title={t("nodeproj.uninstallTitle")}
         />
         <ActionButton
-          disabled={isBusy}
+          disabled={isBusy || (consoleUrlMode && !running)}
           busy={false}
           onClick={() => onOpenWeb(project)}
           icon={ExternalLink}
           color="bg-violet-600 hover:bg-violet-500"
           label={t("nodeproj.openHome")}
+          title={
+            consoleUrlMode
+              ? consoleUrl
+                ? t("nodeproj.openHomeConsoleTitle", { url: consoleUrl })
+                : t("nodeproj.consoleUrlPending")
+              : undefined
+          }
         />
+        {consoleUrlMode && consoleUrl && (
+          <span
+            className="text-[10px] text-emerald-400/80 flex items-center gap-1 flex-shrink-0"
+            title={consoleUrl}
+          >
+            <CheckCircle2 className="w-3 h-3" /> {t("nodeproj.consoleUrlReady")}
+          </span>
+        )}
         <div className="flex-1" />
         {!d?.allReady && installed && (
           <span className="text-[10px] text-amber-400 flex items-center gap-1">

@@ -24,23 +24,27 @@ fn emit_progress(app: &Option<tauri::AppHandle>, step: &str, extra: serde_json::
 /// 取消时返回的标准错误文本（前端据此识别为「用户主动取消」而非失败）。
 const ERR_CANCELLED: &str = "已取消";
 
-/// AI 运行取消标志注册表：每个 run_id 一把独立 AtomicBool，避免跨运行误伤
-/// （思维导图 AI 导入 / 子树重析可并行触发，各自只能被自己的取消请求中断）。
-fn ai_cancel_flag(run_id: &str) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
-    static CANCELS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>> = std::sync::OnceLock::new();
-    let map = CANCELS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    let mut g = map.lock().unwrap();
+type CancelFlag = std::sync::Arc<std::sync::atomic::AtomicBool>;
+type CancelRegistry = std::sync::Mutex<std::collections::HashMap<String, CancelFlag>>;
+type AskSender = tokio::sync::oneshot::Sender<serde_json::Value>;
+type AskRegistry = std::sync::Mutex<std::collections::HashMap<String, AskSender>>;
+
+/// 进程级 AI 运行取消标志注册表：每个 run_id 一把独立 AtomicBool，避免并行运行互相误伤。
+fn cancel_registry() -> &'static CancelRegistry {
+    static CANCELS: std::sync::OnceLock<CancelRegistry> = std::sync::OnceLock::new();
+    CANCELS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn ai_cancel_flag(run_id: &str) -> CancelFlag {
+    let mut g = cancel_registry().lock().unwrap();
     g.entry(run_id.to_string())
         .or_insert_with(|| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)))
         .clone()
 }
 
-/// 运行结束后从注册表移除该 run_id 的 flag（新导入会重新创建干净标志）。
+/// 运行结束后从同一个注册表移除该 run_id 的 flag（新导入会重新创建干净标志）。
 fn ai_drop_flag(run_id: &str) {
-    static CANCELS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>> = std::sync::OnceLock::new();
-    if let Some(map) = CANCELS.get() {
-        map.lock().unwrap().remove(run_id);
-    }
+    cancel_registry().lock().unwrap().remove(run_id);
 }
 
 fn is_cancelled(flag: &std::sync::atomic::AtomicBool) -> bool {
@@ -61,17 +65,18 @@ fn cancel_err(app: &Option<tauri::AppHandle>, flag: &std::sync::atomic::AtomicBo
 // 后端注册一个 oneshot 发送端（按 run_id 索引），阻塞等待前端 mm_ai_answer 回填，
 // 然后把用户回答追加进提示词继续生成。取消时（mm_ai_cancel）会向该通道发送
 // Null 标记把等待解除，避免用户点「停止」后运行卡死在提问处。
-fn ask_register(run_id: &str, tx: tokio::sync::oneshot::Sender<serde_json::Value>) {
-    static ASKS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>>> = std::sync::OnceLock::new();
-    ASKS.get_or_init(Default::default)
-        .lock().unwrap()
-        .insert(run_id.to_string(), tx);
+fn ask_registry() -> &'static AskRegistry {
+    static ASKS: std::sync::OnceLock<AskRegistry> = std::sync::OnceLock::new();
+    ASKS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn ask_register(run_id: &str, tx: AskSender) {
+    ask_registry().lock().unwrap().insert(run_id.to_string(), tx);
 }
 
 /// 用户回填询问答案（mm_ai_answer 调用）。无等待中的询问时返回 Err。
 fn ask_send_answer(run_id: &str, answer: serde_json::Value) -> Result<(), String> {
-    static ASKS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>>> = std::sync::OnceLock::new();
-    match ASKS.get_or_init(Default::default).lock().unwrap().remove(run_id) {
+    match ask_registry().lock().unwrap().remove(run_id) {
         Some(tx) => tx.send(answer).map_err(|_| "询问已结束".into()),
         None => Err("当前没有等待中的询问".into()),
     }
@@ -79,8 +84,7 @@ fn ask_send_answer(run_id: &str, answer: serde_json::Value) -> Result<(), String
 
 /// 取消时解除等待中的询问（mm_ai_cancel 调用，尽力而为）。
 fn ask_send_cancel(run_id: &str) {
-    static ASKS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>>> = std::sync::OnceLock::new();
-    if let Some(tx) = ASKS.get_or_init(Default::default).lock().unwrap().remove(run_id) {
+    if let Some(tx) = ask_registry().lock().unwrap().remove(run_id) {
         let _ = tx.send(serde_json::Value::Null);
     }
 }
@@ -957,6 +961,7 @@ async fn import_ai_nodes(
     parsed: serde_json::Value,
     errs: Vec<String>,
     root_name: &str,
+    replace_existing: bool,
 ) -> Result<DocumentFull, String> {
     let summary = parsed.get("summary").and_then(|s| s.as_str()).unwrap_or("").to_string();
     let id_prefix = format!("{}-", super::db::new_id("ai"));
@@ -971,7 +976,13 @@ async fn import_ai_nodes(
         }
     }
     ensure_import_root(&mut nodes, document_id, &id_prefix, root_name, &summary);
-    // AI 导入始终追加一棵新的根树，不覆盖画布中已有的节点。
+    // AI 导入始终追加一棵新的根树；追问修改模式只替换目标文档中的节点，不影响文档元数据。
+    if replace_existing {
+        super::db::with_conn(|c| {
+            super::db::sql(c.execute("DELETE FROM mindmap_nodes WHERE document_id=?1", rusqlite::params![document_id]))?;
+            Ok(())
+        })?;
+    }
     super::db::batch_save_nodes(&nodes)?;
     super::db::update_document(document_id, None, None, None)?;
     super::db::load_full(document_id)?.ok_or("加载失败".into())
@@ -1265,6 +1276,8 @@ async fn run_ai_router(
     depth: u8,
     requested_views: &[String],
     run_id: &str,
+    target_document_id: Option<&str>,
+    replace_existing: bool,
 ) -> Result<AiImportResult, String> {
     // 本次运行的总 token 累计器（逐请求记录 + 完成时随报告返回、随文档留痕）
     let usage = UsageAcc::default();
@@ -1363,22 +1376,38 @@ async fn run_ai_router(
         cancel_err(app, cancel)?;
         let doc_name = format!("{} · {}", root_name, view_label(view));
         emit_progress(app, "view", serde_json::json!({ "view": view }));
-        let doc = match super::db::create_document(
-            &doc_name,
-            "",
-            if mode == "project" { "ai_project" } else { "ai_text" },
-            None,
-        ) {
-            Ok(d) => d,
-            Err(e) => {
-                failures.push(AiImportFailure { view: view.clone(), reason: e });
-                continue;
+        let (doc, owns_doc) = if primary.is_none() {
+            if let Some(target_id) = target_document_id {
+                let target = super::db::load_full(target_id)?.ok_or("目标思维导图不存在")?;
+                (target.document, false)
+            } else {
+                (super::db::create_document(
+                    &doc_name,
+                    "",
+                    if mode == "project" { "ai_project" } else { "ai_text" },
+                    None,
+                )?, true)
             }
+        } else {
+            (super::db::create_document(
+                &doc_name,
+                "",
+                if mode == "project" { "ai_project" } else { "ai_text" },
+                None,
+            )?, true)
         };
         let user = if mode == "project" {
             context.to_string()
         } else {
             format!("分析以下文字提取结构化需求：\n\n{}", context)
+        };
+        let user = if replace_existing && primary.is_none() {
+            let existing = super::db::load_full(&doc.id)?.map(|f| {
+                f.nodes.iter().map(|n| format!("- {} [{}]：{}", n.name, n.kind, n.detail.chars().take(300).collect::<String>())).collect::<Vec<_>>().join("\n")
+            }).unwrap_or_default();
+            format!("{}\n\n当前目标思维导图已有节点（请根据用户指令修改，输出修改后的完整节点树；不需要保留被删除的节点）：\n{}", user, existing)
+        } else {
+            user
         };
         // 项目模式：记录项目根路径到文档 source_desc，供证据文件定位
         if let Some(p) = project_root {
@@ -1405,14 +1434,14 @@ async fn run_ai_router(
         .await;
         // 生成中途被取消：清理半成品文档并整体中止（不是单个视图失败，不继续下一个视图）
         if is_cancelled(cancel) {
-            let _ = super::db::delete_document(&doc.id);
+            let _ = if owns_doc { super::db::delete_document(&doc.id) } else { Ok(()) };
             emit_progress(app, "cancel", serde_json::json!({}));
             return Err(ERR_CANCELLED.into());
         }
         let (parsed, errs, rounds) = match outcome {
             Ok(x) => x,
             Err(e) => {
-                let _ = super::db::delete_document(&doc.id); // 清理空文档
+                let _ = if owns_doc { super::db::delete_document(&doc.id) } else { Ok(()) }; // 清理空文档
                 emit_progress(app, "fail", serde_json::json!({ "detail": format!("{}: {}", view_label(view), e) }));
                 failures.push(AiImportFailure { view: view.clone(), reason: e });
                 continue;
@@ -1421,7 +1450,8 @@ async fn run_ai_router(
         if rounds > 1 {
             emit_progress(app, "repair", serde_json::json!({ "count": errs.len(), "rounds": rounds }));
         }
-        match import_ai_nodes(&doc.id, parsed, errs.clone(), &doc_name).await {
+        let replacing_target = replace_existing && primary.is_none();
+        match import_ai_nodes(&doc.id, parsed, errs.clone(), &doc_name, replacing_target).await {
             Ok(mut full) => {
                 if primary.is_none() {
                     primary = Some(full.document.id.clone());
@@ -1479,7 +1509,7 @@ async fn run_ai_router(
                 );
             }
             Err(e) => {
-                let _ = super::db::delete_document(&doc.id);
+                let _ = if owns_doc { super::db::delete_document(&doc.id) } else { Ok(()) };
                 failures.push(AiImportFailure { view: view.clone(), reason: e });
             }
         }
@@ -1533,7 +1563,7 @@ pub async fn mm_ai_from_project(app: tauri::AppHandle, input: AiGenerateProjectI
         let context = super::scan::scan_project_with_hint(&pp, input.user_hint.as_deref())?;
         emit_progress(&app_opt, "scan", serde_json::json!({ "done": true }));
         let (provider, model) = resolve_provider_model(&input.provider_id, &input.model_id)?;
-        run_ai_router(&provider, &model, "project", &context, &pname, Some(&pp), &app_opt, &cancel, input.depth.clamp(1, 5), &input.views, &run_id).await
+        run_ai_router(&provider, &model, "project", &context, &pname, Some(&pp), &app_opt, &cancel, input.depth.clamp(1, 5), &input.views, &run_id, Some(&input.document_id), input.replace_existing).await
     }
     .await;
     ai_drop_flag(&run_id);
@@ -1549,7 +1579,7 @@ pub async fn mm_ai_from_text(app: tauri::AppHandle, input: AiGenerateTextInput) 
     let app_opt = Some(app);
     let run_id = if input.run_id.trim().is_empty() { "import".to_string() } else { input.run_id.clone() };
     let cancel = ai_cancel_flag(&run_id);
-    let result = run_ai_router(&provider, &model, "text", &text, title, None, &app_opt, &cancel, 3, &[], &run_id).await;
+    let result = run_ai_router(&provider, &model, "text", &text, title, None, &app_opt, &cancel, 3, &[], &run_id, Some(&input.document_id), input.replace_existing).await;
     ai_drop_flag(&run_id);
     result
 }
@@ -1805,10 +1835,27 @@ mod tests {
         let b2 = ai_cancel_flag("run-b");
         assert!(!is_cancelled(&b2), "drop 后重新创建应为干净标志");
         ai_drop_flag("run-a");
+        ai_drop_flag("run-b");
     }
 
+    #[tokio::test]
+    async fn ask_answer_reaches_waiting_run() {
+        let run_id = "ask-answer-regression";
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        ask_register(run_id, tx);
+        let answer = serde_json::json!({ "scope": "billing" });
+        assert!(ask_send_answer(run_id, answer.clone()).is_ok());
+        assert_eq!(rx.await.unwrap(), answer);
+        assert!(ask_send_answer(run_id, serde_json::json!("late")).is_err());
+    }
 
-
-
-
+    #[tokio::test]
+    async fn cancelling_run_wakes_waiting_ask() {
+        let run_id = "ask-cancel-regression";
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        ask_register(run_id, tx);
+        ask_send_cancel(run_id);
+        assert!(rx.await.unwrap().is_null());
+        assert!(ask_send_answer(run_id, serde_json::json!("late")).is_err());
+    }
 }

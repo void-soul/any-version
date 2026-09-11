@@ -3,10 +3,28 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+/// 把文件字节解码为文本：优先按 BOM 识别 UTF-8 / UTF-16，
+/// 非 UTF-8 时回退 GBK（兼容中文 Windows 工具导出的文件）。
+pub fn decode_text_bytes(bytes: &[u8]) -> String {
+    // BOM 识别（UTF-8 EF BB BF / UTF-16 LE FF FE / UTF-16 BE FE FF）
+    if let Some((encoding, _)) = encoding_rs::Encoding::for_bom(bytes) {
+        let (cow, _, _) = encoding.decode(bytes);
+        return cow.into_owned();
+    }
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return s.to_string();
+    }
+    // 中文 Windows 常见 GBK/GB18030 编码回退
+    let (cow, _, _) = encoding_rs::GBK.decode(bytes);
+    cow.into_owned()
+}
+
 /// 读取文本文件内容（JSON 浏览等辅助工具使用）
+/// 兼容 UTF-8 BOM / UTF-16 / GBK 编码，避免「文件有效但读出来乱码/报错」。
 #[tauri::command]
 pub fn read_text_file(path: String) -> Result<String, String> {
-    fs::read_to_string(&path).map_err(|e| e.to_string())
+    let bytes = fs::read(&path).map_err(|e| format!("读取文件失败: {}", e))?;
+    Ok(decode_text_bytes(&bytes))
 }
 
 /// 写入文本文件内容
@@ -14,6 +32,45 @@ pub fn read_text_file(path: String) -> Result<String, String> {
 pub fn write_text_file(path: String, content: String) -> Result<(), String> {
     fs::write(&path, content).map_err(|e| e.to_string())
 }
+
+/// 保存文本到下载目录（Buddy 导出账号用），返回实际保存路径。
+#[tauri::command]
+pub fn file_io_save_text(
+    app: tauri::AppHandle,
+    file_name: String,
+    content: String,
+) -> Result<String, String> {
+    use tauri::Manager;
+    let dir = app.path().download_dir().unwrap_or_default();
+    if !dir.exists() {
+        fs::create_dir_all(&dir).map_err(|e| format!("创建下载目录失败: {}", e))?;
+    }
+    let mut path = dir.join(file_name.trim());
+    // 同名文件自动追加序号，避免覆盖
+    if path.exists() {
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "export".to_string());
+        let ext = path.extension().map(|s| s.to_string_lossy().to_string());
+        let mut counter = 1;
+        loop {
+            let candidate = match &ext {
+                Some(e) => dir.join(format!("{}({}).{}", stem, counter, e)),
+                None => dir.join(format!("{}({})", stem, counter)),
+            };
+            if !candidate.exists() {
+                path = candidate;
+                break;
+            }
+            counter += 1;
+        }
+    }
+    fs::write(&path, content).map_err(|e| format!("写入文件失败: {}", e))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+
 
 /// Windows 文件关联状态：.md / .markdown 是否已指向 any-version 的 AnyMarkdown ProgID。
 #[tauri::command]

@@ -260,10 +260,9 @@ fn bookmark_from_row(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         refined: row.get::<_, i64>(8)? != 0,
         meta_fetched: row.get::<_, i64>(9)? != 0,
         extra,
-        content: {
-            let raw: String = row.get(11)?;
-            if raw.trim().is_empty() { None } else { Some(raw) }
-        },
+        // content 列由 ALTER TABLE 迁移添加、无默认值：旧行该列为 NULL，必须按
+        // Option<String> 读取（按 String 读 NULL 会报 "Invalid column type Null"）。
+        content: row.get::<_, Option<String>>(11)?.filter(|s| !s.trim().is_empty()),
     })
 }
 

@@ -197,3 +197,25 @@ pub fn simulate_paste(target: Option<windows_sys::Win32::Foundation::HWND>) -> R
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::text_to_utf16_bytes;
+
+    #[test]
+    fn text_to_utf16_bytes_includes_unicode_text_and_nul_terminator() {
+        let bytes = text_to_utf16_bytes("验证码🌐");
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+
+        assert_eq!(units.last(), Some(&0));
+        assert_eq!(String::from_utf16(&units[..units.len() - 1]).unwrap(), "验证码🌐");
+    }
+
+    #[test]
+    fn text_to_utf16_bytes_handles_empty_text() {
+        assert_eq!(text_to_utf16_bytes(""), vec![0, 0]);
+    }
+}

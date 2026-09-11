@@ -8,6 +8,24 @@ use super::models::{
 
 static DB_CONN: Mutex<Option<Connection>> = Mutex::new(None);
 
+pub(crate) fn migrate_item_usage_columns(conn: &Connection) -> Result<(), String> {
+    // 兼容早期已经创建的启动器数据库：为旧表补齐统计列。
+    let _ = conn.execute("ALTER TABLE launcher_item ADD COLUMN open_number INTEGER NOT NULL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE launcher_item ADD COLUMN last_open INTEGER NOT NULL DEFAULT 0", []);
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_item_open ON launcher_item(open_number)", [])
+        .map_err(|e| format!("初始化启动统计索引失败: {}", e))?;
+    Ok(())
+}
+
+pub(crate) fn increment_item_open_count_on(conn: &Connection, id: i64) -> Result<(), String> {
+    let now_ts = Local::now().timestamp_millis();
+    conn.execute(
+        "UPDATE launcher_item SET open_number = open_number + 1, last_open = ?1 WHERE id = ?2",
+        params![now_ts, id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn db_path() -> std::path::PathBuf {
     get_data_dir().join("launcher.db")
 }
@@ -56,7 +74,6 @@ fn build_connection() -> Result<Connection, String> {
         );
         CREATE INDEX IF NOT EXISTS idx_item_cls   ON launcher_item(classification_id);
         CREATE INDEX IF NOT EXISTS idx_item_order ON launcher_item(sort_order);
-        CREATE INDEX IF NOT EXISTS idx_item_open  ON launcher_item(open_number);
 
         CREATE TABLE IF NOT EXISTS launcher_setting (
             key   TEXT PRIMARY KEY,
@@ -65,6 +82,8 @@ fn build_connection() -> Result<Connection, String> {
         "#,
     )
     .map_err(|e| format!("初始化启动器表失败: {}", e))?;
+
+    migrate_item_usage_columns(&conn)?;
 
     // 检查是否需要播种初始默认数据
     let count: i64 = conn
@@ -318,7 +337,7 @@ pub fn reorder_classifications(orders: Vec<(i64, i32)>) -> Result<(), String> {
 pub fn list_items_by_classification(cls_id: i64) -> Result<Vec<Item>, String> {
     with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, classification_id, name, item_type, data, shortcut_key, global_shortcut_key, sort_order
+            "SELECT id, classification_id, name, item_type, data, shortcut_key, global_shortcut_key, sort_order, open_number, last_open
              FROM launcher_item
              WHERE classification_id = ?1
              ORDER BY sort_order ASC"
@@ -334,7 +353,12 @@ pub fn list_items_by_classification(cls_id: i64) -> Result<Vec<Item>, String> {
             let global_shortcut_key_int: i32 = row.get(6)?;
             let sort_order: i32 = row.get(7)?;
 
-            let data: ItemData = serde_json::from_str(&data_str).unwrap_or_default();
+            let open_number: i64 = row.get(8)?;
+            let last_open: i64 = row.get(9)?;
+            let mut data: ItemData = serde_json::from_str(&data_str).unwrap_or_default();
+            // 启动次数/最近启动时间属于独立数据库列，覆盖旧版本 data 缓存。
+            data.open_number = open_number;
+            data.last_open = last_open;
 
             Ok(Item {
                 id,
@@ -361,7 +385,7 @@ pub fn list_items_by_classification(cls_id: i64) -> Result<Vec<Item>, String> {
 pub fn list_all_items() -> Result<Vec<Item>, String> {
     with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, classification_id, name, item_type, data, shortcut_key, global_shortcut_key, sort_order
+            "SELECT id, classification_id, name, item_type, data, shortcut_key, global_shortcut_key, sort_order, open_number, last_open
              FROM launcher_item
              ORDER BY sort_order ASC"
         ).map_err(|e| e.to_string())?;
@@ -376,7 +400,12 @@ pub fn list_all_items() -> Result<Vec<Item>, String> {
             let global_shortcut_key_int: i32 = row.get(6)?;
             let sort_order: i32 = row.get(7)?;
 
-            let data: ItemData = serde_json::from_str(&data_str).unwrap_or_default();
+            let open_number: i64 = row.get(8)?;
+            let last_open: i64 = row.get(9)?;
+            let mut data: ItemData = serde_json::from_str(&data_str).unwrap_or_default();
+            // 启动次数/最近启动时间属于独立数据库列，覆盖旧版本 data 缓存。
+            data.open_number = open_number;
+            data.last_open = last_open;
 
             Ok(Item {
                 id,
@@ -403,7 +432,10 @@ pub fn list_all_items() -> Result<Vec<Item>, String> {
 pub fn save_item(item: &Item) -> Result<i64, String> {
     with_conn(|conn| {
         let now = Local::now().to_rfc3339();
-        let data_json = serde_json::to_string(&item.data).unwrap_or_else(|_| "{}".to_string());
+        let mut data = item.data.clone();
+        data.open_number = item.data.open_number;
+        data.last_open = item.data.last_open;
+        let data_json = serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_string());
 
         if item.id > 0 {
             conn.execute(
@@ -411,8 +443,8 @@ pub fn save_item(item: &Item) -> Result<i64, String> {
                 UPDATE launcher_item
                 SET classification_id = ?1, name = ?2, item_type = ?3, data = ?4,
                     shortcut_key = ?5, global_shortcut_key = ?6, sort_order = ?7,
-                    updated_at = ?8
-                WHERE id = ?9
+                    open_number = ?8, last_open = ?9, updated_at = ?10
+                WHERE id = ?11
                 "#,
                 params![
                     item.classification_id,
@@ -422,6 +454,8 @@ pub fn save_item(item: &Item) -> Result<i64, String> {
                     item.shortcut_key,
                     if item.global_shortcut_key { 1 } else { 0 },
                     item.order,
+                    item.data.open_number,
+                    item.data.last_open,
                     now,
                     item.id,
                 ],
@@ -436,8 +470,8 @@ pub fn save_item(item: &Item) -> Result<i64, String> {
 
             conn.execute(
                 r#"
-                INSERT INTO launcher_item (classification_id, name, item_type, data, shortcut_key, global_shortcut_key, sort_order, created_at, updated_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+                INSERT INTO launcher_item (classification_id, name, item_type, data, shortcut_key, global_shortcut_key, sort_order, open_number, last_open, created_at, updated_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)
                 "#,
                 params![
                     item.classification_id,
@@ -447,6 +481,8 @@ pub fn save_item(item: &Item) -> Result<i64, String> {
                     item.shortcut_key,
                     if item.global_shortcut_key { 1 } else { 0 },
                     max_order + 1,
+                    item.data.open_number,
+                    item.data.last_open,
                     now,
                 ],
             ).map_err(|e| e.to_string())?;
@@ -470,12 +506,13 @@ pub fn batch_add_items(items: Vec<Item>) -> Result<Vec<i64>, String> {
                 |row| row.get(0)
             ).unwrap_or(0);
 
-            let data_json = serde_json::to_string(&item.data).unwrap_or_else(|_| "{}".to_string());
+            let data = item.data.clone();
+            let data_json = serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_string());
 
             tx.execute(
                 r#"
-                INSERT INTO launcher_item (classification_id, name, item_type, data, shortcut_key, global_shortcut_key, sort_order, created_at, updated_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+                INSERT INTO launcher_item (classification_id, name, item_type, data, shortcut_key, global_shortcut_key, sort_order, open_number, last_open, created_at, updated_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)
                 "#,
                 params![
                     item.classification_id,
@@ -485,6 +522,8 @@ pub fn batch_add_items(items: Vec<Item>) -> Result<Vec<i64>, String> {
                     item.shortcut_key,
                     if item.global_shortcut_key { 1 } else { 0 },
                     max_order + 1,
+                    item.data.open_number,
+                    item.data.last_open,
                     now,
                 ],
             ).map_err(|e| e.to_string())?;
@@ -638,14 +677,7 @@ pub fn move_subcategories_to_classification(source_id: i64, target_id: i64) -> R
 }
 
 pub fn increment_item_open_count(id: i64) -> Result<(), String> {
-    with_conn(|conn| {
-        let now_ts = Local::now().timestamp_millis();
-        conn.execute(
-            "UPDATE launcher_item SET open_number = open_number + 1, last_open = ?1 WHERE id = ?2",
-            params![now_ts, id],
-        ).map_err(|e| e.to_string())?;
-        Ok(())
-    })
+    with_conn(|conn| increment_item_open_count_on(conn, id))
 }
 
 // ---------------------- 设置操作 ----------------------
@@ -794,8 +826,8 @@ pub fn import_backup(json_str: &str) -> Result<(), String> {
             let data_json = serde_json::to_string(&it.data).unwrap_or_else(|_| "{}".to_string());
             tx.execute(
                 r#"
-                INSERT INTO launcher_item (id, classification_id, name, item_type, data, shortcut_key, global_shortcut_key, sort_order, created_at, updated_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
+                INSERT INTO launcher_item (id, classification_id, name, item_type, data, shortcut_key, global_shortcut_key, sort_order, open_number, last_open, created_at, updated_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
                 "#,
                 params![
                     it.id,
@@ -806,6 +838,8 @@ pub fn import_backup(json_str: &str) -> Result<(), String> {
                     it.shortcut_key,
                     if it.global_shortcut_key { 1 } else { 0 },
                     it.order,
+                    it.data.open_number,
+                    it.data.last_open,
                     now,
                 ],
             ).map_err(|e| e.to_string())?;

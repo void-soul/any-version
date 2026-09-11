@@ -238,6 +238,10 @@ export function useAnsweredAsks(): ReadonlySet<number> {
 
 export interface AgentWorkbenchProps {
   mode: "project" | "text";
+  onModeChange: (mode: "project" | "text") => void;
+  documents: { id: string; name: string; sourceType: string }[];
+  targetDocumentId: string;
+  onTargetDocumentChange: (id: string) => void;
   providers: AiConfig["providers"];
   providerId: string;
   modelId: string;
@@ -483,7 +487,8 @@ function AskForm({ ask, onSubmit, t }: {
 
 export function AgentWorkbench(props: AgentWorkbenchProps) {
   const {
-    mode, providers, providerId, modelId, onProviderChange, onModelChange,
+    mode, onModeChange, documents, targetDocumentId, onTargetDocumentChange,
+    providers, providerId, modelId, onProviderChange, onModelChange,
     projectPath, onPickProject, aiDepth, onDepthChange, aiViews, onViewsChange,
     textTitle, onTextTitleChange, loading, onRun, onStop, onAnswer, result, runError,
     onShowReport, onNewSession, projectRoot,
@@ -706,12 +711,22 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
         </button>
         {cfgOpen && (
           <div className="space-y-2 border-t border-white/5 p-2.5">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
+              <select className={wbSelect} value={mode} onChange={(e) => onModeChange(e.target.value as "project" | "text")} disabled={loading}>
+                <option value="text">{t("mindmap.aiTaskText")}</option>
+                <option value="project">{t("mindmap.aiTaskProject")}</option>
+              </select>
+              <select className={wbSelect} value={targetDocumentId} onChange={(e) => onTargetDocumentChange(e.target.value)} disabled={loading}>
+                <option value="">{t("mindmap.aiTargetDocument")}</option>
+                {documents.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
               <select className={wbSelect} value={providerId}
                 onChange={(e) => { const pid = e.target.value; onProviderChange(pid); const p = providers.find((x) => x.id === pid); onModelChange(p?.active_model_id ?? p?.models[0]?.id ?? ""); }}>
                 <option value="">{t("mindmap.pickProvider")}</option>
                 {providers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
               <select className={wbSelect} value={modelId} onChange={(e) => onModelChange(e.target.value)} disabled={!providerId}>
                 <option value="">{t("mindmap.pickModel")}</option>
                 {providerModels.map((m) => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
