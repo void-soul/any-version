@@ -238,6 +238,8 @@
     "autostartOn": "Autostart is on",
     "autostartOff": "Autostart is off",
     "trayMenu": "Tray Context Menu",
+    "trayMenuEnabled": "Show tray context menu",
+    "trayMenuEnabledHint": "When off, the tray icon no longer opens a context menu; per-module items live in each module's settings dialog",
     "servicesAutostart": "Service Autostart Management",
     "translateHotkey": "Translate Hotkey",
     "mindmapNodeHotkey": "Mind Map Node Hotkey",

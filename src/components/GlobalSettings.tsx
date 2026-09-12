@@ -21,13 +21,6 @@ import {
   Loader2,
   FileText,
   Power,
-  Rocket,
-  Zap,
-  Server,
-  Database,
-  Waypoints,
-  Video,
-  Globe,
 
   Sliders,
 
@@ -38,10 +31,6 @@ import {
   RotateCcw,
   Search,
   X,
-  Languages,
-  Brain,
-  StickyNote,
-  Code2,
 } from "lucide-react";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -190,25 +179,6 @@ interface Config {
   node_projects_dir?: string;
 }
 
-import type { AiConfig } from "./ai/types";
-import type { ProjectStatus } from "./project/types";
-
-/** 思维导图 AI 探索参数（与后端 ExplorerSettings 对应，camelCase） */
-interface ExplorerSettings {
-  explorerRounds: number;
-  explorerFilesPerRound: number;
-  explorerCharsPerFile: number;
-  explorerBatchChars: number;
-}
-
-/** 各参数的硬钳制范围（与后端一致，前端先拦截明显错误） */
-const EXPLORER_LIMITS = {
-  explorerRounds: { min: 1, max: 12 },
-  explorerFilesPerRound: { min: 1, max: 24 },
-  explorerCharsPerFile: { min: 500, max: 20000 },
-  explorerBatchChars: { min: 4000, max: 60000 },
-} as const;
-
 interface MigrateResult {
   moved_versions: boolean;
   moved_links: boolean;
@@ -226,20 +196,12 @@ interface MigrateProgress {
   file_name: string;
 }
 
-interface SkillMigrateProgress {
-  stage: string;
-  current: number;
-  total: number;
-  skill_name: string;
-}
-
 /** 托盘右键菜单配置（与后端 TrayMenuConfig 对应） */
 interface TrayMenuConfig {
+  /** 是否启用托盘右键菜单（总开关） */
+  enabled: boolean;
+  /** 是否在托盘菜单显示 Mihomo 项（细分项已迁至代理模块设置） */
   show_mihomo: boolean;
-  show_mihomo_profiles: boolean;
-  show_mihomo_proxies: boolean;
-  show_mihomo_mode: boolean;
-  mihomo_proxy_limit: number;
 }
 
 export default function GlobalSettings() {
@@ -266,74 +228,26 @@ export default function GlobalSettings() {
   const [progress, setProgress] = useState<MigrateProgress | null>(null);
   const [deletingOldDirs, setDeletingOldDirs] = useState(false);
   const [deletedOldDirs, setDeletedOldDirs] = useState<string[] | null>(null);
-  const [aiConfig, setAiConfig] = useState<AiConfig | null>(null);
-  const [aiDefaultPath, setAiDefaultPath] = useState("");
-  const [savingAi, setSavingAi] = useState(false);
-  const [aiSaved, setAiSaved] = useState(false);
-  // 全局默认 AI 模型（provider + model，持久化到 translate_config.json，
-  // 影响划词翻译/翻译模块、思维导图 AI 导入等未显式指定模型的 AI 功能）
-  const [translateProvId, setTranslateProvId] = useState("");
-  const [translateModelId, setTranslateModelId] = useState("");
-  const [explorerCfg, setExplorerCfg] = useState<ExplorerSettings | null>(null);
-  const [skillProgress, setSkillProgress] =
-    useState<SkillMigrateProgress | null>(null);
-  const [skillMigrated, setSkillMigrated] = useState(false);
   // 开机自启：反映操作系统真实注册状态（打开设置页时查询）
   // 应用通过 UAC manifest 始终以管理员身份运行，故开机自启天然具备管理员权限。
   const [autostartOn, setAutostartOn] = useState(false);
   const [autostartBusy, setAutostartBusy] = useState(false);
-  // 服务自启配置
-  const [autoStartServices, setAutoStartServices] = useState<string[]>([]);
-  const [sdkProjects, setSdkProjects] = useState<ProjectStatus[]>([]);
-  const [autoStartBusyMap, setAutoStartBusyMap] = useState<Record<string, boolean>>({});
 
-  const fetchAutoStartServices = async () => {
-    try {
-      const [list, projects] = await Promise.all([
-        invoke<string[]>("get_auto_start_services"),
-        invoke<ProjectStatus[]>("project_list_fast"),
-      ]);
-      setAutoStartServices(list || []);
-      setSdkProjects(projects || []);
-    } catch (e) {
-      console.error(e);
-    }
-  };
 
-  const handleToggleAutoStartService = async (serviceId: string, enabled: boolean) => {
-    setAutoStartBusyMap((prev) => ({ ...prev, [serviceId]: true }));
-    try {
-      await invoke("set_auto_start_service", { serviceId, enabled });
-      setAutoStartServices((prev) =>
-        enabled ? [...prev.filter((id) => id !== serviceId), serviceId] : prev.filter((id) => id !== serviceId)
-      );
-    } catch (e: any) {
-      alert(t("settings.autostartFail", { err: String(e) }));
-    } finally {
-      setAutoStartBusyMap((prev) => ({ ...prev, [serviceId]: false }));
-    }
-  };
 
   // 托盘右键菜单配置
   const [trayCfg, setTrayCfg] = useState<TrayMenuConfig>({
+    enabled: true,
     show_mihomo: true,
-    show_mihomo_profiles: true,
-    show_mihomo_proxies: true,
-    show_mihomo_mode: true,
-    mihomo_proxy_limit: 30,
   });
-  const [trayBusy, setTrayBusy] = useState(false);
 
   const saveTrayCfg = async (patch: Partial<TrayMenuConfig>) => {
     const next = { ...trayCfg, ...patch };
     setTrayCfg(next);
-    setTrayBusy(true);
     try {
       await invoke("set_tray_menu_config", { value: next });
     } catch (e) {
       console.error(e);
-    } finally {
-      setTrayBusy(false);
     }
   };
 
@@ -367,112 +281,10 @@ export default function GlobalSettings() {
     }
   };
 
-  const fetchAiConfig = async () => {
-    try {
-      const [cfg, tCfg, exCfg] = await Promise.all([
-        invoke<AiConfig>("get_ai_config"),
-        invoke<{ providerId: string | null; modelId: string | null; targetLang: string | null }>(
-          "get_translate_config",
-        ),
-        invoke<ExplorerSettings>("mm_get_explorer_settings"),
-      ]);
-      setAiConfig(cfg);
-      setExplorerCfg(exCfg);
-      setAiDefaultPath(cfg.default_project_path || "");
-      // 全局默认模型：优先已保存的；否则回退第一个配置了 OpenAI 端点的供应商（修反了
-      // 的过滤条件）+ 其模型，与后端 resolve 的回退规则保持一致
-      const usable = cfg.providers.filter((p) => p.openai_url && p.api_key);
-      const defProv = tCfg.providerId && cfg.providers.some((p) => p.id === tCfg.providerId)
-        ? tCfg.providerId!
-        : (usable[0]?.id || cfg.providers[0]?.id || "");
-      setTranslateProvId(defProv);
-      const selP = cfg.providers.find((p) => p.id === defProv);
-      const defModel = tCfg.modelId && selP?.models.some((m) => m.id === tCfg.modelId)
-        ? tCfg.modelId!
-        : (selP?.active_model_id && selP.models.some((m) => m.id === selP.active_model_id) ? selP.active_model_id! : selP?.models[0]?.id || "");
-      setTranslateModelId(defModel);
-    } catch (e) {
-      console.error(e);
-    }
-  };
 
-  const handleSaveAiConfig = async () => {
-    if (!aiConfig) return;
-    setSavingAi(true);
-    setAiSaved(false);
-    setSkillMigrated(false);
 
-    // 监听技能迁移进度
-    const unlisten = await listen<SkillMigrateProgress>(
-      "skill-migrate-progress",
-      (event) => {
-        setSkillProgress(event.payload);
-      },
-    );
 
-    try {
-      const updated: AiConfig = {
-        ...aiConfig,
-        default_project_path: aiDefaultPath,
-      };
-      const result = await invoke<{ ok: boolean; skill_migrated: boolean }>(
-        "save_ai_config",
-        { config: updated },
-      );
-      setAiConfig(updated);
-      setAiSaved(true);
-      if (result.skill_migrated) {
-        setSkillMigrated(true);
-      }
-      // 探索参数与 AI 配置一起保存（失败不阻断主配置保存）
-      if (explorerCfg) {
-        try {
-          const saved = await invoke<ExplorerSettings>("mm_save_explorer_settings", {
-            settings: explorerCfg,
-          });
-          setExplorerCfg(saved);
-        } catch (e) {
-          console.error("保存探索参数失败:", e);
-        }
-      }
-      setTimeout(() => setAiSaved(false), 3000);
-      setTimeout(() => setSkillMigrated(false), 6000);
-    } catch (e: any) {
-      alert(t("settings.saveFail", { err: String(e) }));
-    } finally {
-      unlisten();
-      setSkillProgress(null);
-      setSavingAi(false);
-    }
-  };
 
-  // 保存全局默认 AI 模型：走专用命令只写 provider/model 两个字段，
-  // 不触碰同一配置文件里的划词目标语言（旧实现整份覆盖会把它抹掉），
-  // 后端同时广播 global-default-model-changed 让已挂载的 AI 面板即时刷新预填。
-  const saveTranslateConfig = async (provId: string, modelId: string) => {
-    try {
-      await invoke("save_global_default_model", {
-        providerId: provId,
-        modelId,
-      });
-    } catch (e: any) {
-      console.error("保存全局默认模型失败:", e);
-    }
-  };
-
-  // 切换翻译默认供应商，联动模型
-  const changeTranslateProvider = (pid: string) => {
-    setTranslateProvId(pid);
-    const p = aiConfig?.providers.find((x) => x.id === pid);
-    const m = p?.models[0]?.id || "";
-    setTranslateModelId(m);
-    saveTranslateConfig(pid, m);
-  };
-
-  const changeTranslateModel = (mid: string) => {
-    setTranslateModelId(mid);
-    saveTranslateConfig(translateProvId, mid);
-  };
 
   const fetchAutostart = async () => {
     try {
@@ -521,12 +333,6 @@ export default function GlobalSettings() {
   });
   // 录制目标：null=未录制；否则为某个顶级模块的 moduleId（含「启动」= "launcher"）
   const [recordingField, setRecordingField] = useState<string | null>(null);
-  // 是否正在录制「划词翻译」热键（独立字段，与模块热键分离）
-  const recordingSelTrans = recordingField === "selection-translate";
-  // 是否正在录制「思维导图速记」热键（独立字段，与模块热键分离）
-  const recordingMindmapQuick = recordingField === "mindmap-quick";
-  // 是否正在录制「思维导图贴纸」热键
-  const recordingMindmapSticker = recordingField === "mindmap-sticker";
   // 始终持有最新 launcherCfg，供录制监听闭包（仅依赖 recordingField）安全读取
   const launcherCfgRef = useRef<LauncherSetting>(launcherCfg);
   useEffect(() => {
@@ -534,9 +340,6 @@ export default function GlobalSettings() {
   }, [launcherCfg]);
   const [_savingLauncher, setSavingLauncher] = useState(false);
   const [_launcherSaved, setLauncherSaved] = useState(false);
-  // 外部编辑器（编辑缓冲，失焦/按钮保存到 launcherCfg.externalEditor）
-  const [editorCmd, setEditorCmd] = useState("");
-  useEffect(() => { setEditorCmd(launcherCfg.externalEditor ?? ""); }, [launcherCfg.externalEditor]);
 
   // ---- 外观：模块主题色 + 全局字体 + 模块顺序 + 模块布局 ----
   const [appearance, setAppearance] = useState<{
@@ -923,9 +726,7 @@ export default function GlobalSettings() {
   useEffect(() => {
     fetchConfig();
     fetchVersion();
-    fetchAiConfig();
     fetchAutostart();
-    fetchAutoStartServices();
     fetchLauncherConfig();
     fetchAppearance();
     fetchSystemFonts();
@@ -1087,21 +888,6 @@ export default function GlobalSettings() {
     }
   };
 
-  // 浏览选择外部编辑器可执行文件（也可手填 PATH 命令如 code / nvim）
-  const handleBrowseEditorExe = async () => {
-    try {
-      const selected = await openDialog({
-        multiple: false,
-        title: t("settings.editorPickTitle"),
-        filters: [
-          { name: t("settings.editorExeFilter"), extensions: ["exe", "cmd", "bat"] },
-        ],
-      });
-      if (typeof selected === "string") setEditorCmd(selected);
-    } catch {
-      alert(t("settings.folderPickerUnavailable"));
-    }
-  };
 
   const handleDownloadUpdate = () => {
     window.open(
@@ -1474,241 +1260,29 @@ export default function GlobalSettings() {
           </button>
         </div>
 
-        {/* 托盘右键菜单 */}
+        {/* 托盘右键菜单总开关（各模块的细分项在对应模块的设置弹窗中） */}
         <div className="pt-3 border-t border-white/5 space-y-3">
-          <div className="space-y-0.5">
-            <p className="text-xs font-medium text-slate-200">{t("settings.trayMenu")}</p>
-            <p className="text-[9px] text-slate-500">
-              {t("settings.trayHint")}
-            </p>
-          </div>
-          {[
-            [
-              "show_mihomo",
-              "settings.trayMihomoSub",
-              "settings.trayMihomoDesc",
-            ],
-            ["show_mihomo_mode", "settings.trayModeSwitch", ""],
-            ["show_mihomo_profiles", "settings.traySubSwitch", ""],
-            ["show_mihomo_proxies", "settings.trayProxySwitch", ""],
-          ].map(([key, label, desc]) => {
-            const disabled =
-              key.startsWith("show_mihomo_") && !trayCfg.show_mihomo;
-            return (
-              <div
-                key={key}
-                className={`flex items-center justify-between ${disabled ? "opacity-40" : ""}`}
-              >
-                <div className="space-y-0.5">
-                  <p className="text-[11px] text-slate-200">{t(label)}</p>
-                  {desc && <p className="text-[9px] text-slate-500">{t(desc)}</p>}
-                </div>
-                <button
-                  onClick={() => saveTrayCfg({ [key]: !(trayCfg as any)[key] })}
-                  disabled={disabled || trayBusy}
-                  role="switch"
-                  aria-checked={!!(trayCfg as any)[key]}
-                  className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer disabled:cursor-not-allowed ${
-                    (trayCfg as any)[key] ? "bg-[var(--module-accent)]" : "bg-white/10"
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      (trayCfg as any)[key]
-                        ? "translate-x-4"
-                        : "translate-x-0.5"
-                    }`}
-                  />
-                </button>
-              </div>
-            );
-          })}
-          <div
-            className={`flex items-center justify-between ${!trayCfg.show_mihomo || !trayCfg.show_mihomo_proxies ? "opacity-40" : ""}`}
-          >
+          <div className="flex items-center justify-between">
             <div className="space-y-0.5">
-              <p className="text-[11px] text-slate-200">{t("settings.trayMaxNodes")}</p>
-              <p className="text-[9px] text-slate-500">
-                {t("settings.trayMaxNodesHint")}
-              </p>
+              <p className="text-xs font-medium text-slate-200">{t("settings.trayMenuEnabled")}</p>
+              <p className="text-[9px] text-slate-500">{t("settings.trayMenuEnabledHint")}</p>
             </div>
-            <input
-              type="number"
-              min={1}
-              max={200}
-              value={trayCfg.mihomo_proxy_limit}
-              disabled={
-                !trayCfg.show_mihomo || !trayCfg.show_mihomo_proxies || trayBusy
-              }
-              onChange={(e) =>
-                saveTrayCfg({
-                  mihomo_proxy_limit: Math.max(1, Number(e.target.value) || 1),
-                })
-              }
-              className="w-20 glass-input px-2 py-1 text-xs text-right"
-            />
+            <button
+              type="button"
+              role="switch"
+              aria-checked={trayCfg.enabled}
+              onClick={() => saveTrayCfg({ enabled: !trayCfg.enabled })}
+              className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer ${
+                trayCfg.enabled ? "bg-[var(--module-accent)]" : "bg-white/15"
+              }`}
+            >
+              <span
+                className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
+                  trayCfg.enabled ? "translate-x-4" : "translate-x-0.5"
+                }`}
+              />
+            </button>
           </div>
-        </div>
-      </div>
-
-      {/* 服务自启管理 */}
-      <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-4">
-        <div className="flex items-center justify-between pb-3 border-b border-white/5">
-          <div className="flex items-center gap-2">
-            <Rocket className="w-4 h-4 text-[var(--module-accent)]" />
-            <div>
-              <h3 className="text-xs font-semibold text-white">{t("settings.servicesAutostart")}</h3>
-              <p className="text-[9px] text-slate-500 mt-0.5">
-                {t("settings.servicesAutostartHint")}
-              </p>
-            </div>
-          </div>
-          <span className="text-[10px] text-slate-400 bg-white/5 px-2 py-0.5 rounded-full border border-white/5">
-            {t("settings.autostartCount", { count: autoStartServices.length })}
-          </span>
-        </div>
-
-        <div className="space-y-3">
-          {(() => {
-            // 系统级核心常驻服务
-            const builtinServices = [
-              {
-                id: "mihomo",
-                name: t("settings.svcMihomo"),
-                tag: t("settings.svcMihomoTag"),
-                tagColor: "bg-indigo-500/10 text-indigo-400 border-indigo-500/20",
-                icon: Waypoints,
-                desc: t("settings.svcMihomoDesc"),
-              },
-              {
-                id: "rtsp",
-                name: t("settings.svcRtsp"),
-                tag: t("settings.svcRtspTag"),
-                tagColor: "bg-purple-500/10 text-purple-400 border-purple-500/20",
-                icon: Video,
-                desc: t("settings.svcRtspDesc"),
-              },
-            ];
-
-            // 动态从 SDK 模块中筛选已托管且已安装（或已配置本地路径）的服务
-            const activeSdkServices = sdkProjects
-              .filter((p) => {
-                const isSvc = p.category === "service" || (p as any).is_service;
-                const isInstalled = (p.installed_versions && p.installed_versions.length > 0) || !!p.install_root;
-                return isSvc && p.managed && isInstalled;
-              })
-              .map((p) => {
-                let icon = Server;
-                let tag = t("settings.svcTagBackend");
-                let tagColor = "bg-cyan-500/10 text-cyan-400 border-cyan-500/20";
-                let desc = t("settings.svcDescAuto", { name: p.display_name });
-
-                if (["mysql", "mongodb", "postgresql"].includes(p.id)) {
-                  icon = Database;
-                  tag = t("settings.svcTagDb");
-                  tagColor = "bg-blue-500/10 text-blue-400 border-blue-500/20";
-                  desc = t("settings.svcDescDb", { name: p.display_name });
-                } else if (p.id === "redis") {
-                  icon = Zap;
-                  tag = t("settings.svcTagMiddleware");
-                  tagColor = "bg-rose-500/10 text-rose-400 border-rose-500/20";
-                  desc = t("settings.svcDescRedis");
-                } else if (p.id === "nginx") {
-                  icon = Globe;
-                  tag = t("settings.svcTagWeb");
-                  tagColor = "bg-green-500/10 text-green-400 border-green-500/20";
-                  desc = t("settings.svcDescNginx");
-                } else if (p.id === "frpc" || p.id === "frps") {
-                  icon = Server;
-                  tag = t("settings.svcTagTunnel");
-                  tagColor = "bg-amber-500/10 text-amber-400 border-amber-500/20";
-                  desc = t("settings.svcDescFrp", { name: p.id.toUpperCase() });
-                }
-
-                return {
-                  id: p.id,
-                  name: t("settings.svcName", { name: p.display_name }),
-                  tag,
-                  tagColor,
-                  icon,
-                  desc,
-                };
-              });
-
-            const displayServices = [...builtinServices, ...activeSdkServices];
-
-            return (
-              <>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-                  {displayServices.map(({ id, name, tag, tagColor, icon: Icon, desc }) => {
-                    const isEnabled = autoStartServices.includes(id);
-                    const isBusy = !!autoStartBusyMap[id];
-
-                    return (
-                      <div
-                        key={id}
-                        className={`p-3 rounded-xl border transition-all flex items-center justify-between gap-3 ${
-                          isEnabled
-                            ? "bg-white/[0.04] border-white/10 shadow-sm"
-                            : "bg-black/20 border-white/5 opacity-80 hover:opacity-100"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <div
-                            className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                              isEnabled
-                                ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]"
-                                : "bg-white/5 text-slate-400 border border-white/5"
-                            }`}
-                          >
-                            <Icon className="w-4 h-4" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs font-semibold text-slate-200 truncate">
-                                {name}
-                              </span>
-                              <span
-                                className={`text-[9px] px-1.5 py-0.2 rounded border font-medium ${tagColor}`}
-                              >
-                                {tag}
-                              </span>
-                            </div>
-                            <p className="text-[10px] text-slate-500 truncate mt-0.5">
-                              {desc}
-                            </p>
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={() => handleToggleAutoStartService(id, !isEnabled)}
-                          disabled={isBusy}
-                          role="switch"
-                          aria-checked={isEnabled}
-                          className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
-                            isEnabled ? "bg-[var(--module-accent)]" : "bg-white/10"
-                          }`}
-                          title={isEnabled ? t("settings.svcAutostartOn") : t("settings.svcAutostartOff")}
-                        >
-                          <span
-                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                              isEnabled ? "translate-x-4" : "translate-x-0.5"
-                            }`}
-                          />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {activeSdkServices.length === 0 && (
-                  <p className="text-[10px] text-slate-500 italic mt-2">
-                    {t("settings.svcEmptyTip")}
-                  </p>
-                )}
-              </>
-            );
-          })()}
         </div>
       </div>
 
@@ -1952,170 +1526,6 @@ export default function GlobalSettings() {
               </div>
             </SortableContext>
           </DndContext>
-          {/* 独立「翻译」热键：与翻译模块热键分离（模块热键=唤起面板看历史） */}
-          <div className="mt-2 flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-white/5 bg-white/[0.02]">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
-                <Languages className="w-3.5 h-3.5 text-emerald-400" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[11px] font-medium text-slate-200">{t("settings.translateHotkey")}</p>
-                <p className="text-[9px] text-slate-500 truncate">
-                  {t("settings.translateHotkeyHint")}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              {launcherCfg.selectionTranslateHotkey && !recordingSelTrans && (
-                <button
-                  onClick={() =>
-                    handleSaveLauncherConfig({ selectionTranslateHotkey: "" })
-                  }
-                  className="p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 cursor-pointer"
-                  title={t("settings.clearTranslateHotkey")}
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              )}
-              <button
-                onClick={() => setRecordingField(recordingSelTrans ? null : "selection-translate")}
-                className={`min-w-[86px] px-2.5 py-1 rounded-md border text-[11px] text-center transition cursor-pointer ${
-                  recordingSelTrans
-                    ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
-                    : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white"
-                }`}
-              >
-                {recordingSelTrans
-                  ? t("settings.pressKeys")
-                  : launcherCfg.selectionTranslateHotkey
-                    ? launcherCfg.selectionTranslateHotkey
-                    : t("settings.clickToRecord")}
-              </button>
-            </div>
-          </div>
-          {/* 独立「思维导图节点速记」热键：呼出节点悬浮窗 */}
-          <div className="mt-2 flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-white/5 bg-white/[0.02]">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="w-7 h-7 rounded-lg bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center shrink-0">
-                <Brain className="w-3.5 h-3.5 text-cyan-400" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[11px] font-medium text-slate-200">{t("settings.mindmapNodeHotkey")}</p>
-                <p className="text-[9px] text-slate-500 truncate">
-                  {t("settings.mindmapNodeHotkeyHint")}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              {recordingMindmapQuick && (
-                <button
-                  onClick={() =>
-                    handleSaveLauncherConfig({ mindmapQuickHotkey: "" })
-                  }
-                  className="p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 cursor-pointer"
-                  title={t("settings.clearQuickHotkey")}
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              )}
-              <button
-                onClick={() => setRecordingField(recordingMindmapQuick ? null : "mindmap-quick")}
-                className={`min-w-[86px] px-2.5 py-1 rounded-md border text-[11px] text-center transition cursor-pointer ${
-                  recordingMindmapQuick
-                    ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
-                    : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white"
-                }`}
-              >
-                {recordingMindmapQuick
-                  ? t("settings.pressKeys")
-                  : launcherCfg.mindmapQuickHotkey
-                    ? launcherCfg.mindmapQuickHotkey
-                    : t("settings.clickToRecord")}
-              </button>
-            </div>
-          </div>
-          {/* 独立「思维导图贴纸」热键：呼出贴纸悬浮窗（必须先选目标文档） */}
-          <div className="mt-2 flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-white/5 bg-white/[0.02]">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="w-7 h-7 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center shrink-0">
-                <StickyNote className="w-3.5 h-3.5 text-amber-400" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[11px] font-medium text-slate-200">{t("settings.mindmapStickerHotkey")}</p>
-                <p className="text-[9px] text-slate-500 truncate">
-                  {t("settings.stickerHotkeyHint")}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              {recordingMindmapSticker && (
-                <button
-                  onClick={() =>
-                    handleSaveLauncherConfig({ mindmapStickerHotkey: "" })
-                  }
-                  className="p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 cursor-pointer"
-                  title={t("settings.clearStickerHotkey")}
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              )}
-              <button
-                onClick={() => setRecordingField(recordingMindmapSticker ? null : "mindmap-sticker")}
-                className={`min-w-[86px] px-2.5 py-1 rounded-md border text-[11px] text-center transition cursor-pointer ${
-                  recordingMindmapSticker
-                    ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
-                    : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white"
-                }`}
-              >
-                {recordingMindmapSticker
-                  ? t("settings.pressKeys")
-                  : launcherCfg.mindmapStickerHotkey
-                    ? launcherCfg.mindmapStickerHotkey
-                    : t("settings.clickToRecord")}
-              </button>
-            </div>
-          </div>
-
-          {/* 全局外部编辑器：思维导图节点「文件」等点击时用它打开（未配置回退资源管理器定位） */}
-          <div className="mt-2 px-3 py-2.5 rounded-lg border border-white/5 bg-white/[0.02] space-y-1.5">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center shrink-0">
-                <Code2 className="w-3.5 h-3.5 text-cyan-400" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[11px] font-medium text-slate-200">{t("settings.externalEditor")}</p>
-                <p className="text-[9px] text-slate-500">{t("settings.externalEditorHint")}</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <input
-                type="text"
-                value={editorCmd}
-                onChange={(e) => setEditorCmd(e.target.value)}
-                onBlur={() => { if ((launcherCfg.externalEditor ?? "") !== editorCmd.trim()) handleSaveLauncherConfig({ externalEditor: editorCmd.trim() }); }}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }}
-                className="flex-1 min-w-0 glass-input px-3 py-2 text-xs font-mono"
-                placeholder={t("settings.externalEditorPh")}
-              />
-              <button
-                onClick={() => void handleBrowseEditorExe()}
-                className="p-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-lg border border-white/5 cursor-pointer transition-all flex-shrink-0"
-                title={t("settings.chooseEditorExe")}
-              >
-                <FolderOpen className="w-4 h-4" />
-              </button>
-              {editorCmd.trim() && (
-                <button
-                  onClick={() => { setEditorCmd(""); handleSaveLauncherConfig({ externalEditor: "" }); }}
-                  className="p-2 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 cursor-pointer transition flex-shrink-0"
-                  title={t("settings.clearExternalEditor")}
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-            <p className="text-[9px] text-slate-600">{t("settings.externalEditorExample")}</p>
-          </div>
           <div className="flex items-center justify-between">
             <button
               onClick={handleResetModuleOrder}
@@ -2130,202 +1540,6 @@ export default function GlobalSettings() {
 
       {/* 数据备份与同步（统一快照，原「数据同步」模块迁入设置） */}
       <DataSyncPanel />
-
-      {/* AI 配置 */}
-      <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-4">
-        <div className="flex items-center gap-2 pb-3 border-b border-white/5">
-          <FolderKanban className="w-4 h-4 text-[var(--module-accent)]" />
-          <h3 className="text-xs font-semibold text-white">{t("settings.aiConfig")}</h3>
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-[10px] text-slate-500 uppercase font-semibold">
-            {t("settings.aiDefaultDir")}
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={aiDefaultPath}
-              onChange={(e) => setAiDefaultPath(e.target.value)}
-              className="flex-1 glass-input px-3.5 py-2.5 text-xs font-mono"
-              placeholder="e.g. C:\Users\Admin\projects"
-            />
-            <button
-              onClick={() => handleBrowseFolder(setAiDefaultPath)}
-              className="p-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-lg border border-white/5 cursor-pointer transition-all flex-shrink-0"
-              title={t("settings.chooseFolder")}
-            >
-              <FolderOpen className="w-4 h-4" />
-            </button>
-          </div>
-          <p className="text-[9px] text-slate-500">
-            {t("settings.aiDefaultDirHint")}
-          </p>
-        </div>
-
-        {/* 全局默认 AI 模型（影响翻译/划词翻译、思维导图 AI 导入等） */}
-        <div className="space-y-2 pt-3 border-t border-white/5">
-          <div>
-            <label className="text-[10px] text-slate-300 uppercase font-semibold flex items-center gap-1">
-              <Brain className="w-3 h-3 text-violet-400" />
-              {t("settings.globalDefaultModel")}
-            </label>
-            <p className="text-[9px] text-slate-600 mt-0.5">
-              {t("settings.globalModelHint")}
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <select
-              value={translateProvId}
-              onChange={(e) => changeTranslateProvider(e.target.value)}
-              disabled={!aiConfig || aiConfig.providers.length === 0}
-              className="glass-input px-3 py-2 text-xs disabled:opacity-50"
-            >
-              {(!aiConfig || aiConfig.providers.length === 0) && (
-                <option value="">{t("settings.noProvider")}</option>
-              )}
-              {aiConfig?.providers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <select
-              value={translateModelId}
-              onChange={(e) => changeTranslateModel(e.target.value)}
-              disabled={!aiConfig || !translateProvId}
-              className="glass-input px-3 py-2 text-xs disabled:opacity-50"
-            >
-              {(aiConfig?.providers.find((p) => p.id === translateProvId)?.models || []).map(
-                (m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name || m.id}
-                  </option>
-                ),
-              )}
-            </select>
-          </div>
-        </div>
-
-        {/* 思维导图 AI 探索参数：分析深度与每轮读取预算 */}
-        {explorerCfg && (
-          <div className="space-y-2 pt-3 border-t border-white/5">
-            <div>
-              <label className="text-[10px] text-slate-300 uppercase font-semibold flex items-center gap-1">
-                <Search className="w-3 h-3 text-cyan-400" />
-                {t("settings.explorerParams")}
-              </label>
-              <p className="text-[9px] text-slate-600 mt-0.5">
-                {t("settings.explorerParamsHint")}
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              {([
-                ["explorerRounds", "settings.explorerRounds", "settings.explorerRoundsHint"],
-                ["explorerFilesPerRound", "settings.explorerFilesHint", ""],
-                ["explorerCharsPerFile", "settings.explorerCharsFile", ""],
-                ["explorerBatchChars", "settings.explorerCharsBatch", ""],
-              ] as const).map(([key, label, hint]) => {
-                const lim = EXPLORER_LIMITS[key];
-                return (
-                  <div key={key}>
-                    <label className="text-[9px] text-slate-400">{t(label)}</label>
-                    <input
-                      type="number"
-                      min={lim.min}
-                      max={lim.max}
-                      value={explorerCfg[key]}
-                      onChange={(e) => {
-                        const n = Number(e.target.value);
-                        if (Number.isNaN(n)) return;
-                        setExplorerCfg({ ...explorerCfg, [key]: n });
-                      }}
-                      onBlur={(e) => {
-                        // 失焦时钳制到合法范围（后端还会再硬钳制一次）
-                        const n = Math.min(lim.max, Math.max(lim.min, Number(e.target.value) || lim.min));
-                        setExplorerCfg({ ...explorerCfg, [key]: n });
-                      }}
-                      className="glass-input px-3 py-2 text-xs font-mono"
-                    />
-                    {hint && <p className="text-[8px] text-slate-600 mt-0.5">{t(hint)}</p>}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* 技能市场配置 */}
-        <div className="space-y-2 pt-3 border-t border-white/5">
-          <div>
-            <label className="text-[10px] text-slate-300 uppercase font-semibold">
-              {t("settings.skillMarket")}
-            </label>
-            <p className="text-[9px] text-slate-600 mt-0.5">
-              {t("settings.skillMarketHint")}
-            </p>
-          </div>
-
-          {/* 技能迁移进度 */}
-          {skillProgress && (
-            <div className="p-2.5 bg-violet-500/10 border border-violet-500/20 rounded-xl space-y-1.5 animate-fadeIn">
-              <div className="flex items-center justify-between text-[9px]">
-                <span className="text-violet-300 font-semibold flex items-center gap-1">
-                  <RefreshCw className="w-3 h-3 animate-spin" />
-                  {skillProgress.stage}
-                </span>
-                {skillProgress.total > 0 && (
-                  <span className="text-violet-400 font-mono">
-                    {skillProgress.current}/{skillProgress.total}
-                  </span>
-                )}
-              </div>
-              {skillProgress.total > 0 && (
-                <div className="w-full bg-violet-500/20 rounded-full h-1 overflow-hidden">
-                  <div
-                    className="bg-violet-400 h-full rounded-full transition-all duration-300"
-                    style={{
-                      width: `${Math.round((skillProgress.current / skillProgress.total) * 100)}%`,
-                    }}
-                  />
-                </div>
-              )}
-              {skillProgress.skill_name && (
-                <div className="text-[8px] text-slate-400 truncate">
-                  {skillProgress.skill_name}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 技能迁移完成 */}
-          {skillMigrated && !skillProgress && (
-            <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-[10px] text-emerald-400 flex items-center gap-1.5 animate-fadeIn">
-              <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-              {t("settings.skillMigrated")}
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center justify-between pt-4 border-t border-white/5">
-          <div>
-            {aiSaved && (
-              <span className="text-xs font-medium text-emerald-400 flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4" />
-                {t("settings.saved")}
-              </span>
-            )}
-          </div>
-          <button
-            onClick={handleSaveAiConfig}
-            disabled={savingAi || !aiConfig}
-            className="px-6 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5"
-          >
-            <Save className="w-3.5 h-3.5" />
-            {savingAi ? t("settings.saving") : t("settings.save")}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

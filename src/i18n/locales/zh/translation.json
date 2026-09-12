@@ -244,6 +244,8 @@
     "autostartOn": "已开启开机自启",
     "autostartOff": "已关闭开机自启",
     "trayMenu": "托盘右键菜单",
+    "trayMenuEnabled": "显示托盘右键菜单",
+    "trayMenuEnabledHint": "关闭后托盘图标不再弹出右键菜单；各模块的细分项在对应模块的设置弹窗中",
     "servicesAutostart": "服务自启管理",
     "translateHotkey": "翻译热键",
     "mindmapNodeHotkey": "思维导图节点速记热键",
