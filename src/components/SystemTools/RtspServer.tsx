@@ -42,6 +42,8 @@ interface RtspConfig {
   loopFile: boolean;
   includeAudio: boolean;
   audioDevice?: string;
+  /** 测试画幅专用合成音源类型（多实例可选不同类型以便凭听感区分） */
+  testAudioType?: string;
   resolution?: string;
   fps?: number;
   bitrateMbps?: number;
@@ -85,6 +87,7 @@ const DEFAULT_CONFIG: RtspConfig = {
   allowLan: false,
   loopFile: true,
   includeAudio: false,
+  testAudioType: "tone1000",
   resolution: "default",
   fps: 30,
   bitrateMbps: 0,
@@ -897,9 +900,25 @@ export default function RtspServer() {
                             )}
 
                             {inst.config.includeAudio && inst.config.sourceType === "testsrc" && (
-                              <p className="text-[10px] text-slate-500 leading-relaxed">
-                                {t("rtsp.testsrcAudioHint")}
-                              </p>
+                              <div>
+                                <span className="text-[10px] text-slate-400 block mb-1">{t("rtsp.testAudioLabel")}</span>
+                                <select
+                                  value={inst.config.testAudioType || "tone1000"}
+                                  disabled={isLocked}
+                                  onChange={(e) => updateInstanceConfig(inst.id, { testAudioType: e.target.value })}
+                                  className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
+                                >
+                                  <option value="tone1000">{t("rtsp.testAudioTone1000")}</option>
+                                  <option value="tone440">{t("rtsp.testAudioTone440")}</option>
+                                  <option value="stereo">{t("rtsp.testAudioStereo")}</option>
+                                  <option value="sweep">{t("rtsp.testAudioSweep")}</option>
+                                  <option value="noise">{t("rtsp.testAudioNoise")}</option>
+                                  <option value="beep">{t("rtsp.testAudioBeep")}</option>
+                                </select>
+                                <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                                  {t("rtsp.testsrcAudioHint")}
+                                </p>
+                              </div>
                             )}
                           </div>
                         )}

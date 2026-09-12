@@ -320,6 +320,7 @@ pub fn run() {
                                 loop_file: true,
                                 include_audio: false,
                                 audio_device: None,
+                                test_audio_type: None,
                                 resolution: Some("1280x720".to_string()),
                                 fps: Some(30),
                                 bitrate_mbps: None,

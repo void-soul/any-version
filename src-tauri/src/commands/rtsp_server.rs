@@ -25,6 +25,10 @@ pub struct RtspConfig {
     pub loop_file: bool,
     pub include_audio: bool,
     pub audio_device: Option<String>,
+    /// 测试画幅（testsrc）专用的合成音源类型，见 testsrc_audio_source。
+    /// 多实例时各选不同类型即可凭听感区分是哪个实例。空/未知值回退 1kHz 纯音。
+    #[serde(default)]
+    pub test_audio_type: Option<String>,
     pub resolution: Option<String>,   // e.g. "1280x720" or "default"
     pub fps: Option<u32>,             // e.g. 30
     pub bitrate_mbps: Option<f64>,    // e.g. 8.0 (8 Mbps)
@@ -87,6 +91,46 @@ fn get_ffmpeg_path() -> PathBuf {
 /// 获取 mediamtx.exe 路径（bin/mediamtx/mediamtx.exe）
 fn get_mediamtx_path() -> PathBuf {
     bin_tool("mediamtx")
+}
+
+/// 测试画幅（testsrc）可用的合成音源类型。
+///
+/// 返回 (lavfi 音频输入参数, 可选音频滤镜)。多实例场景下给各实例选不同类型，
+/// 即可凭听感分辨是哪一路流。全部为纯软件合成，不依赖麦克风；参数均已实测可用。
+fn testsrc_audio_source(kind: &str) -> (Vec<String>, Option<String>) {
+    // 可听音源统一衰减到 50%：满幅正弦/扫频直推非常刺耳。
+    let (input, af): (&str, &str) = match kind {
+        // 440Hz（标准音 A4）：比 1kHz 低沉，便于与其它实例区分
+        "tone440" => ("sine=frequency=440:sample_rate=44100", "volume=0.5"),
+        // 左右声道分离：左 1kHz / 右 400Hz，可验证声道是否接反或被混成单声道
+        "stereo" => (
+            "aevalsrc=sin(1000*2*PI*t)|sin(400*2*PI*t):s=44100:c=stereo",
+            "volume=0.5",
+        ),
+        // 20Hz→20kHz 指数扫频（8 秒一轮）。表达式含逗号，必须用单引号包裹，
+        // 否则 filtergraph 会把逗号当作 filter 分隔符，报 "No option name near ..."
+        "sweep" => (
+            "aevalsrc='sin(2*PI*t*20*pow(1000,mod(t,8)/8))':s=44100:c=mono",
+            "volume=0.5",
+        ),
+        // 粉红噪声：anoisesrc 自带 amplitude 控制音量，不再叠加 volume 滤镜
+        "noise" => ("anoisesrc=color=pink:sample_rate=44100:amplitude=0.3", ""),
+        // 间断滴声：每秒响 0.15 秒，便于察觉卡顿/丢帧；音量门控并入 volume 表达式
+        "beep" => (
+            "sine=frequency=1000:sample_rate=44100",
+            "volume='0.5*if(lt(mod(t,1),0.15),1,0)':eval=frame",
+        ),
+        // 默认：1kHz 纯音
+        _ => ("sine=frequency=1000:sample_rate=44100", "volume=0.5"),
+    };
+    let args = vec![
+        "-f".to_string(),
+        "lavfi".to_string(),
+        "-i".to_string(),
+        input.to_string(),
+    ];
+    let af = if af.is_empty() { None } else { Some(af.to_string()) };
+    (args, af)
 }
 
 /// 获取本机的局域网 IP
@@ -292,6 +336,8 @@ pub fn start_rtsp_server(
     }
 
     let mut args: Vec<String> = Vec::new();
+    // 测试画幅的音频滤镜（由所选音源类型决定），供第 4 节音频编码使用
+    let mut testsrc_audio_af: Option<String> = None;
 
     // 1. 输入源定义与选项
     if config.source_type == "testsrc" {
@@ -303,13 +349,14 @@ pub fn start_rtsp_server(
             "-f".to_string(), "lavfi".to_string(),
             "-i".to_string(), format!("testsrc=size={}:rate={}", size, rate),
         ]);
-        // 测试画幅没有音频输入设备，用 lavfi 合成一路 1kHz 正弦音作为第二个输入，
-        // 便于在没有麦克风的情况下验证音频链路是否正常（开启「包含音频」时生效）。
+        // 测试画幅没有音频输入设备，用 lavfi 合成测试音作为第二个输入，
+        // 便于在没有麦克风的情况下验证音频链路（开启「包含音频」时生效）。
+        // 音源类型可选，多实例时各选不同类型即可凭听感区分。
         if config.include_audio {
-            args.extend(vec![
-                "-f".to_string(), "lavfi".to_string(),
-                "-i".to_string(), "sine=frequency=1000:sample_rate=44100".to_string(),
-            ]);
+            let kind = config.test_audio_type.as_deref().unwrap_or("tone1000");
+            let (audio_input, af) = testsrc_audio_source(kind);
+            args.extend(audio_input);
+            testsrc_audio_af = af;
         }
     } else if config.source_type == "camera" {
         let cam = config.camera_name.as_deref().unwrap_or("");
@@ -427,9 +474,9 @@ pub fn start_rtsp_server(
     // 4. 音频编码
     if config.include_audio {
         args.extend(vec!["-c:a".to_string(), "aac".to_string(), "-ar".to_string(), "44100".to_string()]);
-        // 测试音是满幅正弦波，直接推流非常刺耳，衰减到 50% 再编码
-        if config.source_type == "testsrc" {
-            args.extend(vec!["-af".to_string(), "volume=0.5".to_string()]);
+        // 测试画幅：按所选音源类型应用音量衰减 / 滴声门控滤镜
+        if let Some(af) = testsrc_audio_af {
+            args.extend(vec!["-af".to_string(), af]);
         }
     } else {
         args.push("-an".to_string());
