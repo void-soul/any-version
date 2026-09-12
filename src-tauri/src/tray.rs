@@ -203,6 +203,12 @@ static REBUILD_PENDING: AtomicBool = AtomicBool::new(false);
 const REBUILD_MIN_INTERVAL_MS: u64 = 1500;
 
 /// 后台线程可调用的全局托盘菜单重建入口（无 AppHandle 时静默跳过）。
+/// 托盘右键菜单总开关（设置 → 托盘右键）。
+/// 关闭后托盘图标不再挂载菜单；图标本身与左键打开主窗口的行为保留。
+fn tray_menu_enabled() -> bool {
+    crate::commands::config::load_config().tray_menu.enabled
+}
+
 pub(crate) fn rebuild_tray_menu_global() -> tauri::Result<()> {
     if let Some(app) = GLOBAL_APP.get() {
         rebuild_tray_menu(app)
@@ -213,11 +219,16 @@ pub(crate) fn rebuild_tray_menu_global() -> tauri::Result<()> {
 
 pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let _ = GLOBAL_APP.set(app.clone());
-    let menu = build_menu(app)?;
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip(current_tray_quote())
-        .menu(&menu)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(false);
+    // 全局总开关（设置 → 托盘右键）：关闭时不挂载右键菜单。
+    // 托盘图标保留，左键打开主窗口的行为不受影响。
+    if tray_menu_enabled() {
+        let menu = build_menu(app)?;
+        builder = builder.menu(&menu);
+    }
+    builder = builder
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
                 button,
@@ -247,10 +258,13 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                             if now.saturating_sub(last) >= REBUILD_MIN_INTERVAL_MS {
                                 let handle = tray.app_handle();
                                 if let Some(t) = handle.tray_by_id(TRAY_ID) {
-                                    if let Ok(menu) = build_menu(handle) {
-                                        let _ = t.set_menu(Some(menu));
-                                        REBUILD_LAST.store(now_ms(), Ordering::SeqCst);
-                                    }
+                                    let menu = if tray_menu_enabled() {
+                                        build_menu(handle).ok()
+                                    } else {
+                                        None
+                                    };
+                                    let _ = t.set_menu(menu);
+                                    REBUILD_LAST.store(now_ms(), Ordering::SeqCst);
                                 }
                             }
                         }
@@ -442,7 +456,12 @@ pub fn rebuild_tray_menu(app: &AppHandle) -> tauri::Result<()> {
     REBUILD_LAST.store(now, Ordering::SeqCst);
     REBUILD_PENDING.store(false, Ordering::SeqCst);
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        tray.set_menu(Some(build_menu(app)?))?;
+        let menu = if tray_menu_enabled() {
+            Some(build_menu(app)?)
+        } else {
+            None
+        };
+        tray.set_menu(menu)?;
     }
     Ok(())
 }

@@ -19,30 +19,24 @@ fn default_true() -> bool {
     true
 }
 
-/// 托盘右键菜单的可见性配置（在「设置」里勾选）
+/// 托盘右键菜单配置。
+///
+/// - `enabled` 是全局总开关（「设置 → 托盘右键」），控制托盘图标是否挂载右键菜单。
+/// - `show_mihomo` 决定是否显示 Mihomo 项，其设置入口已迁至**代理模块**的设置弹窗。
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct TrayMenuConfig {
-    /// 显示 Mihomo 子菜单
+    /// 是否启用托盘右键菜单（关闭后托盘图标不挂载菜单）
+    pub enabled: bool,
+    /// 是否在托盘菜单中显示 Mihomo 项
     pub show_mihomo: bool,
-    /// Mihomo 子菜单里显示订阅切换
-    pub show_mihomo_profiles: bool,
-    /// Mihomo 子菜单里显示代理组切换
-    pub show_mihomo_proxies: bool,
-    /// Mihomo 子菜单里显示模式切换（规则/全局/直连）
-    pub show_mihomo_mode: bool,
-    /// 每个代理组最多列出的节点数（过多会导致托盘菜单过长）
-    pub mihomo_proxy_limit: usize,
 }
 
 impl Default for TrayMenuConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             show_mihomo: true,
-            show_mihomo_profiles: true,
-            show_mihomo_proxies: true,
-            show_mihomo_mode: true,
-            mihomo_proxy_limit: 30,
         }
     }
 }

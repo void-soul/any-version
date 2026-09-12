@@ -1,8 +1,11 @@
-//! 思维导图 AI 探索参数的全局设置：存储在数据目录 `mindmap_settings.json`。
+//! 思维导图设置：存储在数据目录 `mindmap_settings.json`。
 //!
-//! 探索循环（AI 点单读文件）的轮数与每批预算原本是硬编码常量，现开放为可调参数，
-//! 让用户按模型窗口/项目规模自行权衡「分析深度 ↔ 成本」。所有字段带硬钳制，
-//! 防止极端值（如 0 轮、单文件 100MB）拖垮上下文或产生天价账单。
+//! 两部分内容：
+//! - **AI 探索预算**：探索循环（AI 点单读文件）的轮数与每批预算原本是硬编码常量，
+//!   现开放为可调参数，让用户按模型窗口/项目规模自行权衡「分析深度 ↔ 成本」。
+//!   这些字段带硬钳制，防止极端值（如 0 轮、单文件 100MB）拖垮上下文或产生天价账单。
+//! - **上次使用的 AI 模型**：思维导图不提供显式「默认模型」设置项，选择模型时自动记录，
+//!   下次打开沿用（见 `last_provider_id` / `last_model_id`）。
 
 use serde::{Deserialize, Serialize};
 
@@ -23,7 +26,7 @@ pub const MAX_CHARS_PER_FILE: u32 = 20_000;
 pub const MIN_BATCH_CHARS: u32 = 4_000;
 pub const MAX_BATCH_CHARS: u32 = 60_000;
 
-/// 思维导图 AI 探索参数。
+/// 思维导图设置（AI 探索预算 + 上次使用的模型记忆）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ExplorerSettings {
@@ -35,6 +38,10 @@ pub struct ExplorerSettings {
     pub explorer_chars_per_file: u32,
     /// 每轮追加内容的总字符预算
     pub explorer_batch_chars: u32,
+    /// 上次使用的 AI 供应商 id（None = 尚未选择过，前端回退到默认供应商）
+    pub last_provider_id: Option<String>,
+    /// 上次使用的 AI 模型 id（None = 尚未选择过，前端回退到激活模型）
+    pub last_model_id: Option<String>,
 }
 
 impl Default for ExplorerSettings {
@@ -44,7 +51,9 @@ impl Default for ExplorerSettings {
             explorer_files_per_round: DEFAULT_EXPLORER_FILES_PER_ROUND,
             explorer_chars_per_file: DEFAULT_EXPLORER_CHARS_PER_FILE,
             explorer_batch_chars: DEFAULT_EXPLORER_BATCH_CHARS,
-            }
+            last_provider_id: None,
+            last_model_id: None,
+        }
     }
 }
 
@@ -122,6 +131,8 @@ mod tests {
             explorer_files_per_round: 99,
             explorer_chars_per_file: 1,
             explorer_batch_chars: 1,
+            last_provider_id: None,
+            last_model_id: None,
         }
         .clamped();
         assert_eq!(s.explorer_rounds, 1);
@@ -138,6 +149,8 @@ mod tests {
             explorer_files_per_round: 8,
             explorer_chars_per_file: 20_000,
             explorer_batch_chars: 4_000,
+            last_provider_id: None,
+            last_model_id: None,
         }
         .clamped();
         assert_eq!(s.explorer_chars_per_file, 20_000);
@@ -151,10 +164,25 @@ mod tests {
             explorer_files_per_round: 12,
             explorer_chars_per_file: 6_000,
             explorer_batch_chars: 40_000,
+            last_provider_id: Some("openai".to_string()),
+            last_model_id: Some("gpt-5".to_string()),
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let back: ExplorerSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.explorer_rounds, 9);
         assert_eq!(back.explorer_batch_chars, 40_000);
+        // 「上次使用的模型」记忆随文件持久化
+        assert_eq!(back.last_provider_id.as_deref(), Some("openai"));
+        assert_eq!(back.last_model_id.as_deref(), Some("gpt-5"));
+    }
+
+    #[test]
+    fn legacy_json_without_last_model_fields_is_accepted() {
+        // 旧版 mindmap_settings.json 没有 last* 字段，反序列化应回退 None（向后兼容）
+        let legacy = r#"{"explorerRounds":4,"explorerFilesPerRound":8,"explorerCharsPerFile":4000,"explorerBatchChars":24000}"#;
+        let cfg: ExplorerSettings = serde_json::from_str(legacy).unwrap();
+        assert_eq!(cfg.explorer_rounds, 4);
+        assert!(cfg.last_provider_id.is_none());
+        assert!(cfg.last_model_id.is_none());
     }
 }

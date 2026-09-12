@@ -290,6 +290,13 @@ pub fn run() {
             let h = app.handle().clone();
             let s_mihomo = mihomo_state.clone();
             let config_clone = crate::commands::config::load_config();
+            // 一次性清理：RTSP 媒体服务不再支持开机自启，移除历史配置中可能残留的 "rtsp"
+            if config_clone.auto_start_services.contains("rtsp") {
+                let _ = crate::commands::config::mutate_config(|c| {
+                    c.auto_start_services.remove("rtsp");
+                    Ok(())
+                });
+            }
             tauri::async_runtime::spawn(async move {
                 let auto_start_services = config_clone.auto_start_services.clone();
 
@@ -301,40 +308,10 @@ pub fn run() {
                     let _ = commands::mihomo::launch_core(&h, s_mihomo).await;
                 }
 
-                // 2. RTSP 推流服务自启
-                if auto_start_services.contains("rtsp") {
-                    if let Some(rtsp_state) = h.try_state::<commands::rtsp_server::RtspServerState>() {
-                        exit_log::exit_log("[autostart] 正在自启 RTSP 推流服务...");
-                        let rtsp_config: commands::rtsp_server::RtspConfig = config_clone
-                            .last_servers
-                            .rtsp
-                            .and_then(|v| serde_json::from_value(v).ok())
-                            .unwrap_or_else(|| commands::rtsp_server::RtspConfig {
-                                id: Some("rtsp-auto".to_string()),
-                                source_type: "testsrc".to_string(),
-                                camera_name: None,
-                                file_path: None,
-                                port: 8554,
-                                path_name: "live".to_string(),
-                                allow_lan: false,
-                                loop_file: true,
-                                include_audio: false,
-                                audio_device: None,
-                                test_audio_type: None,
-                                resolution: Some("1280x720".to_string()),
-                                fps: Some(30),
-                                bitrate_mbps: None,
-                                gop: None,
-                                transport: Some("tcp".to_string()),
-                                video_codec: Some("h264".to_string()),
-                                gpu_accel: Some("cpu".to_string()),
-                            });
-                        let _ = commands::rtsp_server::start_rtsp_server(h.clone(), rtsp_state, rtsp_config);
-                    }
-                }
-
-                // 3. SDK 后台服务自启 (MySQL / Redis / MongoDB / PostgreSQL / Nginx / FRPC / FRPS 等)
+                // 2. SDK 后台服务自启 (MySQL / Redis / MongoDB / PostgreSQL / Nginx / FRPC / FRPS 等)
+                //    注：RTSP 媒体服务已不再提供开机自启（设置入口与自启分支均已移除）。
                 for svc_id in &auto_start_services {
+                    // mihomo 已在上方单独处理；rtsp 保留跳过以防御历史残留配置
                     if svc_id == "mihomo" || svc_id == "rtsp" {
                         continue;
                     }
