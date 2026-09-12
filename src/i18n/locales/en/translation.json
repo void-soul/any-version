@@ -4198,7 +4198,7 @@
     "exportOne": "Export this account",
     "deleteOne": "Delete this account",
     "delMsgSingle": "Delete account “{{name}}”? Only the Kira-stored record is removed; local client login state is unaffected.",
-    "switchStage": {"closing": "Closing the running client…", "merging": "Merging local sessions ({{workspaces}} workspaces scanned)…", "writing": "Writing login state…", "launching": "Relaunching the client…", "done": "Switch complete"},
+    "switchStage": {"closing": "Asking the running client to close (no force-kill, please wait)…", "merging": "Merging local sessions ({{workspaces}} workspaces scanned)…", "writing": "Writing login state…", "done": "Switch complete"},
     "mergeResult": "Sessions merged: {{added}} conversations added, {{replaced}} replaced, {{rows}} rows remapped, {{workspaces}} workspaces scanned",
     "syncImport": "Import to {{target}}",
     "syncImported": "Imported {{count}} account(s) to {{target}}",
@@ -4237,6 +4237,6 @@
     "invalidTimeFormat": "Unrecognized time format. Use YYYY-MM-DD HH:mm:ss",
     "expiryLabel": "Expiry",
     "tabSettings": "Settings",
-    "clientPaths": {"title": "Client paths", "hint": "Switching accounts closes and relaunches the client. Leave empty to auto-detect; set the path manually when auto-detection fails.", "custom": "Manual", "auto": "Auto-detected", "missing": "Not found", "placeholder": "Empty = auto-detect", "resolved": "Effective path", "browse": "Browse", "save": "Save", "clear": "Reset to auto", "saved": "Path saved", "cleared": "Auto-detection restored"}
+    "clientPaths": {"title": "Client paths", "hint": "Switching accounts asks the client to close (it is never force-killed); start it manually afterwards. Leave empty to auto-detect; set the path manually when auto-detection fails.", "custom": "Manual", "auto": "Auto-detected", "missing": "Not found", "placeholder": "Empty = auto-detect", "resolved": "Effective path", "browse": "Browse", "save": "Save", "clear": "Reset to auto", "saved": "Path saved", "cleared": "Auto-detection restored"}
   }
 }

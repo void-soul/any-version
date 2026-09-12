@@ -101,7 +101,7 @@ export interface BuddyClientPath {
 export interface BuddySwitchProgress {
   platform: string;
   accountId: string;
-  stage: "closing" | "merging" | "writing" | "launching" | "done";
+  stage: "closing" | "merging" | "writing" | "done";
   scannedWorkspaces: number;
   message?: string | null;
 }
@@ -1790,7 +1790,7 @@ export default function BuddyPanel() {
       )}
 
       {/* 路径信息 */}
-      {/* ─── 设置 Tab：客户端路径（切换时关闭/重启） ─── */}
+      {/* ─── 设置 Tab：客户端路径（切换时仅请求关闭，由用户手动启动） ─── */}
       {tab === "settings" && (
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">

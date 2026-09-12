@@ -278,7 +278,8 @@ pub async fn buddy_switch_account(
     // 复刻 cockpit-tools 切换时序：关闭运行中的客户端 → 合并来源会话 → 写入登录态 → 重新启动。
     // 各阶段通过 buddy-switch-progress 事件上报前端；合并统计随报告一并返回（前端渲染为文本）。
     tauri::async_runtime::spawn_blocking(move || {
-        // 1) 关闭正在运行的客户端（进程占用 db/会话目录，必须先关再合并）
+        // 1) 请求关闭正在运行的客户端（进程占用 db/会话目录，必须先关再合并）。
+        //    只做优雅退出、不强杀；客户端不响应时 close_running 报错，切换随之中止并提示手动退出。
         emit_switch_progress(Some(&app), platform, &account_id, "closing", 0, None);
         client_process::close_running(platform, 20)?;
 
@@ -303,23 +304,13 @@ pub async fn buddy_switch_account(
         // 切换成功后持久化当前账号（复刻 provider_current_state，供前端稳定标识）
         let _ = store::set_current_account_id(platform, Some(&account_id));
 
-        // 4) 重新启动客户端。启动失败不回滚切换（复刻 cockpit-tools「切换完成，但启动失败」语义）
-        emit_switch_progress(Some(&app), platform, &account_id, "launching", 0, None);
-        let mut message = message;
-        if let Err(err) = client_process::launch(platform) {
-            eprintln!(
-                "[Buddy Switch] {} 启动失败: {}",
-                client_process::app_display_name(platform),
-                err
-            );
-            message = format!(
-                "{}，但 {} 启动失败：{}",
-                message,
-                client_process::app_display_name(platform),
-                err.trim_start_matches(client_process::APP_PATH_MISSING_PREFIX)
-                    .trim()
-            );
-        }
+        // 4) 不再自动启动客户端：只负责写入登录态，客户端由用户自行启动。
+        //    （自动启动会在用户尚未确认时抢占前台窗口，且安装路径缺失时只能以失败告终）
+        let message = format!(
+            "{}，请手动启动 {}",
+            message,
+            client_process::app_display_name(platform)
+        );
         emit_switch_progress(Some(&app), platform, &account_id, "done", 0, None);
         Ok((message, transfer_report))
     })
