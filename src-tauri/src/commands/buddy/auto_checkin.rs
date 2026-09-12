@@ -99,6 +99,42 @@ pub struct BuddyAutoCheckinLogRecord {
     pub details: Vec<BuddyAutoCheckinAccountDetail>,
 }
 
+/// 单个账号的「今日签到任务」视图（前端任务列表的一行）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuddyCheckinTask {
+    pub account_id: String,
+    pub email: String,
+    /// "pending"（待签到）| "success"（已签到）| "failed"（失败，会继续重试）
+    pub status: String,
+    /// 今日计划时间（HH:MM）；今日计划尚未生成时为 None
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scheduled_time: Option<String>,
+    /// 最近一次尝试时间（HH:MM:SS）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_attempt_time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// 自动签到任务列表视图（含「今日计划是否已生成」）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuddyCheckinTasksView {
+    pub enabled: bool,
+    pub start_time: String,
+    pub end_time: String,
+    /// 今日计划是否已生成（到达开始时间后才生成）
+    pub generated: bool,
+    pub tasks: Vec<BuddyCheckinTask>,
+}
+
+/// 把分钟数格式化为 HH:MM。
+pub fn format_minutes(minute: i32) -> String {
+    let clamped = minute.clamp(0, 1439);
+    format!("{:02}:{:02}", clamped / 60, clamped % 60)
+}
+
 fn get_config_file_path() -> PathBuf {
     crate::commands::config::get_data_dir()
         .join("buddy")
@@ -317,9 +353,15 @@ fn random_u32_below(max: u32) -> u32 {
     u32::from_le_bytes(buf) % max
 }
 
+/// 为每个账号生成「当天」的计划签到分钟（随机落在 [startTime, endTime] 内）。
+///
+/// `allow_generate`：是否允许生成**今天**的计划。调用方传入「已到达当天开始时间」
+/// （或用户强制立即执行），以符合「每天在开始时间生成计划」的语义——未到开始时间
+/// 只保留既有计划不动，前端据此显示「今日计划待生成」。
 pub fn ensure_account_schedules(
     config: &mut BuddyAutoCheckinConfig,
     accounts: &[BuddyAccount],
+    allow_generate: bool,
 ) -> bool {
     let today_str = get_today_date_string();
     let start_min = parse_time_to_minutes(&config.start_time);
@@ -341,6 +383,9 @@ pub fn ensure_account_schedules(
             {
                 continue;
             }
+        }
+        if !allow_generate {
+            continue;
         }
 
         let random_offset = if min_range > 0 {
@@ -430,15 +475,17 @@ pub async fn run_auto_checkin_cycle_if_needed(
         return Ok("no_accounts".to_string());
     }
 
-    let schedule_changed = ensure_account_schedules(&mut config, &accounts);
+    // 只有到达当天开始时间（或用户强制立即执行）才生成今日计划
+    let now = Local::now();
+    let current_minute = (now.hour() * 60 + now.minute()) as i32;
+    let allow_generate = force || current_minute >= parse_time_to_minutes(&config.start_time);
+    let schedule_changed = ensure_account_schedules(&mut config, &accounts, allow_generate);
     if schedule_changed {
         save_config_without_wake(&config)?;
         let _ = app.emit("buddy-auto-checkin-config-changed", ());
     }
 
     let today_str = get_today_date_string();
-    let now = Local::now();
-    let current_minute = (now.hour() * 60 + now.minute()) as i32;
 
     let target_accounts: Vec<&BuddyAccount> = if force {
         accounts.iter().collect()
@@ -670,6 +717,96 @@ pub async fn run_auto_checkin_cycle_if_needed(
     }
 }
 
+/// 由「今日是否已签到」+「今日日志中最近一条结果」推导任务状态。
+fn derive_task_status(
+    checked_today: bool,
+    detail: Option<&BuddyAutoCheckinAccountDetail>,
+) -> &'static str {
+    if checked_today
+        || detail
+            .map(|d| d.status == "success" || d.status == "already_checked")
+            .unwrap_or(false)
+    {
+        "success"
+    } else if detail
+        .map(|d| d.status == "failed" || d.status == "inactive")
+        .unwrap_or(false)
+    {
+        "failed"
+    } else {
+        "pending"
+    }
+}
+
+/// 组装「今日签到任务」列表（供前端展示）。
+///
+/// 状态推导（只关心今天）：
+/// - `success`：今日计划已标记签到完成，或今日日志中该账号为成功/已签到
+/// - `failed`：今日日志中该账号最近一次为失败（会按调度继续重试）
+/// - `pending`：其余情况（含「计划时间未到」与「今日计划尚未生成」）
+pub fn build_tasks_view(platform: BuddyPlatform) -> Result<BuddyCheckinTasksView, String> {
+    let config = get_config_checked()?;
+    let accounts = store::list_accounts(platform);
+    let today_str = get_today_date_string();
+
+    // 今日日志里每个账号的最新结果
+    let mut today_results: HashMap<String, BuddyAutoCheckinAccountDetail> = HashMap::new();
+    for log in get_logs_checked()? {
+        if log.date != today_str {
+            continue;
+        }
+        for detail in log.details {
+            today_results.insert(detail.account_id.clone(), detail);
+        }
+    }
+
+    let schedules = config.account_schedules.clone().unwrap_or_default();
+    let mut tasks = Vec::with_capacity(accounts.len());
+    let mut generated = false;
+
+    for account in &accounts {
+        let schedule = schedules.get(&account.id);
+        let scheduled_today = schedule
+            .map(|s| s.scheduled_date == today_str)
+            .unwrap_or(false);
+        if scheduled_today {
+            generated = true;
+        }
+        let checked_today = schedule
+            .and_then(|s| s.last_checked_date.as_deref())
+            .map(|d| d == today_str)
+            .unwrap_or(false);
+        let detail = today_results.get(&account.id);
+        let status = derive_task_status(checked_today, detail);
+
+        let email = if account.email.trim().is_empty() {
+            account.id.clone()
+        } else {
+            account.email.clone()
+        };
+        tasks.push(BuddyCheckinTask {
+            account_id: account.id.clone(),
+            email,
+            status: status.to_string(),
+            scheduled_time: if scheduled_today {
+                schedule.map(|s| format_minutes(s.scheduled_minute))
+            } else {
+                None
+            },
+            last_attempt_time: detail.and_then(|d| d.time.clone()),
+            message: detail.and_then(|d| d.message.clone()),
+        });
+    }
+
+    Ok(BuddyCheckinTasksView {
+        enabled: config.enabled,
+        start_time: config.start_time.clone(),
+        end_time: config.end_time.clone(),
+        generated,
+        tasks,
+    })
+}
+
 fn next_retry_delay(current: Duration) -> Duration {
     current.saturating_mul(2).min(MAX_RETRY_DELAY)
 }
@@ -780,7 +917,7 @@ mod tests {
         };
 
         let accounts = vec![sample_account("acc_1", "a@x.com"), sample_account("acc_2", "b@x.com")];
-        let changed = ensure_account_schedules(&mut config, &accounts);
+        let changed = ensure_account_schedules(&mut config, &accounts, true);
         assert!(changed);
 
         let schedules = config.account_schedules.unwrap();
@@ -788,6 +925,74 @@ mod tests {
         let sch1 = schedules.get("acc_1").unwrap();
         assert!(sch1.scheduled_minute >= 360 && sch1.scheduled_minute <= 720);
         assert_eq!(sch1.scheduled_date, get_today_date_string());
+    }
+
+    #[test]
+    fn test_ensure_account_schedules_skips_before_start_time() {
+        let mut config = BuddyAutoCheckinConfig {
+            enabled: true,
+            start_time: "06:00".to_string(),
+            end_time: "12:00".to_string(),
+            last_checked_date: None,
+            account_schedules: None,
+        };
+        let accounts = vec![sample_account("acc_1", "a@x.com")];
+        // 未到达开始时间：不生成当天计划
+        assert!(!ensure_account_schedules(&mut config, &accounts, false));
+        assert!(config.account_schedules.is_none());
+        // 到达开始时间：生成
+        assert!(ensure_account_schedules(&mut config, &accounts, true));
+        assert!(config.account_schedules.unwrap().contains_key("acc_1"));
+    }
+
+    #[test]
+    fn test_format_minutes() {
+        assert_eq!(format_minutes(0), "00:00");
+        assert_eq!(format_minutes(390), "06:30");
+        assert_eq!(format_minutes(1439), "23:59");
+        assert_eq!(format_minutes(2000), "23:59");
+    }
+
+    fn detail_with_status(status: &str) -> BuddyAutoCheckinAccountDetail {
+        BuddyAutoCheckinAccountDetail {
+            account_id: "acc_1".to_string(),
+            email: "a@x.com".to_string(),
+            status: status.to_string(),
+            time: None,
+            message: None,
+            credit: None,
+        }
+    }
+
+    #[test]
+    fn test_derive_task_status() {
+        // 无记录 → 待签到
+        assert_eq!(derive_task_status(false, None), "pending");
+        // 计划已标记完成 → 已签到
+        assert_eq!(derive_task_status(true, None), "success");
+        // 今日日志显示成功/已签到 → 已签到
+        assert_eq!(
+            derive_task_status(false, Some(&detail_with_status("success"))),
+            "success"
+        );
+        assert_eq!(
+            derive_task_status(false, Some(&detail_with_status("already_checked"))),
+            "success"
+        );
+        // 今日日志显示失败/未开启 → 失败（会继续重试）
+        assert_eq!(
+            derive_task_status(false, Some(&detail_with_status("failed"))),
+            "failed"
+        );
+        assert_eq!(
+            derive_task_status(false, Some(&detail_with_status("inactive"))),
+            "failed"
+        );
+        // 已签到优先于历史失败记录
+        assert_eq!(
+            derive_task_status(true, Some(&detail_with_status("failed"))),
+            "success"
+        );
     }
 
     #[test]

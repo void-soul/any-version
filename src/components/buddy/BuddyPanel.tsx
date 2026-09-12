@@ -34,6 +34,7 @@ import {
   Folder,
   Settings,
   Bell,
+  ListChecks,
 } from "lucide-react";
 
 export interface BuddyAccount {
@@ -147,6 +148,25 @@ export interface BuddyAutoCheckinLog {
     message?: string | null;
     credit?: unknown;
   }[];
+}
+
+/** 单个账号的今日签到任务（后端 buddy_auto_checkin_tasks 返回） */
+export interface BuddyCheckinTask {
+  accountId: string;
+  email: string;
+  status: "pending" | "success" | "failed";
+  scheduledTime?: string | null;
+  lastAttemptTime?: string | null;
+  message?: string | null;
+}
+
+export interface BuddyCheckinTasksView {
+  enabled: boolean;
+  startTime: string;
+  endTime: string;
+  /** 今日计划是否已生成（到达开始时间后才生成） */
+  generated: boolean;
+  tasks: BuddyCheckinTask[];
 }
 
 export interface CheckinStatus {
@@ -503,6 +523,7 @@ export default function BuddyPanel() {
   // 自动签到
   const [autoConfig, setAutoConfig] = useState<BuddyAutoCheckinConfig | null>(null);
   const [autoLogs, setAutoLogs] = useState<BuddyAutoCheckinLog[]>([]);
+  const [autoTasks, setAutoTasks] = useState<BuddyCheckinTasksView | null>(null);
   const [autoBusy, setAutoBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -556,19 +577,21 @@ export default function BuddyPanel() {
     return () => clearTimeout(timer);
   }, [sessionKeyword, tab, loadSessions]);
 
-  // 自动签到配置/日志加载
+  // 自动签到配置/日志/今日任务列表加载
   const loadAutoCheckin = useCallback(async () => {
     try {
-      const [config, logs] = await Promise.all([
+      const [config, logs, tasks] = await Promise.all([
         invoke<BuddyAutoCheckinConfig>("buddy_auto_checkin_get_config"),
         invoke<BuddyAutoCheckinLog[]>("buddy_auto_checkin_logs"),
+        invoke<BuddyCheckinTasksView>("buddy_auto_checkin_tasks", { platform }),
       ]);
       setAutoConfig(config);
       setAutoLogs(logs ?? []);
+      setAutoTasks(tasks);
     } catch (e) {
       setMessage({ ok: false, text: String(e) });
     }
-  }, []);
+  }, [platform]);
 
   useEffect(() => {
     if (tab === "checkin") loadAutoCheckin();
@@ -614,13 +637,19 @@ export default function BuddyPanel() {
     }
   };
 
-  // 自动签到事件刷新
+  // 自动签到事件刷新（日志 / 配置变化都会影响今日任务列表的状态）
   useEffect(() => {
     const unlisteners: (() => void)[] = [];
+    const refreshTasks = () => {
+      void invoke<BuddyCheckinTasksView>("buddy_auto_checkin_tasks", { platform })
+        .then(setAutoTasks)
+        .catch(() => {});
+    };
     const setup = async () => {
       unlisteners.push(
         await listen("buddy-auto-checkin-logs-changed", () => {
           void invoke<BuddyAutoCheckinLog[]>("buddy_auto_checkin_logs").then(setAutoLogs).catch(() => {});
+          refreshTasks();
         })
       );
       unlisteners.push(
@@ -628,6 +657,7 @@ export default function BuddyPanel() {
           void invoke<BuddyAutoCheckinConfig>("buddy_auto_checkin_get_config")
             .then(setAutoConfig)
             .catch(() => {});
+          refreshTasks();
         })
       );
     };
@@ -635,7 +665,7 @@ export default function BuddyPanel() {
     return () => {
       for (const fn of unlisteners) fn();
     };
-  }, []);
+  }, [platform]);
 
   const displayName = useMemo(
     () => (acc: BuddyAccount) =>
@@ -1722,6 +1752,76 @@ export default function BuddyPanel() {
                 </div>
               ) : (
                 <div className="text-[10px] text-slate-600">{t("buddy.auto.loading")}</div>
+              )}
+            </div>
+
+            {/* 今日签到任务列表（账号 + 计划时间 + 状态） */}
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <ListChecks className="w-4 h-4 text-[var(--module-accent)]" />
+                <span className="text-[13px] font-bold text-white">{t("buddy.auto.tasks")}</span>
+                {autoTasks && autoTasks.tasks.length > 0 && (
+                  <span className="text-[10px] text-slate-500">
+                    {t("buddy.auto.taskSummary", {
+                      done: autoTasks.tasks.filter((x) => x.status === "success").length,
+                      total: autoTasks.tasks.length,
+                    })}
+                  </span>
+                )}
+                <div className="flex-1" />
+                <button
+                  onClick={() => void loadAutoCheckin()}
+                  className="px-2 py-1 rounded-md text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition"
+                >
+                  <RefreshCw className="w-3 h-3" /> {t("buddy.auto.refresh")}
+                </button>
+              </div>
+              {!autoTasks || autoTasks.tasks.length === 0 ? (
+                <div className="text-[10px] text-slate-600">{t("buddy.auto.noTasks")}</div>
+              ) : !autoTasks.generated ? (
+                <div className="text-[10px] text-amber-300/80">
+                  {t("buddy.auto.notGenerated", { time: autoTasks.startTime })}
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {autoTasks.tasks.map((task) => {
+                    const badge =
+                      task.status === "success"
+                        ? "text-emerald-300 bg-emerald-500/15 border-emerald-500/25"
+                        : task.status === "failed"
+                          ? "text-rose-300 bg-rose-500/15 border-rose-500/25"
+                          : "text-slate-300 bg-white/5 border-white/10";
+                    return (
+                      <div
+                        key={task.accountId}
+                        className="flex items-center gap-2 rounded-lg border border-white/5 bg-black/20 px-2.5 py-1.5"
+                      >
+                        <span
+                          className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[9px] flex-shrink-0 ${badge}`}
+                        >
+                          {t(`buddy.auto.taskStatus.${task.status}`)}
+                        </span>
+                        <span
+                          className="text-[11px] text-slate-200 truncate flex-1"
+                          title={task.email}
+                        >
+                          {task.email}
+                        </span>
+                        <span className="text-[10px] text-slate-400 flex-shrink-0 font-mono">
+                          {task.scheduledTime ?? "—"}
+                        </span>
+                        <span
+                          className="text-[9px] text-slate-600 truncate max-w-[38%]"
+                          title={task.message ?? ""}
+                        >
+                          {task.lastAttemptTime
+                            ? `${task.lastAttemptTime} ${task.message ?? ""}`.trim()
+                            : ""}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
 

@@ -511,6 +511,15 @@ pub fn buddy_auto_checkin_clear_logs() -> Result<(), String> {
     auto_checkin::save_logs(&[])
 }
 
+/// 今日签到任务列表（账号 + 计划时间 + 状态），供前端「自动签到任务」面板展示。
+#[tauri::command]
+pub fn buddy_auto_checkin_tasks(
+    platform: String,
+) -> Result<auto_checkin::BuddyCheckinTasksView, String> {
+    let platform = platform_from_str(&platform)?;
+    auto_checkin::build_tasks_view(platform)
+}
+
 #[tauri::command]
 pub async fn buddy_auto_checkin_run(
     app: tauri::AppHandle,
