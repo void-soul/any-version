@@ -2,7 +2,10 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Waypoints, Play, Square, RefreshCw, AlertTriangle } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { mihomoApi } from "./mihomoApi";
+
+import { ModuleSettingsButton, SettingsGroup, SettingsRow, SettingsSwitch } from "../shared/ModuleSettings";
 
 import OverviewPanel from "./mihomo/OverviewPanel";
 import ProxiesPanel from "./mihomo/ProxiesPanel";
@@ -40,6 +43,66 @@ const TABS = [
   { k: "sniffer", t: "tabSniffer" },
   { k: "core", t: "tabCore" },
 ];
+
+/** 代理模块专属设置：是否在托盘菜单显示 Mihomo 项、是否随应用开机自启。
+ *  弹窗打开时才挂载，因此在这里按需拉取设置。 */
+function MihomoModuleSettings() {
+  const { t } = useTranslation();
+  const [tray, setTray] = useState<{ enabled: boolean; show_mihomo: boolean } | null>(null);
+  const [autoStart, setAutoStart] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    invoke<{ enabled: boolean; show_mihomo: boolean }>("get_tray_menu_config")
+      .then(setTray)
+      .catch((e) => console.error("读取托盘配置失败:", e));
+    invoke<string[]>("get_auto_start_services")
+      .then((list) => setAutoStart(list.includes("mihomo")))
+      .catch((e) => console.error("读取自启服务失败:", e));
+  }, []);
+
+  // 注意：必须回传完整的托盘配置（含全局 enabled 总开关），只改 show_mihomo
+  const saveTrayItem = async (showMihomo: boolean) => {
+    if (!tray) return;
+    const next = { ...tray, show_mihomo: showMihomo };
+    setTray(next);
+    try {
+      await invoke("set_tray_menu_config", { value: next });
+    } catch (e) {
+      console.error("保存托盘配置失败:", e);
+    }
+  };
+
+  const saveAutoStart = async (enabled: boolean) => {
+    setAutoStart(enabled);
+    try {
+      await invoke("set_auto_start_service", { serviceId: "mihomo", enabled });
+    } catch (e) {
+      console.error("保存自启设置失败:", e);
+      setAutoStart(!enabled); // 失败回滚
+    }
+  };
+
+  return (
+    <SettingsGroup>
+      <SettingsRow
+        label={t("mihomo.settingsTrayItem")}
+        hint={t("mihomo.settingsTrayItemHint")}
+      >
+        <SettingsSwitch checked={!!tray?.show_mihomo} disabled={!tray} onChange={saveTrayItem} />
+      </SettingsRow>
+      <SettingsRow
+        label={t("mihomo.settingsAutoStart")}
+        hint={t("mihomo.settingsAutoStartHint")}
+      >
+        <SettingsSwitch
+          checked={!!autoStart}
+          disabled={autoStart === null}
+          onChange={saveAutoStart}
+        />
+      </SettingsRow>
+    </SettingsGroup>
+  );
+}
 
 export default function Mihomo() {
   const { t } = useTranslation();
@@ -145,6 +208,10 @@ export default function Mihomo() {
           >
             <RefreshCw className={`w-3.5 h-3.5 ${busy === "restart" ? "animate-spin" : ""}`} /> {t("mihomo.shellRestart")}
           </button>
+          {/* 模块专属设置入口（托盘显示 + 开机自启） */}
+          <ModuleSettingsButton title={t("mihomo.settingsTitle")} buttonClassName="p-2.5">
+            <MihomoModuleSettings />
+          </ModuleSettingsButton>
         </div>
       </div>
 

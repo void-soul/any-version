@@ -15,6 +15,10 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { HotkeyRecorder } from "./shared/HotkeyRecorder";
+import { ModuleSettingsButton, SettingsGroup, SettingsRow } from "./shared/ModuleSettings";
+import type { LauncherSetting } from "./launcher/types";
+
 // ─── 类型 ───
 
 interface AiProvider {
@@ -71,6 +75,49 @@ function doTranslate(text: string, providerId: string | null, modelId: string | 
 }
 
 // ─── 面板 ───
+
+/** 翻译模块专属设置：划词翻译热键（数据源为 LauncherSetting）。
+ *  弹窗打开时才挂载，因此可以在这里按需拉取设置。 */
+function TranslateModuleSettings() {
+  const { t } = useTranslation();
+  const [cfg, setCfg] = useState<LauncherSetting | null>(null);
+
+  useEffect(() => {
+    invoke<LauncherSetting>("launcher_get_settings")
+      .then((c) => setCfg(c))
+      .catch((e) => console.error("读取启动器设置失败:", e));
+  }, []);
+
+  const save = async (patch: Partial<LauncherSetting>) => {
+    if (!cfg) return;
+    const next = { ...cfg, ...patch };
+    setCfg(next); // 乐观更新，录制完成后立即回显
+    try {
+      await invoke("launcher_save_settings", { settings: next });
+    } catch (e) {
+      console.error("保存启动器设置失败:", e);
+    }
+  };
+
+  if (!cfg) {
+    return <div className="text-[11px] text-slate-500">…</div>;
+  }
+
+  return (
+    <SettingsGroup>
+      <SettingsRow
+        label={t("settings.translateHotkey")}
+        hint={t("settings.translateHotkeyHint")}
+      >
+        <HotkeyRecorder
+          value={cfg.selectionTranslateHotkey ?? ""}
+          onChange={(hotkey) => save({ selectionTranslateHotkey: hotkey })}
+          clearTitle={t("settings.clearTranslateHotkey")}
+        />
+      </SettingsRow>
+    </SettingsGroup>
+  );
+}
 
 export default function TranslatePanel() {
   const { t } = useTranslation();
@@ -275,6 +322,10 @@ export default function TranslatePanel() {
             </p>
           </div>
         </div>
+        {/* 模块专属设置入口（划词翻译热键） */}
+        <ModuleSettingsButton title={t("tranpanel.settingsTitle")}>
+          <TranslateModuleSettings />
+        </ModuleSettingsButton>
       </div>
 
       {/* 模型选择 */}

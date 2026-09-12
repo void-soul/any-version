@@ -24,6 +24,8 @@ import { VEX_CYBER_CYAN } from "../../utils/brand";
 import { useEventBufferSnapshot } from "../../utils/eventBuffer";
 import { SharedModal } from "../shared/Modal";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
+import { ModuleSettingsButton } from "../shared/ModuleSettings";
+import { MindmapModuleSettings, type ExplorerSettings } from "./MindmapSettings";
 import {
   AgentWorkbench,
   clearAnsweredAsks,
@@ -1807,6 +1809,14 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
               <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={onAiProject} title={t("mindmap.aiUnifiedTitle")}><Brain className="h-3 w-3" />{t("mindmap.aiUnifiedBtn")}</button>
               <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => addSticker()} title={t("mindmap.textSticker")}><StickyNote className="h-3 w-3" />{t("mindmap.textSticker")}</button>
               <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => void addImageSticker()} title={t("mindmap.imageSticker")}><Image className="h-3 w-3" />{t("mindmap.imageSticker")}</button>
+              {/* 模块专属设置入口（热键 / 外部编辑器 / AI 探索参数） */}
+              <ModuleSettingsButton
+                title={t("mindmap.settingsTitle")}
+                label={t("mindmap.settingsTitle")}
+                buttonClassName="text-slate-300 hover:bg-white/[0.08] hover:text-white"
+              >
+                <MindmapModuleSettings />
+              </ModuleSettingsButton>
             </div>
             {/* 自动保存指示 */}
             {lastSaved && (
@@ -1944,6 +1954,18 @@ export default function MindmapPanel() {
   const [config, setConfig] = useState<AiConfig | null>(null);
   const [providerId, setProviderId] = useState<string>("");
   const [modelId, setModelId] = useState<string>("");
+  // 记录「上次使用的模型」：思维导图不提供显式默认模型设置，选择即记住
+  // （存 mindmap_settings.json；读-改-写以保留探索预算等其它字段）
+  const rememberModel = useCallback(async (pid: string, mid: string) => {
+    try {
+      const cur = await invoke<ExplorerSettings>("mm_get_explorer_settings");
+      await invoke("mm_save_explorer_settings", {
+        settings: { ...cur, lastProviderId: pid, lastModelId: mid },
+      });
+    } catch (e) {
+      console.error("记录思维导图模型失败:", e);
+    }
+  }, []);
   const [full, setFull] = useState<DocumentFull | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -2091,21 +2113,26 @@ export default function MindmapPanel() {
     }).catch(() => {});
     // 同步后端：更新托盘小红点（今天有计划时点亮），系统通知同一天只弹一次
     void invoke("mm_refresh_plan_badge").catch(() => {});
-    // AI 供应商/模型预填：优先全局默认 AI 模型（全局设置中选择，与翻译/划词翻译共享），
-    // 失效或未设置时回退第一个可用供应商（与后端 resolve 的回退规则一致）。
+    // AI 供应商/模型预填：优先导图自己「上次使用的模型」，其次全局默认 AI 模型
+    // （翻译模块的默认），失效或未设置时回退第一个可用供应商。
     void Promise.all([
       invoke<AiConfig>("get_ai_config"),
+      invoke<ExplorerSettings>("mm_get_explorer_settings").catch(() => null),
       invoke<{ providerId: string | null; modelId: string | null }>("get_translate_config").catch(() => ({ providerId: null, modelId: null })),
-    ]).then(([cfg, gDef]) => {
+    ]).then(([cfg, mmSet, gDef]) => {
       setConfig(cfg);
       const usable = cfg.providers.filter(x => x.api_key && x.openai_url);
-      const p = (gDef.providerId && cfg.providers.find(x => x.id === gDef.providerId && x.api_key && x.openai_url))
+      // 供应商优先级：导图上次用的 > 全局默认 > 首个可用 > 第一个
+      const wantPid = mmSet?.lastProviderId || gDef.providerId;
+      const p = (wantPid && cfg.providers.find(x => x.id === wantPid && x.api_key && x.openai_url))
         ?? usable[0]
         ?? cfg.providers[0];
       if (!p) return;
       setProviderId(p.id);
-      // 模型：全局默认模型（校验仍属于该供应商）> 供应商激活模型 > 第一个模型
-      const mid = (gDef.modelId && p.models.some(m => m.id === gDef.modelId) ? gDef.modelId : null)
+      // 模型优先级：导图上次用的（需同属该供应商）> 全局默认 > 供应商激活模型 > 第一个
+      const wantMid = p.id === mmSet?.lastProviderId ? mmSet?.lastModelId : null;
+      const mid = (wantMid && p.models.some(m => m.id === wantMid) ? wantMid : null)
+        ?? (gDef.modelId && p.models.some(m => m.id === gDef.modelId) ? gDef.modelId : null)
         ?? p.active_model_id ?? p.models[0]?.id ?? "";
       setModelId(mid);
     }).catch(() => setError(t("mindmap.aiCfgFail")));
@@ -2708,8 +2735,17 @@ export default function MindmapPanel() {
                 providers={providers}
                 providerId={providerId}
                 modelId={modelId}
-                onProviderChange={(pid) => { setProviderId(pid); const p = providers.find(x => x.id === pid); setModelId(p?.active_model_id ?? p?.models[0]?.id ?? ""); }}
-                onModelChange={setModelId}
+                onProviderChange={(pid) => {
+                  setProviderId(pid);
+                  const p = providers.find(x => x.id === pid);
+                  const mid = p?.active_model_id ?? p?.models[0]?.id ?? "";
+                  setModelId(mid);
+                  void rememberModel(pid, mid);
+                }}
+                onModelChange={(mid) => {
+                  setModelId(mid);
+                  void rememberModel(providerId, mid);
+                }}
                 projectPath={projectPath}
                 onPickProject={() => void (async () => { const d = await openDialog({ directory: true, multiple: false, title: t("mindmap.pickDir") }); if (typeof d === "string") setProjectPath(d); })()}
                 aiDepth={aiDepth}

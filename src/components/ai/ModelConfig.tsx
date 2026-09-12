@@ -18,6 +18,7 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  FolderOpen,
 } from "lucide-react";
 import type { ModelEntry, AiProvider, AiConfig, ModelCustomParam } from "./types";
 
@@ -103,6 +104,31 @@ export default function ModelConfig() {
   const saveConfig = async (next: AiConfig) => {
     setConfig(next);
     try { await invoke("save_ai_config", { config: next }); } catch (e) { console.error(e); }
+  };
+
+  // 默认项目目录：输入期间本地缓冲，失焦时才落盘（避免每次按键都写配置文件）
+  const [defaultProject, setDefaultProject] = useState("");
+  useEffect(() => {
+    setDefaultProject(config?.default_project_path ?? "");
+  }, [config?.default_project_path]);
+
+  const browseDefaultProject = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({ directory: true, title: t("settings.chooseFolder") });
+      if (selected && config) {
+        setDefaultProject(selected as string);
+        await saveConfig({ ...config, default_project_path: selected as string });
+      }
+    } catch {
+      alert(t("settings.folderPickerUnavailable"));
+    }
+  };
+
+  const commitDefaultProject = () => {
+    if (!config) return;
+    if (defaultProject === (config.default_project_path ?? "")) return;
+    void saveConfig({ ...config, default_project_path: defaultProject });
   };
 
   // ─── 弹框操作 ───
@@ -284,6 +310,39 @@ export default function ModelConfig() {
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-4">
+      {/* AI 默认项目目录（模块专属设置，原属全局设置页） */}
+      <div className="rounded-xl border border-white/5 bg-slate-900/30 p-3.5 space-y-2">
+        <div className="flex items-center gap-2">
+          <FolderOpen className="w-3.5 h-3.5 text-[var(--module-accent)]" />
+          <span className="text-[11px] font-semibold text-slate-200">
+            {t("modelcfg.defaultProject")}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <input
+            value={defaultProject}
+            onChange={(e) => setDefaultProject(e.target.value)}
+            onBlur={commitDefaultProject}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitDefaultProject();
+            }}
+            placeholder={t("modelcfg.defaultProjectPh")}
+            className="flex-1 h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
+          />
+          <button
+            type="button"
+            onClick={browseDefaultProject}
+            className="h-9 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer flex items-center justify-center"
+            title={t("settings.chooseFolder")}
+          >
+            <FolderOpen className="w-4 h-4" />
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-500 leading-relaxed">
+          {t("modelcfg.defaultProjectHint")}
+        </p>
+      </div>
+
       {/* Add Button */}
       <div className="relative">
         <button onClick={() => setShowAddMenu(!showAddMenu)} className="px-3.5 py-2 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-lg shadow-[var(--module-accent-ring)]">
