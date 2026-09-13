@@ -1273,6 +1273,9 @@ pub async fn build_payload_from_token(
 /// 令牌失效错误前缀（调度器据此识别「登录态过期」类错误）。
 pub const TRAVEL_AUTH_EXPIRED_PREFIX: &str = "AUTH_EXPIRED:";
 
+/// 业务拒绝错误前缀（code != 0，如「今日太累了」等提示；调度器据此当日放弃，不再重试）。
+pub const TRAVEL_REJECTED_PREFIX: &str = "TRAVEL_REJECTED:";
+
 /// 旅行状态（GET /activity/growth/buddy/travel/status）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1408,7 +1411,10 @@ pub async fn travel_depart(
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        return Err(format!("派出失败 (code={}): {}", code, message));
+        return Err(format!(
+            "{}派出被拒绝 (code={}): {}",
+            TRAVEL_REJECTED_PREFIX, code, message
+        ));
     }
     Ok(())
 }
@@ -1437,7 +1443,10 @@ pub async fn travel_claim(
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        return Err(format!("领取失败 (code={}): {}", code, message));
+        return Err(format!(
+            "{}领取被拒绝 (code={}): {}",
+            TRAVEL_REJECTED_PREFIX, code, message
+        ));
     }
     Ok(body
         .get("data")
