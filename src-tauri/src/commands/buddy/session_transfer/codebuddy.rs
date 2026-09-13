@@ -24,7 +24,7 @@ static TRANSFER_LOCK: std::sync::LazyLock<std::sync::Mutex<()>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
 
 /// 辅助数据目录类型（复刻 cockpit-tools 的 kinds 清单）
-const AUXILIARY_KINDS: [&str; 5] = [
+pub(crate) const AUXILIARY_KINDS: [&str; 5] = [
     "check-point",
     "file-tree",
     "plan-task",
@@ -143,7 +143,7 @@ fn transfer_local_sessions(
     Ok(report)
 }
 
-fn codebuddy_extension_data_dir() -> Result<std::path::PathBuf, String> {
+pub(crate) fn codebuddy_extension_data_dir() -> Result<std::path::PathBuf, String> {
     let home = dirs::home_dir().ok_or_else(|| "无法获取用户主目录".to_string())?;
     #[cfg(target_os = "windows")]
     let root = home.join("AppData").join("Local").join("CodeBuddyExtension").join("Data");
@@ -162,7 +162,7 @@ fn codebuddy_extension_data_dir() -> Result<std::path::PathBuf, String> {
     Ok(root)
 }
 
-pub(super) fn validate_uid(uid: &str) -> Result<(), String> {
+pub(crate) fn validate_uid(uid: &str) -> Result<(), String> {
     let trimmed = uid.trim();
     if trimmed.is_empty() || trimmed != uid {
         return Err("CodeBuddy CN UID 为空或包含首尾空白".to_string());
@@ -468,7 +468,7 @@ fn ensure_workspace_index_backup(
     Ok(())
 }
 
-fn read_workspace_index(path: &Path) -> Result<Value, String> {
+pub(crate) fn read_workspace_index(path: &Path) -> Result<Value, String> {
     let content = std::fs::read_to_string(path).map_err(|e| {
         format!(
             "读取 CodeBuddy CN 工作区索引失败: path={}, error={}",
@@ -506,7 +506,7 @@ fn conversation_id(conversation: &Value) -> Option<&str> {
     conversation.get("id").and_then(Value::as_str)
 }
 
-fn validate_conversation_id(id: &str) -> Result<(), String> {
+pub(crate) fn validate_conversation_id(id: &str) -> Result<(), String> {
     if id.is_empty() || id.contains('/') || id.contains('\\') || id.contains("..") {
         return Err("CodeBuddy CN conversationId 包含不安全的路径字符".to_string());
     }
@@ -533,7 +533,7 @@ fn conversation_timestamp(conversation: &Value) -> i64 {
         .unwrap_or_default()
 }
 
-fn reject_symlink_if_exists(path: &Path) -> Result<(), String> {
+pub(crate) fn reject_symlink_if_exists(path: &Path) -> Result<(), String> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => Err(format!(
             "拒绝通过符号链接读写 CodeBuddy CN 会话: {}",

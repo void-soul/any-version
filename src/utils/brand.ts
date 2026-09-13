@@ -11,9 +11,6 @@ export const VEX_AVATAR = "/logo.png";
 /// 品牌名（默认渲染用；窗口标题等仍走各自配置）。
 export const VEX_NAME = "Kira";
 
-/// 角色人设（用于介绍/提示文案）。
-export const VEX_PERSONA = "你的开发助理：安静干活，随叫随到";
-
 /// 常驻欢迎语：统一定义在 kiraQuotes.ts（Kira 统一语句库，励志名言）。
 /// 这里只是向后兼容的别名，保证旧有 import 地址不破坏。
 export const VEX_GREETINGS: string[] = [

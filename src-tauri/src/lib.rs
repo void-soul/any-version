@@ -366,6 +366,8 @@ pub fn run() {
             commands::buddy::start_auto_checkin_scheduler(app.handle().clone());
             // 两平台同邮箱账号的倒计时一次性互相补齐（幂等，无缺失时不写文件）
             commands::buddy::backfill_expiry_times();
+            // Buddy 自动派旅行调度器（WorkBuddy 专属活动，随机时间派出 + 领积分）
+            commands::buddy::start_auto_travel_scheduler(app.handle().clone());
             if let Ok(setting) = commands::launcher::db::get_settings() {
                 let mut hotkeys = setting.module_hotkeys.clone();
                 if !setting.selection_translate_hotkey.trim().is_empty() {
@@ -1002,7 +1004,11 @@ commands::node_manager::npm_exec,
                 commands::buddy::buddy_auto_checkin_clear_logs,
                 commands::buddy::buddy_auto_checkin_tasks,
                 commands::buddy::buddy_auto_checkin_run,
+                commands::buddy::buddy_auto_travel_get_config,
+                commands::buddy::buddy_auto_travel_save_config,
+                commands::buddy::buddy_auto_travel_run,
                 commands::buddy::buddy_list_sessions,
+                commands::buddy::buddy_delete_sessions,
                 commands::buddy::buddy_get_client_paths,
                 commands::buddy::buddy_set_client_path,
 

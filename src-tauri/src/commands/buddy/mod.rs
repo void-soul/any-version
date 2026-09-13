@@ -11,6 +11,7 @@
 
 mod api;
 mod auto_checkin;
+mod auto_travel;
 mod client_process;
 mod codebuddy_cn;
 mod crypto;
@@ -110,6 +111,31 @@ pub fn buddy_set_expiry_times(
 ) -> Result<BuddyAccount, String> {
     let platform = platform_from_str(&platform)?;
     store::set_expiry_times_shared(platform, &account_id, times)
+}
+
+// ─── 自动派 Buddy 旅行（WorkBuddy 专属活动） ───
+
+#[tauri::command]
+pub fn buddy_auto_travel_get_config() -> Result<auto_travel::BuddyAutoTravelConfig, String> {
+    auto_travel::get_config_checked()
+}
+
+#[tauri::command]
+pub fn buddy_auto_travel_save_config(
+    config: auto_travel::BuddyAutoTravelConfig,
+) -> Result<(), String> {
+    auto_travel::save_config(&config)
+}
+
+/// 手动立即执行一轮旅行状态机（派出 / 领取 / 跳过）。
+#[tauri::command]
+pub async fn buddy_auto_travel_run(app: tauri::AppHandle, force: Option<bool>) -> Result<String, String> {
+    auto_travel::run_auto_travel_cycle_if_needed(&app, force.unwrap_or(false)).await
+}
+
+/// 启动后台自动旅行调度（仅 WorkBuddy）。
+pub fn start_auto_travel_scheduler(app: tauri::AppHandle) {
+    auto_travel::start_auto_travel_scheduler(app);
 }
 
 /// 启动时调用：把两平台同邮箱账号缺失的倒计时互相补齐（幂等，无缺失时不写文件）。
@@ -310,13 +336,35 @@ pub async fn buddy_switch_account(
         // 切换成功后持久化当前账号（复刻 provider_current_state，供前端稳定标识）
         let _ = store::set_current_account_id(platform, Some(&account_id));
 
-        // 4) 不再自动启动客户端：只负责写入登录态，客户端由用户自行启动。
-        //    （自动启动会在用户尚未确认时抢占前台窗口，且安装路径缺失时只能以失败告终）
-        let message = format!(
-            "{}，请手动启动 {}",
-            message,
-            client_process::app_display_name(platform)
-        );
+        // 4) 启动行为按平台区分：WorkBuddy 自动重启客户端（启动失败不回滚切换）；
+        //    CodeBuddy CN 不自动启动，提示用户手动启动。
+        let mut message = message;
+        match platform {
+            BuddyPlatform::Workbuddy => {
+                emit_switch_progress(Some(&app), platform, &account_id, "launching", 0, None);
+                if let Err(err) = client_process::launch(platform) {
+                    eprintln!(
+                        "[Buddy Switch] {} 启动失败: {}",
+                        client_process::app_display_name(platform),
+                        err
+                    );
+                    message = format!(
+                        "{}，但 {} 启动失败：{}",
+                        message,
+                        client_process::app_display_name(platform),
+                        err.trim_start_matches(client_process::APP_PATH_MISSING_PREFIX)
+                            .trim()
+                    );
+                }
+            }
+            BuddyPlatform::CodebuddyCn => {
+                message = format!(
+                    "{}，请手动启动 {}",
+                    message,
+                    client_process::app_display_name(platform)
+                );
+            }
+        }
         emit_switch_progress(Some(&app), platform, &account_id, "done", 0, None);
         Ok((message, transfer_report))
     })
@@ -537,6 +585,15 @@ pub async fn buddy_auto_checkin_run(
 }
 
 // ─── 会话管理 ───
+
+/// 删除会话（数据库记录 + 本地会话文件，含辅助目录）。
+#[tauri::command]
+pub fn buddy_delete_sessions(
+    platform: String,
+    conversation_ids: Vec<String>,
+) -> Result<sessions::BuddySessionDeleteReport, String> {
+    sessions::delete_sessions(&platform, &conversation_ids)
+}
 
 #[tauri::command]
 pub fn buddy_list_sessions(

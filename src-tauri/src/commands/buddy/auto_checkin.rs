@@ -344,7 +344,7 @@ pub fn format_time_only() -> String {
     Local::now().format("%H:%M:%S").to_string()
 }
 
-fn random_u32_below(max: u32) -> u32 {
+pub fn random_u32_below(max: u32) -> u32 {
     if max == 0 {
         return 0;
     }

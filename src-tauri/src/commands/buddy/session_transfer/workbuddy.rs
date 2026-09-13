@@ -209,7 +209,7 @@ fn transfer_local_sessions(
     Ok(report)
 }
 
-fn select_extension_data_roots(
+pub(crate) fn select_extension_data_roots(
     source_uid: &str,
 ) -> Result<Vec<(&'static str, std::path::PathBuf)>, String> {
     let home = dirs::home_dir().ok_or_else(|| "无法获取用户主目录".to_string())?;
@@ -259,7 +259,7 @@ fn account_has_history(extension_data_dir: &Path, uid: &str) -> Result<bool, Str
     Ok(false)
 }
 
-fn reject_symlink_if_exists(path: &Path) -> Result<(), String> {
+pub(crate) fn reject_symlink_if_exists(path: &Path) -> Result<(), String> {
     match std::fs::symlink_metadata(path) {
         Ok(m) if m.file_type().is_symlink() => Err(format!(
             "拒绝通过符号链接读写 WorkBuddy 会话: {}",

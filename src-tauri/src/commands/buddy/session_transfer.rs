@@ -1,7 +1,7 @@
 //! Buddy 模块会话迁移：在切换（写入新登录态）之前，把前一账号的所有本地会话合并到目标账号。
 
-mod workbuddy;
-mod codebuddy;
+pub(crate) mod workbuddy;
+pub(crate) mod codebuddy;
 
 use super::models::BuddyAccount;
 use super::models::BuddyPlatform;

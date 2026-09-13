@@ -35,6 +35,7 @@ import {
   Settings,
   Bell,
   ListChecks,
+  Cat,
 } from "lucide-react";
 
 export interface BuddyAccount {
@@ -102,7 +103,7 @@ export interface BuddyClientPath {
 export interface BuddySwitchProgress {
   platform: string;
   accountId: string;
-  stage: "closing" | "merging" | "writing" | "done";
+  stage: "closing" | "merging" | "writing" | "launching" | "done";
   scannedWorkspaces: number;
   message?: string | null;
 }
@@ -119,6 +120,14 @@ export interface BuddySessionRecord {
   locations: { instanceId: string; instanceName: string }[];
 }
 
+/** 后端 buddy_delete_sessions 的删除结果 */
+export interface BuddySessionDeleteReport {
+  dbDeleted: number;
+  historyDirsRemoved: number;
+  auxiliaryDirsRemoved: number;
+  errors: string[];
+}
+
 export interface BuddyAutoCheckinConfig {
   enabled: boolean;
   startTime: string;
@@ -128,6 +137,23 @@ export interface BuddyAutoCheckinConfig {
     string,
     { scheduledDate: string; scheduledMinute: number; lastCheckedDate?: string | null }
   > | null;
+}
+
+/** 单个账号的当日旅行计划与状态 */
+export interface BuddyAccountTravelState {
+  scheduledDate: string;
+  scheduledMinute: number;
+  lastDepartDate?: string | null;
+  lastDoneDate?: string | null;
+  lastRewardCredit?: number | null;
+}
+
+export interface BuddyAutoTravelConfig {
+  enabled: boolean;
+  startTime: string;
+  endTime: string;
+  locationId: number;
+  accountSchedules?: Record<string, BuddyAccountTravelState> | null;
 }
 
 export interface BuddyAutoCheckinLog {
@@ -199,6 +225,24 @@ const PLATFORMS = [
 ] as const;
 
 type Tab = "accounts" | "sessions" | "checkin" | "settings";
+
+/** 派 Buddy 旅行可选地点（与后端 location_id 对应） */
+const TRAVEL_LOCATIONS = [
+  { id: 1, key: "loc1" },
+  { id: 2, key: "loc2" },
+  { id: 3, key: "loc3" },
+  { id: 4, key: "loc4" },
+] as const;
+
+const localDateStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+};
+
+const fmtMinute = (m: number) =>
+  `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 
 
 // ─── 用量解析 ───
@@ -519,11 +563,16 @@ export default function BuddyPanel() {
   const [sessionsBusy, setSessionsBusy] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  // 待删除的会话（确认弹窗，支持批量）
+  const [sessionDelete, setSessionDelete] = useState<{ ids: string[]; label: string } | null>(null);
+  // 会话多选（批量删除）
+  const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set());
 
   // 自动签到
   const [autoConfig, setAutoConfig] = useState<BuddyAutoCheckinConfig | null>(null);
   const [autoLogs, setAutoLogs] = useState<BuddyAutoCheckinLog[]>([]);
   const [autoTasks, setAutoTasks] = useState<BuddyCheckinTasksView | null>(null);
+  const [travelConfig, setTravelConfig] = useState<BuddyAutoTravelConfig | null>(null);
   const [autoBusy, setAutoBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -577,17 +626,19 @@ export default function BuddyPanel() {
     return () => clearTimeout(timer);
   }, [sessionKeyword, tab, loadSessions]);
 
-  // 自动签到配置/日志/今日任务列表加载
+  // 自动签到配置/日志/今日任务列表/旅行配置加载
   const loadAutoCheckin = useCallback(async () => {
     try {
-      const [config, logs, tasks] = await Promise.all([
+      const [config, logs, tasks, travel] = await Promise.all([
         invoke<BuddyAutoCheckinConfig>("buddy_auto_checkin_get_config"),
         invoke<BuddyAutoCheckinLog[]>("buddy_auto_checkin_logs"),
         invoke<BuddyCheckinTasksView>("buddy_auto_checkin_tasks", { platform }),
+        invoke<BuddyAutoTravelConfig>("buddy_auto_travel_get_config"),
       ]);
       setAutoConfig(config);
       setAutoLogs(logs ?? []);
       setAutoTasks(tasks);
+      setTravelConfig(travel);
     } catch (e) {
       setMessage({ ok: false, text: String(e) });
     }
@@ -645,6 +696,11 @@ export default function BuddyPanel() {
         .then(setAutoTasks)
         .catch(() => {});
     };
+    const refreshTravel = () => {
+      void invoke<BuddyAutoTravelConfig>("buddy_auto_travel_get_config")
+        .then(setTravelConfig)
+        .catch(() => {});
+    };
     const setup = async () => {
       unlisteners.push(
         await listen("buddy-auto-checkin-logs-changed", () => {
@@ -658,6 +714,11 @@ export default function BuddyPanel() {
             .then(setAutoConfig)
             .catch(() => {});
           refreshTasks();
+        })
+      );
+      unlisteners.push(
+        await listen("buddy-auto-travel-config-changed", () => {
+          refreshTravel();
         })
       );
     };
@@ -1116,6 +1177,81 @@ export default function BuddyPanel() {
     }
   };
 
+  const saveTravelConfig = async () => {
+    if (!travelConfig) return;
+    setAutoBusy(true);
+    setMessage(null);
+    try {
+      await invoke("buddy_auto_travel_save_config", { config: travelConfig });
+      showMsg(true, t("buddy.travel.saved"));
+      await loadAutoCheckin();
+    } catch (e) {
+      showMsg(false, String(e));
+    } finally {
+      setAutoBusy(false);
+    }
+  };
+
+  const runAutoTravel = async () => {
+    setAutoBusy(true);
+    setMessage(null);
+    try {
+      await invoke<string>("buddy_auto_travel_run", { force: true });
+      showMsg(true, t("buddy.travel.runDone"));
+      await loadAutoCheckin();
+    } catch (e) {
+      showMsg(false, String(e));
+    } finally {
+      setAutoBusy(false);
+    }
+  };
+
+  // 删除会话（数据库记录 + 本地会话文件，支持批量）
+  const deleteSessionsByIds = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    setSessionsBusy(true);
+    try {
+      const report = await invoke<BuddySessionDeleteReport>("buddy_delete_sessions", {
+        platform,
+        conversationIds: ids,
+      });
+      if (report.errors.length > 0) {
+        showMsg(false, `${t("buddy.sessions.deletePartial")}: ${report.errors.join("；")}`);
+      } else {
+        showMsg(true, t("buddy.sessions.deleteDone"));
+      }
+      setSelectedSessionIds(new Set());
+      await loadSessions();
+    } catch (e) {
+      showMsg(false, String(e));
+    } finally {
+      setSessionsBusy(false);
+      setSessionDelete(null);
+    }
+  };
+
+  const toggleSessionSelect = (id: string) => {
+    setSelectedSessionIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllSessions = () => {
+    setSelectedSessionIds((prev) =>
+      sessions.length > 0 && prev.size === sessions.length
+        ? new Set()
+        : new Set(sessions.map((s) => s.conversationId))
+    );
+  };
+
+  // 切换平台时清空会话多选（不同平台的会话 id 空间不同）
+  useEffect(() => {
+    setSelectedSessionIds(new Set());
+  }, [platform]);
+
   const platformLabel = PLATFORMS.find((p) => p.id === platform)?.label ?? platform;
   const otherPlatform = PLATFORMS.find((p) => p.id !== platform);
   const selectedCount = selectedIds.size;
@@ -1559,6 +1695,29 @@ export default function BuddyPanel() {
               <option value="Completed">{t("buddy.sessions.statusCompleted")}</option>
               <option value="InProgress">{t("buddy.sessions.statusInProgress")}</option>
             </select>
+            <div className="flex-1" />
+            <button
+              onClick={toggleSelectAllSessions}
+              disabled={sessions.length === 0}
+              className="px-2 py-1 rounded-md text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 cursor-pointer transition disabled:opacity-50"
+            >
+              {sessions.length > 0 && selectedSessionIds.size === sessions.length
+                ? t("buddy.sessions.selectAllClear")
+                : t("buddy.sessions.selectAll")}
+            </button>
+            <button
+              onClick={() =>
+                setSessionDelete({
+                  ids: [...selectedSessionIds],
+                  label: t("buddy.sessions.deleteBatchLabel", { count: selectedSessionIds.size }),
+                })
+              }
+              disabled={selectedSessionIds.size === 0 || sessionsBusy}
+              className="px-2 py-1 rounded-md text-[10px] bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+            >
+              <Trash2 className="w-3 h-3" />
+              {t("buddy.sessions.deleteSelected", { count: selectedSessionIds.size })}
+            </button>
             <button
               onClick={loadSessions}
               disabled={sessionsBusy}
@@ -1624,6 +1783,13 @@ export default function BuddyPanel() {
                               key={s.conversationId}
                               className="px-3 py-2.5 hover:bg-white/[0.03] transition flex items-start gap-3"
                             >
+                              <input
+                                type="checkbox"
+                                checked={selectedSessionIds.has(s.conversationId)}
+                                onChange={() => toggleSessionSelect(s.conversationId)}
+                                className="accent-[var(--module-accent)] w-3 h-3 cursor-pointer flex-shrink-0 mt-0.5"
+                                title={t("buddy.sessions.selectOne")}
+                              />
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
                                   <span className="text-[11px] font-semibold text-white truncate">
@@ -1668,6 +1834,13 @@ export default function BuddyPanel() {
                                 ) : (
                                   <ClipboardCopy className="w-3 h-3" />
                                 )}
+                              </button>
+                              <button
+                                onClick={() => setSessionDelete({ ids: [s.conversationId], label: s.title || s.conversationId })}
+                                className="p-1.5 rounded-md bg-white/5 hover:bg-rose-500/15 text-rose-300 border border-white/10 cursor-pointer transition flex-shrink-0"
+                                title={t("buddy.sessions.deleteTitle")}
+                              >
+                                <Trash2 className="w-3 h-3" />
                               </button>
                             </div>
                           ))}
@@ -1816,6 +1989,119 @@ export default function BuddyPanel() {
                 </div>
               )}
             </div>
+
+            {/* 自动派 Buddy 旅行（WorkBuddy 专属） */}
+            {platform === "workbuddy" && travelConfig && (
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Cat className="w-4 h-4 text-[var(--module-accent)]" />
+                  <span className="text-[13px] font-bold text-white">{t("buddy.travel.title")}</span>
+                </div>
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={travelConfig.enabled}
+                      onChange={(e) => setTravelConfig({ ...travelConfig, enabled: e.target.checked })}
+                      className="accent-[var(--module-accent)] w-3.5 h-3.5"
+                    />
+                    <span className="text-[11px] text-slate-300">{t("buddy.travel.enabled")}</span>
+                  </label>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <label className="flex items-center gap-2">
+                      <span className="text-[10px] text-slate-500">{t("buddy.travel.startTime")}</span>
+                      <input
+                        type="time"
+                        value={travelConfig.startTime}
+                        onChange={(e) => setTravelConfig({ ...travelConfig, startTime: e.target.value })}
+                        className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <span className="text-[10px] text-slate-500">{t("buddy.travel.endTime")}</span>
+                      <input
+                        type="time"
+                        value={travelConfig.endTime}
+                        onChange={(e) => setTravelConfig({ ...travelConfig, endTime: e.target.value })}
+                        className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <span className="text-[10px] text-slate-500">{t("buddy.travel.location")}</span>
+                      <select
+                        value={travelConfig.locationId}
+                        onChange={(e) =>
+                          setTravelConfig({ ...travelConfig, locationId: Number(e.target.value) })
+                        }
+                        className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
+                      >
+                        {TRAVEL_LOCATIONS.map((loc) => (
+                          <option key={loc.id} value={loc.id}>
+                            {t(`buddy.travel.${loc.key}`)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <p className="text-[9px] text-slate-600">{t("buddy.travel.hint")}</p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={saveTravelConfig}
+                      disabled={autoBusy}
+                      className="px-3 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                    >
+                      {autoBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                      {t("buddy.auto.save")}
+                    </button>
+                    <button
+                      onClick={() => void runAutoTravel()}
+                      disabled={autoBusy}
+                      className="px-3 py-1.5 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                    >
+                      <Play className="w-3 h-3" /> {t("buddy.travel.runNow")}
+                    </button>
+                  </div>
+                  {/* 每账号当日旅行状态 */}
+                  {travelConfig.accountSchedules && accounts.length > 0 && (
+                    <div className="space-y-1">
+                      {accounts.map((acc) => {
+                        const sch = travelConfig.accountSchedules?.[acc.id];
+                        if (!sch || sch.scheduledDate !== localDateStr()) return null;
+                        const done = sch.lastDoneDate === localDateStr();
+                        const departed = sch.lastDepartDate === localDateStr();
+                        const label = done
+                          ? sch.lastRewardCredit != null
+                            ? t("buddy.travel.stateClaimed", { credit: sch.lastRewardCredit })
+                            : t("buddy.travel.stateLimit")
+                          : departed
+                            ? t("buddy.travel.stateTraveling")
+                            : t("buddy.travel.statePending", { time: fmtMinute(sch.scheduledMinute) });
+                        const badge = done
+                          ? "text-emerald-300 bg-emerald-500/15 border-emerald-500/25"
+                          : departed
+                            ? "text-sky-300 bg-sky-500/15 border-sky-500/25"
+                            : "text-slate-300 bg-white/5 border-white/10";
+                        return (
+                          <div
+                            key={acc.id}
+                            className="flex items-center gap-2 rounded-lg border border-white/5 bg-black/20 px-2.5 py-1.5"
+                          >
+                            <span
+                              className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[9px] flex-shrink-0 ${badge}`}
+                            >
+                              {label}
+                            </span>
+                            <span className="text-[11px] text-slate-200 truncate flex-1" title={acc.email}>
+                              {acc.email || acc.id}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* 签到日志 */}
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
@@ -2119,6 +2405,42 @@ export default function BuddyPanel() {
               <button
                 onClick={() => void deleteAccounts(deleteIds)}
                 disabled={busy}
+                className="px-4 py-1.5 rounded-lg text-[11px] bg-rose-600 hover:bg-rose-500 text-white font-semibold cursor-pointer disabled:opacity-50"
+              >
+                {t("buddy.deleteConfirm")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 会话删除确认 */}
+      {sessionDelete && (
+        <div className="fixed inset-0 z-[130] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-[360px] max-w-[95vw] rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl p-5">
+            <div className="flex items-center gap-2.5 mb-4">
+              <div className="w-9 h-9 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center">
+                <Trash2 className="w-4 h-4 text-rose-400" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-bold text-white">{t("buddy.sessions.deleteTitle")}</h3>
+              </div>
+              <button onClick={() => setSessionDelete(null)} className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 cursor-pointer">
+                ✕
+              </button>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed mb-5 break-all">
+              {sessionDelete.ids.length === 1
+                ? t("buddy.sessions.deleteConfirm", { title: sessionDelete.label })
+                : t("buddy.sessions.deleteConfirmBatch", { count: sessionDelete.ids.length })}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setSessionDelete(null)} className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer">
+                {t("buddy.cancel")}
+              </button>
+              <button
+                onClick={() => void deleteSessionsByIds(sessionDelete.ids)}
+                disabled={sessionsBusy}
                 className="px-4 py-1.5 rounded-lg text-[11px] bg-rose-600 hover:bg-rose-500 text-white font-semibold cursor-pointer disabled:opacity-50"
               >
                 {t("buddy.deleteConfirm")}

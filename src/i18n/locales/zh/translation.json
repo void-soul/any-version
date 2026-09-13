@@ -4096,7 +4096,17 @@
       "statusInProgress": "进行中",
       "noSessions": "未找到会话（客户端未运行或未创建过会话）",
       "updated": "更新于",
-      "copyId": "复制会话 ID"
+      "copyId": "复制会话 ID",
+      "deleteTitle": "删除会话（含本地文件）",
+      "deleteConfirm": "确定删除会话「{{title}}」？将同时删除其本地会话文件（对话记录、检查点等），不可恢复。",
+      "deleteDone": "会话已删除",
+      "deletePartial": "会话已部分删除",
+      "selectOne": "选择会话",
+      "selectAll": "全选",
+      "selectAllClear": "取消全选",
+      "deleteSelected": "删除所选 ({{count}})",
+      "deleteBatchLabel": "{{count}} 个会话",
+      "deleteConfirmBatch": "确定删除所选 {{count}} 个会话？将同时删除其本地会话文件（对话记录、检查点等），不可恢复。"
     },
     "auto": {
       "title": "自动签到",
@@ -4139,10 +4149,29 @@
     },
     "checkinSuccessCredit": "签到成功，获得 {{credit}} 积分",
     "autoSaved": "自动签到配置已保存",
+    "travel": {
+      "title": "自动派 Buddy 旅行",
+      "enabled": "启用自动派旅行并领取积分",
+      "startTime": "派出开始",
+      "endTime": "派出结束",
+      "location": "地点",
+      "loc1": "咖啡馆",
+      "loc2": "商场店铺",
+      "loc3": "健身房",
+      "loc4": "古镇客栈",
+      "hint": "每个账号在时间窗口内随机分配派出时间（与签到一样分散执行）；旅行 1~4 小时，5~10 积分/次，每天限 1 次；返回后自动领取积分。",
+      "runNow": "立即巡检",
+      "runDone": "旅行巡检完成",
+      "saved": "自动旅行配置已保存",
+      "statePending": "待派出 {{time}}",
+      "stateTraveling": "旅行中",
+      "stateClaimed": "已领取 +{{credit}}",
+      "stateLimit": "今日已达上限"
+    },
     "exportOne": "导出此账号",
     "deleteOne": "删除此账号",
     "delMsgSingle": "确定删除账号「{{name}}」？仅删除 Kira 中保存的账号记录，不影响本机客户端的登录状态。",
-    "switchStage": {"closing": "正在请求关闭运行中的客户端（不强制结束，请稍候）…", "merging": "正在合并本地会话（已扫描 {{workspaces}} 个工作区）…", "writing": "正在写入登录态…", "done": "切换完成"},
+    "switchStage": {"closing": "正在关闭运行中的客户端…", "merging": "正在合并本地会话（已扫描 {{workspaces}} 个工作区）…", "writing": "正在写入登录态…", "launching": "正在重新启动客户端…", "done": "切换完成"},
     "mergeResult": "会话合并：新增 {{added}} 个对话，替换 {{replaced}} 个，重映射 {{rows}} 条记录，共扫描 {{workspaces}} 个工作区",
     "syncImport": "导入 {{target}}",
     "syncImported": "成功导入 {{count}} 个账号到 {{target}}",
@@ -4181,6 +4210,6 @@
     "invalidTimeFormat": "时间格式无法识别，请用 年-月-日 时:分:秒",
     "expiryLabel": "过期",
     "tabSettings": "设置",
-    "clientPaths": {"title": "客户端路径", "hint": "切换账号时会请求关闭对应客户端（不会强制结束），之后请手动启动。留空使用自动检测；自动检测失败时请手动指定安装路径。", "custom": "手动指定", "auto": "自动检测", "missing": "未检测到", "placeholder": "留空 = 自动检测", "resolved": "生效路径", "browse": "浏览", "save": "保存", "clear": "恢复自动", "saved": "路径已保存", "cleared": "已恢复自动检测"}
+    "clientPaths": {"title": "客户端路径", "hint": "切换账号时会关闭对应客户端：WorkBuddy 超时后强制关闭并自动重启；CodeBuddy CN 不强制关闭（需手动退出后重试）、切换后也请手动启动。留空使用自动检测；自动检测失败时请手动指定安装路径。", "custom": "手动指定", "auto": "自动检测", "missing": "未检测到", "placeholder": "留空 = 自动检测", "resolved": "生效路径", "browse": "浏览", "save": "保存", "clear": "恢复自动", "saved": "路径已保存", "cleared": "已恢复自动检测"}
   }
 }

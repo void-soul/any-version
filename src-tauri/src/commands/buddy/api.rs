@@ -1268,6 +1268,183 @@ pub async fn build_payload_from_token(
     })
 }
 
+// ─── 派 Buddy 旅行（WorkBuddy 活动，路径不带 /v2/ 前缀） ───
+
+/// 令牌失效错误前缀（调度器据此识别「登录态过期」类错误）。
+pub const TRAVEL_AUTH_EXPIRED_PREFIX: &str = "AUTH_EXPIRED:";
+
+/// 旅行状态（GET /activity/growth/buddy/travel/status）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuddyTravelStatus {
+    /// arrived（已回来可领取）/ idle（空闲）/ traveling（旅行中）
+    pub state: String,
+    pub daily_limit_reached: bool,
+    /// 当前/最近一次旅行记录 id（claim 需原样回传，可能是数字或字符串）
+    pub record_id: Option<Value>,
+}
+
+/// 旅行接口通用请求（WorkBuddy 域名，不带 /v2/ 前缀——与签到路径体系不同）。
+async fn travel_request(
+    method: reqwest::Method,
+    path: &str,
+    body: Option<Value>,
+    access_token: &str,
+    uid: Option<&str>,
+    enterprise_id: Option<&str>,
+    domain: Option<&str>,
+) -> Result<Value, String> {
+    let client = build_client()?;
+    let url = format!("{}{}", WORKBUDDY_API_ENDPOINT, path);
+    let mut req = if method == reqwest::Method::GET {
+        client.get(&url)
+    } else {
+        client.post(&url)
+    }
+    .header("Authorization", format!("Bearer {}", access_token))
+    .header("Content-Type", "application/json");
+    if let Some(u) = uid {
+        req = req.header("X-User-Id", u);
+    }
+    if let Some(eid) = enterprise_id {
+        req = req.header("X-Enterprise-Id", eid);
+        req = req.header("X-Tenant-Id", eid);
+    }
+    if let Some(d) = domain {
+        req = req.header("X-Domain", d);
+    }
+    if let Some(body) = body {
+        req = req.json(&body);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("请求 {} 失败: {}", path, e))?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.unwrap_or_default();
+    if status == 401 || status == 403 {
+        return Err(format!(
+            "{}令牌已失效（HTTP {}），请打开 WorkBuddy 刷新登录态",
+            TRAVEL_AUTH_EXPIRED_PREFIX, status
+        ));
+    }
+    if status != 200 {
+        return Err(format!(
+            "请求 {} 失败 (HTTP {}): {}",
+            path,
+            status,
+            text.chars().take(200).collect::<String>()
+        ));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("解析 {} 响应失败: {}", path, e))
+}
+
+/// 查询旅行状态。
+pub async fn travel_status(
+    access_token: &str,
+    uid: Option<&str>,
+    enterprise_id: Option<&str>,
+    domain: Option<&str>,
+) -> Result<BuddyTravelStatus, String> {
+    let body = travel_request(
+        reqwest::Method::GET,
+        "/activity/growth/buddy/travel/status",
+        None,
+        access_token,
+        uid,
+        enterprise_id,
+        domain,
+    )
+    .await?;
+    let data = body.get("data").cloned().unwrap_or_else(|| body.clone());
+    let state = data
+        .get("state")
+        .and_then(Value::as_str)
+        .or_else(|| data.get("status").and_then(Value::as_str))
+        .unwrap_or_default()
+        .to_string();
+    let daily_limit_reached = data
+        .get("daily_limit_reached")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let record_id = data
+        .get("record_id")
+        .cloned()
+        .filter(|v| !v.is_null())
+        .or_else(|| {
+            data.get("current_record")
+                .and_then(|r| r.get("id"))
+                .cloned()
+                .filter(|v| !v.is_null())
+        });
+    Ok(BuddyTravelStatus {
+        state,
+        daily_limit_reached,
+        record_id,
+    })
+}
+
+/// 派出旅行（body `{"location_id": N}`）。
+pub async fn travel_depart(
+    location_id: i64,
+    access_token: &str,
+    uid: Option<&str>,
+    enterprise_id: Option<&str>,
+    domain: Option<&str>,
+) -> Result<(), String> {
+    let body = travel_request(
+        reqwest::Method::POST,
+        "/activity/growth/buddy/travel/depart",
+        Some(json!({ "location_id": location_id })),
+        access_token,
+        uid,
+        enterprise_id,
+        domain,
+    )
+    .await?;
+    let code = body.get("code").and_then(Value::as_i64).unwrap_or(-1);
+    if code != 0 {
+        let message = body
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        return Err(format!("派出失败 (code={}): {}", code, message));
+    }
+    Ok(())
+}
+
+/// 领取奖励（body `{"record_id": ...}`），返回 reward_credit。
+pub async fn travel_claim(
+    record_id: Value,
+    access_token: &str,
+    uid: Option<&str>,
+    enterprise_id: Option<&str>,
+    domain: Option<&str>,
+) -> Result<Option<i64>, String> {
+    let body = travel_request(
+        reqwest::Method::POST,
+        "/activity/growth/buddy/travel/claim",
+        Some(json!({ "record_id": record_id })),
+        access_token,
+        uid,
+        enterprise_id,
+        domain,
+    )
+    .await?;
+    let code = body.get("code").and_then(Value::as_i64).unwrap_or(-1);
+    if code != 0 {
+        let message = body
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        return Err(format!("领取失败 (code={}): {}", code, message));
+    }
+    Ok(body
+        .get("data")
+        .and_then(|d| d.get("reward_credit"))
+        .and_then(Value::as_i64))
+}
+
 // ─── 签到 ───
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

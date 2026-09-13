@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Kira 开发助理",
+        "title": "Kira",
         "width": 1150,
         "height": 780,
         "decorations": false,

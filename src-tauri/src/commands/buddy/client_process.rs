@@ -1,18 +1,22 @@
-//! Buddy 模块客户端进程管理：切换账号时「请求关闭运行中的客户端 → 切换」。
+//! Buddy 模块客户端进程管理：切换账号时「关闭运行中的客户端 → 切换」。
 //!
 //! 复刻自 cockpit-tools `modules/process_*`（workbuddy / codebuddy-cn 部分）：
 //! - 进程识别：按安装 exe 名称匹配（sysinfo），与参考实现的 PowerShell/sysinfo 探测等价
-//! - 关闭：只发送优雅退出请求（taskkill /PID 即 WM_CLOSE / kill -15，走应用自身退出流程）；
-//!   等待超时后仍有进程存活时返回可操作错误，提示用户手动退出——**不做强杀**
-//!   （强杀会让客户端来不及保存状态、丢失未落盘的会话）
-//! - 启动：不再由本应用自动启动客户端，切换完成后由调用方提示用户手动启动；
-//!   仅保留安装路径解析（client_paths.json + 常见安装位置候选）供设置页展示
+//! - 关闭（按平台区分）：
+//!   · WorkBuddy：优雅退出，超时升级强杀（taskkill /T /F / kill -9），保证切换可以继续
+//!   · CodeBuddy CN：只发送优雅退出请求（WM_CLOSE / kill -15），超时后提示用户手动退出——
+//!     不做强杀（强杀会让客户端来不及保存状态、丢失未落盘的会话）
+//! - 启动（按平台区分）：WorkBuddy 切换后自动重启；CodeBuddy CN 不自动启动，
+//!   由调用方提示用户手动启动。安装路径解析（client_paths.json + 常见安装位置候选）
+//!   供启动与设置页展示共用
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use super::models::BuddyPlatform;
 use crate::commands::config::get_data_dir;
+
+pub const APP_PATH_MISSING_PREFIX: &str = "APP_PATH_NOT_FOUND:";
 
 /// 客户端展示名（用于消息文案）
 pub fn app_display_name(platform: BuddyPlatform) -> &'static str {
@@ -277,6 +281,18 @@ fn request_graceful_close(pid: u32) -> Result<(), String> {
     }
 }
 
+/// 强杀（仅 WorkBuddy 在优雅退出超时后升级使用）：taskkill /T /F；unix 用 kill -9。
+fn request_force_kill(pid: u32) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        run_taskkill(&["/PID", &pid.to_string(), "/T", "/F"])
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        run_kill("-9", pid)
+    }
+}
+
 /// 等待给定进程全部退出；超时返回 false。
 fn wait_pids_exit(pids: &[u32], timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
@@ -295,11 +311,11 @@ fn wait_pids_exit(pids: &[u32], timeout: Duration) -> bool {
     }
 }
 
-/// 请求关闭运行中的客户端：只对顶层（主）进程发送优雅退出请求，并等待其自行退出。
-///
-/// **不做强杀**：强杀（taskkill /T /F、kill -9）会让客户端来不及保存状态、丢失未落盘的
-/// 会话，属于破坏性操作。等待超时后仍有进程存活时返回可操作错误，由调用方提示用户手动
-/// 退出后再重试切换。没有进程在运行时直接返回 Ok。
+/// 关闭运行中的客户端（按平台区分强杀策略）：
+/// - WorkBuddy：优雅退出 → 超时升级强杀剩余进程，保证切换可以继续；
+/// - CodeBuddy CN：只做优雅退出，超时后返回可操作错误，提示用户手动退出后再切换
+///   （不强杀：强杀会让客户端来不及保存状态、丢失未落盘的会话）。
+/// 没有进程在运行时直接返回 Ok。
 pub fn close_running(platform: BuddyPlatform, timeout_secs: u64) -> Result<(), String> {
     let pairs = process_pairs(platform);
     if pairs.is_empty() {
@@ -322,20 +338,104 @@ pub fn close_running(platform: BuddyPlatform, timeout_secs: u64) -> Result<(), S
             last_error = Some(err);
         }
     }
-    if wait_pids_exit(&all, Duration::from_secs(timeout_secs)) {
+    let total = Duration::from_secs(timeout_secs);
+    let graceful_wait = total.mul_f32(0.75);
+    if wait_pids_exit(&all, graceful_wait) {
+        return Ok(());
+    }
+
+    let stuck = running_pids(platform);
+    if stuck.is_empty() {
+        return Ok(());
+    }
+
+    // CodeBuddy CN：不强杀——等待超时即报错，由前端提示用户手动退出后再切换
+    if let BuddyPlatform::CodebuddyCn = platform {
+        let detail = last_error.map(|e| format!("（{}）", e)).unwrap_or_default();
+        return Err(format!(
+            "检测到 CodeBuddy CN 仍在运行（pid: {:?}），已请求其退出但未响应，请手动退出后重试{}",
+            stuck, detail
+        ));
+    }
+
+    // WorkBuddy：优雅退出超时，升级强杀剩余进程
+    eprintln!("[Buddy Close] WorkBuddy 优雅退出超时，升级强杀: pid={:?}", stuck);
+    for pid in &stuck {
+        if let Err(err) = request_force_kill(*pid) {
+            eprintln!("[Buddy Close] pid={} 强杀失败: {}", pid, err);
+            last_error = Some(err);
+        }
+    }
+    if wait_pids_exit(&stuck, total.saturating_sub(graceful_wait)) {
         return Ok(());
     }
     let alive = running_pids(platform);
     if alive.is_empty() {
         return Ok(());
     }
-    let detail = last_error.map(|e| format!("（{}）", e)).unwrap_or_default();
     Err(format!(
-        "检测到 {} 仍在运行（pid: {:?}），已请求其退出但未响应，请手动退出后重试{}",
-        app_display_name(platform),
+        "无法关闭运行中的 WorkBuddy（pid: {:?}），请手动关闭后重试{}",
         alive,
-        detail
+        last_error
+            .map(|e| format!("：{}", e))
+            .unwrap_or_default()
     ))
+}
+
+/// 重新启动客户端（`--new-window`，分离于本进程）。仅 WorkBuddy 在切换后调用。
+/// 未找到安装路径返回 APP_PATH_NOT_FOUND 前缀错误，由调用方按警告处理。
+pub fn launch(platform: BuddyPlatform) -> Result<(), String> {
+    let app_name = app_display_name(platform);
+    let path = resolve_launch_path(platform).ok_or_else(|| {
+        format!(
+            "{}未找到 {} 安装路径，可在 {} 中配置",
+            APP_PATH_MISSING_PREFIX,
+            app_name,
+            "buddy/client_paths.json"
+        )
+    })?;
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        let mut cmd = std::process::Command::new(&path);
+        cmd.creation_flags(0x0800_0000 | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
+        cmd.arg("--new-window");
+        let child = cmd
+            .spawn()
+            .map_err(|e| format!("启动 {} 失败：{}", app_name, e))?;
+        eprintln!("[Buddy Launch] {} 已启动: pid={}, path={:?}", app_name, child.id(), path);
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("open")
+            .args(["-n", &path.to_string_lossy(), "--args", "--new-window"])
+            .output()
+            .map_err(|e| format!("启动 {} 失败：{}", app_name, e))?;
+        if !output.status.success() {
+            return Err(format!(
+                "启动 {} 失败：{}",
+                app_name,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        eprintln!("[Buddy Launch] {} 已启动: path={:?}", app_name, path);
+        return Ok(());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let child = std::process::Command::new(&path)
+            .arg("--new-window")
+            .spawn()
+            .map_err(|e| format!("启动 {} 失败：{}", app_name, e))?;
+        eprintln!("[Buddy Launch] {} 已启动: pid={}, path={:?}", app_name, child.id(), path);
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
+    Err(format!("暂不支持在当前平台启动 {}", app_name))
 }
 
 #[cfg(test)]

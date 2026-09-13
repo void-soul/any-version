@@ -4162,7 +4162,17 @@
       "statusInProgress": "In progress",
       "noSessions": "No sessions found (client not running or no sessions created yet)",
       "updated": "Updated",
-      "copyId": "Copy session ID"
+      "copyId": "Copy session ID",
+      "deleteTitle": "Delete session (incl. local files)",
+      "deleteConfirm": "Delete session \"{{title}}\"? Its local files (conversation data, check-points, etc.) will also be removed. This cannot be undone.",
+      "deleteDone": "Session deleted",
+      "deletePartial": "Session partially deleted",
+      "selectOne": "Select session",
+      "selectAll": "Select all",
+      "selectAllClear": "Clear selection",
+      "deleteSelected": "Delete selected ({{count}})",
+      "deleteBatchLabel": "{{count}} session(s)",
+      "deleteConfirmBatch": "Delete the {{count}} selected sessions? Their local files (conversation data, check-points, etc.) will also be removed. This cannot be undone."
     },
     "auto": {
       "title": "Auto check-in",
@@ -4205,10 +4215,29 @@
     },
     "checkinSuccessCredit": "Check-in succeeded, earned {{credit}} credits",
     "autoSaved": "Auto check-in config saved",
+    "travel": {
+      "title": "Auto Buddy travel",
+      "enabled": "Enable auto travel & credit claim",
+      "startTime": "Depart from",
+      "endTime": "Depart until",
+      "location": "Location",
+      "loc1": "Café",
+      "loc2": "Mall shops",
+      "loc3": "Gym",
+      "loc4": "Ancient-town inn",
+      "hint": "Each account gets a random depart time within the window (spread out like check-in); travel takes 1-4h, 5-10 credits per trip, once a day; credits are claimed automatically on return.",
+      "runNow": "Run now",
+      "runDone": "Travel check complete",
+      "saved": "Auto travel config saved",
+      "statePending": "Pending {{time}}",
+      "stateTraveling": "Traveling",
+      "stateClaimed": "Claimed +{{credit}}",
+      "stateLimit": "Daily limit reached"
+    },
     "exportOne": "Export this account",
     "deleteOne": "Delete this account",
     "delMsgSingle": "Delete account “{{name}}”? Only the Kira-stored record is removed; local client login state is unaffected.",
-    "switchStage": {"closing": "Asking the running client to close (no force-kill, please wait)…", "merging": "Merging local sessions ({{workspaces}} workspaces scanned)…", "writing": "Writing login state…", "done": "Switch complete"},
+    "switchStage": {"closing": "Closing the running client…", "merging": "Merging local sessions ({{workspaces}} workspaces scanned)…", "writing": "Writing login state…", "launching": "Relaunching the client…", "done": "Switch complete"},
     "mergeResult": "Sessions merged: {{added}} conversations added, {{replaced}} replaced, {{rows}} rows remapped, {{workspaces}} workspaces scanned",
     "syncImport": "Import to {{target}}",
     "syncImported": "Imported {{count}} account(s) to {{target}}",
@@ -4247,6 +4276,6 @@
     "invalidTimeFormat": "Unrecognized time format. Use YYYY-MM-DD HH:mm:ss",
     "expiryLabel": "Expiry",
     "tabSettings": "Settings",
-    "clientPaths": {"title": "Client paths", "hint": "Switching accounts asks the client to close (it is never force-killed); start it manually afterwards. Leave empty to auto-detect; set the path manually when auto-detection fails.", "custom": "Manual", "auto": "Auto-detected", "missing": "Not found", "placeholder": "Empty = auto-detect", "resolved": "Effective path", "browse": "Browse", "save": "Save", "clear": "Reset to auto", "saved": "Path saved", "cleared": "Auto-detection restored"}
+    "clientPaths": {"title": "Client paths", "hint": "Switching accounts closes the client: WorkBuddy is force-killed on timeout and relaunches automatically; CodeBuddy CN is never force-killed (exit it manually to retry) and must be started manually after switching. Leave empty to auto-detect; set the path manually when auto-detection fails.", "custom": "Manual", "auto": "Auto-detected", "missing": "Not found", "placeholder": "Empty = auto-detect", "resolved": "Effective path", "browse": "Browse", "save": "Save", "clear": "Reset to auto", "saved": "Path saved", "cleared": "Auto-detection restored"}
   }
 }

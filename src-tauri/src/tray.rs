@@ -72,7 +72,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Emitter, Manager, Runtime, Webview, WebviewUrl, WebviewWindowBuilder};
 
 const MAIN_WINDOW_LABEL: &str = "main";
-const MAIN_WINDOW_TITLE: &str = "Kira 开发助理";
+const MAIN_WINDOW_TITLE: &str = "Kira";
 /// 前端「启动」模块的 PageId。主全局热键/托盘恢复/程序启动时打开它。
 const LAUNCHER_MODULE: &str = "launcher";
 const MAIN_WINDOW_WIDTH: f64 = 1150.0;
