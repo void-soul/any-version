@@ -1,5 +1,6 @@
-//! CodeBuddy CN 的「过期时间列」schema：全局一份，列 = { id, 自定义名称 }。
-//! 每个账号按列 id 存一个时间值（见 BuddyAccount::expiry_times）。WorkBuddy 不使用。
+//! 「过期时间列」schema：全局一份（WorkBuddy / CodeBuddy CN 共用），列 = { id, 自定义名称 }。
+//! 每个账号按列 id 存一个时间值（见 BuddyAccount::expiry_times）；同邮箱账号在两平台间
+//! 自动同步（见 store::set_expiry_times_shared）。
 
 use std::collections::HashSet;
 use std::path::PathBuf;

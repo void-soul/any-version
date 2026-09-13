@@ -364,6 +364,8 @@ pub fn run() {
             });
             // Buddy 自动签到调度器（WorkBuddy / CodeBuddy CN 后台签到）
             commands::buddy::start_auto_checkin_scheduler(app.handle().clone());
+            // 两平台同邮箱账号的倒计时一次性互相补齐（幂等，无缺失时不写文件）
+            commands::buddy::backfill_expiry_times();
             if let Ok(setting) = commands::launcher::db::get_settings() {
                 let mut hotkeys = setting.module_hotkeys.clone();
                 if !setting.selection_translate_hotkey.trim().is_empty() {

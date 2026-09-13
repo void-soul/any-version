@@ -704,9 +704,7 @@ export default function BuddyPanel() {
     return { remain, total, unlimited, hasData };
   }, [accounts]);
 
-  const isCN = platform === "codebuddy-cn";
-
-  // ─── 过期时间列（仅 CodeBuddy CN）：列 schema + 单元格时间 ───
+  // ─── 过期时间列（两平台共享）：列 schema 全局一份，同邮箱账号的时间值互通 ───
   const loadExpiryColumns = useCallback(async () => {
     try {
       const cols = await invoke<ExpiryColumn[]>("buddy_get_expiry_columns");
@@ -717,13 +715,8 @@ export default function BuddyPanel() {
   }, []);
 
   useEffect(() => {
-    if (isCN) {
-      void loadExpiryColumns();
-    } else {
-      setExpiryColumns([]);
-      setEditingCell(null);
-    }
-  }, [isCN, loadExpiryColumns]);
+    void loadExpiryColumns();
+  }, [loadExpiryColumns]);
 
   const genColumnId = () =>
     `col_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -1285,36 +1278,35 @@ export default function BuddyPanel() {
               </span>
             )}
             <div className="flex-1" />
-            {isCN &&
-              (addingColumn ? (
-                <div className="flex items-center gap-1">
-                  <input
-                    autoFocus
-                    value={newColumnName}
-                    onChange={(e) => setNewColumnName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        void addColumn();
-                      } else if (e.key === "Escape") {
-                        setAddingColumn(false);
-                        setNewColumnName("");
-                      }
-                    }}
-                    placeholder={t("buddy.columnNamePlaceholder")}
-                    className="w-28 bg-black/40 border border-white/15 rounded px-1.5 py-1 text-[10px] text-white outline-none placeholder:text-slate-600"
-                  />
-                  <button onClick={() => void addColumn()} disabled={colBusy} className="text-emerald-300 disabled:opacity-50 cursor-pointer"><Check className="w-3 h-3" /></button>
-                  <button onClick={() => { setAddingColumn(false); setNewColumnName(""); }} className="text-slate-500 cursor-pointer"><X className="w-3 h-3" /></button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => { setAddingColumn(true); setNewColumnName(""); }}
-                  className="inline-flex items-center gap-0.5 px-1.5 py-1 rounded-md border border-white/10 text-slate-400 hover:text-white hover:border-white/25 cursor-pointer transition"
-                >
-                  <Plus className="w-3 h-3" />{t("buddy.addColumn")}
-                </button>
-              ))}
+            {addingColumn ? (
+              <div className="flex items-center gap-1">
+                <input
+                  autoFocus
+                  value={newColumnName}
+                  onChange={(e) => setNewColumnName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void addColumn();
+                    } else if (e.key === "Escape") {
+                      setAddingColumn(false);
+                      setNewColumnName("");
+                    }
+                  }}
+                  placeholder={t("buddy.columnNamePlaceholder")}
+                  className="w-28 bg-black/40 border border-white/15 rounded px-1.5 py-1 text-[10px] text-white outline-none placeholder:text-slate-600"
+                />
+                <button onClick={() => void addColumn()} disabled={colBusy} className="text-emerald-300 disabled:opacity-50 cursor-pointer"><Check className="w-3 h-3" /></button>
+                <button onClick={() => { setAddingColumn(false); setNewColumnName(""); }} className="text-slate-500 cursor-pointer"><X className="w-3 h-3" /></button>
+              </div>
+            ) : (
+              <button
+                onClick={() => { setAddingColumn(true); setNewColumnName(""); }}
+                className="inline-flex items-center gap-0.5 px-1.5 py-1 rounded-md border border-white/10 text-slate-400 hover:text-white hover:border-white/25 cursor-pointer transition"
+              >
+                <Plus className="w-3 h-3" />{t("buddy.addColumn")}
+              </button>
+            )}
           </div>
 
           <div className="flex-1 overflow-auto">

@@ -77,7 +77,7 @@ pub fn buddy_delete_account(platform: String, account_id: String) -> Result<(), 
     store::delete_account(platform, &account_id)
 }
 
-// ─── 过期时间列（CodeBuddy CN 专用：自定义列名 + 每列一个时间值） ───
+// ─── 过期时间列（两平台共享：全局列 schema，同邮箱账号的时间值互通） ───
 
 #[tauri::command]
 pub fn buddy_get_expiry_columns() -> Result<Vec<expiry::ExpiryColumn>, String> {
@@ -101,6 +101,7 @@ pub fn buddy_set_expiry_columns(
     Ok(saved)
 }
 
+/// 保存账号的过期时间值；同邮箱账号在另一平台的值自动同步（两平台共享同一账号的倒计时）。
 #[tauri::command]
 pub fn buddy_set_expiry_times(
     platform: String,
@@ -108,7 +109,12 @@ pub fn buddy_set_expiry_times(
     times: std::collections::HashMap<String, i64>,
 ) -> Result<BuddyAccount, String> {
     let platform = platform_from_str(&platform)?;
-    store::set_expiry_times(platform, &account_id, times)
+    store::set_expiry_times_shared(platform, &account_id, times)
+}
+
+/// 启动时调用：把两平台同邮箱账号缺失的倒计时互相补齐（幂等，无缺失时不写文件）。
+pub fn backfill_expiry_times() {
+    store::backfill_expiry_times();
 }
 
 #[tauri::command]

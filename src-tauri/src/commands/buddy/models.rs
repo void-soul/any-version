@@ -135,7 +135,7 @@ pub struct BuddyAccount {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_raw: Option<serde_json::Value>,
 
-    /// 各"过期时间列"的时间值（列 id → epoch 毫秒），仅 CodeBuddy CN 使用
+    /// 各"过期时间列"的时间值（列 id → epoch 毫秒）；同邮箱账号在两平台间共享
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub expiry_times: std::collections::HashMap<String, i64>,
 

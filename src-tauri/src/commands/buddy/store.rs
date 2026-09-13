@@ -313,6 +313,84 @@ pub fn set_expiry_times(
     Ok(account)
 }
 
+/// WorkBuddy 与 CodeBuddy CN 视为同一账号体系（同邮箱 = 同一账号）。
+fn twin_platform(platform: BuddyPlatform) -> BuddyPlatform {
+    match platform {
+        BuddyPlatform::Workbuddy => BuddyPlatform::CodebuddyCn,
+        BuddyPlatform::CodebuddyCn => BuddyPlatform::Workbuddy,
+    }
+}
+
+/// 设置账号的过期时间值，并把相同值同步到另一平台中同邮箱的账号。
+///
+/// 两平台的账号记录相互独立（id 不同），但同一邮箱视为同一账号——在任一平台
+/// 修改「过期时间列」的倒计时，另一平台同邮箱账号自动获得相同值。
+/// email 为空或另一平台没有同邮箱账号时不产生同步（各自独立）。
+pub fn set_expiry_times_shared(
+    platform: BuddyPlatform,
+    account_id: &str,
+    times: std::collections::HashMap<String, i64>,
+) -> Result<BuddyAccount, String> {
+    let saved = set_expiry_times(platform, account_id, times.clone())?;
+    sync_expiry_times_to_twin(platform, &saved, times);
+    Ok(saved)
+}
+
+/// 把 saved 账号的过期时间值写到另一平台同邮箱账号（值不同才写，避免无谓的文件写入）。
+fn sync_expiry_times_to_twin(
+    platform: BuddyPlatform,
+    saved: &BuddyAccount,
+    times: std::collections::HashMap<String, i64>,
+) {
+    let email = saved.email.trim();
+    if email.is_empty() {
+        return;
+    }
+    let other = twin_platform(platform);
+    for twin in list_accounts(other) {
+        if twin.email.trim().eq_ignore_ascii_case(email) && twin.expiry_times != saved.expiry_times {
+            let _ = set_expiry_times(other, &twin.id, times.clone());
+        }
+    }
+}
+
+/// 一次性回填：把两平台同邮箱账号**缺失**的过期时间值互相补齐（不覆盖已有值）。
+///
+/// 用于启用跨平台共享后，让 CodeBuddy CN 已有的倒计时立即对 WorkBuddy 生效
+/// （反之亦然）。幂等：无缺失时不动任何文件。
+pub fn backfill_expiry_times() {
+    for platform in [BuddyPlatform::Workbuddy, BuddyPlatform::CodebuddyCn] {
+        let other = twin_platform(platform);
+        let by_email: std::collections::HashMap<String, BuddyAccount> = list_accounts(other)
+            .into_iter()
+            .filter(|a| !a.email.trim().is_empty())
+            .map(|a| (a.email.trim().to_lowercase(), a))
+            .collect();
+        for account in list_accounts(platform) {
+            let email = account.email.trim().to_lowercase();
+            if email.is_empty() || account.expiry_times.is_empty() {
+                continue;
+            }
+            let Some(twin) = by_email.get(&email) else {
+                continue;
+            };
+            // 只补 twin 缺失的键；同键两边都有值时保留 twin 现值（不覆盖）
+            let missing: std::collections::HashMap<String, i64> = account
+                .expiry_times
+                .iter()
+                .filter(|(k, _)| !twin.expiry_times.contains_key(k.as_str()))
+                .map(|(k, v)| (k.clone(), *v))
+                .collect();
+            if missing.is_empty() {
+                continue;
+            }
+            let mut merged = twin.expiry_times.clone();
+            merged.extend(missing);
+            let _ = set_expiry_times(other, &twin.id, merged);
+        }
+    }
+}
+
 /// 从所有账号清除某列的时间值（删除过期时间列时调用）。
 pub fn prune_expiry_column(platform: BuddyPlatform, column_id: &str) {
     let _lock = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -841,5 +919,55 @@ mod tests {
         // 不存在的账号报错
         assert!(set_expiry_times(test_platform(), "no-such", times(&[("c1", 1)])).is_err());
         delete_account(test_platform(), "tl1").unwrap();
+    }
+
+    #[test]
+    fn set_expiry_times_shared_syncs_to_twin_by_email() {
+        let (_root, _guard) = test_root();
+        upsert_account(BuddyPlatform::CodebuddyCn, sample_account("cn_twin", "twin@test.com")).unwrap();
+        upsert_account(BuddyPlatform::Workbuddy, sample_account("wb_twin", "twin@test.com")).unwrap();
+        upsert_account(BuddyPlatform::Workbuddy, sample_account("wb_other", "other@test.com")).unwrap();
+
+        // CN 侧设置 → WB 同邮箱账号自动同步；不同邮箱不受影响
+        set_expiry_times_shared(BuddyPlatform::CodebuddyCn, "cn_twin", times(&[("c1", 1000)])).unwrap();
+        let wb = load_account(BuddyPlatform::Workbuddy, "wb_twin").unwrap();
+        assert_eq!(wb.expiry_times.get("c1"), Some(&1000));
+        let other = load_account(BuddyPlatform::Workbuddy, "wb_other").unwrap();
+        assert!(other.expiry_times.is_empty());
+
+        // 反向：WB 侧清空 → CN 侧同步清空
+        set_expiry_times_shared(BuddyPlatform::Workbuddy, "wb_twin", times(&[])).unwrap();
+        let cn = load_account(BuddyPlatform::CodebuddyCn, "cn_twin").unwrap();
+        assert!(cn.expiry_times.is_empty());
+
+        delete_account(BuddyPlatform::CodebuddyCn, "cn_twin").unwrap();
+        delete_account(BuddyPlatform::Workbuddy, "wb_twin").unwrap();
+        delete_account(BuddyPlatform::Workbuddy, "wb_other").unwrap();
+    }
+
+    #[test]
+    fn backfill_expiry_times_fills_missing_only() {
+        let (_root, _guard) = test_root();
+        // CN 有 c1/c2，WB 同邮箱已有 c2（不同值）→ 回填只补 c1，不覆盖 c2
+        let mut cn = sample_account("cn_bf", "bf@test.com");
+        cn.expiry_times = times(&[("c1", 1000), ("c2", 2000)]);
+        upsert_account(BuddyPlatform::CodebuddyCn, cn).unwrap();
+        let mut wb = sample_account("wb_bf", "bf@test.com");
+        wb.expiry_times = times(&[("c2", 9999)]);
+        upsert_account(BuddyPlatform::Workbuddy, wb).unwrap();
+
+        backfill_expiry_times();
+
+        let wb_after = load_account(BuddyPlatform::Workbuddy, "wb_bf").unwrap();
+        assert_eq!(wb_after.expiry_times.get("c1"), Some(&1000));
+        assert_eq!(wb_after.expiry_times.get("c2"), Some(&9999));
+
+        // 幂等：再跑一次值不变
+        backfill_expiry_times();
+        let wb_again = load_account(BuddyPlatform::Workbuddy, "wb_bf").unwrap();
+        assert_eq!(wb_again.expiry_times.get("c2"), Some(&9999));
+
+        delete_account(BuddyPlatform::CodebuddyCn, "cn_bf").unwrap();
+        delete_account(BuddyPlatform::Workbuddy, "wb_bf").unwrap();
     }
 }
