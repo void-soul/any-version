@@ -4149,6 +4149,19 @@
     },
     "checkinSuccessCredit": "签到成功，获得 {{credit}} 积分",
     "autoSaved": "自动签到配置已保存",
+    "actionLogs": {
+      "title": "行为日志",
+      "empty": "暂无行为记录",
+      "kindCheckin": "签到",
+      "kindTravel": "旅行"
+    },
+    "accountStatus": {
+      "title": "账号状态",
+      "checkinDone": "已签到",
+      "checkinFailed": "签到失败",
+      "checkinPending": "待签到 {{time}}",
+      "checkinNotGenerated": "待生成（{{time}} 起）"
+    },
     "travel": {
       "title": "自动派 Buddy 旅行",
       "enabled": "启用自动派旅行并领取积分",
@@ -4166,7 +4179,8 @@
       "statePending": "待派出 {{time}}",
       "stateTraveling": "旅行中",
       "stateClaimed": "已领取 +{{credit}}",
-      "stateLimit": "今日已达上限"
+      "stateLimit": "今日已结束",
+      "stateNotToday": "未安排"
     },
     "exportOne": "导出此账号",
     "deleteOne": "删除此账号",

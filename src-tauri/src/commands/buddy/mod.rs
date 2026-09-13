@@ -9,6 +9,7 @@
 //! - 签到：手动签到 + 后台自动签到调度器（每天随机时间窗口）
 //! - 会话：列出本机会话（WorkBuddy workbuddy.db / CodeBuddy CN codebuddy-sessions.vscdb）
 
+mod action_log;
 mod api;
 mod auto_checkin;
 mod auto_travel;
@@ -556,32 +557,29 @@ pub fn buddy_auto_checkin_save_config(
 }
 
 #[tauri::command]
-pub fn buddy_auto_checkin_logs() -> Result<Vec<auto_checkin::BuddyAutoCheckinLogRecord>, String> {
-    auto_checkin::get_logs_checked()
+pub fn buddy_get_action_logs() -> Result<Vec<action_log::BuddyActionLogEntry>, String> {
+    action_log::get_action_logs()
 }
 
 #[tauri::command]
-pub fn buddy_auto_checkin_clear_logs() -> Result<(), String> {
-    auto_checkin::save_logs(&[])
+pub fn buddy_clear_action_logs() -> Result<(), String> {
+    action_log::clear_action_logs()
 }
 
-/// 今日签到任务列表（账号 + 计划时间 + 状态），供前端「自动签到任务」面板展示。
+/// 今日签到任务列表（账号 + 计划时间 + 状态）。签到仅限 WorkBuddy，固定按 WB 账号返回。
 #[tauri::command]
-pub fn buddy_auto_checkin_tasks(
-    platform: String,
-) -> Result<auto_checkin::BuddyCheckinTasksView, String> {
-    let platform = platform_from_str(&platform)?;
-    auto_checkin::build_tasks_view(platform)
+pub fn buddy_auto_checkin_tasks() -> Result<auto_checkin::BuddyCheckinTasksView, String> {
+    auto_checkin::build_tasks_view(BuddyPlatform::Workbuddy)
 }
 
+/// 手动立即执行一轮自动签到（仅 WorkBuddy）。
 #[tauri::command]
 pub async fn buddy_auto_checkin_run(
     app: tauri::AppHandle,
-    platform: String,
     force: Option<bool>,
 ) -> Result<String, String> {
-    let platform = platform_from_str(&platform)?;
-    auto_checkin::run_auto_checkin_cycle_if_needed(platform, &app, force.unwrap_or(false)).await
+    auto_checkin::run_auto_checkin_cycle_if_needed(BuddyPlatform::Workbuddy, &app, force.unwrap_or(false))
+        .await
 }
 
 // ─── 会话管理 ───

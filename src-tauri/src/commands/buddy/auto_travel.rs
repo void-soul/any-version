@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
 
+use super::action_log;
 use super::models::{BuddyAccount, BuddyPlatform};
 use super::{api, store};
 
@@ -298,10 +299,16 @@ pub async fn run_auto_travel_cycle_if_needed(
     let mut new_schedules = schedules.clone();
     let mut acted = false;
     let mut auth_expired = false;
+    let mut entries: Vec<action_log::BuddyActionLogEntry> = Vec::new();
 
     for account in &accounts {
         let Some(sch) = schedules.get(&account.id).cloned() else {
             continue;
+        };
+        let email_display = if !account.email.trim().is_empty() {
+            account.email.clone()
+        } else {
+            account.id.clone()
         };
         if sch.scheduled_date != today_str {
             continue;
@@ -329,9 +336,25 @@ pub async fn run_auto_travel_cycle_if_needed(
                 if e.starts_with(api::TRAVEL_AUTH_EXPIRED_PREFIX) {
                     auth_expired = true;
                     eprintln!("[BuddyAutoTravel] 账号 {} 令牌失效: {}", account.id, e);
+                    entries.push(action_log::make_entry(
+                        "travel",
+                        &account.id,
+                        &email_display,
+                        "failed",
+                        Some("令牌已失效，请打开 WorkBuddy 刷新登录态".to_string()),
+                        None,
+                    ));
                     continue;
                 }
                 eprintln!("[BuddyAutoTravel] 账号 {} 查询旅行状态失败: {}", account.id, e);
+                entries.push(action_log::make_entry(
+                    "travel",
+                    &account.id,
+                    &email_display,
+                    "failed",
+                    Some(e),
+                    None,
+                ));
                 continue;
             }
         };
@@ -343,6 +366,14 @@ pub async fn run_auto_travel_cycle_if_needed(
         if status.state == "arrived" {
             let Some(record_id) = status.record_id.clone() else {
                 eprintln!("[BuddyAutoTravel] 账号 {} arrived 但缺少 record_id", account.id);
+                entries.push(action_log::make_entry(
+                    "travel",
+                    &account.id,
+                    &email_display,
+                    "failed",
+                    Some("旅行已归来但缺少 record_id，无法领取".to_string()),
+                    None,
+                ));
                 continue;
             };
             match api::travel_claim(
@@ -358,19 +389,63 @@ pub async fn run_auto_travel_cycle_if_needed(
                     state.last_done_date = Some(today_str.clone());
                     state.last_reward_credit = reward;
                     acted = true;
+                    entries.push(action_log::make_entry(
+                        "travel",
+                        &account.id,
+                        &email_display,
+                        "claimed",
+                        Some("领取旅行奖励".to_string()),
+                        reward,
+                    ));
                     eprintln!(
                         "[BuddyAutoTravel] 账号 {} 领取旅行奖励: {:?} 积分",
                         account.id, reward
                     );
                 }
                 Err(e) => {
-                    eprintln!("[BuddyAutoTravel] 账号 {} 领取失败: {}", account.id, e);
+                    if e.starts_with(super::api::TRAVEL_REJECTED_PREFIX)
+                        && (e.contains("已领取") || e.to_lowercase().contains("already"))
+                    {
+                        // 奖励已被领取过（可能在客户端手动领了）→ 当日完成
+                        state.last_done_date = Some(today_str.clone());
+                        acted = true;
+                        entries.push(action_log::make_entry(
+                            "travel",
+                            &account.id,
+                            &email_display,
+                            "claimed",
+                            Some("奖励已在客户端领取".to_string()),
+                            None,
+                        ));
+                        eprintln!("[BuddyAutoTravel] 账号 {} 奖励已领取过，当日完成", account.id);
+                    } else {
+                        eprintln!(
+                            "[BuddyAutoTravel] 账号 {} 领取失败（下轮重试）: {}",
+                            account.id, e
+                        );
+                        entries.push(action_log::make_entry(
+                            "travel",
+                            &account.id,
+                            &email_display,
+                            "failed",
+                            Some(e),
+                            None,
+                        ));
+                    }
                 }
             }
         } else if status.state == "idle" && status.daily_limit_reached {
             // 今日已派出过（可能是在客户端手动派的）→ 当日完成
             state.last_done_date = Some(today_str.clone());
             acted = true;
+            entries.push(action_log::make_entry(
+                "travel",
+                &account.id,
+                &email_display,
+                "limit_reached",
+                Some("今日已达派出上限".to_string()),
+                None,
+            ));
         } else if status.state == "idle" {
             // 空闲且未达上限：到达计划时间后派出（当日只派一次）
             if sch.last_depart_date.as_deref() != Some(&today_str) {
@@ -386,13 +461,52 @@ pub async fn run_auto_travel_cycle_if_needed(
                     Ok(()) => {
                         state.last_depart_date = Some(today_str.clone());
                         acted = true;
+                        entries.push(action_log::make_entry(
+                            "travel",
+                            &account.id,
+                            &email_display,
+                            "departed",
+                            Some(format!("已派出旅行（地点 {}）", config.location_id)),
+                            None,
+                        ));
                         eprintln!(
                             "[BuddyAutoTravel] 账号 {} 已派出旅行（地点 {}）",
                             account.id, config.location_id
                         );
                     }
                     Err(e) => {
-                        eprintln!("[BuddyAutoTravel] 账号 {} 派出失败: {}", account.id, e);
+                        if e.starts_with(super::api::TRAVEL_REJECTED_PREFIX) {
+                            // 业务拒绝（如「今日太累了」等提示）：当日不再派出，
+                            // 否则会以调度间隔无限重试打扰官方接口
+                            state.last_done_date = Some(today_str.clone());
+                            acted = true;
+                            eprintln!(
+                                "[BuddyAutoTravel] 账号 {} 派出被拒绝，当日放弃: {}",
+                                account.id, e
+                            );
+                            entries.push(action_log::make_entry(
+                                "travel",
+                                &account.id,
+                                &email_display,
+                                "depart_rejected",
+                                Some(e),
+                                None,
+                            ));
+                        } else {
+                            // 网络/服务端临时错误：下一轮重试
+                            eprintln!(
+                                "[BuddyAutoTravel] 账号 {} 派出失败（下轮重试）: {}",
+                                account.id, e
+                            );
+                            entries.push(action_log::make_entry(
+                                "travel",
+                                &account.id,
+                                &email_display,
+                                "failed",
+                                Some(e),
+                                None,
+                            ));
+                        }
                     }
                 }
             }
@@ -402,6 +516,8 @@ pub async fn run_auto_travel_cycle_if_needed(
 
     config.account_schedules = Some(new_schedules);
     save_config_without_wake(&config)?;
+    action_log::append_action_logs(&entries)?;
+    let _ = app.emit("buddy-action-logs-changed", ());
     let _ = app.emit("buddy-auto-travel-config-changed", ());
 
     if auth_expired {

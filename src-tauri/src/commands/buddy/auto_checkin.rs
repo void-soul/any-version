@@ -12,13 +12,14 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Mutex, MutexGuard, OnceLock,
 };
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use chrono::{Local, TimeZone, Timelike};
+use chrono::{Local, Timelike};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
 
+use super::action_log;
 use super::models::{BuddyAccount, BuddyPlatform};
 use super::{api, store};
 
@@ -70,35 +71,6 @@ impl Default for BuddyAutoCheckinConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuddyAutoCheckinAccountDetail {
-    pub account_id: String,
-    pub email: String,
-    pub status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub time: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub credit: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuddyAutoCheckinLogRecord {
-    pub id: String,
-    pub timestamp: String,
-    pub date: String,
-    pub duration_ms: u64,
-    pub total_accounts: usize,
-    pub success_count: usize,
-    pub already_checked_count: usize,
-    pub failed_count: usize,
-    pub status: String,
-    pub details: Vec<BuddyAutoCheckinAccountDetail>,
-}
-
 /// 单个账号的「今日签到任务」视图（前端任务列表的一行）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -139,12 +111,6 @@ fn get_config_file_path() -> PathBuf {
     crate::commands::config::get_data_dir()
         .join("buddy")
         .join("auto_checkin_config.json")
-}
-
-fn get_logs_file_path() -> PathBuf {
-    crate::commands::config::get_data_dir()
-        .join("buddy")
-        .join("auto_checkin_logs.json")
 }
 
 fn scheduler_wake() -> &'static Notify {
@@ -240,95 +206,6 @@ fn save_config_without_wake(config: &BuddyAutoCheckinConfig) -> Result<(), Strin
     write_config_to_path(&get_config_file_path(), config)
 }
 
-fn read_logs_from_path(path: &Path) -> Result<Vec<BuddyAutoCheckinLogRecord>, String> {
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let content = fs::read_to_string(path).map_err(|e| format!("读取自动签到日志失败: {}", e))?;
-    serde_json::from_str(&content).map_err(|e| format!("解析自动签到日志失败: {}", e))
-}
-
-fn write_logs_to_path(path: &Path, logs: &[BuddyAutoCheckinLogRecord]) -> Result<(), String> {
-    let content = serde_json::to_string_pretty(logs)
-        .map_err(|e| format!("序列化自动签到日志失败: {}", e))?;
-    write_atomic(path, &content)
-}
-
-pub fn get_logs_checked() -> Result<Vec<BuddyAutoCheckinLogRecord>, String> {
-    let _guard = lock_storage()?;
-    read_logs_from_path(&get_logs_file_path())
-}
-
-pub fn save_logs(logs: &[BuddyAutoCheckinLogRecord]) -> Result<(), String> {
-    let _guard = lock_storage()?;
-    write_logs_to_path(&get_logs_file_path(), logs)
-}
-
-fn add_log_record(record: BuddyAutoCheckinLogRecord) -> Result<(), String> {
-    let _guard = lock_storage()?;
-    let path = get_logs_file_path();
-    let mut logs = read_logs_from_path(&path)?;
-    if let Some(existing) = logs.iter_mut().find(|log| log.date == record.date) {
-        let mut details: HashMap<String, BuddyAutoCheckinAccountDetail> = existing
-            .details
-            .drain(..)
-            .map(|detail| (detail.account_id.clone(), detail))
-            .collect();
-        for detail in record.details {
-            details.insert(detail.account_id.clone(), detail);
-        }
-
-        existing.timestamp = record.timestamp;
-        existing.duration_ms = existing.duration_ms.saturating_add(record.duration_ms);
-        existing.details = details.into_values().collect();
-        existing.success_count = existing
-            .details
-            .iter()
-            .filter(|detail| detail.status == "success")
-            .count();
-        existing.already_checked_count = existing
-            .details
-            .iter()
-            .filter(|detail| detail.status == "already_checked")
-            .count();
-        existing.failed_count = existing
-            .details
-            .iter()
-            .filter(|detail| detail.status == "failed")
-            .count();
-        existing.total_accounts = existing.details.len();
-        existing.status = if existing.total_accounts == 0 {
-            "no_accounts"
-        } else if existing.failed_count == 0 {
-            "success"
-        } else if existing.success_count > 0 || existing.already_checked_count > 0 {
-            "partial"
-        } else {
-            "failed"
-        }
-        .to_string();
-    } else {
-        logs.insert(0, record);
-    }
-
-    const THIRTY_DAYS_SECS: i64 = 30 * 24 * 60 * 60;
-    let cutoff = Local::now().timestamp() - THIRTY_DAYS_SECS;
-
-    logs.retain(|r| {
-        if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(&r.timestamp, "%Y-%m-%d %H:%M:%S") {
-            if let Some(local_dt) = Local.from_local_datetime(&ndt).single() {
-                local_dt.timestamp() >= cutoff
-            } else {
-                ndt.and_utc().timestamp() >= cutoff
-            }
-        } else {
-            true
-        }
-    });
-
-    write_logs_to_path(&path, &logs)
-}
-
 pub fn parse_time_to_minutes(time_str: &str) -> i32 {
     let parts: Vec<&str> = time_str.split(':').collect();
     let h = parts.first().and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
@@ -338,10 +215,6 @@ pub fn parse_time_to_minutes(time_str: &str) -> i32 {
 
 pub fn get_today_date_string() -> String {
     Local::now().format("%Y-%m-%d").to_string()
-}
-
-pub fn format_time_only() -> String {
-    Local::now().format("%H:%M:%S").to_string()
 }
 
 pub fn random_u32_below(max: u32) -> u32 {
@@ -453,25 +326,6 @@ pub async fn run_auto_checkin_cycle_if_needed(
 
     let accounts = store::list_accounts(platform);
     if accounts.is_empty() {
-        if force {
-            add_log_record(BuddyAutoCheckinLogRecord {
-                id: format!(
-                    "log_{}_{}",
-                    Local::now().timestamp_millis(),
-                    random_u32_below(65536)
-                ),
-                timestamp: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-                date: get_today_date_string(),
-                duration_ms: 0,
-                total_accounts: 0,
-                success_count: 0,
-                already_checked_count: 0,
-                failed_count: 0,
-                status: "no_accounts".to_string(),
-                details: Vec::new(),
-            })?;
-            let _ = app.emit("buddy-auto-checkin-logs-changed", ());
-        }
         return Ok("no_accounts".to_string());
     }
 
@@ -520,16 +374,9 @@ pub async fn run_auto_checkin_cycle_if_needed(
         target_accounts.len()
     );
 
-    let start_instant = Instant::now();
-    let start_timestamp_str = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-
-    let mut success_count = 0;
-    let mut already_checked_count = 0;
-    let mut failed_count = 0;
     let mut retry_needed = false;
-    let mut details = Vec::new();
+    let mut entries: Vec<action_log::BuddyActionLogEntry> = Vec::new();
     let mut new_schedules = config.account_schedules.clone().unwrap_or_default();
-    let target_account_count = target_accounts.len();
 
     for account in target_accounts {
         let email_display = if !account.email.trim().is_empty() {
@@ -537,7 +384,6 @@ pub async fn run_auto_checkin_cycle_if_needed(
         } else {
             account.id.clone()
         };
-        let account_checkin_time = format_time_only();
 
         match api::get_checkin_status(
             &account.access_token,
@@ -548,28 +394,26 @@ pub async fn run_auto_checkin_cycle_if_needed(
         .await
         {
             Ok(status) if status.today_checked_in => {
-                already_checked_count += 1;
-                details.push(BuddyAutoCheckinAccountDetail {
-                    account_id: account.id.clone(),
-                    email: email_display,
-                    status: "already_checked".to_string(),
-                    time: Some(account_checkin_time),
-                    message: Some("今日已完成签到".to_string()),
-                    credit: Some(serde_json::json!(status.daily_credit)),
-                });
+                entries.push(action_log::make_entry(
+                    "checkin",
+                    &account.id,
+                    &email_display,
+                    "already_checked",
+                    Some("今日已完成签到".to_string()),
+                    Some(status.daily_credit),
+                ));
                 mark_schedule_checked(&mut new_schedules, &account.id, &today_str, current_minute);
             }
             Ok(status) if !status.active => {
                 retry_needed = true;
-                failed_count += 1;
-                details.push(BuddyAutoCheckinAccountDetail {
-                    account_id: account.id.clone(),
-                    email: email_display,
-                    status: "inactive".to_string(),
-                    time: Some(account_checkin_time),
-                    message: Some("签到活动未开启或不适用".to_string()),
-                    credit: None,
-                });
+                entries.push(action_log::make_entry(
+                    "checkin",
+                    &account.id,
+                    &email_display,
+                    "inactive",
+                    Some("签到活动未开启或不适用".to_string()),
+                    None,
+                ));
             }
             Ok(_) => match api::perform_checkin(
                 &account.access_token,
@@ -580,7 +424,6 @@ pub async fn run_auto_checkin_cycle_if_needed(
             .await
             {
                 Ok(res) if res.success => {
-                    success_count += 1;
                     let streak = res
                         .streak_days
                         .unwrap_or_else(|| account.checkin_streak.saturating_add(1));
@@ -595,14 +438,14 @@ pub async fn run_auto_checkin_cycle_if_needed(
                         reward,
                     );
 
-                    details.push(BuddyAutoCheckinAccountDetail {
-                        account_id: account.id.clone(),
-                        email: email_display,
-                        status: "success".to_string(),
-                        time: Some(account_checkin_time),
-                        message: Some("签到成功".to_string()),
-                        credit: res.credit.map(|c| serde_json::json!(c)),
-                    });
+                    entries.push(action_log::make_entry(
+                        "checkin",
+                        &account.id,
+                        &email_display,
+                        "success",
+                        Some("签到成功".to_string()),
+                        res.credit,
+                    ));
 
                     mark_schedule_checked(&mut new_schedules, &account.id, &today_str, current_minute);
                 }
@@ -616,15 +459,14 @@ pub async fn run_auto_checkin_cycle_if_needed(
                     .await
                     {
                         Ok(latest_status) if latest_status.today_checked_in => {
-                            already_checked_count += 1;
-                            details.push(BuddyAutoCheckinAccountDetail {
-                                account_id: account.id.clone(),
-                                email: email_display,
-                                status: "already_checked".to_string(),
-                                time: Some(account_checkin_time),
-                                message: Some("今日已完成签到".to_string()),
-                                credit: None,
-                            });
+                            entries.push(action_log::make_entry(
+                                "checkin",
+                                &account.id,
+                                &email_display,
+                                "already_checked",
+                                Some("今日已完成签到".to_string()),
+                                None,
+                            ));
                             mark_schedule_checked(
                                 &mut new_schedules,
                                 &account.id,
@@ -634,46 +476,41 @@ pub async fn run_auto_checkin_cycle_if_needed(
                         }
                         _ => {
                             retry_needed = true;
-                            failed_count += 1;
-                            details.push(BuddyAutoCheckinAccountDetail {
-                                account_id: account.id.clone(),
-                                email: email_display,
-                                status: "failed".to_string(),
-                                time: Some(account_checkin_time),
-                                message: Some(
-                                    res.message.clone().unwrap_or_else(|| "签到失败".to_string()),
-                                ),
-                                credit: None,
-                            });
+                            entries.push(action_log::make_entry(
+                                "checkin",
+                                &account.id,
+                                &email_display,
+                                "failed",
+                                Some(res.message.clone().unwrap_or_else(|| "签到失败".to_string())),
+                                None,
+                            ));
                         }
                     }
                 }
                 Err(err) => {
                     eprintln!("[BuddyAutoCheckin] 账号 {} 自动签到异常: {}", account.id, err);
                     retry_needed = true;
-                    failed_count += 1;
-                    details.push(BuddyAutoCheckinAccountDetail {
-                        account_id: account.id.clone(),
-                        email: email_display,
-                        status: "failed".to_string(),
-                        time: Some(account_checkin_time),
-                        message: Some(err),
-                        credit: None,
-                    });
+                    entries.push(action_log::make_entry(
+                        "checkin",
+                        &account.id,
+                        &email_display,
+                        "failed",
+                        Some(err),
+                        None,
+                    ));
                 }
             },
             Err(err) => {
                 eprintln!("[BuddyAutoCheckin] 账号 {} 签到状态检查异常: {}", account.id, err);
                 retry_needed = true;
-                failed_count += 1;
-                details.push(BuddyAutoCheckinAccountDetail {
-                    account_id: account.id.clone(),
-                    email: email_display,
-                    status: "failed".to_string(),
-                    time: Some(account_checkin_time),
-                    message: Some(err),
-                    credit: None,
-                });
+                entries.push(action_log::make_entry(
+                    "checkin",
+                    &account.id,
+                    &email_display,
+                    "failed",
+                    Some(err),
+                    None,
+                ));
             }
         }
     }
@@ -681,33 +518,9 @@ pub async fn run_auto_checkin_cycle_if_needed(
     config.account_schedules = Some(new_schedules);
     save_config_without_wake(&config)?;
 
-    let duration_ms = start_instant.elapsed().as_millis() as u64;
-    let overall_status = if failed_count == 0 {
-        "success"
-    } else if success_count > 0 || already_checked_count > 0 {
-        "partial"
-    } else {
-        "failed"
-    };
-
-    add_log_record(BuddyAutoCheckinLogRecord {
-        id: format!(
-            "log_{}_{}",
-            Local::now().timestamp_millis(),
-            random_u32_below(65536)
-        ),
-        timestamp: start_timestamp_str,
-        date: today_str,
-        duration_ms,
-        total_accounts: target_account_count,
-        success_count,
-        already_checked_count,
-        failed_count,
-        status: overall_status.to_string(),
-        details,
-    })?;
-
-    let _ = app.emit("buddy-auto-checkin-logs-changed", ());
+    // 行为日志（平铺）：每账号一条
+    action_log::append_action_logs(&entries)?;
+    let _ = app.emit("buddy-action-logs-changed", ());
     let _ = app.emit("buddy-auto-checkin-config-changed", ());
 
     if retry_needed {
@@ -720,7 +533,7 @@ pub async fn run_auto_checkin_cycle_if_needed(
 /// 由「今日是否已签到」+「今日日志中最近一条结果」推导任务状态。
 fn derive_task_status(
     checked_today: bool,
-    detail: Option<&BuddyAutoCheckinAccountDetail>,
+    detail: Option<&action_log::BuddyActionLogEntry>,
 ) -> &'static str {
     if checked_today
         || detail
@@ -749,15 +562,13 @@ pub fn build_tasks_view(platform: BuddyPlatform) -> Result<BuddyCheckinTasksView
     let accounts = store::list_accounts(platform);
     let today_str = get_today_date_string();
 
-    // 今日日志里每个账号的最新结果
-    let mut today_results: HashMap<String, BuddyAutoCheckinAccountDetail> = HashMap::new();
-    for log in get_logs_checked()? {
-        if log.date != today_str {
+    // 今日行为日志里每个账号的最新签到结果（日志新的在前，首个即最新）
+    let mut today_results: HashMap<String, action_log::BuddyActionLogEntry> = HashMap::new();
+    for entry in action_log::get_action_logs()? {
+        if entry.date != today_str || entry.kind != "checkin" {
             continue;
         }
-        for detail in log.details {
-            today_results.insert(detail.account_id.clone(), detail);
-        }
+        today_results.entry(entry.account_id.clone()).or_insert(entry);
     }
 
     let schedules = config.account_schedules.clone().unwrap_or_default();
@@ -793,7 +604,7 @@ pub fn build_tasks_view(platform: BuddyPlatform) -> Result<BuddyCheckinTasksView
             } else {
                 None
             },
-            last_attempt_time: detail.and_then(|d| d.time.clone()),
+            last_attempt_time: detail.map(|d| d.timestamp.get(11..).unwrap_or_default().to_string()),
             message: detail.and_then(|d| d.message.clone()),
         });
     }
@@ -811,48 +622,49 @@ fn next_retry_delay(current: Duration) -> Duration {
     current.saturating_mul(2).min(MAX_RETRY_DELAY)
 }
 
-/// 启动后台自动签到调度（每个平台一个调度循环）
+/// 启动后台自动签到调度（仅 WorkBuddy：签到/派出是 WorkBuddy 专属功能）。
 pub fn start_auto_checkin_scheduler(app: AppHandle) {
-    for platform in [BuddyPlatform::Workbuddy, BuddyPlatform::CodebuddyCn] {
-        let wake = scheduler_wake();
-        let app = app.clone();
-        tauri::async_runtime::spawn(async move {
-            eprintln!("[BuddyAutoCheckin] 后台自动签到调度服务已启动: {}", platform.as_str());
-            let mut next_delay = Duration::ZERO;
-            let mut retry_delay = INITIAL_RETRY_DELAY;
-            loop {
-                if !next_delay.is_zero() {
-                    tokio::select! {
-                        _ = tokio::time::sleep(next_delay) => {}
-                        _ = wake.notified() => {
-                            next_delay = Duration::ZERO;
-                            retry_delay = INITIAL_RETRY_DELAY;
-                            continue;
-                        }
-                    }
-                }
-                match run_auto_checkin_cycle_if_needed(platform, &app, false).await {
-                    Ok(result) if result == "retry" => {
-                        next_delay = retry_delay;
-                        retry_delay = next_retry_delay(retry_delay);
-                        eprintln!(
-                            "[BuddyAutoCheckin] 本轮存在失败，{} 秒后重试",
-                            next_delay.as_secs()
-                        );
-                    }
-                    Ok(_) => {
-                        next_delay = SCHEDULER_POLL_DELAY;
+    let wake = scheduler_wake();
+    let platform = BuddyPlatform::Workbuddy;
+    tauri::async_runtime::spawn(async move {
+        eprintln!(
+            "[BuddyAutoCheckin] 后台自动签到调度服务已启动: {}",
+            platform.as_str()
+        );
+        let mut next_delay = Duration::ZERO;
+        let mut retry_delay = INITIAL_RETRY_DELAY;
+        loop {
+            if !next_delay.is_zero() {
+                tokio::select! {
+                    _ = tokio::time::sleep(next_delay) => {}
+                    _ = wake.notified() => {
+                        next_delay = Duration::ZERO;
                         retry_delay = INITIAL_RETRY_DELAY;
-                    }
-                    Err(err) => {
-                        next_delay = retry_delay;
-                        retry_delay = next_retry_delay(retry_delay);
-                        eprintln!("[BuddyAutoCheckin] 调度异常: {}，{} 秒后重试", err, next_delay.as_secs());
+                        continue;
                     }
                 }
             }
-        });
-    }
+            match run_auto_checkin_cycle_if_needed(platform, &app, false).await {
+                Ok(result) if result == "retry" => {
+                    next_delay = retry_delay;
+                    retry_delay = next_retry_delay(retry_delay);
+                    eprintln!(
+                        "[BuddyAutoCheckin] 本轮存在失败，{} 秒后重试",
+                        next_delay.as_secs()
+                    );
+                }
+                Ok(_) => {
+                    next_delay = SCHEDULER_POLL_DELAY;
+                    retry_delay = INITIAL_RETRY_DELAY;
+                }
+                Err(err) => {
+                    next_delay = retry_delay;
+                    retry_delay = next_retry_delay(retry_delay);
+                    eprintln!("[BuddyAutoCheckin] 调度异常: {}，{} 秒后重试", err, next_delay.as_secs());
+                }
+            }
+        }
+    });
 }
 
 #[cfg(test)]
@@ -953,12 +765,15 @@ mod tests {
         assert_eq!(format_minutes(2000), "23:59");
     }
 
-    fn detail_with_status(status: &str) -> BuddyAutoCheckinAccountDetail {
-        BuddyAutoCheckinAccountDetail {
+    fn detail_with_status(status: &str) -> action_log::BuddyActionLogEntry {
+        action_log::BuddyActionLogEntry {
+            id: "log_test".to_string(),
+            timestamp: "2026-09-13 08:00:00".to_string(),
+            date: "2026-09-13".to_string(),
+            kind: "checkin".to_string(),
             account_id: "acc_1".to_string(),
             email: "a@x.com".to_string(),
             status: status.to_string(),
-            time: None,
             message: None,
             credit: None,
         }

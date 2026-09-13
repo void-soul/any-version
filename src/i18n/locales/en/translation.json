@@ -4215,6 +4215,19 @@
     },
     "checkinSuccessCredit": "Check-in succeeded, earned {{credit}} credits",
     "autoSaved": "Auto check-in config saved",
+    "actionLogs": {
+      "title": "Action log",
+      "empty": "No actions recorded",
+      "kindCheckin": "Check-in",
+      "kindTravel": "Travel"
+    },
+    "accountStatus": {
+      "title": "Account status",
+      "checkinDone": "Checked in",
+      "checkinFailed": "Check-in failed",
+      "checkinPending": "Pending {{time}}",
+      "checkinNotGenerated": "Pending (from {{time}})"
+    },
     "travel": {
       "title": "Auto Buddy travel",
       "enabled": "Enable auto travel & credit claim",
@@ -4232,7 +4245,8 @@
       "statePending": "Pending {{time}}",
       "stateTraveling": "Traveling",
       "stateClaimed": "Claimed +{{credit}}",
-      "stateLimit": "Daily limit reached"
+      "stateLimit": "Finished for today",
+      "stateNotToday": "Not scheduled"
     },
     "exportOne": "Export this account",
     "deleteOne": "Delete this account",

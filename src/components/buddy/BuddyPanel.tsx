@@ -156,24 +156,16 @@ export interface BuddyAutoTravelConfig {
   accountSchedules?: Record<string, BuddyAccountTravelState> | null;
 }
 
-export interface BuddyAutoCheckinLog {
+export interface BuddyActionLogEntry {
   id: string;
   timestamp: string;
   date: string;
-  durationMs: number;
-  totalAccounts: number;
-  successCount: number;
-  alreadyCheckedCount: number;
-  failedCount: number;
+  kind: "checkin" | "travel";
+  accountId: string;
+  email: string;
   status: string;
-  details: {
-    accountId: string;
-    email: string;
-    status: string;
-    time?: string | null;
-    message?: string | null;
-    credit?: unknown;
-  }[];
+  message?: string | null;
+  credit?: number | null;
 }
 
 /** 单个账号的今日签到任务（后端 buddy_auto_checkin_tasks 返回） */
@@ -570,7 +562,7 @@ export default function BuddyPanel() {
 
   // 自动签到
   const [autoConfig, setAutoConfig] = useState<BuddyAutoCheckinConfig | null>(null);
-  const [autoLogs, setAutoLogs] = useState<BuddyAutoCheckinLog[]>([]);
+  const [actionLogs, setActionLogs] = useState<BuddyActionLogEntry[]>([]);
   const [autoTasks, setAutoTasks] = useState<BuddyCheckinTasksView | null>(null);
   const [travelConfig, setTravelConfig] = useState<BuddyAutoTravelConfig | null>(null);
   const [autoBusy, setAutoBusy] = useState(false);
@@ -626,23 +618,23 @@ export default function BuddyPanel() {
     return () => clearTimeout(timer);
   }, [sessionKeyword, tab, loadSessions]);
 
-  // 自动签到配置/日志/今日任务列表/旅行配置加载
+  // 自动签到配置/行为日志/今日任务列表/旅行配置加载（签到与派出仅限 WorkBuddy）
   const loadAutoCheckin = useCallback(async () => {
     try {
       const [config, logs, tasks, travel] = await Promise.all([
         invoke<BuddyAutoCheckinConfig>("buddy_auto_checkin_get_config"),
-        invoke<BuddyAutoCheckinLog[]>("buddy_auto_checkin_logs"),
-        invoke<BuddyCheckinTasksView>("buddy_auto_checkin_tasks", { platform }),
+        invoke<BuddyActionLogEntry[]>("buddy_get_action_logs"),
+        invoke<BuddyCheckinTasksView>("buddy_auto_checkin_tasks"),
         invoke<BuddyAutoTravelConfig>("buddy_auto_travel_get_config"),
       ]);
       setAutoConfig(config);
-      setAutoLogs(logs ?? []);
+      setActionLogs(logs ?? []);
       setAutoTasks(tasks);
       setTravelConfig(travel);
     } catch (e) {
       setMessage({ ok: false, text: String(e) });
     }
-  }, [platform]);
+  }, []);
 
   useEffect(() => {
     if (tab === "checkin") loadAutoCheckin();
@@ -692,7 +684,7 @@ export default function BuddyPanel() {
   useEffect(() => {
     const unlisteners: (() => void)[] = [];
     const refreshTasks = () => {
-      void invoke<BuddyCheckinTasksView>("buddy_auto_checkin_tasks", { platform })
+      void invoke<BuddyCheckinTasksView>("buddy_auto_checkin_tasks")
         .then(setAutoTasks)
         .catch(() => {});
     };
@@ -703,8 +695,8 @@ export default function BuddyPanel() {
     };
     const setup = async () => {
       unlisteners.push(
-        await listen("buddy-auto-checkin-logs-changed", () => {
-          void invoke<BuddyAutoCheckinLog[]>("buddy_auto_checkin_logs").then(setAutoLogs).catch(() => {});
+        await listen("buddy-action-logs-changed", () => {
+          void invoke<BuddyActionLogEntry[]>("buddy_get_action_logs").then(setActionLogs).catch(() => {});
           refreshTasks();
         })
       );
@@ -1157,7 +1149,7 @@ export default function BuddyPanel() {
     setAutoBusy(true);
     setMessage(null);
     try {
-      const result = await invoke<string>("buddy_auto_checkin_run", { platform, force });
+      const result = await invoke<string>("buddy_auto_checkin_run", { force });
       showMsg(true, t(`buddy.autoRun.${result}`, { defaultValue: result }));
       await loadAutoCheckin();
       await load();
@@ -1170,8 +1162,8 @@ export default function BuddyPanel() {
 
   const clearAutoLogs = async () => {
     try {
-      await invoke("buddy_auto_checkin_clear_logs");
-      setAutoLogs([]);
+      await invoke("buddy_clear_action_logs");
+      setActionLogs([]);
     } catch (e) {
       showMsg(false, String(e));
     }
@@ -1858,7 +1850,7 @@ export default function BuddyPanel() {
       {/* ─── 签到 Tab ─── */}
       {tab === "checkin" && (
         <div className="flex-1 overflow-y-auto p-4">
-          <div className="space-y-4 max-w-2xl">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
             {/* 自动签到配置 */}
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
               <div className="flex items-center gap-2 mb-3">
@@ -1920,19 +1912,11 @@ export default function BuddyPanel() {
               )}
             </div>
 
-            {/* 今日签到任务列表（账号 + 计划时间 + 状态） */}
+            {/* 每账号状态（签到 | 派出） */}
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
               <div className="flex items-center gap-2 mb-3">
                 <ListChecks className="w-4 h-4 text-[var(--module-accent)]" />
-                <span className="text-[13px] font-bold text-white">{t("buddy.auto.tasks")}</span>
-                {autoTasks && autoTasks.tasks.length > 0 && (
-                  <span className="text-[10px] text-slate-500">
-                    {t("buddy.auto.taskSummary", {
-                      done: autoTasks.tasks.filter((x) => x.status === "success").length,
-                      total: autoTasks.tasks.length,
-                    })}
-                  </span>
-                )}
+                <span className="text-[13px] font-bold text-white">{t("buddy.accountStatus.title")}</span>
                 <div className="flex-1" />
                 <button
                   onClick={() => void loadAutoCheckin()}
@@ -1941,48 +1925,70 @@ export default function BuddyPanel() {
                   <RefreshCw className="w-3 h-3" /> {t("buddy.auto.refresh")}
                 </button>
               </div>
-              {!autoTasks || autoTasks.tasks.length === 0 ? (
+              {accounts.length === 0 ? (
                 <div className="text-[10px] text-slate-600">{t("buddy.auto.noTasks")}</div>
-              ) : !autoTasks.generated ? (
-                <div className="text-[10px] text-amber-300/80">
-                  {t("buddy.auto.notGenerated", { time: autoTasks.startTime })}
-                </div>
               ) : (
-                <div className="space-y-1">
-                  {autoTasks.tasks.map((task) => {
-                    const badge =
-                      task.status === "success"
-                        ? "text-emerald-300 bg-emerald-500/15 border-emerald-500/25"
-                        : task.status === "failed"
-                          ? "text-rose-300 bg-rose-500/15 border-rose-500/25"
-                          : "text-slate-300 bg-white/5 border-white/10";
+                <div className="space-y-2">
+                  {accounts.map((acc) => {
+                    const task = autoTasks?.tasks.find((x) => x.accountId === acc.id);
+                    const sch = travelConfig?.accountSchedules?.[acc.id];
+                    const today = localDateStr();
+                    let checkinLabel: string;
+                    let checkinCls: string;
+                    if (task?.status === "success") {
+                      checkinLabel = t("buddy.accountStatus.checkinDone");
+                      checkinCls = "text-emerald-300";
+                    } else if (task?.status === "failed") {
+                      checkinLabel = task.message ?? t("buddy.accountStatus.checkinFailed");
+                      checkinCls = "text-rose-300";
+                    } else if (autoTasks?.generated && task?.scheduledTime) {
+                      checkinLabel = t("buddy.accountStatus.checkinPending", { time: task.scheduledTime });
+                      checkinCls = "text-slate-300";
+                    } else {
+                      checkinLabel = t("buddy.accountStatus.checkinNotGenerated", { time: autoTasks?.startTime ?? "" });
+                      checkinCls = "text-slate-400";
+                    }
+                    let travelLabel: string;
+                    let travelCls: string;
+                    if (sch && sch.scheduledDate === today) {
+                      if (sch.lastDoneDate === today) {
+                        if (sch.lastRewardCredit != null) {
+                          travelLabel = t("buddy.travel.stateClaimed", { credit: sch.lastRewardCredit });
+                          travelCls = "text-emerald-300";
+                        } else {
+                          travelLabel = t("buddy.travel.stateLimit");
+                          travelCls = "text-slate-400";
+                        }
+                      } else if (sch.lastDepartDate === today) {
+                        travelLabel = t("buddy.travel.stateTraveling");
+                        travelCls = "text-sky-300";
+                      } else {
+                        travelLabel = t("buddy.travel.statePending", { time: fmtMinute(sch.scheduledMinute) });
+                        travelCls = "text-slate-300";
+                      }
+                    } else {
+                      travelLabel = t("buddy.travel.stateNotToday");
+                      travelCls = "text-slate-500";
+                    }
                     return (
-                      <div
-                        key={task.accountId}
-                        className="flex items-center gap-2 rounded-lg border border-white/5 bg-black/20 px-2.5 py-1.5"
-                      >
-                        <span
-                          className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[9px] flex-shrink-0 ${badge}`}
-                        >
-                          {t(`buddy.auto.taskStatus.${task.status}`)}
-                        </span>
-                        <span
-                          className="text-[11px] text-slate-200 truncate flex-1"
-                          title={task.email}
-                        >
-                          {task.email}
-                        </span>
-                        <span className="text-[10px] text-slate-400 flex-shrink-0 font-mono">
-                          {task.scheduledTime ?? "—"}
-                        </span>
-                        <span
-                          className="text-[9px] text-slate-600 truncate max-w-[38%]"
-                          title={task.message ?? ""}
-                        >
-                          {task.lastAttemptTime
-                            ? `${task.lastAttemptTime} ${task.message ?? ""}`.trim()
-                            : ""}
-                        </span>
+                      <div key={acc.id} className="rounded-lg border border-white/5 bg-black/20 px-3 py-2">
+                        <div className="text-[11px] text-slate-200 truncate mb-1.5" title={acc.email}>
+                          {acc.email || acc.id}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <CalendarCheck className="w-3 h-3 text-slate-500 flex-shrink-0" />
+                            <span className={`text-[10px] truncate ${checkinCls}`} title={checkinLabel}>
+                              {checkinLabel}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <Cat className="w-3 h-3 text-slate-500 flex-shrink-0" />
+                            <span className={`text-[10px] truncate ${travelCls}`} title={travelLabel}>
+                              {travelLabel}
+                            </span>
+                          </div>
+                        </div>
                       </div>
                     );
                   })}
@@ -1990,8 +1996,8 @@ export default function BuddyPanel() {
               )}
             </div>
 
-            {/* 自动派 Buddy 旅行（WorkBuddy 专属） */}
-            {platform === "workbuddy" && travelConfig && (
+            {/* 自动派 Buddy 旅行（WorkBuddy 专属活动） */}
+            {travelConfig && (
               <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
                 <div className="flex items-center gap-2 mb-3">
                   <Cat className="w-4 h-4 text-[var(--module-accent)]" />
@@ -2061,52 +2067,15 @@ export default function BuddyPanel() {
                       <Play className="w-3 h-3" /> {t("buddy.travel.runNow")}
                     </button>
                   </div>
-                  {/* 每账号当日旅行状态 */}
-                  {travelConfig.accountSchedules && accounts.length > 0 && (
-                    <div className="space-y-1">
-                      {accounts.map((acc) => {
-                        const sch = travelConfig.accountSchedules?.[acc.id];
-                        if (!sch || sch.scheduledDate !== localDateStr()) return null;
-                        const done = sch.lastDoneDate === localDateStr();
-                        const departed = sch.lastDepartDate === localDateStr();
-                        const label = done
-                          ? sch.lastRewardCredit != null
-                            ? t("buddy.travel.stateClaimed", { credit: sch.lastRewardCredit })
-                            : t("buddy.travel.stateLimit")
-                          : departed
-                            ? t("buddy.travel.stateTraveling")
-                            : t("buddy.travel.statePending", { time: fmtMinute(sch.scheduledMinute) });
-                        const badge = done
-                          ? "text-emerald-300 bg-emerald-500/15 border-emerald-500/25"
-                          : departed
-                            ? "text-sky-300 bg-sky-500/15 border-sky-500/25"
-                            : "text-slate-300 bg-white/5 border-white/10";
-                        return (
-                          <div
-                            key={acc.id}
-                            className="flex items-center gap-2 rounded-lg border border-white/5 bg-black/20 px-2.5 py-1.5"
-                          >
-                            <span
-                              className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[9px] flex-shrink-0 ${badge}`}
-                            >
-                              {label}
-                            </span>
-                            <span className="text-[11px] text-slate-200 truncate flex-1" title={acc.email}>
-                              {acc.email || acc.id}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                  {/* 账号状态见右侧「账号状态」卡片 */}
                 </div>
               </div>
             )}
 
-            {/* 签到日志 */}
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            {/* 行为日志（签到 + 派旅行，平铺） */}
+            <div className="xl:col-span-2 rounded-xl border border-white/10 bg-white/[0.03] p-4">
               <div className="flex items-center gap-2 mb-3">
-                <span className="text-[13px] font-bold text-white">{t("buddy.auto.logs")}</span>
+                <span className="text-[13px] font-bold text-white">{t("buddy.actionLogs.title")}</span>
                 <div className="flex-1" />
                 <button
                   onClick={clearAutoLogs}
@@ -2115,48 +2084,37 @@ export default function BuddyPanel() {
                   <Eraser className="w-3 h-3" /> {t("buddy.auto.clearLogs")}
                 </button>
               </div>
-              {autoLogs.length === 0 ? (
-                <div className="text-[10px] text-slate-600">{t("buddy.auto.noLogs")}</div>
+              {actionLogs.length === 0 ? (
+                <div className="text-[10px] text-slate-600">{t("buddy.actionLogs.empty")}</div>
               ) : (
-                <div className="space-y-2 max-h-[40vh] overflow-y-auto">
-                  {autoLogs.map((log) => {
-                    const statusColor =
-                      log.status === "success"
-                        ? "text-emerald-300 bg-emerald-500/15 border-emerald-500/25"
-                        : log.status === "partial"
-                          ? "text-amber-300 bg-amber-500/15 border-amber-500/25"
-                          : "text-rose-300 bg-rose-500/15 border-rose-500/25";
+                <div className="space-y-1 max-h-[40vh] overflow-y-auto">
+                  {actionLogs.map((entry) => {
+                    const okStatus = ["success", "already_checked", "claimed", "departed"].includes(entry.status);
+                    const badStatus = ["failed", "inactive"].includes(entry.status);
                     return (
-                      <div key={log.id} className="rounded-lg border border-white/10 bg-black/20 p-2.5">
-                        <div className="flex items-center gap-2 text-[10px]">
-                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded border ${statusColor}`}>
-                            {t(`buddy.auto.logStatus.${log.status}`, { defaultValue: log.status })}
-                          </span>
-                          <span className="text-slate-400">{log.timestamp}</span>
-                          <span className="text-slate-600">
-                            ✓ {log.successCount} · 已签 {log.alreadyCheckedCount} · ✗ {log.failedCount}
-                          </span>
-                          <span className="text-slate-600 ml-auto">{(log.durationMs / 1000).toFixed(1)}s</span>
-                        </div>
-                        {log.details.length > 0 && (
-                          <div className="mt-1.5 space-y-0.5">
-                            {log.details.map((d) => (
-                              <div key={d.accountId} className="flex items-center gap-2 text-[9px] text-slate-500">
-                                <span
-                                  className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                                    d.status === "success"
-                                      ? "bg-emerald-500"
-                                      : d.status === "already_checked"
-                                        ? "bg-sky-500"
-                                        : "bg-rose-500"
-                                  }`}
-                                />
-                                <span className="truncate flex-1">{d.email}</span>
-                                <span className="text-slate-600">{d.message ?? d.status}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                      <div key={entry.id} className="flex items-center gap-2 text-[10px] font-mono">
+                        <span
+                          className={`px-1 py-0.5 rounded border flex-shrink-0 ${
+                            entry.kind === "travel"
+                              ? "text-sky-300 bg-sky-500/10 border-sky-500/20"
+                              : "text-emerald-300 bg-emerald-500/10 border-emerald-500/20"
+                          }`}
+                        >
+                          {entry.kind === "travel" ? t("buddy.actionLogs.kindTravel") : t("buddy.actionLogs.kindCheckin")}
+                        </span>
+                        <span className="text-slate-500 flex-shrink-0">{entry.timestamp}</span>
+                        <span className="text-slate-300 truncate max-w-[160px]" title={entry.email}>
+                          {entry.email || entry.accountId}
+                        </span>
+                        <span
+                          className={`truncate flex-1 ${
+                            okStatus ? "text-emerald-400" : badStatus ? "text-rose-400" : "text-slate-400"
+                          }`}
+                        >
+                          {entry.status === "claimed" && entry.credit != null
+                            ? `${entry.message ?? ""} +${entry.credit}`
+                            : entry.message ?? entry.status}
+                        </span>
                       </div>
                     );
                   })}
