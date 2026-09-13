@@ -4159,8 +4159,13 @@
       "title": "账号状态",
       "checkinDone": "已签到",
       "checkinFailed": "签到失败",
-      "checkinPending": "待签到 {{time}}",
-      "checkinNotGenerated": "待生成（{{time}} 起）"
+      "checkinPending": "待签到",
+      "checkinNotGenerated": "待生成",
+      "planTime": "计划 {{time}}",
+      "actualTime": "实际 {{time}}",
+      "travelPending": "待派出",
+      "travelCount": "今日派出 {{count}}/1 次",
+      "expectedReturn": "预计返回 {{from}}~{{to}}"
     },
     "travel": {
       "title": "自动派 Buddy 旅行",

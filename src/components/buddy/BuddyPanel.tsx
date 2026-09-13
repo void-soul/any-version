@@ -144,6 +144,8 @@ export interface BuddyAccountTravelState {
   scheduledDate: string;
   scheduledMinute: number;
   lastDepartDate?: string | null;
+  /** 实际派出时刻（HH:MM:SS） */
+  lastDepartTime?: string | null;
   lastDoneDate?: string | null;
   lastRewardCredit?: number | null;
 }
@@ -175,6 +177,8 @@ export interface BuddyCheckinTask {
   status: "pending" | "success" | "failed";
   scheduledTime?: string | null;
   lastAttemptTime?: string | null;
+  /** 实际签到时刻（HH:MM:SS，当日已签到时存在） */
+  lastCheckinTime?: string | null;
   message?: string | null;
 }
 
@@ -235,6 +239,13 @@ const localDateStr = () => {
 
 const fmtMinute = (m: number) =>
   `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+
+/** "HH:MM:SS" 加 N 分钟 → "HH:MM" */
+const addMinutes = (time: string, minutes: number) => {
+  const [h, m] = time.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return time;
+  return fmtMinute((h * 60 + m + minutes) % 1440);
+};
 
 
 // ─── 用量解析 ───
@@ -1851,8 +1862,9 @@ export default function BuddyPanel() {
       {tab === "checkin" && (
         <div className="flex-1 overflow-y-auto p-4">
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
-            {/* 自动签到配置 */}
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            {/* 自动签到 + 派旅行配置（合并卡片） */}
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
+              <div>
               <div className="flex items-center gap-2 mb-3">
                 <CalendarCheck className="w-4 h-4 text-[var(--module-accent)]" />
                 <span className="text-[13px] font-bold text-white">{t("buddy.auto.title")}</span>
@@ -1910,6 +1922,83 @@ export default function BuddyPanel() {
               ) : (
                 <div className="text-[10px] text-slate-600">{t("buddy.auto.loading")}</div>
               )}
+              </div>
+
+              <div className="border-t border-white/5 pt-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Cat className="w-4 h-4 text-[var(--module-accent)]" />
+                  <span className="text-[13px] font-bold text-white">{t("buddy.travel.title")}</span>
+                </div>
+                {travelConfig ? (
+                  <div className="space-y-3">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={travelConfig.enabled}
+                        onChange={(e) => setTravelConfig({ ...travelConfig, enabled: e.target.checked })}
+                        className="accent-[var(--module-accent)] w-3.5 h-3.5"
+                      />
+                      <span className="text-[11px] text-slate-300">{t("buddy.travel.enabled")}</span>
+                    </label>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <label className="flex items-center gap-2">
+                        <span className="text-[10px] text-slate-500">{t("buddy.travel.startTime")}</span>
+                        <input
+                          type="time"
+                          value={travelConfig.startTime}
+                          onChange={(e) => setTravelConfig({ ...travelConfig, startTime: e.target.value })}
+                          className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
+                        />
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <span className="text-[10px] text-slate-500">{t("buddy.travel.endTime")}</span>
+                        <input
+                          type="time"
+                          value={travelConfig.endTime}
+                          onChange={(e) => setTravelConfig({ ...travelConfig, endTime: e.target.value })}
+                          className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
+                        />
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <span className="text-[10px] text-slate-500">{t("buddy.travel.location")}</span>
+                        <select
+                          value={travelConfig.locationId}
+                          onChange={(e) =>
+                            setTravelConfig({ ...travelConfig, locationId: Number(e.target.value) })
+                          }
+                          className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
+                        >
+                          {TRAVEL_LOCATIONS.map((loc) => (
+                            <option key={loc.id} value={loc.id}>
+                              {t(`buddy.travel.${loc.key}`)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <p className="text-[9px] text-slate-600">{t("buddy.travel.hint")}</p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={saveTravelConfig}
+                        disabled={autoBusy}
+                        className="px-3 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                      >
+                        {autoBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                        {t("buddy.auto.save")}
+                      </button>
+                      <button
+                        onClick={() => void runAutoTravel()}
+                        disabled={autoBusy}
+                        className="px-3 py-1.5 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                      >
+                        <Play className="w-3 h-3" /> {t("buddy.travel.runNow")}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-[10px] text-slate-600">{t("buddy.auto.loading")}</div>
+                )}
+              </div>
             </div>
 
             {/* 每账号状态（签到 | 派出） */}
@@ -1933,41 +2022,45 @@ export default function BuddyPanel() {
                     const task = autoTasks?.tasks.find((x) => x.accountId === acc.id);
                     const sch = travelConfig?.accountSchedules?.[acc.id];
                     const today = localDateStr();
-                    let checkinLabel: string;
+                    // 签到状态
+                    let checkinState: string;
                     let checkinCls: string;
                     if (task?.status === "success") {
-                      checkinLabel = t("buddy.accountStatus.checkinDone");
+                      checkinState = t("buddy.accountStatus.checkinDone");
                       checkinCls = "text-emerald-300";
                     } else if (task?.status === "failed") {
-                      checkinLabel = task.message ?? t("buddy.accountStatus.checkinFailed");
+                      checkinState = t("buddy.accountStatus.checkinFailed");
                       checkinCls = "text-rose-300";
                     } else if (autoTasks?.generated && task?.scheduledTime) {
-                      checkinLabel = t("buddy.accountStatus.checkinPending", { time: task.scheduledTime });
+                      checkinState = t("buddy.accountStatus.checkinPending");
                       checkinCls = "text-slate-300";
                     } else {
-                      checkinLabel = t("buddy.accountStatus.checkinNotGenerated", { time: autoTasks?.startTime ?? "" });
+                      checkinState = t("buddy.accountStatus.checkinNotGenerated");
                       checkinCls = "text-slate-400";
                     }
-                    let travelLabel: string;
+                    // 派出状态
+                    const departedToday = sch?.lastDepartDate === today;
+                    const traveling = departedToday && sch?.lastDoneDate !== today;
+                    let travelState: string;
                     let travelCls: string;
                     if (sch && sch.scheduledDate === today) {
                       if (sch.lastDoneDate === today) {
                         if (sch.lastRewardCredit != null) {
-                          travelLabel = t("buddy.travel.stateClaimed", { credit: sch.lastRewardCredit });
+                          travelState = t("buddy.travel.stateClaimed", { credit: sch.lastRewardCredit });
                           travelCls = "text-emerald-300";
                         } else {
-                          travelLabel = t("buddy.travel.stateLimit");
+                          travelState = t("buddy.travel.stateLimit");
                           travelCls = "text-slate-400";
                         }
-                      } else if (sch.lastDepartDate === today) {
-                        travelLabel = t("buddy.travel.stateTraveling");
+                      } else if (departedToday) {
+                        travelState = t("buddy.travel.stateTraveling");
                         travelCls = "text-sky-300";
                       } else {
-                        travelLabel = t("buddy.travel.statePending", { time: fmtMinute(sch.scheduledMinute) });
+                        travelState = t("buddy.accountStatus.travelPending");
                         travelCls = "text-slate-300";
                       }
                     } else {
-                      travelLabel = t("buddy.travel.stateNotToday");
+                      travelState = t("buddy.travel.stateNotToday");
                       travelCls = "text-slate-500";
                     }
                     return (
@@ -1976,17 +2069,41 @@ export default function BuddyPanel() {
                           {acc.email || acc.id}
                         </div>
                         <div className="grid grid-cols-2 gap-2">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <CalendarCheck className="w-3 h-3 text-slate-500 flex-shrink-0" />
-                            <span className={`text-[10px] truncate ${checkinCls}`} title={checkinLabel}>
-                              {checkinLabel}
-                            </span>
+                          {/* 签到 */}
+                          <div className="space-y-0.5 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <CalendarCheck className="w-3 h-3 text-slate-500 flex-shrink-0" />
+                              <span className={`text-[10px] font-semibold ${checkinCls}`}>{checkinState}</span>
+                            </div>
+                            <div className="text-[9px] text-slate-500 pl-[18px]">
+                              {t("buddy.accountStatus.planTime", { time: task?.scheduledTime ?? "—" })}
+                              {task?.lastCheckinTime
+                                ? ` · ${t("buddy.accountStatus.actualTime", { time: task.lastCheckinTime })}`
+                                : ""}
+                            </div>
                           </div>
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <Cat className="w-3 h-3 text-slate-500 flex-shrink-0" />
-                            <span className={`text-[10px] truncate ${travelCls}`} title={travelLabel}>
-                              {travelLabel}
-                            </span>
+                          {/* 派出 */}
+                          <div className="space-y-0.5 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <Cat className="w-3 h-3 text-slate-500 flex-shrink-0" />
+                              <span className={`text-[10px] font-semibold ${travelCls}`}>{travelState}</span>
+                            </div>
+                            <div className="text-[9px] text-slate-500 pl-[18px]">
+                              {t("buddy.accountStatus.travelCount", {
+                                count: departedToday ? 1 : 0,
+                              })}
+                              {sch?.lastDepartTime
+                                ? ` · ${t("buddy.accountStatus.actualTime", { time: sch.lastDepartTime })}`
+                                : ""}
+                            </div>
+                            {traveling && sch?.lastDepartTime && (
+                              <div className="text-[9px] text-slate-500 pl-[18px]">
+                                {t("buddy.accountStatus.expectedReturn", {
+                                  from: addMinutes(sch.lastDepartTime, 60),
+                                  to: addMinutes(sch.lastDepartTime, 240),
+                                })}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1995,82 +2112,6 @@ export default function BuddyPanel() {
                 </div>
               )}
             </div>
-
-            {/* 自动派 Buddy 旅行（WorkBuddy 专属活动） */}
-            {travelConfig && (
-              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <Cat className="w-4 h-4 text-[var(--module-accent)]" />
-                  <span className="text-[13px] font-bold text-white">{t("buddy.travel.title")}</span>
-                </div>
-                <div className="space-y-3">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={travelConfig.enabled}
-                      onChange={(e) => setTravelConfig({ ...travelConfig, enabled: e.target.checked })}
-                      className="accent-[var(--module-accent)] w-3.5 h-3.5"
-                    />
-                    <span className="text-[11px] text-slate-300">{t("buddy.travel.enabled")}</span>
-                  </label>
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <label className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-500">{t("buddy.travel.startTime")}</span>
-                      <input
-                        type="time"
-                        value={travelConfig.startTime}
-                        onChange={(e) => setTravelConfig({ ...travelConfig, startTime: e.target.value })}
-                        className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
-                      />
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-500">{t("buddy.travel.endTime")}</span>
-                      <input
-                        type="time"
-                        value={travelConfig.endTime}
-                        onChange={(e) => setTravelConfig({ ...travelConfig, endTime: e.target.value })}
-                        className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
-                      />
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-500">{t("buddy.travel.location")}</span>
-                      <select
-                        value={travelConfig.locationId}
-                        onChange={(e) =>
-                          setTravelConfig({ ...travelConfig, locationId: Number(e.target.value) })
-                        }
-                        className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
-                      >
-                        {TRAVEL_LOCATIONS.map((loc) => (
-                          <option key={loc.id} value={loc.id}>
-                            {t(`buddy.travel.${loc.key}`)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                  <p className="text-[9px] text-slate-600">{t("buddy.travel.hint")}</p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={saveTravelConfig}
-                      disabled={autoBusy}
-                      className="px-3 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
-                    >
-                      {autoBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-                      {t("buddy.auto.save")}
-                    </button>
-                    <button
-                      onClick={() => void runAutoTravel()}
-                      disabled={autoBusy}
-                      className="px-3 py-1.5 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
-                    >
-                      <Play className="w-3 h-3" /> {t("buddy.travel.runNow")}
-                    </button>
-                  </div>
-                  {/* 账号状态见右侧「账号状态」卡片 */}
-                </div>
-              </div>
-            )}
 
             {/* 行为日志（签到 + 派旅行，平铺） */}
             <div className="xl:col-span-2 rounded-xl border border-white/10 bg-white/[0.03] p-4">

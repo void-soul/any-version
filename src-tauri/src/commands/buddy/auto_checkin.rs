@@ -45,6 +45,9 @@ pub struct BuddyAccountScheduleState {
     pub scheduled_minute: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_checked_date: Option<String>,
+    /// 实际签到时刻（HH:MM:SS，当日成功/已签时记录）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_checked_time: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,6 +88,9 @@ pub struct BuddyCheckinTask {
     /// 最近一次尝试时间（HH:MM:SS）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_attempt_time: Option<String>,
+    /// 实际签到时刻（HH:MM:SS，当日已签到时存在）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_checkin_time: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
@@ -282,6 +288,7 @@ pub fn ensure_account_schedules(
                 scheduled_date: today_str.clone(),
                 scheduled_minute,
                 last_checked_date: last_checked,
+                last_checked_time: None,
             },
         );
         changed = true;
@@ -305,8 +312,10 @@ fn mark_schedule_checked(
             scheduled_date: today.to_string(),
             scheduled_minute: current_minute,
             last_checked_date: None,
+            last_checked_time: None,
         });
     schedule.last_checked_date = Some(today.to_string());
+    schedule.last_checked_time = Some(Local::now().format("%H:%M:%S").to_string());
 }
 
 pub async fn run_auto_checkin_cycle_if_needed(
@@ -605,6 +614,9 @@ pub fn build_tasks_view(platform: BuddyPlatform) -> Result<BuddyCheckinTasksView
                 None
             },
             last_attempt_time: detail.map(|d| d.timestamp.get(11..).unwrap_or_default().to_string()),
+            last_checkin_time: schedule
+                .filter(|_| checked_today)
+                .and_then(|s| s.last_checked_time.clone()),
             message: detail.and_then(|d| d.message.clone()),
         });
     }
@@ -844,6 +856,7 @@ mod tests {
                 scheduled_date: "2026-09-01".to_string(),
                 scheduled_minute: 1440,
                 last_checked_date: None,
+                last_checked_time: None,
             },
         )]));
         assert!(validate_config(&config).is_err());

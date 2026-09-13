@@ -4225,8 +4225,13 @@
       "title": "Account status",
       "checkinDone": "Checked in",
       "checkinFailed": "Check-in failed",
-      "checkinPending": "Pending {{time}}",
-      "checkinNotGenerated": "Pending (from {{time}})"
+      "checkinPending": "Pending",
+      "checkinNotGenerated": "Not generated",
+      "planTime": "Plan {{time}}",
+      "actualTime": "Actual {{time}}",
+      "travelPending": "Pending depart",
+      "travelCount": "Departed {{count}}/1 today",
+      "expectedReturn": "ETA {{from}}~{{to}}"
     },
     "travel": {
       "title": "Auto Buddy travel",

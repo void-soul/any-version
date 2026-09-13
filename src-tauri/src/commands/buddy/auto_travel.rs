@@ -54,6 +54,9 @@ pub struct BuddyAccountTravelState {
     /// 当日派出完成的日期（depart 成功后写入）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_depart_date: Option<String>,
+    /// 实际派出时刻（HH:MM:SS）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_depart_time: Option<String>,
     /// 当日流程完成的日期（领取成功或已达派出上限）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_done_date: Option<String>,
@@ -229,16 +232,17 @@ pub fn ensure_travel_schedules(
             0
         };
 
-        let (depart, done, reward) = existing
+        let (depart, depart_time, done, reward) = existing
             .filter(|e| e.scheduled_date == today_str)
             .map(|e| {
                 (
                     e.last_depart_date.clone(),
+                    e.last_depart_time.clone(),
                     e.last_done_date.clone(),
                     e.last_reward_credit,
                 )
             })
-            .unwrap_or((None, None, None));
+            .unwrap_or((None, None, None, None));
 
         schedules.insert(
             account.id.clone(),
@@ -246,6 +250,7 @@ pub fn ensure_travel_schedules(
                 scheduled_date: today_str.clone(),
                 scheduled_minute: start_min + random_offset,
                 last_depart_date: depart,
+                last_depart_time: depart_time,
                 last_done_date: done,
                 last_reward_credit: reward,
             },
@@ -460,6 +465,8 @@ pub async fn run_auto_travel_cycle_if_needed(
                 {
                     Ok(()) => {
                         state.last_depart_date = Some(today_str.clone());
+                        state.last_depart_time =
+                            Some(chrono::Local::now().format("%H:%M:%S").to_string());
                         acted = true;
                         entries.push(action_log::make_entry(
                             "travel",
@@ -674,6 +681,7 @@ mod tests {
                     scheduled_date: "2026-09-13".to_string(),
                     scheduled_minute: 500,
                     last_depart_date: Some("2026-09-13".to_string()),
+                    last_depart_time: Some("08:32:11".to_string()),
                     last_done_date: None,
                     last_reward_credit: Some(8),
                 },
