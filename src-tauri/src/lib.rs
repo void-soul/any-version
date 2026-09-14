@@ -638,6 +638,8 @@ pub fn run() {
             commands::cert::cert_delete,
             commands::cert::cert_issue_now,
             commands::cert::cert_get_pem,
+            commands::cert::cert_detail,
+            commands::cert::cert_export_zip,
             commands::cert::deploy_node_list,
             commands::cert::deploy_node_upsert,
             commands::cert::deploy_node_delete,

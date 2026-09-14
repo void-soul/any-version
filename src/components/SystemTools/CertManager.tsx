@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   ShieldCheck,
   Server,
@@ -11,6 +12,9 @@ import {
   RefreshCw,
   Play,
   Cable,
+  Download,
+  Copy,
+  Check,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -30,6 +34,19 @@ interface Certificate {
   status: string;
   last_error?: string | null;
   deploy_node_ids: string[];
+}
+
+/** 证书详情（后端 cert_detail 返回）：解析出的展示信息 + 证书目录内 PEM 原文 */
+interface CertDetail {
+  subject?: string | null;
+  issuer?: string | null;
+  serial?: string | null;
+  notBefore?: string | null;
+  notAfter?: string | null;
+  /** 距到期剩余天数（负数表示已过期） */
+  daysLeft?: number | null;
+  san: string[];
+  pems: Record<string, string>;
 }
 
 interface DeployNode {
@@ -243,7 +260,11 @@ function CertList() {
     if (on) issuingSet.add(id); else issuingSet.delete(id);
     setIssuing(new Set(issuingSet));
   };
-  const [pem, setPem] = useState<Record<string, string> | null>(null);
+  // 「查看证书」弹窗：详情 + PEM 原文 + 下载证书包
+  const [detail, setDetail] = useState<CertDetail | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [copiedName, setCopiedName] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
 
   const refresh = useCallback(async () => {
     setCerts(await invoke<Certificate[]>("cert_list"));
@@ -271,11 +292,51 @@ function CertList() {
     await invoke("cert_delete", { id });
     refresh();
   };
-  const viewPem = async (id: string) => {
+  const viewDetail = async (id: string) => {
     try {
-      setPem(await invoke<Record<string, string>>("cert_get_pem", { id }));
+      setDetailId(id);
+      setDetail(await invoke<CertDetail>("cert_detail", { id }));
     } catch (e) {
+      setDetailId(null);
       alert(String(e));
+    }
+  };
+  const closeDetail = () => {
+    setDetail(null);
+    setDetailId(null);
+    setCopiedName(null);
+  };
+  const copyPem = async (name: string, content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedName(name);
+      setTimeout(() => setCopiedName(null), 1500);
+    } catch {
+      // 复制失败不打断查看
+    }
+  };
+  // 下载证书包：通用命名 4 文件 + lego 原生文件（后端打包为 zip）
+  const downloadZip = async () => {
+    if (!detailId) return;
+    const domain = certs.find((c) => c.id === detailId)?.domains[0] ?? detailId;
+    const safe = domain.replace(/[^A-Za-z0-9._-]/g, "_");
+    try {
+      const filePath = await saveDialog({
+        title: t("certmgr.downloadTitle"),
+        defaultPath: `${safe}.zip`,
+        filters: [{ name: "ZIP", extensions: ["zip"] }],
+      });
+      if (!filePath || typeof filePath !== "string") return;
+      setDownloading(true);
+      const saved = await invoke<string>("cert_export_zip", {
+        id: detailId,
+        targetPath: filePath,
+      });
+      alert(t("certmgr.downloadDone", { path: saved }));
+    } catch (e) {
+      alert(t("certmgr.downloadFail", { err: String(e) }));
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -332,7 +393,14 @@ function CertList() {
                   <button onClick={() => issue(c.id)} disabled={issuing.has(c.id)} className="text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] mr-2 disabled:opacity-50">
                     {issuing.has(c.id) ? t("certmgr.issuing") : t("certmgr.apply")}
                   </button>
-                  <button onClick={() => viewPem(c.id)} className="text-sky-400 hover:text-sky-300 mr-2">PEM</button>
+                  <button
+                    onClick={() => viewDetail(c.id)}
+                    disabled={c.status !== "issued"}
+                    title={c.status === "issued" ? t("certmgr.view") : t("certmgr.notIssued")}
+                    className="text-sky-400 hover:text-sky-300 mr-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {t("certmgr.view")}
+                  </button>
                   <button onClick={() => del(c.id)} className="text-rose-400 hover:text-rose-300">
                     <Trash2 className="w-3.5 h-3.5 inline" />
                   </button>
@@ -348,22 +416,111 @@ function CertList() {
         </table>
       </div>
 
-      {pem && (
+      {detail && (
         <div className="fixed inset-0 modal-mask bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-slate-900 border border-white/10 rounded-xl p-4 w-[80vw] max-h-[80vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between mb-2">
-              <span className="text-xs font-bold text-slate-200">{t("certmgr.pemTitle")}</span>
-              <button onClick={() => setPem(null)} className="text-slate-400 hover:text-slate-200">{t("certmgr.close")}</button>
+          <div
+            className="bg-slate-900 border border-white/10 rounded-xl w-[70vw] max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 头部：标题 + 下载 + 关闭 */}
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
+              <ShieldCheck className="w-4 h-4 text-[var(--module-accent)] flex-shrink-0" />
+              <span className="text-xs font-bold text-slate-200 flex-shrink-0">
+                {t("certmgr.detailTitle")}
+              </span>
+              <span className="text-[11px] text-slate-400 truncate">
+                {certs.find((c) => c.id === detailId)?.domains.join(", ")}
+              </span>
+              <div className="flex-1" />
+              <button
+                onClick={downloadZip}
+                disabled={downloading}
+                className="px-2.5 py-1.5 rounded-md bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                {downloading ? t("certmgr.downloading") : t("certmgr.download")}
+              </button>
+              <button
+                onClick={closeDetail}
+                className="text-[11px] text-slate-400 hover:text-slate-200 cursor-pointer"
+              >
+                {t("certmgr.close")}
+              </button>
             </div>
-            {Object.keys(pem).length === 0 && (
-              <div className="text-[11px] text-slate-500 py-2">{t("certmgr.pemEmpty")}</div>
-            )}
-            {Object.entries(pem).map(([name, content]) => (
-              <div key={name} className="mb-3">
-                <div className="text-[10px] text-slate-400 mb-1">{name}</div>
-                <pre className="text-[9px] bg-black/40 rounded p-2 overflow-auto max-h-40 whitespace-pre-wrap">{content}</pre>
+
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3">
+              {/* 证书信息 */}
+              <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[11px]">
+                <span className="text-slate-500">{t("certmgr.detailSubject")}</span>
+                <span className="text-slate-200 break-all">{detail.subject ?? "—"}</span>
+                <span className="text-slate-500">{t("certmgr.detailIssuer")}</span>
+                <span className="text-slate-200 break-all">{detail.issuer ?? "—"}</span>
+                <span className="text-slate-500">{t("certmgr.detailSerial")}</span>
+                <span className="text-slate-200 font-mono break-all">{detail.serial ?? "—"}</span>
+                <span className="text-slate-500">{t("certmgr.detailValidity")}</span>
+                <span className="text-slate-200">
+                  {fmtDate(detail.notBefore)} → {fmtDate(detail.notAfter)}
+                  {typeof detail.daysLeft === "number" && (
+                    <span
+                      className={`ml-2 ${
+                        detail.daysLeft < 0
+                          ? "text-rose-400"
+                          : detail.daysLeft <= 15
+                            ? "text-amber-400"
+                            : "text-emerald-400"
+                      }`}
+                    >
+                      {detail.daysLeft < 0
+                        ? t("certmgr.detailExpired", { days: Math.abs(detail.daysLeft) })
+                        : t("certmgr.detailDaysLeft", { days: detail.daysLeft })}
+                    </span>
+                  )}
+                </span>
+                <span className="text-slate-500">{t("certmgr.detailSan")}</span>
+                <span className="text-slate-200 break-all">
+                  {detail.san.length > 0 ? detail.san.join(", ") : "—"}
+                </span>
               </div>
-            ))}
+
+              {/* PEM 原文（可逐段复制） */}
+              <div className="flex items-center gap-2 pt-1">
+                <span className="text-[11px] font-bold text-slate-300">{t("certmgr.pemTitle")}</span>
+                <span className="text-[10px] text-slate-500">{t("certmgr.pemHint")}</span>
+              </div>
+              {Object.keys(detail.pems).length === 0 && (
+                <div className="text-[11px] text-slate-500">{t("certmgr.pemEmpty")}</div>
+              )}
+              {Object.entries(detail.pems).map(([name, content]) => (
+                <div
+                  key={name}
+                  className="rounded-lg border border-white/10 bg-black/20 overflow-hidden"
+                >
+                  <div className="flex items-center gap-2 px-2.5 py-1.5 bg-white/5">
+                    <span className="text-[10px] text-slate-300 font-mono">{name}</span>
+                    <div className="flex-1" />
+                    <button
+                      onClick={() => copyPem(name, content)}
+                      className="text-[10px] text-slate-400 hover:text-slate-200 flex items-center gap-1 cursor-pointer"
+                    >
+                      {copiedName === name ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-400" />
+                          {t("certmgr.copied")}
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          {t("certmgr.copy")}
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <pre className="text-[9px] p-2 overflow-auto max-h-32 whitespace-pre-wrap text-slate-400">
+                    {content}
+                  </pre>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
