@@ -8,8 +8,6 @@
     "bin"
   ],
   "has_cache": false,
-  "cache_detect_cmd": null,
-  "cache_default_path": null,
   "has_mirror": false,
   "mirror_options": null,
   "has_pkg": false,
@@ -17,12 +15,10 @@
   "pkg_homepage_template": null,
   "is_service": true,
   "default_port": 3306,
-  "data_dir": null,
-  "log_dir": null,
   "config_file": "my.ini",
   "config_file_candidates": [
-    "C:\\ProgramData\\MySQL\\MySQL Server 8.4\\my.ini",
-    "C:\\ProgramData\\MySQL\\MySQL Server 8.0\\my.ini",
+    "{program_data}\\MySQL\\MySQL Server 8.4\\my.ini",
+    "{program_data}\\MySQL\\MySQL Server 8.0\\my.ini",
     "{install_root}\\my.ini",
     "{install_root}\\my.cnf"
   ],
@@ -57,8 +53,8 @@
       "display_name": "MySQL 数据目录",
       "kind": "data",
       "possible_paths": [
-        "C:\\ProgramData\\MySQL\\MySQL Server 8.4\\Data",
-        "C:\\ProgramData\\MySQL\\MySQL Server 8.0\\Data",
+        "{program_data}\\MySQL\\MySQL Server 8.4\\Data",
+        "{program_data}\\MySQL\\MySQL Server 8.0\\Data",
         "{install_root}\\data"
       ],
       "default_path": "{install_root}\\data",
@@ -71,8 +67,8 @@
       "display_name": "MySQL 日志目录",
       "kind": "log",
       "possible_paths": [
-        "C:\\ProgramData\\MySQL\\MySQL Server 8.4\\Data",
-        "C:\\ProgramData\\MySQL\\MySQL Server 8.0\\Data",
+        "{program_data}\\MySQL\\MySQL Server 8.4\\Data",
+        "{program_data}\\MySQL\\MySQL Server 8.0\\Data",
         "{install_root}\\logs"
       ],
       "default_path": "{install_root}\\logs",

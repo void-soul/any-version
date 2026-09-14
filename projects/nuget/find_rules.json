@@ -12,7 +12,7 @@
   {
     "pattern": {
       "type": "fixed_path",
-      "path": "C:\\Program Files\\NuGet",
+      "path": "{program_files}\\NuGet",
       "exe_name": "nuget.exe"
     },
     "source_label": "Program Files NuGet",

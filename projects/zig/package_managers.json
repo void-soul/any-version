@@ -8,7 +8,7 @@
     "version_exe": "zig",
     "cache_detect_cmd": "zig env",
     "cache_detect_json_path": "global_cache_dir",
-    "cache_default_path": "{home}\\AppData\\Local\\zig",
+    "cache_default_path": "{local_appdata}\\zig",
     "cache_env_var": "ZIG_GLOBAL_CACHE_DIR",
     "cache_set_cmd_template": null,
     "data_detect_cmd": null,

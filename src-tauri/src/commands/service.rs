@@ -450,14 +450,12 @@ pub(crate) fn resolve_service_runtime(def: &ProjectDef, version: Option<&str>) -
         .find(|d| d.kind.as_deref().unwrap_or("data") == "data")
         .or_else(|| data_dirs.first())
         .map(|d| d.path.clone())
-        .or_else(|| def.data_dir.as_ref().map(|d| expand_path_template(d, install_root.as_deref())))
         .unwrap_or_default();
 
     let log_dir = data_dirs
         .iter()
         .find(|d| d.kind.as_deref() == Some("log"))
         .map(|d| d.path.clone())
-        .or_else(|| def.log_dir.as_ref().map(|d| expand_path_template(d, install_root.as_deref())))
         .unwrap_or_default();
 
     Ok(ServiceRuntime {

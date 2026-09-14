@@ -7,8 +7,6 @@
     "bin"
   ],
   "has_cache": true,
-  "cache_detect_cmd": null,
-  "cache_default_path": "{home}\\go\\pkg\\mod",
   "has_mirror": true,
   "mirror_options": [
     {

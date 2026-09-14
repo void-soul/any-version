@@ -9,12 +9,12 @@ use std::path::{Path, PathBuf};
 use super::types::{
     ProjectDef, ProjectStatus, ProjectDetail,
     EnvVarStatus, EnvVarTier, CacheStatus, ServiceStatus,
-    ManagePreview, ManageStep, ResolvePattern,
+    ManagePreview, ManageStep,
 };
 use super::registry;
 use crate::commands::config::load_config;
 use crate::commands::env::get_registry_env_any;
-use crate::commands::sdk_resolver::{find_sdk_root, FindRule, ResolvePattern as ResolverPattern};
+use crate::commands::sdk_resolver::find_sdk_root;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  公开接口
@@ -440,49 +440,15 @@ pub fn detect_install_source(def: &ProjectDef) -> (Option<String>, Option<String
         return (Some("手动指定".to_string()), Some(custom_path.clone()));
     }
 
-    // 转换 types::ResolvePattern -> sdk_resolver::ResolvePattern
-    let resolver_rules = to_resolver_rules(&def.find_rules);
-
-    if let Some(location) = find_sdk_root(&def.id, &resolver_rules) {
+    // 规则类型与 sdk_resolver 共用同一份（project::types::{FindRule, ResolvePattern}），
+    // 直接借用，无需再做字段搬运。
+    if let Some(location) = find_sdk_root(&def.id, &def.find_rules) {
         let source = location.source.clone();
         let root = location.root.to_string_lossy().to_string();
         (Some(source), Some(root))
     } else {
         (None, None)
     }
-}
-
-/// 将 project::types::FindRule 转换为 sdk_resolver::FindRule
-fn to_resolver_rules(rules: &[super::types::FindRule]) -> Vec<FindRule> {
-    rules.iter().map(|r| {
-        let pattern = match &r.pattern {
-            ResolvePattern::PathContains { path_key, exe_name } => {
-                ResolverPattern::PathContains {
-                    keyword: path_key.clone(),
-                    exe: exe_name.clone(),
-                }
-            }
-            ResolvePattern::EnvBin { env_var, bin_sub, exe_name } => {
-                ResolverPattern::EnvBin {
-                    env: env_var.clone(),
-                    bin_sub: bin_sub.clone(),
-                    exe: exe_name.clone(),
-                }
-            }
-            ResolvePattern::FixedPath { path, exe_name } => {
-                ResolverPattern::FixedPath {
-                    path: path.clone(),
-                    exe: exe_name.clone(),
-                }
-            }
-        };
-        FindRule {
-            pattern,
-            source_label: r.source_label.clone(),
-            priority: r.priority,
-            root_offset: r.root_offset,
-        }
-    }).collect()
 }
 
 /// 构建环境变量状态列表

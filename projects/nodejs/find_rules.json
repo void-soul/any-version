@@ -44,7 +44,7 @@
   {
     "pattern": {
       "type": "fixed_path",
-      "path": "C:\\msys64\\mingw64\\bin",
+      "path": "{msys2}\\mingw64\\bin",
       "exe_name": "node.exe"
     },
     "source_label": "MSYS2",
@@ -54,7 +54,7 @@
   {
     "pattern": {
       "type": "fixed_path",
-      "path": "C:\\Program Files\\nodejs",
+      "path": "{program_files}\\nodejs",
       "exe_name": "node.exe"
     },
     "source_label": "Program Files",

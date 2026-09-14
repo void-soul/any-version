@@ -7,7 +7,7 @@
     "version_cmd": "vcpkg --version",
     "version_exe": "vcpkg",
     "cache_detect_cmd": null,
-    "cache_default_path": "{home}\\AppData\\Local\\vcpkg\\downloads",
+    "cache_default_path": "{local_appdata}\\vcpkg\\downloads",
     "cache_env_var": "VCPKG_DOWNLOADS",
     "cache_set_cmd_template": null,
     "extra_caches": [
@@ -15,7 +15,7 @@
         "id": "binary-cache",
         "display_name": "vcpkg 二进制缓存",
         "detect_cmd": null,
-        "default_path": "{home}\\AppData\\Local\\vcpkg\\archives",
+        "default_path": "{local_appdata}\\vcpkg\\archives",
         "env_var": "VCPKG_DEFAULT_BINARY_CACHE",
         "set_cmd_template": null
       }

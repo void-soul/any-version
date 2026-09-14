@@ -8,8 +8,6 @@
     ""
   ],
   "has_cache": false,
-  "cache_detect_cmd": null,
-  "cache_default_path": null,
   "has_mirror": false,
   "mirror_options": null,
   "has_pkg": false,
@@ -17,8 +15,6 @@
   "pkg_homepage_template": null,
   "is_service": true,
   "default_port": 6379,
-  "data_dir": null,
-  "log_dir": null,
   "config_file": "redis.windows.conf",
   "config_file_candidates": [
     "{install_root}\\redis.windows.conf",

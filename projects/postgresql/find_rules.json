@@ -12,7 +12,7 @@
   {
     "pattern": {
       "type": "fixed_path",
-      "path": "C:\\Program Files\\PostgreSQL\\17\\bin",
+      "path": "{program_files}\\PostgreSQL\\17\\bin",
       "exe_name": "postgres.exe"
     },
     "source_label": "Program Files",
@@ -22,7 +22,7 @@
   {
     "pattern": {
       "type": "fixed_path",
-      "path": "C:\\Program Files\\PostgreSQL\\16\\bin",
+      "path": "{program_files}\\PostgreSQL\\16\\bin",
       "exe_name": "postgres.exe"
     },
     "source_label": "Program Files",

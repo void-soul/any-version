@@ -102,9 +102,15 @@ pub fn validate_subst_value(v: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Expand {home} / {data_dir} placeholders in path strings.
+/// Expand path placeholders in path strings.
 /// - `{home}`      -> 用户主目录（%USERPROFILE%）
 /// - `{data_dir}`  -> 程序数据根目录（get_data_dir()），用于把缓存/数据锚定到托管的数据目录下
+/// - 机器级目录根（`{program_files}` / `{program_data}` / `{local_appdata}` /
+///   `{roaming_appdata}` / `{msys2}`）-> 见 `commands::project::dirs`，**同一组根配置**，
+///   环境变量优先、字面默认值兜底，供所有项目共享引用。
+///
+/// 该函数是项目路径模板的统一展开入口（数据目录 / 缓存目录 / 配置文件候选 /
+/// 服务启动命令参数等），因此新增根只需改 `dirs::ROOTS` 一处。
 pub fn expand_home(path: &str) -> String {
     let mut s = path.to_string();
     if s.contains("{home}") {
@@ -113,7 +119,7 @@ pub fn expand_home(path: &str) -> String {
     if s.contains("{data_dir}") {
         s = s.replace("{data_dir}", &crate::commands::config::get_data_dir().to_string_lossy());
     }
-    s
+    crate::commands::project::dirs::expand(&s)
 }
 
 /// Generic configuration-file based cache resolver

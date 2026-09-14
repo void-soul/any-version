@@ -8,8 +8,6 @@
     "bin"
   ],
   "has_cache": true,
-  "cache_detect_cmd": null,
-  "cache_default_path": "{home}\\.ccache",
   "has_mirror": false,
   "mirror_options": null,
   "has_pkg": false,

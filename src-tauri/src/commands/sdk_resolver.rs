@@ -13,11 +13,14 @@
 //!   - Go            (环境变量 GOPATH / %USERPROFILE%\go\bin)
 //!   - winget / 手动安装 (Program Files, 自定义路径等)
 //!
-//! 每种 SDK 在 sdk_registry.rs 中定义一组 FindRule，按优先级排列。
+//! 规则来源：`projects/<id>/find_rules.json`，与项目定义共用同一套类型
+//! （`project::types::{FindRule, ResolvePattern}`）——**不再单独定义一份**，
+//! 避免两侧字段名漂移导致配置文件只能被其中一方解析。
 //! 本模块的 find_sdk_root() 按优先级依次尝试，返回第一个匹配的结果。
 
 use std::path::{Path, PathBuf};
-use serde::{Serialize, Deserialize};
+
+use crate::commands::project::types::{FindRule, ResolvePattern};
 
 /// SDK 被发现时的结果
 #[derive(Debug, Clone)]
@@ -26,63 +29,6 @@ pub struct SdkLocation {
     pub root: PathBuf,
     /// 来源描述（如 "Scoop", "Chocolatey", "环境变量 JAVA_HOME" 等）
     pub source: String,
-}
-
-/// 安装来源类型（用于 UI 显示和去重）
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InstallSource {
-    /// AnyVersion 管理的版本
-    AnyVersion,
-    /// Scoop 包管理器
-    Scoop,
-    /// Chocolatey 包管理器
-    Chocolatey,
-    /// MSYS2 环境
-    Msys2,
-    /// Cygwin 环境
-    Cygwin,
-    /// conda / Anaconda / Miniconda
-    Conda,
-    /// nvm-windows
-    Nvm,
-    /// pyenv-win
-    Pyenv,
-    /// Volta
-    Volta,
-    /// rustup
-    Rustup,
-    /// Go workspace
-    GoPath,
-    /// winget
-    Winget,
-    /// Program Files
-    ProgramFiles,
-    /// 环境变量直接指向
-    EnvVar,
-    /// 其他 / 手动安装
-    Other,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ResolvePattern {
-    PathContains { keyword: String, exe: String },
-    EnvBin { env: String, bin_sub: String, exe: String },
-    FixedPath { path: String, exe: String },
-    ParentDirPattern { parent_env: String, rel_pattern: String, exe: String },
-}
-
-/// 单条解析规则
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FindRule {
-    /// 规则模式
-    pub pattern: ResolvePattern,
-    /// 来源标签
-    pub source_label: String,
-    /// 优先级（越小越优先，0 = 最高）
-    pub priority: u8,
-    /// 发现后，实际 SDK 根目录相对于匹配路径的向上回溯层数
-    pub root_offset: u8,
 }
 
 /// 对某个 SDK 执行路径解析，按优先级返回第一个匹配结果。
@@ -94,17 +40,14 @@ pub fn find_sdk_root(_sdk_id: &str, find_rules: &[FindRule]) -> Option<SdkLocati
 
     for rule in find_rules {
         let matched_path = match &rule.pattern {
-            ResolvePattern::PathContains { keyword, exe } => {
-                resolve_from_path(keyword, exe)
+            ResolvePattern::PathContains { path_key, exe_name } => {
+                resolve_from_path(path_key, exe_name)
             }
-            ResolvePattern::EnvBin { env, bin_sub, exe } => {
-                resolve_from_env_bin(env, bin_sub, exe)
+            ResolvePattern::EnvBin { env_var, bin_sub, exe_name } => {
+                resolve_from_env_bin(env_var, bin_sub, exe_name)
             }
-            ResolvePattern::FixedPath { path, exe } => {
-                resolve_from_fixed(path, exe)
-            }
-            ResolvePattern::ParentDirPattern { parent_env, rel_pattern, exe } => {
-                resolve_from_parent_dir(parent_env, rel_pattern, exe)
+            ResolvePattern::FixedPath { path, exe_name } => {
+                resolve_from_fixed(path, exe_name)
             }
         };
 
@@ -137,53 +80,6 @@ pub fn find_sdk_root(_sdk_id: &str, find_rules: &[FindRule]) -> Option<SdkLocati
     // 按优先级排序，返回最佳匹配
     candidates.sort_by_key(|(p, _)| *p);
     candidates.into_iter().map(|(_, loc)| loc).next()
-}
-
-/// 枚举某个 SDK 在系统上的所有安装位置（用于"未管理的 SDK"检测）
-pub fn find_all_installations(_sdk_id: &str, find_rules: &[FindRule]) -> Vec<SdkLocation> {
-    let links_dir = crate::commands::config::load_config().links_dir;
-    let links_lower = links_dir.to_lowercase();
-    let mut results = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-
-    for rule in find_rules {
-        let matched_path = match &rule.pattern {
-            ResolvePattern::PathContains { keyword, exe } => {
-                resolve_from_path(keyword, exe)
-            }
-            ResolvePattern::EnvBin { env, bin_sub, exe } => {
-                resolve_from_env_bin(env, bin_sub, exe)
-            }
-            ResolvePattern::FixedPath { path, exe } => {
-                resolve_from_fixed(path, exe)
-            }
-            ResolvePattern::ParentDirPattern { parent_env, rel_pattern, exe } => {
-                resolve_from_parent_dir(parent_env, rel_pattern, exe)
-            }
-        };
-
-        if let Some(mut path) = matched_path {
-            if path.to_string_lossy().to_lowercase().contains(&links_lower) {
-                continue;
-            }
-
-            for _ in 0..rule.root_offset {
-                if let Some(parent) = path.parent() {
-                    path = parent.to_path_buf();
-                }
-            }
-
-            let key = path.to_string_lossy().to_lowercase();
-            if seen.insert(key) {
-                results.push(SdkLocation {
-                    root: path,
-                    source: rule.source_label.clone(),
-                });
-            }
-        }
-    }
-
-    results
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -242,9 +138,14 @@ fn resolve_from_env_bin(env_var: &str, bin_sub: &str, exe_name: &str) -> Option<
     }
 }
 
-/// 检查固定路径
+/// 检查固定路径。
+///
+/// 固定路径允许引用共享目录根（`{program_files}` / `{msys2}` …），
+/// 统一走 `utils::expand_home` 展开，避免各项目把 `C:\Program Files`
+/// 之类的机器目录重复写死在不同文件里。
 fn resolve_from_fixed(fixed: &str, exe_name: &str) -> Option<PathBuf> {
-    let path = Path::new(fixed);
+    let expanded = crate::commands::utils::expand_home(fixed);
+    let path = Path::new(&expanded);
     if path.join(exe_name).exists() {
         return Some(path.to_path_buf());
     }
@@ -253,26 +154,6 @@ fn resolve_from_fixed(fixed: &str, exe_name: &str) -> Option<PathBuf> {
     }
 
     None
-}
-
-/// 从父目录环境变量展开，按模式查找
-fn resolve_from_parent_dir(parent_env: &str, rel_pattern: &str, exe_name: &str) -> Option<PathBuf> {
-    let parent = crate::commands::env::get_registry_env_any(parent_env)
-        .map(|(v, _)| v)
-        .unwrap_or_default();
-    let parent_path = if parent.is_empty() {
-        // 尝试已知的默认位置
-        return None;
-    } else {
-        PathBuf::from(&parent)
-    };
-
-    let target = parent_path.join(rel_pattern);
-    if target.join(exe_name).exists() {
-        Some(target)
-    } else {
-        None
-    }
 }
 
 /// 合并用户级和系统级 PATH 的值

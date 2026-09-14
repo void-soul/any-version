@@ -15,7 +15,7 @@
         "id": "http-cache",
         "display_name": "NuGet HTTP 缓存",
         "detect_cmd": null,
-        "default_path": "{home}\\AppData\\Local\\NuGet\\v3-cache",
+        "default_path": "{local_appdata}\\NuGet\\v3-cache",
         "env_var": "NUGET_HTTP_CACHE_PATH",
         "set_cmd_template": null
       }
@@ -57,7 +57,7 @@
         "NUGET_PACKAGES"
       ],
       "paths": [
-        "{home}\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        "{roaming_appdata}\\NuGet\\NuGet.Config"
       ],
       "keys": [
         "<add\\s+key\\s*=\\s*\"globalPackagesFolder\"\\s+value\\s*=\\s*\"([^\"]+)\""

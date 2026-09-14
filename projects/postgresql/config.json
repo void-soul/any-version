@@ -8,8 +8,6 @@
     "bin"
   ],
   "has_cache": false,
-  "cache_detect_cmd": null,
-  "cache_default_path": null,
   "has_mirror": false,
   "mirror_options": null,
   "has_pkg": false,
@@ -17,8 +15,6 @@
   "pkg_homepage_template": null,
   "is_service": true,
   "default_port": 5432,
-  "data_dir": null,
-  "log_dir": null,
   "config_file": "postgresql.conf",
   "config_file_candidates": [
     "{install_root}\\data\\postgresql.conf"
@@ -69,10 +65,10 @@
       "display_name": "PostgreSQL 日志目录",
       "kind": "log",
       "possible_paths": [
-        "{install_root}\\log",
-        "{install_root}\\logs"
+        "{install_root}\\logs",
+        "{install_root}\\log"
       ],
-      "default_path": "{install_root}\\log",
+      "default_path": "{install_root}\\logs",
       "supports_direct": true,
       "auto_create": true,
       "required_for_start": false

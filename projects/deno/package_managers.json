@@ -7,7 +7,7 @@
     "version_cmd": "deno --version",
     "version_exe": "deno",
     "cache_detect_cmd": null,
-    "cache_default_path": "{home}\\AppData\\Local\\deno",
+    "cache_default_path": "{local_appdata}\\deno",
     "cache_env_var": "DENO_DIR",
     "cache_set_cmd_template": null,
     "data_detect_cmd": null,

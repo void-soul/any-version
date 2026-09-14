@@ -42,8 +42,6 @@ fn classify_mirror(url_str: &str, _tool: &str) -> String {
 pub fn get_mirrors_list() -> Result<Vec<MirrorInfo>, String> {
     let registry = super::project::registry::registry();
     let mut mirrors = Vec::new();
-    let user_profile = std::env::var("USERPROFILE").unwrap_or_default();
-    let app_data = std::env::var("APPDATA").unwrap_or_default();
 
     for proj in &registry {
         for pm in &proj.package_managers {
@@ -71,10 +69,9 @@ pub fn get_mirrors_list() -> Result<Vec<MirrorInfo>, String> {
                     // 2. Try file-based detection
                     if current.is_empty() {
                         if let Some(ref config_file_tpl) = pm.mirror_config_file {
-                            let config_path_str = config_file_tpl
-                                .replace("{home}", &user_profile)
-                                .replace("{appdata}", &app_data);
-                            let config_path = PathBuf::from(&config_path_str);
+                            // 统一走 utils::expand_home：{home} / {roaming_appdata} 等目录根
+                            // 都在同一处展开，不再各模块自带一份占位符替换逻辑。
+                            let config_path = PathBuf::from(super::utils::expand_home(config_file_tpl));
                             if config_path.exists() {
                                 if let Ok(content) = fs::read_to_string(&config_path) {
                                     if let Some(ref regex_str) = pm.mirror_detect_file_regex {
@@ -132,7 +129,6 @@ pub fn get_mirrors_list() -> Result<Vec<MirrorInfo>, String> {
 pub fn set_mirror(tool: String, mirror_type: String) -> Result<(), String> {
     let registry = super::project::registry::registry();
     let user_profile = std::env::var("USERPROFILE").unwrap_or_default();
-    let app_data = std::env::var("APPDATA").unwrap_or_default();
 
     for proj in &registry {
         for pm in &proj.package_managers {
@@ -142,10 +138,8 @@ pub fn set_mirror(tool: String, mirror_type: String) -> Result<(), String> {
                         if opt.mirror_type.to_lowercase() == mirror_type.to_lowercase() {
                             // 1. Try file-based configuration
                             if let Some(ref config_file_tpl) = pm.mirror_config_file {
-                                let config_path_str = config_file_tpl
-                                    .replace("{home}", &user_profile)
-                                    .replace("{appdata}", &app_data);
-                                let config_path = PathBuf::from(&config_path_str);
+                                // 同上：统一走 expand_home 展开目录根。
+                                let config_path = PathBuf::from(super::utils::expand_home(config_file_tpl));
                                 
                                 if let Some(ref content) = opt.config_content {
                                     if !content.is_empty() {

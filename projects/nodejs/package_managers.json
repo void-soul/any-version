@@ -7,7 +7,7 @@
     "version_cmd": "npm --version",
     "version_exe": "npm",
     "cache_detect_cmd": "npm config get cache",
-    "cache_default_path": "{home}\\AppData\\Local\\npm-cache",
+    "cache_default_path": "{local_appdata}\\npm-cache",
     "cache_env_var": "NPM_CONFIG_CACHE",
     "cache_set_cmd_template": "npm config set cache \"{path}\"",
     "data_detect_cmd": null,
@@ -115,7 +115,7 @@
         "id": "cache",
         "display_name": "pnpm 元数据缓存",
         "detect_cmd": "pnpm config get cache-dir",
-        "default_path": "{home}\\AppData\\Local\\pnpm-cache",
+        "default_path": "{local_appdata}\\pnpm-cache",
         "env_var": "PNPM_CONFIG_CACHE_DIR",
         "set_cmd_template": "pnpm config set cache-dir \"{path}\""
       }

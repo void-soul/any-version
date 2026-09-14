@@ -39,8 +39,6 @@ fn sanitize_project_cmds(def: &mut ProjectDef) {
     };
     // 只读检测命令：允许 `2>&1`、管道等合法写法
     check("version_cmd", &mut def.version_cmd, true);
-    check("cache_detect_cmd", &mut def.cache_detect_cmd, true);
-    check("cache_default_path", &mut def.cache_default_path, true);
     for pm in &mut def.package_managers {
         check("install_cmd", &mut pm.install_cmd, false);
         check("version_cmd", &mut pm.version_cmd, true);
@@ -152,7 +150,9 @@ pub fn load_registry() -> Vec<ProjectDef> {
 /// 每个子目录对应一个 SDK，目录名即 SDK 位置（以 config.json 内的 id 为准）。
 /// 复杂的数组/对象字段（env_vars / find_rules / package_managers /
 /// remote_versions_config）可拆分到同名独立文件中，加载时按文件优先覆盖内联值。
-fn load_from_dir(dir: &std::path::Path) -> Option<Vec<ProjectDef>> {
+///
+/// 目录下没有 config.json 的子目录会被跳过，不会成为项目。
+pub(crate) fn load_from_dir(dir: &std::path::Path) -> Option<Vec<ProjectDef>> {
     if !dir.exists() || !dir.is_dir() {
         return None;
     }
@@ -209,4 +209,272 @@ pub fn find_by_id(id: &str) -> Option<ProjectDef> {
 
 pub fn all_ids() -> Vec<String> {
     registry().iter().map(|s| s.id.clone()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::types::ResolvePattern;
+    use super::*;
+    use std::collections::HashSet;
+    use std::path::{Path, PathBuf};
+
+    /// 仓库内 `projects/` 目录。
+    /// `cargo test` 的工作目录是本 crate（`src-tauri`），故取 CARGO_MANIFEST_DIR 的上一级，
+    /// **不受打包产物 `src-tauri/_up_/projects` 影响**，测到的一定是仓库里的真配置。
+    fn repo_projects_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("src-tauri 应有上级目录")
+            .join("projects")
+    }
+
+    fn load_all() -> Vec<ProjectDef> {
+        let dir = repo_projects_dir();
+        assert!(dir.is_dir(), "未找到 projects 目录: {}", dir.display());
+        load_from_dir(&dir).unwrap_or_else(|| {
+            panic!("{} 未解析出任何项目（是否存在 JSON 语法错误？）", dir.display())
+        })
+    }
+
+    /// 目录类字段允许出现的占位符：共享目录根 + 通用模板变量。
+    fn allowed_placeholders() -> Vec<String> {
+        let mut names = crate::commands::project::dirs::root_names();
+        names.extend(
+            ["install_root", "home", "data_dir", "version"]
+                .iter()
+                .map(|s| s.to_string()),
+        );
+        names
+    }
+
+    fn unknown_placeholders(text: &str, allowed: &[String]) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut rest = text;
+        while let Some(start) = rest.find('{') {
+            let after = &rest[start + 1..];
+            let Some(end) = after.find('}') else { break };
+            let name = &after[..end];
+            if !allowed.iter().any(|a| a == name) && !out.iter().any(|o| o == name) {
+                out.push(name.to_string());
+            }
+            rest = &after[end + 1..];
+        }
+        out
+    }
+
+    /// 任何一份 config.json 出错都会让该项目从界面上静默消失，必须由测试挡住。
+    #[test]
+    fn every_project_dir_parses() {
+        let dir = repo_projects_dir();
+        let expected = std::fs::read_dir(&dir)
+            .expect("读取 projects 目录失败")
+            .flatten()
+            .filter(|e| e.path().is_dir() && e.path().join("config.json").exists())
+            .count();
+        let list = load_all();
+        assert!(
+            expected >= 20,
+            "projects/ 下带 config.json 的子目录只有 {} 个，疑似配置被误删",
+            expected
+        );
+        assert_eq!(
+            list.len(),
+            expected,
+            "{} 个目录存在 config.json，却只解析出 {} 个项目",
+            expected,
+            list.len()
+        );
+    }
+
+    /// 拆分出来的独立配置文件（env_vars / find_rules / package_managers /
+    /// remote_versions_config）解析失败时，`load_from_dir` 会**静默回退**到 config.json
+    /// 的内联值（通常为空），项目本身仍能加载成功。因此必须单独验证它们能解析：
+    /// 改坏一份 find_rules.json 只会表现为「这个项目的安装来源检测全部失效」，
+    /// 不会有任何报错。
+    #[test]
+    fn split_config_files_parse() {
+        let dir = repo_projects_dir();
+        let mut checked = 0usize;
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if !path.is_dir() || !path.join("config.json").exists() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+
+            let fr = path.join("find_rules.json");
+            if fr.exists() {
+                let list: Vec<super::super::types::FindRule> = read_json_file(&fr)
+                    .unwrap_or_else(|| panic!("{} 的 find_rules.json 无法解析", name));
+                assert!(!list.is_empty(), "{} 的 find_rules.json 为空", name);
+                checked += 1;
+            }
+            let pm = path.join("package_managers.json");
+            if pm.exists() {
+                let _: Vec<super::super::types::PackageManagerDef> = read_json_file(&pm)
+                    .unwrap_or_else(|| panic!("{} 的 package_managers.json 无法解析", name));
+                checked += 1;
+            }
+            let ev = path.join("env_vars.json");
+            if ev.exists() {
+                let _: Vec<super::super::types::EnvVarDef> = read_json_file(&ev)
+                    .unwrap_or_else(|| panic!("{} 的 env_vars.json 无法解析", name));
+                checked += 1;
+            }
+            let rv = path.join("remote_versions_config.json");
+            if rv.exists() {
+                let _: serde_json::Value = read_json_file(&rv)
+                    .unwrap_or_else(|| panic!("{} 的 remote_versions_config.json 无法解析", name));
+                checked += 1;
+            }
+        }
+        assert!(checked >= 60, "扫描到的拆分配置文件数量异常偏少: {}", checked);
+    }
+
+    /// 目录名必须等于 config.json 里的 id，且 id 全局唯一（id 是配置索引键）。
+    #[test]
+    fn project_ids_unique_and_match_dir_name() {
+        let dir = repo_projects_dir();
+        let mut seen: HashSet<String> = HashSet::new();
+        for def in load_all() {
+            assert!(seen.insert(def.id.clone()), "项目 id 重复: {}", def.id);
+        }
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if !path.is_dir() || !path.join("config.json").exists() {
+                continue;
+            }
+            let dir_name = path.file_name().unwrap().to_string_lossy().to_string();
+            assert!(
+                seen.contains(&dir_name),
+                "目录 {} 未被解析为项目，或 id 与目录名不一致",
+                dir_name
+            );
+        }
+    }
+
+    /// 目录类字段只能引用「共享目录根」或通用模板变量。
+    /// 直接写死 `C:\Program Files` / `$HOME\AppData\Local` 之类的机器路径会导致
+    /// 同特征目录在多处重复维护（改一处漏一处 / 系统盘与 Program Files 被重定向时失效）。
+    #[test]
+    fn dir_fields_only_use_shared_roots() {
+        let allowed = allowed_placeholders();
+        let mut violations: Vec<String> = Vec::new();
+
+        let mut check = |owner: &str, field: &str, text: &str| {
+            for name in unknown_placeholders(text, &allowed) {
+                violations.push(format!("{} 的 {} 含未知占位符 {{{}}}: {}", owner, field, name, text));
+            }
+        };
+
+        for def in load_all() {
+            for (i, rule) in def.find_rules.iter().enumerate() {
+                let owner = format!("{}.find_rules[{}]", def.id, i);
+                match &rule.pattern {
+                    ResolvePattern::PathContains { path_key, .. } => check(&owner, "path_key", path_key),
+                    ResolvePattern::EnvBin { bin_sub, .. } => check(&owner, "bin_sub", bin_sub),
+                    ResolvePattern::FixedPath { path, .. } => check(&owner, "path", path),
+                }
+            }
+            for (i, candidate) in def.config_file_candidates.iter().enumerate() {
+                check(&def.id, &format!("config_file_candidates[{}]", i), candidate);
+            }
+            for dir_def in &def.data_dirs {
+                for p in &dir_def.possible_paths {
+                    check(&def.id, &format!("data_dirs[{}].possible_paths", dir_def.id), p);
+                }
+                check(
+                    &def.id,
+                    &format!("data_dirs[{}].default_path", dir_def.id),
+                    &dir_def.default_path,
+                );
+            }
+            for pm in &def.package_managers {
+                if let Some(p) = &pm.cache_default_path {
+                    check(&def.id, &format!("{}.cache_default_path", pm.id), p);
+                }
+                if let Some(p) = &pm.data_default_path {
+                    check(&def.id, &format!("{}.data_default_path", pm.id), p);
+                }
+                for extra in &pm.extra_caches {
+                    if let Some(p) = &extra.default_path {
+                        check(&def.id, &format!("{}.{}", pm.id, extra.id), p);
+                    }
+                }
+            }
+            for cm in &def.conflict_managers {
+                if let Some(p) = &cm.cache_default_path {
+                    check(&def.id, &format!("{}.cache_default_path", cm.id), p);
+                }
+            }
+        }
+
+        assert!(
+            violations.is_empty(),
+            "目录配置存在未登记的占位符（应改用 dirs::ROOTS 中的共享目录根）:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    /// 服务项目必须声明数据目录，否则「数据文件」页签与启动前的目录检查都无从落地。
+    #[test]
+    fn services_declare_data_dirs() {
+        for def in load_all() {
+            if !def.is_service {
+                continue;
+            }
+            assert!(
+                !def.data_dirs.is_empty(),
+                "服务 {} 未声明任何 data_dirs",
+                def.id
+            );
+            let mut ids: HashSet<&str> = HashSet::new();
+            for d in &def.data_dirs {
+                assert!(ids.insert(d.id.as_str()), "{} 的 data_dirs id 重复: {}", def.id, d.id);
+            }
+        }
+    }
+
+    /// 「同一组配置」不变式：所有服务的日志目录必须用同一份默认路径与创建语义；
+    /// 数据目录的创建语义只能取「不自动创建 + 启动前必须存在」或「自动创建」两种，
+    /// 不允许出现 auto_create=true 同时 required_for_start=true 这种自相矛盾的组合。
+    #[test]
+    fn dir_groups_stay_consistent() {
+        let mut log_default: Option<(String, String)> = None;
+        for def in load_all() {
+            for d in &def.data_dirs {
+                match d.kind.as_deref() {
+                    Some("log") => {
+                        let key = (d.default_path.clone(), d.kind.clone().unwrap_or_default());
+                        match &log_default {
+                            None => log_default = Some(key),
+                            Some(prev) => assert_eq!(
+                                prev.0, key.0,
+                                "服务 {} 的日志目录默认路径与同组不一致（应为 {:?}）",
+                                def.id, prev.0
+                            ),
+                        }
+                        assert!(
+                            !(d.auto_create.unwrap_or(false) && d.required_for_start),
+                            "{} 的日志目录 auto_create 与 required_for_start 同时为真",
+                            def.id
+                        );
+                    }
+                    Some("data") => {
+                        assert!(
+                            !(d.auto_create.unwrap_or(false) && d.required_for_start),
+                            "{} 的数据目录 auto_create 与 required_for_start 同时为真（矛盾组合）",
+                            def.id
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(
+            log_default.map(|(p, _)| p).as_deref(),
+            Some("{install_root}\\logs"),
+            "服务日志目录的共享默认路径应为 {{install_root}}\\logs"
+        );
+    }
 }

@@ -36,14 +36,17 @@ export interface ServiceStatus {
   system_service_name?: string | null;
 }
 
+/**
+ * 包管理器定义 —— 字段与 Rust 侧 `commands/project/types.rs::PackageManagerDef` 一一对应。
+ * 新增/改名配置字段时必须两边同步，否则前端会读到 undefined（静默失效）。
+ */
 export interface PackageManagerDef {
   id: string;
   display_name: string;
   built_in?: boolean;
   install_cmd: string | null;
-  upgrade_cmd: string | null;
-  latest_version_cmd: string | null;
   version_cmd: string | null;
+  version_exe?: string | null;
   cache_detect_cmd: string | null;
   cache_detect_json_path?: string | null;
   pkg_list_cmd: string | null;
@@ -72,6 +75,21 @@ export interface PackageManagerDef {
   // 代理配置
   proxy_detect_cmd: string | null;
   proxy_set_cmd_template: string | null;
+  proxy_clear_cmd?: string | null;
+  // 全局依赖包列表 / 升级
+  pkg_list_format?: string | null;
+  pkg_upgrade_cmd_template?: string | null;
+  pkg_homepage_template?: string | null;
+  pkg_outdated_cmd?: string | null;
+  pkg_outdated_format?: string | null;
+  // 镜像配置文件（{home} / {roaming_appdata} 等目录根占位符由后端统一展开）
+  mirror_config_file?: string | null;
+  mirror_detect_file_regex?: string | null;
+  mirror_config_desc?: string | null;
+  // 基于配置文件的缓存解析器（nuget maven 等）
+  cache_config_source?: Record<string, unknown> | null;
+  // 通过运行时参数执行包管理器（如 ["-m", "pip"]）
+  run_via_runtime_args?: string[] | null;
   remote_versions_config?: Record<string, unknown> | null;
 }
 
@@ -146,7 +164,10 @@ export interface ConflictManagerDef {
   env_vars: string[];
   path_keywords: string[];
   exe_name?: string | null;
+  /** 缓存/工具链目录的默认路径模板（允许 {home} / {program_files} 等目录根占位符） */
   cache_default_path?: string | null;
+  /** 缓存位置对应的环境变量名；缺省时后端回退到 env_vars 首项 */
+  cache_env_var?: string | null;
 }
 
 export interface ProjectDef {
@@ -157,7 +178,15 @@ export interface ProjectDef {
   simple_mode?: boolean;
   is_git_repo?: boolean;
   bootstrap_cmd?: string;
-  env_vars: Array<{ name: string; desc: string; check_type: string; tier?: "core" | "package" | "compat" | "clear" }>;
+  env_vars: Array<{
+    name: string;
+    desc: string;
+    /** "path" | "nonempty" | "runtime" */
+    check_type: string;
+    tier?: "core" | "package" | "compat" | "clear";
+    /** 托管时的值子目录（相对于 link_dir）；不填则值 = link_dir */
+    sub_dir?: string | null;
+  }>;
   bin_dirs: string[];
   has_cache: boolean;
   has_mirror: boolean;

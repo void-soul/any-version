@@ -45,7 +45,7 @@
     "version_cmd": "go version",
     "version_exe": "go",
     "cache_detect_cmd": "go env GOCACHE",
-    "cache_default_path": "{home}\\AppData\\Local\\go-build",
+    "cache_default_path": "{local_appdata}\\go-build",
     "cache_env_var": "GOCACHE",
     "cache_set_cmd_template": "go env -w GOCACHE=\"{path}\"",
     "data_detect_cmd": null,

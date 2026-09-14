@@ -800,16 +800,30 @@ async fn do_install(
                 // 配置文件名取 def.config_file（如 mongod.cfg），回退 my.ini 以保持旧行为
                 let config_filename = def.config_file.clone().unwrap_or_else(|| "my.ini".to_string());
                 let ini_path = dest_dir.join(&config_filename);
-                let data_dir = dest_dir.join("data");
-                let log_dir = dest_dir.join("log");
+                // 数据/日志目录取值与运行时保持一致：统一由 def.data_dirs 解析
+                // （同一套 custom → 配置文件 → 环境变量 → possible_paths → default_path 规则）。
+                // 此前这里硬编码 data / log，与 data_dirs 的声明互相矛盾——
+                // 例如 mongodb 声明 {install_root}\data\db，生成的 mongod.cfg 却写 dbPath=<root>/data，
+                // 且日志目录统一为 logs 后硬编码的 log 会再次跑偏。
+                let resolve_dir = |kind: &str, fallback: &str| -> String {
+                    def.data_dirs
+                        .iter()
+                        .find(|d| d.kind.as_deref() == Some(kind))
+                        .map(|d| {
+                            super::super::service::resolve_data_dir(&def, d, &config, Some(&dest_dir)).path
+                        })
+                        .unwrap_or_else(|| dest_dir.join(fallback).to_string_lossy().to_string())
+                };
+                let data_dir = resolve_dir("data", "data").replace("\\", "/");
+                let log_dir = resolve_dir("log", "log").replace("\\", "/");
                 let port = def.default_port.unwrap_or(0).to_string();
                 let install_root_str = dest_dir.to_string_lossy().replace("\\", "/");
                 let content = tpl
                     .replace("{install_root}", &install_root_str)
                     .replace("{basedir}", &install_root_str)
-                    .replace("{datadir}", &data_dir.to_string_lossy().replace("\\", "/"))
-                    .replace("{data_dir}", &data_dir.to_string_lossy().replace("\\", "/"))
-                    .replace("{log_dir}", &log_dir.to_string_lossy().replace("\\", "/"))
+                    .replace("{datadir}", &data_dir)
+                    .replace("{data_dir}", &data_dir)
+                    .replace("{log_dir}", &log_dir)
                     .replace("{port}", &port);
                 let _ = fs::write(&ini_path, content);
             }

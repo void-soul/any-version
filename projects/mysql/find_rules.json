@@ -12,7 +12,7 @@
   {
     "pattern": {
       "type": "fixed_path",
-      "path": "C:\\Program Files\\MySQL\\MySQL Server 8.4\\bin",
+      "path": "{program_files}\\MySQL\\MySQL Server 8.4\\bin",
       "exe_name": "mysqld.exe"
     },
     "source_label": "Program Files",
@@ -22,7 +22,7 @@
   {
     "pattern": {
       "type": "fixed_path",
-      "path": "C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin",
+      "path": "{program_files}\\MySQL\\MySQL Server 8.0\\bin",
       "exe_name": "mysqld.exe"
     },
     "source_label": "Program Files",

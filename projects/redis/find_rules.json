@@ -42,7 +42,7 @@
   {
     "pattern": {
       "type": "fixed_path",
-      "path": "C:\\Program Files\\Redis",
+      "path": "{program_files}\\Redis",
       "exe_name": "redis-server.exe"
     },
     "source_label": "Program Files",
@@ -52,7 +52,7 @@
   {
     "pattern": {
       "type": "fixed_path",
-      "path": "C:\\Program Files\\Memurai",
+      "path": "{program_files}\\Memurai",
       "exe_name": "memurai.exe"
     },
     "source_label": "Memurai",

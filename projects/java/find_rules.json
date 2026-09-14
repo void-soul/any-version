@@ -43,7 +43,7 @@
   {
     "pattern": {
       "type": "fixed_path",
-      "path": "C:\\Program Files\\Java\\jdk-21\\bin",
+      "path": "{program_files}\\Java\\jdk-21\\bin",
       "exe_name": "java.exe"
     },
     "source_label": "Oracle JDK (Program Files)",
@@ -53,7 +53,7 @@
   {
     "pattern": {
       "type": "fixed_path",
-      "path": "C:\\Program Files\\Java\\jdk-17\\bin",
+      "path": "{program_files}\\Java\\jdk-17\\bin",
       "exe_name": "java.exe"
     },
     "source_label": "Oracle JDK (Program Files)",
@@ -63,7 +63,7 @@
   {
     "pattern": {
       "type": "fixed_path",
-      "path": "C:\\Program Files\\Java\\jdk-11\\bin",
+      "path": "{program_files}\\Java\\jdk-11\\bin",
       "exe_name": "java.exe"
     },
     "source_label": "Oracle JDK (Program Files)",
@@ -73,7 +73,7 @@
   {
     "pattern": {
       "type": "fixed_path",
-      "path": "C:\\Program Files\\Java\\jdk-1.8\\bin",
+      "path": "{program_files}\\Java\\jdk-1.8\\bin",
       "exe_name": "java.exe"
     },
     "source_label": "Oracle JDK (Program Files)",
@@ -83,7 +83,7 @@
   {
     "pattern": {
       "type": "fixed_path",
-      "path": "C:\\Program Files\\Microsoft\\jdk-21\\bin",
+      "path": "{program_files}\\Microsoft\\jdk-21\\bin",
       "exe_name": "java.exe"
     },
     "source_label": "Microsoft OpenJDK",
@@ -93,7 +93,7 @@
   {
     "pattern": {
       "type": "fixed_path",
-      "path": "C:\\msys64\\mingw64\\bin",
+      "path": "{msys2}\\mingw64\\bin",
       "exe_name": "java.exe"
     },
     "source_label": "MSYS2",

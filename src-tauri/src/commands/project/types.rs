@@ -122,6 +122,11 @@ pub struct CacheConfigSource {
     pub write_keys: Option<Vec<XmlWriteKey>>,
 }
 
+/// 数据目录定义（**目录配置的唯一机制**：数据 / 日志 / 配置目录都走这里）。
+///
+/// 历史上项目定义上还有一对扁平的 `data_dir` / `log_dir` 字段，与 `data_dirs`
+/// 表达同一件事且从未被真正使用（24 个项目里 `data_dir` 恒为 null，只有 nginx
+/// 写了一个不会被命中的相对值 `"logs"`），已删除以避免两套机制并存。
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DataDirDef {
     pub id: String,
@@ -352,12 +357,12 @@ pub struct ProjectDef {
     #[serde(default)]
     pub find_rules: Vec<FindRule>,
 
-    /// 是否有缓存管理
+    /// 是否有缓存管理（缓存目录的具体配置在 `package_managers[]` 上：
+    /// `cache_detect_cmd` / `cache_default_path` / `cache_env_var`，
+    /// 项目层不再重复声明一份——此前项目层那份从未被读取，却与包管理器层的值
+    /// 逐字重复（gradle / go / vcpkg / rust / nuget / cmake / maven），
+    /// 改它不生效，属于典型的误导性死配置，已删除。）
     pub has_cache: bool,
-    /// 缓存检测命令
-    pub cache_detect_cmd: Option<String>,
-    /// 默认缓存路径
-    pub cache_default_path: Option<String>,
 
     /// 是否支持镜像
     pub has_mirror: bool,
@@ -378,11 +383,7 @@ pub struct ProjectDef {
     pub simple_mode: bool,
     /// 默认端口
     pub default_port: Option<u16>,
-    /// 数据目录
-    pub data_dir: Option<String>,
-    /// 日志目录
-    pub log_dir: Option<String>,
-    /// 配置文件路径
+    /// 配置文件路径（相对于 install_root 的文件名或模板；完整候选列表见 config_file_candidates）
     pub config_file: Option<String>,
     /// 配置文件候选路径（支持 {install_root} / {home}）
     #[serde(default)]
