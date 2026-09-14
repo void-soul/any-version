@@ -541,6 +541,7 @@ pub fn run() {
             tray::set_tray_quote,
             commands::conflict::get_conflict_managers_status,
             commands::conflict::handle_conflict_manager_action,
+            commands::conflict::preview_conflict_manager_disable,
             commands::ai::config::get_ai_config,
             commands::ai::config::save_ai_config,
             commands::ai::provider::fetch_provider_models,

@@ -1,10 +1,193 @@
 use std::collections::HashMap;
 use std::path::Path;
-use crate::commands::project::types::ConflictManagerStatus;
+use serde::Serialize;
+use crate::commands::project::types::{ConflictManagerDef, ConflictManagerStatus};
 use crate::commands::project::registry;
 use crate::commands::utils::{expand_home, is_exe_in_path};
 use crate::commands::env::{get_registry_env_any, set_registry_env, set_system_registry_env, broadcast_setting_change, get_registry_env, get_system_registry_env};
 use crate::commands::cache::{get_dir_size, format_bytes, clean_pkg_cache_impl, migrate_pkg_storage_impl};
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  「一键停用」预案：预演与实际执行共用同一份计算
+//
+//  背景（为什么要有预案）：停用要清空第三方版本管理器的环境变量、并按关键字从
+//  用户级/系统级 PATH 里整条删除匹配条目。这是**不可逆**操作（原值不归 Kira 备份
+//  管），尤其系统级 PATH 条目删掉后很难找回。因此：
+//    - 执行前先把"将要清空哪些变量、删掉哪些 PATH 条目"算出来给用户确认；
+//    - 预演与实际执行**调用同一个 plan_disable / matched_path_entries**，
+//      保证"提示删 A、实际删 B"这种偏差不可能发生；
+//    - 执行前自动创建一次全量环境备份（失败即中止）。
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// 某个变量在注册表中的存在情况（用户级 / 系统级）。
+#[derive(Clone, Debug, Default)]
+pub struct VarPresence {
+    pub user: Option<String>,
+    pub system: Option<String>,
+}
+
+/// 停用过程中单个环境变量的处置方案。
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct DisableVarAction {
+    /// 变量名
+    pub name: String,
+    /// 当前值（优先取用户级，其次系统级；都没有则 null）
+    pub current_value: Option<String>,
+    /// 当前值所在层级："user" | "system" | "both" | "none"
+    pub level: String,
+    /// "clear" = 将被清空；"keep_managed" = 属于本项目托管变量，跳过不动
+    pub action: String,
+}
+
+/// 「一键停用」的完整预案。
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct DisablePlan {
+    /// 管理器显示名（如 "Rustup"）
+    pub manager_display_name: String,
+    /// 逐个变量的处置明细
+    pub variables: Vec<DisableVarAction>,
+    /// 将被清空的变量名
+    pub cleared_vars: Vec<String>,
+    /// 因属于本项目托管变量（同时出现在 env_vars 与 conflict_managers[].env_vars）而跳过的变量名
+    pub kept_managed_vars: Vec<String>,
+    /// 将从**用户级** PATH 删除的条目
+    pub user_path_entries: Vec<String>,
+    /// 将从**系统级** PATH 删除的条目（清理需管理员权限，失败会静默忽略）
+    pub system_path_entries: Vec<String>,
+}
+
+/// 判断 PATH 值中哪些条目「包含任一关键字」（大小写不敏感，保持原有顺序）。
+///
+/// 预演与实际删除**共用**此函数，避免提示与实际操作不一致。
+/// 注意：这里刻意沿用「子串包含」语义——`\nvm`、`.cargo\bin` 这类关键字本来就
+/// 需要子串匹配才能覆盖 nvm 的 symlink 目录与 rustup 的 shim 目录。
+pub fn matched_path_entries(path_value: &str, keywords: &[String]) -> Vec<String> {
+    let keys: Vec<String> = keywords
+        .iter()
+        .map(|k| k.trim().to_lowercase())
+        .filter(|k| !k.is_empty())
+        .collect();
+    if keys.is_empty() {
+        return Vec::new();
+    }
+    std::env::split_paths(path_value)
+        .map(|p| p.to_string_lossy().to_string())
+        .filter(|p| {
+            let lower = p.to_lowercase();
+            keys.iter().any(|k| lower.contains(k))
+        })
+        .collect()
+}
+
+/// 计算「一键停用」预案（纯函数，便于单测）。
+///
+/// `managed_env_vars` 为该项目当前实际被 Kira 接管的变量集合
+/// （未托管项目为空集）。落在该集合里的变量会被标记为 `keep_managed` 跳过：
+/// 例如 rust 项目的 `RUSTUP_HOME` 同时属于项目 `env_vars`（Kira 写入
+/// `data_dir\rust\rustup`）与 rustup 管理器的 `env_vars`，若一并清空就等于把
+/// Kira 自己刚设好的工具链目录指向打回原形——与"停用外部管理器"的目的相反。
+pub fn plan_disable(
+    mgr: &ConflictManagerDef,
+    managed_env_vars: &std::collections::HashSet<String>,
+    presence: &HashMap<String, VarPresence>,
+    user_path: Option<&str>,
+    system_path: Option<&str>,
+) -> DisablePlan {
+    let mut plan = DisablePlan {
+        manager_display_name: mgr.display_name.clone(),
+        ..Default::default()
+    };
+
+    for name in &mgr.env_vars {
+        let p = presence.get(name).cloned().unwrap_or_default();
+        let level = match (p.user.as_ref(), p.system.as_ref()) {
+            (Some(_), Some(_)) => "both",
+            (Some(_), None) => "user",
+            (None, Some(_)) => "system",
+            (None, None) => "none",
+        }
+        .to_string();
+
+        let keep_managed = managed_env_vars.contains(name);
+        if keep_managed {
+            plan.kept_managed_vars.push(name.clone());
+        } else {
+            plan.cleared_vars.push(name.clone());
+        }
+
+        plan.variables.push(DisableVarAction {
+            name: name.clone(),
+            current_value: p.user.or(p.system),
+            level,
+            action: if keep_managed { "keep_managed" } else { "clear" }.to_string(),
+        });
+    }
+
+    if let Some(p) = user_path {
+        plan.user_path_entries = matched_path_entries(p, &mgr.path_keywords);
+    }
+    if let Some(p) = system_path {
+        plan.system_path_entries = matched_path_entries(p, &mgr.path_keywords);
+    }
+
+    plan
+}
+
+/// 读取一组变量在用户级/系统级的当前值。
+fn collect_presence(vars: &[String]) -> HashMap<String, VarPresence> {
+    let mut map = HashMap::new();
+    for name in vars {
+        map.insert(
+            name.clone(),
+            VarPresence {
+                user: get_registry_env(name),
+                system: get_system_registry_env(name),
+            },
+        );
+    }
+    map
+}
+
+/// 依据当前注册表状态计算某个管理器「一键停用」的预案。
+fn build_disable_plan(
+    sdk_id: &str,
+    manager_id: &str,
+) -> Result<(DisablePlan, ConflictManagerDef), String> {
+    let project = registry::find_by_id(sdk_id)
+        .ok_or_else(|| format!("未找到项目: {}", sdk_id))?;
+    let mgr = project
+        .conflict_managers
+        .iter()
+        .find(|m| m.id == manager_id)
+        .ok_or_else(|| format!("在项目 {} 下未找到冲突管理器: {}", sdk_id, manager_id))?
+        .clone();
+
+    let config = crate::commands::config::load_config();
+    let delegation =
+        crate::commands::project::scanner::get_project_delegation(&config, sdk_id, &project);
+
+    let presence = collect_presence(&mgr.env_vars);
+    let user_path = get_registry_env("PATH");
+    let system_path = get_system_registry_env("PATH");
+
+    let plan = plan_disable(
+        &mgr,
+        &delegation.env_vars,
+        &presence,
+        user_path.as_deref(),
+        system_path.as_deref(),
+    );
+    Ok((plan, mgr))
+}
+
+/// 预演「一键停用」：只读，不产生任何副作用，供前端在执行前列出影响面。
+#[tauri::command]
+pub fn preview_conflict_manager_disable(
+    sdk_id: String,
+    manager_id: String,
+) -> Result<DisablePlan, String> {
+    build_disable_plan(&sdk_id, &manager_id).map(|(plan, _)| plan)
+}
 
 #[tauri::command]
 pub fn get_conflict_managers_status(sdk_id: String) -> Result<Vec<ConflictManagerStatus>, String> {
@@ -172,14 +355,46 @@ pub fn handle_conflict_manager_action(
             broadcast_setting_change();
         }
         "disable" => {
-            // 1. 擦除环境变量
-            for var in &def.env_vars {
+            // 1. 先算预案 —— 与 preview_conflict_manager_disable 共用同一份计算，
+            //    保证「确认框里列的」就是「实际会改的」。
+            let config = crate::commands::config::load_config();
+            let delegation = crate::commands::project::scanner::get_project_delegation(
+                &config,
+                &sdk_id,
+                &project,
+            );
+            let presence = collect_presence(&def.env_vars);
+            let user_path = get_registry_env("PATH");
+            let system_path = get_system_registry_env("PATH");
+            let plan = plan_disable(
+                def,
+                &delegation.env_vars,
+                &presence,
+                user_path.as_deref(),
+                system_path.as_deref(),
+            );
+
+            // 2. 执行前自动创建全量环境备份（用户级 + 系统级）。
+            //    失败即中止：这是不可逆操作，宁可不让做，也不能没有退路。
+            crate::commands::env::create_env_backup(format!(
+                "停用冲突版本管理器 {}（项目 {}）自动备份",
+                def.display_name, sdk_id
+            ))
+            .map_err(|e| {
+                format!(
+                    "已中止：创建环境变量备份失败（{}）。可先在「设置 → 环境变量备份与还原」手动创建备份后重试。",
+                    e
+                )
+            })?;
+
+            // 3. 擦除环境变量（跳过属于本项目托管变量的项，保护 Kira 自己写入的值）
+            for var in &plan.cleared_vars {
                 let _ = set_registry_env(var, "");
                 std::env::remove_var(var);
-                // 尝试系统级清理
+                // 尝试系统级清理（非管理员会失败，静默忽略）
                 let _ = set_system_registry_env(var, "");
             }
-            // 2. 清洗 PATH 变量
+            // 4. 清洗 PATH 变量
             disable_manager_in_path(&def.path_keywords)?;
             broadcast_setting_change();
         }
@@ -189,74 +404,153 @@ pub fn handle_conflict_manager_action(
     Ok(())
 }
 
+/// 从用户级与系统级 PATH 中删除所有命中关键字的条目。
+///
+/// 匹配规则与 `plan_disable` 完全一致（共用 `matched_path_entries`），
+/// 保证预演列出的条目就是这里真正会删掉的条目。
 fn disable_manager_in_path(path_keywords: &[String]) -> Result<(), String> {
     // 1. 用户级 PATH
     if let Some(user_path) = get_registry_env("PATH") {
-        let parts = std::env::split_paths(&user_path)
-            .map(|p| p.to_string_lossy().to_string())
-            .collect::<Vec<_>>();
-            
-        let mut new_parts = Vec::new();
-        let mut modified = false;
-        
-        for part in parts {
-            let part_lower = part.to_lowercase();
-            let mut matches_keyword = false;
-            for keyword in path_keywords {
-                if part_lower.contains(&keyword.to_lowercase()) {
-                    matches_keyword = true;
-                    break;
-                }
-            }
-            if matches_keyword {
-                modified = true;
-            } else {
-                new_parts.push(part);
-            }
-        }
-        
-        if modified {
-            let new_path_str = std::env::join_paths(new_parts.iter().map(std::path::Path::new))
+        let doomed = matched_path_entries(&user_path, path_keywords);
+        if !doomed.is_empty() {
+            let doomed_lower: std::collections::HashSet<String> =
+                doomed.iter().map(|p| p.to_lowercase()).collect();
+            let kept: Vec<String> = std::env::split_paths(&user_path)
+                .map(|p| p.to_string_lossy().to_string())
+                .filter(|p| !doomed_lower.contains(&p.to_lowercase()))
+                .collect();
+            let new_path_str = std::env::join_paths(kept.iter().map(Path::new))
                 .map_err(|e| e.to_string())?
                 .to_string_lossy()
                 .to_string();
             set_registry_env("PATH", &new_path_str)?;
         }
     }
-    
-    // 2. 系统级 PATH
+
+    // 2. 系统级 PATH（需要管理员权限；写失败静默忽略，不阻断用户级停用）
     if let Some(sys_path) = get_system_registry_env("PATH") {
-        let parts = std::env::split_paths(&sys_path)
-            .map(|p| p.to_string_lossy().to_string())
-            .collect::<Vec<_>>();
-            
-        let mut new_parts = Vec::new();
-        let mut modified = false;
-        
-        for part in parts {
-            let part_lower = part.to_lowercase();
-            let mut matches_keyword = false;
-            for keyword in path_keywords {
-                if part_lower.contains(&keyword.to_lowercase()) {
-                    matches_keyword = true;
-                    break;
-                }
+        let doomed = matched_path_entries(&sys_path, path_keywords);
+        if !doomed.is_empty() {
+            let doomed_lower: std::collections::HashSet<String> =
+                doomed.iter().map(|p| p.to_lowercase()).collect();
+            let kept: Vec<String> = std::env::split_paths(&sys_path)
+                .map(|p| p.to_string_lossy().to_string())
+                .filter(|p| !doomed_lower.contains(&p.to_lowercase()))
+                .collect();
+            if let Ok(new_path_str) = std::env::join_paths(kept.iter().map(Path::new)) {
+                let _ = set_system_registry_env("PATH", &new_path_str.to_string_lossy());
             }
-            if matches_keyword {
-                modified = true;
-            } else {
-                new_parts.push(part);
-            }
-        }
-        
-        if modified {
-            let new_path_str = std::env::join_paths(new_parts.iter().map(std::path::Path::new))
-                .map_err(|e| e.to_string())?
-                .to_string_lossy()
-                .to_string();
-            let _ = set_system_registry_env("PATH", &new_path_str);
         }
     }
-    
+
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn mgr(env_vars: &[&str], keywords: &[&str]) -> ConflictManagerDef {
+        ConflictManagerDef {
+            id: "rustup".to_string(),
+            display_name: "Rustup".to_string(),
+            env_vars: env_vars.iter().map(|s| s.to_string()).collect(),
+            path_keywords: keywords.iter().map(|s| s.to_string()).collect(),
+            exe_name: None,
+            cache_default_path: None,
+            cache_env_var: None,
+        }
+    }
+
+    fn presence(items: &[(&str, Option<&str>, Option<&str>)]) -> HashMap<String, VarPresence> {
+        items
+            .iter()
+            .map(|(n, u, s)| {
+                (
+                    (*n).to_string(),
+                    VarPresence {
+                        user: u.map(|v| v.to_string()),
+                        system: s.map(|v| v.to_string()),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn matched_path_entries_matches_substring_case_insensitively() {
+        // 注意第二条：`bin-mirror` 这种用户自建目录也会被命中——
+        // 这正是要在确认框里逐条列出来给用户看的原因。
+        let path = r"C:\Windows;C:\Users\me\.cargo\bin;D:\tools\.CARGO\bin-mirror;D:\other";
+        let got = matched_path_entries(path, &[".cargo\\bin".to_string()]);
+        assert_eq!(
+            got,
+            vec![
+                r"C:\Users\me\.cargo\bin".to_string(),
+                r"D:\tools\.CARGO\bin-mirror".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn matched_path_entries_is_empty_without_usable_keywords() {
+        assert!(matched_path_entries(r"C:\a;C:\b", &[]).is_empty());
+        assert!(matched_path_entries(r"C:\a;C:\b", &["   ".to_string()]).is_empty());
+        assert!(matched_path_entries("", &["nvm".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn plan_clears_everything_when_project_not_managed() {
+        let m = mgr(&["RUSTUP_HOME", "RUSTUP_TOOLCHAIN"], &[".cargo\\bin"]);
+        let p = presence(&[
+            ("RUSTUP_HOME", Some(r"D:\x\rustup"), None),
+            ("RUSTUP_TOOLCHAIN", None, Some("stable-x86_64-pc-windows-msvc")),
+        ]);
+        // 未托管 ⇒ delegation.env_vars 为空 ⇒ 全部按"清空"处理
+        let plan = plan_disable(&m, &HashSet::new(), &p, Some(r"C:\Users\me\.cargo\bin;D:\keep"), None);
+
+        assert_eq!(plan.cleared_vars, vec!["RUSTUP_HOME", "RUSTUP_TOOLCHAIN"]);
+        assert!(plan.kept_managed_vars.is_empty());
+        assert_eq!(plan.variables[0].action, "clear");
+        assert_eq!(plan.variables[0].level, "user");
+        assert_eq!(plan.variables[0].current_value.as_deref(), Some(r"D:\x\rustup"));
+        assert_eq!(plan.variables[1].level, "system");
+        assert_eq!(plan.user_path_entries, vec![r"C:\Users\me\.cargo\bin"]);
+    }
+
+    #[test]
+    fn plan_keeps_vars_owned_by_the_managed_project() {
+        // rust 的 RUSTUP_HOME 同时属于项目 env_vars（Kira 写入 data_dir\rust\rustup）
+        // 与 rustup 管理器的 env_vars：此时必须跳过，否则等于抹掉 Kira 自己设的值。
+        let m = mgr(&["RUSTUP_HOME", "RUSTUP_TOOLCHAIN"], &[".cargo\\bin"]);
+        let managed: HashSet<String> = ["RUSTUP_HOME".to_string()].into_iter().collect();
+        let p = presence(&[
+            ("RUSTUP_HOME", Some(r"D:\any-versions\rust\rustup"), Some(r"D:\any-versions\rust\rustup")),
+            ("RUSTUP_TOOLCHAIN", None, None),
+        ]);
+        let plan = plan_disable(&m, &managed, &p, None, None);
+
+        assert_eq!(plan.kept_managed_vars, vec!["RUSTUP_HOME"]);
+        assert_eq!(plan.cleared_vars, vec!["RUSTUP_TOOLCHAIN"]);
+        assert_eq!(plan.variables[0].action, "keep_managed");
+        assert_eq!(plan.variables[0].level, "both");
+        assert_eq!(plan.variables[1].action, "clear");
+        assert_eq!(plan.variables[1].level, "none");
+    }
+
+    #[test]
+    fn plan_lists_path_entries_from_both_levels() {
+        let m = mgr(&[], &["\\nvm"]);
+        let plan = plan_disable(
+            &m,
+            &HashSet::new(),
+            &presence(&[]),
+            Some(r"C:\Users\me\AppData\Roaming\nvm;D:\keep"),
+            Some(r"C:\ProgramData\nvm;C:\Windows"),
+        );
+        assert_eq!(plan.manager_display_name, "Rustup");
+        assert_eq!(plan.user_path_entries, vec![r"C:\Users\me\AppData\Roaming\nvm"]);
+        assert_eq!(plan.system_path_entries, vec![r"C:\ProgramData\nvm"]);
+    }
 }
