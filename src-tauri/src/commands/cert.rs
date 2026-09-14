@@ -478,32 +478,114 @@ fn lego_env(dns_provider: &str, cred: &Credential) -> Vec<(String, String)> {
     env
 }
 
-/// 读取 lego 生成的 PEM 三段（cert / key / issuer）。
-fn read_lego_pems(cert_dir: &PathBuf) -> Option<(String, String, String)> {
-    let cdir = cert_dir.join(".lego").join("certificates");
-    if !cdir.exists() {
-        return None;
-    }
-    let mut crt = None;
-    let mut key = None;
-    let mut issuer = None;
-    if let Ok(entries) = std::fs::read_dir(&cdir) {
+/// lego 数据目录布局：`--path` 指向的是**数据根目录**，
+/// 证书位于 `<path>/certificates/`、账号位于 `<path>/accounts/`
+/// （实测 lego v5.3.1；v4 同理，只是默认 `--path` 恰为 `~/.lego`）。
+/// 历史实现误以为根目录下还有一层 `.lego`（那是默认路径自身的形态），
+/// 导致 lego 成功签发后仍读不到 PEM，报「未找到生成的 PEM 文件」。
+fn lego_cert_dirs(cert_dir: &PathBuf) -> Vec<PathBuf> {
+    let mut dirs = vec![cert_dir.join("certificates")];
+    // 兼容历史错误布局（曾按 `<path>/.lego/certificates` 读取）
+    dirs.push(cert_dir.join(".lego").join("certificates"));
+    // 兜底：任意一级子目录下的 certificates/（防 lego 后续版本再改布局）
+    if let Ok(entries) = std::fs::read_dir(cert_dir) {
         for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().to_string();
-            let content = std::fs::read_to_string(e.path()).unwrap_or_default();
-            if name.ends_with(".crt") && !name.contains("issuer") {
-                crt = Some(content);
-            } else if name.ends_with(".key") {
-                key = Some(content);
-            } else if name.contains("issuer") && name.ends_with(".crt") {
-                issuer = Some(content);
+            let p = e.path();
+            if p.is_dir() {
+                let sub = p.join("certificates");
+                if sub.is_dir() && !dirs.contains(&sub) {
+                    dirs.push(sub);
+                }
             }
         }
     }
-    match (crt, key) {
-        (Some(c), Some(k)) => Some((c, k, issuer.unwrap_or_default())),
-        _ => None,
+    dirs
+}
+
+/// lego 以域名作为证书文件名，非法字符替换为 `_`
+/// （实测 `*.seemove.cn` → `_.seemove.cn`）。
+fn lego_cert_file_stem(domain: &str) -> String {
+    domain
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// 在候选文件名中挑选目标：优先精确命中 `want`，否则取排序后的第一个。
+/// 排序保证同一目录多次读取结果稳定（`read_dir` 的返回顺序不保证）。
+fn pick_name(
+    names: &[String],
+    want: Option<String>,
+    pred: impl Fn(&str) -> bool,
+) -> Option<String> {
+    let mut cands: Vec<&String> = names.iter().filter(|n| pred(n.as_str())).collect();
+    cands.sort();
+    if let Some(w) = want {
+        if let Some(m) = cands.iter().find(|n| n.as_str() == w) {
+            return Some((*m).clone());
+        }
     }
+    cands.first().map(|n| (*n).clone())
+}
+
+/// 读取某个 lego 证书目录下的 PEM 三段（cert / key / issuer）。
+/// `prefer_domain` 用于同目录存在多份证书时精确匹配，
+/// 否则可能取到别的域名的证书并部署出去。
+fn read_pems_in(
+    cert_store: &PathBuf,
+    prefer_domain: Option<&str>,
+) -> Option<(String, String, String)> {
+    let mut names: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(cert_store) {
+        for e in entries.flatten() {
+            names.push(e.file_name().to_string_lossy().to_string());
+        }
+    }
+    if names.is_empty() {
+        return None;
+    }
+    let stem = prefer_domain.map(lego_cert_file_stem);
+    let crt = pick_name(
+        &names,
+        stem.as_ref().map(|s| format!("{}.crt", s)),
+        |n| n.ends_with(".crt") && !n.contains("issuer"),
+    )?;
+    let key = pick_name(
+        &names,
+        stem.as_ref().map(|s| format!("{}.key", s)),
+        |n| n.ends_with(".key"),
+    )?;
+    let issuer = pick_name(
+        &names,
+        stem.as_ref().map(|s| format!("{}.issuer.crt", s)),
+        |n| n.ends_with(".issuer.crt"),
+    );
+
+    let read = |n: &String| std::fs::read_to_string(cert_store.join(n)).unwrap_or_default();
+    Some((
+        read(&crt),
+        read(&key),
+        issuer.map(|i| read(&i)).unwrap_or_default(),
+    ))
+}
+
+/// 读取某证书 id 下 lego 生成的 PEM 三段，自动适配 lego 的数据目录布局。
+fn read_lego_pems(
+    cert_dir: &PathBuf,
+    prefer_domain: Option<&str>,
+) -> Option<(String, String, String)> {
+    for store in lego_cert_dirs(cert_dir) {
+        if let Some(pems) = read_pems_in(&store, prefer_domain) {
+            return Some(pems);
+        }
+    }
+    None
 }
 
 fn run_lego(cert: &Certificate, cred: &Credential, renew: bool) -> Result<(String, String, String), String> {
@@ -571,7 +653,25 @@ fn run_lego(cert: &Certificate, cred: &Credential, renew: bool) -> Result<(Strin
     }
     eprintln!("[cert] lego 执行成功 ({}): {}",
         if renew { "renew" } else { "issue" }, cert_dir.display());
-    read_lego_pems(&cert_dir).ok_or_else(|| "lego 执行成功但未找到生成的 PEM 文件".to_string())
+    let prefer = cert.domains.first().map(|s| s.as_str());
+    let stores = lego_cert_dirs(&cert_dir);
+    read_lego_pems(&cert_dir, prefer).ok_or_else(|| {
+        let listed: Vec<String> = stores
+            .iter()
+            .map(|d| {
+                let files: Vec<String> = std::fs::read_dir(d)
+                    .map(|rd| {
+                        rd.flatten()
+                            .map(|e| e.file_name().to_string_lossy().to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                format!("{}（{} 个文件{}）", d.display(), files.len(),
+                    if files.is_empty() { String::new() } else { format!(": {}", files.join(", ")) })
+            })
+            .collect();
+        format!("lego 执行成功但未找到生成的 PEM 文件；已查找: {}", listed.join("；"))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1101,24 +1201,31 @@ pub fn cert_list() -> Vec<Certificate> {
         if c.not_after.is_some() {
             continue;
         }
-        let dir = ensure_dir().join(&c.id).join(".lego").join("certificates");
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for e in entries.flatten() {
-                let name = e.file_name().to_string_lossy().to_string();
-                if name.ends_with(".crt") && !name.contains("issuer") {
-                    if let Ok(content) = std::fs::read_to_string(e.path()) {
-                        let (nb, na) = extract_validity(&content);
-                        if na.is_some() {
-                            c.not_before = nb;
-                            c.not_after = na;
-                            if c.status == "pending" {
-                                c.status = "issued".to_string();
+        let cert_dir = ensure_dir().join(&c.id);
+        let mut parsed = false;
+        for dir in lego_cert_dirs(&cert_dir) {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for e in entries.flatten() {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    if name.ends_with(".crt") && !name.contains("issuer") {
+                        if let Ok(content) = std::fs::read_to_string(e.path()) {
+                            let (nb, na) = extract_validity(&content);
+                            if na.is_some() {
+                                c.not_before = nb;
+                                c.not_after = na;
+                                if c.status == "pending" {
+                                    c.status = "issued".to_string();
+                                }
+                                changed = true;
                             }
-                            changed = true;
                         }
+                        parsed = true;
+                        break;
                     }
-                    break;
                 }
+            }
+            if parsed {
+                break;
             }
         }
     }
@@ -1189,14 +1296,19 @@ pub async fn cert_issue_now(id: String) -> Result<Certificate, String> {
 pub fn cert_get_pem(id: String) -> Result<HashMap<String, String>, String> {
     let certs = load_json::<Certificate>("certificates.json");
     let cert = find_cert(&certs, &id).ok_or_else(|| "证书不存在".to_string())?;
-    let dir = ensure_dir().join(&cert.id).join(".lego").join("certificates");
+    let cert_dir = ensure_dir().join(&cert.id);
     let mut out = HashMap::new();
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().to_string();
-            if name.ends_with(".crt") || name.ends_with(".key") {
-                out.insert(name, std::fs::read_to_string(e.path()).unwrap_or_default());
+    for dir in lego_cert_dirs(&cert_dir) {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.ends_with(".crt") || name.ends_with(".key") {
+                    out.insert(name, std::fs::read_to_string(e.path()).unwrap_or_default());
+                }
             }
+        }
+        if !out.is_empty() {
+            break;
         }
     }
     Ok(out)
@@ -1500,5 +1612,70 @@ mod tests {
         // 结尾的 /push 段一律剥离（含反向代理子路径场景）：
         // 部署与连通测试从同一 base 派生，保证两者指向同一个接收端
         assert_eq!(windows_base_url("http://h:9000/api/push"), "http://h:9000/api");
+    }
+
+    fn unique_tmp(prefix: &str) -> PathBuf {
+        let n = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let p = std::env::temp_dir().join(format!("{}_{}_{}", prefix, std::process::id(), n));
+        let _ = std::fs::create_dir_all(&p);
+        p
+    }
+
+    /// lego 的 `--path` 即数据根目录：证书落在 `<path>/certificates/`。
+    /// 必须能从此处读到 PEM，否则签发成功也会报「未找到生成的 PEM 文件」。
+    #[test]
+    fn lego_pems_read_from_data_root_certificates_dir() {
+        let base = unique_tmp("anyver_lego_root");
+        let store = base.join("certificates");
+        std::fs::create_dir_all(&store).unwrap();
+        std::fs::write(store.join("_.a.com.crt"), "LEAF").unwrap();
+        std::fs::write(store.join("_.a.com.key"), "KEY").unwrap();
+        std::fs::write(store.join("_.a.com.issuer.crt"), "ISSUER").unwrap();
+
+        let got = read_lego_pems(&base, Some("*.a.com"))
+            .expect("应能从 <path>/certificates 读到 PEM");
+        assert_eq!(got.0, "LEAF");
+        assert_eq!(got.1, "KEY");
+        assert_eq!(got.2, "ISSUER");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 同一数据目录存在多份证书时，按域名精确取名，
+    /// 不得因 `read_dir` 顺序随机取到别的域名的证书。
+    #[test]
+    fn lego_pems_prefer_domain_over_other_certificates() {
+        let base = unique_tmp("anyver_lego_prefer");
+        let store = base.join("certificates");
+        std::fs::create_dir_all(&store).unwrap();
+        std::fs::write(store.join("a.com.crt"), "CRT_A").unwrap();
+        std::fs::write(store.join("a.com.key"), "KEY_A").unwrap();
+        std::fs::write(store.join("b.com.crt"), "CRT_B").unwrap();
+        std::fs::write(store.join("b.com.key"), "KEY_B").unwrap();
+
+        let (crt, key, _) = read_lego_pems(&base, Some("b.com")).unwrap();
+        assert_eq!(crt, "CRT_B");
+        assert_eq!(key, "KEY_B");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 兼容历史（错误的）`<path>/.lego/certificates` 布局，避免旧数据读不到。
+    #[test]
+    fn lego_pems_legacy_dot_lego_layout_still_readable() {
+        let base = unique_tmp("anyver_lego_legacy");
+        let store = base.join(".lego").join("certificates");
+        std::fs::create_dir_all(&store).unwrap();
+        std::fs::write(store.join("x.com.crt"), "L").unwrap();
+        std::fs::write(store.join("x.com.key"), "K").unwrap();
+
+        let got = read_lego_pems(&base, None).expect("旧布局应仍可读取");
+        assert_eq!(got.0, "L");
+        assert_eq!(got.1, "K");
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
