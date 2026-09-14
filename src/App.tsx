@@ -8,7 +8,7 @@ import { X, Minus, Square, Download, AlertTriangle, Loader2, FolderOpen, Chevron
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { MODULES, MODULE_MAP, resolveModuleLayout } from "./moduleRegistry";
 import VexAvatar from "./components/VexAvatar";
-import { VEX_CYBER_ACCENT, VEX_CYBER_CYAN, resolveThemeAccent } from "./utils/brand";
+import { VEX_CYBER_CYAN, resolveThemeAccent } from "./utils/brand";
 import { moduleLabel } from "./moduleRegistry";
 import { kiraQuoteLine } from "./utils/kiraQuotes";
 import { vexSay, onVexSay, type VexSayKind } from "./utils/vexSay";
@@ -459,6 +459,9 @@ export default function App() {
             {toolbarModules.filter((m) => m.id !== "settings").map((m) => {
               const isActive = activePage === m.id;
               const Icon = m.icon;
+              // 不再按模块各自的颜色上色：这里刻意不覆盖 --neon，
+              // 让 .vex-nav-tab 的 hover/激活背景统一继承 app 根节点上的主题色变量
+              // （--neon = --module-accent = 全局设置里的主题色）。
               return (
                 <button
                   key={m.id}
@@ -468,8 +471,7 @@ export default function App() {
                       ? "vex-nav-tab-active text-white"
                       : "text-slate-400 hover:text-slate-200"
                   }`}
-                  style={{ "--neon": appearance.moduleThemeColors?.[m.id] ?? m.color } as React.CSSProperties}
-                  title={`${moduleLabel(m.id)} (可在全局设置调整主题色)`}
+                  title={moduleLabel(m.id)}
                 >
                   <Icon className="w-3 h-3" />
                   {moduleLabel(m.id)}
@@ -492,7 +494,6 @@ export default function App() {
                       ? "vex-nav-tab-active text-white"
                       : "text-slate-400 hover:text-slate-200"
                   }`}
-                  style={{ "--neon": (moreModules.find((x) => x.id === activePage)?.color) ?? VEX_CYBER_ACCENT } as React.CSSProperties}
                   title="更多模块"
                 >
                   <span className="w-3 h-3 flex items-center justify-center">⋯</span>
@@ -519,7 +520,7 @@ export default function App() {
                                 : "text-slate-300 hover:bg-white/5"
                             }`}
                           >
-                            <Icon className="w-3.5 h-3.5" style={{ color: m.color }} />
+                            <Icon className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                             {moduleLabel(m.id)}
                           </button>
                         );

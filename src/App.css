@@ -203,8 +203,10 @@ button[class*="module-accent"]:active:not(:disabled) {
 }
 
 /* ── 顶栏模块选项卡（导航胶囊内）──
-   常态：暗底细描边；悬停：按各模块自身主题色微泛光 + 图标点亮；
-   激活：主色渐变玻璃底 + 辉光环 + 底部霓虹指示条（紫→青），呈灯管质感。 */
+   统一使用全局主题色：--neon 由 app 根节点注入（= --module-accent = 全局设置里的主题色），
+   各模块入口不再引用自身颜色（不再有彩虹效果）。
+   常态：暗底细描边；悬停：主题色微泛光 + 图标点亮；
+   激活：主题色渐变玻璃底 + 辉光环 + 底部主题色指示条，呈灯管质感。 */
 .vex-nav-tab {
   position: relative;
   transition: box-shadow 0.25s ease, background-color 0.25s ease, color 0.2s ease, filter 0.25s ease;
@@ -240,7 +242,7 @@ button[class*="module-accent"]:active:not(:disabled) {
   bottom: 1px;
   height: 2px;
   border-radius: 2px;
-  background: linear-gradient(90deg, transparent, var(--neon, var(--vex-fallback-primary)), var(--cyan, var(--vex-fallback-cyan)), transparent);
+  background: linear-gradient(90deg, transparent, var(--neon, var(--vex-fallback-primary)), transparent);
   box-shadow: 0 0 8px color-mix(in srgb, var(--neon, var(--vex-fallback-primary)) 90%, transparent);
 }
 .vex-nav-tab-active svg {
