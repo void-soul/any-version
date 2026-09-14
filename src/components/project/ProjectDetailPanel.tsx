@@ -30,6 +30,8 @@ import {
   DataDirsTab,
   ConfigTab,
 } from "./ProjectSubTabs";
+import { ConfirmDialogHost } from "../shared/ConfirmDialog";
+import type { ConfirmRequest } from "../shared/ConfirmDialog";
 
 type SubTab = "versions" | "envvars" | "services" | "config" | string;
 
@@ -165,6 +167,8 @@ export default function ProjectDetailPanel({
   const [showMenuConfig, setShowMenuConfig] = useState(false);
   const [localDelegation, setLocalDelegation] = useState<ProjectDelegation | null>(null);
   const [autoStartServices, setAutoStartServices] = useState<string[]>([]);
+  // 统一确认弹窗请求（替代原生 window.confirm）
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
 
   useEffect(() => {
     setShowMenuConfig(false);
@@ -408,16 +412,29 @@ export default function ProjectDetailPanel({
     }
   }, [pid, patch]);
 
-  const handleUninstall = useCallback(async (version: string) => {
-    if (!pid || !ui.detail) return;
-    if (!confirm(t("projdetail.uninstallConfirm", { name: ui.detail.status.display_name, version }))) return;
+  /** 真正卸载版本（由确认弹窗回调触发） */
+  const doUninstall = useCallback(async (version: string) => {
+    if (!pid) return;
     try {
       await invoke("project_uninstall_version", { id: pid, version });
       await refreshSingle(pid);
     } catch (e: unknown) {
       alert(t("projdetail.uninstallFail", { err: String(e) }));
     }
-  }, [pid, ui.detail, loadDetail, onRefresh]);
+  }, [pid, refreshSingle, t]);
+
+  const handleUninstall = useCallback(async (version: string) => {
+    if (!pid || !ui.detail) return;
+    setConfirmRequest({
+      title: t("projsub.uninstallThis"),
+      danger: true,
+      confirmText: t("projdetail.confirmUninstallBtn"),
+      desc: t("projdetail.uninstallConfirm", { name: ui.detail.status.display_name, version }),
+      onConfirm: () => {
+        void doUninstall(version);
+      },
+    });
+  }, [pid, ui.detail, doUninstall, t]);
 
   const handleUse = useCallback(async (version: string) => {
     if (!pid) return;
@@ -519,17 +536,26 @@ export default function ProjectDetailPanel({
     }
   }, [pid, ui.detail, patch, loadDetail, onRefresh]);
 
-  const handleServiceToggle = useCallback(async () => {
+  /** 强制终止服务进程（安全停止失败并确认后调用） */
+  const forceStopService = useCallback(async () => {
+    if (!pid) return;
+    patch(pid, { serviceCtrlLoading: true });
+    try {
+      await invoke("force_stop_service", { name: pid });
+      await invoke("refresh_tray_menu");
+      await refreshSingle(pid);
+    } catch (e: unknown) {
+      alert(t("projdetail.serviceOpFail", { err: String(e) }));
+    } finally {
+      patch(pid, { serviceCtrlLoading: false });
+    }
+  }, [pid, patch, refreshSingle, t]);
+
+  /** 真正执行服务启停（由确认弹窗或无需确认的路径调用） */
+  const runServiceToggle = useCallback(async () => {
     if (!pid || !ui.detail?.status?.service_status) return;
     const running = ui.detail.status.service_status.running;
     const simpleService = ui.detail.def.simple_mode || ui.detail.status.is_simple_managed;
-
-    if (!isAdmin && Array.isArray(ui.detail.def.service_names) && ui.detail.def.service_names.length > 0) {
-      const confirmed = window.confirm(
-        t("projdetail.adminWarn")
-      );
-      if (!confirmed) return;
-    }
 
     patch(pid, { serviceCtrlLoading: true });
     try {
@@ -538,11 +564,20 @@ export default function ProjectDetailPanel({
           await invoke("stop_service", { name: pid });
         } catch (stopErr) {
           const msg = String(stopErr);
-          const confirmed = window.confirm(
-            t("projdetail.stopFailConfirm", { msg, pid })
-          );
-          if (!confirmed) throw stopErr;
-          await invoke("force_stop_service", { name: pid });
+          // 安全停止失败：用统一弹窗询问是否强制终止。
+          // 用户取消时不再抛出原错误（旧实现会紧跟一条"服务操作失败"的 alert，
+          // 与「用户主动取消」的语义冲突）。
+          patch(pid, { serviceCtrlLoading: false });
+          setConfirmRequest({
+            title: t("projdetail.stopFailTitle"),
+            danger: true,
+            confirmText: t("projdetail.forceStopBtn"),
+            desc: t("projdetail.stopFailConfirm", { msg, pid }),
+            onConfirm: () => {
+              void forceStopService();
+            },
+          });
+          return;
         }
       } else {
         if (!simpleService && !ui.detail.status.active_version) {
@@ -562,7 +597,24 @@ export default function ProjectDetailPanel({
     } finally {
       patch(pid, { serviceCtrlLoading: false });
     }
-  }, [pid, ui.detail, patch, refreshSingle, isAdmin]);
+  }, [pid, ui.detail, patch, refreshSingle, forceStopService, t]);
+
+  /** 服务启停入口：非管理员且有系统服务时先确认（统一弹窗），再执行 */
+  const handleServiceToggle = useCallback(async () => {
+    if (!pid || !ui.detail?.status?.service_status) return;
+    if (!isAdmin && Array.isArray(ui.detail.def.service_names) && ui.detail.def.service_names.length > 0) {
+      setConfirmRequest({
+        title: t("projdetail.adminWarnTitle"),
+        confirmText: t("common.confirm"),
+        desc: t("projdetail.adminWarn"),
+        onConfirm: () => {
+          void runServiceToggle();
+        },
+      });
+      return;
+    }
+    await runServiceToggle();
+  }, [pid, ui.detail, isAdmin, runServiceToggle, t]);
 
   // 服务类项目：静默轮询服务状态，进程意外退出后前端能自动感知，
   // 避免界面仍显示陈旧 PID 导致「停止」误报「未检测到进程」。
@@ -1369,6 +1421,9 @@ export default function ProjectDetailPanel({
           </div>
         </div>
       </div>
+
+      {/* 统一确认弹窗（卸载版本 / 服务启停权限提示 / 强制终止） */}
+      {<ConfirmDialogHost request={confirmRequest} onClose={() => setConfirmRequest(null)} />}
     </div>
   );
 }

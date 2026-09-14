@@ -30,6 +30,8 @@ import {
 } from "lucide-react";
 import type { ProjectStatus, ProjectDef, EnvVarStatus, ServiceStatus, PackageManagerDef } from "./types";
 import { PackageManagerTab as PackageManagerTabModular } from "./tabs/PackageManagerTab";
+import { ConfirmDialogHost } from "../shared/ConfirmDialog";
+import type { ConfirmRequest } from "../shared/ConfirmDialog";
 
 // ── 共享 detour Props ──
 export interface SubTabProps {
@@ -297,6 +299,9 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
   const [_workflowExecuting, setWorkflowExecuting] = useState(false);
   const [workflowProgress, setWorkflowProgress] = useState<{ stage: string; current: number; total: number; file_name: string } | null>(null);
 
+  // 统一确认弹窗请求（替代原生 window.confirm）
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
+
   const loadConflictManagers = async () => {
     if (!project.id || !def || !def.conflict_managers || def.conflict_managers.length === 0) {
       setConflictManagers([]);
@@ -370,25 +375,8 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
     }
   };
 
-  const executeWorkflow = async () => {
-    if (!workflowManagerId) return;
-
-    if (!isAdmin) {
-      const confirmed = window.confirm(t("projsub.migrateAdminWarn"));
-      if (!confirmed) return;
-    }
-
-    // 检查是否向同一目录移动文件
-    const pathsSame = workflowMethod === "junction"
-      && workflowLinkPath.toLowerCase().replace(/[\\/]+$/, "")
-      === workflowActualPath.toLowerCase().replace(/[\\/]+$/, "");
-
-    if (workflowFileAction === "move" && pathsSame) {
-      if (!confirm(t("projsub.samePathConfirm"))) {
-        return;
-      }
-    }
-
+  /** 真正执行缓存变更（由确认弹窗或无需确认的路径直接调用） */
+  const runWorkflowNow = async () => {
     setWorkflowStep("executing");
     setWorkflowExecuting(true);
     setWorkflowProgress(null);
@@ -428,11 +416,117 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
     }
   };
 
-  const handleConflictAction = async (managerId: string, action: string) => {
-    if (!isAdmin) {
-      const confirmed = window.confirm(t("projsub.conflictOpsWarn", { managerId }));
-      if (!confirmed) return;
+  /**
+   * 工作流执行入口：先做预检（非管理员权限 / 移动到与链接相同的目录），
+   * 有风险点时用统一确认弹窗一次性列清，确认后再真正执行。
+   * （原来这里是两次原生 window.confirm，弹窗被系统样式接管且无法逐条展示。）
+   */
+  const executeWorkflow = async () => {
+    if (!workflowManagerId) return;
+
+    const warnings: string[] = [];
+    if (!isAdmin) warnings.push(t("projsub.migrateAdminWarn"));
+
+    const pathsSame = workflowMethod === "junction"
+      && workflowLinkPath.toLowerCase().replace(/[\\/]+$/, "")
+      === workflowActualPath.toLowerCase().replace(/[\\/]+$/, "");
+    if (workflowFileAction === "move" && pathsSame) warnings.push(t("projsub.samePathConfirm"));
+
+    if (warnings.length > 0) {
+      setConfirmRequest({
+        title: t("projsub.workflowConfirmTitle"),
+        confirmText: t("projsub.storeConfirmExec"),
+        desc: (
+          <div className="space-y-2">
+            {warnings.map((w, i) => (
+              <p key={i}>{w}</p>
+            ))}
+          </div>
+        ),
+        onConfirm: () => {
+          void runWorkflowNow();
+        },
+      });
+      return;
     }
+
+    await runWorkflowNow();
+  };
+
+  // 环境变量层级文案（与后端 DisableVarAction.level 对应）
+  const levelLabel = (level: string) => {
+    switch (level) {
+      case "user": return t("projsub.levelUser");
+      case "system": return t("projsub.levelSystem");
+      case "both": return t("projsub.levelBoth");
+      default: return t("projsub.notSet");
+    }
+  };
+
+  /**
+   * 「一键停用」确认弹窗内容（结构化列出影响面）。
+   *
+   * 停用是不可逆操作（原值不归 Kira 备份管），系统级 PATH 条目删掉后尤其难找回，
+   * 因此把后端预案（preview_conflict_manager_disable）原样摊开给用户逐条确认，
+   * 而不是只用一句"确定吗"。
+   */
+  const renderDisablePlan = (plan: any) => {
+    const vars: any[] = plan.variables || [];
+    const clearVars = vars.filter((v) => v.action === "clear");
+    const keptVars = vars.filter((v) => v.action === "keep_managed");
+    const up: string[] = plan.user_path_entries || [];
+    const sp: string[] = plan.system_path_entries || [];
+
+    return (
+      <div className="space-y-3">
+        <p className="text-slate-300">{t("projsub.disableConfirmTitle", { name: plan.manager_display_name })}</p>
+
+        <div className="space-y-0.5">
+          <p className="text-amber-300 font-semibold">
+            {t("projsub.disableConfirmVars", { count: clearVars.length })}
+          </p>
+          {clearVars.map((v) => (
+            <p key={v.name} className="font-mono text-[11px] break-all pl-2">
+              • {v.name}
+              <span className="text-slate-500">　[{levelLabel(v.level)}]　{v.current_value ?? t("projsub.notSet")}</span>
+            </p>
+          ))}
+        </div>
+
+        {keptVars.length > 0 && (
+          <div className="space-y-0.5">
+            <p className="text-emerald-300 font-semibold">{t("projsub.disableConfirmKept")}</p>
+            <p className="font-mono text-[11px] break-all pl-2">
+              • {keptVars.map((v) => v.name).join("　• ")}
+            </p>
+          </div>
+        )}
+
+        <div className="space-y-0.5">
+          <p className="text-slate-300 font-semibold">
+            {t("projsub.disableConfirmPathUser", { count: up.length })}
+          </p>
+          {up.map((p) => (
+            <p key={p} className="font-mono text-[11px] break-all pl-2 text-slate-400">• {p}</p>
+          ))}
+        </div>
+
+        <div className="space-y-0.5">
+          <p className="text-slate-300 font-semibold">
+            {t("projsub.disableConfirmPathSystem", { count: sp.length })}
+          </p>
+          {sp.map((p) => (
+            <p key={p} className="font-mono text-[11px] break-all pl-2 text-slate-400">• {p}</p>
+          ))}
+        </div>
+
+        <p className="text-slate-500 pt-1 border-t border-white/5">{t("projsub.disableConfirmBackup")}</p>
+      </div>
+    );
+  };
+
+  /** 真正执行冲突管理器操作（由按钮或停用确认弹窗触发） */
+  const runConflictAction = async (managerId: string, action: string) => {
     setOperatingManagerId(managerId);
     try {
       await invoke("handle_conflict_manager_action", {
@@ -449,6 +543,45 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
     } finally {
       setOperatingManagerId(null);
     }
+  };
+
+  const handleConflictAction = async (managerId: string, action: string) => {
+    if (action === "disable") {
+      // 先取预案（只读、无副作用），再弹确认弹窗——管理员态同样要确认。
+      let plan: any;
+      try {
+        plan = await invoke<any>("preview_conflict_manager_disable", {
+          sdkId: project.id,
+          managerId,
+        });
+      } catch (e: any) {
+        alert(t("projsub.opFail", { err: String(e) }));
+        return;
+      }
+      setConfirmRequest({
+        title: t("projsub.deactivateTitle2"),
+        danger: true,
+        width: 520,
+        confirmText: t("projsub.disableConfirmOk"),
+        desc: renderDisablePlan(plan),
+        onConfirm: () => {
+          void runConflictAction(managerId, "disable");
+        },
+      });
+      return;
+    }
+    if (!isAdmin) {
+      setConfirmRequest({
+        title: t("projsub.conflictOpsTitle"),
+        confirmText: t("common.confirm"),
+        desc: t("projsub.conflictOpsWarn", { managerId }),
+        onConfirm: () => {
+          void runConflictAction(managerId, action);
+        },
+      });
+      return;
+    }
+    await runConflictAction(managerId, action);
   };
 
   const renderConflictWorkflow = (mgr: any) => {
@@ -808,7 +941,15 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
           {onRepairEnv && (
             <button
               onClick={() => {
-                if (!isAdmin && !window.confirm(t("projsub.repairConfirm"))) return;
+                if (!isAdmin) {
+                  setConfirmRequest({
+                    title: t("projsub.repairEnv"),
+                    confirmText: t("projsub.repairEnv"),
+                    desc: t("projsub.repairConfirm"),
+                    onConfirm: () => onRepairEnv(),
+                  });
+                  return;
+                }
                 onRepairEnv();
               }}
               disabled={isOperating || repairingEnv}
@@ -1143,6 +1284,9 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
           )}
         </div>
       )}
+
+      {/* 统一确认弹窗（替代原生 window.confirm；含一键停用影响面确认） */}
+      {<ConfirmDialogHost request={confirmRequest} onClose={() => setConfirmRequest(null)} />}
     </div>
   );
 }
@@ -1640,6 +1784,8 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
   const [workflowFileAction, setWorkflowFileAction] = useState<"move" | "keep">("keep");
   const [workflowExecuting, setWorkflowExecuting] = useState(false);
   const [workflowProgress, setWorkflowProgress] = useState<{ stage: string; current: number; total: number; file_name: string } | null>(null);
+  // 统一确认弹窗请求（替代原生 window.confirm）
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
 
   // 监听迁移进度
   useEffect(() => {
@@ -1764,13 +1910,8 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
     }
   };
 
-  const handleDelete = async (path: string) => {
-    if (!confirm(t("projsub.warnDeleteDir", { path }))) {
-      return;
-    }
-    if (!confirm(t("projsub.confirmDeleteDir", { path }))) {
-      return;
-    }
+  /** 真正删除数据目录（由确认弹窗回调触发） */
+  const doDelete = async (path: string) => {
     try {
       await invoke("delete_data_dir", {
         projectId: project.id,
@@ -1781,6 +1922,28 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
     } catch (e: unknown) {
       alert(t("projsub.deleteFail", { err: String(e) }));
     }
+  };
+
+  /**
+   * 删除数据目录确认：原来这里是连续两次原生 confirm（"确认删除"→"再次确认"），
+   * 改用统一确认弹窗，把两段警告一次性摆在同一个 danger 弹窗里。
+   */
+  const handleDelete = (path: string) => {
+    setConfirmRequest({
+      title: t("projsub.deleteData"),
+      danger: true,
+      width: 460,
+      confirmText: t("projsub.deleteData"),
+      desc: (
+        <div className="space-y-2.5">
+          <p className="whitespace-pre-line">{t("projsub.warnDeleteDir", { path })}</p>
+          <p className="text-red-300 font-semibold whitespace-pre-line">{t("projsub.confirmDeleteDir", { path })}</p>
+        </div>
+      ),
+      onConfirm: () => {
+        void doDelete(path);
+      },
+    });
   };
 
   const renderWorkflow = (dir: any) => {
@@ -2090,6 +2253,31 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
 
   const dataDirs = project.data_dirs_status || [];
 
+  // 目录类型（data / log / config / cache）徽章文案
+  const dirKindLabel = (kind?: string | null): string | null => {
+    switch (kind) {
+      case "data": return t("projsub.dirKindData");
+      case "log": return t("projsub.dirKindLog");
+      case "config": return t("projsub.dirKindConfig");
+      case "cache": return t("projsub.dirKindCache");
+      default: return null;
+    }
+  };
+
+  // 路径来源徽章文案。取值由后端 resolve_data_dir 给出：
+  // custom（用户改过）/ config（读自服务配置文件）/ env:VAR / detected（探测到已存在）/ default（默认模板）
+  const dirSourceLabel = (source?: string | null): string | null => {
+    if (!source) return null;
+    if (source.startsWith("env:")) return t("projsub.dirSourceEnv", { name: source.slice(4) });
+    switch (source) {
+      case "custom": return t("projsub.dirSourceCustom");
+      case "config": return t("projsub.dirSourceConfig");
+      case "detected": return t("projsub.dirSourceDetected");
+      case "default": return t("projsub.defaultPath");
+      default: return source;
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="glass-panel rounded-2xl p-5 border border-white/5 bg-white/2 space-y-4">
@@ -2107,12 +2295,20 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
           <div className="space-y-4">
             {dataDirs.map((dir) => {
               const isWorkflowActive = workflowDirId === dir.id;
+              const dirDef = def?.data_dirs?.find((d) => d.id === dir.id);
+              const kindLabel = dirKindLabel(dir.kind);
+              const sourceLabel = dirSourceLabel(dir.source);
               return (
                 <div key={dir.id + "_" + dir.path} className="p-4 bg-black/20 rounded-xl border border-white/5 space-y-3 animate-fadeIn">
                   <div className="flex items-start justify-between">
                     <div className="space-y-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-[13px] font-semibold text-white">{dir.display_name}</span>
+                        {kindLabel && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] font-semibold">
+                            {kindLabel}
+                          </span>
+                        )}
                         {dir.is_link && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">
                             {t("projsub.migratedJunction")}
@@ -2129,6 +2325,18 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                         <p className="font-mono text-[11px] text-slate-500 break-all">
                           {t("projsub.realTarget", { path: dir.real_target })}
                         </p>
+                      )}
+                      {sourceLabel && (
+                        <p className="text-[11px] text-slate-500">
+                          {t("projsub.dirSource")}{" "}
+                          <span className="text-slate-400">{sourceLabel}</span>
+                        </p>
+                      )}
+                      {!dir.exists && dirDef?.required_for_start && !dirDef?.auto_create && (
+                        <p className="text-[11px] text-amber-400/80">{t("projsub.dirMustExist")}</p>
+                      )}
+                      {!dir.exists && dirDef?.auto_create && (
+                        <p className="text-[11px] text-slate-500">{t("projsub.dirAutoCreate")}</p>
                       )}
                     </div>
                     <div className="flex items-center gap-2">
@@ -2164,6 +2372,9 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
           </div>
         )}
       </div>
+
+      {/* 统一确认弹窗：删除数据目录（不可逆，danger） */}
+      {<ConfirmDialogHost request={confirmRequest} onClose={() => setConfirmRequest(null)} />}
     </div>
   );
 }

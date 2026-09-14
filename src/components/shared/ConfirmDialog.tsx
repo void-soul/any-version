@@ -53,3 +53,53 @@ export function ConfirmDialog({
     </SharedModal>
   );
 }
+
+/**
+ * 一次确认请求：调用方把它 set 进 state，弹窗确认后回调 onConfirm 执行真正的动作。
+ * 用于替代原生 `window.confirm`（后者样式跟随系统、无法逐条展示影响面）。
+ */
+export interface ConfirmRequest {
+  title?: React.ReactNode;
+  desc: React.ReactNode;
+  confirmText?: string;
+  cancelText?: string;
+  danger?: boolean;
+  width?: number;
+  onConfirm: () => void;
+}
+
+/**
+ * 把一份「按需确认」请求渲染成统一弹窗：
+ *
+ * ```tsx
+ * const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
+ * ...
+ * {<ConfirmDialogHost request={confirmRequest} onClose={() => setConfirmRequest(null)} />}
+ * ```
+ */
+export function ConfirmDialogHost({
+  request,
+  onClose,
+}: {
+  request: ConfirmRequest | null;
+  onClose: () => void;
+}) {
+  if (!request) return null;
+  return (
+    <ConfirmDialog
+      open
+      danger={request.danger}
+      width={request.width}
+      title={request.title}
+      desc={request.desc}
+      confirmText={request.confirmText}
+      cancelText={request.cancelText}
+      onCancel={onClose}
+      onConfirm={() => {
+        const run = request.onConfirm;
+        onClose();
+        run();
+      }}
+    />
+  );
+}

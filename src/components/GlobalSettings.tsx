@@ -42,6 +42,8 @@ import {
   VEX_THEME_STORE_KEY,
   resolveThemeAccent,
 } from "../utils/brand";
+import { ConfirmDialogHost } from "./shared/ConfirmDialog";
+import type { ConfirmRequest } from "./shared/ConfirmDialog";
 
 // 可拖拽的模块配置行：主题色 + 位置 + 启用 + 快捷键（拖拽手柄独立，避免与控件冲突）
 function ModuleConfigRow({
@@ -228,6 +230,8 @@ export default function GlobalSettings() {
   const [progress, setProgress] = useState<MigrateProgress | null>(null);
   const [deletingOldDirs, setDeletingOldDirs] = useState(false);
   const [deletedOldDirs, setDeletedOldDirs] = useState<string[] | null>(null);
+  // 统一确认弹窗请求（替代原生 window.confirm）
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   // 开机自启：反映操作系统真实注册状态（打开设置页时查询）
   // 应用通过 UAC manifest 始终以管理员身份运行，故开机自启天然具备管理员权限。
   const [autostartOn, setAutostartOn] = useState(false);
@@ -782,27 +786,40 @@ export default function GlobalSettings() {
     }
   };
 
-  const handleDeleteOldDirs = async () => {
-    if (!migrateResult?.old_dirs_remain?.length) return;
-    if (
-      !confirm(
-        t("settings.confirmDeleteOldDirs", { dirs: migrateResult.old_dirs_remain.join("\n") }),
-      )
-    )
-      return;
+  /** 真正删除迁移后残留的旧目录（由确认弹窗确认后调用） */
+  const doDeleteOldDirs = async (dirs: string[]) => {
     setDeletingOldDirs(true);
     try {
-      const deleted = await invoke<string[]>("delete_old_storage_dirs", {
-        dirs: migrateResult.old_dirs_remain,
-      });
+      const deleted = await invoke<string[]>("delete_old_storage_dirs", { dirs });
       setDeletedOldDirs(deleted);
       // 清除残留目录列表
-      setMigrateResult({ ...migrateResult, old_dirs_remain: [] });
+      setMigrateResult((prev) => (prev ? { ...prev, old_dirs_remain: [] } : prev));
     } catch (e: any) {
       alert(t("settings.deleteFail", { err: String(e) }));
     } finally {
       setDeletingOldDirs(false);
     }
+  };
+
+  const handleDeleteOldDirs = async () => {
+    const remain = migrateResult?.old_dirs_remain ?? [];
+    if (!remain.length) return;
+    setConfirmRequest({
+      title: t("settings.deleteOldDirsTitle"),
+      danger: true,
+      width: 480,
+      confirmText: t("settings.deleteOldDirsOk"),
+      desc: (
+        <div className="space-y-2">
+          <p className="whitespace-pre-line">
+            {t("settings.confirmDeleteOldDirs", { dirs: remain.join("\n") })}
+          </p>
+        </div>
+      ),
+      onConfirm: () => {
+        void doDeleteOldDirs(remain);
+      },
+    });
   };
 
   const handleCheckUpdate = async () => {
@@ -1540,6 +1557,9 @@ export default function GlobalSettings() {
 
       {/* 数据备份与同步（统一快照，原「数据同步」模块迁入设置） */}
       <DataSyncPanel />
+
+      {/* 统一确认弹窗：删除迁移后残留的旧目录（不可逆，danger） */}
+      {<ConfirmDialogHost request={confirmRequest} onClose={() => setConfirmRequest(null)} />}
     </div>
   );
 }

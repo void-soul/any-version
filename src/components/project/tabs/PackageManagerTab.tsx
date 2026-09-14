@@ -21,6 +21,8 @@ import {
   Info,
 } from "lucide-react";
 import type { ProjectStatus, ProjectDef, PackageManagerDef } from "../types";
+import { ConfirmDialogHost } from "../../shared/ConfirmDialog";
+import type { ConfirmRequest } from "../../shared/ConfirmDialog";
 
 const pmDetectionCache: Record<string, any> = {};
 
@@ -68,6 +70,8 @@ export function PackageManagerTab({
   const [extraCacheInfos, setExtraCacheInfos] = useState<Record<string, any>>(isCached ? cachedData.extraCacheInfos ?? {} : {});
   // 当前工作流针对的附加缓存 id（null = 主缓存 store）
   const [workflowExtraCacheId, setWorkflowExtraCacheId] = useState<string | null>(null);
+  // 统一确认弹窗请求（替代原生 window.confirm）
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
 
   const updatePmCache = (data: Partial<typeof pmDetectionCache[string]>) => {
     const key = `${projectId}:${pm.id}`;
@@ -198,20 +202,8 @@ export function PackageManagerTab({
     } catch { alert(t("pkgmgr.folderPickerUnavailable")); }
   };
 
-  // 执行工作流
-  const executeWorkflow = async () => {
-    // 检查是否向同一目录移动文件
-    const pathsSame = workflowMethod === "junction"
-      && workflowLinkPath.toLowerCase().replace(/[\\/]+$/, "")
-      === workflowActualPath.toLowerCase().replace(/[\\/]+$/, "");
-
-    if (workflowFileAction === "move" && pathsSame) {
-      // 同目录，提示用户无需移动
-      if (!confirm(t("pkgmgr.samePathConfirm"))) {
-        return;
-      }
-    }
-
+  /** 真正执行存储变更工作流（由确认弹窗或无需确认的路径直接调用） */
+  const runWorkflowNow = async () => {
     setWorkflowStep("executing");
     setWorkflowExecuting(true);
     setWorkflowProgress(null);
@@ -270,6 +262,30 @@ export function PackageManagerTab({
       setWorkflowExecuting(false);
       setWorkflowProgress(null);
     }
+  };
+
+  /**
+   * 工作流执行入口：若「移动作业」的目标与链接原路径相同，先用统一确认弹窗
+   * 提示"无需移动文件、将直接创建链接"，确认后再执行。
+   */
+  const executeWorkflow = async () => {
+    const pathsSame = workflowMethod === "junction"
+      && workflowLinkPath.toLowerCase().replace(/[\\/]+$/, "")
+      === workflowActualPath.toLowerCase().replace(/[\\/]+$/, "");
+
+    if (workflowFileAction === "move" && pathsSame) {
+      setConfirmRequest({
+        title: t("pkgmgr.wfConfirm"),
+        confirmText: t("pkgmgr.confirmExec"),
+        desc: t("pkgmgr.samePathConfirm"),
+        onConfirm: () => {
+          void runWorkflowNow();
+        },
+      });
+      return;
+    }
+
+    await runWorkflowNow();
   };
 
   // 镜像
@@ -365,22 +381,13 @@ export function PackageManagerTab({
       },
     });
 
-    // Step 1b: 检测最新版本（仅在已安装时）
-    if (pm.latest_version_cmd) {
-      steps.push({
-        label: t("pkgmgr.detectLatest", { name: pm.display_name }),
-        run: async () => {
-          try {
-            const out = await invoke<string>("run_cmd_capture", { cmd: pm.latest_version_cmd!, projectId });
-            setLatestVersion(out.trim());
-            cachedData.latestVersion = out.trim();
-          } catch {
-            setLatestVersion(null);
-            cachedData.latestVersion = null;
-          }
-        },
-      });
-    }
+    // 说明：此前这里有一段「检测包管理器自身最新版本」的步骤，读取的是
+    // `pm.latest_version_cmd` —— 该字段在 Rust 的 PackageManagerDef 与所有
+    // projects/*/package_managers.json 中都不存在（配置里用的是
+    // pkg_upgrade_cmd_template / pkg_outdated_cmd），因此该分支永远不成立、
+    // latestVersion 永远为 null（对应的「升级到 vX」按钮也就从未出现过）。
+    // 依赖包的最新版本由全局依赖包列表（get_global_packages 的 latest_version）
+    // 展示与升级，这里不再保留死分支。
 
     // Step 2: cache
     if (pm.cache_detect_cmd || pm.cache_default_path || pm.cache_env_var) {
@@ -632,9 +639,8 @@ export function PackageManagerTab({
   };
 
   // ── 清理缓存（带进度条） ──
-  const handleCleanCache = async () => {
-    if (!pm.cache_detect_cmd && !pm.cache_default_path && !pm.cache_env_var) return;
-    if (!confirm(t("pkgmgr.cleanCacheConfirm", { size: cacheInfo?.size || "?" }))) return;
+  // 真正清理（由确认弹窗确认后调用）
+  const doCleanCache = async () => {
     setCleaningCache(true);
     setCleanProgress(null);
     const unlisten = await listen<{ stage: string; current: number; total: number; file_name: string }>("clean-cache-progress", (event) => {
@@ -654,6 +660,20 @@ export function PackageManagerTab({
       setCleaningCache(false);
       setCleanProgress(null);
     }
+  };
+
+  /** 清理缓存入口：先弹统一确认弹窗（删除类操作，danger），确认后执行 */
+  const handleCleanCache = async () => {
+    if (!pm.cache_detect_cmd && !pm.cache_default_path && !pm.cache_env_var) return;
+    setConfirmRequest({
+      title: t("pkgmgr.cleanCache"),
+      danger: true,
+      confirmText: t("pkgmgr.cleanCache"),
+      desc: t("pkgmgr.cleanCacheConfirm", { size: cacheInfo?.size || "?" }),
+      onConfirm: () => {
+        void doCleanCache();
+      },
+    });
   };
 
   // 设置代理
@@ -1487,6 +1507,9 @@ export function PackageManagerTab({
           )}
         </div>
       )}
+
+      {/* 统一确认弹窗（清理缓存 / 同路径直接建链） */}
+      {<ConfirmDialogHost request={confirmRequest} onClose={() => setConfirmRequest(null)} />}
     </div>
   );
 }
