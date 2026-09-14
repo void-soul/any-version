@@ -18,6 +18,9 @@ use super::SessionTransferReport;
 use super::TransferProgress;
 use crate::commands::buddy::emit_switch_progress;
 
+/// 会话备份目录的分类名（`{data_dir}/buddy/session-backup/<本值>/<uid>`）
+const BACKUP_PLATFORM_LABEL: &str = "workbuddy";
+
 /// 进程级互斥：同一时刻只允许一次 WorkBuddy 会话合并
 static TRANSFER_LOCK: LazyLock<std::sync::Mutex<()>> = LazyLock::new(|| std::sync::Mutex::new(()));
 
@@ -132,21 +135,7 @@ fn transfer_local_sessions(
         .map_err(|_| "WorkBuddy 本地会话合并正在进行，请稍后重试".to_string())?;
 
     let (config_dir, electron_data_dir) = resolve_runtime_dirs(runtime_dir)?;
-    let backup_root = runtime_dir
-        .parent()
-        .map(|p| p.join(".kira-workbuddy-session-backup").join(target_uid))
-        .unwrap_or_else(|| {
-            std::path::PathBuf::from(".")
-                .join(".kira-workbuddy-session-backup")
-                .join(target_uid)
-        });
-    std::fs::create_dir_all(&backup_root).map_err(|e| {
-        format!(
-            "创建 WorkBuddy 会话备份目录失败: path={}, error={}",
-            backup_root.display(),
-            e
-        )
-    })?;
+    let backup_root = super::prepare_backup_root(BACKUP_PLATFORM_LABEL, target_uid)?;
 
     let mut report = SessionTransferReport::default();
 

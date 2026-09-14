@@ -3,6 +3,8 @@
 pub(crate) mod workbuddy;
 pub(crate) mod codebuddy;
 
+use std::path::PathBuf;
+
 use super::models::BuddyAccount;
 use super::models::BuddyPlatform;
 
@@ -30,6 +32,66 @@ pub fn transfer_on_switch(
         BuddyPlatform::Workbuddy => workbuddy::transfer_on_switch(target, progress),
         BuddyPlatform::CodebuddyCn => codebuddy::transfer_on_switch(target, progress),
     }
+}
+
+/// 会话合并备份根目录（`{data_dir}/buddy/session-backup/{platform}/{uid}`）。
+///
+/// 备份落在程序自己的数据目录下（可通过数据目录设置迁移到其他盘），
+/// 而不是系统数据目录（Windows 的 `%APPDATA%`），避免在 C 盘堆积大文件。
+///
+/// 每次合并前先清空该账号的旧备份，只保留**最近一次**切换的备份：
+/// 备份的用途是「本次合并可回滚」，按账号无限累积会让目录持续膨胀。
+pub(crate) fn prepare_backup_root(
+    platform_label: &str,
+    target_uid: &str,
+) -> Result<PathBuf, String> {
+    let root = crate::commands::config::get_data_dir()
+        .join("buddy")
+        .join("session-backup")
+        .join(platform_label)
+        .join(target_uid);
+    match std::fs::symlink_metadata(&root) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(format!(
+                "拒绝清理符号链接形式的会话备份目录: {}",
+                root.display()
+            ));
+        }
+        Ok(metadata) if metadata.is_dir() => {
+            std::fs::remove_dir_all(&root).map_err(|e| {
+                format!(
+                    "清理旧会话备份目录失败: path={}, error={}",
+                    root.display(),
+                    e
+                )
+            })?;
+        }
+        Ok(_) => {
+            std::fs::remove_file(&root).map_err(|e| {
+                format!(
+                    "清理旧会话备份文件失败: path={}, error={}",
+                    root.display(),
+                    e
+                )
+            })?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(format!(
+                "读取会话备份目录属性失败: path={}, error={}",
+                root.display(),
+                e
+            ));
+        }
+    }
+    std::fs::create_dir_all(&root).map_err(|e| {
+        format!(
+            "创建会话备份目录失败: path={}, error={}",
+            root.display(),
+            e
+        )
+    })?;
+    Ok(root)
 }
 
 /// 总结一次会话迁移的结果。

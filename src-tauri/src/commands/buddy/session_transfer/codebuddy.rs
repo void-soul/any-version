@@ -23,6 +23,9 @@ use crate::commands::buddy::emit_switch_progress;
 static TRANSFER_LOCK: std::sync::LazyLock<std::sync::Mutex<()>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
 
+/// 会话备份目录的分类名（`{data_dir}/buddy/session-backup/<本值>/<uid>`）
+const BACKUP_PLATFORM_LABEL: &str = "codebuddy-cn";
+
 /// 辅助数据目录类型（复刻 cockpit-tools 的 kinds 清单）
 pub(crate) const AUXILIARY_KINDS: [&str; 5] = [
     "check-point",
@@ -105,21 +108,7 @@ fn transfer_local_sessions(
         .map_err(|_| "CodeBuddy CN 本地会话合并正在进行，请稍后重试".to_string())?;
 
     let extension_data_dir = codebuddy_extension_data_dir()?;
-    let backup_root = user_data_dir
-        .parent()
-        .map(|p| p.join(".kira-codebuddy-session-backup").join(target_uid))
-        .unwrap_or_else(|| {
-            std::path::PathBuf::from(".")
-                .join(".kira-codebuddy-session-backup")
-                .join(target_uid)
-        });
-    std::fs::create_dir_all(&backup_root).map_err(|e| {
-        format!(
-            "创建 CodeBuddy CN 会话备份目录失败: path={}, error={}",
-            backup_root.display(),
-            e
-        )
-    })?;
+    let backup_root = super::prepare_backup_root(BACKUP_PLATFORM_LABEL, target_uid)?;
 
     let mut report =
         sync_history_between_accounts(&extension_data_dir, source_uid, target_uid, &backup_root, progress)?;
