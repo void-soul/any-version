@@ -4,7 +4,7 @@
     "display_name": "Pub",
     "built_in": true,
     "install_cmd": null,
-    "version_cmd": "dart pub --version",
+    "version_cmd": "dart --version",
     "version_exe": "dart",
     "cache_detect_cmd": null,
     "cache_default_path": "{home}\\.pub-cache",

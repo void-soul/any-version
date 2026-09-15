@@ -29,11 +29,26 @@ pub fn github_status_hint(status: u16) -> &'static str {
         401 => "：GITHUB_TOKEN / GH_TOKEN 无效或已过期",
         // 未认证请求每小时只有 60 次，多个仓库/工具一起刷新很容易撞上限流
         403 | 429 => {
-            "：GitHub API 限流。设置 GITHUB_TOKEN 环境变量可把配额从每小时 60 次提到 5000 次"
+            "：GitHub API 限流。在 SDK 模块设置 GitHub Token（或设置 GITHUB_TOKEN 环境变量）可把配额从每小时 60 次提到 5000 次"
         }
         404 => "：仓库或分支不存在（私有仓库需要设置 GITHUB_TOKEN）",
         _ => "",
     }
+}
+
+/// GitHub API Token：SDK 模块里设置的 token 优先，其次回退 GITHUB_TOKEN / GH_TOKEN 环境变量。
+pub fn github_api_token() -> Option<String> {
+    if let Some(t) = crate::commands::config::load_config().github_token {
+        let t = t.trim().to_string();
+        if !t.is_empty() {
+            return Some(t);
+        }
+    }
+    ["GITHUB_TOKEN", "GH_TOKEN"]
+        .iter()
+        .find_map(|k| std::env::var(k).ok())
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
 }
 
 /// 获取全局共享的 HTTP Client 单例，避免每次请求都重建连接池

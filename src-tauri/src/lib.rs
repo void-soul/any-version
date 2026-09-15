@@ -515,6 +515,8 @@ pub fn run() {
             commands::project::commands::project_preview_manage,
             commands::project::commands::project_manage,
             commands::project::commands::project_repair_env_vars,
+            commands::project::commands::project_get_github_token,
+            commands::project::commands::project_set_github_token,
             commands::project::commands::project_unmanage,
             commands::project::commands::project_preview_unmanage,
             commands::project::commands::project_set_custom_path,

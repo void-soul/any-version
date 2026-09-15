@@ -104,6 +104,10 @@ pub struct Config {
     pub project_delegations: std::collections::HashMap<String, ProjectDelegation>,
     #[serde(default)]
     pub active_versions: std::collections::HashMap<String, String>,
+    /// GitHub API Token：SDK 远程版本列表走 api.github.com 时自动附加（限流配额 60→5000 次/小时）。
+    /// 留空则回退读取 GITHUB_TOKEN / GH_TOKEN 环境变量。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_token: Option<String>,
     /// 托管前各项目环境变量的原始值备份。
     /// 结构：project_id -> (变量名 -> 原始值)。按项目隔离，避免多项目同名的变量互相覆盖原始值。
     #[serde(default, deserialize_with = "deserialize_original_envs")]
@@ -292,6 +296,7 @@ fn default_config() -> Config {
         sdk_dir: base_dir.join("sdk").to_string_lossy().to_string(),
         managed_items: std::collections::HashSet::new(),
         simple_managed_items: std::collections::HashSet::new(),
+        github_token: None,
         custom_install_paths: std::collections::HashMap::new(),
         custom_data_paths: std::collections::HashMap::new(),
         project_menu_configs: std::collections::HashMap::new(),

@@ -805,6 +805,28 @@ fn kill_cmd_process_tree(pid: u32) {
     }
 }
 
+/// 读取 SDK 模块设置的 GitHub API Token（空串表示未设置）
+#[tauri::command]
+pub fn project_get_github_token() -> Result<String, String> {
+    Ok(crate::commands::config::load_config()
+        .github_token
+        .unwrap_or_default())
+}
+
+/// 设置/清除 SDK 模块的 GitHub API Token（存入 config.json；清空则回退环境变量）
+#[tauri::command]
+pub fn project_set_github_token(token: String) -> Result<(), String> {
+    let trimmed = token.trim().to_string();
+    crate::commands::config::mutate_config(|c| {
+        c.github_token = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.clone())
+        };
+        Ok(())
+    })
+}
+
 /// 执行 shell 命令并捕获输出（用于包管理器版本检测、镜像切换等）
 #[tauri::command]
 pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String, String> {
@@ -905,6 +927,70 @@ pub fn run_cmd_capture(cmd: String, project_id: Option<String>) -> Result<String
     // （当前进程环境变量可能未同步注册表，这里兜底保证子进程用对 prefix）
     if let Ok(prefix) = std::env::var("NPM_CONFIG_PREFIX") {
         command.env("NPM_CONFIG_PREFIX", &prefix);
+    }
+
+    // 注入托管 SDK 的可执行目录到子进程 PATH（排在本进程 PATH 之前）。
+    //
+    // 用户 PATH 写在注册表里，应用进程启动后不会自动同步 —— 托管后新装的
+    // mvn/gradle/deno/dart 等会因「本进程 PATH 里没有 junction 目录」而在
+    // 包管理器选项卡的检测命令（mvn -v 等）中找不到可执行文件，被误报「未安装」。
+    // 注入**所有**托管 SDK（不只是目标项目）：mvn/gradle 这类检测命令还依赖
+    // 链式工具（java），它们可能也是托管的。
+    let mut extra: Vec<std::path::PathBuf> = Vec::new();
+    let mut ordered: Vec<String> = Vec::new();
+    if let Some(pid) = project_id.as_deref() {
+        if config.managed_items.contains(pid) {
+            // 目标项目排最前，保证检测命中的是它自己（而非外部的同名工具）
+            ordered.push(pid.to_string());
+        }
+    }
+    ordered.extend(
+        config
+            .managed_items
+            .iter()
+            .filter(|x| Some(x.as_str()) != project_id.as_deref())
+            .cloned(),
+    );
+    for sid in &ordered {
+        let link_dir = std::path::PathBuf::from(&config.links_dir).join(sid);
+        for p in super::scanner::get_bin_paths(sid, &link_dir.to_string_lossy()) {
+            let pb = std::path::PathBuf::from(p);
+            if pb.exists() && !extra.contains(&pb) {
+                extra.push(pb);
+            }
+        }
+        // 缓存型 bin（如 rust 的 caches\cargo\bin 里的 rustup shim）
+        if let Some(def) = super::registry::find_by_id(sid) {
+            for p in crate::commands::env::sub_dir_bin_paths(
+                &def.env_vars,
+                &crate::commands::config::get_cache_root(),
+            ) {
+                let pb = std::path::PathBuf::from(p);
+                if pb.exists() && !extra.contains(&pb) {
+                    extra.push(pb);
+                }
+            }
+        }
+    }
+    if !extra.is_empty() {
+        let mut new_path: Vec<std::path::PathBuf> = extra;
+        new_path.extend(std::env::split_paths(
+            &std::env::var("PATH").unwrap_or_default(),
+        ));
+        if let Ok(joined) = std::env::join_paths(&new_path) {
+            command.env("PATH", joined);
+        }
+    }
+
+    // JAVA_HOME 失效兜底：注册表里的 JAVA_HOME 可能指向已卸载/不存在的目录
+    // （实测：指向已删除的 Unity 自带 OpenJDK），mvn.cmd/gradle.bat 会因它直接失败。
+    // 此时从子进程环境移除，让它们回退到 PATH 上的 java（上面已注入托管 java 的 bin）。
+    if let Ok(jh) = std::env::var("JAVA_HOME") {
+        let valid = std::path::Path::new(&jh).join("bin").join("java.exe").exists()
+            || std::path::Path::new(&jh).join("java.exe").exists();
+        if !jh.trim().is_empty() && !valid {
+            command.env_remove("JAVA_HOME");
+        }
     }
 
     // 仅记录命令与状态，绝不打印 stdout/stderr 明文（可能含 token 等敏感信息）。

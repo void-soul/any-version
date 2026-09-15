@@ -283,14 +283,17 @@ async fn fetch_toml_channel(client: &reqwest::Client, config: &serde_json::Value
         return Err(format!("获取 channel manifest 失败: {}", last_error));
     }
 
-    // 提取 [pkg.rust] 段内的 version = "x.y.z"，取空格前的纯版本号
-    let re = regex::Regex::new("(?s)\\[pkg\\.rust][^\\[]*?version\\s*=\\s*\\\"(\\d+\\.\\d+(?:\\.\\d+)*)\\\"")
-        .map_err(|e| format!("正则编译失败: {}", e))?;
     let mut versions: Vec<String> = Vec::new();
-    if let Some(cap) = re.captures(&text) {
-        versions.push(cap.get(1).unwrap().as_str().to_string());
-    } else {
-        return Err("无法从 channel manifest 解析 [pkg.rust].version".to_string());
+    match parse_channel_manifest_version(&text) {
+        Some(v) => versions.push(v),
+        None => {
+            // 截取前 200 字符帮助诊断（代理劫持/CDN 异常页时能直接看出返回的不是 TOML）
+            let preview: String = text.chars().take(200).collect();
+            return Err(format!(
+                "无法从 channel manifest 解析 [pkg.rust].version，响应预览: {}",
+                preview
+            ));
+        }
     }
 
     // 合并配置中的历史版本列表（可选），去重
@@ -313,6 +316,49 @@ async fn fetch_toml_channel(client: &reqwest::Client, config: &serde_json::Value
     Ok(versions)
 }
 
+/// 从 channel manifest（TOML）文本解析 `[pkg.rust]` 段的 version。
+///
+/// 值形如 `"1.98.1 (48a229cea 2026-09-01)"` —— 版本号后可跟括号内的提交信息，
+/// 因此不能要求版本号后紧跟引号（旧正则的 bug：闭合引号永远匹配不上，
+/// 加上 `[^\[]` 无法越过下一个 `[` 段，导致整体必然失配）。
+fn parse_channel_manifest_version(text: &str) -> Option<String> {
+    let re = regex::Regex::new(
+        "(?s)\\[pkg\\.rust][^\\[]*?version\\s*=\\s*\\\"(\\d+\\.\\d+(?:\\.\\d+)*)(?:\\s*\\([^\\\"]*\\))?\\\"",
+    )
+    .ok()?;
+    re.captures(text)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_channel_manifest_version;
+
+    /// 与真实 channel-rust-stable.toml 结构一致的样例（含提交信息后缀与嵌套 target 段）
+    const SAMPLE: &str = "manifest-version = \"2\"\ndate = \"2026-09-03\"\n\n\
+        [pkg.cargo]\nversion = \"0.99.0 (797e8a9bc 2026-08-05)\"\n\n\
+        [pkg.rust]\nversion = \"1.98.1 (48a229cea 2026-09-01)\"\n\
+        git_commit_hash = \"48a229ceaefd4985c50990b14116b6d856af0985\"\n\n\
+        [pkg.rust.target.x86_64-pc-windows-msvc]\navailable = true\n";
+
+    #[test]
+    fn test_parse_channel_manifest_version_with_commit_suffix() {
+        assert_eq!(parse_channel_manifest_version(SAMPLE).as_deref(), Some("1.98.1"));
+    }
+
+    #[test]
+    fn test_parse_channel_manifest_version_plain_value() {
+        let text = "[pkg.rust]\nversion = \"1.91.0\"\n";
+        assert_eq!(parse_channel_manifest_version(text).as_deref(), Some("1.91.0"));
+    }
+
+    #[test]
+    fn test_parse_channel_manifest_version_missing_section() {
+        assert_eq!(parse_channel_manifest_version("[pkg.cargo]\nversion = \"0.99.0\"\n"), None);
+    }
+}
+
 async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, url_override: Option<&str>) -> Result<Vec<String>, String> {
     let url = if let Some(u) = url_override {
         u
@@ -331,13 +377,30 @@ async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, ur
     let reverse = config.get("reverse").and_then(|v| v.as_bool()).unwrap_or(false);
     let extra_field = config.get("extra_field").and_then(|v| v.as_str());
 
+    // GitHub API 未认证请求每小时只有 60 次，多工具一起刷新很容易撞上限流（403）：
+    // 对 github 域名的请求自动附带 Token（SDK 模块设置优先，其次环境变量），
+    // 配额可提到 5000 次/小时。
+    let is_github = url.contains("api.github.com") || url.contains("github.com");
+    let gh_token = if is_github {
+        crate::commands::utils::github_api_token()
+    } else {
+        None
+    };
+
     // 带重试的请求（最多 3 次，指数退避：1s, 2s, 4s）
     let mut last_error = String::new();
     for attempt in 0..3 {
         if attempt > 0 {
             tokio::time::sleep(std::time::Duration::from_secs(1 << (attempt - 1))).await;
         }
-        let resp = match client.get(url).send().await {
+        let send_fut = {
+            let mut req = client.get(url);
+            if let Some(token) = gh_token.as_deref() {
+                req = req.bearer_auth(token);
+            }
+            req
+        };
+        let resp = match send_fut.send().await {
             Ok(r) => r,
             Err(e) => {
                 last_error = format!("网络请求失败: {}", e);
@@ -347,7 +410,18 @@ async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, ur
         // 检查 HTTP 状态码
         let status = resp.status();
         if !status.is_success() {
-            last_error = format!("HTTP {} ({}), 可能是 API 限流或网络问题", status.as_u16(), status.canonical_reason().unwrap_or("未知"));
+            let code = status.as_u16();
+            last_error = if is_github {
+                // GitHub 专属的可操作提示（401 令牌失效 / 403·429 限流 / 404 仓库不存在）
+                format!(
+                    "HTTP {} ({}{})",
+                    code,
+                    status.canonical_reason().unwrap_or("未知"),
+                    crate::commands::utils::github_status_hint(code)
+                )
+            } else {
+                format!("HTTP {} ({}), 可能是 API 限流或网络问题", code, status.canonical_reason().unwrap_or("未知"))
+            };
             continue;
         }
         // 读取响应文本，便于在解析失败时输出诊断信息
@@ -651,7 +725,7 @@ async fn do_npm_install(
     let config = load_config();
     let dest_dir = Path::new(&config.versions_dir).join(&id).join(&version);
 
-    // 1. 先确认 npm 可用（GitNexus 等 npm 包依赖 Node.js 环境）
+    // 1. 先确认 npm 可用（npm_pkg_name 型项目依赖 Node.js 环境）
     let npm_probe = super::super::hidden_cmd::hidden_cmd("npm")
         .arg("--version")
         .output()

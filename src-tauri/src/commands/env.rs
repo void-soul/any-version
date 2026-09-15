@@ -244,7 +244,7 @@ pub fn append_to_user_path(paths: &[String]) -> Result<(), String> {
 ///
 /// 只返回**真实存在**的目录：rustup 把 shim 放在 `$CARGO_HOME\bin`，而 `$RUSTUP_HOME` 下没有
 /// `bin`，所以 rust 只会得到 `caches\cargo\bin` 一条。
-fn sub_dir_bin_paths(
+pub(crate) fn sub_dir_bin_paths(
     env_vars: &[super::project::types::EnvVarDef],
     cache_root: &Path,
 ) -> Vec<String> {

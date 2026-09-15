@@ -253,10 +253,15 @@ async fn fetch_npm_latest(package: &str) -> Result<Option<String>, String> {
 async fn fetch_github_latest(repo: &str) -> Result<Option<String>, String> {
     let client = build_http_client()?;
     let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
-    let resp = client
+    let mut req = client
         .get(&url)
         .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("X-GitHub-Api-Version", "2022-11-28");
+    // 附带 Token（SDK 模块设置优先，其次环境变量），避免未认证 60 次/小时限流
+    if let Some(token) = crate::commands::utils::github_api_token() {
+        req = req.bearer_auth(token);
+    }
+    let resp = req
         .send()
         .await
         .map_err(|e| format!("GitHub 请求失败: {}", e))?;
