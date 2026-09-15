@@ -205,6 +205,16 @@ pub fn get_sdk_link_dir() -> PathBuf {
     get_sdk_dir()
 }
 
+/// 缓存根目录：始终为 `data_dir/caches`。
+///
+/// 各 SDK 的「缓存型环境变量」（`env_vars.json` 里的 `sub_dir`，如 rust 的
+/// CARGO_HOME / RUSTUP_HOME）统一锚定在这里，与各包管理器「缓存目录设置」
+/// 写注册表时使用的路径同属一套布局（`caches/<名称>`），
+/// 避免出现 `data_dir/<sdk_id>/<sub_dir>` 与 `data_dir/caches/<sub_dir>` 两份缓存。
+pub fn get_cache_root() -> PathBuf {
+    get_data_dir().join("caches")
+}
+
 /// 供前端读取当前数据目录（命令）。
 #[tauri::command]
 pub fn get_data_dir_cmd() -> String {

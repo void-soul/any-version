@@ -28,7 +28,7 @@ import {
   Save,
   FileText,
 } from "lucide-react";
-import type { ProjectStatus, ProjectDef, EnvVarStatus, ServiceStatus, PackageManagerDef } from "./types";
+import type { ProjectStatus, ProjectDef, EnvVarStatus, ServiceStatus, PackageManagerDef, ManagedPathEntry } from "./types";
 import { PackageManagerTab as PackageManagerTabModular } from "./tabs/PackageManagerTab";
 import { ConfirmDialogHost } from "../shared/ConfirmDialog";
 import type { ConfirmRequest } from "../shared/ConfirmDialog";
@@ -277,6 +277,10 @@ export function VersionsTab({
 export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, repairingEnv, onRepairEnv, onRefresh }: SubTabProps) {
   const { t } = useTranslation();
   const vars: EnvVarStatus[] = project.env_vars_status ?? [];
+  // Kira 写入用户 PATH 的条目（托管时写入、取消托管时撤下），与环境变量同属托管面。
+  // 后端口径：只要 Kira 设置过且仍在用户 PATH 就返回；非完全托管时可能是残留条目。
+  const managedPaths: ManagedPathEntry[] = project.managed_path_entries ?? [];
+  const fullyManaged = project.managed && !project.is_simple_managed;
   const [isAdmin, setIsAdmin] = useState(true);
 
   useEffect(() => {
@@ -1019,6 +1023,62 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
 
 
 
+
+      {/* Kira 写入用户 PATH 的条目 —— 与环境变量同属托管面（只要 Kira 设置过就展示） */}
+      {managedPaths.length > 0 && (
+        <div className="border-t border-white/5 pt-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs font-semibold text-slate-300">{t("projsub.managedPathsTitle")}</span>
+            {!fullyManaged && (
+              <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[12px] font-semibold">{t("projsub.managedPathsResidual")}</span>
+            )}
+            <span className="text-[12px] text-slate-500">{t("projsub.managedPathsHint")}</span>
+          </div>
+          <div className="border border-white/5 rounded-xl overflow-hidden overflow-x-auto">
+            <table className="w-full text-left border-collapse text-[13px] min-w-[420px]">
+              <thead>
+                <tr className="bg-white/3 border-b border-white/5 text-slate-400 font-medium">
+                  <th className="p-2.5">{t("projsub.thManagedPath")}</th>
+                  <th className="p-2.5 w-36">{t("projsub.thManagedKind")}</th>
+                  <th className="p-2.5 w-24">{t("projsub.thStatus")}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5 text-slate-300">
+                {managedPaths.map((p) => {
+                  const statusText = !p.in_path
+                    ? t("projsub.managedPathNotInPath")
+                    : !p.exists
+                      ? t("projsub.managedPathDirMissing")
+                      : t("projsub.managedPathInPath");
+                  const ok = p.in_path && p.exists;
+                  return (
+                    <tr key={p.path} className="hover:bg-white/1">
+                      <td className="p-2.5 break-all select-text font-mono text-[12px] text-slate-200">{p.path}</td>
+                      <td className="p-2.5">
+                        {p.kind === "cache_bin" ? (
+                          <span className="px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20 text-[12px] font-semibold">{t("projsub.managedKindCache")}</span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-[12px] font-semibold">{t("projsub.managedKindSdk")}</span>
+                        )}
+                      </td>
+                      <td className="p-2.5">
+                        {ok ? (
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                        ) : (
+                          <span title={statusText}>
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[11px] text-slate-500 mt-1.5">{t("projsub.managedPathsFootnote")}</p>
+        </div>
+      )}
 
       {/* 高级模式：运行时环境变量（用户可配置） */}
       <div className="border-t border-white/5 pt-4">

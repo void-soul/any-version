@@ -203,6 +203,143 @@ pub fn add_to_user_path(paths: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// 把条目**追加到用户 PATH 末尾**（已存在时先移除再追加，确保落在最后）。
+///
+/// 与 `add_to_user_path`（插到最前，用于 SDK 自身的 bin，保证版本切换优先）相对：
+/// 缓存型环境变量的 bin —— rustup 把 `rustup.exe` 等 shim 放在 `$CARGO_HOME\bin` —— 必须排在
+/// `sdk\<id>\bin` **之后**。否则 shim 会抢走 `cargo`/`rustc`，Kira 通过 junction 做的
+/// 版本切换就失效了（实测 rustup 的 stable 是 1.96.0，而 Kira 管的是 1.88.0）。
+pub fn append_to_user_path(paths: &[String]) -> Result<(), String> {
+    let wanted: Vec<String> = paths
+        .iter()
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect();
+    if wanted.is_empty() {
+        return Ok(());
+    }
+
+    let current = get_registry_env("PATH").unwrap_or_default();
+    let mut parts: Vec<String> = std::env::split_paths(&current)
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+    for path in &wanted {
+        let lower = path.to_lowercase();
+        parts.retain(|p| p.to_lowercase() != lower);
+        parts.push(path.clone());
+    }
+
+    let new_path = std::env::join_paths(parts.iter().map(Path::new))
+        .map_err(|e| e.to_string())?
+        .to_string_lossy()
+        .to_string();
+    // 结果与现状一致就不写注册表（避免无意义的 WM_SETTINGCHANGE 广播与 PATH 抖动）
+    if new_path.eq_ignore_ascii_case(&current) {
+        return Ok(());
+    }
+    set_registry_env("PATH", &new_path)
+}
+
+/// 缓存型环境变量（`sub_dir`）对应的可执行目录：`<缓存根>/<sub_dir>/bin`。
+///
+/// 只返回**真实存在**的目录：rustup 把 shim 放在 `$CARGO_HOME\bin`，而 `$RUSTUP_HOME` 下没有
+/// `bin`，所以 rust 只会得到 `caches\cargo\bin` 一条。
+fn sub_dir_bin_paths(
+    env_vars: &[super::project::types::EnvVarDef],
+    cache_root: &Path,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for var in env_vars {
+        let Some(sub) = var.sub_dir.as_ref() else {
+            continue;
+        };
+        let dir = cache_root.join(sub).join("bin");
+        if dir.is_dir() {
+            let value = dir.to_string_lossy().to_string();
+            if !out.iter().any(|p| p.eq_ignore_ascii_case(&value)) {
+                out.push(value);
+            }
+        }
+    }
+    out
+}
+
+/// Kira 当前托管的全部 PATH 条目：各完全托管 SDK 的 bin 目录 + 其缓存型环境变量的 bin 目录。
+///
+/// 供「冲突检测 / 一键停用」排除**自托管**条目使用：例如 rust 的 `caches\cargo\bin` 里有
+/// `rustup.exe`，会命中 rustup 的 `path_keywords`，但它是 Kira 自己写进去的
+/// （cargokit 这类 rustup 生态工具硬依赖 PATH 上的 rustup.exe），
+/// 既不该报成冲突，更不该被"停用 rustup"删掉。
+pub fn managed_path_entries() -> Vec<String> {
+    let config = load_config();
+    let cache_root = crate::commands::config::get_cache_root();
+    let mut out: Vec<String> = Vec::new();
+    for item_id in &config.managed_items {
+        let link_dir = format!("{}\\{}", config.links_dir, item_id);
+        for path in super::project::scanner::get_bin_paths(item_id, &link_dir) {
+            push_unique_path(&mut out, path);
+        }
+        if let Some(def) = super::project::registry::find_by_id(item_id) {
+            for path in sub_dir_bin_paths(&def.env_vars, &cache_root) {
+                push_unique_path(&mut out, path);
+            }
+        }
+    }
+    out
+}
+
+/// 忽略大小写去重追加（PATH 条目在不同来源里大小写可能不一致）。
+fn push_unique_path(out: &mut Vec<String>, value: String) {
+    if !out.iter().any(|p| p.eq_ignore_ascii_case(&value)) {
+        out.push(value);
+    }
+}
+
+/// PATH 条目列表里是否已包含某目录（忽略大小写与结尾反斜杠）。
+fn path_list_contains(entries: &[String], target: &str) -> bool {
+    let normalize = |p: &str| p.trim().trim_end_matches('\\').to_lowercase();
+    let target = normalize(target);
+    entries.iter().any(|p| normalize(p) == target)
+}
+
+/// 列出某 SDK 被 Kira 托管写入用户 PATH 的条目（供前端「环境变量」页展示）。
+///
+/// 与 `configure_sdk_env_vars` / `remove_sdk_env_vars` 完全对应的两份来源：
+/// 1. `sdk_bin` —— SDK 自身的可执行目录（`bin_dirs`，如 `sdk\rust\bin`）；
+/// 2. `cache_bin` —— 缓存型环境变量（`sub_dir`）派生的 bin，如 `data_dir\caches\cargo\bin`
+///    （rustup 把 `rustup.exe` 等 shim 放在 `$CARGO_HOME\bin`，cargokit 这类工具硬依赖它）。
+///
+/// 只在**完全托管**时调用（调用方判断），因此这里不做托管判定。
+pub fn managed_path_entries_for_sdk(
+    sdk_id: &str,
+    link_dir: &str,
+    def: &super::project::types::ProjectDef,
+) -> Vec<super::project::types::ManagedPathEntry> {
+    let current: Vec<String> = std::env::split_paths(&get_registry_env("PATH").unwrap_or_default())
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+
+    let mut result: Vec<super::project::types::ManagedPathEntry> = Vec::new();
+    let push_entry = |path: String, kind: &str, result: &mut Vec<_>| {
+        let exists = Path::new(&path).exists();
+        let in_path = path_list_contains(&current, &path);
+        result.push(super::project::types::ManagedPathEntry {
+            path,
+            kind: kind.to_string(),
+            in_path,
+            exists,
+        });
+    };
+
+    for path in super::project::scanner::get_bin_paths(sdk_id, link_dir) {
+        push_entry(path, "sdk_bin", &mut result);
+    }
+    for path in sub_dir_bin_paths(&def.env_vars, &crate::commands::config::get_cache_root()) {
+        push_entry(path, "cache_bin", &mut result);
+    }
+    result
+}
+
 pub fn remove_from_user_path(paths: &[String]) -> Result<(), String> {
     if let Some(user_path) = get_registry_env("PATH") {
         let parts = std::env::split_paths(&user_path)
@@ -304,19 +441,27 @@ pub fn remove_from_system_path(paths: &[String]) -> Result<(), String> {
 ///
 /// 设计原则：
 ///   - 所有 *_HOME 类变量指向 link_dir（版本切换只需重定向 junction）
-///   - CARGO_HOME / RUSTUP_HOME 指向 link_dir 下的子目录
-///   - ANDROID_SDK_HOME 指向 link_dir 下的 .android 子目录
+///   - 需要独立缓存目录的变量（如 CARGO_HOME / RUSTUP_HOME）用 `sub_dir` 声明，
+///     值锚定到**缓存根** `data_dir/caches/<sub_dir>`（见 config::get_cache_root）
 /// 计算某 SDK 环境变量的目标值，并（对 sub_dir 类型）确保目录真实存在。
 ///
-/// - 带 `sub_dir` 的变量（如 CARGO_HOME/RUSTUP_HOME）锚定到**持久化数据目录**
-///   `get_data_dir()/<sdk_id>/<sub_dir>`，而非工具链 junction 之下。
-///   原因：link_dir 是指向某个具体版本工具链的 junction，版本目录内并不包含
+/// - 带 `sub_dir` 的变量（如 CARGO_HOME/RUSTUP_HOME）锚定到**缓存根**
+///   `get_cache_root()/<sub_dir>`（= `data_dir/caches/<sub_dir>`），不指向工具链 junction 之下，
+///   也不再拼 `<sdk_id>`。
+///   原因一：link_dir 是指向某个具体版本工具链的 junction，版本目录内并不包含
 ///   cargo/rustup 的缓存数据；若把 *_HOME 指向 junction 下的子目录，该目录不会存在，
 ///   导致 cargo/rustup 启动时因找不到 HOME 而失败。
+///   原因二：此前解析为 `data_dir/<sdk_id>/<sub_dir>`，与「缓存目录设置」写进注册表的
+///   `data_dir/caches/<sub_dir>` 分叉成两份真实缓存（本机实测 cargo 各 848MB / 2.2GB）；
+///   只要点一次「修复环境变量」，CARGO_HOME 就会被改到另一份，旧缓存变孤儿。
 /// - 不带 sub_dir 的变量直接用 link_dir（版本切换只需重定向 junction）。
-pub fn sdk_env_var_value(sdk_id: &str, link_dir: &str, var_info: &super::project::types::EnvVarDef) -> String {
+pub fn sdk_env_var_value(
+    _sdk_id: &str,
+    link_dir: &str,
+    var_info: &super::project::types::EnvVarDef,
+) -> String {
     if let Some(ref sub) = var_info.sub_dir {
-        let home = crate::commands::config::get_data_dir().join(sdk_id).join(sub);
+        let home = crate::commands::config::get_cache_root().join(sub);
         let _ = std::fs::create_dir_all(&home);
         home.to_string_lossy().to_string()
     } else {
@@ -366,6 +511,14 @@ pub fn configure_sdk_env_vars(sdk_id: &str, link_dir: &str, _version_dir: &str) 
     let bin_paths = crate::commands::project::scanner::get_bin_paths(sdk_id, link_dir);
     let _ = add_to_user_path(&bin_paths);
 
+    // 缓存型环境变量的 bin 目录**追加到 PATH 末尾**（rust 的 `caches\cargo\bin` 里有 rustup.exe）。
+    // 放末尾的理由见 append_to_user_path 的注释：让 rustup 生态工具可达，同时不抢 Kira 的版本切换。
+    if let Some(def) = registry::find_by_id(sdk_id) {
+        let cache_bin_paths =
+            sub_dir_bin_paths(&def.env_vars, &crate::commands::config::get_cache_root());
+        let _ = append_to_user_path(&cache_bin_paths);
+    }
+
     Ok(())
 }
 
@@ -400,6 +553,12 @@ pub fn remove_sdk_env_vars(sdk_id: &str) -> Result<(), String> {
     let link_str = junction_path.to_string_lossy().to_string();
     let bin_paths = crate::commands::project::scanner::get_bin_paths(sdk_id, &link_str);
     let _ = remove_from_user_path(&bin_paths);
+
+    // 与 configure 完全对称：缓存型环境变量的 bin 目录（如 rust 的 `caches\cargo\bin`）
+    // 只在托管期间存在；取消托管/卸载后必须一并撤下，不能留在用户 PATH 里当残留。
+    let cache_bin_paths =
+        sub_dir_bin_paths(&sdk_def.env_vars, &crate::commands::config::get_cache_root());
+    let _ = remove_from_user_path(&cache_bin_paths);
 
     Ok(())
 }
@@ -910,6 +1069,73 @@ pub fn save_path_directories(user_paths: Vec<String>, system_paths: Vec<String>,
     crate::sync_process_path();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::project::types::EnvVarDef;
+
+    fn var(name: &str, sub_dir: Option<&str>) -> EnvVarDef {
+        EnvVarDef {
+            name: name.to_string(),
+            desc: String::new(),
+            check_type: "path".to_string(),
+            tier: None,
+            sub_dir: sub_dir.map(|s| s.to_string()),
+        }
+    }
+
+    fn temp_cache_root(tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("kira-env-{}-{}", tag, nanos));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn test_sub_dir_bin_paths_only_returns_existing_dirs() {
+        let root = temp_cache_root("subdir");
+        std::fs::create_dir_all(root.join("cargo").join("bin")).unwrap();
+
+        let vars = vec![
+            var("CARGO_HOME", Some("cargo")),  // 存在 → 产出
+            var("RUSTUP_HOME", Some("rustup")), // 无 bin 目录 → 不产出
+            var("ANDROID_HOME", None),          // 非 sub_dir → 不产出
+            var("CARGO_HOME_TWIN", Some("cargo")), // 重复 → 去重
+        ];
+        let got = sub_dir_bin_paths(&vars, &root);
+        assert_eq!(
+            got,
+            vec![root.join("cargo").join("bin").to_string_lossy().to_string()]
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_path_list_contains_ignores_case_and_trailing_separator() {
+        let entries = vec![
+            r"C:\Windows".to_string(),
+            r"D:\any-versions\caches\cargo\bin\".to_string(),
+        ];
+        // 大小写不同、结尾是否带反斜杠都视为同一条（与 add/remove_from_user_path 的判定一致）
+        assert!(path_list_contains(&entries, r"d:\any-versions\caches\cargo\bin"));
+        assert!(path_list_contains(&entries, r"D:\any-versions\caches\cargo\bin\"));
+        assert!(!path_list_contains(&entries, r"D:\any-versions\sdk\rust\bin"));
+    }
+
+    #[test]
+    fn test_sub_dir_bin_paths_empty_when_nothing_matches() {
+        let root = temp_cache_root("subdir-empty");
+        std::fs::create_dir_all(&root).unwrap();
+        let vars = vec![var("RUSTUP_HOME", Some("rustup"))];
+        assert!(sub_dir_bin_paths(&vars, &root).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
 
 

@@ -29,10 +29,11 @@
         "RUSTUP_TOOLCHAIN"
       ],
       "path_keywords": [
-        ".cargo\\bin"
+        ".cargo\\bin",
+        "cargo\\bin"
       ],
       "exe_name": "rustup.exe",
-      "cache_default_path": "{data_dir}\\rust\\rustup",
+      "cache_default_path": "{data_dir}\\caches\\rustup",
       "cache_env_var": "RUSTUP_HOME"
     }
   ]

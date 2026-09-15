@@ -316,6 +316,22 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
     // 环境变量状态
     let env_vars_status = build_env_vars_status(def, &config.links_dir, config, managed && !is_simple_managed);
 
+    // Kira 写入用户 PATH 的条目 —— 只要 Kira 设置过（且还留在用户 PATH 里）就展示：
+    // - 完全托管：展示全部候选条目（含"未在 PATH/目录缺失"的告警，帮助发现失效）；
+    // - 未托管/简单托管/已取消托管：只展示仍留在用户 PATH 里的条目（例如取消托管
+    //   清理失败留下的残留），从未托管过的 SDK 其 links_dir 路径不会出现在 PATH，
+    //   过滤后为空数组，不会产生噪音。
+    let fully_managed = managed && !is_simple_managed;
+    let managed_path_entries = {
+        let link_dir = format!("{}\\{}", config.links_dir, id);
+        let entries = crate::commands::env::managed_path_entries_for_sdk(id, &link_dir, def);
+        if fully_managed {
+            entries
+        } else {
+            entries.into_iter().filter(|e| e.in_path).collect()
+        }
+    };
+
     // 缓存状态（主列表加载时跳过缓存大小计算以提升性能）
     let cache_status = if def.has_cache && !skip_cache {
         build_cache_status(def)
@@ -372,6 +388,7 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
         managed,
         is_simple_managed,
         env_vars_status,
+        managed_path_entries,
         cache_status,
         service_status,
         data_dirs_status,

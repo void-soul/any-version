@@ -79,6 +79,29 @@ pub fn matched_path_entries(path_value: &str, keywords: &[String]) -> Vec<String
         .collect()
 }
 
+/// 从匹配结果中剔除「Kira 自己托管」的 PATH 条目（忽略大小写与结尾反斜杠）。
+///
+/// 纯函数，便于单测；带注册表读取的包装见 `exclude_managed_entries`。
+fn filter_out_managed_entries(matched: Vec<String>, managed: &[String]) -> Vec<String> {
+    if managed.is_empty() {
+        return matched;
+    }
+    let normalize = |p: &str| p.trim().trim_end_matches('\\').to_lowercase();
+    let managed_set: std::collections::HashSet<String> =
+        managed.iter().map(|p| normalize(p)).collect();
+    matched
+        .into_iter()
+        .filter(|p| !managed_set.contains(&normalize(p)))
+        .collect()
+}
+
+/// 见 `filter_out_managed_entries`：托管条目（SDK 自身的 bin，以及缓存型环境变量的 bin，
+/// 如 rust 的 `caches\cargo\bin`）即使命中 `path_keywords` 也不算冲突，
+/// 且「停用」时必须保留 —— 那是 Kira 自己写进去的（rustup 生态工具硬依赖它）。
+fn exclude_managed_entries(matched: Vec<String>) -> Vec<String> {
+    filter_out_managed_entries(matched, &super::env::managed_path_entries())
+}
+
 /// 计算「一键停用」预案（纯函数，便于单测）。
 ///
 /// `managed_env_vars` 为该项目当前实际被 Kira 接管的变量集合
@@ -124,10 +147,11 @@ pub fn plan_disable(
     }
 
     if let Some(p) = user_path {
-        plan.user_path_entries = matched_path_entries(p, &mgr.path_keywords);
+        // 排除 Kira 自托管条目：预演列出的条目必须与实际删除的完全一致
+        plan.user_path_entries = exclude_managed_entries(matched_path_entries(p, &mgr.path_keywords));
     }
     if let Some(p) = system_path {
-        plan.system_path_entries = matched_path_entries(p, &mgr.path_keywords);
+        plan.system_path_entries = exclude_managed_entries(matched_path_entries(p, &mgr.path_keywords));
     }
 
     plan
@@ -232,6 +256,8 @@ pub fn get_conflict_managers_status(sdk_id: String) -> Result<Vec<ConflictManage
         if let Some(sys_path) = get_system_registry_env("PATH") {
             check_path(sys_path);
         }
+        // Kira 自己写入的条目（各 SDK 的 bin 与缓存型环境变量的 bin）不算冲突
+        let path_status = exclude_managed_entries(path_status);
         
         // 4. 获取缓存目录与空间大小
         // 以「缓存位置对应的环境变量」为唯一真源（如 rustup 的 RUSTUP_HOME、
@@ -411,7 +437,8 @@ pub fn handle_conflict_manager_action(
 fn disable_manager_in_path(path_keywords: &[String]) -> Result<(), String> {
     // 1. 用户级 PATH
     if let Some(user_path) = get_registry_env("PATH") {
-        let doomed = matched_path_entries(&user_path, path_keywords);
+        // 与预演（plan_disable）共用同一套过滤：Kira 托管的条目绝不删除
+        let doomed = exclude_managed_entries(matched_path_entries(&user_path, path_keywords));
         if !doomed.is_empty() {
             let doomed_lower: std::collections::HashSet<String> =
                 doomed.iter().map(|p| p.to_lowercase()).collect();
@@ -429,7 +456,7 @@ fn disable_manager_in_path(path_keywords: &[String]) -> Result<(), String> {
 
     // 2. 系统级 PATH（需要管理员权限；写失败静默忽略，不阻断用户级停用）
     if let Some(sys_path) = get_system_registry_env("PATH") {
-        let doomed = matched_path_entries(&sys_path, path_keywords);
+        let doomed = exclude_managed_entries(matched_path_entries(&sys_path, path_keywords));
         if !doomed.is_empty() {
             let doomed_lower: std::collections::HashSet<String> =
                 doomed.iter().map(|p| p.to_lowercase()).collect();
@@ -476,6 +503,29 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn filter_out_managed_entries_keeps_only_foreign_entries() {
+        let managed = vec![
+            r"D:\any-versions\caches\cargo\bin".to_string(),
+            r"D:\any-versions\sdk\rust\bin\".to_string(), // 结尾反斜杠也要能匹配
+        ];
+        let matched = vec![
+            r"D:\any-versions\caches\CARGO\bin".to_string(), // 大小写不同 → 仍算托管，剔除
+            r"D:\any-versions\sdk\rust\bin".to_string(),
+            r"C:\Users\me\.cargo\bin".to_string(), // 真正的外部 rustup shim → 保留
+        ];
+        assert_eq!(
+            filter_out_managed_entries(matched, &managed),
+            vec![r"C:\Users\me\.cargo\bin".to_string()]
+        );
+    }
+
+    #[test]
+    fn filter_out_managed_entries_is_noop_without_managed() {
+        let matched = vec![r"C:\Users\me\.cargo\bin".to_string()];
+        assert_eq!(filter_out_managed_entries(matched.clone(), &[]), matched);
     }
 
     #[test]

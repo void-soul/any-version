@@ -545,6 +545,24 @@ pub struct ServiceStatus {
     pub system_service_name: Option<String>,
 }
 
+/// Kira 托管写入用户 PATH 的条目（前端「环境变量」页展示用）。
+///
+/// 与 `EnvVarStatus` 的区别：这些是 **PATH 里的目录**，不是环境变量。
+/// 它们由 `configure_sdk_env_vars` 写入、`remove_sdk_env_vars` 撤下，
+/// 即「只在托管期间存在」，因此属于托管面，需要在同一个界面里可见。
+#[derive(Serialize, Clone, Debug)]
+pub struct ManagedPathEntry {
+    /// 目录路径
+    pub path: String,
+    /// `sdk_bin` = SDK 自身的可执行目录（bin_dirs，如 `sdk\rust\bin`）；
+    /// `cache_bin` = 缓存型环境变量派生的 bin（如 `data_dir\caches\cargo\bin`，里面是 rustup shim）
+    pub kind: String,
+    /// 是否已写入用户 PATH
+    pub in_path: bool,
+    /// 该目录在磁盘上是否存在
+    pub exists: bool,
+}
+
 /// 项目运行时状态（实时扫描结果）
 #[derive(Serialize, Clone, Debug)]
 pub struct ProjectStatus {
@@ -570,6 +588,9 @@ pub struct ProjectStatus {
     pub is_simple_managed: bool,
     /// 环境变量状态列表
     pub env_vars_status: Vec<EnvVarStatus>,
+    /// Kira 托管写入用户 PATH 的条目（未托管/简单托管时为空）
+    #[serde(default)]
+    pub managed_path_entries: Vec<ManagedPathEntry>,
     /// 缓存状态（如果项目有缓存）
     pub cache_status: Option<CacheStatus>,
     /// 服务状态（如果项目是服务）

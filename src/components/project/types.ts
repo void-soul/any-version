@@ -116,6 +116,17 @@ export interface ProjectDelegation {
   manage_optional_tools: string[];
 }
 
+/** Kira 托管写入用户 PATH 的条目（环境变量之外，Kira 也会写 PATH） */
+export interface ManagedPathEntry {
+  path: string;
+  /** sdk_bin = SDK 自身可执行目录；cache_bin = 缓存型环境变量派生的 bin（如 rustup shim 目录） */
+  kind: "sdk_bin" | "cache_bin" | string;
+  /** 是否已写入用户 PATH */
+  in_path: boolean;
+  /** 目录在磁盘上是否存在 */
+  exists: boolean;
+}
+
 export interface ProjectStatus {
   id: string;
   display_name: string;
@@ -128,6 +139,8 @@ export interface ProjectStatus {
   managed: boolean;
   is_simple_managed: boolean;
   env_vars_status: EnvVarStatus[];
+  /** Kira 写入用户 PATH 的条目：只要 Kira 设置过且仍在用户 PATH 就返回（完全托管时还含未生效的告警条目） */
+  managed_path_entries?: ManagedPathEntry[];
   cache_status: CacheStatus | null;
   service_status: ServiceStatus | null;
   data_dirs_status?: DataDirStatus[];
