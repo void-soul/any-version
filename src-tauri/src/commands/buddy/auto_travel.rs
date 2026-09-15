@@ -24,6 +24,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
 
 use super::action_log;
+use super::daily_history::{self, travel_status, TravelPatch};
 use super::models::{BuddyAccount, BuddyPlatform};
 use super::{api, store};
 
@@ -191,6 +192,96 @@ pub fn save_config(config: &BuddyAutoTravelConfig) -> Result<(), String> {
     result
 }
 
+/// 今天是否还有账号没有生成派出计划（跨天 / 首次运行 / 新增账号）。
+///
+/// 与自动签到同构：让「每天打开应用」就把今天的计划生成出来，
+/// 不再等到 `startTime`，从根上消除前端"一直显示未安排"的现象。
+pub fn needs_replan(config: &BuddyAutoTravelConfig, accounts: &[BuddyAccount]) -> bool {
+    let today = super::auto_checkin::get_today_date_string();
+    let Some(schedules) = config.account_schedules.as_ref() else {
+        return !accounts.is_empty();
+    };
+    accounts.iter().any(|account| {
+        schedules
+            .get(&account.id)
+            .map(|schedule| schedule.scheduled_date != today)
+            .unwrap_or(true)
+    })
+}
+
+/// 把一条派旅行结果写进每日归档（失败只打日志，不影响状态机）。
+///
+/// `date` 传「这笔旅行归属的日期」：派出/归来/领取都归到出发那天
+/// （跨零点的情况，比如 23:50 出发、次日 01:00 归来，仍然记在出发日）。
+fn archive_travel(account: &BuddyAccount, date: &str, patch: TravelPatch) {
+    let email = if account.email.trim().is_empty() {
+        account.id.clone()
+    } else {
+        account.email.clone()
+    };
+    if let Err(err) = daily_history::upsert_travel(date, &account.id, &email, patch) {
+        eprintln!(
+            "[BuddyAutoTravel] 写入派旅行归档失败({}): {}",
+            account.id, err
+        );
+    }
+}
+
+/// 当前本地时间 `HH:MM:SS`。
+fn now_time_string() -> String {
+    daily_history::now_time_string()
+}
+
+/// 计划发生变化（跨天重规划 / 首次生成）时同步归档（与签到侧同构）。
+fn archive_schedule_changes(
+    before: &HashMap<String, BuddyAccountTravelState>,
+    after: &BuddyAutoTravelConfig,
+    accounts: &[BuddyAccount],
+) {
+    let today = super::auto_checkin::get_today_date_string();
+    let schedules = after.account_schedules.clone().unwrap_or_default();
+    for account in accounts {
+        let old = before.get(&account.id);
+        let new = schedules.get(&account.id);
+        let plan_changed = match (old, new) {
+            (Some(o), Some(n)) => {
+                o.scheduled_date != n.scheduled_date || o.scheduled_minute != n.scheduled_minute
+            }
+            (None, Some(_)) => true,
+            _ => false,
+        };
+        if !plan_changed {
+            continue;
+        }
+        if let Some(o) = old {
+            if o.scheduled_date != today {
+                if let Err(err) = daily_history::finalize_stale_day(&o.scheduled_date) {
+                    eprintln!(
+                        "[BuddyAutoTravel] 收尾旧日期归档失败({}): {}",
+                        o.scheduled_date, err
+                    );
+                }
+            }
+        }
+        if let Some(n) = new {
+            if n.scheduled_date == today {
+                let plan_time = super::auto_checkin::format_minutes(n.scheduled_minute);
+                if let Err(err) = daily_history::upsert_travel_plan(
+                    &today,
+                    &account.id,
+                    &account.email,
+                    &plan_time,
+                ) {
+                    eprintln!(
+                        "[BuddyAutoTravel] 写入计划归档失败({}): {}",
+                        account.id, err
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// 为每个账号生成「当天」的派出计划（随机落在 [startTime, endTime] 内）。
 ///
 /// `allow_generate`：仅当到达当天开始时间（或用户强制立即执行）才生成，
@@ -293,10 +384,15 @@ pub async fn run_auto_travel_cycle_if_needed(
     let now = Local::now();
     let current_minute = (now.hour() * 60 + now.minute()) as i32;
     let today_str = get_today_date_string();
-    let allow_generate =
-        force || current_minute >= super::auto_checkin::parse_time_to_minutes(&config.start_time);
+    let cross_day = needs_replan(&config, &accounts);
+    let allow_generate = force
+        || cross_day
+        || current_minute >= super::auto_checkin::parse_time_to_minutes(&config.start_time);
+    let before_schedules = config.account_schedules.clone().unwrap_or_default();
     if ensure_travel_schedules(&mut config, &accounts, allow_generate) {
         save_config_without_wake(&config)?;
+        // 计划变更同步归档：旧日期收尾 + 今日计划时间
+        archive_schedule_changes(&before_schedules, &config, &accounts);
         let _ = app.emit("buddy-auto-travel-config-changed", ());
     }
 
@@ -328,6 +424,13 @@ pub async fn run_auto_travel_cycle_if_needed(
             continue;
         }
 
+        // 这笔旅行归属的日期：归来/领取都归档到出发那天
+        // （跨零点时，比如 23:50 出发、次日 01:00 归来，仍记在出发日）
+        let travel_day = sch
+            .last_depart_date
+            .clone()
+            .unwrap_or_else(|| today_str.clone());
+
         let status = match api::travel_status(
             &account.access_token,
             account.uid.as_deref(),
@@ -349,6 +452,15 @@ pub async fn run_auto_travel_cycle_if_needed(
                         Some("令牌已失效，请打开 WorkBuddy 刷新登录态".to_string()),
                         None,
                     ));
+                    archive_travel(
+                        account,
+                        &travel_day,
+                        TravelPatch::new()
+                            .status(travel_status::FAILED)
+                            .message(Some(
+                                "令牌已失效，请打开 WorkBuddy 刷新登录态".to_string(),
+                            )),
+                    );
                     continue;
                 }
                 eprintln!("[BuddyAutoTravel] 账号 {} 查询旅行状态失败: {}", account.id, e);
@@ -357,9 +469,16 @@ pub async fn run_auto_travel_cycle_if_needed(
                     &account.id,
                     &email_display,
                     "failed",
-                    Some(e),
+                    Some(e.clone()),
                     None,
                 ));
+                archive_travel(
+                    account,
+                    &travel_day,
+                    TravelPatch::new()
+                        .status(travel_status::FAILED)
+                        .message(Some(e)),
+                );
                 continue;
             }
         };
@@ -369,6 +488,8 @@ pub async fn run_auto_travel_cycle_if_needed(
         };
 
         if status.state == "arrived" {
+            // 我们是"这一轮才发现它回来"，所以归来时间取当下，误差 ≤ 轮询间隔
+            let back_time = now_time_string();
             let Some(record_id) = status.record_id.clone() else {
                 eprintln!("[BuddyAutoTravel] 账号 {} arrived 但缺少 record_id", account.id);
                 entries.push(action_log::make_entry(
@@ -379,6 +500,15 @@ pub async fn run_auto_travel_cycle_if_needed(
                     Some("旅行已归来但缺少 record_id，无法领取".to_string()),
                     None,
                 ));
+                // 它的确已经回来了，只是拿不到 record_id 领不了：按「已归来待领取」归档
+                archive_travel(
+                    account,
+                    &travel_day,
+                    TravelPatch::new()
+                        .back_time(back_time)
+                        .status(travel_status::ARRIVED)
+                        .message(Some("旅行已归来但缺少 record_id，无法领取".to_string())),
+                );
                 continue;
             };
             match api::travel_claim(
@@ -402,6 +532,15 @@ pub async fn run_auto_travel_cycle_if_needed(
                         Some("领取旅行奖励".to_string()),
                         reward,
                     ));
+                    archive_travel(
+                        account,
+                        &travel_day,
+                        TravelPatch::new()
+                            .back_time(back_time.clone())
+                            .claim_time(now_time_string())
+                            .status(travel_status::CLAIMED)
+                            .credit(reward),
+                    );
                     eprintln!(
                         "[BuddyAutoTravel] 账号 {} 领取旅行奖励: {:?} 积分",
                         account.id, reward
@@ -422,6 +561,15 @@ pub async fn run_auto_travel_cycle_if_needed(
                             Some("奖励已在客户端领取".to_string()),
                             None,
                         ));
+                        archive_travel(
+                            account,
+                            &travel_day,
+                            TravelPatch::new()
+                                .back_time(back_time)
+                                .claim_time(now_time_string())
+                                .status(travel_status::CLAIMED)
+                                .message(Some("奖励已在客户端领取".to_string())),
+                        );
                         eprintln!("[BuddyAutoTravel] 账号 {} 奖励已领取过，当日完成", account.id);
                     } else {
                         eprintln!(
@@ -433,9 +581,17 @@ pub async fn run_auto_travel_cycle_if_needed(
                             &account.id,
                             &email_display,
                             "failed",
-                            Some(e),
+                            Some(e.clone()),
                             None,
                         ));
+                        archive_travel(
+                            account,
+                            &travel_day,
+                            TravelPatch::new()
+                                .back_time(back_time)
+                                .status(travel_status::FAILED)
+                                .message(Some(e)),
+                        );
                     }
                 }
             }
@@ -451,6 +607,14 @@ pub async fn run_auto_travel_cycle_if_needed(
                 Some("今日已达派出上限".to_string()),
                 None,
             ));
+            // 从没由我们派出过 → 说明名额被外部用掉了，次数至少记 1 次
+            let patch = TravelPatch::new().status(travel_status::LIMIT_REACHED);
+            let patch = if sch.last_depart_date.as_deref() == Some(&today_str) {
+                patch
+            } else {
+                patch.add_depart()
+            };
+            archive_travel(account, &travel_day, patch);
         } else if status.state == "idle" {
             // 空闲且未达上限：到达计划时间后派出（当日只派一次）
             if sch.last_depart_date.as_deref() != Some(&today_str) {
@@ -464,9 +628,9 @@ pub async fn run_auto_travel_cycle_if_needed(
                 .await
                 {
                     Ok(()) => {
+                        let depart_time = now_time_string();
                         state.last_depart_date = Some(today_str.clone());
-                        state.last_depart_time =
-                            Some(chrono::Local::now().format("%H:%M:%S").to_string());
+                        state.last_depart_time = Some(depart_time.clone());
                         acted = true;
                         entries.push(action_log::make_entry(
                             "travel",
@@ -476,6 +640,14 @@ pub async fn run_auto_travel_cycle_if_needed(
                             Some(format!("已派出旅行（地点 {}）", config.location_id)),
                             None,
                         ));
+                        archive_travel(
+                            account,
+                            &today_str,
+                            TravelPatch::new()
+                                .depart_time(depart_time)
+                                .status(travel_status::TRAVELING)
+                                .add_depart(),
+                        );
                         eprintln!(
                             "[BuddyAutoTravel] 账号 {} 已派出旅行（地点 {}）",
                             account.id, config.location_id
@@ -496,9 +668,16 @@ pub async fn run_auto_travel_cycle_if_needed(
                                 &account.id,
                                 &email_display,
                                 "depart_rejected",
-                                Some(e),
+                                Some(e.clone()),
                                 None,
                             ));
+                            archive_travel(
+                                account,
+                                &travel_day,
+                                TravelPatch::new()
+                                    .status(travel_status::REJECTED)
+                                    .message(Some(e)),
+                            );
                         } else {
                             // 网络/服务端临时错误：下一轮重试
                             eprintln!(
@@ -510,9 +689,16 @@ pub async fn run_auto_travel_cycle_if_needed(
                                 &account.id,
                                 &email_display,
                                 "failed",
-                                Some(e),
+                                Some(e.clone()),
                                 None,
                             ));
+                            archive_travel(
+                                account,
+                                &travel_day,
+                                TravelPatch::new()
+                                    .status(travel_status::FAILED)
+                                    .message(Some(e)),
+                            );
                         }
                     }
                 }
@@ -531,6 +717,118 @@ pub async fn run_auto_travel_cycle_if_needed(
         return Ok("auth_expired".to_string());
     }
     Ok("completed".to_string())
+}
+
+/// 单个账号的「今日派旅行」视图（前端账号状态卡的一行）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuddyTravelTask {
+    pub account_id: String,
+    pub email: String,
+    /// pending | traveling | arrived | claimed | limit_reached | rejected | failed
+    /// | unfinished | none（既无计划也无记录 → 前端显示「未安排」）
+    pub status: String,
+    /// 计划派出时间（HH:MM）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_time: Option<String>,
+    /// 实际派出时间（HH:MM:SS）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depart_time: Option<String>,
+    /// 归来时间（HH:MM:SS，轮询发现的时刻，误差 ≤ 轮询间隔）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub back_time: Option<String>,
+    /// 领取奖励时间（HH:MM:SS）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim_time: Option<String>,
+    /// 今日派出次数（每天从 0 开始）
+    pub depart_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credit: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// 今日派旅行任务列表视图。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuddyTravelTasksView {
+    pub enabled: bool,
+    pub start_time: String,
+    pub end_time: String,
+    pub location_id: i64,
+    /// 今日计划是否已生成
+    pub generated: bool,
+    pub tasks: Vec<BuddyTravelTask>,
+}
+
+/// 组装「今日派旅行任务」列表（供前端账号状态卡与日历使用）。
+///
+/// 状态与时间优先取今日归档（跨天后仍可追溯、字段齐全），
+/// 归档缺失时回退到调度器里的今日计划（`account_schedules`）。
+pub fn build_travel_tasks_view() -> Result<BuddyTravelTasksView, String> {
+    let config = get_config_checked()?;
+    // 旅行是 WorkBuddy 专属活动
+    let accounts = store::list_accounts(BuddyPlatform::Workbuddy);
+    let today_str = super::auto_checkin::get_today_date_string();
+    let schedules = config.account_schedules.clone().unwrap_or_default();
+    let archive = daily_history::get_day(&today_str).unwrap_or_default();
+
+    let mut generated = false;
+    let mut tasks = Vec::with_capacity(accounts.len());
+    for account in &accounts {
+        let schedule = schedules.get(&account.id);
+        let scheduled_today = schedule
+            .map(|s| s.scheduled_date == today_str)
+            .unwrap_or(false);
+        if scheduled_today {
+            generated = true;
+        }
+        let archived = archive.get(&account.id).and_then(|record| record.travel.as_ref());
+        let email = if account.email.trim().is_empty() {
+            account.id.clone()
+        } else {
+            account.email.clone()
+        };
+        let plan_time = archived.and_then(|t| t.plan_time.clone()).or_else(|| {
+            if scheduled_today {
+                schedule.map(|s| super::auto_checkin::format_minutes(s.scheduled_minute))
+            } else {
+                None
+            }
+        });
+        let status = archived
+            .map(|t| t.status.clone())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                if plan_time.is_some() {
+                    travel_status::PENDING.to_string()
+                } else {
+                    travel_status::NONE.to_string()
+                }
+            });
+
+        tasks.push(BuddyTravelTask {
+            account_id: account.id.clone(),
+            email,
+            status,
+            plan_time,
+            depart_time: archived.and_then(|t| t.depart_time.clone()),
+            back_time: archived.and_then(|t| t.back_time.clone()),
+            claim_time: archived.and_then(|t| t.claim_time.clone()),
+            depart_count: archived.map(|t| t.depart_count).unwrap_or(0),
+            credit: archived.and_then(|t| t.credit),
+            message: archived.and_then(|t| t.message.clone()),
+        });
+    }
+
+    Ok(BuddyTravelTasksView {
+        enabled: config.enabled,
+        start_time: config.start_time.clone(),
+        end_time: config.end_time.clone(),
+        location_id: config.location_id,
+        generated,
+        tasks,
+    })
 }
 
 fn next_retry_delay(current: Duration) -> Duration {
@@ -691,6 +989,80 @@ mod tests {
         assert!(json.contains("\"locationId\":3"));
         let deserialized: BuddyAutoTravelConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized, config);
+    }
+
+    fn travel_state(date: &str, minute: i32) -> BuddyAccountTravelState {
+        BuddyAccountTravelState {
+            scheduled_date: date.to_string(),
+            scheduled_minute: minute,
+            last_depart_date: None,
+            last_depart_time: None,
+            last_done_date: None,
+            last_reward_credit: None,
+        }
+    }
+
+    #[test]
+    fn test_needs_replan_cross_day_and_empty_accounts() {
+        let accounts = vec![sample_account("acc_1", "a@x.com")];
+        let today = super::super::auto_checkin::get_today_date_string();
+
+        // 没有计划 → 需要
+        let mut config = BuddyAutoTravelConfig::default();
+        assert!(needs_replan(&config, &accounts));
+        // 没有账号 → 不需要（避免空转）
+        assert!(!needs_replan(&config, &[]));
+
+        // 今天的计划齐了 → 不需要
+        config.account_schedules = Some(HashMap::from([(
+            "acc_1".to_string(),
+            travel_state(&today, 540),
+        )]));
+        assert!(!needs_replan(&config, &accounts));
+
+        // 昨天的计划 → 需要（"打开应用即重新计划"）
+        config.account_schedules = Some(HashMap::from([(
+            "acc_1".to_string(),
+            travel_state("2020-01-01", 540),
+        )]));
+        assert!(needs_replan(&config, &accounts));
+    }
+
+    #[test]
+    fn test_cross_day_replan_clears_yesterday_progress() {
+        let accounts = vec![sample_account("acc_1", "a@x.com")];
+        let today = super::super::auto_checkin::get_today_date_string();
+        let mut config = BuddyAutoTravelConfig {
+            enabled: true,
+            start_time: "08:00".to_string(),
+            end_time: "12:00".to_string(),
+            location_id: 1,
+            account_schedules: Some(HashMap::from([(
+                "acc_1".to_string(),
+                BuddyAccountTravelState {
+                    scheduled_date: "2020-01-01".to_string(),
+                    scheduled_minute: 540,
+                    last_depart_date: Some("2020-01-01".to_string()),
+                    last_depart_time: Some("09:05:00".to_string()),
+                    last_done_date: Some("2020-01-01".to_string()),
+                    last_reward_credit: Some(7),
+                },
+            )])),
+        };
+
+        assert!(ensure_travel_schedules(&mut config, &accounts, true));
+        let schedule = config
+            .account_schedules
+            .unwrap()
+            .remove("acc_1")
+            .expect("schedule");
+        assert_eq!(schedule.scheduled_date, today);
+        // 昨天的派出/完成状态不会带到今天（即"每天清空"）
+        assert_eq!(schedule.last_depart_date, None);
+        assert_eq!(schedule.last_depart_time, None);
+        assert_eq!(schedule.last_done_date, None);
+        assert_eq!(schedule.last_reward_credit, None);
+        assert!((480..=720).contains(&schedule.scheduled_minute));
     }
 
     #[test]

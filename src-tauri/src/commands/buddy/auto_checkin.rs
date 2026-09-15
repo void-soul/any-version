@@ -20,6 +20,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
 
 use super::action_log;
+use super::daily_history::{self, checkin_status, CheckinPatch};
 use super::models::{BuddyAccount, BuddyPlatform};
 use super::{api, store};
 
@@ -91,6 +92,9 @@ pub struct BuddyCheckinTask {
     /// 实际签到时刻（HH:MM:SS，当日已签到时存在）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_checkin_time: Option<String>,
+    /// 实际时间来源（`kira`）；旧记录可能为空
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
@@ -232,6 +236,24 @@ pub fn random_u32_below(max: u32) -> u32 {
     u32::from_le_bytes(buf) % max
 }
 
+/// 今天是否还有账号没有生成计划（跨天 / 首次运行 / 新增账号）。
+///
+/// 这是「每天打开时若发现过了一天就重新计划」的判定：只要有一个账号的计划
+/// 不是今天的，就允许立即重规划（不必等 `startTime`），从根上消除
+/// 前端"一直显示待生成计划"的现象。
+pub fn needs_replan(config: &BuddyAutoCheckinConfig, accounts: &[BuddyAccount]) -> bool {
+    let today = get_today_date_string();
+    let Some(schedules) = config.account_schedules.as_ref() else {
+        return !accounts.is_empty();
+    };
+    accounts.iter().any(|account| {
+        schedules
+            .get(&account.id)
+            .map(|schedule| schedule.scheduled_date != today)
+            .unwrap_or(true)
+    })
+}
+
 /// 为每个账号生成「当天」的计划签到分钟（随机落在 [startTime, endTime] 内）。
 ///
 /// `allow_generate`：是否允许生成**今天**的计划。调用方传入「已到达当天开始时间」
@@ -318,6 +340,74 @@ fn mark_schedule_checked(
     schedule.last_checked_time = Some(Local::now().format("%H:%M:%S").to_string());
 }
 
+/// 把一条签到结果写进每日归档（失败只打日志，绝不影响签到主流程）。
+fn archive_checkin(account: &BuddyAccount, patch: CheckinPatch) {
+    let email = if account.email.trim().is_empty() {
+        account.id.clone()
+    } else {
+        account.email.clone()
+    };
+    let today = get_today_date_string();
+    if let Err(err) = daily_history::upsert_checkin(&today, &account.id, &email, patch) {
+        eprintln!(
+            "[BuddyAutoCheckin] 写入签到归档失败({}): {}",
+            account.id, err
+        );
+    }
+}
+
+/// 计划发生变化（跨天重规划 / 首次生成）时同步归档：
+/// - 旧日期的记录收尾为 `unfinished`（日历上区分「没做」与「没做完」）；
+/// - 新日期的计划时间写入归档（状态仅在为空时置 `pending`，不降级已成功的记录）。
+fn archive_schedule_changes(
+    before: &HashMap<String, BuddyAccountScheduleState>,
+    after: &BuddyAutoCheckinConfig,
+    accounts: &[BuddyAccount],
+) {
+    let today = get_today_date_string();
+    let schedules = after.account_schedules.clone().unwrap_or_default();
+    for account in accounts {
+        let old = before.get(&account.id);
+        let new = schedules.get(&account.id);
+        let plan_changed = match (old, new) {
+            (Some(o), Some(n)) => {
+                o.scheduled_date != n.scheduled_date || o.scheduled_minute != n.scheduled_minute
+            }
+            (None, Some(_)) => true,
+            _ => false,
+        };
+        if !plan_changed {
+            continue;
+        }
+        if let Some(o) = old {
+            if o.scheduled_date != today {
+                if let Err(err) = daily_history::finalize_stale_day(&o.scheduled_date) {
+                    eprintln!(
+                        "[BuddyAutoCheckin] 收尾旧日期归档失败({}): {}",
+                        o.scheduled_date, err
+                    );
+                }
+            }
+        }
+        if let Some(n) = new {
+            if n.scheduled_date == today {
+                let plan_time = format_minutes(n.scheduled_minute);
+                if let Err(err) = daily_history::upsert_checkin_plan(
+                    &today,
+                    &account.id,
+                    &account.email,
+                    &plan_time,
+                ) {
+                    eprintln!(
+                        "[BuddyAutoCheckin] 写入计划归档失败({}): {}",
+                        account.id, err
+                    );
+                }
+            }
+        }
+    }
+}
+
 pub async fn run_auto_checkin_cycle_if_needed(
     platform: BuddyPlatform,
     app: &AppHandle,
@@ -338,13 +428,19 @@ pub async fn run_auto_checkin_cycle_if_needed(
         return Ok("no_accounts".to_string());
     }
 
-    // 只有到达当天开始时间（或用户强制立即执行）才生成今日计划
+    // 生成今日计划的条件：用户强制 / 已到当天开始时间 / 发现过了一天（跨天重规划）。
+    // 后者保证「每天打开应用后立刻重新计划」，而不必等到 startTime。
     let now = Local::now();
     let current_minute = (now.hour() * 60 + now.minute()) as i32;
-    let allow_generate = force || current_minute >= parse_time_to_minutes(&config.start_time);
+    let cross_day = needs_replan(&config, &accounts);
+    let allow_generate =
+        force || cross_day || current_minute >= parse_time_to_minutes(&config.start_time);
+    let before_schedules = config.account_schedules.clone().unwrap_or_default();
     let schedule_changed = ensure_account_schedules(&mut config, &accounts, allow_generate);
     if schedule_changed {
         save_config_without_wake(&config)?;
+        // 计划变更同步归档：旧日期收尾 + 今日计划时间
+        archive_schedule_changes(&before_schedules, &config, &accounts);
         let _ = app.emit("buddy-auto-checkin-config-changed", ());
     }
 
@@ -412,6 +508,14 @@ pub async fn run_auto_checkin_cycle_if_needed(
                     Some(status.daily_credit),
                 ));
                 mark_schedule_checked(&mut new_schedules, &account.id, &today_str, current_minute);
+                archive_checkin(
+                    account,
+                    CheckinPatch::new()
+                        .actual_time(daily_history::now_time_string())
+                        .status(checkin_status::ALREADY_CHECKED)
+                        .source("kira")
+                        .credit(Some(status.daily_credit)),
+                );
             }
             Ok(status) if !status.active => {
                 retry_needed = true;
@@ -423,6 +527,12 @@ pub async fn run_auto_checkin_cycle_if_needed(
                     Some("签到活动未开启或不适用".to_string()),
                     None,
                 ));
+                archive_checkin(
+                    account,
+                    CheckinPatch::new()
+                        .status(checkin_status::INACTIVE)
+                        .message(Some("签到活动未开启或不适用".to_string())),
+                );
             }
             Ok(_) => match api::perform_checkin(
                 &account.access_token,
@@ -457,6 +567,16 @@ pub async fn run_auto_checkin_cycle_if_needed(
                     ));
 
                     mark_schedule_checked(&mut new_schedules, &account.id, &today_str, current_minute);
+                    archive_checkin(
+                        account,
+                        CheckinPatch::new()
+                            .actual_time(daily_history::now_time_string())
+                            .status(checkin_status::SUCCESS)
+                            .source("kira")
+                            .credit(res.credit)
+                            .streak(Some(streak))
+                            .message(Some("签到成功".to_string())),
+                    );
                 }
                 Ok(res) => {
                     match api::get_checkin_status(
@@ -482,17 +602,34 @@ pub async fn run_auto_checkin_cycle_if_needed(
                                 &today_str,
                                 current_minute,
                             );
+                            archive_checkin(
+                                account,
+                                CheckinPatch::new()
+                                    .actual_time(daily_history::now_time_string())
+                                    .status(checkin_status::ALREADY_CHECKED)
+                                    .source("kira"),
+                            );
                         }
                         _ => {
                             retry_needed = true;
+                            let message = res
+                                .message
+                                .clone()
+                                .unwrap_or_else(|| "签到失败".to_string());
                             entries.push(action_log::make_entry(
                                 "checkin",
                                 &account.id,
                                 &email_display,
                                 "failed",
-                                Some(res.message.clone().unwrap_or_else(|| "签到失败".to_string())),
+                                Some(message.clone()),
                                 None,
                             ));
+                            archive_checkin(
+                                account,
+                                CheckinPatch::new()
+                                    .status(checkin_status::FAILED)
+                                    .message(Some(message)),
+                            );
                         }
                     }
                 }
@@ -504,9 +641,15 @@ pub async fn run_auto_checkin_cycle_if_needed(
                         &account.id,
                         &email_display,
                         "failed",
-                        Some(err),
+                        Some(err.clone()),
                         None,
                     ));
+                    archive_checkin(
+                        account,
+                        CheckinPatch::new()
+                            .status(checkin_status::FAILED)
+                            .message(Some(err)),
+                    );
                 }
             },
             Err(err) => {
@@ -517,9 +660,15 @@ pub async fn run_auto_checkin_cycle_if_needed(
                     &account.id,
                     &email_display,
                     "failed",
-                    Some(err),
+                    Some(err.clone()),
                     None,
                 ));
+                archive_checkin(
+                    account,
+                    CheckinPatch::new()
+                        .status(checkin_status::FAILED)
+                        .message(Some(err)),
+                );
             }
         }
     }
@@ -581,6 +730,8 @@ pub fn build_tasks_view(platform: BuddyPlatform) -> Result<BuddyCheckinTasksView
     }
 
     let schedules = config.account_schedules.clone().unwrap_or_default();
+    // 今日归档：实际签到时间与来源优先从这里取（跨天后仍可追溯）
+    let archive = daily_history::get_day(&today_str).unwrap_or_default();
     let mut tasks = Vec::with_capacity(accounts.len());
     let mut generated = false;
 
@@ -598,6 +749,7 @@ pub fn build_tasks_view(platform: BuddyPlatform) -> Result<BuddyCheckinTasksView
             .unwrap_or(false);
         let detail = today_results.get(&account.id);
         let status = derive_task_status(checked_today, detail);
+        let archived_checkin = archive.get(&account.id).and_then(|r| r.checkin.as_ref());
 
         let email = if account.email.trim().is_empty() {
             account.id.clone()
@@ -614,9 +766,14 @@ pub fn build_tasks_view(platform: BuddyPlatform) -> Result<BuddyCheckinTasksView
                 None
             },
             last_attempt_time: detail.map(|d| d.timestamp.get(11..).unwrap_or_default().to_string()),
-            last_checkin_time: schedule
-                .filter(|_| checked_today)
-                .and_then(|s| s.last_checked_time.clone()),
+            last_checkin_time: archived_checkin
+                .and_then(|c| c.actual_time.clone())
+                .or_else(|| {
+                    schedule
+                        .filter(|_| checked_today)
+                        .and_then(|s| s.last_checked_time.clone())
+                }),
+            source: archived_checkin.and_then(|c| c.source.clone()),
             message: detail.and_then(|d| d.message.clone()),
         });
     }
@@ -767,6 +924,85 @@ mod tests {
         // 到达开始时间：生成
         assert!(ensure_account_schedules(&mut config, &accounts, true));
         assert!(config.account_schedules.unwrap().contains_key("acc_1"));
+    }
+
+    fn schedule_state(date: &str, minute: i32) -> BuddyAccountScheduleState {
+        BuddyAccountScheduleState {
+            scheduled_date: date.to_string(),
+            scheduled_minute: minute,
+            last_checked_date: None,
+            last_checked_time: None,
+        }
+    }
+
+    #[test]
+    fn test_needs_replan_cross_day_and_new_account() {
+        let accounts = vec![
+            sample_account("acc_1", "a@x.com"),
+            sample_account("acc_2", "b@x.com"),
+        ];
+        let today = get_today_date_string();
+
+        // 完全没有计划（首次运行）→ 需要重规划
+        let mut config = BuddyAutoCheckinConfig::default();
+        assert!(needs_replan(&config, &accounts));
+
+        // 两个账号都是今天的计划 → 不需要（已生成的随机时间不抖动）
+        config.account_schedules = Some(HashMap::from([
+            ("acc_1".to_string(), schedule_state(&today, 400)),
+            ("acc_2".to_string(), schedule_state(&today, 500)),
+        ]));
+        assert!(!needs_replan(&config, &accounts));
+
+        // 昨天遗留的计划 → 需要重规划（"打开应用即重新计划"就靠这条）
+        config.account_schedules = Some(HashMap::from([
+            ("acc_1".to_string(), schedule_state("2020-01-01", 400)),
+            ("acc_2".to_string(), schedule_state(&today, 500)),
+        ]));
+        assert!(needs_replan(&config, &accounts));
+
+        // 新增账号（计划表里没有它）→ 需要重规划
+        config.account_schedules = Some(HashMap::from([(
+            "acc_1".to_string(),
+            schedule_state(&today, 400),
+        )]));
+        assert!(needs_replan(&config, &accounts));
+
+        // 没有账号 → 不需要（避免空转）
+        assert!(!needs_replan(&config, &[]));
+    }
+
+    #[test]
+    fn test_cross_day_replan_resets_daily_state() {
+        let accounts = vec![sample_account("acc_1", "a@x.com")];
+        let today = get_today_date_string();
+        let mut config = BuddyAutoCheckinConfig {
+            enabled: true,
+            start_time: "06:00".to_string(),
+            end_time: "12:00".to_string(),
+            last_checked_date: None,
+            account_schedules: Some(HashMap::from([(
+                "acc_1".to_string(),
+                BuddyAccountScheduleState {
+                    scheduled_date: "2020-01-01".to_string(),
+                    scheduled_minute: 400,
+                    last_checked_date: Some("2020-01-01".to_string()),
+                    last_checked_time: Some("06:40:00".to_string()),
+                },
+            )])),
+        };
+
+        // 跨天重规划：计划日期变成今天，昨天的签到状态不会带到今天（即"每天清空"）
+        assert!(ensure_account_schedules(&mut config, &accounts, true));
+        let schedule = config
+            .account_schedules
+            .unwrap()
+            .remove("acc_1")
+            .expect("schedule");
+        assert_eq!(schedule.scheduled_date, today);
+        assert_eq!(schedule.last_checked_date, None);
+        assert_eq!(schedule.last_checked_time, None);
+        assert!(schedule.scheduled_minute >= 360 && schedule.scheduled_minute <= 720);
     }
 
     #[test]

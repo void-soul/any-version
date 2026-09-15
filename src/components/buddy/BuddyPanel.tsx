@@ -31,6 +31,8 @@ import {
   X,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
+  CalendarDays,
   Folder,
   Settings,
   Bell,
@@ -179,6 +181,8 @@ export interface BuddyCheckinTask {
   lastAttemptTime?: string | null;
   /** 实际签到时刻（HH:MM:SS，当日已签到时存在） */
   lastCheckinTime?: string | null;
+  /** 实际时间来源（kira），旧记录可能为空 */
+  source?: string | null;
   message?: string | null;
 }
 
@@ -186,10 +190,75 @@ export interface BuddyCheckinTasksView {
   enabled: boolean;
   startTime: string;
   endTime: string;
-  /** 今日计划是否已生成（到达开始时间后才生成） */
+  /** 今日计划是否已生成 */
   generated: boolean;
   tasks: BuddyCheckinTask[];
 }
+
+/** 单个账号的今日派旅行任务（后端 buddy_auto_travel_tasks 返回） */
+export interface BuddyTravelTask {
+  accountId: string;
+  email: string;
+  /**
+   * pending（待派出）| traveling（旅行中）| arrived（已归来待领取）| claimed（已领取）
+   * | limit_reached（今日已结束）| rejected（派出被拒）| failed（失败）
+   * | unfinished（当天未完成）| none（未安排）
+   */
+  status: string;
+  /** 计划派出时间（HH:MM） */
+  planTime?: string | null;
+  /** 实际派出时间（HH:MM:SS） */
+  departTime?: string | null;
+  /** 归来时间（HH:MM:SS，轮询发现的时刻） */
+  backTime?: string | null;
+  /** 领取奖励时间（HH:MM:SS） */
+  claimTime?: string | null;
+  /** 今日派出次数（每天从 0 开始） */
+  departCount: number;
+  credit?: number | null;
+  message?: string | null;
+}
+
+export interface BuddyTravelTasksView {
+  enabled: boolean;
+  startTime: string;
+  endTime: string;
+  locationId: number;
+  generated: boolean;
+  tasks: BuddyTravelTask[];
+}
+
+/** 每日归档：单账号某天的签到记录 */
+export interface BuddyDailyCheckinRecord {
+  planTime?: string | null;
+  actualTime?: string | null;
+  status: string;
+  source?: string | null;
+  credit?: number | null;
+  streak?: number | null;
+  message?: string | null;
+}
+
+/** 每日归档：单账号某天的派旅行记录 */
+export interface BuddyDailyTravelRecord {
+  planTime?: string | null;
+  departTime?: string | null;
+  backTime?: string | null;
+  claimTime?: string | null;
+  departCount: number;
+  status: string;
+  credit?: number | null;
+  message?: string | null;
+}
+
+export interface BuddyDailyAccountRecord {
+  email: string;
+  checkin?: BuddyDailyCheckinRecord | null;
+  travel?: BuddyDailyTravelRecord | null;
+}
+
+/** 每日归档：日期 → 账号 id → 记录（buddy_get_daily_records 返回） */
+export type BuddyDailyRecords = Record<string, Record<string, BuddyDailyAccountRecord>>;
 
 export interface CheckinStatus {
   todayCheckedIn: boolean;
@@ -235,6 +304,53 @@ const localDateStr = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
     d.getDate()
   ).padStart(2, "0")}`;
+};
+
+/** 当前月份 "YYYY-MM" */
+const localMonthStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
+
+/** 月份 → 日历网格（周日开头，月初补空格），元素为 "YYYY-MM-DD" 或 null */
+const buildMonthCells = (month: string): (string | null)[] => {
+  const [year, m] = month.split("-").map(Number);
+  if (!year || !m) return [];
+  const lead = new Date(year, m - 1, 1).getDay();
+  const daysInMonth = new Date(year, m, 0).getDate();
+  const cells: (string | null)[] = Array.from({ length: lead }, () => null);
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    cells.push(`${month}-${String(day).padStart(2, "0")}`);
+  }
+  return cells;
+};
+
+/** 月份 → [月初, 月末]（供 buddy_get_daily_records 查询） */
+const monthBounds = (month: string): { from: string; to: string } => {
+  const [year, m] = month.split("-").map(Number);
+  const daysInMonth = new Date(year, m, 0).getDate();
+  return { from: `${month}-01`, to: `${month}-${String(daysInMonth).padStart(2, "0")}` };
+};
+
+/** 某月前后移动 N 个月 */
+const shiftMonthStr = (month: string, delta: number): string => {
+  const [year, m] = month.split("-").map(Number);
+  const d = new Date(year, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
+
+/** 单日完成度：签到完成数 / 派出完成数 / 账号总数（日历格子与明细用） */
+const dayProgress = (records: Record<string, BuddyDailyAccountRecord> | undefined) => {
+  const list = Object.values(records ?? {});
+  let checkin = 0;
+  let travel = 0;
+  for (const record of list) {
+    const checkinStatus = record.checkin?.status;
+    if (checkinStatus === "success" || checkinStatus === "already_checked") checkin += 1;
+    const travelStatus = record.travel?.status;
+    if (travelStatus === "claimed" || travelStatus === "limit_reached") travel += 1;
+  }
+  return { total: list.length, checkin, travel };
 };
 
 const fmtMinute = (m: number) =>
@@ -577,6 +693,14 @@ export default function BuddyPanel() {
   const [autoTasks, setAutoTasks] = useState<BuddyCheckinTasksView | null>(null);
   const [travelConfig, setTravelConfig] = useState<BuddyAutoTravelConfig | null>(null);
   const [autoBusy, setAutoBusy] = useState(false);
+  // 签到/派旅行只对 WorkBuddy 账号有效：状态卡固定用 WorkBuddy 账号列表，
+  // 与顶部的平台选择解耦（否则在默认的 CodeBuddy CN 标签下会全部显示"待生成/未安排"）。
+  const [wbAccounts, setWbAccounts] = useState<BuddyAccount[]>([]);
+  const [travelTasks, setTravelTasks] = useState<BuddyTravelTasksView | null>(null);
+  // 日历：当前月份 + 该月归档 + 选中某天
+  const [calendarMonth, setCalendarMonth] = useState<string>(() => localMonthStr());
+  const [dailyRecords, setDailyRecords] = useState<BuddyDailyRecords>({});
+  const [calendarDay, setCalendarDay] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -632,24 +756,44 @@ export default function BuddyPanel() {
   // 自动签到配置/行为日志/今日任务列表/旅行配置加载（签到与派出仅限 WorkBuddy）
   const loadAutoCheckin = useCallback(async () => {
     try {
-      const [config, logs, tasks, travel] = await Promise.all([
+      const [config, logs, tasks, travel, travelTaskView, wb] = await Promise.all([
         invoke<BuddyAutoCheckinConfig>("buddy_auto_checkin_get_config"),
         invoke<BuddyActionLogEntry[]>("buddy_get_action_logs"),
         invoke<BuddyCheckinTasksView>("buddy_auto_checkin_tasks"),
         invoke<BuddyAutoTravelConfig>("buddy_auto_travel_get_config"),
+        invoke<BuddyTravelTasksView>("buddy_auto_travel_tasks"),
+        // 状态卡固定用 WorkBuddy 账号：与签到/派出的数据源保持一致
+        invoke<BuddyAccount[]>("buddy_list_accounts", { platform: "workbuddy" }),
       ]);
       setAutoConfig(config);
       setActionLogs(logs ?? []);
       setAutoTasks(tasks);
       setTravelConfig(travel);
+      setTravelTasks(travelTaskView);
+      setWbAccounts(wb ?? []);
+    } catch (e) {
+      setMessage({ ok: false, text: String(e) });
+    }
+  }, []);
+
+  // 日历归档加载（按月份查询）
+  const loadCalendar = useCallback(async (month: string) => {
+    try {
+      const { from, to } = monthBounds(month);
+      const records = await invoke<BuddyDailyRecords>("buddy_get_daily_records", { from, to });
+      setDailyRecords(records ?? {});
     } catch (e) {
       setMessage({ ok: false, text: String(e) });
     }
   }, []);
 
   useEffect(() => {
-    if (tab === "checkin") loadAutoCheckin();
+    if (tab === "checkin") void loadAutoCheckin();
   }, [tab, loadAutoCheckin]);
+
+  useEffect(() => {
+    if (tab === "checkin") void loadCalendar(calendarMonth);
+  }, [tab, calendarMonth, loadCalendar]);
 
   // 客户端路径设置加载 / 保存 / 清除
   const loadClientPaths = useCallback(async () => {
@@ -703,12 +847,17 @@ export default function BuddyPanel() {
       void invoke<BuddyAutoTravelConfig>("buddy_auto_travel_get_config")
         .then(setTravelConfig)
         .catch(() => {});
+      void invoke<BuddyTravelTasksView>("buddy_auto_travel_tasks")
+        .then(setTravelTasks)
+        .catch(() => {});
     };
     const setup = async () => {
       unlisteners.push(
         await listen("buddy-action-logs-changed", () => {
           void invoke<BuddyActionLogEntry[]>("buddy_get_action_logs").then(setActionLogs).catch(() => {});
           refreshTasks();
+          // 有新的签到/派出行事件 → 刷新日历（当天格子与明细）
+          void loadCalendar(calendarMonth);
         })
       );
       unlisteners.push(
@@ -729,7 +878,7 @@ export default function BuddyPanel() {
     return () => {
       for (const fn of unlisteners) fn();
     };
-  }, [platform]);
+  }, [platform, loadCalendar, calendarMonth]);
 
   const displayName = useMemo(
     () => (acc: BuddyAccount) =>
@@ -1163,6 +1312,7 @@ export default function BuddyPanel() {
       const result = await invoke<string>("buddy_auto_checkin_run", { force });
       showMsg(true, t(`buddy.autoRun.${result}`, { defaultValue: result }));
       await loadAutoCheckin();
+      await loadCalendar(calendarMonth);
       await load();
     } catch (e) {
       showMsg(false, String(e));
@@ -1202,6 +1352,7 @@ export default function BuddyPanel() {
       await invoke<string>("buddy_auto_travel_run", { force: true });
       showMsg(true, t("buddy.travel.runDone"));
       await loadAutoCheckin();
+      await loadCalendar(calendarMonth);
     } catch (e) {
       showMsg(false, String(e));
     } finally {
@@ -2001,27 +2152,32 @@ export default function BuddyPanel() {
               </div>
             </div>
 
-            {/* 每账号状态（签到 | 派出） */}
+            {/* 每账号状态（签到 | 派出）—— 固定用 WorkBuddy 账号：签到/派出只对 WorkBuddy 有效 */}
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
               <div className="flex items-center gap-2 mb-3">
                 <ListChecks className="w-4 h-4 text-[var(--module-accent)]" />
                 <span className="text-[13px] font-bold text-white">{t("buddy.accountStatus.title")}</span>
                 <div className="flex-1" />
                 <button
-                  onClick={() => void loadAutoCheckin()}
+                  onClick={() => {
+                    void loadAutoCheckin();
+                    void loadCalendar(calendarMonth);
+                  }}
                   className="px-2 py-1 rounded-md text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition"
                 >
                   <RefreshCw className="w-3 h-3" /> {t("buddy.auto.refresh")}
                 </button>
               </div>
-              {accounts.length === 0 ? (
+              {platform !== "workbuddy" && (
+                <p className="text-[9px] text-amber-300/80 mb-2">{t("buddy.accountStatus.wbOnly")}</p>
+              )}
+              {wbAccounts.length === 0 ? (
                 <div className="text-[10px] text-slate-600">{t("buddy.auto.noTasks")}</div>
               ) : (
                 <div className="space-y-2">
-                  {accounts.map((acc) => {
+                  {wbAccounts.map((acc) => {
                     const task = autoTasks?.tasks.find((x) => x.accountId === acc.id);
-                    const sch = travelConfig?.accountSchedules?.[acc.id];
-                    const today = localDateStr();
+                    const travel = travelTasks?.tasks.find((x) => x.accountId === acc.id);
                     // 签到状态
                     let checkinState: string;
                     let checkinCls: string;
@@ -2031,37 +2187,60 @@ export default function BuddyPanel() {
                     } else if (task?.status === "failed") {
                       checkinState = t("buddy.accountStatus.checkinFailed");
                       checkinCls = "text-rose-300";
-                    } else if (autoTasks?.generated && task?.scheduledTime) {
+                    } else if (autoTasks && !autoTasks.enabled) {
+                      checkinState = t("buddy.accountStatus.notEnabled");
+                      checkinCls = "text-slate-500";
+                    } else if (task?.scheduledTime) {
                       checkinState = t("buddy.accountStatus.checkinPending");
                       checkinCls = "text-slate-300";
                     } else {
                       checkinState = t("buddy.accountStatus.checkinNotGenerated");
                       checkinCls = "text-slate-400";
                     }
-                    // 派出状态
-                    const departedToday = sch?.lastDepartDate === today;
-                    const traveling = departedToday && sch?.lastDoneDate !== today;
+                    // 派出状态（后端 buddy_auto_travel_tasks：状态与时间都来自每日归档）
                     let travelState: string;
                     let travelCls: string;
-                    if (sch && sch.scheduledDate === today) {
-                      if (sch.lastDoneDate === today) {
-                        if (sch.lastRewardCredit != null) {
-                          travelState = t("buddy.travel.stateClaimed", { credit: sch.lastRewardCredit });
-                          travelCls = "text-emerald-300";
-                        } else {
-                          travelState = t("buddy.travel.stateLimit");
-                          travelCls = "text-slate-400";
-                        }
-                      } else if (departedToday) {
+                    switch (travel?.status) {
+                      case "claimed":
+                        travelState = t("buddy.travel.stateClaimed", { credit: travel.credit ?? 0 });
+                        travelCls = "text-emerald-300";
+                        break;
+                      case "limit_reached":
+                        travelState = t("buddy.travel.stateLimit");
+                        travelCls = "text-slate-400";
+                        break;
+                      case "traveling":
                         travelState = t("buddy.travel.stateTraveling");
                         travelCls = "text-sky-300";
-                      } else {
-                        travelState = t("buddy.accountStatus.travelPending");
+                        break;
+                      case "arrived":
+                        travelState = t("buddy.travel.stateArrived");
+                        travelCls = "text-amber-300";
+                        break;
+                      case "pending":
+                        travelState = t("buddy.travel.statePending", {
+                          time: travel?.planTime ?? "—",
+                        });
                         travelCls = "text-slate-300";
-                      }
-                    } else {
-                      travelState = t("buddy.travel.stateNotToday");
-                      travelCls = "text-slate-500";
+                        break;
+                      case "rejected":
+                        travelState = t("buddy.travel.stateRejected");
+                        travelCls = "text-rose-300";
+                        break;
+                      case "failed":
+                        travelState = t("buddy.travel.stateFailed");
+                        travelCls = "text-rose-300";
+                        break;
+                      case "unfinished":
+                        travelState = t("buddy.accountStatus.unfinished");
+                        travelCls = "text-slate-500";
+                        break;
+                      default:
+                        travelState =
+                          travelTasks && !travelTasks.enabled
+                            ? t("buddy.accountStatus.notEnabled")
+                            : t("buddy.travel.stateNotToday");
+                        travelCls = "text-slate-500";
                     }
                     return (
                       <div key={acc.id} className="rounded-lg border border-white/5 bg-black/20 px-3 py-2">
@@ -2089,18 +2268,22 @@ export default function BuddyPanel() {
                               <span className={`text-[10px] font-semibold ${travelCls}`}>{travelState}</span>
                             </div>
                             <div className="text-[9px] text-slate-500 pl-[18px]">
-                              {t("buddy.accountStatus.travelCount", {
-                                count: departedToday ? 1 : 0,
-                              })}
-                              {sch?.lastDepartTime
-                                ? ` · ${t("buddy.accountStatus.actualTime", { time: sch.lastDepartTime })}`
+                              {t("buddy.accountStatus.travelCount", { count: travel?.departCount ?? 0 })}
+                            </div>
+                            <div className="text-[9px] text-slate-500 pl-[18px]">
+                              {t("buddy.accountStatus.planTime", { time: travel?.planTime ?? "—" })}
+                              {travel?.departTime
+                                ? ` · ${t("buddy.accountStatus.departTime", { time: travel.departTime })}`
+                                : ""}
+                              {travel?.backTime
+                                ? ` · ${t("buddy.accountStatus.backTime", { time: travel.backTime })}`
                                 : ""}
                             </div>
-                            {traveling && sch?.lastDepartTime && (
+                            {travel?.status === "traveling" && travel.departTime && (
                               <div className="text-[9px] text-slate-500 pl-[18px]">
                                 {t("buddy.accountStatus.expectedReturn", {
-                                  from: addMinutes(sch.lastDepartTime, 60),
-                                  to: addMinutes(sch.lastDepartTime, 240),
+                                  from: addMinutes(travel.departTime, 60),
+                                  to: addMinutes(travel.departTime, 240),
                                 })}
                               </div>
                             )}
@@ -2109,6 +2292,166 @@ export default function BuddyPanel() {
                       </div>
                     );
                   })}
+                </div>
+              )}
+            </div>
+
+            {/* 日历：逐日逐账号的计划与实绩（数据来自每日归档） */}
+            <div className="xl:col-span-2 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <CalendarDays className="w-4 h-4 text-[var(--module-accent)]" />
+                <span className="text-[13px] font-bold text-white">{t("buddy.calendar.title")}</span>
+                <span className="text-[9px] text-slate-500 hidden md:inline">
+                  {t("buddy.calendar.hint")}
+                </span>
+                <div className="flex-1" />
+                <button
+                  onClick={() => setCalendarMonth((m) => shiftMonthStr(m, -1))}
+                  className="p-1 rounded-md bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 cursor-pointer transition"
+                  title={t("buddy.calendar.prevMonth")}
+                >
+                  <ChevronLeft className="w-3 h-3" />
+                </button>
+                <span className="text-[11px] font-mono text-slate-200 w-[62px] text-center">
+                  {calendarMonth}
+                </span>
+                <button
+                  onClick={() => setCalendarMonth((m) => shiftMonthStr(m, 1))}
+                  className="p-1 rounded-md bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 cursor-pointer transition"
+                  title={t("buddy.calendar.nextMonth")}
+                >
+                  <ChevronRight className="w-3 h-3" />
+                </button>
+                <button
+                  onClick={() => {
+                    setCalendarMonth(localMonthStr());
+                    setCalendarDay(localDateStr());
+                  }}
+                  className="px-2 py-1 rounded-md text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 cursor-pointer transition"
+                >
+                  {t("buddy.calendar.today")}
+                </button>
+              </div>
+              <div className="grid grid-cols-7 gap-1 mb-1">
+                {t("buddy.calendar.weekdays")
+                  .split(",")
+                  .map((weekday) => (
+                    <div key={weekday} className="text-center text-[9px] text-slate-500">
+                      {weekday}
+                    </div>
+                  ))}
+              </div>
+              <div className="grid grid-cols-7 gap-1">
+                {buildMonthCells(calendarMonth).map((date, index) => {
+                  if (!date) return <div key={`blank-${index}`} />;
+                  const progress = dayProgress(dailyRecords[date]);
+                  const isToday = date === localDateStr();
+                  const selected = date === calendarDay;
+                  const allDone = progress.total > 0 && progress.checkin === progress.total;
+                  return (
+                    <button
+                      key={date}
+                      onClick={() => setCalendarDay(selected ? null : date)}
+                      title={date}
+                      className={`rounded-lg border px-1 py-1 text-left transition cursor-pointer ${
+                        selected
+                          ? "border-[var(--module-accent)] bg-[var(--module-accent)]/15"
+                          : isToday
+                            ? "border-white/20 bg-white/5 hover:bg-white/10"
+                            : "border-white/5 bg-black/20 hover:bg-white/5"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span
+                          className={`text-[10px] font-mono ${
+                            allDone ? "text-emerald-300" : "text-slate-300"
+                          }`}
+                        >
+                          {Number(date.slice(8))}
+                        </span>
+                        {progress.total > 0 && (
+                          <span className="flex items-center gap-0.5">
+                            <span
+                              className={`w-1 h-1 rounded-full ${
+                                progress.checkin > 0 ? "bg-emerald-400" : "bg-slate-600"
+                              }`}
+                            />
+                            <span
+                              className={`w-1 h-1 rounded-full ${
+                                progress.travel > 0 ? "bg-sky-400" : "bg-slate-600"
+                              }`}
+                            />
+                          </span>
+                        )}
+                      </div>
+                      {progress.total > 0 && (
+                        <div className="text-[8px] text-slate-500 truncate">
+                          {t("buddy.calendar.doneCount", {
+                            checkin: progress.checkin,
+                            total: progress.total,
+                          })}
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              {calendarDay && (
+                <div className="mt-3 pt-3 border-t border-white/5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-[11px] font-semibold text-slate-200">{calendarDay}</span>
+                    <span className="text-[9px] text-slate-500">{t("buddy.calendar.detailHint")}</span>
+                    <div className="flex-1" />
+                    <button
+                      onClick={() => setCalendarDay(null)}
+                      className="text-[9px] text-slate-500 hover:text-slate-300 cursor-pointer"
+                    >
+                      {t("buddy.calendar.collapse")}
+                    </button>
+                  </div>
+                  {Object.keys(dailyRecords[calendarDay] ?? {}).length === 0 ? (
+                    <div className="text-[10px] text-slate-600">{t("buddy.calendar.noData")}</div>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="grid grid-cols-3 gap-2 text-[9px] text-slate-500 px-2">
+                        <span>{t("buddy.calendar.colAccount")}</span>
+                        <span>{t("buddy.calendar.colCheckin")}</span>
+                        <span>{t("buddy.calendar.colTravel")}</span>
+                      </div>
+                      {Object.entries(dailyRecords[calendarDay]).map(([accountId, record]) => (
+                        <div
+                          key={accountId}
+                          className="grid grid-cols-3 gap-2 text-[10px] bg-black/20 rounded-lg px-2 py-1.5"
+                        >
+                          <span className="text-slate-300 truncate" title={record.email || accountId}>
+                            {record.email || accountId}
+                          </span>
+                          <span className="text-slate-400 truncate">
+                            {record.checkin
+                              ? `${t(`buddy.calendar.checkinStatus.${record.checkin.status}`, {
+                                  defaultValue: record.checkin.status,
+                                })} · ${record.checkin.planTime ?? "—"}${
+                                  record.checkin.actualTime ? ` / ${record.checkin.actualTime}` : ""
+                                }`
+                              : "—"}
+                          </span>
+                          <span className="text-slate-400 truncate">
+                            {record.travel
+                              ? `${t(`buddy.calendar.travelStatus.${record.travel.status}`, {
+                                  defaultValue: record.travel.status,
+                                })} · ${record.travel.planTime ?? "—"}${
+                                  record.travel.departTime ? ` / ${record.travel.departTime}` : ""
+                                }${
+                                  record.travel.backTime ? ` / ${record.travel.backTime}` : ""
+                                } · ${t("buddy.accountStatus.travelCount", {
+                                  count: record.travel.departCount,
+                                })}`
+                              : "—"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

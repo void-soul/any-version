@@ -7,6 +7,7 @@
 //! - 新增：OAuth 授权登录（展示验证链接轮询）或直接粘贴 token
 //! - 用量：查询官方 user-resource / dosage / payment，展示在账号卡片
 //! - 签到：手动签到 + 后台自动签到调度器（每天随机时间窗口）
+//! - 签到/派旅行的每日归档（`daily_history`）：计划、实际、归来、派出次数，供前端日历使用
 //! - 会话：列出本机会话（WorkBuddy workbuddy.db / CodeBuddy CN codebuddy-sessions.vscdb）
 
 mod action_log;
@@ -16,6 +17,7 @@ mod auto_travel;
 mod client_process;
 mod codebuddy_cn;
 mod crypto;
+mod daily_history;
 mod expiry;
 mod models;
 mod session_transfer;
@@ -129,6 +131,18 @@ pub fn buddy_auto_travel_save_config(
 }
 
 /// 手动立即执行一轮旅行状态机（派出 / 领取 / 跳过）。
+/// 今日派旅行任务列表（账号 + 计划/实际/归来时间 + 派出次数）。
+#[tauri::command]
+pub fn buddy_auto_travel_tasks() -> Result<auto_travel::BuddyTravelTasksView, String> {
+    auto_travel::build_travel_tasks_view()
+}
+
+/// 每日归档查询（日历用）：`[from, to]`（含端点，`YYYY-MM-DD`）内每天每账号的记录。
+#[tauri::command]
+pub fn buddy_get_daily_records(from: String, to: String) -> Result<daily_history::DailyMap, String> {
+    daily_history::get_range(&from, &to)
+}
+
 #[tauri::command]
 pub async fn buddy_auto_travel_run(app: tauri::AppHandle, force: Option<bool>) -> Result<String, String> {
     auto_travel::run_auto_travel_cycle_if_needed(&app, force.unwrap_or(false)).await
@@ -495,6 +509,7 @@ pub async fn buddy_add_account_with_token(
 
 #[tauri::command]
 pub async fn buddy_checkin(
+    app: tauri::AppHandle,
     platform: String,
     account_id: String,
 ) -> Result<api::CheckinResponse, String> {
@@ -520,6 +535,43 @@ pub async fn buddy_checkin(
         });
         api::update_checkin_info(platform, &account_id, Some(now), streak, reward)
             .map_err(|e| format!("签到成功但更新状态失败: {}", e))?;
+
+        // 手动签到同样要"落账"：写每日归档 + 行为日志。
+        // 之前这里只更新了账号自身的 last_checkin_time，于是手动签到成功后
+        // 账号状态卡与日历仍显示「待生成」，属于本模块的历史缺陷。
+        let email = if account.email.trim().is_empty() {
+            account.id.clone()
+        } else {
+            account.email.clone()
+        };
+        let today = daily_history::today_string();
+        let credit = response.credit;
+        if let Err(err) = daily_history::upsert_checkin(
+            &today,
+            &account_id,
+            &email,
+            daily_history::CheckinPatch::new()
+                .actual_time(daily_history::now_time_string())
+                .status(daily_history::checkin_status::SUCCESS)
+                .source("kira")
+                .credit(credit)
+                .streak(Some(streak))
+                .message(Some("签到成功（手动）".to_string())),
+        ) {
+            eprintln!("[Buddy] 手动签到写入归档失败({}): {}", account_id, err);
+        }
+        if let Err(err) = action_log::append_action_logs(&[action_log::make_entry(
+            "checkin",
+            &account_id,
+            &email,
+            "success",
+            Some("签到成功（手动）".to_string()),
+            credit,
+        )]) {
+            eprintln!("[Buddy] 手动签到写入行为日志失败({}): {}", account_id, err);
+        }
+        use tauri::Emitter;
+        let _ = app.emit("buddy-action-logs-changed", ());
     }
 
     Ok(response)
