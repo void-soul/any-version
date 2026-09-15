@@ -46,7 +46,7 @@ const baseTabKeys: Record<string, string> = {
 
 // 判断项目是否支持版本管理（下载多版本 / Git 仓库 / 版本前缀 URL 映射 / npm 包）。
 // mysql 等 SDK 使用 version_url_prefix_map + remote_versions_config 提供版本，
-// npm 包（如 GitNexus）使用 npm_pkg_name 安装，均须纳入判定，
+// npm 包（npm_pkg_name 型）使用 npm install 安装，均须纳入判定，
 // 否则托管后会被误判为「简单托管」。
 function hasVersionSupportOf(def: ProjectDef | null | undefined): boolean {
   if (!def) return false;
@@ -720,7 +720,13 @@ export default function ProjectDetailPanel({
     availableTabs.push("versions");
   }
 
-  if (def?.env_vars && def.env_vars.length > 0 && (!status.managed || (delegation?.env_vars && delegation.env_vars.length > 0))) {
+  // 环境变量选项卡：有 env_vars 定义、或有 Kira 托管的 PATH 条目（后者是
+  // bun/cmake 等「零环境变量 SDK」的唯一托管面展示）时都要显示。
+  const hasManagedPaths = (status.managed_path_entries?.length ?? 0) > 0;
+  if (
+    ((def?.env_vars && def.env_vars.length > 0) || hasManagedPaths) &&
+    (!status.managed || (delegation?.env_vars && delegation.env_vars.length > 0) || hasManagedPaths)
+  ) {
     availableTabs.push("envvars");
   }
 

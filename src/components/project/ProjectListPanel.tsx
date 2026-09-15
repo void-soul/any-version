@@ -1,8 +1,11 @@
 
 import { useTranslation } from "react-i18next";
-import { Search, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { Search, RefreshCw, KeyRound } from "lucide-react";
 import type { ProjectStatus, ProjectCategory } from "./types";
 import { categoryLabel } from "./types";
+import { GithubTokenDialog } from "./GithubTokenDialog";
 
 const FILTERS: Array<{ key: ProjectCategory | "all"; labelKey: string }> = [
   { key: "all", labelKey: "projlist.filterAll" },
@@ -28,6 +31,15 @@ export default function ProjectListPanel({
   filter, onFilterChange, loading, onRefresh,
 }: Props) {
   const { t } = useTranslation();
+  const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
+  const [tokenSet, setTokenSet] = useState(false);
+
+  useEffect(() => {
+    invoke<string>("project_get_github_token")
+      .then((v) => setTokenSet(!!v))
+      .catch(() => {});
+  }, []);
+
   const filtered = projects.filter((p) => {
     if (filter !== "all" && p.category !== filter) return false;
     if (search && !p.display_name.toLowerCase().includes(search.toLowerCase())) return false;
@@ -48,6 +60,17 @@ export default function ProjectListPanel({
               className="w-full glass-input pl-7 pr-2 py-1 text-[11px]"
             />
           </div>
+          <button
+            onClick={() => setTokenDialogOpen(true)}
+            className={`p-1 rounded cursor-pointer flex-shrink-0 ${
+              tokenSet
+                ? "text-emerald-400 hover:text-emerald-300"
+                : "text-slate-500 hover:text-slate-300"
+            } hover:bg-white/10`}
+            title={t("projlist.githubTokenTitle") + (tokenSet ? ` (${t("projlist.githubTokenSet")})` : "")}
+          >
+            <KeyRound className="w-3 h-3" />
+          </button>
           {onRefresh && (
             <button onClick={onRefresh} disabled={loading}
               className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-slate-200 cursor-pointer flex-shrink-0"
@@ -142,6 +165,13 @@ export default function ProjectListPanel({
           })
         )}
       </div>
+
+      {/* GitHub Token 设置弹框（说明 + 三步引导） */}
+      <GithubTokenDialog
+        open={tokenDialogOpen}
+        onClose={() => setTokenDialogOpen(false)}
+        onSaved={(has) => setTokenSet(has)}
+      />
     </div>
   );
 }
