@@ -13,7 +13,8 @@ mod commands;
 mod dsp;
 mod library;
 mod player;
+mod queue;
 mod settings;
 
 pub use commands::*;
-pub use player::MusicPlayerState;
+pub use player::{start_queue_watcher, MusicPlayerState};

@@ -631,6 +631,16 @@ pub async fn launcher_save_settings(
             settings.mindmap_sticker_hotkey.clone(),
         );
     }
+    // 音乐播放器控制热键（后端直接驱动播放器，托盘隐藏时同样生效）
+    for (id, value) in [
+        ("music-play-pause", &settings.music_play_pause_hotkey),
+        ("music-prev", &settings.music_prev_hotkey),
+        ("music-next", &settings.music_next_hotkey),
+    ] {
+        if !value.trim().is_empty() {
+            hotkeys.insert(id.to_string(), value.clone());
+        }
+    }
     let _ = super::windows::register_global_hotkeys(app, &hotkeys);
     Ok(())
 }

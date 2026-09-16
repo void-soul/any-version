@@ -69,6 +69,9 @@ export interface LauncherSetting {
   selectionTranslateHotkey?: string; // 独立「划词翻译」热键：任意程序选中文本后按下 → 悬浮翻译
   mindmapQuickHotkey?: string; // 独立「思维导图节点速记」热键：呼出节点悬浮窗随手记录，默认 Shift+F3
   mindmapStickerHotkey?: string; // 独立「思维导图贴纸」热键：呼出贴纸悬浮窗，默认 Shift+F4
+  musicPlayPauseHotkey?: string; // 音乐播放器：播放/暂停（全局热键，托盘状态同样生效）
+  musicPrevHotkey?: string; // 音乐播放器：上一首
+  musicNextHotkey?: string; // 音乐播放器：下一首
   // ---- 视图设置（全局，应用到所有分类）----
   itemIconSize?: number; // 项目图标大小 (px)，默认 32
   itemColumnNumber?: number; // 网格列数 (0=自适应)，默认 0

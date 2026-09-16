@@ -170,6 +170,16 @@ pub struct LauncherSetting {
     /// 默认 Shift+F4。
     #[serde(default = "default_mindmap_sticker_hotkey")]
     pub mindmap_sticker_hotkey: String,
+    /// 音乐播放器「播放/暂停」热键：直接驱动后端播放器，主窗口隐藏/托盘状态下同样生效。
+    /// 未设置时为空串（不注册）。默认留空，由用户在音乐播放器设置里录制。
+    #[serde(default)]
+    pub music_play_pause_hotkey: String,
+    /// 音乐播放器「上一首」热键
+    #[serde(default)]
+    pub music_prev_hotkey: String,
+    /// 音乐播放器「下一首」热键
+    #[serde(default)]
+    pub music_next_hotkey: String,
     // ---- 视图设置（全局，应用到所有分类）----
     /// 项目图标大小（px），默认 32
     #[serde(default = "default_item_icon_size")]
@@ -259,6 +269,9 @@ impl Default for LauncherSetting {
             selection_translate_hotkey: default_selection_translate_hotkey(),
             mindmap_quick_hotkey: default_mindmap_quick_hotkey(),
             mindmap_sticker_hotkey: default_mindmap_sticker_hotkey(),
+            music_play_pause_hotkey: String::new(),
+            music_prev_hotkey: String::new(),
+            music_next_hotkey: String::new(),
             item_icon_size: default_item_icon_size(),
             item_column_number: 0,
             card_density: default_card_density(),

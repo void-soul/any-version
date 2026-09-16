@@ -1474,6 +1474,22 @@ fn spawn_hotkey_worker(
 ///   3) 窗口可见但未激活        -> 激活并切到本模块；
 ///   4) 窗口隐藏                -> 显示、激活并切到本模块。
 fn handle_hotkey_action(app: &AppHandle, module: &str) {
+    // 音乐播放器控制热键：播放/暂停、上一首、下一首。
+    // 直接驱动后端播放器（不依赖前端），因此主窗口隐藏到托盘时依然可用。
+    if matches!(module, "music-play-pause" | "music-prev" | "music-next") {
+        let state = app.state::<crate::commands::music::MusicPlayerState>();
+        let result = match module {
+            "music-play-pause" => state.toggle(),
+            "music-prev" => state.prev(),
+            _ => state.next(),
+        };
+        crate::exit_log!(
+            "[音乐热键] {} -> {:?}",
+            module,
+            result.as_ref().map(|s| s.status)
+        );
+        return;
+    }
     // 独立「划词翻译」热键：读取前台选中文本 → 翻译 → 悬浮窗显示，
     // 不做四态窗口切换，也不唤起主窗口。
     if module == "selection-translate" {

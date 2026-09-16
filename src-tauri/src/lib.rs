@@ -370,6 +370,9 @@ pub fn run() {
             commands::buddy::backfill_expiry_times();
             // Buddy 自动派旅行调度器（WorkBuddy 专属活动，随机时间派出 + 领积分）
             commands::buddy::start_auto_travel_scheduler(app.handle().clone());
+            // 音乐播放器：后台巡查线程（播完自动切下一首）。
+            // 必须放后端：窗口隐藏到托盘后前端定时器会被 WebView2 节流。
+            commands::music::start_queue_watcher(app.handle().clone());
             if let Ok(setting) = commands::launcher::db::get_settings() {
                 let mut hotkeys = setting.module_hotkeys.clone();
                 if !setting.selection_translate_hotkey.trim().is_empty() {
@@ -389,6 +392,17 @@ pub fn run() {
                         "mindmap-sticker".to_string(),
                         setting.mindmap_sticker_hotkey.clone(),
                     );
+                }
+                // 音乐播放器控制热键（播放/暂停、上一首、下一首）：
+                // 直接在后端驱动播放器，因此主窗口隐藏到托盘时依然有效。
+                for (id, value) in [
+                    ("music-play-pause", &setting.music_play_pause_hotkey),
+                    ("music-prev", &setting.music_prev_hotkey),
+                    ("music-next", &setting.music_next_hotkey),
+                ] {
+                    if !value.trim().is_empty() {
+                        hotkeys.insert(id.to_string(), value.clone());
+                    }
                 }
                 let _ = commands::launcher::windows::register_global_hotkeys(
                     app.handle().clone(),
@@ -525,6 +539,10 @@ pub fn run() {
             commands::music::music_remove_folder,
             commands::music::music_refresh_library,
             commands::music::music_play,
+            commands::music::music_set_queue,
+            commands::music::music_next,
+            commands::music::music_prev,
+            commands::music::music_toggle,
             commands::music::music_pause,
             commands::music::music_resume,
             commands::music::music_stop,

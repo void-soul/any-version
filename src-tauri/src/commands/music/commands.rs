@@ -69,6 +69,35 @@ pub fn music_play(state: State<'_, MusicPlayerState>, path: String) -> Result<Pl
     state.play(&path)
 }
 
+/// 重置播放队列（曲库或播放模式变化时调用）。
+/// 队列常驻后端，托盘/隐藏窗口时也能自动续播下一首。
+#[tauri::command]
+pub fn music_set_queue(
+    state: State<'_, MusicPlayerState>,
+    paths: Vec<String>,
+    mode: String,
+) -> Result<(), String> {
+    state.set_queue(paths, &mode)
+}
+
+/// 下一首（用户操作；播完自动切歌由后端巡查线程负责）
+#[tauri::command]
+pub fn music_next(state: State<'_, MusicPlayerState>) -> Result<PlayerState, String> {
+    state.next()
+}
+
+/// 上一首
+#[tauri::command]
+pub fn music_prev(state: State<'_, MusicPlayerState>) -> Result<PlayerState, String> {
+    state.prev()
+}
+
+/// 播放/暂停切换（播放器热键用；空闲时从队列起播）
+#[tauri::command]
+pub fn music_toggle(state: State<'_, MusicPlayerState>) -> Result<PlayerState, String> {
+    state.toggle()
+}
+
 #[tauri::command]
 pub fn music_pause(state: State<'_, MusicPlayerState>) -> Result<PlayerState, String> {
     Ok(state.pause())

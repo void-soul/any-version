@@ -4,7 +4,10 @@
 // - 顺序 / 随机（洗牌袋）/ 单曲循环三种播放模式；
 // - 音效为 10 段均衡器 + 预设 + 总增益 + 声道平衡（改动即时生效并自动保存）。
 //
-// 播放/解码全部在 Rust（rodio + symphonia），本组件只负责状态、轮询与交互。
+// 播放/解码/队列推进全部在 Rust（rodio + symphonia）：
+// 窗口隐藏到托盘后 WebView2 会节流前端定时器，切歌必须由后端负责
+// （见 src-tauri/src/commands/music/{player,queue}.rs）；本组件只负责
+// 把曲库顺序同步给后端、驱动用户操作、以及轮询展示状态。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -31,8 +34,7 @@ import { SharedButton } from "../shared/Button";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { ModuleSettingsButton } from "../shared/ModuleSettings";
 import { toast } from "../shared/Toast";
-import { EqDialog } from "./EqDialog";
-import { createCursor, nextTrack, prevTrack, shuffleIndices, type PlaylistCursor } from "./playlist";
+import { MusicSettingsDialog } from "./MusicSettings";
 import {
   folderName,
   formatTime,
@@ -72,11 +74,9 @@ export default function MusicPanel() {
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const cursorRef = useRef<PlaylistCursor>(createCursor());
-  const modeRef = useRef<PlayMode>("sequence");
   const tracksRef = useRef<MusicTrack[]>([]);
-  const currentIndexRef = useRef<number | null>(null);
-  const handledEndedRef = useRef<string | null>(null);
+  /** path -> 曲库下标（后端自行切歌时用于同步选中行） */
+  const pathIndexRef = useRef<Map<string, number>>(new Map());
   const saveTimerRef = useRef<number | null>(null);
 
   // —— 过滤后的曲目列表（搜索 + 保持原始索引，播放索引以完整列表为准）——
@@ -94,11 +94,8 @@ export default function MusicPanel() {
 
   useEffect(() => {
     tracksRef.current = library.tracks;
+    pathIndexRef.current = new Map(library.tracks.map((track, index) => [track.path, index]));
   }, [library.tracks]);
-
-  useEffect(() => {
-    modeRef.current = settings?.play_mode ?? "sequence";
-  }, [settings?.play_mode]);
 
   // —— 初始化：曲库 / 设置 / 预设 / 播放状态 ——
   useEffect(() => {
@@ -116,73 +113,70 @@ export default function MusicPanel() {
       .catch(() => {});
   }, [t]);
 
-  // —— 轮询播放状态；发现播完则按模式推进 ——
+  // —— 队列同步：曲库顺序或播放模式变化时交给后端（后端据此自动续播）——
+  useEffect(() => {
+    if (!settings || library.tracks.length === 0) return;
+    invoke("music_set_queue", {
+      paths: library.tracks.map((track) => track.path),
+      mode: settings.play_mode,
+    }).catch(() => {});
+  }, [library.tracks, settings?.play_mode]);
+
+  /** 把后端状态同步到界面；后端可能自行切歌（含托盘模式），因此要同步选中行 */
+  const syncState = useCallback((snapshot: PlayerState) => {
+    setPlayer(snapshot);
+    if (snapshot.path) {
+      const index = pathIndexRef.current.get(snapshot.path);
+      if (index != null) setSelectedIndex(index);
+    }
+  }, []);
+
+  // —— 播放状态轮询：只做 UI 同步，切歌由后端负责 ——
+  useEffect(() => {
+    const refresh = () => {
+      invoke<PlayerState>("music_get_state").then(syncState).catch(() => {});
+    };
+    const timer = window.setInterval(refresh, POLL_MS);
+    // 从托盘/最小化返回时立即对齐一次（隐藏期间 WebView2 会节流定时器）
+    const onVisibility = () => {
+      if (!document.hidden) refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [syncState]);
+
   const playIndex = useCallback(
     async (index: number | null) => {
       const list = tracksRef.current;
       if (index == null || index < 0 || index >= list.length) return;
-      const track = list[index];
       try {
-        const snapshot = await invoke<PlayerState>("music_play", { path: track.path });
-        setPlayer(snapshot);
-        currentIndexRef.current = index;
+        const snapshot = await invoke<PlayerState>("music_play", { path: list[index].path });
+        syncState(snapshot);
         setSelectedIndex(index);
-        handledEndedRef.current = null;
       } catch (e) {
         toast(t("music.playFail", { err: String(e) }), "err");
       }
     },
-    [t]
+    [syncState, t]
   );
 
+  /** 上一首 / 下一首：交给后端队列（保持与托盘模式一致的推进规则） */
   const advance = useCallback(
     async (direction: "next" | "prev") => {
-      const list = tracksRef.current;
-      const mode = modeRef.current;
-      const options = {
-        current: currentIndexRef.current,
-        total: list.length,
-        mode,
-        cursor: cursorRef.current,
-      };
-      const result =
-        direction === "next"
-          ? nextTrack({ ...options })
-          : prevTrack({ ...options });
-      cursorRef.current = result.cursor;
-      await playIndex(result.index);
+      try {
+        const snapshot = await invoke<PlayerState>(
+          direction === "next" ? "music_next" : "music_prev"
+        );
+        syncState(snapshot);
+      } catch (e) {
+        toast(t("music.playFail", { err: String(e) }), "err");
+      }
     },
-    [playIndex]
+    [syncState, t]
   );
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      invoke<PlayerState>("music_get_state")
-        .then((snapshot) => {
-          setPlayer(snapshot);
-          if (
-            snapshot.status === "ended" &&
-            snapshot.path &&
-            handledEndedRef.current !== snapshot.path
-          ) {
-            // 同一首只推进一次，避免轮询重复触发
-            handledEndedRef.current = snapshot.path;
-            const list = tracksRef.current;
-            const mode = modeRef.current;
-            const result = nextTrack({
-              current: currentIndexRef.current,
-              total: list.length,
-              mode,
-              cursor: cursorRef.current,
-            });
-            cursorRef.current = result.cursor;
-            if (result.index != null) void playIndex(result.index);
-          }
-        })
-        .catch(() => {});
-    }, POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [playIndex]);
 
   // —— 设置持久化（防抖；音效改动即时预览）——
   const persistSettings = useCallback((next: MusicSettings) => {
@@ -210,13 +204,8 @@ export default function MusicPanel() {
       setSettings((prev) => {
         if (!prev) return prev;
         const next = { ...prev, play_mode: mode };
-        if (mode === "shuffle") {
-          // 切到随机模式：立刻重排洗牌袋，避免第一首就是当前曲
-          cursorRef.current = {
-            bag: shuffleIndices(tracksRef.current.length, Math.random, currentIndexRef.current),
-            history: cursorRef.current.history,
-          };
-        }
+        // 队列会随 play_mode 变化重新同步给后端（见上方 set_queue effect），
+        // 随机模式由后端重新洗牌，无需前端干预。
         persistSettings(next);
         return next;
       });
@@ -242,7 +231,6 @@ export default function MusicPanel() {
     try {
       const result = await invoke<AddFolderResult>("music_add_folder", { path: picked });
       setLibrary(result.library);
-      cursorRef.current = createCursor();
       toast(t("music.imported", { count: result.added }), "ok");
     } catch (e) {
       toast(t("music.importFail", { err: String(e) }), "err");
@@ -258,7 +246,6 @@ export default function MusicPanel() {
         "music_refresh_library"
       );
       setLibrary(result.library);
-      cursorRef.current = createCursor();
       toast(t("music.rescanned", { added: result.added, removed: result.removed }), "ok");
     } catch (e) {
       toast(t("music.importFail", { err: String(e) }), "err");
@@ -277,8 +264,6 @@ export default function MusicPanel() {
         try {
           const next = await invoke<MusicLibrary>("music_remove_folder", { path: folder });
           setLibrary(next);
-          cursorRef.current = createCursor();
-          currentIndexRef.current = null;
           toast(t("music.removedFolder"), "ok");
         } catch (e) {
           toast(t("music.importFail", { err: String(e) }), "err");
@@ -289,13 +274,13 @@ export default function MusicPanel() {
 
   // —— 播放控制 ——
   const togglePlay = async () => {
-    if (!player || player.status === "idle") {
+    // 空闲/已播完：优先播当前选中行（没选则从头开始）；否则交给后端切换播放态
+    if (!player || player.status === "idle" || player.status === "ended") {
       await playIndex(selectedIndex ?? 0);
       return;
     }
-    const command = player.status === "playing" ? "music_pause" : "music_resume";
     try {
-      setPlayer(await invoke<PlayerState>(command));
+      syncState(await invoke<PlayerState>("music_toggle"));
     } catch (e) {
       toast(t("music.playFail", { err: String(e) }), "err");
     }
@@ -303,8 +288,7 @@ export default function MusicPanel() {
 
   const stop = async () => {
     try {
-      setPlayer(await invoke<PlayerState>("music_stop"));
-      handledEndedRef.current = null;
+      syncState(await invoke<PlayerState>("music_stop"));
     } catch {
       /* 停止失败无副作用 */
     }
@@ -368,9 +352,9 @@ export default function MusicPanel() {
             );
           })}
         </div>
-        <ModuleSettingsButton title={t("music.eqTitle")} width={520}>
+        <ModuleSettingsButton title={t("music.settingsTitle")} width={560}>
           {settings && (
-            <EqDialog eq={settings.eq} presets={presets} onChange={applyEq} />
+            <MusicSettingsDialog eq={settings.eq} presets={presets} onEqChange={applyEq} />
           )}
         </ModuleSettingsButton>
       </div>
@@ -543,7 +527,8 @@ export default function MusicPanel() {
           <p className="text-[10px] text-slate-500 truncate">{player?.artist ?? ""}</p>
         </div>
 
-        <div className="flex items-center gap-1.5 flex-shrink-0 w-32">
+        {/* 音量：右侧留出边距，避免贴着窗口边缘 */}
+        <div className="flex items-center gap-1.5 flex-shrink-0 w-32 mr-3">
           <button
             onClick={() => changeVolume(muted ? 0.8 : 0)}
             className="text-slate-400 hover:text-slate-200 cursor-pointer flex-shrink-0"

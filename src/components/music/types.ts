@@ -1,9 +1,10 @@
 // 音乐播放器前后端共享类型（与 Rust 侧 serde 结构一一对应）。
 
-import type { PlayMode } from "./playlist";
-
-/** 播放模式定义在播放推进逻辑里，这里转发便于组件统一从 types 引入 */
-export type { PlayMode };
+/**
+ * 播放模式。推进逻辑（顺序/随机洗牌/单曲循环）在后端
+ * （src-tauri/src/commands/music/queue.rs），这里只保留类型供界面使用。
+ */
+export type PlayMode = "sequence" | "shuffle" | "single";
 
 /** 一首曲目（来自 data_dir/music/library.json 的缓存） */
 export interface MusicTrack {

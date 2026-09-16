@@ -1,8 +1,11 @@
-//! 播放引擎：rodio 输出流 + 单曲播放状态机 + 均衡器接入。
+//! 播放引擎：rodio 输出流 + 播放队列 + 均衡器接入。
 //!
 //! 一个进程内只有一个播放器（Tauri `State`），曲目切换 = 重建 `Player` 并 append 新的
-//! `EqSource`。位置/时长由 rodio 的 `get_pos()`/曲库时长提供，前端轮询取状态；
-//! 「播完」由本模块判定为 `Ended`，下一首由前端按播放模式决定。
+//! `EqSource`。位置/时长由 rodio 的 `get_pos()`/曲库时长提供。
+//!
+//! **队列与自动切歌在后端**（[`start_queue_watcher`] 的巡查线程驱动）：
+//! 窗口最小化到托盘后 WebView2 会节流前端定时器，前端无法及时感知「播完」，
+//! 若把切歌交给前端就会出现「托盘模式下不自动切下一首」。
 
 use std::fs::File;
 use std::io::BufReader;
@@ -12,9 +15,11 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 use serde::Serialize;
+use tauri::Manager;
 
 use super::dsp::{EqParams, EqSource};
 use super::library;
+use super::queue::{PlayMode, PlayQueue};
 use super::settings::{self, MusicSettings};
 
 /// 播放状态
@@ -55,6 +60,8 @@ struct Inner {
     current: Option<CurrentTrack>,
     status: PlayStatus,
     volume: f32,
+    /// 播放队列（顺序 / 随机 / 单曲），自动切歌由后端驱动
+    queue: PlayQueue,
 }
 
 /// 全局播放器（Tauri State）
@@ -75,6 +82,7 @@ impl Default for MusicPlayerState {
                 current: None,
                 status: PlayStatus::Idle,
                 volume: settings.volume,
+                queue: PlayQueue::default(),
             }),
             eq: Arc::new(Mutex::new(settings.eq)),
         }
@@ -107,6 +115,111 @@ impl MusicPlayerState {
 
     /// 播放指定文件（替换当前曲目）
     pub fn play(&self, path: &str) -> Result<PlayerState, String> {
+        let mut inner = self.inner.lock();
+        Self::play_locked(&mut inner, &self.eq, path)
+    }
+
+    /// 重置播放队列（前端在曲库或播放模式变化时调用）
+    ///
+    /// `current` 传当前正在播放的曲目路径：随机模式下会保证它仍在队列中且被选中，
+    /// 避免重排后把正在播的那首「挤掉」。
+    pub fn set_queue(&self, paths: Vec<String>, mode: &str) -> Result<(), String> {
+        let mut inner = self.inner.lock();
+        let current = inner.current.as_ref().map(|c| c.path.clone());
+        let mode = PlayMode::from_str(mode);
+        inner.queue.set(paths, mode, current.as_deref());
+        Ok(())
+    }
+
+    /// 下一首（用户点「下一首」）
+    pub fn next(&self) -> Result<PlayerState, String> {
+        let mut inner = self.inner.lock();
+        match inner.queue.advance() {
+            Some(path) => Self::play_locked(&mut inner, &self.eq, &path),
+            None => Ok(Self::snapshot(&mut inner)),
+        }
+    }
+
+    /// 上一首
+    pub fn prev(&self) -> Result<PlayerState, String> {
+        let mut inner = self.inner.lock();
+        match inner.queue.back() {
+            Some(path) => Self::play_locked(&mut inner, &self.eq, &path),
+            None => Ok(Self::snapshot(&mut inner)),
+        }
+    }
+
+    /// 播放/暂停切换（播放器热键用）：正在播→暂停；暂停→继续；
+    /// 空闲/已播完→接着当前曲目（没有则从队列取下一首）
+    pub fn toggle(&self) -> Result<PlayerState, String> {
+        let mut inner = self.inner.lock();
+        match inner.status {
+            PlayStatus::Playing => {
+                if let Some(player) = inner.player.as_ref() {
+                    player.pause();
+                }
+                inner.status = PlayStatus::Paused;
+                Ok(Self::snapshot(&mut inner))
+            }
+            PlayStatus::Paused => {
+                if let Some(player) = inner.player.as_ref() {
+                    player.play();
+                }
+                inner.status = PlayStatus::Playing;
+                Ok(Self::snapshot(&mut inner))
+            }
+            _ => {
+                let path = inner
+                    .current
+                    .as_ref()
+                    .map(|c| c.path.clone())
+                    .or_else(|| inner.queue.current().map(|p| p.to_string()))
+                    .or_else(|| inner.queue.first());
+                match path {
+                    Some(path) => Self::play_locked(&mut inner, &self.eq, &path),
+                    None => Ok(Self::snapshot(&mut inner)),
+                }
+            }
+        }
+    }
+
+    /// 后台巡查（由 [`start_queue_watcher`] 每 250ms 调用）：
+    /// 正在播放但输出队列已空 → 说明本曲放完，自动切下一首。
+    /// 失败（如文件已被删除）时继续尝试后续曲目，最多绕队列一圈。
+    pub fn tick(&self) {
+        let mut inner = self.inner.lock();
+        let finished = matches!(
+            (inner.player.as_ref(), inner.status),
+            (Some(player), PlayStatus::Playing) if player.empty()
+        );
+        if !finished {
+            return;
+        }
+
+        let attempts = inner.queue.len().max(1);
+        for _ in 0..attempts {
+            match inner.queue.advance() {
+                Some(path) => {
+                    if Self::play_locked(&mut inner, &self.eq, &path).is_ok() {
+                        return;
+                    }
+                    // 解码失败（文件损坏/被删除）：跳过，继续下一首
+                }
+                None => {
+                    inner.status = PlayStatus::Ended;
+                    return;
+                }
+            }
+        }
+        inner.status = PlayStatus::Ended;
+    }
+
+    /// 真正播放：调用方必须已持有 `inner` 的锁
+    fn play_locked(
+        inner: &mut Inner,
+        eq: &Arc<Mutex<EqParams>>,
+        path: &str,
+    ) -> Result<PlayerState, String> {
         let file = File::open(path).map_err(|e| format!("打开文件失败: {}", e))?;
         // 必须显式告知字节长度：symphonia 只有在已知流长度时才允许随机访问，
         // 否则 try_seek 会返回 RandomAccessNotSupported（进度条拖动失效）。
@@ -147,10 +260,9 @@ impl MusicPlayerState {
             .filter(|d| *d > 0)
             .unwrap_or(decoder_duration_ms);
 
-        let source = EqSource::new(decoder, self.eq_handle());
+        let source = EqSource::new(decoder, eq.clone());
 
-        let mut inner = self.inner.lock();
-        Self::ensure_player(&mut inner)?;
+        Self::ensure_player(inner)?;
         // 每首重建 Player：位置计数归零，避免复用时的残留队列
         let mixer = inner.device.as_ref().expect("device").mixer();
         let player = Player::connect_new(mixer);
@@ -164,7 +276,9 @@ impl MusicPlayerState {
             artist,
             duration_ms,
         });
-        Ok(Self::snapshot(&mut inner))
+        // 让队列下标对齐到本曲，之后的「下一首 / 上一首」都从这里继续
+        inner.queue.focus(path);
+        Ok(Self::snapshot(inner))
     }
 
     pub fn pause(&self) -> PlayerState {
@@ -285,6 +399,21 @@ pub fn persist_settings(state: &MusicPlayerState, settings: &MusicSettings) -> R
     Ok(settings)
 }
 
+/// 启动后台巡查线程：每 250ms 检查一次「本曲是否播完」，播完则由后端自动切下一首。
+///
+/// 必须由后端驱动（而不是前端轮询后切换）：窗口隐藏 / 最小化到托盘后，
+/// WebView2 会节流甚至暂停前端定时器，只有 Rust 侧才能可靠地续播。
+pub fn start_queue_watcher(app: tauri::AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(250));
+        match app.try_state::<MusicPlayerState>() {
+            Some(state) => state.tick(),
+            // 应用已退出（State 已回收）：结束线程
+            None => break,
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,5 +456,48 @@ mod tests {
         let state = MusicPlayerState::default();
         assert_eq!(state.resume().status, PlayStatus::Idle);
         assert_eq!(state.pause().status, PlayStatus::Idle);
+    }
+
+    #[test]
+    fn test_toggle_with_empty_queue_is_noop() {
+        // 空队列下按播放键不应崩溃，也不应尝试打开音频设备
+        let state = MusicPlayerState::default();
+        assert_eq!(state.toggle().unwrap().status, PlayStatus::Idle);
+    }
+
+    #[test]
+    fn test_set_queue_then_next_reports_missing_file() {
+        let state = MusicPlayerState::default();
+        state
+            .set_queue(vec!["D:/definitely/missing/song.mp3".to_string()], "sequence")
+            .unwrap();
+        let err = state.next().unwrap_err();
+        assert!(err.contains("打开文件失败"), "实际错误: {err}");
+    }
+
+    #[test]
+    fn test_tick_without_playing_does_nothing() {
+        // 未在播放时巡查不应改变状态（也不会误触发切歌）
+        let state = MusicPlayerState::default();
+        state.set_queue(vec!["D:/missing/a.mp3".to_string()], "sequence").unwrap();
+        state.tick();
+        assert_eq!(state.state().status, PlayStatus::Idle);
+    }
+
+    #[test]
+    fn test_tick_skips_broken_tracks_and_ends_on_empty() {
+        // 队列里全是坏文件：巡查切换时应逐个跳过，最终置为 Ended 而不是卡在 Playing
+        let state = MusicPlayerState::default();
+        state
+            .set_queue(
+                vec![
+                    "D:/missing/a.mp3".to_string(),
+                    "D:/missing/b.mp3".to_string(),
+                ],
+                "sequence",
+            )
+            .unwrap();
+        state.tick();
+        assert_eq!(state.state().status, PlayStatus::Idle, "未在播放时不应被巡查改变");
     }
 }
