@@ -102,4 +102,8 @@ dirs = "5"
 # VS Code safe storage 解密（macOS/Linux：AES-128-CBC + PBKDF2）
 aes = "0.8"
 cbc = { version = "0.1", features = ["alloc"] }
+rodio = { version = "0.22.2", features = ["symphonia-all"] }
+# 音频标签/时长读取。0.24 会拉起 ogg_pager 0.7.2（要求 rustc 1.89），
+# 本项目工具链为 1.88，故锁在 0.22。
+lofty = "0.22"
 

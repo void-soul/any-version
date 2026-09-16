@@ -257,6 +257,8 @@ pub fn run() {
         .manage(commands::serialtool::SerialState::default())
         .manage(commands::serialtool::SimState::default())
         .manage(commands::wstool::WsState::default())
+        // 音乐播放器（本地曲库 + rodio 播放 + 均衡器）
+        .manage(commands::music::MusicPlayerState::default())
         .setup(|app| {
             if let Ok(res_dir) = app.path().resource_dir() {
                 crate::commands::utils::set_resource_dir(res_dir);
@@ -517,6 +519,23 @@ pub fn run() {
             commands::project::commands::project_repair_env_vars,
             commands::project::commands::project_get_github_token,
             commands::project::commands::project_set_github_token,
+            // 音乐播放器
+            commands::music::music_get_library,
+            commands::music::music_add_folder,
+            commands::music::music_remove_folder,
+            commands::music::music_refresh_library,
+            commands::music::music_play,
+            commands::music::music_pause,
+            commands::music::music_resume,
+            commands::music::music_stop,
+            commands::music::music_seek,
+            commands::music::music_set_volume,
+            commands::music::music_get_state,
+            commands::music::music_get_settings,
+            commands::music::music_update_settings,
+            commands::music::music_get_eq,
+            commands::music::music_preview_eq,
+            commands::music::music_list_presets,
             commands::project::commands::project_unmanage,
             commands::project::commands::project_preview_unmanage,
             commands::project::commands::project_set_custom_path,

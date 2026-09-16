@@ -25,6 +25,7 @@ import {
   Usb,
   Cable,
   UserRoundCog,
+  Music,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import i18n from "./i18n";
@@ -274,6 +275,15 @@ export const MODULES: ModuleDef[] = [
     color: "#6366f1",
     defaultToolbar: false,
     Component: lazyLoad(() => import("./components/devtools/WsDebugger")),
+  },
+  // —— 音乐播放器（纯本地，默认收进「更多」） ——
+  {
+    id: "music",
+    label: "音乐播放器",
+    icon: Music,
+    color: "#8b5cf6",
+    defaultToolbar: false,
+    Component: lazyLoad(() => import("./components/music/MusicPanel")),
   },
 ];
 
