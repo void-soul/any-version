@@ -31,6 +31,11 @@ pub const SSE_IDLE_TIMEOUT: Duration = Duration::from_secs(75);
 /// 非流式调用读取响应正文的超时：拿到响应头后服务端可能挂住连接不发正文，
 /// 必须兜底防止 complete_chat 永久挂起（非流式响应都很小，60s 足够）。
 pub const READ_BODY_TIMEOUT: Duration = Duration::from_secs(60);
+/// 「未产出内容」的非流式重试次数与退避基数（第 n 次重试睡 n×基数）。
+/// 触发条件见 is_retryable_no_output：这类响应不含任何 token（usage 全 0），
+/// 重试无额外计费风险；退避时间短是因为空壳/限流响应都是毫秒级返回。
+pub const EMPTY_RETRY_MAX: usize = 2;
+pub const EMPTY_RETRY_DELAY: Duration = Duration::from_secs(1);
 /// 断点续写最大重试次数（每次续写先校验已累积内容是否已成完整 JSON，成功则提前返回，
 /// 因此多数情况一次续写即可完成）。
 pub const STREAM_RESUME_MAX: usize = 3;
@@ -177,6 +182,16 @@ pub fn is_recoverable_network_error(msg: &str) -> bool {
         || m.contains("broken pipe")
         || m.contains("eos")
         || m.contains("incomplete message")
+}
+
+/// 一次非流式响应是否属于「没产出任何内容、重试零成本」的情形：
+/// - 429：限流（网关常在限流时连响应体都不给），没有任何 token 产生；
+/// - 2xx 但内容为空且无 tool_calls：部分网关（实测魔搭 ModelScope + ZhipuAI/GLM-4.7-Flash）
+///   在模型无可用实例/被限流时**不返回错误码**，而是 HTTP 200 + `{"choices":null,"usage":{全 0}}`
+///   的 171 字节空壳（250ms 返回），既无内容也无计费。
+/// 这两类都允许自动重试；5xx 不重试（可能已产生计费输出）。
+fn is_retryable_no_output(status: u16, text_empty: bool, has_tool_calls: bool) -> bool {
+    status == 429 || ((200..300).contains(&status) && text_empty && !has_tool_calls)
 }
 
 /// 错误消息若以指定前缀开头则去掉（避免「流式中断: 流式中断: …」嵌套）。
@@ -925,55 +940,93 @@ pub async fn complete_chat(
         }
     }
 
-    let resp = send_with_retries(hooks, call_id, &client, &url, provider, &body).await?;
-    let status = resp.status();
-    let raw = read_body_text_lossy(call_id, "非流式响应", resp).await;
-    if raw.is_empty() {
-        // 区分「读体超时」与「空 2xx 响应」：超时时响应已被消费，状态码不可再取，
-        // 用带标签的固定文案让日志与前端都能看出真实原因。
-        return Err(format!("AI请求无响应: 读取响应体超时（超过 {}s）", READ_BODY_TIMEOUT.as_secs()));
-    }
-    log_call(call_id, &format!(
-        "═══ 非流式响应（{}）共 {} 字符 ═══\n{}",
-        status.as_u16(),
-        raw.chars().count(),
-        log_preview(&raw)
-    ));
-    let value: serde_json::Value = match serde_json::from_str(&raw) {
-        Ok(v) => v,
-        Err(e) => {
-            log_call(call_id, &format!("响应 JSON 解析失败：{}", e));
-            return Err(format!("解析响应失败: {}", e));
+    // 非流式「未产出内容」自动重试：网关空壳（200 + 空 choices）与 429 限流都不产生 token，
+    // 重试零计费风险，而实测这类失败多为服务端瞬时状态（同一请求重发即可成功）。
+    let mut empty_retry = 0usize;
+    let (value, message, text, has_tool_calls) = loop {
+        let resp = send_with_retries(hooks, call_id, &client, &url, provider, &body).await?;
+        let status = resp.status();
+        let raw = read_body_text_lossy(call_id, "非流式响应", resp).await;
+        if raw.is_empty() {
+            // 空响应体：错误状态码下的空体（网关限流/故障常见）按 HTTP 错误处理并允许 429 重试；
+            // 只有在 2xx 时才可能是「读体超时」（状态码在消费响应体前已取出，仍然可用）。
+            if !status.is_success() {
+                if status.as_u16() == 429 && empty_retry < EMPTY_RETRY_MAX {
+                    empty_retry += 1;
+                    hooks.check_cancel()?;
+                    log_call(call_id, &format!(
+                        "服务端限流（HTTP 429 且响应体为空），第 {}/{} 次重试",
+                        empty_retry, EMPTY_RETRY_MAX
+                    ));
+                    tokio::time::sleep(EMPTY_RETRY_DELAY * empty_retry as u32).await;
+                    continue;
+                }
+                return Err(format!("AI错误 {}: 响应体为空", status.as_u16()));
+            }
+            return Err(format!("AI请求无响应: 读取响应体超时（超过 {}s）", READ_BODY_TIMEOUT.as_secs()));
+        }
+        log_call(call_id, &format!(
+            "═══ 非流式响应（{}）共 {} 字符 ═══\n{}",
+            status.as_u16(),
+            raw.chars().count(),
+            log_preview(&raw)
+        ));
+        // 响应体可能不是 JSON（网关限流/故障时给空体或 HTML）——先宽容解析，
+        // 不能让「解析失败」掩盖真实的 HTTP 状态与原始正文。
+        let parsed = serde_json::from_str::<serde_json::Value>(&raw).ok();
+        let message = parsed
+            .as_ref()
+            .and_then(|v| v.get("choices"))
+            .and_then(|c| c.get(0))
+            .and_then(|ch| ch.get("message"))
+            .cloned();
+        let text = message
+            .as_ref()
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        // tool-call 响应的 content 合法为空：只要带了 tool_calls 就不算「AI返回空」。
+        let has_tool_calls = message
+            .as_ref()
+            .map(|m| m.get("tool_calls").and_then(|tc| tc.as_array()).map(|a| !a.is_empty()).unwrap_or(false))
+            .unwrap_or(false);
+
+        if is_retryable_no_output(status.as_u16(), text.is_empty(), has_tool_calls)
+            && empty_retry < EMPTY_RETRY_MAX
+        {
+            empty_retry += 1;
+            hooks.check_cancel()?;
+            log_call(call_id, &format!(
+                "服务端未产出内容（HTTP {}），第 {}/{} 次重试",
+                status.as_u16(),
+                empty_retry,
+                EMPTY_RETRY_MAX
+            ));
+            tokio::time::sleep(EMPTY_RETRY_DELAY * empty_retry as u32).await;
+            continue;
+        }
+        if !status.is_success() {
+            return Err(format!("AI错误 {}: {}", status.as_u16(), error_or_status(&raw, &status)));
+        }
+        match parsed {
+            Some(v) => break (v, message, text, has_tool_calls),
+            None => {
+                log_call(call_id, "响应 JSON 解析失败：响应体不是合法 JSON");
+                return Err("解析响应失败: 响应体不是合法 JSON".to_string());
+            }
         }
     };
-    if !status.is_success() {
-        let msg = value
-            .get("error")
-            .and_then(|e| e.get("message"))
-            .and_then(|m| m.as_str())
-            .unwrap_or("未知错误");
-        return Err(format!("AI错误 {}: {}", status.as_u16(), msg));
-    }
-    let message = value
-        .get("choices")
-        .and_then(|c| c.get(0))
-        .and_then(|ch| ch.get("message"))
-        .cloned();
-    let text = message
-        .as_ref()
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    // tool-call 响应的 content 合法为空：只要带了 tool_calls 就不算「AI返回空」。
-    let has_tool_calls = message
-        .as_ref()
-        .map(|m| m.get("tool_calls").and_then(|tc| tc.as_array()).map(|a| !a.is_empty()).unwrap_or(false))
-        .unwrap_or(false);
     if text.is_empty() && !has_tool_calls {
-        log_call(call_id, "AI返回空（choices[0].message.content 为空）");
-        return Err("AI返回空".into());
+        log_call(call_id, &format!(
+            "AI返回空（连续 {} 次尝试 choices[0].message.content 均为空）",
+            EMPTY_RETRY_MAX + 1
+        ));
+        return Err(format!(
+            "AI返回空：连续 {} 次请求均未返回内容（服务端 HTTP 200 但 choices 为空，通常是该模型在服务商侧无可用实例或被限流），请稍后重试或更换模型",
+            EMPTY_RETRY_MAX + 1
+        ));
     }
     if has_tool_calls {
         log_call(call_id, &format!(
@@ -1082,6 +1135,21 @@ mod tests {
         // 业务类错误（AI 主动返回）→ 不重试
         assert!(!is_recoverable_network_error("AI错误 401: Invalid API key"));
         assert!(!is_recoverable_network_error("AI返回空"));
+    }
+
+    #[test]
+    fn no_output_retry_classification() {
+        // 魔搭空壳：200 + 无内容 + 无 tool_calls → 重试（零计费）
+        assert!(is_retryable_no_output(200, true, false));
+        // 限流（含响应体为空的 429）→ 重试
+        assert!(is_retryable_no_output(429, true, false));
+        assert!(is_retryable_no_output(429, false, false));
+        // 正常内容 → 不重试
+        assert!(!is_retryable_no_output(200, false, false));
+        // tool-call 响应 content 合法为空 → 不重试
+        assert!(!is_retryable_no_output(200, true, true));
+        // 5xx 可能已产生计费输出 → 不重试
+        assert!(!is_retryable_no_output(500, true, false));
     }
 
     #[test]
