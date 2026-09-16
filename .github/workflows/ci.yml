@@ -12,10 +12,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          # 必须 pnpm ≥ 10：overrides / allowBuilds / minimumReleaseAgeExclude 现已写在
+          # pnpm-workspace.yaml 里（pnpm 10 起才支持从该文件读取），pnpm 9 读不到这些设置，
+          # 会认为当前 overrides 为空、与 lockfile 记录的不一致，从而在 frozen install 时
+          # 报 ERR_PNPM_LOCKFILE_CONFIG_MISMATCH。与 release.yml 保持一致（pnpm 11 + Node 22）。
+          version: 11
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # pnpm 11 要求 Node ≥ 22.13
+          node-version: 22
           cache: pnpm
       # 锁文件漂移设防：与本地 lockfile 不一致时直接失败。
       - run: pnpm install --frozen-lockfile
