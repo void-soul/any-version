@@ -184,15 +184,17 @@ impl MusicPlayerState {
     }
 
     /// 后台巡查（由 [`start_queue_watcher`] 每 250ms 调用）：
-    /// 正在播放但输出队列已空 → 说明本曲放完，自动切下一首。
+    /// 当前曲目已放完（输出队列为空）→ 自动切下一首。
+    ///
+    /// 判定**不限于 `Playing`**：`Ended` 同样继续推进（自愈）—— 无论谁读过状态、
+    /// 或历史状态被置为 Ended，续播都不会被卡死。
     /// 失败（如文件已被删除）时继续尝试后续曲目，最多绕队列一圈。
     pub fn tick(&self) {
         let mut inner = self.inner.lock();
-        let finished = matches!(
-            (inner.player.as_ref(), inner.status),
-            (Some(player), PlayStatus::Playing) if player.empty()
-        );
-        if !finished {
+        let exhausted = inner.current.is_some()
+            && matches!(inner.status, PlayStatus::Playing | PlayStatus::Ended)
+            && matches!(inner.player.as_ref(), Some(player) if player.empty());
+        if !exhausted {
             return;
         }
 
@@ -201,6 +203,7 @@ impl MusicPlayerState {
             match inner.queue.advance() {
                 Some(path) => {
                     if Self::play_locked(&mut inner, &self.eq, &path).is_ok() {
+                        crate::exit_log!("[音乐] 播完自动切下一首: {}", path);
                         return;
                     }
                     // 解码失败（文件损坏/被删除）：跳过，继续下一首
@@ -356,23 +359,20 @@ impl MusicPlayerState {
         Self::snapshot(&mut inner)
     }
 
-    /// 组装状态快照；顺带把「队列已空」判为播完
+    /// 组装状态快照。
+    ///
+    /// **这是只读路径**（前端每 500ms 轮询 `music_get_state` 都会走到这里），
+    /// 绝不能修改播放状态：旧实现在这里把「输出已空」判为 `Ended`，而 `tick()` 只
+    /// 在 `Playing` 时推进 —— 于是任何一次轮询抢先置为 `Ended` 都会让自动切歌
+    /// **永久失效**（表现就是托盘模式下「播完不切下一首」）。
+    /// 播完的判定与推进统一由 [`MusicPlayerState::tick`] 负责。
     fn snapshot(inner: &mut Inner) -> PlayerState {
         let duration_ms = inner.current.as_ref().map(|c| c.duration_ms).unwrap_or(0);
         let mut position_ms = 0u64;
-        // 先只读地取值，再改状态，避免同时持有 inner 的可变与不可变借用
-        let mut ended = false;
         if inner.current.is_some() {
             if let Some(player) = inner.player.as_ref() {
                 position_ms = player.get_pos().as_millis() as u64;
-                if inner.status == PlayStatus::Playing && player.empty() {
-                    ended = true;
-                }
             }
-        }
-        if ended {
-            inner.status = PlayStatus::Ended;
-            position_ms = duration_ms.max(position_ms);
         }
         if duration_ms > 0 {
             position_ms = position_ms.min(duration_ms);
@@ -404,18 +404,23 @@ pub fn persist_settings(state: &MusicPlayerState, settings: &MusicSettings) -> R
 /// 必须由后端驱动（而不是前端轮询后切换）：窗口隐藏 / 最小化到托盘后，
 /// WebView2 会节流甚至暂停前端定时器，只有 Rust 侧才能可靠地续播。
 pub fn start_queue_watcher(app: tauri::AppHandle) {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_millis(250));
-        match app.try_state::<MusicPlayerState>() {
-            Some(state) => state.tick(),
-            // 应用已退出（State 已回收）：结束线程
-            None => break,
+    std::thread::spawn(move || {
+        crate::exit_log!("[音乐] 后台巡查线程已启动（播完自动切下一首）");
+        loop {
+            std::thread::sleep(Duration::from_millis(250));
+            match app.try_state::<MusicPlayerState>() {
+                Some(state) => state.tick(),
+                // 应用已退出（State 已回收）：结束线程
+                None => break,
+            }
         }
     });
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
 
     #[test]
@@ -482,6 +487,99 @@ mod tests {
         state.set_queue(vec!["D:/missing/a.mp3".to_string()], "sequence").unwrap();
         state.tick();
         assert_eq!(state.state().status, PlayStatus::Idle);
+    }
+
+    #[test]
+    fn test_snapshot_is_read_only() {
+        // 回归（Q-0078 第二轮）：快照/读状态曾经会把 Playing 判成 Ended，
+        // 而 tick() 只在 Playing 时推进 —— 一次轮询就能让自动切歌永久失效。
+        // 这里退化到无音频设备也能断言的部分：未播放时读状态不改任何状态。
+        let state = MusicPlayerState::default();
+        let before = state.state();
+        let after = state.state();
+        assert_eq!(before.status, after.status);
+        assert_eq!(after.status, PlayStatus::Idle);
+    }
+
+    /// 写一个最小 16-bit 单声道 PCM WAV（测试用，避免依赖 ffmpeg）
+    #[cfg(test)]
+    fn write_sine_wav(path: &std::path::Path, seconds: f32) {
+        use std::io::Write;
+        const SAMPLE_RATE: u32 = 44_100;
+        let total = (SAMPLE_RATE as f32 * seconds) as u32;
+        let data_len = total * 2;
+        let mut buf = Vec::with_capacity(44 + data_len as usize);
+        buf.extend_from_slice(b"RIFF");
+        buf.extend_from_slice(&(36 + data_len).to_le_bytes());
+        buf.extend_from_slice(b"WAVEfmt ");
+        buf.extend_from_slice(&16u32.to_le_bytes());
+        buf.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        buf.extend_from_slice(&1u16.to_le_bytes()); // 单声道
+        buf.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
+        buf.extend_from_slice(&(SAMPLE_RATE * 2).to_le_bytes());
+        buf.extend_from_slice(&2u16.to_le_bytes());
+        buf.extend_from_slice(&16u16.to_le_bytes());
+        buf.extend_from_slice(b"data");
+        buf.extend_from_slice(&data_len.to_le_bytes());
+        for i in 0..total {
+            let t = i as f32 / SAMPLE_RATE as f32;
+            let s = (t * 440.0 * std::f32::consts::TAU).sin() * 0.2;
+            buf.extend_from_slice(&((s * i16::MAX as f32) as i16).to_le_bytes());
+        }
+        std::fs::File::create(path)
+            .and_then(|mut f| f.write_all(&buf))
+            .expect("写测试音频");
+    }
+
+    /// 端到端回归：**同时模拟前端轮询与后台巡查**，播完必须自动切下一首。
+    ///
+    /// 需要音频输出设备，因此默认忽略；在本机手动验证：
+    /// `cargo test --lib -- --ignored test_auto_advance_survives_state_polling`
+    #[test]
+    #[ignore = "需要音频输出设备（真实播放），用 `cargo test --lib -- --ignored` 手动跑"]
+    fn test_auto_advance_survives_state_polling() {
+        let dir = std::env::temp_dir().join(format!("kira-music-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        let a_path = dir.join("a.wav");
+        let b_path = dir.join("b.wav");
+        write_sine_wav(&a_path, 1.0);
+        write_sine_wav(&b_path, 1.0);
+        let a = a_path.to_string_lossy().to_string();
+        let b = b_path.to_string_lossy().to_string();
+
+        let state = MusicPlayerState::default();
+        state.set_queue(vec![a.clone(), b.clone()], "sequence").unwrap();
+        state.play(&a).expect("应能开始播放（需要音频输出设备）");
+
+        let start = Instant::now();
+        let mut last_tick = Instant::now();
+        let mut last_poll = Instant::now();
+        let mut advanced = false;
+        while start.elapsed() < Duration::from_secs(15) {
+            std::thread::sleep(Duration::from_millis(25));
+            // 后台巡查线程（真实实现 250ms 一次）
+            if last_tick.elapsed() >= Duration::from_millis(250) {
+                last_tick = Instant::now();
+                state.tick();
+            }
+            // 前端轮询 music_get_state（隐藏窗口下会被节流，可见时 500ms 一次）
+            if last_poll.elapsed() >= Duration::from_millis(25) {
+                last_poll = Instant::now();
+                assert_eq!(
+                    state.state().status,
+                    PlayStatus::Playing,
+                    "读状态不得改变播放状态（旧 bug：轮询把它置成 Ended 后永久不切歌）"
+                );
+            }
+            if state.state().path.as_deref() == Some(b.as_str()) {
+                advanced = true;
+                break;
+            }
+        }
+        state.stop();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(advanced, "有前端轮询时也必须能自动切歌");
     }
 
     #[test]
