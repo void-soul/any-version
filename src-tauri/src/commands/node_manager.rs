@@ -903,28 +903,257 @@ fn pm_install(app: &tauri::AppHandle, def: &NodeProjectDef, dir: &Path) -> Resul
     Ok(())
 }
 
-/// Python 项目安装：`python -m venv .venv` + venv 内 pip 安装 requirements.txt。
-///
-/// venv 隔离系统 Python 环境；pip 装在 venv 里，卸载 = 删 `.venv` 目录，无残留。
-fn python_install(app: &tauri::AppHandle, def: &NodeProjectDef, dir: &Path) -> Result<(), String> {
-    emit_progress(app, &def.id, "install", "正在创建 Python 虚拟环境 (.venv)…");
-    let (ok, last_err, _out) = run_capture_live(app, &def.id, "install", "python", &["-m", "venv", ".venv"], Some(dir), &[], None);
-    if !ok {
-        let msg = last_err.trim();
-        return Err(format!("创建虚拟环境失败: {}", if msg.is_empty() { "未知错误" } else { msg }));
+/// Python 解释器候选（按优先级）：`py -3`（官方启动器）→ `python3` → `python`。
+/// 不再无脑用裸 `python`：PATH 上的可能是嵌入式发行版（无 venv 模块），
+/// 如本应用 SDK 管理器安装的 embeddable Python。
+fn python_candidates() -> Vec<(String, Vec<String>)> {
+    let mut candidates: Vec<(String, Vec<String>)> = Vec::new();
+    if cfg!(windows) {
+        candidates.push(("py".to_string(), vec!["-3".to_string()]));
     }
-    let py = def.venv_python();
-    if !py.exists() {
-        return Err("虚拟环境创建后未找到 python 解释器".to_string());
+    candidates.push(("python3".to_string(), Vec::new()));
+    candidates.push(("python".to_string(), Vec::new()));
+    candidates
+}
+
+/// 探测解释器能否导入某模块（`<py> -c "import xxx"`）。
+fn probe_python_module(program: &str, prefix: &[String], code: &str) -> bool {
+    let mut cmd = hidden_cmd(program);
+    for a in prefix {
+        cmd.arg(a);
     }
-    emit_progress(app, &def.id, "install", "正在安装 requirements.txt 依赖（pip）…");
-    let py_s = py.to_string_lossy().to_string();
-    let (ok, last_err, _out) = run_capture_live(app, &def.id, "install", &py_s, &["-m", "pip", "install", "-r", "requirements.txt"], Some(dir), &[], None);
-    if !ok {
-        let msg = last_err.trim();
-        return Err(format!("pip install 失败: {}", if msg.is_empty() { "未知错误" } else { msg }));
+    cmd.args(["-c", code]);
+    matches!(cmd.output(), Ok(out) if out.status.success())
+}
+
+/// 探测所有候选解释器，返回 (program, prefix, has_venv, has_pip) 列表。
+fn probe_python_candidates() -> Vec<(String, Vec<String>, bool, bool)> {
+    python_candidates()
+        .into_iter()
+        .map(|(program, prefix)| {
+            let has_venv = probe_python_module(&program, &prefix, "import venv, ensurepip");
+            let has_pip = has_venv || probe_python_module(&program, &prefix, "import pip");
+            (program, prefix, has_venv, has_pip)
+        })
+        .collect()
+}
+
+/// Python 运行时安装方案。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PythonRuntimePlan {
+    /// 用该解释器创建 .venv（program + 前缀参数，如 py + ["-3"]）
+    Venv(String, Vec<String>),
+    /// 解释器无 venv 模块但可用 pip → 降级 `pip install --target .deps`
+    TargetDeps(String, Vec<String>),
+    /// 无可用解释器
+    None,
+}
+
+/// 纯函数：venv 优先，其次 pip-only 降级，最后 None。
+pub(crate) fn select_python_runtime(
+    probes: &[(String, Vec<String>, bool, bool)],
+) -> PythonRuntimePlan {
+    for (program, prefix, has_venv, _has_pip) in probes {
+        if *has_venv {
+            return PythonRuntimePlan::Venv(program.clone(), prefix.clone());
+        }
     }
+    for (program, prefix, has_venv, has_pip) in probes {
+        if !*has_venv && *has_pip {
+            return PythonRuntimePlan::TargetDeps(program.clone(), prefix.clone());
+        }
+    }
+    PythonRuntimePlan::None
+}
+
+/// Python 项目启动计划。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PythonLaunchPlan {
+    /// 使用 .venv 内解释器
+    Venv(PathBuf),
+    /// 使用基准解释器 + .deps 依赖目录（PYTHONPATH / ._pth 注入）
+    Deps {
+        program: String,
+        prefix: Vec<String>,
+        deps_dir: PathBuf,
+    },
+    /// 运行时未就绪
+    Missing,
+}
+
+/// 纯函数（仅读文件系统）：优先 .venv，其次读 `.deps/.python-runtime.json` 标记。
+/// marker 里的解释器必须真实存在，否则按 Missing 处理（启动必然失败，应提示重装）。
+pub(crate) fn plan_python_launch(managed_dir: &Path, venv_python: &Path) -> PythonLaunchPlan {
+    if venv_python.exists() {
+        return PythonLaunchPlan::Venv(venv_python.to_path_buf());
+    }
+    let deps_dir = managed_dir.join(".deps");
+    let Ok(raw) = fs::read_to_string(deps_dir.join(".python-runtime.json")) else {
+        return PythonLaunchPlan::Missing;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return PythonLaunchPlan::Missing;
+    };
+    let program = value
+        .get("program")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if program.is_empty() || !Path::new(&program).exists() {
+        return PythonLaunchPlan::Missing;
+    }
+    let prefix = value
+        .get("prefix")
+        .and_then(serde_json::Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    PythonLaunchPlan::Deps {
+        program,
+        prefix,
+        deps_dir,
+    }
+}
+
+/// 嵌入式 Python（带 `*._pth`）会忽略 PYTHONPATH；
+/// 把 .deps 绝对路径追加进 `._pth` 才能让它 import 到降级安装的依赖。
+/// 只在解释器目录存在 `*._pth` 时生效（官方完整安装没有这个文件，走 PYTHONPATH 即可）。
+fn append_deps_to_embeddable_pth(interpreter: &str, deps_dir: &Path) {
+    let path = Path::new(interpreter);
+    let Some(dir) = path.parent() else {
+        return;
+    };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        if !name.ends_with("._pth") {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let deps_line = deps_dir.to_string_lossy().to_string();
+        if content.lines().any(|l| l.trim().eq_ignore_ascii_case(&deps_line)) {
+            return; // 已追加过
+        }
+        let mut out = content.clone();
+        if !out.ends_with('\n') {
+            out.push_str("\r\n");
+        }
+        out.push_str(&deps_line);
+        let _ = fs::write(entry.path(), out);
+        eprintln!("[node_manager] 已把 .deps 追加到 {}（嵌入式 Python 依赖可见性）", entry.path().display());
+        return;
+    }
+}
+
+/// 把降级方案写盘：marker（启动时读回）+ 嵌入式 ._pth 追加。
+fn record_deps_runtime(dir: &Path, program: &str, prefix: &[String]) -> Result<(), String> {
+    let deps = dir.join(".deps");
+    let resolved = find_in_path(program)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| program.to_string());
+    let marker = serde_json::json!({ "program": resolved, "prefix": prefix });
+    fs::write(deps.join(".python-runtime.json"), marker.to_string())
+        .map_err(|e| format!("写入 .deps 运行时标记失败: {}", e))?;
+    append_deps_to_embeddable_pth(&resolved, &deps);
     Ok(())
+}
+
+/// Python 项目安装。
+///
+/// 首选 `venv`（隔离、卸载即删目录）；解释器不带 venv 模块时（典型：嵌入式/embeddable
+/// 发行版，如 SDK 管理器装的 Python），降级为 `pip install --target .deps`，
+/// 启动时通过 PYTHONPATH / ._pth 注入依赖路径。
+fn python_install(app: &tauri::AppHandle, def: &NodeProjectDef, dir: &Path) -> Result<(), String> {
+    emit_progress(app, &def.id, "install", "正在检测可用的 Python 解释器…");
+    let probes = probe_python_candidates();
+    match select_python_runtime(&probes) {
+        PythonRuntimePlan::Venv(program, prefix) => {
+            let mut args = prefix.clone();
+            args.extend(["-m".to_string(), "venv".to_string(), ".venv".to_string()]);
+            emit_progress(app, &def.id, "install", "正在创建 Python 虚拟环境 (.venv)…");
+            let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            let (ok, last_err, _out) =
+                run_capture_live(app, &def.id, "install", &program, &arg_refs, Some(dir), &[], None);
+            if !ok {
+                let msg = last_err.trim();
+                return Err(format!(
+                    "创建虚拟环境失败: {}",
+                    if msg.is_empty() { "未知错误" } else { msg }
+                ));
+            }
+            let py = def.venv_python();
+            if !py.exists() {
+                return Err("虚拟环境创建后未找到 python 解释器".to_string());
+            }
+            emit_progress(app, &def.id, "install", "正在安装 requirements.txt 依赖（pip）…");
+            let py_s = py.to_string_lossy().to_string();
+            let (ok, last_err, _out) = run_capture_live(
+                app,
+                &def.id,
+                "install",
+                &py_s,
+                &["-m", "pip", "install", "-r", "requirements.txt"],
+                Some(dir),
+                &[],
+                None,
+            );
+            if !ok {
+                let msg = last_err.trim();
+                return Err(format!(
+                    "pip install 失败: {}",
+                    if msg.is_empty() { "未知错误" } else { msg }
+                ));
+            }
+            Ok(())
+        }
+        PythonRuntimePlan::TargetDeps(program, prefix) => {
+            emit_progress(
+                app,
+                &def.id,
+                "install",
+                &format!(
+                    "当前 Python（{}）不带 venv 模块（常见于嵌入式发行版），改用 .deps 目录隔离安装依赖…",
+                    program
+                ),
+            );
+            let mut args = prefix.clone();
+            args.extend([
+                "-m".to_string(),
+                "pip".to_string(),
+                "install".to_string(),
+                "-r".to_string(),
+                "requirements.txt".to_string(),
+                "--target".to_string(),
+                ".deps".to_string(),
+                "--upgrade".to_string(),
+            ]);
+            let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            let (ok, last_err, _out) =
+                run_capture_live(app, &def.id, "install", &program, &arg_refs, Some(dir), &[], None);
+            if !ok {
+                let msg = last_err.trim();
+                return Err(format!(
+                    "pip install 失败: {}",
+                    if msg.is_empty() { "未知错误" } else { msg }
+                ));
+            }
+            record_deps_runtime(dir, &program, &prefix)?;
+            Ok(())
+        }
+        PythonRuntimePlan::None => Err(
+            "未找到支持 venv 或 pip 的 Python。请安装官方 Python 3.8+（python.org），\
+             或在本应用 SDK 页为托管 Python 执行 install_pip 后重试"
+                .to_string(),
+        ),
+    }
 }
 
 /// 执行构建（若有 build_script）。
@@ -1535,13 +1764,25 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
     }
 
     // 组装启动命令：git 模式 `pnpm dsh web`；npx 模式 `npx -y --prefix <托管目录> <bin> <args...>`；
-    // python 模式 `.venv 内 python <startCmd...>`（startCmd 即 python 参数，如 `-m core.converter`）。
+    // python 模式 `.venv 内 python <startCmd...>`（startCmd 即 python 参数，如 `-m core.converter`）；
+    // .deps 降级模式：基准 python + PYTHONPATH=<托管目录>/.deps（嵌入式 Python 已在安装期补 ._pth）。
+    let mut python_extra_env: Option<(String, String)> = None;
     let (prog, args) = if def.is_python() {
-        let py = def.venv_python();
-        if !py.exists() {
-            return Err("Python 虚拟环境未就绪（.venv 缺失），请先「安装」或「安装依赖」".to_string());
+        match plan_python_launch(&dir, &def.venv_python()) {
+            PythonLaunchPlan::Venv(py) => (py.to_string_lossy().to_string(), def.start_cmd.clone()),
+            PythonLaunchPlan::Deps { program, prefix, deps_dir } => {
+                let mut a = prefix;
+                a.extend(def.start_cmd.iter().cloned());
+                python_extra_env =
+                    Some(("PYTHONPATH".to_string(), deps_dir.to_string_lossy().to_string()));
+                (program, a)
+            }
+            PythonLaunchPlan::Missing => {
+                return Err(
+                    "Python 运行时未就绪（.venv 与 .deps 均缺失），请先「安装」或「安装依赖」".to_string(),
+                )
+            }
         }
-        (py.to_string_lossy().to_string(), def.start_cmd.clone())
     } else if def.is_npx() {
         let (p, prefix) = resolve_exe_invocation("npx", "请先安装 Node.js (https://nodejs.org)")?;
         let mut a = prefix;
@@ -1570,6 +1811,9 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
     let mut cmd = hidden_cmd(&prog);
     cmd.args(&args);
     cmd.current_dir(&runtime_cwd);
+    if let Some((key, val)) = &python_extra_env {
+        cmd.env(key, val);
+    }
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
@@ -2476,5 +2720,91 @@ mod tests {
         assert_eq!(def.console_url_pattern, "dsh web: (http\\S+)");
         assert!(def.auto_open_console_url);
         assert!(def.has_console_url_pattern());
+    }
+
+    // ─── Python 运行时选择（venv 探测 / .deps 降级） ───
+
+    #[test]
+    fn test_select_python_runtime_prefers_venv_capable() {
+        let probes = vec![
+            ("py".to_string(), vec!["-3".to_string()], false, false),
+            ("python".to_string(), vec![], true, true),
+        ];
+        assert_eq!(
+            select_python_runtime(&probes),
+            PythonRuntimePlan::Venv("python".to_string(), vec![])
+        );
+    }
+
+    #[test]
+    fn test_select_python_runtime_falls_back_to_pip_target() {
+        // 嵌入式发行版：无 venv（即便有 pip）→ 降级 --target 安装
+        let probes = vec![
+            ("py".to_string(), vec!["-3".to_string()], false, false),
+            ("python".to_string(), vec![], false, true),
+        ];
+        assert_eq!(
+            select_python_runtime(&probes),
+            PythonRuntimePlan::TargetDeps("python".to_string(), vec![])
+        );
+    }
+
+    #[test]
+    fn test_select_python_runtime_none_when_no_usable_python() {
+        let probes = vec![("python".to_string(), vec![], false, false)];
+        assert_eq!(select_python_runtime(&probes), PythonRuntimePlan::None);
+    }
+
+    #[test]
+    fn test_plan_python_launch_prefers_venv() {
+        let root = std::env::temp_dir().join(format!("kira-pyplan-{}", std::process::id()));
+        let venv_py = root.join(".venv").join("Scripts").join("python.exe");
+        std::fs::create_dir_all(&venv_py.parent().unwrap()).unwrap();
+        std::fs::write(&venv_py, b"").unwrap();
+
+        assert_eq!(plan_python_launch(&root, &venv_py), PythonLaunchPlan::Venv(venv_py.clone()));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_plan_python_launch_deps_mode_uses_marker() {
+        let root = std::env::temp_dir().join(format!("kira-pyplan-deps-{}", std::process::id()));
+        let fake_py = root.join("base-python.exe");
+        std::fs::create_dir_all(&root);
+        std::fs::write(&fake_py, b"").unwrap();
+        let deps = root.join(".deps");
+        std::fs::create_dir_all(&deps);
+        let marker = serde_json::json!({ "program": fake_py.to_string_lossy(), "prefix": [] });
+        std::fs::write(deps.join(".python-runtime.json"), marker.to_string()).unwrap();
+
+        let venv_py = root.join(".venv").join("Scripts").join("python.exe");
+        match plan_python_launch(&root, &venv_py) {
+            PythonLaunchPlan::Deps { program, prefix, deps_dir } => {
+                assert_eq!(program, fake_py.to_string_lossy());
+                assert!(prefix.is_empty());
+                assert_eq!(deps_dir, deps);
+            }
+            other => panic!("期望 Deps，实际 {:?}", other),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_plan_python_launch_missing_when_no_marker_or_bad_program() {
+        let root = std::env::temp_dir().join(format!("kira-pyplan-miss-{}", std::process::id()));
+        std::fs::create_dir_all(&root);
+        let venv_py = root.join(".venv").join("Scripts").join("python.exe");
+
+        // 无 .deps → Missing
+        assert_eq!(plan_python_launch(&root, &venv_py), PythonLaunchPlan::Missing);
+
+        // 有 .deps 但 marker 指向不存在的解释器 → 仍 Missing（启动必然失败）
+        let deps = root.join(".deps");
+        std::fs::create_dir_all(&deps);
+        let marker = serde_json::json!({ "program": root.join("gone.exe").to_string_lossy(), "prefix": [] });
+        std::fs::write(deps.join(".python-runtime.json"), marker.to_string()).unwrap();
+        assert_eq!(plan_python_launch(&root, &venv_py), PythonLaunchPlan::Missing);
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
