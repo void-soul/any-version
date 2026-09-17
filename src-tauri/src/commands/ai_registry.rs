@@ -262,9 +262,13 @@ pub struct ProxySettingsDef {
 
 // ─── 编译后嵌入的运行时结构 ───
 
-/// 与前端交互的 Provider 预设 DTO
+/// 与前端交互的 Provider 预设 DTO。
+///
+/// 注意：**不要**加 `rename_all = "camelCase"`。前端 `Preset` 类型与 AI 配置面
+/// （`AiProvider`）一致按 snake_case 读 `openai_url` 等字段；一旦序列化成
+/// `openaiUrl`，前端取不到 URL → 「添加预设供应商」只剩名称和官网。
+/// （camelCase rename 只属于上面反序列化 `providers.json` 的 `ProviderPreset`。）
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ProviderPresetDto {
     pub id: String,
     pub name: String,
@@ -844,4 +848,68 @@ pub fn update_tool_profile(tool_id: String, avatar: Option<String>, nickname: Op
     // 配置已写入磁盘；热重载失败不阻断保存（仅影响内存态即时刷新），忽略其返回值。
     let _ = reload_ai_registry();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ProviderPreset, ProviderPresetDto};
+
+    /// 回归：DTO 一旦被标上 `rename_all = "camelCase"`，URL 会序列化成
+    /// `openaiUrl`，前端按 `openai_url` 读取全部落空 → 添加预设只剩名称/官网。
+    #[test]
+    fn provider_preset_dto_serializes_urls_as_snake_case() {
+        let dto = ProviderPresetDto {
+            id: "workbuddy2api".into(),
+            name: "WorkBuddy2API 本地转换".into(),
+            category: "relay".into(),
+            website: "https://example.com".into(),
+            openai_url: "http://127.0.0.1:8788/v1".into(),
+            anthropic_url: "http://127.0.0.1:8788".into(),
+            google_url: String::new(),
+        };
+        let value = serde_json::to_value(&dto).expect("序列化失败");
+        assert!(value.get("openai_url").is_some(), "缺少 openai_url 键: {value}");
+        assert!(value.get("anthropic_url").is_some(), "缺少 anthropic_url 键: {value}");
+        assert!(value.get("google_url").is_some(), "缺少 google_url 键: {value}");
+        assert!(value.get("openaiUrl").is_none(), "不应输出驼峰键: {value}");
+    }
+
+    /// providers.json 健全性：id 唯一、name 非空、category 仅取已知值、
+    /// 至少一个协议端点非空。新增预设时防止手误破坏前端过滤与展示。
+    #[test]
+    fn providers_json_entries_are_valid_and_unique() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../ai-tools/providers.json");
+        let raw = std::fs::read_to_string(&path).expect("providers.json 读取失败");
+        let presets: Vec<ProviderPreset> = serde_json::from_str(&raw).expect("providers.json 解析失败");
+        assert!(presets.len() >= 40, "预设数量异常: {}", presets.len());
+
+        let mut seen = std::collections::HashSet::new();
+        for p in &presets {
+            assert!(!seen.contains(&p.id), "重复预设 id: {}", p.id);
+            seen.insert(p.id.clone());
+            assert!(!p.name.trim().is_empty(), "预设 {} 名称为空", p.id);
+            assert!(
+                matches!(p.category.as_str(), "provider" | "relay" | "local"),
+                "预设 {} 分类未知: {}（前端过滤只认 provider/relay/local）",
+                p.id,
+                p.category
+            );
+            assert!(
+                !p.openai_url.is_empty() || !p.anthropic_url.is_empty() || !p.google_url.is_empty(),
+                "预设 {} 没有任何协议端点",
+                p.id
+            );
+            for url in [&p.openai_url, &p.anthropic_url, &p.google_url] {
+                if !url.is_empty() {
+                    assert!(
+                        url.starts_with("http://") || url.starts_with("https://"),
+                        "预设 {} 端点不是 http(s) URL: {}",
+                        p.id,
+                        url
+                    );
+                }
+            }
+        }
+    }
 }
