@@ -37,11 +37,20 @@
   },
   {
     "id": "qwen",
-    "name": "阿里百炼 Qwen",
+    "name": "千问AI平台 Token Plan",
     "category": "provider",
-    "website": "https://bailian.aliyun.com",
+    "website": "https://platform.qianwenai.com/",
     "openaiUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
     "anthropicUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+    "googleUrl": ""
+  },
+  {
+    "id": "qianwen",
+    "name": "千问AI平台",
+    "category": "provider",
+    "website": "https://platform.qianwenai.com/",
+    "openaiUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "anthropicUrl": "https://dashscope.aliyuncs.com/apps/anthropic",
     "googleUrl": ""
   },
   {
@@ -384,6 +393,42 @@
     "website": "https://ppio.com",
     "openaiUrl": "https://api.ppio.com/openai/v1",
     "anthropicUrl": "https://api.ppio.com/anthropic",
+    "googleUrl": ""
+  },
+  {
+    "id": "88api",
+    "name": "88API",
+    "category": "relay",
+    "website": "https://88api.ai",
+    "openaiUrl": "https://88api.ai/v1",
+    "anthropicUrl": "https://88api.ai",
+    "googleUrl": ""
+  },
+  {
+    "id": "apimart",
+    "name": "APIMart",
+    "category": "relay",
+    "website": "https://apimart.ai",
+    "openaiUrl": "https://api.apimart.ai/v1",
+    "anthropicUrl": "https://api.apimart.ai",
+    "googleUrl": ""
+  },
+  {
+    "id": "grooroute",
+    "name": "GrooRoute",
+    "category": "relay",
+    "website": "https://grooroute.com",
+    "openaiUrl": "https://grooroute.com/v1",
+    "anthropicUrl": "https://grooroute.com",
+    "googleUrl": ""
+  },
+  {
+    "id": "free-router",
+    "name": "Free Router 本地免费池",
+    "category": "relay",
+    "website": "https://github.com/www222fff/free-router-proxy",
+    "openaiUrl": "http://127.0.0.1:8787/v1",
+    "anthropicUrl": "",
     "googleUrl": ""
   }
 ]

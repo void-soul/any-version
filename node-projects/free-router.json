@@ -1,0 +1,15 @@
+{
+  "id": "free-router",
+  "displayName": "Free Router",
+  "repo": "https://github.com/www222fff/free-router-proxy.git",
+  "website": "https://github.com/www222fff/free-router-proxy",
+  "icon": "boxes",
+  "description": "把各渠道的免费模型聚合成 free-best 路由：自动发现免费模型、评测排名、限流冷却、多 Key 轮换与每日配额记账。装好后在「AI 模型」里添加供应商 http://127.0.0.1:8787/v1、模型 free-best 即可使用。注意：它会定期发探活/评测请求，会消耗上游免费额度。",
+  "defaultPort": 8787,
+  "webPath": "http://127.0.0.1:{port}",
+  "nodeRequirement": ">=20",
+  "packageManager": "pnpm",
+  "buildScript": "",
+  "startCmd": ["start"],
+  "managed": true
+}

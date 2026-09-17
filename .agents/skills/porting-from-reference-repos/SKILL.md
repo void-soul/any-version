@@ -13,13 +13,19 @@ Systematically check reference repositories for recent updates, identify valuabl
 
 | Repo | Path | 核心能力 | 与 any-version 的关系 |
 |------|------|---------|---------------------|
-| **EchoBird** | `E:\pro\other-sdk\EchoBird` | 提供各 agent CLI 终端的启动，启动时可修改模型，**但不支持代理**（如将 OpenAI 协议转为 Anthropic 协议） | 架构相似（Tauri+Rust+React），UI/启动逻辑可参考 |
-| **cc-switch** | `E:\pro\other-sdk\cc-switch` | 提供 Claude Code 启动、管理。**支持协议对齐**、抹平第三方模型和 Claude Code 的差异 | 代理/协议转换能力是 any-version 的参考重点 |
-| **CodexPlusPlus** | `E:\pro\other-sdk\CodexPlusPlus` | 提供 Codex 桌面端的启动、**协议对齐**，Codex 官方插件、技能的处理 | 插件/技能管理逻辑可参考 |
-| **open-tag** | `E:\pro\other-sdk\open-tag` | 提供**多 agent 协同**，与 any-version 的 AI-协作功能非常相似 | 协作机制（多 agent 通信、任务分配）是重点参考对象 |
-| **orca** | `E:\pro\other-sdk\orca` | **多 agent 协同编排器**（Orchestrator）：并行 worktree 运行多个 agent（Codex/ClaudeCode/OpenCode/Pi）、一 prompt 分发多 agent 比较结果、移动端监控。技术栈 Electron + TS/React（非 Tauri） | **多 agent 并行编排/任务分发/worktree 管理**机制是重点参考对象；架构不同（Electron），UI 可参考 |
-| **headroom** | `E:\pro\other-sdk\headroom` | **LLM token 压缩层**（context compression）：压缩 AI agent 读取的所有内容（工具输出、日志、RAG、文件、对话历史）后发给 LLM，可减 60-95% token；提供 library（Python/TS `compress()`）、proxy、MCP server、`headroom wrap`、跨 agent 记忆、可逆压缩(CCR)。技术栈 Python + Rust（非 Tauri） | **发送给 LLM 前的内容智能压缩**是重点参考对象，可移植到 any-version 的 AI 对话/工具输出/历史记录场景；Rust 核心逻辑可参考 |
-| **farming** | `E:\pro\other-sdk\farming` | **自托管多 agent 浏览器工作台**（Farming Code / Farming CRT）：在同一开发机上运行并监督多个 AI coding agent（Codex/Claude Code/Pi/OpenCode/Qoder/Qwen Code），浏览器或手机远程连接真实会话；支持结构化 Chat、Terminal、可恢复历史、项目文件浏览/审查、Agent 间共用项目浏览器、多 agent 仪表盘与使用量遥测。技术栈 Node.js + TS（前端 React/TSX + 后端 TS，非 Tauri） | **多 agent 会话监督/恢复历史/结构化 chat/远程监控/文件审查**机制是重点参考对象；桌面与移动端远程管理 agent 的架构与状态管理（TS 端）可参考，移植为 Tauri 时需自行实现 IPC |
+| **EchoBird** | `E:\pro\other-sdk\ai-tools\EchoBird` | 提供各 agent CLI 终端的启动，启动时可修改模型，**但不支持代理**（如将 OpenAI 协议转为 Anthropic 协议） | 架构相似（Tauri+Rust+React），UI/启动逻辑可参考 |
+| **cc-switch** | `E:\pro\other-sdk\ai-tools\cc-switch` | 提供 Claude Code 启动、管理。**支持协议对齐**、抹平第三方模型和 Claude Code 的差异 | 代理/协议转换能力是 any-version 的参考重点 |
+| **CodexPlusPlus** | `E:\pro\other-sdk\ai-tools\CodexPlusPlus` | 提供 Codex 桌面端的启动、**协议对齐**，Codex 官方插件、技能的处理 | 插件/技能管理逻辑可参考 |
+| **open-tag** | `E:\pro\other-sdk\ai-tools\open-tag` | 提供**多 agent 协同**，与 any-version 的 AI-协作功能非常相似 | 协作机制（多 agent 通信、任务分配）是重点参考对象 |
+| **orca** | `E:\pro\other-sdk\ai-tools\orca` | **多 agent 协同编排器**（Orchestrator）：并行 worktree 运行多个 agent（Codex/ClaudeCode/OpenCode/Pi）、一 prompt 分发多 agent 比较结果、移动端监控。技术栈 Electron + TS/React（非 Tauri） | **多 agent 并行编排/任务分发/worktree 管理**机制是重点参考对象；架构不同（Electron），UI 可参考 |
+| **headroom** | `E:\pro\other-sdk\ai-tools\headroom` | **LLM token 压缩层**（context compression）：压缩 AI agent 读取的所有内容（工具输出、日志、RAG、文件、对话历史）后发给 LLM，可减 60-95% token；提供 library（Python/TS `compress()`）、proxy、MCP server、`headroom wrap`、跨 agent 记忆、可逆压缩(CCR)。技术栈 Python + Rust（非 Tauri） | **发送给 LLM 前的内容智能压缩**是重点参考对象，可移植到 any-version 的 AI 对话/工具输出/历史记录场景；Rust 核心逻辑可参考 |
+| **farming** | `E:\pro\other-sdk\ai-tools\farming` | **自托管多 agent 浏览器工作台**（Farming Code / Farming CRT）：在同一开发机上运行并监督多个 AI coding agent（Codex/Claude Code/Pi/OpenCode/Qoder/Qwen Code），浏览器或手机远程连接真实会话；支持结构化 Chat、Terminal、可恢复历史、项目文件浏览/审查、Agent 间共用项目浏览器、多 agent 仪表盘与使用量遥测。技术栈 Node.js + TS（前端 React/TSX + 后端 TS，非 Tauri） | **多 agent 会话监督/恢复历史/结构化 chat/远程监控/文件审查**机制是重点参考对象；桌面与移动端远程管理 agent 的架构与状态管理（TS 端）可参考，移植为 Tauri 时需自行实现 IPC |
+| **ai-toolbox** | `E:\pro\other-sdk\ai-tools\ai-toolbox` | **个人 AI 工具箱**：一站式管理 AI 编程助手配置（Tauri + 前端，v1.1.x）。定位与 any-version 高度重合 | **同架构 + 同定位**，配置写入/多工具适配/UI 模式可直接对照，优先级高 |
+| **free-router-proxy** | `E:\pro\other-sdk\ai-tools\free-router-proxy` | **本地 OpenAI 兼容网关**（Node，v1.1.0）：跨可插拔供应商**排序当前免费模型**，以虚拟模型 `free-best` 暴露；单个供应商限流/宕机/空返回时**自动故障转移**；缺 key 的供应商直接剔除 | **多供应商候选排序 + 故障转移**是 any-version 代理的参考重点（与 EchoBird 有序路由同源问题） |
+| **claude-code-cli** | `E:\pro\other-sdk\ai-tools\claude-code-cli` | Claude Code CLI **源码学习与分析**项目（目录结构还原：cli/commands/context/coordinator 等） | 需要理解 Claude Code 内部行为（配置项、env、工具链）时可作逆向参考 |
+| **page-agent** | `E:\pro\other-sdk\ai-tools\page-agent` | **浏览器内 AI agent**（阿里，TS monorepo + Chrome 扩展，v1.12.x）：在页面里用自然语言驱动浏览器操作 | 与 any-version 定位较远，暂列备查 |
+
+> **路径说明**：所有参考仓库现统一位于 `E:\pro\other-sdk\ai-tools\<repo>`（旧路径 `E:\pro\other-sdk\<repo>` 已失效）。
 
 **Target project (any-version):** `e:\pro\my\any-version` — AI Agent 桌面管理工具，Tauri + Rust + React (TS)。
 
@@ -33,7 +39,7 @@ Systematically check reference repositories for recent updates, identify valuabl
 
 ```bash
 cd e:\pro\my\any-version
-git log --oneline --all --grep="抄作业\|porting\|port\|sync\|EchoBird\|cc-switch\|CodexPlusPlus\|open-tag\|orca\|headroom\|farming" --no-pager | cat
+git log --oneline --all --grep="抄作业\|抄自\|移植自\|porting\|port\|sync\|EchoBird\|cc-switch\|CodexPlusPlus\|open-tag\|orca\|headroom\|farming\|ai-toolbox\|free-router-proxy" --no-pager | cat
 git log --oneline -30 --no-pager | cat
 ```
 
@@ -134,6 +140,22 @@ rg -i "<feature-keyword>" src/ src-tauri/src/ --no-pager | cat
 - <commit hash>: <message> — ✅有用 / ❌无用 / ⚠️待定
 - ...
 
+#### ai-toolbox
+- <commit hash>: <message> — ✅有用 / ❌无用 / ⚠️待定
+- ...
+
+#### free-router-proxy
+- <commit hash>: <message> — ✅有用 / ❌无用 / ⚠️待定
+- ...
+
+#### claude-code-cli
+- <commit hash>: <message> — ✅有用 / ❌无用 / ⚠️待定
+- ...
+
+#### page-agent
+- <commit hash>: <message> — ✅有用 / ❌无用 / ⚠️待定
+- ...
+
 ### 建议抄的内容
 1. <功能名>（来源：<repo>）— 理由 + 整合方案
 2. ...
@@ -161,6 +183,7 @@ rg -i "<feature-keyword>" src/ src-tauri/src/ --no-pager | cat
 - orca 是 **Electron**（非 Tauri），其 `#[tauri::command]` 不存在，参考重点是**多 agent 并行编排/任务分发/worktree 管理/移动端监控**的架构与状态机逻辑（TS 端），移植为 Rust 命令时需自行实现 IPC 与并发控制
 - headroom 是 **Python + Rust**（非 Tauri），参考重点是**压缩算法/CCR 可逆压缩/内容感知压缩器**（Rust crates 可直接借鉴，Python 侧转译为 Rust 或按需调用）；压缩发生在发送给 LLM 之前，适合集成进 any-version 的 AI 消息发送链路
 - farming 是 **Node.js + TS**（非 Tauri），参考重点是**多 agent 会话监督/可恢复历史/结构化 chat/远程浏览器监控/文件审查**的架构与会话状态管理（TS 端），移植为 Rust 命令时需自行实现 IPC 与并发控制
+- ai-toolbox 是 **Tauri + 前端**（同架构）→ 可整块对照移植；free-router-proxy 是 **Node 网关**（非 Tauri），参考重点是**多供应商候选排序、免费模型探测、故障转移与冷却**的算法与状态机，需转写为 Rust 并接入 any-version 代理的上游选择环节
 
 ### Phase 6: Verify (检查)
 
@@ -209,9 +232,9 @@ cd .. && npx tsc --noEmit 2>&1 | cat
 
 ```bash
 # 完整发现周期（从 any-version 根目录运行）
-for repo in EchoBird cc-switch CodexPlusPlus open-tag orca headroom farming; do
+for repo in EchoBird cc-switch CodexPlusPlus open-tag orca headroom farming ai-toolbox free-router-proxy claude-code-cli page-agent; do
   echo "=== $repo ==="
-  cd "E:\pro\other-sdk\$repo" && git log --oneline -20 | cat
+  cd "E:\pro\other-sdk\ai-tools\$repo" && git log --oneline -20 | cat
 done
 cd e:\pro\my\any-version
 ```
