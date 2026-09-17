@@ -430,5 +430,14 @@
     "openaiUrl": "http://127.0.0.1:8787/v1",
     "anthropicUrl": "",
     "googleUrl": ""
+  },
+  {
+    "id": "workbuddy2api",
+    "name": "WorkBuddy2API 本地转换",
+    "category": "relay",
+    "website": "https://github.com/ShouZhuo0413/codebuddy2openai",
+    "openaiUrl": "http://127.0.0.1:8788/v1",
+    "anthropicUrl": "http://127.0.0.1:8788",
+    "googleUrl": ""
   }
 ]

@@ -42,8 +42,13 @@ pub struct NodeProjectDef {
     #[serde(default = "default_web_path")]
     pub web_path: String,
     /// node 版本 semver 约束，如 ">=20"；空串表示不约束。
+    /// Python 项目复用为 python 版本约束（如 ">=3.8"）。
     #[serde(default)]
     pub node_requirement: String,
+    /// 运行时类型：空 / "node" = Node（pnpm/npm/yarn + node_modules）；"python" = Python
+    /// （托管目录内创建 .venv，pip 安装 requirements.txt，startCmd 作为 venv python 的参数）。
+    #[serde(default)]
+    pub runtime: String,
     /// 包管理器：pnpm / npm / yarn
     #[serde(default = "default_pm")]
     pub package_manager: String,
@@ -103,6 +108,19 @@ impl NodeProjectDef {
     /// 是否使用 npx 模式（配置了 npxPackage）。
     pub fn is_npx(&self) -> bool {
         !self.npx_package.trim().is_empty()
+    }
+
+    /// 是否为 Python 运行时（runtime = "python"）：venv + pip，不走 pnpm/npm。
+    pub fn is_python(&self) -> bool {
+        self.runtime.trim().eq_ignore_ascii_case("python")
+    }
+
+    /// venv 内的 python 解释器路径（Windows: `.venv/Scripts/python.exe`，其余: `.venv/bin/python`）。
+    pub fn venv_python(&self) -> PathBuf {
+        self.managed_dir()
+            .join(".venv")
+            .join(if cfg!(windows) { "Scripts" } else { "bin" })
+            .join(if cfg!(windows) { "python.exe" } else { "python" })
     }
 
     /// npx 模式下实际执行的 bin 名；未配置 npxBin 时取包名最后一段。
@@ -867,6 +885,10 @@ fn resolve_pm_invocation(def: &NodeProjectDef) -> Result<(String, Vec<String>), 
 
 /// 在托管目录执行包管理器 install。
 fn pm_install(app: &tauri::AppHandle, def: &NodeProjectDef, dir: &Path) -> Result<(), String> {
+    // Python 项目不走 pnpm/npm：requirements.txt 是唯一依赖清单，用 venv + pip 安装。
+    if def.is_python() {
+        return python_install(app, def, dir);
+    }
     let pm = &def.package_manager;
     let (prog, prefix) = resolve_pm_invocation(def)?;
     emit_progress(app, &def.id, "install", &format!("正在运行 `{} install`（首次可能较慢）…", pm));
@@ -877,6 +899,30 @@ fn pm_install(app: &tauri::AppHandle, def: &NodeProjectDef, dir: &Path) -> Resul
     if !ok {
         let msg = last_err.trim();
         return Err(format!("`{} install` 失败: {}", pm, if msg.is_empty() { "未知错误" } else { msg }));
+    }
+    Ok(())
+}
+
+/// Python 项目安装：`python -m venv .venv` + venv 内 pip 安装 requirements.txt。
+///
+/// venv 隔离系统 Python 环境；pip 装在 venv 里，卸载 = 删 `.venv` 目录，无残留。
+fn python_install(app: &tauri::AppHandle, def: &NodeProjectDef, dir: &Path) -> Result<(), String> {
+    emit_progress(app, &def.id, "install", "正在创建 Python 虚拟环境 (.venv)…");
+    let (ok, last_err, _out) = run_capture_live(app, &def.id, "install", "python", &["-m", "venv", ".venv"], Some(dir), &[], None);
+    if !ok {
+        let msg = last_err.trim();
+        return Err(format!("创建虚拟环境失败: {}", if msg.is_empty() { "未知错误" } else { msg }));
+    }
+    let py = def.venv_python();
+    if !py.exists() {
+        return Err("虚拟环境创建后未找到 python 解释器".to_string());
+    }
+    emit_progress(app, &def.id, "install", "正在安装 requirements.txt 依赖（pip）…");
+    let py_s = py.to_string_lossy().to_string();
+    let (ok, last_err, _out) = run_capture_live(app, &def.id, "install", &py_s, &["-m", "pip", "install", "-r", "requirements.txt"], Some(dir), &[], None);
+    if !ok {
+        let msg = last_err.trim();
+        return Err(format!("pip install 失败: {}", if msg.is_empty() { "未知错误" } else { msg }));
     }
     Ok(())
 }
@@ -1103,6 +1149,22 @@ fn ensure_deps_ready(def: &NodeProjectDef) -> Result<DepCheckResult, String> {
         }
         return Ok(deps);
     }
+    if def.is_python() {
+        if !deps.git.exists {
+            return Err("未检测到 git，请先安装 Git for Windows (https://git-scm.com)".to_string());
+        }
+        if !deps.node.exists {
+            return Err("未检测到 python，请先安装 Python 3.8+ (https://www.python.org)".to_string());
+        }
+        if !deps.node.satisfies {
+            return Err(format!(
+                "Python 版本 {} 不满足要求 {}，请升级 Python",
+                deps.node.version.as_deref().unwrap_or("未知"),
+                deps.node.requirement.as_deref().unwrap_or("")
+            ));
+        }
+        return Ok(deps);
+    }
     if !deps.git.exists {
         return Err("未检测到 git，请先安装 Git for Windows (https://git-scm.com)".to_string());
     }
@@ -1161,9 +1223,10 @@ pub async fn npm_install(app: tauri::AppHandle, project_id: String) -> Result<()
         return Err(format!("git clone 失败: {}", if msg.is_empty() { "未知错误" } else { msg }));
     }
 
-    if !dir.join("package.json").exists() {
+    let manifest = if def.is_python() { "requirements.txt" } else { "package.json" };
+    if !dir.join(manifest).exists() {
         let _ = fs::remove_dir_all(&dir);
-        return Err("克隆完成但未找到 package.json，可能仓库结构异常".to_string());
+        return Err(format!("克隆完成但未找到 {}，可能仓库结构异常", manifest));
     }
 
     pm_install(&app, &def, &dir)?;
@@ -1471,8 +1534,15 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
         }
     }
 
-    // 组装启动命令：git 模式 `pnpm dsh web`；npx 模式 `npx -y --prefix <托管目录> <bin> <args...>`
-    let (prog, args) = if def.is_npx() {
+    // 组装启动命令：git 模式 `pnpm dsh web`；npx 模式 `npx -y --prefix <托管目录> <bin> <args...>`；
+    // python 模式 `.venv 内 python <startCmd...>`（startCmd 即 python 参数，如 `-m core.converter`）。
+    let (prog, args) = if def.is_python() {
+        let py = def.venv_python();
+        if !py.exists() {
+            return Err("Python 虚拟环境未就绪（.venv 缺失），请先「安装」或「安装依赖」".to_string());
+        }
+        (py.to_string_lossy().to_string(), def.start_cmd.clone())
+    } else if def.is_npx() {
         let (p, prefix) = resolve_exe_invocation("npx", "请先安装 Node.js (https://nodejs.org)")?;
         let mut a = prefix;
         a.push("-y".to_string());
@@ -1752,6 +1822,26 @@ pub fn npm_deps(project_id: String) -> Result<DepCheckResult, String> {
 
 fn check_deps(def: &NodeProjectDef) -> DepCheckResult {
     let git = check_dep("git", &["--version"]);
+    // Python 运行时：node 槽位复用为 python 检查（前端徽章按 runtime 显示 python），
+    // pm 槽位显示 pip（随 venv 提供，系统只需 python 就绪）。
+    // `python --version` 输出 "Python 3.12.4"，parse_version_parts 会忽略非数字前缀。
+    if def.is_python() {
+        let mut py = check_dep("python", &["--version"]);
+        py.name = "python".to_string();
+        if py.exists {
+            let v = py.version.as_deref().unwrap_or("");
+            py.satisfies = version_satisfies(v, &def.node_requirement);
+        } else {
+            py.satisfies = false;
+        }
+        py.requirement = Some(def.node_requirement.clone());
+        let mut pm = py.clone();
+        pm.name = "pip".to_string();
+        pm.requirement = Some("随 python 提供".to_string());
+        pm.satisfies = py.exists && py.satisfies;
+        let all_ready = git.exists && py.exists && py.satisfies;
+        return DepCheckResult { git, node: py, package_manager: pm, all_ready };
+    }
     let mut node = check_dep("node", &["--version"]);
     // node 版本约束
     if node.exists {
@@ -2157,6 +2247,7 @@ mod tests {
             default_port: 3080,
             web_path: "http://127.0.0.1:{port}".into(),
             node_requirement: String::new(),
+            runtime: String::new(),
             package_manager: "pnpm".into(),
             build_script: String::new(),
             start_cmd: Vec::new(),
@@ -2187,6 +2278,7 @@ mod tests {
             default_port: 3080,
             web_path: "http://127.0.0.1:{port}".into(),
             node_requirement: String::new(),
+            runtime: String::new(),
             package_manager: String::new(),
             build_script: String::new(),
             start_cmd: Vec::new(),

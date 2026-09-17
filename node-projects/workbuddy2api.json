@@ -1,0 +1,16 @@
+{
+  "id": "workbuddy2api",
+  "displayName": "WorkBuddy2API",
+  "repo": "https://github.com/ShouZhuo0413/codebuddy2openai.git",
+  "website": "https://github.com/ShouZhuo0413/codebuddy2openai",
+  "icon": "boxes",
+  "runtime": "python",
+  "description": "把 WorkBuddy / CodeBuddy 桌面端登录态转成本地 OpenAI / Anthropic 兼容 API（/v1/chat/completions、/v1/responses、/v1/messages）。前置：本机已安装并登录 CodeBuddy 桌面端 + Python 3.8+。默认端口 8788（避开 Free Router 的 8787）；「打开主页」指向 FastAPI 自带的 /docs 接口文档。",
+  "defaultPort": 8788,
+  "webPath": "http://127.0.0.1:{port}/docs",
+  "nodeRequirement": ">=3.8",
+  "packageManager": "pip",
+  "buildScript": "",
+  "startCmd": ["-m", "core.converter", "--desensitize", "--log", "converter.log", "--port", "8788"],
+  "managed": true
+}

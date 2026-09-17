@@ -46,6 +46,8 @@ interface NodeProjectDef {
   defaultPort: number;
   webPath: string;
   nodeRequirement: string;
+  /** 运行时：node（默认）/ python（venv + pip） */
+  runtime?: string;
   packageManager: string;
   buildScript: string;
   startCmd: string[];
@@ -790,7 +792,7 @@ function ProjectCard({
         {!isNpx && <EnvBadge dep={d?.git} label="git" />}
         <EnvBadge
           dep={d?.node}
-          label={`node ${project.nodeRequirement || ""}`.trim()}
+          label={`${project.runtime === "python" ? "python" : "node"} ${project.nodeRequirement || ""}`.trim()}
         />
         <EnvBadge
           dep={d?.packageManager}
