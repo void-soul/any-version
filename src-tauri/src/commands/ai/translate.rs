@@ -783,9 +783,12 @@ mod global_default_tests {
             proxy_port: 15721,
             default_project_path: String::new(),
             rectifier: Default::default(),
+            headroom: Default::default(),
             optimizer: Default::default(),
             skills_dir: String::new(),
             tool_symlinks: Default::default(),
+            route_chain: Vec::new(),
+            aggregate: Default::default(),
         }
     }
 

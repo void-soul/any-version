@@ -79,8 +79,11 @@ pub(crate) fn load_ai_config() -> AiConfig {
         default_project_path: String::new(),
         skills_dir: String::new(),
         rectifier: RectifierConfig::default(),
+        headroom: HeadroomConfig::default(),
         optimizer: OptimizerConfig::default(),
         tool_symlinks: std::collections::HashMap::new(),
+        route_chain: Vec::new(),
+        aggregate: AggregateConfig::default(),
     }
 }
 
@@ -146,15 +149,40 @@ pub(crate) fn save_last_launch_configs(configs: &LastLaunchConfigsFile) -> Resul
 /// 获取所有 Provider/Relay 预设（从 ai-tools/providers.json 加载）
 #[tauri::command]
 pub fn get_provider_presets() -> Result<Vec<crate::commands::ai_registry::ProviderPresetDto>, String> {
-    Ok(registry().providers().iter().map(|p| crate::commands::ai_registry::ProviderPresetDto {
-        id: p.id.clone(),
-        name: p.name.clone(),
-        category: p.category.clone(),
-        website: p.website.clone(),
-        openai_url: p.openai_url.clone(),
-        anthropic_url: p.anthropic_url.clone(),
-        google_url: p.google_url.clone(),
+    // 本地聚合预设的端口取自「聚合」页设置（预设里写 `{port}` 占位符）
+    let port = load_ai_config().aggregate.port;
+    Ok(registry().providers().iter().map(|p| {
+        let mut dto = crate::commands::ai_registry::ProviderPresetDto {
+            id: p.id.clone(),
+            name: p.name.clone(),
+            category: p.category.clone(),
+            website: p.website.clone(),
+            openai_url: p.openai_url.clone(),
+            anthropic_url: p.anthropic_url.clone(),
+            google_url: p.google_url.clone(),
+        };
+        render_local_placeholders(&mut dto, port);
+        dto
     }).collect())
+}
+
+/// 把预设里的 `{port}` / `{port:v1}` 占位符渲染成本地服务的实际端口。
+/// 目前只有「本地聚合」用（端口在聚合页可改），其余预设不受影响。
+pub(crate) fn render_local_placeholders(
+    preset: &mut crate::commands::ai_registry::ProviderPresetDto,
+    port: u16,
+) {
+    let port_s = port.to_string();
+    for value in [
+        &mut preset.openai_url,
+        &mut preset.anthropic_url,
+        &mut preset.google_url,
+        &mut preset.website,
+    ] {
+        if value.contains("{port}") {
+            *value = value.replace("{port}", &port_s);
+        }
+    }
 }
 
 // ─── AI 工具检测 ───
@@ -289,6 +317,57 @@ mod tests {
 
         // 已一致时不再产生变更
         assert!(!sync_provider_categories(&mut providers, &presets));
+    }
+
+    // ─── 本地预设占位符渲染（本地聚合：端口取自聚合页设置） ───
+
+    #[test]
+    fn test_render_local_placeholders_replaces_port() {
+        let mut preset = crate::commands::ai_registry::ProviderPresetDto {
+            id: "local-aggregate".into(),
+            name: "本地聚合".into(),
+            category: "local".into(),
+            website: String::new(),
+            openai_url: "http://127.0.0.1:{port}/v1".into(),
+            anthropic_url: String::new(),
+            google_url: String::new(),
+        };
+        render_local_placeholders(&mut preset, 15888);
+        assert_eq!(preset.openai_url, "http://127.0.0.1:15888/v1");
+        // 再换端口仍可幂等重渲染的前提：已被替换过就不再含占位符
+        render_local_placeholders(&mut preset, 16000);
+        assert_eq!(preset.openai_url, "http://127.0.0.1:15888/v1");
+    }
+
+    #[test]
+    fn test_render_local_placeholders_leaves_normal_presets() {
+        let mut preset = crate::commands::ai_registry::ProviderPresetDto {
+            id: "openai".into(),
+            name: "OpenAI".into(),
+            category: "provider".into(),
+            website: "https://openai.com".into(),
+            openai_url: "https://api.openai.com/v1".into(),
+            anthropic_url: String::new(),
+            google_url: String::new(),
+        };
+        render_local_placeholders(&mut preset, 15888);
+        assert_eq!(preset.openai_url, "https://api.openai.com/v1");
+        assert_eq!(preset.website, "https://openai.com");
+    }
+
+    #[test]
+    fn test_local_aggregate_preset_exists_with_port_placeholder() {
+        // providers.json 里必须有本地聚合预设，且端口用占位符（由后端按聚合页端口渲染）
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ai-tools/providers.json");
+        let raw = std::fs::read_to_string(&path).expect("providers.json 读取失败");
+        let presets: Vec<crate::commands::ai_registry::ProviderPreset> =
+            serde_json::from_str(&raw).expect("providers.json 解析失败");
+        let entry = presets
+            .iter()
+            .find(|p| p.id == "local-aggregate")
+            .expect("缺少 local-aggregate 本地聚合预设");
+        assert_eq!(entry.category, "local");
+        assert!(entry.openai_url.contains("{port}"), "端口应使用 {{port}} 占位符以便动态渲染");
     }
 
     #[test]
@@ -430,9 +509,12 @@ mod tests {
             proxy_port: 15721,
             default_project_path: String::new(),
             rectifier: RectifierConfig::default(),
+            headroom: HeadroomConfig::default(),
             optimizer: OptimizerConfig::default(),
             skills_dir: String::new(),
             tool_symlinks: std::collections::HashMap::new(),
+            route_chain: Vec::new(),
+            aggregate: AggregateConfig::default(),
         };
 
         let raw = serde_json::to_string(&config).expect("serialize");

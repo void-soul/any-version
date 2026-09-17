@@ -64,6 +64,75 @@ impl Default for OptimizerConfig {
     }
 }
 
+/// Headroom 上下文压缩（本地 HTTP 服务，见「服务」页的 Headroom 服务项）。
+fn default_headroom_port() -> u16 { 8791 }
+fn default_headroom_on_unavailable() -> String { "failOpen".to_string() }
+fn default_headroom_timeout_ms() -> u64 { 1500 }
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct HeadroomConfig {
+    /// 总开关：勾选后请求链路才会调用 headroom 的 /v1/compress
+    #[serde(default)]
+    pub enabled: bool,
+    /// 本地 headroom 代理端口（须与「服务」页 Headroom 服务项的端口一致）
+    #[serde(default = "default_headroom_port")]
+    pub port: u16,
+    /// 服务不可用时的策略：`failOpen`（默认，跳过压缩直接发原始请求）/ `failClosed`（直接报错）
+    #[serde(default = "default_headroom_on_unavailable")]
+    pub on_unavailable: String,
+    /// 是否关闭文本 ML 压缩（仅保留结构化压缩；需服务侧同时设 HEADROOM_DISABLE_KOMPRESS=1）
+    #[serde(default)]
+    pub disable_kompress: bool,
+    /// 单次压缩调用超时（毫秒）
+    #[serde(default = "default_headroom_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+impl Default for HeadroomConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: default_headroom_port(),
+            on_unavailable: default_headroom_on_unavailable(),
+            disable_kompress: false,
+            timeout_ms: default_headroom_timeout_ms(),
+        }
+    }
+}
+
+/// 聚合服务配置（本地聚合代理：端口 + 上下文限制）。
+fn default_aggregate_port() -> u16 { 15888 }
+fn default_aggregate_context_limit() -> u64 { 128_000 }
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AggregateConfig {
+    /// 本地聚合服务监听端口（与工具代理 15721 区分）
+    #[serde(default = "default_aggregate_port")]
+    pub port: u16,
+    /// 上下文上限（token，按启发式估算）：超出后裁剪最早的非 system 消息
+    #[serde(default = "default_aggregate_context_limit")]
+    pub context_limit: u64,
+}
+
+impl Default for AggregateConfig {
+    fn default() -> Self {
+        Self {
+            port: default_aggregate_port(),
+            context_limit: default_aggregate_context_limit(),
+        }
+    }
+}
+
+/// 路由链候选：一个「已添加的供应商实例」+ 它 models 列表里的一个模型。
+///
+/// 链路顺序即优先级（严格顺序尝试，无随机/轮询）；候选不重复保存 key/url，
+/// 全部复用供应商自身的配置。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct RouteCandidate {
+    pub provider_id: String,
+    pub model_id: String,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AiConfig {
     pub providers: Vec<AiProvider>,
@@ -76,6 +145,9 @@ pub struct AiConfig {
     /// 整流器配置
     #[serde(default)]
     pub rectifier: RectifierConfig,
+    /// Headroom 上下文压缩配置
+    #[serde(default)]
+    pub headroom: HeadroomConfig,
     /// 优化器配置
     #[serde(default)]
     pub optimizer: OptimizerConfig,
@@ -85,6 +157,12 @@ pub struct AiConfig {
     /// 工具软链接安装配置（tool_id -> 是否开启软链接部署到该工具私有技能目录）
     #[serde(default)]
     pub tool_symlinks: std::collections::HashMap<String, bool>,
+    /// 路由链（顺序即优先级）；候选 = 供应商实例 + 其模型列表中的模型
+    #[serde(default)]
+    pub route_chain: Vec<RouteCandidate>,
+    /// 聚合服务配置（端口 / 上下文限制）
+    #[serde(default)]
+    pub aggregate: AggregateConfig,
 }
 
 fn default_proxy_port() -> u16 {
