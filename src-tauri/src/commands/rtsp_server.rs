@@ -256,22 +256,38 @@ pub fn start_rtsp_server(
 
     let mut mediamtx_child = None;
 
-    if has_mediamtx {
-        // 清理占用目标 RTSP 端口的残留进程（上次会话遗留的 mediamtx 等），
-        // 否则新 mediamtx 绑定失败，potplayer 仍连到旧端口看到旧分辨率流。
-        if let Some(pid) = crate::commands::utils::port_owner_pid(config.port) {
-            if let Some(name) = crate::commands::utils::process_name_by_pid(pid) {
-                let n = name.to_lowercase();
-                if n.contains("mediamtx") || n.contains("ffmpeg") {
-                    let _ = std::process::Command::new("taskkill")
-                        .args(["/PID", &pid.to_string(), "/T", "/F"])
-                        .creation_flags(0x08000000)
-                        .output();
-                    std::thread::sleep(std::time::Duration::from_millis(300));
-                }
+    // 清理占用目标 RTSP 端口的残留进程（上次会话遗留的 mediamtx/ffmpeg 等），
+    // 否则新 mediamtx 绑定失败，potplayer 仍连到旧端口看到旧分辨率流。
+    if let Some(pid) = crate::commands::utils::port_owner_pid(config.port) {
+        if let Some(name) = crate::commands::utils::process_name_by_pid(pid) {
+            let n = name.to_lowercase();
+            if n.contains("mediamtx") || n.contains("ffmpeg") {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .creation_flags(0x08000000)
+                    .output();
+                std::thread::sleep(std::time::Duration::from_millis(300));
             }
         }
+    }
 
+    // 端口仍被其他进程占用（Q-0095：Android 模拟器会抢占 127.0.0.1:8554）时直接失败：
+    // 否则 MediaMTX 绑 0.0.0.0 "成功"掩盖冲突，ffmpeg 在 RTSP 握手阶段报出
+    // 误导性的 `Invalid data found when processing input`。
+    if let Some(owner) = crate::commands::utils::port_conflict_description(config.port) {
+        let err = format!(
+            "端口 {} 已被 {} 占用，RTSP 服务无法启动；请更换端口或结束占用进程后重试",
+            config.port, owner
+        );
+        logs.lock().push(format!("[SERVER ERROR] {}", err));
+        if let Some(l) = state.last_logs.lock().get_mut(&instance_id) {
+            l.push(format!("[SERVER ERROR] {}", err));
+        }
+        state.last_errors.lock().insert(instance_id.clone(), Some(err.clone()));
+        return Err(err);
+    }
+
+    if has_mediamtx {
         let bind_addr = if config.allow_lan {
             format!("0.0.0.0:{}", config.port)
         } else {

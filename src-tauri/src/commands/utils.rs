@@ -538,13 +538,21 @@ pub fn bin_tool_path(tool: &str) -> Option<PathBuf> {
 // ─── 端口 / 进程检测（通用 OS 工具，自 node_manager 迁入） ───
 
 /// 检测端口是否被占用（LISTENING），返回占用进程 PID。
-pub fn port_owner_pid(port: u16) -> Option<u32> {
-    let output = super::hidden_cmd::hidden_cmd("netstat")
+/// 列出监听指定端口的所有进程 PID（任意本地地址，含 0.0.0.0 / 127.0.0.1 / ::）。
+///
+/// 注意：`TcpListener::bind("0.0.0.0", port)` 的试探绑定**检测不到**回环地址上的
+/// 具体绑定（Windows 上 `127.0.0.1:port` 被其他进程占用时，通配绑定依然成功），
+/// 因此必须解析 netstat（Q-0095：Android 模拟器抢占 127.0.0.1:8554）。
+pub fn port_owner_pids(port: u16) -> Vec<u32> {
+    let Ok(output) = super::hidden_cmd::hidden_cmd("netstat")
         .args(["-ano", "-p", "tcp"])
         .output()
-        .ok()?;
+    else {
+        return Vec::new();
+    };
     let stdout = String::from_utf8_lossy(&output.stdout);
     let target = format!(":{}", port);
+    let mut pids = Vec::new();
     for line in stdout.lines() {
         let l = line.trim();
         if !l.to_uppercase().starts_with("TCP") {
@@ -555,10 +563,35 @@ pub fn port_owner_pid(port: u16) -> Option<u32> {
             continue;
         }
         if fields[1].ends_with(&target) && fields[3] == "LISTENING" {
-            return fields[4].parse::<u32>().ok();
+            if let Ok(pid) = fields[4].parse::<u32>() {
+                if !pids.contains(&pid) {
+                    pids.push(pid);
+                }
+            }
         }
     }
-    None
+    pids
+}
+
+pub fn port_owner_pid(port: u16) -> Option<u32> {
+    port_owner_pids(port).into_iter().next()
+}
+
+/// 端口被占用时返回可读的占用者描述（如 `qemu-system-x86_64 (PID 25144)`），空闲返回 `None`。
+pub fn port_conflict_description(port: u16) -> Option<String> {
+    let pids = port_owner_pids(port);
+    if pids.is_empty() {
+        return None;
+    }
+    let mut entries: Vec<String> = Vec::new();
+    for pid in &pids {
+        let name = process_name_by_pid(*pid).unwrap_or_else(|| format!("PID {}", pid));
+        let entry = format!("{} (PID {})", name, pid);
+        if !entries.contains(&entry) {
+            entries.push(entry);
+        }
+    }
+    Some(entries.join(", "))
 }
 
 /// 按进程 ID 查询进程名。
@@ -936,5 +969,32 @@ mod tests {
         );
         assert!(resolve_detected_path(&output, Some("missing")).is_none());
         assert_eq!(resolve_detected_path(r"D:\plain-cache", None).as_deref(), Some(r"D:\plain-cache"));
+    }
+
+    // ─── 端口占用检测（Q-0095：Android 模拟器抢占 127.0.0.1:8554 导致 RTSP 假启动） ───
+
+    #[test]
+    fn port_conflict_detects_own_listener() {
+        let me = std::process::id();
+
+        // 回环地址监听必须被识别（qemu 场景：占用 127.0.0.1:8554，通配绑定"成功"掩盖冲突）
+        let loopback = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let lport = loopback.local_addr().unwrap().port();
+        assert!(
+            port_owner_pids(lport).contains(&me),
+            "自建回环监听（端口 {}）必须被检测到",
+            lport
+        );
+        let desc = port_conflict_description(lport).expect("端口被占用时应返回占用者描述");
+        assert!(
+            desc.contains(&format!("PID {}", me)),
+            "描述应包含占用进程 PID: {}",
+            desc
+        );
+
+        // 通配地址监听同样要能被检测到
+        let wildcard = std::net::TcpListener::bind(("0.0.0.0", 0)).unwrap();
+        let wport = wildcard.local_addr().unwrap().port();
+        assert!(port_owner_pids(wport).contains(&me));
     }
 }

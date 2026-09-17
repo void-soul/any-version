@@ -307,6 +307,14 @@ pub async fn start_http_server(
         return Err(format!("端口 {} 已在服务中", port));
     }
 
+    // 启动前端口占用预检（Q-0095）：明确给出占用者，而不是笼统的"绑定端口失败"
+    if let Some(owner) = crate::commands::utils::port_conflict_description(port) {
+        return Err(format!(
+            "端口 {} 已被 {} 占用，请更换端口或结束占用进程后重试",
+            port, owner
+        ));
+    }
+
     let root_dir = PathBuf::from(&path);
     if !root_dir.exists() {
         return Err("所选目录不存在".to_string());
