@@ -65,6 +65,7 @@ import {
 } from "./types";
 import { matchPinyin } from "./pinyin";
 import { sortLauncherItemsByUsage } from "./usageStats";
+import { buildReorderOrders } from "./reorder";
 import CategoryModal from "./CategoryModal";
 import AddItemModal from "./AddItemModal";
 import VexAvatar from "../VexAvatar";
@@ -308,6 +309,11 @@ export default function LauncherPanel() {
   const draggingItemRef = useRef<Item | null>(null);
   // 拖拽开始时被拖项目的原始分类（跨分类移动持久化时需要）
   const dragSourceCatIdRef = useRef<number | null>(null);
+  // 本轮拖拽是否真的改变了界面上的顺序（由 applyMoveLocal 置位）。
+  // 持久化以「界面看到的顺序」为准，而不是重新解析 dragEnd 的 over：
+  // 指针松手时可能落在卡片间隙/容器上（over=cat:*），此时若按 over 推导会漏保存，
+  // 表现为「拖拽时顺序让位了，松手后重进又变回原样」。
+  const movedDuringDragRef = useRef(false);
 
   // dnd-kit 传感器：移动超过 6px 才判定为拖拽，单击仍可正常启动应用
   const sensors = useSensors(
@@ -871,66 +877,50 @@ export default function LauncherPanel() {
 
       const flat: Item[] = [];
       for (const arr of byCat.values()) flat.push(...arr);
+
+      // 顺序没变（例如拖回原位）时不算移动，避免多写一次数据库
+      const sameOrder =
+        flat.length === prev.length && flat.every((it, i) => it.id === prev[i].id);
+      if (sameOrder) return prev;
+
+      // 立即同步 ref：dragEnd 持久化时读到的必须是「界面最终看到的顺序」，
+      // 不能依赖 useEffect（被动副作用可能晚于 dnd-kit 的 dragEnd 回调）。
+      allItemsRef.current = flat;
+      movedDuringDragRef.current = true;
       return flat;
     });
   };
 
-  // 拖拽结束后把最终位置持久化到后端（保存分类 + 重排序号）
-  // sourceCatId 必须由 handleDragEnd 在清空 dragSourceCatIdRef 之前传入：
-  // 渲染闭包里 dragItem.classificationId 已经是「移动后」的分类，若在此处回退读取，
-  // sourceId 会永远等于 targetCatId，跨分类移动时项目的 classification_id 就写不进数据库，
-  // 重新打开后项目会跳回原分组。
-  const persistMoveAfterDrag = async (
-    dragItem: Item,
-    targetCatId: number,
-    insertBeforeId: number | null,
-    sourceCatId: number | null
-  ) => {
+  // 拖拽结束后把最终位置持久化到后端（保存分类 + 重排序号）。
+  // 持久化的唯一依据是 allItemsRef.current —— 即拖拽过程中 applyMoveLocal 已经
+  // 让位好的「界面所见顺序」，不再重新解析 dragEnd 的 over。
+  // 原因：松手瞬间指针可能落在卡片间隙/容器上（over=cat:*）或容器之外（over=null），
+  // 按 over 推导会漏保存或把项目挪到末尾，表现为「拖完顺序让位了，重开又变回原样」。
+  // sourceCatId 由 handleDragEnd 在清空 dragSourceCatIdRef 之前传入（跨分类时需要）。
+  const persistMoveAfterDrag = async (dragItem: Item, sourceCatId: number | null) => {
     try {
-      const sourceId = sourceCatId ?? dragItem.classificationId;
       // 必须用完整列表（含被「只显示有效项目」隐藏的项）重排序号：
       // 只用可见项会让隐藏项保留旧序号并与新序号冲突，重新打开后顺序错乱。
       const fullList = allItemsRef.current;
-      const targetItems = fullList.filter((it) => it.classificationId === targetCatId);
-      const withoutDrag = targetItems.filter((it) => it.id !== dragItem.id);
-      const idxBefore =
-        insertBeforeId === null ? -1 : withoutDrag.findIndex((it) => it.id === insertBeforeId);
-      const newTarget: Item[] =
-        idxBefore === -1
-          ? [...withoutDrag, dragItem]
-          : [...withoutDrag.slice(0, idxBefore), dragItem, ...withoutDrag.slice(idxBefore)];
-
-      const orderMap = new Map<number, number>();
-      const collect = (list: Item[]) => {
-        const orders: [number, number][] = [];
-        list.forEach((it, i) => {
-          orders.push([it.id, i]);
-          orderMap.set(it.id, i);
-        });
-        return orders;
-      };
+      const moved = fullList.find((it) => it.id === dragItem.id);
+      if (!moved) return;
+      const targetCatId = moved.classificationId;
+      const sourceId = sourceCatId ?? targetCatId;
 
       if (sourceId !== targetCatId) {
-        // 跨分类：先写入新分类（含新序号），再重排目标分类与源分类
-        const movedIdx = newTarget.findIndex((it) => it.id === dragItem.id);
-        const moved = newTarget[movedIdx];
-        if (moved) {
-          await invoke("launcher_save_item", {
-            item: { ...moved, order: movedIdx, classificationId: targetCatId },
-          });
-        }
-        const orders = collect(newTarget);
-        if (orders.length > 0) await invoke("launcher_reorder_items", { orders });
-        const sourceItems = fullList.filter(
-          (it) => it.classificationId === sourceId && it.id !== dragItem.id
-        );
-        if (sourceItems.length > 0) {
-          await invoke("launcher_reorder_items", { orders: collect(sourceItems) });
-        }
-      } else {
-        // 同分类排序：整体重排
-        const orders = collect(newTarget);
-        if (orders.length > 0) await invoke("launcher_reorder_items", { orders });
+        // 跨分类：先把分类写回数据库（序号随后由下面的整体重排覆盖）
+        await invoke("launcher_save_item", {
+          item: { ...moved, classificationId: targetCatId },
+        });
+      }
+
+      // 按本地最终顺序重排受影响分类的序号
+      const affectedCats = sourceId === targetCatId ? [targetCatId] : [targetCatId, sourceId];
+      const orderMap = new Map<number, number>();
+      for (const { orders } of buildReorderOrders(fullList, affectedCats)) {
+        if (orders.length === 0) continue;
+        for (const [id, order] of orders) orderMap.set(id, order);
+        await invoke("launcher_reorder_items", { orders });
       }
 
       // 同步本地 order，避免后续保存（编辑 / 检测）把旧序号写回数据库导致顺序回退
@@ -950,6 +940,7 @@ export default function LauncherPanel() {
     setActiveDragItem(item);
     draggingItemRef.current = item;
     dragSourceCatIdRef.current = item.classificationId;
+    movedDuringDragRef.current = false;
   };
 
   const handleDragOver = (event: DragOverEvent) => {
@@ -987,49 +978,45 @@ export default function LauncherPanel() {
 
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
-    // 先取到拖拽开始时的源分类，再清空 ref（persistMoveAfterDrag 依赖它判断跨分类）
+    // 先取到本次拖拽的上下文，再清空 ref
     const sourceCatId = dragSourceCatIdRef.current;
+    const moved = movedDuringDragRef.current;
     setActiveDragItem(null);
     draggingItemRef.current = null;
     dragSourceCatIdRef.current = null;
+    movedDuringDragRef.current = false;
     setTargetDragSubId(null);
     justDraggedAtRef.current = Date.now(); // 拦截拖拽结束后的残留 click
 
-    if (!over) return;
-    const activeItem = findItemById(String(active.id));
+    // 拖到左栏大分类：切过去让用户立即看到结果（即使本次没有改变顺序）
+    const overId = over ? String(over.id) : "";
+    if (overId.startsWith("sidebar:")) {
+      const catId = Number(overId.slice(overId.indexOf(":") + 1));
+      if (Number.isFinite(catId) && classificationMap.has(catId)) setActiveParentId(catId);
+    }
+
+    // applyMoveLocal 从未真正改变顺序（拖回原位 / 拖到空白处）→ 无需写库。
+    // 这里不看 dragEnd 的 over：松手时指针可能落在卡片间隙(over=cat:*)甚至容器外(over=null)，
+    // 但界面上已经让位出的顺序就是用户想要的结果，必须按它保存。
+    if (!moved) return;
+
+    const activeIdNum = Number(String(active.id).slice("item:".length));
+    const activeItem = allItemsRef.current.find((it) => it.id === activeIdNum);
     if (!activeItem) return;
 
-    const overId = String(over.id);
-    let targetCatId: number | null = null;
-    let insertBeforeId: number | null = null;
-
-    if (overId.startsWith("item:")) {
-      const overItem = findItemById(overId);
-      if (!overItem) return;
-      targetCatId = overItem.classificationId;
-      insertBeforeId = overItem.id;
-    } else if (overId.startsWith("cat:") || overId.startsWith("sidebar:")) {
-      targetCatId = Number(overId.slice(overId.indexOf(":") + 1));
-    }
-    if (targetCatId === null || !Number.isFinite(targetCatId)) return;
-    if (!classificationMap.has(targetCatId)) return;
-
-    // 拖到左栏大分类：切过去让用户立即看到结果
-    if (overId.startsWith("sidebar:")) setActiveParentId(targetCatId);
-
-    // 同分组内拖到分组空白处：applyMoveLocal 会保持原位不移动，
-    // 此时不应把项目重排到分组末尾，否则重新打开会发现项目被挪到最后。
-    if (sourceCatId !== null && sourceCatId === targetCatId && insertBeforeId === null) return;
-
-    await persistMoveAfterDrag(activeItem, targetCatId, insertBeforeId, sourceCatId);
+    await persistMoveAfterDrag(activeItem, sourceCatId);
   };
 
-  const handleDragCancel = () => {
+  const handleDragCancel = async () => {
+    const moved = movedDuringDragRef.current;
     setActiveDragItem(null);
     draggingItemRef.current = null;
     dragSourceCatIdRef.current = null;
+    movedDuringDragRef.current = false;
     setTargetDragSubId(null);
     justDraggedAtRef.current = Date.now();
+    // 取消（ESC）时本地已让位但从未写库，重载回滚，避免界面与数据库不一致
+    if (moved) await loadData();
   };
 
   // Unified Search Filtering (Figure 2)
