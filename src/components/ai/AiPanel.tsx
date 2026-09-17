@@ -1,17 +1,19 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import ModelConfig from "./ModelConfig";
+import RouteAggregate from "./RouteAggregate";
 import ToolLauncher from "./ToolLauncher";
 import UsageStats from "./UsageStats";
 import SkillManager from "./SkillManager";
 import McpManager from "./McpManager";
 import CollabRoom from "./CollabRoom";
-import { Settings2, Rocket, BarChart3, Puzzle, Plug, MessagesSquare } from "lucide-react";
+import { Settings2, Rocket, BarChart3, Puzzle, Plug, MessagesSquare, Route } from "lucide-react";
 
-type AiSubTab = "model" | "launcher" | "usage" | "skills" | "mcp" | "collab";
+type AiSubTab = "model" | "aggregate" | "launcher" | "usage" | "skills" | "mcp" | "collab";
 
 const TABS = [
   { key: "model" as AiSubTab, label: "aipanel.model", icon: Settings2 },
+  { key: "aggregate" as AiSubTab, label: "aipanel.aggregate", icon: Route },
   { key: "launcher" as AiSubTab, label: "aipanel.tools", icon: Rocket },
   { key: "skills" as AiSubTab, label: "aipanel.skills", icon: Puzzle },
   { key: "mcp" as AiSubTab, label: "MCP", icon: Plug },
@@ -59,6 +61,11 @@ export default function AiPanel() {
         {mountedTabs.has("model") && (
           <div className={activeTab === "model" ? "h-full" : "hidden"}>
             <ModelConfig />
+          </div>
+        )}
+        {mountedTabs.has("aggregate") && (
+          <div className={activeTab === "aggregate" ? "h-full" : "hidden"}>
+            <RouteAggregate />
           </div>
         )}
         {mountedTabs.has("launcher") && (

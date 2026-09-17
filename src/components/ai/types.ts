@@ -58,6 +58,70 @@ export interface ProviderPreset {
   google_url: string;
 }
 
+/** Headroom 本地上下文压缩（服务由「服务」页的 Headroom 服务项托管） */
+export interface HeadroomConfig {
+  enabled: boolean;
+  port: number;
+  /** 服务不可用时的策略：failOpen（跳过压缩直接发原始请求，默认）/ failClosed（直接报错） */
+  on_unavailable: string;
+  /** 关闭文本 ML 压缩（仅结构化压缩，需服务侧同时设 HEADROOM_DISABLE_KOMPRESS=1） */
+  disable_kompress: boolean;
+  /** 单次压缩调用超时（毫秒） */
+  timeout_ms: number;
+}
+
+/** Headroom 探活结果 */
+export interface HeadroomHealth {
+  alive: boolean;
+  base_url: string;
+  path: string | null;
+  status: number | null;
+  detail: string;
+}
+
+/** 路由链候选：已添加的供应商实例 + 其模型列表中的一个模型（顺序即优先级） */
+export interface RouteCandidate {
+  provider_id: string;
+  model_id: string;
+}
+
+/** 聚合服务配置（本地聚合代理） */
+export interface AggregateConfig {
+  /** 监听端口 */
+  port: number;
+  /** 上下文上限（token，按启发式估算） */
+  context_limit: number;
+}
+
+/** 聚合服务运行状态 */
+export interface AggregateStatus {
+  running: boolean;
+  port: number;
+  candidateCount: number;
+  detail: string;
+}
+
+/** 聚合服务日志行（后端 aggregate-log 事件） */
+export interface AggregateLog {
+  phase: string;
+  line: string;
+  level: string;
+}
+
+/** 仓库候选视图（路由链页左栏） */
+export interface RouteCandidateView {
+  provider_id: string;
+  provider_name: string;
+  provider_category: string;
+  model_id: string;
+  model_name: string;
+  in_chain: boolean;
+  /** 链路序号（1 起；未入链为 null） */
+  order: number | null;
+  /** 指向聚合服务自身（自引用）：入链会造成请求递归，禁止勾选 */
+  self_referential: boolean;
+}
+
 export interface AiConfig {
   providers: AiProvider[];
   proxy_port: number;
@@ -69,6 +133,7 @@ export interface AiConfig {
     media_fallback: boolean;
     protocol_mismatch: boolean;
   };
+  headroom: HeadroomConfig;
   optimizer: {
     enabled: boolean;
     cache_injection: boolean;
