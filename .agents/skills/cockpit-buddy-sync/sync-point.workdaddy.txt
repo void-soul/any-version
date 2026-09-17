@@ -1,0 +1,5 @@
+[a0cdb0a0] 2026-09-17 WorkDaddy DAEMON_VERSION 1.2.42（build release-1.2.42-20260914-streaming-session-transfer）—— Buddy 会话/用量/自动化域首次全量建档
+学习记录：
+- 2026-09-17 首次把 WorkDaddy（E:\pro\other-sdk\buddy\WorkDaddy）纳入本技能（此前只有 cockpit-tools）。精读并建档 16 个功能域：账号库与加密导出导入（lib.js / secure-transfer.js）、本地导入与 .logged-out（lib.js）、无感 OAuth（daemon.js）、用量/积分（credit-request-usage / credit-history-sync / credit-usage-store / credit-segments）、Token 统计（token-stats.js）、积分轮换建议（credit-rotation.js）、签到（checkin-result / checkin-consent / daemon.js dailyCheckin）、会话列表（session-db.js）、切换与假退出（lib.js::switchTo、/api/switch、/api/logout）、会话归档 .wds v4（session-transfer.js）、auto-copy lineage 合并（daemon.js）、主账号与排序（primary-account.js）、profile 与能力矩阵（profiles.js / cdp-targets.js）、自动化任务（automation*.js + schemas/automation-package.v1.schema.json）、模型管理与 cc-switch 导入（third-party-models.js）、增强开关（inject.js + theme-*.js）。
+- 产物：references/workdaddy.md（契约 + 可移植性三分类 + §D 缺口候选）；SKILL.md 增加 §0 双仓、§2.2 对照表、§4.2 适配规则；relearn.sh 改为双仓模式。
+- 本次未改 any-version 业务代码（仅技能建档与建档读源），故无 qa.db 记录。下次同步起点 = 本 commit；若只改 README/打包文件，relearn 会输出但可直接跳过。

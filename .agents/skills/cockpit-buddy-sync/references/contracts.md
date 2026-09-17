@@ -1,6 +1,9 @@
-# Buddy ↔ cockpit-tools 契约清单（已逐字段验证，截至 v1.3.47 / deacbe44）
+# Buddy ↔ cockpit-tools 契约清单（参考 A；已逐字段验证，截至 v1.3.47 / deacbe44）
 
 学习时**先对照本清单**：参考侧若改了这里的任何常量/时序/语义，即为必修差异。
+
+> 参考仓路径现为 `E:\pro\other-sdk\buddy\cockpit-tools`（旧路径 `E:\pro\other-sdk\cockpit-tools` 已失效）。
+> 第二个参考仓 **WorkDaddy**（Node.js + CDP 注入，异架构）的契约见同目录 `workdaddy.md`；两仓重叠的账号/会话域**以本文件（cockpit-tools）为准**。
 
 ## §1 账号存储与导出/导入
 

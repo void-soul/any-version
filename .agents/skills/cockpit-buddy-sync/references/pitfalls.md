@@ -52,3 +52,23 @@ grep -rn "Tencent-Cloud.genie-ide-cn" src-tauri/src/commands/buddy/
 - 【2026-09-10 核对补充·属适配非缺口】参考自动签到用 `rand::random()`，Kira 依赖里没有 rand，改用 `getrandom` 自实现 `random_u32_below`——行为等价，勿"学回去"引 rand。
 - 【同上】参考 `workbuddy_auto_checkin.rs::migrate_config_if_missing`（启动时确保配置存在）：Kira 的 `get_config_checked` 读不到即返回默认配置，无需迁移函数，缺它不算漏移植。
 - 【2026-09-11 Kira 侧新增】优雅关闭客户端的 taskkill 参数：只能用 `taskkill /PID x`（不带 /T 不带 /F＝WM_CLOSE）。带 `/T` 会逐个向进程树发关闭请求，Electron 的 GPU/渲染/工具子进程没有窗口，刷一屏"只有强制终止才能终止此进程"且整体退出码非 0（参考侧 request_antigravity_graceful_close 带 /T 属同样问题，勿照搬）。/T 只保留在超时升级的强杀（`/T /F`）里。taskkill stderr 是 GBK，用 `file_io::decode_text_bytes` 解码，勿 from_utf8_lossy。
+
+## F. 参考 B（WorkDaddy）移植坑（异架构，契约见 references/workdaddy.md）
+
+19. **把 CDP 注入或 Node daemon 搬进来** — WorkDaddy 的面板/免打扰/自动续接/暂存都靠 `Runtime.evaluate` 注入 renderer，我们没这条链路。这些能力只能采用「纯函数判定规则 + 我们自己的 UI/命令」的形态，或明确放弃。
+20. **两套切换时序混用** — WorkDaddy 切换是"写登录文件 + CDP 刷新，不关客户端"；我们的是"关客户端 → 会话合并 → 写回 → 重启"。把前者的"不关客户端"塞进我们的切换流程，会让运行中的客户端把内存里的旧身份写回，等于没切。假退出（`/api/logout`）才可以走"先退宿主再删文件"。
+21. **Node 加密参数与 Rust crate 默认值不同（真要互操作归档/导出时才踩）** — Node `crypto.scryptSync` 默认 `N=16384, r=8, p=1`（对应 Rust `scrypt::Params::new(14, 8, 1, 32)`）；参考的 AES-GCM 打包布局是 `base64(iv‖authTag‖cipher)`，而 Rust `aes-gcm` crate 输出是 `ciphertext‖tag`、IV 需单独传，直接照搬字节顺序必然解不开。GCM 的 AAD 也要对齐（`.wds` v4 用 `header[0,36)`）。
+22. **`code===10001` 单独判定"已签到"** — 参考是 `code===10001 && !inactive && ALREADY_MESSAGE.test(message)`；只看 code 会把"活动未开启/已过期"误判成签到成功。
+23. **反向覆盖签到调度语义** — WorkDaddy 的签到是固定 60 分钟 interval + opt-in consent，**没有**随机时间窗；我们的随机窗口来自 cockpit-tools，勿用参考的 interval 替换。
+24. **把参考的测试当可移植代码** — `test/*.test.js` 里一半是"从 `inject.js` 抽取源码片段 + DOM 桩"（见 `test/no-disturb-match.test.js` 头部注释），只作**行为规范**读，断言可转写成我们的 Rust 单测，代码不能搬。
+25. **时区混用** — 参考中官方计费/历史按**本地日**聚合（`credit-history-sync` / `credit-usage-store`），匿名上报按 **UTC+8** 日（`usage-report.js`）。移植任何"按天"的功能前先确认用哪一种日界。
+
+## G. 参考仓漂移探测（B 仓）
+
+```bash
+cd E:/pro/other-sdk/buddy/WorkDaddy
+grep -n "DAEMON_VERSION" scripts/daemon.js | head -1   # 与本技能 sync-point.workdaddy.txt 记录对比
+node --test test/*.test.js                             # 参考侧行为规范全量（改动会在这里体现）
+```
+
+差异出现即按 SKILL.md §2.2 圈功能域；本单 F 节若新增同类语义，直接追加。
