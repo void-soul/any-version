@@ -5,13 +5,15 @@
 //! - CodeBuddy CN：会话存在 `%APPDATA%/CodeBuddy CN/codebuddy-sessions.vscdb`
 //!   （ItemTable 中 key 以 `session:` 开头的 JSON）
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use super::models::BuddyPlatform;
 
 /// 单个会话位置（来源实例）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,7 +34,13 @@ pub struct BuddySessionRecord {
     pub status: String,
     pub created_at: Option<i64>,
     pub updated_at: Option<i64>,
+    /// 活动时间：`last_activity_at` → `updated_at` → `created_at` 依次回退（对齐参考实现的 COALESCE 排序）
+    #[serde(default)]
+    pub last_activity_at: Option<i64>,
     pub is_playground: bool,
+    /// 本机已找不到该会话的正文（扩展目录 index.json 无登记或正文目录缺失）
+    #[serde(default)]
+    pub content_missing: bool,
     pub locations: Vec<BuddySessionLocation>,
 }
 
@@ -51,8 +59,38 @@ struct RawSession {
     status: String,
     created_at: Option<i64>,
     updated_at: Option<i64>,
+    last_activity_at: Option<i64>,
     is_deleted: bool,
     is_playground: bool,
+}
+
+/// 会话活动时间：取 `last_activity_at` / `updated_at` / `created_at` 中**最新**者。
+///
+/// 真机数据（WorkBuddy 5.x）显示 `updated_at` 恒 ≥ `last_activity_at`
+/// （客户端刷新会 bump updated_at），取最新者才符合「最近活跃」的直觉；
+/// 缺失列（老库）自动退化为 updated_at / created_at。
+fn activity_at(raw: &RawSession) -> Option<i64> {
+    [raw.last_activity_at, raw.updated_at, raw.created_at]
+        .into_iter()
+        .flatten()
+        .max()
+}
+
+/// 表是否含某列（老版本 `workbuddy.db` 没有 `last_activity_at`，直接写进 SQL 会报错）。
+fn table_has_column(conn: &Connection, table: &str, column: &str) -> bool {
+    let sql = format!("PRAGMA table_info({})", table);
+    let Ok(mut stmt) = conn.prepare(&sql) else {
+        return false;
+    };
+    let Ok(mut rows) = stmt.query([]) else {
+        return false;
+    };
+    while let Ok(Some(row)) = rows.next() {
+        if row.get::<_, String>(1).map(|name| name == column).unwrap_or(false) {
+            return true;
+        }
+    }
+    false
 }
 
 /// WorkBuddy 会话库路径：`~/.workbuddy/workbuddy.db`
@@ -85,10 +123,20 @@ fn read_sessions_from_workbuddy_db(db_path: &Path) -> Vec<RawSession> {
         }
     };
 
-    let mut stmt = match conn.prepare(
-        "SELECT id, cwd, user_id, title, status, created_at, updated_at, deleted_at, is_playground \
+    // 老版本库没有 last_activity_at（5.x 才有），缺列时用 NULL 占位，排序退化为 updated_at/created_at
+    let has_last_activity = table_has_column(&conn, "sessions", "last_activity_at");
+    let activity_column = if has_last_activity {
+        "last_activity_at"
+    } else {
+        "NULL"
+    };
+    let sql = format!(
+        "SELECT id, cwd, user_id, title, status, created_at, updated_at, deleted_at, is_playground, {} \
          FROM sessions",
-    ) {
+        activity_column
+    );
+
+    let mut stmt = match conn.prepare(&sql) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("[BuddySession] 准备 WorkBuddy 查询失败 {}: {}", db_path.display(), e);
@@ -107,13 +155,25 @@ fn read_sessions_from_workbuddy_db(db_path: &Path) -> Vec<RawSession> {
             row.get::<_, Option<i64>>(6)?,
             row.get::<_, Option<i64>>(7)?,
             row.get::<_, i64>(8).unwrap_or(0),
+            row.get::<_, Option<i64>>(9)?,
         ))
     });
 
     let mut sessions = Vec::new();
     if let Ok(rows) = rows {
         for row in rows.flatten() {
-            let (id, cwd, user_id, title, status, created_at, updated_at, deleted_at, is_play) = row;
+            let (
+                id,
+                cwd,
+                user_id,
+                title,
+                status,
+                created_at,
+                updated_at,
+                deleted_at,
+                is_play,
+                last_activity_at,
+            ) = row;
             sessions.push(RawSession {
                 conversation_id: id,
                 title: title.unwrap_or_default(),
@@ -122,6 +182,7 @@ fn read_sessions_from_workbuddy_db(db_path: &Path) -> Vec<RawSession> {
                 status: status.unwrap_or_default(),
                 created_at,
                 updated_at,
+                last_activity_at,
                 is_deleted: deleted_at.is_some(),
                 is_playground: is_play != 0,
             });
@@ -129,6 +190,80 @@ fn read_sessions_from_workbuddy_db(db_path: &Path) -> Vec<RawSession> {
     }
 
     sessions
+}
+
+/// 收集扩展数据目录中「本机仍有正文」的会话 id。
+///
+/// 判定与参考实现一致：工作区 `index.json` 登记了该会话，**且** `<workspace>/<conversationId>/` 目录存在。
+/// 返回 `None` 表示本机没有可识别的旧版目录布局（5.x 会话只落 DB、或全新装机），
+/// 此时调用方跳过「正文缺失」标记，避免把正常会话全标成缺失。
+pub(crate) fn collect_local_conversation_ids_from_roots(
+    roots: &[PathBuf],
+    uid: &str,
+) -> Option<HashSet<String>> {
+    if super::session_transfer::codebuddy::validate_uid(uid).is_err() {
+        return None;
+    }
+    let mut ids = HashSet::new();
+    let mut layout_found = false;
+    for root in roots {
+        let account_outer = root.join(uid);
+        let Ok(ide_entries) = std::fs::read_dir(&account_outer) else {
+            continue;
+        };
+        for ide_entry in ide_entries.flatten() {
+            let Ok(metadata) = std::fs::symlink_metadata(ide_entry.path()) else {
+                continue;
+            };
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                continue;
+            }
+            let history_root = ide_entry.path().join(uid).join("history");
+            if !history_root.is_dir() {
+                continue;
+            }
+            layout_found = true;
+            let Ok(workspace_entries) = std::fs::read_dir(&history_root) else {
+                continue;
+            };
+            for workspace_entry in workspace_entries.flatten() {
+                let Ok(metadata) = std::fs::symlink_metadata(workspace_entry.path()) else {
+                    continue;
+                };
+                if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                    continue;
+                }
+                let workspace_path = workspace_entry.path();
+                let Ok(index) =
+                    super::session_transfer::codebuddy::read_workspace_index(&workspace_path.join("index.json"))
+                else {
+                    continue;
+                };
+                let Some(conversations) = index.get("conversations").and_then(Value::as_array) else {
+                    continue;
+                };
+                for conversation in conversations {
+                    let Some(id) = conversation.get("id").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    if workspace_path.join(id).is_dir() {
+                        ids.insert(id.to_string());
+                    }
+                }
+            }
+        }
+    }
+    layout_found.then_some(ids)
+}
+
+/// 标注哪些会话在本机已经没有正文（`contentMissing`）。`local` 为 `None` 时不动任何记录。
+fn apply_content_probe(records: &mut [BuddySessionRecord], local: Option<&HashSet<String>>) {
+    let Some(local) = local else {
+        return;
+    };
+    for record in records.iter_mut() {
+        record.content_missing = !local.contains(&record.conversation_id);
+    }
 }
 
 /// 读取 vscdb 中的会话 JSON（ItemTable key 以 `session:` 开头）
@@ -183,6 +318,7 @@ fn parse_raw_session(json_str: &str) -> Option<RawSession> {
     let status = v.get("status").and_then(|s| s.as_str()).unwrap_or("Unknown").to_string();
     let created_at = v.get("createdAt").and_then(|t| t.as_i64());
     let updated_at = v.get("updatedAt").and_then(|t| t.as_i64());
+    let last_activity_at = v.get("lastActivityAt").and_then(|t| t.as_i64());
     let is_deleted = v.get("deletedAt").and_then(|t| t.as_i64()).is_some();
     let is_playground = v
         .get("isPlayground")
@@ -197,6 +333,7 @@ fn parse_raw_session(json_str: &str) -> Option<RawSession> {
         status,
         created_at,
         updated_at,
+        last_activity_at,
         is_deleted,
         is_playground,
     })
@@ -246,6 +383,11 @@ fn aggregate_sessions(
                         existing.updated_at = Some(new_updated);
                     }
                 }
+                if let Some(new_activity) = activity_at(&raw) {
+                    if existing.last_activity_at.map_or(true, |old| new_activity > old) {
+                        existing.last_activity_at = Some(new_activity);
+                    }
+                }
                 if !existing
                     .locations
                     .iter()
@@ -254,7 +396,10 @@ fn aggregate_sessions(
                     existing.locations.push(location.clone());
                 }
             })
-            .or_insert_with(|| BuddySessionRecord {
+            .or_insert_with(|| {
+                // 先算出活动时间：下面的结构体字面量会移动 raw 的字段
+                let raw_activity = activity_at(&raw);
+                BuddySessionRecord {
                 conversation_id: raw.conversation_id,
                 title: raw.title,
                 cwd: raw.cwd,
@@ -262,13 +407,22 @@ fn aggregate_sessions(
                 status: raw.status,
                 created_at: raw.created_at,
                 updated_at: raw.updated_at,
+                last_activity_at: raw_activity,
                 is_playground: raw.is_playground,
+                content_missing: false,
                 locations: vec![location],
+                }
             });
     }
 
     let mut records: Vec<BuddySessionRecord> = aggregated.into_values().collect();
-    records.sort_by(|a, b| b.updated_at.unwrap_or(0).cmp(&a.updated_at.unwrap_or(0)));
+    // 排序：活动时间倒序，其次 created_at 倒序（对齐参考实现的 COALESCE 排序）
+    records.sort_by(|a, b| {
+        b.last_activity_at
+            .unwrap_or(0)
+            .cmp(&a.last_activity_at.unwrap_or(0))
+            .then_with(|| b.created_at.unwrap_or(0).cmp(&a.created_at.unwrap_or(0)))
+    });
     records
 }
 
@@ -280,21 +434,39 @@ pub fn list_sessions(
     match platform {
         "workbuddy" => {
             let db_path = workbuddy_sessions_db_path()?;
-            Ok(aggregate_sessions(
+            let mut records = aggregate_sessions(
                 read_sessions_from_workbuddy_db(&db_path),
                 filter,
                 "workbuddy",
                 "WorkBuddy",
-            ))
+            );
+            // 正文存在性探测：仅在能定位到旧版扩展目录布局时生效（5.x 只留 DB 时跳过）
+            let local = current_platform_uid(BuddyPlatform::Workbuddy).and_then(|uid| {
+                let roots: Vec<PathBuf> =
+                    super::session_transfer::workbuddy::select_extension_data_roots(&uid)
+                        .ok()?
+                        .into_iter()
+                        .map(|(_, dir)| dir)
+                        .collect();
+                collect_local_conversation_ids_from_roots(&roots, &uid)
+            });
+            apply_content_probe(&mut records, local.as_ref());
+            Ok(records)
         }
         "codebuddy-cn" | "codebuddy_cn" => {
             let db_path = codebuddy_cn_sessions_db_path()?;
-            Ok(aggregate_sessions(
+            let mut records = aggregate_sessions(
                 read_sessions_from_db(&db_path),
                 filter,
                 "default",
                 "CodeBuddy CN",
-            ))
+            );
+            let local = current_platform_uid(BuddyPlatform::CodebuddyCn).and_then(|uid| {
+                let root = super::session_transfer::codebuddy::codebuddy_extension_data_dir().ok()?;
+                collect_local_conversation_ids_from_roots(&[root], &uid)
+            });
+            apply_content_probe(&mut records, local.as_ref());
+            Ok(records)
         }
         other => Err(format!("未知平台: {}", other)),
     }
@@ -665,6 +837,7 @@ mod tests {
                 updated_at: Some(10),
                 is_deleted: false,
                 is_playground: false,
+                last_activity_at: None,
             },
             RawSession {
                 conversation_id: "b".into(),
@@ -676,6 +849,7 @@ mod tests {
                 updated_at: Some(20),
                 is_deleted: false,
                 is_playground: false,
+                last_activity_at: None,
             },
             RawSession {
                 conversation_id: "a".into(),
@@ -687,6 +861,7 @@ mod tests {
                 updated_at: Some(30), // 更新
                 is_deleted: false,
                 is_playground: false,
+                last_activity_at: None,
             },
             RawSession {
                 conversation_id: "gone".into(),
@@ -698,6 +873,7 @@ mod tests {
                 updated_at: Some(40),
                 is_deleted: true,
                 is_playground: false,
+                last_activity_at: None,
             },
         ];
 
@@ -793,5 +969,132 @@ mod tests {
         assert!(report.errors.is_empty());
 
         let _ = std::fs::remove_dir_all(&dest);
+    }
+
+    // ─── 列表排序：活动时间回退（last_activity_at → updated_at → created_at） ───
+
+    fn raw_session(
+        id: &str,
+        created_at: Option<i64>,
+        updated_at: Option<i64>,
+        last_activity_at: Option<i64>,
+    ) -> RawSession {
+        RawSession {
+            conversation_id: id.to_string(),
+            title: id.to_string(),
+            cwd: "/ws".to_string(),
+            user_id: "uid".to_string(),
+            status: "Completed".to_string(),
+            created_at,
+            updated_at,
+            last_activity_at,
+            is_deleted: false,
+            is_playground: false,
+        }
+    }
+
+    #[test]
+    fn session_sort_uses_newest_activity_time() {
+        let raws = vec![
+            raw_session("only-created", Some(300), None, None),
+            raw_session("by-activity", Some(100), Some(200), Some(500)),
+            raw_session("by-updated", Some(100), Some(400), None),
+        ];
+        let records = aggregate_sessions(
+            raws,
+            &BuddySessionFilter::default(),
+            "workbuddy",
+            "WorkBuddy",
+        );
+        let ids: Vec<&str> = records
+            .iter()
+            .map(|r| r.conversation_id.as_str())
+            .collect();
+        // 活动时间 = 三者取最新；缺失 last_activity_at 时回退 updated_at / created_at
+        assert_eq!(ids, vec!["by-activity", "by-updated", "only-created"]);
+        assert_eq!(records[0].last_activity_at, Some(500));
+        assert_eq!(records[1].last_activity_at, Some(400));
+        assert_eq!(records[2].last_activity_at, Some(300));
+    }
+
+    #[test]
+    fn session_activity_takes_newest_when_updated_beats_last_activity() {
+        // 真机模式（WorkBuddy 5.x）：客户端刷新会 bump updated_at，使其新于 last_activity_at；
+        // 此时活动时间必须取 updated_at，否则最近用过的会话会沉底
+        let raws = vec![raw_session("real", Some(100), Some(900), Some(500))];
+        let records = aggregate_sessions(
+            raws,
+            &BuddySessionFilter::default(),
+            "workbuddy",
+            "WorkBuddy",
+        );
+        assert_eq!(records[0].last_activity_at, Some(900));
+    }
+
+    // ─── 正文存在性探测 ───
+
+    #[test]
+    fn collect_local_conversation_ids_requires_index_entry_and_dir() {
+        let root = std::env::temp_dir().join(format!(
+            "kira-session-probe-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let uid = "uid-a";
+        let history = root
+            .join(uid)
+            .join("VSCode")
+            .join(uid)
+            .join("history")
+            .join("ws1");
+        std::fs::create_dir_all(history.join("conv-ok")).unwrap();
+        std::fs::write(
+            history.join("index.json"),
+            r#"{"conversations":[{"id":"conv-ok"},{"id":"conv-no-dir"}]}"#,
+        )
+        .unwrap();
+
+        let ids = collect_local_conversation_ids_from_roots(&[root.clone()], uid)
+            .expect("存在 history 布局时必须返回集合");
+        assert!(ids.contains("conv-ok"));
+        // index.json 里登记了、但正文目录不存在 → 不算「本地仍有正文」
+        assert!(!ids.contains("conv-no-dir"));
+
+        // 没有 history 布局（5.x 只留 DB / 全新装机）→ None，调用方跳过误报
+        let empty = root.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert!(collect_local_conversation_ids_from_roots(&[empty], uid).is_none());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn content_probe_marks_only_unknown_ids() {
+        let make = |id: &str| BuddySessionRecord {
+            conversation_id: id.to_string(),
+            title: id.to_string(),
+            cwd: "/ws".to_string(),
+            user_id: "uid".to_string(),
+            status: "Completed".to_string(),
+            created_at: Some(1),
+            updated_at: Some(1),
+            last_activity_at: Some(1),
+            is_playground: false,
+            content_missing: false,
+            locations: Vec::new(),
+        };
+        let mut records = vec![make("a"), make("b")];
+
+        // 定位不到本地布局 → 一律不标记，避免全量误报
+        apply_content_probe(&mut records, None);
+        assert!(records.iter().all(|r| !r.content_missing));
+
+        let local: HashSet<String> = ["a".to_string()].into_iter().collect();
+        apply_content_probe(&mut records, Some(&local));
+        assert!(!records[0].content_missing);
+        assert!(records[1].content_missing);
     }
 }
