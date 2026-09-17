@@ -165,6 +165,102 @@ fn list_accounts_locked(platform: BuddyPlatform) -> Vec<BuddyAccount> {
     accounts
 }
 
+// ─── 账号视图偏好（主账号 + 排序模式） ───
+
+/// 排序模式：最近使用（默认）
+pub const ORDER_MODE_LAST_USED: &str = "lastUsed";
+/// 排序模式：剩余额度多的在前
+pub const ORDER_MODE_QUOTA: &str = "quota";
+/// 排序模式：最早到期的在前
+pub const ORDER_MODE_EXPIRY: &str = "expiry";
+
+const ORDER_MODES: [&str; 3] = [ORDER_MODE_LAST_USED, ORDER_MODE_QUOTA, ORDER_MODE_EXPIRY];
+
+/// 校验排序模式（未知值直接拒绝，避免把拼错的模式写进磁盘）。
+pub fn validate_order_mode(mode: &str) -> Result<(), String> {
+    if ORDER_MODES.contains(&mode) {
+        Ok(())
+    } else {
+        Err(format!("未知的排序模式: {}", mode))
+    }
+}
+
+/// 账号视图偏好：主账号 + 排序模式（对应参考实现的 `primary-account.json` + `meta.accountOrderMode`）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuddyAccountView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_account_id: Option<String>,
+    #[serde(default = "default_order_mode")]
+    pub order_mode: String,
+}
+
+fn default_order_mode() -> String {
+    ORDER_MODE_LAST_USED.to_string()
+}
+
+impl Default for BuddyAccountView {
+    fn default() -> Self {
+        Self {
+            primary_account_id: None,
+            order_mode: default_order_mode(),
+        }
+    }
+}
+
+fn view_path(platform: BuddyPlatform) -> Result<PathBuf, String> {
+    Ok(buddy_root()?.join(format!("{}_view.json", platform.accounts_dir_name())))
+}
+
+/// 读取视图偏好；主账号已不存在时自动清空（对齐参考实现「读取时校验」）。
+pub fn load_view(platform: BuddyPlatform) -> BuddyAccountView {
+    let Ok(path) = view_path(platform) else {
+        return BuddyAccountView::default();
+    };
+    let mut view = fs::read_to_string(&path)
+        .ok()
+        .and_then(|c| serde_json::from_str::<BuddyAccountView>(&c).ok())
+        .unwrap_or_default();
+    if validate_order_mode(&view.order_mode).is_err() {
+        view.order_mode = default_order_mode();
+    }
+    if let Some(id) = view.primary_account_id.clone() {
+        if load_account(platform, &id).is_none() {
+            view.primary_account_id = None;
+        }
+    }
+    view
+}
+
+/// 保存视图偏好（主账号必须存在、排序模式必须合法）。
+pub fn save_view_with_mode(
+    platform: BuddyPlatform,
+    primary_account_id: Option<String>,
+    order_mode: &str,
+) -> Result<BuddyAccountView, String> {
+    validate_order_mode(order_mode)?;
+    if let Some(id) = primary_account_id.as_deref() {
+        if load_account(platform, id).is_none() {
+            return Err(format!("账号不存在: {}", id));
+        }
+    }
+    let view = BuddyAccountView {
+        primary_account_id,
+        order_mode: order_mode.to_string(),
+    };
+    save_view(platform, &view)?;
+    Ok(view)
+}
+
+/// 直接落盘视图偏好（调用方自行保证字段合法）。
+pub fn save_view(platform: BuddyPlatform, view: &BuddyAccountView) -> Result<(), String> {
+    let _lock = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = view_path(platform)?;
+    let content =
+        serde_json::to_string_pretty(view).map_err(|e| format!("序列化账号视图失败: {}", e))?;
+    write_atomic(&path, &content)
+}
+
 /// 新增或更新账号（按 uid/email 去重，更新 token 与 last_used）
 pub fn upsert_account(platform: BuddyPlatform, account: BuddyAccount) -> Result<BuddyAccount, String> {
     let _lock = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -969,5 +1065,48 @@ mod tests {
 
         delete_account(BuddyPlatform::CodebuddyCn, "cn_bf").unwrap();
         delete_account(BuddyPlatform::Workbuddy, "wb_bf").unwrap();
+    }
+
+    // ─── 主账号与排序模式 ───
+
+    #[test]
+    fn account_view_roundtrip_and_validation() {
+        let (_root, _guard) = test_root();
+        let platform = BuddyPlatform::Workbuddy;
+        let account = sample_account("view_a", "view-a@example.com");
+        upsert_account(platform, account.clone()).unwrap();
+
+        // 默认：无主账号 + 最近使用排序
+        let view = load_view(platform);
+        assert_eq!(view.primary_account_id, None);
+        assert_eq!(view.order_mode, ORDER_MODE_LAST_USED);
+
+        // 设置主账号与排序模式后能读回
+        save_view(
+            platform,
+            &BuddyAccountView {
+                primary_account_id: Some(account.id.clone()),
+                order_mode: ORDER_MODE_EXPIRY.to_string(),
+            },
+        )
+        .unwrap();
+        let view = load_view(platform);
+        assert_eq!(view.primary_account_id.as_deref(), Some(account.id.as_str()));
+        assert_eq!(view.order_mode, ORDER_MODE_EXPIRY);
+
+        // 非法排序模式被拒绝（写入前校验）
+        assert!(validate_order_mode("whatever").is_err());
+        assert!(save_view_with_mode(platform, Some(account.id.clone()), "whatever").is_err());
+
+        // 账号已删除 → 读时主账号自动清空
+        delete_account(platform, &account.id).unwrap();
+        assert_eq!(load_view(platform).primary_account_id, None);
+    }
+
+    #[test]
+    fn set_primary_rejects_unknown_account() {
+        let (_root, _guard) = test_root();
+        let platform = BuddyPlatform::CodebuddyCn;
+        assert!(save_view_with_mode(platform, Some("not_exists".to_string()), ORDER_MODE_LAST_USED).is_err());
     }
 }

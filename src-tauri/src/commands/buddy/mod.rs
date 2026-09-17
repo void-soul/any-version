@@ -83,6 +83,36 @@ pub fn buddy_delete_account(platform: String, account_id: String) -> Result<(), 
 
 // ─── 过期时间列（两平台共享：全局列 schema，同邮箱账号的时间值互通） ───
 
+// ─── 账号视图偏好（主账号 + 排序模式） ───
+
+#[tauri::command]
+pub fn buddy_get_account_view(platform: String) -> Result<store::BuddyAccountView, String> {
+    let platform = platform_from_str(&platform)?;
+    Ok(store::load_view(platform))
+}
+
+/// 设置主账号（`None` = 取消主账号）；排序模式沿用当前值。
+#[tauri::command]
+pub fn buddy_set_primary_account(
+    platform: String,
+    account_id: Option<String>,
+) -> Result<store::BuddyAccountView, String> {
+    let platform = platform_from_str(&platform)?;
+    let view = store::load_view(platform);
+    store::save_view_with_mode(platform, account_id, &view.order_mode)
+}
+
+/// 设置排序模式（lastUsed / quota / expiry）；主账号沿用当前值。
+#[tauri::command]
+pub fn buddy_set_account_order_mode(
+    platform: String,
+    order_mode: String,
+) -> Result<store::BuddyAccountView, String> {
+    let platform = platform_from_str(&platform)?;
+    let view = store::load_view(platform);
+    store::save_view_with_mode(platform, view.primary_account_id, &order_mode)
+}
+
 #[tauri::command]
 pub fn buddy_get_expiry_columns() -> Result<Vec<expiry::ExpiryColumn>, String> {
     Ok(expiry::load_columns())
@@ -517,15 +547,44 @@ pub async fn buddy_checkin(
     let account = store::load_account(platform, &account_id)
         .ok_or_else(|| format!("账号不存在: {}", account_id))?;
 
-    let response = api::perform_checkin(
+    let mut response = api::perform_checkin(
         &account.access_token,
         account.uid.as_deref(),
         account.enterprise_id.as_deref(),
         account.domain.as_deref(),
     )
-    .await?;
+    .await
+    .map_err(|err| {
+        // AUTH_EXPIRED 前缀是给调度器用的内部约定，手动签到要展示给人看的文案
+        match err.strip_prefix(api::AUTH_EXPIRED_PREFIX) {
+            Some(text) => text.to_string(),
+            None => err,
+        }
+    })?;
 
-    if response.success {
+    // 失败但非「活动未开启」时回查一次状态：官方在部分通道会用业务码返回「今日已签到」，
+    // 不回查就会把「已签到」显示成失败。自动签到早已这么做，手动路径此前漏了这一步。
+    if !response.success && response.inactive != Some(true) {
+        if let Ok(status) = api::get_checkin_status(
+            &account.access_token,
+            account.uid.as_deref(),
+            account.enterprise_id.as_deref(),
+            account.domain.as_deref(),
+        )
+        .await
+        {
+            if status.today_checked_in {
+                response.success = true;
+                response.already = Some(true);
+                response.message = Some("今日已完成签到".to_string());
+            }
+        }
+    }
+
+    let already = response.already == Some(true);
+    let inactive = response.inactive == Some(true);
+
+    if response.success || inactive {
         let now = chrono::Utc::now().timestamp();
         let streak = response
             .streak_days
@@ -533,8 +592,10 @@ pub async fn buddy_checkin(
         let reward = response.reward.clone().or_else(|| {
             response.credit.map(|credit| serde_json::json!({ "credit": credit }))
         });
-        api::update_checkin_info(platform, &account_id, Some(now), streak, reward)
-            .map_err(|e| format!("签到成功但更新状态失败: {}", e))?;
+        if response.success {
+            api::update_checkin_info(platform, &account_id, Some(now), streak, reward)
+                .map_err(|e| format!("签到成功但更新状态失败: {}", e))?;
+        }
 
         // 手动签到同样要"落账"：写每日归档 + 行为日志。
         // 之前这里只更新了账号自身的 last_checkin_time，于是手动签到成功后
@@ -546,26 +607,47 @@ pub async fn buddy_checkin(
         };
         let today = daily_history::today_string();
         let credit = response.credit;
-        if let Err(err) = daily_history::upsert_checkin(
-            &today,
-            &account_id,
-            &email,
-            daily_history::CheckinPatch::new()
-                .actual_time(daily_history::now_time_string())
-                .status(daily_history::checkin_status::SUCCESS)
-                .source("kira")
-                .credit(credit)
-                .streak(Some(streak))
-                .message(Some("签到成功（手动）".to_string())),
-        ) {
+        // 三种「无需重试」的终态：已签到 / 活动未开启 / 本次成功
+        let (archive_status, log_status, fallback_message) = if inactive {
+            (
+                daily_history::checkin_status::INACTIVE,
+                "inactive",
+                "签到活动未开启",
+            )
+        } else if already {
+            (
+                daily_history::checkin_status::ALREADY_CHECKED,
+                "already_checked",
+                "今日已完成签到",
+            )
+        } else {
+            (
+                daily_history::checkin_status::SUCCESS,
+                "success",
+                "签到成功（手动）",
+            )
+        };
+        let message = response
+            .message
+            .clone()
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or_else(|| fallback_message.to_string());
+        let patch = daily_history::CheckinPatch::new()
+            .actual_time(daily_history::now_time_string())
+            .status(archive_status)
+            .source("kira")
+            .credit(credit)
+            .streak(Some(streak))
+            .message(Some(message.clone()));
+        if let Err(err) = daily_history::upsert_checkin(&today, &account_id, &email, patch) {
             eprintln!("[Buddy] 手动签到写入归档失败({}): {}", account_id, err);
         }
         if let Err(err) = action_log::append_action_logs(&[action_log::make_entry(
             "checkin",
             &account_id,
             &email,
-            "success",
-            Some("签到成功（手动）".to_string()),
+            log_status,
+            Some(message),
             credit,
         )]) {
             eprintln!("[Buddy] 手动签到写入行为日志失败({}): {}", account_id, err);

@@ -1270,8 +1270,11 @@ pub async fn build_payload_from_token(
 
 // ─── 派 Buddy 旅行（WorkBuddy 活动，路径不带 /v2/ 前缀） ───
 
-/// 令牌失效错误前缀（调度器据此识别「登录态过期」类错误）。
-pub const TRAVEL_AUTH_EXPIRED_PREFIX: &str = "AUTH_EXPIRED:";
+/// 令牌失效统一前缀：签到 / 旅行等所有调度器共用同一约定，据此识别「登录态过期」类错误。
+pub const AUTH_EXPIRED_PREFIX: &str = "AUTH_EXPIRED:";
+
+/// 兼容旧名（旅行调度器历史引用）。
+pub const TRAVEL_AUTH_EXPIRED_PREFIX: &str = AUTH_EXPIRED_PREFIX;
 
 /// 业务拒绝错误前缀（code != 0，如「今日太累了」等提示；调度器据此当日放弃，不再重试）。
 pub const TRAVEL_REJECTED_PREFIX: &str = "TRAVEL_REJECTED:";
@@ -1497,6 +1500,82 @@ pub struct CheckinResponse {
     pub is_streak_day: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_checkin_in: Option<i64>,
+    /// 今日已完成签到（官方业务码 10001）——此时 `success` 同样为 true
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub already: Option<bool>,
+    /// 签到活动未开启 / 已结束：不是失败，当日重试也没有意义
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inactive: Option<bool>,
+}
+
+// ─── 签到结果分类（对齐 WorkDaddy `checkin-result.js`） ───
+
+/// 官方「今日已签到」业务码。
+pub const CHECKIN_ALREADY_CODE: i64 = 10001;
+
+/// 活动未开启 / 已结束的提示词（官方没有稳定的 inactive 字段，只能按文案判定）。
+const CHECKIN_INACTIVE_HINTS: &[&str] = &[
+    "未开启",
+    "未开始",
+    "未开放",
+    "已过期",
+    "无活动",
+    "活动结束",
+    "活动已结束",
+    "活动关闭",
+    "活动已关闭",
+    "活动暂停",
+    "活动已暂停",
+];
+
+/// 签到结果分类。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckinOutcome {
+    /// 本次签到成功
+    Success,
+    /// 今日已完成签到（业务码 10001）
+    Already,
+    /// 活动未开启 / 已结束
+    Inactive,
+    /// 其他失败（可重试）
+    Failed,
+}
+
+/// 判定提示文案是否表示「活动未开启 / 已结束」。
+pub fn is_checkin_inactive_message(message: &str) -> bool {
+    let text = message.trim();
+    if text.is_empty() {
+        return false;
+    }
+    CHECKIN_INACTIVE_HINTS.iter().any(|hint| text.contains(hint))
+}
+
+/// 分类签到结果。
+///
+/// 判定顺序与参考实现一致：**先判 inactive**，再判 10001——
+/// 活动已结束却返回 10001 时不算「已签到」。
+pub fn classify_checkin_result(http_ok: bool, code: i64, message: &str) -> CheckinOutcome {
+    if is_checkin_inactive_message(message) {
+        return CheckinOutcome::Inactive;
+    }
+    if code == CHECKIN_ALREADY_CODE {
+        return CheckinOutcome::Already;
+    }
+    if http_ok && code == 0 {
+        return CheckinOutcome::Success;
+    }
+    CheckinOutcome::Failed
+}
+
+/// 构造签到接口的错误信息：401/403 统一带 [`AUTH_EXPIRED_PREFIX`]，调度器据此拉长重试。
+pub fn checkin_http_error(status: u16, message: &str) -> String {
+    if status == 401 || status == 403 {
+        return format!(
+            "{}令牌已失效（HTTP {}），请在账号卡片刷新令牌后重试",
+            AUTH_EXPIRED_PREFIX, status
+        );
+    }
+    format!("请求 daily-checkin 失败 (http={}): {}", status, message)
 }
 
 fn default_checkin_active_true() -> bool {
@@ -1725,11 +1804,7 @@ pub async fn perform_checkin(
             .or_else(|| body.get("msg"))
             .and_then(|v| v.as_str())
             .unwrap_or("unknown error");
-        return Err(format!(
-            "请求 daily-checkin 失败 (http={}): {}",
-            status_code.as_u16(),
-            message
-        ));
+        return Err(checkin_http_error(status_code.as_u16(), message));
     }
 
     let code = body.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
@@ -1740,16 +1815,49 @@ pub async fn perform_checkin(
         .unwrap_or("unknown error")
         .to_string();
 
-    if code != 0 {
-        return Ok(CheckinResponse {
-            success: false,
-            message: Some(api_msg),
-            reward: None,
-            credit: None,
-            streak_days: None,
-            is_streak_day: None,
-            next_checkin_in: None,
-        });
+    match classify_checkin_result(true, code, &api_msg) {
+        // 官方「今日已签到」：按已签到返回，调用方与调度器都不必再回查状态
+        CheckinOutcome::Already => {
+            return Ok(CheckinResponse {
+                success: true,
+                message: Some(api_msg),
+                reward: None,
+                credit: None,
+                streak_days: None,
+                is_streak_day: None,
+                next_checkin_in: None,
+                already: Some(true),
+                inactive: None,
+            })
+        }
+        // 活动未开启 / 已结束：不是失败，当日重试也没有意义
+        CheckinOutcome::Inactive => {
+            return Ok(CheckinResponse {
+                success: false,
+                message: Some(api_msg),
+                reward: None,
+                credit: None,
+                streak_days: None,
+                is_streak_day: None,
+                next_checkin_in: None,
+                already: None,
+                inactive: Some(true),
+            })
+        }
+        CheckinOutcome::Failed => {
+            return Ok(CheckinResponse {
+                success: false,
+                message: Some(api_msg),
+                reward: None,
+                credit: None,
+                streak_days: None,
+                is_streak_day: None,
+                next_checkin_in: None,
+                already: None,
+                inactive: None,
+            })
+        }
+        CheckinOutcome::Success => {}
     }
 
     let data = body
@@ -1776,12 +1884,17 @@ pub async fn perform_checkin(
 
     Ok(CheckinResponse {
         success,
-        message,
+        message: message.clone(),
         reward,
         credit,
         streak_days,
         is_streak_day,
         next_checkin_in,
+        already: None,
+        inactive: message
+            .as_deref()
+            .map(is_checkin_inactive_message)
+            .filter(|flag| *flag),
     })
 }
 
@@ -1882,5 +1995,55 @@ mod tests {
         let from_in = token_expiry_at(&json!({"expiresIn": 3600})).unwrap();
         let now_ms = chrono::Utc::now().timestamp_millis();
         assert!((from_in - (now_ms + 3600_000)).abs() < 2000);
+    }
+
+    // ─── 签到结果分类（对齐 WorkDaddy `checkin-result.js` 的语义） ───
+
+    #[test]
+    fn checkin_classify_success() {
+        assert_eq!(
+            classify_checkin_result(true, 0, "签到成功"),
+            CheckinOutcome::Success
+        );
+    }
+
+    #[test]
+    fn checkin_classify_already_checked() {
+        // 官方「今日已签到」业务码 10001 → 视为已签到，而不是失败
+        assert_eq!(
+            classify_checkin_result(true, 10001, "今日已完成签到"),
+            CheckinOutcome::Already
+        );
+    }
+
+    #[test]
+    fn checkin_classify_inactive_beats_already_code() {
+        // 活动未开启/已结束时，即使业务码是 10001 也不算「已签到」
+        assert_eq!(
+            classify_checkin_result(true, 10001, "签到活动已结束"),
+            CheckinOutcome::Inactive
+        );
+        assert_eq!(
+            classify_checkin_result(false, 0, "签到活动未开启"),
+            CheckinOutcome::Inactive
+        );
+    }
+
+    #[test]
+    fn checkin_classify_failed() {
+        assert_eq!(
+            classify_checkin_result(true, 500, "系统繁忙"),
+            CheckinOutcome::Failed
+        );
+        assert_eq!(classify_checkin_result(false, 0, ""), CheckinOutcome::Failed);
+    }
+
+    #[test]
+    fn checkin_http_error_marks_auth_expired() {
+        // 401/403 必须带 AUTH_EXPIRED 前缀，调度器才能与「网络失败」区分开
+        assert!(checkin_http_error(401, "unauthorized").starts_with(AUTH_EXPIRED_PREFIX));
+        assert!(checkin_http_error(403, "forbidden").starts_with(AUTH_EXPIRED_PREFIX));
+        assert!(!checkin_http_error(500, "boom").starts_with(AUTH_EXPIRED_PREFIX));
+        assert_eq!(TRAVEL_AUTH_EXPIRED_PREFIX, AUTH_EXPIRED_PREFIX);
     }
 }

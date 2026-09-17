@@ -31,6 +31,8 @@ static SCHEDULER_WAKE: OnceLock<Notify> = OnceLock::new();
 const SCHEDULER_POLL_DELAY: Duration = Duration::from_secs(30);
 const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(5 * 60);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(60 * 60);
+/// 登录态过期时的重试间隔（等用户刷新令牌，不必按普通失败那样频繁重试）
+const AUTH_EXPIRED_RETRY_DELAY: Duration = Duration::from_secs(30 * 60);
 
 struct CheckinGuard;
 impl Drop for CheckinGuard {
@@ -480,6 +482,8 @@ pub async fn run_auto_checkin_cycle_if_needed(
     );
 
     let mut retry_needed = false;
+    // 登录态过期单独标记：普通失败按指数退避重试，过期则拉长间隔（避免每轮都打官方接口）
+    let mut auth_expired = false;
     let mut entries: Vec<action_log::BuddyActionLogEntry> = Vec::new();
     let mut new_schedules = config.account_schedules.clone().unwrap_or_default();
 
@@ -542,6 +546,48 @@ pub async fn run_auto_checkin_cycle_if_needed(
             )
             .await
             {
+                Ok(res) if res.success && res.already == Some(true) => {
+                    // 官方业务码 10001：今日已签到，无需再打接口
+                    entries.push(action_log::make_entry(
+                        "checkin",
+                        &account.id,
+                        &email_display,
+                        "already_checked",
+                        Some("今日已完成签到".to_string()),
+                        None,
+                    ));
+                    mark_schedule_checked(&mut new_schedules, &account.id, &today_str, current_minute);
+                    archive_checkin(
+                        account,
+                        CheckinPatch::new()
+                            .actual_time(daily_history::now_time_string())
+                            .status(checkin_status::ALREADY_CHECKED)
+                            .source("kira"),
+                    );
+                }
+                Ok(res) if res.inactive == Some(true) => {
+                    // 官方明确回复「活动未开启/已结束」：状态记为 inactive（而非 failed）
+                    retry_needed = true;
+                    let message = res
+                        .message
+                        .clone()
+                        .unwrap_or_else(|| "签到活动未开启或不适用".to_string());
+                    entries.push(action_log::make_entry(
+                        "checkin",
+                        &account.id,
+                        &email_display,
+                        "inactive",
+                        Some(message.clone()),
+                        None,
+                    ));
+                    archive_checkin(
+                        account,
+                        CheckinPatch::new()
+                            .status(checkin_status::INACTIVE)
+                            .source("kira")
+                            .message(Some(message)),
+                    );
+                }
                 Ok(res) if res.success => {
                     let streak = res
                         .streak_days
@@ -635,6 +681,9 @@ pub async fn run_auto_checkin_cycle_if_needed(
                 }
                 Err(err) => {
                     eprintln!("[BuddyAutoCheckin] 账号 {} 自动签到异常: {}", account.id, err);
+                    if err.starts_with(api::AUTH_EXPIRED_PREFIX) {
+                        auth_expired = true;
+                    }
                     retry_needed = true;
                     entries.push(action_log::make_entry(
                         "checkin",
@@ -681,7 +730,9 @@ pub async fn run_auto_checkin_cycle_if_needed(
     let _ = app.emit("buddy-action-logs-changed", ());
     let _ = app.emit("buddy-auto-checkin-config-changed", ());
 
-    if retry_needed {
+    if auth_expired {
+        Ok("auth_expired".to_string())
+    } else if retry_needed {
         Ok("retry".to_string())
     } else {
         Ok("completed".to_string())
@@ -814,6 +865,14 @@ pub fn start_auto_checkin_scheduler(app: AppHandle) {
                 }
             }
             match run_auto_checkin_cycle_if_needed(platform, &app, false).await {
+                Ok(result) if result == "auth_expired" => {
+                    next_delay = AUTH_EXPIRED_RETRY_DELAY;
+                    retry_delay = INITIAL_RETRY_DELAY;
+                    eprintln!(
+                        "[BuddyAutoCheckin] 存在登录态过期账号，{} 分钟后重试",
+                        next_delay.as_secs() / 60
+                    );
+                }
                 Ok(result) if result == "retry" => {
                     next_delay = retry_delay;
                     retry_delay = next_retry_delay(retry_delay);
