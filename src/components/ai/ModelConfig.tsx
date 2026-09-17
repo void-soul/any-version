@@ -103,7 +103,7 @@ export default function ModelConfig() {
       setConfig(data);
       setPresets(presetData);
     } catch {
-      setConfig({ providers: [], proxy_port: 15721, default_project_path: "", rectifier: { enabled: false, thinking_signature: false, thinking_budget: false, media_fallback: false, protocol_mismatch: false }, optimizer: { enabled: false, cache_injection: false, thinking_optimizer: false, deepseek_normalize: false }, skills_dir: "" });
+      setConfig({ providers: [], proxy_port: 15721, default_project_path: "", rectifier: { enabled: false, thinking_signature: false, thinking_budget: false, media_fallback: false, protocol_mismatch: false }, headroom: { enabled: false, port: 8791, on_unavailable: "failOpen", disable_kompress: false, timeout_ms: 1500 }, optimizer: { enabled: false, cache_injection: false, thinking_optimizer: false, deepseek_normalize: false }, skills_dir: "" });
     } finally { setLoading(false); }
   }, []);
 
@@ -407,7 +407,13 @@ export default function ModelConfig() {
 
       {/* Add Button */}
       <div>
-        <button onClick={() => { setPresetSearch(""); setPresetCategory("all"); setShowPresetPicker(true); }} className="px-3.5 py-2 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-lg shadow-[var(--module-accent-ring)]">
+        <button onClick={() => {
+          // 打开前重新拉取预设：「本地聚合」的端口取自聚合页设置，可能已改动
+          void invoke<Preset[]>("get_provider_presets").then(list => setPresets(list)).catch(() => {});
+          setPresetSearch("");
+          setPresetCategory("all");
+          setShowPresetPicker(true);
+        }} className="px-3.5 py-2 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-lg shadow-[var(--module-accent-ring)]">
           <Plus className="w-3.5 h-3.5" /> {t("modelcfg.addProvider")}
         </button>
       </div>

@@ -441,6 +441,15 @@
     "googleUrl": ""
   },
   {
+    "id": "local-aggregate",
+    "name": "本地聚合（本应用聚合服务）",
+    "category": "local",
+    "website": "",
+    "openaiUrl": "http://127.0.0.1:{port}/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
     "id": "ollama",
     "name": "Ollama 本地",
     "category": "local",
