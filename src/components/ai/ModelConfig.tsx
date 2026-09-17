@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -11,8 +11,9 @@ import {
   Globe,
   Key,
   Server,
-  ChevronDown,
-  ChevronRight,
+  Search,
+  Laptop,
+  Wallet,
   X,
   Settings2,
   ExternalLink,
@@ -43,8 +44,15 @@ export default function ModelConfig() {
   const { t } = useTranslation();
   const [config, setConfig] = useState<AiConfig | null>(null);
   const [loading, setLoading] = useState(true);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [showAddMenu, setShowAddMenu] = useState(false);
+  // 详情弹窗（单供应商）与余额查询状态
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [balanceState, setBalanceState] = useState<{
+    pid: string; loading: boolean; error: string | null;
+    items: { key: string; value: string }[];
+  } | null>(null);
+  const [showPresetPicker, setShowPresetPicker] = useState(false);
+  const [presetSearch, setPresetSearch] = useState("");
+  const [presetCategory, setPresetCategory] = useState<"all" | "provider" | "relay" | "local">("all");
   const [presets, setPresets] = useState<Preset[]>([]);
 
   // 弹框状态
@@ -101,6 +109,32 @@ export default function ModelConfig() {
 
   useEffect(() => { loadConfig(); }, [loadConfig]);
 
+  // 预设选择弹窗：关键词 + 分类过滤（分类 all/provider/relay/local）
+  const filteredPresets = useMemo(() => {
+    const kw = presetSearch.trim().toLowerCase();
+    return presets.filter((p) => {
+      if (presetCategory !== "all" && p.category !== presetCategory) return false;
+      if (!kw) return true;
+      return (
+        p.name.toLowerCase().includes(kw) ||
+        p.id.toLowerCase().includes(kw) ||
+        p.website.toLowerCase().includes(kw) ||
+        p.openai_url.toLowerCase().includes(kw) ||
+        p.anthropic_url.toLowerCase().includes(kw)
+      );
+    });
+  }, [presets, presetSearch, presetCategory]);
+
+  const presetCategoryCounts = useMemo(() => {
+    const counts = { all: presets.length, provider: 0, relay: 0, local: 0 };
+    for (const p of presets) {
+      if (p.category === "provider") counts.provider += 1;
+      else if (p.category === "relay") counts.relay += 1;
+      else if (p.category === "local") counts.local += 1;
+    }
+    return counts;
+  }, [presets]);
+
   const saveConfig = async (next: AiConfig) => {
     setConfig(next);
     try { await invoke("save_ai_config", { config: next }); } catch (e) { console.error(e); }
@@ -150,7 +184,7 @@ export default function ModelConfig() {
     setFormError(null);
     setShowApiKey(false);
     setShowModal(true);
-    setShowAddMenu(false);
+    setShowPresetPicker(false);
   };
 
   const openEditModal = (provider: AiProvider) => {
@@ -238,7 +272,6 @@ export default function ModelConfig() {
     }
     saveConfig(next);
     setShowModal(false);
-    setExpandedId(saved.id);
   };
 
   // ─── 删除 ───
@@ -251,7 +284,6 @@ export default function ModelConfig() {
     };
     saveConfig(next);
     setDeleteTarget(null);
-    if (expandedId === id) setExpandedId(null);
   };
 
   // ─── 自动获取模型列表 ───
@@ -304,6 +336,36 @@ export default function ModelConfig() {
     } finally { setTesting(null); }
   };
 
+  // ─── 余额查询（仅支持官方余额端点的预设） ───
+
+  const BALANCE_CAPABLE = new Set(["deepseek", "siliconflow", "openrouter"]);
+
+  const balanceLabel = (key: string) => {
+    if (key === "state") return t("modelcfg.balState");
+    return t(`modelcfg.bal_${key}`);
+  };
+
+  const runBalance = async (provider: AiProvider) => {
+    setBalanceState({ pid: provider.id, loading: true, error: null, items: [] });
+    try {
+      const resp = await invoke<{ items: { key: string; value: string }[] }>("query_provider_balance", {
+        providerId: provider.id,
+        apiKey: provider.api_key,
+      });
+      setBalanceState({ pid: provider.id, loading: false, error: null, items: resp.items });
+    } catch (e: any) {
+      setBalanceState({ pid: provider.id, loading: false, error: String(e), items: [] });
+    }
+  };
+
+  const openDetail = (provider: AiProvider, autoBalance = false) => {
+    setDetailId(provider.id);
+    setBalanceState(null);
+    if (autoBalance) void runBalance(provider);
+  };
+
+  const detailProvider = config?.providers.find(p => p.id === detailId) ?? null;
+
   if (loading) {
     return <div className="h-full flex items-center justify-center text-slate-500"><RefreshCw className="w-5 h-5 animate-spin mr-2" /><span className="text-xs">{t("modelcfg.loading")}</span></div>;
   }
@@ -344,123 +406,260 @@ export default function ModelConfig() {
       </div>
 
       {/* Add Button */}
-      <div className="relative">
-        <button onClick={() => setShowAddMenu(!showAddMenu)} className="px-3.5 py-2 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-lg shadow-[var(--module-accent-ring)]">
+      <div>
+        <button onClick={() => { setPresetSearch(""); setPresetCategory("all"); setShowPresetPicker(true); }} className="px-3.5 py-2 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-lg shadow-[var(--module-accent-ring)]">
           <Plus className="w-3.5 h-3.5" /> {t("modelcfg.addProvider")}
         </button>
-        {showAddMenu && (
-          <div className="absolute top-full left-0 mt-1 w-72 bg-slate-900 border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden max-h-[70vh] overflow-y-auto">
-            <div className="px-3 pt-2.5 pb-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider">{t("modelcfg.sectionProviders")}</div>
-            {presets.filter(p => p.category === "provider").map((p) => (
-              <button key={p.id} onClick={() => openAddModal(p)} disabled={config?.providers.some(x => x.id === p.id)}
-                className="w-full px-3.5 py-2 text-left text-[11px] text-slate-300 hover:bg-white/5 hover:text-white flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-all">
-                <Globe className="w-3.5 h-3.5 text-slate-500" />{p.name}
-                {config?.providers.some(x => x.id === p.id) && <span className="ml-auto text-[9px] text-slate-600">{t("modelcfg.added")}</span>}
-              </button>
-            ))}
-            <button onClick={() => openAddModal()} className="w-full px-3.5 py-2 text-left text-[11px] text-slate-500 hover:bg-white/5 hover:text-slate-300 flex items-center gap-2 cursor-pointer transition-all">
-              <Plus className="w-3.5 h-3.5" />{t("modelcfg.customProvider")}
-            </button>
-            <div className="border-t border-white/5 mx-3 my-1" />
-            <div className="px-3 pt-1 pb-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider">{t("modelcfg.sectionRelay")}</div>
-            {presets.filter(p => p.category === "relay").map((p) => (
-              <button key={p.id} onClick={() => openAddModal(p)} disabled={config?.providers.some(x => x.id === p.id)}
-                className="w-full px-3.5 py-2 text-left text-[11px] text-slate-300 hover:bg-white/5 hover:text-white flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-all">
-                <Server className="w-3.5 h-3.5 text-slate-500" />{p.name}
-                {config?.providers.some(x => x.id === p.id) && <span className="ml-auto text-[9px] text-slate-600">{t("modelcfg.added")}</span>}
-              </button>
-            ))}
-            <button onClick={() => openAddModal({ id: "", name: "", category: "relay", website: "", openai_url: "", anthropic_url: "", google_url: "" })}
-              className="w-full px-3.5 py-2 text-left text-[11px] text-slate-500 hover:bg-white/5 hover:text-slate-300 flex items-center gap-2 cursor-pointer transition-all">
-              <Plus className="w-3.5 h-3.5" />{t("modelcfg.customRelay")}
-            </button>
-          </div>
-        )}
       </div>
 
-      {/* Provider List */}
+      {/* Provider List（紧凑行：点击行打开详情弹窗） */}
       {config?.providers.length === 0 ? (
         <div className="h-64 border border-dashed border-white/5 rounded-2xl flex flex-col items-center justify-center text-slate-500">
           <Key className="w-8 h-8 text-slate-700 mb-2" />
           <span className="text-xs font-bold text-slate-400">{t("modelcfg.noProviders")}</span>
         </div>
-      ) : config?.providers.map((provider) => {
-        const isExpanded = expandedId === provider.id;
-        return (
-          <div key={provider.id} className="rounded-xl border border-white/5 bg-slate-900/30 transition-all">
-            {/* Header */}
-            <div className="p-3.5 flex items-center gap-3 cursor-pointer hover:bg-white/[0.02] transition-all" onClick={() => setExpandedId(isExpanded ? null : provider.id)}>
-              {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronRight className="w-4 h-4 text-slate-500" />}
-              <div className="flex-grow min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs font-bold text-white">{provider.name}</span>
+      ) : (
+        <div className="rounded-xl border border-white/5 overflow-hidden divide-y divide-white/[0.04]">
+          {config?.providers.map((provider) => {
+            const hasEndpoint = !!(provider.openai_url || provider.anthropic_url || provider.google_url);
+            return (
+              <div key={provider.id}>
+                <div
+                  className="flex items-center gap-2 px-2.5 py-1.5 bg-slate-900/20 hover:bg-white/[0.04] cursor-pointer transition-all"
+                  onClick={() => openDetail(provider)}
+                >
+                  <span className="text-[11px] font-bold text-white truncate max-w-[160px]">{provider.name}</span>
                   {provider.website && (
                     <a href={provider.website} target="_blank" rel="noopener noreferrer"
-                      className="text-blue-400 hover:text-blue-300 transition-colors" title={t("modelcfg.openSite")}>
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-blue-400/70 hover:text-blue-300 transition-colors flex-shrink-0" title={t("modelcfg.openSite")}>
                       <ExternalLink className="w-3 h-3" />
                     </a>
                   )}
-                  <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${provider.category === "relay" ? "bg-cyan-500/15 text-cyan-400" : "bg-emerald-500/15 text-emerald-400"}`}>
-                    {provider.category === "relay" ? t("modelcfg.relay") : t("modelcfg.vendor")}
+                  <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold flex-shrink-0 ${provider.category === "relay" ? "bg-cyan-500/15 text-cyan-400" : provider.category === "local" ? "bg-purple-500/15 text-purple-400" : "bg-emerald-500/15 text-emerald-400"}`}>
+                    {provider.category === "relay" ? t("modelcfg.relay") : provider.category === "local" ? t("modelcfg.local") : t("modelcfg.vendor")}
                   </span>
-                  {/* 协议标签：每个已配置的协议端点一个徽标 */}
-                  {(() => {
-                    const protos: { key: string; label: string; cls: string }[] = [];
-                    if (provider.openai_url) protos.push({ key: "openai", label: "OpenAI", cls: "bg-blue-500/20 text-blue-300" });
-                    if (provider.anthropic_url) protos.push({ key: "anthropic", label: "Anthropic", cls: "bg-amber-500/20 text-amber-300" });
-                    if (provider.google_url) protos.push({ key: "google", label: "Google", cls: "bg-green-500/20 text-green-300" });
-                    return protos.map(p => (
-                      <span key={p.key} className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${p.cls}`}>{p.label}</span>
-                    ));
-                  })()}
+                  {provider.openai_url && <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-blue-500/15 text-blue-300/80 flex-shrink-0">OA</span>}
+                  {provider.anthropic_url && <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-amber-500/15 text-amber-300/80 flex-shrink-0">ANT</span>}
+                  {provider.google_url && <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-green-500/15 text-green-300/80 flex-shrink-0">GG</span>}
+                  <span className="ml-auto text-[9px] text-slate-500 flex-shrink-0">{t("modelcfg.modelCount", { count: provider.models.length })}</span>
+                  {BALANCE_CAPABLE.has(provider.id) && (
+                    <button onClick={(e) => { e.stopPropagation(); openDetail(provider, true); }}
+                      className="p-1 rounded-md text-slate-600 hover:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer transition-all"
+                      title={t("modelcfg.balanceQuery")}>
+                      <Wallet className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  <button onClick={(e) => { e.stopPropagation(); handleTest(provider); }} disabled={testing === provider.id || !provider.api_key || !hasEndpoint}
+                    className="p-1 rounded-md text-slate-600 hover:text-yellow-400 hover:bg-yellow-500/10 disabled:opacity-40 cursor-pointer transition-all"
+                    title={t("modelcfg.testOk")}>
+                    <Zap className={`w-3.5 h-3.5 ${testing === provider.id ? "animate-pulse text-yellow-400" : ""}`} />
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); openEditModal(provider); }}
+                    className="p-1 rounded-md text-slate-600 hover:text-blue-400 hover:bg-blue-500/10 cursor-pointer transition-all" title={t("modelcfg.edit")}>
+                    <Settings2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); setDeleteTarget(provider.id); }}
+                    className="p-1 rounded-md text-slate-600 hover:text-red-400 hover:bg-red-500/10 cursor-pointer transition-all" title={t("modelcfg.delete")}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
+                {/* 测速结果：单行内联，省空间 */}
+                {testResult?.id === provider.id && (
+                  <div className={`px-2.5 pb-1.5 text-[9px] flex items-center gap-1 ${testResult.ok ? "text-emerald-400" : "text-red-400"}`}
+                    title={testResult.msg}>
+                    {testResult.ok ? <CheckCircle className="w-3 h-3 flex-shrink-0" /> : <AlertTriangle className="w-3 h-3 flex-shrink-0" />}
+                    <span className="truncate">{testResult.ok ? t("modelcfg.testOk") : `${t("modelcfg.testFail")} — ${testResult.msg}`}</span>
+                  </div>
+                )}
               </div>
-              <div className="flex items-center gap-1.5 flex-shrink-0">
-                <button onClick={(e) => { e.stopPropagation(); handleTest(provider); }} disabled={testing === provider.id || !provider.api_key || (!provider.openai_url && !provider.anthropic_url && !provider.google_url)}
-                  className="px-2 py-1 rounded-md  hover:bg-white/10 text-[10px] text-slate-400 hover:text-white disabled:opacity-40 cursor-pointer transition-all flex items-center gap-1">
-                  <Zap className={`w-3 h-3 ${testing === provider.id ? "animate-pulse text-yellow-400" : ""}`} />
-                </button>
-                <button onClick={(e) => { e.stopPropagation(); openEditModal(provider); }}
-                  className="p-1 rounded-md text-slate-600 hover:text-blue-400 hover:bg-blue-500/10 cursor-pointer transition-all" title={t("modelcfg.edit")}>
-                  <Settings2 className="w-3.5 h-3.5" />
-                </button>
-                <button onClick={(e) => { e.stopPropagation(); setDeleteTarget(provider.id); }}
-                  className="p-1 rounded-md text-slate-600 hover:text-red-400 hover:bg-red-500/10 cursor-pointer transition-all" title={t("modelcfg.delete")}>
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ─── 预设选择弹窗（关键词 + 分类过滤） ─── */}
+      {showPresetPicker && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 modal-mask flex items-center justify-center p-4" onClick={() => setShowPresetPicker(false)}>
+          <div className="w-full max-w-xl bg-slate-950/95 border border-white/10 rounded-2xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="p-4 pb-3 border-b border-white/5 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold text-slate-200">{t("modelcfg.pickerTitle")}</h3>
+                <button onClick={() => setShowPresetPicker(false)} className="text-slate-500 hover:text-slate-300 cursor-pointer"><X className="w-4 h-4" /></button>
+              </div>
+              {/* 关键词搜索 */}
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input autoFocus value={presetSearch} onChange={e => setPresetSearch(e.target.value)}
+                  placeholder={t("modelcfg.pickerSearchPh")}
+                  className="w-full bg-slate-900 border border-white/10 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
+              </div>
+              {/* 分类过滤 */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {([["all", t("modelcfg.filterAll")], ["provider", t("modelcfg.filterProvider")], ["relay", t("modelcfg.filterRelay")], ["local", t("modelcfg.filterLocal")]] as const).map(([key, label]) => (
+                  <button key={key} type="button" onClick={() => setPresetCategory(key)}
+                    className={`px-2.5 py-1 rounded-full text-[10px] font-semibold border transition-colors ${presetCategory === key ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white" : "bg-slate-900 border-white/10 text-slate-400 hover:border-white/20 hover:text-slate-200"}`}>
+                    {label} <span className="opacity-60">{presetCategoryCounts[key]}</span>
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* Test Result */}
-            {testResult?.id === provider.id && (
-              <div className={`mx-3.5 mb-2 p-2 rounded-lg text-[10px] font-medium ${testResult.ok ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"}`}>
-                <div className="flex items-center gap-1.5 mb-0.5">
-                  {testResult.ok ? <CheckCircle className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
-                  <span>{testResult.ok ? t("modelcfg.testOk") : t("modelcfg.testFail")}</span>
+            {/* 预设网格 */}
+            <div className="flex-grow overflow-y-auto p-3">
+              {filteredPresets.length === 0 ? (
+                <div className="h-32 flex flex-col items-center justify-center text-slate-600">
+                  <Search className="w-6 h-6 mb-2" />
+                  <span className="text-[10px]">{t("modelcfg.pickerNoMatch")}</span>
                 </div>
-                <div className="text-[9px] text-slate-400 pl-4 whitespace-pre-line">{testResult.msg}</div>
-              </div>
-            )}
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  {filteredPresets.map((p) => {
+                    const added = config?.providers.some(x => x.id === p.id);
+                    const isLocal = p.category === "local";
+                    const isRelay = p.category === "relay";
+                    return (
+                      <button key={p.id} onClick={() => openAddModal(p)} disabled={added}
+                        className="text-left p-2.5 rounded-xl border border-white/5 bg-slate-900/40 hover:bg-white/5 hover:border-white/15 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-all group">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {isLocal ? <Laptop className="w-3.5 h-3.5 text-purple-400/70 flex-shrink-0" /> : isRelay ? <Server className="w-3.5 h-3.5 text-cyan-400/70 flex-shrink-0" /> : <Globe className="w-3.5 h-3.5 text-emerald-400/70 flex-shrink-0" />}
+                          <span className="text-[11px] font-bold text-slate-200 truncate">{p.name}</span>
+                          {added && <span className="ml-auto text-[8px] text-slate-600 flex-shrink-0">{t("modelcfg.added")}</span>}
+                          {!added && p.website && (
+                            <a href={p.website} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+                              className="ml-auto text-slate-600 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                              title={t("modelcfg.openSite")}>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          )}
+                        </div>
+                        {/* 协议徽标 */}
+                        <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                          {p.openai_url && <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-blue-500/20 text-blue-300">OpenAI</span>}
+                          {p.anthropic_url && <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-300">Anthropic</span>}
+                          {p.google_url && <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-green-500/20 text-green-300">Google</span>}
+                          <span className="font-mono text-[8px] text-slate-600 truncate">{p.openai_url || p.anthropic_url || p.google_url}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
-            {/* Expanded: Models quick view */}
-            {isExpanded && (
-              <div className="px-3.5 pb-3.5 border-t border-white/5 pt-3">
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[10px] text-slate-500 font-semibold">{t("modelcfg.modelList", { count: provider.models.length })}</label>
-                </div>
-                {provider.models.length === 0 ? (
-                  <div className="text-[10px] text-slate-600 py-2 text-center">{t("modelcfg.noModelsHint")}</div>
-                ) : provider.models.map((model) => (
-                  <div key={model.id}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[10px] bg-white/[0.02] border border-transparent">
-                    <span className="font-mono text-slate-300">{model.id}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+            {/* Footer：自定义入口 */}
+            <div className="p-3 border-t border-white/5 bg-slate-900/20 flex justify-end gap-2">
+              <button onClick={() => openAddModal()}
+                className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer flex items-center gap-1">
+                <Plus className="w-3 h-3" />{t("modelcfg.customProvider")}
+              </button>
+              <button onClick={() => openAddModal({ id: "", name: "", category: "relay", website: "", openai_url: "", anthropic_url: "", google_url: "" })}
+                className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer flex items-center gap-1">
+                <Plus className="w-3 h-3" />{t("modelcfg.customRelay")}
+              </button>
+            </div>
           </div>
-        );
-      })}
+        </div>
+      )}
+
+      {/* ─── 供应商详情弹窗 ─── */}
+      {detailProvider && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 modal-mask flex items-center justify-center p-4" onClick={() => setDetailId(null)}>
+          <div className="w-full max-w-md bg-slate-950/95 border border-white/10 rounded-2xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="p-4 border-b border-white/5 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <h3 className="text-xs font-bold text-slate-200 truncate">{detailProvider.name}</h3>
+                <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold flex-shrink-0 ${detailProvider.category === "relay" ? "bg-cyan-500/15 text-cyan-400" : detailProvider.category === "local" ? "bg-purple-500/15 text-purple-400" : "bg-emerald-500/15 text-emerald-400"}`}>
+                  {detailProvider.category === "relay" ? t("modelcfg.relay") : detailProvider.category === "local" ? t("modelcfg.local") : t("modelcfg.vendor")}
+                </span>
+                {detailProvider.website && (
+                  <a href={detailProvider.website} target="_blank" rel="noopener noreferrer"
+                    className="text-blue-400 hover:text-blue-300 transition-colors flex-shrink-0" title={t("modelcfg.openSite")}>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
+              </div>
+              <button onClick={() => setDetailId(null)} className="text-slate-500 hover:text-slate-300 cursor-pointer flex-shrink-0"><X className="w-4 h-4" /></button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-grow overflow-y-auto p-4 space-y-4">
+              {/* 余额 */}
+              {BALANCE_CAPABLE.has(detailProvider.id) && (
+                <div className="p-3 rounded-lg bg-slate-900/50 border border-white/5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] text-slate-400 font-semibold">{t("modelcfg.balance")}</label>
+                    <button onClick={() => void runBalance(detailProvider)} disabled={balanceState?.pid === detailProvider.id && balanceState.loading}
+                      className="px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-[9px] font-semibold text-emerald-400 cursor-pointer transition-all flex items-center gap-0.5 disabled:opacity-40 disabled:cursor-not-allowed">
+                      <RefreshCw className={`w-3 h-3 ${balanceState?.pid === detailProvider.id && balanceState.loading ? "animate-spin" : ""}`} />
+                      {t("modelcfg.balanceQuery")}
+                    </button>
+                  </div>
+                  {balanceState?.pid === detailProvider.id && balanceState.loading && (
+                    <p className="text-[10px] text-slate-500">{t("modelcfg.loading")}</p>
+                  )}
+                  {balanceState?.pid === detailProvider.id && balanceState.error && (
+                    <p className="text-[10px] text-red-400 whitespace-pre-line">{balanceState.error}</p>
+                  )}
+                  {balanceState?.pid === detailProvider.id && !balanceState.loading && !balanceState.error && (
+                    <div className="space-y-1">
+                      {balanceState.items.map((it) => (
+                        <div key={it.key} className="flex items-center justify-between text-[10px]">
+                          <span className="text-slate-500">{balanceLabel(it.key)}</span>
+                          <span className="font-mono text-slate-200">{it.value === "ok" ? t("modelcfg.balOk") : it.value === "disabled" ? t("modelcfg.balDisabled") : it.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 协议端点 */}
+              <div className="p-3 rounded-lg bg-slate-900/50 border border-white/5 space-y-1.5">
+                <label className="text-[10px] text-slate-400 font-semibold">{t("modelcfg.endpoints")}</label>
+                {([
+                  [t("modelcfg.openaiUrl"), detailProvider.openai_url, "text-blue-300"],
+                  [t("modelcfg.anthropicUrl"), detailProvider.anthropic_url, "text-amber-300"],
+                  [t("modelcfg.googleUrl"), detailProvider.google_url, "text-green-300"],
+                ] as const).map(([label, url, cls]) => url ? (
+                  <div key={label} className="flex items-start gap-2 text-[10px]">
+                    <span className={`${cls} font-semibold flex-shrink-0 w-24`}>{label}</span>
+                    <span className="font-mono text-slate-400 break-all">{url}</span>
+                  </div>
+                ) : null)}
+              </div>
+
+              {/* 模型列表 */}
+              <div>
+                <label className="text-[10px] text-slate-500 font-semibold block mb-1.5">
+                  {t("modelcfg.modelList", { count: detailProvider.models.length })}
+                </label>
+                {detailProvider.models.length === 0 ? (
+                  <div className="text-[10px] text-slate-600 py-2 text-center">{t("modelcfg.noModelsHint")}</div>
+                ) : (
+                  <div className="max-h-48 overflow-y-auto rounded-lg border border-white/5 divide-y divide-white/[0.03]">
+                    {detailProvider.models.map((model) => (
+                      <div key={model.id} className="px-2.5 py-1 text-[10px] bg-white/[0.02]">
+                        <span className="font-mono text-slate-300">{model.id}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-white/5 bg-slate-900/20 flex justify-end gap-2">
+              <button onClick={() => { setDetailId(null); openEditModal(detailProvider); }}
+                className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white text-[10px] font-semibold cursor-pointer">{t("modelcfg.edit")}</button>
+              <button onClick={() => setDetailId(null)}
+                className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer">{t("modelcfg.cancel")}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ─── 编辑/新增弹框 ─── */}
       {showModal && (

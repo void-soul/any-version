@@ -606,6 +606,7 @@ pub fn run() {
             commands::ai::skills::install_skill_from_source,
             commands::ai::skills::migrate_legacy_skills,
             commands::ai::config::get_provider_presets,
+            commands::ai::balance::query_provider_balance,
             commands::ai::detect::detect_ai_tools,
             commands::ai::detect::check_ai_tool_versions,
 

@@ -4,6 +4,7 @@
 pub mod models;
 pub mod channel;
 pub mod config;
+pub mod balance;
 pub mod detect;
 pub mod skills;
 pub mod mcp;
@@ -20,6 +21,7 @@ pub mod translate;
 
 pub use models::*;
 pub use config::*;
+pub use balance::*;
 pub use detect::*;
 pub use skills::*;
 pub use usage::*;
