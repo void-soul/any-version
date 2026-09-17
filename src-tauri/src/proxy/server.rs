@@ -29,8 +29,28 @@ use tauri::Emitter;
 use tokio::sync::RwLock;
 
 /// 记录使用量到 SQLite 数据库（线程安全）。携带真实 tool_id / provider_id。
-fn record_proxy_usage(tool_id: &str, provider_id: &str, model: &str, input_tokens: u64, output_tokens: u64) {
-    if let Err(e) = crate::commands::ai::usage::log_usage_db(tool_id, model, Some(provider_id), input_tokens, output_tokens) {
+///
+/// `duration_ms` / `first_token_ms` 供输出速度（t/s）统计（抄自 cc-switch dc0febe5）：
+/// 生成窗口 = 总耗时 − 首字延迟；非流式没有首字延迟传 0，窗口即总耗时。
+/// 两个值都为 0 表示未测量，该记录不参与 t/s 聚合。
+fn record_proxy_usage(
+    tool_id: &str,
+    provider_id: &str,
+    model: &str,
+    input_tokens: u64,
+    output_tokens: u64,
+    duration_ms: u64,
+    first_token_ms: u64,
+) {
+    if let Err(e) = crate::commands::ai::usage::log_usage_db_timed(
+        tool_id,
+        model,
+        Some(provider_id),
+        input_tokens,
+        output_tokens,
+        duration_ms,
+        first_token_ms,
+    ) {
         eprintln!("[proxy] 记录用量失败: {}", e);
     }
 }
@@ -441,10 +461,38 @@ async fn collab_agent_task_handler(
     Json(res).into_response()
 }
 
+/// 把 bind 失败翻译成可操作的提示（抄自 CodexPlusPlus 0e9a86a）。
+///
+/// - 被占用（`AddrInUse`）：给出「关掉占用者 / 换端口」的出路；
+/// - 被系统保留（Windows raw os error **10013**）：Hyper-V/WSL 开机会把动态端口段
+///   （49152-65535）划进排除区间，这时**不是**被占用，重启也好不了，必须换端口或调整排除区间；
+/// - 其他错误：原样冒泡，不误贴标签。
+fn classify_bind_error(addr: &str, error: &std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::AddrInUse {
+        return format!(
+            "代理端口被占用（{}）：请关闭占用该端口的程序，或在 AI 模型配置里换一个端口后重试。",
+            addr
+        );
+    }
+    #[cfg(windows)]
+    if error.raw_os_error() == Some(10013) {
+        return format!(
+            "代理端口被系统保留，无法绑定（{}，Windows os error 10013）。\
+             Hyper-V/WSL 启动时会把一段动态端口划入系统排除区间，重启不会恢复。任选其一：\
+             1) 换一个端口后重试（也可用环境变量 {} 临时覆盖）；\
+             2) 用 `netsh int ipv4 show excludedportrange protocol=tcp` 查看排除区间并避开；\
+             3) 关闭 Hyper-V/WSL 的动态端口预留后重启系统。",
+            addr,
+            crate::proxy::PROXY_PORT_ENV
+        );
+    }
+    format!("绑定代理端口 {} 失败: {}", addr, error)
+}
+
 /// 启动代理服务器（按 config.listen_port 绑定，用于手动/独立启动场景）。
 pub async fn start_proxy_server(config: ProxyConfig) -> Result<(), String> {
     let addr = format!("{}:{}", config.listen_address, config.listen_port);
-    let listener = std::net::TcpListener::bind(&addr).map_err(|e| format!("绑定代理端口 {} 失败: {}", addr, e))?;
+    let listener = std::net::TcpListener::bind(&addr).map_err(|e| classify_bind_error(&addr, &e))?;
     log_proxy(&format!("启动代理服务器: {}", addr));
     serve_proxy(config, listener).await
 }
@@ -811,8 +859,15 @@ async fn process_response(
     // ⑨ 模型伪装回填：响应 model 字段写回声明名 C
     set_response_model(&mut in_resp, claimed_model, inbound);
 
-    // ⑩ 统计落库（记录实际模型 B，而非声明名 C）
-    record_usage_from_response(state, config, inbound, &in_resp, actual_model);
+    // ⑩ 统计落库（记录实际模型 B，而非声明名 C）；非流式无首字延迟，传 0
+    record_usage_from_response(
+        state,
+        config,
+        inbound,
+        &in_resp,
+        actual_model,
+        start.elapsed().as_millis() as u64,
+    );
 
     if proxy_debug_enabled() {
         log_proxy_json_full("  上游完整响应体(P_out)", &resp_json);
@@ -894,6 +949,8 @@ async fn stream_response(
             let mut acc_out: u64 = 0;
             let mut acc_text = String::new();
             let mut chunk_count: u64 = 0;
+            // 首个文本增量到达的时刻：t/s 统计要从生成窗口中扣掉首字等待（抄自 cc-switch dc0febe5）
+            let mut first_token_ms: u64 = 0;
             let stream_start = Instant::now();
             while let Some(r) = stream.next().await {
                 let chunk = match r {
@@ -916,6 +973,9 @@ async fn stream_response(
                                 // 提取文本增量
                                 if let Some(text) = extract_inbound_delta_text(&proto, &cj) {
                                     if !text.is_empty() {
+                                        if first_token_ms == 0 {
+                                            first_token_ms = stream_start.elapsed().as_millis() as u64;
+                                        }
                                         chunk_count += 1;
                                         acc_text.push_str(&text);
                                         if chunk_count <= 5 {
@@ -958,7 +1018,15 @@ async fn stream_response(
                 store_proxy_text_with(rid, &collab_tool_id, &acc_text);
             }
             if acc_in > 0 || acc_out > 0 {
-                record_proxy_usage(&tid, &pid, &act, acc_in, acc_out);
+                record_proxy_usage(
+                    &tid,
+                    &pid,
+                    &act,
+                    acc_in,
+                    acc_out,
+                    stream_start.elapsed().as_millis() as u64,
+                    first_token_ms,
+                );
             }
             let mut s = stats.write().await;
             s.success_requests += 1;
@@ -988,6 +1056,8 @@ async fn stream_response(
                 tokio::pin!(stream);
                 let mut acc_text = String::new();
                 let mut chunk_count: u64 = 0;
+                // 首个文本增量到达的时刻：t/s 统计要从生成窗口中扣掉首字等待
+                let mut first_token_ms: u64 = 0;
                 let stream_start = Instant::now();
                 while let Some(r) = stream.next().await {
                     let chunk = match r {
@@ -1012,6 +1082,9 @@ async fn stream_response(
                             // 从出站协议形态的 chunk 提取文本
                             if let Some(text) = extract_inbound_delta_text(&out_proto, &cj) {
                                 if !text.is_empty() {
+                                    if first_token_ms == 0 {
+                                        first_token_ms = stream_start.elapsed().as_millis() as u64;
+                                    }
                                     chunk_count += 1;
                                     acc_text.push_str(&text);
                                     if chunk_count <= 5 {
@@ -1061,7 +1134,15 @@ async fn stream_response(
                 }
                 let (in_t, out_t) = conv.usage();
                 if in_t > 0 || out_t > 0 {
-                    record_proxy_usage(&tid, &pid, &cm, in_t, out_t);
+                    record_proxy_usage(
+                        &tid,
+                        &pid,
+                        &cm,
+                        in_t,
+                        out_t,
+                        stream_start.elapsed().as_millis() as u64,
+                        first_token_ms,
+                    );
                 }
                 let mut s = stats.write().await;
                 s.success_requests += 1;
@@ -1208,6 +1289,7 @@ fn record_usage_from_response(
     inbound: &str,
     resp: &Value,
     model: &str,
+    duration_ms: u64,
 ) {
     let (in_t, out_t) = match inbound {
         "anthropic" => (
@@ -1228,7 +1310,7 @@ fn record_usage_from_response(
         _ => (0, 0),
     };
     if in_t > 0 || out_t > 0 {
-        record_proxy_usage(&config.tool_id, &config.provider_id, model, in_t, out_t);
+        record_proxy_usage(&config.tool_id, &config.provider_id, model, in_t, out_t, duration_ms, 0);
     }
     let _ = state;
 }
@@ -1373,4 +1455,46 @@ fn build_upstream_request(
         }
     }
     req
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_bind_error;
+    use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn classify_bind_error_explains_addr_in_use() {
+        let msg = classify_bind_error("127.0.0.1:15721", &Error::new(ErrorKind::AddrInUse, "in use"));
+        assert!(msg.contains("被占用"));
+        assert!(msg.contains("127.0.0.1:15721"));
+    }
+
+    #[test]
+    fn classify_bind_error_keeps_other_errors_verbatim() {
+        let msg = classify_bind_error(
+            "127.0.0.1:15721",
+            &Error::new(ErrorKind::PermissionDenied, "access denied"),
+        );
+        assert!(msg.contains("access denied"));
+        assert!(!msg.contains("被占用"));
+        assert!(!msg.contains("被系统保留"));
+    }
+
+    /// Windows 保留端口（Hyper-V/WSL 动态端口排除区间）必须给出对症提示，而不是一句英文 bind 失败。
+    #[cfg(windows)]
+    #[test]
+    fn classify_bind_error_explains_windows_reserved_port() {
+        let msg = classify_bind_error("127.0.0.1:57321", &Error::from_raw_os_error(10013));
+        assert!(msg.contains("被系统保留"));
+        assert!(msg.contains("netsh"));
+        assert!(msg.contains(crate::proxy::PROXY_PORT_ENV));
+    }
+
+    #[test]
+    fn resolve_proxy_port_falls_back_to_configured_value() {
+        // 环境变量未设置时（测试进程内通常如此）回落配置值；非法取值同样回落。
+        if std::env::var(crate::proxy::PROXY_PORT_ENV).is_err() {
+            assert_eq!(crate::proxy::resolve_proxy_port(15721), 15721);
+        }
+    }
 }

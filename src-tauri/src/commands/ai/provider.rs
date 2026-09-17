@@ -3,6 +3,98 @@ use super::config::load_ai_config;
 
 /// 模型列表接口超时（秒）：列表接口应快速返回，超时即报错。
 const FETCH_MODELS_TIMEOUT_SECS: u64 = 15;
+/// 非 JSON 错误体的摘要上限（字符）：可能是整页 HTML 网关页或长文，只留可诊断的开头。
+/// 抄自 CodexPlusPlus b498c4c 的「非 2xx 附带上游错误体摘要」。
+const UPSTREAM_ERROR_SNIPPET_CHARS: usize = 200;
+
+/// 从上游响应体里提取一句可读的错误原因。
+///
+/// 兼容常见形态（抄自 CodexPlusPlus b498c4c）：
+/// - OpenAI 风格 `{"error": {"message": "..."}}`
+/// - 业务信封 `{"code": 401, "msg": "..."}` / `{"message": "..."}`
+/// - 非 JSON（HTML 网关页、纯文本）：截断原文
+fn upstream_error_reason(raw: &str) -> String {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
+        for candidate in [
+            v.pointer("/error/message"),
+            v.pointer("/error/msg"),
+            v.pointer("/msg"),
+            v.pointer("/message"),
+            v.pointer("/error"),
+        ] {
+            if let Some(text) = candidate
+                .and_then(|x| x.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                return text.to_string();
+            }
+        }
+    }
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    trimmed.chars().take(UPSTREAM_ERROR_SNIPPET_CHARS).collect()
+}
+
+/// 判断 HTTP 200 的响应体是不是「业务错误信封」并取出原因。
+///
+/// 部分网关（如智谱 Codex 专属端点）在 key 缺失/失效时返回 **200 + `{"code":401,"msg":"令牌已过期"}`**，
+/// 只按状态码判断会把真因吃成「上游没有可用模型」，用户完全看不到令牌问题。
+/// 仅在解析不到任何模型时调用，因此不会误伤正常返回（有数据时优先信数据）。
+fn business_error_reason(body: &serde_json::Value) -> Option<String> {
+    let reason = ["msg", "message"]
+        .iter()
+        .find_map(|key| body.get(*key).and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let explicit_fail = body.get("success").and_then(|v| v.as_bool()) == Some(false)
+        || body
+            .get("code")
+            .and_then(|v| v.as_i64())
+            .is_some_and(|c| c != 0 && c != 200)
+        || body.get("error").is_some();
+
+    if !explicit_fail {
+        return None;
+    }
+    Some(reason.unwrap_or_else(|| "上游返回业务错误但未提供原因".to_string()))
+}
+
+/// 解析模型列表：同时兼容 OpenAI 风格 `data[].id` 与 Gemini 风格 `models[].name`，
+/// 后者剥掉 `models/` 前缀使模型 ID 与请求体的 `model` 值一致（抄自 CodexPlusPlus b498c4c）。
+fn parse_model_ids(body: &serde_json::Value) -> Vec<String> {
+    fn push(ids: &mut Vec<String>, raw: &str) {
+        let id = raw.trim();
+        if id.is_empty() {
+            return;
+        }
+        let id = id.strip_prefix("models/").unwrap_or(id);
+        if !ids.iter().any(|x| x == id) {
+            ids.push(id.to_string());
+        }
+    }
+
+    let mut ids: Vec<String> = Vec::new();
+    if let Some(arr) = body.get("data").and_then(|v| v.as_array()) {
+        for m in arr {
+            if let Some(s) = m.get("id").and_then(|v| v.as_str()) {
+                push(&mut ids, s);
+            }
+        }
+    }
+    if let Some(arr) = body.get("models").and_then(|v| v.as_array()) {
+        for m in arr {
+            if let Some(s) = m.get("name").and_then(|v| v.as_str()) {
+                push(&mut ids, s);
+            }
+        }
+    }
+    ids
+}
 
 #[tauri::command]
 pub async fn fetch_provider_models(base_url: String, api_key: String) -> Result<Vec<String>, String> {
@@ -17,21 +109,28 @@ pub async fn fetch_provider_models(base_url: String, api_key: String) -> Result<
         .map_err(|e| format!("请求失败: {}", e))?;
 
     let status = resp.status();
-    let body: serde_json::Value = resp.json().await.map_err(|e| format!("解析响应失败: {}", e))?;
+    // 先取原文再解析：非 JSON 的错误体（HTML 网关页、纯文本）也要能看到原因；
+    // 若像以前那样先 json()，解析失败会提前返回，状态码与真因一起丢失。
+    let raw = resp.text().await.map_err(|e| format!("读取响应失败: {}", e))?;
 
     if !status.is_success() {
-        let msg = body.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()).unwrap_or("未知错误");
-        return Err(format!("API 返回错误 ({}): {}", status.as_u16(), msg));
+        let reason = upstream_error_reason(&raw);
+        return Err(if reason.is_empty() {
+            format!("API 返回错误 (HTTP {})", status.as_u16())
+        } else {
+            format!("API 返回错误 (HTTP {}): {}", status.as_u16(), reason)
+        });
     }
 
-    let models: Vec<String> = body.get("data")
-        .and_then(|v| v.as_array())
-        .unwrap_or(&vec![])
-        .iter()
-        .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
-        .collect();
+    let body: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("解析响应失败: {}（原文: {}）", e, upstream_error_reason(&raw)))?;
 
+    let models = parse_model_ids(&body);
     if models.is_empty() {
+        // 200 + 业务错误信封（鉴权失败等）→ 透传真因，而不是笼统的「未获取到模型列表」
+        if let Some(reason) = business_error_reason(&body) {
+            return Err(reason);
+        }
         return Err("未获取到模型列表".to_string());
     }
     Ok(models)
@@ -87,6 +186,18 @@ pub async fn test_model_connection(
 
 #[tauri::command]
 pub async fn start_proxy(port: u16) -> Result<(), String> {
+    // 端口可被环境变量整体挪走（Windows 保留端口 / Hyper-V 排除区间场景），见 PROXY_PORT_ENV。
+    let requested_port = port;
+    let port = crate::proxy::resolve_proxy_port(requested_port);
+    if port != requested_port {
+        eprintln!(
+            "[proxy] 端口被环境变量 {} 覆盖: {} -> {}",
+            crate::proxy::PROXY_PORT_ENV,
+            requested_port,
+            port
+        );
+    }
+
     let config = load_ai_config();
     let provider = config.providers.iter().find(|p| {
         !p.api_key.is_empty() && !p.supported_protocols().is_empty()
@@ -131,4 +242,69 @@ pub async fn start_proxy(port: u16) -> Result<(), String> {
     };
     crate::proxy::server::start_proxy_server(proxy_config).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{business_error_reason, parse_model_ids, upstream_error_reason};
+    use serde_json::json;
+
+    #[test]
+    fn upstream_error_reason_prefers_error_message() {
+        let raw = r#"{"error":{"message":"Invalid API key provided"}}"#;
+        assert_eq!(upstream_error_reason(raw), "Invalid API key provided");
+    }
+
+    #[test]
+    fn upstream_error_reason_reads_business_envelope_msg() {
+        assert_eq!(
+            upstream_error_reason(r#"{"code":401,"msg":"令牌已过期或验证不正确"}"#),
+            "令牌已过期或验证不正确"
+        );
+        // error 是字符串而不是对象时也要能取到
+        assert_eq!(upstream_error_reason(r#"{"error":"rate limited"}"#), "rate limited");
+    }
+
+    #[test]
+    fn upstream_error_reason_truncates_non_json_body() {
+        let raw = format!("<html>{}</html>", "x".repeat(500));
+        let reason = upstream_error_reason(&raw);
+        assert_eq!(reason.chars().count(), 200);
+        assert!(reason.starts_with("<html>"));
+    }
+
+    #[test]
+    fn business_error_reason_detects_http_200_error_envelope() {
+        // 智谱类网关：鉴权失败返回 200 + 业务错误信封
+        let body = json!({"code": 401, "msg": "令牌已过期或验证不正确", "success": false});
+        assert_eq!(
+            business_error_reason(&body).as_deref(),
+            Some("令牌已过期或验证不正确")
+        );
+    }
+
+    #[test]
+    fn business_error_reason_ignores_legit_empty_list() {
+        // 正常返回但确实没有模型：不应误报成业务错误
+        assert_eq!(business_error_reason(&json!({"data": []})), None);
+        assert_eq!(business_error_reason(&json!({"object": "list", "data": []})), None);
+        // code=0 / 200 表示成功，不算失败档
+        assert_eq!(business_error_reason(&json!({"code": 0, "data": []})), None);
+        assert_eq!(business_error_reason(&json!({"code": 200, "data": []})), None);
+    }
+
+    #[test]
+    fn parse_model_ids_supports_openai_and_gemini_shapes() {
+        let openai = json!({"data": [{"id": "gpt-5"}, {"id": "gpt-5"}]});
+        assert_eq!(parse_model_ids(&openai), vec!["gpt-5".to_string()]);
+
+        // Gemini 风格：name 带 models/ 前缀，输出要与请求体的 model 值一致
+        let gemini = json!({"models": [{"name": "models/gemini-2.5-pro"}, {"name": "models/gemini-2.5-flash"}]});
+        assert_eq!(
+            parse_model_ids(&gemini),
+            vec!["gemini-2.5-pro".to_string(), "gemini-2.5-flash".to_string()]
+        );
+
+        assert!(parse_model_ids(&json!({})).is_empty());
+    }
 }
