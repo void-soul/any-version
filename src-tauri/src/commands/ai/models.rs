@@ -555,6 +555,9 @@ pub struct UsageByModel {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub total_tokens: u64,
+    /// 输出速度（tokens/s）：生成窗口 = Σ(总耗时 − 首字延迟)，仅统计测得耗时的请求；
+    /// 没有可用耗时数据时为 None（前端留空）。
+    pub output_tps: Option<f64>,
 }
 
 #[derive(Serialize, Clone, Debug)]

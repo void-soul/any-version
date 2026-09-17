@@ -24,7 +24,7 @@ interface UsageSummary {
   total_output_tokens: number;
   total_tokens: number;
   by_tool: { tool_id: string; request_count: number; input_tokens: number; output_tokens: number; total_tokens: number }[];
-  by_model: { model: string; provider: string; request_count: number; input_tokens: number; output_tokens: number; total_tokens: number }[];
+  by_model: { model: string; provider: string; request_count: number; input_tokens: number; output_tokens: number; total_tokens: number; output_tps?: number | null }[];
   by_provider: { provider: string; request_count: number; input_tokens: number; output_tokens: number; total_tokens: number }[];
   recent: { date: string; request_count: number; input_tokens: number; output_tokens: number; total_tokens: number }[];
 }
@@ -41,6 +41,8 @@ interface Row {
   input: number;
   output: number;
   total: number;
+  /** 输出速度（tokens/s）：仅模型维度由后端聚合给出，其余维度无值不渲染 */
+  tps?: number | null;
 }
 
 function formatTokens(n: number): string {
@@ -228,7 +230,17 @@ function SortableTable({
               </td>
               <td className="px-2 py-1.5 text-[10px] text-[var(--module-accent)] text-right font-semibold tabular-nums">{r.requests}</td>
               <td className="px-2 py-1.5 text-[10px] text-blue-300 text-right tabular-nums">{formatTokens(r.input)}</td>
-              <td className="px-2 py-1.5 text-[10px] text-emerald-300 text-right tabular-nums">{formatTokens(r.output)}</td>
+              <td className="px-2 py-1.5 text-[10px] text-emerald-300 text-right tabular-nums">
+                {formatTokens(r.output)}
+                {typeof r.tps === "number" && (
+                  <span
+                    className="ml-1 text-[8px] text-emerald-500/80"
+                    title={t("usagestats.colOutputTpsHint")}
+                  >
+                    {r.tps.toFixed(1)} t/s
+                  </span>
+                )}
+              </td>
               <td className="px-2 py-1.5 text-right">
                 <div className="flex items-center justify-end gap-1.5">
                   <div className="w-12 h-1.5 bg-white/5 rounded-full overflow-hidden hidden sm:block">
@@ -323,6 +335,7 @@ export default function UsageStats() {
     input: m.input_tokens,
     output: m.output_tokens,
     total: m.total_tokens,
+    tps: m.output_tps ?? null,
   }));
   const providerRows: Row[] = (summary?.by_provider || []).map(p => ({
     key: p.provider || t("usagestats.unknown"),

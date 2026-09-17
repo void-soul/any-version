@@ -3086,6 +3086,7 @@
     "colInput": "输入",
     "colOutput": "输出",
     "colTotal": "总计",
+    "colOutputTpsHint": "输出速度：按生成窗口（总耗时 − 首字延迟）估算，只统计已测到耗时的请求",
     "clearConfirm": "确定要清空所有用量统计数据吗？",
     "unknown": "（未知）",
     "title": "用量统计",

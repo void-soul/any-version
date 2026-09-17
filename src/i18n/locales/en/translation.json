@@ -3080,6 +3080,7 @@
     "colInput": "Input",
     "colOutput": "Output",
     "colTotal": "Total",
+    "colOutputTpsHint": "Output speed: estimated over the generation window (total duration minus first-token latency); only requests with measured timing count",
     "clearConfirm": "Clear all usage statistics?",
     "unknown": "(unknown)",
     "title": "Usage Statistics",
