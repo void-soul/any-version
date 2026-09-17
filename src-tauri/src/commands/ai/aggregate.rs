@@ -5,6 +5,7 @@
 //! - 上下文限制：请求超过 `AggregateConfig.context_limit` 时裁剪最早的非 system 消息
 //! - 压缩：Headroom 开启时先走 `/v1/compress`，失败按 `on_unavailable` 决定放行或报错
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::{
@@ -48,6 +49,8 @@ struct AggState {
     /// 本服务监听端口（用于运行期自引用兜底判定）
     port: u16,
     candidates: Arc<Vec<AggCandidate>>,
+    /// 候选健康状态（失败计数 + 冷却截止时间），键 = `provider::model`
+    health: Arc<Mutex<HashMap<String, CandidateHealth>>>,
     headroom: Option<HeadroomRuntime>,
     context_limit: u64,
 }
@@ -59,8 +62,174 @@ struct AggregateEntry {
 
 static AGGREGATE: OnceLock<Mutex<Option<AggregateEntry>>> = OnceLock::new();
 
-/// 单个候选的重试次数（后续与「报错重试 N 次后切换」的配置打通）。
-const MAX_ATTEMPTS_PER_CANDIDATE: usize = 2;
+/// 聚合服务对外只暴露一个模型（对内才按链分发）——这也是「聚合」的含义。
+pub const AGGREGATE_MODEL_ID: &str = "auto";
+
+// ─── 失败分类与切换策略（纯逻辑，便于单测） ───
+
+/// 上游失败类别，决定「是否重试 / 是否切换 / 冷却多久」。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureClass {
+    /// 鉴权失败（401/403）：key 有问题，长时间冷却
+    Authentication,
+    /// 额度耗尽 / 计费问题（402 或 quota 文案）：长时间冷却
+    Billing,
+    /// 模型不存在或不支持（404 / model_not_found）：长时间冷却
+    ModelUnavailable,
+    /// 限流（429 / rate limit 文案）：按 Retry-After 或 60s 冷却
+    RateLimit,
+    /// 瞬时错误（408/409/5xx/超时/连不上）：可重试，指数退避冷却
+    Transient,
+    /// 不重试也不切换：内容安全等策略拒绝，直接把上游错误返回给客户端
+    Fatal,
+}
+
+/// 判定失败类别：先按响应体文案（更准），再按状态码。
+pub fn classify_failure(status: Option<u16>, body: &str) -> FailureClass {
+    let lower = body.to_ascii_lowercase();
+    // 内容安全 / 策略拒绝：换供应商也一样，直接返回给客户端
+    const FATAL_HINTS: &[&str] = &[
+        "content policy",
+        "safety policy",
+        "content moderation",
+        "blocked by safety",
+    ];
+    if FATAL_HINTS.iter().any(|h| lower.contains(h)) {
+        return FailureClass::Fatal;
+    }
+    const BILLING_HINTS: &[&str] = &[
+        "insufficient_quota",
+        "insufficient quota",
+        "quota exceeded",
+        "credit balance",
+        "credits exhausted",
+        "余额不足",
+        "额度不足",
+    ];
+    if BILLING_HINTS.iter().any(|h| lower.contains(h)) {
+        return FailureClass::Billing;
+    }
+    const MODEL_HINTS: &[&str] = &[
+        "model_not_found",
+        "model not found",
+        "unknown model",
+        "does not support tool",
+        "function calling is not supported",
+    ];
+    if MODEL_HINTS.iter().any(|h| lower.contains(h)) {
+        return FailureClass::ModelUnavailable;
+    }
+    const RATE_HINTS: &[&str] = &["rate limit", "rate_limit", "too many requests"];
+    if RATE_HINTS.iter().any(|h| lower.contains(h)) {
+        return FailureClass::RateLimit;
+    }
+    match status {
+        Some(401) | Some(403) => FailureClass::Authentication,
+        Some(402) => FailureClass::Billing,
+        Some(404) => FailureClass::ModelUnavailable,
+        Some(429) => FailureClass::RateLimit,
+        Some(408) | Some(409) => FailureClass::Transient,
+        Some(s) if (500..=599).contains(&s) => FailureClass::Transient,
+        // 连接失败 / 超时（无状态码）也归瞬时
+        None => FailureClass::Transient,
+        _ => FailureClass::Transient,
+    }
+}
+
+/// 同一候选的尝试次数（含首次）。鉴权/额度/模型/限流不重试，直接切下一个。
+pub fn retry_budget(class: FailureClass) -> usize {
+    match class {
+        FailureClass::Transient => 2,
+        _ => 1,
+    }
+}
+
+/// 冷却时长（切换后多久内不再尝试该候选）。
+pub fn cooldown_for(class: FailureClass, retry_after: Option<u64>, consecutive: u32) -> std::time::Duration {
+    const TRANSIENT_BASE: u64 = 30;
+    const TRANSIENT_MAX: u64 = 5 * 60;
+    const RATE_LIMIT_DEFAULT: u64 = 60;
+    const RATE_LIMIT_MAX: u64 = 24 * 60 * 60;
+    const AUTH_OR_BILLING: u64 = 60 * 60;
+    const MODEL_UNAVAILABLE: u64 = 6 * 60 * 60;
+    match class {
+        FailureClass::Authentication | FailureClass::Billing => {
+            std::time::Duration::from_secs(AUTH_OR_BILLING)
+        }
+        FailureClass::ModelUnavailable => std::time::Duration::from_secs(MODEL_UNAVAILABLE),
+        FailureClass::RateLimit => std::time::Duration::from_secs(
+            retry_after.unwrap_or(RATE_LIMIT_DEFAULT).min(RATE_LIMIT_MAX),
+        ),
+        FailureClass::Transient => {
+            // 30s → 60s → 120s → 240s → 300s（封顶）
+            let shift = consecutive.saturating_sub(1).min(4);
+            let secs = (TRANSIENT_BASE << shift).min(TRANSIENT_MAX);
+            std::time::Duration::from_secs(secs)
+        }
+        FailureClass::Fatal => std::time::Duration::from_secs(0),
+    }
+}
+
+/// 候选健康状态（服务进程内维护；重启即清空）。
+#[derive(Debug, Clone, Default)]
+struct CandidateHealth {
+    consecutive_failures: u32,
+    cooldown_until_ms: Option<u64>,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 候选剩余冷却秒数（未冷却返回 None）。
+fn cooldown_remaining_secs(
+    health: &Arc<Mutex<HashMap<String, CandidateHealth>>>,
+    key: &str,
+) -> Option<u64> {
+    let guard = health.lock().ok()?;
+    let until = guard.get(key)?.cooldown_until_ms?;
+    let now = now_ms();
+    if until > now {
+        Some((until - now) / 1000)
+    } else {
+        None
+    }
+}
+
+/// 记录一次失败：累加连续失败次数并按类别设置冷却，返回冷却时长。
+fn record_failure(
+    health: &Arc<Mutex<HashMap<String, CandidateHealth>>>,
+    key: &str,
+    class: FailureClass,
+    retry_after: Option<u64>,
+) -> std::time::Duration {
+    let mut guard = match health.lock() {
+        Ok(g) => g,
+        Err(_) => return std::time::Duration::from_secs(0),
+    };
+    let entry = guard.entry(key.to_string()).or_default();
+    entry.consecutive_failures = entry.consecutive_failures.saturating_add(1);
+    let cooldown = cooldown_for(class, retry_after, entry.consecutive_failures);
+    entry.cooldown_until_ms = Some(now_ms().saturating_add(cooldown.as_millis() as u64));
+    cooldown
+}
+
+/// 成功后清除该候选的健康记录（失败计数与冷却一起清零）。
+fn clear_health(health: &Arc<Mutex<HashMap<String, CandidateHealth>>>, key: &str) {
+    if let Ok(mut guard) = health.lock() {
+        guard.remove(key);
+    }
+}
+
+/// 单个候选请求失败的结构化信息。
+struct CandidateError {
+    class: FailureClass,
+    message: String,
+    retry_after: Option<u64>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -312,6 +481,7 @@ pub async fn start_aggregate_service(app: tauri::AppHandle) -> Result<AggregateS
         app: app.clone(),
         port,
         candidates: Arc::new(candidates.clone()),
+        health: Arc::new(Mutex::new(HashMap::new())),
         headroom,
         context_limit,
     };
@@ -391,19 +561,17 @@ pub async fn get_aggregate_status() -> AggregateStatus {
 
 // ─── 处理函数 ───
 
+/// 对外只暴露一个模型（聚合 = 多个候选对内的单一入口），内部按链分发到具体模型。
 async fn list_models(State(state): State<AggState>) -> Json<Value> {
-    let data: Vec<Value> = state
-        .candidates
-        .iter()
-        .map(|c| {
-            serde_json::json!({
-                "id": c.model_id,
-                "object": "model",
-                "owned_by": c.provider_name,
-            })
-        })
-        .collect();
-    Json(serde_json::json!({ "object": "list", "data": data }))
+    let _ = &state;
+    Json(serde_json::json!({
+        "object": "list",
+        "data": [{
+            "id": AGGREGATE_MODEL_ID,
+            "object": "model",
+            "owned_by": "aggregate",
+        }]
+    }))
 }
 
 /// Anthropic 协议入口暂不支持（转换层在工具代理里，聚合服务先用 OpenAI 协议）。
@@ -482,12 +650,35 @@ async fn chat_completions(State(state): State<AggState>, Json(mut body): Json<Va
             );
             continue;
         }
+        let key = format!("{}::{}", candidate.provider_id, candidate.model_id);
+        // 冷却中的候选直接跳过（上一轮失败后的惩罚期）
+        if let Some(remaining) = cooldown_remaining_secs(&state.health, &key) {
+            emit_aggregate_log(
+                &state.app,
+                "route",
+                "warn",
+                format!(
+                    "跳过冷却中的候选 #{} {} / {}（剩余 {}s）",
+                    idx + 1,
+                    candidate.provider_name,
+                    candidate.model_id,
+                    remaining
+                ),
+            );
+            continue;
+        }
+
         let mut body_for_candidate = body.clone();
+        // 对外统一用聚合模型名；对内改写为候选自身模型
         body_for_candidate["model"] = Value::String(candidate.model_id.clone());
-        for attempt in 1..=MAX_ATTEMPTS_PER_CANDIDATE {
+
+        let mut attempts = 0usize;
+        loop {
+            attempts += 1;
             match try_candidate(candidate, &body_for_candidate, stream).await {
                 Ok(response) => {
-                    if idx > 0 || attempt > 1 {
+                    clear_health(&state.health, &key);
+                    if idx > 0 || attempts > 1 {
                         emit_aggregate_log(
                             &state.app,
                             "route",
@@ -497,7 +688,7 @@ async fn chat_completions(State(state): State<AggState>, Json(mut body): Json<Va
                                 idx + 1,
                                 candidate.provider_name,
                                 candidate.model_id,
-                                attempt
+                                attempts
                             ),
                         );
                     }
@@ -513,26 +704,67 @@ async fn chat_completions(State(state): State<AggState>, Json(mut body): Json<Va
                             started.elapsed().as_millis()
                         ),
                     );
-                    // 用量落账（聚合场景：tool_id = aggregate，输出 token 由上游 usage 估算，缺失记 0）
                     record_aggregate_usage(&state, candidate, &body_for_candidate, &response.1, started);
                     return response.0;
                 }
                 Err(err) => {
-                    last_error = err.clone();
+                    last_error = format!("{:?}: {}", err.class, err.message);
+                    // 策略类拒绝（内容安全等）：不重试、不切换，直接把错误回给客户端
+                    if err.class == FailureClass::Fatal {
+                        emit_aggregate_log(
+                            &state.app,
+                            "route",
+                            "error",
+                            format!(
+                                "候选 #{} {} / {} 被策略拒绝，不再切换: {}",
+                                idx + 1,
+                                candidate.provider_name,
+                                candidate.model_id,
+                                err.message
+                            ),
+                        );
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({
+                                "error": { "message": err.message, "type": "content_policy" }
+                            })),
+                        )
+                            .into_response();
+                    }
                     emit_aggregate_log(
                         &state.app,
                         "route",
                         "warn",
                         format!(
-                            "候选 #{} {} / {} 失败（第 {} 次）: {}",
+                            "候选 #{} {} / {} 第 {} 次失败 [{:?}]: {}",
                             idx + 1,
                             candidate.provider_name,
                             candidate.model_id,
-                            attempt,
-                            err
+                            attempts,
+                            err.class,
+                            err.message
                         ),
                     );
-                    if !is_retryable(&err) {
+                    // 达到该类别的重试预算 → 记冷却并切换到下一个候选
+                    if attempts >= retry_budget(err.class) {
+                        let cooldown = record_failure(
+                            &state.health,
+                            &key,
+                            err.class,
+                            err.retry_after,
+                        );
+                        emit_aggregate_log(
+                            &state.app,
+                            "route",
+                            "warn",
+                            format!(
+                                "候选 #{} {} / {} 进入冷却 {}s，切换到下一个候选",
+                                idx + 1,
+                                candidate.provider_name,
+                                candidate.model_id,
+                                cooldown.as_secs()
+                            ),
+                        );
                         break;
                     }
                 }
@@ -566,26 +798,39 @@ async fn try_candidate(
     candidate: &AggCandidate,
     body: &Value,
     stream: bool,
-) -> Result<(Response, String), String> {
+) -> Result<(Response, String), CandidateError> {
     let url = format!("{}/chat/completions", candidate.base_url);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
         .build()
-        .map_err(|e| format!("HTTP 客户端构建失败: {}", e))?;
+        .map_err(|e| CandidateError {
+            class: FailureClass::Transient,
+            message: format!("HTTP 客户端构建失败: {}", e),
+            retry_after: None,
+        })?;
     let resp = client
         .post(&url)
         .bearer_auth(&candidate.api_key)
         .json(body)
         .send()
         .await
-        .map_err(|e| if e.is_connect() {
-            format!("连接被拒绝（{}）", url)
-        } else if e.is_timeout() {
-            "请求超时".to_string()
-        } else {
-            format!("请求失败: {}", e)
+        .map_err(|e| {
+            let message = if e.is_connect() {
+                format!("连接被拒绝（{}）", url)
+            } else if e.is_timeout() {
+                "请求超时".to_string()
+            } else {
+                format!("请求失败: {}", e)
+            };
+            CandidateError { class: FailureClass::Transient, message, retry_after: None }
         })?;
     let status = resp.status();
+    // 限流场景优先遵循上游 Retry-After
+    let retry_after = resp
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok());
     let content_type = resp
         .headers()
         .get("content-type")
@@ -594,7 +839,12 @@ async fn try_candidate(
         .to_string();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        return Err(format!("HTTP {} {}", status.as_u16(), trim_error(&text)));
+        let class = classify_failure(Some(status.as_u16()), &text);
+        return Err(CandidateError {
+            class,
+            message: format!("HTTP {} {}", status.as_u16(), trim_error(&text)),
+            retry_after,
+        });
     }
     if stream {
         // 流式：透传上游 SSE 字节流（首字节后不再切换候选，避免重复计费）
@@ -607,7 +857,11 @@ async fn try_candidate(
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
         return Ok((response, String::new()));
     }
-    let text = resp.text().await.map_err(|e| format!("读取响应失败: {}", e))?;
+    let text = resp.text().await.map_err(|e| CandidateError {
+        class: FailureClass::Transient,
+        message: format!("读取响应失败: {}", e),
+        retry_after: None,
+    })?;
     let json: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
     Ok((
         (StatusCode::OK, Json(json)).into_response(),
@@ -624,12 +878,9 @@ fn trim_error(text: &str) -> String {
     }
 }
 
-/// 是否值得对同一候选重试（5xx / 超时 / 连接失败可重试；4xx 直接切下一个）。
-fn is_retryable(err: &str) -> bool {
-    err.contains("HTTP 5")
-        || err.contains("超时")
-        || err.contains("连接被拒绝")
-        || err.contains("请求失败")
+/// 该类别是否值得对同一候选再试一次（只有瞬时错误才重试，其余直接切下一个）。
+fn is_retryable(class: FailureClass) -> bool {
+    retry_budget(class) > 1
 }
 
 /// 压缩旁路：成功返回 Some(压缩后的 body)；未启用/不可达返回 None 或 Err。
@@ -797,11 +1048,106 @@ mod tests {
     }
 
     #[test]
-    fn test_is_retryable() {
-        assert!(is_retryable("HTTP 500 Internal"));
-        assert!(is_retryable("请求超时"));
-        assert!(is_retryable("连接被拒绝（http://x）"));
-        assert!(!is_retryable("HTTP 401 Unauthorized"));
-        assert!(!is_retryable("HTTP 429 Too Many Requests"));
+    fn test_is_retryable_by_class() {
+        assert!(is_retryable(FailureClass::Transient));
+        assert!(!is_retryable(FailureClass::Authentication));
+        assert!(!is_retryable(FailureClass::Billing));
+        assert!(!is_retryable(FailureClass::RateLimit));
+        assert!(!is_retryable(FailureClass::ModelUnavailable));
+        assert!(!is_retryable(FailureClass::Fatal));
+    }
+
+    // ─── 失败分类与切换策略 ───
+
+    #[test]
+    fn test_classify_failure_by_status() {
+        assert_eq!(classify_failure(Some(401), ""), FailureClass::Authentication);
+        assert_eq!(classify_failure(Some(403), ""), FailureClass::Authentication);
+        assert_eq!(classify_failure(Some(402), ""), FailureClass::Billing);
+        assert_eq!(classify_failure(Some(404), ""), FailureClass::ModelUnavailable);
+        assert_eq!(classify_failure(Some(429), ""), FailureClass::RateLimit);
+        assert_eq!(classify_failure(Some(500), ""), FailureClass::Transient);
+        assert_eq!(classify_failure(Some(503), ""), FailureClass::Transient);
+        // 连接失败（无状态码）按瞬时处理，可重试
+        assert_eq!(classify_failure(None, "connection refused"), FailureClass::Transient);
+    }
+
+    #[test]
+    fn test_classify_failure_prefers_body_hints() {
+        // 429 但文案是额度耗尽 → 判为计费问题（冷却更久、不重试）
+        assert_eq!(
+            classify_failure(Some(429), "error: insufficient_quota"),
+            FailureClass::Billing
+        );
+        assert_eq!(
+            classify_failure(Some(400), "insufficient quota for this key"),
+            FailureClass::Billing
+        );
+        // 400 但文案是限流 → 判为限流
+        assert_eq!(classify_failure(Some(400), "rate limit reached"), FailureClass::RateLimit);
+        // 内容安全：不重试也不切换
+        assert_eq!(
+            classify_failure(Some(400), "blocked by safety policy"),
+            FailureClass::Fatal
+        );
+        // 模型不存在
+        assert_eq!(
+            classify_failure(Some(400), "model_not_found: gpt-9"),
+            FailureClass::ModelUnavailable
+        );
+    }
+
+    #[test]
+    fn test_retry_budget_only_for_transient() {
+        assert_eq!(retry_budget(FailureClass::Transient), 2);
+        assert_eq!(retry_budget(FailureClass::Billing), 1);
+        assert_eq!(retry_budget(FailureClass::RateLimit), 1);
+        assert_eq!(retry_budget(FailureClass::Authentication), 1);
+        assert_eq!(retry_budget(FailureClass::ModelUnavailable), 1);
+    }
+
+    #[test]
+    fn test_cooldown_table() {
+        // 瞬时：30 → 60 → 120 → 240 → 300（封顶）
+        assert_eq!(cooldown_for(FailureClass::Transient, None, 1).as_secs(), 30);
+        assert_eq!(cooldown_for(FailureClass::Transient, None, 2).as_secs(), 60);
+        assert_eq!(cooldown_for(FailureClass::Transient, None, 3).as_secs(), 120);
+        assert_eq!(cooldown_for(FailureClass::Transient, None, 4).as_secs(), 240);
+        assert_eq!(cooldown_for(FailureClass::Transient, None, 5).as_secs(), 300);
+        assert_eq!(cooldown_for(FailureClass::Transient, None, 99).as_secs(), 300);
+        // 限流：默认 60s，遵循 Retry-After 但不超过 24h
+        assert_eq!(cooldown_for(FailureClass::RateLimit, None, 1).as_secs(), 60);
+        assert_eq!(cooldown_for(FailureClass::RateLimit, Some(120), 1).as_secs(), 120);
+        assert_eq!(
+            cooldown_for(FailureClass::RateLimit, Some(999_999), 1).as_secs(),
+            24 * 3600
+        );
+        // 鉴权/额度 1h；模型不可用 6h
+        assert_eq!(cooldown_for(FailureClass::Authentication, None, 1).as_secs(), 3600);
+        assert_eq!(cooldown_for(FailureClass::Billing, None, 1).as_secs(), 3600);
+        assert_eq!(
+            cooldown_for(FailureClass::ModelUnavailable, None, 1).as_secs(),
+            6 * 3600
+        );
+    }
+
+    #[test]
+    fn test_health_record_and_clear() {
+        let health: Arc<Mutex<HashMap<String, CandidateHealth>>> = Arc::new(Mutex::new(HashMap::new()));
+        let key = "p::m";
+        assert!(cooldown_remaining_secs(&health, key).is_none());
+        let d = record_failure(&health, key, FailureClass::RateLimit, Some(90));
+        assert_eq!(d.as_secs(), 90);
+        let remaining = cooldown_remaining_secs(&health, key).unwrap_or(0);
+        assert!(remaining > 0 && remaining <= 90, "剩余冷却异常: {}", remaining);
+        // 成功后清除 → 立即可用
+        clear_health(&health, key);
+        assert!(cooldown_remaining_secs(&health, key).is_none());
+    }
+
+    #[test]
+    fn test_aggregate_exposes_single_model() {
+        // 聚合对外只暴露一个模型（否则就不叫聚合了）
+        assert_eq!(AGGREGATE_MODEL_ID, "auto");
     }
 }
