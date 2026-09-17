@@ -4299,6 +4299,8 @@
       "statusInProgress": "In progress",
       "noSessions": "No sessions found (client not running or no sessions created yet)",
       "updated": "Updated",
+      "contentMissing": "Content missing",
+      "contentMissingHint": "The conversation content directory is not present locally (cleaned up or not synced to this machine)",
       "copyId": "Copy session ID",
       "deleteTitle": "Delete session (incl. local files)",
       "deleteConfirm": "Delete session \"{{title}}\"? Its local files (conversation data, check-points, etc.) will also be removed. This cannot be undone.",
@@ -4348,6 +4350,7 @@
       "waiting": "No account due for check-in right now",
       "completed": "Check-in round completed",
       "retry": "Some accounts failed; will retry automatically",
+      "auth_expired": "Some accounts have expired sign-in; refresh their tokens and retry",
       "no_accounts": "No accounts to check in"
     },
     "checkinSuccessCredit": "Check-in succeeded, earned {{credit}} credits",
@@ -4445,7 +4448,13 @@
     "sortDefault": "Recently used",
     "sortQuota": "Remaining quota",
     "sortTime": "Time {n}",
+    "sortExpiry": "Earliest expiry",
+    "primaryToggle": "Set as primary (pinned on top)",
     "quotaTotal": "Total quota",
+    "rotation": {
+      "suggest": "Current account is out of credits; switch to {{email}} ({{remain}} left)",
+      "switch": "Switch"
+    },
     "overdue": "overdue",
     "editTimeLabels": "Edit time labels",
     "timeLabel": "Time",

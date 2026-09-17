@@ -6,6 +6,19 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import {
+  LABEL_FIELDS,
+  REMAINING_FIELDS,
+  TOTAL_FIELDS,
+  USED_FIELDS,
+  mergeCreditSegments,
+  pickNumber,
+  pickText,
+  segmentsFromQuotaItems,
+  selectRotationCandidate,
+  summarizeCreditSegments,
+  type RotationAccount,
+} from "./quota";
+import {
   RefreshCw,
   Download,
   Upload,
@@ -38,6 +51,7 @@ import {
   Bell,
   ListChecks,
   Cat,
+  Star,
 } from "lucide-react";
 
 export interface BuddyAccount {
@@ -118,7 +132,11 @@ export interface BuddySessionRecord {
   status: string;
   createdAt?: number | null;
   updatedAt?: number | null;
+  /** 活动时间：last_activity_at → updated_at → created_at 回退（后端已算好） */
+  lastActivityAt?: number | null;
   isPlayground: boolean;
+  /** 本地已找不到该会话正文（后端探测；定位不到目录布局时不返回 true） */
+  contentMissing?: boolean;
   locations: { instanceId: string; instanceName: string }[];
 }
 
@@ -267,6 +285,12 @@ export interface CheckinStatus {
   dailyCredit: number;
 }
 
+/** 账号视图偏好（后端 `<platform>_view.json`）：主账号 + 排序模式 */
+export interface BuddyAccountView {
+  primaryAccountId?: string | null;
+  orderMode: "lastUsed" | "quota" | "expiry" | string;
+}
+
 export interface OAuthStartResponse {
   loginId: string;
   verificationUri: string;
@@ -282,6 +306,8 @@ interface QuotaItem {
   remain: number;
   unlimited: boolean;
   cycleEndTime?: string | null;
+  /** 官方礼包码：同一礼包的多条记录据此合并 */
+  packageCode?: string;
 }
 
 const PLATFORMS = [
@@ -383,25 +409,29 @@ function parseQuotaItems(quotaRaw: unknown): QuotaItem[] {
   return arr
     .map((a) => {
       const r = a as Record<string, unknown>;
-      const num = (v: unknown): number => {
-        if (typeof v === "number") return v;
-        if (typeof v === "string") {
-          const n = parseFloat(v);
-          return Number.isFinite(n) ? n : 0;
-        }
-        return 0;
-      };
       return {
-        packageName: String(r.PackageName ?? r.packageName ?? ""),
-        used: num(r.CycleCapacityUsed ?? r.CapacityUsed ?? r.used),
-        total: num(r.CycleCapacitySize ?? r.CapacitySize ?? r.total),
-        remain: num(r.CycleCapacityRemain ?? r.CapacityRemain ?? r.remain),
+        // 字段别名表集中在 quota.ts 维护（官方历史上改过多次字段名）
+        packageName: pickText(r, LABEL_FIELDS) || String(r.packageName ?? ""),
+        used: pickNumber(r, USED_FIELDS) ?? 0,
+        total: pickNumber(r, TOTAL_FIELDS) ?? 0,
+        remain: pickNumber(r, REMAINING_FIELDS) ?? 0,
         unlimited: Boolean(r.Unlimited),
+        packageCode: String(r.PackageCode ?? r.packageCode ?? ""),
+        // 到期时间原样交给 UI 展示（别名表里的时间字段由 quota.ts 的 pickTimestamp 处理）
         cycleEndTime:
-          (r.CycleEndTime as string | undefined) ?? (r.cycleEndTime as string | undefined) ?? null,
+          (r.CycleEndTime as string | undefined) ??
+          (r.cycleEndTime as string | undefined) ??
+          (r.EndTime as string | undefined) ??
+          (r.PackageEndTime as string | undefined) ??
+          null,
       };
     })
     .filter((item) => item.total > 0 || item.unlimited || item.packageName);
+}
+
+/** 某账号的积分段（用于「积分不足 → 换号建议」）。 */
+function accountCreditSegments(account: BuddyAccount) {
+  return segmentsFromQuotaItems(parseQuotaItems(account.quotaRaw));
 }
 
 function getDosageText(account: BuddyAccount): string | null {
@@ -436,6 +466,8 @@ function formatQuotaNumber(value: number): string {
 }
 
 // 总额度（不区分个人体验/裂变包，全部合并为一个 remain/total）
+// 同一礼包（礼包码/来源 + 到期时间）的多条记录先合并再求和，与官方礼包分组一致；
+// 单条记录 total < remain 时以 remain 为准（对齐参考实现的归一化）。
 function summarizeQuota(items: QuotaItem[]): {
   used: number;
   total: number;
@@ -444,19 +476,26 @@ function summarizeQuota(items: QuotaItem[]): {
   hasData: boolean;
 } {
   let used = 0;
-  let total = 0;
-  let remain = 0;
   let unlimited = false;
+  const billable: QuotaItem[] = [];
   for (const it of items) {
     if (it.unlimited) {
       unlimited = true;
       continue;
     }
     used += it.used;
-    total += it.total;
-    remain += it.remain;
+    billable.push(it);
   }
-  return { used, total, remain, unlimited, hasData: items.length > 0 };
+  const merged = summarizeCreditSegments(
+    mergeCreditSegments(segmentsFromQuotaItems(billable))
+  );
+  return {
+    used,
+    total: merged.total,
+    remain: merged.remain,
+    unlimited,
+    hasData: items.length > 0,
+  };
 }
 
 // 时间标签倒计时：距目标还有多久 / 已过期多久
@@ -557,7 +596,9 @@ function formatCwd(cwd: string): string {
 
 function formatRelative(t: number | null | undefined): string {
   if (!t) return "—";
-  const diff = Date.now() / 1000 - t;
+  // 单位兼容：WorkBuddy 会话库是毫秒，部分数据源是秒（< 1e12 视为秒）
+  const ms = t < 1e12 ? t * 1000 : t;
+  const diff = (Date.now() - ms) / 1000;
   if (diff < 60) return "刚刚";
   if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
   if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
@@ -625,11 +666,16 @@ function buildSessionGroups(sessions: BuddySessionRecord[]): SessionGroup[] {
     .map(([cwd, groupSessions]) => ({
       cwd,
       sessions: [...groupSessions].sort(
-        (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || a.title.localeCompare(b.title)
+        (a, b) => sessionActivityAt(b) - sessionActivityAt(a) || a.title.localeCompare(b.title)
       ),
-      latestUpdatedAt: Math.max(...groupSessions.map((s) => s.updatedAt ?? 0), 0),
+      latestUpdatedAt: Math.max(...groupSessions.map(sessionActivityAt), 0),
     }))
     .sort((a, b) => b.latestUpdatedAt - a.latestUpdatedAt || a.cwd.localeCompare(b.cwd, "zh-CN"));
+}
+
+/** 会话活动时间：后端已按 last_activity_at → updated_at → created_at 回退算好，这里再兜底一次。 */
+function sessionActivityAt(session: BuddySessionRecord): number {
+  return session.lastActivityAt ?? session.updatedAt ?? session.createdAt ?? 0;
 }
 
 function resolveGroupLabel(cwd: string): string {
@@ -696,6 +742,8 @@ export default function BuddyPanel() {
   // 签到/派旅行只对 WorkBuddy 账号有效：状态卡固定用 WorkBuddy 账号列表，
   // 与顶部的平台选择解耦（否则在默认的 CodeBuddy CN 标签下会全部显示"待生成/未安排"）。
   const [wbAccounts, setWbAccounts] = useState<BuddyAccount[]>([]);
+  // 账号视图偏好：主账号 + 排序模式（后端 `<platform>_view.json` 持久化）
+  const [accountView, setAccountView] = useState<BuddyAccountView>({ orderMode: "lastUsed" });
   const [travelTasks, setTravelTasks] = useState<BuddyTravelTasksView | null>(null);
   // 日历：当前月份 + 该月归档 + 选中某天
   const [calendarMonth, setCalendarMonth] = useState<string>(() => localMonthStr());
@@ -704,18 +752,49 @@ export default function BuddyPanel() {
 
   const load = useCallback(async () => {
     try {
-      const [list, current, pathInfo] = await Promise.all([
+      const [list, current, pathInfo, view] = await Promise.all([
         invoke<BuddyAccount[]>("buddy_list_accounts", { platform }),
         invoke<string | null>("buddy_get_current_account_id", { platform }),
         invoke<BuddyPaths>("buddy_get_paths", { platform }),
+        invoke<BuddyAccountView>("buddy_get_account_view", { platform }),
       ]);
       setAccounts(list);
       setCurrentId(current);
       setPaths(pathInfo);
+      setAccountView(view);
     } catch (e) {
       setMessage({ ok: false, text: String(e) });
     }
   }, [platform]);
+
+  // 主账号：点 ★ 设为/取消主账号（主账号恒排在列表首位）
+  const togglePrimary = async (accountId: string) => {
+    try {
+      const next = accountView.primaryAccountId === accountId ? null : accountId;
+      const view = await invoke<BuddyAccountView>("buddy_set_primary_account", {
+        platform,
+        accountId: next,
+      });
+      setAccountView(view);
+    } catch (e) {
+      showMsg(false, String(e));
+    }
+  };
+
+  const changeOrderMode = async (orderMode: string) => {
+    try {
+      const view = await invoke<BuddyAccountView>("buddy_set_account_order_mode", {
+        platform,
+        orderMode,
+      });
+      setAccountView(view);
+    } catch (e) {
+      showMsg(false, String(e));
+    }
+  };
+
+
+
 
   useEffect(() => {
     load();
@@ -788,7 +867,8 @@ export default function BuddyPanel() {
   }, []);
 
   useEffect(() => {
-    if (tab === "checkin") void loadAutoCheckin();
+    // 设置页现在承载自动签到配置，两个 tab 都需要加载
+    if (tab === "checkin" || tab === "settings") void loadAutoCheckin();
   }, [tab, loadAutoCheckin]);
 
   useEffect(() => {
@@ -916,6 +996,55 @@ export default function BuddyPanel() {
     }
     return { remain, total, unlimited, hasData };
   }, [accounts]);
+
+  // 账号列表排序：主账号恒在首位，其余按排序模式（最近使用 / 剩余额度 / 最早到期）
+  const sortedAccounts = useMemo(() => {
+    const list = [...accounts];
+    const quotaRemain = (a: BuddyAccount) => {
+      const q = summarizeQuota(parseQuotaItems(a.quotaRaw));
+      if (q.unlimited) return Number.POSITIVE_INFINITY;
+      return q.hasData ? q.remain : -1;
+    };
+    const expiryAt = (a: BuddyAccount) => {
+      const times = Object.values(a.expiryTimes ?? {})
+        .filter((v) => Number.isFinite(v) && v > 0)
+        .map((v) => (v < 1e12 ? v * 1000 : v));
+      return times.length ? Math.min(...times) : Number.POSITIVE_INFINITY;
+    };
+    if (accountView.orderMode === "quota") {
+      list.sort((a, b) => quotaRemain(b) - quotaRemain(a) || b.lastUsed - a.lastUsed);
+    } else if (accountView.orderMode === "expiry") {
+      list.sort((a, b) => expiryAt(a) - expiryAt(b) || b.lastUsed - a.lastUsed);
+    } else {
+      list.sort((a, b) => b.lastUsed - a.lastUsed);
+    }
+    const primary = accountView.primaryAccountId;
+    if (primary) {
+      const index = list.findIndex((a) => a.id === primary);
+      if (index > 0) list.unshift(...list.splice(index, 1));
+    }
+    return list;
+  }, [accounts, accountView]);
+
+  // 当前账号积分不足 → 建议切换到哪个账号（参考 WorkDaddy credit-rotation 语义：
+  // 排除当前账号与无剩余账号，最早到期优先，同到期取剩余多的）
+  const rotationCandidate = useMemo(() => {
+    if (!currentId) return null;
+    const current = accounts.find((a) => a.id === currentId);
+    if (!current) return null;
+    const currentQuota = summarizeQuota(parseQuotaItems(current.quotaRaw));
+    // 不限量 / 还有剩余 / 还没查到额度 → 不提示
+    if (currentQuota.unlimited || !currentQuota.hasData || currentQuota.remain > 0) return null;
+    const others: RotationAccount[] = accounts
+      .filter((a) => a.id !== currentId)
+      .map((a) => ({
+        accountId: a.id,
+        uid: a.uid ?? null,
+        label: a.email || a.id,
+        segments: accountCreditSegments(a),
+      }));
+    return selectRotationCandidate(others, current.uid ?? null, Date.now());
+  }, [accounts, currentId]);
 
   // ─── 过期时间列（两平台共享）：列 schema 全局一份，同邮箱账号的时间值互通 ───
   const loadExpiryColumns = useCallback(async () => {
@@ -1567,6 +1696,16 @@ export default function BuddyPanel() {
                 )}
               </span>
             )}
+            <select
+              value={accountView.orderMode}
+              onChange={(e) => void changeOrderMode(e.target.value)}
+              title={t("buddy.sortBy")}
+              className="bg-black/30 border border-white/10 rounded px-1 py-0.5 text-[10px] text-slate-300 outline-none cursor-pointer"
+            >
+              <option value="lastUsed">{t("buddy.sortDefault")}</option>
+              <option value="quota">{t("buddy.sortQuota")}</option>
+              <option value="expiry">{t("buddy.sortExpiry")}</option>
+            </select>
             <div className="flex-1" />
             {addingColumn ? (
               <div className="flex items-center gap-1">
@@ -1598,6 +1737,25 @@ export default function BuddyPanel() {
               </button>
             )}
           </div>
+
+          {rotationCandidate && (
+            <div className="flex items-center gap-2 px-4 py-1.5 border-b border-amber-500/20 bg-amber-500/10 text-[10px] text-amber-200 flex-shrink-0">
+              <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+              <span className="truncate">
+                {t("buddy.rotation.suggest", {
+                  email: rotationCandidate.label,
+                  remain: formatQuotaNumber(rotationCandidate.remaining),
+                })}
+              </span>
+              <button
+                onClick={() => void switchAccount(rotationCandidate.accountId)}
+                disabled={busy}
+                className="ml-auto px-2 py-0.5 rounded border border-amber-400/40 hover:bg-amber-400/15 cursor-pointer transition disabled:opacity-40 flex-shrink-0"
+              >
+                {t("buddy.rotation.switch")}
+              </button>
+            </div>
+          )}
 
           <div className="flex-1 overflow-auto">
             {accounts.length === 0 ? (
@@ -1656,9 +1814,10 @@ export default function BuddyPanel() {
                   <div style={{ width: COL_ACTIONS }} className="px-2 py-1.5 flex-shrink-0 border-l border-white/5" />
                 </div>
 
-                {accounts.map((acc) => {
+                {sortedAccounts.map((acc) => {
                   const isCurrent = acc.id === currentId;
                   const isSelected = selectedIds.has(acc.id);
+                  const isPrimary = accountView.primaryAccountId === acc.id;
                   const quota = summarizeQuota(parseQuotaItems(acc.quotaRaw));
                   const planBadge = getPlanBadge(acc);
                   const cellEditingAcc = editingCell && editingCell.accId === acc.id ? editingCell : null;
@@ -1677,6 +1836,15 @@ export default function BuddyPanel() {
                           onChange={() => toggleSelect(acc.id)}
                           className="accent-[var(--module-accent)] w-3 h-3 flex-shrink-0 cursor-pointer"
                         />
+                        <button
+                          onClick={() => void togglePrimary(acc.id)}
+                          title={t("buddy.primaryToggle")}
+                          className={`flex-shrink-0 cursor-pointer transition ${
+                            isPrimary ? "text-amber-300" : "text-slate-600 hover:text-amber-300"
+                          }`}
+                        >
+                          <Star className="w-3 h-3" fill={isPrimary ? "currentColor" : "none"} />
+                        </button>
                         <span
                           className={`inline-flex items-center text-[9px] px-1.5 py-0.5 rounded border flex-shrink-0 ${
                             planBadge === "PRO"
@@ -1972,7 +2140,17 @@ export default function BuddyPanel() {
                                 </div>
                                 <div className="text-[9px] text-slate-600 mt-0.5 flex items-center gap-2 flex-wrap">
                                   <span>ID: {s.conversationId.slice(0, 12)}…</span>
-                                  <span>{t("buddy.sessions.updated")}: {formatRelative(s.updatedAt)}</span>
+                                  <span>
+                                    {t("buddy.sessions.updated")}: {formatRelative(sessionActivityAt(s))}
+                                  </span>
+                                  {s.contentMissing && (
+                                    <span
+                                      className="px-1 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300"
+                                      title={t("buddy.sessions.contentMissingHint")}
+                                    >
+                                      {t("buddy.sessions.contentMissing")}
+                                    </span>
+                                  )}
                                   {s.locations.length > 0 && (
                                     <span>{s.locations.map((l) => l.instanceName).join(", ")}</span>
                                   )}
@@ -2013,147 +2191,8 @@ export default function BuddyPanel() {
       {tab === "checkin" && (
         <div className="flex-1 overflow-y-auto p-4">
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
-            {/* 自动签到 + 派旅行配置（合并卡片） */}
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
-              <div>
-              <div className="flex items-center gap-2 mb-3">
-                <CalendarCheck className="w-4 h-4 text-[var(--module-accent)]" />
-                <span className="text-[13px] font-bold text-white">{t("buddy.auto.title")}</span>
-              </div>
-              {autoConfig ? (
-                <div className="space-y-3">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={autoConfig.enabled}
-                      onChange={(e) => setAutoConfig({ ...autoConfig, enabled: e.target.checked })}
-                      className="accent-[var(--module-accent)] w-3.5 h-3.5"
-                    />
-                    <span className="text-[11px] text-slate-300">{t("buddy.auto.enabled")}</span>
-                  </label>
-                  <div className="flex items-center gap-3">
-                    <label className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-500">{t("buddy.auto.startTime")}</span>
-                      <input
-                        type="time"
-                        value={autoConfig.startTime}
-                        onChange={(e) => setAutoConfig({ ...autoConfig, startTime: e.target.value })}
-                        className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
-                      />
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-500">{t("buddy.auto.endTime")}</span>
-                      <input
-                        type="time"
-                        value={autoConfig.endTime}
-                        onChange={(e) => setAutoConfig({ ...autoConfig, endTime: e.target.value })}
-                        className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
-                      />
-                    </label>
-                  </div>
-                  <p className="text-[9px] text-slate-600">{t("buddy.auto.hint")}</p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={saveAutoConfig}
-                      disabled={autoBusy}
-                      className="px-3 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
-                    >
-                      {autoBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-                      {t("buddy.auto.save")}
-                    </button>
-                    <button
-                      onClick={() => void runAutoCheckin(true)}
-                      disabled={autoBusy}
-                      className="px-3 py-1.5 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
-                    >
-                      <Play className="w-3 h-3" /> {t("buddy.auto.runNow")}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-[10px] text-slate-600">{t("buddy.auto.loading")}</div>
-              )}
-              </div>
-
-              <div className="border-t border-white/5 pt-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <Cat className="w-4 h-4 text-[var(--module-accent)]" />
-                  <span className="text-[13px] font-bold text-white">{t("buddy.travel.title")}</span>
-                </div>
-                {travelConfig ? (
-                  <div className="space-y-3">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={travelConfig.enabled}
-                        onChange={(e) => setTravelConfig({ ...travelConfig, enabled: e.target.checked })}
-                        className="accent-[var(--module-accent)] w-3.5 h-3.5"
-                      />
-                      <span className="text-[11px] text-slate-300">{t("buddy.travel.enabled")}</span>
-                    </label>
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <label className="flex items-center gap-2">
-                        <span className="text-[10px] text-slate-500">{t("buddy.travel.startTime")}</span>
-                        <input
-                          type="time"
-                          value={travelConfig.startTime}
-                          onChange={(e) => setTravelConfig({ ...travelConfig, startTime: e.target.value })}
-                          className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
-                        />
-                      </label>
-                      <label className="flex items-center gap-2">
-                        <span className="text-[10px] text-slate-500">{t("buddy.travel.endTime")}</span>
-                        <input
-                          type="time"
-                          value={travelConfig.endTime}
-                          onChange={(e) => setTravelConfig({ ...travelConfig, endTime: e.target.value })}
-                          className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
-                        />
-                      </label>
-                      <label className="flex items-center gap-2">
-                        <span className="text-[10px] text-slate-500">{t("buddy.travel.location")}</span>
-                        <select
-                          value={travelConfig.locationId}
-                          onChange={(e) =>
-                            setTravelConfig({ ...travelConfig, locationId: Number(e.target.value) })
-                          }
-                          className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
-                        >
-                          {TRAVEL_LOCATIONS.map((loc) => (
-                            <option key={loc.id} value={loc.id}>
-                              {t(`buddy.travel.${loc.key}`)}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-                    <p className="text-[9px] text-slate-600">{t("buddy.travel.hint")}</p>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={saveTravelConfig}
-                        disabled={autoBusy}
-                        className="px-3 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
-                      >
-                        {autoBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-                        {t("buddy.auto.save")}
-                      </button>
-                      <button
-                        onClick={() => void runAutoTravel()}
-                        disabled={autoBusy}
-                        className="px-3 py-1.5 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
-                      >
-                        <Play className="w-3 h-3" /> {t("buddy.travel.runNow")}
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-[10px] text-slate-600">{t("buddy.auto.loading")}</div>
-                )}
-              </div>
-            </div>
-
             {/* 每账号状态（签到 | 派出）—— 固定用 WorkBuddy 账号：签到/派出只对 WorkBuddy 有效 */}
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="xl:col-span-2 rounded-xl border border-white/10 bg-white/[0.03] p-4">
               <div className="flex items-center gap-2 mb-3">
                 <ListChecks className="w-4 h-4 text-[var(--module-accent)]" />
                 <span className="text-[13px] font-bold text-white">{t("buddy.accountStatus.title")}</span>
@@ -2510,9 +2549,143 @@ export default function BuddyPanel() {
       )}
 
       {/* 路径信息 */}
-      {/* ─── 设置 Tab：客户端路径（切换时仅请求关闭，由用户手动启动） ─── */}
+      {/* ─── 设置 Tab：自动签到 + 客户端路径 ─── */}
       {tab === "settings" && (
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+            <div className="flex items-center gap-2 mb-1">
+              <CalendarCheck className="w-4 h-4 text-[var(--module-accent)]" />
+              <span className="text-[13px] font-bold text-white">{t("buddy.auto.title")}</span>
+            </div>
+            {autoConfig ? (
+              <div className="space-y-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={autoConfig.enabled}
+                    onChange={(e) => setAutoConfig({ ...autoConfig, enabled: e.target.checked })}
+                    className="accent-[var(--module-accent)] w-3.5 h-3.5"
+                  />
+                  <span className="text-[11px] text-slate-300">{t("buddy.auto.enabled")}</span>
+                </label>
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-500">{t("buddy.auto.startTime")}</span>
+                    <input
+                      type="time"
+                      value={autoConfig.startTime}
+                      onChange={(e) => setAutoConfig({ ...autoConfig, startTime: e.target.value })}
+                      className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-500">{t("buddy.auto.endTime")}</span>
+                    <input
+                      type="time"
+                      value={autoConfig.endTime}
+                      onChange={(e) => setAutoConfig({ ...autoConfig, endTime: e.target.value })}
+                      className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
+                    />
+                  </label>
+                </div>
+                <p className="text-[9px] text-slate-600">{t("buddy.auto.hint")}</p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={saveAutoConfig}
+                    disabled={autoBusy}
+                    className="px-3 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                  >
+                    {autoBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                    {t("buddy.auto.save")}
+                  </button>
+                  <button
+                    onClick={() => void runAutoCheckin(true)}
+                    disabled={autoBusy}
+                    className="px-3 py-1.5 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                  >
+                    <Play className="w-3 h-3" /> {t("buddy.auto.runNow")}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="text-[10px] text-slate-600">{t("buddy.auto.loading")}</div>
+            )}
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+            <div className="flex items-center gap-2 mb-1">
+              <Cat className="w-4 h-4 text-[var(--module-accent)]" />
+              <span className="text-[13px] font-bold text-white">{t("buddy.travel.title")}</span>
+            </div>
+            {travelConfig ? (
+              <div className="space-y-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={travelConfig.enabled}
+                    onChange={(e) => setTravelConfig({ ...travelConfig, enabled: e.target.checked })}
+                    className="accent-[var(--module-accent)] w-3.5 h-3.5"
+                  />
+                  <span className="text-[11px] text-slate-300">{t("buddy.travel.enabled")}</span>
+                </label>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <label className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-500">{t("buddy.travel.startTime")}</span>
+                    <input
+                      type="time"
+                      value={travelConfig.startTime}
+                      onChange={(e) => setTravelConfig({ ...travelConfig, startTime: e.target.value })}
+                      className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-500">{t("buddy.travel.endTime")}</span>
+                    <input
+                      type="time"
+                      value={travelConfig.endTime}
+                      onChange={(e) => setTravelConfig({ ...travelConfig, endTime: e.target.value })}
+                      className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-500">{t("buddy.travel.location")}</span>
+                    <select
+                      value={travelConfig.locationId}
+                      onChange={(e) =>
+                        setTravelConfig({ ...travelConfig, locationId: Number(e.target.value) })
+                      }
+                      className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
+                    >
+                      {TRAVEL_LOCATIONS.map((loc) => (
+                        <option key={loc.id} value={loc.id}>
+                          {t(`buddy.travel.${loc.key}`)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <p className="text-[9px] text-slate-600">{t("buddy.travel.hint")}</p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={saveTravelConfig}
+                    disabled={autoBusy}
+                    className="px-3 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                  >
+                    {autoBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                    {t("buddy.auto.save")}
+                  </button>
+                  <button
+                    onClick={() => void runAutoTravel()}
+                    disabled={autoBusy}
+                    className="px-3 py-1.5 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                  >
+                    <Play className="w-3 h-3" /> {t("buddy.travel.runNow")}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="text-[10px] text-slate-600">{t("buddy.auto.loading")}</div>
+            )}
+          </div>
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
             <div className="text-[13px] font-bold text-white mb-1">{t("buddy.clientPaths.title")}</div>
             <p className="text-[9px] text-slate-600 mb-3">{t("buddy.clientPaths.hint")}</p>

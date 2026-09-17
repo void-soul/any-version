@@ -4233,6 +4233,8 @@
       "statusInProgress": "进行中",
       "noSessions": "未找到会话（客户端未运行或未创建过会话）",
       "updated": "更新于",
+      "contentMissing": "正文缺失",
+      "contentMissingHint": "本地已找不到该会话的正文目录（可能被清理或未同步到本机）",
       "copyId": "复制会话 ID",
       "deleteTitle": "删除会话（含本地文件）",
       "deleteConfirm": "确定删除会话「{{title}}」？将同时删除其本地会话文件（对话记录、检查点等），不可恢复。",
@@ -4282,6 +4284,7 @@
       "waiting": "当前没有到点需要签到的账号",
       "completed": "本轮签到完成",
       "retry": "部分账号失败，将自动重试",
+      "auth_expired": "存在登录态过期的账号，请刷新令牌后重试",
       "no_accounts": "没有可签到的账号"
     },
     "checkinSuccessCredit": "签到成功，获得 {{credit}} 积分",
@@ -4379,7 +4382,13 @@
     "sortDefault": "最近使用",
     "sortQuota": "剩余额度",
     "sortTime": "时间{n}",
+    "sortExpiry": "最早到期",
+    "primaryToggle": "设为主账号（置顶）",
     "quotaTotal": "总额度",
+    "rotation": {
+      "suggest": "当前账号积分不足，可切换到 {{email}}（剩余 {{remain}}）",
+      "switch": "切换"
+    },
     "overdue": "已过期",
     "editTimeLabels": "编辑时间标签",
     "timeLabel": "时间",
