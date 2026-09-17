@@ -54,6 +54,10 @@ interface NodeProjectDef {
   managed: boolean;
   npxPackage: string;
   npxBin: string;
+  /** pip 包模式：PyPI 包名（如 headroom-ai[proxy]），直接从 PyPI 安装、无需 clone */
+  pipPackage?: string;
+  /** pip 包模式下的 -m 模块路径（如 headroom.cli） */
+  pipModule?: string;
   /// 控制台 URL 提取正则（第 1 捕获组 = 带凭据主页地址）；空 = 不提取。
   consoleUrlPattern: string;
   /// 捕获到控制台 URL 后是否自动用系统浏览器打开。
@@ -687,6 +691,8 @@ function ProjectCard({
   const Icon = ICONS[project.icon] ?? Bot;
   // npx 模式：配置了 npxPackage，安装/升级/启动直接用 npm install --prefix / npx --prefix
   const isNpx = !!project.npxPackage?.trim();
+  // pip 包模式：配置了 pipPackage，直接从 PyPI 安装（无需 clone）
+  const isPip = !!project.pipPackage?.trim();
   // 控制台 URL 模式：服务通过启动输出里打印的带 token 地址访问（iframe 不可用）
   const consoleUrlMode = !!project.consoleUrlPattern?.trim();
   const installed = st?.installed;
@@ -740,6 +746,14 @@ function ProjectCard({
                 npx
               </span>
             )}
+            {isPip && (
+              <span
+                className="px-1.5 py-0.5 rounded-md text-[9px] font-mono font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                title={t("nodeproj.pipBadgeTitle")}
+              >
+                pip
+              </span>
+            )}
             <span
               className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                 portConflict
@@ -789,14 +803,14 @@ function ProjectCard({
 
       {/* 环境检测条 */}
       <div className="px-5 pb-2 flex flex-wrap items-center gap-3 text-[10px]">
-        {!isNpx && <EnvBadge dep={d?.git} label="git" />}
+        {!isNpx && !isPip && <EnvBadge dep={d?.git} label="git" />}
         <EnvBadge
           dep={d?.node}
           label={`${project.runtime === "python" ? "python" : "node"} ${project.nodeRequirement || ""}`.trim()}
         />
         <EnvBadge
           dep={d?.packageManager}
-          label={isNpx ? "npm" : project.packageManager}
+          label={isNpx ? "npm" : isPip ? "pip" : project.packageManager}
         />
         {st?.port && <span className="text-slate-600">{t("nodeproj.portText", { port: st.port })}</span>}
       </div>

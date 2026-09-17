@@ -69,6 +69,18 @@ pub struct NodeProjectDef {
     /// npx 模式下的可执行名；为空时取包名最后一段（`@scope/name` → `name`）。
     #[serde(default)]
     pub npx_bin: String,
+    /// pip 包模式：PyPI 包名（可带 extras，如 `headroom-ai[proxy]`）。非空时改用 pip 流程，
+    /// 无需 git clone：安装/升级 = `pip install [--upgrade] [--target .deps] <包名>`
+    /// （venv 可用时优先装进 .venv，否则复用 .deps 降级方案），
+    /// 启动 = `<python> -m {pip_module} {start_cmd...}`。
+    #[serde(default)]
+    pub pip_package: String,
+    /// pip 包模式下的 `-m` 模块路径（如 `headroom.cli`）。
+    #[serde(default)]
+    pub pip_module: String,
+    /// 启动时注入的环境变量（如 `HEADROOM_BEACON=off`、`HEADROOM_DISABLE_KOMPRESS=1`）。
+    #[serde(default)]
+    pub env: HashMap<String, String>,
     /// 启动后从控制台输出（stdout/stderr）提取「带凭据主页地址」的正则。
     /// 第 1 捕获组 = URL（如 dsh: `"dsh web: (http\\S+)"`）。
     /// 为空表示不提取。适用于启动时在控制台打印带 token 认证地址、
@@ -115,6 +127,16 @@ impl NodeProjectDef {
         self.runtime.trim().eq_ignore_ascii_case("python")
     }
 
+    /// 是否为 pip 包模式（配置了 pipPackage）：直接从 PyPI 安装，无需 git clone。
+    pub fn is_pip_package(&self) -> bool {
+        !self.pip_package.trim().is_empty()
+    }
+
+    /// pip 包模式的安装标记文件（记录已安装的包名，供 installed() 判定）。
+    pub fn pip_marker_path(&self) -> PathBuf {
+        self.managed_dir().join(".pip-package.json")
+    }
+
     /// venv 内的 python 解释器路径（Windows: `.venv/Scripts/python.exe`，其余: `.venv/bin/python`）。
     pub fn venv_python(&self) -> PathBuf {
         self.managed_dir()
@@ -159,10 +181,14 @@ impl NodeProjectDef {
         self.npx_runtime_dir().join(rel).exists()
     }
 
-    /// 判断是否已安装：git 模式看 package.json，npx 模式看 node_modules 里的包。
+    /// 判断是否已安装：git 模式看 package.json；npx 模式看 node_modules 里的包；
+    /// pip 包模式看安装标记 `.pip-package.json`。
     pub fn installed(&self) -> bool {
         if self.is_npx() {
             return self.npx_installed();
+        }
+        if self.is_pip_package() {
+            return self.pip_marker_path().exists();
         }
         let dir = self.managed_dir();
         dir.join("package.json").exists()
@@ -1066,6 +1092,121 @@ fn record_deps_runtime(dir: &Path, program: &str, prefix: &[String]) -> Result<(
     Ok(())
 }
 
+/// 纯函数：pip 安装参数（spec 可带 extras，如 `headroom-ai[proxy]`）。
+/// `target` 为 Some 时走 `--target`（嵌入式 Python 的 .deps 降级方案），否则装进当前环境（venv）。
+pub(crate) fn pip_install_args(spec: &str, target: Option<&str>, upgrade: bool) -> Vec<String> {
+    let mut args = vec!["-m".to_string(), "pip".to_string(), "install".to_string()];
+    if upgrade {
+        args.push("--upgrade".to_string());
+    }
+    if let Some(dir) = target {
+        args.push("--target".to_string());
+        args.push(dir.to_string());
+    }
+    args.push(spec.to_string());
+    args
+}
+
+/// 纯函数：pip 包模式的启动参数 = `-m <module> <startCmd...>`。
+pub(crate) fn pip_launch_args(module: &str, start_cmd: &[String]) -> Vec<String> {
+    let mut args = vec!["-m".to_string(), module.to_string()];
+    args.extend(start_cmd.iter().cloned());
+    args
+}
+
+/// pip 包模式安装/升级：直接从 PyPI 安装（可带 extras），无需 git clone。
+///
+/// 解释器选择复用 [`select_python_runtime`]：支持 venv 就建 `.venv` 装进去（隔离、卸载即删目录）；
+/// 只有嵌入式 Python（无 venv 但有 pip）时降级 `--target .deps`，并把解释器/依赖路径记录给启动侧。
+fn pip_package_install(
+    app: &tauri::AppHandle,
+    def: &NodeProjectDef,
+    dir: &Path,
+    upgrade: bool,
+) -> Result<(), String> {
+    let spec = def.pip_package.trim().to_string();
+    if spec.is_empty() {
+        return Err("该项目未配置 pipPackage".to_string());
+    }
+    fs::create_dir_all(dir).map_err(|e| format!("创建托管目录失败: {}", e))?;
+
+    emit_progress(app, &def.id, "install", "正在检测可用的 Python 解释器…");
+    let probes = probe_python_candidates();
+    match select_python_runtime(&probes) {
+        PythonRuntimePlan::Venv(program, prefix) => {
+            let venv_py = def.venv_python();
+            if !venv_py.exists() {
+                emit_progress(app, &def.id, "install", "正在创建 Python 虚拟环境 (.venv)…");
+                let mut args = prefix.clone();
+                args.extend(["-m".to_string(), "venv".to_string(), ".venv".to_string()]);
+                let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+                let (ok, last_err, _out) = run_capture_live(
+                    app, &def.id, "install", &program, &arg_refs, Some(dir), &[], None,
+                );
+                if !ok {
+                    let msg = last_err.trim();
+                    return Err(format!(
+                        "创建虚拟环境失败: {}",
+                        if msg.is_empty() { "未知错误" } else { msg }
+                    ));
+                }
+            }
+            if !venv_py.exists() {
+                return Err("虚拟环境创建后未找到 python 解释器".to_string());
+            }
+            emit_progress(app, &def.id, "install", &format!("正在 pip install {} …", spec));
+            let py = venv_py.to_string_lossy().to_string();
+            let args = pip_install_args(&spec, None, upgrade);
+            let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            let (ok, last_err, _out) =
+                run_capture_live(app, &def.id, "install", &py, &arg_refs, Some(dir), &[], None);
+            if !ok {
+                let msg = last_err.trim();
+                return Err(format!(
+                    "pip install 失败: {}",
+                    if msg.is_empty() { "未知错误" } else { msg }
+                ));
+            }
+        }
+        PythonRuntimePlan::TargetDeps(program, prefix) => {
+            emit_progress(
+                app,
+                &def.id,
+                "install",
+                &format!(
+                    "当前 Python（{}）不带 venv 模块（常见于嵌入式发行版），改用 .deps 目录安装…",
+                    program
+                ),
+            );
+            let mut args = prefix.clone();
+            args.extend(pip_install_args(&spec, Some(".deps"), upgrade));
+            let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            let (ok, last_err, _out) =
+                run_capture_live(app, &def.id, "install", &program, &arg_refs, Some(dir), &[], None);
+            if !ok {
+                let msg = last_err.trim();
+                return Err(format!(
+                    "pip install 失败: {}",
+                    if msg.is_empty() { "未知错误" } else { msg }
+                ));
+            }
+            record_deps_runtime(dir, &program, &prefix)?;
+        }
+        PythonRuntimePlan::None => {
+            return Err(
+                "未找到支持 venv 或 pip 的 Python。请安装官方 Python 3.8+（python.org），\
+                 或在本应用 SDK 页为托管 Python 执行 install_pip 后重试"
+                    .to_string(),
+            )
+        }
+    }
+
+    let marker = serde_json::json!({ "package": spec });
+    fs::write(def.pip_marker_path(), marker.to_string())
+        .map_err(|e| format!("写入安装标记失败: {}", e))?;
+    Ok(())
+}
+
 /// Python 项目安装。
 ///
 /// 首选 `venv`（隔离、卸载即删目录）；解释器不带 venv 模块时（典型：嵌入式/embeddable
@@ -1364,6 +1505,20 @@ fn npx_install(
 /// 安装前检查依赖是否就绪，并返回 deps 结果用于报错。
 fn ensure_deps_ready(def: &NodeProjectDef) -> Result<DepCheckResult, String> {
     let deps = check_deps(def);
+    // pip 包模式：直接从 PyPI 安装，无需 git（仅需 Python 可用）
+    if def.is_pip_package() {
+        if !deps.node.exists {
+            return Err("未检测到 python，请先安装 Python 3.8+ (https://www.python.org)".to_string());
+        }
+        if !deps.node.satisfies {
+            return Err(format!(
+                "Python 版本 {} 不满足要求 {}，请升级 Python",
+                deps.node.version.as_deref().unwrap_or("未知"),
+                deps.node.requirement.as_deref().unwrap_or("")
+            ));
+        }
+        return Ok(deps);
+    }
     // npx 模式只需 Node（npm/npx 随 Node 提供），无需 git / 独立包管理器
     if def.is_npx() {
         if !deps.node.exists {
@@ -1432,6 +1587,11 @@ pub async fn npm_install(app: tauri::AppHandle, project_id: String) -> Result<()
         return npx_install(&app, &def, false);
     }
 
+    // pip 包模式：直接从 PyPI 安装，无需 git clone
+    if def.is_pip_package() {
+        return pip_package_install(&app, &def, &dir, false);
+    }
+
     emit_progress(&app, &def.id, "clone", &format!("正在克隆 {} …", def.repo));
     let base = crate::commands::config::get_data_dir();
     let parent = dir.parent().unwrap_or(&base);
@@ -1481,6 +1641,11 @@ pub async fn npm_upgrade(app: tauri::AppHandle, project_id: String) -> Result<()
         return npx_install(&app, &def, true);
     }
 
+    // pip 包模式：pip install --upgrade 即更新到最新版
+    if def.is_pip_package() {
+        return pip_package_install(&app, &def, &dir, true);
+    }
+
     emit_progress(&app, &def.id, "pull", "正在拉取最新代码 (git pull)…");
     let (ok, last_err, _out) = run_capture_live(&app, &def.id, "pull", "git", &["pull"], Some(&dir), &[], None);
     if !ok {
@@ -1508,6 +1673,13 @@ pub async fn npm_install_deps(app: tauri::AppHandle, project_id: String) -> Resu
     // npx 模式没有独立依赖步骤：重新安装即拉取最新版
     if def.is_npx() {
         return npx_install(&app, &def, true);
+    }
+
+    // pip 包模式：重装即修复依赖
+    if def.is_pip_package() {
+        pip_package_install(&app, &def, &dir, false)?;
+        emit_progress(&app, &def.id, "done", "依赖安装完成");
+        return Ok(());
     }
     pm_install(&app, &def, &dir)?;
     pm_build(&app, &def, &dir)?;
@@ -1768,11 +1940,23 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
     // .deps 降级模式：基准 python + PYTHONPATH=<托管目录>/.deps（嵌入式 Python 已在安装期补 ._pth）。
     let mut python_extra_env: Option<(String, String)> = None;
     let (prog, args) = if def.is_python() {
+        // pip 包模式：`python -m <pipModule> <startCmd...>`；普通 python 项目：startCmd 直接是 python 参数
+        let pip_module = def.pip_module.trim().to_string();
+        if def.is_pip_package() && pip_module.is_empty() {
+            return Err("pip 包模式需要配置 pipModule（如 headroom.cli）".to_string());
+        }
+        let build_args = |cmd: &[String]| -> Vec<String> {
+            if def.is_pip_package() {
+                pip_launch_args(&pip_module, cmd)
+            } else {
+                cmd.to_vec()
+            }
+        };
         match plan_python_launch(&dir, &def.venv_python()) {
-            PythonLaunchPlan::Venv(py) => (py.to_string_lossy().to_string(), def.start_cmd.clone()),
+            PythonLaunchPlan::Venv(py) => (py.to_string_lossy().to_string(), build_args(&def.start_cmd)),
             PythonLaunchPlan::Deps { program, prefix, deps_dir } => {
                 let mut a = prefix;
-                a.extend(def.start_cmd.iter().cloned());
+                a.extend(build_args(&def.start_cmd));
                 python_extra_env =
                     Some(("PYTHONPATH".to_string(), deps_dir.to_string_lossy().to_string()));
                 (program, a)
@@ -1812,6 +1996,9 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
     cmd.args(&args);
     cmd.current_dir(&runtime_cwd);
     if let Some((key, val)) = &python_extra_env {
+        cmd.env(key, val);
+    }
+    for (key, val) in &def.env {
         cmd.env(key, val);
     }
     cmd.stdin(std::process::Stdio::null());
@@ -2083,7 +2270,8 @@ fn check_deps(def: &NodeProjectDef) -> DepCheckResult {
         pm.name = "pip".to_string();
         pm.requirement = Some("随 python 提供".to_string());
         pm.satisfies = py.exists && py.satisfies;
-        let all_ready = git.exists && py.exists && py.satisfies;
+        // pip 包模式无需 git（直接从 PyPI 安装）
+        let all_ready = py.exists && py.satisfies && (def.is_pip_package() || git.exists);
         return DepCheckResult { git, node: py, package_manager: pm, all_ready };
     }
     let mut node = check_dep("node", &["--version"]);
@@ -2500,6 +2688,9 @@ mod tests {
             npx_bin: String::new(),
             console_url_pattern: String::new(),
             auto_open_console_url: false,
+            pip_package: String::new(),
+            pip_module: String::new(),
+            env: HashMap::new(),
         };
         assert_eq!(def.resolved_web_path(), "http://127.0.0.1:3080");
     }
@@ -2531,6 +2722,9 @@ mod tests {
             npx_bin: bin.into(),
             console_url_pattern: String::new(),
             auto_open_console_url: false,
+            pip_package: String::new(),
+            pip_module: String::new(),
+            env: HashMap::new(),
         }
     }
 
@@ -2720,6 +2914,51 @@ mod tests {
         assert_eq!(def.console_url_pattern, "dsh web: (http\\S+)");
         assert!(def.auto_open_console_url);
         assert!(def.has_console_url_pattern());
+    }
+
+    // ─── pip 包模式（PyPI 直装，无需 clone） ───
+
+    #[test]
+    fn test_pip_install_args_variants() {
+        // 基础：装进当前环境（venv）
+        assert_eq!(
+            pip_install_args("headroom-ai[proxy]", None, false),
+            vec!["-m", "pip", "install", "headroom-ai[proxy]"]
+        );
+        // 升级 + 目标目录（嵌入式 Python 的 .deps 降级）
+        assert_eq!(
+            pip_install_args("headroom-ai[proxy]", Some(".deps"), true),
+            vec!["-m", "pip", "install", "--upgrade", "--target", ".deps", "headroom-ai[proxy]"]
+        );
+    }
+
+    #[test]
+    fn test_pip_launch_args_prepends_module() {
+        let args = pip_launch_args(
+            "headroom.cli",
+            &["proxy", "--port", "8791"].map(String::from),
+        );
+        assert_eq!(args, vec!["-m", "headroom.cli", "proxy", "--port", "8791"]);
+        // 无子命令时也能工作（仅 -m module）
+        assert_eq!(pip_launch_args("pkg.mod", &[]), vec!["-m", "pkg.mod"]);
+    }
+
+    #[test]
+    fn test_headroom_service_def_is_pip_mode() {
+        // 内置 headroom 服务项必须是 pip 包模式，且启动命令/端口自洽
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../node-projects/headroom.json");
+        let raw = fs::read_to_string(&path).expect("headroom.json 读取失败");
+        let def: NodeProjectDef = serde_json::from_str(&raw).expect("headroom.json 解析失败");
+        assert!(def.is_pip_package(), "headroom 服务项应配置 pipPackage");
+        assert_eq!(def.runtime, "python");
+        assert_eq!(def.pip_module, "headroom.cli");
+        assert!(
+            def.start_cmd.iter().any(|a| a == &def.default_port.to_string()),
+            "startCmd 里的端口应与 defaultPort 一致"
+        );
+        assert!(def.start_cmd.first().map(|s| s.as_str()) == Some("proxy"));
+        // 默认关闭匿名遥测（隐私）；文本压缩开关由 AI 设置页控制
+        assert_eq!(def.env.get("HEADROOM_BEACON").map(String::as_str), Some("off"));
     }
 
     // ─── Python 运行时选择（venv 探测 / .deps 降级） ───
