@@ -258,6 +258,12 @@ export default function LauncherPanel() {
   const [classifications, setClassifications] = useState<Classification[]>([]);
   const [activeParentId, setActiveParentId] = useState<number | null>(null);
   const [allItems, setAllItems] = useState<Item[]>([]);
+  // 拖拽落地时要用「最新一次 applyMoveLocal 之后」的完整列表计算序号，
+  // 渲染闭包可能不是最新的，这里维护一份随渲染同步的引用。
+  const allItemsRef = useRef<Item[]>([]);
+  useEffect(() => {
+    allItemsRef.current = allItems;
+  }, [allItems]);
 
   // Search state (Figure 2: Unified Search)
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -870,35 +876,68 @@ export default function LauncherPanel() {
   };
 
   // 拖拽结束后把最终位置持久化到后端（保存分类 + 重排序号）
-  const persistMoveAfterDrag = async (dragItem: Item, targetCatId: number, insertBeforeId: number | null) => {
+  // sourceCatId 必须由 handleDragEnd 在清空 dragSourceCatIdRef 之前传入：
+  // 渲染闭包里 dragItem.classificationId 已经是「移动后」的分类，若在此处回退读取，
+  // sourceId 会永远等于 targetCatId，跨分类移动时项目的 classification_id 就写不进数据库，
+  // 重新打开后项目会跳回原分组。
+  const persistMoveAfterDrag = async (
+    dragItem: Item,
+    targetCatId: number,
+    insertBeforeId: number | null,
+    sourceCatId: number | null
+  ) => {
     try {
-      const sourceId = dragSourceCatIdRef.current ?? dragItem.classificationId;
-      const targetItems = itemsByClassification.get(targetCatId) || [];
-      const newTarget =
-        insertBeforeId === null
-          ? [...targetItems.filter((it) => it.id !== dragItem.id), dragItem]
-          : (() => {
-              const withoutDrag = targetItems.filter((it) => it.id !== dragItem.id);
-              const idx = withoutDrag.findIndex((it) => it.id === insertBeforeId);
-              return idx === -1
-                ? [...withoutDrag, dragItem]
-                : [...withoutDrag.slice(0, idx), dragItem, ...withoutDrag.slice(idx)];
-            })();
+      const sourceId = sourceCatId ?? dragItem.classificationId;
+      // 必须用完整列表（含被「只显示有效项目」隐藏的项）重排序号：
+      // 只用可见项会让隐藏项保留旧序号并与新序号冲突，重新打开后顺序错乱。
+      const fullList = allItemsRef.current;
+      const targetItems = fullList.filter((it) => it.classificationId === targetCatId);
+      const withoutDrag = targetItems.filter((it) => it.id !== dragItem.id);
+      const idxBefore =
+        insertBeforeId === null ? -1 : withoutDrag.findIndex((it) => it.id === insertBeforeId);
+      const newTarget: Item[] =
+        idxBefore === -1
+          ? [...withoutDrag, dragItem]
+          : [...withoutDrag.slice(0, idxBefore), dragItem, ...withoutDrag.slice(idxBefore)];
+
+      const orderMap = new Map<number, number>();
+      const collect = (list: Item[]) => {
+        const orders: [number, number][] = [];
+        list.forEach((it, i) => {
+          orders.push([it.id, i]);
+          orderMap.set(it.id, i);
+        });
+        return orders;
+      };
 
       if (sourceId !== targetCatId) {
-        // 跨分类：保存被拖项（新分类 + 新序号），再重排目标分类与源分类其余项
-        const moved = newTarget.find((it) => it.id === dragItem.id);
-        if (moved) await invoke("launcher_save_item", { item: { ...moved, classificationId: targetCatId } });
-        const orders: [number, number][] = newTarget.map((it, i) => [it.id, i]);
+        // 跨分类：先写入新分类（含新序号），再重排目标分类与源分类
+        const movedIdx = newTarget.findIndex((it) => it.id === dragItem.id);
+        const moved = newTarget[movedIdx];
+        if (moved) {
+          await invoke("launcher_save_item", {
+            item: { ...moved, order: movedIdx, classificationId: targetCatId },
+          });
+        }
+        const orders = collect(newTarget);
         if (orders.length > 0) await invoke("launcher_reorder_items", { orders });
-        const sourceItems = (itemsByClassification.get(sourceId) || []).filter((it) => it.id !== dragItem.id);
+        const sourceItems = fullList.filter(
+          (it) => it.classificationId === sourceId && it.id !== dragItem.id
+        );
         if (sourceItems.length > 0) {
-          await invoke("launcher_reorder_items", { orders: sourceItems.map((it, i) => [it.id, i]) });
+          await invoke("launcher_reorder_items", { orders: collect(sourceItems) });
         }
       } else {
         // 同分类排序：整体重排
-        const orders: [number, number][] = newTarget.map((it, i) => [it.id, i]);
+        const orders = collect(newTarget);
         if (orders.length > 0) await invoke("launcher_reorder_items", { orders });
+      }
+
+      // 同步本地 order，避免后续保存（编辑 / 检测）把旧序号写回数据库导致顺序回退
+      if (orderMap.size > 0) {
+        setAllItems((prev) =>
+          prev.map((it) => (orderMap.has(it.id) ? { ...it, order: orderMap.get(it.id)! } : it))
+        );
       }
     } catch (err) {
       showToast(t("launcher.saveOrderFail", { err: String(err) }));
@@ -948,6 +987,8 @@ export default function LauncherPanel() {
 
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
+    // 先取到拖拽开始时的源分类，再清空 ref（persistMoveAfterDrag 依赖它判断跨分类）
+    const sourceCatId = dragSourceCatIdRef.current;
     setActiveDragItem(null);
     draggingItemRef.current = null;
     dragSourceCatIdRef.current = null;
@@ -976,7 +1017,11 @@ export default function LauncherPanel() {
     // 拖到左栏大分类：切过去让用户立即看到结果
     if (overId.startsWith("sidebar:")) setActiveParentId(targetCatId);
 
-    await persistMoveAfterDrag(activeItem, targetCatId, insertBeforeId);
+    // 同分组内拖到分组空白处：applyMoveLocal 会保持原位不移动，
+    // 此时不应把项目重排到分组末尾，否则重新打开会发现项目被挪到最后。
+    if (sourceCatId !== null && sourceCatId === targetCatId && insertBeforeId === null) return;
+
+    await persistMoveAfterDrag(activeItem, targetCatId, insertBeforeId, sourceCatId);
   };
 
   const handleDragCancel = () => {

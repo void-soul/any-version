@@ -340,7 +340,7 @@ pub fn list_items_by_classification(cls_id: i64) -> Result<Vec<Item>, String> {
             "SELECT id, classification_id, name, item_type, data, shortcut_key, global_shortcut_key, sort_order, open_number, last_open
              FROM launcher_item
              WHERE classification_id = ?1
-             ORDER BY sort_order ASC"
+             ORDER BY sort_order ASC, id ASC"
         ).map_err(|e| e.to_string())?;
 
         let rows = stmt.query_map([cls_id], |row| {
@@ -387,7 +387,7 @@ pub fn list_all_items() -> Result<Vec<Item>, String> {
         let mut stmt = conn.prepare(
             "SELECT id, classification_id, name, item_type, data, shortcut_key, global_shortcut_key, sort_order, open_number, last_open
              FROM launcher_item
-             ORDER BY sort_order ASC"
+             ORDER BY sort_order ASC, id ASC"
         ).map_err(|e| e.to_string())?;
 
         let rows = stmt.query_map([], |row| {
@@ -590,10 +590,12 @@ pub fn reorder_items(orders: Vec<(i64, i32)>) -> Result<(), String> {
     with_conn(|conn| {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         for (id, sort_order) in orders {
+            // 不能吞掉错误：序号写失败必须让前端弹出「保存排序失败」，否则会表现为
+            // 「拖完看着生效了，重新打开又变回原样」。
             tx.execute(
                 "UPDATE launcher_item SET sort_order = ?1 WHERE id = ?2",
                 params![sort_order, id],
-            ).ok();
+            ).map_err(|e| format!("更新项目排序失败: {}", e))?;
         }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(())
