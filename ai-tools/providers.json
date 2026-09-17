@@ -425,7 +425,7 @@
   {
     "id": "free-router",
     "name": "Free Router 本地免费池",
-    "category": "relay",
+    "category": "local",
     "website": "https://github.com/www222fff/free-router-proxy",
     "openaiUrl": "http://127.0.0.1:8787/v1",
     "anthropicUrl": "",
@@ -434,10 +434,109 @@
   {
     "id": "workbuddy2api",
     "name": "WorkBuddy2API 本地转换",
-    "category": "relay",
+    "category": "local",
     "website": "https://github.com/ShouZhuo0413/codebuddy2openai",
     "openaiUrl": "http://127.0.0.1:8788/v1",
     "anthropicUrl": "http://127.0.0.1:8788",
+    "googleUrl": ""
+  },
+  {
+    "id": "ollama",
+    "name": "Ollama 本地",
+    "category": "local",
+    "website": "https://ollama.com",
+    "openaiUrl": "http://127.0.0.1:11434/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "lmstudio",
+    "name": "LM Studio 本地",
+    "category": "local",
+    "website": "https://lmstudio.ai",
+    "openaiUrl": "http://127.0.0.1:1234/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "spark",
+    "name": "讯飞星火",
+    "category": "provider",
+    "website": "https://xinghuo.xfyun.cn",
+    "openaiUrl": "https://spark-api-open.xf-yun.com/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "lingyi",
+    "name": "零一万物",
+    "category": "provider",
+    "website": "https://www.lingyiwanwu.com",
+    "openaiUrl": "https://api.lingyiwanwu.com/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "baichuan",
+    "name": "百川智能",
+    "category": "provider",
+    "website": "https://www.baichuan-ai.com",
+    "openaiUrl": "https://api.baichuan-ai.com/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "modelscope",
+    "name": "ModelScope 魔搭",
+    "category": "provider",
+    "website": "https://modelscope.cn",
+    "openaiUrl": "https://api-inference.modelscope.cn/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "fireworks",
+    "name": "Fireworks AI",
+    "category": "provider",
+    "website": "https://fireworks.ai",
+    "openaiUrl": "https://api.fireworks.ai/inference/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "cerebras",
+    "name": "Cerebras",
+    "category": "provider",
+    "website": "https://www.cerebras.ai",
+    "openaiUrl": "https://api.cerebras.ai/v1",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "deepinfra",
+    "name": "DeepInfra",
+    "category": "provider",
+    "website": "https://deepinfra.com",
+    "openaiUrl": "https://api.deepinfra.com/v1/openai",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "novita",
+    "name": "Novita AI",
+    "category": "provider",
+    "website": "https://novita.ai",
+    "openaiUrl": "https://api.novita.ai/v3/openai",
+    "anthropicUrl": "",
+    "googleUrl": ""
+  },
+  {
+    "id": "sambanova",
+    "name": "SambaNova",
+    "category": "provider",
+    "website": "https://sambanova.ai",
+    "openaiUrl": "https://api.sambanova.ai/v1",
+    "anthropicUrl": "",
     "googleUrl": ""
   }
 ]

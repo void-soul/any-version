@@ -28,8 +28,18 @@ pub(crate) fn load_ai_config() -> AiConfig {
         if let Ok(data) = fs::read_to_string(&path) {
             // AiProvider 的自定义 Deserialize 已内置迁移逻辑：
             // 自动将旧版 protocols HashMap / 旧版扁平字段转换为新版扁平 URL 结构。
-            if let Ok(config) = serde_json::from_str::<AiConfig>(&data) {
+            if let Ok(mut config) = serde_json::from_str::<AiConfig>(&data) {
                 let mut save_needed = false;
+                // 预设分类同步：providers.json 里某预设改了 category（如 free-router /
+                // workbuddy2api → local）后，已保存供应商仍存着旧分类，这里自动跟随，
+                // 避免列表徽标与预设库不一致。仅同步与预设 id 完全一致的条目。
+                {
+                    let presets = crate::commands::ai_registry::registry().providers();
+                    if sync_provider_categories(&mut config.providers, presets) {
+                        save_needed = true;
+                        eprintln!("[config] 已按预设同步供应商分类");
+                    }
+                }
                 // 检测是否需要迁移（旧格式 → 新格式），若需要则回写
                 if let Ok(raw) = serde_json::from_str::<serde_json::Value>(&data) {
                     let needs_migrate = raw.get("providers")
@@ -77,6 +87,24 @@ pub(crate) fn load_ai_config() -> AiConfig {
 pub(crate) fn save_ai_config_to_file(config: &AiConfig) -> Result<(), String> {
     let data = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
     crate::commands::config::atomic_write_file(&ai_config_path(), data.as_bytes())
+}
+
+/// 把已保存供应商的 category 与预设同步（仅 id 与预设完全一致的条目）。
+/// 返回是否发生变更。
+pub(crate) fn sync_provider_categories(
+    providers: &mut [crate::commands::ai::models::AiProvider],
+    presets: &[crate::commands::ai_registry::ProviderPreset],
+) -> bool {
+    let mut changed = false;
+    for provider in providers.iter_mut() {
+        if let Some(preset) = presets.iter().find(|x| x.id == provider.id) {
+            if provider.category != preset.category {
+                provider.category = preset.category.clone();
+                changed = true;
+            }
+        }
+    }
+    changed
 }
 
 pub(crate) fn load_sessions() -> AiSessionsFile {
@@ -217,6 +245,51 @@ pub fn save_last_launch_config(tool_id: String, config: LastLaunchConfig) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_sync_provider_categories_follows_presets() {
+        use crate::commands::ai::models::{AiProvider, ModelEntry};
+        use crate::commands::ai_registry::ProviderPreset;
+
+        let preset = |id: &str, category: &str| ProviderPreset {
+            id: id.to_string(),
+            name: id.to_string(),
+            category: category.to_string(),
+            website: String::new(),
+            openai_url: "http://127.0.0.1:1/v1".to_string(),
+            anthropic_url: String::new(),
+            google_url: String::new(),
+        };
+        let presets = vec![
+            preset("free-router", "local"),
+            preset("openai", "provider"),
+        ];
+        let provider = |id: &str, category: &str| AiProvider {
+            id: id.to_string(),
+            name: id.to_string(),
+            category: category.to_string(),
+            api_key: String::new(),
+            website: String::new(),
+            openai_url: String::new(),
+            anthropic_url: String::new(),
+            google_url: String::new(),
+            models: Vec::<ModelEntry>::new(),
+            active_model_id: None,
+        };
+
+        let mut providers = vec![
+            provider("free-router", "relay"), // 旧分类 → 应同步为 local
+            provider("openai", "provider"),   // 一致 → 不变
+            provider("custom_abc", "relay"),  // 自定义（无预设）→ 不动
+        ];
+        assert!(sync_provider_categories(&mut providers, &presets));
+        assert_eq!(providers[0].category, "local");
+        assert_eq!(providers[1].category, "provider");
+        assert_eq!(providers[2].category, "relay");
+
+        // 已一致时不再产生变更
+        assert!(!sync_provider_categories(&mut providers, &presets));
+    }
 
     #[test]
     fn test_migrate_old_provider_json() {

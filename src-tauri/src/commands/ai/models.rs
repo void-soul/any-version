@@ -116,7 +116,7 @@ pub struct ProtocolConfig {
 pub struct AiProvider {
     pub id: String,
     pub name: String,
-    pub category: String, // "provider" | "relay"
+    pub category: String, // "provider" | "relay" | "local"
     pub api_key: String,
     pub website: String,
     /// OpenAI 协议端点 URL（空 = 不支持 OpenAI 协议）
