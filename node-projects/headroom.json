@@ -6,6 +6,7 @@
   "icon": "boxes",
   "runtime": "python",
   "pipPackage": "headroom-ai[proxy]",
+  "pipExtraPackages": ["pywin32; sys_platform == 'win32'"],
   "pipModule": "headroom.cli",
   "description": "本地 LLM 上下文压缩服务（Apache-2.0）：把工具输出/日志/JSON/代码在发给模型前压缩，token 节省通常 60%~95%，原文可经 CCR 取回。默认端口 8791（避开 Free Router 8787 / WorkBuddy2API 8788）。启动参数可加 --stateless 不落盘；HEADROOM_DISABLE_KOMPRESS=1 关闭文本 ML 压缩（免 ~600MB 模型下载，仅保留结构化压缩）；Windows 若报 onnxruntime 初始化失败可设置 ORT_DYLIB_PATH。AI 模块的「Headroom 压缩」开关会探活本服务。",
   "defaultPort": 8791,

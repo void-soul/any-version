@@ -75,6 +75,11 @@ pub struct NodeProjectDef {
     /// 启动 = `<python> -m {pip_module} {start_cmd...}`。
     #[serde(default)]
     pub pip_package: String,
+    /// pip 包模式的附加依赖（随主包一次 pip install）。
+    /// 典型：headroom 的 proxy 在 Windows 依赖 pywintypes（pywin32），
+    /// 但 `headroom-ai[proxy]` extra 未声明该 Windows 依赖，需在此补装。
+    #[serde(default)]
+    pub pip_extra_packages: Vec<String>,
     /// pip 包模式下的 `-m` 模块路径（如 `headroom.cli`）。
     #[serde(default)]
     pub pip_module: String,
@@ -182,15 +187,28 @@ impl NodeProjectDef {
     }
 
     /// 判断是否已安装：git 模式看 package.json；npx 模式看 node_modules 里的包；
-    /// pip 包模式看安装标记 `.pip-package.json`。
+    /// pip 包模式看安装标记 `.pip-package.json`；Python git 项目看 .venv / .deps 运行时。
     pub fn installed(&self) -> bool {
+        self.installed_in(&self.managed_dir())
+    }
+
+    /// [`Self::installed`] 的可注入目录版本（便于测试）。
+    pub(crate) fn installed_in(&self, dir: &Path) -> bool {
         if self.is_npx() {
             return self.npx_installed();
         }
         if self.is_pip_package() {
             return self.pip_marker_path().exists();
         }
-        let dir = self.managed_dir();
+        if self.is_python() {
+            // Python 项目没有 package.json：venv 解释器或 .deps 运行时标记（Q-0100 降级方案）
+            // 任一存在即视为已安装。
+            let venv_py = dir
+                .join(".venv")
+                .join(if cfg!(windows) { "Scripts" } else { "bin" })
+                .join(if cfg!(windows) { "python.exe" } else { "python" });
+            return venv_py.exists() || dir.join(".deps").join(".python-runtime.json").exists();
+        }
         dir.join("package.json").exists()
     }
 }
@@ -583,6 +601,47 @@ fn clear_console_url(project_id: &str) {
     }
 }
 
+/// 逐行读取子进程输出流（**按字节、lossy 解码**）。
+///
+/// 禁止用 `BufRead::lines()`：它按 UTF-8 解码，Windows 上子进程往管道写
+/// locale 编码（GBK）时，中文/emoji 是非法 UTF-8 字节 → `lines()` 返回 Err →
+/// reader 线程静默退出并关闭管道读端 → 子进程写 stderr 变 broken pipe →
+/// 退出时 flush 失败（**exit code 120**）且尾部日志全部丢失。
+/// 字节读取 + `from_utf8_lossy` 永不因编码断流。
+fn read_child_stream<R: std::io::Read>(
+    stream: &mut R,
+    app: &tauri::AppHandle,
+    project_id: &str,
+    level: &str,
+    pattern: &str,
+    auto_open: bool,
+) {
+    use std::io::{BufRead, BufReader};
+    let mut reader = BufReader::new(stream);
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        buf.clear();
+        match reader.read_until(b'\n', &mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {
+                let line = String::from_utf8_lossy(&buf);
+                let line = line.trim_end_matches(['\r', '\n']);
+                maybe_capture_console_url(app, project_id, pattern, auto_open, line);
+                emit_log(app, project_id, level, line);
+            }
+        }
+    }
+}
+
+/// Python 启动参数统一加 `-X utf8`：让子进程的 stdio 强制 UTF-8，
+/// 否则 Windows 管道默认 locale 编码（GBK），日志在 Rust 侧显示为乱码。
+/// （嵌入式 Python 的 ._pth 隔离模式忽略 PYTHONUTF8 等环境变量，只能用 -X。）
+pub(crate) fn with_utf8_flag(mut args: Vec<String>) -> Vec<String> {
+    let mut out = vec!["-X".to_string(), "utf8".to_string()];
+    out.append(&mut args);
+    out
+}
+
 /// 在控制台输出行中提取捕获组 URL；无 pattern 或不匹配返回 None。
 fn extract_console_url(pattern: &str, line: &str) -> Option<String> {
     let re = regex::Regex::new(pattern).ok()?;
@@ -620,15 +679,22 @@ fn maybe_capture_console_url(
     }
 }
 
-/// 用系统默认浏览器打开 URL（explorer 优先，cmd start 兜底）。
+/// 用系统默认浏览器打开 URL。
+///
+/// Windows 上**不要**用 `explorer.exe <url>`：explorer 对带 query（如 `?token=...`）
+/// 的 URL 处理不可靠，常退化成打开「此电脑」/资源管理器。首选 `rundll32 url.dll,
+/// FileProtocolHandler`（无窗口、URL 语义交给默认浏览器），回退 `cmd /c start`。
 fn open_url_in_browser(url: &str) {
-    if let Some(path) = find_in_path("explorer") {
-        let _ = std::process::Command::new(path).arg(url).spawn();
-        return;
-    }
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
+        if let Some(rundll) = find_in_path("rundll32") {
+            let _ = std::process::Command::new(rundll)
+                .args(["url.dll,FileProtocolHandler", url])
+                .creation_flags(0x08000000)
+                .spawn();
+            return;
+        }
         let mut c = std::process::Command::new("cmd");
         c.creation_flags(0x08000000);
         let _ = c.args(&["/c", "start", "", url]).spawn();
@@ -1045,10 +1111,36 @@ pub(crate) fn plan_python_launch(managed_dir: &Path, venv_python: &Path) -> Pyth
     }
 }
 
+/// `.deps` 模式下 `--target` 安装的 pywin32 需要显式加入 sys.path 的子目录：
+/// 模块在 `win32/`（pywintypes 等）与 `win32/lib/`，DLL 在 `pywin32_system32/`，
+/// 都不在 `.deps` 顶层，裸 PYTHONPATH=.deps 导入不了 pywintypes。
+/// 只返回真实存在的子目录（未安装 pywin32 的项目返回空）。
+pub(crate) fn pywin32_deps_dirs(deps_dir: &Path) -> Vec<PathBuf> {
+    ["win32", "win32/lib", "pywin32_system32"]
+        .iter()
+        .map(|rel| deps_dir.join(rel))
+        .filter(|p| p.exists())
+        .collect()
+}
+
+/// `.deps` 模式启动的 PYTHONPATH（纯函数，便于测试）：
+/// .deps（pip --target 依赖）+ 项目源码目录（`-m core.converter` 的包所在，
+/// 嵌入式 Python 不会自动把 cwd 加进 sys.path）+ pywin32 子目录。
+pub(crate) fn deps_pythonpath(project_dir: &Path, deps_dir: &Path) -> String {
+    let mut paths = vec![deps_dir.to_path_buf(), project_dir.to_path_buf()];
+    paths.extend(pywin32_deps_dirs(deps_dir));
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    paths
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join(sep)
+}
+
 /// 嵌入式 Python（带 `*._pth`）会忽略 PYTHONPATH；
-/// 把 .deps 绝对路径追加进 `._pth` 才能让它 import 到降级安装的依赖。
+/// 把 .deps / 项目源码目录 / pywin32 子目录追加进 `._pth` 才能让它 import。
 /// 只在解释器目录存在 `*._pth` 时生效（官方完整安装没有这个文件，走 PYTHONPATH 即可）。
-fn append_deps_to_embeddable_pth(interpreter: &str, deps_dir: &Path) {
+fn append_deps_to_embeddable_pth(interpreter: &str, deps_dir: &Path, project_dir: Option<&Path>) {
     let path = Path::new(interpreter);
     let Some(dir) = path.parent() else {
         return;
@@ -1064,22 +1156,34 @@ fn append_deps_to_embeddable_pth(interpreter: &str, deps_dir: &Path) {
         let Ok(content) = fs::read_to_string(entry.path()) else {
             continue;
         };
-        let deps_line = deps_dir.to_string_lossy().to_string();
-        if content.lines().any(|l| l.trim().eq_ignore_ascii_case(&deps_line)) {
-            return; // 已追加过
+        let mut lines: Vec<String> = Vec::new();
+        lines.push(deps_dir.to_string_lossy().to_string());
+        if let Some(pd) = project_dir {
+            if pd != deps_dir {
+                lines.push(pd.to_string_lossy().to_string());
+            }
         }
+        lines.extend(pywin32_deps_dirs(deps_dir).into_iter().map(|p| p.to_string_lossy().to_string()));
+        // 已全部追加过则不动
+        if lines.iter().all(|l| content.lines().any(|x| x.trim().eq_ignore_ascii_case(l))) {
+            return;
+        }
+        lines.retain(|l| !content.lines().any(|x| x.trim().eq_ignore_ascii_case(l)));
         let mut out = content.clone();
         if !out.ends_with('\n') {
             out.push_str("\r\n");
         }
-        out.push_str(&deps_line);
+        for l in &lines {
+            out.push_str(l);
+            out.push_str("\r\n");
+        }
         let _ = fs::write(entry.path(), out);
-        eprintln!("[node_manager] 已把 .deps 追加到 {}（嵌入式 Python 依赖可见性）", entry.path().display());
+        eprintln!("[node_manager] 已把 .deps（含项目目录/pywin32 子目录）追加到 {}（嵌入式 Python 依赖可见性）", entry.path().display());
         return;
     }
 }
 
-/// 把降级方案写盘：marker（启动时读回）+ 嵌入式 ._pth 追加。
+/// 把降级方案写盘：marker（启动时读回）+ 嵌入式 ._pth 追加（.deps + 项目源码目录 + pywin32 子目录）。
 fn record_deps_runtime(dir: &Path, program: &str, prefix: &[String]) -> Result<(), String> {
     let deps = dir.join(".deps");
     let resolved = find_in_path(program)
@@ -1088,13 +1192,14 @@ fn record_deps_runtime(dir: &Path, program: &str, prefix: &[String]) -> Result<(
     let marker = serde_json::json!({ "program": resolved, "prefix": prefix });
     fs::write(deps.join(".python-runtime.json"), marker.to_string())
         .map_err(|e| format!("写入 .deps 运行时标记失败: {}", e))?;
-    append_deps_to_embeddable_pth(&resolved, &deps);
+    append_deps_to_embeddable_pth(&resolved, &deps, Some(dir));
     Ok(())
 }
 
 /// 纯函数：pip 安装参数（spec 可带 extras，如 `headroom-ai[proxy]`）。
+/// `extras` 为项目声明的附加依赖（如 pywin32），与主包同一条命令安装，保证环境一致。
 /// `target` 为 Some 时走 `--target`（嵌入式 Python 的 .deps 降级方案），否则装进当前环境（venv）。
-pub(crate) fn pip_install_args(spec: &str, target: Option<&str>, upgrade: bool) -> Vec<String> {
+pub(crate) fn pip_install_args(spec: &str, extras: &[String], target: Option<&str>, upgrade: bool) -> Vec<String> {
     let mut args = vec!["-m".to_string(), "pip".to_string(), "install".to_string()];
     if upgrade {
         args.push("--upgrade".to_string());
@@ -1104,6 +1209,7 @@ pub(crate) fn pip_install_args(spec: &str, target: Option<&str>, upgrade: bool) 
         args.push(dir.to_string());
     }
     args.push(spec.to_string());
+    args.extend(extras.iter().filter(|s| !s.trim().is_empty()).cloned());
     args
 }
 
@@ -1156,7 +1262,7 @@ fn pip_package_install(
             }
             emit_progress(app, &def.id, "install", &format!("正在 pip install {} …", spec));
             let py = venv_py.to_string_lossy().to_string();
-            let args = pip_install_args(&spec, None, upgrade);
+            let args = pip_install_args(&spec, &def.pip_extra_packages, None, upgrade);
             let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
             let (ok, last_err, _out) =
                 run_capture_live(app, &def.id, "install", &py, &arg_refs, Some(dir), &[], None);
@@ -1179,7 +1285,7 @@ fn pip_package_install(
                 ),
             );
             let mut args = prefix.clone();
-            args.extend(pip_install_args(&spec, Some(".deps"), upgrade));
+            args.extend(pip_install_args(&spec, &def.pip_extra_packages, Some(".deps"), upgrade));
             let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
             let (ok, last_err, _out) =
                 run_capture_live(app, &def.id, "install", &program, &arg_refs, Some(dir), &[], None);
@@ -1938,7 +2044,7 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
     // 组装启动命令：git 模式 `pnpm dsh web`；npx 模式 `npx -y --prefix <托管目录> <bin> <args...>`；
     // python 模式 `.venv 内 python <startCmd...>`（startCmd 即 python 参数，如 `-m core.converter`）；
     // .deps 降级模式：基准 python + PYTHONPATH=<托管目录>/.deps（嵌入式 Python 已在安装期补 ._pth）。
-    let mut python_extra_env: Option<(String, String)> = None;
+    let mut python_extra_env: Vec<(String, String)> = Vec::new();
     let (prog, args) = if def.is_python() {
         // pip 包模式：`python -m <pipModule> <startCmd...>`；普通 python 项目：startCmd 直接是 python 参数
         let pip_module = def.pip_module.trim().to_string();
@@ -1946,19 +2052,35 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
             return Err("pip 包模式需要配置 pipModule（如 headroom.cli）".to_string());
         }
         let build_args = |cmd: &[String]| -> Vec<String> {
-            if def.is_pip_package() {
+            let inner = if def.is_pip_package() {
                 pip_launch_args(&pip_module, cmd)
             } else {
                 cmd.to_vec()
-            }
+            };
+            with_utf8_flag(inner)
         };
         match plan_python_launch(&dir, &def.venv_python()) {
             PythonLaunchPlan::Venv(py) => (py.to_string_lossy().to_string(), build_args(&def.start_cmd)),
             PythonLaunchPlan::Deps { program, prefix, deps_dir } => {
                 let mut a = prefix;
                 a.extend(build_args(&def.start_cmd));
-                python_extra_env =
-                    Some(("PYTHONPATH".to_string(), deps_dir.to_string_lossy().to_string()));
+                // PYTHONPATH = .deps + 项目源码目录（`-m core.converter` 的 core 包在托管目录，
+                // 嵌入式 Python 的 ._pth 锁死 sys.path 且不自动加 cwd，必须显式给出）
+                // + pywin32 子目录（--target 安装的 pywin32 把模块放在 win32/ 与
+                // pywin32_system32/ 下，不在 .deps 顶层）。
+                python_extra_env.push(("PYTHONPATH".to_string(), deps_pythonpath(&dir, &deps_dir)));
+                // pywintypes 的 DLL 依赖需要 pywin32_system32 进入 DLL 搜索路径（PATH）
+                if let Some(sys32) = pywin32_deps_dirs(&deps_dir)
+                    .into_iter()
+                    .find(|p| p.file_name().map(|n| n == "pywin32_system32").unwrap_or(false))
+                {
+                    let mut path_val = sys32.to_string_lossy().to_string();
+                    if let Some(existing) = std::env::var_os("PATH") {
+                        path_val.push_str(";");
+                        path_val.push_str(&existing.to_string_lossy());
+                    }
+                    python_extra_env.push(("PATH".to_string(), path_val));
+                }
                 (program, a)
             }
             PythonLaunchPlan::Missing => {
@@ -1995,7 +2117,7 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
     let mut cmd = hidden_cmd(&prog);
     cmd.args(&args);
     cmd.current_dir(&runtime_cwd);
-    if let Some((key, val)) = &python_extra_env {
+    for (key, val) in &python_extra_env {
         cmd.env(key, val);
     }
     for (key, val) in &def.env {
@@ -2016,33 +2138,37 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
     // 配置了 consoleUrlPattern 的项目，同时在输出行中提取带凭据主页地址：
     // 捕获到新地址（以最后一次输出为准）时记录、通知前端，并按配置自动打开。
     emit_progress(&app, &def.id, "start", &format!("启动命令: {}", def.start_cmd.join(" ")));
+    // 诊断：把实际命令行与关键 env 打进日志（排查「无输出退出」时能看到真实启动形态）
+    {
+        let pypp = python_extra_env
+            .iter()
+            .find(|(k, _)| k == "PYTHONPATH")
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default();
+        emit_log(&app, &def.id, "stdout", &format!("$ {} {}", prog, args.join(" ")));
+        emit_log(&app, &def.id, "stdout", &format!("  cwd: {}", runtime_cwd.display()));
+        if !pypp.is_empty() {
+            emit_log(&app, &def.id, "stdout", &format!("  PYTHONPATH: {}", pypp));
+        }
+    }
+    let mut readers: Vec<std::thread::JoinHandle<()>> = Vec::new();
     let app_out = app.clone();
     let pid_out = def.id.clone();
     let pattern_out = def.console_url_pattern.clone();
     let auto_open_out = def.auto_open_console_url;
     if let Some(mut so) = child.stdout.take() {
-        std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader};
-            let reader = BufReader::new(&mut so);
-            for line in reader.lines().map_while(|l| l.ok()) {
-                maybe_capture_console_url(&app_out, &pid_out, &pattern_out, auto_open_out, &line);
-                emit_log(&app_out, &pid_out, "stdout", &line);
-            }
-        });
+        readers.push(std::thread::spawn(move || {
+            read_child_stream(&mut so, &app_out, &pid_out, "stdout", &pattern_out, auto_open_out);
+        }));
     }
     let app_err = app.clone();
     let pid_err = def.id.clone();
     let pattern_err = def.console_url_pattern.clone();
     let auto_open_err = def.auto_open_console_url;
     if let Some(mut se) = child.stderr.take() {
-        std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader};
-            let reader = BufReader::new(&mut se);
-            for line in reader.lines().map_while(|l| l.ok()) {
-                maybe_capture_console_url(&app_err, &pid_err, &pattern_err, auto_open_err, &line);
-                emit_log(&app_err, &pid_err, "stderr", &line);
-            }
-        });
+        readers.push(std::thread::spawn(move || {
+            read_child_stream(&mut se, &app_err, &pid_err, "stderr", &pattern_err, auto_open_err);
+        }));
     }
 
     // 等待端口就绪（最多 120s，异步等待，不阻塞 UI）。
@@ -2056,11 +2182,24 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
             return Ok(());
         }
         // 进程已退出且端口未就绪 → 启动失败
-        if let Ok(Some(_status)) = child.try_wait() {
-            emit_log(&app, &def.id, "stderr", &format!("启动进程已退出（端口 {} 未就绪）", def.default_port));
+        if let Ok(Some(status)) = child.try_wait() {
+            let code_desc = status
+                .code()
+                .map(|c| format!("exit code {c}"))
+                .unwrap_or_else(|| format!("{status:?}"));
+            emit_log(
+                &app,
+                &def.id,
+                "stderr",
+                &format!("启动进程已退出（端口 {} 未就绪，{}）", def.default_port, code_desc),
+            );
+            // 等 reader 线程读到 EOF 并把尾部日志发到前端，避免「退出即失败、日志丢失」
+            for h in readers.drain(..) {
+                let _ = h.join();
+            }
             return Err(format!(
-                "启动进程已退出，端口 {} 未就绪。请查看下方日志确认报错",
-                def.default_port
+                "启动进程已退出，端口 {} 未就绪（{}）。请查看上方日志确认报错",
+                def.default_port, code_desc
             ));
         }
         if Instant::now() >= deadline {
@@ -2689,6 +2828,7 @@ mod tests {
             console_url_pattern: String::new(),
             auto_open_console_url: false,
             pip_package: String::new(),
+            pip_extra_packages: Vec::new(),
             pip_module: String::new(),
             env: HashMap::new(),
         };
@@ -2723,6 +2863,7 @@ mod tests {
             console_url_pattern: String::new(),
             auto_open_console_url: false,
             pip_package: String::new(),
+            pip_extra_packages: Vec::new(),
             pip_module: String::new(),
             env: HashMap::new(),
         }
@@ -2922,12 +3063,12 @@ mod tests {
     fn test_pip_install_args_variants() {
         // 基础：装进当前环境（venv）
         assert_eq!(
-            pip_install_args("headroom-ai[proxy]", None, false),
+            pip_install_args("headroom-ai[proxy]", &[], None, false),
             vec!["-m", "pip", "install", "headroom-ai[proxy]"]
         );
         // 升级 + 目标目录（嵌入式 Python 的 .deps 降级）
         assert_eq!(
-            pip_install_args("headroom-ai[proxy]", Some(".deps"), true),
+            pip_install_args("headroom-ai[proxy]", &[], Some(".deps"), true),
             vec!["-m", "pip", "install", "--upgrade", "--target", ".deps", "headroom-ai[proxy]"]
         );
     }
@@ -3025,6 +3166,95 @@ mod tests {
             }
             other => panic!("期望 Deps，实际 {:?}", other),
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ─── pywin32 .deps 子目录探测 / pip extras 拼参 ───
+
+    #[test]
+    fn test_with_utf8_flag_prepends_x_utf8() {
+        let args = with_utf8_flag(vec!["-m".into(), "core.converter".into()]);
+        assert_eq!(args, vec!["-X", "utf8", "-m", "core.converter"]);
+        let empty = with_utf8_flag(vec![]);
+        assert_eq!(empty, vec!["-X", "utf8"]);
+    }
+
+    #[test]
+    fn test_deps_pythonpath_includes_project_and_deps() {
+        let root = std::env::temp_dir().join(format!("kira-pypp-{}", std::process::id()));
+        let proj = root.join("workbuddy2api");
+        let deps = proj.join(".deps");
+        std::fs::create_dir_all(&deps).unwrap();
+        let pp = deps_pythonpath(&proj, &deps);
+        let parts: Vec<&str> = if cfg!(windows) { pp.split(';').collect() } else { pp.split(':').collect() };
+        assert_eq!(parts[0], deps.to_string_lossy());
+        assert_eq!(parts[1], proj.to_string_lossy(), "项目源码目录必须在 PYTHONPATH（-m core 可导入）");
+        // 项目目录排在 .deps 之后（依赖优先于同名源码目录是安全序；这里仅验证包含）
+        assert!(parts.len() >= 2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_pywin32_deps_dirs_only_existing() {
+        let root = std::env::temp_dir().join(format!("kira-pyw32-{}", std::process::id()));
+        let deps = root.join(".deps");
+        std::fs::create_dir_all(deps.join("win32").join("lib")).unwrap();
+        std::fs::create_dir_all(deps.join("pywin32_system32")).unwrap();
+        let dirs = pywin32_deps_dirs(&deps);
+        assert_eq!(dirs.len(), 3, "应命中 win32、win32/lib、pywin32_system32: {:?}", dirs);
+        // 未安装 pywin32 的项目：.deps 存在但无子目录 → 空
+        let bare = root.join(".deps-bare");
+        std::fs::create_dir_all(&bare).unwrap();
+        assert!(pywin32_deps_dirs(&bare).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_pip_install_args_appends_extras() {
+        let extras = vec!["pywin32; sys_platform == 'win32'".to_string()];
+        let args = pip_install_args("headroom-ai[proxy]", &extras, Some(".deps"), false);
+        assert_eq!(args, vec![
+            "-m", "pip", "install", "--target", ".deps", "headroom-ai[proxy]",
+            "pywin32; sys_platform == 'win32'",
+        ]);
+        // 空 extras 不产生多余参数
+        let no_extra = pip_install_args("foo", &[], None, true);
+        assert_eq!(no_extra, vec!["-m", "pip", "install", "--upgrade", "foo"]);
+    }
+
+    #[test]
+    fn test_installed_python_project_accepts_deps_runtime() {
+        // Python git 项目没有 package.json：.deps 运行时标记存在即视为已安装
+        let def = NodeProjectDef {
+            id: "wb-test".into(),
+            display_name: "wb".into(),
+            repo: "https://x.git".into(),
+            website: String::new(),
+            icon: String::new(),
+            description: String::new(),
+            default_port: 8788,
+            web_path: String::new(),
+            node_requirement: String::new(),
+            runtime: "python".into(),
+            package_manager: "pip".into(),
+            build_script: String::new(),
+            start_cmd: vec!["-m".into(), "core.converter".into()],
+            managed: true,
+            npx_package: String::new(),
+            npx_bin: String::new(),
+            console_url_pattern: String::new(),
+            auto_open_console_url: false,
+            pip_package: String::new(),
+            pip_extra_packages: Vec::new(),
+            pip_module: String::new(),
+            env: Default::default(),
+        };
+        let root = std::env::temp_dir().join(format!("kira-inst-{}", std::process::id()));
+        let deps = root.join(".deps");
+        std::fs::create_dir_all(&deps).unwrap();
+        assert!(!def.installed_in(&root), "无标记时不应视为已安装");
+        std::fs::write(deps.join(".python-runtime.json"), r#"{"program":"py","prefix":[]}"#).unwrap();
+        assert!(def.installed_in(&root), ".deps 运行时标记存在应为已安装");
         let _ = std::fs::remove_dir_all(&root);
     }
 

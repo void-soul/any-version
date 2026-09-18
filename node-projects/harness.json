@@ -15,5 +15,5 @@
   "npxPackage": "@deepseek-ai/dsh",
   "npxBin": "dsh",
   "consoleUrlPattern": "dsh web: (http\\S+)",
-  "autoOpenConsoleUrl": true
+  "autoOpenConsoleUrl": false
 }
