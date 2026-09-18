@@ -253,16 +253,40 @@ export default function RouteAggregate() {
 
   useEffect(() => { void load(); }, [load]);
 
-  // 落库：后端会清洗（丢弃已删除的供应商/模型、去重）后返回实际保存内容
+  // 落库：后端会清洗（丢弃已删除的供应商/模型、去重、链路上限截断）后返回实际保存内容
   const persist = useCallback(async (next: RouteCandidate[]) => {
     setSaving(true);
     try {
       const saved = await invoke<RouteCandidate[]>("save_route_chain", { chain: next });
       setChain(saved);
+      // 后端可能静默丢弃候选（链路上限/供应商已删）；对本次新增被丢弃的给出可见告警
+      if (next.length > saved.length) {
+        const savedKeys = new Set(saved.map(c => `${c.provider_id}::${c.model_id}`));
+        const dropped = next.filter(c => !savedKeys.has(`${c.provider_id}::${c.model_id}`));
+        if (dropped.length > 0) {
+          const names = dropped
+            .slice(0, 5)
+            .map(c => nameOfRef.current(c))
+            .join("、");
+          setLogs(prev =>
+            [
+              ...prev,
+              {
+                phase: "config",
+                level: "warn",
+                line: `部分候选未加入链路（当前 ${saved.length} 条，已达上限）：${names}${dropped.length > 5 ? " 等" : ""}`,
+              },
+            ].slice(-MAX_LOG_LINES),
+          );
+        }
+      }
       const views = await invoke<RouteCandidateView[]>("list_route_candidates");
       setCandidates(views);
     } catch (e) {
       console.error("保存路由链失败", e);
+      setLogs(prev =>
+        [...prev, { phase: "config", line: `保存路由链失败: ${String(e)}`, level: "error" }].slice(-MAX_LOG_LINES),
+      );
     } finally {
       setSaving(false);
     }
@@ -276,6 +300,10 @@ export default function RouteAggregate() {
     },
     [candidates]
   );
+
+  // persist 是空依赖的 useCallback，经 ref 读取最新的 nameOf（依赖 candidates）
+  const nameOfRef = useRef(nameOf);
+  nameOfRef.current = nameOf;
 
   const isInChain = (v: RouteCandidateView) =>
     chain.some(c => c.provider_id === v.provider_id && c.model_id === v.model_id);

@@ -12,8 +12,10 @@ use serde::Serialize;
 use super::models::{AiConfig, AiProvider, RouteCandidate};
 use super::config::{load_ai_config, save_ai_config_to_file};
 
-/// 链路上限（与后续路由实现的重试预算匹配，防止超长链路拖慢单次请求）。
-pub const MAX_ROUTE_CHAIN: usize = 20;
+/// 链路上限（防止超长链路拖慢单次请求的极端情况）。
+/// 25+ 供应商、每供应商多模型的场景下 20 不够用（Q-0130），放宽到 100；
+/// 请求按序遍历 + 冷却跳过，长链在失败场景才会走到底部，正常请求不受影响。
+pub const MAX_ROUTE_CHAIN: usize = 100;
 
 /// 纯函数：清洗链路——保序去重、丢弃仓库里已不存在的供应商/模型。
 ///
@@ -190,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_normalize_caps_chain_length() {
-        let model_ids: Vec<String> = (0..30).map(|i| format!("m{i}")).collect();
+        let model_ids: Vec<String> = (0..150).map(|i| format!("m{i}")).collect();
         let refs: Vec<&str> = model_ids.iter().map(String::as_str).collect();
         let providers = vec![provider("a", &refs)];
         let chain: Vec<RouteCandidate> = model_ids.iter().map(|m| candidate("a", m)).collect();
