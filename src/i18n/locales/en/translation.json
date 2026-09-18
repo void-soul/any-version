@@ -1845,6 +1845,8 @@
     "contextLimit": "Context limit",
     "retryCount": "Retries",
     "retryCountHint": "Attempts per candidate (only transient errors retry; quota/auth/rate-limit switch immediately)",
+    "entryModel": "Entry model",
+    "entryModelHint": "Clients request with this name; it is mapped to each upstream's configured model on forward",
     "needCandidates": "Pick at least one candidate on the left first",
     "selfReferential": "Self",
     "selfReferentialHint": "This provider points at the aggregate service itself — adding it would cause recursive requests, so it is disabled",

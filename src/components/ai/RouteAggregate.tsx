@@ -663,6 +663,15 @@ export default function RouteAggregate() {
                 className="w-14 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
               <span className="text-[9px] text-slate-600">{t("aggregate.retryCountHint")}</span>
             </div>
+            <div className="flex items-center gap-2">
+              <label className="text-[10px] text-slate-500 flex-shrink-0">{t("aggregate.entryModel")}</label>
+              <input value={aggregate.entry_model ?? ""}
+                onChange={e => setAggregate({ ...aggregate, entry_model: e.target.value })}
+                onBlur={e => patchAggregate({ entry_model: e.target.value.trim() || "kiro-proxy" })}
+                placeholder="kiro-proxy"
+                className="w-32 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+              <span className="text-[9px] text-slate-600">{t("aggregate.entryModelHint")}</span>
+            </div>
           </div>
 
           <AggregateLogPanel logs={logs} onClear={() => setLogs([])} />

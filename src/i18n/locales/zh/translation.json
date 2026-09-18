@@ -1851,6 +1851,8 @@
     "contextLimit": "上下文限制",
     "retryCount": "重试次数",
     "retryCountHint": "同一候选的尝试次数（仅瞬时错误重试，额度/鉴权/限流直接切换）",
+    "entryModel": "入口模型名",
+    "entryModelHint": "客户端使用该模型名请求，转发时自动映射为候选链各上游配置的模型名",
     "needCandidates": "请先在左栏勾选至少一个候选",
     "selfReferential": "自引用",
     "selfReferentialHint": "该供应商指向聚合服务自身，加入聚合链会造成请求递归，已禁止勾选",
