@@ -835,14 +835,14 @@ const CSS = `
   --lv-scrollbar-thumb: #334155; --lv-rowh: 21px;
   --lv-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
   position: relative; height: 100%; display: flex; flex-direction: column;
-  overflow: hidden; background: var(--lv-bg); color: var(--lv-text);
+  overflow: hidden; background: transparent; color: var(--lv-text);
   font-family: var(--lv-mono); font-size: 13px; outline: none;
   color-scheme: dark;
 }
 .lv-root * { box-sizing: border-box; }
 
 .lv-toolbar {
-  background: var(--lv-surface); border-bottom: 1px solid var(--lv-border);
+  background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--lv-border);
   padding: 8px 16px; display: flex; align-items: center; gap: 10px;
   flex-wrap: wrap; flex-shrink: 0;
 }
@@ -857,7 +857,7 @@ const CSS = `
 .lv-btn.active { background: var(--lv-accent); color: #06281d; border-color: var(--lv-accent); }
 
 .lv-search-box {
-  background: var(--lv-bg); border: 1px solid var(--lv-border); color: var(--lv-text);
+  background: rgba(0,0,0,0.3); border: 1px solid var(--lv-border); color: var(--lv-text);
   padding: 5px 10px; border-radius: 4px; font-family: inherit; font-size: 12px;
   width: 220px; outline: none;
 }
@@ -868,7 +868,7 @@ const CSS = `
 
 .lv-goto { display: flex; align-items: center; gap: 4px; color: var(--lv-muted); font-size: 12px; }
 .lv-goto-input {
-  width: 72px; background: var(--lv-bg); border: 1px solid var(--lv-border);
+  width: 72px; background: rgba(0,0,0,0.3); border: 1px solid var(--lv-border);
   color: var(--lv-text); padding: 5px 8px; border-radius: 4px; font-family: inherit;
   font-size: 12px; outline: none;
 }
@@ -885,7 +885,7 @@ const CSS = `
 .lv-dropzone .lv-icon { font-size: 48px; margin-bottom: 12px; }
 
 .lv-root #lv-viewer {
-  flex: 1; overflow: auto; position: relative; display: none; background: var(--lv-bg);
+  flex: 1; overflow: auto; position: relative; display: none; background: transparent;
 }
 .lv-root #lv-sizer { position: relative; }
 
@@ -925,7 +925,7 @@ const CSS = `
 .lv-root .ansi-underline{text-decoration:underline}.lv-root .ansi-bold{font-weight:bold}.lv-root .ansi-dim{opacity:.6}.lv-root .ansi-italic{font-style:italic}
 
 .lv-statusbar {
-  background: var(--lv-surface); border-top: 1px solid var(--lv-border);
+  background: rgba(255,255,255,0.03); border-top: 1px solid var(--lv-border);
   padding: 4px 16px; display: flex; align-items: center; gap: 16px;
   font-size: 11px; color: var(--lv-muted); flex-shrink: 0;
 }
@@ -951,6 +951,6 @@ const CSS = `
 
 /* 自定义滚动条 */
 .lv-root #lv-viewer::-webkit-scrollbar { width: 12px; height: 12px; }
-.lv-root #lv-viewer::-webkit-scrollbar-track { background: var(--lv-bg); }
+.lv-root #lv-viewer::-webkit-scrollbar-track { background: transparent; }
 .lv-root #lv-viewer::-webkit-scrollbar-thumb { background: var(--lv-scrollbar-thumb); border-radius: 6px; }
 `;

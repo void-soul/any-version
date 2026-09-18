@@ -293,9 +293,9 @@ export default function SerialMonitor() {
   };
 
   const selectCls =
-    "bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-teal-500";
+    "bg-black/30 border border-white/10 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-teal-500";
   const inputCls =
-    "bg-slate-950 border border-slate-700 rounded px-2 py-1.5 font-mono text-xs focus:outline-none focus:border-teal-500";
+    "bg-black/30 border border-white/10 rounded px-2 py-1.5 font-mono text-xs focus:outline-none focus:border-teal-500";
 
   return (
     <div className="h-full flex flex-col overflow-hidden p-3 gap-2.5 text-[12px]">
@@ -303,16 +303,16 @@ export default function SerialMonitor() {
         <Usb className="w-4 h-4 text-teal-400" />
         <h1 className="text-base font-semibold">{t("serial.title")}</h1>
         {/* 模式切换 */}
-        <div className="flex rounded-lg overflow-hidden border border-slate-700 text-[11px]">
+        <div className="flex rounded-lg overflow-hidden border border-white/10 text-[11px]">
           <button
             onClick={() => void switchMode("real")}
-            className={`px-3 py-1 flex items-center gap-1 cursor-pointer ${mode === "real" ? "bg-teal-600 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"}`}
+            className={`px-3 py-1 flex items-center gap-1 cursor-pointer ${mode === "real" ? "bg-teal-600 text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"}`}
           >
             <Cable className="w-3.5 h-3.5" /> {t("serial.modeReal")}
           </button>
           <button
             onClick={() => void switchMode("sim")}
-            className={`px-3 py-1 flex items-center gap-1 cursor-pointer ${mode === "sim" ? "bg-violet-600 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200"}`}
+            className={`px-3 py-1 flex items-center gap-1 cursor-pointer ${mode === "sim" ? "bg-violet-600 text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"}`}
           >
             <Bot className="w-3.5 h-3.5" /> {t("serial.modeSim")}
           </button>
@@ -323,7 +323,7 @@ export default function SerialMonitor() {
               ? mode === "sim"
                 ? "bg-violet-900/60 text-violet-300"
                 : "bg-emerald-900/60 text-emerald-300"
-              : "bg-slate-800 text-slate-400"
+              : "bg-white/5 text-slate-400"
           }`}
         >
           {!active ? t("serial.statusIdle") : mode === "sim" ? t("serial.statusSim") : t("serial.statusReal")}
@@ -341,7 +341,7 @@ export default function SerialMonitor() {
 
       {/* 连接配置（真实串口）/ 应答脚本编辑器（模拟设备） */}
       {mode === "real" ? (
-        <div className="shrink-0 flex flex-wrap items-center gap-2 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
+        <div className="shrink-0 flex flex-wrap items-center gap-2 bg-white/[0.03] border border-white/10 rounded-lg p-3">
           <select value={portName} onChange={(e) => setPortName(e.target.value)} className={`${selectCls} min-w-44`}>
             {ports.length === 0 && <option value="">{t("serial.noPorts")}</option>}
             {ports.map((p) => (
@@ -350,7 +350,7 @@ export default function SerialMonitor() {
               </option>
             ))}
           </select>
-          <button onClick={refreshPorts} title={t("serial.refreshPorts")} className="p-1.5 rounded hover:bg-slate-700 text-slate-400 cursor-pointer">
+          <button onClick={refreshPorts} title={t("serial.refreshPorts")} className="p-1.5 rounded hover:bg-white/10 text-slate-400 cursor-pointer">
             <RefreshCw className="w-4 h-4" />
           </button>
           <label className="flex items-center gap-1 text-xs text-slate-400">
@@ -404,7 +404,7 @@ export default function SerialMonitor() {
           )}
         </div>
       ) : (
-        <div className="shrink-0 bg-slate-900/60 border border-violet-900/60 rounded-lg p-3 space-y-2">
+        <div className="shrink-0 bg-white/[0.03] border border-violet-500/30 rounded-lg p-3 space-y-2">
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <Bot className="w-4 h-4 text-violet-400" />
             <span>
@@ -492,7 +492,7 @@ export default function SerialMonitor() {
                   onClick={() => removeRule(i)}
                   disabled={rules.length <= 1}
                   title={t("serial.delRule")}
-                  className="p-1.5 rounded text-slate-500 hover:text-red-400 hover:bg-slate-800 disabled:opacity-30 cursor-pointer"
+                  className="p-1.5 rounded text-slate-500 hover:text-red-400 hover:bg-white/10 disabled:opacity-30 cursor-pointer"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
@@ -503,7 +503,7 @@ export default function SerialMonitor() {
       )}
 
       {/* 收发日志 */}
-      <div ref={logRef} className="flex-1 min-h-0 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-3 font-mono text-[12px] leading-5">
+      <div ref={logRef} className="flex-1 min-h-0 overflow-auto rounded-lg border border-white/10 bg-white/[0.02] p-3 font-mono text-[12px] leading-5">
         {logs.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center text-slate-600 gap-2 select-none">
             {mode === "sim" ? <Bot className="w-8 h-8 opacity-40" /> : <Usb className="w-8 h-8 opacity-40" />}
@@ -518,7 +518,7 @@ export default function SerialMonitor() {
               <div key={i} className={`flex ${system ? "justify-center" : outgoing ? "justify-end" : "justify-start"}`}>
                 <div className={`flex max-w-[86%] items-end gap-2 ${outgoing ? "flex-row-reverse" : ""}`}>
                   <span className="shrink-0 text-[10px] text-slate-600">{entry.time}</span>
-                  <div className={`rounded-xl px-3 py-2 ${system ? "bg-slate-800/80 text-yellow-200" : outgoing ? "bg-cyan-500/15 text-cyan-100" : entry.dir === "dev" ? "bg-violet-500/15 text-violet-100" : "bg-emerald-500/10 text-slate-200"}`}>
+                  <div className={`rounded-xl px-3 py-2 ${system ? "bg-white/[0.06] text-yellow-200" : outgoing ? "bg-cyan-500/15 text-cyan-100" : entry.dir === "dev" ? "bg-violet-500/15 text-violet-100" : "bg-emerald-500/10 text-slate-200"}`}>
                     <span className="mr-1.5 text-[10px] opacity-70">{entry.dir === "rx" ? t("serial.dirDevice") : entry.dir === "tx" ? t("serial.dirSend") : entry.dir === "dev" ? t("serial.dirResp") : t("serial.dirSys")}</span>
                     <span className="break-all whitespace-pre-wrap">{hexView && entry.hex !== undefined ? entry.hex : entry.text}</span>
                   </div>
@@ -530,14 +530,14 @@ export default function SerialMonitor() {
       </div>
 
       {/* 发送区 */}
-      <div className="shrink-0 bg-slate-900/60 border border-slate-800 rounded-lg p-3 space-y-2">
+      <div className="shrink-0 bg-white/[0.03] border border-white/10 rounded-lg p-3 space-y-2">
         {/* 行游标提示 */}
         {lines.length > 1 && (
           <div className="flex items-center justify-between text-[11px] text-slate-500">
             <span className="flex items-center gap-1">
               <ListOrdered className="w-3.5 h-3.5" />
               {t("serial.cursorInfo", { lines: lines.length, idx: Math.min(lineIdx + 1, lines.length) })}
-              <code className="px-1 rounded bg-slate-800 text-teal-300 truncate max-w-64 inline-block">{lines[Math.min(lineIdx, lines.length - 1)]}</code>
+              <code className="px-1 rounded bg-white/5 text-teal-300 truncate max-w-64 inline-block">{lines[Math.min(lineIdx, lines.length - 1)]}</code>
             </span>
             <button onClick={() => setLineIdx(0)} className="hover:text-slate-300 cursor-pointer">{t("serial.resetCursor")}</button>
           </div>
@@ -557,7 +557,7 @@ export default function SerialMonitor() {
               : t("serial.textPlaceholder")
           }
           rows={3}
-          className="w-full bg-slate-950 border border-slate-700 rounded-md p-2 font-mono text-xs resize-none focus:outline-none focus:border-teal-500"
+          className="w-full bg-black/30 border border-white/10 rounded-md p-2 font-mono text-xs resize-none focus:outline-none focus:border-teal-500"
         />
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
           <label className="flex items-center gap-1 cursor-pointer">
@@ -576,7 +576,7 @@ export default function SerialMonitor() {
             <button
               onClick={() => void importLinesFile()}
               title={t("serial.importTitle")}
-              className="p-1.5 rounded hover:bg-slate-700 text-slate-400 cursor-pointer"
+              className="p-1.5 rounded hover:bg-white/10 text-slate-400 cursor-pointer"
             >
               <FileUp className="w-4 h-4" />
             </button>
@@ -597,7 +597,7 @@ export default function SerialMonitor() {
                 value={intervalMs}
                 onChange={(e) => setIntervalMs(Number(e.target.value))}
                 disabled={cycling}
-                className="w-16 bg-slate-800 border border-slate-700 rounded px-1.5 py-1"
+                className="w-16 bg-black/30 border border-white/10 rounded px-1.5 py-1"
               />
               ms
             </label>

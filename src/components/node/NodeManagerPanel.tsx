@@ -515,7 +515,7 @@ export default function NodeManagerPanel() {
 
   // 服务管理页（固定标签页内容）：左侧竖向服务列表（带状态标签）+ 右侧详情卡片
   const managePage = (
-    <div className="h-full flex flex-col bg-[#0b0f1a]">
+    <div className="h-full flex flex-col">
       <div className="flex items-center gap-2 px-5 py-3 border-b border-white/10 bg-white/[0.02]">
         <Settings2 className="w-4 h-4 text-[var(--module-accent)]" />
         <h2 className="text-sm font-bold text-white">{t("nodeproj.manageTitle")}</h2>
@@ -622,7 +622,7 @@ export default function NodeManagerPanel() {
       {(tabs.length > 0 || activeTabId === MANAGE_TAB) && (
         <div className="flex-1 min-h-0 flex flex-col">
           {/* Tab 栏 */}
-          <div className="flex items-center gap-1 px-2 pt-1.5 pb-0 bg-[#0b0f1a] border-b border-white/10 overflow-x-auto">
+          <div className="flex items-center gap-1 px-2 pt-1.5 pb-0 bg-white/[0.02] border-b border-white/10 overflow-x-auto">
             <LayoutDashboard className="w-3.5 h-3.5 text-[var(--module-accent)] ml-1 flex-shrink-0" />
             {tabs.map((tab) => {
               const Icon = ICONS[tab.icon] ?? Bot;
@@ -670,17 +670,24 @@ export default function NodeManagerPanel() {
             >
               <Code2 className="w-3.5 h-3.5" /> {t("nodeproj.devTools")}
             </button>
-            {/* 服务管理入口 */}
+            {/* 服务管理入口（超链接样式，区别于两侧的刷新/开发者工具按钮） */}
             <button
               onClick={() => setActiveTabId(MANAGE_TAB)}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold cursor-pointer transition-all flex-shrink-0 ${
+              className={`group flex items-center gap-1 px-1 py-1 text-[11px] cursor-pointer transition-colors flex-shrink-0 ${
                 activeTabId === MANAGE_TAB
-                  ? "bg-white/10 text-white"
-                  : "text-slate-300 hover:text-white hover:bg-white/10"
+                  ? "text-[var(--module-accent)]"
+                  : "text-slate-400 hover:text-[var(--module-accent)]"
               }`}
               title={t("nodeproj.openManage")}
             >
-              <Settings2 className="w-3.5 h-3.5" /> {t("nodeproj.manage")}
+              <Settings2 className="w-3.5 h-3.5" />
+              <span
+                className={`underline-offset-2 decoration-[var(--module-accent)]/70 ${
+                  activeTabId === MANAGE_TAB ? "underline" : "group-hover:underline"
+                }`}
+              >
+                {t("nodeproj.manage")}
+              </span>
             </button>
           </div>
 

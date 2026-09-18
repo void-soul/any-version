@@ -1282,7 +1282,7 @@ export default function LauncherPanel() {
               e.preventDefault();
               setCategoryContextMenu({ x: e.clientX, y: e.clientY, category: cat });
             }}
-            className="relative bg-[#0c101c] pr-4 pl-0.5 font-semibold text-slate-300 tracking-wide flex items-center gap-1 cursor-pointer hover:text-[var(--module-accent)] transition group-header"
+            className="relative bg-white/[0.04] backdrop-blur-sm pr-4 pl-0.5 font-semibold text-slate-300 tracking-wide flex items-center gap-1 cursor-pointer hover:text-[var(--module-accent)] transition group-header"
             style={categoryNameStyle}
             title={t("launcher.clickManageGroup")}
           >
@@ -1730,7 +1730,7 @@ export default function LauncherPanel() {
 
       {/* 检测进度条（Kira 忙碌小助手） */}
       {checkProgress && (
-        <div className="flex items-center gap-2 px-4 py-1.5 bg-[#0c101c] border-b border-white/5 flex-shrink-0 animate-in slide-in-from-top-2 duration-150">
+        <div className="flex items-center gap-2 px-4 py-1.5 bg-white/[0.03] border-b border-white/5 flex-shrink-0 animate-in slide-in-from-top-2 duration-150">
           <VexBusy
             avatarSize={26}
             text={checkProgress.name ? <>{t("launcher.checkingItem")} <span className="text-[var(--module-accent)]">{checkProgress.name}</span> · {checkProgress.done}/{checkProgress.total}</> : `${t("launcher.checkingItem")} ${checkProgress.done}/${checkProgress.total}…`}
@@ -1758,7 +1758,7 @@ export default function LauncherPanel() {
       >
       <div className="flex-1 flex min-h-0 relative">
         {/* Left Vertical Categories (Fixed 128px) */}
-        <div className="w-32 flex-shrink-0 border-r border-white/5 bg-[#090d16]/70 flex flex-col justify-between py-2 overflow-y-auto">
+        <div className="w-32 flex-shrink-0 border-r border-white/5 bg-white/[0.02] flex flex-col justify-between py-2 overflow-y-auto">
           <div className="space-y-1 px-1.5">
             {topCategories.map((cat) => {
               const isActive = cat.id === activeTopCategory?.id;
@@ -1845,7 +1845,7 @@ export default function LauncherPanel() {
 
         {/* Right Groups / Cards Stream */}
         <div
-          className="flex-1 overflow-y-auto p-5 bg-[#0c101c]/30 backdrop-blur-[1px] flex flex-col"
+          className="flex-1 overflow-y-auto p-5 bg-white/[0.01] flex flex-col"
           style={{ gap: view.categoryGap }}
         >
           {/* 1. If Category has Sub-Categories (recursively rendered) */}
@@ -1885,7 +1885,7 @@ export default function LauncherPanel() {
                     <div className="absolute inset-0 flex items-center pointer-events-none">
                       <div className="w-full border-t border-white/5" />
                     </div>
-                    <div className="relative bg-[#0c101c] pr-4 pl-0.5 font-semibold text-slate-400 tracking-wide flex items-center gap-1.5" style={categoryNameStyle}>
+                    <div className="relative bg-white/[0.04] backdrop-blur-sm pr-4 pl-0.5 font-semibold text-slate-400 tracking-wide flex items-center gap-1.5" style={categoryNameStyle}>
                       <span className="leading-none" style={{ fontSize: view.categoryFontSize + 2 }}>
                         {activeTopCategory?.data?.icon || "📁"}
                       </span>
@@ -1969,7 +1969,7 @@ export default function LauncherPanel() {
         </div>
 
         {usageStatsOpen && (
-          <div className="absolute inset-y-0 left-0 right-0 z-30 bg-[#0c101c]/98 backdrop-blur-md flex flex-col overflow-hidden">
+          <div className="absolute inset-y-0 left-0 right-0 z-30 bg-[#0c101c]/80 backdrop-blur-md flex flex-col overflow-hidden">
             <div className="flex items-center justify-between border-b border-white/10 px-5 py-3">
               <div className="flex items-center gap-2">
                 <BarChart3 className="w-4 h-4 text-amber-400" />
@@ -2014,7 +2014,7 @@ export default function LauncherPanel() {
 
         {/* Figure 2: Unified Search Overlay */}
         {isSearchOpen && (
-          <div className="absolute inset-0 z-40 bg-[#0b101b]/95 backdrop-blur-md flex flex-col items-center p-6 animate-in fade-in zoom-in-95 duration-100">
+          <div className="absolute inset-0 z-40 bg-[#0b101b]/80 backdrop-blur-md flex flex-col items-center p-6 animate-in fade-in zoom-in-95 duration-100">
             <div className="w-full max-w-[600px] h-full flex flex-col">
               {/* Search Input Box */}
               <div className="relative flex items-center mb-3">

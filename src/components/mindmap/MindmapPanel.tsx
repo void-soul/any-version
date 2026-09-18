@@ -858,7 +858,7 @@ function PlanCalendarModal({ onPick, onClose, onAddPlan, onMoveOccurrence }: {
         <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-white"><Calendar className="h-4 w-4 text-cyan-400" />{t("mindmap.planCalendar")}</h3>
           <div className="flex items-center gap-1.5">
-            <div className="flex rounded-md border border-white/10 bg-slate-950/60 p-0.5">
+            <div className="flex rounded-md border border-white/10 bg-white/[0.03] p-0.5">
               <button type="button" onClick={() => setView("month")} className={`rounded px-2 py-1 text-[9px] font-medium transition cursor-pointer ${view === "month" ? "bg-cyan-500/20 text-cyan-300" : "text-slate-400 hover:text-white"}`}>{t("mindmap.monthView")}</button>
               <button type="button" onClick={() => setView("week")} className={`rounded px-2 py-1 text-[9px] font-medium transition cursor-pointer ${view === "week" ? "bg-cyan-500/20 text-cyan-300" : "text-slate-400 hover:text-white"}`}>{t("mindmap.weekView")}</button>
             </div>
@@ -906,7 +906,7 @@ function PlanCalendarModal({ onPick, onClose, onAddPlan, onMoveOccurrence }: {
             </div>
           </div>
           {/* 当日计划列表 */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg border border-white/10 bg-slate-950/40">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg border border-white/10 bg-white/[0.02]">
             <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
               <span className="text-[11px] font-semibold text-slate-200">{t("mindmap.dayPlans", { label: selLabel, count: dayPlans.length })}<span className="ml-1 text-[8px] font-normal text-slate-500">{t("mindmap.dragToReschedule")}</span></span>
               <button type="button" onClick={() => onAddPlan(selDay)}
@@ -1903,7 +1903,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
 }
 
 function Canvas({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onError, onOpenCalendar, focusRequest, onFocusHandled, aiPill }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onError: (message: string) => void; onOpenCalendar: () => void; focusRequest: { nodeId: string; ts: number } | null; onFocusHandled: () => void; aiPill?: React.ReactNode }) {
-  return <div className="h-full min-h-0 bg-[#080f1c]"><ReactFlowProvider><CanvasInner full={full} accent={accent} onDocumentUpdate={onDocumentUpdate} onHistoryPush={onHistoryPush} historyVersion={historyVersion} onAiProject={onAiProject} onError={onError} onOpenCalendar={onOpenCalendar} focusRequest={focusRequest} onFocusHandled={onFocusHandled} aiPill={aiPill} /></ReactFlowProvider></div>;
+  return <div className="h-full min-h-0"><ReactFlowProvider><CanvasInner full={full} accent={accent} onDocumentUpdate={onDocumentUpdate} onHistoryPush={onHistoryPush} historyVersion={historyVersion} onAiProject={onAiProject} onError={onError} onOpenCalendar={onOpenCalendar} focusRequest={focusRequest} onFocusHandled={onFocusHandled} aiPill={aiPill} /></ReactFlowProvider></div>;
 }
 
 // ════════════ 主面板 ════════════
@@ -2606,10 +2606,10 @@ export default function MindmapPanel() {
   const folderPath = getFolderPath(folders, activeFolderId);
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-slate-950/25 text-slate-200">
+    <div className="relative flex h-full min-h-0 flex-col bg-white/[0.01] text-slate-200">
       <div className="flex min-h-0 flex-1">
         {!sidebarCollapsed && (
-          <aside className="group/sb relative flex shrink-0 flex-col border-r border-white/10 bg-slate-950/30" style={{ width: sidebarW }}>
+          <aside className="group/sb relative flex shrink-0 flex-col border-r border-white/10 bg-white/[0.02]" style={{ width: sidebarW }}>
             {/* Search */}
             <div className="border-b border-white/10 px-2 py-1.5 flex items-center gap-1.5">
               <Search className="h-3 w-3 shrink-0 text-slate-600" />

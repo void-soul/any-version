@@ -331,9 +331,9 @@ export default function SkillManager() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#0b0e14] text-slate-200 select-none">
+    <div className="flex flex-col h-full text-slate-200 select-none">
       {/* 顶部导航 Tab */}
-      <div className="flex items-center justify-between px-4 pt-3 border-b border-white/5 bg-slate-900/40">
+      <div className="flex items-center justify-between px-4 pt-3 border-b border-white/5 bg-white/[0.02]">
         <div className="flex items-center gap-1">
           {([
             { k: 'skills' as TabKey, label: t("skillmgr.tabSkills"), icon: Package },
