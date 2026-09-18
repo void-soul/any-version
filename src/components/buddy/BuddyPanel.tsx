@@ -2213,7 +2213,7 @@ export default function BuddyPanel() {
               {wbAccounts.length === 0 ? (
                 <div className="text-[10px] text-slate-600">{t("buddy.auto.noTasks")}</div>
               ) : (
-                <div className="space-y-2">
+                <div className="grid grid-cols-4 gap-1.5 items-start">
                   {wbAccounts.map((acc) => {
                     const task = autoTasks?.tasks.find((x) => x.accountId === acc.id);
                     const travel = travelTasks?.tasks.find((x) => x.accountId === acc.id);
@@ -2282,11 +2282,11 @@ export default function BuddyPanel() {
                         travelCls = "text-slate-500";
                     }
                     return (
-                      <div key={acc.id} className="rounded-lg border border-white/5 bg-black/20 px-3 py-2">
-                        <div className="text-[11px] text-slate-200 truncate mb-1.5" title={acc.email}>
+                      <div key={acc.id} className="rounded-lg border border-white/5 bg-black/20 px-2.5 py-2 min-w-0">
+                        <div className="text-[10px] text-slate-200 truncate mb-1.5" title={acc.email}>
                           {acc.email || acc.id}
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="flex flex-col gap-1.5">
                           {/* 签到 */}
                           <div className="space-y-0.5 min-w-0">
                             <div className="flex items-center gap-1.5">

@@ -708,6 +708,23 @@ function ProjectCard({
   const isExecBusy = busy === `exec:${project.id}`;
   // 命令输入框内容（每个服务独立）
   const [cmdInput, setCmdInput] = useState("");
+  // 随应用启动（kira 启动后自动拉起该服务）
+  const autoStartId = `node:${project.id}`;
+  const [autoStart, setAutoStart] = useState(false);
+  useEffect(() => {
+    void invoke<string[]>("get_auto_start_services")
+      .then(list => setAutoStart(list.includes(autoStartId)))
+      .catch(() => {});
+  }, [autoStartId]);
+  const toggleAutoStart = async () => {
+    const next = !autoStart;
+    setAutoStart(next);
+    try {
+      await invoke("set_auto_start_service", { serviceId: autoStartId, enabled: next });
+    } catch {
+      setAutoStart(!next);
+    }
+  };
   const submitCommand = () => {
     const cmd = cmdInput.trim();
     if (!cmd || isExecBusy) return;
@@ -813,6 +830,18 @@ function ProjectCard({
           label={isNpx ? "npm" : isPip ? "pip" : project.packageManager}
         />
         {st?.port && <span className="text-slate-600">{t("nodeproj.portText", { port: st.port })}</span>}
+        <label
+          className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-200 cursor-pointer select-none"
+          title={t("nodeproj.autoStartTitle")}
+        >
+          <input
+            type="checkbox"
+            checked={autoStart}
+            onChange={() => void toggleAutoStart()}
+            className="w-3 h-3 accent-[var(--module-accent)] cursor-pointer"
+          />
+          {t("nodeproj.autoStart")}
+        </label>
       </div>
 
       {/* 更新检查：git 模式对比 commit；npx 模式对比本地版本与 npm registry 远程版本 */}
