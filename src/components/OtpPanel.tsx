@@ -59,7 +59,7 @@ const TOKEN_TYPE_LABELS: Record<string, string> = {
 const STEAM_CHARS = "23456789BCDFGHJKMNPQRTVWXY";
 
 // —— Base32 解码（RFC4648） ——
-function base32Decode(input: string): Uint8Array {
+function base32Decode(input: string): Uint8Array<ArrayBuffer> {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
   const clean = input.toUpperCase().replace(/[\s=]/g, "");
   let acc = 0;
@@ -79,14 +79,14 @@ function base32Decode(input: string): Uint8Array {
 }
 
 // —— HMAC + 动态截断 ——
-async function hmacDigest(algo: string, key: Uint8Array, msg: Uint8Array): Promise<Uint8Array> {
+async function hmacDigest(algo: string, key: Uint8Array<ArrayBuffer>, msg: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
   const hashAlgo = algo === "SHA256" ? "SHA-256" : algo === "SHA512" ? "SHA-512" : "SHA-1";
   const cryptoKey = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: hashAlgo }, false, ["sign"]);
   const sig = await crypto.subtle.sign("HMAC", cryptoKey, msg);
   return new Uint8Array(sig);
 }
 
-function dynamicTruncate(digest: Uint8Array): number {
+function dynamicTruncate(digest: Uint8Array<ArrayBuffer>): number {
   const offset = digest[digest.length - 1] & 0x0f;
   return (
     ((digest[offset] & 0x7f) << 24) |
@@ -96,7 +96,7 @@ function dynamicTruncate(digest: Uint8Array): number {
   );
 }
 
-async function hotpValue(secret: Uint8Array, counter: number, algo: string): Promise<number> {
+async function hotpValue(secret: Uint8Array<ArrayBuffer>, counter: number, algo: string): Promise<number> {
   const msg = new Uint8Array(8);
   let c = counter;
   for (let i = 7; i >= 0; i--) {
