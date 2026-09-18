@@ -3356,7 +3356,7 @@
     "upgrade": "升级",
     "installDeps": "装依赖",
     "installDepsTitle": "仅重新安装依赖（不拉取代码），依赖缺失时可单独补装",
-    "buildNative": "编译原生模块",
+    "buildNative": "原生模块",
     "buildNativeTitle": "批准并执行被 pnpm 跳过的原生模块构建脚本（如 node-pty/koffi），需要本机 C++ 构建工具链",
     "execPlaceholder": "如：dsh plugin --profile web add",
     "exec": "执行",

@@ -133,6 +133,9 @@ function resolvedWebPath(p: NodeProjectDef): string {
   return p.webPath.replace("{port}", String(p.defaultPort));
 }
 
+/// 服务管理固定标签页 id（不可关闭）
+const MANAGE_TAB = "__manage__";
+
 /// 判断服务端口是否处于监听（running 或 port_conflict 均视为有进程占用端口）。
 function isPortListening(st?: NodeProjectStatus): boolean {
   return st?.status === "running" || st?.status === "port_conflict";
@@ -147,6 +150,8 @@ export default function NodeManagerPanel() {
     {},
   );
   const [busy, setBusy] = useState<string>(""); // "install:harness" / "upgrade:harness" / ...
+  // 管理弹窗当前选中的服务（左侧竖向选项卡，一服务一页）
+  const [manageSelectedId, setManageSelectedId] = useState<string>("");
   const [progress, setProgress] = useState<Record<string, NodeProgress>>({});
   const [error, setError] = useState<Record<string, string>>({});
   const [logs, setLogs] = useState<Record<string, string[]>>({});
@@ -160,7 +165,6 @@ export default function NodeManagerPanel() {
   const [tabReload, setTabReload] = useState<Record<string, number>>({});
   // 服务管理弹窗：默认打开——进入面板没有正在运行的服务时直接展示管理界面，
   // 省去「先看引导页 → 再手动点一次」的步骤。用户可关闭弹窗查看引导页。
-  const [manageOpen, setManageOpen] = useState(true);
   // git 更新检查
   const [updateInfo, setUpdateInfo] = useState<Record<string, NodeUpdateInfo>>(
     {},
@@ -356,8 +360,8 @@ export default function NodeManagerPanel() {
   // 打开应用主页。
   // - 普通服务：主窗口内 iframe 全屏（打开前校验端口是否监听）。
   // - 配置了 consoleUrlPattern 的服务（如 dsh web）：控制台打印的带 token 地址
-  //   是唯一可用入口（直接访问 webPath 会 401，iframe 内也无法完成认证），
-  //   改为用系统默认浏览器打开后端捕获的最新地址；尚未捕获时提示稍候。
+  //   是唯一可用入口（直接访问 webPath 会 401），同样在 Kira 内部 iframe 打开
+  //   后端捕获的最新地址；尚未捕获时提示稍候。
   const openWeb = async (project: NodeProjectDef) => {
     setError((prev) => ({ ...prev, [project.id]: "" }));
     if (project.consoleUrlPattern?.trim()) {
@@ -382,19 +386,15 @@ export default function NodeManagerPanel() {
         }));
         return;
       }
-      try {
-        await invoke("npm_open", { projectId: project.id });
-      } catch (e) {
-        setError((prev) => ({
-          ...prev,
-          [project.id]: typeof e === "string" ? e : String(e),
-        }));
-      }
+      // 内部打开：iframe 直接加载捕获的带 token 地址（不再跳外部浏览器）
+      setTabs((prev) =>
+        prev.some((t) => t.id === project.id) ? prev : [...prev, project],
+      );
+      setActiveTabId(project.id);
       return;
     }
     if (tabs.some((t) => t.id === project.id)) {
       setActiveTabId(project.id);
-      setManageOpen(false);
       return;
     }
     const st = await invoke<NodeProjectStatus>("npm_status", {
@@ -418,7 +418,6 @@ export default function NodeManagerPanel() {
       prev.some((t) => t.id === project.id) ? prev : [...prev, project],
     );
     setActiveTabId(project.id);
-    setManageOpen(false);
   };
 
   const reloadTab = (id: string) => {
@@ -463,9 +462,112 @@ export default function NodeManagerPanel() {
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const managedProjects = projects.filter((p) => p.managed);
+  // 选中项兜底：列表变化后保持有效（默认第一个）
+  const manageSelected = managedProjects.find((p) => p.id === manageSelectedId) ?? managedProjects[0] ?? null;
+
+  // 服务管理页（固定标签页内容）：左侧竖向服务列表（带状态标签）+ 右侧详情卡片
+  const managePage = (
+    <div className="h-full flex flex-col bg-[#0b0f1a]">
+      <div className="flex items-center gap-2 px-5 py-3 border-b border-white/10 bg-white/[0.02]">
+        <Settings2 className="w-4 h-4 text-[var(--module-accent)]" />
+        <h2 className="text-sm font-bold text-white">{t("nodeproj.manageTitle")}</h2>
+        <span className="text-[10px] text-slate-500 ml-1">{t("nodeproj.manageSub")}</span>
+      </div>
+      <div className="flex-1 min-h-0 flex overflow-hidden">
+        {/* 服务选项卡列表 */}
+        <div className="w-52 flex-shrink-0 border-r border-white/10 bg-white/[0.02] overflow-y-auto py-2">
+          {managedProjects.map((project) => {
+            const st = statuses[project.id];
+            const status = st?.status ?? "not_installed";
+            const selected = manageSelected?.id === project.id;
+            const statusCls =
+              status === "running"
+                ? "bg-emerald-500/15 text-emerald-400"
+                : status === "port_conflict"
+                  ? "bg-amber-500/15 text-amber-400"
+                  : "bg-slate-500/15 text-slate-500";
+            const statusLabel =
+              status === "running"
+                ? t("nodeproj.running")
+                : status === "port_conflict"
+                  ? t("nodeproj.portConflict")
+                  : status === "stopped"
+                    ? t("nodeproj.stopped")
+                    : t("nodeproj.notInstalled");
+            return (
+              <button
+                key={project.id}
+                type="button"
+                onClick={() => setManageSelectedId(project.id)}
+                className={`w-full text-left px-3 py-2.5 flex items-center gap-2 border-l-2 transition-colors cursor-pointer ${
+                  selected
+                    ? "border-[var(--module-accent)] bg-white/[0.06]"
+                    : "border-transparent hover:bg-white/[0.03]"
+                }`}
+              >
+                <span
+                  className={`text-[11px] font-semibold truncate flex-1 ${
+                    selected ? "text-white" : "text-slate-300"
+                  }`}
+                  title={project.displayName}
+                >
+                  {project.displayName}
+                </span>
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[8px] font-bold flex-shrink-0 ${statusCls}`}
+                >
+                  {statusLabel}
+                </span>
+              </button>
+            );
+          })}
+          {managedProjects.length === 0 && (
+            <div className="px-3 py-6 text-center text-[10px] text-slate-500">
+              {t("nodeproj.noManaged")}
+            </div>
+          )}
+        </div>
+
+        {/* 选中服务的详情卡片 */}
+        <div className="flex-1 min-w-0 overflow-y-auto p-4">
+          {manageSelected ? (
+            <ProjectCard
+              project={manageSelected}
+              st={statuses[manageSelected.id]}
+              d={deps[manageSelected.id]}
+              prog={progress[manageSelected.id]}
+              busy={busy}
+              isStarting={busy === `start:${manageSelected.id}`}
+              isStopping={busy === `stop:${manageSelected.id}`}
+              logs={logs[manageSelected.id] ?? []}
+              logOpen={!!logOpen[manageSelected.id]}
+              error={error[manageSelected.id]}
+              updateInfo={updateInfo[manageSelected.id]}
+              checkingUpdate={checkingUpdate === manageSelected.id}
+              consoleUrl={consoleUrls[manageSelected.id]}
+              onAction={runAction}
+              onExec={execCommand}
+              onOpenWeb={openWeb}
+              onCheckUpdate={checkUpdate}
+              onToggleLog={() =>
+                setLogOpen((prev) => ({
+                  ...prev,
+                  [manageSelected.id]: !prev[manageSelected.id],
+                }))
+              }
+            />
+          ) : (
+            <div className="h-full flex items-center justify-center text-slate-500 text-sm">
+              {t("nodeproj.noManaged")}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 
   // 主界面：无 Tab 时显示全屏引导页
-  if (tabs.length === 0 && !manageOpen) {
+  if (tabs.length === 0 && activeTabId !== MANAGE_TAB) {
     return (
       <div className="h-full flex flex-col items-center justify-center select-none">
         <div className="text-center space-y-4">
@@ -477,7 +579,7 @@ export default function NodeManagerPanel() {
             </p>
           </div>
           <button
-            onClick={() => setManageOpen(true)}
+            onClick={() => setActiveTabId(MANAGE_TAB)}
             className="px-5 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-xl text-[13px] font-semibold flex items-center gap-2 mx-auto cursor-pointer transition-all"
           >
             <Settings2 className="w-4 h-4" /> {t("nodeproj.openManage")}
@@ -489,8 +591,8 @@ export default function NodeManagerPanel() {
 
   return (
     <div className="h-full flex flex-col min-h-0 select-none">
-      {/* 服务区全屏：Tab 栏 + iframe */}
-      {tabs.length > 0 && (
+      {/* 服务区全屏：Tab 栏 + iframe / 管理页 */}
+      {(tabs.length > 0 || activeTabId === MANAGE_TAB) && (
         <div className="flex-1 min-h-0 flex flex-col">
           {/* Tab 栏 */}
           <div className="flex items-center gap-1 px-2 pt-1.5 pb-0 bg-[#0b0f1a] border-b border-white/10 overflow-x-auto">
@@ -541,21 +643,44 @@ export default function NodeManagerPanel() {
             >
               <Code2 className="w-3.5 h-3.5" /> {t("nodeproj.devTools")}
             </button>
-            {/* 管理按钮 */}
+            {/* 服务管理：固定标签页（不可关闭） */}
             <button
-              onClick={() => setManageOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex-shrink-0"
+              onClick={() => setActiveTabId(MANAGE_TAB)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-[11px] font-semibold transition-all cursor-pointer flex-shrink-0 ml-1 ${
+                activeTabId === MANAGE_TAB
+                  ? "bg-white/10 text-white border-b-2 border-[var(--module-accent)]"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-white/5 border-b-2 border-transparent"
+              }`}
               title={t("nodeproj.openManage")}
             >
-              <Settings2 className="w-3.5 h-3.5" /> {t("nodeproj.manage")}
+              <Settings2 className="w-3 h-3" /> {t("nodeproj.manage")}
+            </button>
+            <div className="flex-1" />
+            <button
+              onClick={() => activeTab && reloadTab(activeTab.id)}
+              disabled={!activeTab}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={t("nodeproj.refreshHomeTitle")}
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> {t("nodeproj.refreshHome")}
+            </button>
+            <button
+              onClick={() => activeTab && void openDevTools(activeTab)}
+              disabled={!activeTab}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={t("nodeproj.devToolsTitle")}
+            >
+              <Code2 className="w-3.5 h-3.5" /> {t("nodeproj.devTools")}
             </button>
           </div>
 
-          {/* 内容区（全屏 iframe） */}
+          {/* 内容区：管理页 / 全屏 iframe */}
           <div className="flex-1 min-h-0">
-            {activeTab ? (
+            {activeTabId === MANAGE_TAB ? (
+              managePage
+            ) : activeTab ? (
               <iframe
-                src={resolvedWebPath(activeTab)}
+                src={consoleUrls[activeTab.id] || resolvedWebPath(activeTab)}
                 key={`${activeTab.id}:${tabReload[activeTab.id] ?? 0}`}
                 className="w-full h-full border-0 bg-white"
                 title={activeTab.displayName}
@@ -569,78 +694,6 @@ export default function NodeManagerPanel() {
         </div>
       )}
 
-      {/* 服务管理弹窗 */}
-      {manageOpen && (
-        <div
-          className="fixed inset-0 z-50 modal-mask flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm"
-        >
-          <div
-            className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-[#0b0f1a] overflow-hidden shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* 弹窗头部 */}
-            <div className="flex items-center gap-2 px-5 py-3.5 border-b border-white/10 bg-white/[0.02]">
-              <Settings2 className="w-4 h-4 text-[var(--module-accent)]" />
-              <h2 className="text-sm font-bold text-white">{t("nodeproj.manageTitle")}</h2>
-              <span className="text-[10px] text-slate-500 ml-1">
-                {t("nodeproj.manageSub")}
-              </span>
-              <div className="flex-1" />
-              <button
-                onClick={() => setManageOpen(false)}
-                className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer transition-all"
-                title={t("nodeproj.close")}
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* 项目卡片列表（可滚动） */}
-            <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
-              {managedProjects.map((project) => {
-                const st = statuses[project.id];
-                const d = deps[project.id];
-                const prog = progress[project.id];
-                const isStarting = busy === `start:${project.id}`;
-                const isStopping = busy === `stop:${project.id}`;
-                return (
-                  <ProjectCard
-                    key={project.id}
-                    project={project}
-                    st={st}
-                    d={d}
-                    prog={prog}
-                    busy={busy}
-                    isStarting={isStarting}
-                    isStopping={isStopping}
-                    logs={logs[project.id] ?? []}
-                    logOpen={!!logOpen[project.id]}
-                    error={error[project.id]}
-                    updateInfo={updateInfo[project.id]}
-                    checkingUpdate={checkingUpdate === project.id}
-                    consoleUrl={consoleUrls[project.id]}
-                    onAction={runAction}
-                    onExec={execCommand}
-                    onOpenWeb={openWeb}
-                    onCheckUpdate={checkUpdate}
-                    onToggleLog={() =>
-                      setLogOpen((prev) => ({
-                        ...prev,
-                        [project.id]: !prev[project.id],
-                      }))
-                    }
-                  />
-                );
-              })}
-              {managedProjects.length === 0 && (
-                <div className="py-10 text-center text-slate-500 text-sm">
-                  {t("nodeproj.noManaged")}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1007,100 +1060,105 @@ function ProjectCard({
         </div>
       )}
 
-      {/* 操作按钮 */}
-      <div className="px-5 py-3 border-t border-white/5 flex items-center gap-2">
-        <ActionButton
-          disabled={!canInstallUpgrade || isBusy || running || portConflict}
-          busy={isBusy && busy === `install:${project.id}`}
-          onClick={() => onAction(project, "install")}
-          icon={Download}
-          color="bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)]"
-          label={t("nodeproj.install")}
-        />
-        <ActionButton
-          disabled={!canUpgrade || isBusy || running}
-          busy={isBusy && busy === `upgrade:${project.id}`}
-          onClick={() => onAction(project, "upgrade")}
-          icon={RefreshCw}
-          color="bg-slate-700 hover:bg-slate-600"
-          label={t("nodeproj.upgrade")}
-        />
-        {!isNpx && (
+      {/* 操作按钮：两行 4 列 Grid（上行=安装维护类，下行=运行类），列严格对齐 */}
+      <div className="px-5 py-3 border-t border-white/5 grid grid-cols-4 gap-2">
           <ActionButton
-            disabled={!canInstallDeps || isBusy || running}
-            busy={isBusy && busy === `install_deps:${project.id}`}
-            onClick={() => onAction(project, "install_deps")}
-            icon={Package}
-            color="bg-sky-700 hover:bg-sky-600"
-            label={t("nodeproj.installDeps")}
-            title={t("nodeproj.installDepsTitle")}
+            disabled={!canInstallUpgrade || isBusy || running || portConflict}
+            busy={isBusy && busy === `install:${project.id}`}
+            onClick={() => onAction(project, "install")}
+            icon={Download}
+            color="bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)]"
+            label={t("nodeproj.install")}
           />
-        )}
-        {isNpx && installed && (
           <ActionButton
-            disabled={!installed || isBusy || running}
-            busy={isBusy && busy === `build_native:${project.id}`}
-            onClick={() => onAction(project, "build_native")}
-            icon={Hammer}
-            color="bg-amber-700 hover:bg-amber-600"
-            label={t("nodeproj.buildNative")}
-            title={t("nodeproj.buildNativeTitle")}
+            disabled={!canUpgrade || isBusy || running}
+            busy={isBusy && busy === `upgrade:${project.id}`}
+            onClick={() => onAction(project, "upgrade")}
+            icon={RefreshCw}
+            color="bg-slate-700 hover:bg-slate-600"
+            label={t("nodeproj.upgrade")}
           />
-        )}
-        <ActionButton
-          disabled={!installed || isBusy || running || portConflict}
-          busy={isStarting}
-          onClick={() => onAction(project, "start")}
-          icon={Play}
-          color="bg-emerald-600 hover:bg-emerald-500"
-          label={t("nodeproj.start")}
-        />
-        <ActionButton
-          disabled={!running || isBusy}
-          busy={isStopping}
-          onClick={() => onAction(project, "stop")}
-          icon={Square}
-          color="bg-red-600 hover:bg-red-500"
-          label={t("nodeproj.stop")}
-        />
-        <ActionButton
-          disabled={!installed || isBusy}
-          busy={isBusy && busy === `uninstall:${project.id}`}
-          onClick={() => setConfirmUninstall(true)}
-          icon={Trash2}
-          color="bg-red-950/70 hover:bg-red-900/80"
-          label={t("nodeproj.uninstall")}
-          title={t("nodeproj.uninstallTitle")}
-        />
-        <ActionButton
-          disabled={isBusy || (consoleUrlMode && !running)}
-          busy={false}
-          onClick={() => onOpenWeb(project)}
-          icon={ExternalLink}
-          color="bg-violet-600 hover:bg-violet-500"
-          label={t("nodeproj.openHome")}
-          title={
-            consoleUrlMode
-              ? consoleUrl
-                ? t("nodeproj.openHomeConsoleTitle", { url: consoleUrl })
-                : t("nodeproj.consoleUrlPending")
-              : undefined
-          }
-        />
-        {consoleUrlMode && consoleUrl && (
-          <span
-            className="text-[10px] text-emerald-400/80 flex items-center gap-1 flex-shrink-0"
-            title={consoleUrl}
-          >
-            <CheckCircle2 className="w-3 h-3" /> {t("nodeproj.consoleUrlReady")}
-          </span>
-        )}
-        <div className="flex-1" />
-        {!d?.allReady && installed && (
-          <span className="text-[10px] text-amber-400 flex items-center gap-1">
-            <AlertTriangle className="w-3 h-3" /> {t("nodeproj.depsNotReady")}
-          </span>
-        )}
+          {!isNpx && (
+            <ActionButton
+              disabled={!canInstallDeps || isBusy || running}
+              busy={isBusy && busy === `install_deps:${project.id}`}
+              onClick={() => onAction(project, "install_deps")}
+              icon={Package}
+              color="bg-sky-700 hover:bg-sky-600"
+              label={t("nodeproj.installDeps")}
+              title={t("nodeproj.installDepsTitle")}
+            />
+          )}
+          {isNpx && installed && (
+            <ActionButton
+              disabled={!installed || isBusy || running}
+              busy={isBusy && busy === `build_native:${project.id}`}
+              onClick={() => onAction(project, "build_native")}
+              icon={Hammer}
+              color="bg-amber-700 hover:bg-amber-600"
+              label={t("nodeproj.buildNative")}
+              title={t("nodeproj.buildNativeTitle")}
+            />
+          )}
+          <ActionButton
+            disabled={!installed || isBusy}
+            busy={isBusy && busy === `uninstall:${project.id}`}
+            onClick={() => setConfirmUninstall(true)}
+            icon={Trash2}
+            color="bg-red-950/70 hover:bg-red-900/80"
+            label={t("nodeproj.uninstall")}
+            title={t("nodeproj.uninstallTitle")}
+          />
+          <ActionButton
+            disabled={!installed || isBusy || running || portConflict}
+            busy={isStarting}
+            onClick={() => onAction(project, "start")}
+            icon={Play}
+            color="bg-emerald-600 hover:bg-emerald-500"
+            label={t("nodeproj.start")}
+          />
+          <ActionButton
+            disabled={!running || isBusy}
+            busy={isStopping}
+            onClick={() => onAction(project, "stop")}
+            icon={Square}
+            color="bg-red-600 hover:bg-red-500"
+            label={t("nodeproj.stop")}
+          />
+          <ActionButton
+            disabled={isBusy || (consoleUrlMode && !running)}
+            busy={false}
+            onClick={() => onOpenWeb(project)}
+            icon={ExternalLink}
+            color="bg-violet-600 hover:bg-violet-500"
+            label={t("nodeproj.openHome")}
+            title={
+              consoleUrlMode
+                ? consoleUrl
+                  ? t("nodeproj.openHomeConsoleTitle", { url: consoleUrl })
+                  : t("nodeproj.consoleUrlPending")
+                : undefined
+            }
+          />
+          {/* 第 4 列：状态提示（右侧对齐，保持与上行按钮列对齐） */}
+          <div className="flex items-center justify-end gap-2 min-w-0">
+            {consoleUrlMode && consoleUrl && (
+              <span
+                className="text-[10px] text-emerald-400/80 flex items-center gap-1 flex-shrink-0"
+                title={consoleUrl}
+              >
+                <CheckCircle2 className="w-3 h-3" /> {t("nodeproj.consoleUrlReady")}
+              </span>
+            )}
+            {!d?.allReady && installed && (
+              <span
+                className="text-[10px] text-amber-400 flex items-center gap-1 flex-shrink-0"
+                title={t("nodeproj.depsNotReady")}
+              >
+                <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+              </span>
+            )}
+          </div>
       </div>
 
       {/* 卸载确认弹窗 */}
@@ -1163,7 +1221,7 @@ function ActionButton({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${color} text-white`}
+      className={`flex-1 justify-center px-2 py-1 rounded-lg text-[10px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${color} text-white`}
     >
       {busy ? (
         <Loader2 className="w-3.5 h-3.5 animate-spin" />
