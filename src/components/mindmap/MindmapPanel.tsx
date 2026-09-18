@@ -95,6 +95,10 @@ function normalizeHexColor(value: string | null | undefined): string | null {
 
 const effectiveNodeColor = (node: MindmapNode) => normalizeHexColor(node.color) ?? kindColor(node.kind);
 
+/** 新增根节点/独立节点的随机取色盘（高饱和，与节点类型配色同亮度风格）。 */
+const NODE_RANDOM_COLORS = ["#22d3ee", "#34d399", "#fbbf24", "#60a5fa", "#fb7185", "#a78bfa", "#f97316", "#4ade80", "#f472b6", "#38bdf8"];
+const randomNodeColor = () => NODE_RANDOM_COLORS[Math.floor(Math.random() * NODE_RANDOM_COLORS.length)];
+
 /** 缩小到这个缩放比以下时，节点文字全部隐藏（ComfyUI 式缩略）。 */
 const ZOOM_HIDE_TEXT = 0.45;
 
@@ -1317,9 +1321,10 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   const addNode = useCallback((parentId: string | null) => {
     onHistoryPush();
     const now = new Date().toISOString();
-    // 新增子节点继承父节点的可见颜色（父节点未手动配色时取类型默认色），保持树视觉连续
+    // 新增子节点继承父节点的可见颜色（父节点未手动配色时取类型默认色），保持树视觉连续；
+    // 新增根节点/独立节点取随机色（每根各不相同）。
     const parent = parentId ? byId.get(parentId) : null;
-    const n: MindmapNode = { id: `n${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, documentId: full.document.id, parentId, name: parentId ? t("mindmap.newNode") : t("mindmap.newRoot"), detail: "", kind: parentId ? "other" : "root", color: parent ? effectiveNodeColor(parent) : "", planAt: null, repeat: "none", positionX: 0, positionY: 0, createdAt: now, updatedAt: now };
+    const n: MindmapNode = { id: `n${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, documentId: full.document.id, parentId, name: parentId ? t("mindmap.newNode") : t("mindmap.newRoot"), detail: "", kind: parentId ? "other" : "root", color: parent ? effectiveNodeColor(parent) : randomNodeColor(), planAt: null, repeat: "none", positionX: 0, positionY: 0, createdAt: now, updatedAt: now };
     void mmApi.upsertNode({ documentId: full.document.id, node: n });
     onDocumentUpdate({ ...full, nodes: [...full.nodes, n] });
     setSelectedId(n.id);

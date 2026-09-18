@@ -233,12 +233,29 @@ pub fn list_documents(folder_id: Option<&str>) -> Result<Vec<MindmapDocument>, S
     })
 }
 
+/// 新建文档根节点的随机取色盘（高饱和，与前端节点配色同风格）。
+pub(crate) const ROOT_NODE_COLORS: [&str; 10] = [
+    "#22d3ee", "#34d399", "#fbbf24", "#60a5fa", "#fb7185",
+    "#a78bfa", "#f97316", "#4ade80", "#f472b6", "#38bdf8",
+];
+
+/// 按种子从色盘取色（纯函数，便于测试）。种子含文档 id/时间戳的随机成分，
+/// 使每份新文档的根节点颜色各不相同。
+pub(crate) fn random_root_color(seed: &str) -> &'static str {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    seed.hash(&mut h);
+    ROOT_NODE_COLORS[(h.finish() as usize) % ROOT_NODE_COLORS.len()]
+}
+
 pub fn create_document(name: &str, description: &str, source_type: &str, folder_id: Option<&str>) -> Result<MindmapDocument, String> {
     with_conn(|c| {
         let id = new_id("mm"); let ts = now_ts();
         sql(c.execute("INSERT INTO mindmap_documents (id,name,description,source_type,source_desc,folder_id,background_texture,layout_dir,ai_imports,ai_input_tokens,ai_output_tokens,created_at,updated_at) VALUES (?1,?2,?3,?4,'',?5,'dots','lr',0,0,0,?6,?7)", rusqlite::params![id, name, description, source_type, folder_id, ts, ts]))?;
         let root_id = new_id("nd");
-        sql(c.execute("INSERT INTO mindmap_nodes (id,document_id,parent_id,name,description,detail,kind,color,plan_at,repeat,sources,position_x,position_y,created_at,updated_at) VALUES (?1,?2,NULL,?3,'根节点','','root','#f8fafc',NULL,'none','[]',0,0,?4,?5)", rusqlite::params![root_id, id, name, ts, ts]))?;
+        // 根节点颜色随机化：不再固定 #f8fafc，每份新文档各不相同
+        let root_color = random_root_color(&format!("{id}{ts}"));
+        sql(c.execute("INSERT INTO mindmap_nodes (id,document_id,parent_id,name,description,detail,kind,color,plan_at,repeat,sources,position_x,position_y,created_at,updated_at) VALUES (?1,?2,NULL,?3,'根节点','','root',?4,NULL,'none','[]',0,0,?5,?6)", rusqlite::params![root_id, id, name, root_color, ts, ts]))?;
         Ok(MindmapDocument { id, name: name.to_string(), description: description.to_string(), source_type: source_type.to_string(), source_desc: String::new(), folder_id: folder_id.map(|s| s.to_string()), background_texture: "dots".to_string(), layout_dir: "lr".to_string(), node_count: 1, sticker_count: 0, ai_imports: 0, ai_input_tokens: 0, ai_output_tokens: 0, created_at: ts.clone(), updated_at: ts })
     })
 }
@@ -549,4 +566,27 @@ pub fn load_full(document_id: &str) -> Result<Option<DocumentFull>, String> {
             Ok(Some(DocumentFull { document: MindmapDocument { id, name, description: desc, source_type: st, source_desc: sd, folder_id: fid, background_texture: bt, layout_dir: ld, node_count: n.len(), sticker_count: sc.len(), ai_imports: aii, ai_input_tokens: ait, ai_output_tokens: aot, created_at: ca, updated_at: ua }, nodes: n, stickers: sc }))
         } else { Ok(None) }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_random_root_color_in_palette_and_deterministic() {
+        for seed in ["a", "mm-abc2026-01-01T00:00:00Z", "zzz"] {
+            let c = random_root_color(seed);
+            assert!(ROOT_NODE_COLORS.contains(&c), "颜色不在色盘内: {c}");
+            assert_eq!(c, random_root_color(seed), "同种子应稳定");
+        }
+    }
+
+    #[test]
+    fn test_random_root_color_varies_across_seeds() {
+        // 50 个不同种子至少命中 5 种颜色（分布不应塌缩到单色）
+        let seeds: Vec<String> = (0..50).map(|i| format!("mm-doc-{i}-{}", i * 7919)).collect();
+        let distinct: std::collections::HashSet<&str> =
+            seeds.iter().map(|s| random_root_color(s)).collect();
+        assert!(distinct.len() >= 5, "50 个种子只命中 {} 种颜色", distinct.len());
+    }
 }
