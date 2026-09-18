@@ -22,6 +22,8 @@ import {
   GitBranch,
   Terminal,
   AlertTriangle,
+  Copy,
+  Eraser,
   X,
   LayoutDashboard,
   Settings2,
@@ -30,7 +32,6 @@ import {
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import VexAvatar from "../VexAvatar";
 import { useTranslation } from "react-i18next";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 
@@ -86,6 +87,8 @@ interface NodeProjectStatus {
   installed: boolean;
   status: string; // "running" | "stopped" | "not_installed" | "port_conflict"
   port?: number | null;
+  /** port_conflict 时占用进程名 */
+  conflictProcess?: string | null;
   pid?: number | null;
   gitVersion?: string | null;
   localVersion?: string | null;
@@ -161,10 +164,9 @@ export default function NodeManagerPanel() {
   const [consoleUrls, setConsoleUrls] = useState<Record<string, string>>({});
   // 内部主页 Tab 管理（在主窗口内 iframe 打开各 Node 应用界面，服务区全屏）
   const [tabs, setTabs] = useState<NodeProjectDef[]>([]);
-  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  // 默认打开服务管理页（Q-0120）：进入面板直接可用，无需点按钮
+  const [activeTabId, setActiveTabId] = useState<string | null>(MANAGE_TAB);
   const [tabReload, setTabReload] = useState<Record<string, number>>({});
-  // 服务管理弹窗：默认打开——进入面板没有正在运行的服务时直接展示管理界面，
-  // 省去「先看引导页 → 再手动点一次」的步骤。用户可关闭弹窗查看引导页。
   // git 更新检查
   const [updateInfo, setUpdateInfo] = useState<Record<string, NodeUpdateInfo>>(
     {},
@@ -217,8 +219,9 @@ export default function NodeManagerPanel() {
   // 监听安装/升级/启动进度；phase=done 时自动清除该项目的进度动画
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let disposed = false; // StrictMode 双挂载下，异步注册完成前可能已卸载 → 必须补退订
     const setup = async () => {
-      unlisten = await listen<NodeProgress>("npm-progress", (e) => {
+      const fn = await listen<NodeProgress>("npm-progress", (e) => {
         const { projectId, phase } = e.payload;
         if (phase === "done") {
           setProgress((prev) => {
@@ -230,16 +233,22 @@ export default function NodeManagerPanel() {
           setProgress((prev) => ({ ...prev, [projectId]: e.payload }));
         }
       });
+      if (disposed) fn();
+      else unlisten = fn;
     };
     setup();
-    return () => unlisten?.();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
   // 监听实时日志（git pull / install / build / start）
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let disposed = false;
     const setup = async () => {
-      unlisten = await listen<NodeLog>("npm-log", (e) => {
+      const fn = await listen<NodeLog>("npm-log", (e) => {
         const { projectId, line } = e.payload;
         if (!line) return;
         setLogs((prev) => {
@@ -250,23 +259,34 @@ export default function NodeManagerPanel() {
           prev[projectId] ? prev : { ...prev, [projectId]: true },
         );
       });
+      if (disposed) fn();
+      else unlisten = fn;
     };
     setup();
-    return () => unlisten?.();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
   // 监听控制台 URL 捕获（dsh web 等在启动输出里打印带 token 的认证地址）
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let disposed = false;
     const setup = async () => {
-      unlisten = await listen<NodeConsoleUrl>("npm-console-url", (e) => {
+      const fn = await listen<NodeConsoleUrl>("npm-console-url", (e) => {
         const { projectId, url } = e.payload;
         if (!projectId || !url) return;
         setConsoleUrls((prev) => ({ ...prev, [projectId]: url }));
       });
+      if (disposed) fn();
+      else unlisten = fn;
     };
     setup();
-    return () => unlisten?.();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
   // 日志区自动滚动到底部
@@ -365,7 +385,15 @@ export default function NodeManagerPanel() {
   const openWeb = async (project: NodeProjectDef) => {
     setError((prev) => ({ ...prev, [project.id]: "" }));
     if (project.consoleUrlPattern?.trim()) {
-      const captured = consoleUrls[project.id];
+      // 始终回查后端取「最新」捕获地址（内存 → 持久化文件）：
+      // token 随每次服务启动变化，前端 state 里可能残留旧值，直接用会打开失效地址。
+      const fromBackend = await invoke<string | null>("npm_console_url", {
+        projectId: project.id,
+      }).catch(() => null);
+      let captured = fromBackend ?? consoleUrls[project.id];
+      if (fromBackend) {
+        setConsoleUrls((prev) => ({ ...prev, [project.id]: fromBackend }));
+      }
       if (!captured) {
         const st = await invoke<NodeProjectStatus>("npm_status", {
           projectId: project.id,
@@ -386,11 +414,16 @@ export default function NodeManagerPanel() {
         }));
         return;
       }
-      // 内部打开：iframe 直接加载捕获的带 token 地址（不再跳外部浏览器）
-      setTabs((prev) =>
-        prev.some((t) => t.id === project.id) ? prev : [...prev, project],
-      );
-      setActiveTabId(project.id);
+      // 独立 Kira 窗口打开（非外部浏览器）：dsh 等服务的鉴权 Cookie 是 SameSite=Strict，
+      // 主窗口 iframe 的第三方上下文会拦截 Cookie 导致 401；顶级窗口可正常握手。
+      try {
+        await invoke("npm_open_window", { projectId: project.id });
+      } catch (e) {
+        setError((prev) => ({
+          ...prev,
+          [project.id]: typeof e === "string" ? e : String(e),
+        }));
+      }
       return;
     }
     if (tabs.some((t) => t.id === project.id)) {
@@ -432,13 +465,28 @@ export default function NodeManagerPanel() {
     }
   };
 
+  // 强制关闭占用服务端口的进程（端口冲突时前端按钮触发）
+  const killPortOwner = async (project: NodeProjectDef, port: number) => {
+    try {
+      await invoke<string>("kill_port_owner", { portStr: String(port) });
+      setError((prev) => ({ ...prev, [project.id]: "" }));
+    } catch (e) {
+      setError((prev) => ({
+        ...prev,
+        [project.id]: typeof e === "string" ? e : String(e),
+      }));
+    }
+    await refreshStatus(project.id);
+  };
+
   const closeTab = (id: string) => {
     setTabs((prev) => {
       const idx = prev.findIndex((t) => t.id === id);
       if (idx === -1) return prev;
       const next = prev.filter((t) => t.id !== id);
       if (activeTabId === id) {
-        setActiveTabId(next[idx] ? next[idx].id : (next[idx - 1]?.id ?? null));
+        // 全部服务标签关闭后回到服务管理页
+        setActiveTabId(next[idx] ? next[idx].id : (next[idx - 1]?.id ?? MANAGE_TAB));
       }
       return next;
     });
@@ -555,6 +603,8 @@ export default function NodeManagerPanel() {
                   [manageSelected.id]: !prev[manageSelected.id],
                 }))
               }
+              onClearLogs={(pid) => setLogs((prev) => ({ ...prev, [pid]: [] }))}
+              onKillPortOwner={(port) => void killPortOwner(manageSelected, port)}
             />
           ) : (
             <div className="h-full flex items-center justify-center text-slate-500 text-sm">
@@ -565,29 +615,6 @@ export default function NodeManagerPanel() {
       </div>
     </div>
   );
-
-  // 主界面：无 Tab 时显示全屏引导页
-  if (tabs.length === 0 && activeTabId !== MANAGE_TAB) {
-    return (
-      <div className="h-full flex flex-col items-center justify-center select-none">
-        <div className="text-center space-y-4">
-          <VexAvatar size={64} className="mx-auto" />
-          <div>
-            <h1 className="text-lg font-bold text-white">{t("nodeproj.servicesTitle")}</h1>
-            <p className="text-[12px] text-slate-500 mt-1">
-              {t("nodeproj.servicesDesc")}
-            </p>
-          </div>
-          <button
-            onClick={() => setActiveTabId(MANAGE_TAB)}
-            className="px-5 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-xl text-[13px] font-semibold flex items-center gap-2 mx-auto cursor-pointer transition-all"
-          >
-            <Settings2 className="w-4 h-4" /> {t("nodeproj.openManage")}
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="h-full flex flex-col min-h-0 select-none">
@@ -626,35 +653,6 @@ export default function NodeManagerPanel() {
                 </button>
               );
             })}
-            <div className="flex-1" />
-            <button
-              onClick={() => activeTab && reloadTab(activeTab.id)}
-              disabled={!activeTab}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-              title={t("nodeproj.refreshHomeTitle")}
-            >
-              <RefreshCw className="w-3.5 h-3.5" /> {t("nodeproj.refreshHome")}
-            </button>
-            <button
-              onClick={() => activeTab && void openDevTools(activeTab)}
-              disabled={!activeTab}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-              title={t("nodeproj.devToolsTitle")}
-            >
-              <Code2 className="w-3.5 h-3.5" /> {t("nodeproj.devTools")}
-            </button>
-            {/* 服务管理：固定标签页（不可关闭） */}
-            <button
-              onClick={() => setActiveTabId(MANAGE_TAB)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-[11px] font-semibold transition-all cursor-pointer flex-shrink-0 ml-1 ${
-                activeTabId === MANAGE_TAB
-                  ? "bg-white/10 text-white border-b-2 border-[var(--module-accent)]"
-                  : "text-slate-400 hover:text-slate-200 hover:bg-white/5 border-b-2 border-transparent"
-              }`}
-              title={t("nodeproj.openManage")}
-            >
-              <Settings2 className="w-3 h-3" /> {t("nodeproj.manage")}
-            </button>
             <div className="flex-1" />
             <button
               onClick={() => activeTab && reloadTab(activeTab.id)}
@@ -719,6 +717,8 @@ function ProjectCard({
   onOpenWeb,
   onCheckUpdate,
   onToggleLog,
+  onClearLogs,
+  onKillPortOwner,
 }: {
   project: NodeProjectDef;
   st?: NodeProjectStatus;
@@ -739,8 +739,11 @@ function ProjectCard({
   onOpenWeb: (p: NodeProjectDef) => void;
   onCheckUpdate: (p: NodeProjectDef) => void;
   onToggleLog: () => void;
+  onClearLogs: (projectId: string) => void;
+  onKillPortOwner: (port: number) => void;
 }) {
   const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
   const Icon = ICONS[project.icon] ?? Bot;
   // npx 模式：配置了 npxPackage，安装/升级/启动直接用 npm install --prefix / npx --prefix
   const isNpx = !!project.npxPackage?.trim();
@@ -897,6 +900,27 @@ function ProjectCard({
         </label>
       </div>
 
+      {/* 端口冲突：明确端口 / 占用进程 / PID，并提供强制关闭 */}
+      {portConflict && (
+        <div className="mx-5 mb-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center gap-2 flex-wrap">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+          <span className="text-[10px] text-amber-300 font-semibold">
+            {t("nodeproj.conflictDetail", {
+              port: st?.port ?? project.defaultPort,
+              proc: st?.conflictProcess ?? "?",
+              pid: st?.pid ?? "?",
+            })}
+          </span>
+          <button
+            type="button"
+            onClick={() => onKillPortOwner(st?.port ?? project.defaultPort)}
+            className="ml-auto px-2 py-1 rounded-md bg-red-600 hover:bg-red-500 text-[10px] font-semibold text-white cursor-pointer transition-all flex items-center gap-1"
+          >
+            <Square className="w-3 h-3" /> {t("nodeproj.forceKill")}
+          </button>
+        </div>
+      )}
+
       {/* 更新检查：git 模式对比 commit；npx 模式对比本地版本与 npm registry 远程版本 */}
       {installed && (
         <div className="px-5 py-1.5 flex items-center gap-2 text-[11px]">
@@ -995,14 +1019,41 @@ function ProjectCard({
       {/* 实时日志区 */}
       {logs.length > 0 && (
         <div className="px-5 py-1">
-          <button
-            onClick={onToggleLog}
-            className="flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-300 cursor-pointer"
-          >
-            <Terminal className="w-3 h-3" />
-            {logOpen ? t("nodeproj.logsToggleOpen") : t("nodeproj.logsToggleClosed")}
-            <span className="text-slate-600">{t("nodeproj.logLines", { count: logs.length })}</span>
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={onToggleLog}
+              className="flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-300 cursor-pointer"
+            >
+              <Terminal className="w-3 h-3" />
+              {logOpen ? t("nodeproj.logsToggleOpen") : t("nodeproj.logsToggleClosed")}
+              <span className="text-slate-600">{t("nodeproj.logLines", { count: logs.length })}</span>
+            </button>
+            <div className="flex-1" />
+            <button
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(logs.join("\n"));
+                  setCopied(true);
+                  window.setTimeout(() => setCopied(false), 1500);
+                } catch {
+                  /* 剪贴板不可用时静默忽略 */
+                }
+              }}
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-slate-500 hover:text-slate-300 hover:bg-white/5 cursor-pointer transition-all"
+              title={t("nodeproj.copyLogs")}
+            >
+              <Copy className="w-3 h-3" />
+              {copied ? t("nodeproj.copied") : t("nodeproj.copyLogs")}
+            </button>
+            <button
+              onClick={() => onClearLogs(project.id)}
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 cursor-pointer transition-all"
+              title={t("nodeproj.clearLogsBtn")}
+            >
+              <Eraser className="w-3 h-3" />
+              {t("nodeproj.clearLogsBtn")}
+            </button>
+          </div>
           {logOpen && (
             <div
               className="mt-1 max-h-56 overflow-y-auto rounded-lg bg-black/40 border border-white/5 p-2 font-mono text-[10px] leading-relaxed"

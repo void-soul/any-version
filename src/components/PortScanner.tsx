@@ -86,7 +86,7 @@ export default function PortScanner() {
   };
 
   return (
-    <div className="grid min-h-0 grid-rows-2 gap-4">
+    <div className="grid h-full min-h-0 grid-cols-2 gap-4">
       {/* 端口查询 */}
       <div className="glass-panel flex min-h-0 flex-col rounded-2xl border border-white/5 p-5">
         <div className="flex shrink-0 items-center gap-2 border-b border-white/5 pb-2">
