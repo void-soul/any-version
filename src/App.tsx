@@ -348,8 +348,8 @@ export default function App() {
       {booting && (
         <div className="fixed inset-0 z-[10000] flex flex-col items-center justify-center gap-6 bg-[#0b101b] cyber-grid">
           <div className="relative">
-            <span className="absolute -inset-3 rounded-full blur-xl opacity-60" style={{ background: `radial-gradient(circle, ${activeModuleColor}55, transparent 70%)` }} />
-            <VexAvatar size={92} className="relative" />
+            <span className="absolute -inset-6 rounded-full blur-2xl opacity-60" style={{ background: `radial-gradient(circle, ${activeModuleColor}55, transparent 70%)` }} />
+            <VexAvatar size={150} className="relative" />
           </div>
           <div className="text-center">
             <div className="text-xl font-black tracking-[0.35em] text-white">
