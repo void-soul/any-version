@@ -656,6 +656,7 @@ pub fn run() {
             commands::ai::skills::migrate_legacy_skills,
             commands::ai::config::get_provider_presets,
             commands::ai::balance::query_provider_balance,
+            commands::node_manager::npm_open_window,
             commands::ai::headroom::check_headroom_health,
             commands::ai::headroom::get_headroom_config,
             commands::ai::headroom::save_headroom_config,

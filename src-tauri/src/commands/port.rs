@@ -64,7 +64,7 @@ fn is_port_reserved(port: i32, ranges: &[ExcludedPortRange]) -> bool {
     false
 }
 
-fn find_port_owner(port_str: &str) -> Option<PortOwner> {
+pub(crate) fn find_port_owner(port_str: &str) -> Option<PortOwner> {
     eprintln!("[port] ====== find_port_owner port_str=\"{}\" ======", port_str);
 
     // Use cmd /c wrapper for reliable execution from GUI subsystem

@@ -260,6 +260,9 @@ pub struct NodeProjectStatus {
     pub local_version: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
+    /// port_conflict 时占用进程名（前端明确展示「端口 X 被 <proc> 占用」）。
+    #[serde(default)]
+    pub conflict_process: Option<String>,
 }
 
 // ─── 注册表 ───
@@ -589,15 +592,42 @@ fn record_console_url_if_changed(project_id: &str, url: &str) -> bool {
     changed
 }
 
-/// 读取某项目最近捕获的控制台 URL。
-fn console_url_of(project_id: &str) -> Option<String> {
-    console_urls().as_ref().and_then(|m| m.get(project_id).cloned())
+/// 控制台 URL 的持久化文件（项目托管目录内）：应用重启后仍能取回最近捕获的地址，
+/// 避免「服务在跑、主页按钮却提示未捕获/回落到无 token 地址」。
+fn console_url_file_path(project_id: &str) -> Option<PathBuf> {
+    find_project(project_id).map(|d| d.managed_dir().join(".console-url.json"))
 }
 
-/// 清除某项目捕获的控制台 URL（停止/卸载时调用）。
+/// 持久化最近捕获的控制台 URL。
+fn persist_console_url(project_id: &str, url: &str) {
+    if let Some(path) = console_url_file_path(project_id) {
+        let data = serde_json::json!({ "url": url }).to_string();
+        let _ = fs::write(&path, data);
+    }
+}
+
+/// 读取某项目最近捕获的控制台 URL：内存优先，回落到持久化文件。
+fn console_url_of(project_id: &str) -> Option<String> {
+    if let Some(u) = console_urls().as_ref().and_then(|m| m.get(project_id).cloned()) {
+        return Some(u);
+    }
+    let path = console_url_file_path(project_id)?;
+    let raw = fs::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    value
+        .get("url")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .filter(|s| s.starts_with("http://") || s.starts_with("https://"))
+}
+
+/// 清除某项目捕获的控制台 URL（停止/卸载时调用；内存 + 持久化文件一并清除）。
 fn clear_console_url(project_id: &str) {
     if let Some(m) = console_urls().as_mut() {
         m.remove(project_id);
+    }
+    if let Some(path) = console_url_file_path(project_id) {
+        let _ = fs::remove_file(path);
     }
 }
 
@@ -673,6 +703,7 @@ fn maybe_capture_console_url(
     // 原子「比较+记录」：仅当地址变化（服务重启后 token 更新）时自动打开，
     // stdout/stderr 并发命中同一行不会重复打开浏览器。
     let changed = record_console_url_if_changed(project_id, &url);
+    persist_console_url(project_id, &url);
     emit_console_url(app, project_id, &url);
     if changed && auto_open {
         open_url_in_browser(&url);
@@ -2274,6 +2305,45 @@ pub fn npm_console_url(project_id: String) -> Result<Option<String>, String> {
     Ok(console_url_of(&def.id))
 }
 
+/// 在独立的 Kira 窗口中打开服务主页。
+///
+/// 为什么不用主窗口 iframe：dsh 等服务的鉴权依赖 `SameSite=Strict` 的 HttpOnly
+/// Cookie（token URL → 303 → Set-Cookie → /）。iframe 是第三方上下文，WebView2
+/// 会拦截该 Cookie，重定向后的 / 永远 401——token 正确也进不去。独立顶级窗口的
+/// Cookie 是第一方，可正常完成握手，同时仍属于本应用（而非外部浏览器）。
+#[tauri::command]
+pub async fn npm_open_window(app: tauri::AppHandle, project_id: String) -> Result<(), String> {
+    use tauri::Manager;
+    let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
+    let url = if def.has_console_url_pattern() {
+        console_url_of(&def.id).unwrap_or_else(|| def.resolved_web_path())
+    } else {
+        def.resolved_web_path()
+    };
+    let label = format!("svc-{}", def.id);
+    // 已有窗口：导航到最新地址并聚焦（token 轮换后复用窗口即可）
+    if let Some(win) = app.get_webview_window(&label) {
+        let js = format!(
+            "window.location.replace({});",
+            serde_json::to_string(&url).unwrap_or_else(|_| "\"about:blank\"".into())
+        );
+        let _ = win.eval(&js);
+        let _ = win.set_focus();
+        return Ok(());
+    }
+    let parsed: tauri::Url = url.parse().map_err(|e| format!("URL 解析失败: {}", e))?;
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        &label,
+        tauri::WebviewUrl::External(parsed),
+    )
+    .title(format!("{} — Kira", def.display_name))
+    .inner_size(1280.0, 820.0)
+    .build()
+    .map_err(|e| format!("创建窗口失败: {}", e))?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn npm_open(project_id: String) -> Result<(), String> {
     let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
@@ -2677,6 +2747,7 @@ fn status_for(def: &NodeProjectDef) -> NodeProjectStatus {
             git_version: None,
             local_version: None,
             error: None,
+            conflict_process: None,
         };
     }
 
@@ -2692,6 +2763,7 @@ fn status_for(def: &NodeProjectDef) -> NodeProjectStatus {
     // 运行状态：端口被我们的进程占用 → running；被其他进程占用 → port_conflict
     let mut status = "stopped".to_string();
     let mut pid = None;
+    let mut conflict_process = None;
     if let Some(p) = crate::commands::utils::port_owner_pid(def.default_port) {
         let recorded = recorded_pid(&def.id);
         if recorded == Some(p) || recorded.is_some() {
@@ -2704,6 +2776,9 @@ fn status_for(def: &NodeProjectDef) -> NodeProjectStatus {
         } else {
             status = "port_conflict".to_string();
             pid = Some(p);
+            // 借用 port.rs 的 tasklist 查询占用进程名，供前端明确展示
+            conflict_process = super::port::find_port_owner(&def.default_port.to_string())
+                .map(|o| o.process_name);
         }
     } else if let Some(p) = recorded_pid(&def.id) {
         // 进程被本应用 spawn 但端口未监听（启动慢/异常）
@@ -2721,6 +2796,7 @@ fn status_for(def: &NodeProjectDef) -> NodeProjectStatus {
         git_version,
         local_version,
         error: None,
+        conflict_process,
     }
 }
 
