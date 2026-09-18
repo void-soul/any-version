@@ -2803,11 +2803,23 @@
     "resizeTipAuto": "拖动调整窗口高度 · 双击恢复自动",
     "resizeTipManual": "已手动调整高度 · 双击恢复自动"
   },
+  "aiCloseGuard": {
+    "title": "AI 任务进行中",
+    "desc": "关闭将停止正在进行的 AI 任务，确定要关闭吗？",
+    "confirm": "停止并关闭",
+    "cancel": "继续任务"
+  },
   "mindmap": {
     "dirLr": "左→右",
     "dirRl": "右→左",
     "dirTb": "上→下",
     "dirBt": "下→上",
+    "descLabel": "描述（可选）",
+    "nodesCount": "{{count}} 节点",
+    "exportMd": "导出 Markdown",
+    "dragResize": "拖拽调整大小",
+    "collapseSidebar": "收起侧栏",
+    "expandSidebar": "展开侧栏",
     "kindRoot": "根节点",
     "kindModule": "模块",
     "kindTask": "任务",

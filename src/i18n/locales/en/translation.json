@@ -2797,11 +2797,23 @@
     "resizeTipAuto": "Drag to resize · double-click to auto-fit",
     "resizeTipManual": "Manually resized · double-click to auto-fit"
   },
+  "aiCloseGuard": {
+    "title": "AI Task in Progress",
+    "desc": "Closing will stop the running AI task. Close anyway?",
+    "confirm": "Stop & Close",
+    "cancel": "Keep Running"
+  },
   "mindmap": {
     "dirLr": "Left → Right",
     "dirRl": "Right → Left",
     "dirTb": "Top → Bottom",
     "dirBt": "Bottom → Top",
+    "descLabel": "Description (optional)",
+    "nodesCount": "{{count}} nodes",
+    "exportMd": "Export Markdown",
+    "dragResize": "Drag to resize",
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar",
     "kindRoot": "Root",
     "kindModule": "Module",
     "kindTask": "Task",
