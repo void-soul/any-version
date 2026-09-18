@@ -670,6 +670,18 @@ export default function NodeManagerPanel() {
             >
               <Code2 className="w-3.5 h-3.5" /> {t("nodeproj.devTools")}
             </button>
+            {/* 服务管理入口 */}
+            <button
+              onClick={() => setActiveTabId(MANAGE_TAB)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold cursor-pointer transition-all flex-shrink-0 ${
+                activeTabId === MANAGE_TAB
+                  ? "bg-white/10 text-white"
+                  : "text-slate-300 hover:text-white hover:bg-white/10"
+              }`}
+              title={t("nodeproj.openManage")}
+            >
+              <Settings2 className="w-3.5 h-3.5" /> {t("nodeproj.manage")}
+            </button>
           </div>
 
           {/* 内容区：管理页 / 全屏 iframe */}
