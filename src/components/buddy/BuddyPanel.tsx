@@ -832,6 +832,11 @@ export default function BuddyPanel() {
     return () => clearTimeout(timer);
   }, [sessionKeyword, tab, loadSessions]);
 
+  // 签到页三个区块（账号状态/日历/日志）的折叠状态
+  const [checkinCollapsed, setCheckinCollapsed] = useState({ accounts: false, calendar: false, logs: false });
+  const toggleCheckinSection = (key: "accounts" | "calendar" | "logs") =>
+    setCheckinCollapsed((c) => ({ ...c, [key]: !c[key] }));
+
   // 自动签到配置/行为日志/今日任务列表/旅行配置加载（签到与派出仅限 WorkBuddy）
   const loadAutoCheckin = useCallback(async () => {
     try {
@@ -2194,8 +2199,11 @@ export default function BuddyPanel() {
             {/* 每账号状态（签到 | 派出）—— 固定用 WorkBuddy 账号：签到/派出只对 WorkBuddy 有效 */}
             <div className="xl:col-span-2 rounded-xl border border-white/10 bg-white/[0.03] p-4">
               <div className="flex items-center gap-2 mb-3">
+              <button type="button" onClick={() => toggleCheckinSection("accounts")} className="flex items-center gap-2 cursor-pointer select-none">
+                {checkinCollapsed.accounts ? <ChevronRight className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
                 <ListChecks className="w-4 h-4 text-[var(--module-accent)]" />
                 <span className="text-[13px] font-bold text-white">{t("buddy.accountStatus.title")}</span>
+              </button>
                 <div className="flex-1" />
                 <button
                   onClick={() => {
@@ -2207,6 +2215,7 @@ export default function BuddyPanel() {
                   <RefreshCw className="w-3 h-3" /> {t("buddy.auto.refresh")}
                 </button>
               </div>
+              {!checkinCollapsed.accounts && (<>
               {platform !== "workbuddy" && (
                 <p className="text-[9px] text-amber-300/80 mb-2">{t("buddy.accountStatus.wbOnly")}</p>
               )}
@@ -2333,16 +2342,20 @@ export default function BuddyPanel() {
                   })}
                 </div>
               )}
+              </>)}
             </div>
 
             {/* 日历：逐日逐账号的计划与实绩（数据来自每日归档） */}
             <div className="xl:col-span-2 rounded-xl border border-white/10 bg-white/[0.03] p-4">
               <div className="flex items-center gap-2 mb-3">
-                <CalendarDays className="w-4 h-4 text-[var(--module-accent)]" />
-                <span className="text-[13px] font-bold text-white">{t("buddy.calendar.title")}</span>
-                <span className="text-[9px] text-slate-500 hidden md:inline">
-                  {t("buddy.calendar.hint")}
-                </span>
+                <button type="button" onClick={() => toggleCheckinSection("calendar")} className="flex items-center gap-2 cursor-pointer select-none">
+                  {checkinCollapsed.calendar ? <ChevronRight className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
+                  <CalendarDays className="w-4 h-4 text-[var(--module-accent)]" />
+                  <span className="text-[13px] font-bold text-white">{t("buddy.calendar.title")}</span>
+                  <span className="text-[9px] text-slate-500 hidden md:inline">
+                    {t("buddy.calendar.hint")}
+                  </span>
+                </button>
                 <div className="flex-1" />
                 <button
                   onClick={() => setCalendarMonth((m) => shiftMonthStr(m, -1))}
@@ -2371,6 +2384,7 @@ export default function BuddyPanel() {
                   {t("buddy.calendar.today")}
                 </button>
               </div>
+              {!checkinCollapsed.calendar && (<>
               <div className="grid grid-cols-7 gap-1 mb-1">
                 {t("buddy.calendar.weekdays")
                   .split(",")
@@ -2493,12 +2507,16 @@ export default function BuddyPanel() {
                   )}
                 </div>
               )}
+              </>)}
             </div>
 
             {/* 行为日志（签到 + 派旅行，平铺） */}
             <div className="xl:col-span-2 rounded-xl border border-white/10 bg-white/[0.03] p-4">
               <div className="flex items-center gap-2 mb-3">
-                <span className="text-[13px] font-bold text-white">{t("buddy.actionLogs.title")}</span>
+                <button type="button" onClick={() => toggleCheckinSection("logs")} className="flex items-center gap-2 cursor-pointer select-none">
+                  {checkinCollapsed.logs ? <ChevronRight className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
+                  <span className="text-[13px] font-bold text-white">{t("buddy.actionLogs.title")}</span>
+                </button>
                 <div className="flex-1" />
                 <button
                   onClick={clearAutoLogs}
@@ -2507,6 +2525,7 @@ export default function BuddyPanel() {
                   <Eraser className="w-3 h-3" /> {t("buddy.auto.clearLogs")}
                 </button>
               </div>
+              {!checkinCollapsed.logs && (<>
               {actionLogs.length === 0 ? (
                 <div className="text-[10px] text-slate-600">{t("buddy.actionLogs.empty")}</div>
               ) : (
@@ -2543,6 +2562,7 @@ export default function BuddyPanel() {
                   })}
                 </div>
               )}
+              </>)}
             </div>
           </div>
         </div>
