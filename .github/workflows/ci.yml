@@ -39,6 +39,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      # tauri-build 的 bundle.resources 引用 src-tauri/_up_（资源打包副本，gitignore 排除），
+      # 必须先由 bundle-resources.mjs 生成，否则 cargo check 的 build script 阶段
+      # 会报「glob pattern _up_/ai-tools/*.json path not found」直接失败。
+      - name: bundle resources
+        run: node scripts/bundle-resources.mjs
       # 硬性关卡：编译必须通过（抓真正的编译/类型错误）。
       - name: cargo check
         run: cargo check --manifest-path src-tauri/Cargo.toml
