@@ -554,6 +554,8 @@ pub fn get_aggregate_config() -> AggregateConfig {
 pub fn save_aggregate_config(config: AggregateConfig) -> Result<AggregateConfig, String> {
     let mut sanitized = config.clone();
     sanitized.retry_count = sanitized.retry_count.clamp(1, 5);
+    // 入口模型名：trim，留空回落默认 kiro-proxy
+    sanitized.entry_model = entry_model(&sanitized);
     let mut current = load_ai_config();
     if running_port().is_some() && current.aggregate.port != sanitized.port {
         return Err("聚合服务运行中不能修改端口，请先停止服务".to_string());
@@ -622,7 +624,7 @@ pub async fn start_aggregate_service(app: tauri::AppHandle) -> Result<AggregateS
             format!(
                 "聚合服务已启动：http://127.0.0.1:{}（对外模型 {}；{} 个候选；上下文上限 {} tokens）",
                 port,
-                AGGREGATE_MODEL_ID,
+                entry_model(&config.aggregate),
                 candidates.len(),
                 config.aggregate.context_limit
             ),
@@ -673,12 +675,23 @@ pub async fn get_aggregate_status() -> AggregateStatus {
 
 // ─── 处理函数 ───
 
+/// 对外暴露的入口模型名：取配置（可配置，默认 kiro-proxy），空值回落默认。
+pub(crate) fn entry_model(config: &AggregateConfig) -> String {
+    let name = config.entry_model.trim();
+    if name.is_empty() {
+        AGGREGATE_MODEL_ID.to_string()
+    } else {
+        name.to_string()
+    }
+}
+
 /// 对外只暴露一个模型（聚合 = 多个候选对内的单一入口），内部按链分发到具体模型。
 async fn list_models() -> Json<Value> {
+    let name = entry_model(&load_ai_config().aggregate);
     Json(serde_json::json!({
         "object": "list",
         "data": [{
-            "id": AGGREGATE_MODEL_ID,
+            "id": name,
             "object": "model",
             "owned_by": "aggregate",
         }]
@@ -1030,6 +1043,16 @@ fn finish_non_stream(
     (StatusCode::OK, Json(converted)).into_response()
 }
 
+/// 同协议转发时的模型名改写（纯函数，便于单测）。
+///
+/// 聚合入口对外只暴露 `kiro-proxy`（AGGREGATE_MODEL_ID）；直接 `body.clone()`
+/// 会把这个入口模型名原样透传给上游 → 上游报「模型不存在」。
+/// 必须改写为候选配置的 `model_id` 再转发。跨协议路径由 transform 函数完成同样改写。
+fn rewrite_upstream_model(mut body: Value, model: &str) -> Value {
+    body["model"] = Value::String(model.to_string());
+    body
+}
+
 /// 单候选请求：成功返回响应；失败返回分类错误。
 async fn try_candidate(
     state: &AggState,
@@ -1042,7 +1065,8 @@ async fn try_candidate(
     // 请求体转换：入口协议 → 候选出站协议（model 统一改为候选模型）
     let (upstream_body, upstream_stream) = match (inbound, candidate.outbound) {
         ("openai", Outbound::OpenAi) | ("anthropic", Outbound::Anthropic) => {
-            (body.clone(), stream_requested)
+            // 同协议也要改写：入口模型是 kiro-proxy，上游只认自己配置的模型名
+            (rewrite_upstream_model(body.clone(), model), stream_requested)
         }
         // 跨协议：v1 先按非流式请求并整体转换（流式转换仅覆盖 a↔o 主流组合）
         (_, _) => {
@@ -1495,6 +1519,31 @@ mod tests {
     #[test]
     fn test_aggregate_exposes_single_model() {
         assert_eq!(AGGREGATE_MODEL_ID, "kiro-proxy");
+    }
+
+    #[test]
+    fn test_entry_model_trim_and_fallback() {
+        let mut cfg = AggregateConfig::default();
+        cfg.entry_model = "  my-model  ".to_string();
+        assert_eq!(entry_model(&cfg), "my-model");
+        cfg.entry_model = "   ".to_string();
+        assert_eq!(entry_model(&cfg), AGGREGATE_MODEL_ID, "留空回落默认");
+        assert_eq!(cfg.entry_model.trim().is_empty(), true);
+    }
+
+    #[test]
+    fn test_same_protocol_rewrite_replaces_entry_model() {
+        // 回归：同协议转发必须把入口模型名（kiro-proxy）改写为候选的 model_id
+        let body = serde_json::json!({
+            "model": "kiro-proxy",
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        let out = rewrite_upstream_model(body.clone(), "claude-sonnet-4");
+        assert_eq!(out["model"], "claude-sonnet-4");
+        assert_eq!(out["messages"], body["messages"], "其它字段不动");
+        // 非 kiro-proxy 的入口模型同样被改写（规则统一，不特判名字）
+        let out2 = rewrite_upstream_model(body, "gpt-4o");
+        assert_eq!(out2["model"], "gpt-4o");
     }
 
     #[test]

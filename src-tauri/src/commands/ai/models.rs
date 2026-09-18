@@ -100,10 +100,11 @@ impl Default for HeadroomConfig {
     }
 }
 
-/// 聚合服务配置（本地聚合代理：端口 + 上下文限制）。
+/// 聚合服务配置（本地聚合代理：端口 + 上下文限制 + 对外模型名）。
 fn default_aggregate_port() -> u16 { 15888 }
 fn default_aggregate_context_limit() -> u64 { 128_000 }
 fn default_aggregate_retry_count() -> u32 { 2 }
+fn default_aggregate_entry_model() -> String { "kiro-proxy".to_string() }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AggregateConfig {
@@ -116,6 +117,10 @@ pub struct AggregateConfig {
     /// 同一候选的重试次数（1~5；仅瞬时错误重试，其它错误直接切下一个候选）
     #[serde(default = "default_aggregate_retry_count")]
     pub retry_count: u32,
+    /// 对外暴露的入口模型名（/v1/models 与请求体 model 校验用）。
+    /// 客户端以该名字请求，聚合层按候选链改写为各上游配置的模型名。
+    #[serde(default = "default_aggregate_entry_model")]
+    pub entry_model: String,
 }
 
 impl Default for AggregateConfig {
@@ -124,6 +129,7 @@ impl Default for AggregateConfig {
             port: default_aggregate_port(),
             context_limit: default_aggregate_context_limit(),
             retry_count: default_aggregate_retry_count(),
+            entry_model: default_aggregate_entry_model(),
         }
     }
 }
