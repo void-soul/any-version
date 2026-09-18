@@ -134,6 +134,7 @@ export default function RouteAggregate() {
   const [aggStatus, setAggStatus] = useState<AggregateStatus | null>(null);
   const [aggBusy, setAggBusy] = useState(false);
   const [logs, setLogs] = useState<AggregateLog[]>([]);
+  const [autoStart, setAutoStart] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -143,18 +144,20 @@ export default function RouteAggregate() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [views, savedChain, headroomCfg, aggCfg, status] = await Promise.all([
+      const [views, savedChain, headroomCfg, aggCfg, status, autoStartList] = await Promise.all([
         invoke<RouteCandidateView[]>("list_route_candidates"),
         invoke<RouteCandidate[]>("get_route_chain"),
         invoke<HeadroomConfig>("get_headroom_config"),
         invoke<AggregateConfig>("get_aggregate_config"),
         invoke<AggregateStatus>("get_aggregate_status"),
+        invoke<string[]>("get_auto_start_services"),
       ]);
       setCandidates(views);
       setChain(savedChain);
       setHeadroom(headroomCfg);
       setAggregate(aggCfg);
       setAggStatus(status);
+      setAutoStart(autoStartList.includes("aggregate"));
     } catch (e) {
       console.error("加载路由链失败", e);
     } finally {
@@ -204,6 +207,17 @@ export default function RouteAggregate() {
         setAggregate(aggregate);
         setLogs(prev => [...prev, { phase: "config", line: String(e), level: "error" }].slice(-MAX_LOG_LINES));
       });
+  };
+
+  const toggleAutoStart = async () => {
+    const next = !autoStart;
+    setAutoStart(next);
+    try {
+      await invoke("set_auto_start_service", { serviceId: "aggregate", enabled: next });
+    } catch (e) {
+      setAutoStart(!next);
+      setLogs(prev => [...prev, { phase: "config", line: String(e), level: "error" }].slice(-MAX_LOG_LINES));
+    }
   };
 
   const startAggregate = async () => {
@@ -604,6 +618,12 @@ export default function RouteAggregate() {
                 )}
               </div>
               <p className="text-[10px] text-slate-500 mt-0.5 leading-relaxed">{t("aggregate.serviceHint")}</p>
+              <label className="flex items-center gap-1.5 text-[10px] text-slate-400 cursor-pointer mt-1">
+                <input type="checkbox" checked={autoStart}
+                  onChange={() => void toggleAutoStart()}
+                  className="w-3 h-3 accent-[var(--module-accent)] cursor-pointer" />
+                {t("aggregate.autoStart")}
+              </label>
             </div>
             {aggStatus?.running ? (
               <button onClick={() => void stopAggregate()} disabled={aggBusy}
@@ -634,6 +654,14 @@ export default function RouteAggregate() {
                 onBlur={e => patchAggregate({ context_limit: Number(e.target.value) || 128000 })}
                 className="w-24 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
               <span className="text-[9px] text-slate-600">tokens</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-[10px] text-slate-500 flex-shrink-0">{t("aggregate.retryCount")}</label>
+              <input type="number" min={1} max={5} value={aggregate.retry_count}
+                onChange={e => setAggregate({ ...aggregate, retry_count: Number(e.target.value) || 1 })}
+                onBlur={e => patchAggregate({ retry_count: Math.min(5, Math.max(1, Number(e.target.value) || 2)) })}
+                className="w-14 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+              <span className="text-[9px] text-slate-600">{t("aggregate.retryCountHint")}</span>
             </div>
           </div>
 

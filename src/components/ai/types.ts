@@ -91,6 +91,8 @@ export interface AggregateConfig {
   port: number;
   /** 上下文上限（token，按启发式估算） */
   context_limit: number;
+  /** 同一候选的重试次数（1~5；仅瞬时错误重试） */
+  retry_count: number;
 }
 
 /** 聚合服务运行状态 */

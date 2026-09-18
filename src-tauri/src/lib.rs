@@ -310,11 +310,60 @@ pub fn run() {
                     let _ = commands::mihomo::launch_core(&h, s_mihomo).await;
                 }
 
+                // 1.5 聚合服务自启（AI「聚合」页可勾选）
+                if auto_start_services.contains("aggregate") {
+                    exit_log::exit_log("[autostart] 正在自启聚合服务...");
+                    match crate::commands::ai::aggregate::start_aggregate_service(h.clone()).await {
+                        Ok(st) => {
+                            exit_log::exit_log(&format!(
+                                "[autostart] 聚合服务自启成功（端口 {}，{} 个候选）",
+                                st.port, st.candidate_count
+                            ));
+                            let _ = h.emit("service-status-changed", "aggregate");
+                        }
+                        Err(e) => exit_log::exit_log(&format!("[autostart] 聚合服务自启失败: {}", e)),
+                    }
+                }
+
+                // 1.6 node 服务自启（id 形如 node:<project_id>，来自服务面板的「随应用启动」勾选）
+                let node_autostart: Vec<String> = auto_start_services
+                    .iter()
+                    .filter(|s| s.starts_with("node:"))
+                    .cloned()
+                    .collect();
+                for node_id in node_autostart {
+                    let project_id = node_id.trim_start_matches("node:").to_string();
+                    match crate::commands::node_manager::find_project(&project_id) {
+                        Some(def) if def.installed() => {
+                            exit_log::exit_log(&format!("[autostart] 正在自启 node 服务: {}", project_id));
+                            if let Err(e) =
+                                crate::commands::node_manager::npm_start(h.clone(), project_id.clone()).await
+                            {
+                                exit_log::exit_log(&format!("[autostart] 自启 node 服务 {} 失败: {}", project_id, e));
+                            } else {
+                                exit_log::exit_log(&format!("[autostart] 自启 node 服务 {} 成功", project_id));
+                                let _ = h.emit("service-status-changed", node_id.clone());
+                            }
+                        }
+                        Some(_) => {
+                            exit_log::exit_log(&format!("[autostart] node 服务 {} 未安装，跳过自启", project_id));
+                        }
+                        None => {
+                            exit_log::exit_log(&format!("[autostart] node 服务 {} 不存在，跳过自启", project_id));
+                        }
+                    }
+                }
+
                 // 2. SDK 后台服务自启 (MySQL / Redis / MongoDB / PostgreSQL / Nginx / FRPC / FRPS 等)
                 //    注：RTSP 媒体服务已不再提供开机自启（设置入口与自启分支均已移除）。
                 for svc_id in &auto_start_services {
-                    // mihomo 已在上方单独处理；rtsp 保留跳过以防御历史残留配置
-                    if svc_id == "mihomo" || svc_id == "rtsp" {
+                    // mihomo 已在上方单独处理；rtsp 保留跳过以防御历史残留配置；
+                    // aggregate 与 node:<id> 也在上方单独处理，避免落入 SDK 服务的查找逻辑报「未找到」。
+                    if svc_id == "mihomo"
+                        || svc_id == "rtsp"
+                        || svc_id == "aggregate"
+                        || svc_id.starts_with("node:")
+                    {
                         continue;
                     }
                     // 自动启动前先判断服务是否已开启：已在运行，或端口已被占用（无论是否本实例

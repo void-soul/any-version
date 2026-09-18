@@ -1,9 +1,13 @@
 //! 聚合服务：本地 HTTP 聚合代理（按聚合链顺序请求，可启停 + 日志回传）。
 //!
-//! - 入口协议：OpenAI 兼容 `POST /v1/chat/completions`（`/v1/messages` 暂不支持，返回 501 并说明）
-//! - 链路顺序：按 `route_chain` 依次尝试；当前候选失败（含重试）后切下一个
+//! - 对外单一模型入口：`kiro-proxy`（聚合 = 多个候选对内的单一入口）
+//! - 入口协议：OpenAI `/v1/chat/completions` + Anthropic `/v1/messages`
+//! - 候选出口协议：按供应商配置的 `openai_url` / `anthropic_url` / `google_url` 决定
+//!   （openai → anthropic → google 优先级），协议转换复用 `proxy::transform` / `proxy::google`
+//! - 链路顺序：按 `route_chain` 依次尝试；失败按类别决定重试/切换，并进入冷却
 //! - 上下文限制：请求超过 `AggregateConfig.context_limit` 时裁剪最早的非 system 消息
-//! - 压缩：Headroom 开启时先走 `/v1/compress`，失败按 `on_unavailable` 决定放行或报错
+//! - 压缩：Headroom 开启时先走 `/v1/compress`，并用 `frozen_message_count` 保持多轮前缀缓存
+//! - 链路热更新：每次请求实时读取配置，改完链路无需重启服务
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -24,46 +28,8 @@ use super::models::{AggregateConfig, AiProvider, RouteCandidate};
 use super::route::normalize_route_chain;
 use super::usage::log_usage_db_timed;
 
-/// 单个候选（启动快照）：解析好的上游端点与凭据。
-#[derive(Clone, Debug)]
-struct AggCandidate {
-    provider_id: String,
-    provider_name: String,
-    base_url: String,
-    api_key: String,
-    model_id: String,
-}
-
-/// Headroom 压缩运行时参数（启动快照）。
-#[derive(Clone, Debug)]
-struct HeadroomRuntime {
-    base_url: String,
-    timeout_ms: u64,
-    /// true = failClosed（压缩不可用直接报错）；false = failOpen（跳过压缩继续）
-    fail_closed: bool,
-}
-
-#[derive(Clone)]
-struct AggState {
-    app: tauri::AppHandle,
-    /// 本服务监听端口（用于运行期自引用兜底判定）
-    port: u16,
-    candidates: Arc<Vec<AggCandidate>>,
-    /// 候选健康状态（失败计数 + 冷却截止时间），键 = `provider::model`
-    health: Arc<Mutex<HashMap<String, CandidateHealth>>>,
-    headroom: Option<HeadroomRuntime>,
-    context_limit: u64,
-}
-
-struct AggregateEntry {
-    port: u16,
-    handle: tokio::task::JoinHandle<()>,
-}
-
-static AGGREGATE: OnceLock<Mutex<Option<AggregateEntry>>> = OnceLock::new();
-
 /// 聚合服务对外只暴露一个模型（对内才按链分发）——这也是「聚合」的含义。
-pub const AGGREGATE_MODEL_ID: &str = "auto";
+pub const AGGREGATE_MODEL_ID: &str = "kiro-proxy";
 
 // ─── 失败分类与切换策略（纯逻辑，便于单测） ───
 
@@ -144,8 +110,17 @@ pub fn retry_budget(class: FailureClass) -> usize {
     }
 }
 
+/// 该类别是否值得对同一候选再试一次（只有瞬时错误才重试，其余直接切下一个）。
+fn is_retryable(class: FailureClass) -> bool {
+    retry_budget(class) > 1
+}
+
 /// 冷却时长（切换后多久内不再尝试该候选）。
-pub fn cooldown_for(class: FailureClass, retry_after: Option<u64>, consecutive: u32) -> std::time::Duration {
+pub fn cooldown_for(
+    class: FailureClass,
+    retry_after: Option<u64>,
+    consecutive: u32,
+) -> std::time::Duration {
     const TRANSIENT_BASE: u64 = 30;
     const TRANSIENT_MAX: u64 = 5 * 60;
     const RATE_LIMIT_DEFAULT: u64 = 60;
@@ -224,11 +199,250 @@ fn clear_health(health: &Arc<Mutex<HashMap<String, CandidateHealth>>>, key: &str
     }
 }
 
+// ─── 自引用防护 ───
+
 /// 单个候选请求失败的结构化信息。
 struct CandidateError {
     class: FailureClass,
     message: String,
     retry_after: Option<u64>,
+}
+
+/// 过滤掉自引用候选（会造成递归），返回 (可用候选, 被剔除数量)。
+pub fn filter_self_referential(
+    candidates: Vec<AggCandidate>,
+    aggregate_port: u16,
+) -> (Vec<AggCandidate>, usize) {
+    let total = candidates.len();
+    let kept: Vec<AggCandidate> = candidates
+        .into_iter()
+        .filter(|c| !is_self_referential(&c.base_url, aggregate_port))
+        .collect();
+    let removed = total - kept.len();
+    (kept, removed)
+}
+
+/// 判断一个上游端点是否是「聚合服务自身」。
+///
+/// 高危场景：把「本地聚合」这类指向本服务的供应商也加进聚合链，
+/// 转发时就会打到自己 → 请求无限递归。启动与转发两侧都要拦。
+pub fn is_self_referential(base_url: &str, aggregate_port: u16) -> bool {
+    let raw = base_url.trim();
+    if raw.is_empty() {
+        return false;
+    }
+    let without_scheme = match raw.split_once("://") {
+        Some((_scheme, rest)) => rest,
+        None => raw,
+    };
+    let authority = without_scheme.split('/').next().unwrap_or("").trim();
+    if authority.is_empty() {
+        return false;
+    }
+    let (host, port_part) = match authority.rfind(':') {
+        Some(idx) => (&authority[..idx], Some(&authority[idx + 1..])),
+        None => (authority, None),
+    };
+    let host = host.trim().trim_matches('[').trim_matches(']').to_ascii_lowercase();
+    let is_loopback = matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1" | "0.0.0.0");
+    let port_matches = port_part
+        .and_then(|p| p.parse::<u16>().ok())
+        .map(|p| p == aggregate_port)
+        .unwrap_or(false);
+    is_loopback && port_matches
+}
+
+// ─── 候选与出站协议 ───
+
+/// 候选出口协议（按供应商配置的 URL 决定）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Outbound {
+    OpenAi,
+    Anthropic,
+    Google,
+}
+
+impl Outbound {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Outbound::OpenAi => "openai",
+            Outbound::Anthropic => "anthropic",
+            Outbound::Google => "google",
+        }
+    }
+}
+
+/// 单个候选（每次请求实时解析）：上游端点与凭据。
+#[derive(Clone, Debug)]
+struct AggCandidate {
+    provider_id: String,
+    provider_name: String,
+    outbound: Outbound,
+    base_url: String,
+    api_key: String,
+    model_id: String,
+}
+
+/// 按出站协议拼上游 URL，返回 (url, 鉴权头名)。
+/// 拼接规则与 proxy::server::build_upstream_url 一致（避免 /v1/v1 之类的重复）。
+pub fn build_candidate_url(
+    outbound: Outbound,
+    base: &str,
+    model: &str,
+    is_stream: bool,
+) -> (String, &'static str) {
+    let base = base.trim().trim_end_matches('/');
+    match outbound {
+        Outbound::OpenAi => {
+            let url = if base.ends_with("/chat/completions") {
+                base.to_string()
+            } else if base.ends_with("/v1") {
+                format!("{base}/chat/completions")
+            } else {
+                format!("{base}/v1/chat/completions")
+            };
+            (url, "Authorization")
+        }
+        Outbound::Anthropic => {
+            let url = if base.ends_with("/messages") {
+                base.to_string()
+            } else if base.ends_with("/v1") {
+                format!("{base}/messages")
+            } else {
+                format!("{base}/v1/messages")
+            };
+            (url, "x-api-key")
+        }
+        Outbound::Google => {
+            let gbase = if let Some(stripped) = base.strip_suffix("/v1beta") {
+                stripped
+            } else {
+                base
+            };
+            let gbase = gbase.trim_end_matches('/');
+            let url = if is_stream {
+                format!("{gbase}/v1beta/models/{model}:streamGenerateContent?alt=sse")
+            } else {
+                format!("{gbase}/v1beta/models/{model}:generateContent")
+            };
+            (url, "x-goog-api-key")
+        }
+    }
+}
+
+/// 从供应商配置选出出站协议与端点（openai → anthropic → google 优先级）。
+fn pick_outbound(provider: &AiProvider) -> Option<(Outbound, String)> {
+    let openai = provider.openai_url.trim().to_string();
+    let anthropic = provider.anthropic_url.trim().to_string();
+    let google = provider.google_url.trim().to_string();
+    if !openai.is_empty() {
+        return Some((Outbound::OpenAi, openai));
+    }
+    if !anthropic.is_empty() {
+        return Some((Outbound::Anthropic, anthropic));
+    }
+    if !google.is_empty() {
+        return Some((Outbound::Google, google));
+    }
+    None
+}
+
+/// 构建候选快照：把链路里的 (provider_id, model_id) 解析成可用的上游端点。
+/// 自引用（指向聚合服务自身）的候选直接剔除，避免请求递归。
+fn build_candidates(
+    providers: &[AiProvider],
+    chain: &[RouteCandidate],
+    aggregate_port: u16,
+) -> Vec<AggCandidate> {
+    let mut out = Vec::new();
+    for candidate in chain {
+        let Some(provider) = providers.iter().find(|p| p.id == candidate.provider_id) else {
+            continue;
+        };
+        let Some((outbound, base)) = pick_outbound(provider) else {
+            continue;
+        };
+        let base = base.trim().trim_end_matches('/').to_string();
+        if base.is_empty() || provider.api_key.trim().is_empty() {
+            continue;
+        }
+        if is_self_referential(&base, aggregate_port) {
+            continue;
+        }
+        out.push(AggCandidate {
+            provider_id: provider.id.clone(),
+            provider_name: if provider.name.trim().is_empty() { provider.id.clone() } else { provider.name.clone() },
+            outbound,
+            base_url: base,
+            api_key: provider.api_key.clone(),
+            model_id: candidate.model_id.clone(),
+        });
+    }
+    out
+}
+
+// ─── Headroom 压缩旁路 + 多轮前缀缓存 ───
+
+#[derive(Clone, Debug)]
+struct HeadroomRuntime {
+    base_url: String,
+    timeout_ms: u64,
+    /// true = failClosed（压缩不可用直接报错）；false = failOpen（跳过压缩继续）
+    fail_closed: bool,
+}
+
+/// 多轮前缀缓存：记录上一轮「客户端发来的原始 messages」与「实际转发出去的压缩 messages」。
+/// 下一轮若客户端消息以上一轮原始前缀开头（同一会话增长），则复用压缩前缀并携带
+/// `frozen_message_count`，避免每轮重新压缩打爆 provider 的 KV 缓存。
+#[derive(Debug, Clone)]
+pub struct PrefixSnapshot {
+    pub original: Vec<Value>,
+    pub forwarded: Vec<Value>,
+}
+
+/// 纯函数：按前缀缓存计算本轮实际发送的 messages 与 frozen_message_count。
+/// 不匹配（新会话/消息被改写）时原样返回、frozen = 0。
+pub fn apply_frozen_prefix(messages: &[Value], cache: Option<&PrefixSnapshot>) -> (Vec<Value>, usize) {
+    let Some(cache) = cache else {
+        return (messages.to_vec(), 0);
+    };
+    let n = cache.original.len();
+    if n == 0 || messages.len() < n || messages[..n] != cache.original[..] {
+        return (messages.to_vec(), 0);
+    }
+    let mut out = cache.forwarded.clone();
+    out.extend(messages[n..].iter().cloned());
+    (out, cache.forwarded.len())
+}
+
+// ─── 服务状态 ───
+
+struct AggregateEntry {
+    port: u16,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+static AGGREGATE: OnceLock<Mutex<Option<AggregateEntry>>> = OnceLock::new();
+
+#[derive(Clone)]
+struct AggState {
+    app: tauri::AppHandle,
+    /// 本服务监听端口（用于运行期自引用兜底判定）
+    port: u16,
+    /// 候选健康状态（失败计数 + 冷却截止时间），键 = `provider::model`
+    health: Arc<Mutex<HashMap<String, CandidateHealth>>>,
+    /// 多轮前缀缓存（单会话语义，v1 只保留最近一个会话）
+    prefix_cache: Arc<Mutex<Option<PrefixSnapshot>>>,
+    /// 上次使用的候选签名（用于热更新链路时的变更日志）
+    chain_signature: Arc<Mutex<Option<String>>>,
+}
+
+fn running_port() -> Option<u16> {
+    AGGREGATE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|e| e.port))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -259,16 +473,16 @@ fn emit_aggregate_log(app: &tauri::AppHandle, phase: &str, level: &str, line: St
     );
 }
 
-// ─── 纯逻辑：上下文裁剪 ───
+// ─── 上下文裁剪 ───
 
 /// 是否为 CJK 字符（中日韩 + 全角标点），这类字符约 1 字 ≈ 1 token。
 fn is_cjk(ch: char) -> bool {
     matches!(ch,
-        '\u{4E00}'..='\u{9FFF}'   // 中日韩统一表意文字
-        | '\u{3400}'..='\u{4DBF}' // 扩展 A
-        | '\u{F900}'..='\u{FAFF}' // 兼容表意文字
-        | '\u{3000}'..='\u{303F}' // 中文标点
-        | '\u{FF00}'..='\u{FFEF}' // 全角形式
+        '\u{4E00}'..='\u{9FFF}'
+        | '\u{3400}'..='\u{4DBF}'
+        | '\u{F900}'..='\u{FAFF}'
+        | '\u{3000}'..='\u{303F}'
+        | '\u{FF00}'..='\u{FFEF}'
     )
 }
 
@@ -338,101 +552,20 @@ pub fn get_aggregate_config() -> AggregateConfig {
 /// 保存聚合服务配置（运行中不允许改端口，需先停止）。
 #[tauri::command]
 pub fn save_aggregate_config(config: AggregateConfig) -> Result<AggregateConfig, String> {
+    let mut sanitized = config.clone();
+    sanitized.retry_count = sanitized.retry_count.clamp(1, 5);
     let mut current = load_ai_config();
-    if running_port().is_some() && current.aggregate.port != config.port {
+    if running_port().is_some() && current.aggregate.port != sanitized.port {
         return Err("聚合服务运行中不能修改端口，请先停止服务".to_string());
     }
-    current.aggregate = config.clone();
+    current.aggregate = sanitized.clone();
     save_ai_config_to_file(&current)?;
-    Ok(config)
+    Ok(sanitized)
 }
 
 // ─── 启停 / 状态 ───
 
-fn running_port() -> Option<u16> {
-    AGGREGATE
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .ok()
-        .and_then(|g| g.as_ref().map(|e| e.port))
-}
-
-/// 判断一个上游端点是否是「聚合服务自身」。
-///
-/// 高危场景：把「本地聚合」这类指向本服务的供应商也加进聚合链，
-/// 转发时就会打到自己 → 请求无限递归。启动与转发两侧都要拦。
-pub fn is_self_referential(base_url: &str, aggregate_port: u16) -> bool {
-    let raw = base_url.trim();
-    if raw.is_empty() {
-        return false;
-    }
-    let without_scheme = match raw.split_once("://") {
-        Some((_scheme, rest)) => rest,
-        None => raw,
-    };
-    let authority = without_scheme.split('/').next().unwrap_or("").trim();
-    if authority.is_empty() {
-        return false;
-    }
-    let (host, port_part) = match authority.rfind(':') {
-        Some(idx) => (&authority[..idx], Some(&authority[idx + 1..])),
-        None => (authority, None),
-    };
-    let host = host.trim().trim_matches('[').trim_matches(']').to_ascii_lowercase();
-    let is_loopback = matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1" | "0.0.0.0");
-    let port_matches = port_part
-        .and_then(|p| p.parse::<u16>().ok())
-        .map(|p| p == aggregate_port)
-        .unwrap_or(false);
-    is_loopback && port_matches
-}
-
-/// 过滤掉自引用候选（会造成递归），返回 (可用候选, 被剔除数量)。
-pub fn filter_self_referential(
-    candidates: Vec<AggCandidate>,
-    aggregate_port: u16,
-) -> (Vec<AggCandidate>, usize) {
-    let total = candidates.len();
-    let kept: Vec<AggCandidate> = candidates
-        .into_iter()
-        .filter(|c| !is_self_referential(&c.base_url, aggregate_port))
-        .collect();
-    let removed = total - kept.len();
-    (kept, removed)
-}
-
-/// 构建候选快照：把链路里的 (provider_id, model_id) 解析成可用的上游端点。
-/// 取供应商的 `openai_url`（聚合服务当前只转发 OpenAI 协议端点）。
-fn build_candidates(
-    providers: &[AiProvider],
-    chain: &[RouteCandidate],
-    aggregate_port: u16,
-) -> Vec<AggCandidate> {
-    let mut out = Vec::new();
-    for candidate in chain {
-        let Some(provider) = providers.iter().find(|p| p.id == candidate.provider_id) else {
-            continue;
-        };
-        let base = provider.openai_url.trim().trim_end_matches('/').to_string();
-        if base.is_empty() || provider.api_key.trim().is_empty() {
-            continue;
-        }
-        // 自引用（指向聚合服务自身）直接剔除，避免请求递归
-        if is_self_referential(&base, aggregate_port) {
-            continue;
-        }
-        out.push(AggCandidate {
-            provider_id: provider.id.clone(),
-            provider_name: if provider.name.trim().is_empty() { provider.id.clone() } else { provider.name.clone() },
-            base_url: base,
-            api_key: provider.api_key.clone(),
-            model_id: candidate.model_id.clone(),
-        });
-    }
-    out
-}
-
-/// 启动聚合服务。
+/// 启动聚合服务。链路支持热更新：启动后修改聚合链无需重启。
 #[tauri::command]
 pub async fn start_aggregate_service(app: tauri::AppHandle) -> Result<AggregateStatus, String> {
     let config = load_ai_config();
@@ -443,53 +576,22 @@ pub async fn start_aggregate_service(app: tauri::AppHandle) -> Result<AggregateS
     }
     let chain = normalize_route_chain(&config.route_chain, &config.providers);
     let candidates = build_candidates(&config.providers, &chain, port);
-    if candidates.is_empty() {
-        // 区分两种空链：一种是没勾候选，一种是勾的全是「本地聚合」这类自引用
-        let any_candidate = !chain.is_empty();
-        return Err(if any_candidate {
-            "聚合链里只有指向本服务的候选（如「本地聚合」），会造成请求递归，已全部剔除。请改选其他供应商".to_string()
-        } else {
-            "聚合链为空或候选缺少 OpenAI 端点 / API Key，请先勾选候选".to_string()
-        });
-    }
-    if candidates.len() < chain.len() {
-        emit_aggregate_log(
-            &app,
-            "start",
-            "warn",
-            format!(
-                "已剔除 {} 个不可用/自引用的候选（如把「本地聚合」加进自身链路会递归）",
-                chain.len() - candidates.len()
-            ),
-        );
-    }
     if let Some(owner) = crate::commands::utils::port_conflict_description(port) {
         return Err(format!("端口 {} 已被占用：{}，请更换端口", port, owner));
     }
 
-    let headroom = if config.headroom.enabled {
-        Some(HeadroomRuntime {
-            base_url: format!("http://127.0.0.1:{}", config.headroom.port),
-            timeout_ms: config.headroom.timeout_ms.max(200),
-            fail_closed: config.headroom.on_unavailable == "failClosed",
-        })
-    } else {
-        None
-    };
-    let context_limit = config.aggregate.context_limit;
     let state = AggState {
         app: app.clone(),
         port,
-        candidates: Arc::new(candidates.clone()),
         health: Arc::new(Mutex::new(HashMap::new())),
-        headroom,
-        context_limit,
+        prefix_cache: Arc::new(Mutex::new(None)),
+        chain_signature: Arc::new(Mutex::new(None)),
     };
 
     let router = Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/v1/chat/completions", post(chat_completions))
-        .route("/v1/messages", post(messages_unsupported))
+        .route("/v1/messages", post(messages))
         .route("/v1/models", get(list_models))
         .with_state(state);
 
@@ -505,17 +607,27 @@ pub async fn start_aggregate_service(app: tauri::AppHandle) -> Result<AggregateS
     *AGGREGATE.get_or_init(|| Mutex::new(None)).lock().unwrap() =
         Some(AggregateEntry { port, handle });
 
-    emit_aggregate_log(
-        &app,
-        "start",
-        "info",
-        format!(
-            "聚合服务已启动：http://127.0.0.1:{}（{} 个候选；上下文上限 {} tokens）",
-            port,
-            candidates.len(),
-            context_limit
-        ),
-    );
+    if candidates.is_empty() {
+        emit_aggregate_log(
+            &app,
+            "start",
+            "warn",
+            "聚合链为空，服务已启动但请求会失败；请在聚合页勾选候选（支持热更新，无需重启）".to_string(),
+        );
+    } else {
+        emit_aggregate_log(
+            &app,
+            "start",
+            "info",
+            format!(
+                "聚合服务已启动：http://127.0.0.1:{}（对外模型 {}；{} 个候选；上下文上限 {} tokens）",
+                port,
+                AGGREGATE_MODEL_ID,
+                candidates.len(),
+                config.aggregate.context_limit
+            ),
+        );
+    }
     Ok(AggregateStatus {
         running: true,
         port,
@@ -562,8 +674,7 @@ pub async fn get_aggregate_status() -> AggregateStatus {
 // ─── 处理函数 ───
 
 /// 对外只暴露一个模型（聚合 = 多个候选对内的单一入口），内部按链分发到具体模型。
-async fn list_models(State(state): State<AggState>) -> Json<Value> {
-    let _ = &state;
+async fn list_models() -> Json<Value> {
     Json(serde_json::json!({
         "object": "list",
         "data": [{
@@ -574,41 +685,122 @@ async fn list_models(State(state): State<AggState>) -> Json<Value> {
     }))
 }
 
-/// Anthropic 协议入口暂不支持（转换层在工具代理里，聚合服务先用 OpenAI 协议）。
-async fn messages_unsupported() -> Response {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({
-            "error": {
-                "message": "聚合服务暂只支持 OpenAI 协议入口 /v1/chat/completions；Anthropic 入口将在后续版本接入",
-                "type": "not_implemented"
-            }
-        })),
-    )
-        .into_response()
+async fn chat_completions(State(state): State<AggState>, Json(body): Json<Value>) -> Response {
+    forward(state, "openai", body).await
 }
 
-async fn chat_completions(State(state): State<AggState>, Json(mut body): Json<Value>) -> Response {
+async fn messages(State(state): State<AggState>, Json(body): Json<Value>) -> Response {
+    forward(state, "anthropic", body).await
+}
+
+/// 请求体中实际携带的 messages 数组（两种入口协议字段相同）。
+fn messages_of(body: &Value) -> Vec<Value> {
+    body.get("messages")
+        .and_then(|m| m.as_array())
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// 共享转发流程（OpenAI / Anthropic 入口通用）。
+async fn forward(state: AggState, inbound: &'static str, mut body: Value) -> Response {
+    // 每次请求实时读取配置：链路热更新、重试次数与压缩设置即改即生效
+    let config = load_ai_config();
+    let retry_count = config.aggregate.retry_count.clamp(1, 5) as usize;
+    let context_limit = config.aggregate.context_limit;
+    let headroom = if config.headroom.enabled {
+        Some(HeadroomRuntime {
+            base_url: format!("http://127.0.0.1:{}", config.headroom.port),
+            timeout_ms: config.headroom.timeout_ms.max(200),
+            fail_closed: config.headroom.on_unavailable == "failClosed",
+        })
+    } else {
+        None
+    };
+
+    // 链路热更新：实时解析候选，变更时打日志
+    let chain = normalize_route_chain(&config.route_chain, &config.providers);
+    let candidates = build_candidates(&config.providers, &chain, state.port);
+    let signature = candidates
+        .iter()
+        .map(|c| format!("{}::{}::{}", c.provider_id, c.model_id, c.outbound.as_str()))
+        .collect::<Vec<_>>()
+        .join("|");
+    {
+        let mut seen = state.chain_signature.lock().unwrap_or_else(|_| panic!("poisoned"));
+        if seen.as_deref() != Some(signature.as_str()) {
+            if let Some(prev) = seen.as_ref() {
+                emit_aggregate_log(
+                    &state.app,
+                    "route",
+                    "info",
+                    format!("聚合链已热更新：{} → {} 个候选", prev.split('|').count(), candidates.len()),
+                );
+            } else {
+                emit_aggregate_log(
+                    &state.app,
+                    "route",
+                    "info",
+                    format!("聚合链加载完成：{} 个候选", candidates.len()),
+                );
+            }
+            *seen = Some(signature);
+        }
+    }
+    if candidates.is_empty() {
+        emit_aggregate_log(&state.app, "route", "error", "聚合链为空（或候选缺少端点/API Key），请求失败".to_string());
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "error": { "message": "聚合链为空：请到 AI「聚合」页勾选候选（支持热更新，改完直接重试）", "type": "aggregate_chain_empty" }
+            })),
+        )
+            .into_response();
+    }
+
+    // 多轮前缀缓存：同一会话复用上轮压缩结果，避免打爆 provider KV 缓存
+    let messages = messages_of(&body);
+    if !messages.is_empty() {
+        let cache = state.prefix_cache.lock().ok().and_then(|g| g.clone());
+        let (effective, frozen) = apply_frozen_prefix(&messages, cache.as_ref());
+        if frozen > 0 {
+            body["messages"] = Value::Array(effective.clone());
+            body["config"] = serde_json::json!({ "frozen_message_count": frozen });
+            emit_aggregate_log(
+                &state.app,
+                "context",
+                "info",
+                format!("命中前缀缓存：{} 条已冻结（省去重新压缩与缓存未命中）", frozen),
+            );
+        }
+    }
+
     // 上下文限制：裁剪最早的非 system 消息
     if let Some(messages) = body.get("messages").and_then(|m| m.as_array()).cloned() {
-        let (kept, trimmed) = trim_messages_to_limit(messages, state.context_limit);
+        let (kept, trimmed) = trim_messages_to_limit(messages, context_limit);
         if trimmed > 0 {
             body["messages"] = Value::Array(kept);
             emit_aggregate_log(
                 &state.app,
                 "context",
                 "warn",
-                format!("上下文超限，已裁剪 {} 条最早的消息（上限 {} tokens）", trimmed, state.context_limit),
+                format!("上下文超限，已裁剪 {} 条最早的消息（上限 {} tokens）", trimmed, context_limit),
             );
         }
     }
 
-    // Headroom 压缩旁路
-    if let Some(hr) = &state.headroom {
+    // Headroom 压缩旁路（成功后更新前缀缓存）
+    let original_messages = messages_of(&body);
+    if let Some(hr) = &headroom {
         match compress_body(hr, &body).await {
             Ok(Some(compressed)) => {
                 emit_aggregate_log(&state.app, "compress", "info", "已压缩请求上下文".to_string());
                 body = compressed;
+                if let Ok(mut guard) = state.prefix_cache.lock() {
+                    *guard = Some(PrefixSnapshot {
+                        original: original_messages.clone(),
+                        forwarded: messages_of(&body),
+                    });
+                }
             }
             Ok(None) => {}
             Err(err) => {
@@ -633,10 +825,10 @@ async fn chat_completions(State(state): State<AggState>, Json(mut body): Json<Va
     }
 
     let started = std::time::Instant::now();
+    let stream_requested = body.get("stream").and_then(|s| s.as_bool()).unwrap_or(false);
     let mut last_error = String::new();
-    let stream = body.get("stream").and_then(|s| s.as_bool()).unwrap_or(false);
 
-    for (idx, candidate) in state.candidates.iter().enumerate() {
+    for (idx, candidate) in candidates.iter().enumerate() {
         // 运行期兜底：万一端口改动后候选变成自引用，直接跳过而不是递归打自己
         if is_self_referential(&candidate.base_url, state.port) {
             emit_aggregate_log(
@@ -651,7 +843,6 @@ async fn chat_completions(State(state): State<AggState>, Json(mut body): Json<Va
             continue;
         }
         let key = format!("{}::{}", candidate.provider_id, candidate.model_id);
-        // 冷却中的候选直接跳过（上一轮失败后的惩罚期）
         if let Some(remaining) = cooldown_remaining_secs(&state.health, &key) {
             emit_aggregate_log(
                 &state.app,
@@ -668,14 +859,10 @@ async fn chat_completions(State(state): State<AggState>, Json(mut body): Json<Va
             continue;
         }
 
-        let mut body_for_candidate = body.clone();
-        // 对外统一用聚合模型名；对内改写为候选自身模型
-        body_for_candidate["model"] = Value::String(candidate.model_id.clone());
-
         let mut attempts = 0usize;
         loop {
             attempts += 1;
-            match try_candidate(candidate, &body_for_candidate, stream).await {
+            match try_candidate(&state, candidate, inbound, &body, stream_requested).await {
                 Ok(response) => {
                     clear_health(&state.health, &key);
                     if idx > 0 || attempts > 1 {
@@ -684,10 +871,11 @@ async fn chat_completions(State(state): State<AggState>, Json(mut body): Json<Va
                             "route",
                             "warn",
                             format!(
-                                "已切换到候选 #{} {} / {}（第 {} 次尝试）",
+                                "已切换到候选 #{} {} / {}（{} 协议，第 {} 次尝试）",
                                 idx + 1,
                                 candidate.provider_name,
                                 candidate.model_id,
+                                candidate.outbound.as_str(),
                                 attempts
                             ),
                         );
@@ -704,8 +892,7 @@ async fn chat_completions(State(state): State<AggState>, Json(mut body): Json<Va
                             started.elapsed().as_millis()
                         ),
                     );
-                    record_aggregate_usage(&state, candidate, &body_for_candidate, &response.1, started);
-                    return response.0;
+                    return response;
                 }
                 Err(err) => {
                     last_error = format!("{:?}: {}", err.class, err.message);
@@ -746,13 +933,8 @@ async fn chat_completions(State(state): State<AggState>, Json(mut body): Json<Va
                         ),
                     );
                     // 达到该类别的重试预算 → 记冷却并切换到下一个候选
-                    if attempts >= retry_budget(err.class) {
-                        let cooldown = record_failure(
-                            &state.health,
-                            &key,
-                            err.class,
-                            err.retry_after,
-                        );
+                    if attempts >= retry_budget(err.class).min(retry_count.max(1)) {
+                        let cooldown = record_failure(&state.health, &key, err.class, err.retry_after);
                         emit_aggregate_log(
                             &state.app,
                             "route",
@@ -776,7 +958,7 @@ async fn chat_completions(State(state): State<AggState>, Json(mut body): Json<Va
         &state.app,
         "route",
         "error",
-        format!("聚合链全部候选失败（{} 个）: {}", state.candidates.len(), last_error),
+        format!("聚合链全部候选失败（{} 个）: {}", candidates.len(), last_error),
     );
     (
         StatusCode::BAD_GATEWAY,
@@ -784,7 +966,7 @@ async fn chat_completions(State(state): State<AggState>, Json(mut body): Json<Va
             "error": {
                 "message": format!(
                     "聚合链 {} 个候选全部失败，最后错误：{}。请检查候选的 API Key / 额度，或到「服务」页查看聚合日志",
-                    state.candidates.len(), last_error
+                    candidates.len(), last_error
                 ),
                 "type": "aggregate_chain_exhausted"
             }
@@ -793,13 +975,105 @@ async fn chat_completions(State(state): State<AggState>, Json(mut body): Json<Va
         .into_response()
 }
 
-/// 单候选请求：返回 (响应, 响应体文本用于统计)。
-async fn try_candidate(
+/// 从上游响应 JSON 提取 usage（按入口协议的形态），落账到 ai_usage。
+fn record_usage(inbound: &str, candidate: &AggCandidate, resp: &Value, elapsed_ms: u128) {
+    let usage = resp.get("usage").cloned().unwrap_or(Value::Null);
+    let (input, output) = match inbound {
+        "anthropic" => (
+            usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+            usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+        ),
+        _ => (
+            usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+            usage.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+        ),
+    };
+    if input == 0 && output == 0 {
+        return;
+    }
+    let _ = log_usage_db_timed(
+        "aggregate",
+        &candidate.model_id,
+        Some(&candidate.provider_id),
+        input,
+        output,
+        elapsed_ms as u64,
+        0,
+    );
+}
+
+/// 按入口/出站协议对响应做转换（跨协议时），并提取 usage 落账。
+fn finish_non_stream(
+    inbound: &'static str,
     candidate: &AggCandidate,
+    upstream: Value,
+    request_model: &str,
+    elapsed_ms: u128,
+) -> Response {
+    let converted = match (inbound, candidate.outbound) {
+        ("openai", Outbound::OpenAi) | ("anthropic", Outbound::Anthropic) => upstream,
+        ("openai", Outbound::Anthropic) => {
+            crate::proxy::transform::anthropic_response_to_openai(&upstream, request_model)
+        }
+        ("openai", Outbound::Google) => {
+            crate::proxy::google::google_response_to_openai(&upstream, request_model)
+        }
+        ("anthropic", Outbound::OpenAi) => {
+            crate::proxy::transform::openai_response_to_anthropic(&upstream, request_model)
+        }
+        ("anthropic", Outbound::Google) => {
+            crate::proxy::google::google_response_to_anthropic(&upstream, request_model)
+        }
+        _ => upstream,
+    };
+    record_usage(inbound, candidate, &converted, elapsed_ms);
+    (StatusCode::OK, Json(converted)).into_response()
+}
+
+/// 单候选请求：成功返回响应；失败返回分类错误。
+async fn try_candidate(
+    state: &AggState,
+    candidate: &AggCandidate,
+    inbound: &'static str,
     body: &Value,
-    stream: bool,
-) -> Result<(Response, String), CandidateError> {
-    let url = format!("{}/chat/completions", candidate.base_url);
+    stream_requested: bool,
+) -> Result<Response, CandidateError> {
+    let model = &candidate.model_id;
+    // 请求体转换：入口协议 → 候选出站协议（model 统一改为候选模型）
+    let (upstream_body, upstream_stream) = match (inbound, candidate.outbound) {
+        ("openai", Outbound::OpenAi) | ("anthropic", Outbound::Anthropic) => {
+            (body.clone(), stream_requested)
+        }
+        // 跨协议：v1 先按非流式请求并整体转换（流式转换仅覆盖 a↔o 主流组合）
+        (_, _) => {
+            let mut b = body.clone();
+            if stream_requested {
+                b["stream"] = Value::Bool(false);
+            }
+            (b, false)
+        }
+    };
+    let upstream_body = match (inbound, candidate.outbound) {
+        ("openai", Outbound::OpenAi) | ("anthropic", Outbound::Anthropic) => {
+            upstream_body
+        }
+        ("openai", Outbound::Anthropic) => {
+            crate::proxy::transform::openai_to_anthropic(&upstream_body, model, None)
+        }
+        ("anthropic", Outbound::OpenAi) => {
+            crate::proxy::transform::anthropic_to_openai(&upstream_body, model, None)
+        }
+        ("openai", Outbound::Google) => {
+            crate::proxy::google::openai_to_google(&upstream_body, model)
+        }
+        ("anthropic", Outbound::Google) => {
+            crate::proxy::google::anthropic_to_google(&upstream_body, model)
+        }
+        // 入口协议只有 openai/anthropic（axum 路由保证），兜底防御
+        _ => upstream_body,
+    };
+
+    let (url, auth_name) = build_candidate_url(candidate.outbound, &candidate.base_url, model, upstream_stream);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
         .build()
@@ -808,10 +1082,14 @@ async fn try_candidate(
             message: format!("HTTP 客户端构建失败: {}", e),
             retry_after: None,
         })?;
-    let resp = client
-        .post(&url)
-        .bearer_auth(&candidate.api_key)
-        .json(body)
+    let mut req = client.post(&url);
+    req = match auth_name {
+        "x-api-key" => req.header("x-api-key", &candidate.api_key).header("anthropic-version", "2023-06-01"),
+        "x-goog-api-key" => req.header("x-goog-api-key", &candidate.api_key),
+        _ => req.bearer_auth(&candidate.api_key),
+    };
+    let resp = req
+        .json(&upstream_body)
         .send()
         .await
         .map_err(|e| {
@@ -825,18 +1103,11 @@ async fn try_candidate(
             CandidateError { class: FailureClass::Transient, message, retry_after: None }
         })?;
     let status = resp.status();
-    // 限流场景优先遵循上游 Retry-After
     let retry_after = resp
         .headers()
         .get("retry-after")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.trim().parse::<u64>().ok());
-    let content_type = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/json")
-        .to_string();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
         let class = classify_failure(Some(status.as_u16()), &text);
@@ -846,27 +1117,152 @@ async fn try_candidate(
             retry_after,
         });
     }
-    if stream {
-        // 流式：透传上游 SSE 字节流（首字节后不再切换候选，避免重复计费）
+
+    let started = std::time::Instant::now();
+
+    // 同协议 + 流式：字节流透传（首字节后不再切换候选，避免重复计费）
+    if upstream_stream && inbound == candidate.outbound.as_str() {
         let stream = resp.bytes_stream();
         let body_stream = axum::body::Body::from_stream(stream);
         let response = Response::builder()
             .status(StatusCode::OK)
-            .header("content-type", if content_type.contains("event-stream") { "text/event-stream" } else { &content_type })
+            .header("content-type", "text/event-stream")
             .body(body_stream)
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
-        return Ok((response, String::new()));
+        return Ok(response);
     }
+
+    // 跨协议 + 流式：a↔o 用流式转换器；google 组合降级为非流式整体转换（记日志说明）
+    if upstream_stream && inbound != candidate.outbound.as_str() {
+        let pair_supported = matches!(
+            (inbound, candidate.outbound),
+            ("anthropic", Outbound::OpenAi) | ("openai", Outbound::Anthropic)
+        );
+        if pair_supported {
+            return stream_cross_protocol(state, candidate, inbound, resp, started);
+        }
+        emit_aggregate_log(
+            &state.app,
+            "route",
+            "warn",
+            format!(
+                "候选 {} / {} 为 google 出站，跨协议流式暂不支持，已降级为非流式整体转换",
+                candidate.provider_name, candidate.model_id
+            ),
+        );
+    }
+
+    // 非流式：整体转换 + 落账
     let text = resp.text().await.map_err(|e| CandidateError {
         class: FailureClass::Transient,
         message: format!("读取响应失败: {}", e),
         retry_after: None,
     })?;
-    let json: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-    Ok((
-        (StatusCode::OK, Json(json)).into_response(),
-        text,
-    ))
+    let upstream_json: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    Ok(finish_non_stream(inbound, candidate, upstream_json, model, started.elapsed().as_millis()))
+}
+
+/// a↔o 跨协议流式转换器的统一包装（两个转换器类型不同，但方法签名一致）。
+enum CrossStreamConverter {
+    AnthropicToOpenai(crate::proxy::transform::StreamConverter),
+    OpenaiToAnthropic(crate::proxy::transform::AnthropicToOpenaiStreamConverter),
+}
+
+impl CrossStreamConverter {
+    fn convert_chunk(&mut self, chunk: &Value) -> Vec<String> {
+        match self {
+            Self::AnthropicToOpenai(c) => c.convert_chunk(chunk),
+            Self::OpenaiToAnthropic(c) => c.convert_chunk(chunk),
+        }
+    }
+    fn usage(&self) -> (u64, u64) {
+        match self {
+            Self::AnthropicToOpenai(c) => c.usage(),
+            Self::OpenaiToAnthropic(c) => c.usage(),
+        }
+    }
+}
+
+/// 跨协议流式转发（仅 a↔o）：用流式转换器把上游 chunk 转成入口协议的 SSE 事件。
+fn stream_cross_protocol(
+    state: &AggState,
+    candidate: &AggCandidate,
+    inbound: &'static str,
+    resp: reqwest::Response,
+    started: std::time::Instant,
+) -> Result<Response, CandidateError> {
+    use axum::response::sse::{Event, Sse};
+    use futures_util::StreamExt;
+
+    let model = candidate.model_id.clone();
+    let provider_id = candidate.provider_id.clone();
+    let outbound = candidate.outbound;
+    let stream = resp.bytes_stream();
+    let sse = async_stream::stream! {
+        let mut conv = match (inbound, outbound) {
+            ("anthropic", Outbound::OpenAi) => Some(CrossStreamConverter::AnthropicToOpenai(
+                crate::proxy::transform::StreamConverter::new(model.clone()),
+            )),
+            ("openai", Outbound::Anthropic) => Some(CrossStreamConverter::OpenaiToAnthropic(
+                crate::proxy::transform::AnthropicToOpenaiStreamConverter::new(model.clone()),
+            )),
+            _ => None,
+        };
+        let Some(conv) = conv.as_mut() else {
+            yield Ok::<_, std::convert::Infallible>(Event::default().data("{\"error\":\"unsupported stream pair\"}"));
+            return;
+        };
+        let mut buffer = String::new();
+        tokio::pin!(stream);
+        while let Some(r) = stream.next().await {
+            let chunk = match r {
+                Ok(c) => c,
+                Err(e) => {
+                    yield Ok::<_, std::convert::Infallible>(Event::default().data(format!("{{\"error\":\"{}\"}}", e)));
+                    break;
+                }
+            };
+            buffer = crate::proxy::sse::append_utf8_safe(&buffer, &chunk);
+            while let Some((block, remainder)) = crate::proxy::sse::take_sse_block(&buffer) {
+                buffer = remainder.to_string();
+                let data_str = match crate::proxy::sse::extract_sse_data(&block) {
+                    Some(d) => d,
+                    None => continue,
+                };
+                if data_str == "[DONE]" {
+                    yield Ok::<_, std::convert::Infallible>(Event::default().data("[DONE]"));
+                    continue;
+                }
+                if let Ok(cj) = serde_json::from_str::<Value>(&data_str) {
+                    for ev in conv.convert_chunk(&cj) {
+                        let mut event = Event::default();
+                        for line in ev.lines() {
+                            if let Some(rest) = line.strip_prefix("event:") {
+                                event = event.event(rest.trim());
+                            } else if let Some(rest) = line.strip_prefix("data:") {
+                                event = event.data(rest.trim());
+                            }
+                        }
+                        yield Ok::<_, std::convert::Infallible>(event);
+                    }
+                }
+            }
+        }
+        // 跨协议流式的 usage 从转换器聚合而来，按入口协议形态落账
+        let (in_t, out_t) = conv.usage();
+        if in_t > 0 || out_t > 0 {
+            let _ = log_usage_db_timed(
+                "aggregate",
+                &model,
+                Some(&provider_id),
+                in_t,
+                out_t,
+                started.elapsed().as_millis() as u64,
+                0,
+            );
+        }
+    };
+    Ok(Sse::new(sse).into_response())
 }
 
 fn trim_error(text: &str) -> String {
@@ -876,11 +1272,6 @@ fn trim_error(text: &str) -> String {
     } else {
         cleaned
     }
-}
-
-/// 该类别是否值得对同一候选再试一次（只有瞬时错误才重试，其余直接切下一个）。
-fn is_retryable(class: FailureClass) -> bool {
-    retry_budget(class) > 1
 }
 
 /// 压缩旁路：成功返回 Some(压缩后的 body)；未启用/不可达返回 None 或 Err。
@@ -921,36 +1312,6 @@ async fn compress_body(hr: &HeadroomRuntime, body: &Value) -> Result<Option<Valu
     }
 }
 
-/// 用量落账：从上游响应里取 usage（缺失则记 0），tool_id 固定为 aggregate。
-fn record_aggregate_usage(
-    state: &AggState,
-    candidate: &AggCandidate,
-    request: &Value,
-    response_text: &str,
-    started: std::time::Instant,
-) {
-    if response_text.trim().is_empty() {
-        return; // 流式透传不落账（拿不到 usage）
-    }
-    let value: Value = serde_json::from_str(response_text).unwrap_or(Value::Null);
-    let usage = value.get("usage").cloned().unwrap_or(Value::Null);
-    let input = usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-    let output = usage.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-    if input == 0 && output == 0 {
-        return;
-    }
-    let _ = log_usage_db_timed(
-        "aggregate",
-        &candidate.model_id,
-        Some(&candidate.provider_id),
-        input,
-        output,
-        started.elapsed().as_millis() as u64,
-        0,
-    );
-    let _ = request;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -960,6 +1321,17 @@ mod tests {
         json!({ "role": role, "content": text })
     }
 
+    fn cand(base: &str) -> AggCandidate {
+        AggCandidate {
+            provider_id: "p".into(),
+            provider_name: "P".into(),
+            outbound: Outbound::OpenAi,
+            base_url: base.into(),
+            api_key: "sk".into(),
+            model_id: "m".into(),
+        }
+    }
+
     #[test]
     fn test_estimate_tokens_mixed() {
         assert!(estimate_tokens("") <= 1);
@@ -967,7 +1339,6 @@ mod tests {
         assert!(estimate_tokens("a".repeat(100).as_str()) >= 20);
         // 中文约 1 字 1 token
         assert_eq!(estimate_tokens("你好世界"), 4);
-        // 混合
         // 2 个汉字 + 3 个英文字符 → 2 + 1 = 3
         assert_eq!(estimate_tokens("你好abc"), 3);
     }
@@ -1005,48 +1376,6 @@ mod tests {
         assert_eq!(kept.len(), 1);
     }
 
-    fn cand(base: &str) -> AggCandidate {
-        AggCandidate {
-            provider_id: "p".into(),
-            provider_name: "P".into(),
-            base_url: base.into(),
-            api_key: "sk".into(),
-            model_id: "m".into(),
-        }
-    }
-
-    #[test]
-    fn test_is_self_referential_detects_own_service() {
-        // 高危：把「本地聚合」加进自己的链路 → 必须识别为自引用
-        assert!(is_self_referential("http://127.0.0.1:15888/v1", 15888));
-        assert!(is_self_referential("http://localhost:15888/v1", 15888));
-        assert!(is_self_referential("http://127.0.0.1:15888", 15888));
-    }
-
-    #[test]
-    fn test_is_self_referential_allows_others() {
-        assert!(!is_self_referential("https://api.openai.com/v1", 15888));
-        // 端口不同 = 别的本地服务（Ollama 等），不是自引用
-        assert!(!is_self_referential("http://127.0.0.1:11434/v1", 15888));
-        assert!(!is_self_referential("http://127.0.0.1:15889/v1", 15888));
-        assert!(!is_self_referential("", 15888));
-        // 没写端口时无法判定为本服务，按非自引用处理
-        assert!(!is_self_referential("http://127.0.0.1/v1", 15888));
-    }
-
-    #[test]
-    fn test_filter_self_referential_removes_only_self() {
-        let list = vec![
-            cand("http://127.0.0.1:15888/v1"),
-            cand("https://api.openai.com/v1"),
-            cand("http://127.0.0.1:11434/v1"),
-        ];
-        let (kept, removed) = filter_self_referential(list, 15888);
-        assert_eq!(removed, 1);
-        assert_eq!(kept.len(), 2);
-        assert!(kept.iter().all(|c| !is_self_referential(&c.base_url, 15888)));
-    }
-
     #[test]
     fn test_is_retryable_by_class() {
         assert!(is_retryable(FailureClass::Transient));
@@ -1057,8 +1386,6 @@ mod tests {
         assert!(!is_retryable(FailureClass::Fatal));
     }
 
-    // ─── 失败分类与切换策略 ───
-
     #[test]
     fn test_classify_failure_by_status() {
         assert_eq!(classify_failure(Some(401), ""), FailureClass::Authentication);
@@ -1068,13 +1395,11 @@ mod tests {
         assert_eq!(classify_failure(Some(429), ""), FailureClass::RateLimit);
         assert_eq!(classify_failure(Some(500), ""), FailureClass::Transient);
         assert_eq!(classify_failure(Some(503), ""), FailureClass::Transient);
-        // 连接失败（无状态码）按瞬时处理，可重试
         assert_eq!(classify_failure(None, "connection refused"), FailureClass::Transient);
     }
 
     #[test]
     fn test_classify_failure_prefers_body_hints() {
-        // 429 但文案是额度耗尽 → 判为计费问题（冷却更久、不重试）
         assert_eq!(
             classify_failure(Some(429), "error: insufficient_quota"),
             FailureClass::Billing
@@ -1083,14 +1408,11 @@ mod tests {
             classify_failure(Some(400), "insufficient quota for this key"),
             FailureClass::Billing
         );
-        // 400 但文案是限流 → 判为限流
         assert_eq!(classify_failure(Some(400), "rate limit reached"), FailureClass::RateLimit);
-        // 内容安全：不重试也不切换
         assert_eq!(
             classify_failure(Some(400), "blocked by safety policy"),
             FailureClass::Fatal
         );
-        // 模型不存在
         assert_eq!(
             classify_failure(Some(400), "model_not_found: gpt-9"),
             FailureClass::ModelUnavailable
@@ -1108,21 +1430,18 @@ mod tests {
 
     #[test]
     fn test_cooldown_table() {
-        // 瞬时：30 → 60 → 120 → 240 → 300（封顶）
         assert_eq!(cooldown_for(FailureClass::Transient, None, 1).as_secs(), 30);
         assert_eq!(cooldown_for(FailureClass::Transient, None, 2).as_secs(), 60);
         assert_eq!(cooldown_for(FailureClass::Transient, None, 3).as_secs(), 120);
         assert_eq!(cooldown_for(FailureClass::Transient, None, 4).as_secs(), 240);
         assert_eq!(cooldown_for(FailureClass::Transient, None, 5).as_secs(), 300);
         assert_eq!(cooldown_for(FailureClass::Transient, None, 99).as_secs(), 300);
-        // 限流：默认 60s，遵循 Retry-After 但不超过 24h
         assert_eq!(cooldown_for(FailureClass::RateLimit, None, 1).as_secs(), 60);
         assert_eq!(cooldown_for(FailureClass::RateLimit, Some(120), 1).as_secs(), 120);
         assert_eq!(
             cooldown_for(FailureClass::RateLimit, Some(999_999), 1).as_secs(),
             24 * 3600
         );
-        // 鉴权/额度 1h；模型不可用 6h
         assert_eq!(cooldown_for(FailureClass::Authentication, None, 1).as_secs(), 3600);
         assert_eq!(cooldown_for(FailureClass::Billing, None, 1).as_secs(), 3600);
         assert_eq!(
@@ -1140,14 +1459,120 @@ mod tests {
         assert_eq!(d.as_secs(), 90);
         let remaining = cooldown_remaining_secs(&health, key).unwrap_or(0);
         assert!(remaining > 0 && remaining <= 90, "剩余冷却异常: {}", remaining);
-        // 成功后清除 → 立即可用
         clear_health(&health, key);
         assert!(cooldown_remaining_secs(&health, key).is_none());
     }
 
     #[test]
+    fn test_is_self_referential_detects_own_service() {
+        assert!(is_self_referential("http://127.0.0.1:15888/v1", 15888));
+        assert!(is_self_referential("http://localhost:15888/v1", 15888));
+        assert!(is_self_referential("http://127.0.0.1:15888", 15888));
+    }
+
+    #[test]
+    fn test_is_self_referential_allows_others() {
+        assert!(!is_self_referential("https://api.openai.com/v1", 15888));
+        assert!(!is_self_referential("http://127.0.0.1:11434/v1", 15888));
+        assert!(!is_self_referential("http://127.0.0.1:15889/v1", 15888));
+        assert!(!is_self_referential("", 15888));
+        assert!(!is_self_referential("http://127.0.0.1/v1", 15888));
+    }
+
+    #[test]
+    fn test_filter_self_referential_removes_only_self() {
+        let list = vec![
+            cand("http://127.0.0.1:15888/v1"),
+            cand("https://api.openai.com/v1"),
+            cand("http://127.0.0.1:11434/v1"),
+        ];
+        let (kept, removed) = filter_self_referential(list, 15888);
+        assert_eq!(removed, 1);
+        assert_eq!(kept.len(), 2);
+        assert!(kept.iter().all(|c| !is_self_referential(&c.base_url, 15888)));
+    }
+
+    #[test]
     fn test_aggregate_exposes_single_model() {
-        // 聚合对外只暴露一个模型（否则就不叫聚合了）
-        assert_eq!(AGGREGATE_MODEL_ID, "auto");
+        assert_eq!(AGGREGATE_MODEL_ID, "kiro-proxy");
+    }
+
+    #[test]
+    fn test_build_candidate_url_avoids_double_v1() {
+        use Outbound::*;
+        let (url, auth) = build_candidate_url(OpenAi, "https://api.x.com/v1", "m", false);
+        assert_eq!(url, "https://api.x.com/v1/chat/completions");
+        assert_eq!(auth, "Authorization");
+        let (url, auth) = build_candidate_url(Anthropic, "https://api.anthropic.com", "m", false);
+        assert_eq!(url, "https://api.anthropic.com/v1/messages");
+        assert_eq!(auth, "x-api-key");
+        let (url, auth) = build_candidate_url(Anthropic, "https://x.com/anthropic/v1", "m", false);
+        assert_eq!(url, "https://x.com/anthropic/v1/messages");
+        let (url, auth) = build_candidate_url(Google, "https://g.com", "m", true);
+        assert_eq!(url, "https://g.com/v1beta/models/m:streamGenerateContent?alt=sse");
+        assert_eq!(auth, "x-goog-api-key");
+    }
+
+    #[test]
+    fn test_pick_outbound_priority_openai_first() {
+        let mut provider = AiProvider {
+            id: "p".into(),
+            name: "P".into(),
+            category: "provider".into(),
+            api_key: "sk".into(),
+            website: String::new(),
+            openai_url: "https://x/v1".into(),
+            anthropic_url: "https://x/anthropic".into(),
+            google_url: "https://g".into(),
+            models: vec![],
+            active_model_id: None,
+        };
+        let (outbound, base) = pick_outbound(&provider).unwrap();
+        assert_eq!(outbound, Outbound::OpenAi);
+        assert_eq!(base, "https://x/v1");
+        // 只有 anthropic → 用 anthropic
+        provider.openai_url = String::new();
+        let (outbound, base) = pick_outbound(&provider).unwrap();
+        assert_eq!(outbound, Outbound::Anthropic);
+        assert_eq!(base, "https://x/anthropic");
+        // 全空 → None
+        provider.anthropic_url = String::new();
+        provider.google_url = String::new();
+        assert!(pick_outbound(&provider).is_none());
+    }
+
+    #[test]
+    fn test_apply_frozen_prefix_reuses_same_session() {
+        let original = vec![msg("system", "sys"), msg("user", "q1")];
+        let forwarded = vec![msg("system", "sys"), msg("user", "q1(压缩)")];
+        let cache = PrefixSnapshot { original: original.clone(), forwarded: forwarded.clone() };
+        // 下一轮：原始前缀 + 新消息 → 复用压缩前缀
+        let next: Vec<Value> = vec![
+            msg("system", "sys"),
+            msg("user", "q1"),
+            msg("assistant", "a1"),
+            msg("user", "q2"),
+        ];
+        let (out, frozen) = apply_frozen_prefix(&next, Some(&cache));
+        assert_eq!(frozen, forwarded.len());
+        assert_eq!(out.len(), forwarded.len() + 2);
+        assert_eq!(out[..forwarded.len()], forwarded[..]);
+    }
+
+    #[test]
+    fn test_apply_frozen_prefix_miss_on_new_session() {
+        let cache = PrefixSnapshot {
+            original: vec![msg("system", "sys"), msg("user", "q1")],
+            forwarded: vec![msg("system", "sys"), msg("user", "q1c")],
+        };
+        // 前缀不同（新会话）→ 原样返回
+        let next = vec![msg("system", "另一个会话"), msg("user", "q")];
+        let (out, frozen) = apply_frozen_prefix(&next, Some(&cache));
+        assert_eq!(frozen, 0);
+        assert_eq!(out, next);
+        // 无缓存 → 原样返回
+        let (out, frozen) = apply_frozen_prefix(&next, None);
+        assert_eq!(frozen, 0);
+        assert_eq!(out, next);
     }
 }

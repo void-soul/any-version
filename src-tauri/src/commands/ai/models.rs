@@ -103,6 +103,7 @@ impl Default for HeadroomConfig {
 /// 聚合服务配置（本地聚合代理：端口 + 上下文限制）。
 fn default_aggregate_port() -> u16 { 15888 }
 fn default_aggregate_context_limit() -> u64 { 128_000 }
+fn default_aggregate_retry_count() -> u32 { 2 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AggregateConfig {
@@ -112,6 +113,9 @@ pub struct AggregateConfig {
     /// 上下文上限（token，按启发式估算）：超出后裁剪最早的非 system 消息
     #[serde(default = "default_aggregate_context_limit")]
     pub context_limit: u64,
+    /// 同一候选的重试次数（1~5；仅瞬时错误重试，其它错误直接切下一个候选）
+    #[serde(default = "default_aggregate_retry_count")]
+    pub retry_count: u32,
 }
 
 impl Default for AggregateConfig {
@@ -119,6 +123,7 @@ impl Default for AggregateConfig {
         Self {
             port: default_aggregate_port(),
             context_limit: default_aggregate_context_limit(),
+            retry_count: default_aggregate_retry_count(),
         }
     }
 }
