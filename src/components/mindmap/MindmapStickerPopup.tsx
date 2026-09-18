@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { StickyNote, X } from "lucide-react";
 import { mmApi, type MindmapDocument, type DocumentFull, type MindmapSticker } from "./types";
 import { usePopupSize } from "./usePopupSize";
-import VexAvatar from "../VexAvatar";
+import VexGlowAvatar from "../VexGlowAvatar";
 import VexGreeting from "../VexGreeting";
 import { VEX_CYBER_ACCENT, resolveThemeAccent } from "../../utils/brand";
 
@@ -138,7 +138,7 @@ export default function MindmapStickerPopup() {
     <div ref={rootRef} className="h-screen w-screen overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl flex flex-col text-slate-200 select-none" style={themeVars}>
       {/* 标题栏 */}
       <div className="flex shrink-0 cursor-grab items-center gap-2 border-b border-white/10 px-3 py-2 active:cursor-grabbing" onMouseDown={onTitleMouseDown} style={{ backgroundColor: "var(--mm-accent-soft)" }}>
-        <VexAvatar size={18} />
+        <VexGlowAvatar size={18} />
         <StickyNote className="h-4 w-4" style={{ color: "var(--mm-accent)" }} />
         <span className="text-xs font-semibold text-white">{t("mmdpop.stickerTitle")}</span>
         <div className="flex-1" />

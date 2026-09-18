@@ -1,4 +1,4 @@
-import VexAvatar from "./VexAvatar";
+import VexGlowAvatar from "./VexGlowAvatar";
 import { VEX_CYBER_ACCENT, VEX_CYBER_CYAN } from "../utils/brand";
 import { useTranslation } from "react-i18next";
 
@@ -22,13 +22,7 @@ export default function VexBusy({
   const accent = `var(--module-accent, ${VEX_CYBER_ACCENT})`;
   return (
     <div className="flex items-center gap-3">
-      <div className="relative flex-shrink-0">
-        <VexAvatar size={avatarSize} />
-        <span
-          className="absolute inset-0 -z-10 animate-ping rounded-full"
-          style={{ boxShadow: `0 0 24px ${barColor ?? accent}` }}
-        />
-      </div>
+      <VexGlowAvatar size={avatarSize} color={barColor} />
       <div className="min-w-0 flex-1">
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
           <div

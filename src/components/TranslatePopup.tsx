@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Copy, Check, X, Languages, ArrowRightLeft } from "lucide-react";
-import VexAvatar from "./VexAvatar";
+import VexGlowAvatar from "./VexGlowAvatar";
 import VexGreeting from "./VexGreeting";
 import VexBusy from "./VexBusy";
 import { VEX_CYBER_ACCENT, resolveThemeAccent } from "../utils/brand";
@@ -333,7 +333,7 @@ export default function TranslatePopup() {
           style={{ WebkitAppRegion: "drag" } as any}
         >
           <div className="flex items-center gap-1.5 text-slate-300">
-            <VexAvatar size={16} />
+            <VexGlowAvatar size={16} />
             <Languages className="w-3.5 h-3.5 text-[var(--tl-accent)]" />
             <span className="text-[11px] font-semibold tracking-wide">{t("translate.title")}</span>
             {result?.target && (

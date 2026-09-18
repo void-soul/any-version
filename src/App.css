@@ -81,6 +81,44 @@
   animation: vex-breathe 3.2s ease-in-out infinite;
 }
 
+/* 头像辉光的「坏灯管」节奏：快速闪两次 → 长亮一次 → 快速闪三次 → 常亮。
+   只作用在光晕上，头像本身尺寸不变。
+   steps(1, end) 让每段直接跳变、不做补间，得到「接触不良」的硬通断感，
+   而不是平滑呼吸。
+   一轮 3s：两连闪(每态 90ms) → 长亮 720ms → 三连闪(每态 90ms) → 常亮 1.47s。
+   单态不能短于 ~60ms：少于 3~4 帧人眼抓不到，会看成一直亮着。 */
+@keyframes vex-flicker {
+  /* ① 快速闪两次 */
+  0% { opacity: 0.80; }
+  3% { opacity: 0.02; }
+  6% { opacity: 0.78; }
+  9% { opacity: 0.02; }
+  /* ② 长亮一次 */
+  10% { opacity: 0.74; }
+  34% { opacity: 0.70; }
+  /* ③ 快速闪三次 */
+  35% { opacity: 0.02; }
+  38% { opacity: 0.80; }
+  41% { opacity: 0.02; }
+  44% { opacity: 0.78; }
+  47% { opacity: 0.02; }
+  50% { opacity: 0.80; }
+  /* ④ 常亮到本轮结束 */
+  51% { opacity: 0.72; }
+  100% { opacity: 0.72; }
+}
+
+.vex-flicker {
+  animation: vex-flicker 3s steps(1, end) infinite;
+}
+
+/* 无障碍：系统开启「减少动态效果」时退回常亮，避免高频闪烁。 */
+@media (prefers-reduced-motion: reduce) {
+  .vex-flicker {
+    animation: none;
+  }
+}
+
 /* vex 头像悬停「俏皮眨一下」：轻微放大 + 歪头 */
 .vex-hover:hover {
   transform: scale(1.12) rotate(-4deg);

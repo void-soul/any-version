@@ -170,7 +170,7 @@ import type { LauncherSetting } from "./launcher/types";
 import { MODULES, moduleLabel } from "../moduleRegistry";
 import { useTranslation } from "react-i18next";
 import DataSyncPanel from "./DataSyncPanel";
-import VexAvatar from "./VexAvatar";
+import VexGlowAvatar from "./VexGlowAvatar";
 import VexGreeting from "./VexGreeting";
 
 interface Config {
@@ -1154,16 +1154,12 @@ export default function GlobalSettings() {
       {/* 关于 Kira：名片 */}
       <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-3">
         <div className="flex items-center gap-4">
-          <div className="relative flex-shrink-0">
-            <VexAvatar size={56} />
-            <span className="absolute -inset-1 rounded-full blur-md opacity-40 bg-[var(--module-accent)]" />
-          </div>
+          <VexGlowAvatar size={56} />
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="text-base font-black tracking-wide text-white">Kira</span>
               <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]">v{appVersion || "1.0.0"}</span>
             </div>
-            <p className="text-[11px] text-slate-400 mt-0.5">{t("settings.companionTagline")}</p>
             <p className="text-[11px] text-slate-300 mt-1 truncate">
               <VexGreeting />
             </p>

@@ -420,7 +420,6 @@
     "configSaved": "配置已保存",
     "saving": "正在保存...",
     "saveConfig": "保存配置",
-    "companionTagline": "你的开发助理",
     "trayHint": "选择需要在系统托盘右键菜单中显示的快捷开关。",
     "trayMihomoSub": "Mihomo 子菜单",
     "trayMihomoDesc": "内核启停，以及下方的模式 / 订阅 / 节点切换",

@@ -68,7 +68,7 @@ import { sortLauncherItemsByUsage } from "./usageStats";
 import { buildReorderOrders } from "./reorder";
 import CategoryModal from "./CategoryModal";
 import AddItemModal from "./AddItemModal";
-import VexAvatar from "../VexAvatar";
+import VexGlowAvatar from "../VexGlowAvatar";
 import VexBusy from "../VexBusy";
 import VexGreeting from "../VexGreeting";
 
@@ -1722,7 +1722,7 @@ export default function LauncherPanel() {
 
       {/* Kira 贴心问候（生命力）：头像 + 时段开场白 + 轮换问候 */}
       <div className="flex items-center gap-2.5 px-4 py-1.5 bg-[var(--module-accent)]/5 border-b border-white/5 flex-shrink-0">
-        <VexAvatar size={26} />
+        <VexGlowAvatar size={26} />
         <span className="text-[11px] text-slate-300 truncate">
           <VexGreeting />
         </span>
@@ -2117,7 +2117,7 @@ export default function LauncherPanel() {
                 })
               ) : searchQuery.trim() ? (
                 <div className="py-14 text-center text-slate-500 text-xs flex flex-col items-center gap-3">
-                  <VexAvatar size={44} className="opacity-80" />
+                  <VexGlowAvatar size={44} className="opacity-80" />
                   <div>
                     <p>{t("launcher.searchNoResult", { query: searchQuery })}</p>
                     <p className="text-[11px] text-slate-600 mt-1">{t("launcher.searchNoResultHint")}</p>

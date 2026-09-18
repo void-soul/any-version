@@ -7,7 +7,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { X, Minus, Square, Download, AlertTriangle, Loader2, FolderOpen, ChevronDown, Settings } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { MODULES, MODULE_MAP, resolveModuleLayout } from "./moduleRegistry";
-import VexAvatar from "./components/VexAvatar";
+import VexGlowAvatar from "./components/VexGlowAvatar";
 import { VEX_CYBER_CYAN, resolveThemeAccent } from "./utils/brand";
 import { moduleLabel } from "./moduleRegistry";
 import { kiraQuoteLine } from "./utils/kiraQuotes";
@@ -347,10 +347,7 @@ export default function App() {
       {/* 冷启动闪屏：Kira 赛博 Logo + 进度，替代白屏 */}
       {booting && (
         <div className="fixed inset-0 z-[10000] flex flex-col items-center justify-center gap-6 bg-[#0b101b] cyber-grid">
-          <div className="relative">
-            <span className="absolute -inset-6 rounded-full blur-2xl opacity-60" style={{ background: `radial-gradient(circle, ${activeModuleColor}55, transparent 70%)` }} />
-            <VexAvatar size={150} className="relative" />
-          </div>
+          <VexGlowAvatar size={150} color={activeModuleColor} />
           <div className="text-center">
             <div className="text-xl font-black tracking-[0.35em] text-white">
               K<span className="text-[var(--module-accent)]">i</span>ra
@@ -389,7 +386,7 @@ export default function App() {
                     : "0 0 12px color-mix(in srgb, var(--module-accent) 30%, transparent), 0 0 30px color-mix(in srgb, var(--module-accent) 16%, transparent), 0 10px 26px rgba(0,0,0,0.5)",
             }}
           >
-            <VexAvatar size={26} />
+            <VexGlowAvatar size={26} />
             <span className="text-[11px] text-slate-200">{vexToast.msg}</span>
           </div>
         </div>
@@ -400,7 +397,7 @@ export default function App() {
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 backdrop-blur-sm">
           <div className="cyber-border w-[380px] max-w-[92vw] rounded-2xl p-6 shadow-2xl shadow-black/60">
             <div className="flex items-center gap-3">
-              <VexAvatar size={46} />
+              <VexGlowAvatar size={46} />
               <div>
                 <div className="text-sm font-black text-white">hi，我是 {t("app.name")}</div>
                 <div className="text-[10px] text-slate-400">{t("app.tagline")}</div>
@@ -450,7 +447,7 @@ export default function App() {
         <div className="vex-neon-line absolute bottom-0 left-0 right-0 h-px" />
         {/* Left: Logo + Name */}
         <div className="flex shrink-0 items-center gap-2 pointer-events-none px-1" data-tauri-drag-region>
-          <VexAvatar size={22} glow={activeModuleColor} className="vex-neon-breathe" />
+          <VexGlowAvatar size={22} color={activeModuleColor} avatarClassName="vex-neon-breathe" />
           <span className="vex-neon-text text-[11px] font-black tracking-wide">Kira</span>
         </div>
 

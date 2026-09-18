@@ -414,7 +414,6 @@
     "configSaved": "Configuration saved",
     "saving": "Saving...",
     "saveConfig": "Save configuration",
-    "companionTagline": "Your dev assistant",
     "trayHint": "Choose which quick switches appear in the system tray right-click menu.",
     "trayMihomoSub": "Mihomo submenu",
     "trayMihomoDesc": "Core start/stop, plus mode / profile / proxy switching below",

@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import VexAvatar from "./VexAvatar";
+import VexGlowAvatar from "./VexGlowAvatar";
 
 /**
  * Kira 风格的空态：头像 + 一句人设口吻的说明，替代冷冰冰的「暂无数据」。
@@ -24,7 +24,7 @@ export default function VexEmptyState({
   const { t } = useTranslation();
   return (
     <div className={`flex flex-col items-center justify-center gap-3 py-14 text-center ${className}`}>
-      <VexAvatar size={avatarSize} />
+      <VexGlowAvatar size={avatarSize} />
       <div>
         <p className="text-xs text-slate-400">{title ?? t("vex.defaultTitle")}</p>
         {desc !== undefined && <p className="mt-1 text-[11px] text-slate-600">{desc ?? t("vex.defaultDesc")}</p>}
