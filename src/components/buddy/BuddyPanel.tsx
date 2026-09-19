@@ -18,6 +18,7 @@ import {
   summarizeCreditSegments,
   type RotationAccount,
 } from "./quota";
+import CreditStatsPanel from "./CreditStatsPanel";
 import {
   RefreshCw,
   Download,
@@ -102,12 +103,113 @@ export interface BuddyPaths {
   authFile?: string | null;
 }
 
+/** 单个会话在一次同步中的结局（后端 session_sync::SessionSyncStatus） */
+export type BuddySessionSyncStatus =
+  | "copied"
+  | "skipped"
+  | "partial"
+  | "conflict"
+  | "failed";
+
+export interface BuddySessionSyncDetail {
+  id: string;
+  label: string;
+  status: BuddySessionSyncStatus;
+  /** 机器可读原因码，前端用 buddy.syncReason.<reason> 翻译 */
+  reason: string;
+}
+
+/** 「只处理有变化的会话」台账（后端 session_sync::SessionSyncSummary） */
+export interface BuddySessionSyncSummary {
+  total: number;
+  copied: number;
+  skipped: number;
+  partial: number;
+  conflict: number;
+  failed: number;
+  /** 全部会话都无变化 */
+  unchanged: boolean;
+  details: BuddySessionSyncDetail[];
+}
+
 export interface BuddyTransferReport {
   addedConversations: number;
   replacedConversations: number;
   updatedSessionRows: number;
   scannedWorkspaces: number;
+  sync?: BuddySessionSyncSummary;
 }
+
+/** 同步明细里各状态的颜色（与 buddy.syncStatus.* 一一对应） */
+const SYNC_STATUS_CLASS: Record<string, string> = {
+  copied: "text-emerald-400",
+  skipped: "text-slate-400",
+  partial: "text-amber-400",
+  conflict: "text-amber-400",
+  failed: "text-rose-400",
+};
+
+// ─── 成长计划 / Buddy 状态（后端 buddy_growth_overview，仅 WorkBuddy） ───
+
+export interface BuddyGrowthTask {
+  taskCode: string;
+  title: string;
+  guide: string;
+  tag: string;
+  deadline?: string | null;
+  reward: { credits: number; energy: number; buddy: boolean };
+  current: number;
+  target: number;
+  state: "claimed" | "completed" | "not_accepted" | "in_progress" | string;
+}
+
+export interface BuddyGrowthOverview {
+  fetchedAt: number;
+  buddyKnown: boolean;
+  unlocked: boolean;
+  growth: { completed: number; total: number; ratio: number; tasks: BuddyGrowthTask[] };
+  rewards: { claimed: number; total: number; pending: number; ratio: number };
+  cat: {
+    state: string;
+    progress: number;
+    arriveAt?: number | null;
+    dailyLimitReached: boolean;
+    available: boolean;
+    activeBuddy: boolean;
+    buddies: { instanceId: number; name: string }[];
+    rewardCredits: number;
+    rewardEnergy: number;
+  };
+  actions: {
+    gachaAvailable: boolean;
+    gachaCount?: number | null;
+    gachaEnergy?: number | null;
+    gachaCost?: number | null;
+    lotteryAvailable: boolean;
+    lotteryCount?: number | null;
+  };
+  manualTasks: string[];
+  streak?: {
+    days?: number | null;
+    progressDays: number;
+    nextTier?: string | null;
+    nextTierRemaining?: number | null;
+    makeupCards?: number | null;
+    tiers: { key: string; days: number; status: string }[];
+    status: string;
+  } | null;
+  warnings: string[];
+}
+
+/** 猫猫旅行状态 → i18n 键（未知状态回落到官方原文） */
+const GROWTH_CAT_STATE_KEY: Record<string, string> = {
+  locked: "buddy.growth.travelLocked",
+  unknown: "buddy.growth.travelUnknown",
+  needs_selection: "buddy.growth.travelNeedsSelection",
+  idle: "buddy.growth.travelIdle",
+  traveling: "buddy.growth.travelTraveling",
+  arrived: "buddy.growth.travelArrived",
+};
 
 export interface BuddyClientPath {
   platform: string;
@@ -122,6 +224,8 @@ export interface BuddySwitchProgress {
   stage: "closing" | "merging" | "writing" | "launching" | "done";
   scannedWorkspaces: number;
   message?: string | null;
+  /** 合并结束时后端一次性带上的同步台账 */
+  sync?: BuddySessionSyncSummary;
 }
 
 export interface BuddySessionRecord {
@@ -695,6 +799,9 @@ export default function BuddyPanel() {
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   // 切换进度（关闭 → 合并 → 写入 → 启动），由后端 buddy-switch-progress 事件驱动
   const [switchProgress, setSwitchProgress] = useState<BuddySwitchProgress | null>(null);
+  // 最近一次切换的会话同步台账（成功/跳过/冲突/失败明细），切换结束后保留给用户查看
+  const [syncSummary, setSyncSummary] = useState<BuddySessionSyncSummary | null>(null);
+  const [syncDetailsOpen, setSyncDetailsOpen] = useState(false);
   // 客户端路径设置（切换时关闭/重启的 WorkBuddy / CodeBuddy CN）
   const [clientPaths, setClientPaths] = useState<BuddyClientPath[]>([]);
   const [pathDraft, setPathDraft] = useState<Record<string, string>>({});
@@ -742,6 +849,11 @@ export default function BuddyPanel() {
   // 签到/派旅行只对 WorkBuddy 账号有效：状态卡固定用 WorkBuddy 账号列表，
   // 与顶部的平台选择解耦（否则在默认的 CodeBuddy CN 标签下会全部显示"待生成/未安排"）。
   const [wbAccounts, setWbAccounts] = useState<BuddyAccount[]>([]);
+  // 成长计划视图（任务进度 / 连续活跃 / 猫猫旅行 / 奖励），仅 WorkBuddy 账号
+  const [growth, setGrowth] = useState<BuddyGrowthOverview | null>(null);
+  const [growthTargetId, setGrowthTargetId] = useState<string | null>(null);
+  const [growthBusy, setGrowthBusy] = useState(false);
+  const [growthError, setGrowthError] = useState<string | null>(null);
   // 账号视图偏好：主账号 + 排序模式（后端 `<platform>_view.json` 持久化）
   const [accountView, setAccountView] = useState<BuddyAccountView>({ orderMode: "lastUsed" });
   const [travelTasks, setTravelTasks] = useState<BuddyTravelTasksView | null>(null);
@@ -832,10 +944,45 @@ export default function BuddyPanel() {
     return () => clearTimeout(timer);
   }, [sessionKeyword, tab, loadSessions]);
 
-  // 签到页三个区块（账号状态/日历/日志）的折叠状态
-  const [checkinCollapsed, setCheckinCollapsed] = useState({ accounts: false, calendar: false, logs: false });
-  const toggleCheckinSection = (key: "accounts" | "calendar" | "logs") =>
+  // 积分页各区块（成长计划/账号状态/日历/日志）的折叠状态
+  const [checkinCollapsed, setCheckinCollapsed] = useState({
+    growth: false,
+    accounts: false,
+    calendar: false,
+    logs: false,
+  });
+  const toggleCheckinSection = (key: "growth" | "accounts" | "calendar" | "logs") =>
     setCheckinCollapsed((c) => ({ ...c, [key]: !c[key] }));
+
+  // 成长计划：一次拉齐任务进度/奖励/连续活跃/猫猫旅行（force=true 绕过后端 60 秒缓存）
+  const loadGrowth = useCallback(async (accountId: string | null, force = false) => {
+    if (!accountId) {
+      setGrowth(null);
+      setGrowthError(null);
+      return;
+    }
+    setGrowthBusy(true);
+    try {
+      const view = await invoke<BuddyGrowthOverview>("buddy_growth_overview", {
+        platform: "workbuddy",
+        accountId,
+        force,
+      });
+      setGrowth(view);
+      setGrowthError(null);
+    } catch (e) {
+      setGrowth(null);
+      setGrowthError(String(e));
+    } finally {
+      setGrowthBusy(false);
+    }
+  }, []);
+
+  // 成长计划卡展示的账号（与 wbAccounts 同步）
+  const growthTarget = useMemo(
+    () => wbAccounts.find((account) => account.id === growthTargetId) ?? null,
+    [wbAccounts, growthTargetId]
+  );
 
   // 自动签到配置/行为日志/今日任务列表/旅行配置加载（签到与派出仅限 WorkBuddy）
   const loadAutoCheckin = useCallback(async () => {
@@ -855,10 +1002,14 @@ export default function BuddyPanel() {
       setTravelConfig(travel);
       setTravelTasks(travelTaskView);
       setWbAccounts(wb ?? []);
+      // 成长计划取第一个 WorkBuddy 账号（与签到/派出的数据源一致）
+      const growthTarget = (wb ?? [])[0] ?? null;
+      setGrowthTargetId(growthTarget?.id ?? null);
+      void loadGrowth(growthTarget?.id ?? null);
     } catch (e) {
       setMessage({ ok: false, text: String(e) });
     }
-  }, []);
+  }, [loadGrowth]);
 
   // 日历归档加载（按月份查询）
   const loadCalendar = useCallback(async (month: string) => {
@@ -1211,11 +1362,15 @@ export default function BuddyPanel() {
     setBusy(true);
     setMessage(null);
     setSwitchProgress(null);
+    setSyncSummary(null);
+    setSyncDetailsOpen(false);
     let unlisten: UnlistenFn | null = null;
     try {
-      unlisten = await listen<BuddySwitchProgress>("buddy-switch-progress", (e) =>
-        setSwitchProgress(e.payload)
-      );
+      unlisten = await listen<BuddySwitchProgress>("buddy-switch-progress", (e) => {
+        setSwitchProgress(e.payload);
+        // 合并结束时后端带上逐会话台账（只在该阶段出现）
+        if (e.payload.sync) setSyncSummary(e.payload.sync);
+      });
       const [text, report] = await invoke<[string, BuddyTransferReport | null]>(
         "buddy_switch_account",
         { platform, accountId: id }
@@ -1235,6 +1390,8 @@ export default function BuddyPanel() {
           })
         );
       }
+      // 事件可能在切换返回前就被消费，这里用返回值兜底，保证台账一定展示
+      if (report?.sync) setSyncSummary(report.sync);
       showMsg(true, parts.join("；"));
       await load();
     } catch (e) {
@@ -1675,6 +1832,55 @@ export default function BuddyPanel() {
           )}
           <span className="break-all">{message.text}</span>
           <button onClick={() => setMessage(null)} className="ml-auto text-slate-500 hover:text-white cursor-pointer">✕</button>
+        </div>
+      )}
+
+      {/* 会话同步台账：只处理有变化的会话，明细含 成功 / 跳过 / 冲突 / 失败 */}
+      {syncSummary && syncSummary.total > 0 && (
+        <div className="border-b border-white/5 bg-white/[0.02] flex-shrink-0">
+          <button
+            onClick={() => setSyncDetailsOpen((open) => !open)}
+            className="w-full flex items-center gap-2 px-4 py-1.5 text-[11px] text-left hover:bg-white/5 cursor-pointer"
+          >
+            <span className="text-slate-500 w-3">{syncDetailsOpen ? "▾" : "▸"}</span>
+            <span className="font-semibold text-slate-300">{t("buddy.syncTitle")}</span>
+            <span className="text-slate-500">
+              {t("buddy.syncTotal", { count: syncSummary.total })}
+            </span>
+            <span className="ml-auto flex items-center gap-2">
+              <span className="text-emerald-400">{t("buddy.syncCountCopied", { count: syncSummary.copied })}</span>
+              <span className="text-slate-400">{t("buddy.syncCountSkipped", { count: syncSummary.skipped })}</span>
+              {syncSummary.conflict > 0 && (
+                <span className="text-amber-400">{t("buddy.syncCountConflict", { count: syncSummary.conflict })}</span>
+              )}
+              {(syncSummary.partial > 0 || syncSummary.failed > 0) && (
+                <span className="text-rose-400">
+                  {t("buddy.syncCountFailed", { count: syncSummary.partial + syncSummary.failed })}
+                </span>
+              )}
+            </span>
+          </button>
+          {syncDetailsOpen && (
+            <div className="max-h-56 overflow-y-auto border-t border-white/5">
+              {syncSummary.unchanged && (
+                <div className="px-4 py-1.5 text-[11px] text-slate-500">{t("buddy.syncUnchanged")}</div>
+              )}
+              {syncSummary.details.map((detail, index) => (
+                <div
+                  key={`${detail.id}-${index}`}
+                  className="flex items-start gap-2 px-4 py-1 text-[11px] border-b border-white/5 last:border-b-0"
+                >
+                  <span className={`flex-shrink-0 w-16 ${SYNC_STATUS_CLASS[detail.status] ?? "text-slate-400"}`}>
+                    {t(`buddy.syncStatus.${detail.status}`)}
+                  </span>
+                  <span className="min-w-0 flex-1 break-all text-slate-300">{detail.label || detail.id}</span>
+                  <span className="flex-shrink-0 text-slate-500">
+                    {t(`buddy.syncReason.${detail.reason}`)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -2196,6 +2402,188 @@ export default function BuddyPanel() {
       {tab === "checkin" && (
         <div className="flex-1 overflow-y-auto p-4">
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+            {/* 成长计划：任务进度 / 奖励 / 连续活跃 / 猫猫旅行 / Buddy（仅 WorkBuddy） */}
+            <div className="xl:col-span-2 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <button
+                  type="button"
+                  onClick={() => toggleCheckinSection("growth")}
+                  className="flex items-center gap-2 cursor-pointer select-none"
+                >
+                  {checkinCollapsed.growth ? <ChevronRight className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
+                  <Gauge className="w-4 h-4 text-[var(--module-accent)]" />
+                  <span className="text-[13px] font-bold text-white">{t("buddy.growth.title")}</span>
+                </button>
+                <span className="text-[11px] text-slate-500 truncate max-w-[40%]">
+                  {growthTarget
+                    ? growthTarget.nickname || growthTarget.email || growthTarget.id
+                    : t("buddy.growth.noAccount")}
+                </span>
+                <div className="flex-1" />
+                <button
+                  type="button"
+                  disabled={!growthTargetId || growthBusy}
+                  onClick={() => void loadGrowth(growthTargetId, true)}
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 disabled:opacity-40 cursor-pointer"
+                >
+                  {growthBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  {t("buddy.growth.refresh")}
+                </button>
+              </div>
+              {!checkinCollapsed.growth && (<>
+              {growthError && <div className="text-[11px] text-amber-300 break-all">{growthError}</div>}
+              {!growthError && !growth && (
+                <div className="text-[11px] text-slate-500">
+                  {growthBusy ? t("buddy.growth.loading") : t("buddy.growth.empty")}
+                </div>
+              )}
+              {growth && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+                  <div className="rounded-lg bg-white/[0.03] border border-white/5 p-2.5">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="font-semibold text-slate-300">{t("buddy.growth.taskProgress")}</span>
+                      <span className="ml-auto text-slate-400">
+                        {t("buddy.growth.taskCompletedOf", {
+                          completed: growth.growth.completed,
+                          total: growth.growth.total,
+                        })}
+                      </span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-white/10 overflow-hidden mb-2">
+                      <div
+                        className="h-full bg-[var(--module-accent)]"
+                        style={{ width: `${Math.round(growth.growth.ratio * 100)}%` }}
+                      />
+                    </div>
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      {growth.growth.tasks.map((task, index) => (
+                        <div key={`${task.taskCode}-${index}`} className="flex items-start gap-2">
+                          <span
+                            className={`flex-shrink-0 ${
+                              task.state === "claimed" || task.state === "completed"
+                                ? "text-emerald-400"
+                                : "text-slate-400"
+                            }`}
+                          >
+                            {t(`buddy.growth.taskState.${task.state}`, { defaultValue: task.state })}
+                          </span>
+                          <span className="min-w-0 flex-1 break-all text-slate-300" title={task.guide || undefined}>
+                            {task.title}
+                          </span>
+                          <span className="flex-shrink-0 text-slate-500">
+                            {task.current}/{task.target}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-white/[0.03] border border-white/5 p-2.5 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-slate-300">{t("buddy.growth.rewardProgress")}</span>
+                      <span className="ml-auto text-slate-400">
+                        {t("buddy.growth.rewardClaimedOf", {
+                          claimed: growth.rewards.claimed,
+                          total: growth.rewards.total,
+                          pending: growth.rewards.pending,
+                        })}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-slate-300">{t("buddy.growth.streak")}</span>
+                      <span className="ml-auto text-slate-400">
+                        {growth.streak?.days != null
+                          ? t("buddy.growth.streakDays", { days: growth.streak.days })
+                          : t("buddy.growth.streakUnavailable")}
+                      </span>
+                    </div>
+                    {growth.streak && growth.streak.tiers.length > 0 && (
+                      <div className="flex items-center gap-3 pl-1 flex-wrap">
+                        {growth.streak.tiers.map((tier) => (
+                          <span
+                            key={tier.key}
+                            className={tier.status === "claimed" ? "text-emerald-400" : "text-slate-500"}
+                          >
+                            {tier.key}
+                            {t(`buddy.growth.tierStatus.${tier.status}`, { defaultValue: tier.status })}
+                          </span>
+                        ))}
+                        {growth.streak.nextTierRemaining != null && growth.streak.nextTier && (
+                          <span className="text-slate-500">
+                            {t("buddy.growth.streakNextTier", {
+                              tier: growth.streak.nextTier,
+                              days: growth.streak.nextTierRemaining,
+                            })}
+                          </span>
+                        )}
+                        {growth.streak.makeupCards != null && (
+                          <span className="text-slate-500">
+                            {t("buddy.growth.streakMakeup", { count: growth.streak.makeupCards })}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    <div className="flex items-start gap-2">
+                      <span className="font-semibold text-slate-300">{t("buddy.growth.travel")}</span>
+                      <span className="ml-auto text-right text-slate-400">
+                        {t(GROWTH_CAT_STATE_KEY[growth.cat.state] ?? "buddy.growth.travelUnknown", {
+                          defaultValue: growth.cat.state,
+                        })}
+                        {growth.cat.arriveAt
+                          ? ` · ${t("buddy.growth.travelArriveAt", {
+                              time: new Date(growth.cat.arriveAt).toLocaleString(),
+                            })}`
+                          : ""}
+                        {growth.cat.rewardCredits > 0
+                          ? ` · ${t("buddy.growth.travelReward", { credits: growth.cat.rewardCredits })}`
+                          : ""}
+                      </span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="font-semibold text-slate-300">{t("buddy.growth.buddies")}</span>
+                      <span className="ml-auto text-right text-slate-400 break-all">
+                        {growth.unlocked
+                          ? growth.cat.buddies.map((buddy) => buddy.name).join("、") ||
+                            t("buddy.growth.buddyActive")
+                          : growth.buddyKnown
+                            ? t("buddy.growth.buddyLocked")
+                            : t("buddy.growth.buddyUnknown")}
+                      </span>
+                    </div>
+                    {(growth.actions.gachaAvailable || growth.actions.lotteryAvailable) && (
+                      <div className="flex items-start gap-2">
+                        <span className="font-semibold text-slate-300">{t("buddy.growth.actions")}</span>
+                        <span className="ml-auto text-right text-slate-400">
+                          {growth.actions.gachaAvailable
+                            ? t("buddy.growth.gacha", {
+                                count: growth.actions.gachaCount ?? 0,
+                                cost: growth.actions.gachaCost ?? 0,
+                                energy: growth.actions.gachaEnergy ?? 0,
+                              })
+                            : ""}
+                          {growth.actions.lotteryAvailable
+                            ? ` ${t("buddy.growth.lottery", { count: growth.actions.lotteryCount ?? 0 })}`
+                            : ""}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  {growth.manualTasks.length > 0 && (
+                    <div className="md:col-span-2 text-slate-500">
+                      {t("buddy.growth.manualTasks", { tasks: growth.manualTasks.join("、") })}
+                    </div>
+                  )}
+                  {growth.warnings.length > 0 && (
+                    <div className="md:col-span-2 text-[10px] text-slate-600 break-all">
+                      {t("buddy.growth.warnings", { count: growth.warnings.length })}
+                    </div>
+                  )}
+                </div>
+              )}
+              </>)}
+            </div>
+            {/* Token / 积分 / 调用量统计（按账号、模型、日期筛选） */}
+            <CreditStatsPanel accounts={wbAccounts} />
+
             {/* 每账号状态（签到 | 派出）—— 固定用 WorkBuddy 账号：签到/派出只对 WorkBuddy 有效 */}
             <div className="xl:col-span-2 rounded-xl border border-white/10 bg-white/[0.03] p-4">
               <div className="flex items-center gap-2 mb-3">
