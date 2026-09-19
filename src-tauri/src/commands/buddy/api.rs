@@ -1290,8 +1290,10 @@ pub struct BuddyTravelStatus {
     pub record_id: Option<Value>,
 }
 
-/// 旅行接口通用请求（WorkBuddy 域名，不带 /v2/ 前缀——与签到路径体系不同）。
-async fn travel_request(
+/// 旅行 / 成长中心接口通用请求（WorkBuddy 域名，不带 /v2/ 前缀——与签到路径体系不同）。
+///
+/// 注意：成长中心有部分端点只在 `/v2/` 前缀下存在，调用方自行拼接完整 `path`。
+pub(crate) async fn travel_request(
     method: reqwest::Method,
     path: &str,
     body: Option<Value>,
