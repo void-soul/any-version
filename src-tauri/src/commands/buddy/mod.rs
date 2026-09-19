@@ -19,9 +19,12 @@ mod codebuddy_cn;
 mod crypto;
 mod daily_history;
 mod expiry;
+pub(crate) mod growth;
 mod models;
+mod session_sync;
 mod session_transfer;
 mod sessions;
+pub(crate) mod stats;
 mod store;
 mod workbuddy;
 
@@ -39,6 +42,9 @@ pub struct BuddySwitchProgress {
     /// 合并阶段：已扫描工作区数
     pub scanned_workspaces: usize,
     pub message: Option<String>,
+    /// 合并结束时一次性带上「只同步有变化的会话」台账（其余阶段为 None，不占载荷）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sync: Option<session_sync::SessionSyncSummary>,
 }
 
 pub(crate) fn emit_switch_progress(
@@ -48,6 +54,44 @@ pub(crate) fn emit_switch_progress(
     stage: &str,
     scanned_workspaces: usize,
     message: Option<String>,
+) {
+    emit_switch_progress_inner(
+        app,
+        platform,
+        account_id,
+        stage,
+        scanned_workspaces,
+        message,
+        None,
+    );
+}
+
+/// 合并结束时上报逐会话明细（成功 / 跳过 / 冲突 / 失败）。
+pub(crate) fn emit_switch_sync_progress(
+    app: Option<&tauri::AppHandle>,
+    platform: BuddyPlatform,
+    account_id: &str,
+    sync: &session_sync::SessionSyncSummary,
+) {
+    emit_switch_progress_inner(
+        app,
+        platform,
+        account_id,
+        "merging",
+        0,
+        None,
+        Some(sync.clone()),
+    );
+}
+
+fn emit_switch_progress_inner(
+    app: Option<&tauri::AppHandle>,
+    platform: BuddyPlatform,
+    account_id: &str,
+    stage: &str,
+    scanned_workspaces: usize,
+    message: Option<String>,
+    sync: Option<session_sync::SessionSyncSummary>,
 ) {
     let Some(handle) = app else { return };
     use tauri::Emitter;
@@ -59,6 +103,7 @@ pub(crate) fn emit_switch_progress(
             stage: stage.to_string(),
             scanned_workspaces,
             message,
+            sync,
         },
     );
 }
@@ -364,11 +409,18 @@ pub async fn buddy_switch_account(
         let transfer_report = session_transfer::transfer_on_switch(platform, &account, Some(&app))?;
         if let Some(report) = &transfer_report {
             eprintln!(
-                "[Buddy Switch] 会话合并报告: 新增会话={}, 替换会话={}, 重映射记录={}, 扫描工作区={}",
+                "[Buddy Switch] 会话合并报告: 新增会话={}, 替换会话={}, 重映射记录={}, 扫描工作区={}, 会话总数={}, 已同步={}, 跳过={}, 冲突={}, 部分失败={}, 失败={}, 全部无变化={}",
                 report.added_conversations,
                 report.replaced_conversations,
                 report.updated_session_rows,
-                report.scanned_workspaces
+                report.scanned_workspaces,
+                report.sync.total,
+                report.sync.copied,
+                report.sync.skipped,
+                report.sync.conflict,
+                report.sync.partial,
+                report.sync.failed,
+                report.sync.unchanged
             );
         }
 

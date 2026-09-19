@@ -12,6 +12,7 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use super::super::models::{BuddyAccount, BuddyPlatform};
+use super::super::session_sync::{self, SessionSyncStatus, SyncTracker};
 use super::super::store;
 use super::codebuddy;
 use super::SessionTransferReport;
@@ -138,6 +139,10 @@ fn transfer_local_sessions(
     let backup_root = super::prepare_backup_root(BACKUP_PLATFORM_LABEL, target_uid)?;
 
     let mut report = SessionTransferReport::default();
+    // 上次同步基线（目标账号维度）：用来判断"哪些会话真的有变化"，无基线时退化为全量。
+    let baseline = session_sync::load_baseline(BACKUP_PLATFORM_LABEL, target_uid);
+    let mut tracker = SyncTracker::new(baseline);
+    let data_root = data_dir_for_workbuddy()?;
 
     // 1) 旧版 per-uid 扩展目录合并（5.x 通常不存在，仅兼容旧版落盘结构）
     let extension_roots = select_extension_data_roots(source_uid)?;
@@ -148,27 +153,28 @@ fn transfer_local_sessions(
         );
     } else {
         for (label, extension_data_dir) in extension_roots {
-            let file_report = codebuddy::sync_history_between_accounts(
+            report.scanned_workspaces += codebuddy::sync_history_between_accounts(
                 &extension_data_dir,
                 source_uid,
                 target_uid,
                 &backup_root.join(label),
                 progress,
+                &mut tracker,
             )?;
-            report.added_conversations += file_report.added_conversations;
-            report.replaced_conversations += file_report.replaced_conversations;
-            report.scanned_workspaces += file_report.scanned_workspaces;
         }
     }
 
-    // 2) WorkBuddy 5.x 主存储：workbuddy.db 按 user_id 过滤 —— 无条件执行
+    // 2) WorkBuddy 5.x 主存储：workbuddy.db 逐会话判定后按需重映射 —— 无条件执行
     report.updated_session_rows += remap_workbuddy_database_user_id(
         &config_dir.join("workbuddy.db"),
         target_uid,
         &backup_root.join("database"),
+        &data_root,
+        &mut tracker,
     )?;
 
-    // 3) 旧版 vscdb（若存在）—— 无条件执行，取第一个命中的
+    // 3) 旧版 vscdb（若存在）—— 无条件执行，取第一个命中的（vscdb 里没有逐会话时间戳，
+    //    按目标账号整库重映射，明细以"已处理"一条记录体现）。
     for legacy_db in [
         electron_data_dir.join("codebuddy-sessions.vscdb"),
         config_dir.join("codebuddy-sessions.vscdb"),
@@ -176,23 +182,45 @@ fn transfer_local_sessions(
         if !legacy_db.is_file() {
             continue;
         }
-        report.updated_session_rows += codebuddy::remap_session_vscdb_user_id(
+        let remapped = codebuddy::remap_session_vscdb_user_id(
             &legacy_db,
             source_uid,
             target_uid,
             &backup_root.join("legacy-database"),
         )?;
+        report.updated_session_rows += remapped;
+        tracker.record(
+            "",
+            "legacy:codebuddy-sessions.vscdb",
+            if remapped > 0 {
+                SessionSyncStatus::Copied
+            } else {
+                SessionSyncStatus::Skipped
+            },
+            if remapped > 0 { "remappedRows" } else { "unchanged" },
+            None,
+        );
         break;
     }
 
+    let (summary, next_baseline) = tracker.finish();
+    session_sync::save_baseline(BACKUP_PLATFORM_LABEL, target_uid, &next_baseline);
+    report.sync = summary;
+
     eprintln!(
-        "[Buddy WB Transfer] 合并完成: source_uid={}, target_uid={}, workspaces={}, added={}, replaced={}, db_rows={}",
+        "[Buddy WB Transfer] 合并完成: source_uid={}, target_uid={}, workspaces={}, added={}, replaced={}, db_rows={}, sessions={}, copied={}, skipped={}, conflict={}, partial={}, failed={}",
         source_uid,
         target_uid,
         report.scanned_workspaces,
         report.added_conversations,
         report.replaced_conversations,
-        report.updated_session_rows
+        report.updated_session_rows,
+        report.sync.total,
+        report.sync.copied,
+        report.sync.skipped,
+        report.sync.conflict,
+        report.sync.partial,
+        report.sync.failed
     );
 
     Ok(report)
@@ -264,11 +292,21 @@ pub(crate) fn reject_symlink_if_exists(path: &Path) -> Result<(), String> {
     }
 }
 
-/// WorkBuddy 5.x 主存储重映射：`sessions` 表全部未删除会话的 user_id 改为目标账号。
+/// WorkBuddy 5.x 主存储重映射：**只重映射有变化的会话**。
+///
+/// 语义参考 WorkDaddy `daemon.js` 的 auto-copy job（`references/workdaddy.md` §17）：
+/// - 会话指纹 = DB `updated_at` + 会话正文本地落盘指纹（`projects/<hash>/<id>.jsonl` 等）；
+/// - 与上次同步基线一致 → **跳过**（不写库、进 `skipped`）；
+/// - 有变化 → 单独 `UPDATE` 该行（不再整库 UPDATE），进 `copied`；
+/// - DB 有记录但磁盘正文缺失 → 仍然重映射，但记为 `partial` / `contentMissing` 提醒用户。
+///
+/// 无基线（首次同步或基线丢失）时全部按"有变化"处理，行为退化为原全量重映射。
 fn remap_workbuddy_database_user_id(
     db_path: &Path,
     target_uid: &str,
     backup_root: &Path,
+    data_root: &Path,
+    tracker: &mut SyncTracker,
 ) -> Result<usize, String> {
     if !db_path.is_file() {
         return Ok(0);
@@ -296,14 +334,102 @@ fn remap_workbuddy_database_user_id(
         return Ok(0);
     }
 
-    let update_count: usize = connection
-        .query_row(
-            "SELECT COUNT(*) FROM sessions WHERE user_id != ?1 AND deleted_at IS NULL",
-            [target_uid],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("读取 WorkBuddy 会话索引失败: {}", e))?;
-    if update_count == 0 {
+    struct Candidate {
+        id: String,
+        label: String,
+        fingerprint: String,
+        content_missing: bool,
+    }
+
+    // 不同 WorkBuddy 版本的 sessions 表列不完全一致（旧版可能没有 title / custom_title /
+    // updated_at）。动态探测可用列后再拼 SQL，避免我们引入新的硬依赖。
+    let columns: std::collections::HashSet<String> = {
+        let mut statement = connection
+            .prepare("PRAGMA table_info(sessions)")
+            .map_err(|e| format!("读取 WorkBuddy 会话表结构失败: {}", e))?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| format!("读取 WorkBuddy 会话表结构失败: {}", e))?;
+        let mut names = std::collections::HashSet::new();
+        for row in rows {
+            if let Ok(name) = row {
+                names.insert(name.to_ascii_lowercase());
+            }
+        }
+        names
+    };
+    let label_parts: Vec<&str> = ["custom_title", "title", "cwd"]
+        .into_iter()
+        .filter(|column| columns.contains(*column))
+        .map(|column| match column {
+            "cwd" => "cwd",
+            other => match other {
+                "custom_title" => "NULLIF(TRIM(custom_title), '')",
+                _ => "NULLIF(TRIM(title), '')",
+            },
+        })
+        .collect();
+    let label_expression = if label_parts.is_empty() {
+        "id".to_string()
+    } else {
+        format!("COALESCE({}, id)", label_parts.join(", "))
+    };
+    let updated_expression = if columns.contains("updated_at") {
+        "updated_at"
+    } else {
+        "0"
+    };
+
+    let candidates: Vec<Candidate> = {
+        let sql = format!(
+            "SELECT id, {}, {} FROM sessions WHERE user_id != ?1 AND deleted_at IS NULL",
+            label_expression, updated_expression
+        );
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|e| format!("读取 WorkBuddy 会话索引失败: {}", e))?;
+        let rows = statement
+            .query_map([target_uid], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(|e| format!("读取 WorkBuddy 会话索引失败: {}", e))?;
+        let mut collected = Vec::new();
+        for row in rows {
+            let (id, label, updated_at) =
+                row.map_err(|e| format!("读取 WorkBuddy 会话记录失败: {}", e))?;
+            let content = session_sync::workbuddy_session_fingerprint(data_root, &id);
+            collected.push(Candidate {
+                fingerprint: session_sync::combined_fingerprint(updated_at, content.as_deref()),
+                content_missing: content.is_none(),
+                label: label.unwrap_or_else(|| id.clone()),
+                id,
+            });
+        }
+        collected
+    };
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+
+    let mut pending: Vec<&Candidate> = Vec::new();
+    for candidate in &candidates {
+        if tracker.is_unchanged(&candidate.id, &candidate.fingerprint) {
+            tracker.record(
+                &candidate.id,
+                &candidate.label,
+                SessionSyncStatus::Skipped,
+                "unchanged",
+                Some(candidate.fingerprint.clone()),
+            );
+        } else {
+            pending.push(candidate);
+        }
+    }
+    if pending.is_empty() {
         return Ok(0);
     }
 
@@ -319,12 +445,49 @@ fn remap_workbuddy_database_user_id(
     let transaction = connection
         .transaction()
         .map_err(|e| format!("开启 WorkBuddy 会话数据库事务失败: {}", e))?;
-    let changed = transaction
-        .execute(
-            "UPDATE sessions SET user_id = ?1 WHERE user_id != ?1 AND deleted_at IS NULL",
-            [target_uid],
-        )
-        .map_err(|e| format!("更新 WorkBuddy 会话 user_id 失败: {}", e))?;
+    let mut changed = 0usize;
+    for candidate in pending {
+        match transaction.execute(
+            "UPDATE sessions SET user_id = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+            rusqlite::params![target_uid, candidate.id],
+        ) {
+            Ok(rows) => {
+                changed += rows;
+                let reason = if candidate.content_missing {
+                    "contentMissing"
+                } else if tracker.baseline_of(&candidate.id).is_none() {
+                    "firstSync"
+                } else {
+                    "updated"
+                };
+                let status = if candidate.content_missing {
+                    SessionSyncStatus::Partial
+                } else {
+                    SessionSyncStatus::Copied
+                };
+                tracker.record(
+                    &candidate.id,
+                    &candidate.label,
+                    status,
+                    reason,
+                    Some(candidate.fingerprint.clone()),
+                );
+            }
+            Err(error) => {
+                eprintln!(
+                    "[Buddy WB Transfer] 会话 user_id 重映射失败: id={}, error={}",
+                    candidate.id, error
+                );
+                tracker.record(
+                    &candidate.id,
+                    &candidate.label,
+                    SessionSyncStatus::Failed,
+                    "updateFailed",
+                    None,
+                );
+            }
+        }
+    }
     transaction
         .commit()
         .map_err(|e| format!("提交 WorkBuddy 会话数据库事务失败: {}", e))?;
@@ -414,9 +577,20 @@ mod tests {
         }
 
         let backup_root = dest.join("backup");
+        let mut tracker = SyncTracker::new(std::collections::BTreeMap::new());
         let changed =
-            remap_workbuddy_database_user_id(&db_path, "target", &backup_root).unwrap();
+            remap_workbuddy_database_user_id(&db_path, "target", &backup_root, &dest, &mut tracker)
+                .unwrap();
         assert_eq!(changed, 2);
+        let (summary, next_baseline) = tracker.finish();
+        assert_eq!(summary.total, 2);
+        assert_eq!(summary.copied, 0, "会话正文目录不存在，应记为 partial 而不是 copied");
+        assert_eq!(summary.partial, 2);
+        assert!(summary
+            .details
+            .iter()
+            .all(|detail| detail.reason == "contentMissing"));
+        assert_eq!(next_baseline.len(), 2);
 
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         let active_non_target: i64 = conn
@@ -440,15 +614,82 @@ mod tests {
     #[test]
     fn missing_database_is_a_noop() {
         let dest = make_temp();
+        let mut tracker = SyncTracker::new(std::collections::BTreeMap::new());
         assert_eq!(
             remap_workbuddy_database_user_id(
                 &dest.join("missing.db"),
                 "target",
-                &dest.join("backup")
+                &dest.join("backup"),
+                &dest,
+                &mut tracker
             )
             .unwrap(),
             0
         );
+        let (summary, _) = tracker.finish();
+        assert_eq!(summary.total, 0);
+    }
+
+    /// 参考 WorkDaddy §17：基线未变时第二次切换必须**一个会话都不处理**。
+    #[test]
+    fn second_transfer_skips_unchanged_sessions() {
+        let dest = make_temp();
+        let db_path = dest.join("workbuddy.db");
+        let project = dest.join("projects").join("hash");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("s1.jsonl"), b"{}\n").unwrap();
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY,
+                    cwd TEXT NOT NULL,
+                    title TEXT,
+                    custom_title TEXT,
+                    user_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    deleted_at INTEGER
+                );
+                INSERT INTO sessions VALUES ('s1', '/', '标题一', NULL, 'source', 'Done', 1, 2, NULL);",
+            )
+            .unwrap();
+        }
+
+        let mut first = SyncTracker::new(std::collections::BTreeMap::new());
+        let changed = remap_workbuddy_database_user_id(
+            &db_path,
+            "target",
+            &dest.join("backup"),
+            &dest,
+            &mut first,
+        )
+        .unwrap();
+        assert_eq!(changed, 1, "首次同步应重映射该会话");
+        let (summary, baseline) = first.finish();
+        assert_eq!(summary.copied, 1);
+        assert_eq!(summary.details[0].label, "标题一");
+        // 把会话回写成来源账号，模拟"下次切换时它又出现在来源侧"，但内容与基线一致
+        rusqlite::Connection::open(&db_path)
+            .unwrap()
+            .execute("UPDATE sessions SET user_id = 'source' WHERE id = 's1'", [])
+            .unwrap();
+
+        let mut second = SyncTracker::new(baseline);
+        let changed = remap_workbuddy_database_user_id(
+            &db_path,
+            "target",
+            &dest.join("backup"),
+            &dest,
+            &mut second,
+        )
+        .unwrap();
+        assert_eq!(changed, 0, "基线未变时不应再处理该会话");
+        let (summary, _) = second.finish();
+        assert_eq!(summary.total, 1);
+        assert_eq!(summary.skipped, 1);
+        assert!(summary.unchanged);
     }
 
     #[test]

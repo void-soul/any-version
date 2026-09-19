@@ -14,6 +14,7 @@ use std::path::{Component, Path};
 use serde_json::Value;
 
 use super::super::models::{BuddyAccount, BuddyPlatform};
+use super::super::session_sync::{SessionSyncStatus, SyncTracker};
 use super::super::store;
 use super::SessionTransferReport;
 use super::TransferProgress;
@@ -110,22 +111,50 @@ fn transfer_local_sessions(
     let extension_data_dir = codebuddy_extension_data_dir()?;
     let backup_root = super::prepare_backup_root(BACKUP_PLATFORM_LABEL, target_uid)?;
 
-    let mut report =
-        sync_history_between_accounts(&extension_data_dir, source_uid, target_uid, &backup_root, progress)?;
+    let mut report = SessionTransferReport::default();
+    // 上次同步基线（目标账号维度）：用于"只处理有变化的会话"与"两侧都改过即冲突"的判定。
+    let baseline = super::super::session_sync::load_baseline(BACKUP_PLATFORM_LABEL, target_uid);
+    let mut tracker = SyncTracker::new(baseline);
+
+    report.scanned_workspaces = sync_history_between_accounts(
+        &extension_data_dir,
+        source_uid,
+        target_uid,
+        &backup_root,
+        progress,
+        &mut tracker,
+    )?;
     report.updated_session_rows = remap_session_vscdb_user_id(
         &user_data_dir.join("codebuddy-sessions.vscdb"),
         source_uid,
         target_uid,
         &backup_root,
     )?;
+    if report.updated_session_rows > 0 {
+        tracker.record(
+            "",
+            "codebuddy-sessions.vscdb",
+            SessionSyncStatus::Copied,
+            "remappedRows",
+            None,
+        );
+    }
+
+    let (summary, next_baseline) = tracker.finish();
+    super::super::session_sync::save_baseline(BACKUP_PLATFORM_LABEL, target_uid, &next_baseline);
+    report.sync = summary;
 
     eprintln!(
-        "[Buddy CN Transfer] 合并完成: source_uid={}, target_uid={}, workspaces={}, added={}, replaced={}, db_rows={}",
+        "[Buddy CN Transfer] 合并完成: source_uid={}, target_uid={}, workspaces={}, sessions={}, copied={}, skipped={}, conflict={}, partial={}, failed={}, db_rows={}",
         source_uid,
         target_uid,
         report.scanned_workspaces,
-        report.added_conversations,
-        report.replaced_conversations,
+        report.sync.total,
+        report.sync.copied,
+        report.sync.skipped,
+        report.sync.conflict,
+        report.sync.partial,
+        report.sync.failed,
         report.updated_session_rows
     );
 
@@ -167,17 +196,18 @@ pub(crate) fn validate_uid(uid: &str) -> Result<(), String> {
 }
 
 /// 合并来源账号 history 目录到目标账号（逐 IDE、逐工作区）。
-/// 返回完整报告（新增/替换会话数 + 扫描工作区数），WorkBuddy 也复用本函数。
+/// 返回扫描到的工作区数；逐会话结局写入 `tracker`（WorkBuddy 也复用本函数）。
 pub(super) fn sync_history_between_accounts(
     extension_data_dir: &Path,
     source_uid: &str,
     target_uid: &str,
     backup_root: &Path,
     progress: TransferProgress,
-) -> Result<SessionTransferReport, String> {
+    tracker: &mut SyncTracker,
+) -> Result<usize, String> {
     let source_outer = extension_data_dir.join(source_uid);
     if !source_outer.is_dir() {
-        return Ok(SessionTransferReport::default());
+        return Ok(0);
     }
     reject_symlink_if_exists(&source_outer)?;
 
@@ -186,7 +216,7 @@ pub(super) fn sync_history_between_accounts(
         reject_symlink_if_exists(&target_outer)?;
     }
 
-    let mut report = SessionTransferReport::default();
+    let mut scanned_workspaces = 0usize;
     let ide_entries = std::fs::read_dir(&source_outer).map_err(|e| {
         format!(
             "读取 CodeBuddy CN 会话根目录失败: path={}, error={}",
@@ -240,28 +270,78 @@ pub(super) fn sync_history_between_accounts(
                 .join("history")
                 .join(&ide_name)
                 .join(&workspace_name);
-            let delta = merge_workspace_history(
+            merge_workspace_history(
                 &source_workspace,
                 &target_workspace,
                 &source_account_root,
                 &target_account_root,
                 &workspace_name,
                 &workspace_backup,
+                tracker,
             )?;
-            report.scanned_workspaces += 1;
-            report.added_conversations += delta.added_conversations;
-            report.replaced_conversations += delta.replaced_conversations;
+            scanned_workspaces += 1;
             emit_switch_progress(
                 progress.app,
                 progress.platform,
                 progress.account_id,
                 "merging",
-                report.scanned_workspaces,
+                scanned_workspaces,
                 None,
             );
         }
     }
-    Ok(report)
+    Ok(scanned_workspaces)
+}
+
+/// 会话同步判定（对应 WorkDaddy auto-copy job 的三分支，见 `references/workdaddy.md` §17）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SyncDecision {
+    /// 两侧都与基线一致：什么都不做
+    Unchanged,
+    /// 两侧都比基线新：拒绝猜测、拒绝覆盖
+    Conflict,
+    /// 只有一侧有变化（或首次同步）：正常合并
+    Apply,
+}
+
+/// 依据上次同步基线判定该会话是否要处理。
+///
+/// - 无基线（首次同步）→ `Apply`（行为与改造前一致）；
+/// - 目标会话文件缺失 → `Apply`（必须补齐，不参与"无变化"判定）；
+/// - 两侧都与基线一致 → `Unchanged`；
+/// - 两侧都偏离基线 → `Conflict`。
+pub(crate) fn decide_sync(
+    baseline: Option<&str>,
+    source_stamp: &str,
+    target_stamp: &str,
+    target_present: bool,
+) -> SyncDecision {
+    let Some(baseline) = baseline else {
+        return SyncDecision::Apply;
+    };
+    if !target_present {
+        return SyncDecision::Apply;
+    }
+    let source_changed = source_stamp != baseline;
+    let target_changed = target_stamp != baseline;
+    match (source_changed, target_changed) {
+        (false, false) => SyncDecision::Unchanged,
+        (true, true) => SyncDecision::Conflict,
+        _ => SyncDecision::Apply,
+    }
+}
+
+/// 会话展示名：标题优先，其次 id。
+fn conversation_label(conversation: &Value, id: &str) -> String {
+    for key in ["title", "name", "label"] {
+        if let Some(text) = conversation.get(key).and_then(Value::as_str) {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+    id.to_string()
 }
 
 /// 合并单个工作区：会话目录 + index.json（去重、取新、保留 current）+ 辅助目录。
@@ -272,10 +352,11 @@ fn merge_workspace_history(
     target_account_root: &Path,
     workspace_name: &std::ffi::OsStr,
     backup_root: &Path,
-) -> Result<SessionTransferReport, String> {
+    tracker: &mut SyncTracker,
+) -> Result<(), String> {
     let source_index_path = source_workspace.join("index.json");
     if !source_index_path.is_file() {
-        return Ok(SessionTransferReport::default());
+        return Ok(());
     }
     let source_index = read_workspace_index(&source_index_path)?;
 
@@ -283,10 +364,17 @@ fn merge_workspace_history(
     if !target_workspace.exists() {
         copy_dir_atomic(source_workspace, target_workspace)?;
         copy_auxiliary_workspace_roots(source_account_root, target_account_root, workspace_name)?;
-        return Ok(SessionTransferReport {
-            added_conversations: conversations(&source_index).len(),
-            ..SessionTransferReport::default()
-        });
+        for conversation in conversations(&source_index) {
+            let id = conversation_id(&conversation).unwrap_or_default().to_string();
+            tracker.record(
+                &id,
+                &conversation_label(&conversation, &id),
+                SessionSyncStatus::Copied,
+                "firstSync",
+                Some(conversation_timestamp(&conversation).to_string()),
+            );
+        }
+        return Ok(());
     }
 
     let target_index_path = target_workspace.join("index.json");
@@ -310,7 +398,6 @@ fn merge_workspace_history(
         merged.push(conversation);
     }
 
-    let mut report = SessionTransferReport::default();
     let mut index_backup_created = false;
     for source_conversation in source_conversations {
         let Some(id) = conversation_id(&source_conversation) else {
@@ -318,11 +405,14 @@ fn merge_workspace_history(
         };
         validate_conversation_id(id)?;
         let source_conversation_dir = source_workspace.join(id);
+        let label = conversation_label(&source_conversation, id);
+        let source_stamp = conversation_timestamp(&source_conversation).to_string();
         if !source_conversation_dir.is_dir() {
             eprintln!(
-                "[Buddy CodeBuddy CN Transfer] 来源会话目录不存在，已跳过: {}",
+                "[Buddy SessionTransfer] 来源会话目录不存在，已跳过: {}",
                 source_conversation_dir.display()
             );
+            tracker.record(id, &label, SessionSyncStatus::Failed, "sourceMissing", None);
             continue;
         }
 
@@ -355,9 +445,21 @@ fn merge_workspace_history(
                     replace_orphaned,
                     &backup_root.join("auxiliary"),
                 )?;
-                target_positions.insert(id.to_string(), merged.len());
+                let reason = if tracker.baseline_of(id).is_none() {
+                    "firstSync"
+                } else {
+                    "restored"
+                };
+                let owned_id = id.to_string();
+                target_positions.insert(owned_id.clone(), merged.len());
                 merged.push(source_conversation);
-                report.added_conversations += 1;
+                tracker.record(
+                    &owned_id,
+                    &label,
+                    SessionSyncStatus::Copied,
+                    reason,
+                    Some(source_stamp.clone()),
+                );
                 index_changed = true;
             }
             Some(target_index_pos) => {
@@ -368,6 +470,35 @@ fn merge_workspace_history(
                         "CodeBuddy CN 目标会话路径不是目录: {}",
                         target_conversation_dir.display()
                     ));
+                }
+                // 「只处理有变化的会话」+「两侧都改过即冲突」：参考 WorkDaddy §17 的三分支。
+                let target_stamp = conversation_timestamp(&merged[target_index_pos]).to_string();
+                match decide_sync(
+                    tracker.baseline_of(id),
+                    &source_stamp,
+                    &target_stamp,
+                    target_conversation_dir.is_dir(),
+                ) {
+                    SyncDecision::Unchanged => {
+                        tracker.record(
+                            id,
+                            &label,
+                            SessionSyncStatus::Skipped,
+                            "unchanged",
+                            Some(source_stamp.clone()),
+                        );
+                        continue;
+                    }
+                    SyncDecision::Conflict => {
+                        eprintln!(
+                            "[Buddy SessionTransfer] 会话两侧都有更新，保留目标版本并记为冲突: id={}, source={}, target={}",
+                            id, source_stamp, target_stamp
+                        );
+                        // 不写基线：冲突未解决前每次切换都会再次提醒
+                        tracker.record(id, &label, SessionSyncStatus::Conflict, "bothChanged", None);
+                        continue;
+                    }
+                    SyncDecision::Apply => {}
                 }
                 // 目标会话目录缺失，或来源更新：整体替换（复刻 cockpit-tools 判定）
                 if !target_conversation_dir.is_dir()
@@ -389,9 +520,30 @@ fn merge_workspace_history(
                         true,
                         &backup_root.join("auxiliary"),
                     )?;
+                    let reason = if tracker.baseline_of(id).is_none() {
+                        "firstSync"
+                    } else {
+                        "updated"
+                    };
+                    let owned_id = id.to_string();
                     merged[target_index_pos] = source_conversation;
-                    report.replaced_conversations += 1;
+                    tracker.record(
+                        &owned_id,
+                        &label,
+                        SessionSyncStatus::Copied,
+                        reason,
+                        Some(source_stamp.clone()),
+                    );
                     index_changed = true;
+                } else {
+                    // 目标更新、无需替换：仍然刷新基线，避免下次重复比较
+                    tracker.record(
+                        id,
+                        &label,
+                        SessionSyncStatus::Skipped,
+                        "targetNewer",
+                        Some(target_stamp),
+                    );
                 }
             }
         }
@@ -428,7 +580,7 @@ fn merge_workspace_history(
         store::write_atomic(&target_index_path, &serialized)?;
     }
 
-    Ok(report)
+    Ok(())
 }
 
 fn ensure_workspace_index_backup(
@@ -910,15 +1062,21 @@ mod tests {
         std::fs::create_dir_all(source_account.join("check-point").join("workspace").join("source-only")).unwrap();
 
         let backup_root = dest.join("backup");
-        let report = sync_history_between_accounts(
+        let mut tracker = SyncTracker::new(std::collections::BTreeMap::new());
+        let scanned = sync_history_between_accounts(
             &data_root,
             "source",
             "target",
             &backup_root,
             no_progress(),
+            &mut tracker,
         )
         .unwrap();
-        assert_eq!(report.scanned_workspaces, 1);
+        assert_eq!(scanned, 1);
+        let (summary, _) = tracker.finish();
+        assert_eq!(summary.total, 1);
+        assert_eq!(summary.copied, 1);
+        assert_eq!(summary.details[0].status, SessionSyncStatus::Copied);
         // 来源工作区在目标不存在 → 整体复制：conversation 目录本体必须存在
         assert!(target_history.join("source-only").is_dir());
         assert!(target_history.join("source-only").join("index.json").is_file());
@@ -955,15 +1113,19 @@ mod tests {
         )
         .unwrap();
 
-        let report = sync_history_between_accounts(
+        let mut tracker = SyncTracker::new(std::collections::BTreeMap::new());
+        let scanned = sync_history_between_accounts(
             &data_root,
             "source",
             "target",
             &dest.join("backup"),
             no_progress(),
+            &mut tracker,
         )
         .unwrap();
-        assert_eq!(report.added_conversations, 1);
+        assert_eq!(scanned, 1);
+        let (summary, _) = tracker.finish();
+        assert_eq!(summary.copied, 1);
         let target_conv = data_root
             .join("target")
             .join("VSCode")
@@ -973,5 +1135,61 @@ mod tests {
             .join("conv1");
         assert!(target_conv.is_dir());
         assert!(target_conv.join("messages").join("0.json").is_file());
+    }
+
+    /// 参考 WorkDaddy §17 的三分支判定：无变化跳过、两侧都改则冲突。
+    #[test]
+    fn decide_sync_skips_unchanged_and_flags_conflicts() {
+        // 首次同步（无基线）→ 正常合并
+        assert_eq!(decide_sync(None, "5", "3", true), SyncDecision::Apply);
+        // 两侧都与基线一致 → 无变化
+        assert_eq!(decide_sync(Some("3"), "3", "3", true), SyncDecision::Unchanged);
+        // 只有一侧变化 → 正常合并
+        assert_eq!(decide_sync(Some("3"), "5", "3", true), SyncDecision::Apply);
+        assert_eq!(decide_sync(Some("3"), "3", "5", true), SyncDecision::Apply);
+        // 两侧都比基线新 → 冲突，拒绝覆盖
+        assert_eq!(decide_sync(Some("3"), "5", "6", true), SyncDecision::Conflict);
+        // 目标会话文件缺失时必须补齐，不参与"无变化"判定
+        assert_eq!(decide_sync(Some("3"), "3", "3", false), SyncDecision::Apply);
+    }
+
+    /// 第二次合并同一批会话：内容没变 → 全部跳过，不再重复复制。
+    #[test]
+    fn second_merge_skips_unchanged_conversations() {
+        let dest = make_temp();
+        let data_root = dest.join("CodeBuddyExtension").join("Data");
+        let source_account = data_root.join("source").join("VSCode").join("source");
+        let target_account = data_root.join("target").join("VSCode").join("target");
+        let source_history = source_account.join("history").join("workspace");
+        let target_history = target_account.join("history").join("workspace");
+        std::fs::create_dir_all(source_history.join("conv1").join("messages")).unwrap();
+        std::fs::write(source_history.join("conv1").join("messages").join("0.json"), "[]").unwrap();
+        let index = serde_json::to_vec(&serde_json::json!({
+            "conversations": [{"id": "conv1", "title": "会话一", "lastMessageAt": 123}],
+            "current": "conv1"
+        }))
+        .unwrap();
+        std::fs::write(source_history.join("index.json"), &index).unwrap();
+
+        let backup_root = dest.join("backup");
+        let mut first = SyncTracker::new(std::collections::BTreeMap::new());
+        sync_history_between_accounts(
+            &data_root, "source", "target", &backup_root, no_progress(), &mut first,
+        )
+        .unwrap();
+        let (first_summary, baseline) = first.finish();
+        assert_eq!(first_summary.copied, 1);
+
+        // 目标工作区已经存在，来源内容未变：第二次应当什么都不做
+        let mut second = SyncTracker::new(baseline);
+        sync_history_between_accounts(
+            &data_root, "source", "target", &backup_root, no_progress(), &mut second,
+        )
+        .unwrap();
+        let (second_summary, _) = second.finish();
+        assert_eq!(second_summary.total, 1);
+        assert_eq!(second_summary.skipped, 1);
+        assert_eq!(second_summary.copied, 0);
+        assert!(second_summary.unchanged);
     }
 }

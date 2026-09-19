@@ -7,6 +7,8 @@ use std::path::PathBuf;
 
 use super::models::BuddyAccount;
 use super::models::BuddyPlatform;
+use super::session_sync::SessionSyncSummary;
+use super::emit_switch_sync_progress;
 
 /// 合并进度上报上下文（切换事件按目标账号标识，stage=merging）
 #[derive(Clone, Copy)]
@@ -28,10 +30,15 @@ pub fn transfer_on_switch(
         account_id: &target.id,
         platform,
     };
-    match platform {
-        BuddyPlatform::Workbuddy => workbuddy::transfer_on_switch(target, progress),
-        BuddyPlatform::CodebuddyCn => codebuddy::transfer_on_switch(target, progress),
+    let report = match platform {
+        BuddyPlatform::Workbuddy => workbuddy::transfer_on_switch(target, progress)?,
+        BuddyPlatform::CodebuddyCn => codebuddy::transfer_on_switch(target, progress)?,
+    };
+    // 明细在合并结束时一次性上报（逐会话明细最多 500 条，不适合跟每个工作区一起推）。
+    if let Some(report) = &report {
+        emit_switch_sync_progress(app, platform, &target.id, &report.sync);
     }
+    Ok(report)
 }
 
 /// 会话合并备份根目录（`{data_dir}/buddy/session-backup/{platform}/{uid}`）。
@@ -95,6 +102,10 @@ pub(crate) fn prepare_backup_root(
 }
 
 /// 总结一次会话迁移的结果。
+///
+/// `sync` 是「只处理有变化的会话」的台账：逐会话结局（复制/跳过/部分失败/冲突/失败）
+/// 与计数。`added_*` / `replaced_*` / `updated_session_rows` 保留为兼容字段，
+/// 与 `sync.copied` 口径不同（前者是文件/数据库行数，后者是会话数）。
 #[derive(Debug, Clone, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionTransferReport {
@@ -102,4 +113,6 @@ pub struct SessionTransferReport {
     pub replaced_conversations: usize,
     pub updated_session_rows: usize,
     pub scanned_workspaces: usize,
+    #[serde(default)]
+    pub sync: SessionSyncSummary,
 }
