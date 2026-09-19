@@ -75,7 +75,7 @@ relearn_cockpit() {
 
   cd "$ref"
   head="$(git rev-parse --short=8 HEAD)"
-  echo "== [A] cockpit-tools（$ref）同步点 $pin → 当前 $head =="
+  echo "== [A] cockpit-tools（辅参考，$ref）同步点 $pin → 当前 $head =="
   if [ "$pin" = "$head" ]; then
     echo "（参考仓未变化；若用户仍报功能异常，走 references/pitfalls.md 检查单）"
     return 0
@@ -87,7 +87,8 @@ relearn_cockpit() {
   echo "== 文件级差异 =="
   git diff --stat "$pin..HEAD" -- "${paths[@]}"
   echo
-  echo "下一步：对上面出现变化的文件，按 SKILL.md §2.1 找到我们的对应实现，对照 references/contracts.md 精读 diff。"
+  echo "下一步：对上面出现变化的文件，按 SKILL.md §2.2 找到我们的对应实现，对照 references/contracts.md 精读 diff。"
+  echo "（辅参考只在主参考 WorkDaddy 未覆盖该域时才需要看；同域冲突以 WorkDaddy 为准，切换时序与合并模型除外。）"
 }
 
 # ─── 参考 B：WorkDaddy（Node.js + CDP 注入，异架构，只借语义） ───
@@ -102,18 +103,38 @@ relearn_workdaddy() {
   pin="$(sed -n '1s/.*\[\([0-9a-f]*\)\].*/\1/p' "$SKILL_DIR/sync-point.workdaddy.txt")"
 
   # 监听真源（scripts/）+ 行为规范（test/）+ 任务包 schema + 设计文档。
-  # 打包/发布/平台流程文件（build-*、install-*、win-launcher.js、watchdog.js、macos-*）与 Buddy 功能域无关，不监听。
+  # WorkDaddy 1.2.76 起新增 Linux 平台件（*-linux*）与打包/发布件（build-*、install-*、win-launcher.js、
+  # watchdog.js、platform.js、windows-native/、assets/）——这些与 Buddy 功能域无关，直接从监听范围排除，
+  # 否则每次版本发布会刷出一大堆噪音 commit。
   local paths=(
     'scripts/*.js'
+    'scripts/*.cmd'
     scripts/builtin
     schemas
     docs
     test
   )
+  local excludes=(
+    ':!scripts/*linux*'
+    ':!scripts/*Linux*'
+    ':!scripts/platform.js'
+    ':!scripts/win-launcher.js'
+    ':!scripts/watchdog.js'
+    ':!scripts/build-*'
+    ':!scripts/install-*'
+    ':!scripts/uninstall-*'
+    ':!scripts/Start-*'
+    ':!scripts/Stop-*'
+    ':!scripts/win/'
+    ':!scripts/windows-native/'
+    ':!scripts/assets/'
+    ':!scripts/workbuddy-buddy-mark.svg'
+    ':!docs/images/'
+  )
 
   cd "$ref"
   head="$(git rev-parse --short=8 HEAD)"
-  echo "== [B] WorkDaddy（$ref）同步点 $pin → 当前 $head =="
+  echo "== [B] WorkDaddy（主参考，$ref）同步点 $pin → 当前 $head =="
   grep -n "const DAEMON_VERSION\|const DAEMON_BUILD_ID" scripts/daemon.js | head -2
   if [ "$pin" = "$head" ]; then
     echo "（参考仓未变化；若用户仍报功能异常，走 references/pitfalls.md F/G 节，并跑 references/workdaddy.md §Z 的漂移校验锚点）"
@@ -121,13 +142,14 @@ relearn_workdaddy() {
   fi
   echo
   echo "== 相关 commit =="
-  git log --oneline "$pin..HEAD" -- "${paths[@]}"
+  git log --oneline "$pin..HEAD" -- "${paths[@]}" "${excludes[@]}"
   echo
   echo "== 文件级差异 =="
-  git diff --stat "$pin..HEAD" -- "${paths[@]}"
+  git diff --stat "$pin..HEAD" -- "${paths[@]}" "${excludes[@]}"
   echo
-  echo "下一步：按 SKILL.md §2.2 找到我们的对应实现；WorkDaddy 属异架构，先做 §3 步 3 的"
+  echo "下一步：按 SKILL.md §2.1 找到我们的对应实现；WorkDaddy 属异架构，先做 §3 步 3 的"
   echo "可移植性三分类（纯逻辑 / 官方接口 / 注入依赖），再对照 references/workdaddy.md 精读 diff。"
+  echo "注意 §0.1 硬规则：WorkDaddy 只作用于 WorkBuddy 路径，勿据此改 CodeBuddy CN 行为。"
 }
 
 case "$WHICH" in
