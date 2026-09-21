@@ -214,6 +214,21 @@ pub fn anthropic_to_openai(body: &Value, target_model: &str, aliases: Option<&Mo
         openai["tool_choice"] = openai_tc;
     }
 
+    // 7. 并行工具调用：Anthropic 用 `tool_choice.disable_parallel_tool_use` 表达「不要并行」，
+    //    OpenAI 是顶层 `parallel_tool_calls`。不映射时上游可能一次回多个 tool_use，
+    //    客户端按单工具解析就会丢掉后续调用（参考 cc-switch「enable parallel tool calls」）。
+    if body
+        .get("tool_choice")
+        .and_then(|tc| tc.get("disable_parallel_tool_use"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        openai["parallel_tool_calls"] = json!(false);
+    } else if let Some(parallel) = body.get("parallel_tool_calls").and_then(|v| v.as_bool()) {
+        // 少数客户端直接把 OpenAI 风格开关塞进 Anthropic 请求体：出现时以它为准
+        openai["parallel_tool_calls"] = json!(parallel);
+    }
+
     openai
 }
 
@@ -822,6 +837,48 @@ pub fn openai_to_anthropic(body: &Value, target_model: &str, aliases: Option<&Mo
         }
     }
 
+    // tool_choice 转换：此前**完全没有映射** —— 客户端说「必须调用工具（required）」
+    // 会被静默降级成自由发挥，输出可能压根不调工具。
+    // Anthropic 不接受没有 tools 的 tool_choice，因此只在有 tools 时写入。
+    if anthropic.get("tools").is_some() {
+        let parallel = body.get("parallel_tool_calls").and_then(|v| v.as_bool());
+        let mut anthropic_tc = match body.get("tool_choice") {
+            Some(Value::String(kind)) => match kind.as_str() {
+                "required" => json!({"type": "any"}),
+                "none" => json!({"type": "none"}),
+                _ => json!({"type": "auto"}),
+            },
+            Some(Value::Object(obj)) => {
+                if obj.get("type").and_then(|v| v.as_str()) == Some("function") {
+                    let name = obj
+                        .get("function")
+                        .and_then(|f| f.get("name"))
+                        .cloned()
+                        .unwrap_or_else(|| json!(""));
+                    json!({"type": "tool", "name": name})
+                } else {
+                    json!({"type": "auto"})
+                }
+            }
+            _ => {
+                // 没给（或给了 null）tool_choice：只有明确要求「不要并行」时才补一个承载对象，
+                // 否则不写该字段，保持上游默认行为。
+                if parallel == Some(false) {
+                    json!({"type": "auto"})
+                } else {
+                    return anthropic;
+                }
+            }
+        };
+        // 并行开关：OpenAI 顶层 `parallel_tool_calls: false` → Anthropic 的
+        // `tool_choice.disable_parallel_tool_use: true`（cc-switch 的
+        //「enable parallel tool calls / preserve parallel tool history」同域问题）。
+        if parallel == Some(false) {
+            anthropic_tc["disable_parallel_tool_use"] = json!(true);
+        }
+        anthropic["tool_choice"] = anthropic_tc;
+    }
+
     anthropic
 }
 
@@ -1062,5 +1119,123 @@ impl AnthropicToOpenaiStreamConverter {
             }
         }
         Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{anthropic_to_openai, openai_to_anthropic};
+    use serde_json::{json, Value};
+
+    fn anthropic_body(tool_choice: Value) -> Value {
+        json!({
+            "model": "claude-sonnet-4",
+            "max_tokens": 128,
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{
+                "name": "read_file",
+                "description": "read a file",
+                "input_schema": {"type": "object"}
+            }],
+            "tool_choice": tool_choice
+        })
+    }
+
+    #[test]
+    fn disable_parallel_tool_use_maps_to_parallel_tool_calls_false() {
+        let out = anthropic_to_openai(
+            &anthropic_body(json!({"type": "auto", "disable_parallel_tool_use": true})),
+            "gpt-5",
+            None,
+        );
+        assert_eq!(out.get("parallel_tool_calls"), Some(&json!(false)));
+    }
+
+    #[test]
+    fn absent_flag_leaves_parallel_tool_calls_untouched() {
+        // 未声明时不要主动写这个字段，让上游保持自己的默认行为
+        let out = anthropic_to_openai(&anthropic_body(json!({"type": "any"})), "gpt-5", None);
+        assert!(
+            out.get("parallel_tool_calls").is_none(),
+            "未声明 disable_parallel_tool_use 时不应注入 parallel_tool_calls"
+        );
+        // 顺带回归 tool_choice 映射（本次未改动，但同一段逻辑）
+        assert_eq!(out.get("tool_choice"), Some(&json!("required")));
+    }
+
+    /// OpenAI 请求体（可带 tool_choice / parallel_tool_calls），用于反向转换测试。
+    fn openai_body(tool_choice: Option<Value>, parallel: Option<bool>) -> Value {
+        let mut body = json!({
+            "model": "gpt-5",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{
+                "type": "function",
+                "function": { "name": "read_file", "parameters": {"type": "object"} }
+            }]
+        });
+        if let Some(tc) = tool_choice {
+            body["tool_choice"] = tc;
+        }
+        if let Some(p) = parallel {
+            body["parallel_tool_calls"] = json!(p);
+        }
+        body
+    }
+
+    /// 反向缺口：此前 openai→anthropic 完全不转换 tool_choice，「必须调用工具」会被降级成自由发挥。
+    #[test]
+    fn openai_tool_choice_maps_to_anthropic() {
+        let required =
+            openai_to_anthropic(&openai_body(Some(json!("required")), None), "claude-x", None);
+        assert_eq!(required.get("tool_choice"), Some(&json!({"type": "any"})));
+
+        let forced = openai_to_anthropic(
+            &openai_body(
+                Some(json!({"type": "function", "function": {"name": "read_file"}})),
+                None,
+            ),
+            "claude-x",
+            None,
+        );
+        assert_eq!(
+            forced.get("tool_choice"),
+            Some(&json!({"type": "tool", "name": "read_file"}))
+        );
+
+        let auto = openai_to_anthropic(&openai_body(Some(json!("auto")), None), "claude-x", None);
+        assert_eq!(auto.get("tool_choice"), Some(&json!({"type": "auto"})));
+
+        // 没给 tool_choice → 不写该字段（保持上游默认行为）
+        let absent = openai_to_anthropic(&openai_body(None, None), "claude-x", None);
+        assert!(absent.get("tool_choice").is_none());
+    }
+
+    #[test]
+    fn openai_parallel_tool_calls_false_maps_to_disable_parallel() {
+        // 带 tool_choice：约束挂在同一个对象上
+        let out =
+            openai_to_anthropic(&openai_body(Some(json!("auto")), Some(false)), "claude-x", None);
+        assert_eq!(
+            out.get("tool_choice"),
+            Some(&json!({"type": "auto", "disable_parallel_tool_use": true}))
+        );
+        // 不带 tool_choice：补一个 auto 承载该约束
+        let out2 = openai_to_anthropic(&openai_body(None, Some(false)), "claude-x", None);
+        assert_eq!(
+            out2.get("tool_choice"),
+            Some(&json!({"type": "auto", "disable_parallel_tool_use": true}))
+        );
+        // true 或未声明 → 不写（保持上游默认）
+        let out3 = openai_to_anthropic(&openai_body(None, Some(true)), "claude-x", None);
+        assert!(out3.get("tool_choice").is_none());
+    }
+
+    #[test]
+    fn tool_choice_is_not_written_without_tools() {
+        // Anthropic 不接受没有 tools 的 tool_choice
+        let mut body = openai_body(Some(json!("required")), None);
+        body.as_object_mut().unwrap().remove("tools");
+        let out = openai_to_anthropic(&body, "claude-x", None);
+        assert!(out.get("tool_choice").is_none());
     }
 }

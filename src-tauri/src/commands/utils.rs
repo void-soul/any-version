@@ -20,6 +20,22 @@ pub fn get_home_dir() -> PathBuf {
     }
 }
 
+/// 按**字节上限**截断字符串，并保证切点落在 UTF-8 字符边界上。
+///
+/// `&s[..n]` 在 n 落在多字节字符中间时会 panic；中英混排的日志与上游错误体
+/// （HTTP 错误消息、用户输入回显）很容易正好踩在边界上。
+/// 同类缺陷参考 cc-switch「stop mask_url panicking on multi-byte UTF-8 near the truncation boundary」。
+pub fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// 把 GitHub API 的 HTTP 状态翻成可操作的提示（抄自 CodexPlusPlus 3873d25）。
 ///
 /// 之前一律 error_for_status() 一把带过，用户只看到「返回错误状态」——403 限流、
@@ -942,6 +958,33 @@ mod tests {
         assert!(validate_subst_value(r"D:\any-version-caches\npm").is_ok());
         assert!(validate_subst_value("https://user:p%40ss@host:8080").is_ok());
         assert!(validate_subst_value("https://host:8080?token=abc").is_ok());
+    }
+
+    #[test]
+    fn truncate_utf8_keeps_char_boundaries() {
+        // ASCII：正好切在 4 字节处
+        assert_eq!(truncate_utf8("abcdefgh", 4), "abcd");
+        // 短于上限：原样返回
+        assert_eq!(truncate_utf8("abc", 10), "abc");
+        // 上限为 0
+        assert_eq!(truncate_utf8("中文", 0), "");
+        // 中文（3 字节/字）：上限 4 落在第二个字中间 → 回退到 3
+        let s = "中文测试";
+        assert_eq!(truncate_utf8(s, 4), "中");
+        assert_eq!(truncate_utf8(s, 3), "中");
+        assert_eq!(truncate_utf8(s, 6), "中文");
+        assert_eq!(truncate_utf8(s, s.len()), s);
+    }
+
+    #[test]
+    fn truncate_utf8_never_panics_on_any_prefix() {
+        // 对任意字节上限都必须安全 —— 这正是 `&s[..n]` 会 panic 的场景
+        let s = "上游返回错误 (401): 令牌无效 — 请检查 key";
+        for n in 0..=s.len() + 4 {
+            let out = truncate_utf8(s, n);
+            assert!(s.starts_with(out), "截断结果必须是原串前缀: n={}", n);
+            assert!(out.len() <= n.min(s.len()), "截断结果不能超上限: n={}", n);
+        }
     }
 
     #[test]
