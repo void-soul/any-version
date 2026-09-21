@@ -216,6 +216,124 @@ fn get_home() -> Option<PathBuf> {
     }
 }
 
+// ─── 真实可执行文件定位（检测兜底 / 启动时 PATH 前置） ───
+
+/// 展开工具路径模板：`%VAR%`（Windows 环境变量）与 `~`（用户主目录）。
+///
+/// 打包的 `paths.json` 用的是 `%APPDATA%/npm/claude.cmd` 这种写法，而
+/// `utils::expand_home`（认 `{根名}`）与 `dirs::expand` 都不认 `%VAR%`。
+/// 未定义的变量**原样保留**，避免拼出一条看起来合法其实错误的路径。
+pub fn expand_tool_path(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(start) = rest.find('%') {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        let Some(end) = after.find('%') else {
+            out.push('%');
+            rest = after;
+            continue;
+        };
+        let name = &after[..end];
+        // 空名字或含分隔符 → 不是环境变量占位符
+        if name.is_empty() || name.contains('/') || name.contains('\\') {
+            out.push('%');
+            rest = after;
+            continue;
+        }
+        match std::env::var(name) {
+            Ok(value) => {
+                out.push_str(&value);
+                rest = &after[end + 1..];
+            }
+            Err(_) => {
+                out.push('%');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+
+    let normalized = if cfg!(windows) {
+        out.replace('/', "\\")
+    } else {
+        out
+    };
+
+    if normalized == "~" {
+        return get_home()
+            .map(|home| home.to_string_lossy().to_string())
+            .unwrap_or(normalized);
+    }
+    if let Some(tail) = normalized
+        .strip_prefix("~/")
+        .or_else(|| normalized.strip_prefix("~\\"))
+    {
+        if let Some(home) = get_home() {
+            return home.join(tail).to_string_lossy().to_string();
+        }
+    }
+    normalized
+}
+
+/// 该工具在当前 OS 的候选路径：默认路径 + 用户覆盖（用户路径优先）。
+///
+/// 用户覆盖来自 `~/.any-version/tool-paths.json`（`tool_paths` 里的自愈文件）。
+pub fn effective_tool_paths(tool_id: &str, declared: &HashMap<String, Vec<String>>) -> Vec<String> {
+    let mut paths = get_current_os_paths(declared);
+    let overrides = load_user_path_overrides();
+    let extra = overrides.get(tool_id).cloned().unwrap_or_default();
+    apply_user_path_overrides(&mut paths, &extra);
+    paths
+}
+
+/// 命令名的候选后缀（Windows 上同一个命令可能是 .exe / .cmd / .bat）。
+fn command_suffixes() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &[".exe", ".cmd", ".bat", ".ps1", ""]
+    } else {
+        &[""]
+    }
+}
+
+/// 在工具声明的路径列表里找**磁盘上真实存在**的可执行文件。
+///
+/// 抄作业自 EchoBird `f86fe961`（`command_exists || binary detected on disk`），两个用途：
+/// - **检测**：`claude --version` 跑不起来 ≠ 没安装 —— curl/scoop/choco 装完 `setx` 只对
+///   **之后**启动的进程生效，本进程 PATH 里没有该目录，会误报「未安装」；
+/// - **启动**：把命中的目录前置进子进程 PATH，裸命令（`cmd /k claude`）才能被解析。
+///
+/// 路径项既可能是文件本身（`%APPDATA%/npm/claude.cmd`），也可能是安装目录。
+pub fn find_declared_exe(
+    tool_id: &str,
+    declared: &HashMap<String, Vec<String>>,
+    command: &str,
+) -> Option<PathBuf> {
+    let command = command.split_whitespace().next()?.trim();
+    if command.is_empty() {
+        return None;
+    }
+    for raw in effective_tool_paths(tool_id, declared) {
+        let expanded = expand_tool_path(&raw);
+        if expanded.is_empty() {
+            continue;
+        }
+        let path = PathBuf::from(&expanded);
+        if path.is_file() {
+            return Some(path);
+        }
+        if path.is_dir() {
+            for suffix in command_suffixes() {
+                let candidate = path.join(format!("{}{}", command, suffix));
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    None
+}
+
 // ─── Tauri 命令 ───
 
 /// 获取/创建工具路径覆盖文件路径（含自愈）
@@ -228,4 +346,81 @@ pub fn get_tool_path_override_file() -> Result<serde_json::Value, String> {
         "path": path,
         "autoHealed": auto_healed,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{expand_tool_path, find_declared_exe};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    fn probe_dir(name: &str) -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("anyver-toolpaths-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn declared_all_platforms(entries: &[String]) -> HashMap<String, Vec<String>> {
+        let mut map = HashMap::new();
+        for key in ["win32", "darwin", "linux"] {
+            map.insert(key.to_string(), entries.to_vec());
+        }
+        map
+    }
+
+    /// `%VAR%` 能展开，未定义的变量原样保留（不能拼出一条假的绝对路径）。
+    #[test]
+    fn expand_tool_path_resolves_env_and_keeps_unknown() {
+        let unknown = expand_tool_path("%ANYVER_DEFINITELY_NOT_SET_98765%/npm/claude.cmd");
+        assert!(
+            unknown.starts_with('%'),
+            "未定义变量应原样保留: {}",
+            unknown
+        );
+        assert!(unknown.ends_with("claude.cmd"));
+
+        // 用必然存在的变量（PATH）验证展开。注意占位符两端都要有 `%`
+        let value = std::env::var("PATH").expect("PATH 必然存在");
+        let out = expand_tool_path("%PATH%/probe/x");
+        assert!(
+            out.contains(&value),
+            "占位符未展开: out={:?} value={:?}",
+            out,
+            value
+        );
+        if !value.contains('%') {
+            assert!(!out.contains('%'), "占位符应被完全展开: {:?}", out);
+        }
+    }
+
+    /// 路径项是目录 → 拼命令名；是文件本身 → 直接用；都找不到 → None。
+    #[test]
+    fn find_declared_exe_matches_files_directories_and_gives_up() {
+        let dir = probe_dir("find");
+        let file_name = if cfg!(windows) { "probe.cmd" } else { "probe" };
+        let exe = dir.join(file_name);
+        std::fs::write(&exe, "").unwrap();
+
+        let by_dir = declared_all_platforms(&[dir.to_string_lossy().to_string()]);
+        assert_eq!(
+            find_declared_exe("__probe_test__", &by_dir, "probe").expect("目录项应命中"),
+            exe
+        );
+
+        let by_file = declared_all_platforms(&[exe.to_string_lossy().to_string()]);
+        assert_eq!(
+            find_declared_exe("__probe_test__", &by_file, "probe").expect("文件项应命中"),
+            exe
+        );
+
+        // start_command 可能带参数（如 "mimo ."）→ 只取命令名
+        assert!(find_declared_exe("__probe_test__", &by_dir, "probe --verbose").is_some());
+
+        // 路径列表为空（或都不存在）→ None，不要瞎猜
+        assert!(find_declared_exe("__probe_test__", &HashMap::new(), "probe").is_none());
+        let missing = declared_all_platforms(&[dir.join("nope").to_string_lossy().to_string()]);
+        assert!(find_declared_exe("__probe_test__", &missing, "probe").is_none());
+    }
 }

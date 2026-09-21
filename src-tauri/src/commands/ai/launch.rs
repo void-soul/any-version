@@ -446,6 +446,23 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
     };
     cmd.current_dir(&req.project_path);
 
+    // 装了但不在 PATH 里也要能启动：curl/scoop/choco 安装完的 `setx` 只对**之后**启动的
+    // 进程生效，本进程 PATH 里没有该目录，裸命令在新终端里会「不是内部或外部命令」。
+    // 检测到 exe 就把它所在目录前置进子进程 PATH（抄作业自 EchoBird f86fe961）。
+    if let Some(exe_path) =
+        super::tool_paths::find_declared_exe(&req.tool_id, &tool_paths.paths, &start_cmd)
+    {
+        if let Some(dir) = exe_path.parent() {
+            match prepend_to_path(dir) {
+                Some(joined) => {
+                    cmd.env("PATH", joined);
+                    eprintln!("[cli] 已前置 PATH: {}", dir.display());
+                }
+                None => eprintln!("[cli] PATH 前置失败（join_paths）: {}", dir.display()),
+            }
+        }
+    }
+
     let tool_arg_parts: Vec<&str> = extra_args
         .split_whitespace()
         .filter(|s| !s.is_empty())
@@ -1379,6 +1396,18 @@ fn set_json_path(doc: &mut serde_json::Value, path: &str, value: serde_json::Val
 
 /// 轮询代理服务器的 /health 端点，等待代理就绪。
 /// 最多重试 50 次（每次 100ms），总计最多 5 秒。返回是否就绪。
+/// 把 `dir` 前置到当前进程 PATH 前面，返回给 `Command::env("PATH", ..)` 的值。
+///
+/// 用途：工具装在 PATH 之外的目录（scoop/choco/curl 安装，或刚装完 PATH 未刷新）时，
+/// 让子进程里的裸命令（`cmd /k claude`）能被解析。取不到当前 PATH 时退化为只有该目录。
+fn prepend_to_path(dir: &std::path::Path) -> Option<std::ffi::OsString> {
+    let mut paths = vec![dir.to_path_buf()];
+    if let Some(current) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&current));
+    }
+    std::env::join_paths(paths).ok()
+}
+
 async fn wait_for_proxy_ready(listen_address: &str, port: u16) -> bool {
     let health_url = format!("http://{}:{}/health", listen_address, port);
     let client = reqwest::Client::builder()

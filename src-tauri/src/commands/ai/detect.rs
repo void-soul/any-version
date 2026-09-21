@@ -33,6 +33,17 @@ fn resolve_tool_website(
 fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool {
     eprintln!("[detect] ========== {} ({}) ==========", config.display_name, config.id);
 
+    // 先看磁盘上是否真的有可执行文件（`%APPDATA%/npm/claude.cmd` 等声明路径）。
+    // 两个用途：① 版本探测都失败时的兜底判据；② 回填给前端/启动逻辑做 PATH 前置。
+    let declared_exe = super::tool_paths::find_declared_exe(
+        &config.id,
+        &paths.paths,
+        &paths.start_command,
+    );
+    if let Some(exe) = &declared_exe {
+        eprintln!("[detect]   磁盘命中: {}", exe.display());
+    }
+
     let upgrade_cmd = match config.pkg_manager.as_deref() {
         Some("npm") => format!("npm install -g {}@latest", config.pkg_name.as_deref().unwrap_or(&config.id)),
         Some("pip") => format!("pip install --upgrade {}", config.pkg_name.as_deref().unwrap_or(&config.id)),
@@ -66,7 +77,9 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
         supports_optimizer: config.supports_optimizer,
         supports_rectifier: config.supports_rectifier,
         launch_uri: paths.launch_uri.clone(),
-        detected_path: None,
+        detected_path: declared_exe
+            .as_ref()
+            .map(|exe| exe.to_string_lossy().to_string()),
         busy: get_tool_busy(&config.id),
     };
 
@@ -99,6 +112,21 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
         };
     }
     eprintln!("[detect]   [策略 2] ✗ 失败");
+
+    // 策略 3：声明路径上确实有可执行文件，只是命令跑不起来（PATH 里还没有该目录）。
+    // 按「未安装」处理会让用户明明装了却看到未安装、启动按钮不可用，
+    // 所以这里判为已安装但版本未知（抄作业自 EchoBird f86fe961）。
+    if let Some(exe) = declared_exe {
+        eprintln!(
+            "[detect]   [策略 3] ✓ 磁盘命中（版本未知）→ {}",
+            exe.display()
+        );
+        return DetectedAiTool {
+            installed: true,
+            version: None,
+            ..not_found
+        };
+    }
 
     eprintln!("[detect] ✗ 未检测到安装");
     not_found
