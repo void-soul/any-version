@@ -194,15 +194,17 @@ pub fn upsert(conn: &Connection, item: &NewFavorite) -> Result<UpsertOutcome, St
     Ok(UpsertOutcome::Updated)
 }
 
-/// 取一批「待归类」条目：**没有标签** 且 **未被人工锁定**。
+/// 取一批「待归类」条目：**没有标签** 且 **未被人工锁定** 且 **未失效**。
 ///
-/// 人工改过标签的条目（`ai_locked = 1`）永不再进入归类批次——用户的选择优先于模型。
+/// - 人工改过标签的条目（`ai_locked = 1`）永不再进入归类批次——用户的选择优先于模型；
+/// - 已失效（`gone`）的条目同样跳过：给一个打不开的仓库归类没有意义，还白花 token。
 pub fn select_unclassified(conn: &Connection, limit: usize) -> Result<Vec<ClassifyItem>, String> {
     let mut statement = conn
         .prepare(
             "SELECT f.id, f.title, COALESCE(f.description, ''), COALESCE(f.extra_json, '') \
              FROM favorite f \
              WHERE f.ai_locked = 0 \
+               AND f.status != 'gone' \
                AND NOT EXISTS (SELECT 1 FROM favorite_tag t WHERE t.favorite_id = f.id) \
              ORDER BY f.id LIMIT ?1",
         )
@@ -331,6 +333,194 @@ pub fn apply_status(
     Ok(())
 }
 
+/// 列表用的一条收藏（含标签）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FavoriteRow {
+    pub id: i64,
+    pub source: String,
+    pub external_id: String,
+    pub url: String,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub description: Option<String>,
+    pub status: String,
+    pub checked_at: Option<String>,
+    pub ai_locked: bool,
+    pub ai_model: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub tags: Vec<String>,
+}
+
+/// 列表筛选条件（全部可选，不传就是不过滤）。
+#[derive(Debug, Clone, Default)]
+pub struct ListFilter {
+    pub source: Option<String>,
+    pub tag: Option<String>,
+    pub status: Option<String>,
+    pub keyword: Option<String>,
+    pub limit: usize,
+}
+
+/// 按条件列出条目（默认按最近更新排序，最多 1000 条）。
+pub fn list(conn: &Connection, filter: &ListFilter) -> Result<Vec<FavoriteRow>, String> {
+    let limit = if filter.limit == 0 { 1000 } else { filter.limit };
+    let keyword = filter
+        .keyword
+        .as_deref()
+        .map(|k| format!("%{}%", k.trim()))
+        .filter(|k| k != "%%");
+
+    let sql = format!(
+        "SELECT f.id, f.source, f.external_id, f.url, f.title, f.subtitle, f.description, \
+                f.status, f.checked_at, f.ai_locked, f.ai_model, f.created_at, f.updated_at \
+         FROM favorite f \
+         WHERE (?1 IS NULL OR f.source = ?1) \
+           AND (?2 IS NULL OR f.status = ?2) \
+           AND (?3 IS NULL OR f.title LIKE ?3 OR COALESCE(f.description, '') LIKE ?3) \
+           AND (?4 IS NULL OR EXISTS (SELECT 1 FROM favorite_tag t WHERE t.favorite_id = f.id AND t.tag = ?4)) \
+         ORDER BY f.updated_at DESC, f.id DESC LIMIT {}",
+        limit
+    );
+    let mut statement = conn
+        .prepare(&sql)
+        .map_err(|e| format!("查询收藏列表失败: {}", e))?;
+    let rows = statement
+        .query_map(
+            rusqlite::params![filter.source, filter.status, keyword, filter.tag],
+            |row| {
+                Ok(FavoriteRow {
+                    id: row.get(0)?,
+                    source: row.get(1)?,
+                    external_id: row.get(2)?,
+                    url: row.get(3)?,
+                    title: row.get(4)?,
+                    subtitle: row.get(5)?,
+                    description: row.get(6)?,
+                    status: row.get(7)?,
+                    checked_at: row.get(8)?,
+                    ai_locked: row.get::<_, i64>(9)? != 0,
+                    ai_model: row.get(10)?,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                    tags: Vec::new(),
+                })
+            },
+        )
+        .map_err(|e| format!("查询收藏列表失败: {}", e))?;
+
+    let mut items = Vec::new();
+    for row in rows {
+        items.push(row.map_err(|e| format!("读取收藏条目失败: {}", e))?);
+    }
+    // 标签单独查一次再挂回去：条目量上千时比每行一个子查询便宜得多
+    let mut tag_map: std::collections::HashMap<i64, Vec<String>> = std::collections::HashMap::new();
+    {
+        let mut tag_statement = conn
+            .prepare("SELECT favorite_id, tag FROM favorite_tag ORDER BY tag")
+            .map_err(|e| format!("查询分类标签失败: {}", e))?;
+        let tag_rows = tag_statement
+            .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))
+            .map_err(|e| format!("查询分类标签失败: {}", e))?;
+        for row in tag_rows {
+            let (id, tag) = row.map_err(|e| format!("读取分类标签失败: {}", e))?;
+            tag_map.entry(id).or_default().push(tag);
+        }
+    }
+    for item in items.iter_mut() {
+        item.tags = tag_map.remove(&item.id).unwrap_or_default();
+    }
+    Ok(items)
+}
+
+/// 人工设置标签（全量替换），并锁定：后续 AI 归类不再碰它。
+pub fn set_tags(conn: &Connection, id: i64, tags: &[String]) -> Result<(), String> {
+    conn.execute("DELETE FROM favorite_tag WHERE favorite_id = ?1", [id])
+        .map_err(|e| format!("清除旧分类失败: {}", e))?;
+    for tag in tags {
+        let trimmed = tag.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        conn.execute(
+            "INSERT OR IGNORE INTO favorite_tag (favorite_id, tag) VALUES (?1, ?2)",
+            rusqlite::params![id, trimmed],
+        )
+        .map_err(|e| format!("写入分类标签失败: {}", e))?;
+    }
+    conn.execute(
+        "UPDATE favorite SET ai_locked = 1, updated_at = ?1 WHERE id = ?2",
+        rusqlite::params![now_str(), id],
+    )
+    .map_err(|e| format!("锁定条目失败: {}", e))?;
+    Ok(())
+}
+
+/// 删除本地条目（只删本地，不动平台）。
+pub fn delete(conn: &Connection, id: i64) -> Result<bool, String> {
+    conn.execute("DELETE FROM favorite_tag WHERE favorite_id = ?1", [id])
+        .map_err(|e| format!("删除分类标签失败: {}", e))?;
+    let removed = conn
+        .execute("DELETE FROM favorite WHERE id = ?1", [id])
+        .map_err(|e| format!("删除收藏条目失败: {}", e))?;
+    Ok(removed > 0)
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FavoriteStats {
+    pub total: usize,
+    pub unclassified: usize,
+    pub gone: usize,
+    pub by_source: Vec<(String, usize)>,
+    pub tags: Vec<(String, usize)>,
+}
+
+/// 概览：总数 / 未归类 / 已失效 / 各源条数 / 各分类条数。
+pub fn stats(conn: &Connection) -> Result<FavoriteStats, String> {
+    let total: usize = conn
+        .query_row("SELECT COUNT(*) FROM favorite", [], |r| r.get(0))
+        .map_err(|e| format!("统计总数失败: {}", e))?;
+    let gone: usize = conn
+        .query_row("SELECT COUNT(*) FROM favorite WHERE status = 'gone'", [], |r| r.get(0))
+        .map_err(|e| format!("统计失效数失败: {}", e))?;
+    let unclassified = select_unclassified(conn, 1_000_000)?.len();
+
+    let mut by_source: Vec<(String, usize)> = Vec::new();
+    {
+        let mut statement = conn
+            .prepare("SELECT source, COUNT(*) FROM favorite GROUP BY source ORDER BY COUNT(*) DESC")
+            .map_err(|e| format!("统计来源失败: {}", e))?;
+        let rows = statement
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, usize>(1)?)))
+            .map_err(|e| format!("统计来源失败: {}", e))?;
+        for row in rows {
+            by_source.push(row.map_err(|e| format!("读取来源统计失败: {}", e))?);
+        }
+    }
+    let mut tags: Vec<(String, usize)> = Vec::new();
+    {
+        let mut statement = conn
+            .prepare("SELECT tag, COUNT(*) FROM favorite_tag GROUP BY tag ORDER BY COUNT(*) DESC, tag")
+            .map_err(|e| format!("统计分类失败: {}", e))?;
+        let rows = statement
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, usize>(1)?)))
+            .map_err(|e| format!("统计分类失败: {}", e))?;
+        for row in rows {
+            tags.push(row.map_err(|e| format!("读取分类统计失败: {}", e))?);
+        }
+    }
+
+    Ok(FavoriteStats {
+        total,
+        unclassified,
+        gone,
+        by_source,
+        tags,
+    })
+}
+
 /// 记录一次导入的收尾状态（供 UI 展示"上次导入"与续跑判断）。
 pub fn mark_imported(conn: &Connection, source: &str, total: usize) -> Result<(), String> {
     conn.execute(
@@ -352,7 +542,8 @@ pub fn count_all(conn: &Connection) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_tags, count_all, migrate, select_unclassified, upsert, NewFavorite, UpsertOutcome,
+        apply_status, apply_tags, count_all, delete, list, migrate, select_unclassified, set_tags,
+        stats, upsert, ListFilter, NewFavorite, UpsertOutcome,
     };
 
     fn sample(external_id: &str, title: &str) -> NewFavorite {
@@ -482,6 +673,16 @@ mod tests {
         .unwrap();
     }
 
+    /// 已失效的条目不再送归类（给它分类没意义，还白花 token）。
+    #[test]
+    fn select_unclassified_skips_gone_items() {
+        let conn = seeded();
+        apply_status(&conn, 2, "gone", None).unwrap();
+        let pending = select_unclassified(&conn, 10).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, 1);
+    }
+
     /// 归类只处理「没标签且没被人工改过」的条目。
     #[test]
     fn select_unclassified_skips_tagged_and_locked() {
@@ -548,6 +749,104 @@ mod tests {
         let items = select_unclassified(&conn, 10).unwrap();
         assert_eq!(items[0].language, "Rust");
         assert_eq!(items[0].topics, vec!["cli".to_string(), "rust".to_string()]);
+    }
+
+    fn seeded() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        insert_raw(&conn, 1, "1", r#"{"language":"Rust"}"#);
+        insert_raw(&conn, 2, "2", r#"{"language":"Go"}"#);
+        conn.execute("UPDATE favorite SET title = 'o/cli', description = 'a fast cli' WHERE id = 1", [])
+            .unwrap();
+        conn.execute("UPDATE favorite SET title = 'o/web', description = 'web framework' WHERE id = 2", [])
+            .unwrap();
+        conn
+    }
+
+    /// 人工改标签 = 全量替换 + 锁定（用户的选择优先于模型）。
+    #[test]
+    fn set_tags_replaces_and_locks() {
+        let conn = seeded();
+        set_tags(&conn, 1, &["CLI".to_string(), "工具".to_string()]).unwrap();
+        let row = &list(&conn, &ListFilter::default()).unwrap()
+            .into_iter()
+            .find(|r| r.id == 1)
+            .unwrap();
+        assert_eq!(row.tags, vec!["CLI".to_string(), "工具".to_string()]);
+        assert!(row.ai_locked);
+        assert!(select_unclassified(&conn, 10).unwrap().iter().all(|i| i.id != 1));
+
+        // 再设一次：旧标签被替换而不是叠加
+        set_tags(&conn, 1, &["CLI".to_string()]).unwrap();
+        let row = &list(&conn, &ListFilter::default()).unwrap()
+            .into_iter()
+            .find(|r| r.id == 1)
+            .unwrap();
+        assert_eq!(row.tags, vec!["CLI".to_string()]);
+    }
+
+    /// 删本地条目要连标签一起删（不留孤儿行）。
+    #[test]
+    fn delete_removes_tags_too() {
+        let conn = seeded();
+        set_tags(&conn, 1, &["CLI".to_string()]).unwrap();
+        assert!(delete(&conn, 1).unwrap());
+        assert!(!delete(&conn, 1).unwrap(), "删第二次应返回 false");
+        let left: i64 = conn
+            .query_row("SELECT COUNT(*) FROM favorite_tag", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
+        assert_eq!(count_all(&conn).unwrap(), 1);
+    }
+
+    #[test]
+    fn list_filters_by_source_tag_and_keyword() {
+        let conn = seeded();
+        set_tags(&conn, 1, &["CLI".to_string()]).unwrap();
+        set_tags(&conn, 2, &["Web".to_string()]).unwrap();
+
+        assert_eq!(list(&conn, &ListFilter::default()).unwrap().len(), 2);
+        assert_eq!(
+            list(&conn, &ListFilter { tag: Some("CLI".into()), ..Default::default() })
+                .unwrap()
+                .len(),
+            1
+        );
+        // 关键字同时匹配标题与描述
+        assert_eq!(
+            list(&conn, &ListFilter { keyword: Some("cli".into()), ..Default::default() })
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            list(&conn, &ListFilter { keyword: Some("framework".into()), ..Default::default() })
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            list(&conn, &ListFilter { source: Some("zhihu".into()), ..Default::default() })
+                .unwrap()
+                .len(),
+            0
+        );
+    }
+
+    #[test]
+    fn stats_counts_unclassified_and_gone() {
+        let conn = seeded();
+        let before = stats(&conn).unwrap();
+        assert_eq!(before.total, 2);
+        assert_eq!(before.unclassified, 2);
+        assert_eq!(before.gone, 0);
+
+        set_tags(&conn, 1, &["CLI".to_string()]).unwrap();
+        apply_status(&conn, 2, "gone", None).unwrap();
+        let after = stats(&conn).unwrap();
+        assert_eq!(after.unclassified, 0, "已归类的 + 已失效的都不再送归类");
+        assert_eq!(after.gone, 1);
+        assert_eq!(after.tags, vec![("CLI".to_string(), 1)]);
     }
 
     /// 多标签：同一条目可挂多个标签，但完全相同的 (条目, 标签) 只能有一条。

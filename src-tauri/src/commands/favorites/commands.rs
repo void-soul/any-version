@@ -243,6 +243,47 @@ pub async fn fav_check_gone(all: Option<bool>) -> Result<CheckResult, String> {
     Ok(result)
 }
 
+/// 列出收藏条目。
+#[tauri::command]
+pub fn fav_list(
+    source: Option<String>,
+    tag: Option<String>,
+    status: Option<String>,
+    keyword: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<db::FavoriteRow>, String> {
+    db::with_conn(|conn| {
+        db::list(
+            conn,
+            &db::ListFilter {
+                source,
+                tag,
+                status,
+                keyword,
+                limit: limit.unwrap_or(0),
+            },
+        )
+    })
+}
+
+/// 人工设置标签（全量替换 + 锁定，后续 AI 归类不再改动）。
+#[tauri::command]
+pub fn fav_set_tags(id: i64, tags: Vec<String>) -> Result<(), String> {
+    db::with_conn(|conn| db::set_tags(conn, id, &tags))
+}
+
+/// 删除本地条目（**只删本地**，不动平台）。
+#[tauri::command]
+pub fn fav_delete(id: i64) -> Result<bool, String> {
+    db::with_conn(|conn| db::delete(conn, id))
+}
+
+/// 概览计数。
+#[tauri::command]
+pub fn fav_stats() -> Result<db::FavoriteStats, String> {
+    db::with_conn(|conn| db::stats(conn))
+}
+
 /// 解析「用哪个供应商的哪个模型」：显式指定优先，否则沿用 AI 模块的默认供应商。
 ///
 /// 与翻译共用同一套回退链（默认供应商 → 第一个可用供应商），避免两个模块各写一份。
