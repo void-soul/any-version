@@ -95,6 +95,15 @@ pub struct NodeProjectDef {
     /// 提取到控制台 URL 后是否自动用系统默认浏览器打开。
     #[serde(default)]
     pub auto_open_console_url: bool,
+    /// 首次初始化命令（如 wigolo 的 `init`：下载浏览器引擎与端上模型，约 1.5 GB）。
+    ///
+    /// npx 模式按 `<npxBin> {init_cmd...}` 在运行目录里执行；空表示该服务无需初始化
+    /// （此时前端不显示「初始化」按钮，行为与既有服务完全一致）。
+    #[serde(default)]
+    pub init_cmd: Vec<String>,
+    /// 初始化完成标记：`~` 已展开，路径存在即视为已初始化；空表示不做判定。
+    #[serde(default)]
+    pub init_marker: String,
 }
 
 impl NodeProjectDef {
@@ -135,6 +144,52 @@ impl NodeProjectDef {
     /// 是否为 pip 包模式（配置了 pipPackage）：直接从 PyPI 安装，无需 git clone。
     pub fn is_pip_package(&self) -> bool {
         !self.pip_package.trim().is_empty()
+    }
+
+    /// 是否配置了首次初始化命令。
+    pub fn has_init(&self) -> bool {
+        !self.init_cmd.is_empty()
+    }
+
+    /// 初始化标记路径（展开开头的 `~` / `~\`）；未配置 marker 时返回 None。
+    pub fn init_marker_path(&self) -> Option<PathBuf> {
+        let marker = self.init_marker.trim();
+        if marker.is_empty() {
+            return None;
+        }
+        if let Some(tail) = marker
+            .strip_prefix("~/")
+            .or_else(|| marker.strip_prefix("~\\"))
+        {
+            return Some(crate::commands::utils::get_home_dir().join(tail));
+        }
+        Some(PathBuf::from(marker))
+    }
+
+    /// 是否已完成初始化。
+    ///
+    /// 未配置 `initCmd`（不需要初始化）或未配置 `initMarker`（无法判定）时都返回 true ——
+    /// 这样既有服务的行为完全不变，只有显式声明了两者的服务才会出现「初始化」入口。
+    pub fn initialized(&self) -> bool {
+        if !self.has_init() {
+            return true;
+        }
+        match self.init_marker_path() {
+            Some(marker) => marker.exists(),
+            None => true,
+        }
+    }
+
+    /// 初始化命令行（`initCmd` 的展示形态，如 `["init"]` → `init`）。
+    ///
+    /// npx 模式带上包自带的 bin 名（`wigolo init`）；其余模式直接拼 `initCmd`。
+    pub fn init_command_line(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if self.is_npx() {
+            parts.push(self.npx_bin_name());
+        }
+        parts.extend(self.init_cmd.iter().cloned());
+        parts.join(" ")
     }
 
     /// pip 包模式的安装标记文件（记录已安装的包名，供 installed() 判定）。
@@ -263,6 +318,12 @@ pub struct NodeProjectStatus {
     /// port_conflict 时占用进程名（前端明确展示「端口 X 被 <proc> 占用」）。
     #[serde(default)]
     pub conflict_process: Option<String>,
+    /// 是否已配置首次初始化命令（前端据此决定是否显示「初始化」入口）。
+    #[serde(default)]
+    pub init_available: bool,
+    /// 是否已完成初始化；未配置 initCmd/initMarker 的服务恒为 true。
+    #[serde(default)]
+    pub initialized: bool,
 }
 
 // ─── 注册表 ───
@@ -1924,32 +1985,7 @@ pub async fn npm_exec(
         return Err(format!("运行目录不存在: {}", cwd.display()));
     }
 
-    #[cfg(windows)]
-    let mut cmd = {
-        use std::os::windows::process::CommandExt;
-        let mut c = hidden_cmd(&cmd_exe_path());
-        c.arg("/c");
-        c.raw_arg(&command);
-        c
-    };
-    #[cfg(not(windows))]
-    let mut cmd = {
-        let mut c = std::process::Command::new("sh");
-        c.arg("-c");
-        c.arg(&command);
-        c
-    };
-    cmd.current_dir(&cwd);
-    // 前置 node_modules/.bin，使项目自带命令（如 dsh）无需全局安装即可调用
-    let bin_dir = cwd.join("node_modules").join(".bin");
-    if bin_dir.exists() {
-        let path = std::env::var("PATH").unwrap_or_default();
-        if let Ok(joined) = std::env::join_paths(
-            std::iter::once(bin_dir).chain(std::env::split_paths(&path)),
-        ) {
-            cmd.env("PATH", joined);
-        }
-    }
+    let cmd = project_shell_command(&cwd, &command);
 
     emit_log(&app, &def.id, "exec", &format!("$ {}", command));
     emit_log(&app, &def.id, "exec", &format!("工作目录: {}", cwd.display()));
@@ -1969,6 +2005,93 @@ pub async fn npm_exec(
         ));
     }
     emit_progress(&app, &def.id, "done", "命令执行完成");
+    Ok(())
+}
+
+/// 构造「在服务运行目录里执行整条命令行」的 Command（`npm_exec` / `npm_init` 共用）。
+///
+/// Windows 上用 `raw_arg` 传整条命令行：若走普通 arg，Rust 会给含空格的命令加引号，
+/// 触发 cmd.exe「首字符为引号时剥离首尾引号」的规则，把命令拆坏。
+/// 同时把运行目录下的 `node_modules/.bin` 前置进 PATH，服务自带的命令无需全局安装即可调用。
+fn project_shell_command(cwd: &Path, command: &str) -> std::process::Command {
+    #[cfg(windows)]
+    let mut cmd = {
+        use std::os::windows::process::CommandExt;
+        let mut c = hidden_cmd(&cmd_exe_path());
+        c.arg("/c");
+        c.raw_arg(command);
+        c
+    };
+    #[cfg(not(windows))]
+    let mut cmd = {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c");
+        c.arg(command);
+        c
+    };
+    cmd.current_dir(cwd);
+    let bin_dir = cwd.join("node_modules").join(".bin");
+    if bin_dir.exists() {
+        if let Some(path) = std::env::var_os("PATH") {
+            if let Ok(joined) = std::env::join_paths(
+                std::iter::once(bin_dir).chain(std::env::split_paths(&path)),
+            ) {
+                cmd.env("PATH", joined);
+            }
+        }
+    }
+    cmd
+}
+
+/// 首次初始化服务：把 `initCmd` 在服务运行目录里跑一遍（如 `wigolo init`）。
+///
+/// 有些服务装完还不能直接用，必须先拉取运行时资源：wigolo 的 `init` 会下载浏览器引擎
+/// 与端上模型（约 1.5 GB）。这里复用 [`npm_exec`] 的执行环境与日志通道，
+/// 初始化输出直接出现在服务日志区；超时放宽到 1 小时（首次下载可能很久）。
+#[tauri::command]
+pub async fn npm_init(app: tauri::AppHandle, project_id: String) -> Result<(), String> {
+    let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
+    if !def.has_init() {
+        return Err("该服务未配置初始化命令".to_string());
+    }
+    if !def.installed() {
+        return Err("项目尚未安装，请先「安装」".to_string());
+    }
+    let cwd = if def.is_npx() {
+        def.npx_runtime_dir()
+    } else {
+        def.managed_dir()
+    };
+    if !cwd.exists() {
+        return Err(format!("运行目录不存在: {}", cwd.display()));
+    }
+
+    let command = def.init_command_line();
+    emit_log(&app, &def.id, "init", &format!("$ {}", command));
+    emit_log(&app, &def.id, "init", &format!("工作目录: {}", cwd.display()));
+    emit_progress(
+        &app,
+        &def.id,
+        "init",
+        "正在初始化：首次会下载运行时资源（wigolo 约 1.5 GB），进度见下方日志",
+    );
+
+    let (ok, last_err, _out) = run_cmd_live(
+        &app,
+        &def.id,
+        "init",
+        &command,
+        project_shell_command(&cwd, &command),
+        Some(Duration::from_secs(3600)),
+    );
+    if !ok {
+        let msg = last_err.trim();
+        return Err(format!(
+            "初始化失败（退出码非 0）: {}",
+            if msg.is_empty() { "未知错误" } else { msg }
+        ));
+    }
+    emit_progress(&app, &def.id, "done", "初始化完成");
     Ok(())
 }
 
@@ -2748,6 +2871,8 @@ fn status_for(def: &NodeProjectDef) -> NodeProjectStatus {
             local_version: None,
             error: None,
             conflict_process: None,
+            init_available: def.has_init(),
+            initialized: def.initialized(),
         };
     }
 
@@ -2797,6 +2922,8 @@ fn status_for(def: &NodeProjectDef) -> NodeProjectStatus {
         local_version,
         error: None,
         conflict_process,
+        init_available: def.has_init(),
+        initialized: def.initialized(),
     }
 }
 
@@ -2907,6 +3034,8 @@ mod tests {
             pip_extra_packages: Vec::new(),
             pip_module: String::new(),
             env: HashMap::new(),
+            init_cmd: Vec::new(),
+            init_marker: String::new(),
         };
         assert_eq!(def.resolved_web_path(), "http://127.0.0.1:3080");
     }
@@ -2942,6 +3071,8 @@ mod tests {
             pip_extra_packages: Vec::new(),
             pip_module: String::new(),
             env: HashMap::new(),
+            init_cmd: Vec::new(),
+            init_marker: String::new(),
         }
     }
 
@@ -3324,6 +3455,8 @@ mod tests {
             pip_extra_packages: Vec::new(),
             pip_module: String::new(),
             env: Default::default(),
+            init_cmd: Vec::new(),
+            init_marker: String::new(),
         };
         let root = std::env::temp_dir().join(format!("kira-inst-{}", std::process::id()));
         let deps = root.join(".deps");
@@ -3351,5 +3484,65 @@ mod tests {
         assert_eq!(plan_python_launch(&root, &venv_py), PythonLaunchPlan::Missing);
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 未配置 initCmd 的服务恒视为已初始化：既有服务的行为不能因这个新字段改变。
+    #[test]
+    fn test_initialized_defaults_true_without_init_config() {
+        let def = npx_def("wigolo", "wigolo");
+        assert!(!def.has_init());
+        assert!(def.initialized(), "没配 initCmd 的服务不应出现「初始化」入口");
+
+        // 配了 initCmd 但没配 marker：无法判定，仍视为已初始化（不打扰用户）
+        let mut no_marker = npx_def("wigolo", "wigolo");
+        no_marker.init_cmd = vec!["init".into()];
+        assert!(no_marker.has_init());
+        assert!(no_marker.initialized());
+    }
+
+    /// marker 不存在 → 未初始化；marker 出现 → 已初始化。
+    #[test]
+    fn test_initialized_follows_marker_path() {
+        let marker = std::env::temp_dir().join(format!("kira-init-marker-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&marker);
+
+        let mut def = npx_def("wigolo", "wigolo");
+        def.init_cmd = vec!["init".into()];
+        def.init_marker = marker.to_string_lossy().to_string();
+        assert!(!def.initialized(), "marker 不存在应视为未初始化");
+
+        std::fs::create_dir_all(&marker).unwrap();
+        assert!(def.initialized(), "marker 存在应视为已初始化");
+        let _ = std::fs::remove_dir_all(&marker);
+    }
+
+    /// `~` 开头的 marker 要展开到用户主目录（wigolo 的 `~/.wigolo`）。
+    #[test]
+    fn test_init_marker_expands_home() {
+        let mut def = npx_def("wigolo", "wigolo");
+        def.init_marker = "~/.wigolo".into();
+        let path = def.init_marker_path().expect("应能展开 ~");
+        assert!(path.ends_with(".wigolo"));
+        assert!(
+            !path.to_string_lossy().starts_with('~'),
+            "~ 应已展开: {}",
+            path.display()
+        );
+
+        def.init_marker = String::new();
+        assert!(def.init_marker_path().is_none());
+    }
+
+    /// npx 模式的初始化命令行要带上包自带的 bin（`wigolo init`）。
+    #[test]
+    fn test_init_command_line() {
+        let mut def = npx_def("wigolo", "wigolo");
+        def.init_cmd = vec!["init".into()];
+        assert_eq!(def.init_command_line(), "wigolo init");
+
+        // 非 npx 模式直接拼 initCmd，不加 bin 前缀
+        let mut git_def = npx_def("", "");
+        git_def.init_cmd = vec!["setup".into(), "--yes".into()];
+        assert_eq!(git_def.init_command_line(), "setup --yes");
     }
 }

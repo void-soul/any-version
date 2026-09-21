@@ -48,6 +48,19 @@ interface DiscoveredMcp {
   alreadyManaged: boolean;
 }
 
+/** MCP 服务器预设：只用于预填表单，不直接落库（命令/地址用户通常还要改）。 */
+interface McpPreset {
+  id: string;
+  name: string;
+  description: string;
+  transport: string;
+  command: string;
+  args: string[];
+  url: string;
+  /** 依赖的本地服务 id（如 wigolo）；空表示无依赖 */
+  serviceId: string;
+}
+
 // 将 "KEY=VALUE" 多行文本解析为对象
 function parseKV(text: string): Record<string, string> {
   const obj: Record<string, string> = {};
@@ -96,6 +109,13 @@ export default function McpManager() {
   const [fEnabled, setFEnabled] = useState(true);
   const [fDescription, setFDescription] = useState("");
   const [saving, setSaving] = useState(false);
+  // MCP 服务器预设（后端静态清单，只在挂载时取一次）
+  const [presets, setPresets] = useState<McpPreset[]>([]);
+  useEffect(() => {
+    invoke<McpPreset[]>("get_mcp_presets")
+      .then(setPresets)
+      .catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -133,6 +153,22 @@ export default function McpManager() {
 
   const openAdd = () => {
     resetForm();
+    setShowForm(true);
+  };
+
+  /// 从预设预填表单（编辑态一并清掉，避免预填内容覆盖到另一个条目上）
+  const applyPreset = (p: McpPreset) => {
+    setEditingId(null);
+    setFName(p.name);
+    setFTransport(p.transport);
+    setFCommand(p.command);
+    setFArgs(p.args.join(" "));
+    setFUrl(p.url);
+    setFDescription(p.description);
+    setFEnv("");
+    setFCwd("");
+    setFHeaders("");
+    setFEnabled(true);
     setShowForm(true);
   };
 
@@ -257,6 +293,28 @@ export default function McpManager() {
               <X className="w-4 h-4" />
             </button>
           </div>
+
+          {/* 从预设添加：只预填表单，落库/改动仍由用户确认 */}
+          {!editingId && presets.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] text-slate-500">{t("mcp.fromPreset")}</span>
+              {presets.map((preset) => {
+                const used = servers.some((s) => s.name === preset.name);
+                return (
+                  <button
+                    key={preset.id}
+                    onClick={() => applyPreset(preset)}
+                    title={used ? `${preset.description}${t("mcp.presetAlreadyAdded")}` : preset.description}
+                    className={`px-2 py-0.5 rounded-md text-[10px] bg-white/5 border border-white/10 cursor-pointer transition-all hover:text-white hover:border-[var(--module-accent-ring)] ${
+                      used ? "text-slate-600" : "text-slate-300"
+                    }`}
+                  >
+                    {preset.name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div>

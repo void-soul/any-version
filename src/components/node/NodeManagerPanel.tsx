@@ -29,6 +29,8 @@ import {
   Settings2,
   Trash2,
   Hammer,
+  Globe,
+  Sparkles,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -63,6 +65,10 @@ interface NodeProjectDef {
   consoleUrlPattern: string;
   /// 捕获到控制台 URL 后是否自动用系统浏览器打开。
   autoOpenConsoleUrl: boolean;
+  /** 首次初始化命令（如 wigolo 的 ["init"]）；空 = 该服务无需初始化 */
+  initCmd?: string[];
+  /** 初始化完成标记（`~` 可展开）；空 = 不做判定 */
+  initMarker?: string;
 }
 
 interface DepCheck {
@@ -93,6 +99,10 @@ interface NodeProjectStatus {
   gitVersion?: string | null;
   localVersion?: string | null;
   error?: string | null;
+  /** 是否配置了首次初始化命令（据此决定是否显示「初始化」入口） */
+  initAvailable: boolean;
+  /** 是否已完成初始化；未配置 initCmd/initMarker 的服务恒为 true */
+  initialized: boolean;
 }
 
 interface NodeUpdateInfo {
@@ -129,6 +139,7 @@ const MAX_LOG_LINES = 800;
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   bot: Bot,
   boxes: Boxes,
+  globe: Globe,
 };
 
 /// 渲染 webPath，替换 {port} 占位符（与后端 NodeProjectDef::resolved_web_path 一致）。
@@ -329,6 +340,31 @@ export default function NodeManagerPanel() {
     setLogOpen((prev) => ({ ...prev, [project.id]: true }));
     try {
       await invoke("npm_exec", { projectId: project.id, command });
+      await refreshStatus(project.id);
+    } catch (e) {
+      setError((prev) => ({
+        ...prev,
+        [project.id]: typeof e === "string" ? e : String(e),
+      }));
+    } finally {
+      setBusy("");
+      setProgress((prev) => {
+        if (!prev[project.id]) return prev;
+        const next = { ...prev };
+        delete next[project.id];
+        return next;
+      });
+    }
+  };
+
+  // 首次初始化（如 wigolo 的 `init`：下载浏览器引擎与端上模型，约 1.5GB）。
+  // 耗时与输出都只在日志里可见，所以先自动展开日志区。
+  const initProject = async (project: NodeProjectDef) => {
+    setBusy(`init:${project.id}`);
+    setError((prev) => ({ ...prev, [project.id]: "" }));
+    setLogOpen((prev) => ({ ...prev, [project.id]: true }));
+    try {
+      await invoke("npm_init", { projectId: project.id });
       await refreshStatus(project.id);
     } catch (e) {
       setError((prev) => ({
@@ -595,6 +631,7 @@ export default function NodeManagerPanel() {
               consoleUrl={consoleUrls[manageSelected.id]}
               onAction={runAction}
               onExec={execCommand}
+              onInit={initProject}
               onOpenWeb={openWeb}
               onCheckUpdate={checkUpdate}
               onToggleLog={() =>
@@ -733,6 +770,7 @@ function ProjectCard({
   consoleUrl,
   onAction,
   onExec,
+  onInit,
   onOpenWeb,
   onCheckUpdate,
   onToggleLog,
@@ -755,6 +793,7 @@ function ProjectCard({
   consoleUrl?: string;
   onAction: (p: NodeProjectDef, action: string) => void;
   onExec: (p: NodeProjectDef, command: string) => void;
+  onInit: (p: NodeProjectDef) => void;
   onOpenWeb: (p: NodeProjectDef) => void;
   onCheckUpdate: (p: NodeProjectDef) => void;
   onToggleLog: () => void;
@@ -779,8 +818,12 @@ function ProjectCard({
     busy === `install_deps:${project.id}` ||
     busy === `build_native:${project.id}` ||
     busy === `exec:${project.id}` ||
+    busy === `init:${project.id}` ||
     busy === `uninstall:${project.id}`;
   const isExecBusy = busy === `exec:${project.id}`;
+  const isInitBusy = busy === `init:${project.id}`;
+  // 装好了、配了初始化命令、但还没初始化 → 必须先跑一次才能用（如 wigolo 要先拉模型）
+  const needsInit = !!installed && !!st?.initAvailable && !st?.initialized;
   // 命令输入框内容（每个服务独立）
   const [cmdInput, setCmdInput] = useState("");
   // 随应用启动（kira 启动后自动拉起该服务）
@@ -1103,6 +1146,29 @@ function ProjectCard({
       )}
 
       {/* 命令执行：在服务运行目录内执行任意命令（PATH 已含 node_modules/.bin） */}
+      {/* 首次初始化提示：装完还不能直接用，要先拉取运行时资源（wigolo 约 1.5GB） */}
+      {needsInit && (
+        <div className="px-5 pt-2">
+          <div className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2">
+            <Sparkles className="w-3.5 h-3.5 text-amber-300 flex-shrink-0" />
+            <div className="flex-1 text-[11px] text-amber-200/90 leading-snug">
+              {t("nodeproj.initBanner")}
+            </div>
+            <div className="w-24 flex-shrink-0">
+              <ActionButton
+                disabled={isBusy}
+                busy={isInitBusy}
+                onClick={() => onInit(project)}
+                icon={Sparkles}
+                color="bg-amber-600 hover:bg-amber-500"
+                label={t("nodeproj.init")}
+                title={t("nodeproj.initTitle")}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {installed && (
         <div className="px-5 py-2 flex items-center gap-2">
           <div className="flex-1 flex items-center gap-1.5 bg-black/20 border border-white/10 rounded-lg px-2.5 py-1.5 focus-within:border-[var(--module-accent)] transition-all">

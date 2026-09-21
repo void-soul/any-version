@@ -87,6 +87,125 @@ pub fn get_mcp_servers() -> Result<Vec<McpServer>, String> {
     Ok(load_store().servers)
 }
 
+// ─── MCP 预设 ───
+
+/// MCP 服务器预设：新增服务器表单里的「从预设添加」。
+///
+/// 只做**预填表单**，不直接落库 —— 预设给的命令 / 地址用户通常还要改（换端口、加 token、
+/// 换成本地已装的路径），一键写死反而更难改。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpPreset {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    /// stdio | http | sse
+    pub transport: String,
+    #[serde(default)]
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub url: String,
+    /// 依赖的本地服务 id（如 wigolo 的服务项 id）；空表示无依赖。
+    /// 前端可用它提示「先在服务页启动该服务」。
+    #[serde(default)]
+    pub service_id: String,
+}
+
+/// 内置预设清单。
+///
+/// wigolo 给两条，因为两种接法取舍不同：stdio 由工具自己拉起进程（不必开服务），
+/// HTTP 复用已在服务页启动的常驻服务（多个工具共用一个缓存与模型）。
+pub fn mcp_presets() -> Vec<McpPreset> {
+    vec![
+        McpPreset {
+            id: "wigolo-stdio".to_string(),
+            name: "wigolo（stdio）".to_string(),
+            description: "由工具自己拉起 wigolo 进程（npx -y wigolo），无需先在「服务」页启动；每个工具各占一份进程与缓存。首次使用前建议先在「服务」页对 wigolo 点一次「初始化」（约 1.5 GB）。".to_string(),
+            transport: "stdio".to_string(),
+            command: "npx".to_string(),
+            args: vec!["-y".to_string(), "wigolo".to_string()],
+            url: String::new(),
+            service_id: "wigolo".to_string(),
+        },
+        McpPreset {
+            id: "wigolo-http".to_string(),
+            name: "wigolo（HTTP）".to_string(),
+            description: "复用「服务」页里已启动的 wigolo 服务（127.0.0.1:3333）上的 /mcp 端点：多个工具共用一个缓存与本地模型。须先启动该服务，否则连接失败。".to_string(),
+            transport: "http".to_string(),
+            command: String::new(),
+            args: Vec::new(),
+            url: "http://127.0.0.1:3333/mcp".to_string(),
+            service_id: "wigolo".to_string(),
+        },
+    ]
+}
+
+#[tauri::command]
+pub fn get_mcp_presets() -> Vec<McpPreset> {
+    mcp_presets()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mcp_presets;
+
+    #[test]
+    fn test_presets_are_well_formed() {
+        let presets = mcp_presets();
+        assert!(!presets.is_empty(), "预设清单不应为空");
+        for preset in &presets {
+            assert!(!preset.id.trim().is_empty());
+            assert!(!preset.name.trim().is_empty());
+            assert!(!preset.description.trim().is_empty(), "{} 缺少描述", preset.id);
+            match preset.transport.as_str() {
+                "stdio" => assert!(
+                    !preset.command.trim().is_empty(),
+                    "{} 是 stdio 预设，必须给 command",
+                    preset.id
+                ),
+                "http" | "sse" => assert!(
+                    preset.url.starts_with("http://") || preset.url.starts_with("https://"),
+                    "{} 的 url 非法: {}",
+                    preset.id,
+                    preset.url
+                ),
+                other => panic!("{} 的 transport 非法: {}", preset.id, other),
+            }
+        }
+    }
+
+    /// HTTP 预设的端口必须与 `node-projects/wigolo.json` 的服务端口一致：
+    /// 服务项改端口而预设没跟上时，用户点了预设会连到一个没人监听的地址。
+    #[test]
+    fn test_wigolo_http_preset_matches_service_def() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../node-projects/wigolo.json");
+        let raw = std::fs::read_to_string(&path).expect("wigolo.json 读取失败");
+        let value: serde_json::Value = serde_json::from_str(&raw).expect("wigolo.json 解析失败");
+        let port = value
+            .get("defaultPort")
+            .and_then(|v| v.as_u64())
+            .expect("wigolo.json 缺少 defaultPort");
+        assert!(
+            value.get("initCmd").and_then(|v| v.as_array()).is_some(),
+            "wigolo 需要配置 initCmd，否则前端不会出现「初始化」入口"
+        );
+
+        let preset = mcp_presets()
+            .into_iter()
+            .find(|p| p.id == "wigolo-http")
+            .expect("缺少 wigolo-http 预设");
+        assert!(
+            preset.url.contains(&format!("127.0.0.1:{}", port)),
+            "预设地址 {} 与服务端口 {} 不一致",
+            preset.url,
+            port
+        );
+        assert!(preset.url.ends_with("/mcp"));
+    }
+}
+
 #[tauri::command]
 pub fn save_mcp_server(server: McpServer) -> Result<(), String> {
     let name = server.name.trim();

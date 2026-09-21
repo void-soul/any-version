@@ -672,6 +672,7 @@ pub fn run() {
             commands::ai::detect::check_ai_tool_versions,
 
             commands::ai::mcp::get_mcp_servers,
+            commands::ai::mcp::get_mcp_presets,
             commands::ai::mcp::save_mcp_server,
             commands::ai::mcp::delete_mcp_server,
             commands::ai::mcp::toggle_mcp_tool,
@@ -998,6 +999,7 @@ pub fn run() {
                 commands::node_manager::npm_install_deps,
 commands::node_manager::npm_build_native,
 commands::node_manager::npm_exec,
+commands::node_manager::npm_init,
                 commands::node_manager::npm_start,
                 commands::node_manager::npm_stop,
                 commands::node_manager::npm_uninstall,

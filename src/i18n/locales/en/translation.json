@@ -3380,9 +3380,14 @@
     "uninstall": "Uninstall",
     "uninstallTitle": "Clear the managed directory (incl. node_modules leftovers), handy for switching modes or reinstalling",
     "uninstallConfirmTitle": "Uninstall and clear managed directory?",
-    "uninstallConfirmDesc": "This stops \"{{name}}\" and deletes its managed directory (deps & cache included). This cannot be undone. Continue?"
+    "uninstallConfirmDesc": "This stops \"{{name}}\" and deletes its managed directory (deps & cache included). This cannot be undone. Continue?",
+    "init": "Initialize",
+    "initTitle": "Download this service's runtime assets (runs once, see the log panel). Until it finishes the service may start but stay unusable",
+    "initBanner": "This service needs a one-time initialization: it downloads runtime assets (a few hundred MB up to 1.5 GB). Watch the log below."
   },
   "mcp": {
+    "fromPreset": "Add from preset:",
+    "presetAlreadyAdded": " (a server with the same name already exists)",
     "transportStdio": "Local (stdio)",
     "http": "HTTP",
     "sse": "SSE",

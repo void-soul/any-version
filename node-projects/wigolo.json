@@ -1,0 +1,18 @@
+{
+  "id": "wigolo",
+  "displayName": "wigolo 网页情报",
+  "repo": "https://github.com/KnockOutEZ/wigolo",
+  "website": "https://knockoutez.github.io/wigolo",
+  "icon": "globe",
+  "description": "本地优先的 Web 情报层：search / fetch / crawl / extract / cache / find_similar / research 共 10 个工具，核心工具无需任何 API key，数据都留在 ~/.wigolo。默认端口 3333，同一端口同时提供 REST（POST /v1/{tool}、GET /openapi.json）与 MCP（/mcp、/sse），可在下方「MCP 服务器」里用预设一键接入。首次启用必须先点「初始化」下载浏览器引擎与端上模型（约 1.5 GB）；research / agent 需要 LLM，配 WIGOLO_LLM_PROVIDER=gemini|anthropic|openai|groq|ollama 及对应 key（纯本地可用 Ollama）。许可证 AGPL-3.0，商业使用需另行许可。",
+  "defaultPort": 3333,
+  "webPath": "http://127.0.0.1:{port}/openapi.json",
+  "nodeRequirement": ">=20",
+  "packageManager": "npm",
+  "npxPackage": "wigolo",
+  "npxBin": "wigolo",
+  "startCmd": ["serve", "--host", "127.0.0.1", "--port", "3333"],
+  "initCmd": ["init"],
+  "initMarker": "~/.wigolo",
+  "managed": true
+}

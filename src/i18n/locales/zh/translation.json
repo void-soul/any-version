@@ -3386,9 +3386,14 @@
     "uninstall": "卸载",
     "uninstallTitle": "清空托管目录（含 node_modules 等残留），便于切换模式或重装",
     "uninstallConfirmTitle": "卸载并清空托管目录？",
-    "uninstallConfirmDesc": "将停止「{{name}}」并删除其托管目录（含依赖与缓存）。此操作不可恢复，确定继续？"
+    "uninstallConfirmDesc": "将停止「{{name}}」并删除其托管目录（含依赖与缓存）。此操作不可恢复，确定继续？",
+    "init": "初始化",
+    "initTitle": "下载该服务的运行时资源（只跑一次，输出见日志区）；未完成前服务即使启动也可能不可用",
+    "initBanner": "该服务需要先初始化：首次会下载运行时资源（可能数百 MB ~ 1.5 GB），进度见下方日志。"
   },
   "mcp": {
+    "fromPreset": "从预设添加：",
+    "presetAlreadyAdded": "（已添加过同名服务器）",
     "transportStdio": "本地 (stdio)",
     "http": "HTTP",
     "sse": "SSE",
