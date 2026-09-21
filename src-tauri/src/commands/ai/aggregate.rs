@@ -26,7 +26,7 @@ use tauri::Emitter;
 use super::config::{load_ai_config, save_ai_config_to_file};
 use super::models::{AggregateConfig, AiProvider, RouteCandidate};
 use super::route::normalize_route_chain;
-use super::usage::log_usage_db_timed;
+use super::usage::{log_usage_db_timed, log_usage_entry, log_usage_failure, UsageEntry};
 
 /// 聚合服务对外只暴露一个模型（对内才按链分发）——这也是「聚合」的含义。
 pub const AGGREGATE_MODEL_ID: &str = "kiro-proxy";
@@ -48,6 +48,20 @@ pub enum FailureClass {
     Transient,
     /// 不重试也不切换：内容安全等策略拒绝，直接把上游错误返回给客户端
     Fatal,
+}
+
+impl FailureClass {
+    /// 落库用的稳定标识（**不要改这些字符串**：已写入 ai_usage.failure_class 的是它们）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FailureClass::Authentication => "authentication",
+            FailureClass::Billing => "billing",
+            FailureClass::ModelUnavailable => "model_unavailable",
+            FailureClass::RateLimit => "rate_limit",
+            FailureClass::Transient => "transient",
+            FailureClass::Fatal => "fatal",
+        }
+    }
 }
 
 /// 判定失败类别：先按响应体文案（更准），再按状态码。
@@ -1001,17 +1015,15 @@ fn record_usage(inbound: &str, candidate: &AggCandidate, resp: &Value, elapsed_m
             usage.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
         ),
     };
-    if input == 0 && output == 0 {
+    let (cache_read, cache_write) = super::usage::cache_tokens_from_json(&usage);
+    if input == 0 && output == 0 && cache_read == 0 {
         return;
     }
-    let _ = log_usage_db_timed(
-        "aggregate",
-        &candidate.model_id,
-        Some(&candidate.provider_id),
-        input,
-        output,
-        elapsed_ms as u64,
-        0,
+    let _ = log_usage_entry(
+        &UsageEntry::success("aggregate", &candidate.model_id, Some(&candidate.provider_id))
+            .tokens(input, output)
+            .cache(cache_read, cache_write)
+            .timing(elapsed_ms as u64, 0),
     );
 }
 
@@ -1135,6 +1147,15 @@ async fn try_candidate(
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
         let class = classify_failure(Some(status.as_u16()), &text);
+        // 失败落账：按模型成功率的分母靠它（参考 ai-toolbox per-model success rate）。
+        // 这里记的是「候选级失败」——同一请求换到下一个候选成功时，成功那条也会落账，
+        // 因此按模型看是"该模型失败过几次"，这正是排查坏供应商需要的口径。
+        let _ = log_usage_failure(
+            "aggregate",
+            &candidate.model_id,
+            Some(&candidate.provider_id),
+            class.as_str(),
+        );
         return Err(CandidateError {
             class,
             message: format!("HTTP {} {}", status.as_u16(), trim_error(&text)),
@@ -1289,12 +1310,16 @@ fn stream_cross_protocol(
     Ok(Sse::new(sse).into_response())
 }
 
+/// 上游错误体压成一行（用于日志与 `CandidateError.message`）。
+/// 截断走 [`crate::commands::utils::truncate_utf8`]：上游错误文案常带中文，
+/// `&cleaned[..200]` 会正好切在多字节字符中间而 panic。
 fn trim_error(text: &str) -> String {
     let cleaned = text.trim().replace('\n', " ");
-    if cleaned.len() > 200 {
-        format!("{}…", &cleaned[..200])
-    } else {
+    let truncated = crate::commands::utils::truncate_utf8(&cleaned, 200);
+    if truncated.len() == cleaned.len() {
         cleaned
+    } else {
+        format!("{}…", truncated)
     }
 }
 

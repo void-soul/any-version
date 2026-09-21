@@ -38,6 +38,10 @@ fn init_connection() -> Result<rusqlite::Connection, String> {
             output_tokens INTEGER NOT NULL DEFAULT 0,
             duration_ms     INTEGER NOT NULL DEFAULT 0,
             first_token_ms  INTEGER NOT NULL DEFAULT 0,
+            ok              INTEGER NOT NULL DEFAULT 1,
+            failure_class   TEXT,
+            cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
+            cache_write_tokens INTEGER NOT NULL DEFAULT 0,
             timestamp   TEXT    NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_ai_usage_tool  ON ai_usage(tool_id);
@@ -73,6 +77,24 @@ fn ensure_usage_columns(conn: &rusqlite::Connection) -> Result<(), String> {
         (
             "first_token_ms",
             "ALTER TABLE ai_usage ADD COLUMN first_token_ms INTEGER NOT NULL DEFAULT 0",
+        ),
+        // 成功率维度：失败请求也会落一行（token 为 0），否则 succeeded/total 无法统计。
+        (
+            "ok",
+            "ALTER TABLE ai_usage ADD COLUMN ok INTEGER NOT NULL DEFAULT 1",
+        ),
+        (
+            "failure_class",
+            "ALTER TABLE ai_usage ADD COLUMN failure_class TEXT",
+        ),
+        // 缓存维度：缓存命中率 = cache_read / (input + cache_read)，只统计上报过缓存的请求。
+        (
+            "cache_read_tokens",
+            "ALTER TABLE ai_usage ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0",
+        ),
+        (
+            "cache_write_tokens",
+            "ALTER TABLE ai_usage ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0",
         ),
     ] {
         if !existing.iter().any(|c| c == column) {
@@ -112,6 +134,156 @@ fn get_db() -> Result<(), String> {
     Ok(())
 }
 
+/// 一次用量落库的完整维度。
+///
+/// 参考 ai-toolbox「per-model success and cache-hit rates with aligned stats tables」：
+/// 成功率与缓存命中率都要求「失败请求」和「缓存 token」这两个维度存在，
+/// 否则只能算 token 总量。参数收成结构体，避免位置参数继续膨胀。
+#[derive(Debug, Clone)]
+pub struct UsageEntry<'a> {
+    pub tool_id: &'a str,
+    pub model: &'a str,
+    pub provider: Option<&'a str>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub duration_ms: u64,
+    pub first_token_ms: u64,
+    pub ok: bool,
+    pub failure_class: Option<&'a str>,
+}
+
+impl<'a> UsageEntry<'a> {
+    /// 成功请求的起点（token / 耗时 / 缓存默认 0，由链式方法补齐）。
+    pub fn success(tool_id: &'a str, model: &'a str, provider: Option<&'a str>) -> Self {
+        Self {
+            tool_id,
+            model,
+            provider,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            duration_ms: 0,
+            first_token_ms: 0,
+            ok: true,
+            failure_class: None,
+        }
+    }
+
+    /// 失败请求：token 记 0，只贡献成功率的分母。
+    pub fn failure(
+        tool_id: &'a str,
+        model: &'a str,
+        provider: Option<&'a str>,
+        failure_class: &'a str,
+    ) -> Self {
+        Self {
+            ok: false,
+            failure_class: Some(failure_class),
+            ..Self::success(tool_id, model, provider)
+        }
+    }
+
+    pub fn tokens(mut self, input_tokens: u64, output_tokens: u64) -> Self {
+        self.input_tokens = input_tokens;
+        self.output_tokens = output_tokens;
+        self
+    }
+
+    pub fn cache(mut self, cache_read_tokens: u64, cache_write_tokens: u64) -> Self {
+        self.cache_read_tokens = cache_read_tokens;
+        self.cache_write_tokens = cache_write_tokens;
+        self
+    }
+
+    pub fn timing(mut self, duration_ms: u64, first_token_ms: u64) -> Self {
+        self.duration_ms = duration_ms;
+        self.first_token_ms = first_token_ms;
+        self
+    }
+}
+
+/// 成功率 = 成功请求 / 总请求。没有请求时返回 None（前端留空，而不是显示 0%）。
+pub fn success_rate(ok_count: u64, total_count: u64) -> Option<f64> {
+    if total_count == 0 {
+        return None;
+    }
+    Some(ok_count as f64 / total_count as f64)
+}
+
+/// 缓存命中率 = cache_read / (input + cache_read)。
+///
+/// **只统计上报过缓存的请求**（`reported_input_tokens` 是这些请求的输入 token 之和）：
+/// 把没上报缓存的供应商一起算进去会把命中率系统性拉低，等于给用户看一个错的数。
+pub fn cache_hit_rate(cache_read_tokens: u64, reported_input_tokens: u64) -> Option<f64> {
+    let denominator = reported_input_tokens + cache_read_tokens;
+    if denominator == 0 {
+        return None;
+    }
+    Some(cache_read_tokens as f64 / denominator as f64)
+}
+
+/// 从 usage JSON 提取缓存 token：读 = 命中缓存的部分，写 = 新建缓存的部分。
+///
+/// 兼容 Anthropic（`cache_read_input_tokens` / `cache_creation_input_tokens`）与
+/// OpenAI 系（`prompt_tokens_details.cached_tokens` / `prompt_cache_hit_tokens`）。
+pub fn cache_tokens_from_json(usage: &serde_json::Value) -> (u64, u64) {
+    let read = usage
+        .get("cache_read_input_tokens")
+        .or_else(|| usage.get("prompt_cache_hit_tokens"))
+        .or_else(|| {
+            usage
+                .get("prompt_tokens_details")
+                .and_then(|d| d.get("cached_tokens"))
+        })
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0);
+    let write = usage
+        .get("cache_creation_input_tokens")
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0);
+    (read, write)
+}
+
+/// 写入一条用量记录（唯一的 INSERT 出口）。
+pub fn log_usage_entry(entry: &UsageEntry) -> Result<(), String> {
+    get_db()?;
+    let timestamp = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let mut guard = DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))?;
+    let conn = guard.as_mut().ok_or("数据库未初始化")?;
+    conn.execute(
+        "INSERT INTO ai_usage (tool_id, model, provider, input_tokens, output_tokens, duration_ms, first_token_ms, ok, failure_class, cache_read_tokens, cache_write_tokens, timestamp) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        rusqlite::params![
+            entry.tool_id,
+            entry.model,
+            entry.provider,
+            entry.input_tokens,
+            entry.output_tokens,
+            entry.duration_ms as i64,
+            entry.first_token_ms as i64,
+            entry.ok as i64,
+            entry.failure_class,
+            entry.cache_read_tokens as i64,
+            entry.cache_write_tokens as i64,
+            timestamp,
+        ],
+    )
+    .map_err(|e| format!("插入用量记录失败: {}", e))?;
+    Ok(())
+}
+
+/// 记录一次**失败**尝试（上游报错 / 路由放弃 / 网络异常）。token 记 0，只进成功率分母。
+pub fn log_usage_failure(
+    tool_id: &str,
+    model: &str,
+    provider: Option<&str>,
+    failure_class: &str,
+) -> Result<(), String> {
+    log_usage_entry(&UsageEntry::failure(tool_id, model, provider, failure_class))
+}
+
 /// 向数据库插入一条用量记录（线程安全），并带上耗时以支持输出速度统计。
 ///
 /// `duration_ms` / `first_token_ms` 传 0 表示未测量（不经代理的直连调用方），
@@ -125,25 +297,11 @@ pub fn log_usage_db_timed(
     duration_ms: u64,
     first_token_ms: u64,
 ) -> Result<(), String> {
-    get_db()?;
-    let timestamp = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
-    let mut guard = DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))?;
-    let conn = guard.as_mut().ok_or("数据库未初始化")?;
-    conn.execute(
-        "INSERT INTO ai_usage (tool_id, model, provider, input_tokens, output_tokens, duration_ms, first_token_ms, timestamp) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        rusqlite::params![
-            tool_id,
-            model,
-            provider,
-            input_tokens,
-            output_tokens,
-            duration_ms as i64,
-            first_token_ms as i64,
-            timestamp,
-        ],
+    log_usage_entry(
+        &UsageEntry::success(tool_id, model, provider)
+            .tokens(input_tokens, output_tokens)
+            .timing(duration_ms, first_token_ms),
     )
-    .map_err(|e| format!("插入用量记录失败: {}", e))?;
-    Ok(())
 }
 
 /// 向数据库插入一条用量记录（无耗时信息，耗时字段落 0）。
@@ -171,10 +329,14 @@ pub fn log_usage_from_json(tool_id: &str, model: &str, provider_id: Option<&str>
         .or_else(|| usage.get("output_tokens"))
         .and_then(|x| x.as_u64())
         .unwrap_or(0);
-    if in_t == 0 && out_t == 0 {
+    let (cache_read, cache_write) = cache_tokens_from_json(usage);
+    if in_t == 0 && out_t == 0 && cache_read == 0 {
         return;
     }
-    if let Err(e) = log_usage_db(tool_id, model, provider_id, in_t, out_t) {
+    let entry = UsageEntry::success(tool_id, model, provider_id)
+        .tokens(in_t, out_t)
+        .cache(cache_read, cache_write);
+    if let Err(e) = log_usage_entry(&entry) {
         eprintln!("[ai-usage] 记录用量失败 (tool_id={}): {}", tool_id, e);
     }
 }
@@ -185,12 +347,20 @@ pub fn get_usage_summary_db() -> Result<UsageSummary, String> {
     let mut guard = DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))?;
     let conn = guard.as_mut().ok_or("数据库未初始化")?;
 
-    // 总计
-    let (total_records, total_input, total_output): (u64, u64, u64) = conn
+    // 总计（含成功数与缓存读取量，供顶部概览展示成功率）
+    let (total_records, total_input, total_output, total_success, total_cache_read): (
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+    ) = conn
         .query_row(
             "SELECT COUNT(*),
                     COALESCE(SUM(input_tokens), 0),
-                    COALESCE(SUM(output_tokens), 0)
+                    COALESCE(SUM(output_tokens), 0),
+                    COALESCE(SUM(ok), 0),
+                    COALESCE(SUM(cache_read_tokens), 0)
              FROM ai_usage",
             [],
             |row| {
@@ -198,6 +368,8 @@ pub fn get_usage_summary_db() -> Result<UsageSummary, String> {
                     row.get::<_, i64>(0)? as u64,
                     row.get::<_, i64>(1)? as u64,
                     row.get::<_, i64>(2)? as u64,
+                    row.get::<_, i64>(3)? as u64,
+                    row.get::<_, i64>(4)? as u64,
                 ))
             },
         )
@@ -228,21 +400,32 @@ pub fn get_usage_summary_db() -> Result<UsageSummary, String> {
     // by_model（附带输出速度：仅聚合测得耗时的记录，未测耗时的记录不参与）
     let mut by_model: Vec<UsageByModel> = Vec::new();
     let mut stmt = conn
-        .prepare("SELECT model, COALESCE(provider, ''), COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(input_tokens + output_tokens),0), COALESCE(SUM(CASE WHEN duration_ms > 0 THEN duration_ms - first_token_ms ELSE 0 END),0), COALESCE(SUM(CASE WHEN duration_ms > 0 THEN output_tokens ELSE 0 END),0) FROM ai_usage GROUP BY model, provider ORDER BY SUM(input_tokens + output_tokens) DESC")
+        .prepare("SELECT model, COALESCE(provider, ''), COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(input_tokens + output_tokens),0), COALESCE(SUM(CASE WHEN duration_ms > 0 THEN duration_ms - first_token_ms ELSE 0 END),0), COALESCE(SUM(CASE WHEN duration_ms > 0 THEN output_tokens ELSE 0 END),0), COALESCE(SUM(ok),0), max(0, COALESCE(SUM(ok),0) - COUNT(*)), COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(CASE WHEN cache_read_tokens > 0 OR cache_write_tokens > 0 THEN input_tokens ELSE 0 END),0) FROM ai_usage GROUP BY model, provider ORDER BY SUM(input_tokens + output_tokens) DESC, COUNT(*) DESC")
         .map_err(|e| format!("预处理 by_model 失败: {}", e))?;
     let model_iter = stmt
         .query_map([], |row| {
             // 生成窗口 = Σ(总耗时 − 首字延迟)；非流式请求 first_token_ms 为 0，窗口即总耗时
             let generation_window_ms = row.get::<_, i64>(6)?.max(0) as u64;
             let measured_output = row.get::<_, i64>(7)?.max(0) as u64;
+            let request_count = row.get::<_, i64>(2)? as u64;
+            // 成功数 = Σ ok；失败数 = 总请求 − 成功（老库补列后默认 1，不会少算成功）
+            let ok_count = row.get::<_, i64>(8)?.max(0) as u64;
+            let failure_count = row.get::<_, i64>(9)?.max(0) as u64;
+            let cache_read = row.get::<_, i64>(10)?.max(0) as u64;
+            let reported_input = row.get::<_, i64>(11)?.max(0) as u64;
             Ok(UsageByModel {
                 model: row.get(0)?,
                 provider: row.get(1)?,
-                request_count: row.get::<_, i64>(2)? as u64,
+                request_count,
                 input_tokens: row.get::<_, i64>(3)? as u64,
                 output_tokens: row.get::<_, i64>(4)? as u64,
                 total_tokens: row.get::<_, i64>(5)? as u64,
                 output_tps: output_tps(measured_output, generation_window_ms),
+                success_count: ok_count,
+                failure_count,
+                success_rate: success_rate(ok_count, request_count),
+                cache_read_tokens: cache_read,
+                cache_hit_rate: cache_hit_rate(cache_read, reported_input),
             })
         })
         .map_err(|e| format!("查询 by_model 失败: {}", e))?;
@@ -301,6 +484,9 @@ pub fn get_usage_summary_db() -> Result<UsageSummary, String> {
         total_input_tokens: total_input,
         total_output_tokens: total_output,
         total_tokens: total_input + total_output,
+        total_success,
+        total_failure: total_records.saturating_sub(total_success),
+        total_cache_read_tokens: total_cache_read,
         by_tool,
         by_model,
         by_provider,
@@ -337,7 +523,7 @@ pub fn clear_usage() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::output_tps;
+    use super::{cache_hit_rate, cache_tokens_from_json, output_tps, success_rate};
 
     #[test]
     fn output_tps_uses_generation_window() {
@@ -351,5 +537,43 @@ mod tests {
         // 没有输出 token / 没有耗时（未测量）→ 不给出数值
         assert_eq!(output_tps(0, 10_000), None);
         assert_eq!(output_tps(1000, 0), None);
+    }
+
+    #[test]
+    fn success_rate_counts_failures_in_denominator() {
+        assert_eq!(success_rate(0, 0), None, "没有请求时不显示 0%");
+        assert_eq!(success_rate(3, 4), Some(0.75));
+        assert_eq!(success_rate(0, 2), Some(0.0), "全失败要显示 0% 而不是留空");
+    }
+
+    #[test]
+    fn cache_hit_rate_ignores_providers_without_cache_reporting() {
+        // 只统计上报过缓存的请求：命中 800，这些请求输入 200 → 80%
+        let rate = cache_hit_rate(800, 200).expect("reported");
+        assert!((rate - 0.8).abs() < 1e-9, "got {}", rate);
+        // 完全没上报缓存 → 留空，而不是显示 0%
+        assert_eq!(cache_hit_rate(0, 0), None);
+        // 命中率 0%（上报了缓存但一次未命中）要显示 0%
+        assert_eq!(cache_hit_rate(0, 500), Some(0.0));
+    }
+
+    #[test]
+    fn cache_tokens_reads_both_protocol_shapes() {
+        let anthropic = serde_json::json!({
+            "input_tokens": 120,
+            "cache_read_input_tokens": 800,
+            "cache_creation_input_tokens": 64
+        });
+        assert_eq!(cache_tokens_from_json(&anthropic), (800, 64));
+
+        let openai = serde_json::json!({
+            "prompt_tokens": 900,
+            "prompt_tokens_details": { "cached_tokens": 512 }
+        });
+        assert_eq!(cache_tokens_from_json(&openai), (512, 0));
+
+        // 未上报缓存的供应商 → 全 0，不参与命中率
+        let plain = serde_json::json!({ "prompt_tokens": 900, "completion_tokens": 10 });
+        assert_eq!(cache_tokens_from_json(&plain), (0, 0));
     }
 }

@@ -23,13 +23,32 @@ interface UsageSummary {
   total_input_tokens: number;
   total_output_tokens: number;
   total_tokens: number;
+  /** 成功 / 失败请求数：失败请求也落库（只进成功率的分母） */
+  total_success: number;
+  total_failure: number;
+  total_cache_read_tokens: number;
   by_tool: { tool_id: string; request_count: number; input_tokens: number; output_tokens: number; total_tokens: number }[];
-  by_model: { model: string; provider: string; request_count: number; input_tokens: number; output_tokens: number; total_tokens: number; output_tps?: number | null }[];
+  by_model: {
+    model: string;
+    provider: string;
+    request_count: number;
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    output_tps?: number | null;
+    success_count: number;
+    failure_count: number;
+    /** 0-1；无请求时为 null */
+    success_rate?: number | null;
+    cache_read_tokens: number;
+    /** 0-1；未上报缓存的模型为 null */
+    cache_hit_rate?: number | null;
+  }[];
   by_provider: { provider: string; request_count: number; input_tokens: number; output_tokens: number; total_tokens: number }[];
   recent: { date: string; request_count: number; input_tokens: number; output_tokens: number; total_tokens: number }[];
 }
 
-type SortKey = "requests" | "input" | "output" | "total";
+type SortKey = "requests" | "input" | "output" | "total" | "success" | "cache";
 
 interface Row {
   key: string;
@@ -43,6 +62,16 @@ interface Row {
   total: number;
   /** 输出速度（tokens/s）：仅模型维度由后端聚合给出，其余维度无值不渲染 */
   tps?: number | null;
+  /** 成功率（0-1）：仅模型维度由后端聚合给出；null/undefined 表示无数据（渲染 —） */
+  successRate?: number | null;
+  /** 成功率排序值（无数据时 -1，保证排在最后） */
+  success?: number;
+  /** 失败请求数（有值时在成功率旁标出） */
+  failureCount?: number;
+  /** 缓存命中率（0-1）：仅模型维度由后端聚合给出；未上报缓存的模型为 null */
+  cacheHitRate?: number | null;
+  /** 缓存命中率排序值 */
+  cache?: number;
 }
 
 function formatTokens(n: number): string {
@@ -168,13 +197,20 @@ function SortableTable({
     const list = maxRows ? rows.slice(0, maxRows) : rows;
     const copy = [...list];
     copy.sort((a, b) => {
-      const diff = a[sortKey] - b[sortKey];
+      // 成功率 / 缓存命中率可能缺值（未上报的模型）→ 用 -1 兜底，让它排在最后
+      const diff = (a[sortKey] ?? -1) - (b[sortKey] ?? -1);
       return asc ? diff : -diff;
     });
     return copy;
   }, [rows, sortKey, asc, maxRows]);
 
   const maxTotal = useMemo(() => Math.max(...rows.map(r => r.total), 1), [rows]);
+
+  // 可靠性与缓存两列只在有数据的维度（目前是「按模型」）出现，其余维度不挤占宽度
+  const hasReliability = useMemo(
+    () => rows.some(r => r.successRate != null || r.cacheHitRate != null),
+    [rows],
+  );
 
   const setSort = (k: SortKey) => {
     if (sortKey === k) setAsc(!asc);
@@ -215,6 +251,12 @@ function SortableTable({
             <SortHeader k="input" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colInput")}</SortHeader>
             <SortHeader k="output" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colOutput")}</SortHeader>
             <SortHeader k="total" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colTotal")}</SortHeader>
+            {hasReliability && (
+              <>
+                <SortHeader k="success" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colSuccess")}</SortHeader>
+                <SortHeader k="cache" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colCacheHit")}</SortHeader>
+              </>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -249,6 +291,33 @@ function SortableTable({
                   <span className="text-[10px] text-slate-400 tabular-nums w-10 text-right">{formatTokens(r.total)}</span>
                 </div>
               </td>
+              {hasReliability && (
+                <>
+                  <td
+                    className={`px-2 py-1.5 text-[10px] text-right tabular-nums whitespace-nowrap ${
+                      r.successRate == null
+                        ? "text-slate-600"
+                        : r.successRate >= 0.99
+                          ? "text-emerald-300"
+                          : r.successRate >= 0.9
+                            ? "text-amber-300"
+                            : "text-rose-300"
+                    }`}
+                    title={t("usagestats.colSuccessHint")}
+                  >
+                    {r.successRate == null ? "—" : `${(r.successRate * 100).toFixed(0)}%`}
+                    {typeof r.failureCount === "number" && r.failureCount > 0 && (
+                      <span className="ml-1 text-[8px] text-rose-400/70">×{r.failureCount}</span>
+                    )}
+                  </td>
+                  <td
+                    className={`px-2 py-1.5 text-[10px] text-right tabular-nums whitespace-nowrap ${r.cacheHitRate == null ? "text-slate-600" : "text-sky-300"}`}
+                    title={t("usagestats.colCacheHitHint")}
+                  >
+                    {r.cacheHitRate == null ? "—" : `${(r.cacheHitRate * 100).toFixed(0)}%`}
+                  </td>
+                </>
+              )}
             </tr>
           ))}
         </tbody>
@@ -336,6 +405,11 @@ export default function UsageStats() {
     output: m.output_tokens,
     total: m.total_tokens,
     tps: m.output_tps ?? null,
+    successRate: m.success_rate ?? null,
+    success: m.success_rate ?? -1,
+    failureCount: m.failure_count,
+    cacheHitRate: m.cache_hit_rate ?? null,
+    cache: m.cache_hit_rate ?? -1,
   }));
   const providerRows: Row[] = (summary?.by_provider || []).map(p => ({
     key: p.provider || t("usagestats.unknown"),

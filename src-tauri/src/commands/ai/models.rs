@@ -621,6 +621,10 @@ pub struct UsageSummary {
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
     pub total_tokens: u64,
+    /// 成功请求数（失败请求也落库，只进这个比值的分母）
+    pub total_success: u64,
+    pub total_failure: u64,
+    pub total_cache_read_tokens: u64,
     pub by_tool: Vec<UsageByTool>,
     pub by_model: Vec<UsageByModel>,
     pub by_provider: Vec<UsageByProvider>,
@@ -647,6 +651,13 @@ pub struct UsageByModel {
     /// 输出速度（tokens/s）：生成窗口 = Σ(总耗时 − 首字延迟)，仅统计测得耗时的请求；
     /// 没有可用耗时数据时为 None（前端留空）。
     pub output_tps: Option<f64>,
+    /// 成功请求数 / 失败请求数 / 成功率（失败请求也落库，只贡献分母）
+    pub success_count: u64,
+    pub failure_count: u64,
+    pub success_rate: Option<f64>,
+    /// 缓存命中：cache_read / (input + cache_read)，只统计上报过缓存的请求
+    pub cache_read_tokens: u64,
+    pub cache_hit_rate: Option<f64>,
 }
 
 #[derive(Serialize, Clone, Debug)]

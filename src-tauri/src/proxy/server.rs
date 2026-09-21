@@ -33,24 +33,27 @@ use tokio::sync::RwLock;
 /// `duration_ms` / `first_token_ms` 供输出速度（t/s）统计（抄自 cc-switch dc0febe5）：
 /// 生成窗口 = 总耗时 − 首字延迟；非流式没有首字延迟传 0，窗口即总耗时。
 /// 两个值都为 0 表示未测量，该记录不参与 t/s 聚合。
+///
+/// `cache_read_tokens` / `cache_write_tokens` 供缓存命中率统计：只有能从响应体
+/// 读到缓存的路径才传非 0（流式透传路径目前拿不到，按 0 记，不参与命中率）。
+#[allow(clippy::too_many_arguments)]
 fn record_proxy_usage(
     tool_id: &str,
     provider_id: &str,
     model: &str,
     input_tokens: u64,
     output_tokens: u64,
+    cache_read_tokens: u64,
+    cache_write_tokens: u64,
     duration_ms: u64,
     first_token_ms: u64,
 ) {
-    if let Err(e) = crate::commands::ai::usage::log_usage_db_timed(
-        tool_id,
-        model,
-        Some(provider_id),
-        input_tokens,
-        output_tokens,
-        duration_ms,
-        first_token_ms,
-    ) {
+    use crate::commands::ai::usage::{log_usage_entry, UsageEntry};
+    let entry = UsageEntry::success(tool_id, model, Some(provider_id))
+        .tokens(input_tokens, output_tokens)
+        .cache(cache_read_tokens, cache_write_tokens)
+        .timing(duration_ms, first_token_ms);
+    if let Err(e) = log_usage_entry(&entry) {
         eprintln!("[proxy] 记录用量失败: {}", e);
     }
 }
@@ -83,10 +86,11 @@ fn log_proxy_json_full(msg: &str, value: &Value) {
 /// 打印完整原始字符串（同上，用于流式完整文本等）。
 fn log_proxy_raw(msg: &str, s: &str) {
     if s.len() > 200_000 {
+        // 必须按字符边界截断：流式完整文本常含中文，`&s[..200_000]` 会 panic。
         log_proxy(&format!(
             "{}: {}...(truncated, total {} bytes)",
             msg,
-            &s[..200_000],
+            crate::commands::utils::truncate_utf8(s, 200_000),
             s.len()
         ));
     } else {
@@ -807,8 +811,22 @@ async fn process_request(
             }
         }
 
-        let mut stats = state.stats.write().await;
-        stats.failed_requests += 1;
+        {
+            let mut stats = state.stats.write().await;
+            stats.failed_requests += 1;
+        }
+        // 失败落账（整流/回退都失败后才到这里）：按模型的成功率靠它做分母，
+        // 也顺带把失败类别记下来，便于在用量统计里看出「哪个供应商在报什么错」。
+        let failure_class = crate::commands::ai::aggregate::classify_failure(
+            Some(status.as_u16()),
+            &error_body,
+        );
+        let _ = crate::commands::ai::usage::log_usage_failure(
+            &config.tool_id,
+            &actual_model,
+            Some(&config.provider_id),
+            failure_class.as_str(),
+        );
         return (
             StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
             Json(json!({
@@ -1024,6 +1042,8 @@ async fn stream_response(
                     &act,
                     acc_in,
                     acc_out,
+                    0,
+                    0,
                     stream_start.elapsed().as_millis() as u64,
                     first_token_ms,
                 );
@@ -1140,6 +1160,8 @@ async fn stream_response(
                         &cm,
                         in_t,
                         out_t,
+                        0,
+                        0,
                         stream_start.elapsed().as_millis() as u64,
                         first_token_ms,
                     );
@@ -1309,8 +1331,23 @@ fn record_usage_from_response(
         }
         _ => (0, 0),
     };
-    if in_t > 0 || out_t > 0 {
-        record_proxy_usage(&config.tool_id, &config.provider_id, model, in_t, out_t, duration_ms, 0);
+    // 缓存命中：Anthropic 走 cache_read_input_tokens，OpenAI 系走 prompt_tokens_details.cached_tokens
+    let (cache_read, cache_write) = resp
+        .get("usage")
+        .map(crate::commands::ai::usage::cache_tokens_from_json)
+        .unwrap_or((0, 0));
+    if in_t > 0 || out_t > 0 || cache_read > 0 {
+        record_proxy_usage(
+            &config.tool_id,
+            &config.provider_id,
+            model,
+            in_t,
+            out_t,
+            cache_read,
+            cache_write,
+            duration_ms,
+            0,
+        );
     }
     let _ = state;
 }
