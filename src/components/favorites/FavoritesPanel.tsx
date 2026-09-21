@@ -12,6 +12,7 @@ import {
   AlertTriangle,
   Download,
   ExternalLink,
+  KeyRound,
   Pencil,
   RefreshCw,
   Search,
@@ -19,6 +20,7 @@ import {
   Square,
   Tag,
   Trash2,
+  Tv,
 } from "lucide-react";
 
 import { SharedButton } from "../shared/Button";
@@ -54,6 +56,11 @@ export default function FavoritesPanel() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingTags, setEditingTags] = useState("");
 
+  // B站：需要 Cookie（含 SESSDATA）才能读自己的收藏；配过就不再每次问
+  const [biliConfigured, setBiliConfigured] = useState(false);
+  const [cookieOpen, setCookieOpen] = useState(false);
+  const [cookieText, setCookieText] = useState("");
+
   const refresh = useCallback(async () => {
     const [list, overview] = await Promise.all([
       invoke<FavoriteRow[]>("fav_list", {
@@ -72,6 +79,12 @@ export default function FavoritesPanel() {
   useEffect(() => {
     void refresh().catch((e) => toast(String(e), "err"));
   }, [refresh]);
+
+  useEffect(() => {
+    invoke<boolean>("fav_has_credential", { source: "bilibili" })
+      .then(setBiliConfigured)
+      .catch(() => setBiliConfigured(false));
+  }, []);
 
   useEffect(() => {
     invoke<AiConfig>("get_ai_config")
@@ -111,6 +124,41 @@ export default function FavoritesPanel() {
       }
     } catch (e) {
       toast(t("favorites.importFail", { err: String(e) }), "err");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const saveCookie = async () => {
+    if (!cookieText.trim()) return;
+    try {
+      await invoke("fav_set_credential", { source: "bilibili", cookie: cookieText.trim() });
+      setBiliConfigured(true);
+      setCookieOpen(false);
+      setCookieText("");
+      toast(t("favorites.cookieSaved"), "ok");
+    } catch (e) {
+      toast(t("favorites.cookieFail", { err: String(e) }), "err");
+    }
+  };
+
+  const runImportBili = async () => {
+    setBusy("bili");
+    try {
+      const result = await invoke<ImportResult>("fav_import_bilibili");
+      await refresh();
+      toast(
+        t("favorites.importDone", {
+          added: result.added,
+          updated: result.updated,
+          skipped: result.skipped,
+        }),
+        "ok",
+      );
+    } catch (e) {
+      toast(t("favorites.importFail", { err: String(e) }), "err");
+      // Cookie 失效是最常见原因：直接把配置弹窗递上去
+      if (!biliConfigured) setCookieOpen(true);
     } finally {
       setBusy(null);
     }
@@ -215,6 +263,29 @@ export default function FavoritesPanel() {
             {t("favorites.cancel")}
           </SharedButton>
         )}
+
+        <div className="flex items-center gap-1">
+          <SharedButton
+            variant="secondary"
+            className="!h-7 !px-2"
+            onClick={() => (biliConfigured ? void runImportBili() : setCookieOpen(true))}
+            disabled={busy !== null}
+          >
+            {busy === "bili" ? (
+              <RefreshCw className="w-3 h-3 animate-spin" />
+            ) : (
+              <Tv className="w-3 h-3" />
+            )}
+            {t("favorites.importBili")}
+          </SharedButton>
+          <button
+            onClick={() => setCookieOpen(true)}
+            className="p-1 rounded text-slate-500 hover:text-slate-200 cursor-pointer"
+            title={t("favorites.biliCookieTitle")}
+          >
+            <KeyRound className="w-3 h-3" />
+          </button>
+        </div>
 
         <div className="flex items-center gap-1">
           <select
@@ -451,6 +522,42 @@ export default function FavoritesPanel() {
         )}
         <span className="ml-auto">{t("favorites.readonlyHint")}</span>
       </div>
+
+      {/* B站 Cookie：登录后从浏览器开发者工具复制整条 Cookie（需含 SESSDATA） */}
+      {cookieOpen && (
+        <div
+          className="fixed inset-0 z-[250] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setCookieOpen(false)}
+        >
+          <div
+            className="w-[460px] max-w-full rounded-2xl border border-white/10 bg-slate-900 p-4 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-[13px] font-bold text-white">{t("favorites.biliCookieTitle")}</div>
+            <p className="text-[10px] text-slate-400 leading-snug">
+              {t("favorites.biliCookieHint")}
+            </p>
+            <textarea
+              value={cookieText}
+              onChange={(e) => setCookieText(e.target.value)}
+              placeholder={t("favorites.biliCookiePlaceholder")}
+              spellCheck={false}
+              className="w-full h-24 glass-input p-2 text-[10px] font-mono resize-y"
+            />
+            <p className="text-[10px] text-amber-400/80 leading-snug">
+              {t("favorites.biliExperimental")}
+            </p>
+            <div className="flex justify-end gap-2">
+              <SharedButton variant="secondary" onClick={() => setCookieOpen(false)}>
+                {t("common.cancel")}
+              </SharedButton>
+              <SharedButton onClick={() => void saveCookie()} disabled={!cookieText.trim()}>
+                {t("favorites.biliCookieSave")}
+              </SharedButton>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmDialogHost request={confirmRequest} onClose={() => setConfirmRequest(null)} />
     </div>
