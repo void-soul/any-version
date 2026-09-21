@@ -713,6 +713,105 @@ pub struct SkillMetaItemDto {
     pub tags: Vec<String>,
 }
 
+// ─── 克隆来源解析（子目录标记 / 技能根定位 / 临时目录） ───
+
+/// 拆分来源里的子目录标记：`owner/repo#skills/foo` → (`owner/repo`, Some("skills/foo"))。
+///
+/// 一个仓库里放多个技能时需要指定装哪个；也是「技能 id 与目录名不一致」时的补救入口
+/// （参考 cc-switch「support mismatched skillId directories / preserve source path during updates」）。
+fn split_source_subdir(source: &str) -> (String, Option<String>) {
+    match source.split_once('#') {
+        Some((base, sub)) => {
+            let base = base.trim();
+            let sub = sub.trim().trim_matches('/');
+            if base.is_empty() || sub.is_empty() {
+                (source.to_string(), None)
+            } else {
+                (base.to_string(), Some(sub.to_string()))
+            }
+        }
+        None => (source.to_string(), None),
+    }
+}
+
+/// SKILL.md 的最深搜索层级：仓库根 → `*/` → `*/*`。
+const SKILL_ROOT_MAX_DEPTH: usize = 2;
+
+/// 在克隆下来的仓库里定位真正的技能目录。
+///
+/// 此前直接把 clone 目录当技能装：当仓库根没有 SKILL.md（`skills/<name>` 布局、
+/// 或多技能集合仓库）时，技能 id 会退化成临时目录名，之后更新 / 卸载就找不到同一个技能。
+///
+/// 0 个 → 报错（不是技能仓库）；1 个 → 直接用；多个 → 报错并列出候选，让用户用 `#子目录` 指定。
+fn find_skill_root(clone_dir: &std::path::Path, explicit_subdir: Option<&str>) -> Result<PathBuf, String> {
+    if let Some(sub) = explicit_subdir {
+        let candidate = clone_dir.join(sub);
+        if candidate.join("SKILL.md").is_file() {
+            return Ok(candidate);
+        }
+        return Err(format!("指定子目录里没有 SKILL.md: {}", sub));
+    }
+
+    if clone_dir.join("SKILL.md").is_file() {
+        return Ok(clone_dir.to_path_buf());
+    }
+
+    let mut found: Vec<PathBuf> = Vec::new();
+    let mut frontier: Vec<(PathBuf, usize)> = vec![(clone_dir.to_path_buf(), 0)];
+    while let Some((dir, depth)) = frontier.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            // 跳过版本控制目录与依赖目录
+            if name.starts_with('.') || name == "node_modules" {
+                continue;
+            }
+            if path.join("SKILL.md").is_file() {
+                found.push(path);
+            } else if depth + 1 < SKILL_ROOT_MAX_DEPTH {
+                frontier.push((path, depth + 1));
+            }
+        }
+    }
+
+    match found.len() {
+        0 => Err("仓库里没有找到 SKILL.md（不是技能仓库？）".to_string()),
+        1 => Ok(found.remove(0)),
+        _ => {
+            let mut names: Vec<String> = found
+                .iter()
+                .filter_map(|path| path.strip_prefix(clone_dir).ok())
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .collect();
+            names.sort();
+            Err(format!(
+                "仓库里有 {} 个技能，请用「来源#子目录」指定要装哪个: {}",
+                names.len(),
+                names.join(", ")
+            ))
+        }
+    }
+}
+
+/// 本次安装专用的临时克隆目录。
+///
+/// 此前两个安装入口共用 `_temp_skill_clone` 并在前后各自 `remove_dir_all`：
+/// 重复点击或并发安装时，后一次会把前一次正在使用的克隆删掉。
+fn temp_clone_dir() -> PathBuf {
+    let stamp = chrono::Local::now().timestamp_nanos_opt().unwrap_or(0);
+    get_data_dir().join(format!(
+        "_temp_skill_clone_{}_{}",
+        std::process::id(),
+        stamp
+    ))
+}
+
 // ─── 安装 / 卸载 ───
 
 #[tauri::command]
@@ -736,10 +835,27 @@ pub fn install_skill(skill_dir: String) -> Result<(), String> {
     let _ = fs::create_dir_all(&store);
     let dest_dir = store.join(&id);
 
+    // 先复制到隐藏的 staging 目录，成功后再整体替换：
+    // 复制失败（磁盘满 / 权限）时旧技能仍然完好，不会「新旧一起丢」。
+    // staging 以 '.' 开头，不会被技能列表扫描到（见 get_skill_overview）。
+    let staging = store.join(format!(".{}.staging", id));
+    let _ = fs::remove_dir_all(&staging);
+    copy_dir_recursive(&src, &staging)?;
+
     if dest_dir.exists() {
         let _ = fs::remove_dir_all(&dest_dir);
     }
-    copy_dir_recursive(&src, &dest_dir)?;
+    if let Err(move_error) = fs::rename(&staging, &dest_dir) {
+        // 目标被占用 / 跨卷时 rename 可能失败：回退成再复制一次
+        if let Err(copy_error) = copy_dir_recursive(&staging, &dest_dir) {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(format!(
+                "安装技能失败（移动: {}；复制: {}）",
+                move_error, copy_error
+            ));
+        }
+        let _ = fs::remove_dir_all(&staging);
+    }
 
     let mut skills = load_skills();
     skills.skills.retain(|s| s.id != id);
@@ -811,23 +927,26 @@ pub async fn install_skill_from_source(source: String) -> Result<(), String> {
         return Err("来源不能为空".to_string());
     }
 
+    // 支持 `owner/repo#子目录`：仓库里有多个技能时用它指定装哪个
+    let (base, subdir) = split_source_subdir(src_trimmed);
+
     // 本地路径
-    let local_path = PathBuf::from(src_trimmed);
+    let local_path = PathBuf::from(&base);
     if local_path.exists() && local_path.is_dir() {
-        return install_skill(local_path.to_string_lossy().to_string());
+        let root = find_skill_root(&local_path, subdir.as_deref())?;
+        return install_skill(root.to_string_lossy().to_string());
     }
 
     // Git URL 或 owner/repo
-    let repo_url = if src_trimmed.starts_with("http://") || src_trimmed.starts_with("https://") {
-        src_trimmed.to_string()
-    } else if src_trimmed.contains('/') && !src_trimmed.contains('\\') {
-        format!("https://github.com/{}", src_trimmed)
+    let repo_url = if base.starts_with("http://") || base.starts_with("https://") {
+        base.clone()
+    } else if base.contains('/') && !base.contains('\\') {
+        format!("https://github.com/{}", base)
     } else {
         return Err("无效的来源格式".to_string());
     };
 
-    let temp_dir = get_data_dir().join("_temp_skill_clone");
-    let _ = fs::remove_dir_all(&temp_dir);
+    let temp_dir = temp_clone_dir();
 
     let mut cmd = tokio::process::Command::new("git");
     #[cfg(windows)]
@@ -846,7 +965,15 @@ pub async fn install_skill_from_source(source: String) -> Result<(), String> {
         return Err(format!("git clone 失败: {}", String::from_utf8_lossy(&output.stderr)));
     }
 
-    let result = install_skill(temp_dir.to_string_lossy().to_string());
+    // 定位技能根：不再把整个 clone 目录当技能，否则技能 id 会退化成临时目录名
+    let root = match find_skill_root(&temp_dir, subdir.as_deref()) {
+        Ok(root) => root,
+        Err(e) => {
+            let _ = fs::remove_dir_all(&temp_dir);
+            return Err(e);
+        }
+    };
+    let result = install_skill(root.to_string_lossy().to_string());
     let _ = fs::remove_dir_all(&temp_dir);
     result
 }
@@ -863,11 +990,15 @@ pub async fn install_skill_from_online(
     }
     emit_install_progress(&app, "准备", 0, 0, "", "准备安装技能...");
 
+    // 支持 `owner/repo#子目录`：仓库里有多个技能时用它指定装哪个
+    let (base, subdir) = split_source_subdir(src_trimmed);
+
     // 本地路径
-    let local_path = PathBuf::from(src_trimmed);
+    let local_path = PathBuf::from(&base);
     if local_path.exists() && local_path.is_dir() {
         emit_install_progress(&app, "安装", 1, 1, "", "正在安装到仓库...");
-        let result = install_skill(local_path.to_string_lossy().to_string());
+        let root = find_skill_root(&local_path, subdir.as_deref())?;
+        let result = install_skill(root.to_string_lossy().to_string());
         if result.is_ok() {
             emit_install_progress(&app, "完成", 1, 1, "", "安装完成！已管理工具自动获得新技能");
         }
@@ -875,17 +1006,16 @@ pub async fn install_skill_from_online(
     }
 
     // Git URL 或 owner/repo
-    let repo_url = if src_trimmed.starts_with("http://") || src_trimmed.starts_with("https://") {
-        src_trimmed.to_string()
-    } else if src_trimmed.contains('/') && !src_trimmed.contains('\\') {
-        format!("https://github.com/{}", src_trimmed)
+    let repo_url = if base.starts_with("http://") || base.starts_with("https://") {
+        base.clone()
+    } else if base.contains('/') && !base.contains('\\') {
+        format!("https://github.com/{}", base)
     } else {
         return Err("无效的来源格式（需要 Git URL 或 owner/repo）".to_string());
     };
 
     // Git clone
-    let temp_dir = get_data_dir().join("_temp_skill_clone");
-    let _ = fs::remove_dir_all(&temp_dir);
+    let temp_dir = temp_clone_dir();
     emit_install_progress(&app, "克隆", 0, 0, "", "正在克隆技能源仓库...");
 
     let mut cmd = tokio::process::Command::new("git");
@@ -905,9 +1035,16 @@ pub async fn install_skill_from_online(
         return Err(format!("git clone 失败: {}", String::from_utf8_lossy(&output.stderr)));
     }
 
-    // 安装到仓库
+    // 安装到仓库：先定位技能根，避免把整个仓库当技能（技能 id 会退化成临时目录名）
     emit_install_progress(&app, "安装", 1, 1, "", "正在安装到仓库...");
-    let result = install_skill(temp_dir.to_string_lossy().to_string());
+    let root = match find_skill_root(&temp_dir, subdir.as_deref()) {
+        Ok(root) => root,
+        Err(e) => {
+            let _ = fs::remove_dir_all(&temp_dir);
+            return Err(e);
+        }
+    };
+    let result = install_skill(root.to_string_lossy().to_string());
     let _ = fs::remove_dir_all(&temp_dir);
 
     if result.is_ok() {
@@ -1062,4 +1199,95 @@ fn copy_dir_recursive(src: &PathBuf, dest: &PathBuf) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{find_skill_root, split_source_subdir};
+    use std::path::{Path, PathBuf};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("anyver-skills-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_skill(dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            "---\nname: demo\ndescription: d\n---\n",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn split_source_subdir_parses_optional_subdir() {
+        assert_eq!(
+            split_source_subdir("owner/repo"),
+            ("owner/repo".to_string(), None)
+        );
+        assert_eq!(
+            split_source_subdir("owner/repo#skills/foo"),
+            ("owner/repo".to_string(), Some("skills/foo".to_string()))
+        );
+        // 只有一侧有内容时按普通来源处理，避免把来源拆坏
+        assert_eq!(split_source_subdir("#x"), ("#x".to_string(), None));
+        assert_eq!(
+            split_source_subdir("owner/repo#"),
+            ("owner/repo#".to_string(), None)
+        );
+    }
+
+    /// 仓库根就是技能：照旧直接用根目录。
+    #[test]
+    fn skill_root_prefers_repository_root() {
+        let dir = temp_dir("root");
+        write_skill(&dir);
+        assert_eq!(find_skill_root(&dir, None).unwrap(), dir);
+    }
+
+    /// 仓库根没有 SKILL.md 时要下钻找到真正的技能目录（此前会退化成临时目录名）。
+    #[test]
+    fn skill_root_finds_single_nested_skill() {
+        let dir = temp_dir("nested");
+        write_skill(&dir.join("skills").join("ppt-master"));
+        let root = find_skill_root(&dir, None).unwrap();
+        assert!(root.ends_with("skills/ppt-master"), "实际: {}", root.display());
+        // 技能目录名才是技能 id 的来源
+        assert_eq!(root.file_name().unwrap().to_string_lossy(), "ppt-master");
+    }
+
+    #[test]
+    fn skill_root_accepts_explicit_subdir_and_rejects_missing_one() {
+        let dir = temp_dir("explicit");
+        write_skill(&dir.join("skills").join("alpha"));
+        let root = find_skill_root(&dir, Some("skills/alpha")).unwrap();
+        assert!(root.ends_with("skills/alpha"));
+        assert!(find_skill_root(&dir, Some("skills/missing")).is_err());
+    }
+
+    /// 多技能仓库必须报错并让用户用 `#子目录` 指定，而不是随便装一个。
+    #[test]
+    fn skill_root_reports_ambiguous_repositories() {
+        let dir = temp_dir("ambiguous");
+        write_skill(&dir.join("skills").join("alpha"));
+        write_skill(&dir.join("skills").join("beta"));
+        let err = find_skill_root(&dir, None).unwrap_err();
+        assert!(
+            err.contains("alpha") && err.contains("beta"),
+            "错误信息应列出候选: {}",
+            err
+        );
+        assert!(find_skill_root(&dir, Some("skills/beta")).is_ok());
+    }
+
+    #[test]
+    fn skill_root_rejects_non_skill_repositories() {
+        let dir = temp_dir("plain");
+        std::fs::write(dir.join("README.md"), "no skill").unwrap();
+        assert!(find_skill_root(&dir, None).is_err());
+    }
 }
