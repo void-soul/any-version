@@ -26,6 +26,7 @@ import {
   Cable,
   UserRoundCog,
   Music,
+  Star,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import i18n from "./i18n";
@@ -284,6 +285,15 @@ export const MODULES: ModuleDef[] = [
     color: "#8b5cf6",
     defaultToolbar: false,
     Component: lazyLoad(() => import("./components/music/MusicPanel")),
+  },
+  // —— 收藏 / 星标聚合（只读导入 + AI 归类）——
+  {
+    id: "favorites",
+    label: "收藏",
+    icon: Star,
+    color: "#f59e0b",
+    defaultToolbar: false,
+    Component: lazyLoad(() => import("./components/favorites/FavoritesPanel")),
   },
 ];
 
