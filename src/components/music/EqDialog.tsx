@@ -2,11 +2,13 @@
 //
 // 改动遵循「即时预览 + 自动保存」：拖动推子立刻通过 music_preview_eq 作用于播放线程，
 // 停止改动 500ms 后由父组件落盘（本组件只负责把新参数交给父组件）。
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { RotateCcw } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { RotateCcw, Upload } from "lucide-react";
 
 import { SharedButton } from "../shared/Button";
-import type { EqParams, EqPresetInfo } from "./types";
+import type { BuiltinCurve, EqCurveImport, EqParams, EqPresetInfo } from "./types";
 
 /** 与后端 `dsp::BAND_FREQS` 保持一致 */
 export const BAND_FREQS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
@@ -30,6 +32,45 @@ export function matchPresetId(bands: number[], presets: EqPresetInfo[]): string 
 
 export function EqDialog({ eq, presets, onChange }: Props) {
   const { t } = useTranslation();
+
+  // 曲线导入（AutoEq / Equalizer APO / Wavelet 的 GraphicEQ 文本 → 折叠成 10 段）
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importStatus, setImportStatus] = useState("");
+  // 内置曲线：不想自己找曲线的用户直接选一条（原文会填进输入框，可照着改）
+  const [builtins, setBuiltins] = useState<BuiltinCurve[]>([]);
+
+  useEffect(() => {
+    invoke<BuiltinCurve[]>("music_list_builtin_curves")
+      .then(setBuiltins)
+      .catch(() => setBuiltins([]));
+  }, []);
+
+  const applyImport = async (text: string) => {
+    if (!text.trim()) return;
+    setImporting(true);
+    setImportStatus("");
+    try {
+      const result = await invoke<EqCurveImport>("music_parse_eq_curve", {
+        text,
+      });
+      const bands = BAND_FREQS.map((_, i) => result.bands[i] ?? 0);
+      // 套用后按「是否命中内置预设」决定 preset：对不上就是 custom（与手拖推子同一口径）
+      onChange({ ...eq, bands, preset: matchPresetId(bands, presets) });
+      setImportStatus(
+        t("music.eqImportDone", {
+          points: result.points,
+          min: Math.round(result.min_freq),
+          max: Math.round(result.max_freq),
+        }),
+      );
+    } catch (e) {
+      setImportStatus(t("music.eqImportFailed", { err: String(e) }));
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const setBand = (index: number, value: number) => {
     const bands = [...eq.bands];
@@ -105,6 +146,67 @@ export function EqDialog({ eq, presets, onChange }: Props) {
             </span>
           </div>
         ))}
+      </div>
+
+      {/* 曲线导入：AutoEq / Equalizer APO / Wavelet 的 GraphicEQ 文本要折叠成 10 段 */}
+      <div className={`space-y-2 pt-2 border-t border-white/5 ${eq.enabled ? "" : "opacity-40 pointer-events-none"}`}>
+        <div className="flex items-center gap-2">
+          <SharedButton
+            variant="secondary"
+            className="!h-7 !px-2"
+            onClick={() => setImportOpen((open) => !open)}
+          >
+            <Upload className="w-3 h-3" />
+            {t("music.eqImport")}
+          </SharedButton>
+          <span className="text-[10px] text-slate-500">{t("music.eqImportHint")}</span>
+        </div>
+        {importOpen && (
+          <div className="space-y-2">
+            <textarea
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              placeholder={t("music.eqImportPlaceholder")}
+              spellCheck={false}
+              className="w-full h-20 glass-input p-2 text-[10px] font-mono resize-y"
+            />
+            <div className="flex items-center gap-2 flex-wrap">
+              <SharedButton
+                className="!h-7 !px-2"
+                onClick={() => void applyImport(importText)}
+                disabled={importing || !importText.trim()}
+              >
+                {importing ? t("music.eqImporting") : t("music.eqImportApply")}
+              </SharedButton>
+              {/* 内置曲线：选中后填进输入框并立即套用（原文可见，方便照着微调） */}
+              <select
+                value=""
+                onChange={(e) => {
+                  const picked = builtins.find((c) => c.id === e.target.value);
+                  if (!picked) return;
+                  setImportText(picked.text);
+                  void applyImport(picked.text);
+                }}
+                disabled={importing || builtins.length === 0}
+                className="glass-input px-2 h-7 text-[11px] cursor-pointer max-w-[180px]"
+                title={t("music.eqBuiltinHint")}
+              >
+                <option value="">{t("music.eqBuiltinPick")}</option>
+                {builtins.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {t(`music.eqBuiltin.${c.id}`)}
+                  </option>
+                ))}
+              </select>
+              {importStatus && <span className="text-[10px] text-slate-400">{importStatus}</span>}
+            </div>
+            {builtins.length > 0 && (
+              <p className="text-[10px] text-slate-500 leading-snug">
+                {t("music.eqBuiltinHint")}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 总增益 / 声道平衡 */}

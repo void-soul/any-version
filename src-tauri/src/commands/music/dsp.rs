@@ -92,7 +92,7 @@ pub struct EqPreset {
     pub bands: [f32; BAND_COUNT],
 }
 
-pub const PRESETS: [EqPreset; 7] = [
+pub const PRESETS: [EqPreset; 13] = [
     EqPreset {
         id: "flat",
         bands: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -121,7 +121,164 @@ pub const PRESETS: [EqPreset; 7] = [
         id: "vocal",
         bands: [-2.0, -2.0, -1.0, 1.5, 4.0, 5.0, 4.0, 2.0, 0.0, -1.0],
     },
+    EqPreset {
+        id: "dance",
+        bands: [4.0, 5.0, 3.5, 0.5, 0.0, -0.5, -1.0, -1.0, 2.0, 4.0],
+    },
+    EqPreset {
+        id: "loudness",
+        bands: [6.0, 4.0, 1.0, -1.0, -2.0, -1.0, 0.5, 2.5, 4.5, 5.5],
+    },
+    EqPreset {
+        id: "treble",
+        bands: [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 3.0, 5.0, 7.0, 8.0],
+    },
+    EqPreset {
+        id: "live",
+        bands: [-2.0, 0.0, 2.0, 3.0, 3.0, 2.5, 1.5, 0.5, -1.0, -2.0],
+    },
+    EqPreset {
+        id: "headphones",
+        bands: [4.0, 3.0, 1.5, 0.0, -1.5, -0.5, 1.0, 2.5, 3.5, 4.0],
+    },
+    EqPreset {
+        id: "acoustic",
+        bands: [3.0, 2.0, 1.0, 0.5, 1.5, 2.5, 3.0, 2.5, 1.5, 0.5],
+    },
 ];
+
+// ─── 内置曲线（GraphicEQ 文本） ───
+
+/// 一条内置曲线：id 供前端做文案键，text 是标准 GraphicEQ 文本。
+///
+/// **故意存成文本而不是直接存 10 段增益**：这样内置曲线和「用户粘贴的曲线」走完全
+/// 相同的解析 / 折叠路径（[`parse_graphic_eq`] + [`fold_curve_to_bands`]），
+/// 不会出现两套口径。用户选中后前端会把文本填进输入框，可以照着改。
+#[derive(Debug, Clone, Copy)]
+pub struct BuiltinCurve {
+    /// 稳定 id（前端用 `music.eqBuiltin.<id>` 取名，**不要随意改**）
+    pub id: &'static str,
+    pub text: &'static str,
+}
+
+/// 内置曲线表。
+///
+/// ⚠️ 口径说明（UI 上也要提示用户）：这些是**目标响应形状**的近似，不是某一款耳机
+/// 的实测修正量。真正的校准曲线 = 目标 − 该型号实测频响（AutoEq 给出的
+/// `GraphicEQ` 已经是这个差值），手里有具体型号的曲线时应当导入那条。
+pub const BUILTIN_CURVES: [BuiltinCurve; 6] = [
+    BuiltinCurve {
+        id: "harman-oe",
+        text: "GraphicEQ: 20 5.5; 25 5.5; 31 5.3; 40 4.8; 50 4.3; 63 3.6; 80 2.8; 100 2.0; 125 1.2; 160 0.5; 200 0.0; 250 -0.4; 315 -0.7; 400 -0.8; 500 -0.6; 630 -0.3; 800 0.0; 1000 0.0; 1250 0.3; 1600 0.8; 2000 1.3; 2500 1.6; 3150 1.7; 4000 1.6; 5000 1.4; 6300 1.1; 8000 0.8; 10000 0.4; 12500 -0.2; 16000 -1.8; 20000 -4.5",
+    },
+    BuiltinCurve {
+        id: "harman-ie",
+        text: "GraphicEQ: 20 9.0; 25 9.0; 31 8.8; 40 8.2; 50 7.4; 63 6.3; 80 5.0; 100 3.8; 125 2.6; 160 1.5; 200 0.6; 250 -0.2; 315 -0.7; 400 -1.0; 500 -0.9; 630 -0.5; 800 -0.1; 1000 0.0; 1250 0.4; 1600 1.0; 2000 1.6; 2500 2.0; 3150 2.2; 4000 2.0; 5000 1.6; 6300 1.0; 8000 0.4; 10000 -0.2; 12500 -1.2; 16000 -3.0; 20000 -6.0",
+    },
+    BuiltinCurve {
+        id: "diffuse-field",
+        text: "GraphicEQ: 20 3.5; 31 2.5; 50 1.5; 80 0.6; 125 0.0; 200 -0.6; 315 -1.2; 500 -1.8; 800 -1.2; 1000 -0.6; 1250 0.4; 1600 1.5; 2000 2.6; 2500 3.4; 3150 3.8; 4000 3.6; 5000 2.8; 6300 1.8; 8000 1.2; 10000 1.6; 12500 2.4; 16000 2.0; 20000 -1.0",
+    },
+    BuiltinCurve {
+        id: "basshead",
+        text: "GraphicEQ: 20 10.0; 31 9.5; 50 8.0; 80 6.0; 125 4.0; 200 2.0; 315 0.5; 500 -0.5; 1000 -1.0; 2000 -1.0; 4000 0.0; 8000 1.0; 16000 2.0",
+    },
+    BuiltinCurve {
+        id: "vocal-clear",
+        text: "GraphicEQ: 20 -6.0; 31 -5.0; 62 -3.0; 125 -1.0; 250 0.0; 500 1.5; 1000 2.5; 2000 3.0; 4000 2.5; 8000 1.0; 16000 -1.0",
+    },
+    BuiltinCurve {
+        id: "treble-smooth",
+        text: "GraphicEQ: 20 1.0; 62 0.5; 250 0.0; 1000 0.0; 2000 -0.5; 3150 -1.5; 4000 -3.0; 5000 -4.0; 6300 -4.0; 8000 -3.0; 10000 -2.0; 12500 -1.5; 16000 -1.0",
+    },
+];
+
+// ─── 曲线导入（GraphicEQ / AutoEq / Equalizer APO 文本 → 10 段） ───
+
+/// 解析 GraphicEQ 风格的曲线文本，返回 `(频率 Hz, 增益 dB)` 列表。
+///
+/// 支持这些形态（换行或分号分隔都行，可混排）：
+/// - `GraphicEQ: 20 -2.3; 21 -2.1; …`（Equalizer APO / Wavelet / AutoEq 的 GraphicEQ.txt）
+/// - 整段或每行只有 `20 -2.3; 21 -2.1`
+/// - 每行一对 `20 -2.3`
+///
+/// 认不出的行走掉：`#` / `//` 注释、`Preamp: -6.2 dB`，以及 AutoEq 的
+/// `Filter 1: ON PK Fc 105 Hz Gain -3.5 dB Q 0.70`。后者是**参数式**滤波器描述，
+/// 不是频点曲线 —— 硬解析会得到一堆错误频点，所以带冒号但又不是 GraphicEQ 的行一律跳过。
+pub fn parse_graphic_eq(text: &str) -> Option<Vec<(f32, f32)>> {
+    let mut points: Vec<(f32, f32)> = Vec::new();
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
+            continue;
+        }
+        let body = match line.split_once(':') {
+            Some((head, rest)) if head.trim().eq_ignore_ascii_case("graphiceq") => rest,
+            Some(_) => continue,
+            None => line,
+        };
+        for chunk in body.split(';') {
+            let mut numbers = chunk
+                .split(|c: char| c.is_whitespace() || c == ',')
+                .filter(|token| !token.is_empty())
+                .filter_map(|token| token.parse::<f32>().ok());
+            let (Some(freq), Some(gain)) = (numbers.next(), numbers.next()) else {
+                continue;
+            };
+            if freq.is_finite() && freq > 0.0 && gain.is_finite() {
+                points.push((freq, gain));
+            }
+        }
+    }
+    if points.is_empty() {
+        None
+    } else {
+        Some(points)
+    }
+}
+
+/// 把任意频点的曲线折叠到我们的 10 段上：在**对数频率轴**上线性插值。
+///
+/// 为什么插值而不是就近取值：AutoEq / Equalizer APO 的曲线点通常是 100+ 个
+/// （按对数等分），就近取值会在低频段出现明显台阶；对数轴插值才是这类曲线的本意。
+/// 曲线没覆盖到的频段取最靠近的端点值（外推只会更离谱），最后按单段上限夹一次。
+pub fn fold_curve_to_bands(points: &[(f32, f32)]) -> Option<[f32; BAND_COUNT]> {
+    let mut sorted: Vec<(f32, f32)> = points
+        .iter()
+        .copied()
+        .filter(|(freq, gain)| freq.is_finite() && *freq > 0.0 && gain.is_finite())
+        .collect();
+    if sorted.is_empty() {
+        return None;
+    }
+    sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    // 合并重复频率，避免插值区间为零
+    sorted.dedup_by(|a, b| (a.0 - b.0).abs() < f32::EPSILON);
+
+    let first = sorted[0];
+    let last = sorted[sorted.len() - 1];
+    let mut bands = [0.0f32; BAND_COUNT];
+    for (index, freq) in BAND_FREQS.iter().enumerate() {
+        let gain = if *freq <= first.0 {
+            first.1
+        } else if *freq >= last.0 {
+            last.1
+        } else {
+            let upper = sorted.partition_point(|(f, _)| *f < *freq);
+            let (f0, g0) = sorted[upper - 1];
+            let (f1, g1) = sorted[upper];
+            let span = f1.ln() - f0.ln();
+            let ratio = if span.abs() < f32::EPSILON {
+                0.0
+            } else {
+                (freq.ln() - f0.ln()) / span
+            };
+            g0 + (g1 - g0) * ratio
+        };
+        bands[index] = gain.clamp(-MAX_BAND_DB, MAX_BAND_DB);
+    }
+    Some(bands)
+}
 
 /// RBJ cookbook peaking EQ 双二阶（Direct Form 1）
 #[derive(Clone, Copy, Debug)]
@@ -523,5 +680,114 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(custom.preset_id_matching(), None);
+    }
+
+    /// 三种常见写法都要能解析；参数式行与注释不能被误当成频点。
+    #[test]
+    fn test_parse_graphic_eq_accepts_common_formats() {
+        let apo = "GraphicEQ: 20 -2.0; 100 3.0; 1000 -1.5";
+        let points = parse_graphic_eq(apo).expect("应解析成功");
+        assert_eq!(points.len(), 3);
+        assert_eq!(points[0], (20.0, -2.0));
+
+        // 多行、每行一对
+        assert_eq!(parse_graphic_eq("20 -2.0\n100 3.0\n1000 -1.5").unwrap().len(), 3);
+
+        // 注释与 Preamp 行忽略，但不影响其余数据
+        let noisy = "# comment\nPreamp: -6.2 dB\nGraphicEQ: 20 -2.0; 100 3.0";
+        assert_eq!(parse_graphic_eq(noisy).unwrap().len(), 2);
+
+        // 参数式（ParametricEQ）不是频点曲线：不能解析出错误频点
+        let parametric = "Filter 1: ON PK Fc 105 Hz Gain -3.5 dB Q 0.70\n\
+                          Filter 2: ON HSC Fc 10000 Hz Gain 2.0 dB Q 0.70";
+        assert_eq!(parse_graphic_eq(parametric), None);
+
+        assert_eq!(parse_graphic_eq("   \n# nothing"), None);
+    }
+
+    /// 折叠：落在频段上原样保留，段间按对数轴插值，范围外取端点。
+    #[test]
+    fn test_fold_curve_interpolates_on_log_axis() {
+        let exact: Vec<(f32, f32)> = BAND_FREQS.iter().map(|f| (*f, 3.0)).collect();
+        let bands = fold_curve_to_bands(&exact).unwrap();
+        assert!(bands.iter().all(|g| (*g - 3.0).abs() < 1e-4), "got {:?}", bands);
+
+        // 100Hz(-6dB) 与 400Hz(+6dB)：250Hz 段应严格落在两端之间（对数插值）
+        let bands = fold_curve_to_bands(&[(100.0, -6.0), (400.0, 6.0)]).unwrap();
+        let idx = BAND_FREQS.iter().position(|f| *f == 250.0).unwrap();
+        assert!(
+            bands[idx] > -6.0 && bands[idx] < 6.0,
+            "插值应落在两端之间: {}",
+            bands[idx]
+        );
+        // 100Hz 以下取端点
+        assert!((bands[0] + 6.0).abs() < 1e-4);
+        // 400Hz 以上取另一端点
+        assert!((bands[BAND_COUNT - 1] - 6.0).abs() < 1e-4);
+    }
+
+    /// 超限曲线要夹到单段上限（否则导入即爆音）；空/非法数据返回 None。
+    #[test]
+    fn test_fold_curve_clamps_and_rejects_invalid() {
+        let bands = fold_curve_to_bands(&[(31.0, 30.0), (16000.0, -30.0)]).unwrap();
+        assert!((bands[0] - MAX_BAND_DB).abs() < 1e-4);
+        assert!((bands[BAND_COUNT - 1] + MAX_BAND_DB).abs() < 1e-4);
+
+        assert!(fold_curve_to_bands(&[]).is_none());
+        assert!(fold_curve_to_bands(&[(f32::NAN, 1.0), (-5.0, 2.0)]).is_none());
+    }
+
+    /// 导入的曲线套进 EqParams 后仍是合法参数（必须走 sanitized）。
+    #[test]
+    fn test_imported_curve_produces_valid_params() {
+        let points = parse_graphic_eq("GraphicEQ: 20 -30; 1000 30; 20000 0").unwrap();
+        let bands = fold_curve_to_bands(&points).unwrap();
+        let params = EqParams {
+            bands,
+            preset: "custom".to_string(),
+            ..EqParams::default()
+        }
+        .sanitized();
+        assert!(params.bands.iter().all(|g| g.abs() <= MAX_BAND_DB));
+    }
+
+    /// 每条内置曲线都必须真的能被解析并折叠成合法参数：
+    /// 内置曲线存的是文本，写错一处就会在用户点下去时才炸，所以在这里兜住。
+    #[test]
+    fn test_builtin_curves_parse_into_valid_bands() {
+        use std::collections::HashSet;
+        let mut ids: HashSet<&str> = HashSet::new();
+        assert!(!BUILTIN_CURVES.is_empty());
+        for curve in BUILTIN_CURVES.iter() {
+            assert!(ids.insert(curve.id), "内置曲线 id 重复: {}", curve.id);
+            let points = parse_graphic_eq(curve.text)
+                .unwrap_or_else(|| panic!("内置曲线解析失败: {}", curve.id));
+            assert!(points.len() >= 8, "频点太少，折叠会失真: {}", curve.id);
+            // 低频与高频两端都要覆盖，否则折叠时全靠端点外推
+            assert!(
+                points.iter().any(|(f, _)| *f <= 60.0),
+                "缺少低频点: {}",
+                curve.id
+            );
+            assert!(
+                points.iter().any(|(f, _)| *f >= 8000.0),
+                "缺少高频点: {}",
+                curve.id
+            );
+            let bands = fold_curve_to_bands(&points).expect("折叠失败");
+            assert!(
+                bands.iter().all(|g| g.is_finite() && g.abs() <= MAX_BAND_DB),
+                "折叠结果超出单段上限: {} -> {:?}",
+                curve.id,
+                bands
+            );
+            // 至少有一段明显起作用，避免误配一条「全 0」的曲线
+            assert!(
+                bands.iter().any(|g| g.abs() >= 1.0),
+                "曲线几乎是平的，检查一下数据: {} -> {:?}",
+                curve.id,
+                bands
+            );
+        }
     }
 }
