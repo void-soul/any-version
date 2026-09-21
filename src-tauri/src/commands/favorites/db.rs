@@ -100,6 +100,16 @@ pub struct NewFavorite {
     pub extra_json: Option<String>,
 }
 
+/// 送进 AI 归类的最小信息（只带判断分类需要的字段）。
+#[derive(Debug, Clone)]
+pub struct ClassifyItem {
+    pub id: i64,
+    pub title: String,
+    pub description: String,
+    pub language: String,
+    pub topics: Vec<String>,
+}
+
 /// upsert 的结果：新增 / 有变化已更新 / 完全没变（跨次导入去重的正常结局）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpsertOutcome {
