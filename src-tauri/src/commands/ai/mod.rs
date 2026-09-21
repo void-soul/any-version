@@ -16,6 +16,7 @@ pub mod provider;
 pub mod launch;
 pub mod terminal;
 pub mod sessions;
+pub mod jsonl_scan;
 pub mod cache;
 pub mod tools;
 pub mod tool_paths;

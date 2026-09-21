@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use super::jsonl_scan::{self, ScanCache};
 use super::models::{ToolSession, AiSessionsFile};
 use crate::commands::ai_registry::registry;
 use super::config::{load_sessions, save_sessions_to_file};
@@ -41,62 +42,67 @@ pub fn scan_tool_sessions(tool_id: String) -> Result<Vec<ToolSession>, String> {
         None => return Ok(sessions),
     };
 
-    for dir_pattern in &session_def.dirs {
-        // 解析路径中的 ~ 和 XDG_CONFIG_HOME
-        let dir = if dir_pattern.starts_with("~/.config/") {
-            let relative = dir_pattern.strip_prefix("~/.config/").unwrap_or("");
-            config_home.join(relative)
-        } else if dir_pattern.starts_with("~/") {
-            home.join(&dir_pattern[2..])
-        } else {
-            PathBuf::from(dir_pattern)
-        };
+    // JSONL 会话扫描走进程内缓存：文件指纹没变就不再整份重读（参考 cc-switch 的
+    // 「detect growing rollouts with a persisted byte cursor」）。
+    jsonl_scan::with_cache(|cache| {
+        cache.prune_missing();
+        for dir_pattern in &session_def.dirs {
+            // 解析路径中的 ~ 和 XDG_CONFIG_HOME
+            let dir = if dir_pattern.starts_with("~/.config/") {
+                let relative = dir_pattern.strip_prefix("~/.config/").unwrap_or("");
+                config_home.join(relative)
+            } else if dir_pattern.starts_with("~/") {
+                home.join(&dir_pattern[2..])
+            } else {
+                PathBuf::from(dir_pattern)
+            };
 
-        if !dir.exists() {
-            continue;
-        }
-
-        match session_def.scan_type.as_str() {
-            "claude_projects" => {
-                let projects_dir = if dir.ends_with("projects") {
-                    dir.clone()
-                } else {
-                    dir.join("projects")
-                };
-                if projects_dir.exists() {
-                    scan_claude_sessions_enhanced(&projects_dir, &mut sessions);
-                }
+            if !dir.exists() {
+                continue;
             }
-            "jsonl" => {
-                if dir.is_file() {
-                    scan_codex_sessions(&dir, &mut sessions);
-                } else {
-                    // 也可能是目录，找 sessions.jsonl
-                    let f = dir.join("sessions.jsonl");
-                    if f.exists() {
-                        scan_codex_sessions(&f, &mut sessions);
+
+            match session_def.scan_type.as_str() {
+                "claude_projects" => {
+                    let projects_dir = if dir.ends_with("projects") {
+                        dir.clone()
+                    } else {
+                        dir.join("projects")
+                    };
+                    if projects_dir.exists() {
+                        scan_claude_sessions_enhanced(&projects_dir, &mut sessions);
                     }
                 }
+                "jsonl" => {
+                    if dir.is_file() {
+                        scan_codex_sessions(&dir, &mut sessions, cache);
+                    } else {
+                        // 也可能是目录，找 sessions.jsonl
+                        let f = dir.join("sessions.jsonl");
+                        if f.exists() {
+                            scan_codex_sessions(&f, &mut sessions, cache);
+                        }
+                    }
+                }
+                "opencode_style" => {
+                    scan_opencode_sessions(&dir, &mut sessions);
+                }
+                "mimocode_style" => {
+                    scan_mimocode_sessions(&dir, &mut sessions);
+                }
+                "reasonix" => {
+                    // reasonix 会话：<REASONIX_HOME>/projects/<encoded-cwd>/sessions/*.jsonl（eventwire JSONL，
+                    // 每行一个事件，result 行携带 session_id）。遍历目录下的 *.jsonl 解析。
+                    let sessions_dir = if dir.ends_with("sessions") {
+                        dir.clone()
+                    } else {
+                        dir.join("sessions")
+                    };
+                    scan_reasonix_sessions(&sessions_dir, &mut sessions, cache);
+                }
+                _ => {}
             }
-            "opencode_style" => {
-                scan_opencode_sessions(&dir, &mut sessions);
-            }
-            "mimocode_style" => {
-                scan_mimocode_sessions(&dir, &mut sessions);
-            }
-            "reasonix" => {
-                // reasonix 会话：<REASONIX_HOME>/projects/<encoded-cwd>/sessions/*.jsonl（eventwire JSONL，
-                // 每行一个事件，result 行携带 session_id）。遍历目录下的 *.jsonl 解析。
-                let sessions_dir = if dir.ends_with("sessions") {
-                    dir.clone()
-                } else {
-                    dir.join("sessions")
-                };
-                scan_reasonix_sessions(&sessions_dir, &mut sessions);
-            }
-            _ => {}
         }
-    }
+    });
 
     sessions.sort_by(|a, b| b.last_used.cmp(&a.last_used));
 
@@ -109,69 +115,99 @@ pub fn scan_tool_sessions(tool_id: String) -> Result<Vec<ToolSession>, String> {
 /// 扫描 Reasonix sessions（eventwire JSONL，参考 open-tag reasonixRuntime）
 /// 每个会话文件是 `<project>/sessions/<session_id>.jsonl`，文件内每行一个事件，
 /// 终结的 result 行（{"type":"result","session_id":"..."}）携带会话 id。
-fn scan_reasonix_sessions(sessions_dir: &PathBuf, sessions: &mut Vec<ToolSession>) {
+fn scan_reasonix_sessions(sessions_dir: &PathBuf, sessions: &mut Vec<ToolSession>, cache: &mut ScanCache) {
     if !sessions_dir.exists() {
         return;
     }
-    if let Ok(entries) = std::fs::read_dir(sessions_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().map_or(false, |e| e != "jsonl") {
+    let Ok(entries) = std::fs::read_dir(sessions_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().map_or(false, |e| e != "jsonl") {
+            continue;
+        }
+        let sid = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => continue,
+        };
+        // 指纹没变说明文件没被追加过 → 直接复用上一轮解析结果，不重读
+        let stamp = jsonl_scan::stamp_of(&path);
+        if let Some(stamp) = &stamp {
+            if let Some(hit) = cache.get(&path, stamp) {
+                sessions.extend(hit);
                 continue;
             }
-            let sid = match path.file_stem().and_then(|s| s.to_str()) {
-                Some(s) if !s.is_empty() => s.to_string(),
-                _ => continue,
-            };
-            // 从文件内 result 行提取最后回复作为摘要（最多取前 200 字符）
-            let mut summary = None;
-            let last_used = path.metadata().and_then(|m| m.modified()).ok();
-            if let Ok(content) = fs::read_to_string(&path) {
-                for line in content.lines().rev() {
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-                        if val.get("type").and_then(|t| t.as_str()) == Some("result") && summary.is_none() {
-                            if let Some(r) = val.get("result").and_then(|r| r.as_str()) {
-                                summary = Some(r.chars().take(200).collect());
-                            }
+        }
+
+        // 从文件内 result 行提取最后回复作为摘要（最多取前 200 字符）。
+        // 会话文件是边写边追加的：末行可能是半截 JSON / 半截 UTF-8，
+        // 容错读取只丢掉那一行，不会让整个会话从列表里消失。
+        let mut summary = None;
+        let last_used = path.metadata().and_then(|m| m.modified()).ok();
+        if let Some(lines) = jsonl_scan::read_lines_tolerant(&path) {
+            for line in lines.iter().rev() {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+                    if val.get("type").and_then(|t| t.as_str()) == Some("result") && summary.is_none() {
+                        if let Some(r) = val.get("result").and_then(|r| r.as_str()) {
+                            summary = Some(r.chars().take(200).collect());
                         }
                     }
                 }
             }
-            let last_used_str = last_used
-                .and_then(|m| chrono::DateTime::<chrono::Local>::from(m).format("%Y-%m-%d %H:%M:%S").to_string().into())
-                .unwrap_or_default();
-            sessions.push(ToolSession {
-                session_id: sid,
-                project_path: path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
-                last_used: last_used_str,
-                summary,
-                resume_cmd: None,
-            });
         }
+        let last_used_str = last_used
+            .and_then(|m| chrono::DateTime::<chrono::Local>::from(m).format("%Y-%m-%d %H:%M:%S").to_string().into())
+            .unwrap_or_default();
+        let parsed = ToolSession {
+            session_id: sid,
+            project_path: path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+            last_used: last_used_str,
+            summary,
+            resume_cmd: None,
+        };
+        if let Some(stamp) = stamp {
+            cache.put(&path, stamp, vec![parsed.clone()]);
+        }
+        sessions.push(parsed);
     }
 }
 
-/// 扫描 Codex sessions（JSONL 格式，参考 cc-switch）
-fn scan_codex_sessions(file_path: &PathBuf, sessions: &mut Vec<ToolSession>) {
-    if let Ok(content) = fs::read_to_string(file_path) {
-        for line in content.lines() {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-                let session_id = val["session_id"].as_str().unwrap_or("").to_string();
-                let project_path = val["project_path"].as_str().unwrap_or("").to_string();
-                let last_used = val["last_used"].as_str().unwrap_or("").to_string();
-                let summary = val["summary"].as_str().map(|s| s.to_string());
-                if !session_id.is_empty() {
-                    sessions.push(ToolSession {
-                        session_id,
-                        project_path,
-                        last_used,
-                        summary,
-                        resume_cmd: None,
-                    });
-                }
+/// 扫描 Codex sessions（JSONL 格式，参考 cc-switch）。
+///
+/// 该文件会随会话进行被追加写：末行可能是半截 JSON，用容错读取跳过它，
+/// 而不是因为一行没写完就丢掉整份会话索引。
+fn scan_codex_sessions(file_path: &PathBuf, sessions: &mut Vec<ToolSession>, cache: &mut ScanCache) {
+    let Some(stamp) = jsonl_scan::stamp_of(file_path) else {
+        return;
+    };
+    if let Some(hit) = cache.get(file_path, &stamp) {
+        sessions.extend(hit);
+        return;
+    }
+    let Some(lines) = jsonl_scan::read_lines_tolerant(file_path) else {
+        return;
+    };
+    let mut parsed = Vec::new();
+    for line in &lines {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+            let session_id = val["session_id"].as_str().unwrap_or("").to_string();
+            let project_path = val["project_path"].as_str().unwrap_or("").to_string();
+            let last_used = val["last_used"].as_str().unwrap_or("").to_string();
+            let summary = val["summary"].as_str().map(|s| s.to_string());
+            if !session_id.is_empty() {
+                parsed.push(ToolSession {
+                    session_id,
+                    project_path,
+                    last_used,
+                    summary,
+                    resume_cmd: None,
+                });
             }
         }
     }
+    cache.put(file_path, stamp, parsed.clone());
+    sessions.extend(parsed);
 }
 
 /// 扫描 OpenCode sessions（文件系统遍历，参考 EchoBird）
@@ -671,5 +707,63 @@ fn fill_resume_cmds(sessions: &mut Vec<ToolSession>, tool_id: &str) {
         session.resume_cmd = Some(
             resume_template.replace("{session_id}", &session.session_id)
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scan_codex_sessions;
+    use crate::commands::ai::jsonl_scan::ScanCache;
+    use std::path::PathBuf;
+
+    fn temp_jsonl(name: &str, content: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "anyver-sessions-{}-{}.jsonl",
+            name,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    fn line(id: &str, summary: &str) -> String {
+        format!(
+            "{{\"session_id\":\"{}\",\"project_path\":\"/p\",\"last_used\":\"2026-09-21 10:00:00\",\"summary\":\"{}\"}}\n",
+            id, summary
+        )
+    }
+
+    /// 会话进行中被追加写的半截末行必须跳过，且不影响其余会话（参考 cc-switch 的 rollout tail 修复）。
+    #[test]
+    fn codex_scan_skips_torn_tail_and_reuses_cache() {
+        let torn = format!("{}{}", line("s1", "第一条"), "{\"session_id\":\"s2\",\"proj");
+        let path = temp_jsonl("torn", &torn);
+
+        let mut cache = ScanCache::default();
+        let mut sessions = Vec::new();
+        scan_codex_sessions(&path, &mut sessions, &mut cache);
+        assert_eq!(sessions.len(), 1, "半截的最后一行不应参与解析");
+        assert_eq!(sessions[0].session_id, "s1");
+        assert_eq!(sessions[0].summary.as_deref(), Some("第一条"));
+
+        // 文件未变：命中缓存，结果一致
+        let mut second = Vec::new();
+        scan_codex_sessions(&path, &mut second, &mut cache);
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].session_id, "s1");
+
+        // 末行写完后：指纹变化 → 重新解析，能看到第二条
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::fs::write(
+            &path,
+            format!("{}{}", line("s1", "第一条"), line("s2", "第二条")),
+        )
+        .unwrap();
+        let mut third = Vec::new();
+        scan_codex_sessions(&path, &mut third, &mut cache);
+        assert_eq!(third.len(), 2, "文件变化后必须重新解析");
+        assert_eq!(third[1].session_id, "s2");
     }
 }
