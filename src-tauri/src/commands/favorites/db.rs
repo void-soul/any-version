@@ -184,6 +184,18 @@ pub fn upsert(conn: &Connection, item: &NewFavorite) -> Result<UpsertOutcome, St
     Ok(UpsertOutcome::Updated)
 }
 
+/// 记录一次导入的收尾状态（供 UI 展示"上次导入"与续跑判断）。
+pub fn mark_imported(conn: &Connection, source: &str, total: usize) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO favorite_import_state (source, cursor, last_run_at, total) \
+         VALUES (?1, NULL, ?2, ?3) \
+         ON CONFLICT(source) DO UPDATE SET last_run_at = ?2, total = ?3",
+        rusqlite::params![source, now_str(), total as i64],
+    )
+    .map_err(|e| format!("记录导入状态失败: {}", e))?;
+    Ok(())
+}
+
 /// 条目总数（测试与概览用）。
 pub fn count_all(conn: &Connection) -> Result<usize, String> {
     conn.query_row("SELECT COUNT(*) FROM favorite", [], |row| row.get(0))

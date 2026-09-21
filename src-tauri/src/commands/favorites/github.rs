@@ -79,9 +79,75 @@ pub fn repo_to_favorite(repo: &Value) -> Option<NewFavorite> {
     })
 }
 
+/// star 列表首页 URL（后续翻页全靠 `Link` 头，这里只拼第一页）。
+pub fn starred_url(login: &str) -> String {
+    format!(
+        "https://api.github.com/users/{}/starred?per_page=100&sort=created&direction=desc",
+        login
+    )
+}
+
+/// 把 HTTP 状态翻成可操作提示：401 与 403 的处理方式完全不同（换 token vs 等限流），
+/// 直接抛 "HTTP 403" 用户没法自助。
+pub fn map_status_error(status: u16, what: &str) -> String {
+    format!(
+        "{}失败 (HTTP {}){}",
+        what,
+        status,
+        crate::commands::utils::github_status_hint(status)
+    )
+}
+
+/// 取 token 归属用户的 login：不让用户手填用户名（填错就拉到别人的 star）。
+pub async fn fetch_user_login(token: &str) -> Result<String, String> {
+    let resp = request(token, "https://api.github.com/user").await?;
+    resp.get("login")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "GitHub 未返回 login，请检查 Token 是否有效".to_string())
+}
+
+/// 拉一页 star 列表，返回（响应体，下一页 URL）。
+pub async fn fetch_starred_page(token: &str, url: &str) -> Result<(Value, Option<String>), String> {
+    let (body, link) = request_with_link(token, url).await?;
+    Ok((body, next_page_url(link.as_deref())))
+}
+
+/// 带鉴权的 GET，失败时带上可操作提示。
+async fn request(token: &str, url: &str) -> Result<Value, String> {
+    request_with_link(token, url).await.map(|(body, _)| body)
+}
+
+async fn request_with_link(token: &str, url: &str) -> Result<(Value, Option<String>), String> {
+    let resp = crate::commands::utils::get_http_client()
+        .get(url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "Any-Version-Manager")
+        .send()
+        .await
+        .map_err(|e| format!("请求 GitHub 失败: {}", e))?;
+
+    let status = resp.status().as_u16();
+    let link = resp
+        .headers()
+        .get(reqwest::header::LINK)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    if !(200..300).contains(&status) {
+        return Err(map_status_error(status, "拉取 GitHub 数据"));
+    }
+    let body = resp
+        .json::<Value>()
+        .await
+        .map_err(|e| format!("解析 GitHub 响应失败: {}", e))?;
+    Ok((body, link))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{next_page_url, repo_to_favorite, SOURCE};
+    use super::{map_status_error, next_page_url, repo_to_favorite, starred_url, SOURCE};
     use serde_json::json;
 
     #[test]
@@ -149,5 +215,25 @@ mod tests {
     fn falls_back_to_full_name_url() {
         let fav = repo_to_favorite(&json!({ "id": 9, "full_name": "o/r" })).unwrap();
         assert_eq!(fav.url, "https://github.com/o/r");
+    }
+
+    #[test]
+    fn starred_url_requests_largest_page() {
+        assert_eq!(
+            starred_url("octocat"),
+            "https://api.github.com/users/octocat/starred?per_page=100&sort=created&direction=desc"
+        );
+    }
+
+    /// 401 必须明说「token 无效」，403 必须明说「限流」——否则用户没法自助。
+    #[test]
+    fn error_messages_are_actionable() {
+        let unauthorized = map_status_error(401, "拉取 GitHub 数据");
+        assert!(unauthorized.contains("401"));
+        assert!(unauthorized.contains("GITHUB_TOKEN"));
+
+        let limited = map_status_error(403, "拉取 GitHub 数据");
+        assert!(limited.contains("限流"));
+        assert!(limited.contains("Token"));
     }
 }

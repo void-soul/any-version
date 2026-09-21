@@ -605,6 +605,9 @@ pub fn run() {
             commands::music::music_list_presets,
             commands::music::music_parse_eq_curve,
             commands::music::music_list_builtin_curves,
+            // ---- 收藏 / 星标聚合（只读导入） ----
+            commands::favorites::fav_import_github,
+            commands::favorites::fav_cancel_import,
             commands::music::music_track_name_suggestion,
             commands::music::music_rename_track,
             commands::music::music_delete_tracks,
