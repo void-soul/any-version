@@ -6,3 +6,4 @@
 //! 硬规则：**只读取平台数据，不反向操作平台**（不做 unstar / 取消收藏 / 新建收藏夹）。
 
 pub mod db;
+pub mod github;
