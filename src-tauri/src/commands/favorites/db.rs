@@ -56,6 +56,14 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
             last_run_at TEXT,
             total       INTEGER NOT NULL DEFAULT 0
         );
+
+        -- 各平台 Cookie（B站 SESSDATA / 知乎 z_c0）。**只存不打印**，
+        -- 日志与错误信息里一律不出现它的内容。
+        CREATE TABLE IF NOT EXISTS favorite_credential (
+            source      TEXT PRIMARY KEY,
+            cookie      TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
         "#,
     )
     .map_err(|e| format!("初始化收藏库失败: {}", e))
@@ -98,6 +106,8 @@ pub struct NewFavorite {
     pub description: Option<String>,
     /// 各源自定的附加字段（语言 / topics / 分区…），存 JSON 字符串
     pub extra_json: Option<String>,
+    /// 导入时就能确定失效的（B站内容被 UP 主删除）直接落这个状态，省一次探测
+    pub initial_status: Option<String>,
 }
 
 /// 送进 AI 归类的最小信息（只带判断分类需要的字段）。
@@ -130,8 +140,8 @@ pub fn upsert(conn: &Connection, item: &NewFavorite) -> Result<UpsertOutcome, St
     let inserted = conn
         .execute(
             "INSERT OR IGNORE INTO favorite \
-             (source, external_id, url, title, subtitle, description, extra_json, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+             (source, external_id, url, title, subtitle, description, extra_json, status, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, COALESCE(?8, 'ok'), ?9, ?9)",
             rusqlite::params![
                 item.source,
                 item.external_id,
@@ -140,6 +150,7 @@ pub fn upsert(conn: &Connection, item: &NewFavorite) -> Result<UpsertOutcome, St
                 item.subtitle,
                 item.description,
                 item.extra_json,
+                item.initial_status,
                 now_str(),
             ],
         )
@@ -282,6 +293,35 @@ pub fn apply_tags(
         .map_err(|e| format!("记录归类模型失败: {}", e))?;
     }
     Ok(count)
+}
+
+/// 读取某平台的 Cookie（没配过返回 None）。
+pub fn get_credential(conn: &Connection, source: &str) -> Result<Option<String>, String> {
+    let mut statement = conn
+        .prepare("SELECT cookie FROM favorite_credential WHERE source = ?1")
+        .map_err(|e| format!("读取凭证失败: {}", e))?;
+    match statement.query_row([source], |row| row.get::<_, String>(0)) {
+        Ok(cookie) => Ok(Some(cookie)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("读取凭证失败: {}", e)),
+    }
+}
+
+/// 写入 / 清除某平台的 Cookie（传空串即清除）。
+pub fn set_credential(conn: &Connection, source: &str, cookie: &str) -> Result<(), String> {
+    let trimmed = cookie.trim();
+    if trimmed.is_empty() {
+        conn.execute("DELETE FROM favorite_credential WHERE source = ?1", [source])
+            .map_err(|e| format!("清除凭证失败: {}", e))?;
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT INTO favorite_credential (source, cookie, updated_at) VALUES (?1, ?2, ?3) \
+         ON CONFLICT(source) DO UPDATE SET cookie = ?2, updated_at = ?3",
+        rusqlite::params![source, trimmed, now_str()],
+    )
+    .map_err(|e| format!("保存凭证失败: {}", e))?;
+    Ok(())
 }
 
 /// 待探测条目：`(id, full_name, url)`。`all = false` 时跳过已探测过的。
@@ -555,6 +595,7 @@ mod tests {
             subtitle: Some(title.to_string()),
             description: Some("desc".to_string()),
             extra_json: Some("{}".to_string()),
+            initial_status: None,
         }
     }
 

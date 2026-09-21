@@ -76,6 +76,7 @@ pub fn repo_to_favorite(repo: &Value) -> Option<NewFavorite> {
             })
             .to_string(),
         ),
+        initial_status: None,
     })
 }
 
