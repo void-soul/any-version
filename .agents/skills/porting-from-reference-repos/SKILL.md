@@ -21,9 +21,7 @@ Systematically check reference repositories for recent updates, identify valuabl
 | **headroom** | `E:\pro\other-sdk\ai-tools\headroom` | **LLM token 压缩层**（context compression）：压缩 AI agent 读取的所有内容（工具输出、日志、RAG、文件、对话历史）后发给 LLM，可减 60-95% token；提供 library（Python/TS `compress()`）、proxy、MCP server、`headroom wrap`、跨 agent 记忆、可逆压缩(CCR)。技术栈 Python + Rust（非 Tauri） | **发送给 LLM 前的内容智能压缩**是重点参考对象，可移植到 any-version 的 AI 对话/工具输出/历史记录场景；Rust 核心逻辑可参考 |
 | **farming** | `E:\pro\other-sdk\ai-tools\farming` | **自托管多 agent 浏览器工作台**（Farming Code / Farming CRT）：在同一开发机上运行并监督多个 AI coding agent（Codex/Claude Code/Pi/OpenCode/Qoder/Qwen Code），浏览器或手机远程连接真实会话；支持结构化 Chat、Terminal、可恢复历史、项目文件浏览/审查、Agent 间共用项目浏览器、多 agent 仪表盘与使用量遥测。技术栈 Node.js + TS（前端 React/TSX + 后端 TS，非 Tauri） | **多 agent 会话监督/恢复历史/结构化 chat/远程监控/文件审查**机制是重点参考对象；桌面与移动端远程管理 agent 的架构与状态管理（TS 端）可参考，移植为 Tauri 时需自行实现 IPC |
 | **ai-toolbox** | `E:\pro\other-sdk\ai-tools\ai-toolbox` | **个人 AI 工具箱**：一站式管理 AI 编程助手配置（Tauri + 前端，v1.1.x）。定位与 any-version 高度重合 | **同架构 + 同定位**，配置写入/多工具适配/UI 模式可直接对照，优先级高 |
-| **free-router-proxy** | `E:\pro\other-sdk\ai-tools\free-router-proxy` | **本地 OpenAI 兼容网关**（Node，v1.1.0）：跨可插拔供应商**排序当前免费模型**，以虚拟模型 `free-best` 暴露；单个供应商限流/宕机/空返回时**自动故障转移**；缺 key 的供应商直接剔除 | **多供应商候选排序 + 故障转移**是 any-version 代理的参考重点（与 EchoBird 有序路由同源问题） |
 | **claude-code-cli** | `E:\pro\other-sdk\ai-tools\claude-code-cli` | Claude Code CLI **源码学习与分析**项目（目录结构还原：cli/commands/context/coordinator 等） | 需要理解 Claude Code 内部行为（配置项、env、工具链）时可作逆向参考 |
-| **page-agent** | `E:\pro\other-sdk\ai-tools\page-agent` | **浏览器内 AI agent**（阿里，TS monorepo + Chrome 扩展，v1.12.x）：在页面里用自然语言驱动浏览器操作 | 与 any-version 定位较远，暂列备查 |
 
 > **路径说明**：所有参考仓库现统一位于 `E:\pro\other-sdk\ai-tools\<repo>`（旧路径 `E:\pro\other-sdk\<repo>` 已失效）。
 
@@ -35,36 +33,39 @@ Systematically check reference repositories for recent updates, identify valuabl
 
 ### Phase 0: 查上次抄作业记录（必须先做）
 
-在读取参考仓库之前，**先调查 any-version 仓库中上次"抄作业"相关的 git 提交记录**：
+**第一步：读 `sync-point.txt`（同目录）** —— 里面记着每个参考仓在「上次抄作业」时的 HEAD hash 与日期，是 Phase 1 的精确起点，也记着上次抄了什么、哪些还没抄。
+
+**第二步：核对 any-version 侧的实际落地**（sync-point 可能滞后，以 git 为准）：
 
 ```bash
 cd e:\pro\my\any-version
-git log --oneline --all --grep="抄作业\|抄自\|移植自\|porting\|port\|sync\|EchoBird\|cc-switch\|CodexPlusPlus\|open-tag\|orca\|headroom\|farming\|ai-toolbox\|free-router-proxy" --no-pager | cat
+git log --oneline --all --grep="抄作业\|抄自\|移植自\|porting\|port\|sync\|EchoBird\|cc-switch\|CodexPlusPlus\|open-tag\|orca\|headroom\|farming\|ai-toolbox" --no-pager | cat
 git log --oneline -30 --no-pager | cat
 ```
 
 目的：
 - 确认上次抄了什么、改动了哪些文件
 - 避免重复抄已经抄过的功能
-- 了解上次抄作业后是否有回滚或修改
+- 了解上次抄作业后是否有回滚或修改（例如 `Page` 模块先做后删、自动化任务体系先做后删）
 
 ### Phase 1: Discover (抄什么)
 
-检查每个参考仓库的近期提交（从上次抄作业之后开始）：
+**以 `sync-point.txt` 里每个仓的 hash 为起点**逐仓 diff（比 `--since="2 weeks ago"` 精确：参考仓提交量差异极大，orca/CodexPlusPlus 两周可上千条）：
 
 ```bash
-# 对每个参考仓库
+# 对每个参考仓库（<pin> = sync-point.txt 里该仓的 hash）
 cd <repo-path>
-git log --oneline --since="2 weeks ago" --no-pager | cat
-git diff --stat HEAD~10..HEAD --no-pager | cat
+git log --oneline <pin>..HEAD --no-pager | cat
+git diff --stat <pin>..HEAD --no-pager | cat
 ```
 
-如果 Phase 0 发现了上次抄作业的 commit hash，则用该 hash 作为起点：
+提交量大的仓（orca、CodexPlusPlus、EchoBird）先按类型收敛，别硬读全量：
 
 ```bash
-cd <repo-path>
-git log --oneline <last-ported-commit>..HEAD --no-pager | cat
+git log --no-merges --grep="^feat" --pretty="%h %ad %s" --date=short <pin>..HEAD | cat   # 只看功能
 ```
+
+抄完当天**回写 `sync-point.txt`**：更新每个仓的 hash（`git -C <repo-path> rev-parse --short=8 HEAD`）、日期，追加本次「落地了什么 / 哪些没抄」，并把未落地项留在文件末尾作为下次的候选。
 
 重点扫描方向：
 - 新 UI 功能（React 组件、状态模式）
@@ -144,15 +145,7 @@ rg -i "<feature-keyword>" src/ src-tauri/src/ --no-pager | cat
 - <commit hash>: <message> — ✅有用 / ❌无用 / ⚠️待定
 - ...
 
-#### free-router-proxy
-- <commit hash>: <message> — ✅有用 / ❌无用 / ⚠️待定
-- ...
-
 #### claude-code-cli
-- <commit hash>: <message> — ✅有用 / ❌无用 / ⚠️待定
-- ...
-
-#### page-agent
 - <commit hash>: <message> — ✅有用 / ❌无用 / ⚠️待定
 - ...
 
@@ -231,12 +224,20 @@ cd .. && npx tsc --noEmit 2>&1 | cat
 ## Quick Reference
 
 ```bash
-# 完整发现周期（从 any-version 根目录运行）
-for repo in EchoBird cc-switch CodexPlusPlus open-tag orca headroom farming ai-toolbox free-router-proxy claude-code-cli page-agent; do
-  echo "=== $repo ==="
-  cd "E:\pro\other-sdk\ai-tools\$repo" && git log --oneline -20 | cat
-done
+# 完整发现周期（幂等：每个仓都从 sync-point.txt 的 hash 开始）
 cd e:\pro\my\any-version
+python - <<'PY'
+import re, subprocess
+root = r"E:\pro\other-sdk\ai-tools"
+for line in open(r".agents\skills\porting-from-reference-repos\sync-point.txt", encoding="utf-8"):
+    m = re.match(r"^([A-Za-z0-9_-]+)\s+([0-9a-f]{6,40})\s", line)
+    if not m:
+        continue
+    repo, pin = m.group(1), m.group(2)
+    print(f"=== {repo} ({pin}..HEAD) ===")
+    print(subprocess.run(["git", "-C", f"{root}\\{repo}", "log", "--oneline", "--no-merges",
+                          f"{pin}..HEAD"], capture_output=True, text=True).stdout.rstrip() or "(无变化)")
+PY
 ```
 
 ## When NOT to Use

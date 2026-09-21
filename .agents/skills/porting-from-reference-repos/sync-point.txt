@@ -1,0 +1,58 @@
+# 参考仓同步点（抄作业用）
+#
+# 用法见 SKILL.md 的 Phase 0 / Phase 1：
+#   Phase 1 从下面每行的 hash 开始 diff（`git log <hash>..HEAD`），比 --since 精确；
+#   抄完当天回写本文件的 hash / 日期，并把「落地了什么、什么没抄」追加到学习记录。
+# 机器可读区格式（脚本按「仓名 hash 日期 备注」解析，注释行以 # 开头）：
+#   <repo> <hash> <date> <note>
+#
+# 记录时间：2026-09-21
+
+ai-toolbox      c9751646  2026-09-21  v1.1.7 同架构同定位，最高优先
+cc-switch       8272707d  2026-09-21  v3.20.3 协议对齐 / 代理
+EchoBird        5efc9fdc  2026-09-20  v5.7.6 启动器 / 路由 / 账号配额
+CodexPlusPlus   b1ed92e   2026-09-17  原生浏览器注入为主，多数不适用
+headroom        67eb910e  2026-09-19  已作为托管服务集成，只跟版本
+farming         af1c95eb  2026-09-20  v2.2.70 多 agent 会话监督
+orca            169bccc5  2026-09-20  mobile OTA / 终端 / diff UI 为主
+open-tag        35d8eee   2026-08-23  约一个月无新提交；authz 权限域
+claude-code-cli 290fdc9   2026-03-31  2026-03 起停更
+
+# ─── 学习记录 ───
+
+2026-09-21 首次建立同步点（此前只能按「上次抄作业的 commit 日期 + since 窗口」猜起点，
+           而各仓提交量差异极大：orca 30 天 2432 条、claude-code-cli 为 0）。
+
+落地（any-version 侧提交）：
+- fb9c58e  feat: #Q-0140 用量统计按模型的成功率 + 缓存命中率（来源 ai-toolbox
+           `per-model success and cache-hit rates with aligned stats tables`）
+- 6cf9336  fix: #Q-0141 按字节截断含中文时 panic（proxy 完整日志 / 路由错误体）+ 补齐
+           anthropic↔openai 的 parallel_tool_calls 与 tool_choice 映射（来源 cc-switch
+           `stop mask_url panicking on multi-byte UTF-8` / `enable parallel tool calls`）
+- 98bbf71  perf: #Q-0142 JSONL 会话扫描增量化 + 容忍半截末行（来源 cc-switch
+           `skip unchanged incomplete rollout tails` / `detect growing rollouts with a persisted byte cursor`）
+- 937bdc9  fix: #Q-0143 技能安装：定位真实技能根、支持 `owner/repo#子目录`、原子替换安装
+           （来源 cc-switch #6381 `support mismatched skillId directories / preserve source path during updates`）
+- c7e839d  fix: #Q-0144 检测与启动 PATH 之外安装的 CLI（来源 EchoBird f86fe961
+           `allow non-PATH CLI launches when binary detected on disk`）
+- QA 记录：Q-0140 ~ Q-0144
+
+明确不抄（连同理由，避免下次重复评估）：
+- 会话分支 / 任务树类 UI（EchoBird、CodexPlusPlus 的 conversation canvas）：产品已否决。
+- 原生浏览器识别与注入（CodexPlusPlus 的 native Chrome/Edge 系列、ai-toolbox 的
+  embedded mini browser 注入面）：需要向宿主 renderer 注入脚本，我们没有该链路
+  （Page 模块先做后删，自动化任务体系同样因此否决）。
+- 归档条目上限（cc-switch `MAX_ARCHIVE_ENTRIES` 10k→30k）：我们是 `git clone`，不下载解压归档。
+- Responses API 相关（`max_tokens` 抬到下限、OpenAI Responses 形态）：我们不代理 `/responses` 端点。
+- tokens/s 展示（cc-switch dc0febe5）：我们已有 `output_tps` + 前端 t/s。
+- orca 的 mobile OTA / `@xterm/addon-image` / diff 折叠与多行评论：与我们的范围无关。
+
+已知未落地（下次候选，按价值排序）：
+1. 按账号 + 日期区间筛选用量（我们已支持按模型/工具/供应商；账号维度见 buddy `stats.rs` 的实现思路可复用）。
+2. EchoBird `5d95bd2f` 的 legacy 代理配置迁移：启动时把老版本写进工具配置、指向已废弃路由的
+   base_url 迁移掉（我们写配置 + 代理同思路，但缺这一步）。
+3. EchoBird `f71adf57` 安装超时杀进程树。
+4. headroom `feat(proxy/model-router): add require_tools route condition`（路由条件扩展）。
+5. farming 的「保留侧聊 / 相关会话面板 / 只读分享链接」：与我们 CollabRoom 模型不同，需先对齐语义。
+6. open-tag 的 authz 权限域（sealed mode / reply policy / protected inboxes）：需先对齐我们的
+   协同权限模型再评估。
