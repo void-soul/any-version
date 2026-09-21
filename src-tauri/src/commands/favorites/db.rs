@@ -86,9 +86,125 @@ pub fn with_conn<T>(f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<
     f(conn)
 }
 
+/// 一条待落库的收藏条目（各源统一形态）。
+#[derive(Debug, Clone)]
+pub struct NewFavorite {
+    pub source: String,
+    /// 平台**原生 id**：GitHub 用仓库 id（不用 full_name，改名会变），B站用 bvid，知乎用内容 id
+    pub external_id: String,
+    pub url: String,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub description: Option<String>,
+    /// 各源自定的附加字段（语言 / topics / 分区…），存 JSON 字符串
+    pub extra_json: Option<String>,
+}
+
+/// upsert 的结果：新增 / 有变化已更新 / 完全没变（跨次导入去重的正常结局）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpsertOutcome {
+    Added,
+    Updated,
+    Skipped,
+}
+
+fn now_str() -> String {
+    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string()
+}
+
+/// 写入一条条目：已存在则按可变字段更新，完全没变则跳过。
+///
+/// 这是「重复导入不进重复记录」的唯一保证——依赖 `(source, external_id)` 唯一约束，
+/// 而不是先查后写（避免并发下两边都查不到）。
+pub fn upsert(conn: &Connection, item: &NewFavorite) -> Result<UpsertOutcome, String> {
+    let inserted = conn
+        .execute(
+            "INSERT OR IGNORE INTO favorite \
+             (source, external_id, url, title, subtitle, description, extra_json, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+            rusqlite::params![
+                item.source,
+                item.external_id,
+                item.url,
+                item.title,
+                item.subtitle,
+                item.description,
+                item.extra_json,
+                now_str(),
+            ],
+        )
+        .map_err(|e| format!("写入收藏条目失败: {}", e))?;
+    if inserted > 0 {
+        return Ok(UpsertOutcome::Added);
+    }
+
+    let current: (String, String, String, String, String) = conn
+        .query_row(
+            "SELECT url, title, COALESCE(subtitle, ''), COALESCE(description, ''), COALESCE(extra_json, '') \
+             FROM favorite WHERE source = ?1 AND external_id = ?2",
+            rusqlite::params![item.source, item.external_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .map_err(|e| format!("读取已存在收藏条目失败: {}", e))?;
+
+    let incoming = (
+        item.url.clone(),
+        item.title.clone(),
+        item.subtitle.clone().unwrap_or_default(),
+        item.description.clone().unwrap_or_default(),
+        item.extra_json.clone().unwrap_or_default(),
+    );
+    if current == incoming {
+        return Ok(UpsertOutcome::Skipped);
+    }
+
+    conn.execute(
+        "UPDATE favorite SET url = ?1, title = ?2, subtitle = ?3, description = ?4, \
+         extra_json = ?5, updated_at = ?6 WHERE source = ?7 AND external_id = ?8",
+        rusqlite::params![
+            incoming.0,
+            incoming.1,
+            item.subtitle,
+            item.description,
+            item.extra_json,
+            now_str(),
+            item.source,
+            item.external_id,
+        ],
+    )
+    .map_err(|e| format!("更新收藏条目失败: {}", e))?;
+    Ok(UpsertOutcome::Updated)
+}
+
+/// 条目总数（测试与概览用）。
+pub fn count_all(conn: &Connection) -> Result<usize, String> {
+    conn.query_row("SELECT COUNT(*) FROM favorite", [], |row| row.get(0))
+        .map_err(|e| format!("统计收藏条目失败: {}", e))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::migrate;
+    use super::{count_all, migrate, upsert, NewFavorite, UpsertOutcome};
+
+    fn sample(external_id: &str, title: &str) -> NewFavorite {
+        NewFavorite {
+            source: "github".to_string(),
+            external_id: external_id.to_string(),
+            url: format!("https://github.com/{}", title),
+            title: title.to_string(),
+            subtitle: Some(title.to_string()),
+            description: Some("desc".to_string()),
+            extra_json: Some("{}".to_string()),
+        }
+    }
 
     #[test]
     fn schema_creates_all_three_tables() {
@@ -139,6 +255,61 @@ mod tests {
             [],
         )
         .unwrap();
+    }
+
+    /// 第二次导入同一批数据必须「一个都不新增」——这是用户对重复导入的核心要求。
+    #[test]
+    fn second_import_is_idempotent() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        let item = sample("1", "o/r");
+        assert_eq!(upsert(&conn, &item).unwrap(), UpsertOutcome::Added);
+        assert_eq!(upsert(&conn, &item).unwrap(), UpsertOutcome::Skipped);
+        assert_eq!(count_all(&conn).unwrap(), 1);
+    }
+
+    /// 内容变了（仓库改名 / 描述更新）要更新，而不是无视。
+    #[test]
+    fn changed_fields_are_updated_in_place() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        upsert(&conn, &sample("1", "o/r")).unwrap();
+        let mut renamed = sample("1", "o/r");
+        renamed.title = "o/renamed".to_string();
+        assert_eq!(upsert(&conn, &renamed).unwrap(), UpsertOutcome::Updated);
+        assert_eq!(count_all(&conn).unwrap(), 1, "更新不能变成新增一行");
+        let title: String = conn
+            .query_row("SELECT title FROM favorite WHERE external_id = '1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(title, "o/renamed");
+    }
+
+    /// GitHub 用仓库 id 做 external_id：仓库改名（full_name 变了）仍是同一条记录。
+    #[test]
+    fn renaming_full_name_does_not_duplicate() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        let first = sample("42", "old/name");
+        let mut renamed = sample("42", "old/name");
+        renamed.title = "new/name".to_string();
+        renamed.url = "https://github.com/new/name".to_string();
+        upsert(&conn, &first).unwrap();
+        upsert(&conn, &renamed).unwrap();
+        assert_eq!(count_all(&conn).unwrap(), 1, "改名不能导进重复条目");
+    }
+
+    /// 不同平台的 id 撞车不算同一条（外部 id 只在同 source 内唯一）。
+    #[test]
+    fn same_external_id_across_sources_stays_separate() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        let mut zhihu = sample("42", "x/y");
+        zhihu.source = "zhihu".to_string();
+        upsert(&conn, &sample("42", "x/y")).unwrap();
+        upsert(&conn, &zhihu).unwrap();
+        assert_eq!(count_all(&conn).unwrap(), 2);
     }
 
     /// 多标签：同一条目可挂多个标签，但完全相同的 (条目, 标签) 只能有一条。
