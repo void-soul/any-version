@@ -215,6 +215,59 @@ impl PlayQueue {
         self.order.first().cloned()
     }
 
+    /// 曲目被重命名（磁盘文件改名）后同步队列里的路径。
+    pub fn rename_path(&mut self, old: &str, new: &str) {
+        for path in self.source.iter_mut().chain(self.order.iter_mut()) {
+            if path == old {
+                *path = new.to_string();
+            }
+        }
+    }
+
+    /// 曲目被删除后从队列移除，返回**当前曲目是否被删除**。
+    ///
+    /// 下标修正是这段的关键：删完之后 `advance()` 必须落到「被删那首的后一首」，
+    /// 而不是跳过一首或倒回前一首 —— 三种模式对 `index` 的解释不同，因此分开处理：
+    /// - 顺序 / 随机：`advance()` 取 `index + 1`，所以把 `index` 指向被删位置的前一个
+    ///   （被删的是首曲时置 `None`，`advance()` 会取新的第一首）；
+    /// - 单曲循环：`advance()` 取 `index` 本身，所以把 `index` 对准被删位置（原位置的新占用者）。
+    pub fn remove_paths(&mut self, paths: &[String]) -> bool {
+        if paths.is_empty() {
+            return false;
+        }
+        let hit = |p: &str| paths.iter().any(|x| x.as_str() == p);
+        let current_removed = self.current().map(hit).unwrap_or(false);
+        if self.order.is_empty() {
+            return current_removed;
+        }
+        // 被删项里位于当前下标之前的数量（用于把下标平移回同一首歌）
+        let removed_before_index = match self.index {
+            Some(i) => self.order.iter().take(i).filter(|p| hit(p)).count(),
+            None => 0,
+        };
+
+        self.source.retain(|p| !hit(p));
+        self.order.retain(|p| !hit(p));
+
+        self.index = match self.index {
+            None => None,
+            Some(_) if self.order.is_empty() => None,
+            Some(i) => {
+                let new_pos = i.saturating_sub(removed_before_index);
+                if current_removed {
+                    match self.mode {
+                        PlayMode::Single => Some(new_pos.min(self.order.len() - 1)),
+                        _ if new_pos == 0 => None,
+                        _ => Some(new_pos - 1),
+                    }
+                } else {
+                    Some(new_pos.min(self.order.len() - 1))
+                }
+            }
+        };
+        current_removed
+    }
+
     /// Fisher-Yates 洗牌（in place）
     fn shuffle(&mut self) {
         let len = self.order.len();
@@ -366,5 +419,81 @@ mod tests {
             assert_eq!(PlayMode::from_str(mode.as_str()), mode);
         }
         assert_eq!(PlayMode::from_str("unknown"), PlayMode::Sequence);
+    }
+
+    /// 重命名后队列里的路径要跟着换（否则下一首会指向已不存在的旧路径）。
+    #[test]
+    fn test_rename_path_follows_file_rename() {
+        let mut q = PlayQueue::default();
+        q.set(queue_of(3), PlayMode::Sequence, Some("track-1.mp3"));
+        q.rename_path("track-1.mp3", "renamed.mp3");
+        assert_eq!(q.current().as_deref(), Some("renamed.mp3"));
+        assert_eq!(q.advance().as_deref(), Some("track-2.mp3"));
+    }
+
+    /// 删除当前曲目后，`advance()` 必须落到「被删那首的后一首」而不是跳曲。
+    #[test]
+    fn test_remove_current_advances_to_the_following_track() {
+        let mut q = PlayQueue::default();
+        q.set(queue_of(4), PlayMode::Sequence, Some("track-1.mp3"));
+        assert!(q.remove_paths(&["track-1.mp3".to_string()]));
+        assert_eq!(q.len(), 3);
+        assert_eq!(q.advance().as_deref(), Some("track-2.mp3"), "顺序模式不能跳曲");
+    }
+
+    /// 删除的是首曲时，下一次从「新的第一首」开始（不能回到被删位置）。
+    #[test]
+    fn test_remove_first_track_starts_from_new_head() {
+        let mut q = PlayQueue::default();
+        q.set(queue_of(3), PlayMode::Sequence, Some("track-0.mp3"));
+        assert!(q.remove_paths(&["track-0.mp3".to_string()]));
+        assert_eq!(q.advance().as_deref(), Some("track-1.mp3"));
+    }
+
+    /// 单曲循环：`advance()` 取 `index` 本身，删除当前曲目后应落到原位置的新占用者。
+    #[test]
+    fn test_remove_current_in_single_mode_keeps_the_slot() {
+        let mut q = PlayQueue::default();
+        q.set(queue_of(3), PlayMode::Single, Some("track-1.mp3"));
+        assert!(q.remove_paths(&["track-1.mp3".to_string()]));
+        assert_eq!(q.advance().as_deref(), Some("track-2.mp3"));
+    }
+
+    /// 删除非当前曲目：当前曲目不变，下标平移不能导致错位。
+    #[test]
+    fn test_remove_other_tracks_keeps_current() {
+        // 删掉当前曲目**之前**的一首
+        let mut q = PlayQueue::default();
+        q.set(queue_of(4), PlayMode::Sequence, Some("track-2.mp3"));
+        assert!(!q.remove_paths(&["track-0.mp3".to_string()]));
+        assert_eq!(q.current().as_deref(), Some("track-2.mp3"));
+        assert_eq!(q.advance().as_deref(), Some("track-3.mp3"));
+
+        // 删掉当前曲目**之后**的一首
+        let mut q2 = PlayQueue::default();
+        q2.set(queue_of(4), PlayMode::Sequence, Some("track-1.mp3"));
+        assert!(!q2.remove_paths(&["track-3.mp3".to_string()]));
+        assert_eq!(q2.advance().as_deref(), Some("track-2.mp3"));
+    }
+
+    /// 批量删除（含当前曲目及其前后项）后队列不越界，且能继续推进。
+    #[test]
+    fn test_bulk_remove_keeps_queue_consistent() {
+        let mut q = PlayQueue::default();
+        q.set(queue_of(5), PlayMode::Sequence, Some("track-2.mp3"));
+        let removed = vec![
+            "track-0.mp3".to_string(),
+            "track-2.mp3".to_string(),
+            "track-4.mp3".to_string(),
+        ];
+        assert!(q.remove_paths(&removed));
+        assert_eq!(q.len(), 2);
+        assert_eq!(q.advance().as_deref(), Some("track-3.mp3"));
+
+        // 全部删空后不再返回曲目
+        assert!(q.remove_paths(&["track-1.mp3".to_string(), "track-3.mp3".to_string()]));
+        assert!(q.len() == 0);
+        assert_eq!(q.advance(), None);
+        assert_eq!(q.current(), None);
     }
 }

@@ -17,6 +17,7 @@ import {
   FolderPlus,
   ListMusic,
   Pause,
+  Pencil,
   Play,
   RefreshCw,
   Repeat1,
@@ -39,6 +40,7 @@ import {
   folderName,
   formatTime,
   type AddFolderResult,
+  type DeleteTracksResult,
   type EqParams,
   type EqPresetInfo,
   type MusicLibrary,
@@ -46,6 +48,8 @@ import {
   type MusicTrack,
   type PlayMode,
   type PlayerState,
+  type RenameTrackResult,
+  type TrackNameSuggestion,
 } from "./types";
 
 /** 播放状态轮询间隔（ms） */
@@ -56,10 +60,10 @@ const SAVE_DEBOUNCE_MS = 500;
 const MODE_ICONS = { sequence: ArrowRight, shuffle: Shuffle, single: Repeat1 } as const;
 
 /**
- * 曲目列表列宽（百分比，合计 100%）：序号 / 标题 / 作者 / 专辑 / 时长。
- * 用 colgroup + table-fixed 让五列按比例随容器缩放，列之间不留 gap。
+ * 曲目列表列宽（百分比，合计 100%）：序号 / 标题 / 作者 / 专辑 / 时长 / 操作。
+ * 用 colgroup + table-fixed 让六列按比例随容器缩放，列之间不留 gap。
  */
-const TRACK_COL_WIDTHS = ["6%", "42%", "20%", "20%", "12%"];
+const TRACK_COL_WIDTHS = ["5%", "34%", "18%", "16%", "10%", "17%"];
 
 export default function MusicPanel() {
   const { t } = useTranslation();
@@ -73,6 +77,11 @@ export default function MusicPanel() {
   const [seeking, setSeeking] = useState<number | null>(null);
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [busy, setBusy] = useState(false);
+  // 重命名弹窗（null = 关闭）：名字由后端按音频标签给的推荐名预填，可手改
+  const [renameTrack, setRenameTrack] = useState<MusicTrack | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [renameFromTags, setRenameFromTags] = useState(false);
+  const [renaming, setRenaming] = useState(false);
 
   const tracksRef = useRef<MusicTrack[]>([]);
   /** path -> 曲库下标（后端自行切歌时用于同步选中行） */
@@ -272,6 +281,70 @@ export default function MusicPanel() {
     });
   };
 
+  // —— 单曲文件操作：重命名 / 删除 ——
+
+  /// 打开重命名弹窗：先向后端要一个按音频标签生成的推荐名
+  const openRename = async (track: MusicTrack) => {
+    setRenameTrack(track);
+    setRenameName(track.path.split(/[\\/]/).pop() ?? track.title);
+    setRenameFromTags(false);
+    try {
+      const suggestion = await invoke<TrackNameSuggestion>("music_track_name_suggestion", {
+        path: track.path,
+      });
+      setRenameName(suggestion.suggested_name);
+      setRenameFromTags(suggestion.from_tags);
+    } catch {
+      // 拿不到建议就沿用现名，用户仍可手动改
+    }
+  };
+
+  const submitRename = async () => {
+    if (!renameTrack || renaming) return;
+    const name = renameName.trim();
+    if (!name) return;
+    setRenaming(true);
+    try {
+      const result = await invoke<RenameTrackResult>("music_rename_track", {
+        path: renameTrack.path,
+        newName: name,
+      });
+      setLibrary(result.library);
+      setRenameTrack(null);
+      toast(t(result.renamed ? "music.renamed" : "music.renameUnchanged"), "ok");
+    } catch (e) {
+      toast(t("music.renameFail", { err: String(e) }), "err");
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  const removeTrack = (track: MusicTrack) => {
+    setConfirmRequest({
+      title: t("music.deleteTrack"),
+      desc: t("music.deleteTrackConfirm", { name: track.title }),
+      danger: true,
+      onConfirm: async () => {
+        setConfirmRequest(null);
+        try {
+          const result = await invoke<DeleteTracksResult>("music_delete_tracks", {
+            paths: [track.path],
+          });
+          setLibrary(result.library);
+          // 删到正在播放那首时后端已切歌，这里同步播放状态
+          syncState(result.player);
+          if (result.failed.length > 0) {
+            toast(t("music.deleteFail", { err: result.failed.join("; ") }), "err");
+          } else {
+            toast(t("music.deleted"), "ok");
+          }
+        } catch (e) {
+          toast(t("music.deleteFail", { err: String(e) }), "err");
+        }
+      },
+    });
+  };
+
   // —— 播放控制 ——
   const togglePlay = async () => {
     // 空闲/已播完：优先播当前选中行（没选则从头开始）；否则交给后端切换播放态
@@ -421,6 +494,9 @@ export default function MusicPanel() {
                 <th className="py-2 text-right font-medium border-b border-white/5">
                   {t("music.thDuration")}
                 </th>
+                <th className="py-2 text-center font-medium border-b border-white/5">
+                  {t("music.thActions")}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -455,6 +531,42 @@ export default function MusicPanel() {
                     </td>
                     <td className="py-2 text-right font-mono text-slate-400">
                       {formatTime(track.duration_ms)}
+                    </td>
+                    {/* 单曲操作：播放 / 重命名（改磁盘文件名）/ 删除（移入回收站）。
+                        stopPropagation：避免触发行级选中与双击播放。 */}
+                    <td className="py-1.5 text-center">
+                      <div className="flex items-center justify-center gap-0.5">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void playIndex(index);
+                          }}
+                          title={t("music.play")}
+                          className="p-1 rounded text-slate-500 hover:text-[var(--module-accent)] hover:bg-white/10 cursor-pointer transition-all"
+                        >
+                          <Play className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void openRename(track);
+                          }}
+                          title={t("music.rename")}
+                          className="p-1 rounded text-slate-500 hover:text-blue-400 hover:bg-blue-500/10 cursor-pointer transition-all"
+                        >
+                          <Pencil className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeTrack(track);
+                          }}
+                          title={t("music.deleteTrack")}
+                          className="p-1 rounded text-slate-500 hover:text-red-400 hover:bg-red-500/10 cursor-pointer transition-all"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -548,6 +660,51 @@ export default function MusicPanel() {
           />
         </div>
       </div>
+
+      {/* 重命名弹窗：默认填后端按标签生成的推荐名，可手改；只改文件名与扩展名，不动标签 */}
+      {renameTrack && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => {
+            if (!renaming) setRenameTrack(null);
+          }}
+        >
+          <div
+            className="w-[440px] max-w-full rounded-2xl border border-white/10 bg-slate-900 p-4 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-[13px] font-bold text-white">{t("music.renameTitle")}</div>
+            <div className="text-[11px] text-slate-400 break-all">
+              {renameTrack.path.split(/[\\/]/).pop()}
+            </div>
+            <input
+              value={renameName}
+              onChange={(e) => setRenameName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void submitRename();
+                if (e.key === "Escape" && !renaming) setRenameTrack(null);
+              }}
+              autoFocus
+              spellCheck={false}
+              className="w-full bg-black/30 border border-white/10 rounded-lg px-2.5 py-2 text-[12px] text-slate-100 outline-none focus:border-[var(--module-accent)]"
+            />
+            <div className="text-[10px] text-slate-500">
+              {renameFromTags ? t("music.renameFromTags") : t("music.renameNoTags")}
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <SharedButton variant="secondary" onClick={() => setRenameTrack(null)} disabled={renaming}>
+                {t("common.cancel")}
+              </SharedButton>
+              <SharedButton
+                onClick={() => void submitRename()}
+                disabled={renaming || !renameName.trim()}
+              >
+                {renaming ? t("music.renaming") : t("music.renameConfirm")}
+              </SharedButton>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmDialogHost request={confirmRequest} onClose={() => setConfirmRequest(null)} />
     </div>
