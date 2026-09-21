@@ -194,6 +194,94 @@ pub fn upsert(conn: &Connection, item: &NewFavorite) -> Result<UpsertOutcome, St
     Ok(UpsertOutcome::Updated)
 }
 
+/// 取一批「待归类」条目：**没有标签** 且 **未被人工锁定**。
+///
+/// 人工改过标签的条目（`ai_locked = 1`）永不再进入归类批次——用户的选择优先于模型。
+pub fn select_unclassified(conn: &Connection, limit: usize) -> Result<Vec<ClassifyItem>, String> {
+    let mut statement = conn
+        .prepare(
+            "SELECT f.id, f.title, COALESCE(f.description, ''), COALESCE(f.extra_json, '') \
+             FROM favorite f \
+             WHERE f.ai_locked = 0 \
+               AND NOT EXISTS (SELECT 1 FROM favorite_tag t WHERE t.favorite_id = f.id) \
+             ORDER BY f.id LIMIT ?1",
+        )
+        .map_err(|e| format!("查询待归类条目失败: {}", e))?;
+    let rows = statement
+        .query_map([limit as i64], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|e| format!("查询待归类条目失败: {}", e))?;
+
+    let mut items = Vec::new();
+    for row in rows {
+        let (id, title, description, extra_json) =
+            row.map_err(|e| format!("读取待归类条目失败: {}", e))?;
+        let extra: serde_json::Value =
+            serde_json::from_str(&extra_json).unwrap_or(serde_json::Value::Null);
+        let language = extra
+            .get("language")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let topics = extra
+            .get("topics")
+            .and_then(|v| v.as_array())
+            .map(|list| {
+                list.iter()
+                    .filter_map(|t| t.as_str())
+                    .map(|t| t.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        items.push(ClassifyItem {
+            id,
+            title,
+            description,
+            language,
+            topics,
+        });
+    }
+    Ok(items)
+}
+
+/// 写入一批归类结果（多标签：一个条目可落多个分类），并记录所用模型。
+pub fn apply_tags(
+    conn: &Connection,
+    items: &[ClassifyItem],
+    groups: &[(String, Vec<usize>)],
+    model: &str,
+) -> Result<usize, String> {
+    let written = now_str();
+    let mut count = 0usize;
+    for (name, indices) in groups {
+        for index in indices {
+            let Some(item) = items.get(*index) else {
+                continue;
+            };
+            conn.execute(
+                "INSERT OR IGNORE INTO favorite_tag (favorite_id, tag) VALUES (?1, ?2)",
+                rusqlite::params![item.id, name],
+            )
+            .map_err(|e| format!("写入分类标签失败: {}", e))?;
+            count += 1;
+        }
+    }
+    for item in items {
+        conn.execute(
+            "UPDATE favorite SET ai_model = ?1, ai_at = ?2 WHERE id = ?3",
+            rusqlite::params![model, written, item.id],
+        )
+        .map_err(|e| format!("记录归类模型失败: {}", e))?;
+    }
+    Ok(count)
+}
+
 /// 记录一次导入的收尾状态（供 UI 展示"上次导入"与续跑判断）。
 pub fn mark_imported(conn: &Connection, source: &str, total: usize) -> Result<(), String> {
     conn.execute(
@@ -214,7 +302,9 @@ pub fn count_all(conn: &Connection) -> Result<usize, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_all, migrate, upsert, NewFavorite, UpsertOutcome};
+    use super::{
+        apply_tags, count_all, migrate, select_unclassified, upsert, NewFavorite, UpsertOutcome,
+    };
 
     fn sample(external_id: &str, title: &str) -> NewFavorite {
         NewFavorite {
@@ -332,6 +422,83 @@ mod tests {
         upsert(&conn, &sample("42", "x/y")).unwrap();
         upsert(&conn, &zhihu).unwrap();
         assert_eq!(count_all(&conn).unwrap(), 2);
+    }
+
+    fn insert_raw(conn: &rusqlite::Connection, id: i64, external_id: &str, extra: &str) {
+        conn.execute(
+            "INSERT INTO favorite (id, source, external_id, url, title, extra_json, created_at, updated_at) \
+             VALUES (?1, 'github', ?2, 'https://x', ?2, ?3, 'now', 'now')",
+            rusqlite::params![id, external_id, extra],
+        )
+        .unwrap();
+    }
+
+    /// 归类只处理「没标签且没被人工改过」的条目。
+    #[test]
+    fn select_unclassified_skips_tagged_and_locked() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        insert_raw(&conn, 1, "1", "{}");
+        insert_raw(&conn, 2, "2", "{}");
+        insert_raw(&conn, 3, "3", "{}");
+
+        let pending = select_unclassified(&conn, 10).unwrap();
+        assert_eq!(pending.len(), 3);
+
+        // 已有标签 → 不再归类
+        conn.execute("INSERT INTO favorite_tag VALUES (1, 'CLI')", []).unwrap();
+        // 人工锁定 → 永远不再归类
+        conn.execute("UPDATE favorite SET ai_locked = 1 WHERE id = 2", []).unwrap();
+
+        let pending = select_unclassified(&conn, 10).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, 3);
+    }
+
+    /// 多标签：一个条目落两个分类要写两行；写完之后它就不再是「待归类」。
+    #[test]
+    fn apply_tags_writes_every_label_and_clears_pending() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        insert_raw(&conn, 1, "1", "{}");
+        let items = select_unclassified(&conn, 10).unwrap();
+        let groups = vec![
+            ("LLM".to_string(), vec![0usize]),
+            ("运维".to_string(), vec![0usize]),
+        ];
+        let written = apply_tags(&conn, &items, &groups, "gpt-x").unwrap();
+        assert_eq!(written, 2, "多标签每条都要写");
+
+        let tags: Vec<String> = conn
+            .prepare("SELECT tag FROM favorite_tag WHERE favorite_id = 1 ORDER BY tag")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(tags, vec!["LLM".to_string(), "运维".to_string()]);
+        assert!(select_unclassified(&conn, 10).unwrap().is_empty());
+
+        let model: String = conn
+            .query_row("SELECT ai_model FROM favorite WHERE id = 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(model, "gpt-x");
+    }
+
+    /// 归类要能读到语言与 topics（这是判断分类最有用的两个信号）。
+    #[test]
+    fn select_unclassified_reads_language_and_topics() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        insert_raw(
+            &conn,
+            1,
+            "o/r",
+            r#"{"language":"Rust","topics":["cli","rust"]}"#,
+        );
+        let items = select_unclassified(&conn, 10).unwrap();
+        assert_eq!(items[0].language, "Rust");
+        assert_eq!(items[0].topics, vec!["cli".to_string(), "rust".to_string()]);
     }
 
     /// 多标签：同一条目可挂多个标签，但完全相同的 (条目, 标签) 只能有一条。

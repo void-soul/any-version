@@ -608,6 +608,7 @@ pub fn run() {
             // ---- 收藏 / 星标聚合（只读导入） ----
             commands::favorites::fav_import_github,
             commands::favorites::fav_cancel_import,
+            commands::favorites::fav_classify,
             commands::music::music_track_name_suggestion,
             commands::music::music_rename_track,
             commands::music::music_delete_tracks,
