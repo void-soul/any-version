@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 
+use super::check;
 use super::classify::{self, BATCH_SIZE};
 use super::db::{self, NewFavorite};
 use super::github;
@@ -179,6 +180,65 @@ pub async fn fav_classify(
         result.classified,
         result.tags_written,
         result.remaining
+    );
+    Ok(result)
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckResult {
+    pub checked: usize,
+    pub gone: usize,
+    pub redirect: usize,
+    pub unknown: usize,
+    /// 因限流提前中断（没跑完，下次再点会继续）
+    pub aborted: bool,
+}
+
+/// 手动检测失效（目前只覆盖 GitHub）。
+///
+/// `all = false` 时只探测没查过的条目；`all = true` 全量重测。
+/// 撞到限流（403/429）就**停下并如实上报**，而不是把活着的收藏误标成失效。
+#[tauri::command]
+pub async fn fav_check_gone(all: Option<bool>) -> Result<CheckResult, String> {
+    let token = crate::commands::utils::github_api_token()
+        .ok_or_else(|| "未配置 GitHub Token：请在 SDK 模块设置 GitHub Token，或设置 GITHUB_TOKEN 环境变量".to_string())?;
+    let items = db::with_conn(|conn| db::select_for_check(conn, github::SOURCE, all.unwrap_or(false), 5_000))?;
+
+    let mut result = CheckResult::default();
+    for (id, full_name, _url) in items {
+        let (status, body) = github::fetch_repo(&token, &full_name).await?;
+        if status == 403 || status == 429 {
+            result.aborted = true;
+            break;
+        }
+        match check::classify_repo_response(status, body.as_ref(), &full_name) {
+            check::GoneStatus::Ok => {
+                db::with_conn(|conn| db::apply_status(conn, id, "ok", None))?;
+            }
+            check::GoneStatus::Gone => {
+                db::with_conn(|conn| db::apply_status(conn, id, "gone", None))?;
+                result.gone += 1;
+            }
+            check::GoneStatus::Redirect(new_url) => {
+                db::with_conn(|conn| db::apply_status(conn, id, "redirect", Some(&new_url)))?;
+                result.redirect += 1;
+            }
+            check::GoneStatus::Unknown => {
+                db::with_conn(|conn| db::apply_status(conn, id, "unknown", None))?;
+                result.unknown += 1;
+            }
+        }
+        result.checked += 1;
+    }
+
+    crate::exit_log!(
+        "[收藏] 失效检测完成: checked={}, gone={}, redirect={}, unknown={}, aborted={}",
+        result.checked,
+        result.gone,
+        result.redirect,
+        result.unknown,
+        result.aborted
     );
     Ok(result)
 }

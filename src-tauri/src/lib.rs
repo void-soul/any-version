@@ -609,6 +609,7 @@ pub fn run() {
             commands::favorites::fav_import_github,
             commands::favorites::fav_cancel_import,
             commands::favorites::fav_classify,
+            commands::favorites::fav_check_gone,
             commands::music::music_track_name_suggestion,
             commands::music::music_rename_track,
             commands::music::music_delete_tracks,

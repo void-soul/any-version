@@ -113,6 +113,23 @@ pub async fn fetch_starred_page(token: &str, url: &str) -> Result<(Value, Option
     Ok((body, next_page_url(link.as_deref())))
 }
 
+/// 查单个仓库是否存在（失效检测用）。返回 `(状态码, 响应体)`——
+/// 404 本身就是结论之一，所以这里**不把非 2xx 当错误抛**。
+pub async fn fetch_repo(token: &str, full_name: &str) -> Result<(u16, Option<Value>), String> {
+    let url = format!("https://api.github.com/repos/{}", full_name);
+    let resp = crate::commands::utils::get_http_client()
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "Any-Version-Manager")
+        .send()
+        .await
+        .map_err(|e| format!("请求 GitHub 失败: {}", e))?;
+    let status = resp.status().as_u16();
+    let body = resp.json::<Value>().await.ok();
+    Ok((status, body))
+}
+
 /// 带鉴权的 GET，失败时带上可操作提示。
 async fn request(token: &str, url: &str) -> Result<Value, String> {
     request_with_link(token, url).await.map(|(body, _)| body)

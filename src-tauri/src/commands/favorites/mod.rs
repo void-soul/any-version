@@ -8,6 +8,7 @@
 pub mod db;
 pub mod github;
 pub mod classify;
+pub mod check;
 pub mod commands;
 
 pub use commands::*;

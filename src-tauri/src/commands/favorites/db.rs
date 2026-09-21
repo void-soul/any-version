@@ -282,6 +282,55 @@ pub fn apply_tags(
     Ok(count)
 }
 
+/// 待探测条目：`(id, full_name, url)`。`all = false` 时跳过已探测过的。
+pub fn select_for_check(
+    conn: &Connection,
+    source: &str,
+    all: bool,
+    limit: usize,
+) -> Result<Vec<(i64, String, String)>, String> {
+    let sql = if all {
+        "SELECT id, title, url FROM favorite WHERE source = ?1 ORDER BY id LIMIT ?2"
+    } else {
+        "SELECT id, title, url FROM favorite WHERE source = ?1 AND checked_at IS NULL \
+         ORDER BY id LIMIT ?2"
+    };
+    let mut statement = conn
+        .prepare(sql)
+        .map_err(|e| format!("查询待探测条目失败: {}", e))?;
+    let rows = statement
+        .query_map(rusqlite::params![source, limit as i64], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        })
+        .map_err(|e| format!("查询待探测条目失败: {}", e))?;
+    let mut items = Vec::new();
+    for row in rows {
+        items.push(row.map_err(|e| format!("读取待探测条目失败: {}", e))?);
+    }
+    Ok(items)
+}
+
+/// 落探测结论；改名的顺手把 URL 指到新地址。
+pub fn apply_status(
+    conn: &Connection,
+    id: i64,
+    status: &str,
+    new_url: Option<&str>,
+) -> Result<(), String> {
+    match new_url {
+        Some(url) => conn.execute(
+            "UPDATE favorite SET status = ?1, url = ?2, checked_at = ?3 WHERE id = ?4",
+            rusqlite::params![status, url, now_str(), id],
+        ),
+        None => conn.execute(
+            "UPDATE favorite SET status = ?1, checked_at = ?2 WHERE id = ?3",
+            rusqlite::params![status, now_str(), id],
+        ),
+    }
+    .map_err(|e| format!("更新探测状态失败: {}", e))?;
+    Ok(())
+}
+
 /// 记录一次导入的收尾状态（供 UI 展示"上次导入"与续跑判断）。
 pub fn mark_imported(conn: &Connection, source: &str, total: usize) -> Result<(), String> {
     conn.execute(
