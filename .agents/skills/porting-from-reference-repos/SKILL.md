@@ -230,7 +230,8 @@ python - <<'PY'
 import re, subprocess
 root = r"E:\pro\other-sdk\ai-tools"
 for line in open(r".agents\skills\porting-from-reference-repos\sync-point.txt", encoding="utf-8"):
-    m = re.match(r"^([A-Za-z0-9_-]+)\s+([0-9a-f]{6,40})\s", line)
+    # 只认「仓名 hash 日期」三段（学习记录里的 “- <hash> ...” 不应被当成同步点）
+    m = re.match(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)\s+([0-9a-f]{6,40})\s+\d{4}-\d{2}-\d{2}\b", line)
     if not m:
         continue
     repo, pin = m.group(1), m.group(2)
