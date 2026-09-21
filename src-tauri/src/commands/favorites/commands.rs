@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 
+use super::bilibili;
 use super::check;
 use super::classify::{self, BATCH_SIZE};
 use super::db::{self, NewFavorite};
@@ -241,6 +242,89 @@ pub async fn fav_check_gone(all: Option<bool>) -> Result<CheckResult, String> {
         result.aborted
     );
     Ok(result)
+}
+
+/// 导入 B站收藏（只读，需要 Cookie）。
+///
+/// 逐个收藏夹分页拉取：`created/list-all` → 每个 `resource/list`。
+/// 同样幂等：第二次导入 added = 0。
+#[tauri::command]
+pub async fn fav_import_bilibili() -> Result<ImportResult, String> {
+    let cookie = db::with_conn(|conn| db::get_credential(conn, bilibili::SOURCE))?
+        .ok_or_else(|| "未配置 B站 Cookie：请在收藏模块里粘贴登录后的 Cookie（含 SESSDATA）".to_string())?;
+
+    CANCEL.store(false, Ordering::SeqCst);
+    let session = bilibili::fetch_session(&cookie).await?;
+    if session.mid.is_none() {
+        return Err("Cookie 未生效（B站没返回登录用户），请重新粘贴 Cookie".to_string());
+    }
+    let folders = bilibili::fetch_folders(&cookie, &session).await?;
+    if folders.is_empty() {
+        return Ok(ImportResult::default());
+    }
+
+    let mut result = ImportResult::default();
+    'outer: for (folder_id, folder_title) in &folders {
+        for page in 1..=bilibili::MAX_PAGES {
+            if CANCEL.load(Ordering::SeqCst) {
+                result.cancelled = true;
+                break 'outer;
+            }
+            let (medias, has_more) =
+                bilibili::fetch_folder_page(&cookie, &session, *folder_id, page).await?;
+            if medias.is_empty() {
+                break;
+            }
+            let items: Vec<NewFavorite> = medias
+                .iter()
+                .filter_map(|media| bilibili::media_to_favorite(media, folder_title))
+                .collect();
+            result.fetched += items.len();
+            let delta = db::with_conn(|conn| {
+                let mut added = 0usize;
+                let mut updated = 0usize;
+                let mut skipped = 0usize;
+                for item in &items {
+                    match db::upsert(conn, item)? {
+                        db::UpsertOutcome::Added => added += 1,
+                        db::UpsertOutcome::Updated => updated += 1,
+                        db::UpsertOutcome::Skipped => skipped += 1,
+                    }
+                }
+                Ok((added, updated, skipped))
+            })?;
+            result.added += delta.0;
+            result.updated += delta.1;
+            result.skipped += delta.2;
+            if !has_more {
+                break;
+            }
+        }
+    }
+
+    db::with_conn(|conn| db::mark_imported(conn, bilibili::SOURCE, result.fetched))?;
+    crate::exit_log!(
+        "[收藏] B站导入完成: folders={}, fetched={}, added={}, updated={}, skipped={}, cancelled={}",
+        folders.len(),
+        result.fetched,
+        result.added,
+        result.updated,
+        result.skipped,
+        result.cancelled
+    );
+    Ok(result)
+}
+
+/// 设置某平台的 Cookie（B站：含 SESSDATA 的完整 Cookie 串；传空串清除）。
+#[tauri::command]
+pub fn fav_set_credential(source: String, cookie: String) -> Result<(), String> {
+    db::with_conn(|conn| db::set_credential(conn, &source, &cookie))
+}
+
+/// 某平台是否已配置 Cookie（**不返回内容**，只回 true/false）。
+#[tauri::command]
+pub fn fav_has_credential(source: String) -> Result<bool, String> {
+    db::with_conn(|conn| db::get_credential(conn, &source).map(|c| c.is_some()))
 }
 
 /// 列出收藏条目。
