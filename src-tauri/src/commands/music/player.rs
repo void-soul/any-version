@@ -9,8 +9,9 @@
 
 use std::fs::File;
 use std::io::BufReader;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
@@ -62,6 +63,43 @@ struct Inner {
     volume: f32,
     /// 播放队列（顺序 / 随机 / 单曲），自动切歌由后端驱动
     queue: PlayQueue,
+    /// 看门狗：上次观测到的播放位置（毫秒）
+    last_pos_ms: u64,
+    /// 看门狗：上次观测到位置发生变化的时间
+    last_progress_at: Instant,
+}
+
+/// 播放位置多久不前进就判定「输出已死」（毫秒）。
+///
+/// 取 2s：正常音频回调延迟远小于它，不会误判；又短到用户几乎察觉不到卡顿。
+/// 设这个兜底是因为**有些驱动在设备消失时只会静默停摆、不报任何流错误**。
+const STALL_RECOVER_MS: u64 = 2000;
+
+/// 是否需要重建音频输出。
+///
+/// 两个触发条件（互为补充）：
+/// 1. 音频流报错 —— 拔耳机 / 切换默认输出设备时 cpal 会把该流置为不可用；
+/// 2. 仍在 `Playing` 但播放位置长时间不前进 —— 驱动不报错时的兜底。
+///
+/// 只有 `Playing` 才看停摆：暂停本来就不前进，`Ended` 由播完推进逻辑负责。
+fn should_recover(output_lost: bool, status: PlayStatus, stalled_for: Option<Duration>) -> bool {
+    if output_lost {
+        return true;
+    }
+    if status != PlayStatus::Playing {
+        return false;
+    }
+    stalled_for
+        .map(|d| d.as_millis() as u64 >= STALL_RECOVER_MS)
+        .unwrap_or(false)
+}
+
+/// 输出重建后是否需要**续播**：只有「正在播 / 已暂停」才续播。
+///
+/// `Ended` 若续播会把已经放完的歌重新拉起来（位置在末尾，等于又震一下）；
+/// `Idle` 只需丢掉坏流，等下次播放时自然重开。
+fn should_resume_after_recover(status: PlayStatus) -> bool {
+    matches!(status, PlayStatus::Playing | PlayStatus::Paused)
 }
 
 /// 全局播放器（Tauri State）
@@ -69,6 +107,8 @@ pub struct MusicPlayerState {
     inner: Mutex<Inner>,
     /// 供播放线程实时读取的均衡器参数（UI 改动即时生效）
     eq: Arc<Mutex<EqParams>>,
+    /// 音频输出流是否已失效（由 cpal 流错误回调置位；见 [`MusicPlayerState::recover_output`]）
+    output_lost: Arc<AtomicBool>,
 }
 
 impl Default for MusicPlayerState {
@@ -83,8 +123,11 @@ impl Default for MusicPlayerState {
                 status: PlayStatus::Idle,
                 volume: settings.volume,
                 queue: PlayQueue::default(),
+                last_pos_ms: 0,
+                last_progress_at: Instant::now(),
             }),
             eq: Arc::new(Mutex::new(settings.eq)),
+            output_lost: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -100,11 +143,23 @@ impl MusicPlayerState {
     }
 
     /// 懒加载音频设备与播放器
-    fn ensure_player(inner: &mut Inner) -> Result<(), String> {
+    ///
+    /// 这里必须自己装 cpal 流错误回调：rodio 的默认回调只把错误打进日志，
+    /// 而「设备被拔掉 / 默认输出被切换」正是靠这个信号才能知道该重建输出流。
+    fn ensure_player(inner: &mut Inner, output_lost: &Arc<AtomicBool>) -> Result<(), String> {
         if inner.device.is_none() {
-            let device = DeviceSinkBuilder::open_default_sink()
+            let flag = output_lost.clone();
+            let device = DeviceSinkBuilder::from_default_device()
+                .map_err(|e| format!("打开音频输出设备失败: {}", e))?
+                .with_error_callback(move |err| {
+                    crate::exit_log!("[音乐] 音频输出流错误（设备被移除或切换？）: {}", err);
+                    flag.store(true, Ordering::SeqCst);
+                })
+                .open_stream()
                 .map_err(|e| format!("打开音频输出设备失败: {}", e))?;
             inner.device = Some(device);
+            // 新流已经建立：清掉失效标记
+            output_lost.store(false, Ordering::SeqCst);
         }
         if inner.player.is_none() {
             let mixer = inner.device.as_ref().expect("device").mixer();
@@ -113,10 +168,94 @@ impl MusicPlayerState {
         Ok(())
     }
 
+    /// 丢弃当前（已失效的）输出流，让下一次 [`Self::ensure_player`] 重开默认设备。
+    fn discard_output(&self, inner: &mut Inner) {
+        inner.player = None;
+        inner.device = None;
+        self.output_lost.store(false, Ordering::SeqCst);
+    }
+
+    /// 音频输出失效后重建：丢弃旧流 → 重开默认设备 → 从原位置续播。
+    ///
+    /// 为什么必须重建：`MixerDeviceSink` 绑定的是**创建那一刻**那个设备的流，
+    /// 设备消失后它既不拉样本也不报错（`Player::play()` 只是翻个标志就返回，
+    /// 「恢复」看起来是成功的），于是表现为「拔耳机后再也放不出声，只能退出重进」。
+    fn recover_output(&self, inner: &mut Inner) {
+        // 只有「正在播 / 已暂停」才需要续播。`Ended` 曲目若在这里重播，
+        // 会把已经放完的歌重新拉起来（位置在末尾，等于又从头震一下）；
+        // `Idle` 同理只丢坏流。
+        let resumable = should_resume_after_recover(inner.status);
+        let Some(path) = inner
+            .current
+            .as_ref()
+            .filter(|_| resumable)
+            .map(|c| c.path.clone())
+        else {
+            // 没有当前曲目（或已经播完）：丢掉坏流即可，下次播放时自然重开
+            self.discard_output(inner);
+            inner.last_pos_ms = 0;
+            inner.last_progress_at = Instant::now();
+            return;
+        };
+        let resume_ms = inner
+            .player
+            .as_ref()
+            .map(|p| p.get_pos().as_millis() as u64)
+            .unwrap_or(inner.last_pos_ms);
+        let was_paused = inner.status == PlayStatus::Paused;
+        self.discard_output(inner);
+
+        match Self::play_locked(inner, &self.eq, &self.output_lost, &path) {
+            Ok(_) => {
+                if let Some(player) = inner.player.as_ref() {
+                    let _ = player.try_seek(Duration::from_millis(resume_ms));
+                    if was_paused {
+                        player.pause();
+                    }
+                }
+                if was_paused {
+                    inner.status = PlayStatus::Paused;
+                }
+                inner.last_pos_ms = resume_ms;
+                inner.last_progress_at = Instant::now();
+                crate::exit_log!("[音乐] 音频输出已重建，从 {} ms 续播: {}", resume_ms, path);
+            }
+            Err(e) => {
+                inner.status = PlayStatus::Idle;
+                inner.current = None;
+                crate::exit_log!("[音乐] 音频输出重建失败: {}", e);
+            }
+        }
+    }
+
+    /// 更新停摆看门狗并返回「已停摆多久」；未在播放时返回 None（并重置计时）。
+    fn stalled_for(&self, inner: &mut Inner) -> Option<Duration> {
+        let pos = inner
+            .player
+            .as_ref()
+            .map(|p| p.get_pos().as_millis() as u64);
+        if inner.status != PlayStatus::Playing {
+            inner.last_pos_ms = pos.unwrap_or(0);
+            inner.last_progress_at = Instant::now();
+            return None;
+        }
+        let pos = pos?;
+        if pos != inner.last_pos_ms {
+            inner.last_pos_ms = pos;
+            inner.last_progress_at = Instant::now();
+            return None;
+        }
+        Some(inner.last_progress_at.elapsed())
+    }
+
     /// 播放指定文件（替换当前曲目）
     pub fn play(&self, path: &str) -> Result<PlayerState, String> {
         let mut inner = self.inner.lock();
-        Self::play_locked(&mut inner, &self.eq, path)
+        // 输出已失效：本调用马上就会 append 新曲目，直接丢坏流即可（不必先续播旧曲）
+        if self.output_lost.load(Ordering::SeqCst) {
+            self.discard_output(&mut inner);
+        }
+        Self::play_locked(&mut inner, &self.eq, &self.output_lost, path)
     }
 
     /// 重置播放队列（前端在曲库或播放模式变化时调用）
@@ -131,11 +270,46 @@ impl MusicPlayerState {
         Ok(())
     }
 
+    /// 曲目在磁盘上改名后同步当前曲目与队列里的路径（播放不中断）。
+    pub fn rename_path(&self, old: &str, new: &str) {
+        let mut inner = self.inner.lock();
+        if let Some(current) = inner.current.as_mut() {
+            if current.path == old {
+                current.path = new.to_string();
+            }
+        }
+        inner.queue.rename_path(old, new);
+    }
+
+    /// 曲目被删除后同步播放器：从队列移除；返回「被删的是不是当前曲目」。
+    ///
+    /// 调用方据此决定是否切下一首 —— 这里**不能**自己调 `next()`：
+    /// `parking_lot::Mutex` 不可重入，在持锁状态下再取一次锁会直接死锁。
+    pub fn forget_paths(&self, paths: &[String]) -> bool {
+        let mut inner = self.inner.lock();
+        let playing_removed = inner
+            .current
+            .as_ref()
+            .map(|c| paths.iter().any(|p| p == &c.path))
+            .unwrap_or(false);
+        let current_removed = inner.queue.remove_paths(paths) || playing_removed;
+        if current_removed {
+            // 立刻停掉输出，避免继续播放一个已被删除的文件
+            if let Some(player) = inner.player.as_ref() {
+                player.clear();
+                player.stop();
+            }
+            inner.current = None;
+            inner.status = PlayStatus::Idle;
+        }
+        current_removed
+    }
+
     /// 下一首（用户点「下一首」）
     pub fn next(&self) -> Result<PlayerState, String> {
         let mut inner = self.inner.lock();
         match inner.queue.advance() {
-            Some(path) => Self::play_locked(&mut inner, &self.eq, &path),
+            Some(path) => Self::play_locked(&mut inner, &self.eq, &self.output_lost, &path),
             None => Ok(Self::snapshot(&mut inner)),
         }
     }
@@ -144,7 +318,7 @@ impl MusicPlayerState {
     pub fn prev(&self) -> Result<PlayerState, String> {
         let mut inner = self.inner.lock();
         match inner.queue.back() {
-            Some(path) => Self::play_locked(&mut inner, &self.eq, &path),
+            Some(path) => Self::play_locked(&mut inner, &self.eq, &self.output_lost, &path),
             None => Ok(Self::snapshot(&mut inner)),
         }
     }
@@ -153,6 +327,10 @@ impl MusicPlayerState {
     /// 空闲/已播完→接着当前曲目（没有则从队列取下一首）
     pub fn toggle(&self) -> Result<PlayerState, String> {
         let mut inner = self.inner.lock();
+        // 输出已失效：先重建，否则下面的 play()/pause() 只是空操作（用户看到的「点了没反应」）
+        if self.output_lost.load(Ordering::SeqCst) {
+            self.recover_output(&mut inner);
+        }
         match inner.status {
             PlayStatus::Playing => {
                 if let Some(player) = inner.player.as_ref() {
@@ -176,7 +354,9 @@ impl MusicPlayerState {
                     .or_else(|| inner.queue.current().map(|p| p.to_string()))
                     .or_else(|| inner.queue.first());
                 match path {
-                    Some(path) => Self::play_locked(&mut inner, &self.eq, &path),
+                    Some(path) => {
+                        Self::play_locked(&mut inner, &self.eq, &self.output_lost, &path)
+                    }
                     None => Ok(Self::snapshot(&mut inner)),
                 }
             }
@@ -191,6 +371,20 @@ impl MusicPlayerState {
     /// 失败（如文件已被删除）时继续尝试后续曲目，最多绕队列一圈。
     pub fn tick(&self) {
         let mut inner = self.inner.lock();
+
+        // ① 输出自愈：设备报错（拔耳机/换默认设备）或位置停摆 → 重建并从原位置续播。
+        //    这一段必须在「播完判定」之前：输出死了以后位置不会再前进，
+        //    不先自愈的话队列永远等不到 empty()，表现为「彻底卡住」。
+        let stalled = self.stalled_for(&mut inner);
+        if should_recover(
+            self.output_lost.load(Ordering::SeqCst),
+            inner.status,
+            stalled,
+        ) {
+            self.recover_output(&mut inner);
+        }
+
+        // ② 播完自动切下一首
         let exhausted = inner.current.is_some()
             && matches!(inner.status, PlayStatus::Playing | PlayStatus::Ended)
             && matches!(inner.player.as_ref(), Some(player) if player.empty());
@@ -202,7 +396,7 @@ impl MusicPlayerState {
         for _ in 0..attempts {
             match inner.queue.advance() {
                 Some(path) => {
-                    if Self::play_locked(&mut inner, &self.eq, &path).is_ok() {
+                    if Self::play_locked(&mut inner, &self.eq, &self.output_lost, &path).is_ok() {
                         crate::exit_log!("[音乐] 播完自动切下一首: {}", path);
                         return;
                     }
@@ -221,6 +415,7 @@ impl MusicPlayerState {
     fn play_locked(
         inner: &mut Inner,
         eq: &Arc<Mutex<EqParams>>,
+        output_lost: &Arc<AtomicBool>,
         path: &str,
     ) -> Result<PlayerState, String> {
         let file = File::open(path).map_err(|e| format!("打开文件失败: {}", e))?;
@@ -265,7 +460,7 @@ impl MusicPlayerState {
 
         let source = EqSource::new(decoder, eq.clone());
 
-        Self::ensure_player(inner)?;
+        Self::ensure_player(inner, output_lost)?;
         // 每首重建 Player：位置计数归零，避免复用时的残留队列
         let mixer = inner.device.as_ref().expect("device").mixer();
         let player = Player::connect_new(mixer);
@@ -273,6 +468,9 @@ impl MusicPlayerState {
         player.append(source);
         inner.player = Some(player);
         inner.status = PlayStatus::Playing;
+        // 新曲目从 0 开始：重置看门狗，给输出流留出启动窗口
+        inner.last_pos_ms = 0;
+        inner.last_progress_at = Instant::now();
         inner.current = Some(CurrentTrack {
             path: path.to_string(),
             title,
@@ -297,6 +495,10 @@ impl MusicPlayerState {
 
     pub fn resume(&self) -> PlayerState {
         let mut inner = self.inner.lock();
+        // 输出已失效：先重建（会从原位置续播）；否则这里的 play() 点下去不会有声
+        if self.output_lost.load(Ordering::SeqCst) {
+            self.recover_output(&mut inner);
+        }
         if let Some(player) = inner.player.as_ref() {
             // 已播完的曲目不允许“继续”
             if inner.status == PlayStatus::Paused {
@@ -320,6 +522,10 @@ impl MusicPlayerState {
 
     pub fn seek(&self, position_ms: u64) -> Result<PlayerState, String> {
         let mut inner = self.inner.lock();
+        // 输出已失效：先重建再跳转，否则 try_seek 会作用在一个已经死掉的流上
+        if self.output_lost.load(Ordering::SeqCst) {
+            self.recover_output(&mut inner);
+        }
         let was_ended = inner.status == PlayStatus::Ended;
         {
             let player = inner
@@ -422,6 +628,45 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
+
+    /// 设备报错一定触发重建（不管播放状态）。
+    #[test]
+    fn test_should_recover_on_output_lost() {
+        assert!(should_recover(true, PlayStatus::Playing, None));
+        assert!(should_recover(true, PlayStatus::Paused, None));
+        assert!(should_recover(true, PlayStatus::Idle, None));
+    }
+
+    /// 停摆只有 Playing 才算：暂停本来就不前进，播完交给推进逻辑。
+    #[test]
+    fn test_should_recover_on_stall_only_while_playing() {
+        let stalled = Some(Duration::from_millis(STALL_RECOVER_MS));
+        assert!(should_recover(false, PlayStatus::Playing, stalled));
+        assert!(!should_recover(false, PlayStatus::Paused, stalled));
+        assert!(!should_recover(false, PlayStatus::Ended, stalled));
+        assert!(!should_recover(false, PlayStatus::Idle, stalled));
+    }
+
+    /// 只有正在播/已暂停才在重建后续播：已播完的曲目不能被「拉起来」。
+    #[test]
+    fn test_recover_resumes_only_for_active_playback() {
+        assert!(should_resume_after_recover(PlayStatus::Playing));
+        assert!(should_resume_after_recover(PlayStatus::Paused));
+        assert!(!should_resume_after_recover(PlayStatus::Ended));
+        assert!(!should_resume_after_recover(PlayStatus::Idle));
+    }
+
+    /// 未达到阈值不重建（正常播放中位置每 250ms 都会前进，这里模拟「刚查过一次」）。
+    #[test]
+    fn test_should_not_recover_before_stall_threshold() {
+        assert!(!should_recover(
+            false,
+            PlayStatus::Playing,
+            Some(Duration::from_millis(STALL_RECOVER_MS - 1))
+        ));
+        // 位置在前进（stalled_for 返回 None）→ 不重建
+        assert!(!should_recover(false, PlayStatus::Playing, None));
+    }
 
     #[test]
     fn test_initial_state_is_idle() {
