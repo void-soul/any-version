@@ -53,6 +53,22 @@ export interface CheckResult {
   aborted: boolean;
 }
 
+/** 后端实时进度事件（favorites-progress）：导入与归类共用一个载荷 */
+export interface FavoritesProgress {
+  stage: "import" | "classify";
+  source?: string | null;
+  folder?: string | null;
+  message?: string | null;
+  fetched?: number | null;
+  added?: number | null;
+  updated?: number | null;
+  skipped?: number | null;
+  classified?: number | null;
+  tagsWritten?: number | null;
+  remaining?: number | null;
+  done: boolean;
+}
+
 export const SOURCE_LABELS: Record<string, string> = {
   github: "GitHub",
   bilibili: "B站",

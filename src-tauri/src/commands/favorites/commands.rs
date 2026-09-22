@@ -20,6 +20,57 @@ static CANCEL: AtomicBool = AtomicBool::new(false);
 /// 单次导入最多翻多少页：star 上千时防止一次跑太久（每页 100 条）。
 const MAX_PAGES: usize = 100;
 
+/// 导入 / 归类的实时进度事件（前端 `favorites-progress`）。
+///
+/// 字段全部可选、按阶段取用：导入阶段给抓取/新增计数与当前收藏夹，
+/// 归类阶段给已归类/剩余/标签数。`done = true` 表示整趟结束（汇总值）。
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FavoritesProgress {
+    /// import | classify
+    stage: &'static str,
+    source: Option<String>,
+    /// 当前正在处理的收藏夹 / 阶段说明
+    folder: Option<String>,
+    message: Option<String>,
+    fetched: Option<usize>,
+    added: Option<usize>,
+    updated: Option<usize>,
+    skipped: Option<usize>,
+    classified: Option<usize>,
+    tags_written: Option<usize>,
+    remaining: Option<usize>,
+    done: bool,
+}
+
+fn emit_progress(app: &tauri::AppHandle, progress: &FavoritesProgress) {
+    use tauri::Emitter;
+    let _ = app.emit("favorites-progress", progress);
+}
+
+/// 汇总一条已累计的导入计数。
+fn import_progress(
+    stage: &'static str,
+    source: &str,
+    folder: Option<String>,
+    message: Option<String>,
+    result: &ImportResult,
+    done: bool,
+) -> FavoritesProgress {
+    FavoritesProgress {
+        stage,
+        source: Some(source.to_string()),
+        folder,
+        message,
+        fetched: Some(result.fetched),
+        added: Some(result.added),
+        updated: Some(result.updated),
+        skipped: Some(result.skipped),
+        done,
+        ..FavoritesProgress::default()
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportResult {
@@ -51,7 +102,10 @@ fn favorites_github_token() -> Result<String, String> {
 ///
 /// 幂等：同一批数据第二次导入 `added = 0`，全部落到 `skipped`（或内容有变时 `updated`）。
 #[tauri::command]
-pub async fn fav_import_github(max_pages: Option<usize>) -> Result<ImportResult, String> {
+pub async fn fav_import_github(
+    app: tauri::AppHandle,
+    max_pages: Option<usize>,
+) -> Result<ImportResult, String> {
     let token = favorites_github_token()?;
 
     CANCEL.store(false, Ordering::SeqCst);
@@ -64,11 +118,13 @@ pub async fn fav_import_github(max_pages: Option<usize>) -> Result<ImportResult,
         ..ImportResult::default()
     };
 
+    let mut page_no = 0usize;
     for _ in 0..limit {
         if CANCEL.load(Ordering::SeqCst) {
             result.cancelled = true;
             break;
         }
+        page_no += 1;
         let (body, next) = github::fetch_starred_page(&token, &url).await?;
         let repos = body
             .as_array()
@@ -94,6 +150,18 @@ pub async fn fav_import_github(max_pages: Option<usize>) -> Result<ImportResult,
         result.updated += delta.1;
         result.skipped += delta.2;
 
+        emit_progress(
+            &app,
+            &import_progress(
+                "import",
+                github::SOURCE,
+                Some(format!("第 {} 页", page_no)),
+                None,
+                &result,
+                false,
+            ),
+        );
+
         match next {
             Some(next_url) => url = next_url,
             None => break,
@@ -109,6 +177,10 @@ pub async fn fav_import_github(max_pages: Option<usize>) -> Result<ImportResult,
         result.updated,
         result.skipped,
         result.cancelled
+    );
+    emit_progress(
+        &app,
+        &import_progress("import", github::SOURCE, None, None, &result, true),
     );
     Ok(result)
 }
@@ -139,6 +211,7 @@ pub struct ClassifyResult {
 /// - `limit` 给一个上限，方便先试 40 条看效果再决定要不要全量跑。
 #[tauri::command]
 pub async fn fav_classify(
+    app: tauri::AppHandle,
     provider_id: Option<String>,
     model_id: Option<String>,
     limit: Option<usize>,
@@ -151,6 +224,10 @@ pub async fn fav_classify(
         model: model.clone(),
         ..ClassifyResult::default()
     };
+    // 总盘子 = 开始时未归类的条数；进度条用它算百分比
+    let total_pending =
+        db::with_conn(|conn| db::select_unclassified(conn, 1_000_000))?.len();
+    let mut batch_no = 0usize;
 
     loop {
         let done = result.classified;
@@ -161,6 +238,7 @@ pub async fn fav_classify(
         if batch.is_empty() {
             break;
         }
+        batch_no += 1;
         let prompt = classify::build_prompt(&batch);
         let outcome = crate::commands::ai::channel::complete_chat(
             &crate::commands::ai::channel::NoHooks,
@@ -180,6 +258,19 @@ pub async fn fav_classify(
         result.tags_written += written;
         result.classified += batch.len();
 
+        emit_progress(
+            &app,
+            &FavoritesProgress {
+                stage: "classify",
+                message: Some(format!("第 {} 批（每批 {} 条）", batch_no, BATCH_SIZE)),
+                classified: Some(result.classified),
+                tags_written: Some(result.tags_written),
+                remaining: Some(total_pending.saturating_sub(result.classified)),
+                done: false,
+                ..FavoritesProgress::default()
+            },
+        );
+
         if let Some(usage) = &outcome.usage {
             crate::commands::ai::usage::log_usage_from_json(
                 "favorites",
@@ -197,6 +288,17 @@ pub async fn fav_classify(
         result.classified,
         result.tags_written,
         result.remaining
+    );
+    emit_progress(
+        &app,
+        &FavoritesProgress {
+            stage: "classify",
+            classified: Some(result.classified),
+            tags_written: Some(result.tags_written),
+            remaining: Some(result.remaining),
+            done: true,
+            ..FavoritesProgress::default()
+        },
     );
     Ok(result)
 }
@@ -265,7 +367,7 @@ pub async fn fav_check_gone(all: Option<bool>) -> Result<CheckResult, String> {
 /// 逐个收藏夹分页拉取：`created/list-all` → 每个 `resource/list`。
 /// 同样幂等：第二次导入 added = 0。
 #[tauri::command]
-pub async fn fav_import_bilibili() -> Result<ImportResult, String> {
+pub async fn fav_import_bilibili(app: tauri::AppHandle) -> Result<ImportResult, String> {
     let cookie = db::with_conn(|conn| db::get_credential(conn, bilibili::SOURCE))?
         .ok_or_else(|| "未配置 B站 Cookie：请在收藏模块里粘贴登录后的 Cookie（含 SESSDATA）".to_string())?;
 
@@ -312,6 +414,17 @@ pub async fn fav_import_bilibili() -> Result<ImportResult, String> {
             result.added += delta.0;
             result.updated += delta.1;
             result.skipped += delta.2;
+            emit_progress(
+                &app,
+                &import_progress(
+                    "import",
+                    bilibili::SOURCE,
+                    Some(folder_title.clone()),
+                    Some(format!("第 {} 页", page)),
+                    &result,
+                    false,
+                ),
+            );
             if !has_more {
                 break;
             }
@@ -327,6 +440,10 @@ pub async fn fav_import_bilibili() -> Result<ImportResult, String> {
         result.updated,
         result.skipped,
         result.cancelled
+    );
+    emit_progress(
+        &app,
+        &import_progress("import", bilibili::SOURCE, None, None, &result, true),
     );
     Ok(result)
 }
@@ -364,7 +481,7 @@ fn zhihu_now_secs() -> u64 {
 /// 每个收藏夹的断点存在本地（`favorite_import_state.cursor`），跨天续传时
 /// 直接从上次位置继续——配额全部花在新内容上，而不是重抓已导过的页。
 #[tauri::command]
-pub async fn fav_import_zhihu() -> Result<ImportResult, String> {
+pub async fn fav_import_zhihu(app: tauri::AppHandle) -> Result<ImportResult, String> {
     let secret = db::with_conn(|conn| db::get_credential(conn, zhihu::SOURCE))?.ok_or_else(|| {
         "未配置知乎 Access Secret：点收藏模块的钥匙按钮，粘贴在 developer.zhihu.com/profile 生成的 Access Secret"
             .to_string()
@@ -472,6 +589,17 @@ pub async fn fav_import_zhihu() -> Result<ImportResult, String> {
             result.added += delta.0;
             result.updated += delta.1;
             result.skipped += delta.2;
+            emit_progress(
+                &app,
+                &import_progress(
+                    "import",
+                    zhihu::SOURCE,
+                    Some(title.clone()),
+                    Some(format!("offset {}", offset)),
+                    &result,
+                    false,
+                ),
+            );
 
             if is_end || next_offset == usize::MAX {
                 // 该收藏夹已导完：清断点，下次导入从头检查是否有新收藏
@@ -497,6 +625,10 @@ pub async fn fav_import_zhihu() -> Result<ImportResult, String> {
         result.skipped,
         result.failed.len(),
         result.cancelled
+    );
+    emit_progress(
+        &app,
+        &import_progress("import", zhihu::SOURCE, None, None, &result, true),
     );
     Ok(result)
 }

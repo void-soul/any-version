@@ -6,6 +6,7 @@
 // - 一个条目可以属于多个分类（多标签），所以同一条目会在多个分类下出现。
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useTranslation } from "react-i18next";
 import {
@@ -37,6 +38,7 @@ import {
   type ClassifyResult,
   type FavoriteRow,
   type FavoriteStats,
+  type FavoritesProgress,
   type ImportResult,
 } from "./types";
 
@@ -58,6 +60,18 @@ export default function FavoritesPanel() {
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingTags, setEditingTags] = useState("");
+
+  // 导入 / 归类的实时进度（后端 favorites-progress 事件）
+  const [progress, setProgress] = useState<FavoritesProgress | null>(null);
+
+  useEffect(() => {
+    const unlisten = listen<FavoritesProgress>("favorites-progress", (event) => {
+      setProgress(event.payload);
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
 
   // AI 归类的模型选择：配置里没存模型列表的供应商，现拉一次并按 provider 缓存
   const [fetchedModels, setFetchedModels] = useState<Record<string, string[]>>({});
@@ -178,6 +192,7 @@ export default function FavoritesPanel() {
       toast(t("favorites.importFail", { err: String(e) }), "err");
     } finally {
       setBusy(null);
+      setProgress(null);
     }
   };
 
@@ -226,6 +241,7 @@ export default function FavoritesPanel() {
       if (!biliConfigured) setCookieOpen(true);
     } finally {
       setBusy(null);
+      setProgress(null);
     }
   };
 
@@ -264,6 +280,7 @@ export default function FavoritesPanel() {
       toast(t("favorites.importFail", { err: String(e) }), "err");
     } finally {
       setBusy(null);
+      setProgress(null);
     }
   };
 
@@ -288,6 +305,7 @@ export default function FavoritesPanel() {
       toast(t("favorites.classifyFail", { err: String(e) }), "err");
     } finally {
       setBusy(null);
+      setProgress(null);
     }
   };
 
@@ -312,6 +330,7 @@ export default function FavoritesPanel() {
       toast(t("favorites.checkFail", { err: String(e) }), "err");
     } finally {
       setBusy(null);
+      setProgress(null);
     }
   };
 
@@ -533,6 +552,65 @@ export default function FavoritesPanel() {
           </select>
         </div>
       </div>
+
+      {/* 实时进度：导入（抓取/新增计数 + 当前收藏夹）与归类（批次 + 百分比） */}
+      {busy && progress && progress.stage === (busy === "classify" ? "classify" : "import") && (
+        <div className="glass-panel px-3 py-2 space-y-1.5">
+          <div className="flex items-center gap-2 text-[10px] text-slate-300 flex-wrap">
+            <RefreshCw className="w-3 h-3 animate-spin text-[var(--module-accent)]" />
+            {progress.stage === "import" ? (
+              <>
+                <span>
+                  {SOURCE_LABELS[progress.source ?? ""] ?? progress.source ?? ""}
+                  {progress.folder ? ` · ${progress.folder}` : ""}
+                  {progress.message ? ` · ${progress.message}` : ""}
+                </span>
+                <span>{t("favorites.progressFetched", { fetched: progress.fetched ?? 0 })}</span>
+                <span className="text-emerald-400/80">
+                  {t("favorites.progressAdded", { added: progress.added ?? 0 })}
+                </span>
+                <span className="text-amber-400/80">
+                  {t("favorites.progressUpdated", { updated: progress.updated ?? 0 })}
+                </span>
+                <span className="text-slate-500">
+                  {t("favorites.progressSkipped", { skipped: progress.skipped ?? 0 })}
+                </span>
+              </>
+            ) : (
+              <>
+                <span>{progress.message}</span>
+                <span>
+                  {t("favorites.progressClassified", {
+                    classified: progress.classified ?? 0,
+                    remaining: progress.remaining ?? 0,
+                  })}
+                </span>
+                <span className="text-slate-400">
+                  {t("favorites.progressTags", { tags: progress.tagsWritten ?? 0 })}
+                </span>
+              </>
+            )}
+          </div>
+          <div className="h-1 rounded bg-white/5 overflow-hidden">
+            {progress.stage === "classify" &&
+            (progress.classified ?? 0) + (progress.remaining ?? 0) > 0 ? (
+              <div
+                className="h-full bg-[var(--module-accent)] transition-all duration-300"
+                style={{
+                  width: `${Math.min(
+                    100,
+                    ((progress.classified ?? 0) /
+                      ((progress.classified ?? 0) + (progress.remaining ?? 0))) *
+                      100,
+                  )}%`,
+                }}
+              />
+            ) : (
+              <div className="h-full w-1/3 bg-[var(--module-accent)] animate-pulse" />
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 flex gap-2 min-h-0">
         {/* 左侧分类树 */}
