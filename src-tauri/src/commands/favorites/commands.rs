@@ -5,6 +5,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
+use serde_json::Value;
 
 use super::bilibili;
 use super::check;
@@ -327,85 +328,73 @@ pub async fn fav_import_bilibili() -> Result<ImportResult, String> {
     Ok(result)
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ZhihuStatus {
-    pub logged_in: bool,
-    pub url_token: Option<String>,
+/// 知乎官方 API 的 GET（带鉴权头）。
+async fn zhihu_get(access_secret: &str, path: &str) -> Result<Value, String> {
+    let client = crate::commands::utils::get_http_client();
+    let mut request = client.get(format!("{}{}", zhihu::BASE_URL, path));
+    for (name, value) in zhihu::auth_headers(access_secret, zhihu_now_secs()) {
+        request = request.header(name, value);
+    }
+    let resp = request
+        .send()
+        .await
+        .map_err(|e| format!("请求知乎开放平台失败: {}", e))?;
+    let status = resp.status().as_u16();
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析知乎响应失败 (HTTP {}): {}", status, e))?;
+    zhihu::parse_envelope(&body)
 }
 
-/// 打开可见的知乎窗口让用户登录（登录态留在该窗口的 Cookie 里，后续导入复用它）。
-#[tauri::command]
-pub fn fav_zhihu_open_login(app: tauri::AppHandle) -> Result<(), String> {
-    zhihu::open_login_window(&app)
+fn zhihu_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
-/// 关闭知乎相关窗口（登录态异常或页面卡住时重置；Cookie 不受影响）。
-#[tauri::command]
-pub fn fav_zhihu_close(app: tauri::AppHandle) -> Result<(), String> {
-    zhihu::close_windows(&app)
-}
-
-/// 探测知乎登录态。
-#[tauri::command]
-pub async fn fav_zhihu_status(app: tauri::AppHandle) -> Result<ZhihuStatus, String> {
-    let url_token = zhihu::fetch_url_token(&app).await?;
-    Ok(ZhihuStatus {
-        logged_in: url_token.is_some(),
-        url_token,
-    })
-}
-
-/// 导入知乎收藏（只读，通过隐藏窗口在知乎页面上下文里调 API）。
+/// 导入知乎收藏（只读，走开放平台官方接口）。
 ///
-/// 逐个收藏夹按 offset 翻页；`paging.is_end` 为 true 或本页为空即停。
+/// 逐个收藏夹按 `Paging.NextOffset` 翻页直到 `IsEnd`。
+/// ⚠️ 用户数据接口按自然日配额（默认 100 次/天、未实名 10 次/天），每次翻页消耗一次；
+/// 超限时会收到明确的 30001/30002 报错，而不是空列表。
 #[tauri::command]
-pub async fn fav_import_zhihu(app: tauri::AppHandle) -> Result<ImportResult, String> {
-    let Some(url_token) = zhihu::fetch_url_token(&app).await? else {
-        return Err("未登录知乎：请点「登录知乎」在打开的窗口里登录一次".to_string());
-    };
+pub async fn fav_import_zhihu() -> Result<ImportResult, String> {
+    let secret = db::with_conn(|conn| db::get_credential(conn, zhihu::SOURCE))?.ok_or_else(|| {
+        "未配置知乎 Access Secret：点收藏模块的钥匙按钮，粘贴在 developer.zhihu.com/profile 生成的 Access Secret"
+            .to_string()
+    })?;
 
     CANCEL.store(false, Ordering::SeqCst);
-    let collections = zhihu::fetch_api(&app, &zhihu::collections_path(&url_token)).await?;
-    let list = collections
-        .get("data")
+    let favlists = zhihu_get(&secret, &zhihu::favlists_path()).await?;
+    let folders = favlists
+        .get("Items")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
 
     let mut result = ImportResult::default();
-    'outer: for collection in list {
-        let id = collection
-            .get("id")
-            .map(|v| v.as_i64().map(|n| n.to_string()).unwrap_or_else(|| v.to_string()))
-            .unwrap_or_default();
-        if id.is_empty() {
-            continue;
-        }
-        let title = collection
-            .get("title")
+    'outer: for folder in folders {
+        let token = folder.get("UrlToken").and_then(|v| v.as_i64());
+        let title = folder
+            .get("Title")
             .and_then(|v| v.as_str())
             .unwrap_or("知乎收藏夹")
             .to_string();
+        let Some(token) = token else {
+            continue;
+        };
 
-        for page in 0..zhihu::MAX_PAGES {
+        let mut offset = 0usize;
+        loop {
             if CANCEL.load(Ordering::SeqCst) {
                 result.cancelled = true;
                 break 'outer;
             }
-            let payload = zhihu::fetch_api(
-                &app,
-                &zhihu::items_path(&id, page * zhihu::PAGE_SIZE),
-            )
-            .await?;
-            let items = payload
-                .get("data")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-            if items.is_empty() {
-                break;
-            }
+            let payload = zhihu_get(&secret, &zhihu::contents_path(token, offset)).await?;
+            let (items, is_end, next_offset) = zhihu::parse_contents_page(&payload);
+
             let favorites: Vec<NewFavorite> = items
                 .iter()
                 .filter_map(|item| zhihu::item_to_favorite(item, &title))
@@ -428,13 +417,10 @@ pub async fn fav_import_zhihu(app: tauri::AppHandle) -> Result<ImportResult, Str
             result.updated += delta.1;
             result.skipped += delta.2;
 
-            let is_end = payload
-                .pointer("/paging/is_end")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-            if is_end {
+            if is_end || next_offset == usize::MAX {
                 break;
             }
+            offset = next_offset;
         }
     }
 

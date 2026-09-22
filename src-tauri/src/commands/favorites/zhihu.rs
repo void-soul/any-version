@@ -1,12 +1,17 @@
-//! 知乎收藏导入（**只读**）——在知乎页面上下文里发 API 请求。
+//! 知乎收藏导入（**只读**）——走知乎**开放平台官方接口**。
 //!
-//! 为什么不用 HTTP 客户端 + Cookie：知乎要求 `x-zse-96` 签名，
-//! 构成是 `"2.0_" + u(md5(x-zse-93 + path + d_c0))`，其中 `u()` 是知乎自己的
-//! jsvmp 混淆函数（没有公开算法、随前端版本变化）。纯 Rust 复现既不稳定也不现实。
+//! 为什么不用 webview / 逆向：`www.zhihu.com/api/v4/*` 要求 `x-zse-96` 签名
+//! （jsvmp 混淆，随版本变化）；而开放平台（`developer.zhihu.com`）对「用户收藏」
+//! 提供了官方接口，鉴权只是 `Authorization: Bearer <AccessSecret>` + 秒级时间戳头，
+//! 在 developer.zhihu.com/profile 生成 Access Secret 即可使用。
 //!
-//! 因此这里复用 [`crate::commands::picky`] 已确立的「隐藏 WebviewWindow + eval」方案：
-//! 把请求放进**知乎页面自己的上下文**里发（`fetch` + `credentials: 'include'`），
-//! 签名由知乎自己的 JS 完成，我们只把 JSON 取回来。代价是首次要在应用内登录一次知乎。
+//! 接口（来自官方文档 `developer.zhihu.com/docs?key=user_collections`）：
+//! - `GET /api/v1/user/favlists`                        收藏夹列表（Limit，无分页）
+//! - `GET /api/v1/user/favlist_contents`                收藏夹内容（Offset/Limit + Paging.IsEnd）
+//!
+//! ⚠️ 额度：这类用户数据接口按「自然日」配额（user_data 项，默认 100 次/天、
+//! 未实名 10 次/天），每次翻页都消耗一次。超限返回 30001/30002，
+//! 报错里会明说，不会静默给空列表。
 
 use serde_json::{json, Value};
 
@@ -15,188 +20,129 @@ use super::db::NewFavorite;
 /// 数据源标识（写入 `favorite.source`）
 pub const SOURCE: &str = "zhihu";
 
-/// 隐藏窗口 label：**同一个 label 复用**（与 picky 每次销毁不同）——
-/// 登录态就活在这个 webview 的 cookie 里，销毁窗口等于把用户登录态丢了。
-pub const VIEW_LABEL: &str = "favorites-zhihu-view";
+pub const BASE_URL: &str = "https://developer.zhihu.com";
 
-/// 登录窗口 label：与隐藏窗口**分开**。
-///
-/// 之前两者共用一个窗口（先隐藏创建、再 `show()` + `navigate()`），实测会白屏：
-/// WebView2 在不可见状态下创建、随后又被打断导航，容易停在空白文档上。
-/// 现在登录走独立窗口，**直接可见创建**（与 `node_manager` / `picky` 的写法一致）；
-/// Cookie 存在 WebView2 的用户数据目录里，与隐藏窗口天然共享，所以登录一次两边都生效。
-pub const LOGIN_LABEL: &str = "favorites-zhihu-login";
-
-/// 主页（隐藏窗口的宿主页；同源才能带 Cookie 调 API）
-pub const HOME_URL: &str = "https://www.zhihu.com/";
-
-/// 登录页（用户点「登录知乎」时打开的可见窗口）
-pub const LOGIN_URL: &str = "https://www.zhihu.com/signin";
-
-/// 每页条数：知乎 items 接口 limit 上限是 20。
+/// 每页条数（官方默认 20；文档未给出上限，用保守值）
 pub const PAGE_SIZE: usize = 20;
 
-/// 一次导入最多翻多少页。
-pub const MAX_PAGES: usize = 500;
+/// 收藏夹列表请求的 Limit（接口无分页字段，一次尽量多取）
+pub const FAVLISTS_LIMIT: usize = 100;
 
-/// 页面上下文里取值的全局变量名（`window.__xx`），每次请求前清零。
-pub const RESULT_VAR: &str = "__favZhihuFetch";
+/// 收藏夹列表。
+pub fn favlists_path() -> String {
+    format!("/api/v1/user/favlists?Limit={}", FAVLISTS_LIMIT)
+}
 
-/// 收藏夹列表（我创建的）。
-pub fn collections_path(url_token: &str) -> String {
+/// 收藏夹内容第 offset 条开始的分页。
+pub fn contents_path(favlist_url_token: i64, offset: usize) -> String {
     format!(
-        "/api/v4/members/{}/collections?offset=0&limit=50",
-        url_token
+        "/api/v1/user/favlist_contents?FavlistUrlToken={}&Offset={}&Limit={}",
+        favlist_url_token, offset, PAGE_SIZE
     )
 }
 
-/// 收藏夹内容（第 offset 条开始的 PAGE_SIZE 条）。
-pub fn items_path(collection_id: &str, offset: usize) -> String {
-    format!(
-        "/api/v4/collections/{}/items?offset={}&limit={}",
-        collection_id, offset, PAGE_SIZE
-    )
-}
-
-/// 构造「发起请求」的 JS。
+/// 构造鉴权请求头。
 ///
-/// URL 用 `serde_json::to_string` 转义后注入，避免路径里出现引号/反斜杠时把脚本拼坏
-/// （收藏夹 id 虽然是我们自己拼的，但拼串注入是这类代码最容易出的洞）。
-pub fn build_fetch_js(url: &str) -> String {
-    let literal = serde_json::to_string(url).unwrap_or_else(|_| "\"\"".to_string());
-    format!(
-        r#"(function () {{
-  try {{
-    window.{var} = null;
-    fetch({url}, {{ credentials: 'include', headers: {{ 'accept': 'application/json, text/plain, */*' }} }})
-      .then(function (r) {{ return r.text().then(function (t) {{ return {{ status: r.status, body: t }}; }}); }})
-      .then(function (v) {{ window.{var} = JSON.stringify(v); }})
-      .catch(function (e) {{ window.{var} = JSON.stringify({{ error: String(e) }}); }});
-    return 'started';
-  }} catch (e) {{
-    window.{var} = JSON.stringify({{ error: String(e) }});
-    return 'failed';
-  }}
-}})()"#,
-        var = RESULT_VAR,
-        url = literal
-    )
+/// `X-Request-Timestamp` 与服务器时间差不能超过 10 分钟，所以每次请求都取当前时间；
+/// 时间戳作为参数传入便于测试。
+pub fn auth_headers(access_secret: &str, timestamp: u64) -> Vec<(&'static str, String)> {
+    vec![
+        ("Authorization", format!("Bearer {}", access_secret)),
+        ("X-Request-Timestamp", timestamp.to_string()),
+        ("Content-Type", "application/json".to_string()),
+    ]
 }
 
-/// 解析轮询到的 `window.__favZhihuFetch` 值。
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// 解析响应外层：官方文档用 PascalCase（`Data`/`Code`），做一层兼容防改版。
 ///
-/// `eval_with_callback` 会把 JS 字符串再序列化一层（回调收到的是带引号的 JSON 串），
-/// 所以要先剥一层再剥一层——picky 里也踩过同样的坑。
-pub fn parse_poll(raw: &str) -> Result<Option<Value>, String> {
-    let outer: Value = serde_json::from_str(raw.trim())
-        .map_err(|e| format!("读取知乎响应失败: {}", e))?;
-    let inner_text = match outer {
-        Value::Null => return Ok(None),
-        Value::String(s) => s,
-        other => other.to_string(),
-    };
-    let payload: Value = serde_json::from_str(&inner_text)
-        .map_err(|e| format!("解析知乎响应失败: {}", e))?;
-    if let Some(err) = payload.get("error").and_then(|v| v.as_str()) {
-        return Err(format!("知乎页面内请求失败: {}", err));
-    }
-    let status = payload.get("status").and_then(|v| v.as_i64()).unwrap_or(0);
-    let body = payload
-        .get("body")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
-    if status == 404 {
-        return Err("知乎接口返回 404（接口可能已改版）".to_string());
-    }
-    if status == 403 || status == 401 {
-        return Err("知乎拒绝了请求（未登录或账号受限），请先在应用内登录知乎".to_string());
-    }
-    let parsed: Value =
-        serde_json::from_str(body).map_err(|e| format!("解析知乎 JSON 失败: {}", e))?;
-    if let Some(error) = parsed.get("error") {
-        let message = error
-            .pointer("/message")
+/// 返回 `Data` 部分；`Code != 0` 时给出可操作提示。
+pub fn parse_envelope(body: &Value) -> Result<Value, String> {
+    let code = body
+        .get("Code")
+        .or_else(|| body.get("code"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    if code != 0 {
+        let message = body
+            .get("Message")
+            .or_else(|| body.get("message"))
             .and_then(|v| v.as_str())
-            .or_else(|| error.as_str())
-            .unwrap_or("未知错误");
-        return Err(format!("知乎返回错误: {}", message));
+            .unwrap_or_default();
+        return Err(map_api_error(code, message));
     }
-    Ok(Some(parsed))
+    body.get("Data")
+        .or_else(|| body.get("data"))
+        .cloned()
+        .ok_or_else(|| "知乎响应缺少 Data 字段（接口可能已改版）".to_string())
 }
 
-/// 一条收藏项 → 待落库条目。
+/// 官方错误码 → 可操作提示。
+pub fn map_api_error(code: i64, message: &str) -> String {
+    let hint = match code {
+        20001 => "（Access Secret 无效或已过期，请到 developer.zhihu.com/profile 重新生成）",
+        30001 | 30002 => {
+            "（今日用户数据额度已用完：这类接口按自然日配额，默认 100 次/天、未实名 10 次/天，明天再导或在开放平台查看额度）"
+        }
+        30003 => "（被知乎风控拒绝，请稍后再试）",
+        10001 => "（参数错误，可能是接口改版）",
+        90001 => "（知乎服务端内部错误，稍后再试）",
+        _ => "",
+    };
+    format!("知乎返回错误 {} {}{}", code, message, hint)
+}
+
+/// 一条收藏内容 → 待落库条目。
 ///
-/// 知乎的 items 结构是 `{ content: {...}, created: 时间戳 }`，而 `content` 的类型
-/// 有 answer / article / zvideo / pin 等多种，字段各不相同，所以这里逐层兜底取值，
-/// 任一项缺失都只影响该条而不是整批。
+/// 官方 items **没有内容 id**，字段是 `Url / ContentType / Title / Summary / Author`；
+/// 去重键用 **Url**（同一内容的规范链接，稳定且唯一）。
+/// 字段全是 PascalCase，缺哪个都只影响该条。
 pub fn item_to_favorite(item: &Value, collection_title: &str) -> Option<NewFavorite> {
-    let content = item.get("content").unwrap_or(item);
-    let kind = content
-        .get("type")
+    let url = item
+        .get("Url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())?;
+    let title = item
+        .get("Title")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())?;
+    let kind = item
+        .get("ContentType")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
-    let id = content
-        .get("id")
-        .and_then(|v| v.as_i64())
-        .or_else(|| item.get("id").and_then(|v| v.as_i64()))?;
-
-    let question_title = content
-        .pointer("/question/title")
+    let summary = item
+        .get("Summary")
         .and_then(|v| v.as_str())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    let own_title = content
-        .get("title")
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let excerpt = content
-        .get("excerpt")
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-
-    let title = question_title
-        .clone()
-        .or(own_title)
-        .or_else(|| excerpt.as_ref().map(|s| s.chars().take(60).collect()))?;
-
-    let question_id = content.pointer("/question/id").and_then(|v| v.as_i64());
-    let url = match kind {
-        "answer" => match question_id {
-            Some(qid) => format!("https://www.zhihu.com/question/{}/answer/{}", qid, id),
-            None => format!("https://www.zhihu.com/answer/{}", id),
-        },
-        "article" => format!("https://zhuanlan.zhihu.com/p/{}", id),
-        "zvideo" => format!("https://www.zhihu.com/zvideo/{}", id),
-        "pin" => format!("https://www.zhihu.com/pin/{}", id),
-        _ => content
-            .get("url")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())?,
-    };
-
-    let author = content
-        .pointer("/author/name")
+    let author = item
+        .pointer("/Author/Name")
         .and_then(|v| v.as_str())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
     Some(NewFavorite {
         source: SOURCE.to_string(),
-        // 不同类型可能有相同数字 id，所以把类型拼进去当去重键
-        external_id: format!("{}:{}", kind, id),
+        external_id: url.clone(),
         url,
         title,
         subtitle: author.or_else(|| Some(collection_title.to_string())),
-        description: excerpt,
+        description: summary,
         extra_json: Some(
             json!({
                 "kind": kind,
                 "collection": collection_title,
-                "created": item.get("created").and_then(|v| v.as_i64())
-                    .or_else(|| item.get("created_time").and_then(|v| v.as_i64())),
-                "voteup": content.get("voteup_count").and_then(|v| v.as_i64()),
+                "fav_time": item.get("FavTime").and_then(|v| v.as_i64()),
+                "created": item.get("CreatedAt").and_then(|v| v.as_i64()),
+                "like_count": item.get("LikeCount").and_then(|v| v.as_i64()),
             })
             .to_string(),
         ),
@@ -204,309 +150,124 @@ pub fn item_to_favorite(item: &Value, collection_title: &str) -> Option<NewFavor
     })
 }
 
-/// 隐藏窗口上的操作必须串行：同一时刻只有一个 fetch 在跑，否则全局变量会互相覆盖。
-static WEBVIEW_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-/// 取回结果的最长等待（知乎接口偶发慢，比 picky 的 6s 放宽）。
-const FETCH_TIMEOUT_SECS: u64 = 20;
-/// 首次打开页面等待 `document.readyState === 'complete'` 的预算。
-const READY_TIMEOUT_SECS: u64 = 30;
-
-/// 确保隐藏窗口存在（不存在就以知乎主页为宿主建一个）。
-fn ensure_view(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
-    use tauri::Manager;
-
-    if let Some(window) = app.get_webview_window(VIEW_LABEL) {
-        return Ok(window);
-    }
-
-    let url = tauri::WebviewUrl::External(
-        HOME_URL
-            .parse()
-            .map_err(|e| format!("知乎地址解析失败: {}", e))?,
-    );
-    let window = tauri::WebviewWindowBuilder::new(app, VIEW_LABEL, url)
-        .title("知乎")
-        .inner_size(1280.0, 820.0)
-        .visible(false)
-        .skip_taskbar(true)
-        // 页面事件进日志：白屏时能立刻看出是「没加载」还是「加载了但被拦」
-        .on_page_load(|webview, payload| {
-            crate::exit_log!(
-                "[收藏-知乎] 隐藏窗口页面事件: {:?} {}",
-                payload.event(),
-                payload.url()
-            );
-            let _ = webview;
-        })
-        .build()
-        .map_err(|e| format!("创建知乎窗口失败: {}", e))?;
-    Ok(window)
-}
-
-/// 当前页面地址（诊断用：白屏时能知道它到底停在哪）。
-async fn current_url(window: &tauri::WebviewWindow) -> String {
-    use tokio::sync::oneshot;
-    let (tx, rx) = oneshot::channel::<String>();
-    let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
-    let slot2 = slot.clone();
-    if window
-        .eval_with_callback("location.href", move |s| {
-            if let Some(t) = slot2.lock().unwrap().take() {
-                let _ = t.send(s);
-            }
-        })
-        .is_err()
-    {
-        return String::new();
-    }
-    tokio::time::timeout(std::time::Duration::from_secs(2), rx)
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .unwrap_or_default()
-}
-
-/// 轮询 `document.readyState` 直到 complete。
-async fn wait_ready(window: &tauri::WebviewWindow) -> bool {
-    use tokio::sync::oneshot;
-
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(READY_TIMEOUT_SECS);
-    loop {
-        let (tx, rx) = oneshot::channel::<String>();
-        let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
-        let slot2 = slot.clone();
-        if window
-            .eval_with_callback("document.readyState", move |s| {
-                if let Some(t) = slot2.lock().unwrap().take() {
-                    let _ = t.send(s);
-                }
-            })
-            .is_err()
-        {
-            return false;
-        }
-        match tokio::time::timeout(std::time::Duration::from_secs(3), rx).await {
-            Ok(Ok(state)) if state.contains("complete") => return true,
-            _ => {}
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return false;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    }
-}
-
-/// 在知乎页面上下文里请求一个 API 路径（同源 + 带 Cookie，签名由知乎 JS 完成）。
-pub async fn fetch_api(app: &tauri::AppHandle, path: &str) -> Result<Value, String> {
-    use tokio::sync::oneshot;
-
-    let _guard = WEBVIEW_LOCK.lock().await;
-    let window = ensure_view(app)?;
-    if !wait_ready(&window).await {
-        // 记下它停在哪，并把坏窗口销毁：否则下次会继续在坏窗口上复用（一直是白屏）。
-        let url = current_url(&window).await;
-        let _ = window.destroy();
-        crate::exit_log!("[收藏-知乎] 隐藏窗口加载超时，停在该地址: {}", url);
-        return Err(format!(
-            "知乎页面加载超时（当前地址: {}）。请点右侧钥匙按钮打开登录窗口确认能否正常访问知乎",
-            if url.is_empty() { "未知" } else { &url }
-        ));
-    }
-
-    let url = format!("https://www.zhihu.com{}", path);
-    let poll_var = format!("window.{}", RESULT_VAR);
-    window
-        .eval(build_fetch_js(&url))
-        .map_err(|e| format!("在知乎页面里发起请求失败: {}", e))?;
-
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(FETCH_TIMEOUT_SECS);
-    loop {
-        let (tx, rx) = oneshot::channel::<String>();
-        let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
-        let slot2 = slot.clone();
-        if window
-            .eval_with_callback(poll_var.clone(), move |s| {
-                if let Some(t) = slot2.lock().unwrap().take() {
-                    let _ = t.send(s);
-                }
-            })
-            .is_err()
-        {
-            return Err("读取知乎响应失败（窗口可能已被关闭）".to_string());
-        }
-        if let Ok(Ok(raw)) = tokio::time::timeout(std::time::Duration::from_secs(3), rx).await {
-            match parse_poll(&raw)? {
-                Some(value) => return Ok(value),
-                None => {}
-            }
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Err("知乎请求超时（可能未登录或网络受限）".to_string());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    }
-}
-
-/// 打开可见的知乎登录窗口（独立 label，直接可见创建）。
-///
-/// 登录态存在 WebView2 用户数据目录的 Cookie 里，与隐藏窗口共享；
-/// 登录完成后用户手动关掉本窗口即可。
-pub fn open_login_window(app: &tauri::AppHandle) -> Result<(), String> {
-    use tauri::Manager;
-
-    if let Some(window) = app.get_webview_window(LOGIN_LABEL) {
-        let _ = window.show();
-        let _ = window.set_focus();
-        return Ok(());
-    }
-
-    let url = tauri::WebviewUrl::External(
-        LOGIN_URL
-            .parse()
-            .map_err(|e| format!("登录地址解析失败: {}", e))?,
-    );
-    tauri::WebviewWindowBuilder::new(app, LOGIN_LABEL, url)
-        .title("登录知乎（登录完成后关闭此窗口）")
-        .inner_size(1100.0, 820.0)
-        .on_page_load(|_, payload| {
-            crate::exit_log!(
-                "[收藏-知乎] 登录窗口页面事件: {:?} {}",
-                payload.event(),
-                payload.url()
-            );
-        })
-        .build()
-        .map_err(|e| format!("创建知乎登录窗口失败: {}", e))?;
-    Ok(())
-}
-
-/// 关掉知乎相关窗口（登录窗口 + 隐藏窗口）。
-///
-/// 供「登录态异常 / 页面卡住」时重置：隐藏窗口一旦处于坏状态，
-/// 复用它会一直失败，销毁后下次会重新创建。
-pub fn close_windows(app: &tauri::AppHandle) -> Result<(), String> {
-    use tauri::Manager;
-    for label in [LOGIN_LABEL, VIEW_LABEL] {
-        if let Some(window) = app.get_webview_window(label) {
-            let _ = window.destroy();
-        }
-    }
-    Ok(())
-}
-
-/// 当前登录用户的 url_token（未登录返回 None）。
-pub async fn fetch_url_token(app: &tauri::AppHandle) -> Result<Option<String>, String> {
-    let me = match fetch_api(app, "/api/v4/me").await {
-        Ok(value) => value,
-        // 未登录时接口返回 401/403，这与「接口挂了」是两回事
-        Err(e) if e.contains("登录") => return Ok(None),
-        Err(e) => return Err(e),
-    };
-    Ok(me
-        .get("url_token")
+/// 从内容页响应里取（条目数组，是否结束，下一个 Offset）。
+pub fn parse_contents_page(payload: &Value) -> (Vec<Value>, bool, usize) {
+    let items = payload
+        .get("Items")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let is_end = payload
+        .pointer("/Paging/IsEnd")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let next_offset = payload
+        .pointer("/Paging/NextOffset")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .filter(|s| !s.is_empty()))
+        .and_then(|s| s.parse::<usize>().ok());
+    (items, is_end, next_offset.unwrap_or(usize::MAX))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{build_fetch_js, collections_path, item_to_favorite, items_path, parse_poll, RESULT_VAR};
+    use super::{
+        auth_headers, contents_path, favlists_path, item_to_favorite, map_api_error,
+        parse_contents_page, parse_envelope, FAVLISTS_LIMIT, PAGE_SIZE,
+    };
     use serde_json::json;
 
     #[test]
-    fn paths_use_documented_endpoints() {
+    fn paths_match_official_endpoints() {
         assert_eq!(
-            items_path("12345", 40),
-            "/api/v4/collections/12345/items?offset=40&limit=20"
+            favlists_path(),
+            format!("/api/v1/user/favlists?Limit={}", FAVLISTS_LIMIT)
         );
-        assert!(collections_path("someone").contains("/api/v4/members/someone/collections"));
-    }
-
-    /// URL 必须被安全转义，不能被拼进脚本体里。
-    #[test]
-    fn fetch_js_escapes_the_url() {
-        let js = build_fetch_js("/api/v4/collections/1/items?offset=0&limit=20");
-        assert!(js.contains("credentials: 'include'"), "必须带 Cookie：{}", js);
-        assert!(js.contains(&format!("window.{} = null", RESULT_VAR)));
-        // 含引号的路径不会把脚本拼破
-        let risky = build_fetch_js("/x\";alert(1);//");
-        assert!(risky.contains(r#"\";alert(1);//"#), "URL 未转义: {}", risky);
+        assert_eq!(
+            contents_path(123456789, 40),
+            format!(
+                "/api/v1/user/favlist_contents?FavlistUrlToken=123456789&Offset=40&Limit={}",
+                PAGE_SIZE
+            )
+        );
     }
 
     #[test]
-    fn parse_poll_unwraps_double_encoded_payload() {
-        let payload = json!({ "status": 200, "body": r#"{"data":[]}"# }).to_string();
-        let raw = serde_json::to_string(&payload).unwrap(); // 外层再序列化一次
-        let value = parse_poll(&raw).unwrap().unwrap();
-        assert_eq!(value["data"], json!([]));
+    fn auth_headers_carry_bearer_and_timestamp() {
+        let headers = auth_headers("secret-1", 1742822400);
+        assert!(headers.contains(&("Authorization", "Bearer secret-1".to_string())));
+        assert!(headers.contains(&("X-Request-Timestamp", "1742822400".to_string())));
+        assert!(headers.contains(&("Content-Type", "application/json".to_string())));
     }
 
-    /// 还没返回时是 null：调用方据此继续轮询。
+    /// 官方是 PascalCase，但做一层小写兼容（改版不至于直接坏）。
     #[test]
-    fn parse_poll_returns_none_while_pending() {
-        assert!(parse_poll("null").unwrap().is_none());
-    }
-
-    #[test]
-    fn parse_poll_reports_http_and_page_errors() {
-        let forbidden = serde_json::to_string(&json!({"status":403,"body":""}).to_string()).unwrap();
-        assert!(parse_poll(&forbidden).unwrap_err().contains("登录"));
-        let not_found = serde_json::to_string(&json!({"status":404,"body":""}).to_string()).unwrap();
-        assert!(parse_poll(&not_found).unwrap_err().contains("404"));
-        let page_error = serde_json::to_string(&json!({"error":"TypeError"}).to_string()).unwrap();
-        assert!(parse_poll(&page_error).is_err());
-        // 知乎自己的业务错误
-        let body = json!({ "error": { "message": "未登录" } }).to_string();
-        let raw = serde_json::to_string(&json!({"status":200,"body":body}).to_string()).unwrap();
-        assert!(parse_poll(&raw).unwrap_err().contains("未登录"));
+    fn envelope_accepts_both_casings() {
+        let pascal = json!({"Code": 0, "Data": {"Items": []}});
+        assert!(parse_envelope(&pascal).is_ok());
+        let lower = json!({"code": 0, "data": {"Items": []}});
+        assert!(parse_envelope(&lower).is_ok());
     }
 
     #[test]
-    fn maps_answer_using_question_title_and_answer_url() {
+    fn api_errors_are_actionable() {
+        assert!(map_api_error(20001, "").contains("Access Secret"));
+        assert!(map_api_error(30001, "").contains("额度"));
+        assert!(map_api_error(30002, "").contains("额度"));
+    }
+
+    #[test]
+    fn envelope_reports_error_codes() {
+        let body = json!({"Code": 20001, "Message": "auth failed"});
+        let err = parse_envelope(&body).unwrap_err();
+        assert!(err.contains("20001") && err.contains("Access Secret"), "实际: {}", err);
+        // 缺 Data 视为异常而不是空结果
+        let empty = json!({"Code": 0});
+        assert!(parse_envelope(&empty).is_err());
+    }
+
+    #[test]
+    fn maps_item_using_url_as_dedup_key() {
         let item = json!({
-            "content": {
-                "type": "answer",
-                "id": 52361406,
-                "question": { "id": 19550517, "title": "如何评价 X？" },
-                "author": { "name": "某人" },
-                "excerpt": "摘要内容",
-                "voteup_count": 12
-            },
-            "created": 1500000
+            "ContentType": "answer",
+            "Url": "https://www.zhihu.com/question/1/answer/2",
+            "Title": "如何评价 X？",
+            "Summary": "摘要",
+            "FavTime": 1700000000,
+            "LikeCount": 12,
+            "Author": { "Name": "某人" }
         });
         let fav = item_to_favorite(&item, "我的收藏").unwrap();
-        assert_eq!(fav.external_id, "answer:52361406", "不同类型可能撞 id，必须带类型");
-        assert_eq!(fav.url, "https://www.zhihu.com/question/19550517/answer/52361406");
+        // 官方 items 没有内容 id，Url 就是唯一稳定标识
+        assert_eq!(fav.external_id, "https://www.zhihu.com/question/1/answer/2");
+        assert_eq!(fav.url, "https://www.zhihu.com/question/1/answer/2");
         assert_eq!(fav.title, "如何评价 X？");
         assert_eq!(fav.subtitle.as_deref(), Some("某人"));
-        assert_eq!(fav.description.as_deref(), Some("摘要内容"));
+        assert_eq!(fav.description.as_deref(), Some("摘要"));
+        assert!(fav.extra_json.as_ref().unwrap().contains("我的收藏"));
+    }
+
+    /// 缺 Url 或 Title 的条目跳过，别让整批失败。
+    #[test]
+    fn malformed_items_are_skipped() {
+        assert!(item_to_favorite(&json!({"Title": "x"}), "夹").is_none());
+        assert!(item_to_favorite(&json!({"Url": "https://x"}), "夹").is_none());
     }
 
     #[test]
-    fn maps_article_and_zvideo_urls() {
-        let article = json!({ "content": { "type": "article", "id": 7, "title": "专栏文" } });
-        assert_eq!(
-            item_to_favorite(&article, "夹").unwrap().url,
-            "https://zhuanlan.zhihu.com/p/7"
-        );
-        let zvideo = json!({ "content": { "type": "zvideo", "id": 8, "title": "视频" } });
-        assert_eq!(
-            item_to_favorite(&zvideo, "夹").unwrap().url,
-            "https://www.zhihu.com/zvideo/8"
-        );
-    }
+    fn contents_page_reads_paging() {
+        let payload = json!({
+            "Items": [{"Url": "https://x", "Title": "t"}],
+            "Paging": { "IsEnd": false, "NextOffset": "40", "Totals": 100 }
+        });
+        let (items, is_end, next) = parse_contents_page(&payload);
+        assert_eq!(items.len(), 1);
+        assert!(!is_end);
+        assert_eq!(next, 40);
 
-    /// 标题缺失时退回摘要前 60 字；连摘要都没有才跳过该条。
-    #[test]
-    fn falls_back_to_excerpt_then_skips() {
-        let long = "字".repeat(120);
-        let item = json!({ "content": { "type": "answer", "id": 1, "excerpt": long } });
-        let fav = item_to_favorite(&item, "夹").unwrap();
-        assert_eq!(fav.title.chars().count(), 60);
-
-        let empty = json!({ "content": { "type": "answer", "id": 1 } });
-        assert!(item_to_favorite(&empty, "夹").is_none());
+        let ended = json!({ "Items": [], "Paging": { "IsEnd": true } });
+        let (items, is_end, next) = parse_contents_page(&ended);
+        assert!(items.is_empty() && is_end);
+        // 没给 NextOffset 时返回哨兵值，调用方按「结束」处理
+        assert_eq!(next, usize::MAX);
     }
 }

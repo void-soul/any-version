@@ -15,7 +15,6 @@ import {
   ExternalLink,
   KeyRound,
   Lock,
-  LogIn,
   Pencil,
   RefreshCw,
   Search,
@@ -24,7 +23,6 @@ import {
   Tag,
   Trash2,
   Tv,
-  X,
 } from "lucide-react";
 
 import { SharedButton } from "../shared/Button";
@@ -40,7 +38,6 @@ import {
   type FavoriteRow,
   type FavoriteStats,
   type ImportResult,
-  type ZhihuStatus,
 } from "./types";
 
 export default function FavoritesPanel() {
@@ -71,6 +68,11 @@ export default function FavoritesPanel() {
   const [cookieOpen, setCookieOpen] = useState(false);
   const [cookieText, setCookieText] = useState("");
 
+  // 知乎：走开放平台官方接口，凭证是 Access Secret（不是 Cookie）
+  const [zhihuConfigured, setZhihuConfigured] = useState(false);
+  const [zhihuSecretOpen, setZhihuSecretOpen] = useState(false);
+  const [zhihuSecret, setZhihuSecret] = useState("");
+
   // GitHub Token：**收藏模块自己的一份**，与 SDK 模块的 token 互不共享
   const [tokenConfigured, setTokenConfigured] = useState(false);
   const [tokenOpen, setTokenOpen] = useState(false);
@@ -98,6 +100,9 @@ export default function FavoritesPanel() {
     invoke<boolean>("fav_has_credential", { source: "bilibili" })
       .then(setBiliConfigured)
       .catch(() => setBiliConfigured(false));
+    invoke<boolean>("fav_has_credential", { source: "zhihu" })
+      .then(setZhihuConfigured)
+      .catch(() => setZhihuConfigured(false));
     invoke<string>("fav_get_github_token")
       .then((token) => setTokenConfigured(!!token.trim()))
       .catch(() => setTokenConfigured(false));
@@ -189,6 +194,19 @@ export default function FavoritesPanel() {
     }
   };
 
+  const saveZhihuSecret = async () => {
+    if (!zhihuSecret.trim()) return;
+    try {
+      await invoke("fav_set_credential", { source: "zhihu", cookie: zhihuSecret.trim() });
+      setZhihuConfigured(true);
+      setZhihuSecretOpen(false);
+      setZhihuSecret("");
+      toast(t("favorites.zhihuSecretSaved"), "ok");
+    } catch (e) {
+      toast(t("favorites.cookieFail", { err: String(e) }), "err");
+    }
+  };
+
   const runImportBili = async () => {
     setBusy("bili");
     try {
@@ -211,17 +229,15 @@ export default function FavoritesPanel() {
     }
   };
 
-  // 知乎：登录态活在隐藏窗口的 Cookie 里，所以先探测再导入；
-  // 不在面板打开时就探测——那会在后台加载一次知乎首页，没必要。
+  // 知乎：走开放平台官方接口，只需 Access Secret（developer.zhihu.com/profile 生成）
   const runImportZhihu = async () => {
+    // 没配就先把配置弹窗递上去
+    if (!zhihuConfigured) {
+      setZhihuSecretOpen(true);
+      return;
+    }
     setBusy("zhihu");
     try {
-      const status = await invoke<ZhihuStatus>("fav_zhihu_status");
-      if (!status.loggedIn) {
-        await invoke("fav_zhihu_open_login");
-        toast(t("favorites.zhihuNeedLogin"), "err");
-        return;
-      }
       const result = await invoke<ImportResult>("fav_import_zhihu");
       await refresh();
       toast(
@@ -383,7 +399,7 @@ export default function FavoritesPanel() {
             className="!h-7 !px-2"
             onClick={() => void runImportZhihu()}
             disabled={busy !== null}
-            title={t("favorites.zhihuExperimental")}
+            title={t("favorites.zhihuOfficialHint")}
           >
             {busy === "zhihu" ? (
               <RefreshCw className="w-3 h-3 animate-spin" />
@@ -393,23 +409,13 @@ export default function FavoritesPanel() {
             {t("favorites.importZhihu")}
           </SharedButton>
           <button
-            onClick={() => void invoke("fav_zhihu_open_login")}
-            className="p-1 rounded text-slate-500 hover:text-slate-200 cursor-pointer"
-            title={t("favorites.zhihuLogin")}
+            onClick={() => setZhihuSecretOpen(true)}
+            className={`p-1 rounded cursor-pointer transition-colors ${
+              zhihuConfigured ? "text-emerald-400" : "text-slate-500 hover:text-slate-200"
+            }`}
+            title={t("favorites.zhihuSecretTitle")}
           >
-            <LogIn className="w-3 h-3" />
-          </button>
-          {/* 页面卡住/白屏时重置窗口（不动登录 Cookie） */}
-          <button
-            onClick={() =>
-              void invoke("fav_zhihu_close")
-                .then(() => toast(t("favorites.zhihuClosed"), "ok"))
-                .catch((e) => toast(String(e), "err"))
-            }
-            className="p-1 rounded text-slate-500 hover:text-rose-300 cursor-pointer"
-            title={t("favorites.zhihuClose")}
-          >
-            <X className="w-3 h-3" />
+            <KeyRound className="w-3 h-3" />
           </button>
         </div>
 
@@ -663,6 +669,48 @@ export default function FavoritesPanel() {
         hintKey="favorites.githubTokenHint"
         noteKey="favorites.githubTokenLocalNote"
       />
+
+      {/* 知乎 Access Secret：开放平台个人中心生成，走官方接口（无需 Cookie / 签名逆向） */}
+      {zhihuSecretOpen && (
+        <div
+          className="fixed inset-0 z-[250] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setZhihuSecretOpen(false)}
+        >
+          <div
+            className="w-[460px] max-w-full rounded-2xl border border-white/10 bg-slate-900 p-4 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-[13px] font-bold text-white">{t("favorites.zhihuSecretTitle")}</div>
+            <p className="text-[10px] text-slate-400 leading-snug">
+              {t("favorites.zhihuSecretHint")}
+            </p>
+            <input
+              type="password"
+              value={zhihuSecret}
+              onChange={(e) => setZhihuSecret(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void saveZhihuSecret();
+                if (e.key === "Escape") setZhihuSecretOpen(false);
+              }}
+              placeholder={t("favorites.zhihuSecretPlaceholder")}
+              spellCheck={false}
+              autoComplete="off"
+              className="w-full bg-black/30 border border-white/10 rounded-lg px-2.5 py-2 text-[12px] font-mono text-slate-100 outline-none focus:border-[var(--module-accent)]"
+            />
+            <p className="text-[10px] text-amber-400/80 leading-snug">
+              {t("favorites.zhihuQuotaHint")}
+            </p>
+            <div className="flex justify-end gap-2">
+              <SharedButton variant="secondary" onClick={() => setZhihuSecretOpen(false)}>
+                {t("common.cancel")}
+              </SharedButton>
+              <SharedButton onClick={() => void saveZhihuSecret()} disabled={!zhihuSecret.trim()}>
+                {t("favorites.biliCookieSave")}
+              </SharedButton>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* B站 Cookie：登录后从浏览器开发者工具复制整条 Cookie（需含 SESSDATA） */}
       {cookieOpen && (
