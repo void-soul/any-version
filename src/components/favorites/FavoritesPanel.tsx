@@ -605,6 +605,19 @@ export default function FavoritesPanel() {
                   )}%`,
                 }}
               />
+            ) : progress.stage === "import" &&
+              (progress.folderTotal ?? 0) > 0 &&
+              (progress.folderFetched ?? 0) > 0 ? (
+              // 知乎：服务端给了收藏夹总数（Totals），可以显示真实百分比
+              <div
+                className="h-full bg-[var(--module-accent)] transition-all duration-300"
+                style={{
+                  width: `${Math.min(
+                    100,
+                    ((progress.folderFetched ?? 0) / (progress.folderTotal ?? 1)) * 100,
+                  )}%`,
+                }}
+              />
             ) : (
               <div className="h-full w-1/3 bg-[var(--module-accent)] animate-pulse" />
             )}

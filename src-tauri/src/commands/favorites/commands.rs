@@ -40,6 +40,9 @@ struct FavoritesProgress {
     classified: Option<usize>,
     tags_written: Option<usize>,
     remaining: Option<usize>,
+    /// 知乎专用：当前收藏夹已抓取条数 / 服务端报告的总数（Paging.Totals）
+    folder_fetched: Option<usize>,
+    folder_total: Option<i64>,
     done: bool,
 }
 
@@ -532,6 +535,10 @@ pub async fn fav_import_zhihu(app: tauri::AppHandle) -> Result<ImportResult, Str
         if offset > 0 {
             crate::exit_log!("[收藏] 知乎收藏夹「{}」从断点 {} 继续导入", title, offset);
         }
+        // 服务端认为的收藏夹总数（公开范围口径）；进进度条，也能回答
+        // 「是接口截断还是本来就这么多」——与 UI 显示的总数对不上时看它
+        let mut folder_total: Option<i64> = None;
+        let mut folder_fetched = 0usize;
 
         loop {
             if CANCEL.load(Ordering::SeqCst) {
@@ -558,14 +565,19 @@ pub async fn fav_import_zhihu(app: tauri::AppHandle) -> Result<ImportResult, Str
                     continue 'outer;
                 }
             };
-            let (page_items, is_end, next_offset) = zhihu::parse_contents_page(&payload);
+            let (page_items, is_end, next_offset, totals) = zhihu::parse_contents_page(&payload);
+            if totals.is_some() {
+                folder_total = totals;
+            }
+            folder_fetched += page_items.len();
             crate::exit_log!(
-                "[收藏-知乎] 「{}」 offset={} -> {} 条, is_end={}, next={:?}",
+                "[收藏-知乎] 「{}」 offset={} -> {} 条, is_end={}, next={:?}, totals={:?}",
                 title,
                 offset,
                 page_items.len(),
                 is_end,
-                next_offset
+                next_offset,
+                folder_total
             );
 
             let favorites: Vec<NewFavorite> = page_items
@@ -591,14 +603,18 @@ pub async fn fav_import_zhihu(app: tauri::AppHandle) -> Result<ImportResult, Str
             result.skipped += delta.2;
             emit_progress(
                 &app,
-                &import_progress(
-                    "import",
-                    zhihu::SOURCE,
-                    Some(title.clone()),
-                    Some(format!("offset {}", offset)),
-                    &result,
-                    false,
-                ),
+                &FavoritesProgress {
+                    folder_fetched: Some(folder_fetched),
+                    folder_total,
+                    ..import_progress(
+                        "import",
+                        zhihu::SOURCE,
+                        Some(title.clone()),
+                        Some(format!("offset {}", offset)),
+                        &result,
+                        false,
+                    )
+                },
             );
 
             if is_end || next_offset == usize::MAX {

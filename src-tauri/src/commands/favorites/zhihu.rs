@@ -175,11 +175,13 @@ pub fn item_to_favorite(item: &Value, collection_title: &str) -> Option<NewFavor
     })
 }
 
-/// 从内容页响应里取（条目数组，是否结束，下一个 Offset）。
+/// 从内容页响应里取（条目数组，是否结束，下一个 Offset，服务端报告的总数）。
 ///
 /// `NextOffset` 文档说是 String，但按防御性处理：字符串和数字都接受——
 /// 类型对不上时宁可少翻一页，也不能在这里 panic 或死循环。
-pub fn parse_contents_page(payload: &Value) -> (Vec<Value>, bool, usize) {
+/// `Totals` 是**服务端认为**的该收藏夹总条数（公开范围口径），
+/// 用于进度百分比，也能回答「到底是接口截断还是本来就这么多」。
+pub fn parse_contents_page(payload: &Value) -> (Vec<Value>, bool, usize, Option<i64>) {
     let items = payload
         .get("Items")
         .and_then(|v| v.as_array())
@@ -195,7 +197,10 @@ pub fn parse_contents_page(payload: &Value) -> (Vec<Value>, bool, usize) {
         Some(Value::Number(n)) => n.as_u64().map(|n| n as usize),
         _ => None,
     };
-    (items, is_end, next_offset.unwrap_or(usize::MAX))
+    let totals = payload
+        .pointer("/Paging/Totals")
+        .and_then(|v| v.as_i64());
+    (items, is_end, next_offset.unwrap_or(usize::MAX), totals)
 }
 
 #[cfg(test)]
@@ -300,15 +305,29 @@ mod tests {
             "Items": [{"Url": "https://x", "Title": "t"}],
             "Paging": { "IsEnd": false, "NextOffset": "40", "Totals": 100 }
         });
-        let (items, is_end, next) = parse_contents_page(&payload);
+        let (items, is_end, next, totals) = parse_contents_page(&payload);
         assert_eq!(items.len(), 1);
         assert!(!is_end);
         assert_eq!(next, 40);
+        assert_eq!(totals, Some(100));
 
         let ended = json!({ "Items": [], "Paging": { "IsEnd": true } });
-        let (items, is_end, next) = parse_contents_page(&ended);
+        let (items, is_end, next, totals) = parse_contents_page(&ended);
         assert!(items.is_empty() && is_end);
         // 没给 NextOffset 时返回哨兵值，调用方按「结束」处理
         assert_eq!(next, usize::MAX);
+        assert_eq!(totals, None);
+    }
+
+    /// NextOffset 实际返回数字时也要能解析（文档写 String，但按防御性处理）。
+    #[test]
+    fn next_offset_as_number_is_accepted() {
+        let payload = json!({
+            "Items": [],
+            "Paging": { "IsEnd": false, "NextOffset": 60 }
+        });
+        let (_, is_end, next, _) = parse_contents_page(&payload);
+        assert!(!is_end);
+        assert_eq!(next, 60);
     }
 }

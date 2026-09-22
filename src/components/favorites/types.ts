@@ -66,6 +66,9 @@ export interface FavoritesProgress {
   classified?: number | null;
   tagsWritten?: number | null;
   remaining?: number | null;
+  /** 知乎专用：当前收藏夹已抓取条数 / 服务端报告的总数（Paging.Totals） */
+  folderFetched?: number | null;
+  folderTotal?: number | null;
   done: boolean;
 }
 
