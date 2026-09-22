@@ -118,6 +118,8 @@ pub struct ClassifyItem {
     pub description: String,
     pub language: String,
     pub topics: Vec<String>,
+    /// GitHub star 数（热度参考）；视频/文章条目为 None
+    pub stars: Option<i64>,
 }
 
 /// upsert 的结果：新增 / 有变化已更新 / 完全没变（跨次导入去重的正常结局）。
@@ -252,12 +254,17 @@ pub fn select_unclassified(conn: &Connection, limit: usize) -> Result<Vec<Classi
                     .collect()
             })
             .unwrap_or_default();
+        let stars = extra
+            .get("stars")
+            .and_then(|v| v.as_i64())
+            .filter(|count| *count > 0);
         items.push(ClassifyItem {
             id,
             title,
             description,
             language,
             topics,
+            stars,
         });
     }
     Ok(items)

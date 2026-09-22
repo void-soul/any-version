@@ -17,13 +17,18 @@ pub const BATCH_SIZE: usize = 40;
 const MAX_TITLE_CHARS: usize = 120;
 const MAX_DESC_CHARS: usize = 200;
 
-pub const SYSTEM_PROMPT: &str = "你是一个信息整理助手。用户会给你一批收藏条目（每行 `序号|名称|简介|语言|标签`）。\
-请按主题把它们分成若干组，输出**严格 JSON**，不要任何解释文字：\n\
+pub const SYSTEM_PROMPT: &str = "你是一个信息整理助手。用户会给你一批收藏条目，每行格式：\n\
+`序号|名称|简介|语言|标签|热度`\n\
+字段说明：\n\
+- 条目可能来自不同平台：GitHub 仓库名形如 `owner/repo`，「语言」是主要编程语言、「标签」是官方 topics、\n\
+  「热度」是 star 数（视频/文章条目的语言、标签、热度可能为空，此时靠名称与简介判断）；\n\
+- 热度只代表流行程度，不是分类依据，仅作参考。\n\
+请按**主题**把它们分成若干组，输出**严格 JSON**，不要任何解释文字：\n\
 {\"groups\":[{\"name\":\"分类名\",\"items\":[0,1,5]}]}\n\
 规则：\n\
 1. 分类名用中文，简短（不超过 8 个字），总数不超过 12 个；\n\
 2. 一个序号可以出现在多个组里（多标签），但每个组内的序号不要重复；\n\
-3. `items` 里的序号必须是输入里出现过的序号，不要编造；\n\
+3. `items` 里的序号必须是输入里出现过的序号，不要编造；也不要臆造输入里没有的主题；\n\
 4. 无法确定归属的放进「其他」；\n\
 5. 只输出 JSON。";
 
@@ -35,13 +40,20 @@ pub fn build_prompt(items: &[ClassifyItem]) -> String {
     let mut lines = Vec::with_capacity(items.len() + 2);
     lines.push(format!("共 {} 条，请归类：", items.len()));
     for (index, item) in items.iter().enumerate() {
+        // 热度（star 数）只在有值时追加：视频/文章条目没有这个字段，
+        // 凑一个空段只会让模型困惑该列是什么
+        let stars = match item.stars {
+            Some(count) if count > 0 => format!("|{}", count),
+            _ => String::new(),
+        };
         lines.push(format!(
-            "{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}{}",
             index,
             clamp(&item.title, MAX_TITLE_CHARS),
             clamp(&item.description, MAX_DESC_CHARS),
             clamp(&item.language, 20),
             clamp(&item.topics.join(","), 60),
+            stars,
         ));
     }
     lines.push("只输出 JSON：".to_string());
@@ -130,6 +142,7 @@ mod tests {
             description: desc.to_string(),
             language: lang.to_string(),
             topics: topics.iter().map(|t| t.to_string()).collect(),
+            stars: None,
         }
     }
 
@@ -139,6 +152,23 @@ mod tests {
         let prompt = build_prompt(&items);
         assert!(prompt.contains("0|o/r|a cli|Rust|cli,rust"), "实际: {}", prompt);
         assert!(prompt.contains("共 1 条"));
+    }
+
+    /// star 数作为热度参考附加在行尾；没有热度的条目（视频/文章）不能出现空段。
+    #[test]
+    fn prompt_appends_stars_only_when_present() {
+        let mut starred = item("o/popular", "well known", "Rust", &[]);
+        starred.stars = Some(123456);
+        let plain = item("BV1xx", "一个视频", "", &[]);
+
+        let prompt = build_prompt(&[starred, plain]);
+        assert!(prompt.contains("0|o/popular|well known|Rust||123456"), "实际: {}", prompt);
+        assert!(
+            prompt.contains("1|BV1xx|一个视频||"),
+            "无热度条目不应出现空的星号段: {}",
+            prompt
+        );
+        assert!(!prompt.contains("||||"), "空热度不应留下空段: {}", prompt);
     }
 
     #[test]
