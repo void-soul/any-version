@@ -20,6 +20,14 @@ use super::db::NewFavorite;
 /// 数据源标识（写入 `favorite.source`）
 pub const SOURCE: &str = "zhihu";
 
+/// 凭证键：官方接口的 Access Secret。
+pub const SECRET_KEY: &str = "zhihu";
+
+/// 凭证键：实验路线的 Cookie（**与上面那个是不同槽位**，互不覆盖）。
+///
+/// 之前实验代码直接复用 `zhihu` 槽位存 Cookie，会把用户配好的 Access Secret 顶掉。
+pub const COOKIE_KEY: &str = "zhihu-cookie";
+
 pub const BASE_URL: &str = "https://developer.zhihu.com";
 
 /// 每页条数（官方默认 20；文档未给出上限，用保守值）

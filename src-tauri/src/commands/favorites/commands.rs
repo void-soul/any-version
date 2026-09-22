@@ -457,9 +457,13 @@ pub async fn fav_import_bilibili(app: tauri::AppHandle) -> Result<ImportResult, 
 /// 401/403 则 v4 接口强制签名、Cookie 方案证伪。结果同时写入 exit.log。
 #[tauri::command]
 pub async fn fav_zhihu_probe(app: tauri::AppHandle) -> Result<String, String> {
-    let cookie = db::with_conn(|conn| db::get_credential(conn, zhihu::SOURCE))?.ok_or_else(|| {
-        "请先点钥匙图标粘贴知乎 Cookie（需含 z_c0 登录态与 d_c0）".to_string()
-    })?;
+    // 读的是**实验专用槽位** `zhihu-cookie`：官方接口的 Access Secret 存在 `zhihu`，
+    // 两者互不覆盖——把 Cookie 存进 Secret 的槽位会把用户配好的凭证顶掉。
+    let cookie =
+        db::with_conn(|conn| db::get_credential(conn, zhihu::COOKIE_KEY))?.ok_or_else(|| {
+            "请先点烧瓶图标粘贴知乎 Cookie（需含 z_c0 登录态与 d_c0；这与「知乎 Access Secret」是两个独立输入框）"
+                .to_string()
+        })?;
     let report = zhihu::probe_with_cookie(&app, &cookie).await?;
     crate::exit_log!("[收藏-知乎] 实验结果: {}", report);
     Ok(report)

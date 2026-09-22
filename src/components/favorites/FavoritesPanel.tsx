@@ -31,6 +31,7 @@ import { SharedButton } from "../shared/Button";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { toast } from "../shared/Toast";
 import { GithubTokenDialog } from "../project/GithubTokenDialog";
+import { CredentialDialog } from "./CredentialDialog";
 import type { AiConfig, AiProvider } from "../ai/types";
 import {
   SOURCE_LABELS,
@@ -81,12 +82,12 @@ export default function FavoritesPanel() {
   // B站：需要 Cookie（含 SESSDATA）才能读自己的收藏；配过就不再每次问
   const [biliConfigured, setBiliConfigured] = useState(false);
   const [cookieOpen, setCookieOpen] = useState(false);
-  const [cookieText, setCookieText] = useState("");
 
-  // 知乎：走开放平台官方接口，凭证是 Access Secret（不是 Cookie）
+  // 知乎：官方接口用 Access Secret；实验路线用 Cookie（**两个槽位各存各的**）
   const [zhihuConfigured, setZhihuConfigured] = useState(false);
   const [zhihuSecretOpen, setZhihuSecretOpen] = useState(false);
-  const [zhihuSecret, setZhihuSecret] = useState("");
+  const [zhihuCookieConfigured, setZhihuCookieConfigured] = useState(false);
+  const [zhihuCookieOpen, setZhihuCookieOpen] = useState(false);
 
   // GitHub Token：**收藏模块自己的一份**，与 SDK 模块的 token 互不共享
   const [tokenConfigured, setTokenConfigured] = useState(false);
@@ -118,6 +119,9 @@ export default function FavoritesPanel() {
     invoke<boolean>("fav_has_credential", { source: "zhihu" })
       .then(setZhihuConfigured)
       .catch(() => setZhihuConfigured(false));
+    invoke<boolean>("fav_has_credential", { source: "zhihu-cookie" })
+      .then(setZhihuCookieConfigured)
+      .catch(() => setZhihuCookieConfigured(false));
     invoke<string>("fav_get_github_token")
       .then((token) => setTokenConfigured(!!token.trim()))
       .catch(() => setTokenConfigured(false));
@@ -197,29 +201,14 @@ export default function FavoritesPanel() {
     }
   };
 
-  const saveCookie = async () => {
-    if (!cookieText.trim()) return;
+  const runProbe = async () => {
     try {
-      await invoke("fav_set_credential", { source: "bilibili", cookie: cookieText.trim() });
-      setBiliConfigured(true);
-      setCookieOpen(false);
-      setCookieText("");
-      toast(t("favorites.cookieSaved"), "ok");
+      const report = await invoke<string>("fav_zhihu_probe");
+      // 2xx 才算通过（"status":200 这种格式）
+      const ok = /"status":\s*2\d\d/.test(report);
+      toast(report, ok ? "ok" : "err");
     } catch (e) {
-      toast(t("favorites.cookieFail", { err: String(e) }), "err");
-    }
-  };
-
-  const saveZhihuSecret = async () => {
-    if (!zhihuSecret.trim()) return;
-    try {
-      await invoke("fav_set_credential", { source: "zhihu", cookie: zhihuSecret.trim() });
-      setZhihuConfigured(true);
-      setZhihuSecretOpen(false);
-      setZhihuSecret("");
-      toast(t("favorites.zhihuSecretSaved"), "ok");
-    } catch (e) {
-      toast(t("favorites.cookieFail", { err: String(e) }), "err");
+      toast(String(e), "err");
     }
   };
 
@@ -417,13 +406,7 @@ export default function FavoritesPanel() {
             {t("favorites.importBili")}
           </SharedButton>
           <button
-            onClick={() => {
-              setCookieOpen(true);
-              // 回显已保存的值：否则再次打开看起来像没保存过
-              invoke<string>("fav_get_credential", { source: "bilibili" })
-                .then((v) => setCookieText(v ?? ""))
-                .catch(() => {});
-            }}
+            onClick={() => setCookieOpen(true)}
             className={`p-1 rounded cursor-pointer transition-colors ${
               biliConfigured ? "text-emerald-400" : "text-slate-500 hover:text-slate-200"
             }`}
@@ -453,12 +436,7 @@ export default function FavoritesPanel() {
             {t("favorites.importZhihu")}
           </SharedButton>
           <button
-            onClick={() => {
-              setZhihuSecretOpen(true);
-              invoke<string>("fav_get_credential", { source: "zhihu" })
-                .then((v) => setZhihuSecret(v ?? ""))
-                .catch(() => {});
-            }}
+            onClick={() => setZhihuSecretOpen(true)}
             className={`p-1 rounded cursor-pointer transition-colors ${
               zhihuConfigured ? "text-emerald-400" : "text-slate-500 hover:text-slate-200"
             }`}
@@ -466,17 +444,12 @@ export default function FavoritesPanel() {
           >
             <KeyRound className="w-3 h-3" />
           </button>
-          {/* 【实验】验证 Cookie 路线能否访问知乎登录态接口 */}
+          {/* 【实验】Cookie 路线：独立槽位存 Cookie（不覆盖上面的 Access Secret） */}
           <button
-            onClick={() =>
-              void invoke<string>("fav_zhihu_probe")
-                .then((report) => {
-                  const ok = report.includes('"status":2');
-                  toast(report, ok ? "ok" : "err");
-                })
-                .catch((e) => toast(String(e), "err"))
-            }
-            className="p-1 rounded text-slate-500 hover:text-slate-200 cursor-pointer"
+            onClick={() => (zhihuCookieConfigured ? void runProbe() : setZhihuCookieOpen(true))}
+            className={`p-1 rounded cursor-pointer transition-colors ${
+              zhihuCookieConfigured ? "text-emerald-400" : "text-slate-500 hover:text-slate-200"
+            }`}
             title={t("favorites.zhihuProbe")}
           >
             <FlaskConical className="w-3 h-3" />
@@ -806,83 +779,48 @@ export default function FavoritesPanel() {
         noteKey="favorites.githubTokenLocalNote"
       />
 
-      {/* 知乎 Access Secret：开放平台个人中心生成，走官方接口（无需 Cookie / 签名逆向） */}
-      {zhihuSecretOpen && (
-        <div
-          className="fixed inset-0 z-[250] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-          onClick={() => setZhihuSecretOpen(false)}
-        >
-          <div
-            className="w-[460px] max-w-full rounded-2xl border border-white/10 bg-slate-900 p-4 space-y-3"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="text-[13px] font-bold text-white">{t("favorites.zhihuSecretTitle")}</div>
-            <p className="text-[10px] text-slate-400 leading-snug">
-              {t("favorites.zhihuSecretHint")}
-            </p>
-            <input
-              type="password"
-              value={zhihuSecret}
-              onChange={(e) => setZhihuSecret(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void saveZhihuSecret();
-                if (e.key === "Escape") setZhihuSecretOpen(false);
-              }}
-              placeholder={t("favorites.zhihuSecretPlaceholder")}
-              spellCheck={false}
-              autoComplete="off"
-              className="w-full bg-black/30 border border-white/10 rounded-lg px-2.5 py-2 text-[12px] font-mono text-slate-100 outline-none focus:border-[var(--module-accent)]"
-            />
-            <p className="text-[10px] text-amber-400/80 leading-snug">
-              {t("favorites.zhihuQuotaHint")}
-            </p>
-            <div className="flex justify-end gap-2">
-              <SharedButton variant="secondary" onClick={() => setZhihuSecretOpen(false)}>
-                {t("common.cancel")}
-              </SharedButton>
-              <SharedButton onClick={() => void saveZhihuSecret()} disabled={!zhihuSecret.trim()}>
-                {t("favorites.biliCookieSave")}
-              </SharedButton>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 三类凭证各用一个弹窗，**存储键不同所以互不覆盖**：
+          - zhihu        = 官方接口 Access Secret（密码框）
+          - zhihu-cookie = 实验路线 Cookie（多文本框，需含 z_c0 + d_c0）
+          - bilibili     = B站 Cookie（多文本框，需含 SESSDATA） */}
+      <CredentialDialog
+        open={zhihuSecretOpen}
+        onClose={() => setZhihuSecretOpen(false)}
+        source="zhihu"
+        title={t("favorites.zhihuSecretTitle")}
+        hint={t("favorites.zhihuSecretHint")}
+        placeholder={t("favorites.zhihuSecretPlaceholder")}
+        note={t("favorites.zhihuQuotaHint")}
+        onSaved={setZhihuConfigured}
+      />
 
-      {/* B站 Cookie：登录后从浏览器开发者工具复制整条 Cookie（需含 SESSDATA） */}
-      {cookieOpen && (
-        <div
-          className="fixed inset-0 z-[250] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-          onClick={() => setCookieOpen(false)}
-        >
-          <div
-            className="w-[460px] max-w-full rounded-2xl border border-white/10 bg-slate-900 p-4 space-y-3"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="text-[13px] font-bold text-white">{t("favorites.biliCookieTitle")}</div>
-            <p className="text-[10px] text-slate-400 leading-snug">
-              {t("favorites.biliCookieHint")}
-            </p>
-            <textarea
-              value={cookieText}
-              onChange={(e) => setCookieText(e.target.value)}
-              placeholder={t("favorites.biliCookiePlaceholder")}
-              spellCheck={false}
-              className="w-full h-24 glass-input p-2 text-[10px] font-mono resize-y"
-            />
-            <p className="text-[10px] text-amber-400/80 leading-snug">
-              {t("favorites.biliExperimental")}
-            </p>
-            <div className="flex justify-end gap-2">
-              <SharedButton variant="secondary" onClick={() => setCookieOpen(false)}>
-                {t("common.cancel")}
-              </SharedButton>
-              <SharedButton onClick={() => void saveCookie()} disabled={!cookieText.trim()}>
-                {t("favorites.biliCookieSave")}
-              </SharedButton>
-            </div>
-          </div>
-        </div>
-      )}
+      <CredentialDialog
+        open={zhihuCookieOpen}
+        onClose={() => setZhihuCookieOpen(false)}
+        source="zhihu-cookie"
+        title={t("favorites.zhihuCookieTitle")}
+        hint={t("favorites.zhihuCookieHint")}
+        placeholder={t("favorites.zhihuCookiePlaceholder")}
+        note={t("favorites.zhihuCookieNote")}
+        multiline
+        onSaved={(configured) => {
+          setZhihuCookieConfigured(configured);
+          // 配好就顺手跑一次实验，省一次点击
+          void runProbe();
+        }}
+      />
+
+      <CredentialDialog
+        open={cookieOpen}
+        onClose={() => setCookieOpen(false)}
+        source="bilibili"
+        title={t("favorites.biliCookieTitle")}
+        hint={t("favorites.biliCookieHint")}
+        placeholder={t("favorites.biliCookiePlaceholder")}
+        note={t("favorites.biliExperimental")}
+        multiline
+        onSaved={setBiliConfigured}
+      />
 
       <ConfirmDialogHost request={confirmRequest} onClose={() => setConfirmRequest(null)} />
     </div>
