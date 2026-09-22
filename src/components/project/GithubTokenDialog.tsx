@@ -19,9 +19,29 @@ interface Props {
   onClose: () => void;
   /** 保存/清除成功后回调（告知父组件当前是否已设置，用于刷新入口图标颜色） */
   onSaved?: (hasToken: boolean) => void;
+  /**
+   * 读取 / 保存命令。默认用 SDK 模块的 `project_*`；
+   * 收藏模块传自己的 `fav_*`——两处 Token **互相独立**（各存各的，互不读取）。
+   */
+  getCommand?: string;
+  setCommand?: string;
+  /** 说明文案的 i18n 键（两句里含「用途 + 存放位置」，所以按调用方给） */
+  hintKey?: string;
+  noteKey?: string;
+  /** 标题键（两处 Token 用途不同，标题要能区分） */
+  titleKey?: string;
 }
 
-export function GithubTokenDialog({ open, onClose, onSaved }: Props) {
+export function GithubTokenDialog({
+  open,
+  onClose,
+  onSaved,
+  getCommand = "project_get_github_token",
+  setCommand = "project_set_github_token",
+  hintKey = "projlist.githubTokenHint",
+  noteKey = "projlist.githubTokenLocalNote",
+  titleKey = "projlist.githubTokenTitle",
+}: Props) {
   const { t } = useTranslation();
   const [value, setValue] = useState("");
   const [initial, setInitial] = useState("");
@@ -32,13 +52,13 @@ export function GithubTokenDialog({ open, onClose, onSaved }: Props) {
   useEffect(() => {
     if (!open) return;
     setLoadError(false);
-    invoke<string>("project_get_github_token")
+    invoke<string>(getCommand)
       .then((v) => {
-        setValue(v);
-        setInitial(v);
+        setValue(v ?? "");
+        setInitial(v ?? "");
       })
       .catch(() => setLoadError(true));
-  }, [open]);
+  }, [open, getCommand]);
 
   const dirty = value !== initial;
   const hasSaved = !!initial.trim();
@@ -46,7 +66,7 @@ export function GithubTokenDialog({ open, onClose, onSaved }: Props) {
   const persist = async (token: string) => {
     setSaving(true);
     try {
-      await invoke("project_set_github_token", { token });
+      await invoke(setCommand, { token });
       setInitial(token);
       setValue(token);
       onSaved?.(!!token.trim());
@@ -60,7 +80,7 @@ export function GithubTokenDialog({ open, onClose, onSaved }: Props) {
     <SharedModal
       open={open}
       onClose={onClose}
-      title={t("projlist.githubTokenTitle")}
+      title={t(titleKey)}
       width={520}
       footer={
         <>
@@ -91,7 +111,7 @@ export function GithubTokenDialog({ open, onClose, onSaved }: Props) {
     >
       {/* 为什么要设置 */}
       <div className="text-[12px] text-slate-300 leading-relaxed">
-        {t("projlist.githubTokenHint")}
+        {t(hintKey)}
       </div>
 
       {/* 三步引导 */}
@@ -161,7 +181,7 @@ export function GithubTokenDialog({ open, onClose, onSaved }: Props) {
         </div>
       </div>
 
-      <p className="text-[10px] text-slate-500 leading-snug">{t("projlist.githubTokenLocalNote")}</p>
+      <p className="text-[10px] text-slate-500 leading-snug">{t(noteKey)}</p>
     </SharedModal>
   );
 }

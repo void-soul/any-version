@@ -31,13 +31,24 @@ pub struct ImportResult {
     pub cancelled: bool,
 }
 
+/// 收藏模块**自己的** GitHub Token。
+///
+/// 刻意与 SDK 模块的 `github_token`（及 `GITHUB_TOKEN` 环境变量）**互不共享**：
+/// 收藏导入需要的是「读你 star 的权限」，和 SDK 刷版本列表是两件事，
+/// 用户可能只想给其中一个配 token。因此这里只认收藏模块自己存的凭证。
+fn favorites_github_token() -> Result<String, String> {
+    db::with_conn(|conn| db::get_credential(conn, github::SOURCE))?.ok_or_else(|| {
+        "未配置 GitHub Token：请在收藏模块点「GitHub Token」按钮配置（与 SDK 模块的 Token 相互独立）"
+            .to_string()
+    })
+}
+
 /// 导入 GitHub star（只读）。
 ///
 /// 幂等：同一批数据第二次导入 `added = 0`，全部落到 `skipped`（或内容有变时 `updated`）。
 #[tauri::command]
 pub async fn fav_import_github(max_pages: Option<usize>) -> Result<ImportResult, String> {
-    let token = crate::commands::utils::github_api_token()
-        .ok_or_else(|| "未配置 GitHub Token：请在 SDK 模块设置 GitHub Token，或设置 GITHUB_TOKEN 环境变量".to_string())?;
+    let token = favorites_github_token()?;
 
     CANCEL.store(false, Ordering::SeqCst);
     let login = github::fetch_user_login(&token).await?;
@@ -203,8 +214,8 @@ pub struct CheckResult {
 /// 撞到限流（403/429）就**停下并如实上报**，而不是把活着的收藏误标成失效。
 #[tauri::command]
 pub async fn fav_check_gone(all: Option<bool>) -> Result<CheckResult, String> {
-    let token = crate::commands::utils::github_api_token()
-        .ok_or_else(|| "未配置 GitHub Token：请在 SDK 模块设置 GitHub Token，或设置 GITHUB_TOKEN 环境变量".to_string())?;
+    // 与导入用同一个（收藏模块自己的）Token：同一份权限，不该出现「导入能用、检测不能用」
+    let token = favorites_github_token()?;
     let items = db::with_conn(|conn| db::select_for_check(conn, github::SOURCE, all.unwrap_or(false), 5_000))?;
 
     let mut result = CheckResult::default();
@@ -437,6 +448,18 @@ pub async fn fav_import_zhihu(app: tauri::AppHandle) -> Result<ImportResult, Str
         result.cancelled
     );
     Ok(result)
+}
+
+/// 读取收藏模块自己的 GitHub Token（未配置返回空串；**不读 SDK 模块的配置**）。
+#[tauri::command]
+pub fn fav_get_github_token() -> Result<String, String> {
+    Ok(db::with_conn(|conn| db::get_credential(conn, github::SOURCE))?.unwrap_or_default())
+}
+
+/// 保存 / 清除收藏模块自己的 GitHub Token（传空串即清除）。
+#[tauri::command]
+pub fn fav_set_github_token(token: String) -> Result<(), String> {
+    db::with_conn(|conn| db::set_credential(conn, github::SOURCE, &token))
 }
 
 /// 设置某平台的 Cookie（B站：含 SESSDATA 的完整 Cookie 串；传空串清除）。

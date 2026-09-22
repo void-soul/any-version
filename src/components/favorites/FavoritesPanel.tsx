@@ -14,6 +14,8 @@ import {
   Download,
   ExternalLink,
   KeyRound,
+  Lock,
+  LogIn,
   Pencil,
   RefreshCw,
   Search,
@@ -28,6 +30,7 @@ import {
 import { SharedButton } from "../shared/Button";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { toast } from "../shared/Toast";
+import { GithubTokenDialog } from "../project/GithubTokenDialog";
 import type { AiConfig, AiProvider } from "../ai/types";
 import {
   SOURCE_LABELS,
@@ -64,6 +67,10 @@ export default function FavoritesPanel() {
   const [cookieOpen, setCookieOpen] = useState(false);
   const [cookieText, setCookieText] = useState("");
 
+  // GitHub Token：**收藏模块自己的一份**，与 SDK 模块的 token 互不共享
+  const [tokenConfigured, setTokenConfigured] = useState(false);
+  const [tokenOpen, setTokenOpen] = useState(false);
+
   const refresh = useCallback(async () => {
     const [list, overview] = await Promise.all([
       invoke<FavoriteRow[]>("fav_list", {
@@ -87,6 +94,9 @@ export default function FavoritesPanel() {
     invoke<boolean>("fav_has_credential", { source: "bilibili" })
       .then(setBiliConfigured)
       .catch(() => setBiliConfigured(false));
+    invoke<string>("fav_get_github_token")
+      .then((token) => setTokenConfigured(!!token.trim()))
+      .catch(() => setTokenConfigured(false));
   }, []);
 
   useEffect(() => {
@@ -109,6 +119,11 @@ export default function FavoritesPanel() {
   );
 
   const runImport = async () => {
+    // 没配 Token 就直接把配置弹窗递上去，别让用户吃一个报错再自己找入口
+    if (!tokenConfigured) {
+      setTokenOpen(true);
+      return;
+    }
     setBusy("import");
     try {
       const result = await invoke<ImportResult>("fav_import_github", { maxPages: null });
@@ -295,6 +310,21 @@ export default function FavoritesPanel() {
           </SharedButton>
         )}
 
+        {/* 收藏模块自己的 GitHub Token（与 SDK 模块相互独立） */}
+        <button
+          onClick={() => setTokenOpen(true)}
+          className={`p-1 rounded cursor-pointer transition-colors ${
+            tokenConfigured ? "text-emerald-400" : "text-slate-500 hover:text-slate-200"
+          }`}
+          title={
+            tokenConfigured
+              ? t("favorites.githubTokenSetTip")
+              : t("favorites.githubTokenNeedTip")
+          }
+        >
+          <Lock className="w-3.5 h-3.5" />
+        </button>
+
         <div className="flex items-center gap-1">
           <SharedButton
             variant="secondary"
@@ -338,7 +368,7 @@ export default function FavoritesPanel() {
             className="p-1 rounded text-slate-500 hover:text-slate-200 cursor-pointer"
             title={t("favorites.zhihuLogin")}
           >
-            <KeyRound className="w-3 h-3" />
+            <LogIn className="w-3 h-3" />
           </button>
           {/* 页面卡住/白屏时重置窗口（不动登录 Cookie） */}
           <button
@@ -589,6 +619,18 @@ export default function FavoritesPanel() {
         )}
         <span className="ml-auto">{t("favorites.readonlyHint")}</span>
       </div>
+
+      {/* GitHub Token（收藏模块专属）：与 SDK 模块的 Token 各存各的 */}
+      <GithubTokenDialog
+        open={tokenOpen}
+        onClose={() => setTokenOpen(false)}
+        onSaved={setTokenConfigured}
+        getCommand="fav_get_github_token"
+        setCommand="fav_set_github_token"
+        titleKey="favorites.githubTokenTitle"
+        hintKey="favorites.githubTokenHint"
+        noteKey="favorites.githubTokenLocalNote"
+      />
 
       {/* B站 Cookie：登录后从浏览器开发者工具复制整条 Cookie（需含 SESSDATA） */}
       {cookieOpen && (

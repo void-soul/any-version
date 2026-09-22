@@ -582,8 +582,9 @@ pub fn count_all(conn: &Connection) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_status, apply_tags, count_all, delete, list, migrate, select_unclassified, set_tags,
-        stats, upsert, ListFilter, NewFavorite, UpsertOutcome,
+        apply_status, apply_tags, count_all, delete, get_credential, list, migrate,
+        select_unclassified, set_credential, set_tags, stats, upsert, ListFilter, NewFavorite,
+        UpsertOutcome,
     };
 
     fn sample(external_id: &str, title: &str) -> NewFavorite {
@@ -712,6 +713,30 @@ mod tests {
             rusqlite::params![id, external_id, extra],
         )
         .unwrap();
+    }
+
+    /// 凭证按 source 隔离：收藏模块的 GitHub Token 与 B站 Cookie 互不影响，
+    /// 也就不会出现「换了 B站 Cookie 把 GitHub Token 顶掉」这种事。
+    #[test]
+    fn credentials_are_stored_per_source() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        assert_eq!(get_credential(&conn, "github").unwrap(), None);
+
+        set_credential(&conn, "github", "ghp_xxx").unwrap();
+        set_credential(&conn, "bilibili", "SESSDATA=yyy").unwrap();
+        assert_eq!(get_credential(&conn, "github").unwrap().as_deref(), Some("ghp_xxx"));
+        assert_eq!(
+            get_credential(&conn, "bilibili").unwrap().as_deref(),
+            Some("SESSDATA=yyy")
+        );
+
+        // 覆盖同一个 source 不影响另一个；空串即清除
+        set_credential(&conn, "github", "ghp_new").unwrap();
+        assert_eq!(get_credential(&conn, "bilibili").unwrap().as_deref(), Some("SESSDATA=yyy"));
+        set_credential(&conn, "github", "").unwrap();
+        assert_eq!(get_credential(&conn, "github").unwrap(), None);
+        assert_eq!(get_credential(&conn, "bilibili").unwrap().is_some(), true);
     }
 
     /// 已失效的条目不再送归类（给它分类没意义，还白花 token）。
