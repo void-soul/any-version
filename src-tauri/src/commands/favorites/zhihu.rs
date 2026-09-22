@@ -12,6 +12,11 @@
 //!    在知乎页面上下文里 fetch `www.zhihu.com/api/v4/*`。目标是拿到全量收藏。
 //!    为什么不移植 zse96 签名：zhihu-plus-plus 是 AGPL-3.0，代码进 Kira 会传染整个应用。
 //!    实验要验证的假设：页面上下文里的裸 `fetch`（不带签名头）是否被 v4 接口放行。
+//!
+//!    ⚠️ **第一次实验结果无效**（2026-09-22）：返回 401，但日志显示知乎首页被重定向到
+//!    `/signin` —— 根本没建立起登录态，那是游客在打登录态接口，说明不了签名的事。
+//!    所以探测改成**两路并行**（WebView 裸 fetch + Rust 直连带 Cookie 头），
+//!    并且先判登录态再下结论，见 [`probe_verdict`]。
 
 use serde_json::{json, Value};
 
@@ -211,6 +216,10 @@ pub const VIEW_LABEL: &str = "favorites-zhihu-view";
 /// 宿主页（同源才能带 Cookie 调 API）
 pub const HOME_URL: &str = "https://www.zhihu.com/";
 
+/// 直连探测用的桌面 UA：知乎对明显非浏览器的 UA 会直接 403，
+/// 这里只是想让请求看起来像个普通浏览器，不做任何指纹伪装。
+const DESKTOP_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+
 /// 页面上下文里取回结果的全局变量名
 pub const RESULT_VAR: &str = "__favZhihuFetch";
 
@@ -383,11 +392,15 @@ async fn fetch_api(
     }
 }
 
-/// 实验主流程：注入 Cookie → 重载页面 → 请求 `/api/v4/me`。
+/// 实验主流程：**两路并行探测**，返回一段 JSON 文本直接给用户看结论。
 ///
-/// 返回一段 JSON 文本（状态码 + 响应体片段），直接给用户看实验结论：
-/// - 200 且带用户信息 → Cookie 路线成立（裸 fetch 不被签名校验拦截）
-/// - 401/403 → v4 接口强制签名，Cookie 方案证伪
+/// 为什么必须两路：第一次实验只跑 WebView 路线，拿到 401 就写「签名证伪」，
+/// 但日志里首页被重定向到 `/signin` —— 说明压根没建立起登录态，那是**游客**
+/// 在访问登录态接口，401 是必然的，跟签名无关。所以现在一路走 WebView（页面上下文
+/// 裸 fetch），一路走 Rust 直连（把你粘贴的那串原样放进 Cookie 头，没有任何中间环节）：
+/// - 任一 2xx → Cookie 有效且裸请求放行，可切全量导入
+/// - 两路都 401/403 **且** 页面跳登录页 → Cookie 本身无效（失效/复制不完整），结论是「待重测」而非「证伪」
+/// - 已登录却被拒 → 才是真正的「v4 强制签名」
 pub async fn probe_with_cookie(app: &tauri::AppHandle, cookie_text: &str) -> Result<String, String> {
     use tauri::webview::cookie::Cookie as TauriCookie;
 
@@ -437,37 +450,149 @@ pub async fn probe_with_cookie(app: &tauri::AppHandle, cookie_text: &str) -> Res
     }
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
 
+    // 登录态判据：知乎首页在未登录时会重定向到 /signin。之前就是漏看这一步，
+    // 把「游客访问登录态接口的 401」误判成了「签名拦截」。
+    let final_url = eval_str(&window, "location.href").await.unwrap_or_default();
+    let logged_in = !final_url.is_empty() && !final_url.contains("/signin");
+    // 我们是以 http_only(false) 写入的，所以页面里能读到 z_c0 就说明确实写进了存储。
+    // 读不到 → 问题在注入环节；读得到却仍跳登录页 → Cookie 本身无效。
+    let dom_cookie = eval_str(&window, "document.cookie").await.unwrap_or_default();
+    let cookie_stored = dom_cookie.contains("z_c0");
+
     // 实验核心：裸 fetch（不带任何签名头）能否通过 v4 接口
     let (status, body) = fetch_api(app, &window, "/api/v4/me").await?;
     let snippet: String = body.chars().take(500).collect();
     crate::exit_log!(
-        "[收藏-知乎] 实验 /api/v4/me -> status={} body={}",
+        "[收藏-知乎] 实验(WebView) /api/v4/me -> status={} loggedIn={} url={} body={}",
         status,
+        logged_in,
+        final_url,
         snippet
     );
 
+    // 第二路：Rust 直连，绕开 WebView 的 Cookie 存储
+    let (direct_status, direct_body) = probe_direct(cookie_text).await?;
+    crate::exit_log!(
+        "[收藏-知乎] 实验(直连) /api/v4/me -> status={} body={}",
+        direct_status,
+        direct_body
+    );
+
+    let verdict = probe_verdict(status, logged_in, direct_status);
     Ok(json!({
-        "status": status,
-        "conclusion": if (200..300).contains(&status) {
-            "Cookie 路线成立：裸 fetch 未被签名校验拦截，可以切到全量导入"
-        } else if status == 401 || status == 403 {
-            "Cookie 路线证伪：v4 接口强制 x-zse-96 签名，裸 fetch 被拒"
-        } else {
-            "未知结果，请把完整输出发给开发者"
-        },
-        "body": snippet,
+        "verdict": verdict,
+        "conclusion": probe_conclusion(verdict),
+        "cookie": { "count": pairs.len(), "storedInPage": cookie_stored },
+        "webview": { "loggedIn": logged_in, "url": final_url, "status": status, "body": snippet },
+        "direct": { "status": direct_status, "body": direct_body },
     })
     .to_string())
+}
+
+/// 探测结论的机器可读判定（前端靠它决定 toast 是成功还是失败）。
+///
+/// 抽成纯函数是因为「哪种状态算哪种结论」正是上次误判的地方，必须有测试钉住。
+pub fn probe_verdict(webview_status: u16, logged_in: bool, direct_status: u16) -> &'static str {
+    let webview_ok = (200..300).contains(&webview_status);
+    let direct_ok = (200..300).contains(&direct_status);
+    if webview_ok || direct_ok {
+        return "ok";
+    }
+    if !logged_in {
+        // 没登录 → 这是游客在打登录态接口，401 说明不了签名的事
+        return "invalid_cookie";
+    }
+    if webview_status == 401 || webview_status == 403 || direct_status == 401 || direct_status == 403
+    {
+        return "needs_signature";
+    }
+    "unknown"
+}
+
+/// [`probe_verdict`] 对应的人话解释。
+pub fn probe_conclusion(verdict: &str) -> &'static str {
+    match verdict {
+        "ok" => "Cookie 有效且裸请求被放行：可以走 Cookie 路线做全量导入（优先用直连，少一层中间环节）",
+        "invalid_cookie" => "Cookie 未建立登录态（知乎首页跳到了登录页）。多半是 z_c0 失效或复制不完整：请在浏览器确认处于登录状态，重新复制整条 Cookie 再测。注意：这不能证明签名是必需的。",
+        "needs_signature" => "已登录但裸请求仍被拒：v4 接口确实需要 x-zse-96 签名，Cookie 方案证伪",
+        _ => "未知结果，请把完整输出发给开发者",
+    }
+}
+
+/// 直连探测：Rust 侧把 Cookie 串原样放进请求头打 `/api/v4/me`。
+///
+/// 存在的意义是排除中间环节：WebView 路线失败时，分不清是「Cookie 无效」还是
+/// 「Cookie 没真正注入」；直连发出的就是你粘贴的那一串，没有第二种解释。
+async fn probe_direct(cookie_text: &str) -> Result<(u16, String), String> {
+    let resp = crate::commands::utils::get_http_client()
+        .get("https://www.zhihu.com/api/v4/me")
+        .header("Cookie", cookie_text)
+        .header("User-Agent", DESKTOP_UA)
+        .header("Referer", "https://www.zhihu.com/")
+        .header("Accept", "application/json, text/plain, */*")
+        .header("Accept-Language", "zh-CN,zh;q=0.9")
+        .send()
+        .await
+        .map_err(|e| format!("直连知乎失败: {}", e))?;
+    let status = resp.status().as_u16();
+    let body = resp.text().await.unwrap_or_default();
+    Ok((status, body.chars().take(400).collect()))
+}
+
+/// 在页面里求一个 JS 表达式的字符串值。
+async fn eval_str(window: &tauri::WebviewWindow, expr: &str) -> Result<String, String> {
+    use tokio::sync::oneshot;
+
+    let (tx, rx) = oneshot::channel::<String>();
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+    let slot2 = slot.clone();
+    window
+        .eval_with_callback(expr, move |s| {
+            if let Some(t) = slot2.lock().unwrap().take() {
+                let _ = t.send(s);
+            }
+        })
+        .map_err(|e| format!("执行页面脚本失败: {}", e))?;
+    match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
+        Ok(Ok(value)) => Ok(value),
+        _ => Err("读取页面状态超时".to_string()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         auth_headers, contents_path, favlists_path, item_to_favorite, map_api_error,
-        parse_contents_page, parse_cookie_pairs, parse_envelope, parse_quota, FAVLISTS_LIMIT,
-        PAGE_SIZE,
+        parse_contents_page, parse_cookie_pairs, parse_envelope, parse_quota, probe_conclusion,
+        probe_verdict, FAVLISTS_LIMIT, PAGE_SIZE,
     };
     use serde_json::json;
+
+    /// **这次误判的回归测试**：没登录时的 401 绝不能判成「需要签名」。
+    /// 首页被重定向到 /signin 意味着请求是游客发出的，401 是必然结果，与签名无关。
+    #[test]
+    fn anonymous_401_is_not_a_signature_verdict() {
+        // 实测就是这样：未登录 + 两路都 401
+        assert_eq!(probe_verdict(401, false, 401), "invalid_cookie");
+        assert!(probe_conclusion("invalid_cookie").contains("不能证明签名"));
+        // 已登录却被拒 → 才是签名问题
+        assert_eq!(probe_verdict(401, true, 401), "needs_signature");
+        assert!(probe_conclusion("needs_signature").contains("x-zse-96"));
+    }
+
+    /// 任一路 2xx 就算通过（直连通过也够用，反而更省事）。
+    #[test]
+    fn any_route_2xx_counts_as_ok() {
+        assert_eq!(probe_verdict(200, true, 401), "ok");
+        assert_eq!(probe_verdict(401, false, 200), "ok");
+        assert!(probe_conclusion("ok").contains("全量导入"));
+    }
+
+    /// 未知状态不能假装看懂了。
+    #[test]
+    fn unexpected_status_is_unknown() {
+        assert_eq!(probe_verdict(500, true, 502), "unknown");
+    }
 
     /// Cookie 串解析：分号/换行都行、同名去重、无效段跳过。
     #[test]

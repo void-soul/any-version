@@ -204,9 +204,9 @@ export default function FavoritesPanel() {
   const runProbe = async () => {
     try {
       const report = await invoke<string>("fav_zhihu_probe");
-      // 2xx 才算通过（"status":200 这种格式）
-      const ok = /"status":\s*2\d\d/.test(report);
-      toast(report, ok ? "ok" : "err");
+      // 判定交给后端的 verdict（两路探测：WebView + Rust 直连）
+      const verdict = /"verdict":\s*"([a-z_]+)"/.exec(report)?.[1];
+      toast(report, verdict === "ok" ? "ok" : "err");
     } catch (e) {
       toast(String(e), "err");
     }
