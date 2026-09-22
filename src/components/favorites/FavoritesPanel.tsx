@@ -62,6 +62,10 @@ export default function FavoritesPanel() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingTags, setEditingTags] = useState("");
 
+  // AI 归类的模型选择：配置里没存模型列表的供应商，现拉一次并按 provider 缓存
+  const [fetchedModels, setFetchedModels] = useState<Record<string, string[]>>({});
+  const [modelsLoading, setModelsLoading] = useState(false);
+
   // B站：需要 Cookie（含 SESSDATA）才能读自己的收藏；配过就不再每次问
   const [biliConfigured, setBiliConfigured] = useState(false);
   const [cookieOpen, setCookieOpen] = useState(false);
@@ -117,6 +121,31 @@ export default function FavoritesPanel() {
     () => providers.find((p) => p.id === providerId) ?? null,
     [providers, providerId],
   );
+
+  /** 当前可选的模型：优先用配置里存的，没有就现拉（有些供应商配置里 models 是空的） */
+  const modelOptions = useMemo<string[]>(() => {
+    if (!activeProvider) return [];
+    if (activeProvider.models.length > 0) {
+      return activeProvider.models.map((m) => m.id);
+    }
+    return fetchedModels[activeProvider.id] ?? [];
+  }, [activeProvider, fetchedModels]);
+
+  // 模型列表为空时自动补拉一次（失败静默：用户仍可用「默认」让后端自己选）
+  useEffect(() => {
+    if (!activeProvider || activeProvider.models.length > 0) return;
+    const pid = activeProvider.id;
+    if (fetchedModels[pid]) return;
+    setModelsLoading(true);
+    invoke<string[]>("fetch_provider_models", {
+      baseUrl: activeProvider.openai_url,
+      apiKey: activeProvider.api_key,
+    })
+      .then((models) => setFetchedModels((prev) => ({ ...prev, [pid]: models })))
+      .catch(() => setFetchedModels((prev) => ({ ...prev, [pid]: [] })))
+      .finally(() => setModelsLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProvider?.id]);
 
   const runImport = async () => {
     // 没配 Token 就直接把配置弹窗递上去，别让用户吃一个报错再自己找入口
@@ -395,7 +424,7 @@ export default function FavoritesPanel() {
             className="glass-input px-2 h-7 text-[11px] cursor-pointer max-w-[140px]"
             title={t("favorites.providerHint")}
           >
-            {providers.length === 0 && <option value="">{t("favorites.noProvider")}</option>}
+            <option value="">{t("favorites.providerDefault")}</option>
             {providers.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -407,10 +436,13 @@ export default function FavoritesPanel() {
             onChange={(e) => setModelId(e.target.value)}
             className="glass-input px-2 h-7 text-[11px] cursor-pointer max-w-[180px]"
             title={t("favorites.modelHint")}
+            disabled={!activeProvider}
           >
-            {(activeProvider?.models || []).map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name || m.id}
+            <option value="">{t("favorites.modelDefault")}</option>
+            {modelsLoading && <option disabled>{t("favorites.modelLoading")}</option>}
+            {modelOptions.map((id) => (
+              <option key={id} value={id}>
+                {id}
               </option>
             ))}
           </select>
