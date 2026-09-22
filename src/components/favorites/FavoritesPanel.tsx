@@ -10,6 +10,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
+  BookMarked,
   Download,
   ExternalLink,
   KeyRound,
@@ -35,6 +36,7 @@ import {
   type FavoriteRow,
   type FavoriteStats,
   type ImportResult,
+  type ZhihuStatus,
 } from "./types";
 
 export default function FavoritesPanel() {
@@ -164,6 +166,34 @@ export default function FavoritesPanel() {
     }
   };
 
+  // 知乎：登录态活在隐藏窗口的 Cookie 里，所以先探测再导入；
+  // 不在面板打开时就探测——那会在后台加载一次知乎首页，没必要。
+  const runImportZhihu = async () => {
+    setBusy("zhihu");
+    try {
+      const status = await invoke<ZhihuStatus>("fav_zhihu_status");
+      if (!status.loggedIn) {
+        await invoke("fav_zhihu_open_login");
+        toast(t("favorites.zhihuNeedLogin"), "err");
+        return;
+      }
+      const result = await invoke<ImportResult>("fav_import_zhihu");
+      await refresh();
+      toast(
+        t("favorites.importDone", {
+          added: result.added,
+          updated: result.updated,
+          skipped: result.skipped,
+        }),
+        "ok",
+      );
+    } catch (e) {
+      toast(t("favorites.importFail", { err: String(e) }), "err");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const runClassify = async () => {
     setBusy("classify");
     try {
@@ -282,6 +312,30 @@ export default function FavoritesPanel() {
             onClick={() => setCookieOpen(true)}
             className="p-1 rounded text-slate-500 hover:text-slate-200 cursor-pointer"
             title={t("favorites.biliCookieTitle")}
+          >
+            <KeyRound className="w-3 h-3" />
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1">
+          <SharedButton
+            variant="secondary"
+            className="!h-7 !px-2"
+            onClick={() => void runImportZhihu()}
+            disabled={busy !== null}
+            title={t("favorites.zhihuExperimental")}
+          >
+            {busy === "zhihu" ? (
+              <RefreshCw className="w-3 h-3 animate-spin" />
+            ) : (
+              <BookMarked className="w-3 h-3" />
+            )}
+            {t("favorites.importZhihu")}
+          </SharedButton>
+          <button
+            onClick={() => void invoke("fav_zhihu_open_login")}
+            className="p-1 rounded text-slate-500 hover:text-slate-200 cursor-pointer"
+            title={t("favorites.zhihuLogin")}
           >
             <KeyRound className="w-3 h-3" />
           </button>

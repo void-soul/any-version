@@ -43,6 +43,12 @@ export interface ClassifyResult {
   remaining: number;
 }
 
+/** 知乎登录态（后端 fav_zhihu_status） */
+export interface ZhihuStatus {
+  loggedIn: boolean;
+  urlToken?: string | null;
+}
+
 export interface CheckResult {
   checked: number;
   gone: number;
