@@ -41,6 +41,22 @@ pub fn contents_path(favlist_url_token: i64, offset: usize) -> String {
     )
 }
 
+/// 额度查询（官方文档：不消耗业务额度）。
+pub fn quota_path() -> String {
+    "/api/v1/quota?APIIDs=user_data".to_string()
+}
+
+/// 从额度响应里取剩余次数；字段缺失/格式不符返回 None（不让预检阻塞导入）。
+pub fn parse_quota_remaining(payload: &Value) -> Option<i64> {
+    let value = payload
+        .get("Data")
+        .or_else(|| payload.get("data"))
+        .unwrap_or(payload);
+    ["RemainingQuota", "remaining_quota"]
+        .iter()
+        .find_map(|key| value.get(key).and_then(|v| v.as_i64()))
+}
+
 /// 构造鉴权请求头。
 ///
 /// `X-Request-Timestamp` 与服务器时间差不能超过 10 分钟，所以每次请求都取当前时间；
@@ -172,7 +188,7 @@ pub fn parse_contents_page(payload: &Value) -> (Vec<Value>, bool, usize) {
 mod tests {
     use super::{
         auth_headers, contents_path, favlists_path, item_to_favorite, map_api_error,
-        parse_contents_page, parse_envelope, FAVLISTS_LIMIT, PAGE_SIZE,
+        parse_contents_page, parse_envelope, parse_quota_remaining, FAVLISTS_LIMIT, PAGE_SIZE,
     };
     use serde_json::json;
 
@@ -223,6 +239,20 @@ mod tests {
         // 缺 Data 视为异常而不是空结果
         let empty = json!({"Code": 0});
         assert!(parse_envelope(&empty).is_err());
+    }
+
+    /// 额度解析：PascalCase 与小写都认；缺字段返回 None（预检失败不阻塞导入）。
+    #[test]
+    fn quota_remaining_handles_both_casings_and_missing() {
+        assert_eq!(
+            parse_quota_remaining(&json!({"Data": {"RemainingQuota": 7}})),
+            Some(7)
+        );
+        assert_eq!(
+            parse_quota_remaining(&json!({"data": {"remaining_quota": 0}})),
+            Some(0)
+        );
+        assert_eq!(parse_quota_remaining(&json!({})), None);
     }
 
     #[test]

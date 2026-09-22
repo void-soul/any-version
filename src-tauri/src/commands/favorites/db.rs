@@ -568,6 +568,34 @@ pub fn stats(conn: &Connection) -> Result<FavoriteStats, String> {
     })
 }
 
+/// 读取某键的断点游标（键形如 `zhihu:<收藏夹id>`）。
+///
+/// 为什么需要：知乎用户数据接口按自然日配额（默认 100 次/天、未实名 10 次/天），
+/// 每次翻页消耗一次。如果每次导入都从第 0 页重来，已导入的页照样烧额度，
+/// 长收藏夹永远导不完——断点让每天的配额全部花在新内容上。
+pub fn get_import_cursor(conn: &Connection, key: &str) -> Result<Option<String>, String> {
+    let mut statement = conn
+        .prepare("SELECT cursor FROM favorite_import_state WHERE source = ?1")
+        .map_err(|e| format!("读取导入断点失败: {}", e))?;
+    match statement.query_row([key], |row| row.get::<_, Option<String>>(0)) {
+        Ok(cursor) => Ok(cursor.filter(|c| !c.is_empty())),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("读取导入断点失败: {}", e)),
+    }
+}
+
+/// 写入 / 清除断点游标（`None` = 该键已导完）。
+pub fn set_import_cursor(conn: &Connection, key: &str, cursor: Option<&str>) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO favorite_import_state (source, cursor, last_run_at, total) \
+         VALUES (?1, ?2, ?3, 0) \
+         ON CONFLICT(source) DO UPDATE SET cursor = ?2, last_run_at = ?3",
+        rusqlite::params![key, cursor, now_str()],
+    )
+    .map_err(|e| format!("保存导入断点失败: {}", e))?;
+    Ok(())
+}
+
 /// 记录一次导入的收尾状态（供 UI 展示"上次导入"与续跑判断）。
 pub fn mark_imported(conn: &Connection, source: &str, total: usize) -> Result<(), String> {
     conn.execute(
@@ -589,9 +617,9 @@ pub fn count_all(conn: &Connection) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_status, apply_tags, count_all, delete, get_credential, list, migrate,
-        select_unclassified, set_credential, set_tags, stats, upsert, ListFilter, NewFavorite,
-        UpsertOutcome,
+        apply_status, apply_tags, count_all, delete, get_credential, get_import_cursor, list,
+        migrate, select_unclassified, set_credential, set_import_cursor, set_tags, stats, upsert,
+        ListFilter, NewFavorite, UpsertOutcome,
     };
 
     fn sample(external_id: &str, title: &str) -> NewFavorite {
@@ -720,6 +748,28 @@ mod tests {
             rusqlite::params![id, external_id, extra],
         )
         .unwrap();
+    }
+
+    /// 断点游标：按键读写、可清除；跨天续传靠它把配额花在新内容上。
+    #[test]
+    fn import_cursor_roundtrip_and_clear() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        let key = "zhihu:123456789";
+        assert_eq!(get_import_cursor(&conn, key).unwrap(), None);
+
+        set_import_cursor(&conn, key, Some("40")).unwrap();
+        assert_eq!(get_import_cursor(&conn, key).unwrap().as_deref(), Some("40"));
+
+        // 不同键互不影响（B站/其它收藏夹各有各的断点）
+        set_import_cursor(&conn, "zhihu:999", Some("20")).unwrap();
+        assert_eq!(get_import_cursor(&conn, key).unwrap().as_deref(), Some("40"));
+
+        // 导完后清除：下次导入从头检查是否有新内容
+        set_import_cursor(&conn, key, None).unwrap();
+        assert_eq!(get_import_cursor(&conn, key).unwrap(), None);
+        // 清除不能动别的键
+        assert_eq!(get_import_cursor(&conn, "zhihu:999").unwrap().as_deref(), Some("20"));
     }
 
     /// 凭证按 source 隔离：收藏模块的 GitHub Token 与 B站 Cookie 互不影响，

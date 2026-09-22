@@ -360,8 +360,9 @@ fn zhihu_now_secs() -> u64 {
 /// 导入知乎收藏（只读，走开放平台官方接口）。
 ///
 /// 逐个收藏夹按 `Paging.NextOffset` 翻页直到 `IsEnd`。
-/// ⚠️ 用户数据接口按自然日配额（默认 100 次/天、未实名 10 次/天），每次翻页消耗一次；
-/// 超限时会收到明确的 30001/30002 报错，而不是空列表。
+/// ⚠️ 用户数据接口按自然日配额（默认 100 次/天、未实名 10 次/天），每次翻页消耗一次。
+/// 每个收藏夹的断点存在本地（`favorite_import_state.cursor`），跨天续传时
+/// 直接从上次位置继续——配额全部花在新内容上，而不是重抓已导过的页。
 #[tauri::command]
 pub async fn fav_import_zhihu() -> Result<ImportResult, String> {
     let secret = db::with_conn(|conn| db::get_credential(conn, zhihu::SOURCE))?.ok_or_else(|| {
@@ -370,6 +371,23 @@ pub async fn fav_import_zhihu() -> Result<ImportResult, String> {
     })?;
 
     CANCEL.store(false, Ordering::SeqCst);
+
+    // 额度预检（官方文档：查询额度不消耗业务额度）。额度为 0 时直接明说，
+    // 别让用户对着「9 页之后突然失败」的现场猜原因。
+    let remaining = match zhihu_get(&secret, &zhihu::quota_path()).await {
+        Ok(payload) => zhihu::parse_quota_remaining(&payload),
+        Err(_) => None, // 预检失败不阻塞导入，让真正的导入请求给出错误
+    };
+    if remaining == Some(0) {
+        return Err(
+            "知乎今日额度已用完（剩余 0 次）：用户数据接口按自然日配额，默认 100 次/天、未实名 10 次/天；明天再导，或在开放平台完成实名提升额度"
+                .to_string(),
+        );
+    }
+    if let Some(count) = remaining {
+        crate::exit_log!("[收藏] 知乎今日剩余额度: {}", count);
+    }
+
     let favlists = zhihu_get(&secret, &zhihu::favlists_path()).await?;
     let folders = favlists
         .get("Items")
@@ -388,15 +406,28 @@ pub async fn fav_import_zhihu() -> Result<ImportResult, String> {
         let Some(token) = token else {
             continue;
         };
+        let state_key = format!("{}:{}", zhihu::SOURCE, token);
 
-        let mut offset = 0usize;
+        // 断点续传：从上次翻到的页继续，而不是每次都从第 0 页烧额度
+        let mut offset = db::with_conn(|conn| db::get_import_cursor(conn, &state_key))?
+            .and_then(|cursor| cursor.parse::<usize>().ok())
+            .unwrap_or(0);
+        if offset > 0 {
+            crate::exit_log!("[收藏] 知乎收藏夹「{}」从断点 {} 继续导入", title, offset);
+        }
+
         loop {
             if CANCEL.load(Ordering::SeqCst) {
                 result.cancelled = true;
+                // 取消也要存断点：下次从这页继续
+                let _ = db::with_conn(|conn| {
+                    db::set_import_cursor(conn, &state_key, Some(&offset.to_string()))
+                });
                 break 'outer;
             }
             // 单个收藏夹失败（比如私有收藏夹平台不允许读）不能拖垮整个导入：
-            // 跳过它、记下原因，其余收藏夹照常导完
+            // 跳过它、记下原因，其余收藏夹照常导完。断点保留在失败前的位置，
+            // 明天额度恢复后从同一位置重试。
             let payload = match zhihu_get(&secret, &zhihu::contents_path(token, offset)).await {
                 Ok(payload) => payload,
                 Err(e) => {
@@ -430,9 +461,14 @@ pub async fn fav_import_zhihu() -> Result<ImportResult, String> {
             result.skipped += delta.2;
 
             if is_end || next_offset == usize::MAX {
+                // 该收藏夹已导完：清断点，下次导入从头检查是否有新收藏
+                let _ = db::with_conn(|conn| db::set_import_cursor(conn, &state_key, None));
                 break;
             }
             offset = next_offset;
+            let _ = db::with_conn(|conn| {
+                db::set_import_cursor(conn, &state_key, Some(&offset.to_string()))
+            });
         }
     }
 
