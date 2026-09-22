@@ -174,6 +174,7 @@
     "githubTokenSetTip": "已配置收藏模块的 GitHub Token（点击修改）",
     "githubTokenNeedTip": "还没配置收藏模块的 GitHub Token（点击配置，与 SDK 模块的 Token 独立）",
     "importDone": "导入完成：新增 {{added}}，更新 {{updated}}，无变化 {{skipped}}",
+    "importPartial": "部分导入：新增 {{added}}，{{failed}} 个收藏夹读取失败 —— {{detail}}",
     "importCancelled": "已取消导入（已导入的部分保留）",
     "importFail": "导入失败: {{err}}",
     "classifyDone": "已归类 {{classified}} 条，写入 {{tags}} 个分类标签，还剩 {{remaining}} 条未归类",

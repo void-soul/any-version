@@ -34,6 +34,8 @@ export interface ImportResult {
   updated: number;
   skipped: number;
   cancelled: boolean;
+  /** 读取失败的收藏夹（`标题（原因）`）；其余收藏夹照常导入 */
+  failed?: string[];
 }
 
 export interface ClassifyResult {

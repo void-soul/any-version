@@ -240,14 +240,26 @@ export default function FavoritesPanel() {
     try {
       const result = await invoke<ImportResult>("fav_import_zhihu");
       await refresh();
-      toast(
-        t("favorites.importDone", {
-          added: result.added,
-          updated: result.updated,
-          skipped: result.skipped,
-        }),
-        "ok",
-      );
+      // 部分收藏夹失败（如私有夹平台不让读）：主体照常导入，但要让人看见失败明细
+      if (result.failed && result.failed.length > 0) {
+        toast(
+          t("favorites.importPartial", {
+            added: result.added,
+            failed: result.failed.length,
+            detail: result.failed.join("；"),
+          }),
+          "err",
+        );
+      } else {
+        toast(
+          t("favorites.importDone", {
+            added: result.added,
+            updated: result.updated,
+            skipped: result.skipped,
+          }),
+          "ok",
+        );
+      }
     } catch (e) {
       toast(t("favorites.importFail", { err: String(e) }), "err");
     } finally {

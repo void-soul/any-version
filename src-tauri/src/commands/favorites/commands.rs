@@ -30,6 +30,9 @@ pub struct ImportResult {
     pub updated: usize,
     pub skipped: usize,
     pub cancelled: bool,
+    /// 读取失败的收藏夹（`标题（原因）`）；其余收藏夹照常导入
+    #[serde(default)]
+    pub failed: Vec<String>,
 }
 
 /// 收藏模块**自己的** GitHub Token。
@@ -392,7 +395,16 @@ pub async fn fav_import_zhihu() -> Result<ImportResult, String> {
                 result.cancelled = true;
                 break 'outer;
             }
-            let payload = zhihu_get(&secret, &zhihu::contents_path(token, offset)).await?;
+            // 单个收藏夹失败（比如私有收藏夹平台不允许读）不能拖垮整个导入：
+            // 跳过它、记下原因，其余收藏夹照常导完
+            let payload = match zhihu_get(&secret, &zhihu::contents_path(token, offset)).await {
+                Ok(payload) => payload,
+                Err(e) => {
+                    result.failed.push(format!("{}（{}）", title, e));
+                    crate::exit_log!("[收藏] 知乎收藏夹读取失败，已跳过: {} ({})", title, e);
+                    continue 'outer;
+                }
+            };
             let (items, is_end, next_offset) = zhihu::parse_contents_page(&payload);
 
             let favorites: Vec<NewFavorite> = items
@@ -426,11 +438,12 @@ pub async fn fav_import_zhihu() -> Result<ImportResult, String> {
 
     db::with_conn(|conn| db::mark_imported(conn, zhihu::SOURCE, result.fetched))?;
     crate::exit_log!(
-        "[收藏] 知乎导入完成: fetched={}, added={}, updated={}, skipped={}, cancelled={}",
+        "[收藏] 知乎导入完成: fetched={}, added={}, updated={}, skipped={}, failed_folders={}, cancelled={}",
         result.fetched,
         result.added,
         result.updated,
         result.skipped,
+        result.failed.len(),
         result.cancelled
     );
     Ok(result)
