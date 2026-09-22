@@ -451,6 +451,20 @@ pub async fn fav_import_bilibili(app: tauri::AppHandle) -> Result<ImportResult, 
     Ok(result)
 }
 
+/// 【实验】验证「粘贴 Cookie + 隐藏 WebView 页面内 fetch」能否访问知乎登录态接口。
+///
+/// 返回 JSON 文本：`{status, conclusion, body}` —— status=200 则 Cookie 路线成立，
+/// 401/403 则 v4 接口强制签名、Cookie 方案证伪。结果同时写入 exit.log。
+#[tauri::command]
+pub async fn fav_zhihu_probe(app: tauri::AppHandle) -> Result<String, String> {
+    let cookie = db::with_conn(|conn| db::get_credential(conn, zhihu::SOURCE))?.ok_or_else(|| {
+        "请先点钥匙图标粘贴知乎 Cookie（需含 z_c0 登录态与 d_c0）".to_string()
+    })?;
+    let report = zhihu::probe_with_cookie(&app, &cookie).await?;
+    crate::exit_log!("[收藏-知乎] 实验结果: {}", report);
+    Ok(report)
+}
+
 /// 知乎官方 API 的 GET（带鉴权头）。
 async fn zhihu_get(access_secret: &str, path: &str) -> Result<Value, String> {
     let client = crate::commands::utils::get_http_client();

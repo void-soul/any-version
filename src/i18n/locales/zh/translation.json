@@ -168,6 +168,7 @@
     "zhihuSecretHint": "到 developer.zhihu.com/profile（知乎数据开放平台 → 个人中心）生成 Access Secret 并粘贴到这里。走的是官方接口，不需要 Cookie，也不需要登录窗口。",
     "zhihuSecretPlaceholder": "粘贴 Access Secret",
     "zhihuSecretSaved": "Access Secret 已保存",
+    "zhihuProbe": "【实验】测试 Cookie 能否访问知乎登录态接口",
     "zhihuOfficialHint": "走知乎开放平台官方接口（需要 Access Secret）",
     "zhihuQuotaHint": "注意额度：用户数据类接口按自然日配额（你的总额度见开放平台「各接口剩余配额」面板），每次翻页消耗一次；超限时导入会明确报错。",
     "progressFetched": "已抓取 {{fetched}} 条",

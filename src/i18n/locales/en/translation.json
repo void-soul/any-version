@@ -168,6 +168,7 @@
     "zhihuSecretHint": "Generate an Access Secret at developer.zhihu.com/profile (Zhihu Data Platform → Profile) and paste it here. This uses the official API - no cookies, no sign-in window.",
     "zhihuSecretPlaceholder": "Paste Access Secret",
     "zhihuSecretSaved": "Access Secret saved",
+    "zhihuProbe": "Experiment: test whether a cookie can reach Zhihu's signed-in API",
     "zhihuOfficialHint": "Uses the official Zhihu Data Platform API (needs an Access Secret)",
     "zhihuQuotaHint": "Mind the quota: user-data endpoints are capped per calendar day (your total is shown in the platform's quota panel) and every page costs one call; hitting the cap fails loudly instead of returning an empty list.",
     "progressFetched": "{{fetched}} fetched",

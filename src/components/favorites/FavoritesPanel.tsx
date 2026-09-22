@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   BookMarked,
   Download,
+  FlaskConical,
   ExternalLink,
   KeyRound,
   Lock,
@@ -464,6 +465,21 @@ export default function FavoritesPanel() {
             title={t("favorites.zhihuSecretTitle")}
           >
             <KeyRound className="w-3 h-3" />
+          </button>
+          {/* 【实验】验证 Cookie 路线能否访问知乎登录态接口 */}
+          <button
+            onClick={() =>
+              void invoke<string>("fav_zhihu_probe")
+                .then((report) => {
+                  const ok = report.includes('"status":2');
+                  toast(report, ok ? "ok" : "err");
+                })
+                .catch((e) => toast(String(e), "err"))
+            }
+            className="p-1 rounded text-slate-500 hover:text-slate-200 cursor-pointer"
+            title={t("favorites.zhihuProbe")}
+          >
+            <FlaskConical className="w-3 h-3" />
           </button>
         </div>
 

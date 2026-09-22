@@ -618,6 +618,7 @@ pub fn run() {
             commands::favorites::fav_set_credential,
             commands::favorites::fav_has_credential,
             commands::favorites::fav_get_credential,
+            commands::favorites::fav_zhihu_probe,
             commands::favorites::fav_import_zhihu,
             commands::favorites::fav_get_github_token,
             commands::favorites::fav_set_github_token,
