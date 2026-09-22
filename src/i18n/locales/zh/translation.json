@@ -155,6 +155,8 @@
     "readonlyHint": "只读：本模块不会取消 star、不会改你的收藏夹",
     "importBili": "导入 B站收藏",
     "biliCookieTitle": "B站 Cookie",
+    "biliCookieSetTip": "已配置 B站 Cookie（点击查看/修改）",
+    "biliCookieNeedTip": "还没配置 B站 Cookie（点击配置）",
     "biliCookieHint": "在浏览器登录 bilibili.com 后，从开发者工具的「网络」面板复制任意请求的完整 Cookie（需含 SESSDATA）。只保存在本机，用于读取你自己的收藏夹。",
     "biliCookiePlaceholder": "SESSDATA=xxxx; bili_jct=xxxx; ...",
     "biliCookieSave": "保存",

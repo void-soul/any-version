@@ -155,6 +155,8 @@
     "readonlyHint": "Read-only: this module never unstars anything or edits your collections",
     "importBili": "Import Bilibili",
     "biliCookieTitle": "Bilibili cookie",
+    "biliCookieSetTip": "Bilibili cookie is set (click to view/edit)",
+    "biliCookieNeedTip": "No Bilibili cookie yet (click to set one)",
     "biliCookieHint": "Log in to bilibili.com in your browser, then copy the full Cookie of any request from devtools (must include SESSDATA). Stored locally and used only to read your own favorites.",
     "biliCookiePlaceholder": "SESSDATA=xxxx; bili_jct=xxxx; ...",
     "biliCookieSave": "Save",

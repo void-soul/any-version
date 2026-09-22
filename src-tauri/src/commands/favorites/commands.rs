@@ -473,6 +473,14 @@ pub fn fav_has_credential(source: String) -> Result<bool, String> {
     db::with_conn(|conn| db::get_credential(conn, &source).map(|c| c.is_some()))
 }
 
+/// 读取某平台已保存的凭证原文（未配置返回空串）。
+///
+/// 仅供配置弹窗回显（GitHub Token 弹窗一直有这个能力）；只在本机 UI 里展示。
+#[tauri::command]
+pub fn fav_get_credential(source: String) -> Result<String, String> {
+    Ok(db::with_conn(|conn| db::get_credential(conn, &source))?.unwrap_or_default())
+}
+
 /// 列出收藏条目。
 #[tauri::command]
 pub fn fav_list(

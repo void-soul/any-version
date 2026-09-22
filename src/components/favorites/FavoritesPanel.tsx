@@ -397,9 +397,21 @@ export default function FavoritesPanel() {
             {t("favorites.importBili")}
           </SharedButton>
           <button
-            onClick={() => setCookieOpen(true)}
-            className="p-1 rounded text-slate-500 hover:text-slate-200 cursor-pointer"
-            title={t("favorites.biliCookieTitle")}
+            onClick={() => {
+              setCookieOpen(true);
+              // 回显已保存的值：否则再次打开看起来像没保存过
+              invoke<string>("fav_get_credential", { source: "bilibili" })
+                .then((v) => setCookieText(v ?? ""))
+                .catch(() => {});
+            }}
+            className={`p-1 rounded cursor-pointer transition-colors ${
+              biliConfigured ? "text-emerald-400" : "text-slate-500 hover:text-slate-200"
+            }`}
+            title={
+              biliConfigured
+                ? t("favorites.biliCookieSetTip")
+                : t("favorites.biliCookieNeedTip")
+            }
           >
             <KeyRound className="w-3 h-3" />
           </button>
@@ -421,7 +433,12 @@ export default function FavoritesPanel() {
             {t("favorites.importZhihu")}
           </SharedButton>
           <button
-            onClick={() => setZhihuSecretOpen(true)}
+            onClick={() => {
+              setZhihuSecretOpen(true);
+              invoke<string>("fav_get_credential", { source: "zhihu" })
+                .then((v) => setZhihuSecret(v ?? ""))
+                .catch(() => {});
+            }}
             className={`p-1 rounded cursor-pointer transition-colors ${
               zhihuConfigured ? "text-emerald-400" : "text-slate-500 hover:text-slate-200"
             }`}
