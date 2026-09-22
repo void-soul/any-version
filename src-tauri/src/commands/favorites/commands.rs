@@ -8,6 +8,7 @@ use serde::Serialize;
 
 use super::bilibili;
 use super::check;
+use super::zhihu;
 use super::classify::{self, BATCH_SIZE};
 use super::db::{self, NewFavorite};
 use super::github;
@@ -306,6 +307,123 @@ pub async fn fav_import_bilibili() -> Result<ImportResult, String> {
     crate::exit_log!(
         "[收藏] B站导入完成: folders={}, fetched={}, added={}, updated={}, skipped={}, cancelled={}",
         folders.len(),
+        result.fetched,
+        result.added,
+        result.updated,
+        result.skipped,
+        result.cancelled
+    );
+    Ok(result)
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZhihuStatus {
+    pub logged_in: bool,
+    pub url_token: Option<String>,
+}
+
+/// 打开可见的知乎窗口让用户登录（登录态留在该窗口的 Cookie 里，后续导入复用它）。
+#[tauri::command]
+pub fn fav_zhihu_open_login(app: tauri::AppHandle) -> Result<(), String> {
+    zhihu::open_login_window(&app)
+}
+
+/// 探测知乎登录态。
+#[tauri::command]
+pub async fn fav_zhihu_status(app: tauri::AppHandle) -> Result<ZhihuStatus, String> {
+    let url_token = zhihu::fetch_url_token(&app).await?;
+    Ok(ZhihuStatus {
+        logged_in: url_token.is_some(),
+        url_token,
+    })
+}
+
+/// 导入知乎收藏（只读，通过隐藏窗口在知乎页面上下文里调 API）。
+///
+/// 逐个收藏夹按 offset 翻页；`paging.is_end` 为 true 或本页为空即停。
+#[tauri::command]
+pub async fn fav_import_zhihu(app: tauri::AppHandle) -> Result<ImportResult, String> {
+    let Some(url_token) = zhihu::fetch_url_token(&app).await? else {
+        return Err("未登录知乎：请点「登录知乎」在打开的窗口里登录一次".to_string());
+    };
+
+    CANCEL.store(false, Ordering::SeqCst);
+    let collections = zhihu::fetch_api(&app, &zhihu::collections_path(&url_token)).await?;
+    let list = collections
+        .get("data")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut result = ImportResult::default();
+    'outer: for collection in list {
+        let id = collection
+            .get("id")
+            .map(|v| v.as_i64().map(|n| n.to_string()).unwrap_or_else(|| v.to_string()))
+            .unwrap_or_default();
+        if id.is_empty() {
+            continue;
+        }
+        let title = collection
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("知乎收藏夹")
+            .to_string();
+
+        for page in 0..zhihu::MAX_PAGES {
+            if CANCEL.load(Ordering::SeqCst) {
+                result.cancelled = true;
+                break 'outer;
+            }
+            let payload = zhihu::fetch_api(
+                &app,
+                &zhihu::items_path(&id, page * zhihu::PAGE_SIZE),
+            )
+            .await?;
+            let items = payload
+                .get("data")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if items.is_empty() {
+                break;
+            }
+            let favorites: Vec<NewFavorite> = items
+                .iter()
+                .filter_map(|item| zhihu::item_to_favorite(item, &title))
+                .collect();
+            result.fetched += favorites.len();
+            let delta = db::with_conn(|conn| {
+                let mut added = 0usize;
+                let mut updated = 0usize;
+                let mut skipped = 0usize;
+                for item in &favorites {
+                    match db::upsert(conn, item)? {
+                        db::UpsertOutcome::Added => added += 1,
+                        db::UpsertOutcome::Updated => updated += 1,
+                        db::UpsertOutcome::Skipped => skipped += 1,
+                    }
+                }
+                Ok((added, updated, skipped))
+            })?;
+            result.added += delta.0;
+            result.updated += delta.1;
+            result.skipped += delta.2;
+
+            let is_end = payload
+                .pointer("/paging/is_end")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            if is_end {
+                break;
+            }
+        }
+    }
+
+    db::with_conn(|conn| db::mark_imported(conn, zhihu::SOURCE, result.fetched))?;
+    crate::exit_log!(
+        "[收藏] 知乎导入完成: fetched={}, added={}, updated={}, skipped={}, cancelled={}",
         result.fetched,
         result.added,
         result.updated,
