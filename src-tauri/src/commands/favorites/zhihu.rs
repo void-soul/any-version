@@ -25,6 +25,10 @@ pub const BASE_URL: &str = "https://developer.zhihu.com";
 /// 每页条数（官方默认 20；文档未给出上限，用保守值）
 pub const PAGE_SIZE: usize = 20;
 
+/// 页与页之间的间隔（毫秒）：上次 1 秒内连发 9 个请求后中断，
+/// 触发风控是头号嫌疑。300ms 意味着 100 页约 30 秒，完全可接受。
+pub const PAGE_DELAY_MS: u64 = 300;
+
 /// 收藏夹列表请求的 Limit（接口无分页字段，一次尽量多取）
 pub const FAVLISTS_LIMIT: usize = 100;
 
@@ -46,15 +50,20 @@ pub fn quota_path() -> String {
     "/api/v1/quota?APIIDs=user_data".to_string()
 }
 
-/// 从额度响应里取剩余次数；字段缺失/格式不符返回 None（不让预检阻塞导入）。
-pub fn parse_quota_remaining(payload: &Value) -> Option<i64> {
+/// 从额度响应里取（剩余，总额度）；字段缺失/格式不符返回 None（不让预检阻塞导入）。
+pub fn parse_quota(payload: &Value) -> Option<(i64, i64)> {
     let value = payload
         .get("Data")
         .or_else(|| payload.get("data"))
         .unwrap_or(payload);
-    ["RemainingQuota", "remaining_quota"]
+    let remaining = ["RemainingQuota", "remaining_quota"]
+        .iter()
+        .find_map(|key| value.get(key).and_then(|v| v.as_i64()))?;
+    let total = ["TotalQuota", "total_quota"]
         .iter()
         .find_map(|key| value.get(key).and_then(|v| v.as_i64()))
+        .unwrap_or(-1);
+    Some((remaining, total))
 }
 
 /// 构造鉴权请求头。
@@ -104,7 +113,7 @@ pub fn map_api_error(code: i64, message: &str) -> String {
     let hint = match code {
         20001 => "（Access Secret 无效或已过期，请到 developer.zhihu.com/profile 重新生成）",
         30001 | 30002 => {
-            "（今日用户数据额度已用完：这类接口按自然日配额，默认 100 次/天、未实名 10 次/天，明天再导或在开放平台查看额度）"
+            "（今日用户数据额度已用完：按自然日配额，剩余与总额度见开放平台「各接口剩余配额」面板，次日恢复）"
         }
         30003 => "（被知乎风控拒绝，请稍后再试）",
         10001 => "（参数错误，可能是接口改版）",
@@ -167,6 +176,9 @@ pub fn item_to_favorite(item: &Value, collection_title: &str) -> Option<NewFavor
 }
 
 /// 从内容页响应里取（条目数组，是否结束，下一个 Offset）。
+///
+/// `NextOffset` 文档说是 String，但按防御性处理：字符串和数字都接受——
+/// 类型对不上时宁可少翻一页，也不能在这里 panic 或死循环。
 pub fn parse_contents_page(payload: &Value) -> (Vec<Value>, bool, usize) {
     let items = payload
         .get("Items")
@@ -177,10 +189,12 @@ pub fn parse_contents_page(payload: &Value) -> (Vec<Value>, bool, usize) {
         .pointer("/Paging/IsEnd")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
-    let next_offset = payload
-        .pointer("/Paging/NextOffset")
-        .and_then(|v| v.as_str())
-        .and_then(|s| s.parse::<usize>().ok());
+    let next_raw = payload.pointer("/Paging/NextOffset");
+    let next_offset = match next_raw {
+        Some(Value::String(s)) => s.parse::<usize>().ok(),
+        Some(Value::Number(n)) => n.as_u64().map(|n| n as usize),
+        _ => None,
+    };
     (items, is_end, next_offset.unwrap_or(usize::MAX))
 }
 
@@ -188,7 +202,7 @@ pub fn parse_contents_page(payload: &Value) -> (Vec<Value>, bool, usize) {
 mod tests {
     use super::{
         auth_headers, contents_path, favlists_path, item_to_favorite, map_api_error,
-        parse_contents_page, parse_envelope, parse_quota_remaining, FAVLISTS_LIMIT, PAGE_SIZE,
+        parse_contents_page, parse_envelope, parse_quota, FAVLISTS_LIMIT, PAGE_SIZE,
     };
     use serde_json::json;
 
@@ -243,16 +257,13 @@ mod tests {
 
     /// 额度解析：PascalCase 与小写都认；缺字段返回 None（预检失败不阻塞导入）。
     #[test]
-    fn quota_remaining_handles_both_casings_and_missing() {
+    fn quota_handles_both_casings_and_missing() {
+        assert_eq!(parse_quota(&json!({"Data": {"RemainingQuota": 7}})), Some((7, -1)));
         assert_eq!(
-            parse_quota_remaining(&json!({"Data": {"RemainingQuota": 7}})),
-            Some(7)
+            parse_quota(&json!({"data": {"remaining_quota": 0, "total_quota": 10000}})),
+            Some((0, 10000))
         );
-        assert_eq!(
-            parse_quota_remaining(&json!({"data": {"remaining_quota": 0}})),
-            Some(0)
-        );
-        assert_eq!(parse_quota_remaining(&json!({})), None);
+        assert_eq!(parse_quota(&json!({})), None);
     }
 
     #[test]

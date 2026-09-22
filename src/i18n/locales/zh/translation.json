@@ -169,7 +169,7 @@
     "zhihuSecretPlaceholder": "粘贴 Access Secret",
     "zhihuSecretSaved": "Access Secret 已保存",
     "zhihuOfficialHint": "走知乎开放平台官方接口（需要 Access Secret）",
-    "zhihuQuotaHint": "注意额度：用户数据类接口按自然日配额（默认 100 次/天、未实名 10 次/天），每次翻页消耗一次；超限时导入会明确报错。",
+    "zhihuQuotaHint": "注意额度：用户数据类接口按自然日配额（你的总额度见开放平台「各接口剩余配额」面板），每次翻页消耗一次；超限时导入会明确报错。",
     "githubTokenTitle": "GitHub Token（收藏）",
     "githubTokenHint": "导入 star 列表要走 GitHub API：未认证请求每小时只有 60 次，翻几页就会 403 限流。这里配的 Token 只给收藏模块用，和 SDK 模块里的那个各自独立、互不影响。",
     "githubTokenLocalNote": "Token 只保存在本机收藏库里，仅用于附带在 GitHub API 请求上（读你的 star 列表），不会上传。只需要只读权限。",

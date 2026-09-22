@@ -373,19 +373,19 @@ pub async fn fav_import_zhihu() -> Result<ImportResult, String> {
     CANCEL.store(false, Ordering::SeqCst);
 
     // 额度预检（官方文档：查询额度不消耗业务额度）。额度为 0 时直接明说，
-    // 别让用户对着「9 页之后突然失败」的现场猜原因。
-    let remaining = match zhihu_get(&secret, &zhihu::quota_path()).await {
-        Ok(payload) => zhihu::parse_quota_remaining(&payload),
+    // 别让用户对着「第 N 页突然失败」的现场猜原因。
+    let quota = match zhihu_get(&secret, &zhihu::quota_path()).await {
+        Ok(payload) => zhihu::parse_quota(&payload),
         Err(_) => None, // 预检失败不阻塞导入，让真正的导入请求给出错误
     };
-    if remaining == Some(0) {
-        return Err(
-            "知乎今日额度已用完（剩余 0 次）：用户数据接口按自然日配额，默认 100 次/天、未实名 10 次/天；明天再导，或在开放平台完成实名提升额度"
-                .to_string(),
-        );
-    }
-    if let Some(count) = remaining {
-        crate::exit_log!("[收藏] 知乎今日剩余额度: {}", count);
+    if let Some((remaining, total)) = quota {
+        crate::exit_log!("[收藏] 知乎用户数据额度: 剩余 {}/{}", remaining, total);
+        if remaining == 0 {
+            return Err(format!(
+                "知乎今日额度已用完（剩余 0/{}）：按自然日配额，次日恢复；总额度见开放平台「各接口剩余配额」面板",
+                total
+            ));
+        }
     }
 
     let favlists = zhihu_get(&secret, &zhihu::favlists_path()).await?;
@@ -432,13 +432,26 @@ pub async fn fav_import_zhihu() -> Result<ImportResult, String> {
                 Ok(payload) => payload,
                 Err(e) => {
                     result.failed.push(format!("{}（{}）", title, e));
-                    crate::exit_log!("[收藏] 知乎收藏夹读取失败，已跳过: {} ({})", title, e);
+                    crate::exit_log!(
+                        "[收藏-知乎] 收藏夹「{}」第 {} 页读取失败，已跳过: {}",
+                        title,
+                        offset,
+                        e
+                    );
                     continue 'outer;
                 }
             };
-            let (items, is_end, next_offset) = zhihu::parse_contents_page(&payload);
+            let (page_items, is_end, next_offset) = zhihu::parse_contents_page(&payload);
+            crate::exit_log!(
+                "[收藏-知乎] 「{}」 offset={} -> {} 条, is_end={}, next={:?}",
+                title,
+                offset,
+                page_items.len(),
+                is_end,
+                next_offset
+            );
 
-            let favorites: Vec<NewFavorite> = items
+            let favorites: Vec<NewFavorite> = page_items
                 .iter()
                 .filter_map(|item| zhihu::item_to_favorite(item, &title))
                 .collect();
@@ -469,6 +482,9 @@ pub async fn fav_import_zhihu() -> Result<ImportResult, String> {
             let _ = db::with_conn(|conn| {
                 db::set_import_cursor(conn, &state_key, Some(&offset.to_string()))
             });
+            // 页与页之间留间隔：上次 1 秒内连发 9 个请求，触发风控（30003/412）是 177
+            // 条停下来的头号嫌疑
+            tokio::time::sleep(std::time::Duration::from_millis(zhihu::PAGE_DELAY_MS)).await;
         }
     }
 
