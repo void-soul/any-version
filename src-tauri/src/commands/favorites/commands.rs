@@ -329,6 +329,12 @@ pub fn fav_zhihu_open_login(app: tauri::AppHandle) -> Result<(), String> {
     zhihu::open_login_window(&app)
 }
 
+/// 关闭知乎相关窗口（登录态异常或页面卡住时重置；Cookie 不受影响）。
+#[tauri::command]
+pub fn fav_zhihu_close(app: tauri::AppHandle) -> Result<(), String> {
+    zhihu::close_windows(&app)
+}
+
 /// 探测知乎登录态。
 #[tauri::command]
 pub async fn fav_zhihu_status(app: tauri::AppHandle) -> Result<ZhihuStatus, String> {

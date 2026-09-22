@@ -620,6 +620,7 @@ pub fn run() {
             commands::favorites::fav_import_zhihu,
             commands::favorites::fav_zhihu_open_login,
             commands::favorites::fav_zhihu_status,
+            commands::favorites::fav_zhihu_close,
             commands::music::music_track_name_suggestion,
             commands::music::music_rename_track,
             commands::music::music_delete_tracks,

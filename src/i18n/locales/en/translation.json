@@ -165,6 +165,8 @@
     "zhihuLogin": "Sign in to Zhihu",
     "zhihuNeedLogin": "Not signed in to Zhihu - a sign-in window was opened; click import again once you are done",
     "zhihuExperimental": "Zhihu requires its own dynamic signature, so requests are made from inside a Zhihu page (the page's own script signs them). You need to sign in once inside this app.",
+    "zhihuClose": "Close Zhihu windows (reset when the page is stuck or blank; sign-in is kept)",
+    "zhihuClosed": "Zhihu windows closed - the next import recreates them",
     "importDone": "Imported: {{added}} added, {{updated}} updated, {{skipped}} unchanged",
     "importCancelled": "Import cancelled (already imported entries are kept)",
     "importFail": "Import failed: {{err}}",

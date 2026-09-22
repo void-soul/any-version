@@ -19,6 +19,14 @@ pub const SOURCE: &str = "zhihu";
 /// 登录态就活在这个 webview 的 cookie 里，销毁窗口等于把用户登录态丢了。
 pub const VIEW_LABEL: &str = "favorites-zhihu-view";
 
+/// 登录窗口 label：与隐藏窗口**分开**。
+///
+/// 之前两者共用一个窗口（先隐藏创建、再 `show()` + `navigate()`），实测会白屏：
+/// WebView2 在不可见状态下创建、随后又被打断导航，容易停在空白文档上。
+/// 现在登录走独立窗口，**直接可见创建**（与 `node_manager` / `picky` 的写法一致）；
+/// Cookie 存在 WebView2 的用户数据目录里，与隐藏窗口天然共享，所以登录一次两边都生效。
+pub const LOGIN_LABEL: &str = "favorites-zhihu-login";
+
 /// 主页（隐藏窗口的宿主页；同源才能带 Cookie 调 API）
 pub const HOME_URL: &str = "https://www.zhihu.com/";
 
@@ -205,16 +213,10 @@ const FETCH_TIMEOUT_SECS: u64 = 20;
 const READY_TIMEOUT_SECS: u64 = 30;
 
 /// 确保隐藏窗口存在（不存在就以知乎主页为宿主建一个）。
-///
-/// `visible = true` 时顺便显示并聚焦（用于登录）；否则保持隐藏。
-fn ensure_view(app: &tauri::AppHandle, visible: bool) -> Result<tauri::WebviewWindow, String> {
+fn ensure_view(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
     use tauri::Manager;
 
     if let Some(window) = app.get_webview_window(VIEW_LABEL) {
-        if visible {
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
         return Ok(window);
     }
 
@@ -225,11 +227,44 @@ fn ensure_view(app: &tauri::AppHandle, visible: bool) -> Result<tauri::WebviewWi
     );
     let window = tauri::WebviewWindowBuilder::new(app, VIEW_LABEL, url)
         .title("知乎")
-        .inner_size(1100.0, 800.0)
-        .visible(visible)
+        .inner_size(1280.0, 820.0)
+        .visible(false)
+        .skip_taskbar(true)
+        // 页面事件进日志：白屏时能立刻看出是「没加载」还是「加载了但被拦」
+        .on_page_load(|webview, payload| {
+            crate::exit_log!(
+                "[收藏-知乎] 隐藏窗口页面事件: {:?} {}",
+                payload.event(),
+                payload.url()
+            );
+            let _ = webview;
+        })
         .build()
         .map_err(|e| format!("创建知乎窗口失败: {}", e))?;
     Ok(window)
+}
+
+/// 当前页面地址（诊断用：白屏时能知道它到底停在哪）。
+async fn current_url(window: &tauri::WebviewWindow) -> String {
+    use tokio::sync::oneshot;
+    let (tx, rx) = oneshot::channel::<String>();
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+    let slot2 = slot.clone();
+    if window
+        .eval_with_callback("location.href", move |s| {
+            if let Some(t) = slot2.lock().unwrap().take() {
+                let _ = t.send(s);
+            }
+        })
+        .is_err()
+    {
+        return String::new();
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(2), rx)
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or_default()
 }
 
 /// 轮询 `document.readyState` 直到 complete。
@@ -267,9 +302,16 @@ pub async fn fetch_api(app: &tauri::AppHandle, path: &str) -> Result<Value, Stri
     use tokio::sync::oneshot;
 
     let _guard = WEBVIEW_LOCK.lock().await;
-    let window = ensure_view(app, false)?;
+    let window = ensure_view(app)?;
     if !wait_ready(&window).await {
-        return Err("知乎页面加载超时，请点「登录知乎」打开窗口重试".to_string());
+        // 记下它停在哪，并把坏窗口销毁：否则下次会继续在坏窗口上复用（一直是白屏）。
+        let url = current_url(&window).await;
+        let _ = window.destroy();
+        crate::exit_log!("[收藏-知乎] 隐藏窗口加载超时，停在该地址: {}", url);
+        return Err(format!(
+            "知乎页面加载超时（当前地址: {}）。请点右侧钥匙按钮打开登录窗口确认能否正常访问知乎",
+            if url.is_empty() { "未知" } else { &url }
+        ));
     }
 
     let url = format!("https://www.zhihu.com{}", path);
@@ -306,30 +348,50 @@ pub async fn fetch_api(app: &tauri::AppHandle, path: &str) -> Result<Value, Stri
     }
 }
 
-/// 打开（或显示）可见的知乎窗口，让用户登录。登录态留在该 webview 的 Cookie 里。
+/// 打开可见的知乎登录窗口（独立 label，直接可见创建）。
+///
+/// 登录态存在 WebView2 用户数据目录的 Cookie 里，与隐藏窗口共享；
+/// 登录完成后用户手动关掉本窗口即可。
 pub fn open_login_window(app: &tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
 
-    if let Some(window) = app.get_webview_window(VIEW_LABEL) {
+    if let Some(window) = app.get_webview_window(LOGIN_LABEL) {
         let _ = window.show();
         let _ = window.set_focus();
-        let _ = window.navigate(
-            LOGIN_URL
-                .parse()
-                .map_err(|e| format!("登录地址解析失败: {}", e))?,
-        );
         return Ok(());
     }
+
     let url = tauri::WebviewUrl::External(
         LOGIN_URL
             .parse()
             .map_err(|e| format!("登录地址解析失败: {}", e))?,
     );
-    tauri::WebviewWindowBuilder::new(app, VIEW_LABEL, url)
-        .title("登录知乎")
-        .inner_size(1100.0, 800.0)
+    tauri::WebviewWindowBuilder::new(app, LOGIN_LABEL, url)
+        .title("登录知乎（登录完成后关闭此窗口）")
+        .inner_size(1100.0, 820.0)
+        .on_page_load(|_, payload| {
+            crate::exit_log!(
+                "[收藏-知乎] 登录窗口页面事件: {:?} {}",
+                payload.event(),
+                payload.url()
+            );
+        })
         .build()
         .map_err(|e| format!("创建知乎登录窗口失败: {}", e))?;
+    Ok(())
+}
+
+/// 关掉知乎相关窗口（登录窗口 + 隐藏窗口）。
+///
+/// 供「登录态异常 / 页面卡住」时重置：隐藏窗口一旦处于坏状态，
+/// 复用它会一直失败，销毁后下次会重新创建。
+pub fn close_windows(app: &tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    for label in [LOGIN_LABEL, VIEW_LABEL] {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.destroy();
+        }
+    }
     Ok(())
 }
 

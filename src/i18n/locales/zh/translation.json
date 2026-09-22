@@ -165,6 +165,8 @@
     "zhihuLogin": "登录知乎",
     "zhihuNeedLogin": "还没登录知乎：已打开登录窗口，登录完成后再点一次导入",
     "zhihuExperimental": "知乎接口必须带它自家的动态签名，所以这里是在知乎页面里发起请求（签名交给知乎自己的脚本算），需要你先在应用内登录一次。",
+    "zhihuClose": "关闭知乎窗口（页面卡住/白屏时重置，不影响登录）",
+    "zhihuClosed": "已关闭知乎窗口，下次导入会重新创建",
     "importDone": "导入完成：新增 {{added}}，更新 {{updated}}，无变化 {{skipped}}",
     "importCancelled": "已取消导入（已导入的部分保留）",
     "importFail": "导入失败: {{err}}",

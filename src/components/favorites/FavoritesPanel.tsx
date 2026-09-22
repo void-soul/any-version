@@ -22,6 +22,7 @@ import {
   Tag,
   Trash2,
   Tv,
+  X,
 } from "lucide-react";
 
 import { SharedButton } from "../shared/Button";
@@ -338,6 +339,18 @@ export default function FavoritesPanel() {
             title={t("favorites.zhihuLogin")}
           >
             <KeyRound className="w-3 h-3" />
+          </button>
+          {/* 页面卡住/白屏时重置窗口（不动登录 Cookie） */}
+          <button
+            onClick={() =>
+              void invoke("fav_zhihu_close")
+                .then(() => toast(t("favorites.zhihuClosed"), "ok"))
+                .catch((e) => toast(String(e), "err"))
+            }
+            className="p-1 rounded text-slate-500 hover:text-rose-300 cursor-pointer"
+            title={t("favorites.zhihuClose")}
+          >
+            <X className="w-3 h-3" />
           </button>
         </div>
 
