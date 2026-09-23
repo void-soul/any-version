@@ -1,9 +1,17 @@
 // 全局 Toast：模块内直接调用 toast(msg, kind) 即可，无需 Provider/挂载。
-// kind: "ok"(绿) | "err"(红) | "info"(模块主题色)。自动淡出，供全 app 统一反馈体验。
+// kind: "ok"(绿) | "err"(红) | "info"(全局主色调)。自动淡出，供全 app 统一反馈体验。
 // 替代各模块手写的 showToast 状态机（LauncherPanel/ClipboardPanel 等）。
-import { useEffect, useState } from "react";
+//
+// 主色调来源：Toast 挂在 document.body 下，而 `--module-accent` 是 App 注入在
+// `#app-content` 上的**当前模块色**，body 这一层取不到——于是气泡要么没色、
+// 要么跟着某个模块变。这里显式读全局设置的主色调（`resolveThemeAccent`），
+// 再用内联样式把它作为 `--module-accent` 写在气泡容器上，让子元素的既有 class 直接生效。
+import { useEffect, useState, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
+import { invoke } from "@tauri-apps/api/core";
 import { Check, AlertCircle, Info } from "lucide-react";
+
+import { VEX_CYBER_ACCENT, resolveThemeAccent } from "../../utils/brand";
 
 type ToastKind = "ok" | "err" | "info";
 
@@ -38,10 +46,37 @@ export function toast(msg: string, kind: ToastKind = "ok"): void {
 
 function ToastView({ items }: { items: ToastMsg[] }) {
   const [ready, setReady] = useState(false);
-  useEffect(() => setReady(true), []);
+  // 全局主色调（全局设置里选的那个），而不是当前模块色
+  const [accent, setAccent] = useState(VEX_CYBER_ACCENT);
+  useEffect(() => {
+    setReady(true);
+    let alive = true;
+    (async () => {
+      try {
+        const ap = await invoke<{ moduleThemeColors?: Record<string, string> }>(
+          "get_appearance_config",
+        );
+        if (alive) setAccent(resolveThemeAccent(ap.moduleThemeColors));
+      } catch {
+        /* 读不到就用默认签名色，不影响提示本身 */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
   if (items.length === 0) return null;
   return (
-    <div className={`fixed left-4 bottom-4 flex flex-col gap-2 pointer-events-none ${ready ? "animate-in fade-in duration-200" : ""}`} style={{ maxWidth: 420 }}>
+    <div
+      className={`fixed left-4 bottom-4 flex flex-col gap-2 pointer-events-none ${ready ? "animate-in fade-in duration-200" : ""}`}
+      style={
+        {
+          maxWidth: 420,
+          // 覆写成全局主色调：下面那些 `var(--module-accent)` 的 class 从这里取值
+          "--module-accent": accent,
+        } as CSSProperties
+      }
+    >
       {items.map((t) => {
         const Icon = t.kind === "ok" ? Check : t.kind === "err" ? AlertCircle : Info;
         const iconCls =
