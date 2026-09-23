@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import {
-  Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, ReactFlowProvider, getBezierPath, useReactFlow,
+  BaseEdge, Controls, EdgeLabelRenderer, Handle, MarkerType, MiniMap, Position, ReactFlow, ReactFlowProvider, getBezierPath, useReactFlow,
   type Connection, type Edge, type EdgeProps, type Node, type NodeChange, type NodeProps, type Viewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -18,7 +18,7 @@ import {
   ChevronDown, ChevronRight, ChevronsRight, ChevronLeft, FolderPlus, Search, Maximize2, Minimize2, Code2, FileText, ListTree, RotateCcw, RotateCw, Calendar, Link2, Square, MessageCircle, LocateFixed,
 } from "lucide-react";
 import type { AiConfig } from "../ai/types";
-import { AiImportResult, DocumentFull, MindmapDocument, MindmapFolder, MindmapNode, MindmapSticker, PlannedOccurrence, PositionInput, kindColor, mmApi } from "./types";
+import { AiImportResult, DocumentFull, MindmapDocument, MindmapFolder, MindmapLink, MindmapNode, MindmapSticker, PlannedOccurrence, PositionInput, kindColor, mmApi } from "./types";
 import { moduleAccent } from "../../utils/theme";
 import { VEX_CYBER_CYAN } from "../../utils/brand";
 import { useEventBufferSnapshot } from "../../utils/eventBuffer";
@@ -226,6 +226,34 @@ const ColorEdge = memo(function ColorEdge({ id, sourceX, sourceY, targetX, targe
   </>);
 });
 
+/** 自由关系线：与父子树无关的额外连线（虚线 + 中点说明文字）。
+ *  标签本身即操作入口：点击改文字，悬停显示 ✕ 删除。 */
+const RelationEdge = memo(function RelationEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps) {
+  const { t } = useTranslation();
+  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, curvature: 0.35 });
+  const color = (data?.color as string | undefined) ?? VEX_CYBER_CYAN;
+  const label = (data?.label as string | undefined) ?? "";
+  const onEdit = data?.onEdit as ((e: React.MouseEvent) => void) | undefined;
+  const onDelete = data?.onDelete as ((e: React.MouseEvent) => void) | undefined;
+  const gid = `mm-link-${id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  return (<>
+    <defs><marker id={`arrow-${gid}`} markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill={color} /></marker></defs>
+    <BaseEdge id={id} path={path} interactionWidth={22} markerEnd={`url(#arrow-${gid})`}
+      style={{ stroke: color, strokeWidth: 1.6, strokeDasharray: "6 4" }} />
+    <EdgeLabelRenderer>
+      <div className="nodrag nopan" style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "all" }}>
+        <div className="group/link flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[9px] shadow backdrop-blur"
+          style={{ borderColor: `${color}77`, backgroundColor: "rgba(13,21,36,0.92)", color }}>
+          <button type="button" className="max-w-[140px] cursor-pointer truncate hover:underline" title={t("mindmap.linkEditHint")}
+            onClick={(e) => { e.stopPropagation(); onEdit?.(e); }}>{label || t("mindmap.linkMode")}</button>
+          <button type="button" className="hidden rounded-full p-0.5 text-slate-500 transition group-hover/link:block hover:bg-white/10 hover:text-red-400"
+            title={t("mindmap.delete")} onClick={(e) => { e.stopPropagation(); onDelete?.(e); }}><X className="h-2.5 w-2.5" /></button>
+        </div>
+      </div>
+    </EdgeLabelRenderer>
+  </>);
+});
+
 // ════════════ 贴纸节点 ════════════
 
 type StickerNodeData = {
@@ -379,6 +407,26 @@ function layoutTree(nodes: MindmapNode[], dir: LayoutDir = "lr"): Map<string, { 
     }
   }
   return pos;
+}
+
+// ════════════ 拖拽改上级：目标节点命中判定 ════════════
+
+/** 点 (px,py) 是否落在以 (sx,sy) 为左上角、宽 w 高 h 的矩形内（拖拽改上级的落点判定）。 */
+function pointInRect(px: number, py: number, sx: number, sy: number, w: number, h: number): boolean {
+  return px >= sx && px <= sx + w && py >= sy && py <= sy + h;
+}
+
+/** 收集 id 及其全部后代 id（拖到自己的子孙上会成环，必须排除）。 */
+function withDescendants(id: string, nodes: MindmapNode[]): Set<string> {
+  const out = new Set<string>([id]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const n of nodes) {
+      if (n.parentId && out.has(n.parentId) && !out.has(n.id)) { out.add(n.id); changed = true; }
+    }
+  }
+  return out;
 }
 
 // ════════════ 祖先链（选中节点的高亮路径） ════════════
@@ -1117,7 +1165,7 @@ function AiImportReportModal({ result, onClose, onOpenDoc }: {
 // nodeTypes/edgeTypes 必须在组件外定义为常量：若在 JSX 内联新建，每次渲染都会
 // 产生新对象，React Flow 会因此反复重渲染（官方文档明确警告的卡顿/卡死源）。
 const mmNodeTypes = { mmNode: FlowNode, stickerNode: StickerFlowNode };
-const mmEdgeTypes = { colorE: ColorEdge };
+const mmEdgeTypes = { colorE: ColorEdge, relationE: RelationEdge };
 
 type PosOverride = { x: number; y: number };
 
@@ -1138,7 +1186,7 @@ type NodeCacheEntry = {
 
 function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onError, onOpenCalendar, focusRequest, onFocusHandled, aiPill }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onError: (message: string) => void; onOpenCalendar: () => void; focusRequest: { nodeId: string; ts: number } | null; onFocusHandled: () => void; aiPill?: React.ReactNode }) {
   const { t } = useTranslation();
-  const { fitView } = useReactFlow();
+  const { fitView, flowToScreenPosition } = useReactFlow();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // 节点树导航面板：点击树节点 = 选中 + 展开祖先 + 视口聚焦（与悬浮窗树形选择同一交互直觉）
@@ -1152,6 +1200,33 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   const previewCloseTimer = useRef<number | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
   const [lastSaved, setLastSaved] = useState<number | null>(null);
+  // ── 自由关系线 ──
+  // 关系线模式：此模式下拖拽连线只加「额外关系线」，不改父子关系（按住 Shift 拖线等效）。
+  const [linkMode, setLinkMode] = useState(false);
+  // 连线时是否按住了 Shift（onConnectStart 记录，onConnect 消费）
+  const shiftConnectRef = useRef(false);
+  // 关系线编辑弹层：新建草稿（isNew=true）或编辑已有关系线
+  const [linkDraft, setLinkDraft] = useState<{ id: string; sourceId: string; targetId: string; label: string; x: number; y: number; isNew: boolean } | null>(null);
+  // 画布内的轻提示（改上级 / 建关系线后的反馈）
+  const [canvasNotice, setCanvasNotice] = useState<string>("");
+  const noticeTimer = useRef<number | null>(null);
+  const flashCanvas = useCallback((text: string) => {
+    setCanvasNotice(text);
+    if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setCanvasNotice(""), 2600);
+  }, []);
+  // 拖拽改上级：拖拽过程中命中的目标节点（松手时生效）
+  const dropTargetRef = useRef<string | null>(null);
+  // 点击式连线：关系线模式下第一次点选的节点＝关系线起点，再点一个节点即完成
+  const [linkFrom, setLinkFrom] = useState<string | null>(null);
+  // 节点 data 里的回调会被 React Flow 缓存，不能闭包捕获会变的状态 → 用 ref 镜像
+  const linkFromRef = useRef<string | null>(null);
+  const linkModeRef = useRef(false);
+  useEffect(() => { linkFromRef.current = linkFrom; }, [linkFrom]);
+  useEffect(() => { linkModeRef.current = linkMode; }, [linkMode]);
+  // 本次拖线的起点节点 / onConnect 是否已受理（onConnectEnd 兜底用，见下方 onConnectEnd）
+  const connectStartRef = useRef<string | null>(null);
+  const connectHandledRef = useRef(false);
   // 用户拖放产生的位置覆盖（本地状态）。节点位置 = posOverrides ?? (已保存坐标 ?? 自动布局)。
   // 关键：拖放不再依赖 nodes state + useEffect 同步（那会在 WebView2/React19 下形成
   // onNodesChange → setNodes → 重建节点 → 重新测量 → onNodesChange 的死循环），
@@ -1170,6 +1245,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   }, []);
   // 切换文档时清空位置覆盖（新文档用其自身已保存坐标或自动布局）
   useEffect(() => { setPosOverrides({}); }, [full.document.id]);
+  // 切换文档时丢弃「关系线起点」的待完成状态
+  useEffect(() => { setLinkFrom(null); }, [full.document.id]);
   // 切换文档时恢复该文档保存的布局方向（避免沿用上一份导图的方向）
   useEffect(() => {
     const d = full.document.layoutDir;
@@ -1188,6 +1265,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
 
   const graphNodes = full.nodes;
   const stickers = full.stickers;
+  // 自由关系线（旧文档可能没有该字段）
+  const links = useMemo(() => full.links ?? [], [full.links]);
   const byId = useMemo(() => new Map(graphNodes.map((n) => [n.id, n])), [graphNodes]);
   // focusRequest effect 需要读取最新节点但又不依赖 byId 变化（避免弹窗被重开），用 ref 镜像
   const byIdRef = useRef(byId);
@@ -1343,13 +1422,85 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     onDocumentUpdate({ ...full, nodes: full.nodes.map(n => n.id === nodeId ? updated : n) });
   }, [byId, full, onDocumentUpdate, onHistoryPush]);
 
+  // ── 自由关系线：新建 / 编辑 / 删除 ──
+
+  /** 节点卡片中心的画布坐标（关系线弹层定位用）。 */
+  const nodeCenterOf = useCallback((id: string): { x: number; y: number } | null => {
+    const n = byId.get(id);
+    if (!n) return null;
+    const hasSaved = n.positionX !== 0 || n.positionY !== 0;
+    const base = hasSaved ? { x: n.positionX, y: n.positionY } : layout.get(n.id) ?? { x: 0, y: 0 };
+    const p = posOverrides[n.id] ?? base;
+    const s = measuredMap[n.id] ?? { width: 200, height: 90 };
+    return { x: p.x + s.width / 2, y: p.y + s.height / 2 };
+  }, [byId, layout, posOverrides, measuredMap]);
+
+  /** 两节点连线中点的屏幕坐标（新建关系线时给弹层定位；坐标缺失则退回屏幕中心）。 */
+  const linkAnchorOnScreen = useCallback((sourceId: string, targetId: string): { x: number; y: number } => {
+    const a = nodeCenterOf(sourceId);
+    const b = nodeCenterOf(targetId);
+    if (!a || !b) return { x: Math.round(window.innerWidth / 2), y: Math.round(window.innerHeight / 2) };
+    return flowToScreenPosition({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  }, [nodeCenterOf, flowToScreenPosition]);
+
+  /** 打开「新建关系线」弹层；同向关系线已存在时直接打开它编辑（不重复建线）。 */
+  const openLinkCreator = useCallback((sourceId: string, targetId: string) => {
+    const existing = links.find(l => l.sourceId === sourceId && l.targetId === targetId);
+    const p = linkAnchorOnScreen(sourceId, targetId);
+    if (existing) { setLinkDraft({ id: existing.id, sourceId, targetId, label: existing.label, x: p.x, y: p.y, isNew: false }); return; }
+    setLinkDraft({ id: `lk${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, sourceId, targetId, label: "", x: p.x, y: p.y, isNew: true });
+  }, [links, linkAnchorOnScreen]);
+
+  /** 点击关系线标签 → 就地编辑（弹层贴着鼠标位置）。 */
+  const openLinkEditor = useCallback((link: MindmapLink, e: React.MouseEvent) => {
+    setLinkDraft({ id: link.id, sourceId: link.sourceId, targetId: link.targetId, label: link.label, x: e.clientX, y: e.clientY, isNew: false });
+  }, []);
+
+  /** 点选节点：关系线模式下退化为「点起点 → 点终点」的点击式连线（不必去够连接点）。
+   *  注意：本函数会存进节点 data 被 React Flow 缓存，因此只读 ref，不闭包捕获 linkMode/linkFrom。 */
+  const selectNode = useCallback((id: string) => {
+    setSelectedId(id);
+    if (!linkModeRef.current) return;
+    const from = linkFromRef.current;
+    if (!from) { setLinkFrom(id); flashCanvas(t("mindmap.linkPickFrom", { name: byId.get(id)?.name ?? id })); return; }
+    if (from === id) { setLinkFrom(null); return; } // 再点起点＝取消
+    setLinkFrom(null);
+    openLinkCreator(from, id);
+  }, [byId, openLinkCreator, flashCanvas, t]);
+
+  /** 保存关系线（新建或改文字）。 */
+  const saveLinkDraft = useCallback(() => {
+    if (!linkDraft) return;
+    const now = new Date().toISOString();
+    const old = links.find(l => l.id === linkDraft.id);
+    const link: MindmapLink = {
+      id: linkDraft.id, documentId: full.document.id, sourceId: linkDraft.sourceId, targetId: linkDraft.targetId,
+      label: linkDraft.label.trim(), createdAt: old?.createdAt ?? now, updatedAt: now,
+    };
+    onHistoryPush();
+    void mmApi.upsertLink({ documentId: full.document.id, link });
+    const next = old ? links.map(l => (l.id === link.id ? link : l)) : [...links, link];
+    onDocumentUpdate({ ...full, links: next });
+    setLinkDraft(null);
+    flashCanvas(t("mindmap.linkSaved", { label: link.label || t("mindmap.linkMode") }));
+  }, [linkDraft, links, full, onDocumentUpdate, onHistoryPush, flashCanvas, t]);
+
+  /** 删除关系线。 */
+  const removeLink = useCallback((linkId: string) => {
+    onHistoryPush();
+    void mmApi.deleteLink({ documentId: full.document.id, linkId });
+    onDocumentUpdate({ ...full, links: links.filter(l => l.id !== linkId) });
+    setLinkDraft(prev => (prev?.id === linkId ? null : prev));
+  }, [links, full, onDocumentUpdate, onHistoryPush]);
+
   const onConnect = useCallback((connection: Connection) => {
+    // 只要连接点之间连上了（哪怕后面被防环等规则拒绝），就不该再走 onConnectEnd 的兜底
+    connectHandledRef.current = true;
     const source = connection.source;
     const target = connection.target;
     if (!source || !target || source === target || !byId.has(source) || !byId.has(target)) return;
-    // 单父约束：一个节点只允许一个入口（树形结构）。目标已有父节点时忽略本次连线。
-    const child = byId.get(target)!;
-    if (child.parentId) return;
+    // 关系线模式（或按住 Shift 拖线）：只加一条带文字的额外关系线，不改父子关系。
+    if (linkMode || shiftConnectRef.current) { openLinkCreator(source, target); return; }
     // 不能连到自己的后代，否则成环。
     let cursor: string | null = source;
     const seen = new Set<string>();
@@ -1358,11 +1509,40 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       seen.add(cursor);
       cursor = byId.get(cursor)?.parentId ?? null;
     }
+    const child = byId.get(target)!;
     onHistoryPush();
+    // 目标已有上级 → 改挂到新上级（其子树一并跟随）；没有上级 → 设置上级。
     const updated = { ...child, parentId: source, kind: child.kind === "root" ? "other" : child.kind, updatedAt: new Date().toISOString() };
     void mmApi.upsertNode({ documentId: full.document.id, node: updated });
     onDocumentUpdate({ ...full, nodes: full.nodes.map(n => n.id === target ? updated : n) });
-  }, [byId, full, onDocumentUpdate, onHistoryPush]);
+    if (child.parentId && child.parentId !== source) {
+      flashCanvas(t("mindmap.reparented", { name: child.name, parent: byId.get(source)?.name ?? source }));
+    }
+  }, [byId, full, onDocumentUpdate, onHistoryPush, linkMode, openLinkCreator, flashCanvas, t]);
+
+  /** 记录拖线起点与是否按住 Shift（松手时 onConnect / onConnectEnd 据此分流）。 */
+  const onConnectStart = useCallback((event: MouseEvent | TouchEvent, params: { nodeId?: string | null }) => {
+    shiftConnectRef.current = "shiftKey" in event ? Boolean(event.shiftKey) : false;
+    connectStartRef.current = params?.nodeId ?? null;
+    connectHandledRef.current = false;
+  }, []);
+
+  /** 拖线兜底：关系线模式下可以「拖到目标节点的任意位置」松手（不必精确命中 12px 的连接点）。
+   *  语义＝从起点节点连到落点节点；只有连接点之间没连上（onConnect 未触发）时才生效。 */
+  const onConnectEnd = useCallback((event: MouseEvent | TouchEvent) => {
+    const fromId = connectStartRef.current;
+    const handled = connectHandledRef.current;
+    connectStartRef.current = null;
+    connectHandledRef.current = false;
+    if (handled || !fromId) return;
+    if (!linkMode && !shiftConnectRef.current) return;
+    const point = "changedTouches" in event ? event.changedTouches[0] : event;
+    if (!point) return;
+    const el = document.elementFromPoint(point.clientX, point.clientY);
+    const toId = el?.closest(".react-flow__node")?.getAttribute("data-id") ?? null;
+    if (!toId || toId === fromId || !byId.has(toId)) return;
+    openLinkCreator(fromId, toId);
+  }, [linkMode, byId, openLinkCreator]);
 
   const deleteNode = useCallback((nodeId: string) => {
     onHistoryPush();
@@ -1375,11 +1555,12 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
         if (n.parentId && removed.has(n.parentId) && !removed.has(n.id)) { removed.add(n.id); changed = true; }
       }
     }
-    onDocumentUpdate({ ...full, nodes: full.nodes.filter(n => !removed.has(n.id)) });
+    onDocumentUpdate({ ...full, nodes: full.nodes.filter(n => !removed.has(n.id)), links: links.filter(l => !removed.has(l.sourceId) && !removed.has(l.targetId)) });
     if (selectedId === nodeId) setSelectedId(null);
     if (detailNode?.id === nodeId) setDetailNode(null);
     setPreview(null);
-  }, [selectedId, detailNode, full, onDocumentUpdate, onHistoryPush]);
+    setLinkDraft(prev => (prev && (removed.has(prev.sourceId) || removed.has(prev.targetId)) ? null : prev));
+  }, [selectedId, detailNode, full, links, onDocumentUpdate, onHistoryPush]);
 
   // 打开详情弹窗前先记录历史快照：整个编辑会话（改名称/描述/颜色/进度/detail）算一步撤销
   const openDetail = useCallback((n: MindmapNode) => {
@@ -1423,7 +1604,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       const prevData = prev ? (prev.obj as Node<FlowNodeData>).data : null;
       const dataChanged = !prevData || prev!.full !== full || prev!.node !== n || prev!.selected !== selected || prev!.hasChildren !== hasChildren || prev!.collapsed !== isCollapsed || prev!.hiddenCount !== hiddenCount || prevData.targetPosition !== endpointPositions.target || prevData.sourcePosition !== endpointPositions.source || prevData.hideText !== zoomHide || prevData.parentColor !== parentColor;
       const data: FlowNodeData = dataChanged ? { node: n, selected, hasChildren, collapsed: isCollapsed, hiddenCount, hideText: zoomHide, parentColor, projectRoot, targetPosition: endpointPositions.target, sourcePosition: endpointPositions.source,
-            onSelect: () => setSelectedId(n.id), onOpenDetail: () => openDetail(n),
+            onSelect: () => selectNode(n.id), onOpenDetail: () => openDetail(n),
             onToggle: () => setCollapsed(cur => { const nx = new Set(cur); nx.has(n.id) ? nx.delete(n.id) : nx.add(n.id); return nx; }),
             onAddChild: () => addChildNode(n.id),
             onPreview: (e) => { if (previewCloseTimer.current) window.clearTimeout(previewCloseTimer.current); setPreview({ node: n, x: e.clientX, y: e.clientY }); },
@@ -1490,7 +1671,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     // 清理不再显示的缓存项
     for (const k of cache.keys()) if (!alive.has(k)) cache.delete(k);
     return [...main, ...stickerNodes];
-  }, [visibleNodes, layout, selectedId, collapsed, childrenCount, stickers, full, onDocumentUpdate, highlightChain, posOverrides, measuredMap, addChildNode, deleteNode, openDetail, endpointPositions, zoomHide, byId]);
+  }, [visibleNodes, layout, selectedId, collapsed, childrenCount, stickers, full, onDocumentUpdate, highlightChain, posOverrides, measuredMap, addChildNode, deleteNode, openDetail, endpointPositions, zoomHide, byId, selectNode]);
 
   const edges = useMemo<Edge[]>(() => {
     const visible = new Set(visibleNodes.map(n => n.id));
@@ -1502,8 +1683,23 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       out.push({ id: `mm-e-${n.id}`, source: n.parentId, target: n.id, sourceHandle: "out", targetHandle: "in", type: "colorE", style: isOnChain ? { strokeWidth: 2, opacity: 0.9 } : {},
         data: { color: effectiveNodeColor(n) }, markerEnd: { type: MarkerType.ArrowClosed, color: "#f8fafc" } } as Edge);
     }
+    // 自由关系线（虚线 + 文字标签）：两端节点都可见时才画（折叠隐藏的子树不画）
+    for (const l of links) {
+      if (!visible.has(l.sourceId) || !visible.has(l.targetId)) continue;
+      const src = byId.get(l.sourceId);
+      out.push({
+        id: `mm-l-${l.id}`, source: l.sourceId, target: l.targetId, sourceHandle: "out", targetHandle: "in",
+        type: "relationE",
+        data: {
+          color: src ? effectiveNodeColor(src) : VEX_CYBER_CYAN,
+          label: l.label,
+          onEdit: (e: React.MouseEvent) => openLinkEditor(l, e),
+          onDelete: () => removeLink(l.id),
+        },
+      } as Edge);
+    }
     return out;
-  }, [visibleNodes, byId, highlightChain]);
+  }, [visibleNodes, byId, highlightChain, links, openLinkEditor, removeLink]);
 
   // 受控节点：React Flow 拖放时把位置写入 posOverrides。仅处理 position 变更，
   // 选择由 selectedId 管理。一次 setState → 一次渲染 → 收敛，无反馈循环。
@@ -1599,10 +1795,53 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     }
   }, []);
 
+  /** 拖拽中的节点中心落在哪个节点卡片里（拖到某节点上＝成为它的子节点）。 */
+  const findDropTarget = useCallback((node: Node): string | null => {
+    if (node.id.startsWith("sticker-")) return null;
+    const self = byId.get(node.id);
+    if (!self) return null;
+    const ownSize = measuredMap[node.id] ?? node.measured ?? { width: 200, height: 90 };
+    const cx = node.position.x + (ownSize.width ?? 0) / 2;
+    const cy = node.position.y + (ownSize.height ?? 0) / 2;
+    // 排除自己与自己的全部后代（否则成环），也排除当前上级（那是原地重排，不是改关系）
+    const forbidden = withDescendants(node.id, graphNodes);
+    for (let i = visibleNodes.length - 1; i >= 0; i--) {
+      const target = visibleNodes[i];
+      if (forbidden.has(target.id) || target.id === self.parentId) continue;
+      const size = measuredMap[target.id];
+      if (!size) continue;
+      const pos = posOverrides[target.id] ?? (target.positionX !== 0 || target.positionY !== 0
+        ? { x: target.positionX, y: target.positionY }
+        : layout.get(target.id) ?? { x: 0, y: 0 });
+      if (pointInRect(cx, cy, pos.x, pos.y, size.width, size.height)) return target.id;
+    }
+    return null;
+  }, [byId, graphNodes, measuredMap, visibleNodes, posOverrides, layout]);
+
+  const onNodeDrag = useCallback((_e: MouseEvent | TouchEvent, node: Node) => {
+    dropTargetRef.current = findDropTarget(node);
+  }, [findDropTarget]);
+
   const onNodeDragStop = useCallback((_e: MouseEvent | TouchEvent, node: Node) => {
-    onHistoryPush(); // 一次拖放 = 一步撤销
+    const dropTarget = dropTargetRef.current;
+    dropTargetRef.current = null;
     const cur = fullRef.current;
     const now = new Date().toISOString();
+    const dragged = node.id.startsWith("sticker-") ? null : byId.get(node.id);
+    const target = dropTarget ? byId.get(dropTarget) : null;
+    // 拖到另一个节点卡片上松手 → 改上级（落位交给自动布局：清掉已保存坐标，排到新上级的子节点序列里）
+    if (dragged && target && dragged.id !== target.id && dragged.parentId !== target.id) {
+      onHistoryPush(); // 一次拖放 = 一步撤销
+      const updated: MindmapNode = { ...dragged, parentId: target.id, kind: dragged.kind === "root" ? "other" : dragged.kind, positionX: 0, positionY: 0, updatedAt: now };
+      void mmApi.upsertNode({ documentId: cur.document.id, node: updated });
+      onDocumentUpdate({ ...cur, document: { ...cur.document, updatedAt: now }, nodes: cur.nodes.map(n => n.id === updated.id ? updated : n) });
+      setPosOverrides(prev => { if (!(updated.id in prev)) return prev; const next = { ...prev }; delete next[updated.id]; return next; });
+      // 上一次拖拽可能还有未落盘的坐标，必须一并丢弃，否则会把刚清掉的坐标写回去
+      pendingPos.current = pendingPos.current.filter(p => p.nodeId !== updated.id);
+      flashCanvas(t("mindmap.reparented", { name: dragged.name, parent: target.name }));
+      return;
+    }
+    onHistoryPush(); // 一次拖放 = 一步撤销
     if (node.id.startsWith("sticker-")) {
       const sid = node.id.replace("sticker-", "");
       pendingStickers.current.set(sid, { x: node.position.x, y: node.position.y });
@@ -1612,7 +1851,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       onDocumentUpdate({ ...cur, document: { ...cur.document, updatedAt: now }, nodes: cur.nodes.map(n => n.id === node.id ? { ...n, positionX: node.position.x, positionY: node.position.y, updatedAt: now } : n) });
     }
     scheduleFlush();
-  }, [onDocumentUpdate, scheduleFlush, onHistoryPush]);
+  }, [onDocumentUpdate, scheduleFlush, onHistoryPush, byId, flashCanvas, t]);
 
   const addSticker = useCallback((imageData = "") => {
     onHistoryPush();
@@ -1696,7 +1935,9 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     if (!node.id.startsWith("sticker-") && byId.has(node.id)) { setSelectedId(node.id); setCtxMenu({ x: event.clientX, y: event.clientY, nodeId: node.id }); }
   }, [byId]);
 
-  useEffect(() => { const close = () => setCtxMenu(null); window.addEventListener("click", close); return () => window.removeEventListener("click", close); }, []);
+  // 空白处按下即收起（用 mousedown 而非 click：拖线建立关系线是 mouseup 触发，
+  // 紧随其后的 click 会把刚打开的弹层立刻关掉）。弹层内部各自 stopPropagation。
+  useEffect(() => { const close = () => { setCtxMenu(null); setLinkDraft(null); }; window.addEventListener("mousedown", close); return () => window.removeEventListener("mousedown", close); }, []);
 
   // ── 键盘快捷键 ──
   useEffect(() => {
@@ -1707,7 +1948,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       else if (e.key === "Tab") { e.preventDefault(); addChildNode(); }
       else if (e.key === "Enter") { if (selectedId) { e.preventDefault(); const n = byId.get(selectedId); if (n) setDetailNode(n); } }
       else if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) { e.preventDefault(); navigateByKey(e.key); }
-      else if (e.key === "Escape") { setSelectedId(null); setCtxMenu(null); setPreview(null); }
+      else if (e.key === "Escape") { setSelectedId(null); setCtxMenu(null); setPreview(null); setLinkDraft(null); setLinkFrom(null); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -1716,9 +1957,11 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   return (
     <div className="relative h-full min-h-0">
       <ReactFlow nodes={flowNodes} edges={edges} nodeTypes={mmNodeTypes} edgeTypes={mmEdgeTypes}
-        onNodesChange={onNodesChange} onNodeDragStop={onNodeDragStop} onConnect={onConnect} onMove={onViewportMove}
-        onPaneClick={() => { setSelectedId(null); setCtxMenu(null); setPreview(null); }}
-        onNodeContextMenu={(e, n) => onNodeContextMenu(e, n as Node)} minZoom={0.1} maxZoom={2.5} nodesConnectable
+        onNodesChange={onNodesChange} onNodeDrag={onNodeDrag} onNodeDragStop={onNodeDragStop} onConnect={onConnect} onConnectStart={onConnectStart} onConnectEnd={onConnectEnd} onMove={onViewportMove}
+        onPaneClick={() => { setSelectedId(null); setCtxMenu(null); setPreview(null); setLinkFrom(null); }}
+        onNodeContextMenu={(e, n) => onNodeContextMenu(e, n as Node)}
+        onEdgeClick={(e, ed) => { const l = links.find(x => `mm-l-${x.id}` === ed.id); if (l) openLinkEditor(l, e); }}
+        minZoom={0.1} maxZoom={2.5} nodesConnectable
         proOptions={{ hideAttribution: true }}>
         <MiniMap style={{ backgroundColor: "#080f1c", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95"
           nodeColor={(n) => { const d = n.data as FlowNodeData | StickerNodeData; return 'node' in d ? effectiveNodeColor(d.node) : "#fef3c7"; }}
@@ -1726,12 +1969,22 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
         <Controls className="canvas-flow-controls" showInteractive={false} />
       </ReactFlow>
 
-      {/* 连线规则提示：拖拽连线 = 设置父节点；一个节点只能有一个父节点 */}
+      {/* 连线规则提示：拖线＝改上级（拖到节点卡片上松手同样改上级）；关系线模式下拖线＝加一条带文字的关系线 */}
       <div className="pointer-events-none absolute bottom-2 left-1/2 z-10 -translate-x-1/2">
-        <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-white/10 bg-slate-900/80 px-2.5 py-1 text-[9px] text-slate-400 shadow backdrop-blur">
-          <Link2 className="h-2.5 w-2.5 text-cyan-300/80" />{t("mindmap.connectHint")}
+        <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-1 text-[9px] shadow backdrop-blur ${linkMode ? "border-cyan-400/40 bg-cyan-950/80 text-cyan-200" : "border-white/10 bg-slate-900/80 text-slate-400"}`}>
+          <Link2 className="h-2.5 w-2.5 text-cyan-300/80" />
+          {linkFrom
+            ? t("mindmap.linkFromHint", { name: byId.get(linkFrom)?.name ?? linkFrom })
+            : linkMode ? t("mindmap.linkModeOn") : t("mindmap.connectHint")}
         </span>
       </div>
+
+      {/* 画布轻提示：改上级 / 建关系线的即时反馈 */}
+      {canvasNotice && (
+        <div className="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-full border border-cyan-400/30 bg-slate-900/95 px-3 py-1.5 text-[10px] text-cyan-200 shadow-xl">
+          {canvasNotice}
+        </div>
+      )}
 
       {/* 右上角统一列：AI 后台运行胶囊（顶，条件出现）+ 行内「节点树（左）| 浮动工具栏（右）」。
           原先三者都锚定 right-4 top-4 互相重叠，现改为垂直/水平排布互不遮挡；
@@ -1804,6 +2057,9 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
           <div className="pointer-events-auto flex flex-col gap-1">
             <div className="rounded-lg border border-white/10 bg-slate-900/95 p-1 shadow-lg flex flex-col gap-0.5">
               <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={relayout} title={t("mindmap.autoLayout")}><LayoutGrid className="h-3 w-3" />{t("mindmap.layout")}</button>
+              {/* 关系线模式：拖线在任意两节点之间加「额外关系线」（不改父子关系） */}
+              <button type="button" className={`inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] transition ${linkMode ? "bg-cyan-400/15 text-cyan-200" : "text-slate-300 hover:bg-white/[0.08] hover:text-white"}`}
+                onClick={() => setLinkMode(v => { if (v) setLinkFrom(null); return !v; })} title={t("mindmap.linkModeHint")}><Link2 className="h-3 w-3" />{t("mindmap.linkMode")}</button>
               <button type="button" disabled={!selectedId} className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={focusSelected} title={t("mindmap.focusSelected")}><LocateFixed className="h-3 w-3" />{t("mindmap.focusSelected")}</button>
               <select className="w-full rounded border border-white/10 bg-slate-900/95 px-1.5 py-1 text-[10px] text-slate-300 outline-none focus:border-cyan-400/60" value={dir} onChange={(e) => changeDir(e.target.value as LayoutDir)} title={t("mindmap.layoutDir")}>
                 {Object.entries(LAYOUT_DIR_KEYS).map(([k, v]) => <option key={k} value={k}>{t(v)}</option>)}
@@ -1843,8 +2099,44 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
         </div>
       </div>
 
+      {/* 关系线弹层：新建时输入说明文字，编辑时改文字或删除 */}
+      {linkDraft && (() => {
+        const fromName = byId.get(linkDraft.sourceId)?.name ?? linkDraft.sourceId;
+        const toName = byId.get(linkDraft.targetId)?.name ?? linkDraft.targetId;
+        return (
+          <div className="fixed z-[220] w-[248px] rounded-lg border border-cyan-400/25 bg-[#101827] p-2 shadow-2xl"
+            style={{ left: Math.max(8, Math.min(linkDraft.x, window.innerWidth - 256)), top: Math.max(8, Math.min(linkDraft.y, window.innerHeight - 132)) }}
+            onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
+            <div className="mb-1.5 flex items-center gap-1 text-[10px] text-slate-400">
+              <Link2 className="h-3 w-3 shrink-0 text-cyan-300" />
+              <span className="min-w-0 truncate" title={`${fromName} → ${toName}`}>{t("mindmap.linkTitle", { from: fromName, to: toName })}</span>
+            </div>
+            <input autoFocus value={linkDraft.label} placeholder={t("mindmap.linkLabelPh")}
+              onChange={(e) => setLinkDraft(prev => prev ? { ...prev, label: e.target.value } : prev)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); saveLinkDraft(); }
+                else if (e.key === "Escape") { e.preventDefault(); setLinkDraft(null); }
+              }}
+              className="w-full rounded border border-white/10 bg-slate-900/80 px-2 py-1 text-[11px] text-slate-200 outline-none focus:border-cyan-400/60" />
+            <div className="mt-2 flex items-center justify-between gap-1">
+              <span className="text-[8px] text-slate-600">{t("mindmap.linkHint")}</span>
+              <div className="flex shrink-0 items-center gap-1">
+                {!linkDraft.isNew && (
+                  <button type="button" className="rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-[10px] text-red-300 hover:bg-red-500/20"
+                    onClick={() => removeLink(linkDraft.id)}>{t("mindmap.delete")}</button>
+                )}
+                <button type="button" className="rounded border border-white/10 bg-white/[0.05] px-2 py-1 text-[10px] text-slate-300 hover:bg-white/[0.1] hover:text-white"
+                  onClick={() => setLinkDraft(null)}>{t("mindmap.cancel")}</button>
+                <button type="button" className="rounded bg-cyan-500 px-2 py-1 text-[10px] font-semibold text-slate-950 hover:bg-cyan-400"
+                  onClick={saveLinkDraft}>{t("mindmap.save")}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {ctxMenu && (
-        <div className="fixed z-50 min-w-[160px] rounded-lg border border-white/10 bg-[#101827] py-1 shadow-2xl" style={{ left: ctxMenu.x, top: ctxMenu.y }} onClick={e => e.stopPropagation()}>
+        <div className="fixed z-50 min-w-[160px] rounded-lg border border-white/10 bg-[#101827] py-1 shadow-2xl" style={{ left: ctxMenu.x, top: ctxMenu.y }} onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
           <div className="border-b border-white/10 px-3 py-1.5 text-[10px] font-semibold text-slate-400">{byId.get(ctxMenu.nodeId)?.name ?? ctxMenu.nodeId}</div>
           <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-[11px] text-slate-300 transition hover:bg-white/[0.08] hover:text-white"
             onClick={() => { const n = byId.get(ctxMenu.nodeId); if (n) setDetailNode(n); setCtxMenu(null); }}><Sparkles className="h-3.5 w-3.5" />{t("mindmap.viewDetail")}</button>
@@ -2056,6 +2348,10 @@ export default function MindmapPanel() {
         const snapStickers = new Set(snap.stickers.map(s => s.id));
         for (const s of cur.stickers) if (!snapStickers.has(s.id)) { await mmApi.deleteSticker({ documentId: snap.document.id, stickerId: s.id }); }
         for (const s of snap.stickers) { await mmApi.upsertSticker({ documentId: snap.document.id, sticker: s }); }
+        // 自由关系线同样按快照对齐（同一对节点只允许一条，upsert 幂等）
+        const snapLinks = new Set((snap.links ?? []).map(l => l.id));
+        for (const l of (cur.links ?? [])) if (!snapLinks.has(l.id)) { await mmApi.deleteLink({ documentId: snap.document.id, linkId: l.id }); }
+        for (const l of (snap.links ?? [])) { await mmApi.upsertLink({ documentId: snap.document.id, link: l }); }
       } catch (e) {
         // 本地已恢复，但持久化失败：明确告知用户，避免数据丢失后无从排查
         console.error("[mindmap] 撤销/重做持久化失败:", e);

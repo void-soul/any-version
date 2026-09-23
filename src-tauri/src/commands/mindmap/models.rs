@@ -122,6 +122,26 @@ pub struct MindmapSticker {
     pub updated_at: String,
 }
 
+// ─── 自由关系线 ───
+
+/// 节点之间的自由关系线：与父子树无关，任意两个节点之间都能连，
+/// 并可带一句说明文字（如「依赖」「参考」「互斥」）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MindmapLink {
+    pub id: String,
+    pub document_id: String,
+    /// 起点节点 id
+    pub source_id: String,
+    /// 终点节点 id
+    pub target_id: String,
+    /// 关系说明文字（可为空）
+    #[serde(default)]
+    pub label: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 // ─── 入参 ───
 
 #[derive(Debug, Deserialize)]
@@ -209,6 +229,20 @@ pub struct DeleteStickerInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UpsertLinkInput {
+    pub document_id: String,
+    pub link: MindmapLink,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteLinkInput {
+    pub document_id: String,
+    pub link_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AiGenerateInput {
     pub document_id: String,
     pub provider_id: Option<String>,
@@ -273,6 +307,9 @@ pub struct DocumentFull {
     pub document: MindmapDocument,
     pub nodes: Vec<MindmapNode>,
     pub stickers: Vec<MindmapSticker>,
+    /// 自由关系线（旧数据/旧前端可为空）
+    #[serde(default)]
+    pub links: Vec<MindmapLink>,
 }
 
 /// 指定日期范围内的具体计划发生记录（计划日历聚合展示用）。

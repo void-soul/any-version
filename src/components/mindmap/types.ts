@@ -75,12 +75,30 @@ export interface MindmapSticker {
   updatedAt: string;
 }
 
+// ─── 自由关系线 ───
+
+/** 两个节点之间的自由关系线：与父子树无关，可任意连接并带说明文字。 */
+export interface MindmapLink {
+  id: string;
+  documentId: string;
+  /** 起点节点 id */
+  sourceId: string;
+  /** 终点节点 id */
+  targetId: string;
+  /** 关系说明文字（可为空） */
+  label: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ─── 完整负载 ───
 
 export interface DocumentFull {
   document: MindmapDocument;
   nodes: MindmapNode[];
   stickers: MindmapSticker[];
+  /** 自由关系线（旧数据可能为空） */
+  links?: MindmapLink[];
 }
 
 /** 一次 AI 导入运行（或单个视图）的 token 消耗统计。 */
@@ -187,6 +205,16 @@ export interface UpsertStickerInput {
 export interface DeleteStickerInput {
   documentId: string;
   stickerId: string;
+}
+
+export interface UpsertLinkInput {
+  documentId: string;
+  link: MindmapLink;
+}
+
+export interface DeleteLinkInput {
+  documentId: string;
+  linkId: string;
 }
 
 export interface AiProjectInput {
@@ -296,6 +324,9 @@ export const mmApi = {
 
   upsertSticker: (i: UpsertStickerInput) => invoke<void>("mm_upsert_sticker", { input: i }),
   deleteSticker: (i: DeleteStickerInput) => invoke<void>("mm_delete_sticker", { input: i }),
+
+  upsertLink: (i: UpsertLinkInput) => invoke<void>("mm_upsert_link", { input: i }),
+  deleteLink: (i: DeleteLinkInput) => invoke<void>("mm_delete_link", { input: i }),
 
   exportMd: (id: string) => invoke<string>("mm_export_markdown", { documentId: id }),
   aiFromProject: (i: AiProjectInput) => invoke<AiImportResult>("mm_ai_from_project", { input: i }),

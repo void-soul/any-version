@@ -470,6 +470,14 @@ pub fn mm_upsert_sticker(input: UpsertStickerInput) -> Result<(), String> { supe
 #[tauri::command]
 pub fn mm_delete_sticker(input: DeleteStickerInput) -> Result<(), String> { super::db::delete_sticker(&input.document_id, &input.sticker_id) }
 
+// ─── 自由关系线 ───
+
+#[tauri::command]
+pub fn mm_upsert_link(input: UpsertLinkInput) -> Result<(), String> { super::db::upsert_link(&input.link) }
+
+#[tauri::command]
+pub fn mm_delete_link(input: DeleteLinkInput) -> Result<(), String> { super::db::delete_link(&input.document_id, &input.link_id) }
+
 // ─── 导出 ───
 
 #[tauri::command]

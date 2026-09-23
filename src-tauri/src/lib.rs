@@ -1004,6 +1004,8 @@ pub fn run() {
                 commands::mindmap::quick_popup::hide_mindmap_sticker_popup,
                 commands::mindmap::quick_popup::take_mindmap_quick_selection,
                 commands::mindmap::mm_delete_sticker,
+                commands::mindmap::mm_upsert_link,
+                commands::mindmap::mm_delete_link,
                 commands::mindmap::mm_export_markdown,
                 commands::mindmap::mm_ai_from_project,
                 commands::mindmap::mm_ai_from_text,

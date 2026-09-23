@@ -557,13 +557,60 @@ pub fn delete_sticker(document_id: &str, sticker_id: &str) -> Result<(), String>
     with_conn(|c| { sql(c.execute("DELETE FROM mindmap_stickers WHERE id=?1", rusqlite::params![sticker_id]))?; touch_document_inner(c, document_id)?; Ok(()) })
 }
 
+// ─── 自由关系线 ───
+
+fn row_to_link(r: &rusqlite::Row) -> rusqlite::Result<MindmapLink> {
+    Ok(MindmapLink { id: r.get(0)?, document_id: r.get(1)?, source_id: r.get(2)?, target_id: r.get(3)?, label: r.get(4)?, created_at: r.get(5)?, updated_at: r.get(6)? })
+}
+
+fn list_links_inner(c: &rusqlite::Connection, document_id: &str) -> Result<Vec<MindmapLink>, String> {
+    let mut s = c.prepare("SELECT id,document_id,source_id,target_id,label,created_at,updated_at FROM mindmap_links WHERE document_id=?1").map_err(|e| e.to_string())?;
+    let rows = s.query_map(rusqlite::params![document_id], |r| row_to_link(r)).map_err(|e| e.to_string())?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
+}
+
+pub fn list_links(document_id: &str) -> Result<Vec<MindmapLink>, String> {
+    with_conn(|c| list_links_inner(c, document_id))
+}
+
+/// 新建/更新一条自由关系线。
+/// 同一对节点（同向）只保留一条：upsert 时先清掉重复记录，避免多条线叠在一起。
+pub fn upsert_link(l: &MindmapLink) -> Result<(), String> {
+    if l.source_id == l.target_id {
+        return Err("关系线的起点和终点不能是同一个节点".into());
+    }
+    with_conn(|c| {
+        let ts = now_ts();
+        sql(c.execute(
+            "DELETE FROM mindmap_links WHERE document_id=?1 AND source_id=?2 AND target_id=?3 AND id<>?4",
+            rusqlite::params![l.document_id, l.source_id, l.target_id, l.id],
+        ))?;
+        let exists: i64 = c.query_row("SELECT COUNT(*) FROM mindmap_links WHERE id=?1", rusqlite::params![l.id], |r| r.get(0)).unwrap_or(0);
+        if exists > 0 {
+            sql(c.execute("UPDATE mindmap_links SET source_id=?1,target_id=?2,label=?3,updated_at=?4 WHERE id=?5", rusqlite::params![l.source_id, l.target_id, l.label, ts, l.id]))?;
+        } else {
+            sql(c.execute("INSERT INTO mindmap_links (id,document_id,source_id,target_id,label,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7)", rusqlite::params![l.id, l.document_id, l.source_id, l.target_id, l.label, ts, ts]))?;
+        }
+        touch_document_inner(c, &l.document_id)?;
+        Ok(())
+    })
+}
+
+pub fn delete_link(document_id: &str, link_id: &str) -> Result<(), String> {
+    with_conn(|c| {
+        sql(c.execute("DELETE FROM mindmap_links WHERE id=?1", rusqlite::params![link_id]))?;
+        touch_document_inner(c, document_id)?;
+        Ok(())
+    })
+}
+
 pub fn load_full(document_id: &str) -> Result<Option<DocumentFull>, String> {
     with_conn(|c| {
         let mut s = c.prepare("SELECT id,name,description,source_type,source_desc,folder_id,background_texture,layout_dir,created_at,updated_at,ai_imports,ai_input_tokens,ai_output_tokens FROM mindmap_documents WHERE id=?1").map_err(|e| e.to_string())?;
         let mut rows = s.query_map(rusqlite::params![document_id], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,String>(6)?,r.get::<_,String>(7)?,r.get::<_,String>(8)?,r.get::<_,String>(9)?,r.get::<_,i64>(10)?,r.get::<_,i64>(11)?,r.get::<_,i64>(12)?))).map_err(|e| e.to_string())?;
         if let Some(Ok((id,name,desc,st,sd,fid,bt,ld,ca,ua,aii,ait,aot))) = rows.next() {
-            let n = list_nodes_inner(c, &id)?; let sc = list_stickers_inner(c, &id)?;
-            Ok(Some(DocumentFull { document: MindmapDocument { id, name, description: desc, source_type: st, source_desc: sd, folder_id: fid, background_texture: bt, layout_dir: ld, node_count: n.len(), sticker_count: sc.len(), ai_imports: aii, ai_input_tokens: ait, ai_output_tokens: aot, created_at: ca, updated_at: ua }, nodes: n, stickers: sc }))
+            let n = list_nodes_inner(c, &id)?; let sc = list_stickers_inner(c, &id)?; let lk = list_links_inner(c, &id)?;
+            Ok(Some(DocumentFull { document: MindmapDocument { id, name, description: desc, source_type: st, source_desc: sd, folder_id: fid, background_texture: bt, layout_dir: ld, node_count: n.len(), sticker_count: sc.len(), ai_imports: aii, ai_input_tokens: ait, ai_output_tokens: aot, created_at: ca, updated_at: ua }, nodes: n, stickers: sc, links: lk }))
         } else { Ok(None) }
     })
 }
