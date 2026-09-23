@@ -4679,25 +4679,6 @@
         "available": "可领取"
       }
     },
-    "stats": {
-      "title": "Token / 积分 / 调用量统计",
-      "range": "近 {{days}} 天",
-      "allAccounts": "全部账号",
-      "allModels": "全部模型",
-      "clearCache": "清缓存",
-      "cacheCleared": "统计缓存已清除并重新拉取",
-      "tokenTitle": "Token（本地会话）",
-      "tokenTotals": "输入 {{input}} · 输出 {{output}} · 调用 {{calls}}",
-      "tokenSource": "区间 {{since}} ~ {{until}}，扫描 {{files}} 个会话文件",
-      "tokenEmpty": "该区间没有可统计的本地会话用量",
-      "tokens": "Token",
-      "creditTitle": "积分 / 调用量（官方计费）",
-      "creditTotals": "积分 {{credits}} · 请求 {{requests}}",
-      "creditSource": "区间 {{since}} ~ {{until}}",
-      "creditErrors": "{{count}} 个账号拉取失败（其余数据可用）",
-      "credits": "积分",
-      "requests": "请求数"
-    },
     "syncImport": "导入 {{target}}",
     "syncImported": "成功导入 {{count}} 个账号到 {{target}}",
     "syncFailed": "导入失败: {{error}}",

@@ -24,7 +24,6 @@ mod models;
 mod session_sync;
 mod session_transfer;
 mod sessions;
-pub(crate) mod stats;
 mod store;
 mod workbuddy;
 

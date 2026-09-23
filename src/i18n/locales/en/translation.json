@@ -4751,25 +4751,6 @@
         "available": "Claimable"
       }
     },
-    "stats": {
-      "title": "Tokens / credits / calls",
-      "range": "Last {{days}}d",
-      "allAccounts": "All accounts",
-      "allModels": "All models",
-      "clearCache": "Clear cache",
-      "cacheCleared": "Statistics cache cleared and refetched",
-      "tokenTitle": "Tokens (local sessions)",
-      "tokenTotals": "in {{input}} · out {{output}} · {{calls}} calls",
-      "tokenSource": "Range {{since}} ~ {{until}}, {{files}} session files scanned",
-      "tokenEmpty": "No local session usage in this range",
-      "tokens": "Tokens",
-      "creditTitle": "Credits / calls (official billing)",
-      "creditTotals": "{{credits}} credits · {{requests}} requests",
-      "creditSource": "Range {{since}} ~ {{until}}",
-      "creditErrors": "{{count}} account(s) failed to load; the rest is usable",
-      "credits": "Credits",
-      "requests": "Requests"
-    },
     "syncImport": "Import to {{target}}",
     "syncImported": "Imported {{count}} account(s) to {{target}}",
     "syncFailed": "Import failed: {{error}}",

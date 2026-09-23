@@ -18,7 +18,6 @@ import {
   summarizeCreditSegments,
   type RotationAccount,
 } from "./quota";
-import CreditStatsPanel from "./CreditStatsPanel";
 import {
   RefreshCw,
   Download,
@@ -2582,9 +2581,6 @@ export default function BuddyPanel() {
               )}
               </>)}
             </div>
-            {/* Token / 积分 / 调用量统计（按账号、模型、日期筛选） */}
-            <CreditStatsPanel accounts={wbAccounts} />
-
             {/* 每账号状态（签到 | 派出）—— 固定用 WorkBuddy 账号：签到/派出只对 WorkBuddy 有效 */}
             <div className="xl:col-span-2 rounded-xl border border-white/10 bg-white/[0.03] p-4">
               <div className="flex items-center gap-2 mb-3">
