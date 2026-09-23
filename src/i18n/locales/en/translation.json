@@ -4672,7 +4672,13 @@
     "exportOne": "Export this account",
     "deleteOne": "Delete this account",
     "delMsgSingle": "Delete account “{{name}}”? Only the Kira-stored record is removed; local client login state is unaffected.",
-    "switchStage": {"closing": "Closing the running client…", "merging": "Merging local sessions ({{workspaces}} workspaces scanned)…", "writing": "Writing login state…", "launching": "Relaunching the client…", "done": "Switch complete"},
+    "switchStage": {
+      "closing": "Closing the running client…",
+      "merging": "Merging local sessions ({{workspaces}} workspaces scanned)…",
+      "writing": "Writing login state…",
+      "launching": "Relaunching the client…",
+      "done": "Switch complete"
+    },
     "mergeResult": "Sessions merged: {{added}} conversations added, {{replaced}} replaced, {{rows}} rows remapped, {{workspaces}} workspaces scanned",
     "syncTitle": "Session sync details",
     "syncTotal": "{{count}} sessions",
@@ -4807,6 +4813,19 @@
     "invalidTimeFormat": "Unrecognized time format. Use YYYY-MM-DD HH:mm:ss",
     "expiryLabel": "Expiry",
     "tabSettings": "Settings",
-    "clientPaths": {"title": "Client paths", "hint": "Switching accounts closes the client: WorkBuddy is force-killed on timeout and relaunches automatically; CodeBuddy CN is never force-killed (exit it manually to retry) and must be started manually after switching. Leave empty to auto-detect; set the path manually when auto-detection fails.", "custom": "Manual", "auto": "Auto-detected", "missing": "Not found", "placeholder": "Empty = auto-detect", "resolved": "Effective path", "browse": "Browse", "save": "Save", "clear": "Reset to auto", "saved": "Path saved", "cleared": "Auto-detection restored"}
+    "clientPaths": {
+      "title": "Client paths",
+      "hint": "Switching accounts closes the client: WorkBuddy is force-killed on timeout and relaunches automatically; CodeBuddy CN is never force-killed (exit it manually to retry) and must be started manually after switching. Leave empty to auto-detect; set the path manually when auto-detection fails.",
+      "custom": "Manual",
+      "auto": "Auto-detected",
+      "missing": "Not found",
+      "placeholder": "Empty = auto-detect",
+      "resolved": "Effective path",
+      "browse": "Browse",
+      "save": "Save",
+      "clear": "Reset to auto",
+      "saved": "Path saved",
+      "cleared": "Auto-detection restored"
+    }
   }
 }
