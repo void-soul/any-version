@@ -18,6 +18,15 @@ interface Props {
   /** 琥珀色的风险提示（实验功能才给） */
   note?: string;
   onSaved?: (configured: boolean) => void;
+  /** 主按钮文案（默认「保存」） */
+  saveLabel?: string;
+  /**
+   * 保存成功并关闭弹窗之后要做的事（例如「保存并测试」里的测试步骤）。
+   *
+   * **不在保存前 await**：探测要等页面重载，几十秒不关弹窗会让人以为卡死，
+   * 结果统一走 toast 汇报。也不能在保存前调用——那时后端还是旧凭证。
+   */
+  afterSave?: (value: string) => void;
 }
 
 /**
@@ -38,6 +47,8 @@ export function CredentialDialog({
   multiline = false,
   note,
   onSaved,
+  saveLabel,
+  afterSave,
 }: Props) {
   const { t } = useTranslation();
   const [value, setValue] = useState("");
@@ -60,6 +71,7 @@ export function CredentialDialog({
       setValue(trimmed);
       onSaved?.(true);
       onClose();
+      afterSave?.(trimmed);
     } finally {
       setSaving(false);
     }
@@ -82,6 +94,9 @@ export function CredentialDialog({
           <textarea
             value={value}
             onChange={(e) => setValue(e.target.value)}
+            // 聚焦即全选：Cookie 是长串，用户重新粘一份时最怕「粘在旧值后面」，
+            // 拼出来的 Cookie 会静默失效。全选后直接 Ctrl+V 就是整条替换。
+            onFocus={(e) => e.currentTarget.select()}
             placeholder={placeholder}
             spellCheck={false}
             className="w-full h-24 glass-input p-2 text-[10px] font-mono resize-y"
@@ -107,7 +122,7 @@ export function CredentialDialog({
             {t("common.cancel")}
           </SharedButton>
           <SharedButton onClick={() => void persist()} disabled={saving || !value.trim()}>
-            {t("favorites.credentialSave")}
+            {saveLabel ?? t("favorites.credentialSave")}
           </SharedButton>
         </div>
       </div>

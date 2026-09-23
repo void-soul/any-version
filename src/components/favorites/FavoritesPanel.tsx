@@ -444,13 +444,19 @@ export default function FavoritesPanel() {
           >
             <KeyRound className="w-3 h-3" />
           </button>
-          {/* 【实验】Cookie 路线：独立槽位存 Cookie（不覆盖上面的 Access Secret） */}
+          {/* 【实验】Cookie 路线：独立槽位存 Cookie（不覆盖上面的 Access Secret）。
+              **永远打开弹窗**（回显已存的 Cookie），测试由弹窗里的「保存并测试」触发：
+              之前配过就直接开测，用户再也没法改 Cookie 了。 */}
           <button
-            onClick={() => (zhihuCookieConfigured ? void runProbe() : setZhihuCookieOpen(true))}
+            onClick={() => setZhihuCookieOpen(true)}
             className={`p-1 rounded cursor-pointer transition-colors ${
               zhihuCookieConfigured ? "text-emerald-400" : "text-slate-500 hover:text-slate-200"
             }`}
-            title={t("favorites.zhihuProbe")}
+            title={
+              zhihuCookieConfigured
+                ? t("favorites.zhihuProbeEdit")
+                : t("favorites.zhihuCookieTitle")
+            }
           >
             <FlaskConical className="w-3 h-3" />
           </button>
@@ -803,11 +809,9 @@ export default function FavoritesPanel() {
         placeholder={t("favorites.zhihuCookiePlaceholder")}
         note={t("favorites.zhihuCookieNote")}
         multiline
-        onSaved={(configured) => {
-          setZhihuCookieConfigured(configured);
-          // 配好就顺手跑一次实验，省一次点击
-          void runProbe();
-        }}
+        saveLabel={t("favorites.credentialSaveAndTest")}
+        onSaved={setZhihuCookieConfigured}
+        afterSave={() => void runProbe()}
       />
 
       <CredentialDialog
