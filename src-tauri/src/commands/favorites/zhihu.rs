@@ -7,16 +7,19 @@
 //!    ⚠️ 但接口说明原文是「获取指定收藏夹中的**公开内容**」——实测 2025 条的收藏夹
 //!    只返回 159 条，失效/非公开内容被服务端过滤，`Paging.Totals` 也是过滤后的口径。
 //!
-//! 2. **Cookie + 隐藏 WebView**（`fav_zhihu_probe` 实验，待验证）：用户粘贴浏览器
-//!    Cookie（z_c0 登录态 + d_c0），用 `WebviewWindow::set_cookie` 注入隐藏 WebView，
-//!    在知乎页面上下文里 fetch `www.zhihu.com/api/v4/*`。目标是拿到全量收藏。
+//! 2. **Cookie 直连**（`fav_zhihu_probe` 实验）：用户粘贴浏览器 Cookie（z_c0 登录态 +
+//!    d_c0），Rust 侧直接把它放进请求头打 `www.zhihu.com/api/v4/*`，目标是拿到全量收藏。
 //!    为什么不移植 zse96 签名：zhihu-plus-plus 是 AGPL-3.0，代码进 Kira 会传染整个应用。
-//!    实验要验证的假设：页面上下文里的裸 `fetch`（不带签名头）是否被 v4 接口放行。
 //!
-//!    ⚠️ **第一次实验结果无效**（2026-09-22）：返回 401，但日志显示知乎首页被重定向到
-//!    `/signin` —— 根本没建立起登录态，那是游客在打登录态接口，说明不了签名的事。
-//!    所以探测改成**两路并行**（WebView 裸 fetch + Rust 直连带 Cookie 头），
-//!    并且先判登录态再下结论，见 [`probe_verdict`]。
+//!    **已确认（2026-09-23）**：`/api/v4/me` 用 Cookie 裸请求返回 200 并带回真实账号信息，
+//!    即该接口**不校验** `x-zse-96`。知乎的签名校验是**按接口**的，所以探测逐个打
+//!    `/me` → `/collections` → `/collections/{id}/items`，看断在哪一步，见 [`probe_verdict`]。
+//!
+//!    ⚠️ 踩过的两个坑（都有测试钉住）：
+//!    - 用隐藏 WebView 注入 Cookie 那条路**建立不了登录态**（首页仍跳 `/signin`），
+//!      于是拿到 401 后被误判成「签名拦截」——那是游客在打登录态接口，说明不了签名的事。
+//!      该实现已删除。
+//!    - 结论必须**先判登录态再判签名**，否则同样的 401 会被解释成完全相反的两件事。
 
 use serde_json::{json, Value};
 
@@ -208,25 +211,11 @@ pub fn parse_quota(payload: &Value) -> Option<(i64, i64)> {
     Some((remaining, total))
 }
 
-// ─── Cookie + 隐藏 WebView（实验路线） ───
+// ─── Cookie 直连（实验路线） ───
 
-/// 隐藏窗口 label：复用同一个（Cookie 与页面状态都在它身上）。
-pub const VIEW_LABEL: &str = "favorites-zhihu-view";
-
-/// 宿主页（同源才能带 Cookie 调 API）
-pub const HOME_URL: &str = "https://www.zhihu.com/";
-
-/// 直连探测用的桌面 UA：知乎对明显非浏览器的 UA 会直接 403，
-/// 这里只是想让请求看起来像个普通浏览器，不做任何指纹伪装。
+/// 探测用的桌面 UA：知乎对明显非浏览器的 UA 会直接 403，
+/// 这里只是让请求看起来像个普通浏览器，不做任何指纹伪装。
 const DESKTOP_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
-
-/// 页面上下文里取回结果的全局变量名
-pub const RESULT_VAR: &str = "__favZhihuFetch";
-
-/// 取回结果的最长等待。
-const FETCH_TIMEOUT_SECS: u64 = 20;
-/// 首次打开页面等待 complete 的预算。
-const READY_TIMEOUT_SECS: u64 = 30;
 
 /// 解析用户粘贴的 Cookie 串（支持 `a=b; c=d` 与每行一对，容忍换行）。
 ///
@@ -250,160 +239,53 @@ pub fn parse_cookie_pairs(text: &str) -> Vec<(String, String)> {
     pairs
 }
 
-/// 构造「发起请求」的 JS（URL 经 JSON 转义注入，结果写进全局变量供轮询）。
-pub fn build_fetch_js(url: &str) -> String {
-    let literal = serde_json::to_string(url).unwrap_or_else(|_| "\"\"".to_string());
-    format!(
-        r#"(function () {{
-  try {{
-    window.{var} = null;
-    fetch({url}, {{ credentials: 'include', headers: {{ 'accept': 'application/json, text/plain, */*' }} }})
-      .then(function (r) {{ return r.text().then(function (t) {{ return {{ status: r.status, body: t }}; }}); }})
-      .then(function (v) {{ window.{var} = JSON.stringify(v); }})
-      .catch(function (e) {{ window.{var} = JSON.stringify({{ error: String(e) }}); }});
-    return 'started';
-  }} catch (e) {{
-    window.{var} = JSON.stringify({{ error: String(e) }});
-    return 'failed';
-  }}
-}})()"#,
-        var = RESULT_VAR,
-        url = literal
-    )
-}
-
-/// 解析轮询到的结果：剥两层 JSON（eval 回传会多序列化一层），返回 (HTTP 状态, 响应体)。
-pub fn parse_poll(raw: &str) -> Result<Option<(u16, String)>, String> {
-    let outer: Value =
-        serde_json::from_str(raw.trim()).map_err(|e| format!("读取知乎响应失败: {}", e))?;
-    let inner_text = match outer {
-        Value::Null => return Ok(None),
-        Value::String(s) => s,
-        other => other.to_string(),
-    };
-    let payload: Value =
-        serde_json::from_str(&inner_text).map_err(|e| format!("解析知乎响应失败: {}", e))?;
-    if let Some(err) = payload.get("error").and_then(|v| v.as_str()) {
-        return Err(format!("知乎页面内请求失败: {}", err));
-    }
-    let status = payload.get("status").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
-    let body = payload
-        .get("body")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
-    Ok(Some((status, body)))
-}
-
-static WEBVIEW_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-/// 确保隐藏窗口存在（宿主页 = 知乎首页，同源 + Cookie）。
-fn ensure_view(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
-    use tauri::Manager;
-
-    if let Some(window) = app.get_webview_window(VIEW_LABEL) {
-        return Ok(window);
-    }
-    let url = tauri::WebviewUrl::External(
-        HOME_URL
-            .parse()
-            .map_err(|e| format!("知乎地址解析失败: {}", e))?,
-    );
-    tauri::WebviewWindowBuilder::new(app, VIEW_LABEL, url)
-        .title("知乎")
-        .inner_size(1280.0, 820.0)
-        .visible(false)
-        .skip_taskbar(true)
-        .on_page_load(|_, payload| {
-            crate::exit_log!("[收藏-知乎] 页面事件: {:?} {}", payload.event(), payload.url());
-        })
-        .build()
-        .map_err(|e| format!("创建知乎窗口失败: {}", e))
-}
-
-/// 轮询 document.readyState 直到 complete。
-async fn wait_ready(window: &tauri::WebviewWindow) -> bool {
-    use tokio::sync::oneshot;
-
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(READY_TIMEOUT_SECS);
-    loop {
-        let (tx, rx) = oneshot::channel::<String>();
-        let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
-        let slot2 = slot.clone();
-        if window
-            .eval_with_callback("document.readyState", move |s| {
-                if let Some(t) = slot2.lock().unwrap().take() {
-                    let _ = t.send(s);
-                }
-            })
-            .is_err()
-        {
-            return false;
-        }
-        match tokio::time::timeout(std::time::Duration::from_secs(3), rx).await {
-            Ok(Ok(state)) if state.contains("complete") => return true,
-            _ => {}
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return false;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    }
-}
-
-/// 在知乎页面上下文里 GET 一个 API 路径，返回 (HTTP 状态, 响应体)。
-async fn fetch_api(
-    app: &tauri::AppHandle,
-    window: &tauri::WebviewWindow,
-    path: &str,
-) -> Result<(u16, String), String> {
-    use tokio::sync::oneshot;
-
-    let url = format!("https://www.zhihu.com{}", path);
-    let poll_var = format!("window.{}", RESULT_VAR);
-    window
-        .eval(build_fetch_js(&url))
-        .map_err(|e| format!("在知乎页面里发起请求失败: {}", e))?;
-
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(FETCH_TIMEOUT_SECS);
-    loop {
-        let (tx, rx) = oneshot::channel::<String>();
-        let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
-        let slot2 = slot.clone();
-        if window
-            .eval_with_callback(poll_var.clone(), move |s| {
-                if let Some(t) = slot2.lock().unwrap().take() {
-                    let _ = t.send(s);
-                }
-            })
-            .is_err()
-        {
-            return Err("读取知乎响应失败（窗口可能已被关闭）".to_string());
-        }
-        if let Ok(Ok(raw)) = tokio::time::timeout(std::time::Duration::from_secs(3), rx).await {
-            if let Some((status, body)) = parse_poll(&raw)? {
-                return Ok((status, body));
-            }
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Err("知乎请求超时".to_string());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    }
-}
-
-/// 实验主流程：**两路并行探测**，返回一段 JSON 文本直接给用户看结论。
+/// 带浏览器风味的 API GET（Cookie 原样放进请求头）。
 ///
-/// 为什么必须两路：第一次实验只跑 WebView 路线，拿到 401 就写「签名证伪」，
-/// 但日志里首页被重定向到 `/signin` —— 说明压根没建立起登录态，那是**游客**
-/// 在访问登录态接口，401 是必然的，跟签名无关。所以现在一路走 WebView（页面上下文
-/// 裸 fetch），一路走 Rust 直连（把你粘贴的那串原样放进 Cookie 头，没有任何中间环节）：
-/// - 任一 2xx → Cookie 有效且裸请求放行，可切全量导入
-/// - 两路都 401/403 **且** 页面跳登录页 → Cookie 本身无效（失效/复制不完整），结论是「待重测」而非「证伪」
-/// - 已登录却被拒 → 才是真正的「v4 强制签名」
-pub async fn probe_with_cookie(app: &tauri::AppHandle, cookie_text: &str) -> Result<String, String> {
-    use tauri::webview::cookie::Cookie as TauriCookie;
+/// 名字不带 `zhihu_` 前缀是为了和 `commands.rs` 里那个「官方开放平台」的 `zhihu_get`
+/// 区分开：这个走 Cookie，那个走 Access Secret。
+///
+/// 不走隐藏 WebView 那条老路：实测把 Cookie 注入 WebView 后知乎首页照样跳 `/signin`，
+/// 登录态根本没建立（Cookie 存储、domain、重载时机全是变量）。直连只有一种解释——
+/// 请求头里就是你粘贴的那串。
+async fn cookie_get(cookie: &str, url: &str, referer: &str) -> Result<(u16, String), String> {
+    let resp = crate::commands::utils::get_http_client()
+        .get(url)
+        .header("Cookie", cookie)
+        .header("User-Agent", DESKTOP_UA)
+        .header("Referer", referer)
+        .header("Accept", "application/json, text/plain, */*")
+        .header("Accept-Language", "zh-CN,zh;q=0.9")
+        .header("x-requested-with", "fetch")
+        .send()
+        .await
+        .map_err(|e| format!("直连知乎失败: {}", e))?;
+    let status = resp.status().as_u16();
+    let body = resp.text().await.unwrap_or_default();
+    Ok((status, body))
+}
 
+/// 探测「我的收藏夹列表」返回体里的第一个收藏夹 id。
+///
+/// 形状是 `{"data":[{"id":580815780,"title":"…"}],"paging":{…}}`；
+/// 拿不到就返回 None（用户可能一个收藏夹都没有，此时 items 无法验证）。
+pub fn first_collection_id(body: &str) -> Option<i64> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    value
+        .get("data")
+        .and_then(|v| v.as_array())
+        .and_then(|list| list.first())
+        .and_then(|item| item.get("id"))
+        .and_then(|id| id.as_i64())
+}
+
+/// 实验主流程：**依次打三个接口**，验证 Cookie 裸请求能走多远。
+///
+/// 顺序即依赖：`/me` 验登录态 → `/collections` 列收藏夹 → 取第一个 id 打
+/// `/collections/{id}/items`（这才是全量导入真正要用的接口）。
+///
+/// 为什么不测「裸 fetch 整体可行性」而是逐接口测：知乎的 `x-zse-96` 签名是**按接口**
+/// 校验的（实测 `/me` 不要签名），只测一个接口就下结论会误判整条路线。
+pub async fn probe_cookie(cookie_text: &str) -> Result<String, String> {
     let pairs = parse_cookie_pairs(cookie_text);
     if pairs.is_empty() {
         return Err("Cookie 为空或格式无法解析（需要含 z_c0 与 d_c0）".to_string());
@@ -419,92 +301,97 @@ pub async fn probe_with_cookie(app: &tauri::AppHandle, cookie_text: &str) -> Res
         }
     }
 
-    let _guard = WEBVIEW_LOCK.lock().await;
-    let window = ensure_view(app)?;
-    if !wait_ready(&window).await {
-        let _ = window.destroy();
-        return Err("知乎页面加载超时（窗口已重置，请再试一次）".to_string());
-    }
+    // ① 登录态
+    let (me_status, me_body) = cookie_get(
+        cookie_text,
+        "https://www.zhihu.com/api/v4/me",
+        "https://www.zhihu.com/",
+    )
+    .await?;
+    let me_snippet: String = me_body.chars().take(300).collect();
+    crate::exit_log!(
+        "[收藏-知乎] 实验① /api/v4/me -> status={} body={}",
+        me_status,
+        me_snippet
+    );
 
-    // 注入 Cookie：domain 用 .zhihu.com（与浏览器里 z_c0 的域一致）
-    for (name, value) in &pairs {
-        let cookie = TauriCookie::build((name.as_str(), value.as_str()))
-            .domain(".zhihu.com")
-            .path("/")
-            .secure(true)
-            .http_only(false)
-            .same_site(tauri::webview::cookie::SameSite::Lax)
-            .build();
-        if let Err(e) = window.set_cookie(cookie) {
-            return Err(format!("注入 Cookie 失败（{}）: {}", name, e));
+    // ② 收藏夹列表
+    let (list_status, list_body) = cookie_get(
+        cookie_text,
+        "https://www.zhihu.com/api/v4/collections?offset=0&limit=20",
+        "https://www.zhihu.com/collections",
+    )
+    .await?;
+    let list_snippet: String = list_body.chars().take(300).collect();
+    crate::exit_log!(
+        "[收藏-知乎] 实验② /api/v4/collections -> status={} body={}",
+        list_status,
+        list_snippet
+    );
+
+    // ③ 收藏夹内容（真正要用的那个接口）
+    let first_id = first_collection_id(&list_body);
+    let (items_status, items_path, items_snippet) = match first_id {
+        Some(id) => {
+            let path = format!("/api/v4/collections/{}/items?offset=0&limit=20", id);
+            let (status, body) = cookie_get(
+                cookie_text,
+                &format!("https://www.zhihu.com{}", path),
+                &format!("https://www.zhihu.com/collection/{}", id),
+            )
+            .await?;
+            let snippet: String = body.chars().take(300).collect();
+            crate::exit_log!(
+                "[收藏-知乎] 实验③ {} -> status={} body={}",
+                path,
+                status,
+                snippet
+            );
+            (Some(status), path, snippet)
         }
-    }
-    crate::exit_log!("[收藏-知乎] 已注入 {} 个 Cookie，重载页面", pairs.len());
+        None => {
+            crate::exit_log!("[收藏-知乎] 实验③ 跳过：列表里没解析出收藏夹 id");
+            (None, String::new(), String::new())
+        }
+    };
 
-    // 重载让 Cookie 生效，再等一次 complete
-    window
-        .eval("location.reload()")
-        .map_err(|e| format!("重载知乎页面失败: {}", e))?;
-    if !wait_ready(&window).await {
-        return Err("注入 Cookie 后页面加载超时".to_string());
-    }
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-
-    // 登录态判据：知乎首页在未登录时会重定向到 /signin。之前就是漏看这一步，
-    // 把「游客访问登录态接口的 401」误判成了「签名拦截」。
-    let final_url = eval_str(&window, "location.href").await.unwrap_or_default();
-    let logged_in = !final_url.is_empty() && !final_url.contains("/signin");
-    // 我们是以 http_only(false) 写入的，所以页面里能读到 z_c0 就说明确实写进了存储。
-    // 读不到 → 问题在注入环节；读得到却仍跳登录页 → Cookie 本身无效。
-    let dom_cookie = eval_str(&window, "document.cookie").await.unwrap_or_default();
-    let cookie_stored = dom_cookie.contains("z_c0");
-
-    // 实验核心：裸 fetch（不带任何签名头）能否通过 v4 接口
-    let (status, body) = fetch_api(app, &window, "/api/v4/me").await?;
-    let snippet: String = body.chars().take(500).collect();
-    crate::exit_log!(
-        "[收藏-知乎] 实验(WebView) /api/v4/me -> status={} loggedIn={} url={} body={}",
-        status,
-        logged_in,
-        final_url,
-        snippet
-    );
-
-    // 第二路：Rust 直连，绕开 WebView 的 Cookie 存储
-    let (direct_status, direct_body) = probe_direct(cookie_text).await?;
-    crate::exit_log!(
-        "[收藏-知乎] 实验(直连) /api/v4/me -> status={} body={}",
-        direct_status,
-        direct_body
-    );
-
-    let verdict = probe_verdict(status, logged_in, direct_status);
+    let verdict = probe_verdict(me_status, list_status, items_status);
     Ok(json!({
         "verdict": verdict,
         "conclusion": probe_conclusion(verdict),
-        "cookie": { "count": pairs.len(), "storedInPage": cookie_stored },
-        "webview": { "loggedIn": logged_in, "url": final_url, "status": status, "body": snippet },
-        "direct": { "status": direct_status, "body": direct_body },
+        "cookie": { "count": pairs.len() },
+        "steps": {
+            "me": { "status": me_status, "body": me_snippet },
+            "collections": { "status": list_status, "body": list_snippet },
+            "items": { "status": items_status, "path": items_path, "body": items_snippet },
+        },
     })
     .to_string())
 }
 
 /// 探测结论的机器可读判定（前端靠它决定 toast 是成功还是失败）。
 ///
-/// 抽成纯函数是因为「哪种状态算哪种结论」正是上次误判的地方，必须有测试钉住。
-pub fn probe_verdict(webview_status: u16, logged_in: bool, direct_status: u16) -> &'static str {
-    let webview_ok = (200..300).contains(&webview_status);
-    let direct_ok = (200..300).contains(&direct_status);
-    if webview_ok || direct_ok {
-        return "ok";
-    }
-    if !logged_in {
-        // 没登录 → 这是游客在打登录态接口，401 说明不了签名的事
+/// 抽成纯函数是因为「哪种状态算哪种结论」正是前两次误判的地方，必须有测试钉住。
+///
+/// `items` 为 None 表示列表里没解析出收藏夹 id（用户没有收藏夹），此时无法验证
+/// 内容接口，按「已通过的部分」给结论而不是拦下来。
+pub fn probe_verdict(me: u16, collections: u16, items: Option<u16>) -> &'static str {
+    let ok = |status: u16| (200..300).contains(&status);
+    let rejected = |status: u16| status == 401 || status == 403;
+
+    // 登录态都没过 → Cookie 本身的问题，别往签名上扯
+    if rejected(me) {
         return "invalid_cookie";
     }
-    if webview_status == 401 || webview_status == 403 || direct_status == 401 || direct_status == 403
-    {
+    if !ok(me) {
+        return "unknown";
+    }
+    // 已登录，但数据接口被拒 → 这才是签名拦截
+    if rejected(collections) || items.map(rejected).unwrap_or(false) {
         return "needs_signature";
+    }
+    if ok(collections) && items.map(ok).unwrap_or(true) {
+        return "ok";
     }
     "unknown"
 }
@@ -512,87 +399,68 @@ pub fn probe_verdict(webview_status: u16, logged_in: bool, direct_status: u16) -
 /// [`probe_verdict`] 对应的人话解释。
 pub fn probe_conclusion(verdict: &str) -> &'static str {
     match verdict {
-        "ok" => "Cookie 有效且裸请求被放行：可以走 Cookie 路线做全量导入（优先用直连，少一层中间环节）",
-        "invalid_cookie" => "Cookie 未建立登录态（知乎首页跳到了登录页）。多半是 z_c0 失效或复制不完整：请在浏览器确认处于登录状态，重新复制整条 Cookie 再测。注意：这不能证明签名是必需的。",
-        "needs_signature" => "已登录但裸请求仍被拒：v4 接口确实需要 x-zse-96 签名，Cookie 方案证伪",
+        "ok" => "Cookie 直连可用（/me → /collections → /collections/{id}/items 全部通过）：可以切到 Cookie 路线做全量导入",
+        "invalid_cookie" => "登录态没过：/api/v4/me 被拒。多半是 z_c0 失效或复制不完整，请在浏览器确认已登录后重新复制整条 Cookie 再测。注意：这不能证明签名是必需的。",
+        "needs_signature" => "登录态正常，但收藏接口被拒：那几个接口确实要 x-zse-96 签名，Cookie 方案证伪",
         _ => "未知结果，请把完整输出发给开发者",
-    }
-}
-
-/// 直连探测：Rust 侧把 Cookie 串原样放进请求头打 `/api/v4/me`。
-///
-/// 存在的意义是排除中间环节：WebView 路线失败时，分不清是「Cookie 无效」还是
-/// 「Cookie 没真正注入」；直连发出的就是你粘贴的那一串，没有第二种解释。
-async fn probe_direct(cookie_text: &str) -> Result<(u16, String), String> {
-    let resp = crate::commands::utils::get_http_client()
-        .get("https://www.zhihu.com/api/v4/me")
-        .header("Cookie", cookie_text)
-        .header("User-Agent", DESKTOP_UA)
-        .header("Referer", "https://www.zhihu.com/")
-        .header("Accept", "application/json, text/plain, */*")
-        .header("Accept-Language", "zh-CN,zh;q=0.9")
-        .send()
-        .await
-        .map_err(|e| format!("直连知乎失败: {}", e))?;
-    let status = resp.status().as_u16();
-    let body = resp.text().await.unwrap_or_default();
-    Ok((status, body.chars().take(400).collect()))
-}
-
-/// 在页面里求一个 JS 表达式的字符串值。
-async fn eval_str(window: &tauri::WebviewWindow, expr: &str) -> Result<String, String> {
-    use tokio::sync::oneshot;
-
-    let (tx, rx) = oneshot::channel::<String>();
-    let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
-    let slot2 = slot.clone();
-    window
-        .eval_with_callback(expr, move |s| {
-            if let Some(t) = slot2.lock().unwrap().take() {
-                let _ = t.send(s);
-            }
-        })
-        .map_err(|e| format!("执行页面脚本失败: {}", e))?;
-    match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
-        Ok(Ok(value)) => Ok(value),
-        _ => Err("读取页面状态超时".to_string()),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        auth_headers, contents_path, favlists_path, item_to_favorite, map_api_error,
-        parse_contents_page, parse_cookie_pairs, parse_envelope, parse_quota, probe_conclusion,
-        probe_verdict, FAVLISTS_LIMIT, PAGE_SIZE,
+        auth_headers, contents_path, favlists_path, first_collection_id, item_to_favorite,
+        map_api_error, parse_contents_page, parse_cookie_pairs, parse_envelope, parse_quota,
+        probe_conclusion, probe_verdict, FAVLISTS_LIMIT, PAGE_SIZE,
     };
     use serde_json::json;
 
-    /// **这次误判的回归测试**：没登录时的 401 绝不能判成「需要签名」。
-    /// 首页被重定向到 /signin 意味着请求是游客发出的，401 是必然结果，与签名无关。
+    /// **误判回归**：登录态没过时的 401 绝不能判成「需要签名」。
+    /// 第一次实验就是这样错的（首页跳 /signin，那是游客在打登录态接口）。
     #[test]
     fn anonymous_401_is_not_a_signature_verdict() {
-        // 实测就是这样：未登录 + 两路都 401
-        assert_eq!(probe_verdict(401, false, 401), "invalid_cookie");
+        assert_eq!(probe_verdict(401, 401, Some(401)), "invalid_cookie");
         assert!(probe_conclusion("invalid_cookie").contains("不能证明签名"));
-        // 已登录却被拒 → 才是签名问题
-        assert_eq!(probe_verdict(401, true, 401), "needs_signature");
+    }
+
+    /// 已登录但数据接口被拒 → 这才是签名问题（实测 /me 200 而收藏接口被拒的情形）。
+    #[test]
+    fn signed_in_but_rejected_means_signature() {
+        assert_eq!(probe_verdict(200, 403, Some(403)), "needs_signature");
+        assert_eq!(probe_verdict(200, 401, None), "needs_signature");
         assert!(probe_conclusion("needs_signature").contains("x-zse-96"));
     }
 
-    /// 任一路 2xx 就算通过（直连通过也够用，反而更省事）。
+    /// 三个接口全通 → Cookie 直连可用（2026-09-23 实测 /me 就是这样的）。
     #[test]
-    fn any_route_2xx_counts_as_ok() {
-        assert_eq!(probe_verdict(200, true, 401), "ok");
-        assert_eq!(probe_verdict(401, false, 200), "ok");
+    fn all_three_steps_passing_means_ok() {
+        assert_eq!(probe_verdict(200, 200, Some(200)), "ok");
         assert!(probe_conclusion("ok").contains("全量导入"));
     }
 
-    /// 未知状态不能假装看懂了。
+    /// 用户一个收藏夹都没有时 items 无从验证，不能因此判失败。
     #[test]
-    fn unexpected_status_is_unknown() {
-        assert_eq!(probe_verdict(500, true, 502), "unknown");
+    fn missing_collection_id_does_not_fail_the_probe() {
+        assert_eq!(probe_verdict(200, 200, None), "ok");
     }
+
+    /// 服务端 5xx 是「看不懂」，不能假装是签名或 Cookie 的问题。
+    #[test]
+    fn server_error_stays_unknown() {
+        assert_eq!(probe_verdict(200, 200, Some(500)), "unknown");
+        assert_eq!(probe_verdict(500, 200, Some(200)), "unknown");
+    }
+
+    /// 收藏夹列表解析：取第一个 id；结构不对/空列表都不 panic。
+    #[test]
+    fn first_collection_id_reads_data_array() {
+        let body = r#"{"data":[{"id":580815780,"title":"默认收藏夹"}],"paging":{"is_end":false}}"#;
+        assert_eq!(first_collection_id(body), Some(580815780));
+        assert_eq!(first_collection_id(r#"{"data":[]}"#), None);
+        assert_eq!(first_collection_id(r#"{"error":{"code":100}}"#), None);
+        assert_eq!(first_collection_id("not json"), None);
+    }
+
 
     /// Cookie 串解析：分号/换行都行、同名去重、无效段跳过。
     #[test]

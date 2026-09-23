@@ -172,7 +172,7 @@
     "zhihuCookieTitle": "Zhihu cookie (experiment)",
     "zhihuCookieHint": "Copy the full Zhihu cookie from your browser (must include z_c0 for sign-in and d_c0). It is stored in a separate experiment-only slot and will not overwrite the Access Secret above. To swap in a new cookie, click the flask icon again - the dialog shows what is currently saved.",
     "zhihuCookiePlaceholder": "z_c0=xxxx; d_c0=xxxx; ...",
-    "zhihuCookieNote": "Experimental: injected into a hidden browser window to probe Zhihu's API. It only validates feasibility and does not affect the normal import yet.",
+    "zhihuCookieNote": "Experimental: sends your pasted cookie straight to Zhihu and probes three endpoints in order (/me, my collection list, collection items) to see where signature checks kick in. It only validates feasibility and does not affect the normal import yet.",
     "credentialSave": "Save",
     "credentialSaveAndTest": "Save and test",
     "zhihuOfficialHint": "Uses the official Zhihu Data Platform API (needs an Access Secret)",

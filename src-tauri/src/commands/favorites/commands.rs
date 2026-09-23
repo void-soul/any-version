@@ -451,12 +451,12 @@ pub async fn fav_import_bilibili(app: tauri::AppHandle) -> Result<ImportResult, 
     Ok(result)
 }
 
-/// 【实验】验证「粘贴 Cookie + 隐藏 WebView 页面内 fetch」能否访问知乎登录态接口。
+/// 【实验】用粘贴的 Cookie 直连知乎，依次探测 `/me`、`/collections`、`/collections/{id}/items`。
 ///
-/// 返回 JSON 文本：`{status, conclusion, body}` —— status=200 则 Cookie 路线成立，
-/// 401/403 则 v4 接口强制签名、Cookie 方案证伪。结果同时写入 exit.log。
+/// 返回 JSON 文本：带 `verdict`（ok / invalid_cookie / needs_signature / unknown）、
+/// `conclusion` 与三个接口各自的 `status`/`body`。结果同时写入 exit.log。
 #[tauri::command]
-pub async fn fav_zhihu_probe(app: tauri::AppHandle) -> Result<String, String> {
+pub async fn fav_zhihu_probe() -> Result<String, String> {
     // 读的是**实验专用槽位** `zhihu-cookie`：官方接口的 Access Secret 存在 `zhihu`，
     // 两者互不覆盖——把 Cookie 存进 Secret 的槽位会把用户配好的凭证顶掉。
     let cookie =
@@ -464,7 +464,7 @@ pub async fn fav_zhihu_probe(app: tauri::AppHandle) -> Result<String, String> {
             "请先点烧瓶图标粘贴知乎 Cookie（需含 z_c0 登录态与 d_c0；这与「知乎 Access Secret」是两个独立输入框）"
                 .to_string()
         })?;
-    let report = zhihu::probe_with_cookie(&app, &cookie).await?;
+    let report = zhihu::probe_cookie(&cookie).await?;
     crate::exit_log!("[收藏-知乎] 实验结果: {}", report);
     Ok(report)
 }
