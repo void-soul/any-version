@@ -2,7 +2,10 @@
 //!
 //! - 配置：enabled / startTime / endTime / accountSchedules（每账号当天随机签到分钟）
 //! - 每轮：查询签到状态 → 未签到则执行 daily-checkin → 更新账号签到信息
-//! - 失败重试：指数退避（5 分钟起，上限 1 小时）；应用启动时立即跑一轮
+//! - 错过不补执行：打开应用时发现「计划时间已过但今天没做过」的账号，重排到窗口内的
+//!   新随机时间（`reschedule_missed_plans`）；窗口已全过去则今天放弃，等明天跨天重规划
+//! - 失败重试：也改为重排新随机时间（`reschedule_failed_plans`），不再原地退避重试
+//! - 调度：固定 30 秒轮询（应用启动时立即跑一轮），仅调度异常本身按退避重试
 //! - 日志：按天记录，保留 30 天，前端可查看/清空
 
 use std::collections::HashMap;
@@ -31,8 +34,12 @@ static SCHEDULER_WAKE: OnceLock<Notify> = OnceLock::new();
 const SCHEDULER_POLL_DELAY: Duration = Duration::from_secs(30);
 const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(5 * 60);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(60 * 60);
-/// 登录态过期时的重试间隔（等用户刷新令牌，不必按普通失败那样频繁重试）
-const AUTH_EXPIRED_RETRY_DELAY: Duration = Duration::from_secs(30 * 60);
+/// 「错过计划时间」的宽限（分钟）。
+///
+/// 调度轮询是 30 秒一次，正常路径应当落在计划分钟当刻执行；但一轮可能因为并发
+/// （用户点了「立即签到」）或账号多而跨过整分钟，所以只有超过宽限仍未执行的计划
+/// 才算「错过」，据此重排——避免把正常的小延迟误判成错过。
+pub const MISSED_PLAN_GRACE_MIN: i32 = 5;
 
 struct CheckinGuard;
 impl Drop for CheckinGuard {
@@ -238,6 +245,78 @@ pub fn random_u32_below(max: u32) -> u32 {
     u32::from_le_bytes(buf) % max
 }
 
+/// 当前本地时间的「当天分钟数」（0~1439）。
+pub fn current_minute_of_day() -> i32 {
+    let now = Local::now();
+    (now.hour() * 60 + now.minute()) as i32
+}
+
+/// 计划窗口 `[startTime, endTime]`（`end < start` 时收口到 start，与生成逻辑一致）。
+pub fn plan_window(start_time: &str, end_time: &str) -> (i32, i32) {
+    let start = parse_time_to_minutes(start_time);
+    let end = parse_time_to_minutes(end_time).max(start);
+    (start, end)
+}
+
+/// 计划是否已经「错过」：超过 `MISSED_PLAN_GRACE_MIN` 仍未执行。
+pub fn is_plan_missed(scheduled_minute: i32, current_minute: i32) -> bool {
+    current_minute - scheduled_minute > MISSED_PLAN_GRACE_MIN
+}
+
+/// 今天窗口内还剩下的可用区间 `[max(start, now + 1), end]`；`None` = 窗口已全部过去。
+///
+/// 「打开应用时发现计划时间已过」的处理都以它为准：还有剩余窗口就重排到里面，
+/// 全过去了就今天放弃（等明天跨天重规划）。
+pub fn remaining_window(start_min: i32, end_min: i32, current_minute: i32) -> Option<(i32, i32)> {
+    let from = start_min.max(current_minute + 1);
+    if from > end_min {
+        None
+    } else {
+        Some((from, end_min))
+    }
+}
+
+/// 计划是否到了该执行的时候：到点、错过不超过宽限、且仍在今天的窗口内。
+///
+/// 三个条件缺一不可：
+/// - 还没到点不动；
+/// - 错过太久的计划交给重排，绝不「打开应用就立刻补执行」；
+/// - 窗口已全部过去 → 今天放弃（用户确认的语义：不补执行，等明天）。
+pub fn is_plan_due(scheduled_minute: i32, current_minute: i32, end_min: i32) -> bool {
+    current_minute >= scheduled_minute
+        && !is_plan_missed(scheduled_minute, current_minute)
+        && current_minute <= end_min
+}
+
+/// 抽一个计划分钟：优先落在「窗口内还没过去的时间」上，窗口已全部过去时退回整窗随机。
+///
+/// 生成计划与重排计划共用：晚开应用（例如 09:00 打开、窗口 06:00~12:00）不应该
+/// 一生成就抽到一个已经过去的点——那等于「立刻执行」。
+pub fn draw_plan_minute(start_min: i32, end_min: i32, current_minute: i32) -> i32 {
+    match remaining_window(start_min, end_min, current_minute) {
+        Some((from, to)) => random_minute_in(from, to),
+        None => {
+            let span = (end_min - start_min).max(0) as u32;
+            start_min + random_u32_below(span + 1) as i32
+        }
+    }
+}
+
+/// 在 `[from, to]` 内随机取一分钟（含端点）。
+fn random_minute_in(from: i32, to: i32) -> i32 {
+    let span = (to - from).max(0) as u32;
+    from + random_u32_below(span + 1) as i32
+}
+
+/// 展示用邮箱（缺失时退回账号 id）。
+fn account_email(account: &BuddyAccount) -> String {
+    if account.email.trim().is_empty() {
+        account.id.clone()
+    } else {
+        account.email.clone()
+    }
+}
+
 /// 今天是否还有账号没有生成计划（跨天 / 首次运行 / 新增账号）。
 ///
 /// 这是「每天打开时若发现过了一天就重新计划」的判定：只要有一个账号的计划
@@ -267,12 +346,8 @@ pub fn ensure_account_schedules(
     allow_generate: bool,
 ) -> bool {
     let today_str = get_today_date_string();
-    let start_min = parse_time_to_minutes(&config.start_time);
-    let mut end_min = parse_time_to_minutes(&config.end_time);
-    if end_min < start_min {
-        end_min = start_min;
-    }
-    let min_range = (end_min - start_min).max(0);
+    let (start_min, end_min) = plan_window(&config.start_time, &config.end_time);
+    let current_minute = current_minute_of_day();
 
     let mut schedules = config.account_schedules.clone().unwrap_or_default();
     let mut changed = false;
@@ -291,12 +366,10 @@ pub fn ensure_account_schedules(
             continue;
         }
 
-        let random_offset = if min_range > 0 {
-            random_u32_below(min_range as u32 + 1) as i32
-        } else {
-            0
-        };
-        let scheduled_minute = start_min + random_offset;
+        // 抽「窗口内还没过去」的点：晚开应用时若从整窗随机，容易抽到一个已经
+        // 过去的时刻而被当成「立刻执行」。窗口已全过去则退回整窗随机（当天不再
+        // 执行，前端显示「未完成」）。
+        let scheduled_minute = draw_plan_minute(start_min, end_min, current_minute);
 
         let last_checked = existing.and_then(|e| {
             if e.last_checked_date.as_deref() == Some(&today_str) {
@@ -320,6 +393,99 @@ pub fn ensure_account_schedules(
 
     if changed {
         config.account_schedules = Some(schedules);
+    }
+    changed
+}
+
+/// 把「计划时间已过、今天却还没完成」的账号重新安排到窗口内的新随机时间。
+///
+/// 规则（与用户确认）：
+/// - 窗口内还有剩余时间 → 重新随机一个**未来**时间点，并记一条 `rescheduled` 日志；
+/// - 窗口已全部过去 → 今天放弃：计划保持原样、不执行，等明天的跨天重规划
+///   （`is_plan_due` 的「仍在窗口内」条件保证它不会被立刻执行，前端显示「未完成」）；
+/// - 已经尝试过但失败的账号同样重排，不再按退避间隔原地重试。
+///
+/// 返回 `(计划是否有改动, 新增的行为日志)`。
+fn reschedule_missed_plans(
+    config: &mut BuddyAutoCheckinConfig,
+    accounts: &[BuddyAccount],
+    current_minute: i32,
+) -> (bool, Vec<action_log::BuddyActionLogEntry>) {
+    let today = get_today_date_string();
+    let (start_min, end_min) = plan_window(&config.start_time, &config.end_time);
+    let Some((from, to)) = remaining_window(start_min, end_min, current_minute) else {
+        return (false, Vec::new());
+    };
+
+    let mut schedules = config.account_schedules.clone().unwrap_or_default();
+    let mut entries = Vec::new();
+
+    for account in accounts {
+        let Some(schedule) = schedules.get(&account.id) else {
+            continue;
+        };
+        if schedule.scheduled_date != today
+            || schedule.last_checked_date.as_deref() == Some(today.as_str())
+            || !is_plan_missed(schedule.scheduled_minute, current_minute)
+        {
+            continue;
+        }
+
+        let old_minute = schedule.scheduled_minute;
+        let new_minute = draw_plan_minute(from, to, current_minute);
+        if let Some(state) = schedules.get_mut(&account.id) {
+            state.scheduled_minute = new_minute;
+        }
+        entries.push(action_log::make_entry(
+            "checkin",
+            &account.id,
+            &account_email(account),
+            "rescheduled",
+            Some(format!(
+                "原计划 {} 已过且未完成，重新安排到 {}",
+                format_minutes(old_minute),
+                format_minutes(new_minute)
+            )),
+            None,
+        ));
+    }
+
+    let changed = !entries.is_empty();
+    if changed {
+        config.account_schedules = Some(schedules);
+    }
+    (changed, entries)
+}
+
+/// 把本轮「尝试过但没成功」的账号的计划挪到窗口内的新随机时间（失败的重试时机）。
+///
+/// 为什么不能只靠 `reschedule_missed_plans`：那条路要等「错过超过宽限」才动手，
+/// 而计划在宽限内仍算「到点」，下一个轮询会立刻把同一个失败账号再打一遍。
+///
+/// 窗口已全部过去时不改（今天放弃；失败状态保留在归档与行为日志里）。
+/// 返回是否有账号被挪动。
+fn reschedule_failed_plans(
+    schedules: &mut HashMap<String, BuddyAccountScheduleState>,
+    attempted: &[String],
+    today: &str,
+    current_minute: i32,
+    start_min: i32,
+    end_min: i32,
+) -> bool {
+    let Some((from, to)) = remaining_window(start_min, end_min, current_minute) else {
+        return false;
+    };
+    let mut changed = false;
+    for account_id in attempted {
+        let Some(state) = schedules.get_mut(account_id) else {
+            continue;
+        };
+        // 成功签到会把 last_checked_date 置为今天：没置上的就是本轮失败的
+        if state.scheduled_date != today || state.last_checked_date.as_deref() == Some(today) {
+            continue;
+        }
+        state.scheduled_minute = draw_plan_minute(from, to, current_minute);
+        changed = true;
     }
     changed
 }
@@ -434,11 +600,20 @@ pub async fn run_auto_checkin_cycle_if_needed(
     // 后者保证「每天打开应用后立刻重新计划」，而不必等到 startTime。
     let now = Local::now();
     let current_minute = (now.hour() * 60 + now.minute()) as i32;
+    let (start_min, end_min) = plan_window(&config.start_time, &config.end_time);
     let cross_day = needs_replan(&config, &accounts);
     let allow_generate =
         force || cross_day || current_minute >= parse_time_to_minutes(&config.start_time);
     let before_schedules = config.account_schedules.clone().unwrap_or_default();
-    let schedule_changed = ensure_account_schedules(&mut config, &accounts, allow_generate);
+    let mut schedule_changed = ensure_account_schedules(&mut config, &accounts, allow_generate);
+    // 计划时间已过但今天还没完成（应用没开着 / 上一轮失败）→ 重排到窗口内的新随机时间，
+    // 而不是「打开应用就立刻补执行」。手动立即执行（force）不参与重排。
+    let (rescheduled, reschedule_entries) = if force {
+        (false, Vec::new())
+    } else {
+        reschedule_missed_plans(&mut config, &accounts, current_minute)
+    };
+    schedule_changed |= rescheduled;
     if schedule_changed {
         save_config_without_wake(&config)?;
         // 计划变更同步归档：旧日期收尾 + 今日计划时间
@@ -463,7 +638,8 @@ pub async fn run_auto_checkin_cycle_if_needed(
                         if s.last_checked_date.as_deref() == Some(&today_str) {
                             return false;
                         }
-                        s.scheduled_date == today_str && current_minute >= s.scheduled_minute
+                        s.scheduled_date == today_str
+                            && is_plan_due(s.scheduled_minute, current_minute, end_min)
                     }
                     None => false,
                 }
@@ -472,6 +648,11 @@ pub async fn run_auto_checkin_cycle_if_needed(
     };
 
     if target_accounts.is_empty() {
+        // 本轮没有账号到点，但可能刚重排过计划：重排日志仍要落盘。
+        if !reschedule_entries.is_empty() {
+            action_log::append_action_logs(&reschedule_entries)?;
+            let _ = app.emit("buddy-action-logs-changed", ());
+        }
         return Ok("waiting".to_string());
     }
 
@@ -482,10 +663,13 @@ pub async fn run_auto_checkin_cycle_if_needed(
     );
 
     let mut retry_needed = false;
-    // 登录态过期单独标记：普通失败按指数退避重试，过期则拉长间隔（避免每轮都打官方接口）
+    // 登录态过期标记（仅用于收尾日志；失败的重试时机已改为「重排到窗口内新随机时间」）
     let mut auth_expired = false;
-    let mut entries: Vec<action_log::BuddyActionLogEntry> = Vec::new();
-    let mut new_schedules = config.account_schedules.clone().unwrap_or_default();
+    let mut entries: Vec<action_log::BuddyActionLogEntry> = reschedule_entries;
+    let retry_before_schedules = config.account_schedules.clone().unwrap_or_default();
+    let mut new_schedules = retry_before_schedules.clone();
+    // 本轮尝试过的账号（失败者要把重试时机挪到新的随机时刻）
+    let target_ids: Vec<String> = target_accounts.iter().map(|a| a.id.clone()).collect();
 
     for account in target_accounts {
         let email_display = if !account.email.trim().is_empty() {
@@ -722,7 +906,22 @@ pub async fn run_auto_checkin_cycle_if_needed(
         }
     }
 
+    // 失败账号的重试时机也改成「窗口内新随机时间」：否则下一个轮询（30 秒后）会以
+    // 「已到点」立刻重打同一个失败账号，同一分钟内反复打官方接口。
+    let retry_moved = reschedule_failed_plans(
+        &mut new_schedules,
+        &target_ids,
+        &today_str,
+        current_minute,
+        start_min,
+        end_min,
+    );
+
     config.account_schedules = Some(new_schedules);
+    if retry_moved {
+        // 计划时间被挪动过 → 同步归档（日历与卡片都以归档为准）
+        archive_schedule_changes(&retry_before_schedules, &config, &accounts);
+    }
     save_config_without_wake(&config)?;
 
     // 行为日志（平铺）：每账号一条
@@ -730,13 +929,14 @@ pub async fn run_auto_checkin_cycle_if_needed(
     let _ = app.emit("buddy-action-logs-changed", ());
     let _ = app.emit("buddy-auto-checkin-config-changed", ());
 
-    if auth_expired {
-        Ok("auth_expired".to_string())
-    } else if retry_needed {
-        Ok("retry".to_string())
-    } else {
-        Ok("completed".to_string())
+    // 失败不再让调度器拉长间隔：重试时机已改成「重排到窗口内的新随机时间」，
+    // 轮询若退避到分钟以上就会错过这些随机时刻。失败信息已写进行为日志。
+    if auth_expired || retry_needed {
+        eprintln!(
+            "[BuddyAutoCheckin] 本轮存在失败：已过计划时间的账号已重排到窗口内新随机时间（窗口已结束的今天放弃）"
+        );
     }
+    Ok("completed".to_string())
 }
 
 /// 由「今日是否已签到」+「今日日志中最近一条结果」推导任务状态。
@@ -765,6 +965,8 @@ fn derive_task_status(
 /// 状态推导（只关心今天）：
 /// - `success`：今日计划已标记签到完成，或今日日志中该账号为成功/已签到
 /// - `failed`：今日日志中该账号最近一次为失败（会按调度继续重试）
+/// - `unfinished`：计划时间已错过、今天从未尝试过、且今天的窗口已全过去
+///   （调度器已放弃今天，等明天跨天重规划）
 /// - `pending`：其余情况（含「计划时间未到」与「今日计划尚未生成」）
 pub fn build_tasks_view(platform: BuddyPlatform) -> Result<BuddyCheckinTasksView, String> {
     let config = get_config_checked()?;
@@ -785,6 +987,11 @@ pub fn build_tasks_view(platform: BuddyPlatform) -> Result<BuddyCheckinTasksView
     let archive = daily_history::get_day(&today_str).unwrap_or_default();
     let mut tasks = Vec::with_capacity(accounts.len());
     let mut generated = false;
+    // 「今天已放弃」的判据（与调度器同一套，见 `is_plan_due`）：计划已错过、且今天
+    // 的窗口已经全过去 → 显示「未完成」，而不是整天挂着「待签到」。
+    let current_minute = current_minute_of_day();
+    let (start_min, end_min) = plan_window(&config.start_time, &config.end_time);
+    let window_closed = remaining_window(start_min, end_min, current_minute).is_none();
 
     for account in &accounts {
         let schedule = schedules.get(&account.id);
@@ -799,7 +1006,22 @@ pub fn build_tasks_view(platform: BuddyPlatform) -> Result<BuddyCheckinTasksView
             .map(|d| d == today_str)
             .unwrap_or(false);
         let detail = today_results.get(&account.id);
-        let status = derive_task_status(checked_today, detail);
+        // 「尝试过」= 有过真实调用结果的日志（重排日志不算），失败过的账号保持「失败」
+        let attempted = detail
+            .map(|d| matches!(d.status.as_str(), "success" | "already_checked" | "failed" | "inactive"))
+            .unwrap_or(false);
+        let give_up_today = !checked_today
+            && !attempted
+            && scheduled_today
+            && window_closed
+            && schedule
+                .map(|s| is_plan_missed(s.scheduled_minute, current_minute))
+                .unwrap_or(false);
+        let status = if give_up_today {
+            checkin_status::UNFINISHED
+        } else {
+            derive_task_status(checked_today, detail)
+        };
         let archived_checkin = archive.get(&account.id).and_then(|r| r.checkin.as_ref());
 
         let email = if account.email.trim().is_empty() {
@@ -865,22 +1087,8 @@ pub fn start_auto_checkin_scheduler(app: AppHandle) {
                 }
             }
             match run_auto_checkin_cycle_if_needed(platform, &app, false).await {
-                Ok(result) if result == "auth_expired" => {
-                    next_delay = AUTH_EXPIRED_RETRY_DELAY;
-                    retry_delay = INITIAL_RETRY_DELAY;
-                    eprintln!(
-                        "[BuddyAutoCheckin] 存在登录态过期账号，{} 分钟后重试",
-                        next_delay.as_secs() / 60
-                    );
-                }
-                Ok(result) if result == "retry" => {
-                    next_delay = retry_delay;
-                    retry_delay = next_retry_delay(retry_delay);
-                    eprintln!(
-                        "[BuddyAutoCheckin] 本轮存在失败，{} 秒后重试",
-                        next_delay.as_secs()
-                    );
-                }
+                // 固定短间隔轮询：账号级失败已改成「重排到窗口内新随机时间」，
+                // 轮询若退避到分钟级就会错过这些随机时刻。
                 Ok(_) => {
                     next_delay = SCHEDULER_POLL_DELAY;
                     retry_delay = INITIAL_RETRY_DELAY;
@@ -992,6 +1200,130 @@ mod tests {
             last_checked_date: None,
             last_checked_time: None,
         }
+    }
+
+    /// 窗口固定 06:00~12:00（360~720）的配置，便于用注入的 `current_minute` 做确定性测试。
+    fn config_with_schedules(
+        states: Vec<(&str, BuddyAccountScheduleState)>,
+    ) -> BuddyAutoCheckinConfig {
+        BuddyAutoCheckinConfig {
+            enabled: true,
+            start_time: "06:00".to_string(),
+            end_time: "12:00".to_string(),
+            last_checked_date: None,
+            account_schedules: Some(
+                states
+                    .into_iter()
+                    .map(|(id, state)| (id.to_string(), state))
+                    .collect(),
+            ),
+        }
+    }
+
+    #[test]
+    fn test_remaining_window_and_plan_due() {
+        // 窗口 06:00~12:00，现在 10:00 → 剩余可用区间从「现在」之后开始
+        assert_eq!(remaining_window(360, 720, 600), Some((601, 720)));
+        // 还没到开始时间 → 从开始时间起
+        assert_eq!(remaining_window(360, 720, 60), Some((360, 720)));
+        // 已到 / 已过结束时间 → 今天没有剩余窗口（今天就放弃）
+        assert_eq!(remaining_window(360, 720, 720), None);
+        assert_eq!(remaining_window(360, 720, 900), None);
+
+        assert!(is_plan_due(600, 600, 720)); // 到点当刻
+        assert!(is_plan_due(600, 605, 720)); // 宽限内的小延迟照旧执行
+        assert!(!is_plan_due(600, 606, 720)); // 错过超过宽限 → 交给重排，不立刻补执行
+        assert!(!is_plan_due(600, 601, 600)); // 窗口已过 → 今天放弃
+        assert!(!is_plan_due(700, 600, 720)); // 还没到点
+    }
+
+    #[test]
+    fn test_draw_plan_minute_prefers_future_within_window() {
+        // 窗口内还有剩余时间 → 一定抽在未来（晚开应用不会一生成就「立刻执行」）
+        for _ in 0..64 {
+            let minute = draw_plan_minute(360, 720, 600);
+            assert!((601..=720).contains(&minute), "minute={}", minute);
+        }
+        // 窗口已全部过去 → 退回整窗随机（当天不会再执行，前端显示「未完成」）
+        for _ in 0..64 {
+            let minute = draw_plan_minute(360, 720, 900);
+            assert!((360..=720).contains(&minute), "minute={}", minute);
+        }
+    }
+
+    #[test]
+    fn test_reschedule_missed_plan_moves_to_future_and_logs() {
+        let accounts = vec![sample_account("acc_1", "a@x.com")];
+        let today = get_today_date_string();
+        // 08:00 的计划没执行，现在 10:00
+        let mut config = config_with_schedules(vec![("acc_1", schedule_state(&today, 480))]);
+
+        let (changed, entries) = reschedule_missed_plans(&mut config, &accounts, 600);
+        assert!(changed);
+        let schedule = config.account_schedules.unwrap().remove("acc_1").unwrap();
+        assert!((601..=720).contains(&schedule.scheduled_minute));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].status, "rescheduled");
+        let message = entries[0].message.clone().unwrap_or_default();
+        assert!(message.contains("08:00"), "message={}", message);
+    }
+
+    #[test]
+    fn test_reschedule_skips_window_closed_checked_and_grace() {
+        let accounts = vec![sample_account("acc_1", "a@x.com")];
+        let today = get_today_date_string();
+
+        // 窗口已全部过去（现在 13:20）→ 今天放弃：计划不动、不写日志
+        let mut config = config_with_schedules(vec![("acc_1", schedule_state(&today, 480))]);
+        let (changed, entries) = reschedule_missed_plans(&mut config, &accounts, 800);
+        assert!(!changed);
+        assert!(entries.is_empty());
+        assert_eq!(
+            config
+                .account_schedules
+                .unwrap()
+                .get("acc_1")
+                .unwrap()
+                .scheduled_minute,
+            480
+        );
+
+        // 今天已签到 → 不重排
+        let mut state = schedule_state(&today, 480);
+        state.last_checked_date = Some(today.clone());
+        let mut config = config_with_schedules(vec![("acc_1", state)]);
+        assert!(!reschedule_missed_plans(&mut config, &accounts, 600).0);
+
+        // 还在宽限内（08:00 的计划，现在 08:03）→ 不重排，照旧立刻执行
+        let mut config = config_with_schedules(vec![("acc_1", schedule_state(&today, 480))]);
+        assert!(!reschedule_missed_plans(&mut config, &accounts, 483).0);
+    }
+
+    #[test]
+    fn test_reschedule_failed_plans_moves_retry_time_and_skips_checked() {
+        let today = get_today_date_string();
+        let mut checked = schedule_state(&today, 600);
+        checked.last_checked_date = Some(today.clone());
+        let mut schedules = HashMap::from([
+            ("acc_failed".to_string(), schedule_state(&today, 600)),
+            ("acc_done".to_string(), checked),
+        ]);
+        let attempted = vec!["acc_failed".to_string(), "acc_done".to_string()];
+
+        // 窗口 06:00~12:00，现在 10:00 → 失败账号挪到窗口内未来时间，已签到的不动
+        assert!(reschedule_failed_plans(
+            &mut schedules, &attempted, &today, 600, 360, 720
+        ));
+        assert!((601..=720).contains(&schedules["acc_failed"].scheduled_minute));
+        assert_eq!(schedules["acc_done"].scheduled_minute, 600);
+
+        // 窗口已全部过去 → 不挪（今天放弃）
+        let mut schedules =
+            HashMap::from([("acc_failed".to_string(), schedule_state(&today, 600))]);
+        assert!(!reschedule_failed_plans(
+            &mut schedules, &attempted, &today, 800, 360, 720
+        ));
+        assert_eq!(schedules["acc_failed"].scheduled_minute, 600);
     }
 
     #[test]

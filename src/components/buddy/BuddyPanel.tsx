@@ -298,7 +298,8 @@ export interface BuddyActionLogEntry {
 export interface BuddyCheckinTask {
   accountId: string;
   email: string;
-  status: "pending" | "success" | "failed";
+  /** unfinished：计划时间已错过且今天的窗口已结束（今日放弃，等明天重新随机安排） */
+  status: "pending" | "success" | "failed" | "unfinished";
   scheduledTime?: string | null;
   lastAttemptTime?: string | null;
   /** 实际签到时刻（HH:MM:SS，当日已签到时存在） */
@@ -2623,6 +2624,10 @@ export default function BuddyPanel() {
                     } else if (task?.status === "failed") {
                       checkinState = t("buddy.accountStatus.checkinFailed");
                       checkinCls = "text-rose-300";
+                    } else if (task?.status === "unfinished") {
+                      // 计划时间已错过且今日窗口已结束：今天不再执行（等明天重新随机安排）
+                      checkinState = t("buddy.accountStatus.unfinished");
+                      checkinCls = "text-slate-500";
                     } else if (autoTasks && !autoTasks.enabled) {
                       checkinState = t("buddy.accountStatus.notEnabled");
                       checkinCls = "text-slate-500";

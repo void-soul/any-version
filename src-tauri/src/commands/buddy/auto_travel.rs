@@ -8,6 +8,8 @@
 //!
 //! 与自动签到一致：每个账号在 [startTime, endTime] 窗口内随机分配**派出时间**，
 //! 避免所有账号同时派出；领取检测全天进行（旅行时长 1~4 小时随机，返回后下一轮领取）。
+//! 计划时间已过而当天没派出时（应用没开着 / 上一轮失败）重排到窗口内的新随机时间，
+//! 不「打开应用就立刻补派」；窗口已全过去则今天放弃，等明天跨天重规划。
 
 use std::collections::HashMap;
 use std::fs;
@@ -293,12 +295,8 @@ pub fn ensure_travel_schedules(
     allow_generate: bool,
 ) -> bool {
     let today_str = get_today_date_string();
-    let start_min = super::auto_checkin::parse_time_to_minutes(&config.start_time);
-    let mut end_min = super::auto_checkin::parse_time_to_minutes(&config.end_time);
-    if end_min < start_min {
-        end_min = start_min;
-    }
-    let min_range = (end_min - start_min).max(0);
+    let (start_min, end_min) = super::auto_checkin::plan_window(&config.start_time, &config.end_time);
+    let current_minute = super::auto_checkin::current_minute_of_day();
 
     let mut schedules = config.account_schedules.clone().unwrap_or_default();
     let mut changed = false;
@@ -317,12 +315,6 @@ pub fn ensure_travel_schedules(
             continue;
         }
 
-        let random_offset = if min_range > 0 {
-            super::auto_checkin::random_u32_below(min_range as u32 + 1) as i32
-        } else {
-            0
-        };
-
         let (depart, depart_time, done, reward) = existing
             .filter(|e| e.scheduled_date == today_str)
             .map(|e| {
@@ -335,11 +327,16 @@ pub fn ensure_travel_schedules(
             })
             .unwrap_or((None, None, None, None));
 
+        // 抽「窗口内还没过去」的点（与签到同源），窗口已全过去则退回整窗随机
+        // ——那天不会再派出，前端显示「未完成」。
+        let scheduled_minute =
+            super::auto_checkin::draw_plan_minute(start_min, end_min, current_minute);
+
         schedules.insert(
             account.id.clone(),
             BuddyAccountTravelState {
                 scheduled_date: today_str.clone(),
-                scheduled_minute: start_min + random_offset,
+                scheduled_minute,
                 last_depart_date: depart,
                 last_depart_time: depart_time,
                 last_done_date: done,
@@ -355,12 +352,120 @@ pub fn ensure_travel_schedules(
     changed
 }
 
+/// 把「计划时间已过、今天却还没派出/完成」的账号重新安排到窗口内的新随机时间。
+///
+/// 规则与自动签到完全一致：
+/// - 窗口内还有剩余时间 → 重新随机一个**未来**时间点，并记一条 `rescheduled` 日志；
+/// - 窗口已全部过去 → 今天放弃（不改计划、不执行，等明天跨天重规划）；
+/// - 已经派出过（旅行中/已归来待领取）或当日已完成的账号不参与重排；
+/// - 派出失败（网络错误等）也重排，不再按固定轮询原地重试。
+///
+/// 返回 `(计划是否有改动, 新增的行为日志)`。
+fn reschedule_missed_plans(
+    config: &mut BuddyAutoTravelConfig,
+    accounts: &[BuddyAccount],
+    current_minute: i32,
+) -> (bool, Vec<action_log::BuddyActionLogEntry>) {
+    let today = get_today_date_string();
+    let (start_min, end_min) = super::auto_checkin::plan_window(&config.start_time, &config.end_time);
+    let Some((from, to)) = super::auto_checkin::remaining_window(start_min, end_min, current_minute)
+    else {
+        return (false, Vec::new());
+    };
+
+    let mut schedules = config.account_schedules.clone().unwrap_or_default();
+    let mut entries = Vec::new();
+
+    for account in accounts {
+        let Some(schedule) = schedules.get(&account.id) else {
+            continue;
+        };
+        if schedule.scheduled_date != today
+            || schedule.last_depart_date.as_deref() == Some(today.as_str())
+            || schedule.last_done_date.as_deref() == Some(today.as_str())
+            || !super::auto_checkin::is_plan_missed(schedule.scheduled_minute, current_minute)
+        {
+            continue;
+        }
+
+        let old_minute = schedule.scheduled_minute;
+        let new_minute = super::auto_checkin::draw_plan_minute(from, to, current_minute);
+        if let Some(state) = schedules.get_mut(&account.id) {
+            state.scheduled_minute = new_minute;
+        }
+        entries.push(action_log::make_entry(
+            "travel",
+            &account.id,
+            &account_email(account),
+            "rescheduled",
+            Some(format!(
+                "原计划 {} 已过且未完成，重新安排到 {}",
+                super::auto_checkin::format_minutes(old_minute),
+                super::auto_checkin::format_minutes(new_minute)
+            )),
+            None,
+        ));
+    }
+
+    let changed = !entries.is_empty();
+    if changed {
+        config.account_schedules = Some(schedules);
+    }
+    (changed, entries)
+}
+
+/// 把本轮「尝试派出但没成功」的账号的计划挪到窗口内的新随机时间（失败的重试时机）。
+///
+/// 与签到侧同构：光靠 `reschedule_missed_plans` 要等「错过超过宽限」才动手，而计划在
+/// 宽限内仍算「到点」，下一个轮询就会把同一个失败账号再打一遍。
+///
+/// 已派出过（旅行中 / 已归来待领取）与当日已完成的账号不挪：它们的重试走正常轮询。
+/// 窗口已全部过去时不改（今天放弃）。返回是否有账号被挪动。
+fn reschedule_failed_plans(
+    schedules: &mut HashMap<String, BuddyAccountTravelState>,
+    attempted: &[String],
+    today: &str,
+    current_minute: i32,
+    start_min: i32,
+    end_min: i32,
+) -> bool {
+    let Some((from, to)) = super::auto_checkin::remaining_window(start_min, end_min, current_minute)
+    else {
+        return false;
+    };
+    let mut changed = false;
+    for account_id in attempted {
+        let Some(state) = schedules.get_mut(account_id) else {
+            continue;
+        };
+        if state.scheduled_date != today
+            || state.last_depart_date.as_deref() == Some(today)
+            || state.last_done_date.as_deref() == Some(today)
+        {
+            continue;
+        }
+        state.scheduled_minute = super::auto_checkin::draw_plan_minute(from, to, current_minute);
+        changed = true;
+    }
+    changed
+}
+
+/// 展示用邮箱（缺失时退回账号 id）。
+fn account_email(account: &BuddyAccount) -> String {
+    if account.email.trim().is_empty() {
+        account.id.clone()
+    } else {
+        account.email.clone()
+    }
+}
+
 /// 执行一轮自动旅行状态机（每轮「查状态 → 至多一个动作」）。
 ///
-/// - 派出：仅当到达当日计划时间（或 force）且当日未派出过；
+/// - 派出：仅当到达当日计划时间（或 force）且当日未派出过；计划时间已过（应用没开着 /
+///   上一轮失败）时由 `reschedule_missed_plans` 重排到窗口内的新随机时间，不「立刻补派」；
 /// - 领取：全天检测 arrived（旅行时长 1~4 小时随机，返回后下一轮领取）；
 /// - 已达派出上限：当日完成；
-/// - 令牌失效：返回 auth_expired，由调度器拉长重试间隔。
+/// - 窗口已全部过去：今天放弃（等明天跨天重规划）。
 pub async fn run_auto_travel_cycle_if_needed(
     app: &AppHandle,
     force: bool,
@@ -384,12 +489,22 @@ pub async fn run_auto_travel_cycle_if_needed(
     let now = Local::now();
     let current_minute = (now.hour() * 60 + now.minute()) as i32;
     let today_str = get_today_date_string();
+    let (start_min, end_min) = super::auto_checkin::plan_window(&config.start_time, &config.end_time);
     let cross_day = needs_replan(&config, &accounts);
     let allow_generate = force
         || cross_day
         || current_minute >= super::auto_checkin::parse_time_to_minutes(&config.start_time);
     let before_schedules = config.account_schedules.clone().unwrap_or_default();
-    if ensure_travel_schedules(&mut config, &accounts, allow_generate) {
+    let mut schedule_changed = ensure_travel_schedules(&mut config, &accounts, allow_generate);
+    // 计划时间已过但今天还没派出（应用没开着 / 上一轮失败）→ 重排到窗口内的新随机时间，
+    // 而不是「打开应用就立刻补派」。手动立即巡检（force）不参与重排。
+    let (rescheduled, reschedule_entries) = if force {
+        (false, Vec::new())
+    } else {
+        reschedule_missed_plans(&mut config, &accounts, current_minute)
+    };
+    schedule_changed |= rescheduled;
+    if schedule_changed {
         save_config_without_wake(&config)?;
         // 计划变更同步归档：旧日期收尾 + 今日计划时间
         archive_schedule_changes(&before_schedules, &config, &accounts);
@@ -400,7 +515,9 @@ pub async fn run_auto_travel_cycle_if_needed(
     let mut new_schedules = schedules.clone();
     let mut acted = false;
     let mut auth_expired = false;
-    let mut entries: Vec<action_log::BuddyActionLogEntry> = Vec::new();
+    let mut entries: Vec<action_log::BuddyActionLogEntry> = reschedule_entries;
+    // 本轮到点、真正跑过状态机的账号（派出失败者要把重试时机挪到新的随机时刻）
+    let mut attempted_ids: Vec<String> = Vec::new();
 
     for account in &accounts {
         let Some(sch) = schedules.get(&account.id).cloned() else {
@@ -417,12 +534,15 @@ pub async fn run_auto_travel_cycle_if_needed(
         if sch.last_done_date.as_deref() == Some(&today_str) {
             continue; // 当日流程已完成
         }
+        // 已派出过 → 继续跟领取（不受窗口限制：旅行可能在窗口结束后才回来）；
+        // 否则只有「到点且仍在窗口内、没错过太久」才派出。
         let due = sch.last_depart_date.as_deref() == Some(&today_str)
             || force
-            || current_minute >= sch.scheduled_minute;
+            || super::auto_checkin::is_plan_due(sch.scheduled_minute, current_minute, end_min);
         if !due {
             continue;
         }
+        attempted_ids.push(account.id.clone());
 
         // 这笔旅行归属的日期：归来/领取都归档到出发那天
         // （跨零点时，比如 23:50 出发、次日 01:00 归来，仍记在出发日）
@@ -707,14 +827,33 @@ pub async fn run_auto_travel_cycle_if_needed(
         // traveling：旅行中，等下一轮领取
     }
 
+    // 派出失败（网络错误/令牌失效等）的重试时机也改成「窗口内新随机时间」：否则下一个
+    // 轮询就会以「已到点」立刻重打同一个失败账号。
+    let retry_moved = reschedule_failed_plans(
+        &mut new_schedules,
+        &attempted_ids,
+        &today_str,
+        current_minute,
+        start_min,
+        end_min,
+    );
+
     config.account_schedules = Some(new_schedules);
+    if retry_moved {
+        // 计划时间被挪动过 → 同步归档（日历与卡片都以归档为准）
+        archive_schedule_changes(&schedules, &config, &accounts);
+    }
     save_config_without_wake(&config)?;
     action_log::append_action_logs(&entries)?;
     let _ = app.emit("buddy-action-logs-changed", ());
     let _ = app.emit("buddy-auto-travel-config-changed", ());
 
+    // 失败不再让调度器拉长间隔：重试时机已改成「重排到窗口内的新随机时间」，
+    // 轮询若退避到分钟以上就会错过这些随机时刻。失败信息已写进行为日志。
     if auth_expired {
-        return Ok("auth_expired".to_string());
+        eprintln!(
+            "[BuddyAutoTravel] 本轮存在令牌失效账号：已过计划时间的账号已重排到窗口内新随机时间（窗口已结束的今天放弃）"
+        );
     }
     Ok("completed".to_string())
 }
@@ -765,6 +904,9 @@ pub struct BuddyTravelTasksView {
 ///
 /// 状态与时间优先取今日归档（跨天后仍可追溯、字段齐全），
 /// 归档缺失时回退到调度器里的今日计划（`account_schedules`）。
+///
+/// 归档里还是 `pending` 但计划已错过、且今天的窗口已全过去时，对外显示 `unfinished`
+/// （「今天已放弃」，等明天跨天重规划）——与签到侧同一套判据（见 `is_plan_due`）。
 pub fn build_travel_tasks_view() -> Result<BuddyTravelTasksView, String> {
     let config = get_config_checked()?;
     // 旅行是 WorkBuddy 专属活动
@@ -775,6 +917,11 @@ pub fn build_travel_tasks_view() -> Result<BuddyTravelTasksView, String> {
 
     let mut generated = false;
     let mut tasks = Vec::with_capacity(accounts.len());
+    let current_minute = super::auto_checkin::current_minute_of_day();
+    let (start_min, end_min) = super::auto_checkin::plan_window(&config.start_time, &config.end_time);
+    let window_closed =
+        super::auto_checkin::remaining_window(start_min, end_min, current_minute).is_none();
+
     for account in &accounts {
         let schedule = schedules.get(&account.id);
         let scheduled_today = schedule
@@ -806,6 +953,21 @@ pub fn build_travel_tasks_view() -> Result<BuddyTravelTasksView, String> {
                     travel_status::NONE.to_string()
                 }
             });
+        // 「今天已放弃」：计划错过 + 窗口已全过去 + 今天既没派出过也没结束
+        let give_up_today = window_closed
+            && scheduled_today
+            && schedule
+                .map(|s| {
+                    super::auto_checkin::is_plan_missed(s.scheduled_minute, current_minute)
+                        && s.last_depart_date.as_deref() != Some(today_str.as_str())
+                        && s.last_done_date.as_deref() != Some(today_str.as_str())
+                })
+                .unwrap_or(false);
+        let status = if give_up_today && status == travel_status::PENDING {
+            travel_status::UNFINISHED.to_string()
+        } else {
+            status
+        };
 
         tasks.push(BuddyTravelTask {
             account_id: account.id.clone(),
@@ -854,12 +1016,8 @@ pub fn start_auto_travel_scheduler(app: AppHandle) {
                 }
             }
             match run_auto_travel_cycle_if_needed(&app, false).await {
-                Ok(result) if result == "auth_expired" => {
-                    // 令牌失效：拉长重试间隔，用户刷新登录态后由定时或 wake 恢复
-                    next_delay = MAX_RETRY_DELAY;
-                    retry_delay = INITIAL_RETRY_DELAY;
-                    eprintln!("[BuddyAutoTravel] 令牌失效，{} 秒后重试", next_delay.as_secs());
-                }
+                // 固定短间隔轮询：账号级失败已改成「重排到窗口内新随机时间」，
+                // 轮询若退避到分钟级就会错过这些随机时刻。
                 Ok(_) => {
                     next_delay = SCHEDULER_POLL_DELAY;
                     retry_delay = INITIAL_RETRY_DELAY;
@@ -967,6 +1125,86 @@ mod tests {
     }
 
     #[test]
+    fn test_travel_reschedule_missed_plan_moves_to_future_and_logs() {
+        let accounts = vec![sample_account("acc_1", "a@x.com")];
+        let today = get_today_date_string();
+        // 窗口 08:00~12:00（480~720），计划 08:30 没派出，现在 10:00
+        let mut config = travel_config_with(travel_state(&today, 510));
+        let (changed, entries) = reschedule_missed_plans(&mut config, &accounts, 600);
+        assert!(changed);
+        let schedule = config.account_schedules.unwrap().remove("acc_1").unwrap();
+        assert!((601..=720).contains(&schedule.scheduled_minute));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, "travel");
+        assert_eq!(entries[0].status, "rescheduled");
+    }
+
+    #[test]
+    fn test_travel_reschedule_skips_departed_done_and_closed_window() {
+        let accounts = vec![sample_account("acc_1", "a@x.com")];
+        let today = get_today_date_string();
+        let build = |mutate: fn(&mut BuddyAccountTravelState)| {
+            let mut state = travel_state(&today, 510);
+            mutate(&mut state);
+            travel_config_with(state)
+        };
+
+        // 已派出（旅行中 / 已归来待领取）→ 不重排
+        let mut config = build(|s| s.last_depart_date = Some(get_today_date_string()));
+        assert!(!reschedule_missed_plans(&mut config, &accounts, 600).0);
+
+        // 当日已完成 → 不重排
+        let mut config = build(|s| s.last_done_date = Some(get_today_date_string()));
+        assert!(!reschedule_missed_plans(&mut config, &accounts, 600).0);
+
+        // 窗口已全部过去（现在 13:20）→ 今天放弃：计划不动、不写日志
+        let mut config = build(|_| {});
+        let (changed, entries) = reschedule_missed_plans(&mut config, &accounts, 800);
+        assert!(!changed);
+        assert!(entries.is_empty());
+        assert_eq!(
+            config
+                .account_schedules
+                .unwrap()
+                .get("acc_1")
+                .unwrap()
+                .scheduled_minute,
+            510
+        );
+
+        // 还在宽限内（08:30 的计划，现在 08:33）→ 不重排，照旧立刻派出
+        let mut config = build(|_| {});
+        assert!(!reschedule_missed_plans(&mut config, &accounts, 513).0);
+    }
+
+    #[test]
+    fn test_travel_reschedule_failed_plans_skips_departed_and_done() {
+        let today = get_today_date_string();
+        let mut traveling = travel_state(&today, 600);
+        traveling.last_depart_date = Some(today.clone());
+        let mut done = travel_state(&today, 600);
+        done.last_done_date = Some(today.clone());
+        let mut schedules = HashMap::from([
+            ("acc_failed".to_string(), travel_state(&today, 600)),
+            ("acc_traveling".to_string(), traveling),
+            ("acc_done".to_string(), done),
+        ]);
+        let attempted = vec![
+            "acc_failed".to_string(),
+            "acc_traveling".to_string(),
+            "acc_done".to_string(),
+        ];
+
+        // 窗口 08:00~12:00，现在 10:00 → 只有派出失败的账号挪到窗口内未来时间
+        assert!(reschedule_failed_plans(
+            &mut schedules, &attempted, &today, 600, 480, 720
+        ));
+        assert!((601..=720).contains(&schedules["acc_failed"].scheduled_minute));
+        assert_eq!(schedules["acc_traveling"].scheduled_minute, 600);
+        assert_eq!(schedules["acc_done"].scheduled_minute, 600);
+    }
+
+    #[test]
     fn test_config_serde_roundtrip() {
         let config = BuddyAutoTravelConfig {
             enabled: true,
@@ -999,6 +1237,17 @@ mod tests {
             last_depart_time: None,
             last_done_date: None,
             last_reward_credit: None,
+        }
+    }
+
+    /// 窗口固定 08:00~12:00（480~720）的单账号配置，便于用注入的 `current_minute` 做确定性测试。
+    fn travel_config_with(state: BuddyAccountTravelState) -> BuddyAutoTravelConfig {
+        BuddyAutoTravelConfig {
+            enabled: true,
+            start_time: "08:00".to_string(),
+            end_time: "12:00".to_string(),
+            location_id: 1,
+            account_schedules: Some(HashMap::from([("acc_1".to_string(), state)])),
         }
     }
 
