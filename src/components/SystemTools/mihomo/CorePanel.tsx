@@ -4,6 +4,7 @@
 //   跳过验证前缀；RTT 延迟；TCP 并发；记住节点/FakeIP；日志等级；进程查找；核心升级）
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { Shuffle, RefreshCw, Eye, EyeOff, Trash2, ExternalLink, CloudDownload } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
 import { cardCls, SettingItem, Toggle, btnSec, btnPrimary, inputCls } from "./ui";
@@ -134,7 +135,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
         params.delete("hostname");
         url = `${u.origin}/ui/#/proxies?${params.toString()}`;
       }
-      window.open(url, "_blank", "noopener,noreferrer");
+      void openUrl(url);
     } catch {
       setMsg(t("mihomo.coreEcInvalid"));
     }

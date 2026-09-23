@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Rocket,
   FolderOpen,
@@ -743,7 +744,7 @@ export default function ToolLauncher() {
                     <span className="text-[9px] text-slate-600">{t("toollaunch.notInstalled")}</span>
                     {tool.website && (
                       <a href={tool.website} target="_blank" rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); void openUrl(tool.website); }}
                         className="text-blue-400/70 hover:text-blue-300 transition-colors flex items-center"
                         title={t("toollaunch.openSite")}>
                         <ExternalLink className="w-2.5 h-2.5" />
@@ -841,6 +842,7 @@ export default function ToolLauncher() {
                     )}
                     <span className="text-[10px] text-slate-500">· {selectedTool.api_protocol === "none" ? t("toollaunch.modelNone") : PROTOCOL_LABELS[selectedTool.api_protocol]}</span>
                     <a href={selectedTool.website} target="_blank" rel="noopener noreferrer"
+                      onClick={(e) => { e.preventDefault(); void openUrl(selectedTool.website); }}
                       className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-0.5 ml-1"
                       title={t("toollaunch.openSite")}>
                       <ExternalLink className="w-3 h-3" /> {t("toollaunch.site")}

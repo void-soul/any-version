@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   applyNodeChanges,
   Background,
@@ -322,7 +323,7 @@ function TaskMarkdown({ content, onOpenFile }: { content: string; onOpenFile: (p
       a: ({ href, children }) => {
         const target = href ?? "";
         const local = isLocalFilePath(target);
-        return <a href={local ? undefined : target} target={local ? undefined : "_blank"} rel={local ? undefined : "noopener noreferrer"} onClick={(event) => { if (local) { event.preventDefault(); onOpenFile(decodeLocalPath(target)); } }} className="text-cyan-300 underline decoration-cyan-400/40 underline-offset-2 hover:text-cyan-100">{children}</a>;
+        return <a href={local ? undefined : target} target={local ? undefined : "_blank"} rel={local ? undefined : "noopener noreferrer"} onClick={(event) => { if (local) { event.preventDefault(); onOpenFile(decodeLocalPath(target)); } else { event.preventDefault(); void openUrl(target); } }} className="text-cyan-300 underline decoration-cyan-400/40 underline-offset-2 hover:text-cyan-100">{children}</a>;
       },
       img: ({ src, alt }) => {
         const target = typeof src === "string" ? src : "";

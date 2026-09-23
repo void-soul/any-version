@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -225,7 +225,7 @@ export const MindmapMarkdown = memo(function MindmapMarkdown({ content }: { cont
             const target = href ?? "";
             const local = isLocalFilePath(target);
             return <a href={local ? undefined : target} target={local ? undefined : "_blank"} rel={local ? undefined : "noopener noreferrer"}
-              onClick={(e) => { if (local) { e.preventDefault(); openLocal(decodeLocalPath(target)); } }}
+              onClick={(e) => { e.preventDefault(); if (local) { openLocal(decodeLocalPath(target)); } else { void openUrl(target); } }}
               className="text-cyan-300 underline decoration-cyan-400/40 underline-offset-2 hover:text-cyan-100">{children}</a>;
           },
           img: ({ src, alt }) => {

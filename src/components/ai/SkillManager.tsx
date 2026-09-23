@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { listen as listenEvent } from '@tauri-apps/api/event';
 import {
   Search, Tag, Boxes, Store, Download, Trash2,
@@ -669,6 +670,7 @@ export default function SkillManager() {
                     href={src.url}
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={(e) => { e.preventDefault(); void openUrl(src.url); }}
                     className="rounded-xl bg-white/[0.03] border border-white/10 p-3.5 hover:border-[var(--module-accent-ring)] transition-all group"
                   >
                     <div className="flex items-center justify-between">

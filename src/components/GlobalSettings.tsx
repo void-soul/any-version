@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen, emit } from "@tauri-apps/api/event";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -907,10 +908,7 @@ export default function GlobalSettings() {
 
 
   const handleDownloadUpdate = () => {
-    window.open(
-      "https://github.com/void-soul/any-version/releases/latest",
-      "_blank",
-    );
+    void openUrl("https://github.com/void-soul/any-version/releases/latest");
   };
 
   return (

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Plus,
   Trash2,
@@ -437,7 +438,7 @@ export default function ModelConfig() {
                   <span className="text-[11px] font-bold text-white truncate max-w-[160px]">{provider.name}</span>
                   {provider.website && (
                     <a href={provider.website} target="_blank" rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); void openUrl(provider.website); }}
                       className="text-blue-400/70 hover:text-blue-300 transition-colors flex-shrink-0" title={t("modelcfg.openSite")}>
                       <ExternalLink className="w-3 h-3" />
                     </a>
@@ -533,7 +534,7 @@ export default function ModelConfig() {
                           <span className="text-[11px] font-bold text-slate-200 truncate">{p.name}</span>
                           {added && <span className="ml-auto text-[8px] text-slate-600 flex-shrink-0">{t("modelcfg.added")}</span>}
                           {!added && p.website && (
-                            <a href={p.website} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+                            <a href={p.website} target="_blank" rel="noopener noreferrer" onClick={(e) => { e.preventDefault(); e.stopPropagation(); void openUrl(p.website); }}
                               className="ml-auto text-slate-600 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity"
                               title={t("modelcfg.openSite")}>
                               <ExternalLink className="w-3 h-3" />
@@ -582,6 +583,7 @@ export default function ModelConfig() {
                 </span>
                 {detailProvider.website && (
                   <a href={detailProvider.website} target="_blank" rel="noopener noreferrer"
+                    onClick={(e) => { e.preventDefault(); void openUrl(detailProvider.website); }}
                     className="text-blue-400 hover:text-blue-300 transition-colors flex-shrink-0" title={t("modelcfg.openSite")}>
                     <ExternalLink className="w-3 h-3" />
                   </a>
