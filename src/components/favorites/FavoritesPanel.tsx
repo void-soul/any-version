@@ -10,34 +10,31 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useTranslation } from "react-i18next";
 import {
-  AlertTriangle,
-  BookMarked,
-  Download,
-  FlaskConical,
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
-  KeyRound,
-  Lock,
   Pencil,
   RefreshCw,
   Search,
-  Sparkles,
-  Square,
   Tag,
   Trash2,
-  Tv,
 } from "lucide-react";
 
 import { SharedButton } from "../shared/Button";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { toast } from "../shared/Toast";
 import { GithubTokenDialog } from "../project/GithubTokenDialog";
+import { MarkdownRenderer } from "../ai/MarkdownRenderer";
 import { CredentialDialog } from "./CredentialDialog";
 import type { AiConfig, AiProvider } from "../ai/types";
 import {
   SOURCE_LABELS,
+  expiringInDays,
   statusBadge,
+  type CachedContent,
   type CheckResult,
   type ClassifyResult,
+  type CredentialStatus,
   type FavoriteRow,
   type FavoriteStats,
   type FavoritesProgress,
@@ -83,18 +80,25 @@ export default function FavoritesPanel() {
   const [biliConfigured, setBiliConfigured] = useState(false);
   const [cookieOpen, setCookieOpen] = useState(false);
 
-  // 知乎：官方接口用 Access Secret；实验路线用 Cookie（**两个槽位各存各的**）
-  const [zhihuConfigured, setZhihuConfigured] = useState(false);
-  const [zhihuSecretOpen, setZhihuSecretOpen] = useState(false);
+  // 知乎：只走 Cookie 直连（官方接口拿不到私有收藏夹，已下线）
   const [zhihuCookieConfigured, setZhihuCookieConfigured] = useState(false);
   const [zhihuCookieOpen, setZhihuCookieOpen] = useState(false);
+
+  // 凭证健康状态：Cookie 快过期/已失效时主动提醒
+  const [credStatus, setCredStatus] = useState<CredentialStatus[]>([]);
+  const [credWarned, setCredWarned] = useState(false);
+
+  // 展开看正文：知乎收藏内容 / GitHub README（懒抓，抓过就缓存在库里）
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [content, setContent] = useState<Record<number, CachedContent | null>>({});
+  const [contentBusy, setContentBusy] = useState<number | null>(null);
 
   // GitHub Token：**收藏模块自己的一份**，与 SDK 模块的 token 互不共享
   const [tokenConfigured, setTokenConfigured] = useState(false);
   const [tokenOpen, setTokenOpen] = useState(false);
 
   const refresh = useCallback(async () => {
-    const [list, overview] = await Promise.all([
+    const [list, overview, creds] = await Promise.all([
       invoke<FavoriteRow[]>("fav_list", {
         source,
         tag,
@@ -103,9 +107,11 @@ export default function FavoritesPanel() {
         limit: 0,
       }),
       invoke<FavoriteStats>("fav_stats"),
+      invoke<CredentialStatus[]>("fav_credential_status"),
     ]);
     setItems(list);
     setStats(overview);
+    setCredStatus(creds);
   }, [source, tag, keyword]);
 
   useEffect(() => {
@@ -116,9 +122,6 @@ export default function FavoritesPanel() {
     invoke<boolean>("fav_has_credential", { source: "bilibili" })
       .then(setBiliConfigured)
       .catch(() => setBiliConfigured(false));
-    invoke<boolean>("fav_has_credential", { source: "zhihu" })
-      .then(setZhihuConfigured)
-      .catch(() => setZhihuConfigured(false));
     invoke<boolean>("fav_has_credential", { source: "zhihu-cookie" })
       .then(setZhihuCookieConfigured)
       .catch(() => setZhihuCookieConfigured(false));
@@ -126,6 +129,46 @@ export default function FavoritesPanel() {
       .then((token) => setTokenConfigured(!!token.trim()))
       .catch(() => setTokenConfigured(false));
   }, []);
+
+  /** 某个凭证的告警级别：expired > soon > ok/unknown（未配置则 null）。 */
+  const credAlert = useCallback(
+    (sourceKey: string): "expired" | "soon" | null => {
+      const found = credStatus.find((c) => c.source === sourceKey);
+      if (!found?.configured) return null;
+      if (found.status === "expired") return "expired";
+      if (expiringInDays(found.expiresAt) !== null) return "soon";
+      return null;
+    },
+    [credStatus],
+  );
+
+  // 失效/快过期只主动提醒一次，别每次重渲染都弹
+  useEffect(() => {
+    if (credWarned || credStatus.length === 0) return;
+    const expired = credStatus.filter((c) => c.configured && c.status === "expired");
+    const soon = credStatus.filter(
+      (c) => c.configured && c.status !== "expired" && expiringInDays(c.expiresAt) !== null,
+    );
+    if (expired.length === 0 && soon.length === 0) return;
+    setCredWarned(true);
+    if (expired.length > 0) {
+      toast(
+        t("favorites.credExpiredHint", {
+          sources: expired.map((c) => t(`favorites.credName.${c.source}`)).join("、"),
+        }),
+        "err",
+      );
+    } else {
+      const days = expiringInDays(soon[0].expiresAt) ?? 0;
+      toast(
+        t("favorites.credSoonHint", {
+          source: t(`favorites.credName.${soon[0].source}`),
+          days,
+        }),
+        "info",
+      );
+    }
+  }, [credStatus, credWarned, t]);
 
   useEffect(() => {
     invoke<AiConfig>("get_ai_config")
@@ -201,15 +244,39 @@ export default function FavoritesPanel() {
     }
   };
 
-  const runProbe = async () => {
+  /**
+   * 展开正文：知乎用已缓存的内容，GitHub 懒抓 README（优先中文版）。
+   *
+   * `refresh` 为 true 时强制重新抓（GitHub 用），否则命中缓存直接显示。
+   */
+  const openContent = async (item: FavoriteRow, force = false) => {
+    setContentBusy(item.id);
     try {
-      const report = await invoke<string>("fav_zhihu_probe");
-      // 判定交给后端的 verdict（两路探测：WebView + Rust 直连）
-      const verdict = /"verdict":\s*"([a-z_]+)"/.exec(report)?.[1];
-      toast(report, verdict === "ok" ? "ok" : "err");
+      const data =
+        item.source === "github"
+          ? await invoke<CachedContent>("fav_github_readme", { id: item.id, refresh: force })
+          : await invoke<CachedContent | null>("fav_get_content", { id: item.id });
+      setContent((prev) => ({ ...prev, [item.id]: data }));
     } catch (e) {
-      toast(String(e), "err");
+      toast(t("favorites.contentFail", { err: String(e) }), "err");
+      // 失败也记一笔，避免每次收起再展开都重试一遍
+      setContent((prev) => ({ ...prev, [item.id]: null }));
+    } finally {
+      setContentBusy(null);
     }
+  };
+
+  /** 能否展开看正文：知乎有正文缓存，GitHub 能抓 README，B站暂不支持。 */
+  const canPreview = (item: FavoriteRow) =>
+    item.source === "zhihu" || item.source === "github";
+
+  const toggleContent = (item: FavoriteRow) => {
+    if (expandedId === item.id) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(item.id);
+    if (!(item.id in content)) void openContent(item);
   };
 
   const runImportBili = async () => {
@@ -235,18 +302,17 @@ export default function FavoritesPanel() {
     }
   };
 
-  // 知乎：走开放平台官方接口，只需 Access Secret（developer.zhihu.com/profile 生成）
+  // 知乎：只走 Cookie 直连（含私有收藏夹；官方接口拿不到全量，已下线）
   const runImportZhihu = async () => {
-    // 没配就先把配置弹窗递上去
-    if (!zhihuConfigured) {
-      setZhihuSecretOpen(true);
+    if (!zhihuCookieConfigured) {
+      setZhihuCookieOpen(true);
       return;
     }
     setBusy("zhihu");
     try {
       const result = await invoke<ImportResult>("fav_import_zhihu");
       await refresh();
-      // 部分收藏夹失败（如私有夹平台不让读）：主体照常导入，但要让人看见失败明细
+      // 部分收藏夹失败（限流等）：主体照常导入，但要把失败明细露出来
       if (result.failed && result.failed.length > 0) {
         toast(
           t("favorites.importPartial", {
@@ -256,6 +322,8 @@ export default function FavoritesPanel() {
           }),
           "err",
         );
+      } else if (result.cancelled) {
+        toast(t("favorites.importCancelled"), "ok");
       } else {
         toast(
           t("favorites.importDone", {
@@ -268,6 +336,8 @@ export default function FavoritesPanel() {
       }
     } catch (e) {
       toast(t("favorites.importFail", { err: String(e) }), "err");
+      // Cookie 失效是最常见原因：把配置弹窗递上去
+      setZhihuCookieOpen(true);
     } finally {
       setBusy(null);
       setProgress(null);
@@ -283,14 +353,25 @@ export default function FavoritesPanel() {
         limit: null,
       });
       await refresh();
-      toast(
-        t("favorites.classifyDone", {
-          classified: result.classified,
-          tags: result.tagsWritten,
-          remaining: result.remaining,
-        }),
-        "ok",
-      );
+      if (result.cancelled) {
+        // 停掉了也要说清「已归类多少条被保留」，否则用户不知道白干了没有
+        toast(
+          t("favorites.classifyCancelled", {
+            classified: result.classified,
+            remaining: result.remaining,
+          }),
+          "info",
+        );
+      } else {
+        toast(
+          t("favorites.classifyDone", {
+            classified: result.classified,
+            tags: result.tagsWritten,
+            remaining: result.remaining,
+          }),
+          "ok",
+        );
+      }
     } catch (e) {
       toast(t("favorites.classifyFail", { err: String(e) }), "err");
     } finally {
@@ -304,7 +385,9 @@ export default function FavoritesPanel() {
     try {
       const result = await invoke<CheckResult>("fav_check_gone", { all: false });
       await refresh();
-      if (result.aborted) {
+      if (result.cancelled) {
+        toast(t("favorites.checkCancelled", { checked: result.checked }), "info");
+      } else if (result.aborted) {
         toast(t("favorites.checkAborted", { checked: result.checked }), "err");
       } else {
         toast(
@@ -357,112 +440,127 @@ export default function FavoritesPanel() {
 
   const goneCount = stats?.gone ?? 0;
 
+  /**
+   * 停止当前长任务。
+   *
+   * 后端在**循环的下一轮开始前**检查标志：进行中的那次请求会跑完
+   * （导入的一页 / 归类的一批 / 检测的一条），所以提示语要说清是「下一轮才停」，
+   * 否则用户看界面没立刻反应会以为按钮坏了、再点几次。
+   */
+  const requestStop = async () => {
+    try {
+      await invoke("fav_cancel");
+      toast(t("favorites.stopRequested"), "info");
+    } catch (e) {
+      toast(String(e), "err");
+    }
+  };
+
+  /** 只在对应任务运行时出现的「停止」链接。 */
+  const stopLink = (active: boolean) =>
+    active ? <LinkButton label={t("favorites.stop")} danger onClick={() => void requestStop()} /> : null;
+
+  /** 凭证按钮的悬停提示：有告警时把原因说清楚，别让用户猜角标是什么意思。 */
+  const credTitle = (sourceKey: string, fallback: string) => {
+    const level = credAlert(sourceKey);
+    if (level === "expired") return t("favorites.credExpired");
+    if (level === "soon") {
+      const days =
+        expiringInDays(credStatus.find((c) => c.source === sourceKey)?.expiresAt) ?? 0;
+      return t("favorites.credSoon", { days });
+    }
+    return fallback;
+  };
+
   return (
     <div className="h-full flex flex-col gap-2 p-3 text-slate-200">
-      {/* 顶部操作区 */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <SharedButton className="!h-7 !px-2" onClick={() => void runImport()} disabled={busy !== null}>
-          {busy === "import" ? (
-            <RefreshCw className="w-3 h-3 animate-spin" />
-          ) : (
-            <Download className="w-3 h-3" />
-          )}
-          {t("favorites.import")}
-        </SharedButton>
-        {busy === "import" && (
-          <SharedButton variant="secondary" className="!h-7 !px-2" onClick={() => void invoke("fav_cancel_import")}>
-            <Square className="w-3 h-3" />
-            {t("favorites.cancel")}
-          </SharedButton>
-        )}
-
-        {/* 收藏模块自己的 GitHub Token（与 SDK 模块相互独立） */}
-        <button
-          onClick={() => setTokenOpen(true)}
-          className={`p-1 rounded cursor-pointer transition-colors ${
-            tokenConfigured ? "text-emerald-400" : "text-slate-500 hover:text-slate-200"
-          }`}
-          title={
-            tokenConfigured
-              ? t("favorites.githubTokenSetTip")
-              : t("favorites.githubTokenNeedTip")
-          }
-        >
-          <Lock className="w-3.5 h-3.5" />
-        </button>
-
-        <div className="flex items-center gap-1">
-          <SharedButton
-            variant="secondary"
-            className="!h-7 !px-2"
-            onClick={() => (biliConfigured ? void runImportBili() : setCookieOpen(true))}
+      {/* 顶部操作区：站点名只出现一次，动作一律用文字链接表达（细分隔线分组）。
+          三个站点的两个动作语义一致（导入 / 密钥），凭证键不同所以互不覆盖。 */}
+      <div className="flex items-center gap-x-3 gap-y-1 flex-wrap">
+        {/* GitHub star */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-slate-200 font-medium">GitHub</span>
+          <LinkButton
+            label={t("favorites.import")}
+            busy={busy === "import"}
             disabled={busy !== null}
-          >
-            {busy === "bili" ? (
-              <RefreshCw className="w-3 h-3 animate-spin" />
-            ) : (
-              <Tv className="w-3 h-3" />
-            )}
-            {t("favorites.importBili")}
-          </SharedButton>
-          <button
-            onClick={() => setCookieOpen(true)}
-            className={`p-1 rounded cursor-pointer transition-colors ${
-              biliConfigured ? "text-emerald-400" : "text-slate-500 hover:text-slate-200"
-            }`}
+            onClick={() => void runImport()}
+          />
+          {stopLink(busy === "import")}
+          <KeyLink
+            label={t("favorites.key")}
+            configured={tokenConfigured}
             title={
+              tokenConfigured
+                ? t("favorites.githubTokenSetTip")
+                : t("favorites.githubTokenNeedTip")
+            }
+            onClick={() => setTokenOpen(true)}
+          />
+        </div>
+
+        <Divider />
+
+        {/* B站收藏 */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-slate-200 font-medium">B站</span>
+          <LinkButton
+            label={t("favorites.import")}
+            busy={busy === "bili"}
+            disabled={busy !== null}
+            onClick={() => (biliConfigured ? void runImportBili() : setCookieOpen(true))}
+          />
+          {stopLink(busy === "bili")}
+          <KeyLink
+            label={t("favorites.key")}
+            configured={biliConfigured}
+            alert={credAlert("bilibili")}
+            title={credTitle(
+              "bilibili",
               biliConfigured
                 ? t("favorites.biliCookieSetTip")
-                : t("favorites.biliCookieNeedTip")
-            }
-          >
-            <KeyRound className="w-3 h-3" />
-          </button>
-        </div>
-
-        <div className="flex items-center gap-1">
-          <SharedButton
-            variant="secondary"
-            className="!h-7 !px-2"
-            onClick={() => void runImportZhihu()}
-            disabled={busy !== null}
-            title={t("favorites.zhihuOfficialHint")}
-          >
-            {busy === "zhihu" ? (
-              <RefreshCw className="w-3 h-3 animate-spin" />
-            ) : (
-              <BookMarked className="w-3 h-3" />
+                : t("favorites.biliCookieNeedTip"),
             )}
-            {t("favorites.importZhihu")}
-          </SharedButton>
-          <button
-            onClick={() => setZhihuSecretOpen(true)}
-            className={`p-1 rounded cursor-pointer transition-colors ${
-              zhihuConfigured ? "text-emerald-400" : "text-slate-500 hover:text-slate-200"
-            }`}
-            title={t("favorites.zhihuSecretTitle")}
-          >
-            <KeyRound className="w-3 h-3" />
-          </button>
-          {/* 【实验】Cookie 路线：独立槽位存 Cookie（不覆盖上面的 Access Secret）。
-              **永远打开弹窗**（回显已存的 Cookie），测试由弹窗里的「保存并测试」触发：
-              之前配过就直接开测，用户再也没法改 Cookie 了。 */}
-          <button
-            onClick={() => setZhihuCookieOpen(true)}
-            className={`p-1 rounded cursor-pointer transition-colors ${
-              zhihuCookieConfigured ? "text-emerald-400" : "text-slate-500 hover:text-slate-200"
-            }`}
-            title={
-              zhihuCookieConfigured
-                ? t("favorites.zhihuProbeEdit")
-                : t("favorites.zhihuCookieTitle")
-            }
-          >
-            <FlaskConical className="w-3 h-3" />
-          </button>
+            onClick={() => setCookieOpen(true)}
+          />
         </div>
 
-        <div className="flex items-center gap-1">
+        <Divider />
+
+        {/* 知乎收藏 */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-slate-200 font-medium">知乎</span>
+          <LinkButton
+            label={t("favorites.import")}
+            busy={busy === "zhihu"}
+            disabled={busy !== null}
+            title={t("favorites.zhihuImportHint")}
+            onClick={() => void runImportZhihu()}
+          />
+          {stopLink(busy === "zhihu")}
+          {/* 密钥**永远打开弹窗**（回显已存的 Cookie）：之前配过就直接跑的写法
+              让用户再也进不去弹窗，改不了一份过期 Cookie。 */}
+          <KeyLink
+            label={t("favorites.key")}
+            configured={zhihuCookieConfigured}
+            alert={credAlert("zhihu-cookie")}
+            title={credTitle(
+              "zhihu-cookie",
+              zhihuCookieConfigured
+                ? t("favorites.zhihuCookieSetTip")
+                : t("favorites.zhihuCookieNeedTip"),
+            )}
+            onClick={() => setZhihuCookieOpen(true)}
+          />
+        </div>
+
+        <Divider />
+
+        {/* AI 归类 + 失效检测：都是对已有的本地库做加工 */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-slate-200 font-medium">
+            {t("favorites.toolsLabel")}
+          </span>
           <select
             value={providerId}
             onChange={(e) => {
@@ -470,7 +568,7 @@ export default function FavoritesPanel() {
               const p = providers.find((x) => x.id === e.target.value);
               setModelId(p?.active_model_id || p?.models[0]?.id || "");
             }}
-            className="glass-input px-2 h-7 text-[11px] cursor-pointer max-w-[140px]"
+            className="glass-input px-2 h-6 text-[11px] cursor-pointer max-w-[130px]"
             title={t("favorites.providerHint")}
           >
             <option value="">{t("favorites.providerDefault")}</option>
@@ -483,7 +581,7 @@ export default function FavoritesPanel() {
           <select
             value={modelId}
             onChange={(e) => setModelId(e.target.value)}
-            className="glass-input px-2 h-7 text-[11px] cursor-pointer max-w-[180px]"
+            className="glass-input px-2 h-6 text-[11px] cursor-pointer max-w-[170px]"
             title={t("favorites.modelHint")}
             disabled={!activeProvider}
           >
@@ -495,33 +593,20 @@ export default function FavoritesPanel() {
               </option>
             ))}
           </select>
-          <SharedButton
-            className="!h-7 !px-2"
-            onClick={() => void runClassify()}
+          <LinkButton
+            label={t("favorites.classify")}
+            busy={busy === "classify"}
             disabled={busy !== null || providers.length === 0}
-          >
-            {busy === "classify" ? (
-              <RefreshCw className="w-3 h-3 animate-spin" />
-            ) : (
-              <Sparkles className="w-3 h-3" />
-            )}
-            {t("favorites.classify")}
-          </SharedButton>
+            onClick={() => void runClassify()}
+          />
+          <LinkButton
+            label={t("favorites.check")}
+            busy={busy === "check"}
+            disabled={busy !== null}
+            onClick={() => void runCheck()}
+          />
+          {stopLink(busy === "classify" || busy === "check")}
         </div>
-
-        <SharedButton
-          variant="secondary"
-          className="!h-7 !px-2"
-          onClick={() => void runCheck()}
-          disabled={busy !== null}
-        >
-          {busy === "check" ? (
-            <RefreshCw className="w-3 h-3 animate-spin" />
-          ) : (
-            <AlertTriangle className="w-3 h-3" />
-          )}
-          {t("favorites.check")}
-        </SharedButton>
 
         <div className="ml-auto flex items-center gap-2">
           <div className="flex items-center gap-1 glass-input px-2 h-7">
@@ -548,12 +633,27 @@ export default function FavoritesPanel() {
         </div>
       </div>
 
-      {/* 实时进度：导入（抓取/新增计数 + 当前收藏夹）与归类（批次 + 百分比） */}
-      {busy && progress && progress.stage === (busy === "classify" ? "classify" : "import") && (
+      {/* 实时进度：导入 / 归类 / 失效检测三类共用一条进度条。
+          只按 stage 过滤**不**看 busy：检测失效在 picker 那侧没有 busy 之外的信号，
+          而导入/归类结束时后端会发 done=true，前端在 finally 里清掉即可。 */}
+      {progress && (
         <div className="glass-panel px-3 py-2 space-y-1.5">
           <div className="flex items-center gap-2 text-[10px] text-slate-300 flex-wrap">
             <RefreshCw className="w-3 h-3 animate-spin text-[var(--module-accent)]" />
-            {progress.stage === "import" ? (
+            {progress.stage === "check" ? (
+              <>
+                <span>{t("favorites.checkProgress")}</span>
+                <span>
+                  {t("favorites.progressChecked", {
+                    checked: progress.checked ?? 0,
+                    total: progress.checkTotal ?? 0,
+                  })}
+                </span>
+                <span className="text-slate-500 truncate max-w-[260px]">
+                  {progress.message ?? ""}
+                </span>
+              </>
+            ) : progress.stage === "import" ? (
               <>
                 <span>
                   {SOURCE_LABELS[progress.source ?? ""] ?? progress.source ?? ""}
@@ -587,7 +687,17 @@ export default function FavoritesPanel() {
             )}
           </div>
           <div className="h-1 rounded bg-white/5 overflow-hidden">
-            {progress.stage === "classify" &&
+            {progress.stage === "check" && (progress.checkTotal ?? 0) > 0 ? (
+              <div
+                className="h-full bg-[var(--module-accent)] transition-all duration-300"
+                style={{
+                  width: `${Math.min(
+                    100,
+                    ((progress.checked ?? 0) / (progress.checkTotal ?? 1)) * 100,
+                  )}%`,
+                }}
+              />
+            ) : progress.stage === "classify" &&
             (progress.classified ?? 0) + (progress.remaining ?? 0) > 0 ? (
               <div
                 className="h-full bg-[var(--module-accent)] transition-all duration-300"
@@ -744,14 +854,83 @@ export default function FavoritesPanel() {
                     )}
                   </div>
 
-                  <button
-                    onClick={() => removeItem(item)}
-                    className="p-1 rounded text-slate-600 hover:text-rose-400 cursor-pointer opacity-0 group-hover:opacity-100"
-                    title={t("favorites.delete")}
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
+                  <div className="flex items-center gap-0.5">
+                    {canPreview(item) && (
+                      <button
+                        onClick={() => toggleContent(item)}
+                        className="p-1 rounded text-slate-600 hover:text-slate-200 cursor-pointer"
+                        title={
+                          expandedId === item.id
+                            ? t("favorites.contentHide")
+                            : t("favorites.contentShow")
+                        }
+                      >
+                        {expandedId === item.id ? (
+                          <ChevronDown className="w-3 h-3" />
+                        ) : (
+                          <ChevronRight className="w-3 h-3" />
+                        )}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => removeItem(item)}
+                      className="p-1 rounded text-slate-600 hover:text-rose-400 cursor-pointer opacity-0 group-hover:opacity-100"
+                      title={t("favorites.delete")}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
                 </div>
+
+                {/* 展开的正文：知乎是导入时顺手缓存的内容，GitHub 是懒抓的 README（优先中文版） */}
+                {expandedId === item.id && (
+                  <div className="mt-1.5 rounded-lg border border-white/10 bg-black/25 p-2">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[9px] text-slate-500 truncate">
+                        {contentBusy === item.id
+                          ? t("favorites.contentLoading")
+                          : content[item.id]?.label ??
+                            (item.source === "github"
+                              ? t("favorites.contentReadme")
+                              : t("favorites.contentEmpty"))}
+                        {content[item.id]?.fetchedAt
+                          ? ` · ${content[item.id]?.fetchedAt}`
+                          : ""}
+                      </span>
+                      {item.source === "github" && (
+                        <button
+                          onClick={() => void openContent(item, true)}
+                          disabled={contentBusy === item.id}
+                          className="ml-auto text-[9px] text-slate-500 hover:text-slate-200 cursor-pointer disabled:opacity-40"
+                          title={t("favorites.contentRefresh")}
+                        >
+                          {t("favorites.contentRefresh")}
+                        </button>
+                      )}
+                    </div>
+                    {contentBusy === item.id ? (
+                      <div className="flex items-center gap-2 text-[10px] text-slate-500 py-2">
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                        {t("favorites.contentLoading")}
+                      </div>
+                    ) : content[item.id]?.text ? (
+                      <div className="max-h-72 overflow-y-auto">
+                        {item.source === "github" ? (
+                          <MarkdownRenderer content={content[item.id]!.text} />
+                        ) : (
+                          // 知乎正文只渲染纯文本：远端 HTML 直接进 DOM 等于把注入面交给知乎
+                          <p className="text-[11px] text-slate-300 leading-relaxed whitespace-pre-wrap">
+                            {content[item.id]!.text}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-slate-500 py-1">
+                        {t("favorites.contentEmpty")}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -785,21 +964,9 @@ export default function FavoritesPanel() {
         noteKey="favorites.githubTokenLocalNote"
       />
 
-      {/* 三类凭证各用一个弹窗，**存储键不同所以互不覆盖**：
-          - zhihu        = 官方接口 Access Secret（密码框）
-          - zhihu-cookie = 实验路线 Cookie（多文本框，需含 z_c0 + d_c0）
+      {/* 两类凭证各用一个弹窗，**存储键不同所以互不覆盖**：
+          - zhihu-cookie = 知乎 Cookie（多文本框，需含 z_c0 + d_c0）
           - bilibili     = B站 Cookie（多文本框，需含 SESSDATA） */}
-      <CredentialDialog
-        open={zhihuSecretOpen}
-        onClose={() => setZhihuSecretOpen(false)}
-        source="zhihu"
-        title={t("favorites.zhihuSecretTitle")}
-        hint={t("favorites.zhihuSecretHint")}
-        placeholder={t("favorites.zhihuSecretPlaceholder")}
-        note={t("favorites.zhihuQuotaHint")}
-        onSaved={setZhihuConfigured}
-      />
-
       <CredentialDialog
         open={zhihuCookieOpen}
         onClose={() => setZhihuCookieOpen(false)}
@@ -809,9 +976,11 @@ export default function FavoritesPanel() {
         placeholder={t("favorites.zhihuCookiePlaceholder")}
         note={t("favorites.zhihuCookieNote")}
         multiline
-        saveLabel={t("favorites.credentialSaveAndTest")}
-        onSaved={setZhihuCookieConfigured}
-        afterSave={() => void runProbe()}
+        onSaved={(configured) => {
+          setZhihuCookieConfigured(configured);
+          // 换了 Cookie 就把健康状态刷新一下：后端会把 status 重置为「未验证」
+          void refresh().catch(() => {});
+        }}
       />
 
       <CredentialDialog
@@ -828,5 +997,96 @@ export default function FavoritesPanel() {
 
       <ConfirmDialogHost request={confirmRequest} onClose={() => setConfirmRequest(null)} />
     </div>
+  );
+}
+
+/** 分组之间的细分隔线（比留白更明确地「断开」，又不至于像卡片那样围起来）。 */
+function Divider() {
+  return <span className="w-px h-3.5 bg-white/10" />;
+}
+
+/**
+ * 工具栏的文字链接按钮。
+ *
+ * 刻意做成纯文字：这一排全是同级动作，用按钮样式会把「导入」这种高频操作
+ * 和其它动作拉成一样的视觉重量，反而看不出主次，一行里还会挤满色块。
+ * `busy` 时显示转圈并禁用点击（避免重复触发）。
+ */
+function LinkButton({
+  label,
+  onClick,
+  disabled,
+  busy,
+  danger,
+  title,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  busy?: boolean;
+  danger?: boolean;
+  title?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled || busy}
+      title={title}
+      className={`inline-flex items-center gap-1 text-[11px] cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+        danger
+          ? "text-rose-400/80 hover:text-rose-300"
+          : "text-slate-400 hover:text-[var(--module-accent)]"
+      }`}
+    >
+      {busy && <RefreshCw className="w-2.5 h-2.5 animate-spin" />}
+      {label}
+    </button>
+  );
+}
+
+/** 「密钥」链接：已配置为正常色，未配置更暗；有告警时带一个点。 */
+function KeyLink({
+  label,
+  configured,
+  title,
+  alert,
+  onClick,
+}: {
+  label: string;
+  configured: boolean;
+  title: string;
+  alert?: "expired" | "soon" | null;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={`relative text-[11px] cursor-pointer transition-colors ${
+        configured
+          ? "text-slate-400 hover:text-[var(--module-accent)]"
+          : "text-slate-600 hover:text-slate-300"
+      }`}
+    >
+      {label}
+      <CredDot level={alert ?? null} />
+    </button>
+  );
+}
+
+/**
+ * 凭证链接右上角的告警点。
+ *
+ * 只做「一眼看出有事」，具体原因交给 `title`——因为这里能承载的信息量太小，
+ * 把「3 天后过期」塞进一个点里只会让人困惑。
+ */
+function CredDot({ level }: { level: "expired" | "soon" | null }) {
+  if (!level) return null;
+  return (
+    <span
+      className={`absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${
+        level === "expired" ? "bg-rose-400" : "bg-amber-400"
+      }`}
+    />
   );
 }

@@ -62,11 +62,60 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
         CREATE TABLE IF NOT EXISTS favorite_credential (
             source      TEXT PRIMARY KEY,
             cookie      TEXT NOT NULL,
-            updated_at  TEXT NOT NULL
+            updated_at  TEXT NOT NULL,
+            -- ok | expired | unknown：最近一次用它的结果，用于主动提醒「该换 Cookie 了」
+            status      TEXT NOT NULL DEFAULT 'unknown',
+            checked_at  TEXT,
+            -- 从 Cookie 里能解析出的过期时间（unix 秒）；解析不出为 NULL
+            expires_at  INTEGER
+        );
+
+        -- 条目正文缓存：知乎收藏的 content（HTML+纯文本）、GitHub 的 README。
+        -- 单独一张表而不是塞进 favorite.extra_json：正文动辄几十 KB，
+        -- 列表查询只要元数据，混在一起会让每次列表都拖着大字段走。
+        CREATE TABLE IF NOT EXISTS favorite_content (
+            favorite_id INTEGER PRIMARY KEY,
+            -- 展示用的纯文本（已剥标签）
+            text        TEXT NOT NULL,
+            -- 原始 HTML（目前只在需要时留档，前端一律渲染 text，避免注入远端 HTML）
+            html        TEXT,
+            -- 来源标注，如 `README_CN.md` / 收藏夹名
+            label       TEXT,
+            fetched_at  TEXT NOT NULL
         );
         "#,
     )
-    .map_err(|e| format!("初始化收藏库失败: {}", e))
+    .map_err(|e| format!("初始化收藏库失败: {}", e))?;
+
+    // 老库补列：`CREATE TABLE IF NOT EXISTS` 对已存在的表不会加新列。
+    for (column, ddl) in [
+        ("status", "ALTER TABLE favorite_credential ADD COLUMN status TEXT NOT NULL DEFAULT 'unknown'"),
+        ("checked_at", "ALTER TABLE favorite_credential ADD COLUMN checked_at TEXT"),
+        ("expires_at", "ALTER TABLE favorite_credential ADD COLUMN expires_at INTEGER"),
+    ] {
+        if !has_column(conn, "favorite_credential", column)? {
+            conn.execute(ddl, [])
+                .map_err(|e| format!("升级收藏库失败（{}）: {}", column, e))?;
+        }
+    }
+    Ok(())
+}
+
+/// 表里有没有这一列（用于幂等升级老库）。
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, String> {
+    let mut statement = conn
+        .prepare(&format!("PRAGMA table_info({})", table))
+        .map_err(|e| format!("读取表结构失败: {}", e))?;
+    let mut rows = statement
+        .query([])
+        .map_err(|e| format!("读取表结构失败: {}", e))?;
+    while let Some(row) = rows.next().map_err(|e| format!("读取表结构失败: {}", e))? {
+        let name: String = row.get(1).map_err(|e| format!("读取表结构失败: {}", e))?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// 打开/初始化全局连接（不持有锁；由调用方在锁内调用）。
@@ -314,7 +363,23 @@ pub fn get_credential(conn: &Connection, source: &str) -> Result<Option<String>,
     }
 }
 
+/// 一条凭证的健康状态（供 UI 提示「该换 Cookie 了」）。
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialStatus {
+    pub source: String,
+    pub configured: bool,
+    /// ok | expired | unknown
+    pub status: String,
+    pub checked_at: Option<String>,
+    /// 从 Cookie 里解析出的过期时间（unix 秒）
+    pub expires_at: Option<i64>,
+    pub updated_at: Option<String>,
+}
+
 /// 写入 / 清除某平台的 Cookie（传空串即清除）。
+///
+/// 写入时顺手清掉旧的健康状态：新 Cookie 还没验证过，不该继承上一次的 `expired`。
 pub fn set_credential(conn: &Connection, source: &str, cookie: &str) -> Result<(), String> {
     let trimmed = cookie.trim();
     if trimmed.is_empty() {
@@ -323,12 +388,128 @@ pub fn set_credential(conn: &Connection, source: &str, cookie: &str) -> Result<(
         return Ok(());
     }
     conn.execute(
-        "INSERT INTO favorite_credential (source, cookie, updated_at) VALUES (?1, ?2, ?3) \
-         ON CONFLICT(source) DO UPDATE SET cookie = ?2, updated_at = ?3",
-        rusqlite::params![source, trimmed, now_str()],
+        "INSERT INTO favorite_credential (source, cookie, updated_at, status, checked_at, expires_at) \
+         VALUES (?1, ?2, ?3, 'unknown', NULL, ?4) \
+         ON CONFLICT(source) DO UPDATE SET cookie = ?2, updated_at = ?3, \
+         status = 'unknown', checked_at = NULL, expires_at = ?4",
+        rusqlite::params![
+            source,
+            trimmed,
+            now_str(),
+            crate::commands::favorites::cookie_expiry::parse_cookie_expiry(source, trimmed)
+        ],
     )
     .map_err(|e| format!("保存凭证失败: {}", e))?;
     Ok(())
+}
+
+/// 记一次使用结果（`ok` / `expired`），并刷新 `checked_at`。
+pub fn mark_credential_status(conn: &Connection, source: &str, status: &str) -> Result<(), String> {
+    conn.execute(
+        "UPDATE favorite_credential SET status = ?1, checked_at = ?2 WHERE source = ?3",
+        rusqlite::params![status, now_str(), source],
+    )
+    .map_err(|e| format!("更新凭证状态失败: {}", e))?;
+    Ok(())
+}
+
+/// 读某平台的凭证健康状态（没配过时 `configured = false`）。
+pub fn credential_status(conn: &Connection, source: &str) -> Result<CredentialStatus, String> {
+    let mut statement = conn
+        .prepare(
+            "SELECT status, checked_at, expires_at, updated_at FROM favorite_credential \
+             WHERE source = ?1",
+        )
+        .map_err(|e| format!("读取凭证状态失败: {}", e))?;
+    match statement.query_row([source], |row| {
+        Ok(CredentialStatus {
+            source: source.to_string(),
+            configured: true,
+            status: row.get(0)?,
+            checked_at: row.get(1)?,
+            expires_at: row.get(2)?,
+            updated_at: row.get(3)?,
+        })
+    }) {
+        Ok(status) => Ok(status),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(CredentialStatus {
+            source: source.to_string(),
+            configured: false,
+            status: "unknown".to_string(),
+            ..CredentialStatus::default()
+        }),
+        Err(e) => Err(format!("读取凭证状态失败: {}", e)),
+    }
+}
+
+/// 写一条正文缓存（同一个条目重复写就覆盖：内容变了要跟新）。
+pub fn put_content(
+    conn: &Connection,
+    favorite_id: i64,
+    text: &str,
+    html: Option<&str>,
+    label: Option<&str>,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO favorite_content (favorite_id, text, html, label, fetched_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5) \
+         ON CONFLICT(favorite_id) DO UPDATE SET text = ?2, html = ?3, label = ?4, fetched_at = ?5",
+        rusqlite::params![favorite_id, text, html, label, now_str()],
+    )
+    .map_err(|e| format!("缓存正文失败: {}", e))?;
+    Ok(())
+}
+
+/// 正文缓存（返回给前端的形态）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedContent {
+    pub text: String,
+    /// 来源标注：知乎是收藏夹名，GitHub 是 README 文件名
+    pub label: Option<String>,
+    pub fetched_at: String,
+}
+
+/// 读正文缓存。
+pub fn get_content(
+    conn: &Connection,
+    favorite_id: i64,
+) -> Result<Option<CachedContent>, String> {
+    let mut statement = conn
+        .prepare("SELECT text, label, fetched_at FROM favorite_content WHERE favorite_id = ?1")
+        .map_err(|e| format!("读取正文缓存失败: {}", e))?;
+    match statement.query_row([favorite_id], |row| {
+        Ok(CachedContent {
+            text: row.get(0)?,
+            label: row.get(1)?,
+            fetched_at: row.get(2)?,
+        })
+    }) {
+        Ok(row) => Ok(Some(row)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("读取正文缓存失败: {}", e)),
+    }
+}
+
+/// 条目 id → (source, title)；正文缓存/README 都要先知道抓谁。
+pub fn find_by_id(
+    conn: &Connection,
+    id: i64,
+) -> Result<Option<(String, String, String)>, String> {
+    let mut statement = conn
+        .prepare("SELECT source, title, COALESCE(subtitle, '') FROM favorite WHERE id = ?1")
+        .map_err(|e| format!("查询条目失败: {}", e))?;
+    match statement.query_row([id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    }) {
+        Ok(row) => Ok(Some(row)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("查询条目失败: {}", e)),
+    }
 }
 
 /// 待探测条目：`(id, full_name, url)`。`all = false` 时跳过已探测过的。
@@ -606,6 +787,22 @@ pub fn mark_imported(conn: &Connection, source: &str, total: usize) -> Result<()
     )
     .map_err(|e| format!("记录导入状态失败: {}", e))?;
     Ok(())
+}
+
+/// 写入并返回条目 id（正文缓存要按 id 挂，而 upsert 本身不返回 id）。
+pub fn upsert_with_id(
+    conn: &Connection,
+    item: &NewFavorite,
+) -> Result<(UpsertOutcome, i64), String> {
+    let outcome = upsert(conn, item)?;
+    let id = conn
+        .query_row(
+            "SELECT id FROM favorite WHERE source = ?1 AND external_id = ?2",
+            rusqlite::params![item.source, item.external_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|e| format!("读取条目 id 失败: {}", e))?;
+    Ok((outcome, id))
 }
 
 /// 条目总数（测试与概览用）。

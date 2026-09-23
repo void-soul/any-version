@@ -27,7 +27,7 @@ const MAX_PAGES: usize = 100;
 #[derive(Debug, Clone, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FavoritesProgress {
-    /// import | classify
+    /// import | classify | check
     stage: &'static str,
     source: Option<String>,
     /// 当前正在处理的收藏夹 / 阶段说明
@@ -43,6 +43,9 @@ struct FavoritesProgress {
     /// 知乎专用：当前收藏夹已抓取条数 / 服务端报告的总数（Paging.Totals）
     folder_fetched: Option<usize>,
     folder_total: Option<i64>,
+    /// 失效检测专用：已探测条数 / 本轮待探测总数
+    checked: Option<usize>,
+    check_total: Option<usize>,
     done: bool,
 }
 
@@ -188,9 +191,13 @@ pub async fn fav_import_github(
     Ok(result)
 }
 
-/// 取消正在进行的导入（下一页开始前生效）。
+/// 停止当前长任务（导入 / AI 归类 / 失效检测）。
+///
+/// 三类任务共用这一个标志：同一时刻只可能有一个在跑（界面上的按钮互斥），
+/// 各自在**下一个循环开始前**检查它，所以停止是「不再往下走」而不是中断进行中的请求。
+/// 每个任务的入口都会先把它清掉，不会出现「上次取消了、这次一开就停」。
 #[tauri::command]
-pub fn fav_cancel_import() -> Result<(), String> {
+pub fn fav_cancel() -> Result<(), String> {
     CANCEL.store(true, Ordering::SeqCst);
     Ok(())
 }
@@ -205,6 +212,8 @@ pub struct ClassifyResult {
     pub model: String,
     /// 还剩多少条没归类（下一轮继续）
     pub remaining: usize,
+    /// 用户中途点了停止（已归类的部分保留）
+    pub cancelled: bool,
 }
 
 /// 用 AI 给**未归类**的条目打分类标签（多标签）。
@@ -222,6 +231,7 @@ pub async fn fav_classify(
     let cfg = crate::commands::ai::config::load_ai_config();
     let (provider, model) = resolve_ai_target(&cfg, &provider_id, &model_id)?;
 
+    CANCEL.store(false, Ordering::SeqCst);
     let budget = limit.unwrap_or(usize::MAX);
     let mut result = ClassifyResult {
         model: model.clone(),
@@ -232,7 +242,28 @@ pub async fn fav_classify(
         db::with_conn(|conn| db::select_unclassified(conn, 1_000_000))?.len();
     let mut batch_no = 0usize;
 
+    // 先发一条 0/N：每批要等模型返回（几十秒都可能），不先点亮进度条用户会以为没反应
+    emit_progress(
+        &app,
+        &FavoritesProgress {
+            stage: "classify",
+            source: None,
+            message: Some(format!("每批 {} 条", BATCH_SIZE)),
+            classified: Some(0),
+            tags_written: Some(0),
+            remaining: Some(total_pending),
+            done: false,
+            ..FavoritesProgress::default()
+        },
+    );
+
     loop {
+        // 停止检查放在**每批开始前**：进行中的那一批请求照跑完（已付的 token 不浪费），
+        // 但不再发下一批。这样「停止」不会留下半截结果。
+        if CANCEL.load(Ordering::SeqCst) {
+            result.cancelled = true;
+            break;
+        }
         let done = result.classified;
         if done >= budget {
             break;
@@ -315,6 +346,8 @@ pub struct CheckResult {
     pub unknown: usize,
     /// 因限流提前中断（没跑完，下次再点会继续）
     pub aborted: bool,
+    /// 用户点了停止（已检测的条目状态已落库）
+    pub cancelled: bool,
 }
 
 /// 手动检测失效（目前只覆盖 GitHub）。
@@ -322,13 +355,36 @@ pub struct CheckResult {
 /// `all = false` 时只探测没查过的条目；`all = true` 全量重测。
 /// 撞到限流（403/429）就**停下并如实上报**，而不是把活着的收藏误标成失效。
 #[tauri::command]
-pub async fn fav_check_gone(all: Option<bool>) -> Result<CheckResult, String> {
+pub async fn fav_check_gone(
+    app: tauri::AppHandle,
+    all: Option<bool>,
+) -> Result<CheckResult, String> {
     // 与导入用同一个（收藏模块自己的）Token：同一份权限，不该出现「导入能用、检测不能用」
     let token = favorites_github_token()?;
+    CANCEL.store(false, Ordering::SeqCst);
     let items = db::with_conn(|conn| db::select_for_check(conn, github::SOURCE, all.unwrap_or(false), 5_000))?;
 
+    let total = items.len();
     let mut result = CheckResult::default();
+    // 探测是**逐条串行**的，几千条会跑很久：没有进度用户会以为卡死。
+    // 先发一条 0/N 把进度条点亮，之后每查完一条更新一次。
+    emit_progress(
+        &app,
+        &FavoritesProgress {
+            stage: "check",
+            source: Some(github::SOURCE.to_string()),
+            checked: Some(0),
+            check_total: Some(total),
+            done: false,
+            ..FavoritesProgress::default()
+        },
+    );
+
     for (id, full_name, _url) in items {
+        if CANCEL.load(Ordering::SeqCst) {
+            result.cancelled = true;
+            break;
+        }
         let (status, body) = github::fetch_repo(&token, &full_name).await?;
         if status == 403 || status == 429 {
             result.aborted = true;
@@ -352,6 +408,18 @@ pub async fn fav_check_gone(all: Option<bool>) -> Result<CheckResult, String> {
             }
         }
         result.checked += 1;
+        emit_progress(
+            &app,
+            &FavoritesProgress {
+                stage: "check",
+                source: Some(github::SOURCE.to_string()),
+                message: Some(full_name),
+                checked: Some(result.checked),
+                check_total: Some(total),
+                done: false,
+                ..FavoritesProgress::default()
+            },
+        );
     }
 
     crate::exit_log!(
@@ -361,6 +429,19 @@ pub async fn fav_check_gone(all: Option<bool>) -> Result<CheckResult, String> {
         result.redirect,
         result.unknown,
         result.aborted
+    );
+    // done 事件带上最终计数，前端据此收尾（aborted 时总数还是原值，进度条会停在中途，
+    // 这是刻意的：让用户看到「没跑完」而不是假装 100%）
+    emit_progress(
+        &app,
+        &FavoritesProgress {
+            stage: "check",
+            source: Some(github::SOURCE.to_string()),
+            checked: Some(result.checked),
+            check_total: Some(total),
+            done: true,
+            ..FavoritesProgress::default()
+        },
     );
     Ok(result)
 }
@@ -431,7 +512,13 @@ pub async fn fav_import_bilibili(app: tauri::AppHandle) -> Result<ImportResult, 
             if !has_more {
                 break;
             }
+            // 每页之间留间隔：B站对**收藏夹这类账号态接口**的风控比公开接口紧得多，
+            // 连发几百个请求的下场是 Cookie 直接失效（甚至封号），
+            // 所以这个延迟是账号安全措施，不是性能参数，不要为了「快一点」调小。
+            tokio::time::sleep(std::time::Duration::from_millis(bilibili::PAGE_DELAY_MS)).await;
         }
+        // 收藏夹之间也歇一下：连续切换收藏夹时请求同样密集
+        tokio::time::sleep(std::time::Duration::from_millis(bilibili::PAGE_DELAY_MS)).await;
     }
 
     db::with_conn(|conn| db::mark_imported(conn, bilibili::SOURCE, result.fetched))?;
@@ -451,213 +538,193 @@ pub async fn fav_import_bilibili(app: tauri::AppHandle) -> Result<ImportResult, 
     Ok(result)
 }
 
-/// 【实验】用粘贴的 Cookie 直连知乎，依次探测 `/me`、`/collections`、`/collections/{id}/items`。
+/// 读知乎 Cookie（需含 z_c0 登录态与 d_c0）。
+fn zhihu_cookie() -> Result<String, String> {
+    db::with_conn(|conn| db::get_credential(conn, zhihu::COOKIE_KEY))?.ok_or_else(|| {
+        "未配置知乎 Cookie：点收藏模块的烧瓶按钮，粘贴浏览器里复制的整条 Cookie（需含 z_c0 与 d_c0）"
+            .to_string()
+    })
+}
+
+/// 单趟导入最多翻多少页（内容接口每页 [`zhihu::PAGE_SIZE`] 条）。
 ///
-/// 返回 JSON 文本：带 `verdict`（ok / invalid_cookie / needs_signature / unknown）、
-/// `conclusion` 与三个接口各自的 `status`/`body`。结果同时写入 exit.log。
-#[tauri::command]
-pub async fn fav_zhihu_probe() -> Result<String, String> {
-    // 读的是**实验专用槽位** `zhihu-cookie`：官方接口的 Access Secret 存在 `zhihu`，
-    // 两者互不覆盖——把 Cookie 存进 Secret 的槽位会把用户配好的凭证顶掉。
-    let cookie =
-        db::with_conn(|conn| db::get_credential(conn, zhihu::COOKIE_KEY))?.ok_or_else(|| {
-            "请先点烧瓶图标粘贴知乎 Cookie（需含 z_c0 登录态与 d_c0；这与「知乎 Access Secret」是两个独立输入框）"
-                .to_string()
-        })?;
-    let report = zhihu::probe_cookie(&cookie).await?;
-    crate::exit_log!("[收藏-知乎] 实验结果: {}", report);
-    Ok(report)
-}
+/// 2032 条的收藏夹约 102 页，给到 2000 页足够用；上限的意义是防「服务端一直
+/// 返回 is_end=false」时把我们拖进死循环。
+const ZHIHU_MAX_PAGES: usize = 2000;
 
-/// 知乎官方 API 的 GET（带鉴权头）。
-async fn zhihu_get(access_secret: &str, path: &str) -> Result<Value, String> {
-    let client = crate::commands::utils::get_http_client();
-    let mut request = client.get(format!("{}{}", zhihu::BASE_URL, path));
-    for (name, value) in zhihu::auth_headers(access_secret, zhihu_now_secs()) {
-        request = request.header(name, value);
-    }
-    let resp = request
-        .send()
-        .await
-        .map_err(|e| format!("请求知乎开放平台失败: {}", e))?;
-    let status = resp.status().as_u16();
-    let body: Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析知乎响应失败 (HTTP {}): {}", status, e))?;
-    zhihu::parse_envelope(&body)
-}
-
-fn zhihu_now_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-/// 导入知乎收藏（只读，走开放平台官方接口）。
+/// 导入知乎收藏（Cookie 直连，**私有收藏夹也能拿到**）。
 ///
-/// 逐个收藏夹按 `Paging.NextOffset` 翻页直到 `IsEnd`。
-/// ⚠️ 用户数据接口按自然日配额（默认 100 次/天、未实名 10 次/天），每次翻页消耗一次。
-/// 每个收藏夹的断点存在本地（`favorite_import_state.cursor`），跨天续传时
-/// 直接从上次位置继续——配额全部花在新内容上，而不是重抓已导过的页。
+/// 单条收藏夹内容接口一次给 20 条，2032 条的收藏夹要 102 次请求，
+/// 所以间隔 [`zhihu::PAGE_DELAY_MS`] 是账号安全措施，不是性能参数。
 #[tauri::command]
 pub async fn fav_import_zhihu(app: tauri::AppHandle) -> Result<ImportResult, String> {
-    let secret = db::with_conn(|conn| db::get_credential(conn, zhihu::SOURCE))?.ok_or_else(|| {
-        "未配置知乎 Access Secret：点收藏模块的钥匙按钮，粘贴在 developer.zhihu.com/profile 生成的 Access Secret"
-            .to_string()
-    })?;
-
+    let cookie = zhihu_cookie()?;
     CANCEL.store(false, Ordering::SeqCst);
 
-    // 额度预检（官方文档：查询额度不消耗业务额度）。额度为 0 时直接明说，
-    // 别让用户对着「第 N 页突然失败」的现场猜原因。
-    let quota = match zhihu_get(&secret, &zhihu::quota_path()).await {
-        Ok(payload) => zhihu::parse_quota(&payload),
-        Err(_) => None, // 预检失败不阻塞导入，让真正的导入请求给出错误
+    // ① 拿用户 id：收藏夹列表要按 id 查，url_token 是主页地址那套
+    let (status, body) = zhihu::cookie_get_path(&cookie, "/api/v4/me").await?;
+    if !(200..300).contains(&status) {
+        // 401/403 基本都是 Cookie 过期——顺手把状态落库，UI 才能主动提醒
+        if status == 401 || status == 403 {
+            let _ = db::with_conn(|conn| db::mark_credential_status(conn, zhihu::COOKIE_KEY, "expired"));
+        }
+        return Err(format!(
+            "知乎登录态校验失败 (HTTP {})：Cookie 可能已失效，请重新复制整条 Cookie。响应: {}",
+            status,
+            crate::commands::utils::truncate_utf8(&body, 200)
+        ));
+    }
+    let _ = db::with_conn(|conn| db::mark_credential_status(conn, zhihu::COOKIE_KEY, "ok"));
+    let person_id = zhihu::parse_person_id(&body)
+        .ok_or_else(|| "知乎 /me 未返回用户 id，无法列出收藏夹".to_string())?;
+    let login = serde_json::from_str::<Value>(&body)
+        .ok()
+        .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+        .unwrap_or_else(|| person_id.clone());
+
+    let mut result = ImportResult {
+        login,
+        ..ImportResult::default()
     };
-    if let Some((remaining, total)) = quota {
-        crate::exit_log!("[收藏] 知乎用户数据额度: 剩余 {}/{}", remaining, total);
-        if remaining == 0 {
+
+    // ② 收藏夹列表（分页）
+    let mut collections: Vec<zhihu::CookieCollection> = Vec::new();
+    let mut offset = 0usize;
+    let mut pages = 0usize;
+    loop {
+        if CANCEL.load(Ordering::SeqCst) {
+            result.cancelled = true;
+            break;
+        }
+        pages += 1;
+        if pages > ZHIHU_MAX_PAGES {
+            result
+                .failed
+                .push("收藏夹列表翻页超过上限，已停止".to_string());
+            break;
+        }
+        let (status, body) =
+            zhihu::cookie_get_path(&cookie, &zhihu::collections_path(&person_id, offset)).await?;
+        if status == 403 || status == 429 {
             return Err(format!(
-                "知乎今日额度已用完（剩余 0/{}）：按自然日配额，次日恢复；总额度见开放平台「各接口剩余配额」面板",
-                total
+                "知乎限流 (HTTP {})：停在第 {} 个收藏夹前，稍后再试（已导入的部分保留）",
+                status,
+                collections.len()
             ));
         }
+        if !(200..300).contains(&status) {
+            return Err(format!(
+                "拉取收藏夹列表失败 (HTTP {})：响应 {}",
+                status,
+                crate::commands::utils::truncate_utf8(&body, 200)
+            ));
+        }
+        let (page, is_end) = zhihu::parse_collections_page(&body)?;
+        let got = page.len();
+        collections.extend(page);
+        offset += got;
+        if is_end || got == 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(zhihu::PAGE_DELAY_MS)).await;
     }
 
-    let favlists = zhihu_get(&secret, &zhihu::favlists_path()).await?;
-    let folders = favlists
-        .get("Items")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+    crate::exit_log!(
+        "[收藏] 知乎(Cookie) 共 {} 个收藏夹，开始导入内容",
+        collections.len()
+    );
 
-    let mut result = ImportResult::default();
-    'outer: for folder in folders {
-        let token = folder.get("UrlToken").and_then(|v| v.as_i64());
-        let title = folder
-            .get("Title")
-            .and_then(|v| v.as_str())
-            .unwrap_or("知乎收藏夹")
-            .to_string();
-        let Some(token) = token else {
-            continue;
-        };
-        let state_key = format!("{}:{}", zhihu::SOURCE, token);
-
-        // 断点续传：从上次翻到的页继续，而不是每次都从第 0 页烧额度
-        let mut offset = db::with_conn(|conn| db::get_import_cursor(conn, &state_key))?
-            .and_then(|cursor| cursor.parse::<usize>().ok())
-            .unwrap_or(0);
-        if offset > 0 {
-            crate::exit_log!("[收藏] 知乎收藏夹「{}」从断点 {} 继续导入", title, offset);
-        }
-        // 服务端认为的收藏夹总数（公开范围口径）；进进度条，也能回答
-        // 「是接口截断还是本来就这么多」——与 UI 显示的总数对不上时看它
-        let mut folder_total: Option<i64> = None;
-        let mut folder_fetched = 0usize;
-
+    // ③ 逐个收藏夹抓内容
+    'folders: for collection in &collections {
+        let mut offset = 0usize;
+        let mut pages = 0usize;
         loop {
             if CANCEL.load(Ordering::SeqCst) {
                 result.cancelled = true;
-                // 取消也要存断点：下次从这页继续
-                let _ = db::with_conn(|conn| {
-                    db::set_import_cursor(conn, &state_key, Some(&offset.to_string()))
-                });
-                break 'outer;
+                break 'folders;
             }
-            // 单个收藏夹失败（比如私有收藏夹平台不允许读）不能拖垮整个导入：
-            // 跳过它、记下原因，其余收藏夹照常导完。断点保留在失败前的位置，
-            // 明天额度恢复后从同一位置重试。
-            let payload = match zhihu_get(&secret, &zhihu::contents_path(token, offset)).await {
-                Ok(payload) => payload,
-                Err(e) => {
-                    result.failed.push(format!("{}（{}）", title, e));
-                    crate::exit_log!(
-                        "[收藏-知乎] 收藏夹「{}」第 {} 页读取失败，已跳过: {}",
-                        title,
-                        offset,
-                        e
-                    );
-                    continue 'outer;
+            pages += 1;
+            if pages > ZHIHU_MAX_PAGES {
+                result.failed.push(format!("「{}」翻页超过上限，已停止", collection.title));
+                break;
+            }
+            let path = zhihu::cookie_items_path(collection.id, offset);
+            let (status, body) = zhihu::cookie_get_path(&cookie, &path).await?;
+            if status == 403 || status == 429 {
+                result.failed.push(format!(
+                    "「{}」被限流 (HTTP {})，已导入的部分保留",
+                    collection.title, status
+                ));
+                break;
+            }
+            if !(200..300).contains(&status) {
+                result.failed.push(format!(
+                    "「{}」拉取失败 (HTTP {})：{}",
+                    collection.title,
+                    status,
+                    crate::commands::utils::truncate_utf8(&body, 120)
+                ));
+                break;
+            }
+            let (items, is_end) = zhihu::parse_cookie_items_page(&body, collection)?;
+            let got = items.len();
+            for item in &items {
+                // upsert + 顺手缓存正文：内容接口已经把全文给我们了，不存白不存
+                let (outcome, id) = db::with_conn(|conn| db::upsert_with_id(conn, &item.favorite))?;
+                match outcome {
+                    db::UpsertOutcome::Added => result.added += 1,
+                    db::UpsertOutcome::Updated => result.updated += 1,
+                    db::UpsertOutcome::Skipped => result.skipped += 1,
                 }
-            };
-            let (page_items, is_end, next_offset, totals) = zhihu::parse_contents_page(&payload);
-            if totals.is_some() {
-                folder_total = totals;
+                if !item.text.is_empty() || item.html.is_some() {
+                    db::with_conn(|conn| {
+                        db::put_content(
+                            conn,
+                            id,
+                            &item.text,
+                            item.html.as_deref(),
+                            Some(&collection.title),
+                        )
+                    })?;
+                }
             }
-            folder_fetched += page_items.len();
-            crate::exit_log!(
-                "[收藏-知乎] 「{}」 offset={} -> {} 条, is_end={}, next={:?}, totals={:?}",
-                title,
-                offset,
-                page_items.len(),
-                is_end,
-                next_offset,
-                folder_total
-            );
+            result.fetched += got;
+            offset += got;
 
-            let favorites: Vec<NewFavorite> = page_items
-                .iter()
-                .filter_map(|item| zhihu::item_to_favorite(item, &title))
-                .collect();
-            result.fetched += favorites.len();
-            let delta = db::with_conn(|conn| {
-                let mut added = 0usize;
-                let mut updated = 0usize;
-                let mut skipped = 0usize;
-                for item in &favorites {
-                    match db::upsert(conn, item)? {
-                        db::UpsertOutcome::Added => added += 1,
-                        db::UpsertOutcome::Updated => updated += 1,
-                        db::UpsertOutcome::Skipped => skipped += 1,
-                    }
-                }
-                Ok((added, updated, skipped))
-            })?;
-            result.added += delta.0;
-            result.updated += delta.1;
-            result.skipped += delta.2;
             emit_progress(
                 &app,
                 &FavoritesProgress {
-                    folder_fetched: Some(folder_fetched),
-                    folder_total,
-                    ..import_progress(
-                        "import",
-                        zhihu::SOURCE,
-                        Some(title.clone()),
-                        Some(format!("offset {}", offset)),
-                        &result,
-                        false,
-                    )
+                    stage: "import",
+                    source: Some(zhihu::SOURCE.to_string()),
+                    folder: Some(collection.title.clone()),
+                    message: Some(format!("已抓取 {} 条", result.fetched)),
+                    fetched: Some(result.fetched),
+                    added: Some(result.added),
+                    updated: Some(result.updated),
+                    skipped: Some(result.skipped),
+                    folder_fetched: Some(offset),
+                    folder_total: Some(collection.item_count as i64),
+                    done: false,
+                    ..FavoritesProgress::default()
                 },
             );
 
-            if is_end || next_offset == usize::MAX {
-                // 该收藏夹已导完：清断点，下次导入从头检查是否有新收藏
-                let _ = db::with_conn(|conn| db::set_import_cursor(conn, &state_key, None));
+            if is_end || got == 0 {
                 break;
             }
-            offset = next_offset;
-            let _ = db::with_conn(|conn| {
-                db::set_import_cursor(conn, &state_key, Some(&offset.to_string()))
-            });
-            // 页与页之间留间隔：上次 1 秒内连发 9 个请求，触发风控（30003/412）是 177
-            // 条停下来的头号嫌疑
+            // 每页之间歇一下：这条路线依赖用户 Cookie，跑太猛会被风控甚至封号
             tokio::time::sleep(std::time::Duration::from_millis(zhihu::PAGE_DELAY_MS)).await;
         }
     }
 
     db::with_conn(|conn| db::mark_imported(conn, zhihu::SOURCE, result.fetched))?;
     crate::exit_log!(
-        "[收藏] 知乎导入完成: fetched={}, added={}, updated={}, skipped={}, failed_folders={}, cancelled={}",
+        "[收藏] 知乎(Cookie) 导入完成: 收藏夹={}, 抓取={}, 新增={}, 更新={}, 无变化={}, 取消={}",
+        collections.len(),
         result.fetched,
         result.added,
         result.updated,
         result.skipped,
-        result.failed.len(),
         result.cancelled
     );
     emit_progress(
@@ -665,6 +732,70 @@ pub async fn fav_import_zhihu(app: tauri::AppHandle) -> Result<ImportResult, Str
         &import_progress("import", zhihu::SOURCE, None, None, &result, true),
     );
     Ok(result)
+}
+
+
+/// 读各平台凭证的健康状态（用于「Cookie 快过期 / 已失效」提示）。
+///
+/// 前端在模块打开时调一次：纯本地查询、不联网，所以不会给平台添任何请求。
+#[tauri::command]
+pub fn fav_credential_status() -> Result<Vec<db::CredentialStatus>, String> {
+    db::with_conn(|conn| {
+        ["github", "bilibili", zhihu::COOKIE_KEY]
+            .iter()
+            .map(|source| db::credential_status(conn, source))
+            .collect()
+    })
+}
+
+/// 读条目正文缓存（知乎收藏的内容，或已抓过的 GitHub README）。
+///
+/// 返回 `None` = 没缓存过，由前端决定要不要去抓（GitHub README 是懒抓的）。
+#[tauri::command]
+pub fn fav_get_content(id: i64) -> Result<Option<db::CachedContent>, String> {
+    db::with_conn(|conn| db::get_content(conn, id))
+}
+
+/// 抓某个 GitHub 条目的 README（**优先 `README_ZH.md`**）并缓存。
+///
+/// 顺序：`README_ZH.md` → GitHub 自己认的默认 README。
+/// 先找中文版是因为不少中文项目把中文说明单独放一个文件，默认 README 反而是英文简介。
+/// 命中后按文件名写进 `favorite_content.label`，界面上能看出读的是哪一份。
+#[tauri::command]
+pub async fn fav_github_readme(
+    id: i64,
+    refresh: Option<bool>,
+) -> Result<db::CachedContent, String> {
+    if refresh != Some(true) {
+        if let Some(cached) = db::with_conn(|conn| db::get_content(conn, id))? {
+            return Ok(cached);
+        }
+    }
+
+    let (source, full_name, _) = db::with_conn(|conn| db::find_by_id(conn, id))?
+        .ok_or_else(|| format!("条目 {} 不存在", id))?;
+    if source != github::SOURCE {
+        return Err("只有 GitHub 条目支持查看 README".to_string());
+    }
+    let token =
+        db::with_conn(|conn| db::get_credential(conn, github::SOURCE))?.unwrap_or_default();
+
+    for name in github::README_ZH_CANDIDATES {
+        if let Some(text) = github::fetch_file_text(&token, &full_name, name).await? {
+            return cache_readme(id, &text, Some(name));
+        }
+    }
+    match github::fetch_default_readme(&token, &full_name).await? {
+        Some((name, text)) => cache_readme(id, &text, Some(&name)),
+        None => Err(format!("{} 没有 README", full_name)),
+    }
+}
+
+/// 写入 README 缓存并回读（回读是为了带上统一的 `fetchedAt`）。
+fn cache_readme(id: i64, text: &str, label: Option<&str>) -> Result<db::CachedContent, String> {
+    db::with_conn(|conn| db::put_content(conn, id, text, None, label))?;
+    db::with_conn(|conn| db::get_content(conn, id))?
+        .ok_or_else(|| "缓存 README 失败".to_string())
 }
 
 /// 读取收藏模块自己的 GitHub Token（未配置返回空串；**不读 SDK 模块的配置**）。

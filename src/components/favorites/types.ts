@@ -43,6 +43,8 @@ export interface ClassifyResult {
   tagsWritten: number;
   model: string;
   remaining: number;
+  /** 用户中途点了停止（已归类的部分保留） */
+  cancelled: boolean;
 }
 
 export interface CheckResult {
@@ -50,12 +52,15 @@ export interface CheckResult {
   gone: number;
   redirect: number;
   unknown: number;
+  /** 因限流提前中断 */
   aborted: boolean;
+  /** 用户点了停止 */
+  cancelled: boolean;
 }
 
-/** 后端实时进度事件（favorites-progress）：导入与归类共用一个载荷 */
+/** 后端实时进度事件（favorites-progress）：导入 / 归类 / 失效检测共用一个载荷 */
 export interface FavoritesProgress {
-  stage: "import" | "classify";
+  stage: "import" | "classify" | "check";
   source?: string | null;
   folder?: string | null;
   message?: string | null;
@@ -69,7 +74,39 @@ export interface FavoritesProgress {
   /** 知乎专用：当前收藏夹已抓取条数 / 服务端报告的总数（Paging.Totals） */
   folderFetched?: number | null;
   folderTotal?: number | null;
+  /** 失效检测专用：已探测条数 / 本轮待探测总数 */
+  checked?: number | null;
+  checkTotal?: number | null;
   done: boolean;
+}
+
+/** 条目正文缓存（知乎收藏内容 / GitHub README） */
+export interface CachedContent {
+  text: string;
+  /** 来源标注：知乎是收藏夹名，GitHub 是 README 文件名 */
+  label?: string | null;
+  fetchedAt: string;
+}
+
+/** 凭证健康状态（后端 fav_credential_status） */
+export interface CredentialStatus {
+  source: string;
+  configured: boolean;
+  /** ok | expired | unknown */
+  status: string;
+  checkedAt?: string | null;
+  /** 从 Cookie 里解析出的过期时间（unix 秒）；解析不出为 null */
+  expiresAt?: number | null;
+  updatedAt?: string | null;
+}
+
+/** 凭证是否「即将过期」（默认 3 天内）。返回剩余天数用于文案。 */
+export function expiringInDays(expiresAt?: number | null, within = 3): number | null {
+  if (!expiresAt) return null;
+  const leftMs = expiresAt * 1000 - Date.now();
+  if (leftMs <= 0) return 0;
+  const days = leftMs / 86400000;
+  return days <= within ? Math.ceil(days) : null;
 }
 
 export const SOURCE_LABELS: Record<string, string> = {

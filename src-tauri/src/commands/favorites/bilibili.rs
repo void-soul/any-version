@@ -23,6 +23,13 @@ pub const PAGE_SIZE: usize = 20;
 /// 一次导入最多翻多少页（防止收藏夹特别大时跑太久）
 pub const MAX_PAGES: usize = 200;
 
+/// 页与页之间的间隔（毫秒）。
+///
+/// B站的收藏夹接口是**账号态接口**（要带 Cookie + WBI 签名），风控阈值比公开接口低得多：
+/// 连发请求轻则 `-412` 拦截、重则直接让 Cookie 失效。对比知乎的 400ms，
+/// 这里给到 600ms——慢一点换账号安全，是划算的。
+pub const PAGE_DELAY_MS: u64 = 600;
+
 /// 登录态与 WBI 口令。
 #[derive(Debug, Clone)]
 pub struct Session {

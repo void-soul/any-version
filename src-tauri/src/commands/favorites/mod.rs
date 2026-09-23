@@ -8,6 +8,7 @@
 pub mod db;
 pub mod github;
 pub mod classify;
+pub mod cookie_expiry;
 pub mod check;
 pub mod wbi;
 pub mod bilibili;

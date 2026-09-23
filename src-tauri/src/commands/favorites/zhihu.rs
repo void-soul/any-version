@@ -1,25 +1,24 @@
 //! 知乎收藏导入（**只读**）。
 //!
-//! 当前有两条通路：
+//! 走 **Cookie 直连**：用户粘贴浏览器 Cookie（z_c0 登录态 + d_c0），Rust 侧把它放进请求头
+//! 打 `www.zhihu.com/api/v4/*`。为什么不移植 zse96 签名：zhihu-plus-plus 是 AGPL-3.0，
+//! 代码进 Kira 会传染整个应用。
 //!
-//! 1. **开放平台官方接口**（`developer.zhihu.com`，`fav_import_zhihu` 在用）：
-//!    鉴权只是 `Bearer <AccessSecret>` + 时间戳，稳定、无逆向。
-//!    ⚠️ 但接口说明原文是「获取指定收藏夹中的**公开内容**」——实测 2025 条的收藏夹
-//!    只返回 159 条，失效/非公开内容被服务端过滤，`Paging.Totals` 也是过滤后的口径。
+//! **已确认（2026-09-23）**：`/me`、`/api/v4/people/{id}/collections`、
+//! `/api/v4/collections/{id}/items` 三个接口用 Cookie 裸请求全部 200 —— 知乎的
+//! `x-zse-96` 签名是**按接口**校验的（浏览器端统一签名不代表服务端逐个强制），
+//! 这三个恰好都不校验。
 //!
-//! 2. **Cookie 直连**（`fav_zhihu_probe` 实验）：用户粘贴浏览器 Cookie（z_c0 登录态 +
-//!    d_c0），Rust 侧直接把它放进请求头打 `www.zhihu.com/api/v4/*`，目标是拿到全量收藏。
-//!    为什么不移植 zse96 签名：zhihu-plus-plus 是 AGPL-3.0，代码进 Kira 会传染整个应用。
+//! 上线前有两条路：开放平台官方接口（Access Secret + 配额）与 Cookie。**官方路线已删除**：
+//! 它标注「获取公开内容」，实测 2032 条的收藏夹只返回 159 条（私有/失效内容被过滤），
+//! 拿不到全量就等于没用，而 Cookie 路线一条不少。
 //!
-//!    **已确认（2026-09-23）**：`/api/v4/me` 用 Cookie 裸请求返回 200 并带回真实账号信息，
-//!    即该接口**不校验** `x-zse-96`。知乎的签名校验是**按接口**的，所以探测逐个打
-//!    `/me` → `/collections` → `/collections/{id}/items`，看断在哪一步，见 [`probe_verdict`]。
-//!
-//!    ⚠️ 踩过的两个坑（都有测试钉住）：
-//!    - 用隐藏 WebView 注入 Cookie 那条路**建立不了登录态**（首页仍跳 `/signin`），
-//!      于是拿到 401 后被误判成「签名拦截」——那是游客在打登录态接口，说明不了签名的事。
-//!      该实现已删除。
-//!    - 结论必须**先判登录态再判签名**，否则同样的 401 会被解释成完全相反的两件事。
+//! ⚠️ 踩过的三个坑（都有测试钉住）：
+//! - 用隐藏 WebView 注入 Cookie 那条路**建立不了登录态**（首页仍跳 `/signin`），
+//!   于是拿到 401 后被误判成「签名拦截」——那是游客在打登录态接口，说明不了签名的事。
+//! - 结论必须**先判登录态再判签名**，否则同样的 401 会被解释成完全相反的两件事。
+//! - `GET /api/v4/collections` 返回 **405**：那是「创建收藏夹」的 POST 端点，
+//!   列表得按 `/people/{id}/collections` 查，而且要用 **id** 不是 `url_token`。
 
 use serde_json::{json, Value};
 
@@ -28,221 +27,28 @@ use super::db::NewFavorite;
 /// 数据源标识（写入 `favorite.source`）
 pub const SOURCE: &str = "zhihu";
 
-/// 凭证键：官方接口的 Access Secret。
-pub const SECRET_KEY: &str = "zhihu";
-
-/// 凭证键：实验路线的 Cookie（**与上面那个是不同槽位**，互不覆盖）。
+/// 凭证键。
 ///
-/// 之前实验代码直接复用 `zhihu` 槽位存 Cookie，会把用户配好的 Access Secret 顶掉。
+/// 保留 `zhihu-cookie` 这个名字而不是改成 `zhihu`：用户已经按这个键存过 Cookie，
+/// 改名等于让他们重粘一次，没有任何好处。
 pub const COOKIE_KEY: &str = "zhihu-cookie";
 
-pub const BASE_URL: &str = "https://developer.zhihu.com";
-
-/// 每页条数（官方默认 20；文档未给出上限，用保守值）
+/// 每页条数（与浏览器一致；服务端似乎不认更大的 limit，取实测值最稳）
 pub const PAGE_SIZE: usize = 20;
 
-/// 页与页之间的间隔（毫秒）：避免连发请求触发风控。
-pub const PAGE_DELAY_MS: u64 = 300;
-
-/// 收藏夹列表请求的 Limit（接口无分页字段，一次尽量多取）
-pub const FAVLISTS_LIMIT: usize = 100;
-
-// ─── 开放平台官方接口 ───
-
-/// 收藏夹列表。
-pub fn favlists_path() -> String {
-    format!("/api/v1/user/favlists?Limit={}", FAVLISTS_LIMIT)
-}
-
-/// 收藏夹内容第 offset 条开始的分页。
-pub fn contents_path(favlist_url_token: i64, offset: usize) -> String {
-    format!(
-        "/api/v1/user/favlist_contents?FavlistUrlToken={}&Offset={}&Limit={}",
-        favlist_url_token, offset, PAGE_SIZE
-    )
-}
-
-/// 额度查询（官方文档：不消耗业务额度）。
-pub fn quota_path() -> String {
-    "/api/v1/quota?APIIDs=user_data".to_string()
-}
-
-/// 构造鉴权请求头。
+/// 页与页之间的间隔（毫秒）。
 ///
-/// `X-Request-Timestamp` 与服务器时间差不能超过 10 分钟，所以每次请求都取当前时间；
-/// 时间戳作为参数传入便于测试。
-pub fn auth_headers(access_secret: &str, timestamp: u64) -> Vec<(&'static str, String)> {
-    vec![
-        ("Authorization", format!("Bearer {}", access_secret)),
-        ("X-Request-Timestamp", timestamp.to_string()),
-        ("Content-Type", "application/json".to_string()),
-    ]
-}
+/// 这条路线用的是**用户自己的 Cookie**，请求太密轻则限流重则风控封号，
+/// 这个延迟不是性能优化而是账号安全措施，不要为了「快一点」调小。
+pub const PAGE_DELAY_MS: u64 = 400;
 
-/// 解析响应外层：官方文档用 PascalCase（`Data`/`Code`），做一层兼容防改版。
-///
-/// 返回 `Data` 部分；`Code != 0` 时给出可操作提示。
-pub fn parse_envelope(body: &Value) -> Result<Value, String> {
-    let code = body
-        .get("Code")
-        .or_else(|| body.get("code"))
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
-    if code != 0 {
-        let message = body
-            .get("Message")
-            .or_else(|| body.get("message"))
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
-        return Err(map_api_error(code, message));
-    }
-    body.get("Data")
-        .or_else(|| body.get("data"))
-        .cloned()
-        .ok_or_else(|| "知乎响应缺少 Data 字段（接口可能已改版）".to_string())
-}
-
-/// 官方错误码 → 可操作提示。
-pub fn map_api_error(code: i64, message: &str) -> String {
-    let hint = match code {
-        20001 => "（Access Secret 无效或已过期，请到 developer.zhihu.com/profile 重新生成）",
-        30001 | 30002 => {
-            "（今日用户数据额度已用完：按自然日配额，剩余与总额度见开放平台「各接口剩余配额」面板，次日恢复）"
-        }
-        30003 => "（被知乎风控拒绝，请稍后再试）",
-        10001 => "（参数错误，可能是接口改版）",
-        90001 => "（知乎服务端内部错误，稍后再试）",
-        _ => "",
-    };
-    format!("知乎返回错误 {} {}{}", code, message, hint)
-}
-
-/// 一条收藏内容 → 待落库条目。
-///
-/// 官方 items **没有内容 id**，字段是 `Url / ContentType / Title / Summary / Author`；
-/// 去重键用 **Url**（同一内容的规范链接，稳定且唯一）。
-/// 字段全是 PascalCase，缺哪个都只影响该条。
-pub fn item_to_favorite(item: &Value, collection_title: &str) -> Option<NewFavorite> {
-    let url = item
-        .get("Url")
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())?;
-    let title = item
-        .get("Title")
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())?;
-    let kind = item
-        .get("ContentType")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
-    let summary = item
-        .get("Summary")
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let author = item
-        .pointer("/Author/Name")
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-
-    Some(NewFavorite {
-        source: SOURCE.to_string(),
-        external_id: url.clone(),
-        url,
-        title,
-        subtitle: author.or_else(|| Some(collection_title.to_string())),
-        description: summary,
-        extra_json: Some(
-            json!({
-                "kind": kind,
-                "collection": collection_title,
-                "fav_time": item.get("FavTime").and_then(|v| v.as_i64()),
-                "created": item.get("CreatedAt").and_then(|v| v.as_i64()),
-                "like_count": item.get("LikeCount").and_then(|v| v.as_i64()),
-            })
-            .to_string(),
-        ),
-        initial_status: None,
-    })
-}
-
-/// 从内容页响应里取（条目数组，是否结束，下一个 Offset，服务端报告的总数）。
-///
-/// `NextOffset` 文档说是 String，但按防御性处理：字符串和数字都接受——
-/// 类型对不上时宁可少翻一页，也不能在这里 panic 或死循环。
-/// `Totals` 是**服务端认为**的该收藏夹总条数（公开范围口径），用于进度百分比，
-/// 也能回答「到底是接口截断还是本来就这么多」。
-pub fn parse_contents_page(payload: &Value) -> (Vec<Value>, bool, usize, Option<i64>) {
-    let items = payload
-        .get("Items")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let is_end = payload
-        .pointer("/Paging/IsEnd")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-    let next_raw = payload.pointer("/Paging/NextOffset");
-    let next_offset = match next_raw {
-        Some(Value::String(s)) => s.parse::<usize>().ok(),
-        Some(Value::Number(n)) => n.as_u64().map(|n| n as usize),
-        _ => None,
-    };
-    let totals = payload.pointer("/Paging/Totals").and_then(|v| v.as_i64());
-    (items, is_end, next_offset.unwrap_or(usize::MAX), totals)
-}
-
-/// 从额度响应里取（剩余，总额度）；字段缺失/格式不符返回 None（不让预检阻塞导入）。
-pub fn parse_quota(payload: &Value) -> Option<(i64, i64)> {
-    let value = payload
-        .get("Data")
-        .or_else(|| payload.get("data"))
-        .unwrap_or(payload);
-    let remaining = ["RemainingQuota", "remaining_quota"]
-        .iter()
-        .find_map(|key| value.get(key).and_then(|v| v.as_i64()))?;
-    let total = ["TotalQuota", "total_quota"]
-        .iter()
-        .find_map(|key| value.get(key).and_then(|v| v.as_i64()))
-        .unwrap_or(-1);
-    Some((remaining, total))
-}
-
-// ─── Cookie 直连（实验路线） ───
+// ─── Cookie 直连 ───
 
 /// 探测用的桌面 UA：知乎对明显非浏览器的 UA 会直接 403，
 /// 这里只是让请求看起来像个普通浏览器，不做任何指纹伪装。
 const DESKTOP_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
-/// 解析用户粘贴的 Cookie 串（支持 `a=b; c=d` 与每行一对，容忍换行）。
-///
-/// 同名取第一个（浏览器里同名 Cookie 本来就不该出现两次）；无效段跳过。
-pub fn parse_cookie_pairs(text: &str) -> Vec<(String, String)> {
-    let mut pairs: Vec<(String, String)> = Vec::new();
-    for segment in text.split([';', '\n']) {
-        let segment = segment.trim();
-        let Some((name, value)) = segment.split_once('=') else {
-            continue;
-        };
-        let name = name.trim();
-        let value = value.trim();
-        if name.is_empty() || value.is_empty() {
-            continue;
-        }
-        if !pairs.iter().any(|(n, _)| n == name) {
-            pairs.push((name.to_string(), value.to_string()));
-        }
-    }
-    pairs
-}
-
 /// 带浏览器风味的 API GET（Cookie 原样放进请求头）。
-///
-/// 名字不带 `zhihu_` 前缀是为了和 `commands.rs` 里那个「官方开放平台」的 `zhihu_get`
-/// 区分开：这个走 Cookie，那个走 Access Secret。
 ///
 /// 不走隐藏 WebView 那条老路：实测把 Cookie 注入 WebView 后知乎首页照样跳 `/signin`，
 /// 登录态根本没建立（Cookie 存储、domain、重载时机全是变量）。直连只有一种解释——
@@ -264,343 +70,549 @@ async fn cookie_get(cookie: &str, url: &str, referer: &str) -> Result<(u16, Stri
     Ok((status, body))
 }
 
-/// 探测「我的收藏夹列表」返回体里的第一个收藏夹 id。
+/// 知乎站点根地址
+const HOST: &str = "https://www.zhihu.com";
+
+/// 按**路径**发请求（导入循环与探测共用）。
 ///
-/// 形状是 `{"data":[{"id":580815780,"title":"…"}],"paging":{…}}`；
-/// 拿不到就返回 None（用户可能一个收藏夹都没有，此时 items 无法验证）。
-pub fn first_collection_id(body: &str) -> Option<i64> {
-    let value: Value = serde_json::from_str(body).ok()?;
-    value
-        .get("data")
-        .and_then(|v| v.as_array())
-        .and_then(|list| list.first())
-        .and_then(|item| item.get("id"))
-        .and_then(|id| id.as_i64())
+/// Referer 按目标分类给：知乎对 Referer 有校验，给一个真实存在的同站页面最稳。
+pub async fn cookie_get_path(cookie: &str, path: &str) -> Result<(u16, String), String> {
+    let referer = if path.starts_with("/api/v4/collections/") {
+        "https://www.zhihu.com/collections"
+    } else {
+        "https://www.zhihu.com/"
+    };
+    cookie_get(cookie, &format!("{}{}", HOST, path), referer).await
 }
 
-/// 实验主流程：**依次打三个接口**，验证 Cookie 裸请求能走多远。
+/// 从 `/api/v4/me` 的返回体里取用户 id —— 收藏夹列表要按**这个 id** 查，不是 `url_token`。
 ///
-/// 顺序即依赖：`/me` 验登录态 → `/collections` 列收藏夹 → 取第一个 id 打
-/// `/collections/{id}/items`（这才是全量导入真正要用的接口）。
-///
-/// 为什么不测「裸 fetch 整体可行性」而是逐接口测：知乎的 `x-zse-96` 签名是**按接口**
-/// 校验的（实测 `/me` 不要签名），只测一个接口就下结论会误判整条路线。
-pub async fn probe_cookie(cookie_text: &str) -> Result<String, String> {
-    let pairs = parse_cookie_pairs(cookie_text);
-    if pairs.is_empty() {
-        return Err("Cookie 为空或格式无法解析（需要含 z_c0 与 d_c0）".to_string());
+/// 2026-09-23 从浏览器实抓确认真实路径是 `/api/v4/people/{id}/collections`，
+/// 其中 `{id}` 是 `56369d958f9395250fec460bcff34da9` 这种 id，
+/// 而 `url_token`（`logic-magican-88`）是主页地址用的那串，两者不能混。
+pub fn parse_person_id(body: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    let id = value.get("id")?;
+    match id {
+        Value::String(s) if !s.is_empty() => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
     }
-    let names: Vec<&str> = pairs.iter().map(|(n, _)| n.as_str()).collect();
-    for required in ["z_c0", "d_c0"] {
-        if !names.contains(&required) {
-            return Err(format!(
-                "Cookie 里缺少 {}（必需）。已识别的键: {}",
-                required,
-                names.join(", ")
-            ));
+}
+
+/// 收藏夹列表路径（分页按 `offset`；实测 `paging.next` 也是这个形态）。
+pub fn collections_path(person_id: &str, offset: usize) -> String {
+    format!(
+        "/api/v4/people/{}/collections?offset={}&limit={}",
+        person_id, offset, PAGE_SIZE
+    )
+}
+
+/// 收藏夹内容路径（**全量导入真正要用的那个接口**）。
+pub fn cookie_items_path(collection_id: i64, offset: usize) -> String {
+    format!(
+        "/api/v4/collections/{}/items?offset={}&limit={}",
+        collection_id, offset, PAGE_SIZE
+    )
+}
+
+/// 收藏夹（列表页一项）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CookieCollection {
+    pub id: i64,
+    pub title: String,
+    /// 服务端报告的条数（含非公开内容，官方接口给的是过滤后的数）
+    pub item_count: usize,
+    pub is_public: bool,
+}
+
+/// 解析收藏夹列表页 → (收藏夹, 是否最后一页)。
+pub fn parse_collections_page(body: &str) -> Result<(Vec<CookieCollection>, bool), String> {
+    let value: Value =
+        serde_json::from_str(body).map_err(|e| format!("解析知乎收藏夹列表失败: {}", e))?;
+    if let Some(err) = value.get("error") {
+        return Err(format!("知乎收藏夹列表返回错误: {}", err));
+    }
+    let is_end = value
+        .get("paging")
+        .and_then(|p| p.get("is_end"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let collections = value
+        .get("data")
+        .and_then(|v| v.as_array())
+        .map(|list| {
+            list.iter()
+                .filter_map(|item| {
+                    let id = item.get("id").and_then(|v| v.as_i64())?;
+                    let title = item
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("未命名收藏夹")
+                        .to_string();
+                    let item_count = item
+                        .get("item_count")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as usize;
+                    let is_public = item
+                        .get("is_public")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
+                    Some(CookieCollection {
+                        id,
+                        title,
+                        item_count,
+                        is_public,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok((collections, is_end))
+}
+
+/// 去掉 HTML 标签取纯文本（`pin` 的正文就是 HTML，没有 title 字段）。
+///
+/// 只做标签剥离 + 常见实体反转义 + 空白折叠：目的是给出人可读的一行摘要，
+/// 不做完整 HTML 解析（这个模块不需要渲染，多引一个解析库不值）。
+pub fn strip_html(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut tag = String::new();
+    let mut in_tag = false;
+    for ch in input.chars() {
+        match ch {
+            '<' => {
+                in_tag = true;
+                tag.clear();
+            }
+            '>' => {
+                in_tag = false;
+                // `<br/>`、`</p>` 这些在视觉上是分隔，直接删会把前后文字粘成一个词
+                // （「世界</p><b>粗」→「世界粗」），所以替换成一个空格。
+                if tag_breaks_line(&tag) {
+                    out.push(' ');
+                }
+            }
+            _ if in_tag => tag.push(ch),
+            _ => out.push(ch),
         }
     }
+    let unescaped = out
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&ldquo;", "「")
+        .replace("&rdquo;", "」");
+    unescaped.split_whitespace().collect::<Vec<_>>().join(" ")
+}
 
-    // ① 登录态
-    let (me_status, me_body) = cookie_get(
-        cookie_text,
-        "https://www.zhihu.com/api/v4/me",
-        "https://www.zhihu.com/",
+/// 这个标签是否需要替换成空格（块级 / 换行类标签）。
+fn tag_breaks_line(tag: &str) -> bool {
+    let name = tag
+        .trim_start_matches('/')
+        .split(|c: char| c.is_whitespace() || c == '/')
+        .next()
+        .unwrap_or("");
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "br" | "p"
+            | "div"
+            | "li"
+            | "ul"
+            | "ol"
+            | "tr"
+            | "td"
+            | "th"
+            | "table"
+            | "hr"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "blockquote"
+            | "section"
+            | "figure"
+            | "figcaption"
     )
-    .await?;
-    let me_snippet: String = me_body.chars().take(300).collect();
-    crate::exit_log!(
-        "[收藏-知乎] 实验① /api/v4/me -> status={} body={}",
-        me_status,
-        me_snippet
-    );
+}
 
-    // ② 收藏夹列表
-    let (list_status, list_body) = cookie_get(
-        cookie_text,
-        "https://www.zhihu.com/api/v4/collections?offset=0&limit=20",
-        "https://www.zhihu.com/collections",
-    )
-    .await?;
-    let list_snippet: String = list_body.chars().take(300).collect();
-    crate::exit_log!(
-        "[收藏-知乎] 实验② /api/v4/collections -> status={} body={}",
-        list_status,
-        list_snippet
-    );
+/// 归一化知乎链接：去掉查询串、锚点与末尾斜杠。
+///
+/// **存在的唯一理由是跨路线去重**：同一条内容经官方接口与 Cookie 两条路拿到的 URL
+/// 会差一些跟踪参数（pin 的 `?native=0`、回答页的各种 `?utm_*`），如果去重键直接用
+/// 原始 URL，同一篇内容从两个入口各导一次就会变成两条记录。
+/// 归一化后两条路线产出同一个值，第二次导入只会更新、不会新增。
+pub fn normalize_zhihu_url(url: &str) -> String {
+    let trimmed = url.trim();
+    let without_fragment = trimmed.split('#').next().unwrap_or(trimmed);
+    without_fragment
+        .split('?')
+        .next()
+        .unwrap_or(without_fragment)
+        .trim_end_matches('/')
+        .to_string()
+}
 
-    // ③ 收藏夹内容（真正要用的那个接口）
-    let first_id = first_collection_id(&list_body);
-    let (items_status, items_path, items_snippet) = match first_id {
-        Some(id) => {
-            let path = format!("/api/v4/collections/{}/items?offset=0&limit=20", id);
-            let (status, body) = cookie_get(
-                cookie_text,
-                &format!("https://www.zhihu.com{}", path),
-                &format!("https://www.zhihu.com/collection/{}", id),
-            )
-            .await?;
-            let snippet: String = body.chars().take(300).collect();
-            crate::exit_log!(
-                "[收藏-知乎] 实验③ {} -> status={} body={}",
-                path,
-                status,
-                snippet
-            );
-            (Some(status), path, snippet)
-        }
-        None => {
-            crate::exit_log!("[收藏-知乎] 实验③ 跳过：列表里没解析出收藏夹 id");
-            (None, String::new(), String::new())
+/// 一条收藏内容 → 统一条目。
+///
+/// 去重键是 **`{type}:{id}`**：`article` 的 id 与 `answer` 的 id 不在同一命名空间，
+/// 不加类型前缀会存在理论上撞车的可能，而幂等是这模块的核心承诺。
+///
+/// 标题三级回退：`title` → `excerpt_title` → 正文纯文本首段。`pin` 没有 `title`
+/// （实测），只靠 `title` 会让所有想法都变成「无标题」。
+pub fn item_to_cookie_favorite(
+    content: &Value,
+    favored_at: Option<i64>,
+    collection: &CookieCollection,
+) -> Option<NewFavorite> {
+    let kind = content.get("type").and_then(|v| v.as_str())?;
+    let content_id = match content.get("id")? {
+        Value::String(s) if !s.is_empty() => format!("{}:{}", kind, s),
+        Value::Number(n) => format!("{}:{}", kind, n),
+        _ => return None,
+    };
+    let url = content
+        .get("url")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if url.is_empty() {
+        return None;
+    }
+    // 去重键用归一化 URL（与官方路线一致），内容 id 存进 extra 备查
+    let external_id = normalize_zhihu_url(&url);
+
+    let body_text = content
+        .get("content")
+        .and_then(|v| v.as_str())
+        .map(strip_html)
+        .unwrap_or_default();
+    let excerpt = content
+        .get("excerpt_title")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let title = content
+        .get("title")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| excerpt.clone())
+        .or_else(|| {
+            let head = crate::commands::utils::truncate_utf8(&body_text, 120).to_string();
+            (!head.is_empty()).then_some(head)
+        })
+        .unwrap_or_else(|| url.clone());
+
+    let author = content
+        .get("author")
+        .and_then(|a| a.get("name"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let author_token = content
+        .get("author")
+        .and_then(|a| a.get("url_token"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let description = {
+        let text = crate::commands::utils::truncate_utf8(&body_text, 300).to_string();
+        if text.is_empty() {
+            excerpt.clone()
+        } else {
+            Some(text)
         }
     };
 
-    let verdict = probe_verdict(me_status, list_status, items_status);
-    Ok(json!({
-        "verdict": verdict,
-        "conclusion": probe_conclusion(verdict),
-        "cookie": { "count": pairs.len() },
-        "steps": {
-            "me": { "status": me_status, "body": me_snippet },
-            "collections": { "status": list_status, "body": list_snippet },
-            "items": { "status": items_status, "path": items_path, "body": items_snippet },
-        },
+    let extra = json!({
+        "type": kind,
+        "contentId": content_id,
+        "author": author,
+        "authorToken": author_token,
+        "collection": collection.title,
+        "collectionId": collection.id,
+        "favoredAt": favored_at,
+        "isPublic": collection.is_public,
+    });
+
+    Some(NewFavorite {
+        source: SOURCE.to_string(),
+        external_id,
+        url,
+        title,
+        subtitle: author,
+        description,
+        extra_json: Some(extra.to_string()),
+        // 收藏接口返回的条目本身就存在，无需预置失效状态
+        initial_status: None,
     })
-    .to_string())
 }
 
-/// 探测结论的机器可读判定（前端靠它决定 toast 是成功还是失败）。
-///
-/// 抽成纯函数是因为「哪种状态算哪种结论」正是前两次误判的地方，必须有测试钉住。
-///
-/// `items` 为 None 表示列表里没解析出收藏夹 id（用户没有收藏夹），此时无法验证
-/// 内容接口，按「已通过的部分」给结论而不是拦下来。
-pub fn probe_verdict(me: u16, collections: u16, items: Option<u16>) -> &'static str {
-    let ok = |status: u16| (200..300).contains(&status);
-    let rejected = |status: u16| status == 401 || status == 403;
-
-    // 登录态都没过 → Cookie 本身的问题，别往签名上扯
-    if rejected(me) {
-        return "invalid_cookie";
-    }
-    if !ok(me) {
-        return "unknown";
-    }
-    // 已登录，但数据接口被拒 → 这才是签名拦截
-    if rejected(collections) || items.map(rejected).unwrap_or(false) {
-        return "needs_signature";
-    }
-    if ok(collections) && items.map(ok).unwrap_or(true) {
-        return "ok";
-    }
-    "unknown"
+/// 收藏内容页里的一条：待落库条目 + 正文（正文另外存进 `favorite_content`）。
+#[derive(Debug, Clone)]
+pub struct ZhihuItem {
+    pub favorite: NewFavorite,
+    /// 正文纯文本（已剥标签，列表展开时直接显示）
+    pub text: String,
+    /// 正文原始 HTML（留档；前端不直接渲染远端 HTML，避免注入）
+    pub html: Option<String>,
 }
 
-/// [`probe_verdict`] 对应的人话解释。
-pub fn probe_conclusion(verdict: &str) -> &'static str {
-    match verdict {
-        "ok" => "Cookie 直连可用（/me → /collections → /collections/{id}/items 全部通过）：可以切到 Cookie 路线做全量导入",
-        "invalid_cookie" => "登录态没过：/api/v4/me 被拒。多半是 z_c0 失效或复制不完整，请在浏览器确认已登录后重新复制整条 Cookie 再测。注意：这不能证明签名是必需的。",
-        "needs_signature" => "登录态正常，但收藏接口被拒：那几个接口确实要 x-zse-96 签名，Cookie 方案证伪",
-        _ => "未知结果，请把完整输出发给开发者",
+/// 解析收藏夹内容页 → (条目, 是否最后一页)。
+///
+/// 正文顺手一起带出来：内容接口本来就把 `content` 全文给了（实测一页 20 条约 366KB），
+/// 不缓存等于每次都白拿一遍再丢掉。
+pub fn parse_cookie_items_page(
+    body: &str,
+    collection: &CookieCollection,
+) -> Result<(Vec<ZhihuItem>, bool), String> {
+    let value: Value =
+        serde_json::from_str(body).map_err(|e| format!("解析知乎收藏内容失败: {}", e))?;
+    if let Some(err) = value.get("error") {
+        return Err(format!("知乎收藏内容返回错误: {}", err));
     }
+    let is_end = value
+        .get("paging")
+        .and_then(|p| p.get("is_end"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let items = value
+        .get("data")
+        .and_then(|v| v.as_array())
+        .map(|list| {
+            list.iter()
+                .filter_map(|entry| {
+                    // 外层 `created` 是**收藏时间**，内容自己的 `created` 是发布时间
+                    let favored_at = entry.get("created").and_then(|v| v.as_i64());
+                    let content = entry.get("content")?;
+                    let favorite = item_to_cookie_favorite(content, favored_at, collection)?;
+                    let html = content
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .filter(|s| !s.is_empty());
+                    let text = html.as_deref().map(strip_html).unwrap_or_default();
+                    Some(ZhihuItem {
+                        favorite,
+                        text,
+                        html,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok((items, is_end))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        auth_headers, contents_path, favlists_path, first_collection_id, item_to_favorite,
-        map_api_error, parse_contents_page, parse_cookie_pairs, parse_envelope, parse_quota,
-        probe_conclusion, probe_verdict, FAVLISTS_LIMIT, PAGE_SIZE,
+        collections_path, cookie_items_path, item_to_cookie_favorite, normalize_zhihu_url,
+        parse_collections_page, parse_cookie_items_page, parse_person_id, strip_html,
+        CookieCollection, PAGE_SIZE,
     };
     use serde_json::json;
 
-    /// **误判回归**：登录态没过时的 401 绝不能判成「需要签名」。
-    /// 第一次实验就是这样错的（首页跳 /signin，那是游客在打登录态接口）。
-    #[test]
-    fn anonymous_401_is_not_a_signature_verdict() {
-        assert_eq!(probe_verdict(401, 401, Some(401)), "invalid_cookie");
-        assert!(probe_conclusion("invalid_cookie").contains("不能证明签名"));
+    /// 测试用收藏夹（映射只用到 title / id / is_public）。
+    fn sample_collection() -> CookieCollection {
+        CookieCollection {
+            id: 580815780,
+            title: "20260922".to_string(),
+            item_count: 2032,
+            is_public: false,
+        }
     }
 
-    /// 已登录但数据接口被拒 → 这才是签名问题（实测 /me 200 而收藏接口被拒的情形）。
+    /// 路径按实抓结果拼：收藏夹列表用 **people id**，内容用收藏夹 id。
     #[test]
-    fn signed_in_but_rejected_means_signature() {
-        assert_eq!(probe_verdict(200, 403, Some(403)), "needs_signature");
-        assert_eq!(probe_verdict(200, 401, None), "needs_signature");
-        assert!(probe_conclusion("needs_signature").contains("x-zse-96"));
-    }
-
-    /// 三个接口全通 → Cookie 直连可用（2026-09-23 实测 /me 就是这样的）。
-    #[test]
-    fn all_three_steps_passing_means_ok() {
-        assert_eq!(probe_verdict(200, 200, Some(200)), "ok");
-        assert!(probe_conclusion("ok").contains("全量导入"));
-    }
-
-    /// 用户一个收藏夹都没有时 items 无从验证，不能因此判失败。
-    #[test]
-    fn missing_collection_id_does_not_fail_the_probe() {
-        assert_eq!(probe_verdict(200, 200, None), "ok");
-    }
-
-    /// 服务端 5xx 是「看不懂」，不能假装是签名或 Cookie 的问题。
-    #[test]
-    fn server_error_stays_unknown() {
-        assert_eq!(probe_verdict(200, 200, Some(500)), "unknown");
-        assert_eq!(probe_verdict(500, 200, Some(200)), "unknown");
-    }
-
-    /// 收藏夹列表解析：取第一个 id；结构不对/空列表都不 panic。
-    #[test]
-    fn first_collection_id_reads_data_array() {
-        let body = r#"{"data":[{"id":580815780,"title":"默认收藏夹"}],"paging":{"is_end":false}}"#;
-        assert_eq!(first_collection_id(body), Some(580815780));
-        assert_eq!(first_collection_id(r#"{"data":[]}"#), None);
-        assert_eq!(first_collection_id(r#"{"error":{"code":100}}"#), None);
-        assert_eq!(first_collection_id("not json"), None);
-    }
-
-
-    /// Cookie 串解析：分号/换行都行、同名去重、无效段跳过。
-    #[test]
-    fn cookie_pairs_parse_tolerantly() {
-        let pairs = parse_cookie_pairs("z_c0=abc; d_c0=def\n  bogus  \nother=1; z_c0=dup");
-        assert_eq!(pairs.len(), 3, "实际: {:?}", pairs);
-        assert!(
-            pairs.contains(&("z_c0".to_string(), "abc".to_string())),
-            "同名取第一个"
-        );
-        assert!(pairs.contains(&("d_c0".to_string(), "def".to_string())));
-        assert!(pairs.contains(&("other".to_string(), "1".to_string())));
-
-        // 没有等号的段跳过；首尾空白容忍
-        assert!(parse_cookie_pairs("no-equals-sign").is_empty());
+    fn paths_match_verified_endpoints() {
         assert_eq!(
-            parse_cookie_pairs("  a = b  ")
-                .first()
-                .map(|(n, v)| (n.as_str(), v.as_str())),
-            Some(("a", "b"))
-        );
-    }
-
-    #[test]
-    fn paths_match_official_endpoints() {
-        assert_eq!(
-            favlists_path(),
-            format!("/api/v1/user/favlists?Limit={}", FAVLISTS_LIMIT)
-        );
-        assert_eq!(
-            contents_path(123456789, 40),
+            collections_path("56369d958f9395250fec460bcff34da9", 0),
             format!(
-                "/api/v1/user/favlist_contents?FavlistUrlToken=123456789&Offset=40&Limit={}",
+                "/api/v4/people/56369d958f9395250fec460bcff34da9/collections?offset=0&limit={}",
+                PAGE_SIZE
+            )
+        );
+        assert_eq!(
+            cookie_items_path(580815780, 20),
+            format!(
+                "/api/v4/collections/580815780/items?offset=20&limit={}",
                 PAGE_SIZE
             )
         );
     }
 
+    /// /me 返回体里取用户 id（字符串形态）；结构不对不 panic。
     #[test]
-    fn auth_headers_carry_bearer_and_timestamp() {
-        let headers = auth_headers("secret-1", 1742822400);
-        assert!(headers.contains(&("Authorization", "Bearer secret-1".to_string())));
-        assert!(headers.contains(&("X-Request-Timestamp", "1742822400".to_string())));
-        assert!(headers.contains(&("Content-Type", "application/json".to_string())));
-    }
-
-    /// 官方是 PascalCase，但做一层小写兼容（改版不至于直接坏）。
-    #[test]
-    fn envelope_accepts_both_casings() {
-        let pascal = json!({"Code": 0, "Data": {"Items": []}});
-        assert!(parse_envelope(&pascal).is_ok());
-        let lower = json!({"code": 0, "data": {"Items": []}});
-        assert!(parse_envelope(&lower).is_ok());
-    }
-
-    #[test]
-    fn api_errors_are_actionable() {
-        assert!(map_api_error(20001, "").contains("Access Secret"));
-        assert!(map_api_error(30001, "").contains("额度"));
-        assert!(map_api_error(30002, "").contains("额度"));
-    }
-
-    #[test]
-    fn envelope_reports_error_codes() {
-        let body = json!({"Code": 20001, "Message": "auth failed"});
-        let err = parse_envelope(&body).unwrap_err();
-        assert!(err.contains("20001") && err.contains("Access Secret"), "实际: {}", err);
-        // 缺 Data 视为异常而不是空结果
-        let empty = json!({"Code": 0});
-        assert!(parse_envelope(&empty).is_err());
-    }
-
-    #[test]
-    fn maps_item_using_url_as_dedup_key() {
-        let item = json!({
-            "ContentType": "answer",
-            "Url": "https://www.zhihu.com/question/1/answer/2",
-            "Title": "如何评价 X？",
-            "Summary": "摘要",
-            "FavTime": 1700000000,
-            "LikeCount": 12,
-            "Author": { "Name": "某人" }
-        });
-        let fav = item_to_favorite(&item, "我的收藏").unwrap();
-        // 官方 items 没有内容 id，Url 就是唯一稳定标识
-        assert_eq!(fav.external_id, "https://www.zhihu.com/question/1/answer/2");
-        assert_eq!(fav.url, "https://www.zhihu.com/question/1/answer/2");
-        assert_eq!(fav.title, "如何评价 X？");
-        assert_eq!(fav.subtitle.as_deref(), Some("某人"));
-        assert_eq!(fav.description.as_deref(), Some("摘要"));
-        assert!(fav.extra_json.as_ref().unwrap().contains("我的收藏"));
-    }
-
-    /// 缺 Url 或 Title 的条目跳过，别让整批失败。
-    #[test]
-    fn malformed_items_are_skipped() {
-        assert!(item_to_favorite(&json!({"Title": "x"}), "夹").is_none());
-        assert!(item_to_favorite(&json!({"Url": "https://x"}), "夹").is_none());
-    }
-
-    #[test]
-    fn contents_page_reads_paging() {
-        let payload = json!({
-            "Items": [{"Url": "https://x", "Title": "t"}],
-            "Paging": { "IsEnd": false, "NextOffset": "40", "Totals": 100 }
-        });
-        let (items, is_end, next, totals) = parse_contents_page(&payload);
-        assert_eq!(items.len(), 1);
-        assert!(!is_end);
-        assert_eq!(next, 40);
-        assert_eq!(totals, Some(100));
-
-        let ended = json!({ "Items": [], "Paging": { "IsEnd": true } });
-        let (items, is_end, next, totals) = parse_contents_page(&ended);
-        assert!(items.is_empty() && is_end);
-        // 没给 NextOffset 时返回哨兵值，调用方按「结束」处理
-        assert_eq!(next, usize::MAX);
-        assert_eq!(totals, None);
-    }
-
-    /// NextOffset 实际返回数字时也要能解析（文档写 String，但按防御性处理）。
-    #[test]
-    fn next_offset_as_number_is_accepted() {
-        let payload = json!({
-            "Items": [],
-            "Paging": { "IsEnd": false, "NextOffset": 60 }
-        });
-        let (_, is_end, next, _) = parse_contents_page(&payload);
-        assert!(!is_end);
-        assert_eq!(next, 60);
-    }
-
-    /// 额度解析：PascalCase 与小写都认；缺字段返回 None（预检失败不阻塞导入）。
-    #[test]
-    fn quota_handles_both_casings_and_missing() {
-        assert_eq!(parse_quota(&json!({"Data": {"RemainingQuota": 7}})), Some((7, -1)));
+    fn parse_person_id_reads_me_response() {
         assert_eq!(
-            parse_quota(&json!({"data": {"remaining_quota": 0, "total_quota": 10000}})),
-            Some((0, 10000))
+            parse_person_id(r#"{"id":"56369d958f9395250fec460bcff34da9","name":"走刀口"}"#),
+            Some("56369d958f9395250fec460bcff34da9".to_string())
         );
-        assert_eq!(parse_quota(&json!({})), None);
+        // 数字形态也接受（接口变了不至于直接崩）
+        assert_eq!(parse_person_id(r#"{"id":123}"#), Some("123".to_string()));
+        assert_eq!(parse_person_id(r#"{"id":""}"#), None);
+        assert_eq!(parse_person_id("not json"), None);
+    }
+
+    /// 收藏夹列表解析：**私有收藏夹也算**（`is_public=false` 实测就有）。
+    #[test]
+    fn parse_collections_reads_private_folders() {
+        let body = r#"{"paging":{"is_end":true,"totals":2},"data":[
+            {"id":580815780,"title":"20260922","is_public":false,"item_count":2032},
+            {"id":196117121,"title":"20260921","is_public":false,"item_count":125}]}"#;
+        let (collections, is_end) = parse_collections_page(body).unwrap();
+        assert!(is_end);
+        assert_eq!(collections.len(), 2);
+        assert_eq!(collections[0].id, 580815780);
+        assert_eq!(collections[0].item_count, 2032);
+        assert!(!collections[0].is_public, "私有收藏夹必须保留");
+    }
+
+    /// 收藏夹列表返回错误体时要把错误抛出去，而不是当成「0 个收藏夹」静默成功。
+    #[test]
+    fn parse_collections_reports_api_error() {
+        let err = parse_collections_page(r#"{"error":{"code":100,"name":"X"}}"#).unwrap_err();
+        assert!(err.contains("错误"), "实际: {}", err);
+    }
+
+    /// **实测**：`pin` 没有 `title`，只有 `excerpt_title`；标题必须回退到它，
+    /// 否则所有「想法」都会变成无标题条目。
+    #[test]
+    fn pin_without_title_falls_back_to_excerpt() {
+        let collection = sample_collection();
+        let content = json!({
+            "id": "2077691230142649695", "type": "pin",
+            "url": "https://www.zhihu.com/pin/2077691230142649695?native=0",
+            "excerpt_title": "它教你从头训一个超小语言模型",
+            "content": "<p>正文<strong>加粗</strong>内容</p>",
+            "author": { "name": "someone", "url_token": "someone-1" }
+        });
+        let fav = item_to_cookie_favorite(&content, Some(1790124359), &collection).unwrap();
+        assert_eq!(fav.title, "它教你从头训一个超小语言模型");
+        assert_eq!(fav.external_id, "https://www.zhihu.com/pin/2077691230142649695");
+        assert!(fav.extra_json.as_deref().unwrap().contains("pin:2077691230142649695"));
+        assert_eq!(fav.subtitle.as_deref(), Some("someone"));
+        assert!(fav.description.as_deref().unwrap().contains("正文加粗内容"));
+    }
+
+    /// **跨路线去重**：同一条内容经官方接口与 Cookie 两条路导入，必须得到同一个
+    /// `external_id`，否则换个入口再导一次就多一条重复记录。
+    /// 同一条内容带不同的跟踪参数，去重键必须一致（否则同一篇会被重复导入）。
+    #[test]
+    fn dedup_key_ignores_tracking_params() {
+        let collection = sample_collection();
+        let bare = item_to_cookie_favorite(
+            &json!({"id":"1","type":"article","url":"https://zhuanlan.zhihu.com/p/1","title":"a"}),
+            None,
+            &collection,
+        )
+        .unwrap();
+        let tracked = item_to_cookie_favorite(
+            &json!({"id":"1","type":"article",
+                    "url":"https://zhuanlan.zhihu.com/p/1?utm_id=0#tip","title":"a"}),
+            None,
+            &collection,
+        )
+        .unwrap();
+        assert_eq!(bare.external_id, tracked.external_id);
+    }
+
+    /// URL 归一化：查询串、锚点、末尾斜杠都去掉，但不同内容仍不同。
+    #[test]
+    fn normalize_url_strips_params_and_fragment() {
+        assert_eq!(
+            normalize_zhihu_url("https://www.zhihu.com/pin/123?native=0"),
+            "https://www.zhihu.com/pin/123"
+        );
+        assert_eq!(
+            normalize_zhihu_url(" https://zhuanlan.zhihu.com/p/1#tip "),
+            "https://zhuanlan.zhihu.com/p/1"
+        );
+        assert_eq!(
+            normalize_zhihu_url("https://www.zhihu.com/question/1/answer/2/"),
+            "https://www.zhihu.com/question/1/answer/2"
+        );
+        assert_ne!(
+            normalize_zhihu_url("https://www.zhihu.com/pin/1"),
+            normalize_zhihu_url("https://www.zhihu.com/pin/2")
+        );
+    }
+
+    /// 缺 id / 缺 url 的畸形条目直接跳过，不让它污染库。
+    #[test]
+    fn malformed_content_is_skipped() {
+        let collection = sample_collection();
+        assert!(item_to_cookie_favorite(&json!({"type":"pin"}), None, &collection).is_none());
+        assert!(item_to_cookie_favorite(
+            &json!({"id":"1","type":"pin","url":""}),
+            None,
+            &collection
+        )
+        .is_none());
+    }
+
+    /// 收藏内容解析：外层 `created` 是**收藏时间**，要写进 extra。
+    #[test]
+    fn cookie_items_page_reads_shape_and_favored_at() {
+        let collection = sample_collection();
+        let body = r#"{"paging":{"is_end":false,"totals":2032},"data":[
+            {"created":1740533662,"content":{"id":"26425730763","type":"article",
+             "title":"标题","url":"https://zhuanlan.zhihu.com/p/26425730763",
+             "author":{"name":"游戏茶馆"}}},
+            {"created":1790084038,"content":{"id":"999","type":"pin","url":"",
+             "excerpt_title":"想法"}}]}"#;
+        let (items, is_end) = parse_cookie_items_page(body, &collection).unwrap();
+        assert!(!is_end);
+        assert_eq!(items.len(), 1, "url 为空的条目要跳过");
+        assert!(items[0]
+            .favorite
+            .extra_json
+            .as_deref()
+            .unwrap()
+            .contains("1740533662"));
+    }
+
+    /// 正文要一起带出来（列表展开直接看，不用二次请求）。
+    #[test]
+    fn items_page_carries_content_text() {
+        let collection = sample_collection();
+        let body = r#"{"paging":{"is_end":true},"data":[
+            {"created":1,"content":{"id":"9","type":"pin",
+             "url":"https://www.zhihu.com/pin/9","excerpt_title":"想法",
+             "content":"<p>正文<b>加粗</b></p>"}}]}"#;
+        let (items, _) = parse_cookie_items_page(body, &collection).unwrap();
+        assert_eq!(items[0].text, "正文加粗");
+        assert_eq!(items[0].html.as_deref(), Some("<p>正文<b>加粗</b></p>"));
+    }
+
+    /// HTML 剥离：标签、实体、连续空白都要处理干净（pin 正文是 HTML）。
+    #[test]
+    fn strip_html_removes_tags_and_entities() {
+        assert_eq!(
+            strip_html("<p>你好&nbsp;&amp; 世界</p><br/><b>粗</b>"),
+            "你好 & 世界 粗"
+        );
+        assert_eq!(strip_html("<p class=\"a\"><br/></p>"), "");
+        assert_eq!(strip_html("纯文本"), "纯文本");
+    }
+
+    /// 空列表 / 结构不同都不 panic（此时没有 id 可取，拉取循环会直接结束）。
+    #[test]
+    fn parse_collections_tolerates_empty_data() {
+        let (empty, is_end) = parse_collections_page(r#"{"data":[],"paging":{"is_end":true}}"#).unwrap();
+        assert!(empty.is_empty());
+        assert!(is_end);
+        let (missing, _) = parse_collections_page(r#"{"paging":{}}"#).unwrap();
+        assert!(missing.is_empty());
     }
 }

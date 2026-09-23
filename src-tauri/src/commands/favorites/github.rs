@@ -2,6 +2,7 @@
 //!
 //! 只做**纯计算 + 只读请求**，不调用任何写入接口（本模块不 unstar、不改仓库）。
 
+use base64::Engine;
 use serde_json::{json, Value};
 
 use super::db::NewFavorite;
@@ -136,6 +137,104 @@ async fn request(token: &str, url: &str) -> Result<Value, String> {
     request_with_link(token, url).await.map(|(body, _)| body)
 }
 
+/// 中文 README 的候选文件名，**按优先级**排在默认 README 之前。
+///
+/// 只要 `README_ZH.md`：中文说明在这套命名里最常见，多试五六种变体换来的是
+/// 每次展开都能多打几个 404 请求，不值。大小写各留一个是因为
+/// contents 接口的路径**区分大小写**，而实际仓库里两种写法都有。
+pub const README_ZH_CANDIDATES: [&str; 2] = ["README_ZH.md", "readme_zh.md"];
+
+/// 带可选 token 的 GET builder。
+///
+/// token 为空时**不加 Authorization 头**：加一个空的 `Authorization:` 会被 GitHub
+/// 当成无效凭证直接 401，而公开仓库不带头本来就能读。
+fn github_get(
+    url: &str,
+    accept: &'static str,
+    token: &str,
+) -> reqwest::RequestBuilder {
+    let mut request = crate::commands::utils::get_http_client()
+        .get(url)
+        .header("Accept", accept)
+        .header("User-Agent", "Any-Version-Manager")
+        .header("X-GitHub-Api-Version", "2022-11-28");
+    if !token.trim().is_empty() {
+        request = request.header("Authorization", format!("Bearer {}", token.trim()));
+    }
+    request
+}
+
+/// 取仓库里某个文件的**原始文本**；文件不存在返回 `None`（404 不是错误）。
+pub async fn fetch_file_text(
+    token: &str,
+    full_name: &str,
+    path: &str,
+) -> Result<Option<String>, String> {
+    let url = format!("https://api.github.com/repos/{}/contents/{}", full_name, path);
+    // raw 直接给文件内容，省掉一次 base64 解码
+    let resp = github_get(&url, "application/vnd.github.raw", token)
+        .send()
+        .await
+        .map_err(|e| format!("请求 GitHub 失败: {}", e))?;
+
+    let status = resp.status().as_u16();
+    if status == 404 {
+        return Ok(None);
+    }
+    if !(200..300).contains(&status) {
+        return Err(map_status_error(status, "读取 README"));
+    }
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取 README 内容失败: {}", e))?;
+    Ok(Some(text))
+}
+
+/// 取仓库的默认 README（GitHub 自己解析文件名），返回 `(文件名, 内容)`。
+pub async fn fetch_default_readme(
+    token: &str,
+    full_name: &str,
+) -> Result<Option<(String, String)>, String> {
+    let url = format!("https://api.github.com/repos/{}/readme", full_name);
+    let resp = github_get(&url, "application/vnd.github+json", token)
+        .send()
+        .await
+        .map_err(|e| format!("请求 GitHub 失败: {}", e))?;
+
+    let status = resp.status().as_u16();
+    if status == 404 {
+        return Ok(None);
+    }
+    if !(200..300).contains(&status) {
+        return Err(map_status_error(status, "读取 README"));
+    }
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析 GitHub 响应失败: {}", e))?;
+    let name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("README")
+        .to_string();
+    // content 是 base64（含换行），用标准表解码
+    let encoded = body
+        .get("content")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "GitHub 未返回 README 内容".to_string())?;
+    Ok(Some((name, decode_readme(encoded)?)))
+}
+
+/// 解码 GitHub 返回的 base64 正文（**含换行**，必须先去掉空白）。
+pub fn decode_readme(encoded: &str) -> Result<String, String> {
+    let cleaned: String = encoded.chars().filter(|c| !c.is_whitespace()).collect();
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(cleaned.as_bytes())
+        .map_err(|e| format!("解码 README 失败: {}", e))?;
+    Ok(String::from_utf8_lossy(&decoded).to_string())
+}
+
 async fn request_with_link(token: &str, url: &str) -> Result<(Value, Option<String>), String> {
     let resp = crate::commands::utils::get_http_client()
         .get(url)
@@ -165,7 +264,10 @@ async fn request_with_link(token: &str, url: &str) -> Result<(Value, Option<Stri
 
 #[cfg(test)]
 mod tests {
-    use super::{map_status_error, next_page_url, repo_to_favorite, starred_url, SOURCE};
+    use super::{
+        decode_readme, map_status_error, next_page_url, repo_to_favorite, starred_url,
+        README_ZH_CANDIDATES, SOURCE,
+    };
     use serde_json::json;
 
     #[test]
@@ -233,6 +335,28 @@ mod tests {
     fn falls_back_to_full_name_url() {
         let fav = repo_to_favorite(&json!({ "id": 9, "full_name": "o/r" })).unwrap();
         assert_eq!(fav.url, "https://github.com/o/r");
+    }
+
+    /// 中文 README 优先：`README_ZH.md` 必须排在第一个。
+    /// （顺序即优先级，改动顺序要连带改这个测试，别默默调。）
+    #[test]
+    fn readme_zh_candidate_comes_first() {
+        assert_eq!(README_ZH_CANDIDATES[0], "README_ZH.md");
+        // 默认 README 由 GitHub 自己解析（能认 README.md/.rst/无扩展名），不放进候选表
+        assert!(
+            README_ZH_CANDIDATES
+                .iter()
+                .all(|n| n.eq_ignore_ascii_case("readme_zh.md")),
+            "候选表里只该有中文 README 的两种大小写写法"
+        );
+    }
+
+    /// README 正文是带换行的 base64，必须先剥空白再解码。
+    #[test]
+    fn decode_readme_strips_newlines() {
+        let encoded = "aGVsbG8K\n\nd29ybGQ=";
+        assert_eq!(decode_readme(encoded).unwrap(), "hello\nworld");
+        assert!(decode_readme("!!!not-base64!!!").is_err());
     }
 
     #[test]

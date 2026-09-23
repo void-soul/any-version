@@ -18,8 +18,6 @@ interface Props {
   /** 琥珀色的风险提示（实验功能才给） */
   note?: string;
   onSaved?: (configured: boolean) => void;
-  /** 主按钮文案（默认「保存」） */
-  saveLabel?: string;
   /**
    * 保存成功并关闭弹窗之后要做的事（例如「保存并测试」里的测试步骤）。
    *
@@ -47,7 +45,6 @@ export function CredentialDialog({
   multiline = false,
   note,
   onSaved,
-  saveLabel,
   afterSave,
 }: Props) {
   const { t } = useTranslation();
@@ -122,7 +119,7 @@ export function CredentialDialog({
             {t("common.cancel")}
           </SharedButton>
           <SharedButton onClick={() => void persist()} disabled={saving || !value.trim()}>
-            {saveLabel ?? t("favorites.credentialSave")}
+            {t("favorites.credentialSave")}
           </SharedButton>
         </div>
       </div>
