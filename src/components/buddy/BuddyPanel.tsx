@@ -1,6 +1,6 @@
 // Buddy 模块：WorkBuddy / CodeBuddy CN 账号管理（复刻 cockpit-tools）。
 // 功能：导入/导出、新增（OAuth / 粘贴 Token）、用量、手动/自动签到、会话管理、切换账号。
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -18,6 +18,7 @@ import {
   summarizeCreditSegments,
   type RotationAccount,
 } from "./quota";
+import { filterSyncDetails, SYNC_STATUS_FILTERS } from "./sessionSync";
 import {
   RefreshCw,
   Download,
@@ -114,6 +115,8 @@ export type BuddySessionSyncStatus =
 export interface BuddySessionSyncDetail {
   id: string;
   label: string;
+  /** 该会话所属目录 / 项目（后端取不到时为 null，界面显示占位符） */
+  workspace: string | null;
   status: BuddySessionSyncStatus;
   /** 机器可读原因码，前端用 buddy.syncReason.<reason> 翻译 */
   reason: string;
@@ -805,6 +808,16 @@ export default function BuddyPanel() {
   // 最近一次切换的会话同步台账（成功/跳过/冲突/失败明细），切换结束后保留给用户查看
   const [syncSummary, setSyncSummary] = useState<BuddySessionSyncSummary | null>(null);
   const [syncDetailsOpen, setSyncDetailsOpen] = useState(false);
+  // 明细的状态筛选（"all" | copied | skipped | partial | conflict | failed）
+  const [syncStatusFilter, setSyncStatusFilter] = useState<string>("all");
+  // 冲突提醒横幅是否被手动关闭（每次切换都会重新亮起，见 switchAccount）
+  const [conflictAlertDismissed, setConflictAlertDismissed] = useState(false);
+  // 冲突确认框：必须显式点一个按钮才能关（点背景不关）。与横幅是两档提醒 ——
+  // 横幅常驻、可被忽略；确认框强制确认一次。每次切换重新弹（见 switchAccount）。
+  const [conflictDialogOpen, setConflictDialogOpen] = useState(false);
+  // 本轮切换是否已经弹过确认框：事件与命令返回值都可能带同一份台账，避免弹两次。
+  // 用 ref 而非 state —— 事件闭包捕获的 state 是旧值，读不到「已经弹过」。
+  const conflictDialogShownRef = useRef(false);
   // 客户端路径设置（切换时关闭/重启的 WorkBuddy / CodeBuddy CN）
   const [clientPaths, setClientPaths] = useState<BuddyClientPath[]>([]);
   const [pathDraft, setPathDraft] = useState<Record<string, string>>({});
@@ -1395,18 +1408,44 @@ export default function BuddyPanel() {
     }
   };
 
+  /**
+   * 有冲突会话时的统一动作：展开明细并预筛到「冲突」+ 弹确认框。
+   *
+   * 明细默认折叠、默认显示全部状态，几百条「跳过」里夹几条冲突基本必被漏掉；
+   * 所以既把第一眼落在这些会话上（自动展开 + 预筛），又弹一个必须显式选择才能
+   * 关掉的确认框（横幅另有一份，见下方 conflictAlert）。
+   */
+  const focusConflicts = (conflictCount: number) => {
+    if (conflictCount === 0) {
+      return;
+    }
+    setSyncDetailsOpen(true);
+    setSyncStatusFilter("conflict");
+    if (!conflictDialogShownRef.current) {
+      conflictDialogShownRef.current = true;
+      setConflictDialogOpen(true);
+    }
+  };
+
   const switchAccount = async (id: string) => {
     setBusy(true);
     setMessage(null);
     setSwitchProgress(null);
     setSyncSummary(null);
     setSyncDetailsOpen(false);
+    // 每次切换都重新亮起冲突提醒：上一轮点过「关闭」不影响这一次
+    setConflictAlertDismissed(false);
+    setConflictDialogOpen(false);
+    conflictDialogShownRef.current = false;
     let unlisten: UnlistenFn | null = null;
     try {
       unlisten = await listen<BuddySwitchProgress>("buddy-switch-progress", (e) => {
         setSwitchProgress(e.payload);
         // 合并结束时后端带上逐会话台账（只在该阶段出现）
-        if (e.payload.sync) setSyncSummary(e.payload.sync);
+        if (e.payload.sync) {
+          setSyncSummary(e.payload.sync);
+          focusConflicts(e.payload.sync.conflict);
+        }
       });
       const [text, report] = await invoke<[string, BuddyTransferReport | null]>(
         "buddy_switch_account",
@@ -1428,7 +1467,10 @@ export default function BuddyPanel() {
         );
       }
       // 事件可能在切换返回前就被消费，这里用返回值兜底，保证台账一定展示
-      if (report?.sync) setSyncSummary(report.sync);
+      if (report?.sync) {
+        setSyncSummary(report.sync);
+        focusConflicts(report.sync.conflict);
+      }
       showMsg(true, parts.join("；"));
       await load();
     } catch (e) {
@@ -1872,6 +1914,36 @@ export default function BuddyPanel() {
         </div>
       )}
 
+      {/* 冲突会话重点提醒：两侧都改过的会话 Kira 不替用户选，必须一眼看到。
+          明细默认折叠且默认显示全部状态，只靠计数行里那个「冲突 N」必被漏掉。 */}
+      {syncSummary && syncSummary.conflict > 0 && !conflictAlertDismissed && (
+        <div className="flex items-start gap-2 px-4 py-2 text-[11px] border-b bg-amber-500/15 text-amber-200 border-amber-500/30">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-[1px] text-amber-400" />
+          <span className="min-w-0 flex-1 leading-relaxed">
+            <span className="font-bold">
+              {t("buddy.conflictAlertTitle", { count: syncSummary.conflict })}
+            </span>
+            <span className="block text-amber-200/75">{t("buddy.conflictAlertDesc")}</span>
+          </span>
+          <button
+            onClick={() => {
+              setSyncDetailsOpen(true);
+              setSyncStatusFilter("conflict");
+            }}
+            className="flex-shrink-0 px-2 py-0.5 rounded-md bg-amber-500/20 hover:bg-amber-500/30 font-semibold cursor-pointer transition-colors"
+          >
+            {t("buddy.conflictAlertView")}
+          </button>
+          <button
+            onClick={() => setConflictAlertDismissed(true)}
+            title={t("buddy.conflictAlertDismiss")}
+            className="flex-shrink-0 text-amber-300/70 hover:text-white cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* 会话同步台账：只处理有变化的会话，明细含 成功 / 跳过 / 冲突 / 失败 */}
       {syncSummary && syncSummary.total > 0 && (
         <div className="border-b border-white/5 bg-white/[0.02] flex-shrink-0">
@@ -1899,10 +1971,30 @@ export default function BuddyPanel() {
           </button>
           {syncDetailsOpen && (
             <div className="max-h-56 overflow-y-auto border-t border-white/5">
+              {/* 状态筛选：明细最多 500 条，冲突/失败往往只有几条，不筛要翻半天 */}
+              <div className="flex items-center gap-1 px-4 py-1.5 border-b border-white/5 sticky top-0 bg-[#0b0b0f] z-10">
+                {SYNC_STATUS_FILTERS.map((status) => (
+                  <button
+                    key={status}
+                    onClick={() => setSyncStatusFilter(status)}
+                    className={`px-1.5 py-0.5 rounded-md text-[10px] cursor-pointer transition-all ${
+                      syncStatusFilter === status
+                        ? "bg-[var(--module-accent)]/25 text-white font-semibold"
+                        : "text-slate-400 hover:bg-white/5"
+                    }`}
+                  >
+                    {status === "all" ? t("buddy.syncFilterAll") : t(`buddy.syncStatus.${status}`)}
+                  </button>
+                ))}
+              </div>
               {syncSummary.unchanged && (
                 <div className="px-4 py-1.5 text-[11px] text-slate-500">{t("buddy.syncUnchanged")}</div>
               )}
-              {syncSummary.details.map((detail, index) => (
+              {/* 明细 ≤500 条，直接两次调用纯过滤函数即可，无需额外 state */}
+              {filterSyncDetails(syncSummary.details, syncStatusFilter).length === 0 && !syncSummary.unchanged && (
+                <div className="px-4 py-1.5 text-[11px] text-slate-500">{t("buddy.syncFilterEmpty")}</div>
+              )}
+              {filterSyncDetails(syncSummary.details, syncStatusFilter).map((detail, index) => (
                 <div
                   key={`${detail.id}-${index}`}
                   className="flex items-start gap-2 px-4 py-1 text-[11px] border-b border-white/5 last:border-b-0"
@@ -1910,8 +2002,15 @@ export default function BuddyPanel() {
                   <span className={`flex-shrink-0 w-16 ${SYNC_STATUS_CLASS[detail.status] ?? "text-slate-400"}`}>
                     {t(`buddy.syncStatus.${detail.status}`)}
                   </span>
+                  {/* 目录列：这条会话属于哪个项目；超长按宽度折叠，悬停看完整路径 */}
+                  <span
+                    className="flex-shrink-0 w-40 truncate text-slate-500 cursor-help"
+                    title={detail.workspace ?? undefined}
+                  >
+                    {detail.workspace || t("buddy.syncWorkspaceUnknown")}
+                  </span>
                   <span className="min-w-0 flex-1 break-all text-slate-300">{detail.label || detail.id}</span>
-                  <span className="flex-shrink-0 text-slate-500">
+                  <span className="flex-shrink-0 text-slate-500" title={t(`buddy.syncReason.${detail.reason}`)}>
                     {t(`buddy.syncReason.${detail.reason}`)}
                   </span>
                 </div>
@@ -3405,6 +3504,47 @@ export default function BuddyPanel() {
                 className="px-4 py-1.5 rounded-lg text-[11px] bg-rose-600 hover:bg-rose-500 text-white font-semibold cursor-pointer disabled:opacity-50"
               >
                 {t("buddy.deleteConfirm")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 冲突确认框：必须显式点一个按钮才能关（点背景不关），
+          否则「冲突被静默放过」这个问题会原样复发 */}
+      {conflictDialogOpen && syncSummary && syncSummary.conflict > 0 && (
+        <div className="fixed inset-0 z-[130] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-[380px] max-w-[95vw] rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl p-5">
+            <div className="flex items-center gap-2.5 mb-4">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
+                <AlertTriangle className="w-4 h-4 text-amber-400" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-bold text-white">
+                  {t("buddy.conflictDialogTitle", { count: syncSummary.conflict })}
+                </h3>
+                <p className="text-[10px] text-slate-500">{t("buddy.conflictDialogHint")}</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed mb-5">
+              {t("buddy.conflictDialogDesc")}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConflictDialogOpen(false)}
+                className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer"
+              >
+                {t("buddy.conflictDialogOk")}
+              </button>
+              <button
+                onClick={() => {
+                  setSyncDetailsOpen(true);
+                  setSyncStatusFilter("conflict");
+                  setConflictDialogOpen(false);
+                }}
+                className="px-4 py-1.5 rounded-lg text-[11px] bg-amber-600 hover:bg-amber-500 text-white font-semibold cursor-pointer"
+              >
+                {t("buddy.conflictDialogView")}
               </button>
             </div>
           </div>
