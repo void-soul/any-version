@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   Bold, Italic, Strikethrough, Code, List, ListOrdered, ListChecks, Quote,
   Square, Link, Table, Minus, Heading1, Heading2, Heading3, Undo2, Redo2,
-  Columns, Eye, Pencil,
+  Columns, Eye, Pencil, Paperclip,
 } from "lucide-react";
 import { MindmapMarkdown } from "./MindmapMarkdown";
 
@@ -43,11 +43,14 @@ interface Props {
   minHeight?: string;
   /** 是否默认分栏（编辑+预览） */
   defaultSplit?: boolean;
+  /** 可选：选一个本地文件插入链接（返回要写入的路径；null = 用户取消）。
+   *  不传则工具栏不出现该按钮 —— 需要「文件链接」的模块（如任务计划）自己给选择器。 */
+  pickFile?: () => Promise<string | null>;
 }
 
 /** 可复用的 Markdown 编辑器：格式工具栏 + 编辑区 + 可选分栏实时预览。
  *  供思维导图节点详情编辑、悬浮窗节点表单等场景复用。 */
-export const MarkdownFieldEditor = memo(function MarkdownFieldEditor({ value, onChange, minHeight = "200px", defaultSplit = false }: Props) {
+export const MarkdownFieldEditor = memo(function MarkdownFieldEditor({ value, onChange, minHeight = "200px", defaultSplit = false, pickFile }: Props) {
   const { t } = useTranslation();
   const [split, setSplit] = useState(defaultSplit);
   const [mode, setMode] = useState<"edit" | "view">("edit");
@@ -107,6 +110,22 @@ export const MarkdownFieldEditor = memo(function MarkdownFieldEditor({ value, on
     }
   }, [undo, redo, handleChange]);
 
+  /** 插入本地文件链接：路径里的空格转成 %20（否则 Markdown 会把链接截断），
+   *  点击时 MindmapMarkdown 会解码回原路径再打开。 */
+  const insertFileLink = useCallback(async () => {
+    if (!pickFile) return;
+    const path = await pickFile();
+    if (!path) return;
+    const name = path.replace(/\\/g, "/").split("/").pop() || path;
+    const href = path.replace(/ /g, "%20");
+    applyTransform((ta) => {
+      const { selectionStart: s, selectionEnd: e, value } = ta;
+      const label = value.slice(s, e) || name;
+      const insert = `[${label}](${href})`;
+      return { text: value.slice(0, s) + insert + value.slice(e), selStart: s + 1, selEnd: s + 1 + label.length };
+    });
+  }, [pickFile, applyTransform]);
+
   const tbtn = "inline-flex items-center justify-center h-6 w-6 rounded-md text-slate-300 bg-white/5 hover:bg-white/10 transition-colors cursor-pointer disabled:opacity-30";
 
   const preview = useMemo(() => (
@@ -143,6 +162,9 @@ export const MarkdownFieldEditor = memo(function MarkdownFieldEditor({ value, on
           return { text: value.slice(0, s) + insert + value.slice(e), selStart: s + 4, selEnd: s + 4 + sel.length };
         })}><Square className="w-3 h-3" /></button>
         <button className={tbtn} title={t("mmd.link")} onClick={() => applyTransform((ta) => wrapSelection(ta, "[", "](https://)", t("mmd.phLink")))}><Link className="w-3 h-3" /></button>
+        {pickFile && (
+          <button className={tbtn} title={t("mmd.fileLink")} onClick={() => void insertFileLink()}><Paperclip className="w-3 h-3" /></button>
+        )}
         <button className={tbtn} title={t("mmd.table")} onClick={() => applyTransform((ta) => {
           const tpl = `\n| ${t("mmd.tableCol1")} | ${t("mmd.tableCol2")} | ${t("mmd.tableCol3")} |\n| --- | --- | --- |\n|  a  |  b  |  c  |\n`;
           const { selectionStart: s, value } = ta;

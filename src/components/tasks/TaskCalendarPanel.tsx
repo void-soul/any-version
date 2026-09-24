@@ -12,12 +12,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   AlertTriangle, CalendarDays, Check, ChevronLeft, ChevronRight, Clock, Inbox, Loader2, Plus, Trash2,
 } from "lucide-react";
 import { SharedButton, inputCls, labelCls } from "../shared/Button";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { SharedModal } from "../shared/Modal";
+import { MarkdownFieldEditor } from "../mindmap/MarkdownFieldEditor";
 import { isOverdue, monthGrid, monthRange, shiftMonth, weekRange } from "./calendarRange";
 import {
   PRIORITY_META, addDays, deriveStatus, progressColor, tasksApi, todayStr,
@@ -336,10 +338,19 @@ function TaskEditorModal({
   const [progress, setProgress] = useState(task?.progress ?? 0);
   const [tags, setTags] = useState(task?.tags ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
+  const [detail, setDetail] = useState(task?.detail ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const late = !!task && isOverdue({ progress, scheduledDate: date || null }, today);
+
+  /** 选一个本地文件插入详细说明（绝对路径：任务不属于任何项目目录，
+   *  相对路径没有可解析的根，所以一律存绝对路径）。 */
+  const pickTaskFile = async () => {
+    const sel = await open({ multiple: false, title: t("taskPlan.pickFileTitle") });
+    if (!sel) return null;
+    return typeof sel === "string" ? sel : null;
+  };
 
   const save = async () => {
     const trimmed = title.trim();
@@ -357,11 +368,12 @@ function TaskEditorModal({
           priority,
           tags,
           description,
+          detail,
         });
         // 进度走专用命令：它会记 move record（进度变化也值得留痕）
         if (progress !== task.progress) await tasksApi.setProgress(task.id, { progress });
       } else {
-        await tasksApi.create({ title: trimmed, scheduledDate: date || null, priority, tags, description, progress });
+        await tasksApi.create({ title: trimmed, scheduledDate: date || null, priority, tags, description, detail, progress });
       }
       onSaved();
     } catch (e) {
@@ -489,8 +501,20 @@ function TaskEditorModal({
 
       <div>
         <label className={labelCls}>{t("taskPlan.descriptionLabel")}</label>
-        <textarea className={`${inputCls} !h-20 resize-none py-1.5`} value={description}
+        <textarea className={`${inputCls} !h-16 resize-none py-1.5`} value={description}
           onChange={(e) => setDescription(e.target.value)} />
+      </div>
+
+      {/* 详细说明：Markdown + 本地文件链接。链接点在预览里即可打开，
+          与思维导图里的文件链接是同一套做法（复用 MindmapMarkdown 渲染）。 */}
+      <div className="flex min-h-0 flex-col">
+        <label className={labelCls}>{t("taskPlan.detailLabel")}</label>
+        <MarkdownFieldEditor
+          value={detail}
+          onChange={setDetail}
+          minHeight="140px"
+          pickFile={pickTaskFile}
+        />
       </div>
 
       {task && (

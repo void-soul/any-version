@@ -325,6 +325,8 @@ export interface AgentOp {
   kind?: string;
   /** add/update 携带；后端已校验为 #RRGGBB，不合法时为 null */
   color?: string | null;
+  /** add 携带：该节点的证据锚定文件（项目相对路径或绝对路径），分析文件后回填 */
+  sources?: string[];
 }
 
 /** 会话消息（落库形态，回放只展示不执行 opsJson） */

@@ -300,6 +300,9 @@ const PHASE_STEPS_TEXT: Record<string, number> = { view: 0, usage: 0, reconnect:
 const PHASE_KEYS_PROJECT = ["agent.phaseScan", "agent.phaseExplore", "agent.phaseRoute", "agent.phaseGenerate", "agent.phaseValidate", "agent.phaseDraw"] as const;
 const PHASE_KEYS_TEXT = ["agent.phaseGenerate", "agent.phaseValidate", "agent.phaseDraw"] as const;
 
+/** AI 输入框自动增高的上限（px）：到顶后内部滚动，否则长指令会把对话区挤没 */
+const INPUT_MAX_HEIGHT = 160;
+
 const wbSelect = "h-8 min-w-0 rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400/60 disabled:opacity-50";
 const wbBtn = "inline-flex cursor-pointer items-center gap-1 rounded-md border border-white/10 bg-white/[0.05] px-2 py-1.5 text-[10px] text-slate-300 transition hover:bg-white/[0.1] hover:text-white disabled:cursor-default disabled:opacity-40";
 
@@ -568,6 +571,16 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length, entries.length, loading]);
+
+  // 输入框随内容自动增高（到上限后内部滚动）：
+  // 写长指令（例如「分析这个文件并画一张图」）时不该挤在一行里靠滚动看。
+  // 先置 auto 再取 scrollHeight，否则内容变少时高度不会回缩。
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, INPUT_MAX_HEIGHT)}px`;
+  }, [input]);
 
   // 用量统计（usage 事件累计）
   const totals = useMemo(() => {
@@ -877,7 +890,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
               : t("agent.inputPhFollowUp")
           }
           disabled={loading}
-          className="max-h-[120px] min-h-[34px] flex-1 resize-none rounded-lg border border-white/10 bg-slate-950/70 px-2.5 py-2 text-[11px] text-slate-200 outline-none focus:border-cyan-400/60 disabled:opacity-50"
+          className="min-h-[34px] flex-1 resize-none overflow-y-auto rounded-lg border border-white/10 bg-slate-950/70 px-2.5 py-2 text-[11px] leading-relaxed text-slate-200 outline-none focus:border-cyan-400/60 disabled:opacity-50"
         />
         {!loading && (
           <button type="button" onClick={submit} disabled={sendDisabled}

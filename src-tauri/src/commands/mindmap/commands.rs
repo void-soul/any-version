@@ -1515,7 +1515,7 @@ pub const AGENT_TOOLS_SPEC: &str = r##"[
   { "type": "function", "function": { "name": "get_document_overview", "description": "获取当前思维导图的大纲（每个节点的 id、父节点、名称），用于了解整体结构。", "parameters": { "type": "object", "properties": {} } } },
   { "type": "function", "function": { "name": "get_subtree", "description": "读取某个节点及其全部子孙的完整内容（名称、详情 Markdown、类型、颜色）。", "parameters": { "type": "object", "properties": { "root_id": { "type": "string", "description": "子树根节点 id" } }, "required": ["root_id"] } } },
   { "type": "function", "function": { "name": "search_nodes", "description": "按关键词搜索节点（匹配名称与详情），返回匹配节点的 id 与名称。", "parameters": { "type": "object", "properties": { "keyword": { "type": "string" } }, "required": ["keyword"] } } },
-  { "type": "function", "function": { "name": "add_nodes", "description": "在指定父节点下新增一批兄弟节点。新节点不需要提供 id，系统会生成并在工具结果里返回。要建整棵子树时，按层级多次调用（先挂父，再以返回的 id 为父挂子）。", "parameters": { "type": "object", "properties": { "parent_id": { "type": "string", "description": "父节点 id（必须是大纲中真实存在的 id）" }, "nodes": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string", "description": "节点名称（必填）" }, "detail": { "type": "string", "description": "节点说明，Markdown" }, "kind": { "type": "string", "description": "节点类型" }, "color": { "type": "string", "description": "#RRGGBB" } }, "required": ["name"] } } }, "required": ["parent_id", "nodes"] } } },
+  { "type": "function", "function": { "name": "add_nodes", "description": "在指定父节点下新增一批兄弟节点。新节点不需要提供 id，系统会生成并在工具结果里返回。要建整棵子树时，按层级多次调用（先挂父，再以返回的 id 为父挂子）。分析某个文件后落地为导图时，用 sources 把来源文件锚到节点上。", "parameters": { "type": "object", "properties": { "parent_id": { "type": "string", "description": "父节点 id（必须是大纲中真实存在的 id）" }, "nodes": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string", "description": "节点名称（必填）" }, "detail": { "type": "string", "description": "节点说明，Markdown" }, "kind": { "type": "string", "description": "节点类型" }, "color": { "type": "string", "description": "#RRGGBB" }, "sources": { "type": "array", "items": { "type": "string" }, "description": "该节点对应的真实源码文件（项目相对路径或绝对路径），用于证据锚定" } }, "required": ["name"] } } }, "required": ["parent_id", "nodes"] } } },
   { "type": "function", "function": { "name": "update_nodes", "description": "批量修改已有节点字段（只传需要修改的字段）。", "parameters": { "type": "object", "properties": { "updates": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "detail": { "type": "string" }, "color": { "type": "string" } }, "required": ["id"] } } }, "required": ["updates"] } } },
   { "type": "function", "function": { "name": "delete_nodes", "description": "删除节点及其整棵子树。破坏性操作：用户会先看到确认清单，可能拒绝。", "parameters": { "type": "object", "properties": { "ids": { "type": "array", "items": { "type": "string" } } }, "required": ["ids"] } } },
   { "type": "function", "function": { "name": "move_nodes", "description": "把节点移动/重新挂到另一个父节点下。会改变导图结构：用户会先看到确认清单，可能拒绝。", "parameters": { "type": "object", "properties": { "ids": { "type": "array", "items": { "type": "string" } }, "new_parent_id": { "type": "string" } }, "required": ["ids", "new_parent_id"] } } }
@@ -1558,7 +1558,8 @@ fn agent_prompt(doc_name: &str) -> String {
 3. kind 取值：root|module|component|service|route|config|file|task|requirement|constraint|risk|other。color 是 #RRGGBB。
 4. delete_nodes / move_nodes 需要用户在界面上确认；如果被拒绝，不要原样重复提交，先询问顾虑或给出替代方案。
 5. 不改图的分析（总结、找重复与缺口、回答问题）直接回答，引用节点名称。
-6. 全程用中文，简洁，可用 Markdown。"#
+6. 用户用 @ 引用的文件会以「用户引用的文件内容」附在消息里。要求分析某个文件的业务逻辑时：先通读给出的内容，再按「入口/流程/分支/关键数据/边界与异常」组织成节点落到图上，并用 add_nodes 的 sources 把被分析的文件锚到相关节点（项目相对路径或绝对路径均可）。
+7. 全程用中文，简洁，可用 Markdown。"#
         , name = doc_name)
 }
 
@@ -1673,6 +1674,10 @@ fn agent_build_ops(action: &str, args: &serde_json::Value) -> Result<Vec<serde_j
                     "detail": n.get("detail").and_then(|v| v.as_str()).unwrap_or(""),
                     "kind": n.get("kind").and_then(|v| v.as_str()).unwrap_or("other"),
                     "color": agent_valid_color(n.get("color").and_then(|v| v.as_str())),
+                    // 证据锚定：分析文件后生成的节点带着来源文件（最多 3 个，与节点上限一致）
+                    "sources": n.get("sources").and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().filter_map(|s| s.as_str()).filter(|s| !s.trim().is_empty()).take(3).map(|s| s.trim().to_string()).collect::<Vec<_>>())
+                        .unwrap_or_default(),
                 }));
             }
             if ops.is_empty() {
@@ -2085,6 +2090,9 @@ const PROJECT_FILES_MAX: usize = 4000;
 const PROJECT_WALK_MAX_DEPTH: usize = 12;
 /// 单个附件文件进上下文的字符上限。
 const AGENT_ATTACHMENT_CHARS: usize = 8_000;
+/// 只引用了**一个**文件时的字符上限：分析单个文件的业务逻辑通常要读完整段代码，
+/// 8k 会把后半段截掉；多文件时仍按 8k 控制总上下文。
+const AGENT_ATTACHMENT_CHARS_SINGLE: usize = 24_000;
 /// 单轮对话最多引用的文件数。
 const AGENT_MAX_ATTACHMENTS: usize = 8;
 
@@ -2140,34 +2148,76 @@ fn walk_project_files(root: &std::path::Path, dir: &std::path::Path, depth: usiz
 }
 
 /// 读取 @ 引用的附件内容（相对绑定目录解析；单文件截断、总数封顶），拼进上下文。
+/// 把用户 @ 引用的文件内容拼进上下文。
+///
+/// 路径解析：**绝对路径直接用**（盘符 / UNC / Unix 根），相对路径按导图绑定的项目目录拼。
+/// 此前只认绑定目录下的相对路径 —— 用户想分析**任意一个文件**（哪怕不在绑定目录里）时，
+/// 内容会被静默丢掉，而「分析这个文件并画张图」恰恰是最常见的用法。
+///
+/// 截断标记只在真的截断时出现（旧实现只要读成功就标「（截断）」，会误导模型以为没读全）。
 fn agent_attachments_block(document_dir: Option<&str>, attached: &[String]) -> String {
-    let Some(dir) = document_dir.filter(|d| !d.trim().is_empty()) else {
-        return String::new();
+    let dir = document_dir.map(str::trim).filter(|d| !d.is_empty());
+    let cap = if attached.len() <= 1 {
+        AGENT_ATTACHMENT_CHARS_SINGLE
+    } else {
+        AGENT_ATTACHMENT_CHARS
     };
     let mut block = String::new();
     let mut used = 0usize;
-    for rel in attached {
+    for raw in attached {
         if used >= AGENT_MAX_ATTACHMENTS {
             break;
         }
-        let rel = rel.trim();
+        let rel = raw.trim();
         if rel.is_empty() {
             continue;
         }
         used += 1;
-        let path = std::path::Path::new(dir).join(rel);
-        let body = std::fs::read_to_string(&path)
-            .map(|c| c.chars().take(AGENT_ATTACHMENT_CHARS).collect::<String>())
-            .unwrap_or_else(|_| "（读取失败）".to_string());
+        let Some(path) = resolve_attachment_path(dir, rel) else {
+            block.push_str(&format!(
+                "\n### 文件 {}\n（未绑定项目目录，无法解析这个相对路径）\n",
+                rel
+            ));
+            continue;
+        };
+        let (body, truncated) = match std::fs::read_to_string(&path) {
+            Ok(text) => {
+                let total = text.chars().count();
+                if total > cap {
+                    (text.chars().take(cap).collect::<String>(), true)
+                } else {
+                    (text, false)
+                }
+            }
+            Err(_) => ("（读取失败）".to_string(), false),
+        };
         block.push_str(&format!(
             "\n### 文件 {}{}（{} 字符）\n{}\n",
             rel,
-            if body == "（读取失败）" { "" } else { "（截断）" },
+            if truncated { "（截断）" } else { "" },
             body.chars().count(),
             body
         ));
     }
     block
+}
+
+/// 附件路径解析：绝对径直接用；相对路径需要项目目录，没有则 None（由调用方提示）。
+fn resolve_attachment_path(dir: Option<&str>, rel: &str) -> Option<std::path::PathBuf> {
+    if is_absolute_path(rel) {
+        return Some(std::path::PathBuf::from(rel));
+    }
+    dir.map(|d| std::path::Path::new(d).join(rel))
+}
+
+/// 绝对路径判定：Unix 根 / UNC / Windows 盘符。
+fn is_absolute_path(value: &str) -> bool {
+    let v = value.trim();
+    if v.starts_with('/') || v.starts_with('\\') {
+        return true;
+    }
+    let bytes = v.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 // ─── 子树重新分析 ───
@@ -2299,6 +2349,47 @@ pub fn mm_move_document(input: MoveDocumentInput) -> Result<(), String> { super:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_absolute_path_covers_unix_windows_and_unc() {
+        assert!(is_absolute_path("/home/u/a.ts"));
+        assert!(is_absolute_path("\\\\server\\share\\a.ts"));
+        assert!(is_absolute_path("C:/code/a.ts"));
+        assert!(is_absolute_path("d:\\code\\a.ts"));
+        // 相对路径不能被误判成绝对（否则会拼到绑定目录后面）
+        assert!(!is_absolute_path("src/a.ts"));
+        assert!(!is_absolute_path("./a.ts"));
+        assert!(!is_absolute_path("a.ts"));
+    }
+
+    #[test]
+    fn attachments_resolve_absolute_and_relative_and_report_unbound() {
+        let dir = std::env::temp_dir().join(format!("kira_attach_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("rel.ts"), "export const rel = 1;").unwrap();
+        std::fs::write(dir.join("abs.ts"), "export const abs = 2;").unwrap();
+        let dir_str = dir.to_string_lossy().to_string();
+        let abs_path = dir.join("abs.ts").to_string_lossy().to_string();
+
+        // 绝对路径：不依赖绑定目录（旧实现会把绝对路径当相对路径拼接 → 读不到）
+        let block = agent_attachments_block(None, &[abs_path.clone()]);
+        assert!(block.contains("export const abs = 2;"), "绝对路径应被读到: {}", block);
+
+        // 相对路径：按绑定目录解析
+        let block = agent_attachments_block(Some(&dir_str), &["rel.ts".to_string()]);
+        assert!(block.contains("export const rel = 1;"), "相对路径应按绑定目录解析: {}", block);
+
+        // 相对路径 + 未绑定目录：明确说明，而不是像以前那样静默返回空
+        let block = agent_attachments_block(None, &["rel.ts".to_string()]);
+        assert!(block.contains("未绑定项目目录"), "应提示无法解析: {}", block);
+
+        // 截断标记只在真的截断时出现（旧实现读成功就标「（截断）」，会误导模型）
+        let block = agent_attachments_block(None, &[abs_path]);
+        assert!(!block.contains("（截断）"), "没超上限不该标截断: {}", block);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn project_files(tmp: &std::path::Path, v: &[&str]) -> crate::commands::mindmap::scan::ProjectFiles {
         crate::commands::mindmap::scan::ProjectFiles {

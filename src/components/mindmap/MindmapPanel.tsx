@@ -832,7 +832,7 @@ type NodeCacheEntry = {
   obj: Node;
 };
 
-function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onError, aiPill, treeOpen, onTreeOpenChange }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onError: (message: string) => void; aiPill?: React.ReactNode; treeOpen: boolean; onTreeOpenChange: (open: boolean) => void }) {
+function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onExportMd, onError, aiPill, treeOpen, onTreeOpenChange }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onExportMd: () => void; onError: (message: string) => void; aiPill?: React.ReactNode; treeOpen: boolean; onTreeOpenChange: (open: boolean) => void }) {
   const { t } = useTranslation();
   const { fitView, flowToScreenPosition } = useReactFlow();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -1715,6 +1715,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
               <button type="button" className={`${button} w-full justify-start`} style={{ color: ACCENT, borderColor: `${ACCENT}55` }} onClick={onAiProject} title={t("mindmap.aiUnifiedTitle")}><Brain className="h-3 w-3" />{t("mindmap.aiUnifiedBtn")}</button>
               <button type="button" className={`${button} w-full justify-start`} onClick={() => addSticker()} title={t("mindmap.textSticker")}><StickyNote className="h-3 w-3" />{t("mindmap.textSticker")}</button>
               <button type="button" className={`${button} w-full justify-start`} onClick={() => void addImageSticker()} title={t("mindmap.imageSticker")}><Image className="h-3 w-3" />{t("mindmap.imageSticker")}</button>
+              {/* 导出 Markdown：针对当前这份文档，所以放在画布侧而不是文档列表栏 */}
+              <button type="button" className={`${button} w-full justify-start`} onClick={onExportMd} title={t("mindmap.exportMd")}><ScrollText className="h-3 w-3" />{t("mindmap.exportMd")}</button>
             </div>
             {/* 自动保存指示 */}
             {lastSaved && (
@@ -1846,8 +1848,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   );
 }
 
-function Canvas({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onError, aiPill, treeOpen, onTreeOpenChange }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onError: (message: string) => void; aiPill?: React.ReactNode; treeOpen: boolean; onTreeOpenChange: (open: boolean) => void }) {
-  return <div className="h-full min-h-0"><ReactFlowProvider><CanvasInner full={full} accent={accent} onDocumentUpdate={onDocumentUpdate} onHistoryPush={onHistoryPush} historyVersion={historyVersion} onAiProject={onAiProject} onError={onError} aiPill={aiPill} treeOpen={treeOpen} onTreeOpenChange={onTreeOpenChange} /></ReactFlowProvider></div>;
+function Canvas({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onExportMd, onError, aiPill, treeOpen, onTreeOpenChange }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onExportMd: () => void; onError: (message: string) => void; aiPill?: React.ReactNode; treeOpen: boolean; onTreeOpenChange: (open: boolean) => void }) {
+  return <div className="h-full min-h-0"><ReactFlowProvider><CanvasInner full={full} accent={accent} onDocumentUpdate={onDocumentUpdate} onHistoryPush={onHistoryPush} historyVersion={historyVersion} onAiProject={onAiProject} onExportMd={onExportMd} onError={onError} aiPill={aiPill} treeOpen={treeOpen} onTreeOpenChange={onTreeOpenChange} /></ReactFlowProvider></div>;
 }
 
 // ════════════ 主面板 ════════════
@@ -1955,6 +1957,9 @@ export default function MindmapPanel() {
   const agentSessionRef = useRef<string | null>(null);
   // 绑定目录下的文件清单（@ 引用候选）
   const [projectFiles, setProjectFiles] = useState<string[]>([]);
+  // 本轮对话 @ 引用的文件：模型生成的节点若没带 sources，用它兜底锚定
+  // （「分析这个文件并画图」时，用户引用了谁就该锚谁，不能让节点凭空出现没有出处）
+  const agentAttachmentsRef = useRef<string[]>([]);
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; action: () => void } | null>(null);
   // AI 导入校验报告弹窗（导入完成后展示节点数/修复轮数/残留诊断）
   const [aiReport, setAiReport] = useState<AiImportResult | null>(null);
@@ -2491,7 +2496,9 @@ export default function MindmapPanel() {
                 id: op.id, documentId: docId, parentId: op.parentId ?? null,
                 name: op.name ?? "", detail: op.detail ?? "", kind: op.kind ?? "other",
                 color: op.color ?? "#f59e0b",
-                sources: [], positionX: 0, positionY: 0,
+                // 模型给了 sources 就用它的；没给但本轮引用了文件，则锚到被分析的文件上
+                sources: op.sources?.length ? op.sources : agentAttachmentsRef.current.slice(0, 3),
+                positionX: 0, positionY: 0,
               },
             });
             applied++;
@@ -2572,6 +2579,7 @@ export default function MindmapPanel() {
     try {
       // @ 引用的文件：去重、封顶 8 个，后端读取内容进上下文
       const atRefs = [...new Set([...instruction.matchAll(/(?:^|\s)@([^\s@]+)/g)].map((m) => m[1]))].slice(0, 8);
+      agentAttachmentsRef.current = atRefs;
       const r = await mmApi.agentChat({
         documentId: docId, sessionId: agentSessionRef.current ?? "", message: instruction,
         selectedNodeIds: [], attachedFiles: atRefs, providerId, modelId, runId,
@@ -2746,14 +2754,16 @@ export default function MindmapPanel() {
               );})}
             </div>
             {/* 底部工具区：新建文件夹/文档 + AI 导入入口 */}
+            {/* 底部工具区：只留「文档 / 文件夹维度」的操作。
+                AI 入口与「导出 Markdown」都是针对**当前打开的那份文档**的功能 ——
+                前者收进第二栏（画布侧），后者一并移到第二栏，这里不再承载单文档操作；
+                「N 个节点」是文档级计数，也不再占这一栏的位置。 */}
             <div className="shrink-0 space-y-1.5 border-t border-white/10 p-1.5">
               <div className="grid grid-cols-2 gap-1.5">
                 <button type="button" className={button} onClick={() => { setShowFolderCreate(true); setFolderName(""); }} title={t("mindmap.newFolder")}><FolderPlus className="h-3 w-3" />{t("mindmap.folder")}</button>
                 <button type="button" className={button} onClick={() => setShowCreate(true)} title={t("mindmap.newDoc")}><Plus className="h-3 w-3" />{t("mindmap.doc")}</button>
               </div>
-              <div className="grid grid-cols-2 gap-1.5">
-              <button type="button" className={`${button} hover:bg-white/10`} style={{ color: ACCENT, borderColor: `${ACCENT}55` }} onClick={() => void openAiImport()} title={t("mindmap.aiUnifiedTitle")}><Brain className="h-3 w-3" />{t("mindmap.aiUnifiedBtn")}</button>
-              {/* 模块专属设置（热键 / 外部编辑器 / AI 探索参数）：自第二栏底部移来 */}
+              {/* 模块专属设置（热键 / 外部编辑器 / AI 探索参数） */}
               <ModuleSettingsButton
                 title={t("mindmap.settingsTitle")}
                 label={t("mindmap.settingsTitle")}
@@ -2761,8 +2771,6 @@ export default function MindmapPanel() {
               >
                 <MindmapModuleSettings />
               </ModuleSettingsButton>
-              </div>
-              {full && <div className="flex items-center justify-between px-0.5 text-[9px] text-slate-500"><span className="truncate">{t("mindmap.nodesCount", { name: full.document.name, count: full.nodes.length })}</span><button type="button" className={button} onClick={exportMd} title={t("mindmap.exportMd")}><ScrollText className="h-3 w-3" /></button></div>}
             </div>
             {/* 宽度拖拽把手 + 收起按钮（侧边栏右侧） */}
             <div className="absolute -right-1 top-0 z-10 flex h-full w-2.5 cursor-col-resize items-center justify-center hover:bg-white/[0.06]" title={t("mindmap.dragResize")}
@@ -2793,7 +2801,7 @@ export default function MindmapPanel() {
           {/* 画布常驻：右栏对话展开/折叠时也保持挂载，边生成边绘制。
               右栏不再是弹窗，画布全程可交互 —— 这正是三栏布局的意义。 */}
           {(full ? (
-            <Canvas full={full} accent={ACCENT} onDocumentUpdate={onDocumentUpdated} onHistoryPush={commitHistory} historyVersion={historyVersion} onAiProject={() => void openAiImport()} onError={setError}
+            <Canvas full={full} accent={ACCENT} onDocumentUpdate={onDocumentUpdated} onHistoryPush={commitHistory} historyVersion={historyVersion} onAiProject={() => void openAiImport()} onExportMd={() => void exportMd()} onError={setError}
               treeOpen={treeOpen} onTreeOpenChange={setSidePanesOpen}
               aiPill={aiMinimized && showAi ? <AiRunningPill running={aiLoading} onRestore={() => setAiMinimized(false)} onStop={() => void stopAi()} /> : null} />
           ) : (
