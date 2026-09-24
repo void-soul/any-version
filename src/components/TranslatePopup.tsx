@@ -6,7 +6,7 @@ import { Copy, Check, X, Languages, ArrowRightLeft } from "lucide-react";
 import VexGlowAvatar from "./VexGlowAvatar";
 import VexGreeting from "./VexGreeting";
 import VexBusy from "./VexBusy";
-import { VEX_CYBER_ACCENT, resolveThemeAccent } from "../utils/brand";
+import { VEX_CYBER_ACCENT, resolveThemeAccent, themeAccentVars } from "../utils/brand";
 import { useTranslation } from "react-i18next";
 
 interface TranslateResult {
@@ -58,6 +58,10 @@ export default function TranslatePopup() {
     })();
   }, []);
   const themeVars = {
+    // 与主界面共用同一份变量定义：VexGlowAvatar / VexBusy / VexGreeting 等共享组件读的是
+    // `--module-accent`，只注入 `--tl-*` 会让头像光晕停留在 main.tsx 预置的缓存色上
+    //（或干脆用默认色），不跟随 get_appearance_config 的最新配置。
+    ...themeAccentVars(translateAccent),
     "--tl-accent": translateAccent,
     "--tl-accent-soft": `color-mix(in srgb, ${translateAccent} 14%, transparent)`,
     "--tl-accent-ring": `color-mix(in srgb, ${translateAccent} 30%, transparent)`,
@@ -333,7 +337,7 @@ export default function TranslatePopup() {
           style={{ WebkitAppRegion: "drag" } as any}
         >
           <div className="flex items-center gap-1.5 text-slate-300">
-            <VexGlowAvatar size={16} />
+            <VexGlowAvatar size={16} color={translateAccent} />
             <Languages className="w-3.5 h-3.5 text-[var(--tl-accent)]" />
             <span className="text-[11px] font-semibold tracking-wide">{t("translate.title")}</span>
             {result?.target && (
