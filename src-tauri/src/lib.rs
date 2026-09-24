@@ -1023,6 +1023,8 @@ pub fn run() {
                 commands::mindmap::mm_agent_chat,
                 commands::mindmap::mm_agent_get_session,
                 commands::mindmap::mm_agent_list_messages,
+                commands::mindmap::mm_bind_document_dir,
+                commands::mindmap::mm_list_project_files,
                 commands::mindmap::mm_planned_occurrences,
                 commands::mindmap::mm_move_plan_occurrence,
                 commands::mindmap::mm_refresh_plan_badge,

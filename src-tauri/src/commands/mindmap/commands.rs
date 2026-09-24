@@ -2026,6 +2026,13 @@ pub async fn mm_agent_chat(app: tauri::AppHandle, input: AgentChatInput) -> Resu
         } else {
             format!("{}\n\n{}", user_text, selected)
         };
+        // @ 引用的文件：内容进上下文（模型在正文里也能看到 @路径 引用）
+        let attachments = agent_attachments_block(full.document.project_dir.as_deref(), &input.attached_files);
+        let user_content = if attachments.is_empty() {
+            user_content
+        } else {
+            format!("{}\n\n用户引用的文件内容：{}", user_content, attachments)
+        };
         messages.push(serde_json::json!({ "role": "user", "content": user_content }));
 
         // 空输入（「继续」）不重复落一条空用户消息
@@ -2153,6 +2160,102 @@ mod agent_tests {
         assert!(agent_build_ops("move_nodes", &serde_json::json!({ "ids": ["a"] })).is_err());
         assert!(agent_build_ops("unknown", &serde_json::json!({})).is_err());
     }
+}
+
+// ─── 项目目录绑定与 @ 文件引用 ───
+
+/// 列出文件的跳过目录（依赖/构建产物，@ 引用不该出现它们）。
+const PROJECT_SKIP_DIRS: [&str; 10] = [
+    "node_modules", ".git", "target", "dist", "build", "out", ".next", "coverage", ".venv", ".idea",
+];
+/// @ 引用候选的文件数上限。
+const PROJECT_FILES_MAX: usize = 800;
+/// 目录遍历深度上限。
+const PROJECT_WALK_MAX_DEPTH: usize = 12;
+/// 单个附件文件进上下文的字符上限。
+const AGENT_ATTACHMENT_CHARS: usize = 8_000;
+/// 单轮对话最多引用的文件数。
+const AGENT_MAX_ATTACHMENTS: usize = 8;
+
+/// 绑定/解绑导图的项目目录（一个导图文档至多绑定一个；重复绑定即替换）。
+#[tauri::command]
+pub fn mm_bind_document_dir(document_id: String, dir: Option<String>) -> Result<(), String> {
+    let dir = dir.map(|d| d.trim().to_string()).filter(|d| !d.is_empty());
+    if let Some(d) = &dir {
+        if !std::path::Path::new(d).is_dir() {
+            return Err(format!("目录不存在: {}", d));
+        }
+    }
+    super::db::bind_document_dir(&document_id, dir.as_deref())
+}
+
+/// 列出文档绑定目录下的相对文件路径（@ 引用候选；跳过依赖与构建产物目录）。
+#[tauri::command]
+pub fn mm_list_project_files(document_id: String) -> Result<Vec<String>, String> {
+    let dir = super::db::document_project_dir(&document_id)?.ok_or("该导图未绑定项目目录")?;
+    let root = std::path::PathBuf::from(&dir);
+    if !root.is_dir() {
+        return Err(format!("绑定的目录不存在: {}", dir));
+    }
+    let mut out: Vec<String> = Vec::new();
+    walk_project_files(&root, &root, 0, &mut out);
+    out.sort();
+    Ok(out)
+}
+
+fn walk_project_files(root: &std::path::Path, dir: &std::path::Path, depth: usize, out: &mut Vec<String>) {
+    if depth > PROJECT_WALK_MAX_DEPTH || out.len() >= PROJECT_FILES_MAX {
+        return;
+    }
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let mut entries: Vec<std::fs::DirEntry> = rd.filter_map(|e| e.ok()).collect();
+    entries.sort_by_key(|e| e.file_name());
+    for e in entries {
+        if out.len() >= PROJECT_FILES_MAX {
+            return;
+        }
+        let p = e.path();
+        let name = e.file_name().to_string_lossy().to_string();
+        if p.is_dir() {
+            if PROJECT_SKIP_DIRS.contains(&name.as_str()) || name.starts_with('.') {
+                continue;
+            }
+            walk_project_files(root, &p, depth + 1, out);
+        } else if let Ok(rel) = p.strip_prefix(root) {
+            out.push(rel.to_string_lossy().replace('\\', "/"));
+        }
+    }
+}
+
+/// 读取 @ 引用的附件内容（相对绑定目录解析；单文件截断、总数封顶），拼进上下文。
+fn agent_attachments_block(document_dir: Option<&str>, attached: &[String]) -> String {
+    let Some(dir) = document_dir.filter(|d| !d.trim().is_empty()) else {
+        return String::new();
+    };
+    let mut block = String::new();
+    let mut used = 0usize;
+    for rel in attached {
+        if used >= AGENT_MAX_ATTACHMENTS {
+            break;
+        }
+        let rel = rel.trim();
+        if rel.is_empty() {
+            continue;
+        }
+        used += 1;
+        let path = std::path::Path::new(dir).join(rel);
+        let body = std::fs::read_to_string(&path)
+            .map(|c| c.chars().take(AGENT_ATTACHMENT_CHARS).collect::<String>())
+            .unwrap_or_else(|_| "（读取失败）".to_string());
+        block.push_str(&format!(
+            "\n### 文件 {}{}（{} 字符）\n{}\n",
+            rel,
+            if body == "（读取失败）" { "" } else { "（截断）" },
+            body.chars().count(),
+            body
+        ));
+    }
+    block
 }
 
 // ─── 子树重新分析 ───

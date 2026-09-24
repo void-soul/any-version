@@ -30,6 +30,8 @@ export interface MindmapDocument {
   layoutDir: string;
   /** 累计 AI 导入次数（token 消耗留痕） */
   aiImports: number;
+  /** 绑定的项目目录：一个导图文档至多绑定一个（AI 上下文与 @ 引用固定来自它） */
+  projectDir: string | null;
   /** 累计输入 token */
   aiInputTokens: number;
   /** 累计输出 token */
@@ -338,6 +340,8 @@ export const mmApi = {
   agentChat: (i: AgentChatInput) => invoke<AgentChatResult>("mm_agent_chat", { input: i }),
   agentGetSession: (documentId: string) => invoke<string>("mm_agent_get_session", { documentId }),
   agentListMessages: (sessionId: string) => invoke<AgentMessageRow[]>("mm_agent_list_messages", { sessionId }),
+  bindDocumentDir: (documentId: string, dir: string | null) => invoke<void>("mm_bind_document_dir", { documentId, dir }),
+  listProjectFiles: (documentId: string) => invoke<string[]>("mm_list_project_files", { documentId }),
 
   plannedOccurrences: (start: string, end: string) => invoke<PlannedOccurrence[]>("mm_planned_occurrences", { start, end }),
   movePlanOccurrence: (i: MovePlanOccurrenceInput) => invoke<void>("mm_move_plan_occurrence", { input: i }),
@@ -373,6 +377,8 @@ export interface AgentChatInput {
   sessionId?: string;
   message?: string;
   selectedNodeIds?: string[];
+  /** @ 引用的文件（相对绑定目录路径），内容截断后进上下文 */
+  attachedFiles?: string[];
   providerId?: string | null;
   modelId?: string | null;
   runId?: string;

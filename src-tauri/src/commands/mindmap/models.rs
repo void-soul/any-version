@@ -48,6 +48,9 @@ pub struct MindmapDocument {
     /// 累计 AI 导入次数（token 消耗留痕）
     #[serde(default)]
     pub ai_imports: i64,
+    /// 绑定的项目目录：一个导图文档至多绑定一个（AI 上下文与 @ 引用固定来自它）
+    #[serde(default)]
+    pub project_dir: Option<String>,
     /// 累计输入 token
     #[serde(default)]
     pub ai_input_tokens: i64,
@@ -265,6 +268,9 @@ pub struct AgentChatInput {
     /// 当前画布选中节点：作为聚焦上下文提供给 Agent
     #[serde(default)]
     pub selected_node_ids: Vec<String>,
+    /// @ 引用的文件（相对绑定目录的路径）：内容截断后进上下文
+    #[serde(default)]
+    pub attached_files: Vec<String>,
     pub provider_id: Option<String>,
     pub model_id: Option<String>,
     /// 取消/回填标识（复用导入流程的取消与问答通道机制）

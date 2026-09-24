@@ -2301,6 +2301,8 @@ export default function MindmapPanel() {
   const [pendingOps, setPendingOps] = useState<{ runId: string; ops: AgentOp[]; autoApplied: number } | null>(null);
   // 当前文档的 Agent 会话 id（按文档持久化，后端 mm_agent_get_session 保证存在）
   const agentSessionRef = useRef<string | null>(null);
+  // 绑定目录下的文件清单（@ 引用候选）
+  const [projectFiles, setProjectFiles] = useState<string[]>([]);
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; action: () => void } | null>(null);
   // 计划日历：跨文档按日查看计划（具体发生记录由日历弹窗按可见范围向后端拉取）
   const [showCalendar, setShowCalendar] = useState(false);
@@ -2979,9 +2981,11 @@ export default function MindmapPanel() {
     aiRunIdRef.current = runId;
     setAiLoading(true); setError("");
     try {
+      // @ 引用的文件：去重、封顶 8 个，后端读取内容进上下文
+      const atRefs = [...new Set([...instruction.matchAll(/(?:^|\s)@([^\s@]+)/g)].map((m) => m[1]))].slice(0, 8);
       const r = await mmApi.agentChat({
         documentId: docId, sessionId: agentSessionRef.current ?? "", message: instruction,
-        selectedNodeIds: [], providerId, modelId, runId,
+        selectedNodeIds: [], attachedFiles: atRefs, providerId, modelId, runId,
       });
       agentSessionRef.current = r.sessionId;
       pushAgentMessage("agent", r.reply);
@@ -2989,6 +2993,30 @@ export default function MindmapPanel() {
       pushAgentMessage("agent", `${t("agent.runFailed")}：${String(e)}`);
     } finally { aiRunIdRef.current = null; setAiLoading(false); }
   }, [full?.document.id, providerId, modelId, t]);
+
+  // chat 模式绑定项目目录（一个导图至多绑定一个，重复绑定即替换）
+  const pickAndBindDir = useCallback(async () => {
+    const docId = targetDocumentId || full?.document.id;
+    if (!docId) return;
+    const d = await openDialog({ directory: true, multiple: false, title: t("mindmap.pickDir") });
+    if (typeof d !== "string" || !d) return;
+    try {
+      await mmApi.bindDocumentDir(docId, d);
+      const f = await mmApi.load(docId);
+      if (f) onDocumentUpdated(f);
+      flash(t("mindmap.agentDirBound"));
+    } catch (e) { setError(String(e)); }
+  }, [targetDocumentId, full?.document.id, onDocumentUpdated, flash, t]);
+
+  // chat 模式：绑定目录（或换绑）后拉取文件清单作为 @ 候选
+  useEffect(() => {
+    if (aiMode !== "chat" || !full?.document.projectDir) { setProjectFiles([]); return; }
+    let alive = true;
+    void mmApi.listProjectFiles(full.document.id)
+      .then((files) => { if (alive) setProjectFiles(files); })
+      .catch(() => { if (alive) setProjectFiles([]); });
+    return () => { alive = false; };
+  }, [aiMode, full?.document.id, full?.document.projectDir]);
 
   // 打开右栏（或切换文档）时载入该文档的 Agent 会话历史（按文档持久化）
   useEffect(() => {
@@ -3264,6 +3292,9 @@ export default function MindmapPanel() {
                   onShowReport={() => { if (lastAiResult) setAiReport(lastAiResult); }}
                   onNewSession={() => { aiHasRunRef.current = false; setLastAiResult(null); setError(""); }}
                   projectRoot={aiMode === "project" ? projectPath : null}
+                  projectDir={full?.document.projectDir ?? null}
+                  projectFiles={projectFiles}
+                  onBindProjectDir={() => void pickAndBindDir()}
                 />
               </div>
             </div>

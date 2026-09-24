@@ -247,6 +247,12 @@ export type AgentWorkbenchMode = "project" | "text" | "chat";
 export interface AgentWorkbenchProps {
   mode: AgentWorkbenchMode;
   onModeChange: (mode: AgentWorkbenchMode) => void;
+  /** chat 模式：文档绑定的项目目录（AI 上下文与 @ 引用固定来自它） */
+  projectDir?: string | null;
+  /** chat 模式：绑定目录下的文件清单（@ 候选） */
+  projectFiles?: string[];
+  /** chat 模式：打开目录选择器并绑定到当前文档 */
+  onBindProjectDir?: () => void;
   documents: { id: string; name: string; sourceType: string }[];
   targetDocumentId: string;
   onTargetDocumentChange: (id: string) => void;
@@ -501,13 +507,16 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
     providers, providerId, modelId, onProviderChange, onModelChange,
     projectPath, onPickProject, aiDepth, onDepthChange, aiViews, onViewsChange,
     textTitle, onTextTitleChange, loading, onRun, onStop, onAnswer, result, runError,
-    onShowReport, onNewSession, projectRoot,
+    onShowReport, onNewSession, projectRoot, projectDir, projectFiles, onBindProjectDir,
   } = props;
   const { t } = useTranslation();
 
   const messages = useAgentMessages();
   const entries = useEventBufferSnapshot(mmAiProgressBuffer);
   const [input, setInput] = useState("");
+  // @ 引用文件：输入 @ 后弹出绑定目录文件候选（↑↓ 选择、Enter/Tab 选中、Esc 取消）
+  const [atQuery, setAtQuery] = useState<string | null>(null);
+  const [atIndex, setAtIndex] = useState(0);
   const [cfgOpen, setCfgOpen] = useState(true);
   const [now, setNow] = useState(() => Date.now());
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -585,6 +594,27 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
   }, [entries]);
 
   const providerModels = useMemo(() => providers.find((p) => p.id === providerId)?.models ?? [], [providers, providerId]);
+
+  // @ 候选：按光标前的 @ 关键词过滤绑定目录文件清单
+  const atMatches = useMemo(
+    () => (atQuery === null ? [] : (projectFiles ?? []).filter((f) => f.toLowerCase().includes(atQuery.toLowerCase())).slice(0, 8)),
+    [atQuery, projectFiles],
+  );
+
+  const onInputChange = (value: string) => {
+    setInput(value);
+    const caret = inputRef.current?.selectionStart ?? value.length;
+    const m = value.slice(0, caret).match(/(?:^|\s)@([^\s@]*)$/);
+    if (m && (projectFiles?.length ?? 0) > 0) { setAtQuery(m[1]); setAtIndex(0); } else { setAtQuery(null); }
+  };
+
+  const pickAt = (path: string) => {
+    const caret = inputRef.current?.selectionStart ?? input.length;
+    const before = input.slice(0, caret).replace(/@([^\s@]*)$/, `@${path} `);
+    setInput(before + input.slice(caret));
+    setAtQuery(null);
+    inputRef.current?.focus();
+  };
 
   // 待回答的询问：时间线中最近一条 step=ask 且尚未回答、且运行仍在进行的事件。
   // AI 遇到歧义时后端推送 ask 事件并阻塞等待；用户填写表单提交后（onAnswer）
@@ -719,9 +749,11 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
           <ChevronDown className={`h-3 w-3 shrink-0 text-slate-500 transition-transform ${cfgOpen ? "" : "-rotate-90"}`} />
           <span className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">{t("agent.configTitle")}</span>
           <span className="ml-auto text-[8px] text-slate-600">
-            {mode === "project"
-              ? (projectPath ? projectPath : t("mindmap.pickDir"))
-              : (textTitle || t("agent.textUntitled"))}
+            {mode === "chat"
+              ? (projectDir || t("mindmap.agentNoDir"))
+              : mode === "project"
+                ? (projectPath || t("mindmap.pickDir"))
+                : (textTitle || t("agent.textUntitled"))}
           </span>
         </button>
         {cfgOpen && (
@@ -748,7 +780,16 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
                 {providerModels.map((m) => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
               </select>
             </div>
-            {mode === "project" ? (
+            {mode === "chat" ? (
+              // 绑定项目目录：@ 引用与对话上下文固定来自它（一个导图至多绑定一个）
+              <div className="flex items-center gap-2">
+                <button type="button" className={`${wbBtn} max-w-[55%]`} onClick={onBindProjectDir} disabled={!onBindProjectDir}>
+                  <Search className="h-3 w-3" />
+                  <span className="truncate">{projectDir ? projectDir.split(/[\\/]/).pop() : t("mindmap.agentBindDir")}</span>
+                </button>
+                <span className="min-w-0 flex-1 truncate font-mono text-[8px] text-slate-600" title={projectDir ?? ""}>{projectDir ?? t("mindmap.agentNoDir")}</span>
+              </div>
+            ) : mode === "project" ? (
               <>
                 <div className="flex items-center gap-2">
                   <button type="button" className={`${wbBtn} max-w-[55%]`} onClick={onPickProject}>
@@ -794,12 +835,31 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
       </div>
 
       {/* 指令输入区：首轮下达任务；完成后继续追问（结果增量追加到画布） */}
-      <div className="flex shrink-0 items-end gap-1.5">
+      <div className="relative flex shrink-0 items-end gap-1.5">
+        {/* @ 引用文件候选（IDE 式）：输入 @ 触发，↑↓/Enter/Tab/Esc 操作 */}
+        {atQuery !== null && atMatches.length > 0 && (
+          <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-40 overflow-y-auto rounded-lg border border-white/10 bg-slate-900/95 py-1 shadow-xl">
+            {atMatches.map((f, i) => (
+              <button key={f} type="button" onMouseDown={(e) => { e.preventDefault(); pickAt(f); }}
+                className={`block w-full cursor-pointer truncate px-2.5 py-1 text-left font-mono text-[10px] transition ${i === atIndex ? "bg-[var(--module-accent)]/25 text-white" : "text-slate-300 hover:bg-white/5"}`}>
+                {f}
+              </button>
+            ))}
+          </div>
+        )}
         <textarea
           ref={inputRef}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); } }}
+          onChange={(e) => onInputChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (atQuery !== null && atMatches.length > 0) {
+              if (e.key === "ArrowDown") { e.preventDefault(); setAtIndex((i) => (i + 1) % atMatches.length); return; }
+              if (e.key === "ArrowUp") { e.preventDefault(); setAtIndex((i) => (i - 1 + atMatches.length) % atMatches.length); return; }
+              if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pickAt(atMatches[atIndex]); return; }
+              if (e.key === "Escape") { e.preventDefault(); setAtQuery(null); return; }
+            }
+            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); }
+          }}
           rows={isFirstRun && mode === "text" ? 3 : 1}
           placeholder={
             isFirstRun
