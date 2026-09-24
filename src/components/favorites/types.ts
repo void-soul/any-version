@@ -1,20 +1,20 @@
 // 收藏 / 星标聚合模块的类型定义（与 src-tauri/commands/favorites 对应）
 
-/** 一条收藏条目 */
+/** 一条收藏条目（后端 `FavoriteRow` 用 `rename_all = "camelCase"` 序列化） */
 export interface FavoriteRow {
   id: number;
   source: string; // github | bilibili | zhihu
-  external_id: string;
+  externalId: string;
   url: string;
   title: string;
   subtitle?: string | null;
   description?: string | null;
   status: string; // ok | gone | redirect | unknown
-  checked_at?: string | null;
-  ai_locked: boolean;
-  ai_model?: string | null;
-  created_at: string;
-  updated_at: string;
+  checkedAt?: string | null;
+  aiLocked: boolean;
+  aiModel?: string | null;
+  createdAt: string;
+  updatedAt: string;
   /** 多标签：一个条目可以同时属于多个分类 */
   tags: string[];
 }
@@ -23,7 +23,8 @@ export interface FavoriteStats {
   total: number;
   unclassified: number;
   gone: number;
-  by_source: [string, number][];
+  /** 各来源条数（后端 camelCase 序列化，故不是 by_source） */
+  bySource: [string, number][];
   tags: [string, number][];
 }
 

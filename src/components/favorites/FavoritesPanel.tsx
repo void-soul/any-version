@@ -624,7 +624,7 @@ export default function FavoritesPanel() {
             className="glass-input px-2 h-7 text-[11px] cursor-pointer"
           >
             <option value="">{t("favorites.allSources")}</option>
-            {(stats?.by_source || []).map(([key]) => (
+            {(stats?.bySource || []).map(([key]) => (
               <option key={key} value={key}>
                 {SOURCE_LABELS[key] ?? key}
               </option>
@@ -797,7 +797,7 @@ export default function FavoritesPanel() {
                           {t(badge.text)}
                         </span>
                       )}
-                      {item.ai_locked && (
+                      {item.aiLocked && (
                         <span
                           className="text-[9px] px-1 rounded bg-emerald-500/10 text-emerald-400/80"
                           title={t("favorites.lockedHint")}

@@ -816,8 +816,47 @@ mod tests {
     use super::{
         apply_status, apply_tags, count_all, delete, get_credential, get_import_cursor, list,
         migrate, select_unclassified, set_credential, set_import_cursor, set_tags, stats, upsert,
-        ListFilter, NewFavorite, UpsertOutcome,
+        FavoriteRow, FavoriteStats, ListFilter, NewFavorite, UpsertOutcome,
     };
+
+    /// 前后端的字段契约：这两个结构按 camelCase 序列化，前端读的是 `bySource` / `aiLocked`。
+    /// 一旦 rename_all 被去掉或字段改名，前端只会静默拿到 undefined（来源下拉框只剩
+    /// 「全部来源」、锁定徽标不显示），所以在这里钉死。
+    #[test]
+    fn list_and_stats_serialize_as_camel_case() {
+        let overview = FavoriteStats {
+            total: 3,
+            unclassified: 1,
+            gone: 0,
+            by_source: vec![("github".to_string(), 3)],
+            tags: vec![("CLI".to_string(), 2)],
+        };
+        let value = serde_json::to_value(&overview).unwrap();
+        assert!(value.get("by_source").is_none());
+        assert_eq!(value["bySource"][0][0], "github");
+        assert_eq!(value["bySource"][0][1], 3);
+
+        let row = FavoriteRow {
+            id: 1,
+            source: "github".to_string(),
+            external_id: "42".to_string(),
+            url: "https://github.com/a/b".to_string(),
+            title: "a/b".to_string(),
+            subtitle: None,
+            description: None,
+            status: "ok".to_string(),
+            checked_at: None,
+            ai_locked: true,
+            ai_model: Some("m".to_string()),
+            created_at: "2026-01-01".to_string(),
+            updated_at: "2026-01-01".to_string(),
+            tags: vec![],
+        };
+        let value = serde_json::to_value(&row).unwrap();
+        assert!(value.get("ai_locked").is_none());
+        assert_eq!(value["aiLocked"], true);
+        assert_eq!(value["externalId"], "42");
+    }
 
     fn sample(external_id: &str, title: &str) -> NewFavorite {
         NewFavorite {
