@@ -3169,6 +3169,7 @@
     "newDoc": "新建思维导图",
     "doc": "文档",
     "aiUnifiedBtn": "AI 分析",
+    "aiPanelClose": "收起 AI 面板",
     "aiUnifiedTitle": "AI 思维导图助手",
     "aiTaskText": "分析文字",
     "aiTaskProject": "分析项目",

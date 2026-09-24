@@ -3169,6 +3169,7 @@
     "newDoc": "New mind map",
     "doc": "Document",
     "aiUnifiedBtn": "AI Analyze",
+    "aiPanelClose": "Collapse AI panel",
     "aiUnifiedTitle": "AI Mind Map Assistant",
     "aiTaskText": "Analyze text",
     "aiTaskProject": "Analyze project",

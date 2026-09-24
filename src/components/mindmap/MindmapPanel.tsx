@@ -22,7 +22,7 @@ import { AiImportResult, DocumentFull, MindmapDocument, MindmapFolder, MindmapLi
 import { moduleAccent } from "../../utils/theme";
 import { VEX_CYBER_CYAN } from "../../utils/brand";
 import { useEventBufferSnapshot } from "../../utils/eventBuffer";
-import { SharedModal } from "../shared/Modal";
+
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { ModuleSettingsButton } from "../shared/ModuleSettings";
 import { MindmapModuleSettings, type ExplorerSettings } from "./MindmapSettings";
@@ -2289,6 +2289,8 @@ export default function MindmapPanel() {
   const [search, setSearch] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarW, setSidebarW] = useState(260);
+  // 右栏 AI 对话面板宽度（与左栏把手同一套拖拽逻辑，方向相反）
+  const [aiPanelW, setAiPanelW] = useState(440);
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; action: () => void } | null>(null);
   // 计划日历：跨文档按日查看计划（具体发生记录由日历弹窗按可见范围向后端拉取）
   const [showCalendar, setShowCalendar] = useState(false);
@@ -3019,56 +3021,8 @@ export default function MindmapPanel() {
           </button>
         )}
         <main className="relative min-w-0 flex-1">
-          {/* AI 智能体工作台（项目/文档共用）：会话式多轮 + 阶段计划 + 工具透明 + 流式反馈 */}
-          {showAi && !aiMinimized && (
-            <SharedModal open onClose={requestCloseAi} width={680} bodyClass="!p-0" headerActions={
-              <button type="button" onClick={() => setAiMinimized(true)} title={t("aiMinimized.minimize")}
-                className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 transition hover:bg-white/10 hover:text-white">
-                <Minimize2 className="w-3.5 h-3.5" />
-              </button>
-            } title={t("mindmap.aiUnifiedTitle")}>
-              <AgentWorkbench
-                mode={aiMode}
-                onModeChange={setAiMode}
-                documents={docs.map(d => ({ id: d.id, name: d.name, sourceType: d.sourceType }))}
-                targetDocumentId={targetDocumentId}
-                onTargetDocumentChange={(id) => void selectAiTarget(id)}
-                providers={providers}
-                providerId={providerId}
-                modelId={modelId}
-                onProviderChange={(pid) => {
-                  setProviderId(pid);
-                  const p = providers.find(x => x.id === pid);
-                  const mid = p?.active_model_id ?? p?.models[0]?.id ?? "";
-                  setModelId(mid);
-                  void rememberModel(pid, mid);
-                }}
-                onModelChange={(mid) => {
-                  setModelId(mid);
-                  void rememberModel(providerId, mid);
-                }}
-                projectPath={projectPath}
-                onPickProject={() => void (async () => { const d = await openDialog({ directory: true, multiple: false, title: t("mindmap.pickDir") }); if (typeof d === "string") setProjectPath(d); })()}
-                aiDepth={aiDepth}
-                onDepthChange={setAiDepth}
-                aiViews={aiViews}
-                onViewsChange={setAiViews}
-                textTitle={textTitle}
-                onTextTitleChange={setTextTitle}
-                loading={aiLoading}
-                onRun={(instruction) => { if (aiMode === "project") void runAiProject(instruction); else void runAiText(instruction); }}
-                onStop={() => void stopAi()}
-                onAnswer={(answer) => { const rid = aiRunIdRef.current; if (rid) void mmApi.aiAnswer(rid, answer).catch((e) => console.error("回答询问失败:", e)); }}
-                result={lastAiResult}
-                runError={error}
-                onShowReport={() => { if (lastAiResult) setAiReport(lastAiResult); }}
-                onNewSession={() => { aiHasRunRef.current = false; setLastAiResult(null); setError(""); }}
-                projectRoot={aiMode === "project" ? projectPath : null}
-              />
-            </SharedModal>
-          )}
-          {/* 画布常驻：AI 弹框打开/最小化时也保持挂载，边生成边绘制。
-              弹框打开期间设置 modal-mask 抑制全局快捷键，画布仅作背景展示。 */}
+          {/* 画布常驻：右栏对话展开/折叠时也保持挂载，边生成边绘制。
+              右栏不再是弹窗，画布全程可交互 —— 这正是三栏布局的意义。 */}
           {(full ? (
             <Canvas full={full} accent={ACCENT} onDocumentUpdate={onDocumentUpdated} onHistoryPush={commitHistory} historyVersion={historyVersion} onAiProject={() => void openAiImport()} onError={setError} onOpenCalendar={openCalendar} focusRequest={calFocus} onFocusHandled={() => setCalFocus(null)}
               aiPill={aiMinimized && aiLoading && showAi ? <AiRunningPill onRestore={() => setAiMinimized(false)} onStop={() => void stopAi()} /> : null} />
@@ -3083,6 +3037,78 @@ export default function MindmapPanel() {
           ))}
           {error && !showAi && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 max-w-md rounded-md border border-red-400/20 bg-slate-900 px-3 py-2 text-[11px] text-red-300 shadow-xl">{error}<button type="button" className="ml-2 text-slate-400 hover:text-white" onClick={() => setError("")}>✕</button></div>}
         </main>
+        {/* 右栏：AI 对话常驻（替代原弹窗）。showAi=展开；最小化时画布只留恢复胶囊。
+            与左栏同构：可拖宽、可收起，收起后经左栏「AI 分析」按钮或画布胶囊恢复。 */}
+        {showAi && !aiMinimized && (
+          <aside className="relative flex-shrink-0 border-l border-white/5 bg-slate-950/40" style={{ width: aiPanelW }}>
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="flex flex-shrink-0 items-center gap-2 border-b border-white/5 px-3 py-2">
+                <Brain className="h-3.5 w-3.5" style={{ color: ACCENT }} />
+                <span className="truncate text-[11px] font-bold text-slate-200">{t("mindmap.aiUnifiedTitle")}</span>
+                <div className="ml-auto flex items-center gap-1">
+                  <button type="button" onClick={() => setAiMinimized(true)} title={t("aiMinimized.minimize")}
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 transition hover:bg-white/10 hover:text-white">
+                    <Minimize2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button type="button" onClick={requestCloseAi} title={t("mindmap.aiPanelClose")}
+                    className="flex h-6 w-6 items-center justify-center rounded-md px-1.5 text-slate-400 transition hover:bg-white/10 hover:text-white">✕</button>
+                </div>
+              </div>
+              {/* AI 智能体工作台（项目/文档共用）：会话式多轮 + 阶段计划 + 工具透明 + 流式反馈 */}
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <AgentWorkbench
+                  mode={aiMode}
+                  onModeChange={setAiMode}
+                  documents={docs.map(d => ({ id: d.id, name: d.name, sourceType: d.sourceType }))}
+                  targetDocumentId={targetDocumentId}
+                  onTargetDocumentChange={(id) => void selectAiTarget(id)}
+                  providers={providers}
+                  providerId={providerId}
+                  modelId={modelId}
+                  onProviderChange={(pid) => {
+                    setProviderId(pid);
+                    const p = providers.find(x => x.id === pid);
+                    const mid = p?.active_model_id ?? p?.models[0]?.id ?? "";
+                    setModelId(mid);
+                    void rememberModel(pid, mid);
+                  }}
+                  onModelChange={(mid) => {
+                    setModelId(mid);
+                    void rememberModel(providerId, mid);
+                  }}
+                  projectPath={projectPath}
+                  onPickProject={() => void (async () => { const d = await openDialog({ directory: true, multiple: false, title: t("mindmap.pickDir") }); if (typeof d === "string") setProjectPath(d); })()}
+                  aiDepth={aiDepth}
+                  onDepthChange={setAiDepth}
+                  aiViews={aiViews}
+                  onViewsChange={setAiViews}
+                  textTitle={textTitle}
+                  onTextTitleChange={setTextTitle}
+                  loading={aiLoading}
+                  onRun={(instruction) => { if (aiMode === "project") void runAiProject(instruction); else void runAiText(instruction); }}
+                  onStop={() => void stopAi()}
+                  onAnswer={(answer) => { const rid = aiRunIdRef.current; if (rid) void mmApi.aiAnswer(rid, answer).catch((e) => console.error("回答询问失败:", e)); }}
+                  result={lastAiResult}
+                  runError={error}
+                  onShowReport={() => { if (lastAiResult) setAiReport(lastAiResult); }}
+                  onNewSession={() => { aiHasRunRef.current = false; setLastAiResult(null); setError(""); }}
+                  projectRoot={aiMode === "project" ? projectPath : null}
+                />
+              </div>
+            </div>
+            {/* 左缘拖宽把手：与左栏同一套逻辑，拖动方向相反 */}
+            <div className="absolute -left-1 top-0 z-10 flex h-full w-2.5 cursor-col-resize items-center justify-center hover:bg-white/[0.06]" title={t("mindmap.dragResize")}
+              onMouseDown={(e) => {
+                if (e.button !== 0) return;
+                e.preventDefault();
+                const startX = e.clientX; const startW = aiPanelW;
+                const onMove = (ev: MouseEvent) => { setAiPanelW(Math.min(640, Math.max(300, startW - (ev.clientX - startX)))); };
+                const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+                window.addEventListener("mousemove", onMove);
+                window.addEventListener("mouseup", onUp);
+              }} />
+          </aside>
+        )}
       </div>
       {showCreate && <CreateDocModal onClose={() => setShowCreate(false)} onCreate={(n,d,fid) => { void createDoc(n,d,fid); }} folderId={activeFolderId} />}
       {error && showAi && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 max-w-md rounded-md border border-red-400/20 bg-slate-900 px-3 py-2 text-[11px] text-red-300 shadow-xl">{error}<button type="button" className="ml-2 text-slate-400 hover:text-white" onClick={() => setError("")}>✕</button></div>}
