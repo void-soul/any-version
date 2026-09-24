@@ -44,10 +44,13 @@ export function toast(msg: string, kind: ToastKind = "ok"): void {
   }, 2600);
 }
 
+/** 主色调的进程内缓存：读一次就够（后续气泡直接用，不必先闪一下默认签名色）。 */
+let cachedAccent: string | null = null;
+
 function ToastView({ items }: { items: ToastMsg[] }) {
   const [ready, setReady] = useState(false);
   // 全局主色调（全局设置里选的那个），而不是当前模块色
-  const [accent, setAccent] = useState(VEX_CYBER_ACCENT);
+  const [accent, setAccent] = useState(cachedAccent ?? VEX_CYBER_ACCENT);
   useEffect(() => {
     setReady(true);
     let alive = true;
@@ -56,7 +59,10 @@ function ToastView({ items }: { items: ToastMsg[] }) {
         const ap = await invoke<{ moduleThemeColors?: Record<string, string> }>(
           "get_appearance_config",
         );
-        if (alive) setAccent(resolveThemeAccent(ap.moduleThemeColors));
+        if (!alive) return;
+        const next = resolveThemeAccent(ap.moduleThemeColors);
+        cachedAccent = next;
+        setAccent(next);
       } catch {
         /* 读不到就用默认签名色，不影响提示本身 */
       }
@@ -85,6 +91,10 @@ function ToastView({ items }: { items: ToastMsg[] }) {
             : t.kind === "err"
               ? "bg-rose-500/20 text-rose-300"
               : "bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[var(--module-accent)]";
+        // 描边取该条通知的语义色：ok 绿 / err 红 / info 全局主色。
+        // 气泡用的 `.vex-neon-edge` 渐变读的是 `--vex-primary`/`--vex-cyan`，
+        // 不覆盖的话永远是品牌紫→青，通知就跟不上主题色了。
+        const edgeColor = t.kind === "ok" ? "#34d399" : t.kind === "err" ? "#f43f5e" : accent;
         const glowShadow =
           t.kind === "ok"
             ? "0 0 12px rgba(52,211,153,0.28), 0 0 30px rgba(52,211,153,0.16), 0 12px 26px rgba(0,0,0,0.5)"
@@ -95,7 +105,14 @@ function ToastView({ items }: { items: ToastMsg[] }) {
           <div
             key={t.id}
             className={`vex-neon-edge flex items-center gap-2.5 pl-3 pr-4 py-2.5 rounded-xl bg-slate-900/95 backdrop-blur-md ${t.kind === "err" ? "vex-toast-pulse" : t.kind === "ok" ? "vex-toast-light" : ""}`}
-            style={{ boxShadow: glowShadow }}
+            style={
+              {
+                boxShadow: glowShadow,
+                // 覆写霓虹描边渐变的两端为语义色（info = 全局主色），描边即随主题走
+                "--vex-primary": edgeColor,
+                "--vex-cyan": edgeColor,
+              } as CSSProperties
+            }
           >
             <span className={`w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 ${iconCls}`}>
               <Icon className="w-3 h-3" />
