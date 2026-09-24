@@ -145,7 +145,38 @@ fn build_connection() -> Result<rusqlite::Connection, String> {
             .map_err(|e| format!("迁移贴纸系列字段失败: {}", e))?;
     }
 
+    // 元数据表（key-value）：用于记录「一次性迁移是否已执行」等跨启动状态（见 migrate.rs）
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS task_meta (\
+            key   TEXT PRIMARY KEY,\
+            value TEXT NOT NULL DEFAULT ''\
+        );",
+    )
+    .map_err(|e| format!("初始化元数据表失败: {}", e))?;
+
     Ok(conn)
+}
+
+/// 读一条元数据（不存在返回 None）。
+pub fn get_meta(conn: &rusqlite::Connection, key: &str) -> Result<Option<String>, String> {
+    match conn.query_row("SELECT value FROM task_meta WHERE key = ?1", [key], |row| {
+        row.get::<_, String>(0)
+    }) {
+        Ok(value) => Ok(Some(value)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("读取元数据失败: {}", e)),
+    }
+}
+
+/// 写一条元数据（已存在则覆盖）。
+pub fn set_meta(conn: &rusqlite::Connection, key: &str, value: &str) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO task_meta (key, value) VALUES (?1, ?2) \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        rusqlite::params![key, value],
+    )
+    .map_err(|e| format!("写入元数据失败: {}", e))?;
+    Ok(())
 }
 
 /// 初始化数据库（幂等）。

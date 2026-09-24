@@ -27,6 +27,7 @@ import {
   UserRoundCog,
   Music,
   Star,
+  CalendarDays,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import i18n from "./i18n";
@@ -294,6 +295,15 @@ export const MODULES: ModuleDef[] = [
     color: "#f59e0b",
     defaultToolbar: false,
     Component: lazyLoad(() => import("./components/favorites/FavoritesPanel")),
+  },
+  // —— 任务计划（全屏日历；独立库 tasks.db，与思维导图解耦）——
+  {
+    id: "tasks",
+    label: "任务计划",
+    icon: CalendarDays,
+    color: "#f59e0b",
+    defaultToolbar: false,
+    Component: lazyLoad(() => import("./components/tasks/TaskCalendarPanel")),
   },
 ];
 

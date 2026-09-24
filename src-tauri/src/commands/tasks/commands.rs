@@ -884,9 +884,14 @@ pub fn tasks_copy_image(source_path: String) -> Result<String, String> {
 }
 
 /// 初始化任务数据库（供启动时调用）。
+///
+/// 顺带执行一次「思维导图旧计划 → 任务」的一次性迁移（幂等，见 `super::migrate`）：
+/// 思维导图侧的节点计划已经整块移除，历史安排只能靠这次迁移保住。
 #[tauri::command]
 pub fn tasks_init() -> Result<(), String> {
-    super::db::init_db()
+    super::db::init_db()?;
+    let _ = super::db::with_conn(|conn| super::migrate::migrate_mindmap_plans(conn));
+    Ok(())
 }
 
 // ─── 画布贴纸（白板便签） ───
