@@ -8,17 +8,17 @@
 # 注意：学习记录里形如「- <hash> ...」的行不参与解析（正则要求第 1 段以字母数字开头、
 #       第 3 段是日期），所以下面两个区块可以放心混排。
 #
-# 记录时间：2026-09-21
+# 记录时间：2026-09-24
 
-ai-toolbox      c9751646  2026-09-21  v1.1.7 同架构同定位，最高优先
-cc-switch       8272707d  2026-09-21  v3.20.3 协议对齐 / 代理
-EchoBird        5efc9fdc  2026-09-20  v5.7.6 启动器 / 路由 / 账号配额
-CodexPlusPlus   b1ed92e   2026-09-17  原生浏览器注入为主，多数不适用
-headroom        67eb910e  2026-09-19  已作为托管服务集成，只跟版本
-farming         af1c95eb  2026-09-20  v2.2.70 多 agent 会话监督
-orca            169bccc5  2026-09-20  mobile OTA / 终端 / diff UI 为主
-open-tag        35d8eee   2026-08-23  约一个月无新提交；authz 权限域
-claude-code-cli 290fdc9   2026-03-31  2026-03 起停更
+ai-toolbox      e558b6f2  2026-09-24  同架构同定位，最高优先
+cc-switch       da193d4f  2026-09-23  协议对齐 / 代理
+EchoBird        0e2250bb  2026-09-23  启动器 / 路由 / 账号配额
+CodexPlusPlus   693c8486  2026-09-24  原生浏览器注入为主，多数不适用
+headroom        a6a9cef9  2026-09-24  已作为托管服务集成，只跟版本
+farming         a93dbecf  2026-09-24  多 agent 会话监督
+orca            f2ac9f29  2026-09-23  mobile OTA / 终端 / diff UI 为主
+open-tag        35d8eee6  2026-08-23  约一个月无新提交；authz 权限域
+claude-code-cli 290fdc94  2026-03-31  2026-03 起停更
 
 # ─── 学习记录 ───
 
@@ -58,3 +58,90 @@ claude-code-cli 290fdc9   2026-03-31  2026-03 起停更
 5. farming 的「保留侧聊 / 相关会话面板 / 只读分享链接」：与我们 CollabRoom 模型不同，需先对齐语义。
 6. open-tag 的 authz 权限域（sealed mode / reply policy / protected inboxes）：需先对齐我们的
    协同权限模型再评估。
+
+2026-09-24 第三轮（起点 = 上面 09-21 的 hash；本轮共 9 仓 diff：ai-toolbox 39 提交、
+           cc-switch 38、EchoBird 22、CodexPlusPlus 89、headroom 30、farming 61、
+           orca 215、open-tag 0、claude-code-cli 0）。
+
+落地（any-version 侧改动，待用户确认后提交；QA 记录 Q-0159 ~ Q-0163）：
+- Q-0159  feat: Windows git 长路径（`with_git_long_paths` 前置 `-c core.longpaths=true`，
+           接到 skills 两处 clone / node_manager clone+git_cmd / project run_git_cmd+pull）
+           来源 ai-toolbox 95bdfdf3
+- Q-0160  fix: 模型列表解析 —— 业务错误信封优先于「有列表」判定、`"error": null` 不算错误、
+           `models[]` 容忍 slug/id（来源 CodexPlusPlus e4bbee2 + cc-switch f2537fdf）
+- Q-0161  fix: 工具参数 `type: null` 递归剥除（来源 CodexPlusPlus a3286e9）
+- Q-0162  feat: Anthropic `output_config.effort` / `thinking` → OpenAI `reasoning_effort`
+           映射 + 家族白名单（grok-4.x 按次版本号解析）+ max 档分流
+           （来源 cc-switch 8e478b2b + d6e05152）
+- Q-0163  feat: 供应商自定义上游请求头（Rust `proxy::headers` + ProxyConfig/ModelRoute 字段 +
+           代理注入 + fetch/test 入参 + 保存前校验 + 前端编辑器 + i18n）
+           （来源 CodexPlusPlus ea0ac5d，#1685）
+- 验证：`cargo test --lib` 564 passed / 0 failed / 1 ignored；`npx tsc --noEmit` 退出码 0。
+
+本轮经代码核实「不适用」（连同证据，避免下次重复评估）：
+- ai-toolbox cc8413cc / 1406e789 / 12b45509（2xx 流协议错误不冷却模型、聚合重入 fail-closed）：
+  我们 `try_candidate` 只在「无状态码 / 非 2xx / 读取响应失败」时产出 CandidateError，
+  `record_failure` 全库只有一处调用点；2xx 从不进 classify_failure，无该冷却路径。
+  重入类改动对应他们的 gateway CLI takeover 回放，我们没有该机制。
+- ai-toolbox 980e23f2（max_output_tokens 下限 / DeepSeek search flag / StepFun effort 档）：
+  三项分别依赖 Responses 出站路径（我们只代理 /v1/messages 与 /v1/chat/completions）、
+  Codex catalog 镜像（我们不写 codex_catalog_model_entry）、供应商 profile 兼容层（我们没有）。
+- cc-switch 6f6087cd（window.show() 前重置 skip_taskbar）：我们主窗口从不设 skip_taskbar
+  （仅 picky / mindmap quick_popup / 划词翻译三个独立弹窗设置），无此 bug。
+- cc-switch 701c079b（版本探测忽略 shell 启动输出）：我们的 detect_current_version 直接
+  执行 exe，不经过 login shell，无 WSL 链路。
+- cc-switch 56df6513（GitHub Copilot 剥离 stop）：我们 providers.json 无 copilot 预设，
+  也没有 provider_type 概念；若将来支持 Copilot 再评估。
+
+本轮未抄（下次候选，按价值排序）：
+1. ai-toolbox 896c961d + c126d68e：Codex `requires_openai_auth` 三态 + 从 auth.json 导入账号
+   （取决于是否支持 ChatGPT 官方登录的 codex）。
+2. ai-toolbox c0002b1d + EchoBird 端点更新：最新模型预设（gpt-6 / opus 5.5 / grok 4.7 /
+   glm-5.3 / qwen3.8 / mimo v2.6）——我们的 builtinModels 只有 claude-code 与 gemini-cli 非空。
+3. ai-toolbox bfa86b0b / EchoBird c6f4bc25：opencode v2 配置迁移（需先确认 v2 是否可装）。
+4. CodexPlusPlus 3933a12：15 家供应商模型元数据 catalog（大，需先定用途）。
+5. CodexPlusPlus bc3669e / f0eb338 / 6b02b74 / 91688b4：config.toml 重复表头 / mcp_servers 打散 /
+   hooks 数组表头 —— 我们 launch.rs::write_toml_config 是文本级合并，风险同类但更窄（只原地
+   替换受管标量键并逐行保留其它行），需先构造「嵌套 mcp_servers + [[hooks]]」实测再决定。
+6. EchoBird 8a7a82a3 / b1b868b3：外观主题 + 首帧前恢复调色板。
+7. EchoBird 97fcff93：WorkBuddy AI 账号切换（我们 buddy/workbuddy.rs 已从 cockpit-tools 移植了
+   同款 CodeBuddyExtension 账号切换；他们新增的是另一个 workbuddyai 产品 + credits 面板，
+   credits 已随 #Q-0153 移除，只评估是否加 workbuddyai 这个 auth 来源）。
+8. EchoBird 1c94d420 / bdff0c3f：Kimi Desktop / OpenScience —— 均为 GUI 桌面客户端，
+   我们已剥离 GUI 托管能力，仅在需要「只检测不托管」时再加。
+9. headroom：托管为 pip 包 `headroom-ai[proxy]`（未钉版本），`pip install -U` 即跟到 0.38.0，
+   无需移植代码；只需确认装机版本。
+
+已作废候选：
+- 「按账号 + 日期区间筛选用量」（09-21 候选 1）：原引用的 buddy `stats.rs` 已随 #Q-0153 删除。
+
+2026-09-24 第三梯队（同一天续做，用户要求「第 1-3 梯队都抄一遍」；QA 记录 Q-0164 ~ Q-0168）：
+
+落地：
+- Q-0164  feat: 工具伪装模型预设刷新 + MiniMax 国内端点迁到 minimax.cn
+           （来源 ai-toolbox c0002b1d / EchoBird 0e2250bb / cc-switch e06ff90f）
+- Q-0165  feat: Codex 官方账号（auth.json）快照导入/应用/删除 —— 导入只落快照、
+           仅应用时写运行时并先备份（来源 ai-toolbox c126d68e）
+- Q-0166  fix: opencode v2 配置目录与文件名解析（OPENCODE_CONFIG_DIR / XDG_CONFIG_HOME /
+           opencode.jsonc 择优）（来源 EchoBird c6f4bc25）
+- Q-0167  perf: 主题 accent 首帧恢复（localStorage 缓存 + 渲染前同步预置）
+           （来源 EchoBird b1b868b3）
+- 验证：`cargo check --all-targets` 0 error；`cargo test --lib` 577 passed / 0 failed；
+  `npx tsc --noEmit` 退出码 0；`npm test` 8 files / 44 tests 全绿。
+
+第三梯队收官（同日续做第二轮）：
+- Q-0168  feat: WorkBuddy AI 平台（来源 EchoBird 97fcff93）
+           实现方式与上一轮预估不同（更省、更稳）：**没有**新建 workbuddy_ai.rs，
+           而是把 workbuddy.rs 的 7 个入口参数化（新增 `BuddyPlatform::auth_file_name()`
+           / `is_workbuddy_family()`），避免复制 741 行工作代码；编译器用 E0004 逐处
+           点名了 9 个 match 分派点，全部补齐。
+           关键语义：AI 版**只读登录文件** `workbuddy-desktop-ai.info`（跳过 CN 专用的
+           state.vscdb secret 兜底，其密钥名未公开）；**无会话库**，故 session_transfer
+           返回 None、会话清理明确拒绝（宁可不删也不误删 CN 会话）；切号后**不自动拉起**
+           客户端（与 CodeBuddy CN 一致）；twin_platform 对 AI 返回自身，不参与
+           WorkBuddy ↔ CodeBuddy CN 的过期时间共享。
+           前端只需给 BuddyPanel 平台列表加一项 —— 已有的 `platform !== "workbuddy"`
+           门控让签到/旅行/WorkDaddy 导入自然对 AI 版隐藏。
+           验证：`cargo check --all-targets` 0 error；`cargo test --lib` 579 passed / 0 failed；
+           `npx tsc --noEmit` 退出码 0；`npm test` 8 files / 44 tests 全绿。
+           待真机验证：在一台装了 WorkBuddy AI 的机器上导入本地登录态，确认字段解析与切号写回。
