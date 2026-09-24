@@ -1970,7 +1970,7 @@ export default function BuddyPanel() {
           {syncDetailsOpen && (
             <div className="max-h-56 overflow-y-auto border-t border-white/5">
               {/* 状态筛选：明细最多 500 条，冲突/失败往往只有几条，不筛要翻半天 */}
-              <div className="flex items-center gap-1 px-4 py-1.5 border-b border-white/5 sticky top-0 bg-[#0b0b0f] z-10">
+              <div className="flex items-center gap-1 px-4 py-1.5 border-b border-white/5 sticky top-0 bg-surface-deep z-10">
                 {SYNC_STATUS_FILTERS.map((status) => (
                   <button
                     key={status}

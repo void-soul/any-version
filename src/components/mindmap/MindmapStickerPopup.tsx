@@ -135,7 +135,7 @@ export default function MindmapStickerPopup() {
   useEffect(() => { inputRef.current?.focus(); }, [full, docId]);
 
   return (
-    <div ref={rootRef} className="h-screen w-screen overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl flex flex-col text-slate-200 select-none" style={themeVars}>
+    <div ref={rootRef} className="h-screen w-screen overflow-hidden rounded-xl border border-white/10 bg-surface-panel shadow-2xl flex flex-col text-slate-200 select-none" style={themeVars}>
       {/* 标题栏 */}
       <div className="flex shrink-0 cursor-grab items-center gap-2 border-b border-white/10 px-3 py-2 active:cursor-grabbing" onMouseDown={onTitleMouseDown} style={{ backgroundColor: "var(--mm-accent-soft)" }}>
         <VexGlowAvatar size={18} />

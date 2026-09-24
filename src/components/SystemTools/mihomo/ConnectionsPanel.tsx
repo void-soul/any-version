@@ -240,7 +240,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
       ) : (
         <div className={`${cardCls} overflow-auto max-h-[60vh]`}>
           <table className="w-full text-[11px] whitespace-nowrap">
-            <thead className="sticky top-0 bg-[#11151f] z-10">
+            <thead className="sticky top-0 bg-surface-raised z-10">
               <tr className="text-slate-400 text-left">
                 <th className="px-2 py-2 font-medium"></th>
                 {TABLE_COLUMNS.map((c) => <th key={c.key} className="px-2 py-2 font-medium">{t(`mihomo.${c.t}`)}</th>)}

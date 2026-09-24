@@ -53,7 +53,7 @@ export function BusyOverlay({ show, text }: { show: boolean; text?: string }) {
   const { t } = useTranslation();
   if (!show) return null;
   return (
-    <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl bg-[#0b0e15]/70 backdrop-blur-[2px]">
+    <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl bg-surface-deep/70 backdrop-blur-[2px]">
       <span className="w-6 h-6 rounded-full border-2 border-[var(--module-accent-ring)] border-t-[var(--module-accent)] animate-spin" />
       <span className="text-[11px] text-slate-300">{text || t("mihomoui.processing")}</span>
     </div>
@@ -65,10 +65,10 @@ export function Modal({ title, onClose, children, footer, wide, busy, busyText }
   return (
     <div className="fixed inset-0 z-50 modal-mask flex items-center justify-center bg-black/60 p-4">
       <div
-        className={`relative w-full ${wide ? "max-w-4xl" : "max-w-2xl"} max-h-[85vh] overflow-y-auto rounded-2xl border border-white/10 bg-[#11151f] shadow-2xl`}
+        className={`relative w-full ${wide ? "max-w-4xl" : "max-w-2xl"} max-h-[85vh] overflow-y-auto rounded-2xl border border-white/10 bg-surface-raised shadow-2xl`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 sticky top-0 bg-[#11151f] z-10">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 sticky top-0 bg-surface-raised z-10">
           <h3 className="text-sm font-bold text-white">{title}</h3>
           <button
             className="text-slate-400 hover:text-white text-xl leading-none cursor-pointer disabled:opacity-40"
@@ -79,7 +79,7 @@ export function Modal({ title, onClose, children, footer, wide, busy, busyText }
           </button>
         </div>
         <div className="p-4 space-y-3">{children}</div>
-        {footer && <div className="px-4 py-3 border-t border-white/10 flex justify-end gap-2 sticky bottom-0 bg-[#11151f]">{footer}</div>}
+        {footer && <div className="px-4 py-3 border-t border-white/10 flex justify-end gap-2 sticky bottom-0 bg-surface-raised">{footer}</div>}
         <BusyOverlay show={locked} text={busyText} />
       </div>
     </div>

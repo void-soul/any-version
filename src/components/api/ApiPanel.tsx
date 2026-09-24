@@ -34,6 +34,10 @@ import { SharedButton } from "../shared/Button";
 // 记住当前项目/环境/激活接口（模块卸载重挂载后恢复）
 const API_CTX_KEY = "any_version_api_ctx";
 
+/** 浮层底：面板色 + 微量透明度渐变（统一走皮肤 token，勿再写死颜色） */
+const POPOVER_BG =
+  "linear-gradient(160deg, color-mix(in srgb, var(--color-surface-panel) 99%, transparent), color-mix(in srgb, var(--color-surface-panel) 95%, transparent))";
+
 // ─── 模块转移弹窗（选择目标模块） ───
 function MoveModuleModal({ module, modules, onClose, onMoved }: {
   module: ApiModule;
@@ -809,7 +813,7 @@ export default function ApiPanel() {
                 {projectPop && (
                   <>
                     <div className="fixed inset-0 z-30" onClick={() => setProjectPop(false)} />
-                    <div className="absolute left-0 top-full z-40 mt-1.5 w-56 overflow-hidden rounded-xl border border-white/10 shadow-2xl" style={{ background: "linear-gradient(160deg, rgba(13,21,36,0.99), rgba(13,21,36,0.95))" }}>
+                    <div className="absolute left-0 top-full z-40 mt-1.5 w-56 overflow-hidden rounded-xl border border-white/10 shadow-2xl" style={{ background: POPOVER_BG }}>
                       <div className="flex items-center justify-between border-b border-white/10 px-3 py-1.5">
                         <span className="text-[10px] font-semibold text-slate-500">{t("api.apiProjects")}</span>
                         <button onClick={openCreateProject} className="p-0.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer" title={t("api.newProjectTip")}>
@@ -870,7 +874,7 @@ export default function ApiPanel() {
                     {envPop && (
                       <>
                         <div className="fixed inset-0 z-30" onClick={() => setEnvPop(false)} />
-                        <div className="absolute left-0 top-full z-40 mt-1.5 min-w-full w-max max-w-[260px] overflow-hidden rounded-xl border border-white/10 shadow-2xl" style={{ background: "linear-gradient(160deg, rgba(13,21,36,0.99), rgba(13,21,36,0.95))" }}>
+                        <div className="absolute left-0 top-full z-40 mt-1.5 min-w-full w-max max-w-[260px] overflow-hidden rounded-xl border border-white/10 shadow-2xl" style={{ background: POPOVER_BG }}>
                           <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-500">{t("api.envSwitchTitle")}</div>
                           <div className="max-h-52 overflow-y-auto p-1 space-y-0.5">
                             {envs.length === 0 && <div className="px-2 py-1 text-[10px] text-slate-600">{t("api.noEnvHint")}</div>}
@@ -1075,7 +1079,7 @@ export default function ApiPanel() {
                 {showTplPanel && (
                   <>
                     <div className="fixed inset-0 z-30" onClick={() => setShowTplPanel(false)} />
-                    <div className="absolute right-0 top-full z-40 mt-1.5 w-80 overflow-hidden rounded-xl border border-white/10 shadow-2xl" style={{ background: "linear-gradient(160deg, rgba(13,21,36,0.99), rgba(13,21,36,0.95))" }}>
+                    <div className="absolute right-0 top-full z-40 mt-1.5 w-80 overflow-hidden rounded-xl border border-white/10 shadow-2xl" style={{ background: POPOVER_BG }}>
                       <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
                         <span className="flex items-center gap-1.5 text-[11px] font-semibold text-white">
                           <Link2 className="w-3 h-3" style={{ color: "var(--module-accent)" }} />

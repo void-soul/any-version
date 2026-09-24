@@ -167,7 +167,7 @@ export function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
             <table className="w-full border-separate border-spacing-0 text-xs">
               <thead>
                 <tr>
-                  <th className="sticky left-0 z-10 bg-[#0d1524] px-2 py-1.5 text-left text-[10px] font-semibold text-slate-400 border-b border-white/10">{t("pmodals.varName")}</th>
+                  <th className="sticky left-0 z-10 bg-surface-panel px-2 py-1.5 text-left text-[10px] font-semibold text-slate-400 border-b border-white/10">{t("pmodals.varName")}</th>
                   {local.map((e, i) => (
                     <th key={e.id} className={`px-1.5 py-1 border-b border-white/10 ${e.id === active ? "bg-[color-mix(in_srgb,var(--module-accent)_10%,transparent)]" : "bg-black/20"}`}>
                       <div className="flex items-center gap-1">
@@ -201,7 +201,7 @@ export function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
               <tbody>
                 {allKeys.map((key) => (
                   <tr key={key} className="group">
-                    <td className="sticky left-0 z-10 bg-[#0d1524] px-2 py-1 border-b border-white/5">
+                    <td className="sticky left-0 z-10 bg-surface-panel px-2 py-1 border-b border-white/5">
                       <div className="flex items-center gap-1">
                         <input
                           defaultValue={key}

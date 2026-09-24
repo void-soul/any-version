@@ -137,7 +137,7 @@ export default function OverridesPanel() {
             <Plus className="w-3.5 h-3.5" />
           </button>
           {addMenu && (
-            <div className="absolute right-0 top-9 z-30 w-36 rounded-xl border border-white/10 bg-[#1a1f2d] shadow-xl overflow-hidden"
+            <div className="absolute right-0 top-9 z-30 w-36 rounded-xl border border-white/10 bg-surface-panel shadow-xl overflow-hidden"
               onClick={(e) => e.stopPropagation()}>
               {[
                 [t("overrides.openFile"), () => fileRef.current?.click()],
@@ -199,7 +199,7 @@ export default function OverridesPanel() {
 
             {/* 菜单（复刻 menuItems：编辑信息/编辑文件/执行日志(js)/删除） */}
             {menuFor === item.id && (
-              <div className="absolute right-2 top-9 z-30 w-32 rounded-xl border border-white/10 bg-[#1a1f2d] shadow-xl overflow-hidden"
+              <div className="absolute right-2 top-9 z-30 w-32 rounded-xl border border-white/10 bg-surface-panel shadow-xl overflow-hidden"
                 onClick={(e) => e.stopPropagation()}>
                 <button className="w-full text-left px-3 py-2 text-[11px] text-slate-200 hover:bg-white/10 cursor-pointer"
                   onClick={() => { setEditInfo(item); setMenuFor(null); }}>{t("overrides.editInfo")}</button>

@@ -1118,7 +1118,7 @@ export default function ProjectDetailPanel({
               {/* 遮罩 */}
               <div className="absolute inset-0 modal-mask bg-black/60 backdrop-blur-sm" />
               {/* 弹框 */}
-              <div className={`relative w-full max-w-lg max-h-[82vh] rounded-2xl border shadow-2xl flex flex-col overflow-hidden animate-fadeIn ${isUnmanage ? "bg-[#17181c] border-red-500/25" : "bg-[#17181c] border-[var(--module-accent-ring)]"}`}>
+              <div className={`relative w-full max-w-lg max-h-[82vh] rounded-2xl border shadow-2xl flex flex-col overflow-hidden animate-fadeIn ${isUnmanage ? "bg-surface-panel border-red-500/25" : "bg-surface-panel border-[var(--module-accent-ring)]"}`}>
                 {/* 头部 */}
                 <div className="flex-shrink-0 px-4 py-3 border-b border-white/10 bg-white/[0.02] flex items-center justify-between">
                   <h4 className={`text-xs font-semibold flex items-center gap-1.5 ${isUnmanage ? "text-red-300" : "text-[var(--module-accent)]"}`}>

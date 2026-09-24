@@ -208,7 +208,7 @@ export default function MindmapNodePopup() {
   useEffect(() => { inputRef.current?.focus(); }, [full, docId]);
 
   return (
-    <div ref={rootRef} className="h-screen w-screen overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl flex flex-col text-slate-200 select-none" style={themeVars}>
+    <div ref={rootRef} className="h-screen w-screen overflow-hidden rounded-xl border border-white/10 bg-surface-panel shadow-2xl flex flex-col text-slate-200 select-none" style={themeVars}>
       {/* 标题栏 */}
       <div className="flex shrink-0 cursor-grab items-center gap-2 border-b border-white/10 px-3 py-2 active:cursor-grabbing" onMouseDown={onTitleMouseDown} style={{ backgroundColor: "var(--mm-accent-soft)" }}>
         <VexGlowAvatar size={18} />
@@ -230,7 +230,7 @@ export default function MindmapNodePopup() {
             <ChevronDown className={`h-3 w-3 shrink-0 text-slate-500 transition-transform ${pickOpen ? "rotate-180" : ""}`} />
           </button>
           {pickOpen && (
-            <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto rounded-md border border-white/10 bg-[#101827] shadow-2xl shadow-black/50">
+            <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto rounded-md border border-white/10 bg-surface-modal shadow-2xl shadow-black/50">
               {/* 新增根节点：创建新文档，节点作为根 */}
               <button type="button" onClick={pickNewRoot}
                 className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[11px] hover:bg-white/[0.06] ${creatingRoot ? "text-[var(--mm-accent)]" : "text-slate-300"}`}>

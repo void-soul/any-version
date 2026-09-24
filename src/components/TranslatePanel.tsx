@@ -575,7 +575,7 @@ export default function TranslatePanel() {
         <button
           onClick={scrollToTop}
           title={t("tranpanel.backToTop")}
-          className="fixed bottom-8 right-8 z-40 flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-[#0d1524]/90 text-slate-300 shadow-xl backdrop-blur transition hover:text-white hover:border-[var(--module-accent)]/60 cursor-pointer"
+          className="fixed bottom-8 right-8 z-40 flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-surface-panel/90 text-slate-300 shadow-xl backdrop-blur transition hover:text-white hover:border-[var(--module-accent)]/60 cursor-pointer"
         >
           <ArrowUp className="w-4 h-4" />
         </button>

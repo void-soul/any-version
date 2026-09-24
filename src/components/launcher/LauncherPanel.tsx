@@ -1505,7 +1505,7 @@ export default function LauncherPanel() {
             </button>
 
             {viewSettingsOpen && (
-              <div className="absolute right-0 mt-1 z-[150] w-64 bg-[#171d2e] border border-white/15 rounded-xl shadow-2xl shadow-black/50 p-3 space-y-3 max-h-[75vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-100">
+              <div className="absolute right-0 mt-1 z-[150] w-64 bg-surface-panel border border-white/15 rounded-xl shadow-2xl shadow-black/50 p-3 space-y-3 max-h-[75vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-100">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-slate-200 flex items-center gap-1">
                     <Settings2 className="w-3 h-3 text-[var(--module-accent)]" />
@@ -1969,7 +1969,7 @@ export default function LauncherPanel() {
         </div>
 
         {usageStatsOpen && (
-          <div className="absolute inset-y-0 left-0 right-0 z-30 bg-[#0c101c]/80 backdrop-blur-md flex flex-col overflow-hidden">
+          <div className="absolute inset-y-0 left-0 right-0 z-30 bg-surface-panel/80 backdrop-blur-md flex flex-col overflow-hidden">
             <div className="flex items-center justify-between border-b border-white/10 px-5 py-3">
               <div className="flex items-center gap-2">
                 <BarChart3 className="w-4 h-4 text-amber-400" />
@@ -2014,7 +2014,7 @@ export default function LauncherPanel() {
 
         {/* Figure 2: Unified Search Overlay */}
         {isSearchOpen && (
-          <div className="absolute inset-0 z-40 bg-[#0b101b]/80 backdrop-blur-md flex flex-col items-center p-6 animate-in fade-in zoom-in-95 duration-100">
+          <div className="absolute inset-0 z-40 bg-surface-splash/80 backdrop-blur-md flex flex-col items-center p-6 animate-in fade-in zoom-in-95 duration-100">
             <div className="w-full max-w-[600px] h-full flex flex-col">
               {/* Search Input Box */}
               <div className="relative flex items-center mb-3">
@@ -2154,7 +2154,7 @@ export default function LauncherPanel() {
               ? { bottom: (typeof window !== "undefined" ? window.innerHeight : 0) - itemContextMenu.y, top: "auto" }
               : { top: itemContextMenu.y }),
           }}
-          className="fixed z-[200] bg-[#171d2e] border border-white/15 rounded-xl shadow-2xl p-1.5 min-w-[160px] text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100"
+          className="fixed z-[200] bg-surface-panel border border-white/15 rounded-xl shadow-2xl p-1.5 min-w-[160px] text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100"
           onClick={(e) => e.stopPropagation()}
         >
           <button
@@ -2240,7 +2240,7 @@ export default function LauncherPanel() {
               ? { bottom: (typeof window !== "undefined" ? window.innerHeight : 0) - categoryContextMenu.y, top: "auto" }
               : { top: categoryContextMenu.y }),
           }}
-          className="fixed z-[200] bg-[#171d2e] border border-white/15 rounded-xl shadow-2xl p-1.5 min-w-[150px] text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100"
+          className="fixed z-[200] bg-surface-panel border border-white/15 rounded-xl shadow-2xl p-1.5 min-w-[150px] text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100"
           onClick={(e) => e.stopPropagation()}
         >
           <button
@@ -2307,7 +2307,7 @@ export default function LauncherPanel() {
           className="fixed inset-0 z-[250] modal-mask bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-100"
         >
           <div
-            className="w-full max-w-sm bg-[#171d2e] border border-white/15 rounded-2xl p-5 shadow-2xl space-y-4 text-xs"
+            className="w-full max-w-sm bg-surface-panel border border-white/15 rounded-2xl p-5 shadow-2xl space-y-4 text-xs"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-2 border-b border-white/10">
@@ -2400,7 +2400,7 @@ export default function LauncherPanel() {
           className="fixed inset-0 z-[250] modal-mask bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-100"
         >
           <div
-            className="w-full max-w-sm bg-[#171d2e] border border-white/15 rounded-2xl p-5 shadow-2xl space-y-4 text-xs"
+            className="w-full max-w-sm bg-surface-panel border border-white/15 rounded-2xl p-5 shadow-2xl space-y-4 text-xs"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-2 border-b border-white/10">
@@ -2491,7 +2491,7 @@ export default function LauncherPanel() {
           className="fixed inset-0 z-[110] modal-mask flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
         >
           <div
-            className="bg-[#141927] border rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-100"
+            className="bg-surface-panel border rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-100"
             style={{ borderColor: "var(--module-accent-ring)" }}
             onClick={(e) => e.stopPropagation()}
           >

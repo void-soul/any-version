@@ -56,8 +56,8 @@ export class ErrorBoundary extends React.Component<React.PropsWithChildren, Stat
             justifyContent: "center",
             height: "100vh",
             padding: 24,
-            color: "#e5e7eb",
-            background: "#0f172a",
+            color: "var(--color-text-primary)",
+            background: "var(--color-surface)",
             fontFamily: "system-ui, sans-serif",
           }}
         >
@@ -69,7 +69,7 @@ export class ErrorBoundary extends React.Component<React.PropsWithChildren, Stat
               overflow: "auto",
               padding: 12,
               borderRadius: 8,
-              background: "#1e293b",
+              background: "var(--color-surface-inset)",
               fontSize: 12,
               whiteSpace: "pre-wrap",
             }}

@@ -829,7 +829,7 @@ export default function LogViewer() {
 
 const CSS = `
 .lv-root {
-  --lv-bg: #0d111d; --lv-surface: #0e1220; --lv-border: rgba(255,255,255,0.06);
+  --lv-bg: var(--color-surface); --lv-surface: var(--color-surface-topbar); --lv-border: rgba(255,255,255,0.06);
   --lv-text: #e2e8f0; --lv-muted: #94a3b8; --lv-accent: #10b981;
   --lv-error: #f87171; --lv-warn: #fbbf24; --lv-scrollbar: #1e293b;
   --lv-scrollbar-thumb: #334155; --lv-rowh: 21px;
@@ -938,10 +938,10 @@ const CSS = `
   padding: 5px 8px; border-radius: 4px; font-family: inherit; font-size: 12px; outline: none;
 }
 .lv-filter-select:focus { border-color: var(--lv-accent); }
-.lv-filter-select option { background: #0e1220; color: var(--lv-text); }
+.lv-filter-select option { background: var(--color-surface-topbar); color: var(--lv-text); }
 
 .lv-root #lv-overlay {
-  position: absolute; inset: 0; background: rgba(13,17,29,0.85);
+  position: absolute; inset: 0; background: color-mix(in srgb, var(--color-surface) 85%, transparent);
   display: none; align-items: center; justify-content: center;
   flex-direction: column; gap: 14px; z-index: 50; color: var(--lv-text);
 }

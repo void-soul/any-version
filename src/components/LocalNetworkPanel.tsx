@@ -108,7 +108,7 @@ export default function LocalNetworkPanel() {
             <p className="shrink-0 text-[10px] text-slate-500">{t("netpan.connCount", { filtered: filteredConns.length, total: conns.length })}</p>
             <div className="min-h-0 flex-1 overflow-y-auto">
               <table className="w-full text-[10px]">
-                <thead className="sticky top-0 bg-[#0b0e14]">
+                <thead className="sticky top-0 bg-surface-deep">
                   <tr className="text-slate-400 font-semibold border-b border-white/5">
                     <td className="py-1.5 pr-3">{t("netpan.thProto")}</td>
                     <td className="py-1.5 pr-3">{t("netpan.thLocal")}</td>

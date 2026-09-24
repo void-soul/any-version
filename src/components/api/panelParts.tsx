@@ -173,7 +173,7 @@ export function VarInput({ value, onChange, envVars, placeholder, className, dis
       )}
       {open && candidates.length > 0 && (
         <div
-          className="absolute z-30 max-h-48 overflow-y-auto rounded-md border border-white/10 bg-[#0d1524] shadow-xl"
+          className="absolute z-30 max-h-48 overflow-y-auto rounded-md border border-white/10 bg-surface-panel shadow-xl"
           style={caret ? { left: caret.left, top: caret.top } : { left: 0, right: 0, top: "calc(100% + 2px)" }}
         >
           {candidates.map((c, i) => {

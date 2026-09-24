@@ -194,7 +194,7 @@ export default function PortScanner() {
               <p className="text-[10px] text-slate-500 py-2">{t("portscan.noReserved")}</p>
             ) : (
               <table className="w-full text-[10px]">
-                <thead className="sticky top-0 bg-[#0b0e14]">
+                <thead className="sticky top-0 bg-surface-deep">
                   <tr className="text-slate-400 font-semibold border-b border-white/5">
                     <td className="py-1.5 pr-3">{t("portscan.startPort")}</td>
                     <td className="py-1.5 pr-3">{t("portscan.endPort")}</td>

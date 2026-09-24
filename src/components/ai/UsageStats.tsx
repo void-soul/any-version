@@ -454,7 +454,7 @@ export default function UsageStats() {
               className="bg-white/5 border border-white/10 rounded-lg text-[10px] text-slate-300 px-1.5 py-1 cursor-pointer hover:text-white hover:bg-white/10 transition-all focus:outline-none"
             >
               {REFRESH_INTERVAL_OPTIONS_MS.map((ms) => (
-                <option key={ms} value={ms} className="bg-[#0e1220] text-slate-200">
+                <option key={ms} value={ms} className="bg-surface-topbar text-slate-200">
                   {t(REFRESH_INTERVAL_KEYS[ms as RefreshIntervalOption] ?? "usagestats.interval0")}
                 </option>
               ))}

@@ -164,7 +164,7 @@ export default function CategoryTreeSelect({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full bg-[#1e2436] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 transition cursor-pointer flex items-center justify-between gap-2 text-left"
+        className="w-full bg-surface-inset border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 transition cursor-pointer flex items-center justify-between gap-2 text-left"
       >
         <span className="flex items-center gap-1.5 min-w-0 truncate">
           <FolderTree className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />
@@ -175,7 +175,7 @@ export default function CategoryTreeSelect({
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute z-50 mt-1 w-full bg-[#1a2030] border border-white/10 rounded-xl shadow-2xl shadow-black/50 overflow-hidden">
+        <div className="absolute z-50 mt-1 w-full bg-surface-panel border border-white/10 rounded-xl shadow-2xl shadow-black/50 overflow-hidden">
           {/* Search box */}
           <div className="p-2 border-b border-white/5">
             <input

@@ -1636,7 +1636,7 @@ function RemoteVersionSelector({
 
             {/* 下拉列表 */}
             {open && filtered.length > 0 && (
-              <div className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto glass-panel rounded-xl border border-white/10 bg-[#1a1f2e] shadow-2xl">
+              <div className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto glass-panel rounded-xl border border-white/10 bg-surface-panel shadow-2xl">
                 {filtered.map((v) => (
                   <button
                     key={v}
@@ -1652,7 +1652,7 @@ function RemoteVersionSelector({
 
             {/* 无匹配提示 */}
             {open && search.trim() && filtered.length === 0 && (
-              <div className="absolute z-50 mt-1 w-full glass-panel rounded-xl border border-white/10 bg-[#1a1f2e] shadow-2xl p-3 text-center">
+              <div className="absolute z-50 mt-1 w-full glass-panel rounded-xl border border-white/10 bg-surface-panel shadow-2xl p-3 text-center">
                 <p className="text-[13px] text-slate-500">{t("projsub.noMatch", { kw: search })}</p>
               </div>
             )}

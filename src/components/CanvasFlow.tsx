@@ -195,7 +195,7 @@ const JsonFlowNode = memo(function JsonFlowNode({ data }: NodeProps<Node<JsonFlo
   const container = isJsonContainer(item.value);
   const color = hashColor(item.id, JSON_EDGE_COLORS);
   return (
-    <div className={`w-[250px] rounded-lg border bg-[#101827] px-2.5 py-2 shadow-xl ${selected ? "border-cyan-300 shadow-cyan-500/30" : chain ? "border-cyan-700/80" : "border-white/10"}`} onClick={() => onSelect(item.path)}>
+    <div className={`w-[250px] rounded-lg border bg-surface-modal px-2.5 py-2 shadow-xl ${selected ? "border-cyan-300 shadow-cyan-500/30" : chain ? "border-cyan-700/80" : "border-white/10"}`} onClick={() => onSelect(item.path)}>
       <Handle type="target" position={Position.Left} isConnectable={false} className="!h-2.5 !w-2.5 !border-2 !border-slate-950" style={{ background: color }} />
       <div className="flex items-center gap-1.5">
         {container && <button type="button" className="nodrag nopan inline-flex h-4 w-4 items-center justify-center text-slate-500 hover:text-white" onClick={(event) => { event.stopPropagation(); onToggle(item.path); }} title={collapsed.has(item.path) ? t("canvasflow.expand") : t("canvasflow.collapse")}>{collapsed.has(item.path) ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}</button>}
@@ -245,7 +245,7 @@ function JsonFlowInner({ value, selectedPath, searchMatches, onSelectPath, onCop
   // JSON 内容变化时重置位置
   useEffect(() => { setNodes(computedNodes); }, [value]);
   useEffect(() => { const timer = window.setTimeout(() => fitView({ padding: 0.2, duration: 240 }), 0); return () => window.clearTimeout(timer); }, [fitView, value, collapsed]);
-  return <div className="relative h-full min-h-0"><ReactFlow nodes={nodes} edges={edges} nodeTypes={{ jsonNode: JsonFlowNode }} edgeTypes={{ color: ColorEdge }} onNodesChange={(changes) => setNodes((cur) => applyNodeChanges(changes, cur))} fitView minZoom={0.15} maxZoom={2.2} nodesDraggable nodesConnectable={false} elementsSelectable proOptions={{ hideAttribution: true }}><Background color="#1e293b" gap={24} size={1} /><MiniMap style={{ backgroundColor: "#080f1c", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95" nodeColor={(node) => hashColor(String(node.id), JSON_EDGE_COLORS)} nodeStrokeColor="#0f172a" nodeBorderRadius={2} maskColor="rgba(2, 6, 23, 0.72)" pannable zoomable /><Controls className="canvas-flow-controls" showInteractive={false} /></ReactFlow>{graphTruncated && <div className="pointer-events-none absolute left-3 top-3 z-10 rounded border border-amber-400/20 bg-slate-900/90 px-2 py-1 text-[10px] text-amber-200">{t("canvasflow.graphTruncated", { count: MAX_JSON_FLOW_ITEMS })}</div>}</div>;
+  return <div className="relative h-full min-h-0"><ReactFlow nodes={nodes} edges={edges} nodeTypes={{ jsonNode: JsonFlowNode }} edgeTypes={{ color: ColorEdge }} onNodesChange={(changes) => setNodes((cur) => applyNodeChanges(changes, cur))} fitView minZoom={0.15} maxZoom={2.2} nodesDraggable nodesConnectable={false} elementsSelectable proOptions={{ hideAttribution: true }}><Background color="#1e293b" gap={24} size={1} /><MiniMap style={{ backgroundColor: "var(--color-surface-deep)", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95" nodeColor={(node) => hashColor(String(node.id), JSON_EDGE_COLORS)} nodeStrokeColor="#0f172a" nodeBorderRadius={2} maskColor="rgba(2, 6, 23, 0.72)" pannable zoomable /><Controls className="canvas-flow-controls" showInteractive={false} /></ReactFlow>{graphTruncated && <div className="pointer-events-none absolute left-3 top-3 z-10 rounded border border-amber-400/20 bg-slate-900/90 px-2 py-1 text-[10px] text-amber-200">{t("canvasflow.graphTruncated", { count: MAX_JSON_FLOW_ITEMS })}</div>}</div>;
 }
 
 export function JsonFlowCanvas(props: { value: JsonValue; selectedPath: string; searchMatches: SearchMatches; onSelectPath: (path: string) => void; onCopy: (value: string) => void; collapseAllToken: number }) {
@@ -414,7 +414,7 @@ function TaskDetailModal({ task, onClose, onUpdate, onInsertFile, onInsertImage,
   );
   return createPortal(
     <div className={`fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-[3px] ${fullscreen ? "p-0" : "p-6"}`}>
-      <div className={`flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0d1524] shadow-2xl ${fullscreen ? "h-[100vh] w-[100vw] rounded-none" : "h-[82vh] w-[min(92vw,860px)]"}`} onClick={(event) => event.stopPropagation()}>
+      <div className={`flex flex-col overflow-hidden rounded-xl border border-white/10 bg-surface-panel shadow-2xl ${fullscreen ? "h-[100vh] w-[100vw] rounded-none" : "h-[82vh] w-[min(92vw,860px)]"}`} onClick={(event) => event.stopPropagation()}>
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/10 px-3" style={{ backgroundColor: hexToRgba(color, 0.12) }}>
           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 9px ${color}` }} />
           <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-slate-100">{t("canvasflow.detailTitle", { title: task.title })}</span>
@@ -445,7 +445,7 @@ const TaskFlowNode = memo(function TaskFlowNode({ data }: NodeProps<Node<TaskFlo
   const [titleDraft, setTitleDraft] = useState(task.title);
   useEffect(() => { setTitleDraft(task.title); }, [task.title]);
   const saveTitle = () => { const title = titleDraft.trim(); if (title && title !== task.title) data.onUpdate({ title }); setEditingTitle(false); };
-  return <><article className={`relative flex w-[320px] flex-col overflow-hidden rounded-lg border bg-[#101827] shadow-2xl`} style={{ height: bodyCollapsed ? undefined : TASK_NODE_HEIGHT, borderColor: selected ? color : `${color}88`, boxShadow: selected ? `0 0 22px ${hexToRgba(color, 0.35)}` : "0 18px 40px rgba(0,0,0,.5)" }} onClick={data.onSelect} onDoubleClick={(event) => { event.stopPropagation(); setDetailOpen(true); }}>
+  return <><article className={`relative flex w-[320px] flex-col overflow-hidden rounded-lg border bg-surface-modal shadow-2xl`} style={{ height: bodyCollapsed ? undefined : TASK_NODE_HEIGHT, borderColor: selected ? color : `${color}88`, boxShadow: selected ? `0 0 22px ${hexToRgba(color, 0.35)}` : "0 18px 40px rgba(0,0,0,.5)" }} onClick={data.onSelect} onDoubleClick={(event) => { event.stopPropagation(); setDetailOpen(true); }}>
     <Handle type="target" position={Position.Left} isConnectable className="!h-3 !w-3 !border-2 !border-slate-950" style={{ background: color }} />
     <header className="flex h-10 cursor-grab items-center gap-1.5 border-b border-white/10 px-2.5" style={{ backgroundColor: hexToRgba(color, 0.12) }}>
       <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 9px ${color}` }} />
@@ -465,7 +465,7 @@ const TaskFlowNode = memo(function TaskFlowNode({ data }: NodeProps<Node<TaskFlo
     </div>}
     <Handle type="source" position={Position.Right} isConnectable className="!h-3 !w-3 !border-2 !border-slate-950" style={{ background: color }} />
   </article>
-  <button type="button" className="nodrag nopan absolute z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border-2 border-dashed text-sm font-bold leading-none transition hover:scale-110 hover:border-solid" style={{ right: -38, top: "50%", borderColor: `${color}88`, color: `${color}cc`, backgroundColor: "#101827", boxShadow: "0 0 6px rgba(0,0,0,.45)" }} onClick={(event) => { event.stopPropagation(); data.onAddChild(); }} title={t("canvasflow.addSub")}><Plus className="h-3.5 w-3.5" /></button>
+  <button type="button" className="nodrag nopan absolute z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border-2 border-dashed text-sm font-bold leading-none transition hover:scale-110 hover:border-solid" style={{ right: -38, top: "50%", borderColor: `${color}88`, color: `${color}cc`, backgroundColor: "var(--color-surface-modal)", boxShadow: "0 0 6px rgba(0,0,0,.45)" }} onClick={(event) => { event.stopPropagation(); data.onAddChild(); }} title={t("canvasflow.addSub")}><Plus className="h-3.5 w-3.5" /></button>
   {detailOpen && <TaskDetailModal task={task} onClose={() => setDetailOpen(false)} onUpdate={data.onUpdate} onInsertFile={data.onInsertFile} onInsertImage={data.onInsertImage} onInsertScreenshot={data.onInsertScreenshot} onOpenFile={data.onOpenFile} />}
 </>;
 });
@@ -535,7 +535,7 @@ function TaskFlowInner(props: TaskFlowProps) {
       ...stickerNodes.map((next) => { const existing = currentById.get(next.id); return existing ? { ...next, position: existing.position, dragging: existing.dragging } : next; }),
     ]; }); }, [taskNodes, stickerNodes]);
   useEffect(() => { const timer = window.setTimeout(() => fitView({ padding: 0.18, duration: 260 }), 0); return () => window.clearTimeout(timer); }, [fitView, props.selectedSeries, collapsed]);
-  return <ReactFlow nodes={nodes} edges={taskEdges} nodeTypes={taskNodeTypes} edgeTypes={edgeTypes} onNodesChange={(changes) => setNodes((current) => applyNodeChanges(changes, current))} onNodeDragStop={(_, node) => { if (node.id.startsWith("sticker-")) { props.onStickerPositionChange(node.id.slice(8), node.position); } else { props.onPositionChange(node.id, node.position); } }} onConnect={handleConnect} fitView minZoom={0.1} maxZoom={2} nodesConnectable connectionRadius={28} proOptions={{ hideAttribution: true }} onPaneClick={(event) => { if (event.detail === 2) { const bounds = (event.target as HTMLElement).closest(".react-flow__pane")?.getBoundingClientRect(); if (bounds) props.onAddSticker(event.clientX - bounds.left, event.clientY - bounds.top); } }}><Background color="#1e293b" gap={24} size={1} /><MiniMap style={{ backgroundColor: "#080f1c", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95" nodeColor={(node) => node.id.startsWith("sticker-") ? (node.data as StickerNodeData).sticker.color : taskColor((node.data as TaskFlowNodeData).task)} nodeStrokeColor="#0f172a" nodeBorderRadius={2} maskColor="rgba(2, 6, 23, 0.72)" pannable zoomable /><Controls className="canvas-flow-controls" showInteractive={false} /></ReactFlow>;
+  return <ReactFlow nodes={nodes} edges={taskEdges} nodeTypes={taskNodeTypes} edgeTypes={edgeTypes} onNodesChange={(changes) => setNodes((current) => applyNodeChanges(changes, current))} onNodeDragStop={(_, node) => { if (node.id.startsWith("sticker-")) { props.onStickerPositionChange(node.id.slice(8), node.position); } else { props.onPositionChange(node.id, node.position); } }} onConnect={handleConnect} fitView minZoom={0.1} maxZoom={2} nodesConnectable connectionRadius={28} proOptions={{ hideAttribution: true }} onPaneClick={(event) => { if (event.detail === 2) { const bounds = (event.target as HTMLElement).closest(".react-flow__pane")?.getBoundingClientRect(); if (bounds) props.onAddSticker(event.clientX - bounds.left, event.clientY - bounds.top); } }}><Background color="#1e293b" gap={24} size={1} /><MiniMap style={{ backgroundColor: "var(--color-surface-deep)", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95" nodeColor={(node) => node.id.startsWith("sticker-") ? (node.data as StickerNodeData).sticker.color : taskColor((node.data as TaskFlowNodeData).task)} nodeStrokeColor="#0f172a" nodeBorderRadius={2} maskColor="rgba(2, 6, 23, 0.72)" pannable zoomable /><Controls className="canvas-flow-controls" showInteractive={false} /></ReactFlow>;
 }
 
 export type TaskFlowProps = {
@@ -561,5 +561,5 @@ export type TaskFlowProps = {
 };
 
 export function TaskFlowCanvas(props: TaskFlowProps) {
-  return <div className="h-full min-h-0 bg-[#080f1c]"><ReactFlowProvider><TaskFlowInner {...props} /></ReactFlowProvider></div>;
+  return <div className="h-full min-h-0 bg-surface-deep"><ReactFlowProvider><TaskFlowInner {...props} /></ReactFlowProvider></div>;
 }

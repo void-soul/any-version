@@ -327,7 +327,7 @@ export default function TranslatePopup() {
       `}</style>
       <div className="w-screen h-screen bg-transparent select-none" style={themeVars}>
         <div
-          className="w-full h-full rounded-none border border-white/15 bg-[#1b1d23]/95 shadow-2xl shadow-black/60 overflow-hidden"
+          className="w-full h-full rounded-none border border-white/15 bg-surface-panel/95 shadow-2xl shadow-black/60 overflow-hidden"
           data-tauri-drag-region
         >
         {/* 标题栏：可拖拽（原生 app-region drag，兼容透明无边框窗口） */}

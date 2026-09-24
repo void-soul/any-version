@@ -133,7 +133,7 @@ export default function CategoryModal({
       className="fixed inset-0 z-[100] modal-mask flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
     >
       <div
-        className="bg-[#141927] border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150 text-slate-100"
+        className="bg-surface-panel border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150 text-slate-100"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -296,7 +296,7 @@ export default function CategoryModal({
                   <select
                     value={itemShowOnly}
                     onChange={(e: any) => setItemShowOnly(e.target.value)}
-                    className="w-full bg-[#1e2436] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none"
+                    className="w-full bg-surface-inset border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none"
                   >
                     <option value="default">{t("category.optAll")}</option>
                     <option value="file">{t("category.optFile")}</option>
