@@ -206,8 +206,17 @@ pub(crate) fn detect_via_pm(pm: &str, pkg_name: &str) -> Option<String> {
     }
 }
 
+/// 检测命令的工作目录：一个专用的空目录（见 [`detect_via_cmd`] 的说明）。
+///
+/// 取不到就用 None（不设置 cwd，行为与改动前一致），不因此让检测失败。
+fn neutral_detect_cwd() -> Option<std::path::PathBuf> {
+    let dir = crate::commands::config::get_data_dir().join("detect-cwd");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
 /// 通过 detect_cmd 回退检测（执行工具自身的 --version 命令）
-fn detect_via_cmd(detect_cmd: &str) -> Option<String> {
+pub(crate) fn detect_via_cmd(detect_cmd: &str) -> Option<String> {
     let parts: Vec<&str> = detect_cmd.split_whitespace().collect();
     if parts.is_empty() {
         return None;
@@ -221,6 +230,13 @@ fn detect_via_cmd(detect_cmd: &str) -> Option<String> {
         let mut cmd = hidden_cmd::hidden_cmd(&exe);
         if parts.len() > 1 {
             cmd.args(&parts[1..]);
+        }
+        // 用中性工作目录执行：`node -e require.resolve("<pkg>")` 这类检测命令会
+        // 从**当前目录**的 node_modules 向上查找，Kira 的工作目录若恰好能解析到
+        // （或曾经能），就会把「本地刚好有这个依赖」误报成「全局已安装」——
+        // 表现为界面一直显示已安装，而 npm uninstall -g 什么都删不掉。
+        if let Some(cwd) = neutral_detect_cwd() {
+            cmd.current_dir(cwd);
         }
         match run_command_with_timeout(&mut cmd, 10) {
             Some(out) => {

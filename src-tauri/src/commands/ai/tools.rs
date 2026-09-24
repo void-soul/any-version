@@ -1,5 +1,5 @@
 use crate::commands::ai_registry::registry;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -183,6 +183,105 @@ enum PmOp {
 /// 随 node 版本变化（nvm / fnm / volta），Kira 查询用的 npm 与用户当初安装用的
 /// 可能不是同一个 —— 据此拒绝操作会让「本机明明装了」的工具变成卸载不了的死结。
 ///
+/// 由**检测到的可执行文件所在目录**推断「当初装这个包的是哪个包管理器」，
+/// 并生成对应命令（用该目录里的包管理器，而不是 PATH 里的第一个）。
+///
+/// 这是卸载能真正生效的关键：本机往往有多个 node/npm（Kira 自带 SDK、系统
+/// node、scoop、pnpm、bun…），每个的全局前缀互不相通。用 PATH 里那个 npm 去
+/// 卸「另一个前缀装的包」，npm 对未安装的包照样返回成功，上层就以为卸不掉，
+/// 最后落到「按文件清理」把 exe 直接删了 —— 留下包管理器里的一份记录。
+fn pm_command_for_install_dir(dir: &Path, pkg: &str, op: PmOp) -> Option<String> {
+    let pick = |names: &[&str]| -> Option<PathBuf> {
+        names
+            .iter()
+            .map(|n| dir.join(n))
+            .find(|p| p.is_file())
+    };
+    let install = matches!(op, PmOp::Install);
+
+    if let Some(npm) = pick(&["npm.cmd", "npm"]) {
+        let spec = if install { format!("{}@latest", pkg) } else { pkg.to_string() };
+        // 带完整路径调用，避免 PATH 里那个 npm 抢走
+        return Some(format!(
+            "\"{}\" {} -g {}",
+            npm.display(),
+            if install { "install" } else { "uninstall" },
+            spec
+        ));
+    }
+    if let Some(pnpm) = pick(&["pnpm.cmd", "pnpm.exe", "pnpm"]) {
+        return Some(format!(
+            "\"{}\" {} -g {}",
+            pnpm.display(),
+            if install { "add" } else { "remove" },
+            pkg
+        ));
+    }
+    if let Some(bun) = pick(&["bun.exe", "bun"]) {
+        return Some(format!(
+            "\"{}\" {} -g {}",
+            bun.display(),
+            if install { "add" } else { "remove" },
+            pkg
+        ));
+    }
+    // scoop 的 shims 目录里没有包管理器，交给 scoop 自己
+    if dir.file_name().and_then(|n| n.to_str()) == Some("shims") {
+        return Some(format!("scoop uninstall {}", pkg));
+    }
+    None
+}
+
+/// 本机所有可能的 npm 全局前缀（用来回答「这个包到底装在哪」）。
+///
+/// 一台机器上常有多个 node（Kira 自带 SDK、系统安装、nvm/fnm/volta…），
+/// 每个的全局前缀互不相通；只问 PATH 里第一个 npm 会答错。
+fn npm_prefix_candidates() -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    if let Some(paths) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            let has_npm = dir.join("npm.cmd").is_file() || dir.join("npm").is_file();
+            if has_npm && !out.contains(&dir) {
+                out.push(dir);
+            }
+        }
+    }
+    // 常见固定位置：即使没进 PATH 也可能装着包
+    let mut extras: Vec<PathBuf> = Vec::new();
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        extras.push(PathBuf::from(appdata).join("npm"));
+    }
+    if cfg!(windows) {
+        extras.push(PathBuf::from(r"C:\Program Files\nodejs"));
+    }
+    for dir in extras {
+        let has_npm = dir.join("npm.cmd").is_file() || dir.join("npm").is_file();
+        if has_npm && !out.contains(&dir) {
+            out.push(dir);
+        }
+    }
+    out
+}
+
+/// 该 npm 布局目录里是否真的装了这个包（`prefix/node_modules/<pkg>`）。
+///
+/// 用来在执行前拦一道：npm 卸载「没装的包」也返回成功，不拦就会被误判成
+/// 「命令成功但仍能检测到」，白跑一趟还误导后续渠道。
+fn package_present_in_dir(dir: &Path, pkg: &str) -> bool {
+    if pkg.is_empty() {
+        return false;
+    }
+    // 只挡路径穿越与绝对路径；npm 的 scope 包名（`@openai/codex`）本身就是合法的
+    // 两级目录，不能因为它含 `/` 就拒掉
+    if Path::new(pkg)
+        .components()
+        .any(|c| !matches!(c, Component::Normal(_)))
+    {
+        return false;
+    }
+    dir.join("node_modules").join(pkg).is_dir()
+}
+
 /// pip 给两条候选：Windows 上 `pip.exe` 常常没进 PATH（只有 `python` 进了），
 /// 只写 `pip ...` 会直接「命令找不到」，于是工具明明装着却卸不掉。
 fn pm_commands(pkg_manager: Option<&str>, pkg: &str, op: PmOp) -> Vec<String> {
@@ -273,6 +372,95 @@ fn pkg_dir_candidates(shim: &Path, pkg: &str) -> Vec<PathBuf> {
     pkg_dir_candidates_with(shim, pkg, |p| p.exists())
 }
 
+// ─── 工具数据目录（`~/.pi` / `~/.codex` …） ───
+
+/// 用户主目录（与 AI 模块其它地方同一口径：USERPROFILE 优先，其次 HOME）。
+fn user_home_dir() -> Option<PathBuf> {
+    let raw = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(trimmed))
+}
+
+/// `cache_dirs` 声明 → 主目录下的绝对路径（只收真正存在的目录）。
+///
+/// 安全过滤（卸载时删的是**用户数据**，比删安装文件更危险，口径必须更严）：
+/// - 只接受相对路径，拒绝绝对路径与盘符；
+/// - 拒绝含 `..` 的路径（防越出主目录）；
+/// - 解析结果必须**严格位于主目录之内**，等于主目录本身也拒绝。
+fn tool_data_dirs(cache_dirs: &[String], home: &Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    for entry in cache_dirs {
+        let name = entry.trim();
+        if name.is_empty() || Path::new(name).is_absolute() {
+            continue;
+        }
+        if Path::new(name)
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_)))
+        {
+            continue;
+        }
+        let full = home.join(name);
+        if full == home || !full.starts_with(home) {
+            continue;
+        }
+        if full.is_dir() {
+            out.push(full);
+        }
+    }
+    out
+}
+
+/// 删除工具的数据目录（用户数据，一律**移入回收站**而不是直接删）。
+///
+/// Junction / 软链接只删链接本身，不跟随到真实目录（迁移过缓存的工具，
+/// 真实数据可能在别的盘，删掉链接即可）。返回实际处理的路径清单。
+fn remove_tool_data_dirs(config: &crate::commands::ai_registry::ToolConfig) -> Result<Vec<String>, String> {
+    let Some(home) = user_home_dir() else {
+        return Err("无法定位用户主目录，未删除任何数据目录".to_string());
+    };
+    let targets = tool_data_dirs(&config.cache_dirs, &home);
+    if targets.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut removed: Vec<String> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
+    for target in targets {
+        let is_link = std::fs::symlink_metadata(&target)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false);
+        let result = if is_link {
+            // 只删链接，绝不递归删链接指向的真实目录
+            std::fs::remove_dir(&target).map_err(|e| e.to_string())
+        } else {
+            trash::delete(&target).map_err(|e| format!("{}", e))
+        };
+        match result {
+            Ok(()) => removed.push(target.display().to_string()),
+            Err(e) => failed.push(format!("{}（{}）", target.display(), e)),
+        }
+    }
+
+    if removed.is_empty() {
+        return Err(format!("数据目录删除失败：{}", failed.join("；")));
+    }
+    if !failed.is_empty() {
+        // 部分成功：把没删掉的如实带回去，不假装全成
+        return Err(format!(
+            "已移入回收站：{}；另有未删除：{}",
+            removed.join("、"),
+            failed.join("；")
+        ));
+    }
+    Ok(removed)
+}
+
 /// 系统目录保护：即使某个工具的注册表项被误配成系统可执行文件，
 /// 按文件清理也不允许动到系统自带的东西。
 fn is_protected_path(p: &Path) -> bool {
@@ -342,11 +530,29 @@ fn detect_exe_any(
 }
 
 /// 「现在还能不能检测到这个工具」——用于确认某条命令报成功是否真的生效。
+///
+/// 必须与 `detect.rs::detect_single_tool` **同一口径**（PM 记录 / detect_cmd /
+/// 声明路径，任一命中即算已安装）。只看可执行文件是否存在是不够的：
+/// npm 卸载掉垫片后 exe 没了，但 `npm ls` 或 `node -e require.resolve(...)` 仍
+/// 能命中（包还在某个前缀里），界面就会显示「卸载成功、却仍是已安装」。
 fn still_installed(
     config: &crate::commands::ai_registry::ToolConfig,
     paths: &crate::commands::ai_registry::PathConfig,
 ) -> bool {
-    detect_exe_any(config, paths).is_some()
+    let pm_hit = config
+        .pkg_manager
+        .as_deref()
+        .zip(config.pkg_name.as_deref())
+        .and_then(|(pm, pkg)| super::detect::detect_via_pm(pm, pkg))
+        .is_some();
+    let cmd_hit = super::detect::detect_via_cmd(&paths.detect_cmd).is_some();
+    let exe_hit = detect_exe_any(config, paths).is_some();
+    still_installed_from(pm_hit, cmd_hit, exe_hit)
+}
+
+/// 三条检测口径的组合（拆出来便于单测：命中任一即视为仍安装）。
+fn still_installed_from(pm_hit: bool, cmd_hit: bool, exe_hit: bool) -> bool {
+    pm_hit || cmd_hit || exe_hit
 }
 
 /// 出错时的落尾：把 Kira 实际检测到的可执行文件路径给出来，便于手动处理。
@@ -489,8 +695,16 @@ pub async fn upgrade_ai_tool(app: AppHandle, tool_id: String) -> Result<ToolOpRe
 /// 前两条命令「报成功但工具仍能被检测到」时不算数（`npm uninstall -g` 对不在
 /// 该前缀下的包可能静默成功），继续往下走，避免出现「界面说卸载成功、图标还在」。
 /// 第三环对**非包管理器安装**的工具同样有效：可执行文件先按声明路径找、再按 PATH 找。
+///
+/// `remove_data_dirs` = true 时，卸载成功后顺带把该工具的数据目录
+/// （`~/.pi`、`~/.codex` 等 `cacheDirs`）**移入回收站**——由用户在确认框里勾选，
+/// 默认不动（卸载程序 ≠ 删除用户数据，这两件事不该被捆死）。
 #[tauri::command]
-pub async fn uninstall_ai_tool(app: AppHandle, tool_id: String) -> Result<ToolOpResult, String> {
+pub async fn uninstall_ai_tool(
+    app: AppHandle,
+    tool_id: String,
+    remove_data_dirs: Option<bool>,
+) -> Result<ToolOpResult, String> {
     let reg = registry();
     let (config, paths) = reg.get_tool(&tool_id).ok_or("未知工具")?;
     let _busy_guard = ToolBusyGuard { id: tool_id.clone() };
@@ -498,50 +712,137 @@ pub async fn uninstall_ai_tool(app: AppHandle, tool_id: String) -> Result<ToolOp
 
     let pkg = config.pkg_name.as_deref().unwrap_or(&config.id);
     let mut notes: Vec<String> = Vec::new();
+    // 卸载成功的文案（各渠道分散在下面几段，统一收集后再决定要不要动数据目录）
+    let mut uninstalled: Option<String> = None;
 
-    if let Some(cmd) = paths
-        .uninstall_cmd
-        .as_deref()
-        .map(str::trim)
-        .filter(|c| !c.is_empty())
-        .map(str::to_string)
-    {
-        match run_streaming(&app, &tool_id, "uninstalling", &cmd).await {
-            Ok(()) if !still_installed(&config, &paths) => {
-                return Ok(ToolOpResult {
-                    ok: true,
-                    message: format!("已通过官方卸载命令卸载：{}", cmd),
-                })
+    if uninstalled.is_none() {
+        if let Some(cmd) = paths
+            .uninstall_cmd
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .map(str::to_string)
+        {
+            match run_streaming(&app, &tool_id, "uninstalling", &cmd).await {
+                Ok(()) if !still_installed(&config, &paths) => {
+                    uninstalled = Some(format!("已通过官方卸载命令卸载：{}", cmd));
+                }
+                Ok(()) => notes.push(format!("{} 执行成功，但仍能检测到该工具", cmd)),
+                Err(e) => notes.push(format!("{} 失败：{}", cmd, e)),
             }
-            Ok(()) => notes.push(format!("{} 执行成功，但仍能检测到该工具", cmd)),
-            Err(e) => notes.push(format!("{} 失败：{}", cmd, e)),
         }
     }
 
-    for cmd in pm_commands(config.pkg_manager.as_deref(), pkg, PmOp::Uninstall) {
-        match run_streaming(&app, &tool_id, "uninstalling", &cmd).await {
-            Ok(()) if !still_installed(&config, &paths) => {
-                return Ok(ToolOpResult {
-                    ok: true,
-                    message: format!("已通过包管理器卸载：{}", cmd),
-                })
+    // ②' 按**实际安装位置**找包管理器：检测到的 exe 所在目录里有 npm/pnpm/bun
+    //    就用它 —— 这才是当初装这个包的那一个（PATH 里的可能是 Kira 自带 SDK 的 npm，
+    //    在它自己的前缀下根本没有这个包，卸载会「成功」但毫无效果）。
+    if uninstalled.is_none() {
+        if let Some(exe) = detect_exe_any(&config, &paths) {
+            if let Some(dir) = exe.parent() {
+                if let Some(cmd) = pm_command_for_install_dir(dir, pkg, PmOp::Uninstall) {
+                    // npm 布局下先确认这个前缀真装了它，避免对「没装的包」白跑一趟
+                    let npm_layout = dir.join("npm.cmd").is_file() || dir.join("npm").is_file();
+                    if npm_layout && !package_present_in_dir(dir, pkg) {
+                        notes.push(format!(
+                            "{} 前缀（{}）下没有 {}，已跳过",
+                            dir.display(),
+                            "npm",
+                            pkg
+                        ));
+                    } else {
+                        match run_streaming(&app, &tool_id, "uninstalling", &cmd).await {
+                            Ok(()) if !still_installed(&config, &paths) => {
+                                uninstalled = Some(format!("已通过 {} 卸载：{}", dir.display(), cmd));
+                            }
+                            Ok(()) => notes.push(format!("{} 执行成功，但仍能检测到该工具", cmd)),
+                            Err(e) => notes.push(format!("{} 失败：{}", cmd, e)),
+                        }
+                    }
+                }
             }
-            Ok(()) => notes.push(format!("{} 执行成功，但仍能检测到该工具", cmd)),
-            Err(e) => notes.push(format!("{} 失败：{}", cmd, e)),
         }
     }
 
-    match remove_detected_install(&config, &paths) {
-        Ok(summary) => Ok(ToolOpResult {
-            ok: true,
-            message: summary,
-        }),
-        Err(e) => {
-            let mut notes = notes;
-            notes.push(e);
-            Err(all_channels_failed(&config, &paths, "卸载", &notes))
+    // ②'' 逐个排查本机所有 npm 前缀：哪个前缀里真有这个包，就用那个前缀的 npm 卸。
+    //     覆盖「垫片已不在 PATH 里、但 npm 仍记着这个包」的情况（工具界面一直显示
+    //     已安装，却怎么都卸不掉）。
+    if uninstalled.is_none() && config.pkg_manager.as_deref() == Some("npm") {
+        for dir in npm_prefix_candidates() {
+            if !package_present_in_dir(&dir, pkg) {
+                continue;
+            }
+            let Some(cmd) = pm_command_for_install_dir(&dir, pkg, PmOp::Uninstall) else {
+                continue;
+            };
+            match run_streaming(&app, &tool_id, "uninstalling", &cmd).await {
+                Ok(()) if !still_installed(&config, &paths) => {
+                    uninstalled = Some(format!("已在 {} 前缀下卸载：{}", dir.display(), cmd));
+                    break;
+                }
+                Ok(()) => notes.push(format!("{} 执行成功，但仍能检测到该工具", cmd)),
+                Err(e) => notes.push(format!("{} 失败：{}", cmd, e)),
+            }
         }
     }
+
+    if uninstalled.is_none() {
+        for cmd in pm_commands(config.pkg_manager.as_deref(), pkg, PmOp::Uninstall) {
+            match run_streaming(&app, &tool_id, "uninstalling", &cmd).await {
+                Ok(()) if !still_installed(&config, &paths) => {
+                    uninstalled = Some(format!("已通过包管理器卸载：{}", cmd));
+                    break;
+                }
+                Ok(()) => notes.push(format!("{} 执行成功，但仍能检测到该工具", cmd)),
+                Err(e) => notes.push(format!("{} 失败：{}", cmd, e)),
+            }
+        }
+    }
+
+    let mut message = match uninstalled {
+        Some(text) => text,
+        None => match remove_detected_install(&config, &paths) {
+            Ok(summary) => {
+                // 按文件清理只删掉了可执行文件（垫片/包目录）。若包管理器或
+                // detect_cmd 仍能命中，说明本机还有另一处安装 —— 必须说出来，
+                // 否则界面一边报「卸载成功」、一边仍显示已安装，用户只会觉得程序在骗人
+                if still_installed(&config, &paths) {
+                    format!(
+                        "{}；⚠ 检测仍显示已安装：本机可能还有另一处安装（如另一个 npm 前缀），请在该前缀下执行卸载",
+                        summary
+                    )
+                } else if config.pkg_manager.as_deref() == Some("npm") {
+                    format!(
+                        "{}；注意：npm 里可能仍留有记录，如需彻底清除请在对应 npm 前缀下执行 npm uninstall -g {}",
+                        summary, pkg
+                    )
+                } else {
+                    summary
+                }
+            }
+            Err(e) => {
+                let mut notes = notes;
+                notes.push(e);
+                return Err(all_channels_failed(&config, &paths, "卸载", &notes));
+            }
+        },
+    };
+
+    // 工具已经卸掉了，再动数据目录：顺序反了会撞上「文件正被运行中进程占用」
+    if remove_data_dirs == Some(true) {
+        match remove_tool_data_dirs(&config) {
+            Ok(list) => {
+                if !list.is_empty() {
+                    message = format!("{}；数据目录已移入回收站：{}", message, list.join("、"));
+                }
+            }
+            Err(e) => {
+                // 卸载本身成功了：数据目录没删掉只作提醒，不能把整个操作判成失败
+                message = format!("{}；⚠ {}", message, e);
+            }
+        }
+    }
+
+    Ok(ToolOpResult { ok: true, message })
 }
 
 #[cfg(test)]
@@ -577,6 +878,105 @@ mod tests {
         );
         assert!(pm_commands(None, "pi", PmOp::Install).is_empty());
         assert!(pm_commands(Some("go"), "pi", PmOp::Uninstall).is_empty());
+    }
+
+    #[test]
+    fn still_installed_uses_the_same_verdict_as_detection() {
+        // 卸载的「成功」判定必须和 detect 同一口径：PM 记录 / detect_cmd / 声明路径
+        // 任一命中都还算已安装。只看 exe 会漏掉「垫片删了、包还在 npm 里」的情况，
+        // 表现为界面报卸载成功、却仍显示已安装。
+        assert!(still_installed_from(true, false, false));
+        assert!(still_installed_from(false, true, false));
+        assert!(still_installed_from(false, false, true));
+        assert!(!still_installed_from(false, false, false));
+    }
+
+    #[test]
+    fn pm_command_for_install_dir_uses_the_package_manager_that_owns_the_shim() {
+        // 卸载必须用「当初装这个包的那一个」包管理器：目录里有 npm.cmd 就用它
+        // （而不是 PATH 里第一个 npm —— 它可能在另一个全局前缀下，卸载毫无效果）
+        let dir = std::env::temp_dir().join(format!("kira_pm_probe_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // 目录里什么都没有 → 认不出包管理器
+        assert!(pm_command_for_install_dir(&dir, "pkg", PmOp::Uninstall).is_none());
+
+        std::fs::write(dir.join("npm.cmd"), "").unwrap();
+        let cmd = pm_command_for_install_dir(&dir, "@openai/codex", PmOp::Uninstall).unwrap();
+        assert!(cmd.contains("uninstall -g @openai/codex"), "实际: {cmd}");
+        assert!(cmd.contains(dir.join("npm.cmd").display().to_string().as_str()), "应带完整路径: {cmd}");
+        let install = pm_command_for_install_dir(&dir, "@openai/codex", PmOp::Install).unwrap();
+        assert!(install.contains("install -g @openai/codex@latest"), "实际: {install}");
+
+        // pnpm / bun 各自的动词
+        std::fs::remove_file(dir.join("npm.cmd")).unwrap();
+        std::fs::write(dir.join("pnpm.cmd"), "").unwrap();
+        assert!(pm_command_for_install_dir(&dir, "pkg", PmOp::Uninstall)
+            .unwrap()
+            .contains("remove -g pkg"));
+        std::fs::remove_file(dir.join("pnpm.cmd")).unwrap();
+        std::fs::write(dir.join("bun.exe"), "").unwrap();
+        assert!(pm_command_for_install_dir(&dir, "pkg", PmOp::Uninstall)
+            .unwrap()
+            .contains("remove -g pkg"));
+
+        // scoop shims 目录里没有包管理器，交给 scoop
+        let shims = dir.join("shims");
+        std::fs::create_dir_all(&shims).unwrap();
+        assert_eq!(
+            pm_command_for_install_dir(&shims, "pkg", PmOp::Uninstall),
+            Some("scoop uninstall pkg".to_string())
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn package_present_in_dir_checks_global_node_modules_layout() {
+        // 预检：npm 卸载「没装的包」也返回成功，不拦会让上层误判渠道有效
+        let dir = std::env::temp_dir().join(format!("kira_pkg_probe_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("node_modules").join("@openai/codex")).unwrap();
+        assert!(package_present_in_dir(&dir, "@openai/codex"));
+        assert!(!package_present_in_dir(&dir, "@openai/other"));
+        // 路径穿越一律拒绝
+        assert!(!package_present_in_dir(&dir, "../evil"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tool_data_dirs_only_accepts_existing_subdirs_of_home() {
+        // 卸载时删的是用户数据（~/.pi、~/.codex），口径必须比删安装文件更严：
+        // 只认主目录下真实存在的子目录，绝对路径 / `..` / 主目录本身一律拒绝
+        let home = std::env::temp_dir().join(format!("kira_data_dirs_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".pi")).unwrap();
+        std::fs::create_dir_all(home.join(".config/deveco")).unwrap();
+
+        let got = tool_data_dirs(
+            &[
+                ".pi".to_string(),
+                ".config/deveco".to_string(),
+                ".missing".to_string(),
+                "..".to_string(),
+                "../evil".to_string(),
+            ],
+            &home,
+        );
+        let names: Vec<String> = got
+            .iter()
+            .map(|p| p.strip_prefix(&home).unwrap().display().to_string())
+            .collect();
+        assert_eq!(names, vec![".pi", ".config/deveco"]);
+
+        // 绝对路径与空串也要挡掉（防止注册表被改坏时误删系统目录）
+        let abs = if cfg!(windows) { "C:\\Windows" } else { "/etc" };
+        assert!(tool_data_dirs(&[abs.to_string(), "  ".to_string()], &home).is_empty());
+        // 主目录本身绝不能被当成「数据目录」删掉
+        assert!(tool_data_dirs(&[".".to_string()], &home).is_empty());
+
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

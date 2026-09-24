@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Rocket,
@@ -514,17 +515,76 @@ export default function ToolLauncher() {
     } finally { setInstallingTool(null); }
   };
 
-  const handleUninstall = async (tool: DetectedAiTool) => {
-    if (!confirm(t("toollaunch.uninstallConfirm", { name: tool.display_name }))) return;
+  // 卸载确认弹窗：原生 confirm 说不清「会不会连数据一起删」，换成能逐条看清影响面的确认框
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
+  const [removeDataDirs, setRemoveDataDirs] = useState(false);
+  // 勾选值同时写 ref：确认回调是弹窗创建时就捕获的闭包，直接读 state 会拿到旧值
+  const removeDataDirsRef = useRef(false);
+  const toggleRemoveDataDirs = (value: boolean) => {
+    removeDataDirsRef.current = value;
+    setRemoveDataDirs(value);
+  };
+
+  /** 打开卸载确认：先刷新数据目录清单，再把该工具实际占用的目录逐条列出来 */
+  const askUninstall = async (tool: DetectedAiTool) => {
+    await loadCacheInfos();
+    const dirs = cacheInfos.filter((c) => c.tool_id === tool.id && c.exists);
+    toggleRemoveDataDirs(false);
+    setConfirmRequest({
+      title: t("toollaunch.uninstallConfirmTitle", { name: tool.display_name }),
+      danger: true,
+      width: 440,
+      confirmText: t("toollaunch.uninstall"),
+      desc: (
+        <div className="space-y-2">
+          <div>{t("toollaunch.uninstallConfirmDesc", { name: tool.display_name })}</div>
+          {dirs.length > 0 ? (
+            <>
+              <div className="text-[10px] text-slate-400">{t("toollaunch.dataDirsHint")}</div>
+              <div className="max-h-32 overflow-y-auto rounded-lg border border-white/10 bg-black/30 divide-y divide-white/5">
+                {dirs.map((d) => (
+                  <div key={d.dir_name} className="flex items-center gap-2 px-2 py-1.5 text-[10px]">
+                    <FolderOpen className="w-3 h-3 flex-shrink-0 text-slate-500" />
+                    <span className="min-w-0 flex-1 break-all text-slate-300">{d.full_path}</span>
+                    <span className="flex-shrink-0 text-slate-500">{d.size}</span>
+                  </div>
+                ))}
+              </div>
+              <label className="flex items-start gap-2 text-[10px] text-slate-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={removeDataDirs}
+                  onChange={(e) => toggleRemoveDataDirs(e.target.checked)}
+                  className="mt-0.5 cursor-pointer"
+                />
+                <span>{t("toollaunch.removeDataDirsCheckbox", { count: dirs.length })}</span>
+              </label>
+              <div className="text-[9px] text-slate-500">{t("toollaunch.removeDataDirsHint")}</div>
+            </>
+          ) : (
+            <div className="text-[10px] text-slate-500">{t("toollaunch.noDataDirs")}</div>
+          )}
+        </div>
+      ),
+      onConfirm: () => void handleUninstall(tool, removeDataDirsRef.current),
+    });
+  };
+
+  const handleUninstall = async (tool: DetectedAiTool, removeData: boolean) => {
     setUninstallingTool(tool.id);
     setUninstallResult(null);
     startOpLog(tool.id, "uninstalling");
     try {
-      const res = await invoke<ToolOpResult>("uninstall_ai_tool", { toolId: tool.id });
+      const res = await invoke<ToolOpResult>("uninstall_ai_tool", {
+        toolId: tool.id,
+        removeDataDirs: removeData,
+      });
       setUninstallResult({ id: tool.id, ...res });
-      const t = await invoke<DetectedAiTool[]>("detect_ai_tools").catch(() => []);
-      setTools(t);
+      const detected = await invoke<DetectedAiTool[]>("detect_ai_tools").catch(() => []);
+      setTools(detected);
       await checkVersions();
+      // 勾选删除时数据目录已进回收站，清单要跟着刷新
+      if (removeData) void loadCacheInfos();
     } catch (e: any) {
       setUninstallResult({ id: tool.id, ok: false, message: String(e) });
     } finally { setUninstallingTool(null); }
@@ -868,7 +928,7 @@ export default function ToolLauncher() {
                               {getBusy(selectedTool.id) === "upgrading" ? `${t("toollaunch.upgrading")}...` : t("toollaunch.upgrade")}
                             </button>
                             <button
-                              onClick={() => handleUninstall(selectedTool)}
+                              onClick={() => void askUninstall(selectedTool)}
                               disabled={getBusy(selectedTool.id) === "uninstalling"}
                               className="px-2 py-0.5 rounded-md bg-red-500/10 hover:bg-red-500/20 text-[9px] font-semibold text-red-400 cursor-pointer transition-all flex items-center gap-0.5 disabled:opacity-50"
                               title={t("toollaunch.uninstallTitle")}
@@ -1709,6 +1769,9 @@ export default function ToolLauncher() {
           </>
         )}
       </div>
+
+      {/* 卸载确认（含「是否同时删除数据目录」）：替代原生 window.confirm */}
+      <ConfirmDialogHost request={confirmRequest} onClose={() => setConfirmRequest(null)} />
     </div>
   );
 }
