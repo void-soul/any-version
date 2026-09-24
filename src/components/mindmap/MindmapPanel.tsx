@@ -1960,8 +1960,11 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   }, [selectedId, detailNode, deleteSelected, addChildNode, byId, navigateByKey]);
 
   return (
-    <div className="relative h-full min-h-0">
-      <ReactFlow nodes={flowNodes} edges={edges} nodeTypes={mmNodeTypes} edgeTypes={mmEdgeTypes}
+    // 四栏布局的第三栏（画布）：第二栏「节点树 + 底部选项」由下方 order-first 的
+    // 原右上角覆盖层承担，视觉上排在画布左侧；absolute 覆盖层（提示/上下文菜单）
+    // 仍以本容器为定位父级。
+    <div className="relative flex h-full min-h-0">
+      <ReactFlow className="min-w-0 flex-1" nodes={flowNodes} edges={edges} nodeTypes={mmNodeTypes} edgeTypes={mmEdgeTypes}
         onNodesChange={onNodesChange} onNodeDrag={onNodeDrag} onNodeDragStop={onNodeDragStop} onConnect={onConnect} onConnectStart={onConnectStart} onConnectEnd={onConnectEnd} onMove={onViewportMove}
         onPaneClick={() => { setSelectedId(null); setCtxMenu(null); setPreview(null); setLinkFrom(null); }}
         onNodeContextMenu={(e, n) => onNodeContextMenu(e, n as Node)}
@@ -1991,22 +1994,22 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
         </div>
       )}
 
-      {/* 右上角统一列：AI 后台运行胶囊（顶，条件出现）+ 行内「节点树（左）| 浮动工具栏（右）」。
-          原先三者都锚定 right-4 top-4 互相重叠，现改为垂直/水平排布互不遮挡；
-          外层 pointer-events-none 让空白区不挡画布交互，各交互块自身 pointer-events-auto。 */}
-      <div className="pointer-events-none absolute right-4 top-4 z-20 flex max-h-[calc(100%-2rem)] flex-col items-end gap-2">
-        {aiPill && <div className="pointer-events-auto">{aiPill}</div>}
-        <div className="flex items-start gap-2">
+      {/* 第二栏：节点树 + 底部选项（原画布右上角覆盖层）。
+          用 order-first 让它排在画布左侧，避免大段 JSX 搬移；收起时收成窄条。
+          外层 pointer-events-none 让空白区不挡交互，各交互块自身 pointer-events-auto。 */}
+      <div className={`order-first pointer-events-none flex shrink-0 flex-col border-r border-white/5 bg-[#0d1524]/70 ${treeOpen ? "w-56" : "w-9"}`}>
+        {aiPill && <div className={`pointer-events-auto ${treeOpen ? "p-1.5" : "hidden"}`}>{aiPill}</div>}
+        <div className="flex min-h-0 flex-1 flex-col">
           {/* 节点树导航：与悬浮窗树形选择同交互 —— 点击即导航到该节点 */}
-          <div className="pointer-events-auto flex flex-col items-end" style={{ maxWidth: "46%" }}>
+          <div className="pointer-events-auto flex min-h-0 flex-1 flex-col">
             {!treeOpen && (
-              <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-slate-900/95 px-2 py-1.5 text-[10px] text-slate-300 shadow-lg hover:bg-white/[0.08] hover:text-white"
+              <button type="button" className="mx-auto mt-1 rounded p-1 text-slate-400 transition hover:bg-white/10 hover:text-white"
                 onClick={() => setTreeOpen(true)} title={t("mindmap.treeNavShow")}>
-                <ListTree className="h-3 w-3" />{t("mindmap.treeNavShow")}
+                <ListTree className="h-3.5 w-3.5" />
               </button>
             )}
             {treeOpen && (
-              <div className="flex max-h-full w-52 flex-col rounded-lg border border-white/10 bg-[#0d1524]/95 shadow-2xl shadow-black/40 backdrop-blur">
+              <div className="flex min-h-0 flex-1 flex-col border-b border-white/10">
             <div className="flex items-center gap-1.5 border-b border-white/10 px-2 py-1.5">
               <ListTree className="h-3 w-3 shrink-0 text-slate-500" />
               <span className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-wide text-slate-400">{t("mindmap.treeNavTitle")}</span>
@@ -2014,7 +2017,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
                 <ChevronRight className="h-3 w-3" />
               </button>
             </div>
-            <div ref={treeListRef} className="max-h-[52vh] min-h-0 overflow-y-auto py-0.5">
+            <div ref={treeListRef} className="min-h-0 flex-1 overflow-y-auto py-0.5">
               {navTree.map((x, i) => {
                 const on = selectedId === x.node.id;
                 const rowColor = effectiveNodeColor(x.node);
@@ -2058,8 +2061,9 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
           </div>
         )}
           </div>
-          {/* Compact floating toolbar */}
-          <div className="pointer-events-auto flex flex-col gap-1">
+          {/* 第二栏底部选项（原浮动工具栏）：导图设置已移至第一栏底部；
+              收起成窄条时整块隐藏，避免挤在 36px 宽里 */}
+          <div className={`pointer-events-auto flex shrink-0 flex-col gap-1 p-1.5 pt-0 ${treeOpen ? "" : "hidden"}`}>
             <div className="rounded-lg border border-white/10 bg-slate-900/95 p-1 shadow-lg flex flex-col gap-0.5">
               <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={relayout} title={t("mindmap.autoLayout")}><LayoutGrid className="h-3 w-3" />{t("mindmap.layout")}</button>
               {/* 关系线模式：拖线在任意两节点之间加「额外关系线」（不改父子关系） */}
@@ -2075,14 +2079,6 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
               <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-cyan-300 hover:bg-cyan-400/10 hover:text-cyan-200" onClick={onAiProject} title={t("mindmap.aiUnifiedTitle")}><Brain className="h-3 w-3" />{t("mindmap.aiUnifiedBtn")}</button>
               <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => addSticker()} title={t("mindmap.textSticker")}><StickyNote className="h-3 w-3" />{t("mindmap.textSticker")}</button>
               <button type="button" className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.08] hover:text-white" onClick={() => void addImageSticker()} title={t("mindmap.imageSticker")}><Image className="h-3 w-3" />{t("mindmap.imageSticker")}</button>
-              {/* 模块专属设置入口（热键 / 外部编辑器 / AI 探索参数） */}
-              <ModuleSettingsButton
-                title={t("mindmap.settingsTitle")}
-                label={t("mindmap.settingsTitle")}
-                buttonClassName="text-slate-300 hover:bg-white/[0.08] hover:text-white"
-              >
-                <MindmapModuleSettings />
-              </ModuleSettingsButton>
             </div>
             {/* 自动保存指示 */}
             {lastSaved && (
@@ -3164,6 +3160,14 @@ export default function MindmapPanel() {
               </div>
               <div className="grid grid-cols-2 gap-1.5">
               <button type="button" className={`${button} hover:bg-white/10`} style={{ color: ACCENT, borderColor: `${ACCENT}55` }} onClick={() => void openAiImport()} title={t("mindmap.aiUnifiedTitle")}><Brain className="h-3 w-3" />{t("mindmap.aiUnifiedBtn")}</button>
+              {/* 模块专属设置（热键 / 外部编辑器 / AI 探索参数）：自第二栏底部移来 */}
+              <ModuleSettingsButton
+                title={t("mindmap.settingsTitle")}
+                label={t("mindmap.settingsTitle")}
+                buttonClassName="w-full justify-center text-slate-300 hover:bg-white/10"
+              >
+                <MindmapModuleSettings />
+              </ModuleSettingsButton>
               </div>
               <button type="button" className={button} onClick={() => void openCalendar()} title={t("mindmap.planCalendarBtn")}><Calendar className="h-3 w-3" />{t("mindmap.planCalendar")}</button>
               {full && <div className="flex items-center justify-between px-0.5 text-[9px] text-slate-500"><span className="truncate">{t("mindmap.nodesCount", { name: full.document.name, count: full.nodes.length })}</span><button type="button" className={button} onClick={exportMd} title={t("mindmap.exportMd")}><ScrollText className="h-3 w-3" /></button></div>}
