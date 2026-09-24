@@ -32,6 +32,8 @@ pub fn transfer_on_switch(
     };
     let report = match platform {
         BuddyPlatform::Workbuddy => workbuddy::transfer_on_switch(target, progress)?,
+        // WorkBuddy AI 无 state.vscdb 会话库，不做会话迁移
+        BuddyPlatform::WorkbuddyAi => None,
         BuddyPlatform::CodebuddyCn => codebuddy::transfer_on_switch(target, progress)?,
     };
     // 明细在合并结束时一次性上报（逐会话明细最多 500 条，不适合跟每个工作区一起推）。

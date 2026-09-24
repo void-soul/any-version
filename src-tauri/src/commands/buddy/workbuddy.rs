@@ -17,12 +17,16 @@ use super::crypto::Platform;
 use super::models::{BuddyAccount, BuddyPlatform};
 use super::store;
 
-const AUTH_FILE_NAME: &str = "workbuddy-desktop.info";
 const SECRET_EXTENSION_ID: &str = "tencent-cloud.coding-copilot";
 const SECRET_KEY: &str = "planning-genie.new.accessTokencn";
 
 /// 默认 auth 文件路径（三个平台）
-pub fn default_auth_file_path() -> Option<PathBuf> {
+pub fn default_auth_file_path(platform: BuddyPlatform) -> Option<PathBuf> {
+    // 两个 WorkBuddy 版本共用同一个 CodeBuddyExtension 目录，只靠文件名区分
+    let file_name = platform.auth_file_name();
+    if file_name.is_empty() {
+        return None;
+    }
     let home = dirs::home_dir()?;
     #[cfg(target_os = "windows")]
     {
@@ -33,7 +37,7 @@ pub fn default_auth_file_path() -> Option<PathBuf> {
                 .join("Data")
                 .join("Public")
                 .join("auth")
-                .join(AUTH_FILE_NAME),
+                .join(file_name),
         );
     }
     #[cfg(target_os = "macos")]
@@ -45,7 +49,7 @@ pub fn default_auth_file_path() -> Option<PathBuf> {
                 .join("Data")
                 .join("Public")
                 .join("auth")
-                .join(AUTH_FILE_NAME),
+                .join(file_name),
         );
     }
     #[cfg(target_os = "linux")]
@@ -57,20 +61,26 @@ pub fn default_auth_file_path() -> Option<PathBuf> {
                 .join("Data")
                 .join("Public")
                 .join("auth")
-                .join(AUTH_FILE_NAME),
+                .join(file_name),
         );
     }
     #[allow(unreachable_code)]
     None
 }
 
-/// WorkBuddy 数据根目录（state.vscdb 所在目录的上一级）
-pub fn default_data_dir() -> Option<PathBuf> {
+/// WorkBuddy 数据根目录（state.vscdb 所在目录的上一级）。
+///
+/// 仅 CN 版有该目录；WorkBuddy AI 的数据目录未公开，参考实现也只读写登录文件，
+/// 故返回 None（调用方据此跳过会话/secret 相关分支）。
+pub fn default_data_dir(platform: BuddyPlatform) -> Option<PathBuf> {
+    if !matches!(platform, BuddyPlatform::Workbuddy) {
+        return None;
+    }
     dirs::data_dir().map(|d| d.join("WorkBuddy"))
 }
 
-pub fn default_state_db_path() -> Option<PathBuf> {
-    default_data_dir().map(|d| d.join("User").join("globalStorage").join("state.vscdb"))
+pub fn default_state_db_path(platform: BuddyPlatform) -> Option<PathBuf> {
+    default_data_dir(platform).map(|d| d.join("User").join("globalStorage").join("state.vscdb"))
 }
 
 fn logout_marker_path(auth_file: &PathBuf) -> PathBuf {
@@ -237,6 +247,7 @@ fn accounts_match(
 
 /// 从本地登录 JSON 构建账号
 fn build_account_from_local(
+    platform: BuddyPlatform,
     access_token: String,
     parsed_json: Option<serde_json::Value>,
     uid_from_token: Option<String>,
@@ -286,13 +297,13 @@ fn build_account_from_local(
     let identity_seed = uid
         .clone()
         .or_else(|| Some(email.clone()))
-        .unwrap_or_else(|| "workbuddy_user".to_string())
+        .unwrap_or_else(|| format!("{}_user", platform.id_prefix()))
         .to_lowercase();
-    let generated_id = format!("workbuddy_{:x}", md5::compute(identity_seed.as_bytes()));
+    let generated_id = format!("{}_{:x}", platform.id_prefix(), md5::compute(identity_seed.as_bytes()));
 
     BuddyAccount {
         id: generated_id,
-        platform: "workbuddy".to_string(),
+        platform: platform.as_str().to_string(),
         email,
         uid,
         nickname,
@@ -329,9 +340,9 @@ fn build_account_from_local(
 
 /// 从本机 WorkBuddy 客户端导入当前登录账号。
 /// 优先读 auth 文件（新版）；无 auth 文件时回退读 state.vscdb secret（旧版）。
-pub fn import_payload_from_local() -> Result<Option<BuddyAccount>, String> {
+pub fn import_payload_from_local(platform: BuddyPlatform) -> Result<Option<BuddyAccount>, String> {
     // 1) 新版：auth 文件
-    if let Some(auth_file) = default_auth_file_path() {
+    if let Some(auth_file) = default_auth_file_path(platform) {
         if auth_file.exists() && !logout_marker_path(&auth_file).exists() {
             let secret = fs::read_to_string(&auth_file)
                 .map_err(|e| format!("读取本机 WorkBuddy 登录信息失败: {}", e))?;
@@ -354,6 +365,7 @@ pub fn import_payload_from_local() -> Result<Option<BuddyAccount>, String> {
                 let access_token = normalize_local_token(&normalized)
                     .ok_or_else(|| "本地 WorkBuddy 登录信息解析失败: access token 为空".to_string())?;
                 return Ok(Some(build_account_from_local(
+                    platform,
                     access_token,
                     parsed_json,
                     uid_from_token,
@@ -363,14 +375,19 @@ pub fn import_payload_from_local() -> Result<Option<BuddyAccount>, String> {
     }
 
     // 2) 旧版：state.vscdb secret
-    let state_db = match default_state_db_path() {
+    //    仅 CN WorkBuddy 有该库；WorkBuddy AI 既无此库、其 secret 键名也未公开，
+    //    故只走「读登录文件」这一条路（与参考实现一致）。
+    if !matches!(platform, BuddyPlatform::Workbuddy) {
+        return Ok(None);
+    }
+    let state_db = match default_state_db_path(platform) {
         Some(p) => p,
         None => return Ok(None),
     };
     if !state_db.exists() {
         return Ok(None);
     }
-    let data_root = default_data_dir().ok_or("无法定位 WorkBuddy 数据目录")?;
+    let data_root = default_data_dir(platform).ok_or("无法定位 WorkBuddy 数据目录")?;
     let raw_secret = super::crypto::read_secret_storage_value(
         &state_db,
         SECRET_EXTENSION_ID,
@@ -405,6 +422,7 @@ pub fn import_payload_from_local() -> Result<Option<BuddyAccount>, String> {
     let access_token = normalize_local_token(&normalized)
         .ok_or_else(|| "本地 WorkBuddy 登录信息解析失败: access token 为空".to_string())?;
     Ok(Some(build_account_from_local(
+        platform,
         access_token,
         parsed_json,
         uid_from_token,
@@ -444,7 +462,9 @@ pub(crate) fn build_account_from_auth_text(
         });
     let access_token = normalize_local_token(&normalized)
         .ok_or_else(|| "登录信息解析失败: access token 为空".to_string())?;
+    // 第三方导出（WorkDaddy / cockpit）只覆盖 CN WorkBuddy 账号
     Ok(Some(build_account_from_local(
+        BuddyPlatform::Workbuddy,
         access_token,
         parsed_json,
         uid_from_token,
@@ -452,8 +472,11 @@ pub(crate) fn build_account_from_auth_text(
 }
 
 /// 判断本机客户端当前使用哪个账号
-pub fn resolve_current_account_id(accounts: &[BuddyAccount]) -> Option<String> {
-    if let Ok(Some(payload)) = import_payload_from_local() {
+pub fn resolve_current_account_id(
+    platform: BuddyPlatform,
+    accounts: &[BuddyAccount],
+) -> Option<String> {
+    if let Ok(Some(payload)) = import_payload_from_local(platform) {
         let incoming_uid = normalize_identity(payload.uid.as_deref());
         let incoming_email = normalize_email_identity(Some(payload.email.as_str()));
         if let Some(account_id) = accounts.iter().find(|account| {
@@ -602,8 +625,11 @@ fn build_auth_session(account: &BuddyAccount, base_session: Option<&serde_json::
 
 /// 切换默认客户端到指定账号（写回 auth 文件；无文件时按 account 重建）。
 /// 返回写入后的校验信息。
-pub fn write_account_to_default_client(account: &BuddyAccount) -> Result<String, String> {
-    let auth_file = default_auth_file_path()
+pub fn write_account_to_default_client(
+    platform: BuddyPlatform,
+    account: &BuddyAccount,
+) -> Result<String, String> {
+    let auth_file = default_auth_file_path(platform)
         .ok_or_else(|| "无法定位默认 WorkBuddy 登录信息路径".to_string())?;
 
     if let Some(raw) = account.auth_raw.as_ref() {
@@ -679,14 +705,14 @@ pub fn write_account_to_default_client(account: &BuddyAccount) -> Result<String,
 }
 
 /// 公开：加载账号并切换
-pub fn switch_account(account_id: &str) -> Result<String, String> {
-    let account = store::load_account(BuddyPlatform::Workbuddy, account_id)
-        .ok_or_else(|| format!("WorkBuddy 账号不存在: {}", account_id))?;
-    let result = write_account_to_default_client(&account)?;
+pub fn switch_account(platform: BuddyPlatform, account_id: &str) -> Result<String, String> {
+    let account = store::load_account(platform, account_id)
+        .ok_or_else(|| format!("{} 账号不存在: {}", platform.as_str(), account_id))?;
+    let result = write_account_to_default_client(platform, &account)?;
     // 更新 last_used
     let mut updated = account;
     updated.last_used = chrono::Utc::now().timestamp();
-    let _ = store::upsert_account(BuddyPlatform::Workbuddy, updated);
+    let _ = store::upsert_account(platform, updated);
     Ok(result)
 }
 #[cfg(test)]

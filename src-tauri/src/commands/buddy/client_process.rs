@@ -22,6 +22,7 @@ pub const APP_PATH_MISSING_PREFIX: &str = "APP_PATH_NOT_FOUND:";
 pub fn app_display_name(platform: BuddyPlatform) -> &'static str {
     match platform {
         BuddyPlatform::Workbuddy => "WorkBuddy",
+        BuddyPlatform::WorkbuddyAi => "WorkBuddy AI",
         BuddyPlatform::CodebuddyCn => "CodeBuddy CN",
     }
 }
@@ -30,6 +31,13 @@ pub fn app_display_name(platform: BuddyPlatform) -> &'static str {
 fn process_name_candidates(platform: BuddyPlatform) -> &'static [&'static str] {
     match platform {
         BuddyPlatform::Workbuddy => &["WorkBuddy.exe", "WorkBuddy", "workbuddy"],
+        BuddyPlatform::WorkbuddyAi => &[
+            "WorkBuddyAI.exe",
+            "WorkBuddy AI.exe",
+            "WorkBuddyAI",
+            "WorkBuddy AI",
+            "workbuddy-ai",
+        ],
         BuddyPlatform::CodebuddyCn => &["CodeBuddy CN.exe", "CodeBuddy.exe", "CodeBuddy CN", "codebuddy-cn"],
     }
 }
@@ -95,7 +103,11 @@ pub struct BuddyClientPath {
 /// 两个平台的客户端路径视图
 pub fn client_paths_view() -> Vec<BuddyClientPath> {
     let map = read_client_paths();
-    [BuddyPlatform::Workbuddy, BuddyPlatform::CodebuddyCn]
+    [
+        BuddyPlatform::Workbuddy,
+        BuddyPlatform::WorkbuddyAi,
+        BuddyPlatform::CodebuddyCn,
+    ]
         .iter()
         .map(|platform| {
             let configured = map
@@ -139,6 +151,43 @@ fn default_launch_candidates(platform: BuddyPlatform) -> Vec<PathBuf> {
             #[cfg(target_os = "linux")]
             {
                 for bin in ["/usr/bin/workbuddy", "/usr/local/bin/workbuddy", "/opt/workbuddy/workbuddy"] {
+                    candidates.push(PathBuf::from(bin));
+                }
+            }
+        }
+        BuddyPlatform::WorkbuddyAi => {
+            // 安装目录名从 EchoBird tools/workbuddyai/paths.json 取：
+            // Windows %LOCALAPPDATA%\Programs\WorkBuddyAI\WorkBuddyAI.exe，
+            // macOS /Applications/WorkBuddy AI.app（发行方 Tencent）
+            #[cfg(target_os = "windows")]
+            {
+                if let Ok(local) = std::env::var("LOCALAPPDATA") {
+                    candidates.push(
+                        PathBuf::from(local)
+                            .join("Programs")
+                            .join("WorkBuddyAI")
+                            .join("WorkBuddyAI.exe"),
+                    );
+                }
+                if let Ok(pf) = std::env::var("PROGRAMFILES") {
+                    candidates.push(
+                        PathBuf::from(pf)
+                            .join("WorkBuddy AI")
+                            .join("WorkBuddy AI.exe"),
+                    );
+                }
+            }
+            #[cfg(target_os = "macos")]
+            {
+                candidates.push(PathBuf::from("/Applications/WorkBuddy AI.app"));
+            }
+            #[cfg(target_os = "linux")]
+            {
+                for bin in [
+                    "/usr/bin/workbuddy-ai",
+                    "/usr/local/bin/workbuddy-ai",
+                    "/opt/workbuddy-ai/workbuddy-ai",
+                ] {
                     candidates.push(PathBuf::from(bin));
                 }
             }

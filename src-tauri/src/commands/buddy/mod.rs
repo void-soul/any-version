@@ -312,7 +312,10 @@ pub fn buddy_sync_accounts(from_platform: String, to_platform: String) -> Result
 pub async fn buddy_import_from_local(platform: String) -> Result<Option<BuddyAccount>, String> {
     let platform = platform_from_str(&platform)?;
     let local = match platform {
-        BuddyPlatform::Workbuddy => workbuddy::import_payload_from_local()?,
+        // WorkBuddy 与 WorkBuddy AI 共用同一套登录文件解析，只是文件名不同
+        BuddyPlatform::Workbuddy | BuddyPlatform::WorkbuddyAi => {
+            workbuddy::import_payload_from_local(platform)?
+        }
         BuddyPlatform::CodebuddyCn => codebuddy_cn::import_payload_from_local()?,
     };
     let Some(mut account) = local else {
@@ -421,7 +424,9 @@ pub fn buddy_get_current_account_id(platform: String) -> Result<Option<String>, 
 
     // 回退：读取本机客户端当前登录账号
     let current = match platform {
-        BuddyPlatform::Workbuddy => workbuddy::resolve_current_account_id(&accounts),
+        BuddyPlatform::Workbuddy | BuddyPlatform::WorkbuddyAi => {
+            workbuddy::resolve_current_account_id(platform, &accounts)
+        }
         BuddyPlatform::CodebuddyCn => codebuddy_cn::resolve_current_account_id(&accounts),
     };
     Ok(current)
@@ -469,7 +474,9 @@ pub async fn buddy_switch_account(
         // 3) 写入目标账号登录态
         emit_switch_progress(Some(&app), platform, &account_id, "writing", 0, None);
         let message = match platform {
-            BuddyPlatform::Workbuddy => workbuddy::switch_account(&account_id)?,
+            BuddyPlatform::Workbuddy | BuddyPlatform::WorkbuddyAi => {
+                workbuddy::switch_account(platform, &account_id)?
+            }
             BuddyPlatform::CodebuddyCn => codebuddy_cn::switch_account(&account_id)?,
         };
         // 切换成功后持久化当前账号（复刻 provider_current_state，供前端稳定标识）
@@ -496,7 +503,9 @@ pub async fn buddy_switch_account(
                     );
                 }
             }
-            BuddyPlatform::CodebuddyCn => {
+            // WorkBuddy AI 与 CodeBuddy CN 一致：不自动启动，提示用户手动启动
+            //（AI 版数据目录/启动行为未公开，避免误拉起错误进程）
+            BuddyPlatform::WorkbuddyAi | BuddyPlatform::CodebuddyCn => {
                 message = format!(
                     "{}，请手动启动 {}",
                     message,
@@ -837,10 +846,11 @@ pub fn buddy_list_sessions(
 pub fn buddy_get_paths(platform: String) -> Result<serde_json::Value, String> {
     let platform = platform_from_str(&platform)?;
     let (data_dir, state_db, auth_file) = match platform {
-        BuddyPlatform::Workbuddy => (
-            workbuddy::default_data_dir().map(|p| p.to_string_lossy().to_string()),
-            workbuddy::default_state_db_path().map(|p| p.to_string_lossy().to_string()),
-            workbuddy::default_auth_file_path().map(|p| p.to_string_lossy().to_string()),
+        // AI 版没有数据目录/state.vscdb（对应函数返回 None），只有登录文件
+        BuddyPlatform::Workbuddy | BuddyPlatform::WorkbuddyAi => (
+            workbuddy::default_data_dir(platform).map(|p| p.to_string_lossy().to_string()),
+            workbuddy::default_state_db_path(platform).map(|p| p.to_string_lossy().to_string()),
+            workbuddy::default_auth_file_path(platform).map(|p| p.to_string_lossy().to_string()),
         ),
         BuddyPlatform::CodebuddyCn => (
             codebuddy_cn::default_data_dir().map(|p| p.to_string_lossy().to_string()),

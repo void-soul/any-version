@@ -69,8 +69,11 @@ fn buddy_current_account(platform: BuddyPlatform, except_ids: &[String]) -> Opti
         }
     }
     let output = match platform {
-        BuddyPlatform::Workbuddy => super::super::workbuddy::resolve_current_account_id(&accounts),
-        BuddyPlatform::CodebuddyCn => super::super::codebuddy_cn::resolve_current_account_id(&accounts),
+        BuddyPlatform::Workbuddy => {
+            super::super::workbuddy::resolve_current_account_id(BuddyPlatform::Workbuddy, &accounts)
+        }
+        // 该模块只服务 CN WorkBuddy 的会话迁移，其余平台不参与
+        BuddyPlatform::WorkbuddyAi | BuddyPlatform::CodebuddyCn => None,
     };
     output.filter(|id| !except_ids.iter().any(|except| except == id))
         .and_then(|id| accounts.iter().find(|account| account.id == id).cloned())

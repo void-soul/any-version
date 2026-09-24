@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "kebab-case")]
 pub enum BuddyPlatform {
     Workbuddy,
+    /// WorkBuddy AI（国际版，www.workbuddy.ai）：独立账号体系，但共用
+    /// CodeBuddyExtension 登录文件布局，仅文件名不同（抄自 EchoBird 97fcff93）。
+    WorkbuddyAi,
     CodebuddyCn,
 }
 
@@ -14,6 +17,7 @@ impl BuddyPlatform {
     pub fn as_str(&self) -> &'static str {
         match self {
             BuddyPlatform::Workbuddy => "workbuddy",
+            BuddyPlatform::WorkbuddyAi => "workbuddy-ai",
             BuddyPlatform::CodebuddyCn => "codebuddy-cn",
         }
     }
@@ -21,6 +25,7 @@ impl BuddyPlatform {
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "workbuddy" => Some(BuddyPlatform::Workbuddy),
+            "workbuddy-ai" | "workbuddy_ai" => Some(BuddyPlatform::WorkbuddyAi),
             "codebuddy-cn" | "codebuddy_cn" => Some(BuddyPlatform::CodebuddyCn),
             _ => None,
         }
@@ -30,6 +35,7 @@ impl BuddyPlatform {
     pub fn accounts_dir_name(&self) -> &'static str {
         match self {
             BuddyPlatform::Workbuddy => "buddy_workbuddy_accounts",
+            BuddyPlatform::WorkbuddyAi => "buddy_workbuddy_ai_accounts",
             BuddyPlatform::CodebuddyCn => "buddy_codebuddy_cn_accounts",
         }
     }
@@ -38,8 +44,64 @@ impl BuddyPlatform {
     pub fn id_prefix(&self) -> &'static str {
         match self {
             BuddyPlatform::Workbuddy => "workbuddy",
+            BuddyPlatform::WorkbuddyAi => "workbuddy_ai",
             BuddyPlatform::CodebuddyCn => "codebuddy_cn",
         }
+    }
+
+    /// 客户端本地登录态文件名。
+    ///
+    /// 两个 WorkBuddy 版本共用 `CodeBuddyExtension/Data/Public/auth` 目录，
+    /// 只靠文件名区分（CN 版无后缀、AI 版带 `-ai`）。
+    pub fn auth_file_name(&self) -> &'static str {
+        match self {
+            BuddyPlatform::Workbuddy => "workbuddy-desktop.info",
+            BuddyPlatform::WorkbuddyAi => "workbuddy-desktop-ai.info",
+            BuddyPlatform::CodebuddyCn => "",
+        }
+    }
+
+    /// 是否属于 WorkBuddy 系（共用 CodeBuddyExtension 登录文件布局）。
+    pub fn is_workbuddy_family(&self) -> bool {
+        matches!(self, BuddyPlatform::Workbuddy | BuddyPlatform::WorkbuddyAi)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BuddyPlatform;
+
+    /// WorkBuddy AI（workbuddy-desktop-ai.info / www.workbuddy.ai）是独立产品，
+    /// 但共用 CodeBuddyExtension 登录文件布局，只是文件名不同。
+    /// 抄自 EchoBird 97fcff93（`feat: add WorkBuddy and WorkBuddy AI account switching`）。
+    #[test]
+    fn workbuddy_ai_round_trips_and_stays_isolated() {
+        let ai = BuddyPlatform::from_str("workbuddy-ai").expect("应识别 workbuddy-ai");
+        assert_eq!(ai, BuddyPlatform::WorkbuddyAi);
+        assert_eq!(ai.as_str(), "workbuddy-ai");
+        // 下划线写法也接受（旧数据/手写配置）
+        assert_eq!(BuddyPlatform::from_str("workbuddy_ai"), Some(BuddyPlatform::WorkbuddyAi));
+        // 未知平台仍然返回 None，不能把任意串当合法平台
+        assert_eq!(BuddyPlatform::from_str("workbuddy-ai-x"), None);
+
+        // 账号库目录与 id 前缀必须与另外两个平台都不同，否则会互相覆盖数据
+        for other in [BuddyPlatform::Workbuddy, BuddyPlatform::CodebuddyCn] {
+            assert_ne!(ai.accounts_dir_name(), other.accounts_dir_name());
+            assert_ne!(ai.id_prefix(), other.id_prefix());
+        }
+    }
+
+    #[test]
+    fn workbuddy_family_shares_layout_but_uses_distinct_auth_file() {
+        assert_eq!(BuddyPlatform::Workbuddy.auth_file_name(), "workbuddy-desktop.info");
+        assert_eq!(
+            BuddyPlatform::WorkbuddyAi.auth_file_name(),
+            "workbuddy-desktop-ai.info"
+        );
+        assert!(BuddyPlatform::Workbuddy.is_workbuddy_family());
+        assert!(BuddyPlatform::WorkbuddyAi.is_workbuddy_family());
+        // CodeBuddy CN 不走该文件布局
+        assert!(!BuddyPlatform::CodebuddyCn.is_workbuddy_family());
     }
 }
 

@@ -410,10 +410,14 @@ pub fn set_expiry_times(
 }
 
 /// WorkBuddy 与 CodeBuddy CN 视为同一账号体系（同邮箱 = 同一账号）。
+///
+/// WorkBuddy AI 是独立产品（www.workbuddy.ai），与二者都不共享账号，故返回自身
+/// ——「跨平台共享过期时间」对它退化为同平台内同步（实际为无操作）。
 fn twin_platform(platform: BuddyPlatform) -> BuddyPlatform {
     match platform {
         BuddyPlatform::Workbuddy => BuddyPlatform::CodebuddyCn,
         BuddyPlatform::CodebuddyCn => BuddyPlatform::Workbuddy,
+        BuddyPlatform::WorkbuddyAi => BuddyPlatform::WorkbuddyAi,
     }
 }
 
