@@ -84,6 +84,14 @@ grep -rn "Tencent-Cloud.genie-ide-cn" src-tauri/src/commands/buddy/
 39. **规则化安全评估的判定纪律** — 参考 §20.1 明确"查询请求本身不是写操作，不得因为查询频率或请求次数推断风控"。实现时**不要**因为出现 `http.requestAsAccount` 就加风险分（它只是"以账号身份读取"）；只有非 GET 写请求、非官方域名请求、发消息、页面输入、真实切换账号才计分，否则只读任务会被误判成中风险。
 40. **Token 统计的账号归属是"有信息就用信息，没信息就猜路径"** — 记录里的 `accountUid/accountId/uid/userId` → 会话路径中含账号 uid → 否则记 `unknown`。别把 `unknown` 归到第一个账号上（会把统计做成假数据）。
 
+## H. 第三方导出文件导入（2026-09-24 新增，账号迁移路径）
+
+42. **WorkDaddy「账号导出」是加密包，不是 JSON 数组** — 信封 `{wbsExport:'WorkDaddy', version:3, exportType:'accounts', kdf:'aes-256-gcm+scrypt', salt, data}`；`version:3` 解出来还要 **gunzip**，`version:2` 是**不压缩**明文。判据只看顶层 `wbsExport === 'WorkDaddy'`，**不要**按"是不是数组"猜格式。检测：`third_party_import::tests::{workdaddy_v3_envelope_decrypts_like_reference,workdaddy_v2_envelope_is_uncompressed}`。
+43. **scrypt 参数与打包布局两个都错不了** — Node `crypto.scryptSync(pw, salt, 32)` = N=16384(log2=14)/r=8/p=1；布局是 `iv(12)‖authTag(16)‖ciphertext`，而 RustCrypto `aes-gcm` 的 `decrypt` 要 `ciphertext‖tag`，**必须重排**，否则一律报"密码错误"。密码按**原文**派生（只校验 trim 非空，不要 trim 后再算）。检测：`scrypt_kdf::tests::matches_node_native_scrypt`（Node 原生已知答案向量，等同 RFC 7914 §12）。
+44. **新增 Rust 依赖前先确认能拉到** — 本机到 crates.io 与 rsproxy 的 TLS 都被 schannel 吊销检查打断（`CRYPT_E_REVOCATION_OFFLINE (0x80092013)`，`--config http.check-revoke=false` 也只解决一部分）。所以 scrypt 用库内实现（`scrypt_kdf.rs`，复用已有 `pbkdf2` + `sha2`），保证「拉下代码即可 `cargo build`」。检测：`cargo fetch 2>&1 | Select-String CRYPT_E_REVOCATION_OFFLINE`。
+45. **WorkDaddy 的 `info` 字段是字符串** — `accounts[i].info` 是**登录文件原文的 JSON 文本**（不是对象），要 `serde_json::from_str` 二次解析；用 `build_account_from_local` 那套链（`build_account_from_auth_text`），别直接反序列化成结构体。
+46. **WorkDaddy 只产 WorkBuddy 账号（§0.1）** — 命令层 `buddy_import_third_party` 在 `platform != workbuddy` 时直接拒绝；前端也只在 WorkBuddy 弹窗里显示该来源。
+
 ## G. 参考仓漂移探测（B 仓）
 
 ```bash

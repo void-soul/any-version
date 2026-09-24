@@ -26,3 +26,9 @@
 - 验证（第二批）：`cargo test --no-default-features --lib` **422 passed**（新增 automation 24 + stats 5）；`npx tsc --noEmit` 无错误。
 - 两批合计：`cargo test` 393 → 422（自动化删除后回到 **398**），`tsc` 全程干净；qa：Q-0134 ~ Q-0139（其中 Q-0137 因功能被否决改为 `WontFix`）。
 - 仍未做（下一批候选）：会话加密归档 `.wds` v4（§11）、积分轮换建议（§7）、第三方模型 cc-switch 导入（§15）、防休眠（§16）、假退出登录（§10 语义）；自动化侧尚未接 `session.*` 的模型选择（§20.2，需注入）与 ZIP 任务包（现为 JSON 信封）。
+- 2026-09-24 用户指定需求「导入账号时支持 WorkDaddy、cockpit-tools」，落地**第三方导出文件导入**（不扫描对方数据目录）：
+  - 新增 `third_party_import.rs`（`parse_workdaddy_export`：信封 v3 = AES-256-GCM+scrypt+gzip 解密 → 载荷 `accounts[{uid,info}]` → `workbuddy::build_account_from_auth_text`；`parse_cockpit_tools_export`：回退到 `store::parse_accounts_json`）、
+    `scrypt_kdf.rs`（库内 scrypt，参数对齐 Node `crypto.scryptSync` 默认；**不新增依赖**——本机 crates.io/rsproxy 的 TLS 被 schannel 吊销检查打断，见 pitfalls §H 44）、
+    `workbuddy.rs::build_account_from_auth_text`、`store::parse_accounts_json`（纯函数抽取）、命令 `buddy_import_third_party`（tool=workdaddy 时强制 WorkBuddy，§0.1）、前端来源清单 + 10 键 i18n ×2。
+  - 验证：`cargo test --no-default-features --lib` **531 passed**（新增 11：scrypt KAT 1 + WorkDaddy 5 + cockpit 3 + 其它 2）；`npx tsc --noEmit` 干净。qa：**Q-0154**（已解决待验证）。契约与踩坑已回写 `references/workdaddy.md` §1 落地状态、`references/pitfalls.md` §H。
+  - **本轮未学习 relearn 差异**（用户给定了范围，与 diff 无关）：WorkDaddy `7126432f → d3f29616`（DAEMON_VERSION 1.2.76 → **1.2.148**；新增 `session-sync.js`/`session-dirty.js`/`workbuddy-compat.js`/`automation-likes.js`/`account-credit-cache.js`、大量 `test/session-*`，主体是**会话同步与自动化/会话筛选**域）。**pin 保持不变，下次同步仍从 7126432f 开始。**

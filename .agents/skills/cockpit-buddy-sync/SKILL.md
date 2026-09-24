@@ -21,7 +21,7 @@ description: 把两个参考仓的 Buddy / WorkBuddy（含 CodeBuddy CN/AI）功
 
 目标侧文件地图：
 
-- Buddy 后端 `src-tauri/src/commands/buddy/`：`mod.rs`（命令层 + 切换编排 + 进度事件）、`models.rs`、`store.rs`、`api.rs`（官方 API / 用量 / 签到 / 成长 / 旅行）、`crypto.rs`、`workbuddy.rs`、`codebuddy_cn.rs`、`sessions.rs`、`auto_checkin.rs`、`auto_travel.rs`、`daily_history.rs`、`expiry.rs`、`action_log.rs`、`client_process.rs`、`session_transfer{.rs,/workbuddy.rs,/codebuddy.rs}`
+- Buddy 后端 `src-tauri/src/commands/buddy/`：`mod.rs`（命令层 + 切换编排 + 进度事件）、`models.rs`、`store.rs`、`api.rs`（官方 API / 用量 / 签到 / 成长 / 旅行）、`crypto.rs`、`workbuddy.rs`、`codebuddy_cn.rs`、`sessions.rs`、`auto_checkin.rs`、`auto_travel.rs`、`daily_history.rs`、`expiry.rs`、`action_log.rs`、`client_process.rs`、`session_transfer{.rs,/workbuddy.rs,/codebuddy.rs}`、`third_party_import.rs`（WorkDaddy / cockpit-tools **导出文件**导入）、`scrypt_kdf.rs`（WorkDaddy 加密导出包的 scrypt 派生）
 - 前端 `src/components/buddy/BuddyPanel.tsx`；i18n `src/i18n/locales/{zh,en}/translation.json`（键在 `buddy.*`）；命令注册 `src-tauri/src/lib.rs`
 - **AI/代理侧**（WorkDaddy 的用量统计、Token 统计、模型管理域对应到这里）：`src-tauri/src/commands/ai/{models.rs,provider.rs,usage.rs}`、`src-tauri/src/proxy/{mod.rs,server.rs}`、`src/components/ai/{UsageStats.tsx,ModelConfig.tsx}`
 
@@ -53,7 +53,7 @@ bash .agents/skills/cockpit-buddy-sync/scripts/relearn.sh cockpit    # 只跑辅
 
 | 功能域 | WorkDaddy 参考位置 | 我们的位置 | 可移植性 | 锚点 |
 |---|---|---|---|---|
-| 账号库/备份/加密导出导入 | `scripts/lib.js`（`accountsDir`/`backupAuthFile`/`backupCurrent`）、`scripts/secure-transfer.js`（`EXPORT_VERSION=3`/`createEncryptedExport`/`openEncryptedExport`）、`daemon.js` `/api/accounts/{export,import}` | `store.rs`、`crypto.rs`、`mod.rs` | 纯逻辑 | `workdaddy.md` §1 §2 |
+| 账号库/备份/加密导出导入 | `scripts/lib.js`（`accountsDir`/`backupAuthFile`/`backupCurrent`）、`scripts/secure-transfer.js`（`EXPORT_VERSION=3`/`createEncryptedExport`/`openEncryptedExport`）、`daemon.js` `/api/accounts/{export,import}` | `store.rs`、`crypto.rs`、`mod.rs`、`third_party_import.rs`（**导入侧已落地**：吃 WorkDaddy 账号导出包，见 §1 落地状态；导出侧仍是明文 JSON） | 纯逻辑 | `workdaddy.md` §1 §2 |
 | 本地导入（登录态解析/多实例发现） | `lib.js` `authRecordFromJson`/`resolveCurrentAuth`/`resolveAuthTarget`/`retireLogoutMarker`、`profiles.js` `authFile` | `workbuddy.rs`、`codebuddy_cn.rs` | 纯逻辑 | §3 |
 | 新增账号（无感 OAuth 免退出） | `daemon.js` `/api/oauth/{start,poll}`、`buildSeamlessAuthFile`、`saveSeamlessAccount`（`OAUTH_TIMEOUT_SECONDS=600`） | `api.rs` | 纯逻辑 + 接口 | §4 |
 | 用量/积分（官方计费接口 + 按天落库） | `credit-request-usage.js`、`credit-history-sync.js`、`credit-usage-store.js`、`credit-segments.js` | `api.rs::refresh_payload_for_account`、`daily_history.rs` | 纯逻辑 + 接口 | §5 |
@@ -80,7 +80,7 @@ bash .agents/skills/cockpit-buddy-sync/scripts/relearn.sh cockpit    # 只跑辅
 | 功能域 | cockpit-tools 参考位置 | 我们的位置 | 何时才查它 |
 |---|---|---|---|
 | 切换账号时序（关客户端→合并→写回→重启） | `commands/workbuddy.rs::inject_workbuddy_to_vscode`、`commands/codebuddy_cn_instance.rs`、`modules/workbuddy_instance.rs::resolve_workbuddy_runtime_dirs` | `mod.rs::buddy_switch_account`、`workbuddy.rs`/`codebuddy_cn.rs` `write_account_to_default_client`、`client_process.rs` | **切换时序仍以它为准**（WorkDaddy 是不关客户端的另一套模型，见 §4.1） |
-| 账号存储/去重/导出导入 | `modules/workbuddy_account.rs`、`modules/codebuddy_cn_account.rs` | `store.rs`、`mod.rs` | WorkDaddy 未覆盖的字段级契约 |
+| 账号存储/去重/导出导入 | `modules/workbuddy_account.rs`、`modules/codebuddy_cn_account.rs` | `store.rs`、`mod.rs`、`third_party_import.rs`（导出为明文 JSON 数组，直接走我们的 JSON 导入） | WorkDaddy 未覆盖的字段级契约 |
 | 本地导入 | 同上 `import_payload_from_local` | `workbuddy.rs`、`codebuddy_cn.rs` | 需要 Rust 侧写法范例时 |
 | 新增（OAuth/token） | `modules/*_oauth.rs`、`commands/workbuddy.rs` | `api.rs` | 同上 |
 | 用量/配额 | `commands/*.rs` quota 系列 + `*_oauth` 的 refresh | `api.rs` `refresh_payload_for_account` | 同上 |

@@ -15,7 +15,11 @@
 - 加密导出 `secure-transfer.js`：`EXPORT_KDF='aes-256-gcm+scrypt'`、`EXPORT_VERSION=3`、`EXPORT_COMPRESSION='gzip'`、`MAX_PASSWORD_LENGTH=1024`；`encryptBinary` 用 `salt=16B`、`iv=12B`、打包布局 `base64(iv‖authTag‖cipher)`（`[0,12)` / `[12,28)` / `[28,…)`）；`createEncryptedExport(kind,payload,password)` **先 gzip 再加密**，信封 `{wbsExport:'WorkDaddy',version,exportType,createdAt,kdf,compression,salt,data}`；`openEncryptedExport` 接受 `version ∈ {2,3}`（v2 为不压缩文本），校验 `payload.exportType === 'WorkDaddy-'+kind`；`normalizeExportKind` = `/^[a-z][a-z0-9-]{0,63}$/`。
 - v1 兼容：`daemon.js` `EXPORT_PASSPHRASE='workdaddy'` + `EXPORT_KDF_SALT='WorkDaddy-account-export-v1'` 的固定密钥 AES-GCM（`decryptLegacyExport`）。
 - 导出/导入路由：`POST /api/accounts/export`（`{password,uids?≤500}`，payload `{exportType:'WorkDaddy-accounts',version:2,accounts:[{uid,info}]}`）、`POST /api/accounts/import`（分支：`format:'plain-json'` 明文 | 加密 v≥2 | v1 固定密码；**写盘前必须校验** uid 非 `.`/`..`、不含 `\ / \0`、且 `acct.uid === uid`）。
-- 我们的对应：`store.rs`、`crypto.rs`；差异候选 = 我们的导出格式与参考 v3 信封不兼容（若要互操作需按上表复刻信封）。
+- 我们的对应：`store.rs`、`crypto.rs`；差异候选 = 我们的**导出**格式与参考 v3 信封不兼容（若要互操作需按上表复刻信封）。
+- **落地状态（2026-09-24）**：已实现**导入侧**——`third_party_import.rs::parse_workdaddy_export` 解析参考的账号导出包（信封 v3/v2），
+  载荷 `{exportType:'WorkDaddy-accounts', accounts:[{uid, info}]}` 里 `info`（登录文件原文）经
+  `workbuddy.rs::build_account_from_auth_text` 还原成账号；密钥派生用库内 scrypt（`scrypt_kdf.rs`，参数对齐 Node 默认）。
+  导出侧仍未复刻（我们的导出仍是明文 JSON）。
 
 锚点：`grep -n "EXPORT_VERSION\|EXPORT_KDF\|function createEncryptedExport\|function openEncryptedExport" scripts/secure-transfer.js`；`grep -n "function resolveAuthTarget\|function backupCurrent\|function accountsDir" scripts/lib.js`
 

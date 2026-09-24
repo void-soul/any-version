@@ -2,3 +2,5 @@
 学习记录：
 - 2026-09-10 首次对齐 9 个功能域（账号库/导出导入、本地导入、新增 OAuth/token、用量配额、手动+自动签到、会话列表、切换账号、会话合并、账号互导）。期间修复大量移植缺陷（条件化 workbuddy.db 重映射、工作区正文漏拷、辅助目录空桩、备份漏 wal、报告对象渲染进 React、super 路径层级、log crate 等，详见 references/pitfalls.md）。验证：cargo check 干净、204 lib 测试、tsc 无错误。qa：Q-0035~Q-0040。
 - 2026-09-10 用本技能全量核对：relearn 无差异；A/B/D 检查单、WB auth 写回守护（$wbEncrypted/哈希原子写/四字段校验）、CN 注入三连、api.rs 端点与 token_expiry 秒毫秒归一、企业用量 /data/data 兜底、auto_checkin 随机窗口+日志裁剪 全部与参考一致。新发现两处属 Kira 适配（非缺口）已补入 pitfalls §E。验证同次通过（204 测试/tsc 干净），qa：Q-0042。
+- 2026-09-24 用户指定需求「导入账号时支持 WorkDaddy、cockpit-tools」→ 落地**导出文件导入**（辅参考只提供格式契约，不读它的数据目录）：参考侧 `modules/{workbuddy_account,codebuddy_cn_account}.rs::export_accounts` = `serde_json::to_string_pretty(Vec<Account>)`（明文、snake_case、id 前缀 `workbuddy_`/`codebuddy_cn_`），故直接复用我们的 JSON 导入（`third_party_import.rs::parse_cockpit_tools_export` → `store::parse_accounts_json`），并把 `workbuddy_accounts.json`（只有摘要、无 `access_token`）这类误投翻译成可操作错误。契约已回写 `references/contracts.md` §1。验证：`cargo test` 531 passed、`tsc` 干净；qa：**Q-0154**。
+  **本轮未学习 relearn 差异**：cockpit-tools `deacbe44 → 79870647`（v1.3.59：`codebuddy_session_list.rs` -114 行）。**pin 保持不变，下次同步仍从 deacbe44 开始。**

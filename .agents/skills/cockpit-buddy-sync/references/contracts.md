@@ -10,6 +10,9 @@
 - 存储：`data_dir/buddy/{platform}_accounts/<id>.json` + 同名索引 json（id 仅 `A-Za-z0-9._-`，防穿越）；`current_accounts.json` 持久化"最后切换到的账号"（= 参考 provider_current_state）。
 - upsert 去重：uid 优先，其次 email（非 unknown）；命中则保留目标已有 id/created_at/tags。
 - 导入 JSON 容错：UTF-8 BOM/UTF-16/GBK 字节解码；顶层数组 | 单对象 | `{accounts|data|items|list|records:[...]}`；snake_case→camelCase；缺 platform/createdAt/lastUsed/id 自动补（id 用 `{platform}_{md5(uid|email|import_N)}`）。
+  - 落地（2026-09-24）：解析逻辑抽成纯函数 `store::parse_accounts_json`（不落库），`import_accounts` = 解析 + `upsert_account`；第三方导入复用前者。
+- **参考侧的账号导出 = 明文 JSON 数组**：`modules/{workbuddy_account,codebuddy_cn_account}.rs::export_accounts` 就是 `serde_json::to_string_pretty(Vec<Account>)`，字段 snake_case（`access_token/expires_at/...`），`id` 前缀 `workbuddy_` / `codebuddy_cn_`。因此我们的 JSON 导入天然可吃——**不要**再加一层专用解析。
+  - 与我们对接：`third_party_import.rs::parse_cockpit_tools_export`（Kira「从本机导入」面板的 cockpit-tools 来源）。注意 `workbuddy_accounts.json` 只是摘要索引（无 `access_token`），**不是**导出文件，导入必须报可操作错误。
 
 ## §2 本地导入（从客户端）
 
