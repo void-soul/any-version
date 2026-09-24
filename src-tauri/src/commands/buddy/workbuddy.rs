@@ -411,6 +411,46 @@ pub fn import_payload_from_local() -> Result<Option<BuddyAccount>, String> {
     )))
 }
 
+/// 从登录文件原文构建 WorkBuddy 账号（供第三方导出导入复用，见 `third_party_import.rs`）。
+///
+/// 解析链与 `import_payload_from_local` 的 auth 文件分支一致，只是输入换成文本而非路径：
+/// 先按 JSON 找 access token，找不到则把整段文本当作裸 token。
+/// `uid_hint`（WorkDaddy 备份的 `uid`）只在文件内取不到 uid 时兜底。
+pub(crate) fn build_account_from_auth_text(
+    info: &str,
+    uid_hint: Option<&str>,
+) -> Result<Option<BuddyAccount>, String> {
+    let trimmed = info.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let parsed_json = serde_json::from_str::<serde_json::Value>(trimmed).ok();
+    let token_candidate = match parsed_json.as_ref() {
+        Some(value) => parse_local_access_token(value),
+        None => Some(trimmed.to_string()),
+    };
+    let Some(raw_token) = token_candidate else {
+        return Ok(None);
+    };
+    let (uid_from_token, normalized) = extract_local_token_parts(&raw_token)
+        .ok_or_else(|| "登录信息解析失败: access token 无效".to_string())?;
+    let uid_from_token = uid_from_token
+        .or_else(|| extract_uid_from_jwt(&raw_token))
+        .or_else(|| {
+            uid_hint
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        });
+    let access_token = normalize_local_token(&normalized)
+        .ok_or_else(|| "登录信息解析失败: access token 为空".to_string())?;
+    Ok(Some(build_account_from_local(
+        access_token,
+        parsed_json,
+        uid_from_token,
+    )))
+}
+
 /// 判断本机客户端当前使用哪个账号
 pub fn resolve_current_account_id(accounts: &[BuddyAccount]) -> Option<String> {
     if let Ok(Some(payload)) = import_payload_from_local() {

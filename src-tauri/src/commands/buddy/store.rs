@@ -580,13 +580,13 @@ pub fn export_accounts(platform: BuddyPlatform, account_ids: &[String]) -> Resul
     serde_json::to_string_pretty(&accounts).map_err(|e| format!("导出失败: {}", e))
 }
 
-/// 导入账号 JSON。
+/// 解析账号 JSON（纯函数，不落库；落库见 `import_accounts`）。
 ///
 /// 兼容性（JSON 本身有效但导入失败的常见原因）：
 /// - UTF-8 BOM / UTF-16 编码（先按字节解码）
 /// - 顶层为对象 `{"accounts": [...]}` 或单个账号对象，而非纯数组
 /// - 缺少可选字段（platform / id / createdAt / lastUsed）时自动补全
-pub fn import_accounts(
+pub fn parse_accounts_json(
     platform: BuddyPlatform,
     json_content: &str,
 ) -> Result<Vec<BuddyAccount>, String> {
@@ -689,10 +689,22 @@ pub fn import_accounts(
             |e| format!("解析导入 JSON 第 {} 个账号失败: {}", idx + 1, e),
         )?;
         account.platform = platform.as_str().to_string();
-        let saved = upsert_account(platform, account)?;
-        imported.push(saved);
+        imported.push(account);
     }
     Ok(imported)
+}
+
+/// 导入账号 JSON 并落库（解析复用 `parse_accounts_json`，按 uid/email 去重）。
+pub fn import_accounts(
+    platform: BuddyPlatform,
+    json_content: &str,
+) -> Result<Vec<BuddyAccount>, String> {
+    let parsed = parse_accounts_json(platform, json_content)?;
+    let mut saved = Vec::with_capacity(parsed.len());
+    for account in parsed {
+        saved.push(upsert_account(platform, account)?);
+    }
+    Ok(saved)
 }
 
 #[cfg(test)]

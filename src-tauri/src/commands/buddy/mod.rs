@@ -21,10 +21,12 @@ mod daily_history;
 mod expiry;
 pub(crate) mod growth;
 mod models;
+mod scrypt_kdf;
 mod session_sync;
 mod session_transfer;
 mod sessions;
 mod store;
+mod third_party_import;
 mod workbuddy;
 
 use models::{BuddyAccount, BuddyPlatform};
@@ -251,6 +253,47 @@ pub fn buddy_import_accounts(
 ) -> Result<Vec<BuddyAccount>, String> {
     let platform = platform_from_str(&platform)?;
     store::import_accounts(platform, &json_content)
+}
+
+// ─── 第三方工具导出文件导入（WorkDaddy 加密包 / cockpit-tools 明文 JSON） ───
+
+/// 从第三方工具的**导出文件**导入账号（不读取对方的数据目录）。
+///
+/// - `workdaddy`：WorkDaddy「账号导出」生成的加密 JSON（信封 v3 = gzip + AES-256-GCM，
+///   密钥由 scrypt 从导出密码派生），载荷 `account/{uid,info}` 逐个还原成 WorkBuddy 账号。
+/// - `cockpit-tools`：cockpit-tools 中选中账号「导出」生成的明文 JSON 数组。
+///
+/// 与 `buddy_import_accounts` 同语义：只落库，不调用官方 API 补全。
+#[tauri::command]
+pub fn buddy_import_third_party(
+    platform: String,
+    tool: String,
+    json_content: String,
+    password: Option<String>,
+) -> Result<Vec<BuddyAccount>, String> {
+    let platform = platform_from_str(&platform)?;
+    let tool = tool.trim().to_ascii_lowercase();
+    let parsed = match tool.as_str() {
+        third_party_import::TOOL_WORKDADDY => {
+            // SKILL.md §0.1 硬规则：WorkDaddy 只有 WorkBuddy（cn/ai）两个 profile
+            if platform != BuddyPlatform::Workbuddy {
+                return Err(
+                    "WorkDaddy 导出文件只包含 WorkBuddy 账号，请在 WorkBuddy 平台下导入".to_string(),
+                );
+            }
+            third_party_import::parse_workdaddy_export(&json_content, password.as_deref())?
+        }
+        third_party_import::TOOL_COCKPIT => {
+            third_party_import::parse_cockpit_tools_export(platform, &json_content)?
+        }
+        other => return Err(format!("不支持的第三方导入来源: {}", other)),
+    };
+
+    let mut saved = Vec::with_capacity(parsed.len());
+    for account in parsed {
+        saved.push(store::upsert_account(platform, account)?);
+    }
+    Ok(saved)
 }
 
 // ─── 账号跨平台互导（复刻 sync_workbuddy_to_codebuddy_cn / sync_codebuddy_cn_to_workbuddy） ───
