@@ -2,6 +2,12 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { preapplyThemeAccent } from "./utils/brand";
+
+// 首帧前同步预置主题色：外观配置要走 invoke 异步取，等它回来之前页面会先用默认色画一帧，
+// 用户会看到主色「跳变」。这里用本地缓存先把 --module-accent 系列写到 documentElement，
+// 后端配置到达后由 App 覆盖。抄自 EchoBird b1b868b3（restore saved palette before first paint）。
+preapplyThemeAccent();
 
 // 划词翻译悬浮窗：独立无边框窗口，以 `index.html?popup=translate` 打开，
 // 此时只渲染轻量的 TranslatePopup，而不挂载整个 App。

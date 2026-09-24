@@ -8,7 +8,12 @@ import { X, Minus, Square, Download, AlertTriangle, Loader2, FolderOpen, Chevron
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { MODULES, MODULE_MAP, resolveModuleLayout } from "./moduleRegistry";
 import VexGlowAvatar from "./components/VexGlowAvatar";
-import { VEX_CYBER_CYAN, resolveThemeAccent } from "./utils/brand";
+import {
+  VEX_CYBER_CYAN,
+  resolveThemeAccent,
+  themeAccentVars,
+  cacheThemeAccent,
+} from "./utils/brand";
 import { moduleLabel } from "./moduleRegistry";
 import { kiraQuoteLine } from "./utils/kiraQuotes";
 import { vexSay, onVexSay, type VexSayKind } from "./utils/vexSay";
@@ -295,14 +300,13 @@ export default function App() {
   // 全 App 主强调色：优先读后端配置里的主题色（module_theme_colors["theme"]），
   // 未设置时回退默认签名色。各模块内部用 --module-accent 系列变量联动处同步跟随。
   const activeModuleColor = resolveThemeAccent(appearance.moduleThemeColors);
-  const moduleThemeVars = {
-    "--module-accent": activeModuleColor,
-    "--module-accent-soft": `color-mix(in srgb, ${activeModuleColor} 12%, transparent)`,
-    "--module-accent-ring": `color-mix(in srgb, ${activeModuleColor} 30%, transparent)`,
-    "--module-accent-strong": `color-mix(in srgb, ${activeModuleColor} 85%, white)`,
-    "--neon": activeModuleColor,
-    "--cyan": VEX_CYBER_CYAN,
-  } as React.CSSProperties;
+  // 变量表与首帧预置（main.tsx::preapplyThemeAccent）共用同一份定义，避免两处漂移
+  const moduleThemeVars = themeAccentVars(activeModuleColor) as React.CSSProperties;
+
+  // 把当前主色缓存到本地：下次冷启动时 main.tsx 会在首帧前用它预置变量，消除主色跳变
+  useEffect(() => {
+    cacheThemeAccent(activeModuleColor);
+  }, [activeModuleColor]);
 
   // 计算模块布局：顶栏模块 / 更多模块 / 全部启用模块。
   const { toolbarModules, moreModules, allEnabled } = useMemo(
