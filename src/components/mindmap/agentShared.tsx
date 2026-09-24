@@ -64,6 +64,10 @@ export interface AiProgressEntry {
   max?: number;
   resume?: boolean;
   send?: boolean;
+  // Agent 写操作（step=agentOps）：待前端应用/确认的 ops 载荷（分级确认见 MindmapPanel）
+  runId?: string;
+  needConfirm?: boolean;
+  ops?: import("./types").AgentOp[];
   // 无效点单回执（step=reject）：AI 本轮请求了目录结构里不存在的路径
   paths?: string[];
   // 前端收到时打的时间戳（ms）
@@ -163,6 +167,8 @@ export function progressText(e: AiProgressEntry, t: (k: string, o?: any) => stri
       return t("agent.askStep", { n: e.round ?? 1, max: e.max ?? 3 });
     case "cancel":
       return t("mindmap.aiCancelled");
+    case "agentOps":
+      return t("mindmap.agentOpsStep", { n: e.ops?.length ?? 0 });
     default:
       return e.detail ?? e.step;
   }
@@ -236,9 +242,11 @@ export function useAnsweredAsks(): ReadonlySet<number> {
 // - 多轮会话（首轮下达任务，完成后可继续追问，结果增量追加到当前画布）
 // - 停止 / 校验报告 / 最小化后台运行
 
+export type AgentWorkbenchMode = "project" | "text" | "chat";
+
 export interface AgentWorkbenchProps {
-  mode: "project" | "text";
-  onModeChange: (mode: "project" | "text") => void;
+  mode: AgentWorkbenchMode;
+  onModeChange: (mode: AgentWorkbenchMode) => void;
   documents: { id: string; name: string; sourceType: string }[];
   targetDocumentId: string;
   onTargetDocumentChange: (id: string) => void;
@@ -283,7 +291,9 @@ const wbSelect = "h-8 min-w-0 rounded-md border border-white/10 bg-slate-950/70 
 const wbBtn = "inline-flex cursor-pointer items-center gap-1 rounded-md border border-white/10 bg-white/[0.05] px-2 py-1.5 text-[10px] text-slate-300 transition hover:bg-white/[0.1] hover:text-white disabled:cursor-default disabled:opacity-40";
 
 /** 阶段步进器：按事件流推导各阶段状态（待办/进行/完成/失败） */
-function PhaseStepper({ mode, entries, loading, t }: { mode: "project" | "text"; entries: readonly AiProgressEntry[]; loading: boolean; t: (k: string, o?: any) => string }) {
+function PhaseStepper({ mode, entries, loading, t }: { mode: AgentWorkbenchMode; entries: readonly AiProgressEntry[]; loading: boolean; t: (k: string, o?: any) => string }) {
+  // 对话模式没有「阶段计划」：工具循环的事件走时间线即可
+  if (mode === "chat") return null;
   const phaseMap = mode === "project" ? PHASE_STEPS_PROJECT : PHASE_STEPS_TEXT;
   const keys = mode === "project" ? PHASE_KEYS_PROJECT : PHASE_KEYS_TEXT;
   const { maxPhase, failPhase, drawCount, cancelled } = useMemo(() => {
@@ -600,7 +610,10 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
     pushAgentMessage("user", t("agent.askAnswered"));
   };
 
-  const sendDisabled = loading || (mode === "text" && isFirstRun && !input.trim()) || (mode === "project" && isFirstRun && !projectPath);
+  const sendDisabled = loading
+    || (mode === "text" && isFirstRun && !input.trim())
+    || (mode === "project" && isFirstRun && !projectPath)
+    || (mode === "chat" && isFirstRun && !input.trim());
 
   const submit = () => {
     if (sendDisabled) return;
@@ -608,9 +621,11 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
     if (!isFirstRun && !txt) return;
     // 用户气泡：首轮无指令时按配置生成摘要文本
     const bubble = txt
-      || (mode === "project"
-        ? t("agent.userRunProject", { path: projectPath.split(/[\\/]/).pop() ?? projectPath, depth: aiDepth, views: aiViews.length ? aiViews.map((v) => viewLabel(t, v)).join("、") : t("agent.viewsAuto") })
-        : textTitle || t("agent.userRunText"));
+      || (mode === "chat"
+        ? t("agent.userContinue")
+        : mode === "project"
+          ? t("agent.userRunProject", { path: projectPath.split(/[\\/]/).pop() ?? projectPath, depth: aiDepth, views: aiViews.length ? aiViews.map((v) => viewLabel(t, v)).join("、") : t("agent.viewsAuto") })
+          : textTitle || t("agent.userRunText"));
     pushAgentMessage("user", bubble);
     setInput("");
     onRun(txt);
@@ -712,7 +727,8 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
         {cfgOpen && (
           <div className="space-y-2 border-t border-white/5 p-2.5">
             <div className="grid grid-cols-3 gap-2">
-              <select className={wbSelect} value={mode} onChange={(e) => onModeChange(e.target.value as "project" | "text")} disabled={loading}>
+              <select className={wbSelect} value={mode} onChange={(e) => onModeChange(e.target.value as AgentWorkbenchMode)} disabled={loading}>
+                <option value="chat">{t("mindmap.aiTaskChat")}</option>
                 <option value="text">{t("mindmap.aiTaskText")}</option>
                 <option value="project">{t("mindmap.aiTaskProject")}</option>
               </select>
@@ -787,7 +803,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
           rows={isFirstRun && mode === "text" ? 3 : 1}
           placeholder={
             isFirstRun
-              ? (mode === "project" ? t("agent.inputPhProject") : t("agent.inputPhText"))
+              ? (mode === "chat" ? t("agent.inputPhChat") : mode === "project" ? t("agent.inputPhProject") : t("agent.inputPhText"))
               : t("agent.inputPhFollowUp")
           }
           disabled={loading}

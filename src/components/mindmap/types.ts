@@ -335,9 +335,68 @@ export const mmApi = {
   aiAnswer: (runId: string, answer: Record<string, unknown> | string) => invoke<void>("mm_ai_answer", { runId, answer }),
   regenerateNode: (i: RegenerateInput) => invoke<DocumentFull>("mm_regenerate_node", { input: i }),
 
+  agentChat: (i: AgentChatInput) => invoke<AgentChatResult>("mm_agent_chat", { input: i }),
+  agentGetSession: (documentId: string) => invoke<string>("mm_agent_get_session", { documentId }),
+  agentListMessages: (sessionId: string) => invoke<AgentMessageRow[]>("mm_agent_list_messages", { sessionId }),
+
   plannedOccurrences: (start: string, end: string) => invoke<PlannedOccurrence[]>("mm_planned_occurrences", { start, end }),
   movePlanOccurrence: (i: MovePlanOccurrenceInput) => invoke<void>("mm_move_plan_occurrence", { input: i }),
 };
+
+// ─── AI Agent（右栏对话）───
+
+/** Agent 提交给前端应用的写操作（后端只裁决不执行，落图走既有写路径） */
+export interface AgentOp {
+  action: "add" | "update" | "delete" | "move";
+  /** add = 后端生成的节点 id；update/delete/move = 目标节点 id */
+  id?: string;
+  parentId?: string;
+  name?: string;
+  detail?: string;
+  kind?: string;
+  /** add/update 携带；后端已校验为 #RRGGBB，不合法时为 null */
+  color?: string | null;
+}
+
+/** 会话消息（落库形态，回放只展示不执行 opsJson） */
+export interface AgentMessageRow {
+  id: string;
+  sessionId: string;
+  role: string;
+  content: string;
+  opsJson: string;
+  createdAt: string;
+}
+
+export interface AgentChatInput {
+  documentId: string;
+  sessionId?: string;
+  message?: string;
+  selectedNodeIds?: string[];
+  providerId?: string | null;
+  modelId?: string | null;
+  runId?: string;
+}
+
+export interface AgentChatResult {
+  sessionId: string;
+  reply: string;
+  rounds: number;
+}
+
+/**
+ * 分级确认：删除/移动是破坏性操作（丢内容或打乱结构），进右栏确认清单；
+ * 新增/编辑可随时 Ctrl+Z 撤销，直接应用。
+ */
+export function partitionAgentOps(ops: AgentOp[]): { auto: AgentOp[]; confirm: AgentOp[] } {
+  const auto: AgentOp[] = [];
+  const confirm: AgentOp[] = [];
+  for (const op of ops) {
+    if (op.action === "delete" || op.action === "move") confirm.push(op);
+    else auto.push(op);
+  }
+  return { auto, confirm };
+}
 
 // ─── 节点颜色映射 ───
 

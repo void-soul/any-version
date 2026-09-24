@@ -29,16 +29,21 @@ import { MindmapModuleSettings, type ExplorerSettings } from "./MindmapSettings"
 import {
   AgentWorkbench,
   clearAnsweredAsks,
+  clearAgentMessages,
   mmAiProgressBuffer,
   openSourceFile,
   progressText,
+  pushAgentMessage,
   fmtNum,
   fmtDur,
   viewLabel,
   useAnsweredAsks,
 } from "./agentShared";
+import { partitionAgentOps, type AgentOp } from "./types";
 
 const ACCENT = moduleAccent();
+// Agent ops 事件已处理标记（模块级：面板重挂后事件缓冲会重放，不能重复应用）
+const handledAgentOpsAt = new Set<number>();
 const MM_LAST_DOC_KEY = "any_version_mindmap_last_doc";
 
 const button = "inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.05] px-2 py-1.5 text-[10px] text-slate-300 transition hover:bg-white/[0.1] hover:text-white disabled:opacity-40";
@@ -2273,7 +2278,8 @@ export default function MindmapPanel() {
   const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
   const [renameDocName, setRenameDocName] = useState("");
   const [showAi, setShowAi] = useState(false);
-  const [aiMode, setAiMode] = useState<"project" | "text">("text");
+  // 对话是主模式（设计目标：AI 成为导图 Agent），导入两模式保留为面板内入口
+  const [aiMode, setAiMode] = useState<"project" | "text" | "chat">("chat");
   const [targetDocumentId, setTargetDocumentId] = useState<string>("");
   const [textTitle, setTextTitle] = useState("");
   const [projectPath, setProjectPath] = useState("");
@@ -2291,6 +2297,10 @@ export default function MindmapPanel() {
   const [sidebarW, setSidebarW] = useState(260);
   // 右栏 AI 对话面板宽度（与左栏把手同一套拖拽逻辑，方向相反）
   const [aiPanelW, setAiPanelW] = useState(440);
+  // Agent 待确认变更清单（删除/移动类 op，等用户裁决后经 mm_ai_answer 回填）
+  const [pendingOps, setPendingOps] = useState<{ runId: string; ops: AgentOp[]; autoApplied: number } | null>(null);
+  // 当前文档的 Agent 会话 id（按文档持久化，后端 mm_agent_get_session 保证存在）
+  const agentSessionRef = useRef<string | null>(null);
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; action: () => void } | null>(null);
   // 计划日历：跨文档按日查看计划（具体发生记录由日历弹窗按可见范围向后端拉取）
   const [showCalendar, setShowCalendar] = useState(false);
@@ -2866,6 +2876,140 @@ export default function MindmapPanel() {
     try { await mmApi.aiCancel(rid); } catch { /* 取消请求本身失败可忽略：运行自然结束时 ref 会被清空 */ }
   }, []);
 
+  // ─── 思维导图 Agent（右栏对话）───
+  // 后端只裁决不执行：写 ops 经 agentOps 事件到达这里，分级应用
+  // （新增/编辑直接落图 + Ctrl+Z 兜底；删除/移动进确认清单），结果经 mm_ai_answer 回填。
+
+  const applyAgentOps = useCallback(async (runId: string, ops: AgentOp[]) => {
+    const docId = full?.document.id;
+    if (!docId) {
+      await mmApi.aiAnswer(runId, { status: "denied", note: "no open document" }).catch(() => {});
+      return;
+    }
+    const { auto, confirm } = partitionAgentOps(ops);
+    let applied = 0;
+    if (auto.length) {
+      commitHistory(); // 先压撤销快照，再写入
+      for (const op of auto) {
+        try {
+          if (op.action === "add" && op.id) {
+            await mmApi.upsertNode({
+              documentId: docId,
+              node: {
+                id: op.id, documentId: docId, parentId: op.parentId ?? null,
+                name: op.name ?? "", detail: op.detail ?? "", kind: op.kind ?? "other",
+                color: op.color ?? "#f59e0b", planAt: null, repeat: "none",
+                sources: [], positionX: 0, positionY: 0,
+                createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+              },
+            });
+            applied++;
+          } else if (op.action === "update" && op.id) {
+            // 只改 op 携带的字段：以库内现值为底，避免把未提及字段清空
+            const f = await mmApi.load(docId);
+            const n = f?.nodes.find((x) => x.id === op.id);
+            if (n) {
+              await mmApi.upsertNode({ documentId: docId, node: { ...n, name: op.name ?? n.name, detail: op.detail ?? n.detail, color: op.color ?? n.color } });
+              applied++;
+            }
+          }
+        } catch (e) { console.error("应用 Agent 变更失败:", e); }
+      }
+      const f = await mmApi.load(docId);
+      if (f) onDocumentUpdated(f);
+    }
+    if (confirm.length) {
+      // 破坏性操作：进右栏确认清单，等用户裁决后再回填
+      setPendingOps({ runId, ops: confirm, autoApplied: applied });
+      return;
+    }
+    await mmApi.aiAnswer(runId, { status: "applied", applied }).catch(() => {});
+  }, [full?.document.id, commitHistory, onDocumentUpdated]);
+
+  // 事件缓冲在面板重挂时会重放历史，用事件时间戳去重，避免重放导致重复应用/重复弹确认
+  useEffect(() => {
+    for (const e of aiProgress) {
+      if (e.step !== "agentOps" || !e.ops?.length || !e.runId || !e.at) continue;
+      if (handledAgentOpsAt.has(e.at)) continue;
+      handledAgentOpsAt.add(e.at);
+      void applyAgentOps(e.runId, e.ops);
+    }
+  }, [aiProgress, applyAgentOps]);
+
+  const confirmPendingOps = useCallback(async () => {
+    const p = pendingOps;
+    if (!p || !full?.document.id) return;
+    setPendingOps(null);
+    const docId = full.document.id;
+    commitHistory();
+    let applied = 0;
+    let lastErr = "";
+    for (const op of p.ops) {
+      try {
+        if (op.action === "delete" && op.id) {
+          // 后端按子树级联删除
+          await mmApi.deleteNode({ documentId: docId, nodeId: op.id });
+          applied++;
+        } else if (op.action === "move" && op.id) {
+          const f = await mmApi.load(docId);
+          const n = f?.nodes.find((x) => x.id === op.id);
+          if (n) {
+            await mmApi.upsertNode({ documentId: docId, node: { ...n, parentId: op.parentId ?? null } });
+            applied++;
+          }
+        }
+      } catch (e) { lastErr = String(e); }
+    }
+    const f = await mmApi.load(docId);
+    if (f) onDocumentUpdated(f);
+    await mmApi.aiAnswer(p.runId, { status: applied > 0 ? "applied" : "denied", applied, note: lastErr || undefined }).catch(() => {});
+  }, [pendingOps, full?.document.id, commitHistory, onDocumentUpdated]);
+
+  const denyPendingOps = useCallback(async () => {
+    const p = pendingOps;
+    if (!p) return;
+    setPendingOps(null);
+    await mmApi.aiAnswer(p.runId, { status: "denied", note: "user rejected" }).catch(() => {});
+  }, [pendingOps]);
+
+  const runAgentChat = useCallback(async (instruction: string) => {
+    const docId = full?.document.id;
+    if (!docId || !providerId || !modelId) return;
+    const runId = crypto.randomUUID ? crypto.randomUUID() : `agent-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    aiRunIdRef.current = runId;
+    setAiLoading(true); setError("");
+    try {
+      const r = await mmApi.agentChat({
+        documentId: docId, sessionId: agentSessionRef.current ?? "", message: instruction,
+        selectedNodeIds: [], providerId, modelId, runId,
+      });
+      agentSessionRef.current = r.sessionId;
+      pushAgentMessage("agent", r.reply);
+    } catch (e) {
+      pushAgentMessage("agent", `${t("agent.runFailed")}：${String(e)}`);
+    } finally { aiRunIdRef.current = null; setAiLoading(false); }
+  }, [full?.document.id, providerId, modelId, t]);
+
+  // 打开右栏（或切换文档）时载入该文档的 Agent 会话历史（按文档持久化）
+  useEffect(() => {
+    if (!showAi || !full?.document.id) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const sid = await mmApi.agentGetSession(full.document.id);
+        if (!alive) return;
+        agentSessionRef.current = sid;
+        const msgs = await mmApi.agentListMessages(sid);
+        if (!alive) return;
+        clearAgentMessages();
+        for (const m of msgs) {
+          if (m.content.trim()) pushAgentMessage(m.role === "user" ? "user" : "agent", m.content);
+        }
+      } catch { /* 会话载入失败不阻断对话 */ }
+    })();
+    return () => { alive = false; };
+  }, [showAi, full?.document.id]);
+
   // AI 弹框关闭：任务进行中先询问（确认后停止任务），空闲则直接关。
   // 只有右上角 ✕ / footer 按钮会走到这里；弹框本身无 Esc/遮罩关闭。
   const requestCloseAi = useCallback(() => {
@@ -3054,6 +3198,33 @@ export default function MindmapPanel() {
                     className="flex h-6 w-6 items-center justify-center rounded-md px-1.5 text-slate-400 transition hover:bg-white/10 hover:text-white">✕</button>
                 </div>
               </div>
+              {/* 待确认变更清单：破坏性 op（删除/移动）等用户裁决，确认/拒绝经 mm_ai_answer 回填 */}
+              {pendingOps && (
+                <div className="mx-2 mt-2 shrink-0 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5">
+                  <div className="mb-1 text-[10px] font-bold text-amber-200">
+                    {t("mindmap.agentConfirmTitle", { count: pendingOps.ops.length })}
+                  </div>
+                  <ul className="mb-2 space-y-0.5 text-[10px] text-amber-100/85">
+                    {pendingOps.ops.slice(0, 6).map((op, i) => {
+                      const name = full?.nodes.find((n) => n.id === op.id)?.name ?? op.id ?? "?";
+                      return (
+                        <li key={`${op.id}-${i}`} className="truncate">
+                          {op.action === "delete"
+                            ? t("mindmap.agentOpDelete", { name })
+                            : t("mindmap.agentOpMove", { name, parent: op.parentId ?? "" })}
+                        </li>
+                      );
+                    })}
+                    {pendingOps.ops.length > 6 && <li className="text-amber-200/60">…</li>}
+                  </ul>
+                  <div className="flex justify-end gap-1.5">
+                    <button type="button" onClick={() => void denyPendingOps()}
+                      className="cursor-pointer rounded-md px-2 py-1 text-[10px] text-slate-400 transition hover:bg-white/10">{t("mindmap.agentDeny")}</button>
+                    <button type="button" onClick={() => void confirmPendingOps()}
+                      className="cursor-pointer rounded-md bg-amber-600 px-2.5 py-1 text-[10px] font-semibold text-white transition hover:bg-amber-500">{t("mindmap.agentConfirm")}</button>
+                  </div>
+                </div>
+              )}
               {/* AI 智能体工作台（项目/文档共用）：会话式多轮 + 阶段计划 + 工具透明 + 流式反馈 */}
               <div className="min-h-0 flex-1 overflow-y-auto">
                 <AgentWorkbench
@@ -3085,7 +3256,7 @@ export default function MindmapPanel() {
                   textTitle={textTitle}
                   onTextTitleChange={setTextTitle}
                   loading={aiLoading}
-                  onRun={(instruction) => { if (aiMode === "project") void runAiProject(instruction); else void runAiText(instruction); }}
+                  onRun={(instruction) => { if (aiMode === "chat") void runAgentChat(instruction); else if (aiMode === "project") void runAiProject(instruction); else void runAiText(instruction); }}
                   onStop={() => void stopAi()}
                   onAnswer={(answer) => { const rid = aiRunIdRef.current; if (rid) void mmApi.aiAnswer(rid, answer).catch((e) => console.error("回答询问失败:", e)); }}
                   result={lastAiResult}
