@@ -904,38 +904,78 @@ pub async fn complete_chat(
     temperature: f32,
     tools_json: Option<&str>,
 ) -> Result<CompleteOutcome, String> {
+    complete_chat_messages(
+        hooks,
+        provider,
+        model,
+        &[
+            serde_json::json!({ "role": "system", "content": system }),
+            serde_json::json!({ "role": "user", "content": user }),
+        ],
+        temperature,
+        tools_json,
+    )
+    .await
+}
+
+/// 多轮消息版非流式调用（[`complete_chat`] 的泛化形态）。
+///
+/// Agent 工具循环需要把 assistant(tool_calls) 与 tool(result) 消息回传给网关继续
+/// 推理，单轮 (system, user) 签名表达不了这种对话形态，故抽出本函数；
+/// 传输韧性（TTFB 超时 / send 重试 / 空响应与限流处理）与单轮版完全一致。
+pub async fn complete_chat_messages(
+    hooks: &dyn ChannelHooks,
+    provider: &AiProvider,
+    model: &str,
+    messages: &[serde_json::Value],
+    temperature: f32,
+    tools_json: Option<&str>,
+) -> Result<CompleteOutcome, String> {
     let client = ai_http_client();
     let url = completion_url(&provider.openai_url);
     let call_id = next_call_id();
     log_call(call_id, &format!(
-        "═══ 非流式请求提交 ═══ model={} provider={}({}) url={} temperature={}\n── system prompt ──\n{}\n── user prompt ──\n{}",
+        "═══ 非流式请求提交 ═══ model={} provider={}({}) url={} temperature={} messages={}\n── 末条消息 ──\n{}",
         model,
         provider.name,
         provider.id,
         url,
         temperature,
-        log_preview(system),
-        log_preview(user)
+        messages.len(),
+        log_preview(messages.last().map(|m| m.to_string()).unwrap_or_default().as_str())
     ));
     let mut body = serde_json::json!({
         "model": model,
-        "messages": [
-            { "role": "system", "content": system },
-            { "role": "user", "content": user }
-        ],
+        "messages": messages,
         "stream": false,
         "temperature": temperature,
     });
-    // 原生 tool-calling：网关支持时强制结构化输出；tool_choice 强制点名工具，
-    // 防止模型「自己决定」要不要调工具（探索场景每次都必须点单）。
+    // 原生 tool-calling：网关支持时携带 tools。tool_choice 策略：spec 只有一个工具时
+    // 强制点名（探索场景每轮必须点单，防止模型「自己决定」要不要调）；多工具（Agent
+    // 循环）用 auto，由模型自行决定调哪个 / 是否直接回答。
     if let Some(spec) = tools_json {
         if let Some(arr) = serde_json::from_str::<serde_json::Value>(spec)
             .ok()
             .filter(|v| v.is_array())
         {
+            let single = arr.as_array().map(|a| a.len() == 1).unwrap_or(false);
+            // 先取出（可能的）强制点名目标，再移交 arr 的所有权
+            let forced_name = if single {
+                arr.get(0)
+                    .and_then(|t| t.get("function"))
+                    .and_then(|f| f.get("name"))
+                    .and_then(|n| n.as_str())
+                    .map(|s| s.to_string())
+            } else {
+                None
+            };
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("tools".into(), arr);
-                obj.insert("tool_choice".into(), serde_json::json!({ "type": "function", "function": { "name": "request_files" } }));
+                if let Some(name) = forced_name {
+                    obj.insert("tool_choice".into(), serde_json::json!({ "type": "function", "function": { "name": name } }));
+                } else {
+                    obj.insert("tool_choice".into(), serde_json::json!("auto"));
+                }
             }
         }
     }

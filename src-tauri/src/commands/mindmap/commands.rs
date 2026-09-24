@@ -1592,6 +1592,569 @@ pub async fn mm_ai_from_text(app: tauri::AppHandle, input: AiGenerateTextInput) 
     result
 }
 
+// ─── 思维导图 Agent（右栏对话）───
+//
+// 与导入流程共用传输通道（ai::channel）与进度/取消/问答基础设施；区别在于：
+// 导入是「单轮 JSON 出口」，Agent 是「多轮工具循环」——模型通过 tools 读写导图。
+// 写操作后端只裁决不执行：ops 以事件发给前端，由前端走既有写路径应用
+// （撤销快照 / 画布刷新 / 持久化保持单一来源），后端阻塞等待前端回填结果。
+
+/// 单轮对话的 LLM 调用轮数上限（含读工具轮），防止循环失控。
+const AGENT_MAX_ROUNDS: usize = 8;
+/// 单批写 ops 的节点数上限。
+const AGENT_MAX_OPS: usize = 50;
+/// 会话历史的字符预算（粗略 4 字符 ≈ 1 token，只求「不会无限膨胀」，精确计数交给网关）。
+const AGENT_HISTORY_CHAR_BUDGET: usize = 24_000;
+/// 等待前端应用/确认 ops 的超时：确认清单可能要等人，放宽到 10 分钟。
+const AGENT_OPS_WAIT_SECS: u64 = 600;
+
+/// Agent 工具集（OpenAI tools 格式）。读工具后端直接执行；写工具构建 ops 交前端应用。
+pub const AGENT_TOOLS_SPEC: &str = r##"[
+  { "type": "function", "function": { "name": "get_document_overview", "description": "获取当前思维导图的大纲（每个节点的 id、父节点、名称），用于了解整体结构。", "parameters": { "type": "object", "properties": {} } } },
+  { "type": "function", "function": { "name": "get_subtree", "description": "读取某个节点及其全部子孙的完整内容（名称、详情 Markdown、类型、颜色）。", "parameters": { "type": "object", "properties": { "root_id": { "type": "string", "description": "子树根节点 id" } }, "required": ["root_id"] } } },
+  { "type": "function", "function": { "name": "search_nodes", "description": "按关键词搜索节点（匹配名称与详情），返回匹配节点的 id 与名称。", "parameters": { "type": "object", "properties": { "keyword": { "type": "string" } }, "required": ["keyword"] } } },
+  { "type": "function", "function": { "name": "add_nodes", "description": "在指定父节点下新增一批兄弟节点。新节点不需要提供 id，系统会生成并在工具结果里返回。要建整棵子树时，按层级多次调用（先挂父，再以返回的 id 为父挂子）。", "parameters": { "type": "object", "properties": { "parent_id": { "type": "string", "description": "父节点 id（必须是大纲中真实存在的 id）" }, "nodes": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string", "description": "节点名称（必填）" }, "detail": { "type": "string", "description": "节点说明，Markdown" }, "kind": { "type": "string", "description": "节点类型" }, "color": { "type": "string", "description": "#RRGGBB" } }, "required": ["name"] } } }, "required": ["parent_id", "nodes"] } } },
+  { "type": "function", "function": { "name": "update_nodes", "description": "批量修改已有节点字段（只传需要修改的字段）。", "parameters": { "type": "object", "properties": { "updates": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "detail": { "type": "string" }, "color": { "type": "string" } }, "required": ["id"] } } }, "required": ["updates"] } } },
+  { "type": "function", "function": { "name": "delete_nodes", "description": "删除节点及其整棵子树。破坏性操作：用户会先看到确认清单，可能拒绝。", "parameters": { "type": "object", "properties": { "ids": { "type": "array", "items": { "type": "string" } } }, "required": ["ids"] } } },
+  { "type": "function", "function": { "name": "move_nodes", "description": "把节点移动/重新挂到另一个父节点下。会改变导图结构：用户会先看到确认清单，可能拒绝。", "parameters": { "type": "object", "properties": { "ids": { "type": "array", "items": { "type": "string" } }, "new_parent_id": { "type": "string" } }, "required": ["ids", "new_parent_id"] } } }
+]"##;
+
+/// 写 op 的分级：新增/编辑直接生效（Ctrl+Z 可撤销），删除/移动必须经用户确认。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentOpClass {
+    /// 直接应用
+    Auto,
+ /// 进入右栏待确认清单
+    Confirm,
+}
+
+fn agent_op_class(action: &str) -> AgentOpClass {
+    match action {
+        "delete" | "move" => AgentOpClass::Confirm,
+        _ => AgentOpClass::Auto,
+    }
+}
+
+/// 校验 AI 给的颜色为 #RRGGBB；不合法返回 None（调用方省略该字段，画布用默认色）。
+fn agent_valid_color(color: Option<&str>) -> Option<String> {
+    let hex = color?.trim().strip_prefix('#')?;
+    if hex.len() == 6 && hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        Some(format!("#{}", hex.to_ascii_lowercase()))
+    } else {
+        None
+    }
+}
+
+/// Agent 系统提示词：角色 + 工具使用规则 + 字段约束。
+fn agent_prompt(doc_name: &str) -> String {
+    format!(
+        r#"你是思维导图「{name}」的智能体助手，工作在导图应用的右侧对话栏里。用户会要求你分析、修改或重组这张导图。
+
+规则：
+1. 涉及导图内容时优先使用工具；修改前先用 get_document_overview 了解结构，必要时 get_subtree / search_nodes 确认细节。引用的 id 必须来自工具返回结果，不要臆造。
+2. add_nodes 的新节点不要提供 id，系统会生成并在工具结果里返回；一次调用挂同一父节点下的一批兄弟节点，建子树时按层级多次调用。
+3. kind 取值：root|module|component|service|route|config|file|task|requirement|constraint|risk|other。color 是 #RRGGBB。
+4. delete_nodes / move_nodes 需要用户在界面上确认；如果被拒绝，不要原样重复提交，先询问顾虑或给出替代方案。
+5. 不改图的分析（总结、找重复与缺口、回答问题）直接回答，引用节点名称。
+6. 全程用中文，简洁，可用 Markdown。"#
+        , name = doc_name)
+}
+
+/// 从「最新往回」收集会话历史直到字符预算用尽，返回保持时间正序的 (role, content)。
+/// 空内容的 assistant 行（纯 ops 载荷）不进上下文——ops 已经体现在用户可见的
+/// 后续对话里，回放进提示词只会重复占预算。
+fn agent_history_window(history: &[AgentMessageRow], budget: usize) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut left = budget;
+    for m in history.iter().rev() {
+        if (m.role != "user" && m.role != "assistant") || m.content.trim().is_empty() {
+            continue;
+        }
+        let cost = m.content.chars().count() + 8;
+        if cost > left {
+            break;
+        }
+        left -= cost;
+        out.push((m.role.clone(), m.content.clone()));
+    }
+    out.reverse();
+    out
+}
+
+/// 节点 id 及其全部子孙 id（含自身）。带已访问去重：脏数据成环时不会死循环。
+fn agent_descendant_ids(nodes: &[MindmapNode], root_id: &str) -> Vec<String> {
+    let mut out = vec![root_id.to_string()];
+    let mut i = 0;
+    while i < out.len() {
+        let cur = out[i].clone();
+        i += 1;
+        for n in nodes {
+            if n.parent_id.as_deref() == Some(cur.as_str()) && !out.iter().any(|x| x == &n.id) {
+                out.push(n.id.clone());
+            }
+        }
+    }
+    out
+}
+
+fn agent_node_brief(n: &MindmapNode, with_detail: bool) -> serde_json::Value {
+    let mut v = serde_json::json!({ "id": n.id, "parentId": n.parent_id, "name": n.name, "kind": n.kind });
+    if with_detail {
+        v["detail"] = serde_json::json!(n.detail);
+        v["color"] = serde_json::json!(n.color);
+        v["planAt"] = serde_json::json!(n.plan_at);
+    }
+    v
+}
+
+/// 读工具：文档大纲（压缩表示，一行一个节点）。
+fn agent_tool_overview(full: &DocumentFull) -> serde_json::Value {
+    let mut outline = String::from("id | parent_id | name\n");
+    for n in &full.nodes {
+        outline.push_str(&format!(
+            "{} | {} | {}\n",
+            n.id,
+            n.parent_id.as_deref().unwrap_or("-"),
+            n.name
+        ));
+    }
+    serde_json::json!({ "document": full.document.name, "total": full.nodes.len(), "outline": outline })
+}
+
+/// 读工具：子树全文。
+fn agent_tool_subtree(full: &DocumentFull, root_id: &str) -> serde_json::Value {
+    if !full.nodes.iter().any(|n| n.id == root_id) {
+        return serde_json::json!({ "error": "节点不存在", "rootId": root_id });
+    }
+    let ids = agent_descendant_ids(&full.nodes, root_id);
+    let nodes: Vec<serde_json::Value> = full
+        .nodes
+        .iter()
+        .filter(|n| ids.iter().any(|i| i == &n.id))
+        .map(|n| agent_node_brief(n, true))
+        .collect();
+    serde_json::json!({ "rootId": root_id, "count": nodes.len(), "nodes": nodes })
+}
+
+/// 读工具：关键词搜索。
+fn agent_tool_search(full: &DocumentFull, keyword: &str) -> serde_json::Value {
+    let kw = keyword.trim().to_lowercase();
+    if kw.is_empty() {
+        return serde_json::json!({ "matches": [] });
+    }
+    let matches: Vec<serde_json::Value> = full
+        .nodes
+        .iter()
+        .filter(|n| n.name.to_lowercase().contains(&kw) || n.detail.to_lowercase().contains(&kw))
+        .take(30)
+        .map(|n| agent_node_brief(n, false))
+        .collect();
+    serde_json::json!({ "matches": matches, "total": full.nodes.len() })
+}
+
+/// 把一次写工具调用归一化为 ops 数组（每个受影响节点一条，camelCase 直达前端）。
+fn agent_build_ops(action: &str, args: &serde_json::Value) -> Result<Vec<serde_json::Value>, String> {
+    let mut ops: Vec<serde_json::Value> = Vec::new();
+    match action {
+        "add_nodes" => {
+            let parent = args.get("parentId").and_then(|v| v.as_str()).unwrap_or_default().trim().to_string();
+            let nodes = args.get("nodes").and_then(|v| v.as_array()).ok_or("add_nodes 缺少 nodes")?;
+            for n in nodes.iter().take(AGENT_MAX_OPS) {
+                let name = n.get("name").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                ops.push(serde_json::json!({
+                    "action": "add",
+                    "id": super::db::new_id("agent"),
+                    "parentId": parent,
+                    "name": name,
+                    "detail": n.get("detail").and_then(|v| v.as_str()).unwrap_or(""),
+                    "kind": n.get("kind").and_then(|v| v.as_str()).unwrap_or("other"),
+                    "color": agent_valid_color(n.get("color").and_then(|v| v.as_str())),
+                }));
+            }
+            if ops.is_empty() {
+                return Err("add_nodes 没有有效节点（name 不能为空）".into());
+            }
+        }
+        "update_nodes" => {
+            for u in args.get("updates").and_then(|v| v.as_array()).ok_or("update_nodes 缺少 updates")?.iter().take(AGENT_MAX_OPS) {
+                let id = u.get("id").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+                if id.is_empty() {
+                    continue;
+                }
+                let mut op = serde_json::json!({ "action": "update", "id": id });
+                for (key, field) in [("name", "name"), ("detail", "detail")] {
+                    if let Some(v) = u.get(key).and_then(|v| v.as_str()) {
+                        op[field] = serde_json::json!(v);
+                    }
+                }
+                if let Some(c) = agent_valid_color(u.get("color").and_then(|v| v.as_str())) {
+                    op["color"] = serde_json::json!(c);
+                }
+                if op.get("name").is_none() && op.get("detail").is_none() && op.get("color").is_none() {
+                    continue;
+                }
+                ops.push(op);
+            }
+            if ops.is_empty() {
+                return Err("update_nodes 没有有效更新".into());
+            }
+        }
+        "delete_nodes" => {
+            for id in args.get("ids").and_then(|v| v.as_array()).ok_or("delete_nodes 缺少 ids")?.iter().take(AGENT_MAX_OPS) {
+                let id = id.as_str().unwrap_or("").trim();
+                if !id.is_empty() {
+                    ops.push(serde_json::json!({ "action": "delete", "id": id }));
+                }
+            }
+            if ops.is_empty() {
+                return Err("delete_nodes 没有有效 id".into());
+            }
+        }
+        "move_nodes" => {
+            let parent = args.get("newParentId").and_then(|v| v.as_str()).unwrap_or_default().trim().to_string();
+            if parent.is_empty() {
+                return Err("move_nodes 缺少 newParentId".into());
+            }
+            for id in args.get("ids").and_then(|v| v.as_array()).ok_or("move_nodes 缺少 ids")?.iter().take(AGENT_MAX_OPS) {
+                let id = id.as_str().unwrap_or("").trim();
+                if !id.is_empty() {
+                    ops.push(serde_json::json!({ "action": "move", "id": id, "parentId": parent }));
+                }
+            }
+            if ops.is_empty() {
+                return Err("move_nodes 没有有效 id".into());
+            }
+        }
+        other => return Err(format!("未知写工具 {}", other)),
+    }
+    Ok(ops)
+}
+
+/// 写工具处理：构建 ops → 防环校验 → 事件发给前端 → 阻塞等待应用/确认结果。
+/// 返回 (全部 ops, 给模型的工具结果)。回填复用问答通道（mm_ai_answer）：
+/// 前端把应用/确认结果作为 answer 发回，取消时通道收到 Null。
+async fn agent_handle_write(
+    app: &Option<tauri::AppHandle>,
+    cancel: &std::sync::atomic::AtomicBool,
+    full: &DocumentFull,
+    run_id: &str,
+    name: &str,
+    args: &serde_json::Value,
+) -> Result<(Vec<serde_json::Value>, serde_json::Value), String> {
+    let ops = agent_build_ops(name, args)?;
+    // 防环：move 的目标父节点不能是被移动节点自身或其后代
+    for op in ops.iter().filter(|o| o.get("action").and_then(|v| v.as_str()) == Some("move")) {
+        let id = op.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+        let new_parent = op.get("parentId").and_then(|v| v.as_str()).unwrap_or_default();
+        if agent_descendant_ids(&full.nodes, id).iter().any(|x| x == new_parent) {
+            return Err("不能把节点移动到它自身或它的子孙节点下".into());
+        }
+    }
+    let need_confirm = ops
+        .iter()
+        .any(|o| o.get("action").and_then(|v| v.as_str()).map(agent_op_class) == Some(AgentOpClass::Confirm));
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<serde_json::Value>();
+    emit_progress(app, "agentOps", serde_json::json!({
+        "runId": run_id,
+        "needConfirm": need_confirm,
+        "ops": ops,
+    }));
+    ask_register(run_id, tx);
+    let ack = match tokio::time::timeout(std::time::Duration::from_secs(AGENT_OPS_WAIT_SECS), rx).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(_)) => serde_json::Value::Null,
+        Err(_) => {
+            ask_send_cancel(run_id);
+            return Err("等待前端应用变更超时".into());
+        }
+    };
+    if ack.is_null() {
+        // mm_ai_cancel 会向问答通道发 Null：任务被用户停止
+        cancel_err(app, cancel)?;
+        return Err(ERR_CANCELLED.into());
+    }
+    let status = ack.get("status").and_then(|v| v.as_str()).unwrap_or("applied").to_string();
+    Ok((ops.clone(), serde_json::json!({
+        "status": status,
+        "ops": ops,
+        "note": ack.get("note").cloned().unwrap_or(serde_json::Value::Null),
+    })))
+}
+
+/// 一轮 Agent 对话的产物。
+struct AgentTurn {
+    reply: String,
+    rounds: usize,
+}
+
+/// Agent 工具循环：LLM ↔ 工具（读直执 / 写经前端），直到给出最终回答或轮数耗尽。
+/// `messages[0]` 必须是 system。返回最终回复与本轮实际提交的 ops（用于落库）。
+#[allow(clippy::too_many_arguments)]
+async fn agent_run(
+    app: &Option<tauri::AppHandle>,
+    cancel: &std::sync::atomic::AtomicBool,
+    acc: &UsageAcc,
+    provider: &ai::models::AiProvider,
+    model: &str,
+    full: &DocumentFull,
+    session_id: &str,
+    run_id: &str,
+    messages: &mut Vec<serde_json::Value>,
+) -> Result<AgentTurn, String> {
+    let hooks = MmHooks { app, cancel };
+    let mut all_ops: Vec<serde_json::Value> = Vec::new();
+    for round in 0..AGENT_MAX_ROUNDS {
+        cancel_err(app, cancel)?;
+        let outcome = ai::channel::complete_chat_messages(&hooks, provider, model, messages, 0.4, Some(AGENT_TOOLS_SPEC))
+            .await
+            .map_err(|e| {
+                if e.contains("tool") && e.contains("400") {
+                    format!("{}（当前模型/网关可能不支持工具调用，请更换模型）", e)
+                } else {
+                    e
+                }
+            })?;
+        if let Some(u) = &outcome.usage {
+            record_and_emit_usage(app, acc, model, &provider.id, u);
+        }
+        let message = outcome.message.clone().ok_or("AI响应缺少 message")?;
+        let tool_calls = message
+            .get("tool_calls")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        if tool_calls.is_empty() {
+            let reply = outcome.text.trim().to_string();
+            if reply.is_empty() {
+                return Err("AI返回空".into());
+            }
+            let _ = super::db::agent_append_message(session_id, "assistant", &reply, "[]");
+            return Ok(AgentTurn { reply, rounds: round + 1 });
+        }
+        // assistant(tool_calls) 原样回传（OpenAI 协议要求带上它才能接 tool 消息）
+        messages.push(message.clone());
+        let mut tool_results: Vec<serde_json::Value> = Vec::new();
+        for tc in &tool_calls {
+            let call_id = tc.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let name = tc
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let raw_args = tc.get("function").and_then(|f| f.get("arguments")).cloned();
+            let args = match raw_args {
+                Some(serde_json::Value::String(s)) => {
+                    serde_json::from_str::<serde_json::Value>(s.trim()).unwrap_or(serde_json::json!({}))
+                }
+                Some(v @ serde_json::Value::Object(_)) => v,
+                _ => serde_json::json!({}),
+            };
+            let result: serde_json::Value = match name.as_str() {
+                "get_document_overview" => agent_tool_overview(full),
+                "get_subtree" => agent_tool_subtree(full, args.get("rootId").and_then(|v| v.as_str()).unwrap_or_else(|| args.get("root_id").and_then(|v| v.as_str()).unwrap_or(""))),
+                "search_nodes" => agent_tool_search(full, args.get("keyword").and_then(|v| v.as_str()).unwrap_or("")),
+                "add_nodes" | "update_nodes" | "delete_nodes" | "move_nodes" => {
+                    match agent_handle_write(app, cancel, full, run_id, &name, &args).await {
+                        Ok((ops, ack)) => {
+                            all_ops.extend(ops.iter().cloned());
+                            // 纯 ops 载荷落库：回放时展示，不重放执行
+                            let _ = super::db::agent_append_message(session_id, "assistant", "", &serde_json::to_string(&ops).unwrap_or_else(|_| "[]".into()));
+                            ack
+                        }
+                        Err(e) => serde_json::json!({ "status": "error", "error": e }),
+                    }
+                }
+                other => serde_json::json!({ "status": "error", "error": format!("未知工具 {}", other) }),
+            };
+            tool_results.push(serde_json::json!({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": result.to_string(),
+            }));
+        }
+        messages.extend(tool_results);
+    }
+    Err(format!("Agent 连续 {} 轮未给出最终回答，已停止", AGENT_MAX_ROUNDS))
+}
+
+/// Agent 一轮对话入口：确保会话 → 构建上下文与历史 → 跑工具循环 → 落库并返回。
+#[tauri::command]
+pub async fn mm_agent_chat(app: tauri::AppHandle, input: AgentChatInput) -> Result<AgentChatResult, String> {
+    let app_opt = Some(app);
+    let user_text = input.message.trim().to_string();
+    let run_id = if input.run_id.trim().is_empty() { "agent".to_string() } else { input.run_id.clone() };
+    let cancel = ai_cancel_flag(&run_id);
+    let result = async {
+        let full = super::db::load_full(&input.document_id)?.ok_or("文档不存在")?;
+        let (provider, model) = resolve_provider_model(&input.provider_id, &input.model_id)?;
+        let session_id = if input.session_id.trim().is_empty() {
+            super::db::agent_ensure_session(&input.document_id)?
+        } else {
+            input.session_id.clone()
+        };
+
+        // 上下文：system + 历史（按预算裁剪）+ 大纲/选中子树 + 本轮用户输入
+        let history = super::db::agent_list_messages(&session_id)?;
+        let mut messages = vec![serde_json::json!({ "role": "system", "content": agent_prompt(&full.document.name) })];
+        let mut insert_at = 1usize;
+        for (role, content) in agent_history_window(&history, AGENT_HISTORY_CHAR_BUDGET) {
+            messages.insert(insert_at, serde_json::json!({ "role": role, "content": content }));
+            insert_at += 1;
+        }
+        let selected = if input.selected_node_ids.is_empty() {
+            String::from("当前没有选中节点。")
+        } else {
+            let mut parts = Vec::new();
+            for id in input.selected_node_ids.iter().take(3) {
+                if full.nodes.iter().any(|n| n.id == *id) {
+                    parts.push(agent_tool_subtree(&full, id).to_string());
+                }
+            }
+            if parts.is_empty() {
+                String::from("当前没有选中节点。")
+            } else {
+                format!("用户当前选中的节点（完整子树）：\n{}", parts.join("\n"))
+            }
+        };
+        let user_content = if user_text.is_empty() {
+            format!("（用户点击了继续）\n\n{}", selected)
+        } else {
+            format!("{}\n\n{}", user_text, selected)
+        };
+        messages.push(serde_json::json!({ "role": "user", "content": user_content }));
+
+        // 空输入（「继续」）不重复落一条空用户消息
+        if !user_text.is_empty() {
+            super::db::agent_append_message(&session_id, "user", &user_text, "[]")?;
+        }
+
+        let usage = UsageAcc::default();
+        let turn = agent_run(&app_opt, &cancel, &usage, &provider, &model, &full, &session_id, &run_id, &mut messages).await?;
+        let u = usage.snapshot();
+        if u.requests > 0 {
+            let _ = super::db::add_ai_usage(&input.document_id, u.input_tokens, u.output_tokens);
+        }
+        Ok(AgentChatResult { session_id, reply: turn.reply, rounds: turn.rounds as u32 })
+    }
+    .await;
+    ai_drop_flag(&run_id);
+    result
+}
+
+/// 取文档的 Agent 会话 id（不存在则新建）。
+#[tauri::command]
+pub fn mm_agent_get_session(document_id: String) -> Result<String, String> {
+    super::db::agent_ensure_session(&document_id)
+}
+
+/// 列出会话消息（按时间正序；前端回放右栏对话）。
+#[tauri::command]
+pub fn mm_agent_list_messages(session_id: String) -> Result<Vec<AgentMessageRow>, String> {
+    super::db::agent_list_messages(&session_id)
+}
+
+#[cfg(test)]
+mod agent_tests {
+    use super::*;
+
+    #[test]
+    fn agent_op_class_routes_destructive_ops_to_confirm() {
+        // 删除/移动会丢内容或打乱结构 → 必须确认；新增/编辑可撤销 → 直接生效
+        assert_eq!(agent_op_class("delete"), AgentOpClass::Confirm);
+        assert_eq!(agent_op_class("move"), AgentOpClass::Confirm);
+        assert_eq!(agent_op_class("add"), AgentOpClass::Auto);
+        assert_eq!(agent_op_class("update"), AgentOpClass::Auto);
+        assert_eq!(agent_op_class("未知动作"), AgentOpClass::Auto);
+    }
+
+    #[test]
+    fn agent_valid_color_accepts_only_rrggbb() {
+        assert_eq!(agent_valid_color(Some("#FF8800")).as_deref(), Some("#ff8800"));
+        assert_eq!(agent_valid_color(Some(" #A1B2C3 ")).as_deref(), Some("#a1b2c3"));
+        // 非法：缺 #、长度不对、非十六进制
+        assert_eq!(agent_valid_color(Some("FF8800")), None);
+        assert_eq!(agent_valid_color(Some("#F80")), None);
+        assert_eq!(agent_valid_color(Some("#GG0000")), None);
+        assert_eq!(agent_valid_color(None), None);
+        assert_eq!(agent_valid_color(Some("")), None);
+    }
+
+    #[test]
+    fn agent_history_window_keeps_order_and_respects_budget() {
+        fn row(role: &str, content: &str) -> AgentMessageRow {
+            AgentMessageRow {
+                id: String::new(),
+                session_id: String::new(),
+                role: role.into(),
+                content: content.into(),
+                ops_json: "[]".into(),
+                created_at: String::new(),
+            }
+        }
+        let history = vec![
+            row("user", "第一条"),
+            row("assistant", "第一条回答"),
+            // 纯 ops 载荷行：不进上下文
+            row("assistant", ""),
+            row("user", "第二条"),
+        ];
+        let win = agent_history_window(&history, 10_000);
+        assert_eq!(win.len(), 3);
+        assert_eq!(win[0], ("user".to_string(), "第一条".to_string()));
+        assert_eq!(win[2], ("user".to_string(), "第二条".to_string()));
+
+        // 预算只够两条时，从最新往回保留
+        let win = agent_history_window(&history, ("第二条".chars().count() + 8) as usize);
+        assert_eq!(win, vec![("user".to_string(), "第二条".to_string())]);
+    }
+
+    #[test]
+    fn agent_tools_spec_is_valid_openai_tools_array() {
+        let spec: serde_json::Value = serde_json::from_str(AGENT_TOOLS_SPEC).expect("工具集必须是合法 JSON");
+        let arr = spec.as_array().expect("工具集必须是数组");
+        assert!(arr.len() >= 7);
+        for t in arr {
+            let name = t.get("function").and_then(|f| f.get("name")).and_then(|v| v.as_str());
+            assert!(name.is_some_and(|n| !n.is_empty()), "每个工具必须有 function.name");
+        }
+    }
+
+    #[test]
+    fn agent_build_ops_normalizes_add_with_generated_ids() {
+        let args = serde_json::json!({
+            "parentId": "root-1",
+            "nodes": [
+                { "name": "模块A", "detail": "职责", "kind": "module", "color": "#00FF00" },
+                { "name": "  " },
+                { "color": "#00FF00" }
+            ]
+        });
+        let ops = agent_build_ops("add_nodes", &args).unwrap();
+        // 空名与缺名节点被跳过
+        assert_eq!(ops.len(), 1);
+        let op = &ops[0];
+        assert_eq!(op["action"], "add");
+        assert_eq!(op["parentId"], "root-1");
+        assert_eq!(op["name"], "模块A");
+        assert_eq!(op["color"], "#00ff00");
+        // id 由后端生成，模型引用它时有据可依
+        assert!(op["id"].as_str().is_some_and(|s| s.starts_with("agent_")));
+    }
+
+    #[test]
+    fn agent_build_ops_rejects_invalid_input() {
+        assert!(agent_build_ops("add_nodes", &serde_json::json!({ "nodes": [] })).is_err());
+        assert!(agent_build_ops("delete_nodes", &serde_json::json!({ "ids": ["  "] })).is_err());
+        assert!(agent_build_ops("move_nodes", &serde_json::json!({ "ids": ["a"] })).is_err());
+        assert!(agent_build_ops("unknown", &serde_json::json!({})).is_err());
+    }
+}
+
 // ─── 子树重新分析 ───
 
 /// 子树重析 prompt：结构化 JSON 输出 + 校验约束（kind 白名单/color/progress/父引用）。

@@ -249,6 +249,52 @@ pub struct AiGenerateInput {
     pub model_id: Option<String>,
 }
 
+// ─── AI Agent 对话（右栏）───
+
+/// 思维导图 Agent 单轮对话输入。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentChatInput {
+    pub document_id: String,
+    /// 会话 id：空 = 自动取该文档最近会话（不存在则新建）
+    #[serde(default)]
+    pub session_id: String,
+    /// 用户输入；允许为空串（表示「继续」，例如确认变更后的续跑）
+    #[serde(default)]
+    pub message: String,
+    /// 当前画布选中节点：作为聚焦上下文提供给 Agent
+    #[serde(default)]
+    pub selected_node_ids: Vec<String>,
+    pub provider_id: Option<String>,
+    pub model_id: Option<String>,
+    /// 取消/回填标识（复用导入流程的取消与问答通道机制）
+    #[serde(default)]
+    pub run_id: String,
+}
+
+/// 会话消息（落库形态，前端按 role 渲染）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentMessageRow {
+    pub id: String,
+    pub session_id: String,
+    /// user | assistant | system
+    pub role: String,
+    pub content: String,
+    /// 该条消息携带的写操作 JSON 数组（用户消息为 "[]"）；回放只展示不执行
+    pub ops_json: String,
+    pub created_at: String,
+}
+
+/// Agent 一轮对话的输出。
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentChatResult {
+    pub session_id: String,
+    pub reply: String,
+    pub rounds: u32,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiGenerateProjectInput {

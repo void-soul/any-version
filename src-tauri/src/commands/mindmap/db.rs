@@ -51,6 +51,19 @@ fn build_connection() -> Result<rusqlite::Connection, String> {
             FOREIGN KEY(document_id) REFERENCES mindmap_documents(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_mm_links_doc ON mindmap_links(document_id);
+        CREATE TABLE IF NOT EXISTS mindmap_agent_sessions (
+            id TEXT PRIMARY KEY, document_id TEXT NOT NULL,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            FOREIGN KEY(document_id) REFERENCES mindmap_documents(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_mm_agent_sessions_doc ON mindmap_agent_sessions(document_id);
+        CREATE TABLE IF NOT EXISTS mindmap_agent_messages (
+            id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '', ops_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(session_id) REFERENCES mindmap_agent_sessions(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_mm_agent_messages_session ON mindmap_agent_messages(session_id);
     "#).map_err(|e| format!("初始化思维导图表失败: {}", e))?;
 
     // 旧版本贴纸表没有 image_data，启动时幂等补列，保留已有文字贴纸。
@@ -317,6 +330,76 @@ fn touch_document_inner(c: &rusqlite::Connection, id: &str) -> Result<(), String
 
 pub fn touch_document(id: &str) -> Result<(), String> {
     with_conn(|c| touch_document_inner(c, id))
+}
+
+// ─── AI Agent 会话（按文档持久化）───
+
+/// 取文档的 Agent 会话：取最近一个，不存在则新建（一个文档一个活跃会话）。
+pub fn agent_ensure_session(document_id: &str) -> Result<String, String> {
+    use rusqlite::OptionalExtension;
+    with_conn(|c| {
+        let existing: Option<String> = sql(
+            c.query_row(
+                "SELECT id FROM mindmap_agent_sessions WHERE document_id=?1 ORDER BY updated_at DESC LIMIT 1",
+                rusqlite::params![document_id],
+                |r| r.get(0),
+            )
+            .optional(),
+        )?;
+        if let Some(id) = existing {
+            return Ok(id);
+        }
+        let id = new_id("mas");
+        let ts = now_ts();
+        sql(c.execute(
+            "INSERT INTO mindmap_agent_sessions(id,document_id,created_at,updated_at) VALUES(?1,?2,?3,?3)",
+            rusqlite::params![id, document_id, ts],
+        ))?;
+        Ok(id)
+    })
+}
+
+/// 追加一条会话消息，并顺带刷新会话的 updated_at。
+pub fn agent_append_message(session_id: &str, role: &str, content: &str, ops_json: &str) -> Result<String, String> {
+    with_conn(|c| {
+        let id = new_id("mam");
+        let ts = now_ts();
+        sql(c.execute(
+            "INSERT INTO mindmap_agent_messages(id,session_id,role,content,ops_json,created_at) VALUES(?1,?2,?3,?4,?5,?6)",
+            rusqlite::params![id, session_id, role, content, ops_json, ts],
+        ))?;
+        sql(c.execute(
+            "UPDATE mindmap_agent_sessions SET updated_at=?1 WHERE id=?2",
+            rusqlite::params![ts, session_id],
+        ))?;
+        Ok(id)
+    })
+}
+
+/// 按时间正序列出会话消息（前端回放 + 后端构建上下文共用）。
+pub fn agent_list_messages(session_id: &str) -> Result<Vec<crate::commands::mindmap::models::AgentMessageRow>, String> {
+    with_conn(|c| {
+        let mut s = c
+            .prepare("SELECT id,session_id,role,content,ops_json,created_at FROM mindmap_agent_messages WHERE session_id=?1 ORDER BY created_at,id")
+            .map_err(|e| e.to_string())?;
+        let rows = s
+            .query_map(rusqlite::params![session_id], |r| {
+                Ok(crate::commands::mindmap::models::AgentMessageRow {
+                    id: r.get(0)?,
+                    session_id: r.get(1)?,
+                    role: r.get(2)?,
+                    content: r.get(3)?,
+                    ops_json: r.get(4)?,
+                    created_at: r.get(5)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| e.to_string())?);
+        }
+        Ok(out)
+    })
 }
 
 /// 记录文档来源（AI 项目导入时存项目根路径，供证据文件定位）。
