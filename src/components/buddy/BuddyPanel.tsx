@@ -52,6 +52,7 @@ import {
   ListChecks,
   Cat,
   Star,
+  Package,
 } from "lucide-react";
 
 export interface BuddyAccount {
@@ -827,6 +828,8 @@ export default function BuddyPanel() {
   const [oauth, setOauth] = useState<OAuthStartResponse | null>(null);
   const [oauthBusy, setOauthBusy] = useState(false);
   const [tokenInput, setTokenInput] = useState("");
+  // WorkDaddy「账号导出」的密码（只有加密导出包需要，明文 JSON 留空即可）
+  const [workdaddyPassword, setWorkdaddyPassword] = useState("");
 
   // 会话
   const [sessions, setSessions] = useState<BuddySessionRecord[]>([]);
@@ -1331,6 +1334,38 @@ export default function BuddyPanel() {
       } else {
         showMsg(false, t("buddy.noLocalLogin"));
       }
+      await load();
+    } catch (e) {
+      showMsg(false, String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 第三方工具导出文件导入（WorkDaddy 加密包 / cockpit-tools 明文 JSON，均不读取对方数据目录） */
+  const importThirdParty = async (tool: "workdaddy" | "cockpit-tools") => {
+    if (tool === "workdaddy" && !workdaddyPassword.trim()) {
+      showMsg(false, t("buddy.importWorkdaddyPasswordRequired"));
+      return;
+    }
+    try {
+      const selected = await openDialog({
+        title: tool === "workdaddy" ? t("buddy.importWorkdaddyPick") : t("buddy.importCockpitPick"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!selected) return;
+      const path = Array.isArray(selected) ? selected[0] : selected;
+      setBusy(true);
+      setMessage(null);
+      const content = await invoke<string>("read_text_file", { path });
+      const imported = await invoke<BuddyAccount[]>("buddy_import_third_party", {
+        platform,
+        tool,
+        jsonContent: content,
+        password: tool === "workdaddy" ? workdaddyPassword : null,
+      });
+      showMsg(true, t("buddy.importedThirdParty", { count: imported.length }));
+      setShowAdd(false);
       await load();
     } catch (e) {
       showMsg(false, String(e));
@@ -3500,6 +3535,42 @@ export default function BuddyPanel() {
                   {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
                   {t("buddy.importLocal")}
                 </button>
+
+                {/* 第三方工具导出文件（不读取对方数据目录，仅解析导出的 JSON） */}
+                <p className="text-[10px] text-slate-500 pt-3 border-t border-white/10">{t("buddy.importSourceTitle")}</p>
+
+                {platform === "workbuddy" && (
+                  <div className="space-y-1.5">
+                    <input
+                      type="password"
+                      value={workdaddyPassword}
+                      onChange={(e) => setWorkdaddyPassword(e.target.value)}
+                      placeholder={t("buddy.importWorkdaddyPassword")}
+                      className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white outline-none focus:border-[var(--module-accent)]/50 placeholder:text-slate-600"
+                    />
+                    <button
+                      onClick={() => void importThirdParty("workdaddy")}
+                      disabled={busy}
+                      className="w-full px-3 py-2 rounded-lg text-[11px] border border-white/10 hover:border-[var(--module-accent)]/40 hover:bg-white/5 text-slate-200 flex items-center justify-center gap-1 cursor-pointer transition disabled:opacity-50"
+                    >
+                      {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Package className="w-3 h-3" />}
+                      {t("buddy.importWorkdaddy")}
+                    </button>
+                    <p className="text-[9px] text-slate-600 leading-relaxed">{t("buddy.importWorkdaddyHint")}</p>
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <button
+                    onClick={() => void importThirdParty("cockpit-tools")}
+                    disabled={busy}
+                    className="w-full px-3 py-2 rounded-lg text-[11px] border border-white/10 hover:border-[var(--module-accent)]/40 hover:bg-white/5 text-slate-200 flex items-center justify-center gap-1 cursor-pointer transition disabled:opacity-50"
+                  >
+                    {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <FolderOpen className="w-3 h-3" />}
+                    {t("buddy.importCockpit")}
+                  </button>
+                  <p className="text-[9px] text-slate-600 leading-relaxed">{t("buddy.importCockpitHint")}</p>
+                </div>
               </div>
             )}
           </div>
