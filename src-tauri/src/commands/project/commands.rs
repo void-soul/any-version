@@ -1929,7 +1929,7 @@ pub struct GitRepoStatus {
 fn run_git_cmd(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
     let mut cmd = std::process::Command::new("git");
     cmd.current_dir(dir);
-    cmd.args(args);
+    cmd.args(crate::commands::utils::with_git_long_paths(args));
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -2087,7 +2087,7 @@ pub fn update_git_repo(path: String, bootstrap_cmd: Option<String>) -> Result<()
 
     let mut pull_cmd = std::process::Command::new("git");
     pull_cmd.current_dir(dir);
-    pull_cmd.args(&["pull"]);
+    pull_cmd.args(crate::commands::utils::with_git_long_paths(&["pull"]));
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

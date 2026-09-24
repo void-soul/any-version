@@ -952,7 +952,12 @@ pub async fn install_skill_from_source(source: String) -> Result<(), String> {
     #[cfg(windows)]
     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     let output = cmd
-        .args(["clone", "--depth", "1", &repo_url])
+        .args(crate::commands::utils::with_git_long_paths(&[
+            "clone",
+            "--depth",
+            "1",
+            &repo_url,
+        ]))
         .arg(&temp_dir)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1022,7 +1027,12 @@ pub async fn install_skill_from_online(
     #[cfg(windows)]
     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     let output = cmd
-        .args(["clone", "--depth", "1", &repo_url])
+        .args(crate::commands::utils::with_git_long_paths(&[
+            "clone",
+            "--depth",
+            "1",
+            &repo_url,
+        ]))
         .arg(&temp_dir)
         .stdout(Stdio::null())
         .stderr(Stdio::null())

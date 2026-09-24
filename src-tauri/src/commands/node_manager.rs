@@ -1796,13 +1796,14 @@ pub async fn npm_install(app: tauri::AppHandle, project_id: String) -> Result<()
     let _ = fs::create_dir_all(parent);
     let _ = fs::remove_dir_all(&dir);
     // 直接指定克隆目标目录为托管目录 {id}，避免依赖仓库名。
-    let clone_args: Vec<String> = vec![
-        "clone".to_string(),
-        "--depth".to_string(),
-        "1".to_string(),
-        def.repo.clone(),
-        dir.to_string_lossy().to_string(),
-    ];
+    let dest = dir.to_string_lossy().to_string();
+    let clone_args: Vec<String> = crate::commands::utils::with_git_long_paths(&[
+        "clone",
+        "--depth",
+        "1",
+        def.repo.as_str(),
+        dest.as_str(),
+    ]);
     let arg_refs: Vec<&str> = clone_args.iter().map(|s| s.as_str()).collect();
     let (ok, last_err, _out) = run_capture_live(&app, &def.id, "clone", "git", &arg_refs, Some(parent), &[], None);
     if !ok {
@@ -2762,7 +2763,7 @@ fn version_gt(a: &str, b: &str) -> bool {
 fn git_cmd(dir: &Path, args: &[&str]) -> Result<String, String> {
     let mut cmd = std::process::Command::new("git");
     cmd.current_dir(dir);
-    cmd.args(args);
+    cmd.args(crate::commands::utils::with_git_long_paths(args));
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

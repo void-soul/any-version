@@ -946,6 +946,25 @@ pub fn sync_mihomo_geo() {
     }
 }
 
+/// 给 git 子命令参数加上长路径开关。
+///
+/// Windows 的 MAX_PATH(260) 会让深目录仓库的 `git clone` / `checkout` 直接失败
+/// （典型报错：`Filename too long`），`-c core.longpaths=true` 让 git 改用
+/// `\\?\` 前缀的长路径。git 的全局选项必须排在子命令之前，故用前缀而不是追加。
+/// 非 Windows 原样返回，调用方可无条件使用。
+///
+/// 抄自 ai-toolbox 95bdfdf3（`fix: Windows端clone仓库path过深的问题`）。
+pub fn with_git_long_paths(args: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(args.len() + 2);
+    #[cfg(windows)]
+    {
+        out.push("-c".to_string());
+        out.push("core.longpaths=true".to_string());
+    }
+    out.extend(args.iter().map(|s| s.to_string()));
+    out
+}
+
 
 
 #[cfg(test)]
@@ -998,6 +1017,35 @@ mod tests {
     fn validate_subst_value_rejects_empty() {
         assert!(validate_subst_value("").is_err());
         assert!(validate_subst_value("   ").is_err());
+    }
+
+    #[test]
+    fn with_git_long_paths_enables_core_longpaths_on_windows() {
+        // Windows 的 MAX_PATH(260) 会让深目录仓库 clone/checkout 直接失败；
+        // `-c core.longpaths=true` 让 git 改用 \\?\ 前缀的长路径。
+        // 抄自 ai-toolbox 95bdfdf3（`fix: Windows端clone仓库path过深的问题`）。
+        let args = with_git_long_paths(&["clone", "--depth", "1", "url", "dest"]);
+        let expected: Vec<String> = if cfg!(windows) {
+            vec!["-c", "core.longpaths=true", "clone", "--depth", "1", "url", "dest"]
+        } else {
+            vec!["clone", "--depth", "1", "url", "dest"]
+        }
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        assert_eq!(args, expected);
+    }
+
+    #[test]
+    fn with_git_long_paths_keeps_original_args_intact() {
+        // 前缀不得吞掉或改写原有参数（顺序敏感：git 的全局选项必须在子命令之前）。
+        let args = with_git_long_paths(&["pull"]);
+        assert_eq!(args.last().map(String::as_str), Some("pull"));
+        assert_eq!(args.len(), if cfg!(windows) { 3 } else { 1 });
+        if cfg!(windows) {
+            assert_eq!(args[0], "-c");
+            assert_eq!(args[1], "core.longpaths=true");
+        }
     }
 
     #[test]
