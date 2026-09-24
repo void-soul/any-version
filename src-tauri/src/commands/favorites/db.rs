@@ -36,6 +36,9 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
             ai_at        TEXT,
             created_at   TEXT    NOT NULL,
             updated_at   TEXT    NOT NULL,
+            -- 平台记录的**收藏时间**（GitHub starred_at / B站 fav_time / 知乎 created）。
+            -- 老库与取不到时间的来源为 NULL，展示与排序回退到 created_at（本地首次入库时间）。
+            favorited_at TEXT,
             UNIQUE(source, external_id)
         );
         CREATE INDEX IF NOT EXISTS idx_favorite_source       ON favorite(source);
@@ -98,7 +101,38 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
                 .map_err(|e| format!("升级收藏库失败（{}）: {}", column, e))?;
         }
     }
+    // favorite 表同样要补「收藏时间」列（见建表注释）
+    if !has_column(conn, "favorite", "favorited_at")? {
+        conn.execute("ALTER TABLE favorite ADD COLUMN favorited_at TEXT", [])
+            .map_err(|e| format!("升级收藏库失败（favorited_at）: {}", e))?;
+    }
+    // 索引必须等补列之后再建：老库上表里还没有这一列时，建索引会直接报错
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_favorite_favorited ON favorite(favorited_at)",
+        [],
+    )
+    .map_err(|e| format!("初始化收藏库失败: {}", e))?;
     Ok(())
+}
+
+/// unix 秒 → 本地时间字符串（与 [`now_str`] 同一格式，便于直接按字符串排序与比较）。
+pub fn unix_to_local_str(secs: i64) -> Option<String> {
+    chrono::DateTime::from_timestamp(secs, 0).map(|dt| {
+        dt.with_timezone(&chrono::Local)
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string()
+    })
+}
+
+/// RFC3339（GitHub 的 `starred_at` 形如 `2021-01-01T00:00:00Z`）→ 本地时间字符串。
+pub fn rfc3339_to_local_str(value: &str) -> Option<String> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|dt| {
+            dt.with_timezone(&chrono::Local)
+                .format("%Y-%m-%dT%H:%M:%S")
+                .to_string()
+        })
 }
 
 /// 表里有没有这一列（用于幂等升级老库）。
@@ -155,6 +189,9 @@ pub struct NewFavorite {
     pub description: Option<String>,
     /// 各源自定的附加字段（语言 / topics / 分区…），存 JSON 字符串
     pub extra_json: Option<String>,
+    /// 平台记录的**收藏时间**（本地时间字符串）。取不到时为 None：
+    /// 此时不覆盖库里已有的值，展示与排序回退到 created_at。
+    pub favorited_at: Option<String>,
     /// 导入时就能确定失效的（B站内容被 UP 主删除）直接落这个状态，省一次探测
     pub initial_status: Option<String>,
 }
@@ -191,8 +228,8 @@ pub fn upsert(conn: &Connection, item: &NewFavorite) -> Result<UpsertOutcome, St
     let inserted = conn
         .execute(
             "INSERT OR IGNORE INTO favorite \
-             (source, external_id, url, title, subtitle, description, extra_json, status, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, COALESCE(?8, 'ok'), ?9, ?9)",
+             (source, external_id, url, title, subtitle, description, extra_json, status, favorited_at, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, COALESCE(?8, 'ok'), ?9, ?10, ?10)",
             rusqlite::params![
                 item.source,
                 item.external_id,
@@ -202,6 +239,7 @@ pub fn upsert(conn: &Connection, item: &NewFavorite) -> Result<UpsertOutcome, St
                 item.description,
                 item.extra_json,
                 item.initial_status,
+                item.favorited_at,
                 now_str(),
             ],
         )
@@ -210,9 +248,10 @@ pub fn upsert(conn: &Connection, item: &NewFavorite) -> Result<UpsertOutcome, St
         return Ok(UpsertOutcome::Added);
     }
 
-    let current: (String, String, String, String, String) = conn
+    let current: (String, String, String, String, String, String) = conn
         .query_row(
-            "SELECT url, title, COALESCE(subtitle, ''), COALESCE(description, ''), COALESCE(extra_json, '') \
+            "SELECT url, title, COALESCE(subtitle, ''), COALESCE(description, ''), \
+                    COALESCE(extra_json, ''), COALESCE(favorited_at, '') \
              FROM favorite WHERE source = ?1 AND external_id = ?2",
             rusqlite::params![item.source, item.external_id],
             |row| {
@@ -222,17 +261,21 @@ pub fn upsert(conn: &Connection, item: &NewFavorite) -> Result<UpsertOutcome, St
                     row.get(2)?,
                     row.get(3)?,
                     row.get(4)?,
+                    row.get(5)?,
                 ))
             },
         )
         .map_err(|e| format!("读取已存在收藏条目失败: {}", e))?;
 
+    // 收藏时间也参与「有没有变化」的比较：老库（或旧版本导入）里该列为空时，
+    // 这次带上了平台时间就算一次有效更新，从而把历史数据补齐。
     let incoming = (
         item.url.clone(),
         item.title.clone(),
         item.subtitle.clone().unwrap_or_default(),
         item.description.clone().unwrap_or_default(),
         item.extra_json.clone().unwrap_or_default(),
+        item.favorited_at.clone().unwrap_or_default(),
     );
     if current == incoming {
         return Ok(UpsertOutcome::Skipped);
@@ -240,7 +283,8 @@ pub fn upsert(conn: &Connection, item: &NewFavorite) -> Result<UpsertOutcome, St
 
     conn.execute(
         "UPDATE favorite SET url = ?1, title = ?2, subtitle = ?3, description = ?4, \
-         extra_json = ?5, updated_at = ?6 WHERE source = ?7 AND external_id = ?8",
+         extra_json = ?5, favorited_at = COALESCE(?9, favorited_at), updated_at = ?6 \
+         WHERE source = ?7 AND external_id = ?8",
         rusqlite::params![
             incoming.0,
             incoming.1,
@@ -250,6 +294,8 @@ pub fn upsert(conn: &Connection, item: &NewFavorite) -> Result<UpsertOutcome, St
             now_str(),
             item.source,
             item.external_id,
+            // 本次没取到时间就保留库里已有的，别把知道的覆盖成 NULL
+            item.favorited_at,
         ],
     )
     .map_err(|e| format!("更新收藏条目失败: {}", e))?;
@@ -578,6 +624,8 @@ pub struct FavoriteRow {
     pub ai_model: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// 平台记录的收藏时间；取不到为 None（前端回退显示 created_at）
+    pub favorited_at: Option<String>,
     pub tags: Vec<String>,
 }
 
@@ -588,7 +636,22 @@ pub struct ListFilter {
     pub tag: Option<String>,
     pub status: Option<String>,
     pub keyword: Option<String>,
+    /// 排序方式：`favorited`（按收藏时间）/ `created`（按入库时间）/ 其它/缺省 = 按最近更新
+    pub sort: Option<String>,
+    /// 只保留「收藏时间（取不到则入库时间）不早于该时刻」的条目，本地时间字符串
+    pub favorited_since: Option<String>,
     pub limit: usize,
+}
+
+/// 排序方式 → 固定 SQL 片段（白名单，绝不把用户输入直接拼进 SQL）。
+fn order_by_clause(sort: Option<&str>) -> &'static str {
+    match sort {
+        // 收藏时间优先；平台没给时间的来源回退到本地首次入库时间
+        Some("favorited") => "COALESCE(f.favorited_at, f.created_at) DESC, f.id DESC",
+        Some("created") => "f.created_at DESC, f.id DESC",
+        // 默认：最近更新在前
+        _ => "f.updated_at DESC, f.id DESC",
+    }
 }
 
 /// 按条件列出条目（默认按最近更新排序，最多 1000 条）。
@@ -600,15 +663,23 @@ pub fn list(conn: &Connection, filter: &ListFilter) -> Result<Vec<FavoriteRow>, 
         .map(|k| format!("%{}%", k.trim()))
         .filter(|k| k != "%%");
 
+    let since = filter
+        .favorited_since
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
     let sql = format!(
         "SELECT f.id, f.source, f.external_id, f.url, f.title, f.subtitle, f.description, \
-                f.status, f.checked_at, f.ai_locked, f.ai_model, f.created_at, f.updated_at \
+                f.status, f.checked_at, f.ai_locked, f.ai_model, f.created_at, f.updated_at, f.favorited_at \
          FROM favorite f \
          WHERE (?1 IS NULL OR f.source = ?1) \
            AND (?2 IS NULL OR f.status = ?2) \
            AND (?3 IS NULL OR f.title LIKE ?3 OR COALESCE(f.description, '') LIKE ?3) \
            AND (?4 IS NULL OR EXISTS (SELECT 1 FROM favorite_tag t WHERE t.favorite_id = f.id AND t.tag = ?4)) \
-         ORDER BY f.updated_at DESC, f.id DESC LIMIT {}",
+           AND (?5 IS NULL OR COALESCE(f.favorited_at, f.created_at) >= ?5) \
+         ORDER BY {} LIMIT {}",
+        order_by_clause(filter.sort.as_deref()),
         limit
     );
     let mut statement = conn
@@ -616,7 +687,7 @@ pub fn list(conn: &Connection, filter: &ListFilter) -> Result<Vec<FavoriteRow>, 
         .map_err(|e| format!("查询收藏列表失败: {}", e))?;
     let rows = statement
         .query_map(
-            rusqlite::params![filter.source, filter.status, keyword, filter.tag],
+            rusqlite::params![filter.source, filter.status, keyword, filter.tag, since],
             |row| {
                 Ok(FavoriteRow {
                     id: row.get(0)?,
@@ -632,6 +703,7 @@ pub fn list(conn: &Connection, filter: &ListFilter) -> Result<Vec<FavoriteRow>, 
                     ai_model: row.get(10)?,
                     created_at: row.get(11)?,
                     updated_at: row.get(12)?,
+                    favorited_at: row.get(13)?,
                     tags: Vec::new(),
                 })
             },
@@ -850,12 +922,15 @@ mod tests {
             ai_model: Some("m".to_string()),
             created_at: "2026-01-01".to_string(),
             updated_at: "2026-01-01".to_string(),
+            favorited_at: None,
             tags: vec![],
         };
         let value = serde_json::to_value(&row).unwrap();
         assert!(value.get("ai_locked").is_none());
         assert_eq!(value["aiLocked"], true);
         assert_eq!(value["externalId"], "42");
+        // 收藏时间字段也要能被前端读到（列表里要显示、排序要用）
+        assert!(value.get("favoritedAt").is_some());
     }
 
     fn sample(external_id: &str, title: &str) -> NewFavorite {
@@ -867,8 +942,81 @@ mod tests {
             subtitle: Some(title.to_string()),
             description: Some("desc".to_string()),
             extra_json: Some("{}".to_string()),
+            favorited_at: None,
             initial_status: None,
         }
+    }
+
+    #[test]
+    fn list_sorts_and_filters_by_favorited_time() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        let mut old = sample("1", "old");
+        old.favorited_at = Some("2020-05-01T10:00:00".to_string());
+        let mut recent = sample("2", "recent");
+        recent.favorited_at = Some("2026-05-01T10:00:00".to_string());
+        upsert(&conn, &old).unwrap();
+        upsert(&conn, &recent).unwrap();
+
+        // 按收藏时间排序：最近收藏的在前（而不是按入库/更新时间）
+        let sorted = list(
+            &conn,
+            &ListFilter {
+                sort: Some("favorited".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(sorted[0].external_id, "2");
+        assert_eq!(sorted[0].favorited_at.as_deref(), Some("2026-05-01T10:00:00"));
+        assert_eq!(sorted[1].external_id, "1");
+
+        // 时间过滤：只留收藏时间不早于 2026 的
+        let filtered = list(
+            &conn,
+            &ListFilter {
+                favorited_since: Some("2026-01-01T00:00:00".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].external_id, "2");
+
+        // 没有平台收藏时间的条目回退用入库时间判断，不会被时间过滤直接漏掉
+        let no_time = sample("3", "no-time");
+        upsert(&conn, &no_time).unwrap();
+        let all = list(
+            &conn,
+            &ListFilter {
+                favorited_since: Some("2000-01-01T00:00:00".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn reimport_backfills_favorited_time_without_touching_known_values() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        // 老库（或升级前导入）没有收藏时间：再次导入带上时间时应算一次更新并补齐
+        let mut item = sample("9", "backfill");
+        assert_eq!(upsert(&conn, &item).unwrap(), UpsertOutcome::Added);
+        item.favorited_at = Some("2021-03-04T05:06:07".to_string());
+        assert_eq!(upsert(&conn, &item).unwrap(), UpsertOutcome::Updated);
+        let rows = list(&conn, &ListFilter::default()).unwrap();
+        assert_eq!(rows[0].favorited_at.as_deref(), Some("2021-03-04T05:06:07"));
+
+        // 本次没取到时间（如平台接口不再返回）时保留库里已有的值，不覆盖成 NULL
+        let mut without_time = sample("9", "backfill");
+        without_time.description = Some("changed".to_string());
+        assert_eq!(upsert(&conn, &without_time).unwrap(), UpsertOutcome::Updated);
+        let rows = list(&conn, &ListFilter::default()).unwrap();
+        assert_eq!(rows[0].favorited_at.as_deref(), Some("2021-03-04T05:06:07"));
     }
 
     #[test]

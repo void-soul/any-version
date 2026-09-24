@@ -195,6 +195,11 @@ pub fn media_to_favorite(media: &Value, folder_title: &str) -> Option<NewFavorit
             })
             .to_string(),
         ),
+        // `fav_time` 是平台记录的**收藏时间**（unix 秒），取出来单独存一列供排序/过滤
+        favorited_at: media
+            .get("fav_time")
+            .and_then(|v| v.as_i64())
+            .and_then(super::db::unix_to_local_str),
         initial_status: if attr == 0 { None } else { Some("gone".to_string()) },
     })
 }

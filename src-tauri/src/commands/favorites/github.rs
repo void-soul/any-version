@@ -68,6 +68,8 @@ pub fn repo_to_favorite(repo: &Value) -> Option<NewFavorite> {
         title: full_name.to_string(),
         subtitle: Some(full_name.to_string()),
         description,
+        // 仓库对象本身不带收藏时间，只有 star 列表元素才有（见 starred_item_to_favorite）
+        favorited_at: None,
         // 归类时要用：语言 + topics 是最有价值的两个信号
         extra_json: Some(
             json!({
@@ -110,9 +112,26 @@ pub async fn fetch_user_login(token: &str) -> Result<String, String> {
 }
 
 /// 拉一页 star 列表，返回（响应体，下一页 URL）。
+///
+/// 带 `application/vnd.github.star+json` 媒体类型：这样每个元素是 `{ starred_at, repo }`，
+/// 才能拿到**平台记录的收藏时间**；不带的话元素只有仓库对象，时间就永久丢失了。
 pub async fn fetch_starred_page(token: &str, url: &str) -> Result<(Value, Option<String>), String> {
-    let (body, link) = request_with_link(token, url).await?;
+    let (body, link) = request_with_link(token, url, "application/vnd.github.star+json").await?;
     Ok((body, next_page_url(link.as_deref())))
+}
+
+/// 一条 star 列表元素 → 待落库条目。
+///
+/// 见 [`fetch_starred_page`]：带 star+json 时元素是 `{ starred_at, repo }` 两层结构，
+/// 不带时元素本身就是仓库对象（`starred_at` 取不到，收藏时间为空）。
+pub fn starred_item_to_favorite(item: &Value) -> Option<NewFavorite> {
+    let repo = item.get("repo").unwrap_or(item);
+    let mut favorite = repo_to_favorite(repo)?;
+    favorite.favorited_at = item
+        .get("starred_at")
+        .and_then(|v| v.as_str())
+        .and_then(super::db::rfc3339_to_local_str);
+    Some(favorite)
 }
 
 /// 查单个仓库是否存在（失效检测用）。返回 `(状态码, 响应体)`——
@@ -134,7 +153,9 @@ pub async fn fetch_repo(token: &str, full_name: &str) -> Result<(u16, Option<Val
 
 /// 带鉴权的 GET，失败时带上可操作提示。
 async fn request(token: &str, url: &str) -> Result<Value, String> {
-    request_with_link(token, url).await.map(|(body, _)| body)
+    request_with_link(token, url, "application/vnd.github+json")
+        .await
+        .map(|(body, _)| body)
 }
 
 /// 中文 README 的候选文件名，**按优先级**排在默认 README 之前。
@@ -235,11 +256,15 @@ pub fn decode_readme(encoded: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&decoded).to_string())
 }
 
-async fn request_with_link(token: &str, url: &str) -> Result<(Value, Option<String>), String> {
+async fn request_with_link(
+    token: &str,
+    url: &str,
+    accept: &str,
+) -> Result<(Value, Option<String>), String> {
     let resp = crate::commands::utils::get_http_client()
         .get(url)
         .header("Authorization", format!("Bearer {}", token))
-        .header("Accept", "application/vnd.github+json")
+        .header("Accept", accept)
         .header("User-Agent", "Any-Version-Manager")
         .send()
         .await

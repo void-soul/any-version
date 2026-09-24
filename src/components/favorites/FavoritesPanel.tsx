@@ -19,6 +19,7 @@ import { useTranslation } from "react-i18next";
 import {
   ChevronDown,
   ChevronRight,
+  Clock,
   ExternalLink,
   Pencil,
   RefreshCw,
@@ -27,6 +28,7 @@ import {
   Trash2,
 } from "lucide-react";
 
+import { favoritedDateLabel, sinceToLocalString, type FavoritesSort, type SincePreset } from "./favoritedTime";
 import { SharedButton } from "../shared/Button";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { toast } from "../shared/Toast";
@@ -62,6 +64,11 @@ export default function FavoritesPanel() {
   const [tag, setTag] = useState<string | null>(null);
   const [source, setSource] = useState<string | null>(null);
   const [keyword, setKeyword] = useState("");
+  // 排序默认按「收藏时间」：这是收藏模块，用户最关心的是「我什么时候收藏的」，
+  // 而默认的「最近更新」会把 AI 归类动过的老条目顶到最前面，反直觉。
+  const [sort, setSort] = useState<FavoritesSort>("favorited");
+  // 收藏时间过滤（全部 / 近 7 天 / 近 30 天 / 近一年）
+  const [since, setSince] = useState<SincePreset>("all");
   const [busy, setBusy] = useState<string | null>(null);
 
   // AI 归类的模型选择：直接复用 AI 模块的配置，不另设一套
@@ -136,6 +143,9 @@ export default function FavoritesPanel() {
         tag,
         status: null,
         keyword: keyword.trim() || null,
+        sort,
+        // 时区换算放在前端：后端只拿到一个「不早于」的本地时间串，不需要猜时区
+        favoritedSince: sinceToLocalString(since),
         limit: 0,
       }),
       invoke<FavoriteStats>("fav_stats"),
@@ -144,7 +154,7 @@ export default function FavoritesPanel() {
     setItems(list);
     setStats(overview);
     setCredStatus(creds);
-  }, [source, tag, keyword]);
+  }, [source, tag, keyword, sort, since]);
 
   useEffect(() => {
     void refresh().catch((e) => toast(String(e), "err"));
@@ -737,6 +747,29 @@ export default function FavoritesPanel() {
               </option>
             ))}
           </select>
+          {/* 排序方式：默认按收藏时间 */}
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as FavoritesSort)}
+            className="glass-input px-2 h-7 text-[11px] cursor-pointer"
+            title={t("favorites.sortTip")}
+          >
+            <option value="favorited">{t("favorites.sortFavorited")}</option>
+            <option value="created">{t("favorites.sortCreated")}</option>
+            <option value="updated">{t("favorites.sortUpdated")}</option>
+          </select>
+          {/* 收藏时间过滤 */}
+          <select
+            value={since}
+            onChange={(e) => setSince(e.target.value as SincePreset)}
+            className="glass-input px-2 h-7 text-[11px] cursor-pointer"
+            title={t("favorites.sinceTip")}
+          >
+            <option value="all">{t("favorites.sinceAll")}</option>
+            <option value="7d">{t("favorites.since7d")}</option>
+            <option value="30d">{t("favorites.since30d")}</option>
+            <option value="365d">{t("favorites.since365d")}</option>
+          </select>
         </div>
       </div>
 
@@ -912,6 +945,26 @@ export default function FavoritesPanel() {
                       <span className="text-[9px] px-1 rounded bg-white/5 text-slate-500">
                         {SOURCE_LABELS[item.source] ?? item.source}
                       </span>
+                      {/* 收藏时间：优先平台记录的时间；老库/平台不返回时回退到入库时间，
+                          并在 tooltip 里说清这是哪一个，别让用户以为平台时间不准 */}
+                      {(() => {
+                        const platform = favoritedDateLabel(item.favoritedAt);
+                        const label = platform ?? favoritedDateLabel(item.createdAt);
+                        if (!label) return null;
+                        return (
+                          <span
+                            className="text-[9px] px-1 rounded bg-white/5 text-slate-500 flex items-center gap-0.5 shrink-0"
+                            title={
+                              platform
+                                ? t("favorites.favoritedAtTip", { time: item.favoritedAt })
+                                : t("favorites.importedAtTip", { time: item.createdAt })
+                            }
+                          >
+                            <Clock className="w-2.5 h-2.5" />
+                            {label}
+                          </span>
+                        );
+                      })()}
                       {badge && (
                         <span className={`text-[9px] px-1 rounded ${badge.className}`}>
                           {t(badge.text)}

@@ -352,6 +352,8 @@ pub fn item_to_cookie_favorite(
         subtitle: author,
         description,
         extra_json: Some(extra.to_string()),
+        // 外层 `created` 就是收藏时间（unix 秒）：单独存一列，供按收藏时间排序/过滤
+        favorited_at: favored_at.and_then(super::db::unix_to_local_str),
         // 收藏接口返回的条目本身就存在，无需预置失效状态
         initial_status: None,
     })

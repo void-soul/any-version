@@ -135,7 +135,11 @@ pub async fn fav_import_github(
         let repos = body
             .as_array()
             .ok_or_else(|| "GitHub 返回的 star 列表格式异常".to_string())?;
-        let items: Vec<NewFavorite> = repos.iter().filter_map(github::repo_to_favorite).collect();
+        // star 列表元素是 `{ starred_at, repo }`：由 starred_item_to_favorite 取出收藏时间
+        let items: Vec<NewFavorite> = repos
+            .iter()
+            .filter_map(github::starred_item_to_favorite)
+            .collect();
         result.fetched += items.len();
 
         // 整页在一个连接里写完：既能少取锁，也让这一页的写入是原子的
@@ -831,12 +835,18 @@ pub fn fav_get_credential(source: String) -> Result<String, String> {
 }
 
 /// 列出收藏条目。
+///
+/// `sort`：`favorited` 按收藏时间 / `created` 按入库时间 / 其它按最近更新。
+/// `favorited_since`：只保留收藏时间不早于该时刻的条目（本地时间字符串，由前端按
+/// 「今天 / 近 7 天 / 近 30 天 / 今年」这类预设算好再传，后端不猜时区）。
 #[tauri::command]
 pub fn fav_list(
     source: Option<String>,
     tag: Option<String>,
     status: Option<String>,
     keyword: Option<String>,
+    sort: Option<String>,
+    favorited_since: Option<String>,
     limit: Option<usize>,
 ) -> Result<Vec<db::FavoriteRow>, String> {
     db::with_conn(|conn| {
@@ -847,6 +857,8 @@ pub fn fav_list(
                 tag,
                 status,
                 keyword,
+                sort,
+                favorited_since,
                 limit: limit.unwrap_or(0),
             },
         )
