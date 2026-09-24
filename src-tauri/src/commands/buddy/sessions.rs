@@ -511,10 +511,6 @@ pub fn delete_sessions(
     }
     match platform {
         "workbuddy" => delete_workbuddy_sessions(&ids),
-        // WorkBuddy AI 未公开会话目录：宁可不删，也不能误删 CN 版 WorkBuddy 的会话
-        "workbuddy-ai" | "workbuddy_ai" => Err(
-            "WorkBuddy AI 暂不支持会话清理（未定位到会话目录）".to_string(),
-        ),
         "codebuddy-cn" | "codebuddy_cn" => delete_codebuddy_sessions(&ids),
         other => Err(format!("未知平台: {}", other)),
     }
@@ -524,8 +520,7 @@ pub fn delete_sessions(
 fn current_platform_uid(platform: super::models::BuddyPlatform) -> Option<String> {
     let accounts = super::store::list_accounts(platform);
     let current_id = super::store::get_current_account_id(platform).or_else(|| match platform {
-        super::models::BuddyPlatform::Workbuddy
-        | super::models::BuddyPlatform::WorkbuddyAi => {
+        super::models::BuddyPlatform::Workbuddy => {
             super::workbuddy::resolve_current_account_id(platform, &accounts)
         }
         super::models::BuddyPlatform::CodebuddyCn => {

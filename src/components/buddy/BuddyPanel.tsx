@@ -421,8 +421,6 @@ interface QuotaItem {
 const PLATFORMS = [
   { id: "codebuddy-cn", label: "CodeBuddy CN", emoji: "🇨🇳" },
   { id: "workbuddy", label: "WorkBuddy", emoji: "🟣" },
-  // 国际版（www.workbuddy.ai）：独立账号体系，登录文件为 workbuddy-desktop-ai.info
-  { id: "workbuddy-ai", label: "WorkBuddy AI", emoji: "🌐" },
 ] as const;
 
 type Tab = "accounts" | "sessions" | "checkin" | "settings";

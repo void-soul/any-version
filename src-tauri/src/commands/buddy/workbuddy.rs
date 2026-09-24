@@ -70,8 +70,7 @@ pub fn default_auth_file_path(platform: BuddyPlatform) -> Option<PathBuf> {
 
 /// WorkBuddy 数据根目录（state.vscdb 所在目录的上一级）。
 ///
-/// 仅 CN 版有该目录；WorkBuddy AI 的数据目录未公开，参考实现也只读写登录文件，
-/// 故返回 None（调用方据此跳过会话/secret 相关分支）。
+/// 仅 CN 版有该目录，其余平台返回 None（调用方据此跳过会话/secret 相关分支）。
 pub fn default_data_dir(platform: BuddyPlatform) -> Option<PathBuf> {
     if !matches!(platform, BuddyPlatform::Workbuddy) {
         return None;
@@ -375,8 +374,7 @@ pub fn import_payload_from_local(platform: BuddyPlatform) -> Result<Option<Buddy
     }
 
     // 2) 旧版：state.vscdb secret
-    //    仅 CN WorkBuddy 有该库；WorkBuddy AI 既无此库、其 secret 键名也未公开，
-    //    故只走「读登录文件」这一条路（与参考实现一致）。
+    //    仅 CN WorkBuddy 有该库，故只走「读登录文件」这一条路（与参考实现一致）。
     if !matches!(platform, BuddyPlatform::Workbuddy) {
         return Ok(None);
     }

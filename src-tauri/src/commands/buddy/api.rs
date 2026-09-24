@@ -21,12 +21,10 @@ use super::models::{BuddyAccount, BuddyPlatform};
 use super::store;
 
 const WORKBUDDY_API_ENDPOINT: &str = "https://copilot.tencent.com";
-const WORKBUDDY_AI_API_ENDPOINT: &str = "https://www.workbuddy.ai";
 const CODEBUDDY_CN_API_ENDPOINT: &str = "https://www.codebuddy.cn";
 const API_PREFIX: &str = "/v2/plugin";
 const PLATFORM_CODEBUDDY_CN: &str = "ide";
 const PLATFORM_WORKBUDDY: &str = "workbuddy";
-const PLATFORM_WORKBUDDY_AI: &str = "workbuddy-ai";
 const HTTP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const OAUTH_TIMEOUT_SECONDS: u64 = 600;
 const OAUTH_POLL_INTERVAL_MS: u64 = 1500;
@@ -75,7 +73,6 @@ fn build_client() -> Result<reqwest::Client, String> {
 pub fn api_endpoint(platform: BuddyPlatform) -> &'static str {
     match platform {
         BuddyPlatform::Workbuddy => WORKBUDDY_API_ENDPOINT,
-        BuddyPlatform::WorkbuddyAi => WORKBUDDY_AI_API_ENDPOINT,
         BuddyPlatform::CodebuddyCn => CODEBUDDY_CN_API_ENDPOINT,
     }
 }
@@ -83,7 +80,6 @@ pub fn api_endpoint(platform: BuddyPlatform) -> &'static str {
 fn oauth_platform_name(platform: BuddyPlatform) -> &'static str {
     match platform {
         BuddyPlatform::Workbuddy => PLATFORM_WORKBUDDY,
-        BuddyPlatform::WorkbuddyAi => PLATFORM_WORKBUDDY_AI,
         BuddyPlatform::CodebuddyCn => PLATFORM_CODEBUDDY_CN,
     }
 }

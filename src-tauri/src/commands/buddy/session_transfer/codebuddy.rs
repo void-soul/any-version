@@ -83,7 +83,6 @@ fn buddy_current_account(platform: BuddyPlatform, except_ids: &[String]) -> Opti
         BuddyPlatform::Workbuddy => {
             super::super::workbuddy::resolve_current_account_id(BuddyPlatform::Workbuddy, &accounts)
         }
-        BuddyPlatform::WorkbuddyAi => None,
         BuddyPlatform::CodebuddyCn => super::super::codebuddy_cn::resolve_current_account_id(&accounts),
     };
     output.filter(|id| !except_ids.iter().any(|except| except == id))
