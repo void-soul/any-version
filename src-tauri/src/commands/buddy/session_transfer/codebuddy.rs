@@ -134,11 +134,14 @@ fn transfer_local_sessions(
         &backup_root,
     )?;
     if report.updated_session_rows > 0 {
-        tracker.record(
+        // 这是整库汇总行（id 为空），不归属任何工作区，显式给 None，
+        // 免得继承到别处设定的「当前工作区」上下文
+        tracker.record_in(
             "",
             "codebuddy-sessions.vscdb",
             SessionSyncStatus::Copied,
             "remappedRows",
+            None,
             None,
         );
     }
@@ -357,6 +360,10 @@ fn merge_workspace_history(
     backup_root: &Path,
     tracker: &mut SyncTracker,
 ) -> Result<(), String> {
+    // 本次调用处理的就是 workspace_name 这一个工作区目录：设一次上下文，
+    // 随后本函数内所有 record 都会带上它（明细里的「目录」列）。
+    tracker.set_workspace(Some(workspace_name.to_string_lossy().to_string()));
+
     let source_index_path = source_workspace.join("index.json");
     if !source_index_path.is_file() {
         return Ok(());

@@ -42,6 +42,9 @@ pub struct SessionSyncDetail {
     pub id: String,
     /// 展示名（标题优先，其次工作区路径，最后回落到 id）
     pub label: String,
+    /// 该会话所属的目录 / 项目。CodeBuddy 侧是 history 下的工作区目录名，
+    /// WorkBuddy 侧是 `sessions.cwd`；取不到时为 None，前端显示占位符。
+    pub workspace: Option<String>,
     pub status: SessionSyncStatus,
     /// 机器可读原因码，前端用 `buddy.syncReason.<reason>` 翻译；未知码直接展示原文
     pub reason: String,
@@ -68,6 +71,9 @@ pub(crate) struct SyncTracker {
     baseline: BTreeMap<String, String>,
     next: BTreeMap<String, String>,
     summary: SessionSyncSummary,
+    /// 「当前工作区」上下文：`set_workspace` 设定后，其后 `record` 的明细都会带上它。
+    /// 仅在按工作区目录逐个处理的调用链里使用（见 `set_workspace`）。
+    current_workspace: Option<String>,
 }
 
 impl SyncTracker {
@@ -76,6 +82,7 @@ impl SyncTracker {
             baseline,
             next: BTreeMap::new(),
             summary: SessionSyncSummary::default(),
+            current_workspace: None,
         }
     }
 
@@ -89,7 +96,18 @@ impl SyncTracker {
         self.baseline_of(id) == Some(fingerprint)
     }
 
+    /// 设定「当前工作区」上下文：其后 `record` 记录的明细都会带上它。
+    ///
+    /// 供「一次调用只处理一个工作区目录」的调用方使用（CodeBuddy 的
+    /// `merge_workspace_history` 正是逐个工作区目录处理的）。逐行处理、每条目录
+    /// 都可能不同的调用方（如 WorkBuddy 的共享会话库）请用 [`SyncTracker::record_in`]。
+    pub(crate) fn set_workspace(&mut self, workspace: Option<String>) {
+        self.current_workspace = workspace;
+    }
+
     /// 记录一个会话的结局。`fingerprint` 为 Some 时写入新基线（即"已确认同步到这个状态"）。
+    ///
+    /// 工作区取当前上下文（见 [`SyncTracker::set_workspace`]）。
     pub(crate) fn record(
         &mut self,
         id: &str,
@@ -97,6 +115,20 @@ impl SyncTracker {
         status: SessionSyncStatus,
         reason: &str,
         fingerprint: Option<String>,
+    ) {
+        let workspace = self.current_workspace.clone();
+        self.record_in(id, label, status, reason, fingerprint, workspace);
+    }
+
+    /// 同上，但显式指定本条明细所属的工作区（拿不到就传 None）。
+    pub(crate) fn record_in(
+        &mut self,
+        id: &str,
+        label: &str,
+        status: SessionSyncStatus,
+        reason: &str,
+        fingerprint: Option<String>,
+        workspace: Option<String>,
     ) {
         self.summary.total += 1;
         match status {
@@ -120,6 +152,9 @@ impl SyncTracker {
             self.summary.details.push(SessionSyncDetail {
                 id: id.to_string(),
                 label: truncate_label(label),
+                // 不做 120 字截断：路径尾部（项目名）才是识别关键，且前端要
+                // 用完整路径做 title 提示，按宽度折叠交给 CSS。
+                workspace,
                 status,
                 reason: reason.to_string(),
             });

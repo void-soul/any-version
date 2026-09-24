@@ -192,7 +192,9 @@ fn transfer_local_sessions(
             &backup_root.join("legacy-database"),
         )?;
         report.updated_session_rows += remapped;
-        tracker.record(
+        // 整库汇总行（id 为空），不归属任何工作区，显式给 None，
+        // 免得继承到 CodeBuddy 侧设定的「当前工作区」上下文
+        tracker.record_in(
             "",
             "legacy:codebuddy-sessions.vscdb",
             if remapped > 0 {
@@ -201,6 +203,7 @@ fn transfer_local_sessions(
                 SessionSyncStatus::Skipped
             },
             if remapped > 0 { "remappedRows" } else { "unchanged" },
+            None,
             None,
         );
         break;
@@ -340,6 +343,8 @@ fn remap_workbuddy_database_user_id(
     struct Candidate {
         id: String,
         label: String,
+        /// 会话所属目录（`sessions.cwd`）；旧版表没有该列时为 None
+        workspace: Option<String>,
         fingerprint: String,
         content_missing: bool,
     }
@@ -382,11 +387,14 @@ fn remap_workbuddy_database_user_id(
     } else {
         "0"
     };
+    // `cwd` 就是「会话所属目录」，旧版只把它拼进 label 的 COALESCE 里当兜底，
+    // 明细上完全看不到；这里单独取出来作为独立的 workspace 字段。
+    let workspace_expression = if columns.contains("cwd") { "cwd" } else { "NULL" };
 
     let candidates: Vec<Candidate> = {
         let sql = format!(
-            "SELECT id, {}, {} FROM sessions WHERE user_id != ?1 AND deleted_at IS NULL",
-            label_expression, updated_expression
+            "SELECT id, {}, {}, {} FROM sessions WHERE user_id != ?1 AND deleted_at IS NULL",
+            label_expression, updated_expression, workspace_expression
         );
         let mut statement = connection
             .prepare(&sql)
@@ -397,18 +405,21 @@ fn remap_workbuddy_database_user_id(
                     row.get::<_, String>(0)?,
                     row.get::<_, Option<String>>(1)?,
                     row.get::<_, i64>(2)?,
+                    row.get::<_, Option<String>>(3)?,
                 ))
             })
             .map_err(|e| format!("读取 WorkBuddy 会话索引失败: {}", e))?;
         let mut collected = Vec::new();
         for row in rows {
-            let (id, label, updated_at) =
+            let (id, label, updated_at, workspace) =
                 row.map_err(|e| format!("读取 WorkBuddy 会话记录失败: {}", e))?;
             let content = session_sync::workbuddy_session_fingerprint(data_root, &id);
             collected.push(Candidate {
                 fingerprint: session_sync::combined_fingerprint(updated_at, content.as_deref()),
                 content_missing: content.is_none(),
                 label: label.unwrap_or_else(|| id.clone()),
+                // 空串 / 全空白与「表里没这一列」等价，统一收敛成 None
+                workspace: workspace.filter(|w| !w.trim().is_empty()),
                 id,
             });
         }
@@ -421,12 +432,13 @@ fn remap_workbuddy_database_user_id(
     let mut pending: Vec<&Candidate> = Vec::new();
     for candidate in &candidates {
         if tracker.is_unchanged(&candidate.id, &candidate.fingerprint) {
-            tracker.record(
+            tracker.record_in(
                 &candidate.id,
                 &candidate.label,
                 SessionSyncStatus::Skipped,
                 "unchanged",
                 Some(candidate.fingerprint.clone()),
+                candidate.workspace.clone(),
             );
         } else {
             pending.push(candidate);
@@ -468,12 +480,13 @@ fn remap_workbuddy_database_user_id(
                 } else {
                     SessionSyncStatus::Copied
                 };
-                tracker.record(
+                tracker.record_in(
                     &candidate.id,
                     &candidate.label,
                     status,
                     reason,
                     Some(candidate.fingerprint.clone()),
+                    candidate.workspace.clone(),
                 );
             }
             Err(error) => {
@@ -481,12 +494,13 @@ fn remap_workbuddy_database_user_id(
                     "[Buddy WB Transfer] 会话 user_id 重映射失败: id={}, error={}",
                     candidate.id, error
                 );
-                tracker.record(
+                tracker.record_in(
                     &candidate.id,
                     &candidate.label,
                     SessionSyncStatus::Failed,
                     "updateFailed",
                     None,
+                    candidate.workspace.clone(),
                 );
             }
         }
