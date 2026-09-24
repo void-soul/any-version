@@ -1196,6 +1196,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // 节点树导航面板：点击树节点 = 选中 + 展开祖先 + 视口聚焦（与悬浮窗树形选择同一交互直觉）
   const [treeOpen, setTreeOpen] = useState(true);
+  // 第二栏（节点树）宽度：与第一栏/第四栏同一套拖拽把手逻辑
+  const [treeW, setTreeW] = useState(224);
   const treeListRef = useRef<HTMLDivElement | null>(null);
   const [detailNode, setDetailNode] = useState<MindmapNode | null>(null);
   const [preview, setPreview] = useState<{ node: MindmapNode; x: number; y: number } | null>(null);
@@ -1997,7 +1999,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       {/* 第二栏：节点树 + 底部选项（原画布右上角覆盖层）。
           用 order-first 让它排在画布左侧，避免大段 JSX 搬移；收起时收成窄条。
           外层 pointer-events-none 让空白区不挡交互，各交互块自身 pointer-events-auto。 */}
-      <div className={`order-first pointer-events-none flex shrink-0 flex-col border-r border-white/5 bg-[#0d1524]/70 ${treeOpen ? "w-56" : "w-9"}`}>
+      <div className="relative order-first pointer-events-none flex shrink-0 flex-col border-r border-white/5 bg-[#0d1524]/70"
+        style={{ width: treeOpen ? treeW : 36 }}>
         {aiPill && <div className={`pointer-events-auto ${treeOpen ? "p-1.5" : "hidden"}`}>{aiPill}</div>}
         <div className="flex min-h-0 flex-1 flex-col">
           {/* 节点树导航：与悬浮窗树形选择同交互 —— 点击即导航到该节点 */}
@@ -2098,6 +2101,21 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
             )}
           </div>
         </div>
+        {/* 右缘拖宽把手：与第一栏、第四栏同一套逻辑 */}
+        {treeOpen && (
+          <div
+            className="pointer-events-auto absolute -right-1 top-0 z-10 flex h-full w-2.5 cursor-col-resize items-center justify-center hover:bg-white/[0.06]"
+            title={t("mindmap.dragResize")}
+            onMouseDown={(e) => {
+              if (e.button !== 0) return;
+              e.preventDefault();
+              const startX = e.clientX; const startW = treeW;
+              const onMove = (ev: MouseEvent) => setTreeW(Math.min(480, Math.max(160, startW + (ev.clientX - startX))));
+              const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+              window.addEventListener("mousemove", onMove);
+              window.addEventListener("mouseup", onUp);
+            }} />
+        )}
       </div>
 
       {/* 关系线弹层：新建时输入说明文字，编辑时改文字或删除 */}
