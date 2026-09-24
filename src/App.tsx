@@ -20,6 +20,14 @@ import { vexSay, onVexSay, type VexSayKind } from "./utils/vexSay";
 import { useTranslation } from "react-i18next";
 import "./App.css";
 
+/** 模块按钮统一样式：胶囊里的模块入口、「更多」下拉里的模块条目共用同一套外观与 hover。
+ *  同一种东西不该有第二种长相 —— 下拉条目原先另写了一套（字号 11 / 内边距 py-2 / 图标 3.5 /
+ *  自配色 hover），悬停表现与胶囊不一致，看起来像两个不同层级的控件。 */
+const moduleTabClass = (active: boolean, extra = "") =>
+  `px-3 py-1.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer vex-nav-tab ${
+    active ? "vex-nav-tab-active text-white" : "text-slate-400 hover:text-slate-200"
+  } ${extra}`;
+
 // 模块 id 即字符串（所有模块平级）。
 export type PageId = string;
 
@@ -467,11 +475,7 @@ export default function App() {
                 <button
                   key={m.id}
                   onClick={() => switchPage(m.id)}
-                  className={`px-3 py-1.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer vex-nav-tab ${
-                    isActive
-                      ? "vex-nav-tab-active text-white"
-                      : "text-slate-400 hover:text-slate-200"
-                  }`}
+                  className={moduleTabClass(isActive)}
                   title={moduleLabel(m.id)}
                 >
                   <Icon className="w-3 h-3" />
@@ -490,11 +494,7 @@ export default function App() {
                     const r = moreBtnRef.current?.getBoundingClientRect();
                     if (r) setMoreAnchor({ bottom: r.bottom, right: window.innerWidth - r.right });
                   }}
-                  className={`px-3 py-1.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer vex-nav-tab ${
-                    moreModules.some((m) => m.id === activePage)
-                      ? "vex-nav-tab-active text-white"
-                      : "text-slate-400 hover:text-slate-200"
-                  }`}
+                  className={moduleTabClass(moreModules.some((m) => m.id === activePage))}
                   title="更多模块"
                 >
                   <span className="w-3 h-3 flex items-center justify-center">⋯</span>
@@ -542,7 +542,7 @@ export default function App() {
             className={`p-1.5 rounded transition-all cursor-pointer vex-nav-tab ${
               activePage === "settings"
                 ? "vex-nav-tab-active text-white"
-                : "vex-neon-hover text-slate-400 hover:text-white"
+                : "text-slate-400 hover:text-slate-200"
             }`}
             style={{ "--neon": activeModuleColor } as React.CSSProperties}
             title={t("topbar.settings")}

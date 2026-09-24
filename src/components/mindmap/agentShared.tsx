@@ -16,6 +16,7 @@ import {
 import type { AiConfig } from "../ai/types";
 import type { AiImportResult } from "./types";
 import { createEventBuffer, useEventBufferSnapshot, type EventBuffer } from "../../utils/eventBuffer";
+import { matchProjectFiles } from "./atFiles";
 
 // ─── 打开文件（编辑器优先） ───
 
@@ -232,6 +233,12 @@ function subscribeAnsweredAsks(fn: () => void) {
 export function useAnsweredAsks(): ReadonlySet<number> {
   return useSyncExternalStore(subscribeAnsweredAsks, () => answeredAskIds, () => answeredAskIds);
 }
+
+// ════════════ 工作台输入草稿（模块级：隐藏/关闭卸载组件后不丢） ════════════
+// AgentWorkbench 的输入框原先用组件内 state，而「最小化」与「关闭」都会把它卸载，
+// 于是隐藏一下再恢复、或关掉重新打开，辛苦敲的提示词就没了。草稿放模块级存储，
+// 唯一清空点是成功提交（submit 里写空）。
+let agentDraft = "";
 
 // ════════════ AgentWorkbench：AI 项目 / AI 文档共用智能体工作台 ════════════
 //
@@ -513,7 +520,10 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
 
   const messages = useAgentMessages();
   const entries = useEventBufferSnapshot(mmAiProgressBuffer);
-  const [input, setInput] = useState("");
+  // 草稿从模块级存储恢复（见文件上方 agentDraft 的说明）
+  const [input, setInput] = useState(() => agentDraft);
+  /** 写草稿：组件 state 与模块级存储一起更新，避免两处不一致 */
+  const setDraft = (value: string) => { agentDraft = value; setInput(value); };
   // @ 引用文件：输入 @ 后弹出绑定目录文件候选（↑↓ 选择、Enter/Tab 选中、Esc 取消）
   const [atQuery, setAtQuery] = useState<string | null>(null);
   const [atIndex, setAtIndex] = useState(0);
@@ -595,14 +605,14 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
 
   const providerModels = useMemo(() => providers.find((p) => p.id === providerId)?.models ?? [], [providers, providerId]);
 
-  // @ 候选：按光标前的 @ 关键词过滤绑定目录文件清单
+  // @ 候选：按光标前的 @ 关键词匹配绑定目录文件清单（排序与上限见 atFiles.ts）
   const atMatches = useMemo(
-    () => (atQuery === null ? [] : (projectFiles ?? []).filter((f) => f.toLowerCase().includes(atQuery.toLowerCase())).slice(0, 8)),
+    () => (atQuery === null ? [] : matchProjectFiles(projectFiles ?? [], atQuery)),
     [atQuery, projectFiles],
   );
 
   const onInputChange = (value: string) => {
-    setInput(value);
+    setDraft(value);
     const caret = inputRef.current?.selectionStart ?? value.length;
     const m = value.slice(0, caret).match(/(?:^|\s)@([^\s@]*)$/);
     if (m && (projectFiles?.length ?? 0) > 0) { setAtQuery(m[1]); setAtIndex(0); } else { setAtQuery(null); }
@@ -611,7 +621,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
   const pickAt = (path: string) => {
     const caret = inputRef.current?.selectionStart ?? input.length;
     const before = input.slice(0, caret).replace(/@([^\s@]*)$/, `@${path} `);
-    setInput(before + input.slice(caret));
+    setDraft(before + input.slice(caret));
     setAtQuery(null);
     inputRef.current?.focus();
   };
@@ -657,7 +667,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
           ? t("agent.userRunProject", { path: projectPath.split(/[\\/]/).pop() ?? projectPath, depth: aiDepth, views: aiViews.length ? aiViews.map((v) => viewLabel(t, v)).join("、") : t("agent.viewsAuto") })
           : textTitle || t("agent.userRunText"));
     pushAgentMessage("user", bubble);
-    setInput("");
+    setDraft("");
     onRun(txt);
   };
 
