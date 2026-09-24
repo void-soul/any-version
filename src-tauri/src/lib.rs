@@ -615,6 +615,8 @@ pub fn run() {
             commands::favorites::fav_get_content,
             commands::favorites::fav_github_readme,
             commands::favorites::fav_list,
+            commands::favorites::fav_get_settings,
+            commands::favorites::fav_save_settings,
             commands::favorites::fav_set_tags,
             commands::favorites::fav_delete,
             commands::favorites::fav_stats,

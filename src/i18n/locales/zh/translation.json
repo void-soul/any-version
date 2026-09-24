@@ -149,6 +149,7 @@
     "searchPlaceholder": "搜索标题 / 简介",
     "allSources": "全部来源",
     "allTags": "全部分类",
+    "resizeLeftTip": "拖动调整分类栏宽度（宽度会记住）",
     "noTagsHint": "还没有分类。导入后点「AI 归类」，或自己在条目上改标签。",
     "empty": "还没有收藏，先点「导入 GitHub star」",
     "total": "总数",

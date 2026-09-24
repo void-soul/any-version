@@ -28,6 +28,16 @@ export interface FavoriteStats {
   tags: [string, number][];
 }
 
+/** 收藏模块界面设置（后端 `favorites_settings.json`） */
+export interface FavoriteSettings {
+  /** 左侧分类栏宽度（px） */
+  leftWidth: number;
+  /** 上次 AI 归类用的供应商；null = 沿用全局默认 */
+  providerId: string | null;
+  /** 上次 AI 归类用的模型 */
+  modelId: string | null;
+}
+
 export interface ImportResult {
   login: string;
   fetched: number;

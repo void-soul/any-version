@@ -149,6 +149,7 @@
     "searchPlaceholder": "Search title / description",
     "allSources": "All sources",
     "allTags": "All tags",
+    "resizeLeftTip": "Drag to resize the tag column (the width is remembered)",
     "noTagsHint": "No tags yet. Import first, then click Classify, or edit tags on an item yourself.",
     "empty": "Nothing here yet - import your GitHub stars first",
     "total": "Total",

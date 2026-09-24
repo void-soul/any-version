@@ -4,7 +4,14 @@
 // - 导入是幂等的（后端按平台原生 id 去重），重复点「导入」只会得到 added=0；
 // - 归类只处理未归类且未被人工改过的条目，人工改标签后该条目被锁定；
 // - 一个条目可以属于多个分类（多标签），所以同一条目会在多个分类下出现。
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -36,10 +43,16 @@ import {
   type ClassifyResult,
   type CredentialStatus,
   type FavoriteRow,
+  type FavoriteSettings,
   type FavoriteStats,
   type FavoritesProgress,
   type ImportResult,
 } from "./types";
+
+/** 分类栏宽度：默认 180px（比原先固定的 160px 宽 20px），范围与后端 clamp 一致。 */
+const DEFAULT_LEFT_WIDTH = 180;
+const MIN_LEFT_WIDTH = 140;
+const MAX_LEFT_WIDTH = 420;
 
 export default function FavoritesPanel() {
   const { t } = useTranslation();
@@ -55,6 +68,25 @@ export default function FavoritesPanel() {
   const [providers, setProviders] = useState<AiProvider[]>([]);
   const [providerId, setProviderId] = useState<string>("");
   const [modelId, setModelId] = useState<string>("");
+
+  // 左侧分类栏宽度：可拖动，宽度与模型选择一起存进 favorites_settings.json
+  const [leftWidth, setLeftWidth] = useState(DEFAULT_LEFT_WIDTH);
+  // 设置的内存副本：拖动/切模型都是「读-改-写」，先攒在这里再整份落盘
+  const settingsRef = useRef<FavoriteSettings>({
+    leftWidth: DEFAULT_LEFT_WIDTH,
+    providerId: null,
+    modelId: null,
+  });
+
+  /** 保存界面设置（整份覆盖，未传的字段沿用内存里的现值）。失败只记日志：设置丢了不影响功能。 */
+  const persistSettings = useCallback(async (patch: Partial<FavoriteSettings>) => {
+    settingsRef.current = { ...settingsRef.current, ...patch };
+    try {
+      await invoke("fav_save_settings", { settings: settingsRef.current });
+    } catch (e) {
+      console.error("保存收藏设置失败:", e);
+    }
+  }, []);
 
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -170,18 +202,63 @@ export default function FavoritesPanel() {
     }
   }, [credStatus, credWarned, t]);
 
+  // 供应商/模型预填：优先收藏模块「上次用的」，其次全局默认（翻译模块里选的），
+  // 再回退首个可用供应商——选过一次就不会每次进来又被重置成默认。
   useEffect(() => {
-    invoke<AiConfig>("get_ai_config")
-      .then((cfg) => {
-        const usable = (cfg.providers || []).filter((p) => p.openai_url && p.api_key);
+    let alive = true;
+    void Promise.all([
+      invoke<AiConfig>("get_ai_config"),
+      invoke<FavoriteSettings>("fav_get_settings").catch(() => null),
+      invoke<{ providerId: string | null; modelId: string | null }>("get_translate_config").catch(
+        () => ({ providerId: null, modelId: null }),
+      ),
+    ])
+      .then(([cfg, saved, globalDefault]) => {
+        if (!alive) return;
+        const all = cfg.providers || [];
+        const usable = all.filter((p) => p.openai_url && p.api_key);
         setProviders(usable);
-        const first = usable[0];
-        if (first) {
-          setProviderId(first.id);
-          setModelId(first.active_model_id || first.models[0]?.id || "");
-        }
+
+        // 分类栏宽度：坏值回默认，越界收敛（后端也会再钳一次）
+        const savedWidth = saved?.leftWidth;
+        const width =
+          typeof savedWidth === "number" && Number.isFinite(savedWidth) && savedWidth > 0
+            ? Math.min(MAX_LEFT_WIDTH, Math.max(MIN_LEFT_WIDTH, savedWidth))
+            : DEFAULT_LEFT_WIDTH;
+        setLeftWidth(width);
+        settingsRef.current = {
+          leftWidth: width,
+          providerId: saved?.providerId ?? null,
+          modelId: saved?.modelId ?? null,
+        };
+
+        // 供应商优先级：收藏上次用的 > 全局默认 > 首个可用 > 第一个
+        const wantPid = saved?.providerId || globalDefault.providerId;
+        const provider =
+          (wantPid && all.find((p) => p.id === wantPid && p.openai_url && p.api_key)) ||
+          usable[0] ||
+          all[0];
+        if (!provider) return;
+        setProviderId(provider.id);
+
+        // 模型优先级：同属该供应商的「上次用的」> 全局默认 > 供应商激活模型 > 第一个
+        const wantMid =
+          saved?.providerId === provider.id
+            ? saved.modelId
+            : globalDefault.providerId === provider.id
+              ? globalDefault.modelId
+              : null;
+        setModelId(
+          (wantMid && provider.models.some((m) => m.id === wantMid) ? wantMid : null) ??
+            provider.active_model_id ??
+            provider.models[0]?.id ??
+            "",
+        );
       })
       .catch(() => setProviders([]));
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const activeProvider = useMemo(
@@ -213,6 +290,26 @@ export default function FavoritesPanel() {
       .finally(() => setModelsLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProvider?.id]);
+
+  /** 拖动分类栏右侧分隔条：拖动过程只改内存宽度，松手才落盘（免得拖一次写几十遍文件）。 */
+  const startLeftResize = (e: ReactMouseEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = leftWidth;
+    let next = startWidth;
+    const onMove = (ev: MouseEvent) => {
+      next = Math.min(MAX_LEFT_WIDTH, Math.max(MIN_LEFT_WIDTH, startWidth + (ev.clientX - startX)));
+      setLeftWidth(next);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      if (next !== startWidth) void persistSettings({ leftWidth: next });
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
 
   const runImport = async () => {
     // 没配 Token 就直接把配置弹窗递上去，别让用户吃一个报错再自己找入口
@@ -564,9 +661,12 @@ export default function FavoritesPanel() {
           <select
             value={providerId}
             onChange={(e) => {
-              setProviderId(e.target.value);
-              const p = providers.find((x) => x.id === e.target.value);
-              setModelId(p?.active_model_id || p?.models[0]?.id || "");
+              const pid = e.target.value;
+              setProviderId(pid);
+              const p = providers.find((x) => x.id === pid);
+              const mid = p?.active_model_id || p?.models[0]?.id || "";
+              setModelId(mid);
+              void persistSettings({ providerId: pid || null, modelId: mid || null });
             }}
             className="glass-input px-2 h-6 text-[11px] cursor-pointer max-w-[130px]"
             title={t("favorites.providerHint")}
@@ -580,7 +680,13 @@ export default function FavoritesPanel() {
           </select>
           <select
             value={modelId}
-            onChange={(e) => setModelId(e.target.value)}
+            onChange={(e) => {
+              setModelId(e.target.value);
+              void persistSettings({
+                providerId: providerId || null,
+                modelId: e.target.value || null,
+              });
+            }}
             className="glass-input px-2 h-6 text-[11px] cursor-pointer max-w-[170px]"
             title={t("favorites.modelHint")}
             disabled={!activeProvider}
@@ -730,9 +836,12 @@ export default function FavoritesPanel() {
         </div>
       )}
 
-      <div className="flex-1 flex gap-2 min-h-0">
-        {/* 左侧分类树 */}
-        <div className="w-40 shrink-0 overflow-y-auto glass-panel p-2 space-y-0.5">
+      <div className="flex-1 flex min-h-0">
+        {/* 左侧分类树（宽度可拖动，默认 180px，拖动后写回设置） */}
+        <div
+          className="shrink-0 overflow-y-auto glass-panel p-2 space-y-0.5"
+          style={{ width: leftWidth }}
+        >
           <button
             onClick={() => setTag(null)}
             className={`w-full text-left px-2 py-1 rounded text-[11px] cursor-pointer transition-colors ${
@@ -766,6 +875,16 @@ export default function FavoritesPanel() {
             </p>
           )}
         </div>
+
+        {/* 分隔条：左右布局的唯一调节点（拖动改左栏宽度） */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={t("favorites.resizeLeftTip")}
+          title={t("favorites.resizeLeftTip")}
+          onMouseDown={startLeftResize}
+          className="w-2 shrink-0 cursor-col-resize rounded transition-colors hover:bg-[var(--module-accent-soft)]"
+        />
 
         {/* 右侧条目列表 */}
         <div className="flex-1 overflow-y-auto glass-panel divide-y divide-white/5">
