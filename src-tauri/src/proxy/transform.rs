@@ -151,7 +151,7 @@ pub fn anthropic_to_openai(body: &Value, target_model: &str, aliases: Option<&Mo
 
     // 3. 构建 OpenAI 请求
     let mut openai = json!({
-        "model": resolved_model,
+        "model": resolved_model.clone(),
         "messages": messages,
     });
 
@@ -227,6 +227,18 @@ pub fn anthropic_to_openai(body: &Value, target_model: &str, aliases: Option<&Mo
     } else if let Some(parallel) = body.get("parallel_tool_calls").and_then(|v| v.as_bool()) {
         // 少数客户端直接把 OpenAI 风格开关塞进 Anthropic 请求体：出现时以它为准
         openai["parallel_tool_calls"] = json!(parallel);
+    }
+
+    // 8. reasoning effort：Anthropic 的 `thinking` / `output_config.effort` 在 OpenAI 侧
+    //    没有等价块，只有顶层 `reasoning_effort` 一个落点。不映射时用户的 effort 意图
+    //    （含 Claude Code `/effort max`）会静默丢失，gpt-5+/grok-4.x 上表现为「档位永远默认」
+    //    （抄自 cc-switch 8e478b2b / d6e05152）。
+    //    仅当入站真的表达了 effort、且目标模型支持该参数时写入；
+    //    未表达时留给 optimizers::optimize_thinking_openai 按家族兜底。
+    if super::optimizers::supports_reasoning_effort(&resolved_model) {
+        if let Some(effort) = super::optimizers::resolve_reasoning_effort(&resolved_model, body) {
+            openai["reasoning_effort"] = json!(effort);
+        }
     }
 
     openai
@@ -1161,6 +1173,39 @@ mod tests {
         );
         // 顺带回归 tool_choice 映射（本次未改动，但同一段逻辑）
         assert_eq!(out.get("tool_choice"), Some(&json!("required")));
+    }
+
+    #[test]
+    fn output_config_effort_maps_to_reasoning_effort() {
+        // Anthropic 的 `output_config.effort` 在 OpenAI 侧只有 `reasoning_effort` 一个落点；
+        // 不映射时 Claude Code `/effort max` 这类意图会静默丢失（抄自 cc-switch d6e05152）。
+        let mut body = anthropic_body(json!({"type": "auto"}));
+        body["output_config"] = json!({"effort": "max"});
+        let out = anthropic_to_openai(&body, "gpt-5.6", None);
+        assert_eq!(out.get("reasoning_effort"), Some(&json!("max")));
+    }
+
+    #[test]
+    fn thinking_budget_maps_to_reasoning_effort_for_grok() {
+        let mut body = anthropic_body(json!({"type": "auto"}));
+        body["thinking"] = json!({"type": "enabled", "budget_tokens": 8000});
+        let out = anthropic_to_openai(&body, "grok-4.7", None);
+        assert_eq!(out.get("reasoning_effort"), Some(&json!("medium")));
+    }
+
+    #[test]
+    fn effort_is_not_injected_for_unsupported_model() {
+        let mut body = anthropic_body(json!({"type": "auto"}));
+        body["output_config"] = json!({"effort": "high"});
+        let out = anthropic_to_openai(&body, "gpt-4o", None);
+        assert!(out.get("reasoning_effort").is_none(), "{out}");
+    }
+
+    #[test]
+    fn no_effort_intent_leaves_reasoning_effort_to_the_optimizer() {
+        // 入站没有表达 effort 时不要臆造，交给 optimizers::optimize_thinking_openai 按家族兜底
+        let out = anthropic_to_openai(&anthropic_body(json!({"type": "auto"})), "gpt-5.4", None);
+        assert!(out.get("reasoning_effort").is_none(), "{out}");
     }
 
     /// OpenAI 请求体（可带 tool_choice / parallel_tool_calls），用于反向转换测试。

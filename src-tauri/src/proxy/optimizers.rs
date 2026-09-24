@@ -427,22 +427,120 @@ pub fn optimize_thinking(body: &mut Value) {
 //  7. Thinking Optimizer（OpenAI / Google 形态）
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/// OpenAI 形态 thinking 优化：对支持 reasoning 的模型设置 `reasoning_effort`。
-pub fn optimize_thinking_openai(body: &mut Value) {
-    let model = body
-        .get("model")
+/// 取模型名的最后一段（去掉 `provider/model` 前缀）并转小写，供家族判定使用。
+fn model_basename(model: &str) -> String {
+    let lower = model.trim().to_ascii_lowercase();
+    lower.rsplit('/').next().unwrap_or(&lower).to_string()
+}
+
+/// 是否为 OpenAI o 系列推理模型（o1 / o3 / o4-mini 等）。
+fn is_openai_o_series(model: &str) -> bool {
+    model
+        .strip_prefix('o')
+        .and_then(|rest| rest.chars().next())
+        .is_some_and(|c| c.is_ascii_digit())
+}
+
+/// 模型是否支持 OpenAI 的 `reasoning_effort` 参数。
+///
+/// 家族与 cc-switch `supports_reasoning_effort` 对齐（抄自 8e478b2b / d6e05152）：
+/// - o 系列：o1 / o3 / o4-mini 等
+/// - GPT-5+：`gpt-` 后首个字符是数字且 ≥ 5（gpt-5 / gpt-5.1 / gpt-5-codex / gpt-6-astra）
+/// - xAI Grok 4.5+：`grok-4.x`，x 为数字次版本且 ≥ 5 —— **解析而非枚举**，
+///   未来版本（如 grok-4.10）无需再改白名单
+/// - 保留 `grok-build-*` 家族
+/// - 沿袭旧实现的模糊判定：模型名里含 `reasoning` 的也视作支持
+pub fn supports_reasoning_effort(model: &str) -> bool {
+    let base = model_basename(model);
+    is_openai_o_series(&base)
+        || (base.starts_with("gpt-")
+            && base
+                .strip_prefix("gpt-")
+                .and_then(|rest| rest.chars().next())
+                .is_some_and(|c| c.is_ascii_digit() && c >= '5'))
+        || base
+            .strip_prefix("grok-4.")
+            .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|minor| minor.parse::<u32>().ok())
+            .is_some_and(|minor| minor >= 5)
+        || base.starts_with("grok-build-")
+        || base.contains("reasoning")
+}
+
+/// 拥有独立 `max` 推理档位的模型；其余模型把 `max` 降级为 `xhigh`。
+///
+/// 抄自 cc-switch d6e05152：无差别把 `max` 压成 `xhigh` 会丢掉这些模型的最强档。
+fn supports_max_reasoning_effort(model: &str) -> bool {
+    matches!(
+        model_basename(model).as_str(),
+        "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" | "gpt-6-astra"
+    )
+}
+
+/// 从 Anthropic 形态请求体解析出应发给 OpenAI 上游的 `reasoning_effort`。
+///
+/// `model` 必须是**解析后的上游模型名**（不能直接读 body.model：跨协议转换时
+/// body.model 可能还停留在入站「声称的模型」，判定 `max` 档会判错）。
+///
+/// 优先级（抄自 cc-switch d6e05152）：
+/// 1. 显式 `output_config.effort` —— 直接保留用户意图；`max` 仅对有独立 max 档的
+///    模型保留，否则降级 `xhigh`；未知取值返回 `None`（不注入）。
+/// 2. 回落 `thinking.type` + `budget_tokens`：`adaptive` → `xhigh`；
+///    `enabled` 按预算 `<4000` → `low`、`<16000` → `medium`、其余及无预算 → `high`；
+///    `disabled` / 缺失 → `None`。
+pub fn resolve_reasoning_effort(model: &str, body: &Value) -> Option<&'static str> {
+    if let Some(effort) = body
+        .pointer("/output_config/effort")
         .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_lowercase();
-    // o1 / o3 / o4 系列支持 reasoning_effort
-    let supports = model.contains("o1")
-        || model.contains("o3")
-        || model.contains("o4")
-        || model.contains("reasoning");
-    if supports {
-        if let Some(o) = body.as_object_mut() {
-            o.insert("reasoning_effort".into(), json!("high"));
+    {
+        let normalized = effort.trim().to_ascii_lowercase();
+        return match normalized.as_str() {
+            "low" => Some("low"),
+            "medium" => Some("medium"),
+            "high" => Some("high"),
+            "xhigh" => Some("xhigh"),
+            "max" if supports_max_reasoning_effort(model) => Some("max"),
+            "max" => Some("xhigh"),
+            _ => None,
+        };
+    }
+
+    match body.pointer("/thinking/type").and_then(|v| v.as_str()) {
+        Some("adaptive") => Some("xhigh"),
+        Some("enabled") => {
+            let budget = body
+                .pointer("/thinking/budget_tokens")
+                .and_then(|v| v.as_u64());
+            Some(match budget {
+                Some(b) if b < 4_000 => "low",
+                Some(b) if b < 16_000 => "medium",
+                _ => "high",
+            })
         }
+        _ => None,
+    }
+}
+
+/// OpenAI 形态 thinking 优化：对支持 reasoning 的模型设置 `reasoning_effort`。
+///
+/// 已经带 `reasoning_effort` 时直接放行：转换阶段（`transform::anthropic_to_openai` 第 8 步）
+/// 会按入站意图写好该字段，或客户端直接使用 OpenAI 协议自己给出，都不能被兜底值覆盖。
+pub fn optimize_thinking_openai(body: &mut Value) {
+    let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
+    if !supports_reasoning_effort(model) {
+        return;
+    }
+    if body
+        .get("reasoning_effort")
+        .and_then(|v| v.as_str())
+        .is_some()
+    {
+        return;
+    }
+    // 未表达意图时维持旧行为：保守地按 high 请求
+    let effort = resolve_reasoning_effort(model, body).unwrap_or("high");
+    if let Some(o) = body.as_object_mut() {
+        o.insert("reasoning_effort".into(), json!(effort));
     }
 }
 
@@ -611,5 +709,134 @@ pub fn strip_unknown_fields(body: &mut Value, outbound_protocol: &str) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn supports_reasoning_effort_covers_modern_families() {
+        // 白名单按家族而非枚举，未来版本无需再改（抄自 cc-switch 8e478b2b）
+        for supported in [
+            "o1",
+            "o3",
+            "o4-mini",
+            "gpt-5",
+            "gpt-5.1",
+            "gpt-5-codex",
+            "gpt-6-astra",
+            "grok-4.5",
+            "grok-4.6",
+            "grok-4.7",
+            "grok-4.10",
+            "grok-4.7-build",
+            "grok-build-0.1",
+            "openai/o3",
+            "GPT-5.6",
+        ] {
+            assert!(supports_reasoning_effort(supported), "应支持: {supported}");
+        }
+        for unsupported in [
+            "gpt-4o",
+            "gpt-4.1",
+            "claude-sonnet-4-6",
+            "deepseek-v4",
+            // grok-4.x 只接 x >= 5
+            "grok-4",
+            "grok-4.4",
+            "grok-4.",
+            "grok-4.build",
+        ] {
+            assert!(!supports_reasoning_effort(unsupported), "不应支持: {unsupported}");
+        }
+    }
+
+    #[test]
+    fn resolve_reasoning_effort_prefers_output_config() {
+        for (effort, expected) in [
+            ("low", "low"),
+            ("medium", "medium"),
+            ("high", "high"),
+            ("xhigh", "xhigh"),
+        ] {
+            let body = json!({"model": "claude-sonnet-4", "output_config": {"effort": effort}});
+            assert_eq!(resolve_reasoning_effort("gpt-5.4", &body), Some(expected), "{effort}");
+        }
+        // `max` 只在有独立 max 档的模型上保留，其余降级为 xhigh。
+        // 注意判定用的是「解析后的上游模型」，不是 body.model。
+        let max_body = json!({"model": "claude-sonnet-4", "output_config": {"effort": "max"}});
+        for model in ["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"] {
+            assert_eq!(resolve_reasoning_effort(model, &max_body), Some("max"), "{model}");
+        }
+        assert_eq!(resolve_reasoning_effort("gpt-5.4", &max_body), Some("xhigh"));
+        // 未知取值不注入
+        let unknown = json!({"output_config": {"effort": "turbo"}});
+        assert_eq!(resolve_reasoning_effort("gpt-5.4", &unknown), None);
+    }
+
+    #[test]
+    fn resolve_reasoning_effort_falls_back_to_thinking_budget() {
+        let with_thinking = |t: Value| json!({"thinking": t});
+        assert_eq!(
+            resolve_reasoning_effort("gpt-5.4", &with_thinking(json!({"type": "adaptive"}))),
+            Some("xhigh")
+        );
+        assert_eq!(
+            resolve_reasoning_effort(
+                "gpt-5.4",
+                &with_thinking(json!({"type": "enabled", "budget_tokens": 1000}))
+            ),
+            Some("low")
+        );
+        assert_eq!(
+            resolve_reasoning_effort(
+                "gpt-5.4",
+                &with_thinking(json!({"type": "enabled", "budget_tokens": 8000}))
+            ),
+            Some("medium")
+        );
+        assert_eq!(
+            resolve_reasoning_effort(
+                "gpt-5.4",
+                &with_thinking(json!({"type": "enabled", "budget_tokens": 32000}))
+            ),
+            Some("high")
+        );
+        // enabled 但没给预算：保守取 high
+        assert_eq!(
+            resolve_reasoning_effort("gpt-5.4", &with_thinking(json!({"type": "enabled"}))),
+            Some("high")
+        );
+        // disabled / 未表达：不注入
+        assert_eq!(
+            resolve_reasoning_effort("gpt-5.4", &with_thinking(json!({"type": "disabled"}))),
+            None
+        );
+        assert_eq!(resolve_reasoning_effort("gpt-5.4", &json!({})), None);
+    }
+
+    #[test]
+    fn optimize_thinking_openai_does_not_clobber_explicit_effort() {
+        // 转换阶段已按入站意图写好 effort，优化器的兜底值不能覆盖它
+        let mut body = json!({"model": "gpt-5.6", "reasoning_effort": "max"});
+        optimize_thinking_openai(&mut body);
+        assert_eq!(body["reasoning_effort"], json!("max"));
+    }
+
+    #[test]
+    fn optimize_thinking_openai_defaults_to_high_for_supported_model() {
+        let mut body = json!({"model": "gpt-5.4"});
+        optimize_thinking_openai(&mut body);
+        assert_eq!(body["reasoning_effort"], json!("high"));
+    }
+
+    #[test]
+    fn optimize_thinking_openai_injects_nothing_for_unsupported_model() {
+        let mut body = json!({"model": "gpt-4o"});
+        optimize_thinking_openai(&mut body);
+        assert!(body.get("reasoning_effort").is_none(), "{body}");
     }
 }
