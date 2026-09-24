@@ -7,6 +7,8 @@
     <title>Kira</title>
     <script>
       // anti-FOUC：首屏绘制前先把根背景设为深色，避免 WebView2 原生层白闪（移植自 cc-switch #6252）
+      // 注意：此处必须保留字面量（此时 App.css 尚未加载、读不到 CSS 变量），
+      // 取值须与 App.css @theme 的 --color-surface 保持一致，改皮肤时两处同步。
       (function () {
         try {
           document.documentElement.style.background = "#0d111d";

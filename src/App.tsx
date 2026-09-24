@@ -343,14 +343,14 @@ export default function App() {
 
   return (
     <div
-      className={`w-screen h-screen overflow-hidden bg-[#0d111d] text-slate-100 flex flex-col ${bgTextureClass}`}
+      className={`w-screen h-screen overflow-hidden bg-surface text-slate-100 flex flex-col ${bgTextureClass}`}
       style={{ fontFamily: effectiveFontFamily, ...moduleThemeVars }}
     >
       {fontFaceCss && <style>{fontFaceCss}</style>}
 
       {/* 冷启动闪屏：Kira 赛博 Logo + 进度，替代白屏 */}
       {booting && (
-        <div className="fixed inset-0 z-[10000] flex flex-col items-center justify-center gap-6 bg-[#0b101b] cyber-grid">
+        <div className="fixed inset-0 z-[10000] flex flex-col items-center justify-center gap-6 bg-surface-splash cyber-grid">
           <VexGlowAvatar size={150} color={activeModuleColor} />
           <div className="text-center">
             <div className="text-xl font-black tracking-[0.35em] text-white">
@@ -379,7 +379,7 @@ export default function App() {
                 ? "vex-toast-pulse bg-[#1a1016]/90"
                 : vexToast.kind === "success"
                   ? "vex-toast-light bg-[#0f1a16]/90"
-                  : "bg-[#12151f]/90"
+                  : "bg-surface-panel/90"
             }`}
             style={{
               boxShadow:
@@ -446,7 +446,7 @@ export default function App() {
       <div className="vex-neon-ambient fixed inset-0 z-0" />
 
       {/* top bar */}
-      <div className="relative flex-shrink-0 h-11 flex items-center justify-between px-3 border-b border-white/5 bg-[#0e1220]/80 backdrop-blur-md z-50" data-tauri-drag-region>
+      <div className="relative flex-shrink-0 h-11 flex items-center justify-between px-3 border-b border-border-subtle bg-surface-topbar/80 backdrop-blur-md z-50" data-tauri-drag-region>
         {/* 顶栏底部霓虹辉光细线 */}
         <div className="vex-neon-line absolute bottom-0 left-0 right-0 h-px" />
         {/* Left: Logo + Name */}
@@ -504,7 +504,8 @@ export default function App() {
                 {moreOpen && moreAnchor && createPortal(
                   <>
                     <div className="fixed inset-0 z-[200]" onClick={() => setMoreOpen(false)} />
-                    <div className="fixed z-[201] min-w-[160px] rounded-lg border border-white/10 bg-[#151a2a] shadow-2xl shadow-black/60 p-1"
+                    {/* 面板底色/描边走全局皮肤 token（App.css @theme），换肤自动跟随 */}
+                    <div className="fixed z-[201] min-w-[160px] rounded-lg border border-border bg-surface-modal shadow-2xl shadow-black/60 p-1"
                       style={{ top: moreAnchor.bottom + 6, right: moreAnchor.right }}>
                       {moreModules.map((m) => {
                         const Icon = m.icon;
@@ -517,8 +518,8 @@ export default function App() {
                             }}
                             className={`w-full px-3 py-2 rounded-md text-[11px] font-medium flex items-center gap-2 transition-all cursor-pointer text-left ${
                               activePage === m.id
-                                ? "bg-white/10 text-white"
-                                : "text-slate-300 hover:bg-white/5"
+                                ? "bg-[var(--module-accent-ring)] text-white"
+                                : "text-slate-300 hover:bg-[var(--module-accent-soft)]"
                             }`}
                           >
                             <Icon className="w-3.5 h-3.5 text-[var(--module-accent)]" />

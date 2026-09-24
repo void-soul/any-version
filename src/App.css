@@ -22,9 +22,15 @@
    模块自己的强调色继续用 --module-accent 系列（App 注入），
    本组 token 是「皮肤层」，两者正交——换肤改这里，模块主题色不变。 */
 @theme {
-  --color-surface: #0d111d;          /* 应用底色 */
-  --color-surface-raised: #11151f;   /* 卡片/面板底 */
-  --color-surface-modal: #101827;    /* 弹框底 */
+  --color-surface: #0d111d;          /* 应用底色（须与 index.html 首帧预置色一致） */
+  --color-surface-panel: #0d1524;    /* 面板/浮层/下拉/弹框/卡片底（唯一基准档） */
+  --color-surface-raised: var(--color-surface-panel); /* 卡片底（与面板同档，保留语义名） */
+  --color-surface-modal: var(--color-surface-panel);  /* 弹框底（与面板同档，保留语义名） */
+  --color-surface-deep: #080f1c;     /* 深层底：画布 / 内嵌 / 整屏遮罩 */
+  --color-surface-inset: #1e2436;    /* 输入框 / 内嵌控件 / 选项底 */
+  --color-surface-topbar: #0e1220;   /* 顶栏底（配 /80 + backdrop-blur 用） */
+  --color-surface-splash: #0b101b;   /* 冷启动闪屏底 */
+  --color-surface-hover: #334155;    /* 交互悬停态底（比 inset 再亮一档） */
   --color-border: rgba(255, 255, 255, 0.1);
   --color-border-subtle: rgba(255, 255, 255, 0.05);
   --color-text-primary: #f1f5f9;
@@ -34,7 +40,8 @@
 
 @layer base {
   body {
-    background-color: #0f131f;
+    /* 底色统一走皮肤 token（原硬编码 #0f131f 与 surface 不同，属历史漂移） */
+    background-color: var(--color-surface);
     color: #f1f5f9;
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
     overflow: hidden;
@@ -417,7 +424,7 @@ button[class*="module-accent"]:active:not(:disabled) {
   position: relative;
   border: 1px solid transparent;
   background:
-    linear-gradient(var(--color-surface-modal, #101827), var(--color-surface-modal, #101827)) padding-box,
+    linear-gradient(var(--color-surface-panel), var(--color-surface-panel)) padding-box,
     linear-gradient(135deg, var(--vex-primary, var(--vex-fallback-primary)), var(--vex-cyan, var(--vex-fallback-cyan))) border-box;
   box-shadow:
     0 0 14px color-mix(in srgb, var(--vex-primary, var(--vex-fallback-primary)) 16%, transparent),
@@ -542,7 +549,7 @@ button[class*="module-accent"]:active:not(:disabled) {
 
 /* Glassmorphism helpers */
 .glass-panel {
-  background: rgba(21, 27, 44, 0.38);
+  background: color-mix(in srgb, var(--color-surface-inset) 38%, transparent);
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
@@ -551,20 +558,20 @@ button[class*="module-accent"]:active:not(:disabled) {
 }
 
 .glass-panel-hover:hover {
-  background: rgba(25, 33, 53, 0.5);
+  background: color-mix(in srgb, var(--color-surface-inset) 50%, transparent);
   border-color: rgba(255, 255, 255, 0.1);
   transform: translateY(-2px);
 }
 
 .glass-sidebar {
-  background: rgba(14, 18, 30, 0.85);
+  background: color-mix(in srgb, var(--color-surface-topbar) 85%, transparent);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border-right: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .glass-input {
-  background: rgba(10, 14, 23, 0.6);
+  background: color-mix(in srgb, var(--color-surface-deep) 60%, transparent);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   color: #f1f5f9;
@@ -584,7 +591,7 @@ button[class*="module-accent"]:active:not(:disabled) {
    .glass-panel select 提高优先级，覆盖组件内的 Tailwind 背景工具类 */
 select,
 .glass-panel select {
-  background-color: rgba(10, 14, 23, 0.6) !important;
+  background-color: color-mix(in srgb, var(--color-surface-deep) 60%, transparent) !important;
   color: #f1f5f9 !important;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
@@ -604,7 +611,7 @@ select:focus,
 }
 select option,
 .glass-panel select option {
-  background-color: #141a2b;
+  background-color: var(--color-surface-panel);
   color: #f1f5f9;
 }
 
@@ -613,7 +620,7 @@ select option,
   overflow: hidden;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 8px;
-  background: rgba(15, 23, 42, 0.96);
+  background: color-mix(in srgb, var(--color-surface-panel) 96%, transparent);
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
 }
 
@@ -622,7 +629,7 @@ select option,
   height: 30px;
   border: 0;
   border-bottom: 1px solid rgba(148, 163, 184, 0.2);
-  background: rgba(30, 41, 59, 0.96);
+  background: color-mix(in srgb, var(--color-surface-inset) 96%, transparent);
   color: #cbd5e1;
 }
 
@@ -631,12 +638,12 @@ select option,
 }
 
 .canvas-flow-controls .react-flow__controls-button:hover {
-  background: rgba(51, 65, 85, 0.98);
+  background: color-mix(in srgb, var(--color-surface-hover) 98%, transparent);
   color: #f8fafc;
 }
 
 .canvas-flow-controls .react-flow__controls-button:disabled {
-  background: rgba(15, 23, 42, 0.9);
+  background: color-mix(in srgb, var(--color-surface-panel) 90%, transparent);
   color: #64748b;
 }
 
@@ -652,7 +659,7 @@ select option,
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(14, 18, 30, 0.1);
+  background: color-mix(in srgb, var(--color-surface-topbar) 10%, transparent);
 }
 
 ::-webkit-scrollbar-thumb {
