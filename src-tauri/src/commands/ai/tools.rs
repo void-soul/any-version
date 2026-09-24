@@ -3,6 +3,33 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use tauri::{AppHandle, Emitter};
+use tokio::io::{AsyncBufReadExt, BufReader};
+
+/// 安装 / 卸载 / 升级的实时进度事件名：每行命令输出推一次，前端工具面板逐行显示。
+const TOOL_PROGRESS_EVENT: &str = "ai-tool-progress";
+
+/// 进度事件载荷：一条命令输出行。
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolProgressPayload {
+    tool_id: String,
+    /// "installing" | "uninstalling" | "upgrading"
+    phase: String,
+    line: String,
+}
+
+/// 安装 / 卸载 / 升级的结果。
+///
+/// 这三个命令此前返回 `Result<String, String>`，成败全靠前端 `msg.includes("成功")` 猜 ——
+/// 「已清理 3 处安装文件」这种正常成功文案不含「成功」二字，会被渲染成红色报错样式，
+/// 用户看到的就是「明明卸干净了却报错」。改成结构化结果，前端不再猜。
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolOpResult {
+    pub ok: bool,
+    pub message: String,
+}
 
 /// 跟踪正在进行中的 升级/安装/卸载 操作，作为“进行中”状态的权威来源。
 /// 前端在切换 Agent、切换页面或组件重新挂载后，仍可从 detect / versions 结果中
@@ -43,33 +70,102 @@ impl Drop for ToolBusyGuard {
     }
 }
 
+// ─── 流式执行（安装/卸载/升级的实时进度） ───
+
+/// 逐行读取子进程的一个管道：每行推一次进度事件，并把输出收进 `sink`（失败时回显原因）。
+///
+/// 两个管道必须**并发**读：只读其中一个时，另一个写满内核缓冲区会让子进程阻塞在写，
+/// 表现为「进度卡住不动、命令永不结束」。
+async fn stream_pipe<R: tokio::io::AsyncRead + Unpin>(
+    app: &AppHandle,
+    tool_id: &str,
+    phase: &str,
+    pipe: R,
+    sink: &Mutex<Vec<String>>,
+) {
+    let mut lines = BufReader::new(pipe).lines();
+    while let Ok(Some(raw)) = lines.next_line().await {
+        let line = raw.trim_end().to_string();
+        if line.trim().is_empty() {
+            continue;
+        }
+        let _ = app.emit(
+            TOOL_PROGRESS_EVENT,
+            ToolProgressPayload {
+                tool_id: tool_id.to_string(),
+                phase: phase.to_string(),
+                line: line.clone(),
+            },
+        );
+        if let Ok(mut sink) = sink.lock() {
+            // npm 的进度输出可能很长，只留尾部用于报错回显
+            if sink.len() < 300 {
+                sink.push(line);
+            }
+        }
+    }
+}
+
+/// 执行一条命令，边跑边把输出推给前端。成功返回 Ok，失败返回原因（含输出尾部）。
+async fn run_streaming(
+    app: &AppHandle,
+    tool_id: &str,
+    phase: &str,
+    cmd: &str,
+) -> Result<(), String> {
+    let mut c = tokio::process::Command::new("cmd");
+    #[cfg(windows)]
+    c.creation_flags(0x08000000); // CREATE_NO_WINDOW：禁止弹出命令提示符黑框
+    let mut child = c
+        .args(["/c", cmd])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("无法执行命令: {}", e))?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let sink = Mutex::new(Vec::<String>::new());
+    let out_task = async {
+        if let Some(p) = stdout {
+            stream_pipe(app, tool_id, phase, p, &sink).await
+        }
+    };
+    let err_task = async {
+        if let Some(p) = stderr {
+            stream_pipe(app, tool_id, phase, p, &sink).await
+        }
+    };
+    let (status, _, _) = tokio::join!(child.wait(), out_task, err_task);
+    let status = status.map_err(|e| format!("等待命令结束失败: {}", e))?;
+    if status.success() {
+        return Ok(());
+    }
+    let lines = sink.into_inner().unwrap_or_default();
+    let tail: Vec<String> = lines.iter().rev().take(5).rev().cloned().collect();
+    Err(if tail.is_empty() {
+        format!("命令以 {} 退出", status)
+    } else {
+        tail.join("\n")
+    })
+}
+
+/// 安装工具：跑工具自带的官方安装命令，输出实时推给前端。
 #[tauri::command]
-pub async fn install_ai_tool(tool_id: String) -> Result<String, String> {
+pub async fn install_ai_tool(app: AppHandle, tool_id: String) -> Result<ToolOpResult, String> {
     let reg = registry();
-    let (_, paths) = reg.get_tool(&tool_id).ok_or("未知工具")?;
+    let (config, paths) = reg.get_tool(&tool_id).ok_or("未知工具")?;
     let _busy_guard = ToolBusyGuard { id: tool_id.clone() };
     set_tool_busy(&tool_id, "installing");
-    let install_cmd = &paths.install_cmd;
-    let mut cmd = tokio::process::Command::new("cmd");
-    #[cfg(windows)]
-    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW：禁止弹出命令提示符黑框
-    let output = cmd
-        .args(["/c", install_cmd])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|e| format!("安装失败: {}", e))?;
-
-    if output.status.success() {
-        Ok("安装成功".to_string())
-    } else {
-        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(if err.is_empty() {
-            "安装失败".to_string()
-        } else {
-            err
-        })
+    let install_cmd = paths.install_cmd.trim().to_string();
+    if install_cmd.is_empty() {
+        return Err(format!("{} 未配置安装命令", config.display_name));
+    }
+    match run_streaming(&app, &tool_id, "installing", &install_cmd).await {
+        Ok(()) => Ok(ToolOpResult {
+            ok: true,
+            message: format!("安装完成：{}", install_cmd),
+        }),
+        Err(e) => Err(format!("安装失败：{}", e)),
     }
 }
 
@@ -80,19 +176,28 @@ enum PmOp {
     Uninstall,
 }
 
-/// 由工具声明的包管理器生成升级 / 卸载命令；不认识的包管理器返回 `None`，
+/// 由工具声明的包管理器生成升级 / 卸载命令**候选**（按尝试顺序）；不认识的包管理器返回空，
 /// 调用方此时应回落到工具自带的官方命令（`installCmd` / `uninstallCmd`）。
 ///
 /// 这里**刻意不**要求「包管理器全局注册表里查得到该包」再去执行：npm 的全局前缀
 /// 随 node 版本变化（nvm / fnm / volta），Kira 查询用的 npm 与用户当初安装用的
 /// 可能不是同一个 —— 据此拒绝操作会让「本机明明装了」的工具变成卸载不了的死结。
-fn pm_command(pkg_manager: Option<&str>, pkg: &str, op: PmOp) -> Option<String> {
+///
+/// pip 给两条候选：Windows 上 `pip.exe` 常常没进 PATH（只有 `python` 进了），
+/// 只写 `pip ...` 会直接「命令找不到」，于是工具明明装着却卸不掉。
+fn pm_commands(pkg_manager: Option<&str>, pkg: &str, op: PmOp) -> Vec<String> {
     match (pkg_manager, op) {
-        (Some("npm"), PmOp::Install) => Some(format!("npm install -g {}@latest", pkg)),
-        (Some("npm"), PmOp::Uninstall) => Some(format!("npm uninstall -g {}", pkg)),
-        (Some("pip"), PmOp::Install) => Some(format!("pip install --upgrade {}", pkg)),
-        (Some("pip"), PmOp::Uninstall) => Some(format!("pip uninstall -y {}", pkg)),
-        _ => None,
+        (Some("npm"), PmOp::Install) => vec![format!("npm install -g {}@latest", pkg)],
+        (Some("npm"), PmOp::Uninstall) => vec![format!("npm uninstall -g {}", pkg)],
+        (Some("pip"), PmOp::Install) => vec![
+            format!("pip install --upgrade {}", pkg),
+            format!("python -m pip install --upgrade {}", pkg),
+        ],
+        (Some("pip"), PmOp::Uninstall) => vec![
+            format!("pip uninstall -y {}", pkg),
+            format!("python -m pip uninstall -y {}", pkg),
+        ],
+        _ => Vec::new(),
     }
 }
 
@@ -183,30 +288,7 @@ fn is_protected_path(p: &Path) -> bool {
         || dir == "/sbin"
 }
 
-/// 在后台静默跑一条命令；失败时把 stderr 带回来（空则用退出码兜底）。
-async fn run_shell(cmd: &str) -> Result<(), String> {
-    let mut c = tokio::process::Command::new("cmd");
-    #[cfg(windows)]
-    c.creation_flags(0x08000000); // CREATE_NO_WINDOW：禁止弹出命令提示符黑框
-    let output = c
-        .args(["/c", cmd])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|e| format!("无法执行命令: {}", e))?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    Err(if err.is_empty() {
-        format!("命令以 {} 退出", output.status)
-    } else {
-        err
-    })
-}
-
-/// 定位工具的可执行文件。
+/// 定位工具的可执行文件（只看注册表声明的路径）。
 fn detect_exe(
     config: &crate::commands::ai_registry::ToolConfig,
     paths: &crate::commands::ai_registry::PathConfig,
@@ -214,12 +296,57 @@ fn detect_exe(
     super::tool_paths::find_declared_exe(&config.id, &paths.paths, &paths.start_command)
 }
 
+/// 在给定的目录列表里按垫片后缀找可执行文件（顺序即优先级）。目录列表由调用方给出，便于单测。
+fn find_exe_in_dirs(
+    dirs: impl IntoIterator<Item = PathBuf>,
+    name: &str,
+) -> Option<PathBuf> {
+    for dir in dirs {
+        for ext in SHIM_EXTS {
+            let cand = dir.join(if ext.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}.{}", name, ext)
+            });
+            if cand.is_file() {
+                return Some(cand);
+            }
+        }
+    }
+    None
+}
+
+/// 在 PATH 里定位工具的可执行文件。
+///
+/// 检测（策略 2/3）本来就能靠 PATH 发现工具，但「按文件清理」此前只认注册表里声明的
+/// 路径 —— 于是出现「界面明明检测到、卸载却说找不到它的可执行文件」的死结（Q-0191）。
+/// 这里用 `start_command` 的首个 token 在 PATH 各目录里按垫片后缀回头找一遍。
+fn find_exe_on_path(command: &str) -> Option<PathBuf> {
+    let name = command.split_whitespace().next()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let raw = std::env::var_os("PATH")?;
+    find_exe_in_dirs(std::env::split_paths(&raw), name)
+}
+
+/// 「可执行文件在哪」的统一口径：先看注册表声明的路径，再看 PATH。
+///
+/// 两条渠道必须一致 —— 若检测走 PATH、清理只看声明路径，就会出现
+/// 「检测得到但清理说找不到」，或者「清理报成功但 PATH 里那份还在」。
+fn detect_exe_any(
+    config: &crate::commands::ai_registry::ToolConfig,
+    paths: &crate::commands::ai_registry::PathConfig,
+) -> Option<PathBuf> {
+    detect_exe(config, paths).or_else(|| find_exe_on_path(&paths.start_command))
+}
+
 /// 「现在还能不能检测到这个工具」——用于确认某条命令报成功是否真的生效。
 fn still_installed(
     config: &crate::commands::ai_registry::ToolConfig,
     paths: &crate::commands::ai_registry::PathConfig,
 ) -> bool {
-    detect_exe(config, paths).is_some()
+    detect_exe_any(config, paths).is_some()
 }
 
 /// 出错时的落尾：把 Kira 实际检测到的可执行文件路径给出来，便于手动处理。
@@ -234,7 +361,7 @@ fn all_channels_failed(
     } else {
         notes.join("；")
     };
-    match detect_exe(config, paths) {
+    match detect_exe_any(config, paths) {
         Some(exe) => format!(
             "{} {}失败（{}）。Kira 检测到的可执行文件：{}",
             config.display_name,
@@ -250,14 +377,19 @@ fn all_channels_failed(
 /// 以及能确认归属该包的 `node_modules` / `site-packages` 目录。
 ///
 /// 这是包管理器与官方命令都不可用时的最后手段：npm 前缀不一致、包已卸但垫片
-/// 残留、官方脚本装的单文件 CLI 等。返回实际删除清单；一项都没删掉时返回错误，
-/// 并带上每个路径失败的原因（Windows 上文件被正在运行的工具占用很常见）。
+/// 残留、官方脚本装的单文件 CLI 等。返回实际删除清单。
+///
+/// 两个关键点：
+/// ① 可执行文件用 [`detect_exe_any`] 定位（声明路径 → PATH），别处安装的工具也能找到；
+/// ② 清理完**必须复核**：Windows 上正在运行的 exe 删不掉（文件锁），以前只要删掉任意
+///    一项就返回成功，界面显示「已清理」而工具还在 —— 现在复核未过一律算失败。
 fn remove_detected_install(
     config: &crate::commands::ai_registry::ToolConfig,
     paths: &crate::commands::ai_registry::PathConfig,
 ) -> Result<String, String> {
-    let exe = detect_exe(config, paths)
-        .ok_or_else(|| "Kira 找不到它的可执行文件位置，无法按文件清理".to_string())?;
+    let exe = detect_exe_any(config, paths).ok_or_else(|| {
+        "Kira 既没在声明的路径、也没在 PATH 里找到它的可执行文件，无法按文件清理".to_string()
+    })?;
     let pkg = config.pkg_name.as_deref().unwrap_or(&config.id);
 
     let mut removed: Vec<String> = Vec::new();
@@ -291,6 +423,17 @@ fn remove_detected_install(
             format!("清理失败：{}", failed.join("；"))
         });
     }
+
+    // 复核：文件删了不等于工具没了（另一份安装、或被占用的文件仍在）
+    if let Some(left) = detect_exe_any(config, paths) {
+        return Err(format!(
+            "已删除 {}，但 {} 仍能被检测到（{}）—— 可能还有一份安装，或文件正被运行中的进程占用；请先退出该工具再试",
+            removed.join("、"),
+            config.display_name,
+            left.display()
+        ));
+    }
+
     let mut msg = format!("已清理 {} 处安装文件：{}", removed.len(), removed.join("、"));
     if !failed.is_empty() {
         msg.push_str(&format!("；另有 {} 处未清理：{}", failed.len(), failed.join("；")));
@@ -301,9 +444,10 @@ fn remove_detected_install(
 /// 升级工具。
 ///
 /// 渠道顺序：① 声明的包管理器 → ② 工具自带的官方安装命令。
-/// 两者都不可用（或都失败）时才报错，报错里带上各渠道的 stderr 与检测到的文件位置。
+/// 两者都不可用（或都失败）时才报错，报错里带上各渠道的输出尾部与检测到的文件位置。
+/// 全过程逐行推送进度事件，前端实时显示命令输出。
 #[tauri::command]
-pub async fn upgrade_ai_tool(tool_id: String) -> Result<String, String> {
+pub async fn upgrade_ai_tool(app: AppHandle, tool_id: String) -> Result<ToolOpResult, String> {
     let reg = registry();
     let (config, paths) = reg.get_tool(&tool_id).ok_or("未知工具")?;
     let _busy_guard = ToolBusyGuard { id: tool_id.clone() };
@@ -312,16 +456,26 @@ pub async fn upgrade_ai_tool(tool_id: String) -> Result<String, String> {
     let pkg = config.pkg_name.as_deref().unwrap_or(&config.id);
     let mut notes: Vec<String> = Vec::new();
 
-    if let Some(cmd) = pm_command(config.pkg_manager.as_deref(), pkg, PmOp::Install) {
-        match run_shell(&cmd).await {
-            Ok(()) => return Ok(format!("升级完成：{}", cmd)),
+    for cmd in pm_commands(config.pkg_manager.as_deref(), pkg, PmOp::Install) {
+        match run_streaming(&app, &tool_id, "upgrading", &cmd).await {
+            Ok(()) => {
+                return Ok(ToolOpResult {
+                    ok: true,
+                    message: format!("升级完成：{}", cmd),
+                })
+            }
             Err(e) => notes.push(format!("{} 失败：{}", cmd, e)),
         }
     }
 
     if !paths.install_cmd.trim().is_empty() {
-        match run_shell(&paths.install_cmd).await {
-            Ok(()) => return Ok(format!("已通过官方安装命令升级：{}", paths.install_cmd)),
+        match run_streaming(&app, &tool_id, "upgrading", &paths.install_cmd).await {
+            Ok(()) => {
+                return Ok(ToolOpResult {
+                    ok: true,
+                    message: format!("已通过官方安装命令升级：{}", paths.install_cmd),
+                })
+            }
             Err(e) => notes.push(format!("官方安装命令失败：{}", e)),
         }
     }
@@ -334,8 +488,9 @@ pub async fn upgrade_ai_tool(tool_id: String) -> Result<String, String> {
 /// 渠道顺序：① 配置的官方卸载命令 → ② 声明的包管理器 → ③ 按文件清理。
 /// 前两条命令「报成功但工具仍能被检测到」时不算数（`npm uninstall -g` 对不在
 /// 该前缀下的包可能静默成功），继续往下走，避免出现「界面说卸载成功、图标还在」。
+/// 第三环对**非包管理器安装**的工具同样有效：可执行文件先按声明路径找、再按 PATH 找。
 #[tauri::command]
-pub async fn uninstall_ai_tool(tool_id: String) -> Result<String, String> {
+pub async fn uninstall_ai_tool(app: AppHandle, tool_id: String) -> Result<ToolOpResult, String> {
     let reg = registry();
     let (config, paths) = reg.get_tool(&tool_id).ok_or("未知工具")?;
     let _busy_guard = ToolBusyGuard { id: tool_id.clone() };
@@ -347,21 +502,29 @@ pub async fn uninstall_ai_tool(tool_id: String) -> Result<String, String> {
     if let Some(cmd) = paths
         .uninstall_cmd
         .as_deref()
-        .filter(|c| !c.trim().is_empty())
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(str::to_string)
     {
-        match run_shell(cmd).await {
+        match run_streaming(&app, &tool_id, "uninstalling", &cmd).await {
             Ok(()) if !still_installed(&config, &paths) => {
-                return Ok(format!("已通过官方卸载命令卸载：{}", cmd))
+                return Ok(ToolOpResult {
+                    ok: true,
+                    message: format!("已通过官方卸载命令卸载：{}", cmd),
+                })
             }
             Ok(()) => notes.push(format!("{} 执行成功，但仍能检测到该工具", cmd)),
             Err(e) => notes.push(format!("{} 失败：{}", cmd, e)),
         }
     }
 
-    if let Some(cmd) = pm_command(config.pkg_manager.as_deref(), pkg, PmOp::Uninstall) {
-        match run_shell(&cmd).await {
+    for cmd in pm_commands(config.pkg_manager.as_deref(), pkg, PmOp::Uninstall) {
+        match run_streaming(&app, &tool_id, "uninstalling", &cmd).await {
             Ok(()) if !still_installed(&config, &paths) => {
-                return Ok(format!("已通过包管理器卸载：{}", cmd))
+                return Ok(ToolOpResult {
+                    ok: true,
+                    message: format!("已通过包管理器卸载：{}", cmd),
+                })
             }
             Ok(()) => notes.push(format!("{} 执行成功，但仍能检测到该工具", cmd)),
             Err(e) => notes.push(format!("{} 失败：{}", cmd, e)),
@@ -369,7 +532,10 @@ pub async fn uninstall_ai_tool(tool_id: String) -> Result<String, String> {
     }
 
     match remove_detected_install(&config, &paths) {
-        Ok(summary) => Ok(summary),
+        Ok(summary) => Ok(ToolOpResult {
+            ok: true,
+            message: summary,
+        }),
         Err(e) => {
             let mut notes = notes;
             notes.push(e);
@@ -387,23 +553,49 @@ mod tests {
     fn pm_command_maps_npm_and_pip() {
         // 只认 npm / pip；其它包管理器回落到工具自带的官方命令
         assert_eq!(
-            pm_command(Some("npm"), "@openai/codex", PmOp::Install).unwrap(),
-            "npm install -g @openai/codex@latest"
+            pm_commands(Some("npm"), "@openai/codex", PmOp::Install),
+            vec!["npm install -g @openai/codex@latest"]
         );
         assert_eq!(
-            pm_command(Some("npm"), "@openai/codex", PmOp::Uninstall).unwrap(),
-            "npm uninstall -g @openai/codex"
+            pm_commands(Some("npm"), "@openai/codex", PmOp::Uninstall),
+            vec!["npm uninstall -g @openai/codex"]
+        );
+        // pip 有两条候选：Windows 上 pip.exe 常不在 PATH，第二备用 `python -m pip`
+        assert_eq!(
+            pm_commands(Some("pip"), "headroom-ai", PmOp::Install),
+            vec![
+                "pip install --upgrade headroom-ai",
+                "python -m pip install --upgrade headroom-ai"
+            ]
         );
         assert_eq!(
-            pm_command(Some("pip"), "headroom-ai", PmOp::Install).unwrap(),
-            "pip install --upgrade headroom-ai"
+            pm_commands(Some("pip"), "headroom-ai", PmOp::Uninstall),
+            vec![
+                "pip uninstall -y headroom-ai",
+                "python -m pip uninstall -y headroom-ai"
+            ]
         );
-        assert_eq!(
-            pm_command(Some("pip"), "headroom-ai", PmOp::Uninstall).unwrap(),
-            "pip uninstall -y headroom-ai"
-        );
-        assert!(pm_command(None, "pi", PmOp::Install).is_none());
-        assert!(pm_command(Some("go"), "pi", PmOp::Uninstall).is_none());
+        assert!(pm_commands(None, "pi", PmOp::Install).is_empty());
+        assert!(pm_commands(Some("go"), "pi", PmOp::Uninstall).is_empty());
+    }
+
+    #[test]
+    fn find_exe_in_dirs_walks_dirs_and_shim_suffixes_in_order() {
+        // 非包管理器安装的工具往往只在 PATH 里（注册表声明的路径找不到）：
+        // 按文件清理要能在目录列表里找到它，且优先命中 .cmd 垫片
+        let dir = std::env::temp_dir().join(format!("kira_path_probe_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("pi.cmd"), "").unwrap();
+
+        let missing = dir.join("does-not-exist");
+        let found = find_exe_in_dirs(vec![missing, dir.clone()], "pi");
+        assert_eq!(found.as_deref(), Some(dir.join("pi.cmd").as_path()));
+
+        // 名字对不上就找不到（不能瞎猜）
+        assert!(find_exe_in_dirs(vec![dir.clone()], "other-tool").is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

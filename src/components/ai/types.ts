@@ -159,6 +159,16 @@ export interface AiConfig {
   skills_dir: string;
 }
 
+/** 安装 / 卸载 / 升级的结果（后端 `ToolOpResult`）。
+ *
+ *  此前后端只返回一个字符串，前端靠 `msg.includes("成功")` 猜成败 ——
+ *  「已清理 3 处安装文件」这种正常成功文案不含「成功」二字，会被渲染成红色报错。
+ *  现在由后端直接给出 ok，前端不再猜。 */
+export interface ToolOpResult {
+  ok: boolean;
+  message: string;
+}
+
 export interface DetectedAiTool {
   id: string;
   display_name: string;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -32,7 +32,7 @@ import {
   ToggleRight,
   Download,
   Shield,
-  Cpu, Pencil, Check, History,
+  Cpu, Pencil, Check, History, Terminal,
 } from "lucide-react";
 import type {
   AiProvider,
@@ -44,6 +44,7 @@ import type {
   TerminalInfo,
   ModelCustomParam,
   ModelEntry,
+  ToolOpResult,
 } from "./types";
 
 const PROTOCOL_LABELS: Record<string, string> = {
@@ -187,11 +188,14 @@ export default function ToolLauncher() {
   const [launching, setLaunching] = useState(false);
   const [launchResult, setLaunchResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [upgradingTool, setUpgradingTool] = useState<string | null>(null);
-  const [upgradeResult, setUpgradeResult] = useState<{ id: string; msg: string } | null>(null);
+  const [upgradeResult, setUpgradeResult] = useState<{ id: string; ok: boolean; message: string } | null>(null);
   const [installingTool, setInstallingTool] = useState<string | null>(null);
-  const [installResult, setInstallResult] = useState<{ id: string; msg: string } | null>(null);
+  const [installResult, setInstallResult] = useState<{ id: string; ok: boolean; message: string } | null>(null);
   const [uninstallingTool, setUninstallingTool] = useState<string | null>(null);
-  const [uninstallResult, setUninstallResult] = useState<{ id: string; msg: string } | null>(null);
+  const [uninstallResult, setUninstallResult] = useState<{ id: string; ok: boolean; message: string } | null>(null);
+  // 安装/卸载/升级的实时输出（后端 ai-tool-progress 事件逐行推送，按工具 id 分开存）
+  const [opLogs, setOpLogs] = useState<Record<string, { phase: string; lines: string[] }>>({});
+  const opLogRef = useRef<HTMLDivElement | null>(null);
   const [versionStatuses, setVersionStatuses] = useState<Record<string, { latest: string; status: string; busy?: string | null }>>({});
   const [checkingVersions, setCheckingVersions] = useState(false);
 
@@ -341,6 +345,27 @@ export default function ToolLauncher() {
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
+  // 安装/卸载/升级的实时输出：后端把 npm/pip 的每一行输出推来，
+  // 逐行显示（保留最近 60 行）—— 否则用户只能盯着一个转圈图标猜命令跑到哪了。
+  useEffect(() => {
+    const unlisten = listen<{ toolId: string; phase: string; line: string }>("ai-tool-progress", (event) => {
+      const { toolId, phase, line } = event.payload;
+      setOpLogs((prev) => {
+        const cur = prev[toolId];
+        // 阶段变了（如先卸载后重装）就另起一段，不要把两次输出混在一起
+        const lines = cur && cur.phase === phase ? [...cur.lines, line] : [line];
+        return { ...prev, [toolId]: { phase, lines: lines.slice(-60) } };
+      });
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
+
+  // 输出追加后自动滚到底部（日志类 UI 的基本预期）
+  useEffect(() => {
+    const el = opLogRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [opLogs]);
+
   useEffect(() => {
     if (!selectedTool?.installed) { setSessions([]); return; }
     invoke<ToolSession[]>("scan_tool_sessions", { toolId: selectedTool.id })
@@ -453,17 +478,23 @@ export default function ToolLauncher() {
     } finally { setLaunching(false); }
   };
 
+  /** 清空某工具的实时输出（操作开始时调用，避免上一轮的残留混进这一轮） */
+  const startOpLog = (toolId: string, phase: string) => {
+    setOpLogs((prev) => ({ ...prev, [toolId]: { phase, lines: [] } }));
+  };
+
   const handleUpgrade = async (tool: DetectedAiTool) => {
     setUpgradingTool(tool.id);
     setUpgradeResult(null);
+    startOpLog(tool.id, "upgrading");
     try {
-      const msg = await invoke<string>("upgrade_ai_tool", { toolId: tool.id });
-      setUpgradeResult({ id: tool.id, msg });
+      const res = await invoke<ToolOpResult>("upgrade_ai_tool", { toolId: tool.id });
+      setUpgradeResult({ id: tool.id, ...res });
       const t = await invoke<DetectedAiTool[]>("detect_ai_tools").catch(() => []);
       setTools(t);
       await checkVersions();
     } catch (e: any) {
-      setUpgradeResult({ id: tool.id, msg: String(e) });
+      setUpgradeResult({ id: tool.id, ok: false, message: String(e) });
     } finally { setUpgradingTool(null); }
   };
 
@@ -471,14 +502,15 @@ export default function ToolLauncher() {
     if (!tool.install_cmd) return;
     setInstallingTool(tool.id);
     setInstallResult(null);
+    startOpLog(tool.id, "installing");
     try {
-      const msg = await invoke<string>("install_ai_tool", { toolId: tool.id });
-      setInstallResult({ id: tool.id, msg });
+      const res = await invoke<ToolOpResult>("install_ai_tool", { toolId: tool.id });
+      setInstallResult({ id: tool.id, ...res });
       const t = await invoke<DetectedAiTool[]>("detect_ai_tools").catch(() => []);
       setTools(t);
       await checkVersions();
     } catch (e: any) {
-      setInstallResult({ id: tool.id, msg: String(e) });
+      setInstallResult({ id: tool.id, ok: false, message: String(e) });
     } finally { setInstallingTool(null); }
   };
 
@@ -486,14 +518,15 @@ export default function ToolLauncher() {
     if (!confirm(t("toollaunch.uninstallConfirm", { name: tool.display_name }))) return;
     setUninstallingTool(tool.id);
     setUninstallResult(null);
+    startOpLog(tool.id, "uninstalling");
     try {
-      const msg = await invoke<string>("uninstall_ai_tool", { toolId: tool.id });
-      setUninstallResult({ id: tool.id, msg });
+      const res = await invoke<ToolOpResult>("uninstall_ai_tool", { toolId: tool.id });
+      setUninstallResult({ id: tool.id, ...res });
       const t = await invoke<DetectedAiTool[]>("detect_ai_tools").catch(() => []);
       setTools(t);
       await checkVersions();
     } catch (e: any) {
-      setUninstallResult({ id: tool.id, msg: String(e) });
+      setUninstallResult({ id: tool.id, ok: false, message: String(e) });
     } finally { setUninstallingTool(null); }
   };
 
@@ -1620,6 +1653,24 @@ export default function ToolLauncher() {
               </>
             )}
 
+            {/* 安装 / 卸载 / 升级的实时输出：命令跑起来后逐行滚动。
+                以前只有一句「安装中...」+ 转圈图标，用户无法判断是卡住了还是在下载；
+                现在 npm/pip 的每一行输出都看得见，结束时上面再给结果卡片。 */}
+            {getBusy(selectedTool.id) && opLogs[selectedTool.id] && (
+              <div className="rounded-xl border border-white/10 bg-black/40 p-2.5">
+                <div className="mb-1.5 flex items-center gap-1.5 text-[9px] font-semibold text-slate-400">
+                  <Terminal className="w-3 h-3" />
+                  {t("toollaunch.opProgress")}
+                  <span className="ml-auto text-slate-600">{opLogs[selectedTool.id].lines.length}</span>
+                </div>
+                <div ref={opLogRef} className="max-h-32 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-relaxed text-slate-300">
+                  {opLogs[selectedTool.id].lines.length === 0
+                    ? <div className="text-slate-600">{t("toollaunch.opWaiting")}</div>
+                    : opLogs[selectedTool.id].lines.slice(-20).map((line, i) => <div key={i}>{line}</div>)}
+                </div>
+              </div>
+            )}
+
             {launchResult && (
               <div className={`p-3 rounded-xl text-xs flex items-start gap-2 ${
                 launchResult.ok ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" : "bg-red-500/10 border border-red-500/20 text-red-400"
@@ -1631,28 +1682,28 @@ export default function ToolLauncher() {
 
             {upgradeResult && upgradeResult.id === selectedTool?.id && (
               <div className={`p-3 rounded-xl text-xs flex items-start gap-2 ${
-                upgradeResult.msg.includes("成功") ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" : "bg-red-500/10 border border-red-500/20 text-red-400"
+                upgradeResult.ok ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" : "bg-red-500/10 border border-red-500/20 text-red-400"
               }`}>
-                {upgradeResult.msg.includes("成功") ? <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
-                <span className="whitespace-pre-line">{upgradeResult.msg}</span>
+                {upgradeResult.ok ? <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
+                <span className="whitespace-pre-line">{upgradeResult.message}</span>
               </div>
             )}
 
             {installResult && installResult.id === selectedTool?.id && (
               <div className={`p-3 rounded-xl text-xs flex items-start gap-2 ${
-                installResult.msg.includes("成功") ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" : "bg-red-500/10 border border-red-500/20 text-red-400"
+                installResult.ok ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" : "bg-red-500/10 border border-red-500/20 text-red-400"
               }`}>
-                {installResult.msg.includes("成功") ? <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
-                <span className="whitespace-pre-line">{installResult.msg}</span>
+                {installResult.ok ? <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
+                <span className="whitespace-pre-line">{installResult.message}</span>
               </div>
             )}
 
             {uninstallResult && uninstallResult.id === selectedTool?.id && (
               <div className={`p-3 rounded-xl text-xs flex items-start gap-2 ${
-                uninstallResult.msg.includes("成功") ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" : "bg-red-500/10 border border-red-500/20 text-red-400"
+                uninstallResult.ok ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" : "bg-red-500/10 border border-red-500/20 text-red-400"
               }`}>
-                {uninstallResult.msg.includes("成功") ? <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
-                <span className="whitespace-pre-line">{uninstallResult.msg}</span>
+                {uninstallResult.ok ? <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
+                <span className="whitespace-pre-line">{uninstallResult.message}</span>
               </div>
             )}
           </>
