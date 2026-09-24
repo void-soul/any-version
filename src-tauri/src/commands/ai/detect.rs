@@ -264,8 +264,14 @@ pub(crate) fn detect_via_cmd(detect_cmd: &str) -> Option<String> {
 
     let stdout = output.trim().to_string();
     if stdout.is_empty() {
-        eprintln!("[detect]     empty output → (installed)");
-        return Some("(installed)".to_string());
+        // 空输出 = 没有任何「工具存在」的证据，必须算**未检测到**。
+        //
+        // pi 这类工具的 detectCmd 写成 `node -e "try{require.resolve(x);console.log('ok')}
+        // catch(e){console.log('')}"`：包不存在时**退出码仍然是 0** 且什么都不打印。
+        // 把空输出当成「已安装但拿不到版本」，会让这类工具永远显示已安装、
+        // 且永远卸不掉（npm 全局根本没这个包，卸载自然毫无效果）——Q-0204。
+        eprintln!("[detect]     empty output → 视为未检测到（拿不到任何证据）");
+        return None;
     }
 
     // 用正则提取纯净的 semver 版本号
