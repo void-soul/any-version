@@ -31,6 +31,16 @@ export interface ModelCustomParam {
   configPath?: string;
 }
 
+/**
+ * 供应商自定义上游请求头（有序键值对）。
+ * 用于除 API Key 外还需额外头的网关；传输层头（Host / Content-Length 等）由后端拒绝，
+ * 显式配置的 Authorization 优先于 API Key。
+ */
+export interface UpstreamHeader {
+  key: string;
+  value: string;
+}
+
 export interface AiProvider {
   id: string;
   name: string;
@@ -45,6 +55,8 @@ export interface AiProvider {
   google_url: string;
   models: ModelEntry[];
   active_model_id: string | null;
+  /** 自定义上游请求头（转发、连通性测试、模型列表三处共用） */
+  custom_headers: UpstreamHeader[];
 }
 
 export interface ProviderPreset {

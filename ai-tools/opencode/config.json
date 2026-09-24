@@ -28,6 +28,9 @@
   "configFile": {
     "path": "~/.config/opencode/opencode.json",
     "format": "jsonc",
+    "pathEnvDirs": ["OPENCODE_CONFIG_DIR"],
+    "xdgSubdir": "opencode",
+    "preferExistingExtensions": ["jsonc"],
       "write": {
         "provider.anyversion.name": "anyversion",
         "provider.anyversion.npm": "@ai-sdk/openai-compatible",

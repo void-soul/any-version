@@ -158,6 +158,7 @@ mod tests {
                 .map(|m| ModelEntry { id: m.to_string(), name: m.to_string(), custom_params: vec![] })
                 .collect(),
             active_model_id: None,
+            custom_headers: Vec::new(),
         }
     }
 

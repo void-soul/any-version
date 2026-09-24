@@ -10,7 +10,10 @@
 //! ⑦ 反应式整流(失败重试) → ⑧ 协议转换响应 P_out→P_in →
 //! ⑨ 模型伪装回填 C → ⑩ 统计落库(强制)
 
-use super::{google, optimizers, sse, transform, types::ProxyConfig};
+use super::{
+    google, headers as upstream_headers, optimizers, sse, transform,
+    types::{ProxyConfig, UpstreamHeader},
+};
 use axum::{
     body::Body,
     extract::{OriginalUri, Request, State},
@@ -703,7 +706,8 @@ async fn process_request(
             o.insert("stream".into(), json!(true));
         }
     }
-    let (upstream_url, auth_name, route_api_key) = build_upstream_url(&config, &outbound, &actual_model, is_stream);
+    let (upstream_url, auth_name, route_api_key, route_headers) =
+        build_upstream_url(&config, &outbound, &actual_model, is_stream);
     if upstream_url.is_empty() {
         let mut stats = state.stats.write().await;
         stats.failed_requests += 1;
@@ -721,7 +725,7 @@ async fn process_request(
         log_proxy_json_full("  出站完整请求体(P_out)", &out_body);
     }
 
-    let req = build_upstream_request(&state.client, &config, headers, &upstream_url, &auth_name, &route_api_key, &out_body);
+    let req = build_upstream_request(&state.client, headers, &upstream_url, &auth_name, &route_api_key, &route_headers, &out_body);
     let upstream_resp = match req.send().await {
         Ok(r) => r,
         Err(e) => {
@@ -761,7 +765,7 @@ async fn process_request(
 
         // ⑦ 反应式整流：修正后重试一次
         if let Some(rectified) = optimizers::try_reactive_rectify(status.as_u16(), &error_body, &out_body, &config, &outbound) {
-            let retry_req = build_upstream_request(&state.client, &config, headers, &upstream_url, &auth_name, &route_api_key, &rectified);
+            let retry_req = build_upstream_request(&state.client, headers, &upstream_url, &auth_name, &route_api_key, &route_headers, &rectified);
             if let Ok(retry_resp) = retry_req.send().await {
                 if retry_resp.status().is_success() {
                     log_proxy(&format!("↻ retry succeeded after rectify  ({}ms)", start.elapsed().as_millis()));
@@ -794,13 +798,13 @@ async fn process_request(
                     o.insert("stream".into(), json!(true));
                 }
             }
-            let (fb_url, fb_auth, fb_key) = build_upstream_url(&fb_config, "openai", &actual_model, is_stream);
+            let (fb_url, fb_auth, fb_key, fb_headers) = build_upstream_url(&fb_config, "openai", &actual_model, is_stream);
             if !fb_url.is_empty() {
                 log_proxy(&format!(
                     "↻ protocol fallback anthropic→openai: POST {} auth={}",
                     fb_url, fb_auth
                 ));
-                let fb_req = build_upstream_request(&state.client, &fb_config, headers, &fb_url, &fb_auth, &fb_key, &fb_body);
+                let fb_req = build_upstream_request(&state.client, headers, &fb_url, &fb_auth, &fb_key, &fb_headers, &fb_body);
                 if let Ok(fb_resp) = fb_req.send().await {
                     if fb_resp.status().is_success() {
                         log_proxy(&format!("↻ fallback succeeded  ({}ms)", start.elapsed().as_millis()));
@@ -1402,11 +1406,20 @@ fn extract_stream_usage(inbound: &str, cj: &Value) -> (u64, u64) {
 /// ⑥ 构建上游 URL 与鉴权头名称。
 /// 按实际模型名 B 查 `model_routes`：命中则用该模型所属供应商的端点与 key，
 /// 否则回退到全局 upstream_base_url / upstream_api_key（大模型供应商）。
-/// 返回 (url, auth_header_name, api_key)。
-fn build_upstream_url(config: &ProxyConfig, outbound: &str, model: &str, is_stream: bool) -> (String, String, String) {
-    let (base, api_key) = config.model_routes.get(model)
-        .map(|r| (r.base_url.clone(), r.api_key.clone()))
-        .unwrap_or_else(|| (config.upstream_base_url.clone(), config.upstream_api_key.clone()));
+/// 返回 (url, auth_header_name, api_key, 自定义请求头)。
+fn build_upstream_url(
+    config: &ProxyConfig,
+    outbound: &str,
+    model: &str,
+    is_stream: bool,
+) -> (String, String, String, Vec<UpstreamHeader>) {
+    let (base, api_key, headers) = config.model_routes.get(model)
+        .map(|r| (r.base_url.clone(), r.api_key.clone(), r.headers.clone()))
+        .unwrap_or_else(|| (
+            config.upstream_base_url.clone(),
+            config.upstream_api_key.clone(),
+            config.upstream_headers.clone(),
+        ));
     let base = base.trim_end_matches('/');
     let (url, auth_name) = match outbound {
         "anthropic" => {
@@ -1452,18 +1465,20 @@ fn build_upstream_url(config: &ProxyConfig, outbound: &str, model: &str, is_stre
         }
         _ => (String::new(), "Authorization".to_string()),
     };
-    (url, auth_name, api_key)
+    (url, auth_name, api_key, headers)
 }
 
-/// 构建上游请求（携带对应鉴权头）。
+/// 构建上游请求（携带对应鉴权头 + 供应商自定义头）。
 /// `api_key`：由 `build_upstream_url` 按模型路由表解析得到的供应商 key。
+/// `custom_headers`：同一次解析得到的自定义请求头；用户显式配置的头优先于默认注入
+/// （抄自 CodexPlusPlus ea0ac5d：显式 `Authorization` 优先于供应商 API Key，不做隐式合并）。
 fn build_upstream_request(
     client: &reqwest::Client,
-    _config: &ProxyConfig,
     headers: &HeaderMap,
     upstream_url: &str,
     auth_name: &str,
     api_key: &str,
+    custom_headers: &[UpstreamHeader],
     body: &Value,
 ) -> reqwest::RequestBuilder {
     let mut req = client.post(upstream_url);
@@ -1471,19 +1486,28 @@ fn build_upstream_request(
         "x-api-key" => {
             // 参照 EchoBird: Anthropic 兼容上游有的只认 x-api-key、有的只认
             // Bearer。两者都发，最大化兼容（真实 Anthropic 也接受 Bearer）。
-            req = req
-                .header("x-api-key", api_key)
-                .header("Authorization", format!("Bearer {}", api_key))
-                .header("anthropic-version", "2023-06-01")
-                .json(body);
+            if !upstream_headers::overrides(custom_headers, "x-api-key") {
+                req = req.header("x-api-key", api_key);
+            }
+            if !upstream_headers::has_authorization(custom_headers) {
+                req = req.header("Authorization", format!("Bearer {}", api_key));
+            }
+            if !upstream_headers::overrides(custom_headers, "anthropic-version") {
+                req = req.header("anthropic-version", "2023-06-01");
+            }
+            req = req.json(body);
         }
         "x-goog-api-key" => {
-            req = req.header("x-goog-api-key", api_key).json(body);
+            if !upstream_headers::overrides(custom_headers, "x-goog-api-key") {
+                req = req.header("x-goog-api-key", api_key);
+            }
+            req = req.json(body);
         }
         _ => {
-            req = req
-                .header("Authorization", format!("Bearer {}", api_key))
-                .json(body);
+            if !upstream_headers::has_authorization(custom_headers) {
+                req = req.header("Authorization", format!("Bearer {}", api_key));
+            }
+            req = req.json(body);
         }
     }
     if let Some(beta) = headers.get("anthropic-beta") {
@@ -1491,7 +1515,8 @@ fn build_upstream_request(
             req = req.header("anthropic-beta", val);
         }
     }
-    req
+    // 自定义头最后注入，覆盖上面可能已写入的同名默认值
+    upstream_headers::apply(req, custom_headers)
 }
 
 #[cfg(test)]

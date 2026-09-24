@@ -56,7 +56,8 @@ fn business_error_reason(body: &serde_json::Value) -> Option<String> {
             .get("code")
             .and_then(|v| v.as_i64())
             .is_some_and(|c| c != 0 && c != 200)
-        || body.get("error").is_some();
+        // `"error": null` 在正常响应里很常见，只有非 null 才算错误
+        || body.get("error").is_some_and(|v| !v.is_null());
 
     if !explicit_fail {
         return None;
@@ -66,6 +67,9 @@ fn business_error_reason(body: &serde_json::Value) -> Option<String> {
 
 /// 解析模型列表：同时兼容 OpenAI 风格 `data[].id` 与 Gemini 风格 `models[].name`，
 /// 后者剥掉 `models/` 前缀使模型 ID 与请求体的 `model` 值一致（抄自 CodexPlusPlus b498c4c）。
+///
+/// `models[]` 内除 Gemini 的 `name` 外还容忍 Codex 远端目录的 `slug` 与 OpenAI 风格的
+/// `id`：形状认不出来只跳过该条目，不能让整份响应失败（抄自 cc-switch f2537fdf）。
 fn parse_model_ids(body: &serde_json::Value) -> Vec<String> {
     fn push(ids: &mut Vec<String>, raw: &str) {
         let id = raw.trim();
@@ -88,22 +92,52 @@ fn parse_model_ids(body: &serde_json::Value) -> Vec<String> {
     }
     if let Some(arr) = body.get("models").and_then(|v| v.as_array()) {
         for m in arr {
-            if let Some(s) = m.get("name").and_then(|v| v.as_str()) {
-                push(&mut ids, s);
+            for key in ["name", "slug", "id"] {
+                if let Some(s) = m.get(key).and_then(|v| v.as_str()) {
+                    push(&mut ids, s);
+                    break;
+                }
             }
         }
     }
     ids
 }
 
+/// 解读模型列表响应：业务错误信封优先于「有列表」判定。
+///
+/// 网关在错误态下可能回一个占位或部分列表（`{"code":401,"success":false,
+/// "data":[{"id":"…"}]}`），先看列表会把它当成「获取成功」，用户看到成功但令牌
+/// 其实已失效（抄自 CodexPlusPlus e4bbee2）。反向不会误伤：`business_error_reason`
+/// 只认 `success=false` / `code∉{0,200}` / `error` 非 null，标准 OpenAI 响应三者都没有。
+fn interpret_models_body(body: &serde_json::Value) -> Result<Vec<String>, String> {
+    if let Some(reason) = business_error_reason(body) {
+        return Err(reason);
+    }
+    let models = parse_model_ids(body);
+    if models.is_empty() {
+        return Err("未获取到模型列表".to_string());
+    }
+    Ok(models)
+}
+
 #[tauri::command]
-pub async fn fetch_provider_models(base_url: String, api_key: String) -> Result<Vec<String>, String> {
+pub async fn fetch_provider_models(
+    base_url: String,
+    api_key: String,
+    headers: Option<Vec<crate::proxy::types::UpstreamHeader>>,
+) -> Result<Vec<String>, String> {
     let url = format!("{}/models", base_url.trim_end_matches('/'));
     let client = reqwest::Client::new();
-    let resp = client
+    // 自定义头与代理转发共用同一套规则：显式 Authorization 优先于 API Key
+    // （抄自 CodexPlusPlus ea0ac5d —— 三处发往上游的请求行为必须一致）。
+    let custom = headers.unwrap_or_default();
+    let mut req = client
         .get(&url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .timeout(std::time::Duration::from_secs(FETCH_MODELS_TIMEOUT_SECS))
+        .timeout(std::time::Duration::from_secs(FETCH_MODELS_TIMEOUT_SECS));
+    if !crate::proxy::headers::has_authorization(&custom) {
+        req = req.header("Authorization", format!("Bearer {}", api_key));
+    }
+    let resp = crate::proxy::headers::apply(req, &custom)
         .send()
         .await
         .map_err(|e| format!("请求失败: {}", e))?;
@@ -125,15 +159,8 @@ pub async fn fetch_provider_models(base_url: String, api_key: String) -> Result<
     let body: serde_json::Value = serde_json::from_str(&raw)
         .map_err(|e| format!("解析响应失败: {}（原文: {}）", e, upstream_error_reason(&raw)))?;
 
-    let models = parse_model_ids(&body);
-    if models.is_empty() {
-        // 200 + 业务错误信封（鉴权失败等）→ 透传真因，而不是笼统的「未获取到模型列表」
-        if let Some(reason) = business_error_reason(&body) {
-            return Err(reason);
-        }
-        return Err("未获取到模型列表".to_string());
-    }
-    Ok(models)
+    // 200 + 业务错误信封（鉴权失败等）优先透传真因，而不是笼统的「未获取到模型列表」
+    interpret_models_body(&body)
 }
 
 // ─── 用量统计 ───
@@ -145,6 +172,7 @@ pub async fn test_model_connection(
     base_url: String,
     protocol: String,
     api_key: String,
+    headers: Option<Vec<crate::proxy::types::UpstreamHeader>>,
 ) -> Result<serde_json::Value, String> {
     let url = base_url.trim().to_string();
     if url.is_empty() {
@@ -155,23 +183,22 @@ pub async fn test_model_connection(
     let client = reqwest::Client::new();
     let start = std::time::Instant::now();
 
-    // Google 端点用 x-goog-api-key 鉴权
-    let resp = if protocol == "google" {
-        client
-            .get(&test_url)
-            .header("x-goog-api-key", &api_key)
-            .timeout(std::time::Duration::from_secs(15))
-            .send()
-            .await
-    } else {
-        client
-            .get(&test_url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .timeout(std::time::Duration::from_secs(15))
-            .send()
-            .await
+    // Google 端点用 x-goog-api-key 鉴权；自定义头与代理转发同规则（显式 Authorization 优先）
+    let custom = headers.unwrap_or_default();
+    let mut req = client
+        .get(&test_url)
+        .timeout(std::time::Duration::from_secs(15));
+    if protocol == "google" {
+        if !crate::proxy::headers::overrides(&custom, "x-goog-api-key") {
+            req = req.header("x-goog-api-key", &api_key);
+        }
+    } else if !crate::proxy::headers::has_authorization(&custom) {
+        req = req.header("Authorization", format!("Bearer {}", api_key));
     }
-    .map_err(|e| format!("连接失败: {}", e))?;
+    let resp = crate::proxy::headers::apply(req, &custom)
+        .send()
+        .await
+        .map_err(|e| format!("连接失败: {}", e))?;
 
     let latency_ms = start.elapsed().as_millis() as u64;
     let status = resp.status();
@@ -237,6 +264,7 @@ pub async fn start_proxy(port: u16) -> Result<(), String> {
         optimizer_thinking: config.optimizer.thinking_optimizer,
         optimizer_deepseek: config.optimizer.deepseek_normalize,
         model_routes: std::collections::HashMap::new(),
+        upstream_headers: crate::proxy::headers::normalize(&provider.custom_headers),
         app_handle: None,
         collab_room_id: None,
     };
@@ -246,7 +274,7 @@ pub async fn start_proxy(port: u16) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{business_error_reason, parse_model_ids, upstream_error_reason};
+    use super::{business_error_reason, interpret_models_body, parse_model_ids, upstream_error_reason};
     use serde_json::json;
 
     #[test]
@@ -306,5 +334,76 @@ mod tests {
         );
 
         assert!(parse_model_ids(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn parse_model_ids_tolerates_slug_and_id_in_models_field() {
+        // `models[]` 不只 Gemini 的 name：Codex 远端目录用 slug、OpenAI 风格用 id，
+        // 认不出单个条目也不能连累整份响应（抄自 cc-switch f2537fdf）。
+        let body = json!({"models": [
+            {"name": "models/gemini-2.5-pro"},
+            {"slug": "glm-4.7"},
+            {"id": "openai-shaped"},
+            {"nope": 1},
+            {"slug": ""}
+        ]});
+        assert_eq!(
+            parse_model_ids(&body),
+            vec![
+                "gemini-2.5-pro".to_string(),
+                "glm-4.7".to_string(),
+                "openai-shaped".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn business_error_reason_ignores_null_error_field() {
+        // 正常响应里 `"error": null` 很常见。业务错误判定现在要跑在「有模型列表」
+        // 之前，null 绝不能被当成错误，否则会把正常列表响应整份判失败。
+        let body = json!({"object": "list", "error": null, "data": [{"id": "gpt-5"}]});
+        assert_eq!(business_error_reason(&body), None);
+    }
+
+    #[test]
+    fn interpret_models_body_prefers_business_error_over_returned_models() {
+        // 回归（抄自 CodexPlusPlus e4bbee2）：网关在错误态下回了一个占位列表时，
+        // 错误必须优先，否则 UI 显示「获取成功 1 个模型」而令牌其实已失效。
+        let body = json!({"code": 401, "msg": "令牌已过期", "success": false, "data": [{"id": "glm-5.3"}]});
+        assert_eq!(interpret_models_body(&body).unwrap_err(), "令牌已过期");
+    }
+
+    #[test]
+    fn interpret_models_body_keeps_normal_lists_working() {
+        // 反向保护：标准 OpenAI 响应没有 success/code/error 字段，
+        // 提前检查业务错误不能把它误判成失败。
+        for (body, expected) in [
+            (
+                json!({"object": "list", "data": [{"id": "gpt-5.6-sol"}]}),
+                "gpt-5.6-sol",
+            ),
+            (
+                json!({"code": 200, "success": true, "data": [{"id": "glm-5.3"}]}),
+                "glm-5.3",
+            ),
+            (
+                json!({"code": 0, "msg": "ok", "data": [{"id": "deepseek-v4"}]}),
+                "deepseek-v4",
+            ),
+        ] {
+            assert_eq!(
+                interpret_models_body(&body).unwrap(),
+                vec![expected.to_string()],
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn interpret_models_body_reports_empty_without_envelope() {
+        assert_eq!(
+            interpret_models_body(&json!({"object": "list", "data": []})).unwrap_err(),
+            "未获取到模型列表"
+        );
     }
 }

@@ -114,6 +114,17 @@ pub struct ConfigFileDef {
     #[serde(default)]
     pub schema: Option<String>,
     pub write: Option<HashMap<String, String>>,
+    /// 目录级环境变量覆盖（按顺序取第一个非空值作为配置目录）：如 OpenCode v2 的
+    /// `OPENCODE_CONFIG_DIR`。目录确定后文件名沿用 `path` 的文件名。
+    /// 抄自 EchoBird c6f4bc25。
+    #[serde(default, alias = "pathEnvDirs")]
+    pub path_env_dirs: Vec<String>,
+    /// 用 `XDG_CONFIG_HOME` 拼接的子目录名（如 `opencode`），在 `path_env_dirs` 之后生效。
+    #[serde(default, alias = "xdgSubdir")]
+    pub xdg_subdir: Option<String>,
+    /// 同 stem 的其它扩展名文件已存在时优先沿用它（如 OpenCode v2 的 `opencode.jsonc`）。
+    #[serde(default, alias = "preferExistingExtensions")]
+    pub prefer_existing_extensions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

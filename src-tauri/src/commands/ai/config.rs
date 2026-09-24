@@ -200,7 +200,16 @@ pub fn get_ai_config() -> Result<AiConfig, String> {
 }
 
 #[tauri::command]
-pub async fn save_ai_config(app: AppHandle, config: AiConfig) -> Result<serde_json::Value, String> {
+pub async fn save_ai_config(app: AppHandle, mut config: AiConfig) -> Result<serde_json::Value, String> {
+    // 自定义上游请求头：非法项直接拒绝保存（传输层头 / 重名 / 非法名称或值），
+    // 合法项规范化（去空行、去首尾空白、按名称去重、限 64 条）。
+    // 拒绝发生在写盘之前，避免把坏配置落盘（抄自 CodexPlusPlus ea0ac5d）。
+    for provider in config.providers.iter_mut() {
+        crate::proxy::headers::validate(&provider.custom_headers)
+            .map_err(|e| format!("供应商「{}」：{}", provider.name, e))?;
+        provider.custom_headers = crate::proxy::headers::normalize(&provider.custom_headers);
+    }
+
     let old_config = load_ai_config();
     // 解析为实际路径（空字符串 → 默认 ~/.agents/skills），使默认目录与新目录间的迁移也能正确触发
     let old_resolved = resolve_skills_dir(&old_config.skills_dir);
@@ -303,6 +312,7 @@ mod tests {
             google_url: String::new(),
             models: Vec::<ModelEntry>::new(),
             active_model_id: None,
+            custom_headers: Vec::new(),
         };
 
         let mut providers = vec![
@@ -505,6 +515,7 @@ mod tests {
                 google_url: String::new(),
                 models: vec![ModelEntry { id: "m1".into(), name: "M1".into(), custom_params: vec![] }],
                 active_model_id: None,
+                custom_headers: Vec::new(),
             }],
             proxy_port: 15721,
             default_project_path: String::new(),

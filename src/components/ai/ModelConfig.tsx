@@ -22,7 +22,7 @@ import {
   EyeOff,
   FolderOpen,
 } from "lucide-react";
-import type { ModelEntry, AiProvider, AiConfig, ModelCustomParam } from "./types";
+import type { ModelEntry, AiProvider, AiConfig, ModelCustomParam, UpstreamHeader } from "./types";
 
 type Preset = {
   id: string; name: string; category: string;
@@ -33,8 +33,17 @@ type Preset = {
 const EMPTY_PROVIDER: AiProvider = {
   id: "", name: "", category: "provider", api_key: "", website: "",
   openai_url: "", anthropic_url: "", google_url: "",
-  models: [], active_model_id: null,
+  models: [], active_model_id: null, custom_headers: [],
 };
+
+/// 传输层 / 逐跳头：由 HTTP 客户端按实际报文决定，后端也会拒绝，这里提前拦。
+const FORBIDDEN_HEADER_NAMES = new Set([
+  "host", "content-length", "transfer-encoding", "connection", "keep-alive",
+  "proxy-connection", "te", "trailer", "upgrade", "expect",
+]);
+
+/// RFC 7230 token 字符集（HTTP 头名称的合法字符）
+const HEADER_NAME_RE = /^[A-Za-z0-9!#$%&'*+\-.^_`|~]+$/;
 
 /// 从预设（可能含多个协议端点）取出全部协议 URL
 function presetUrls(p: Preset): { openai_url: string; anthropic_url: string; google_url: string } {
@@ -190,7 +199,8 @@ export default function ModelConfig() {
 
   const openEditModal = (provider: AiProvider) => {
     setModalMode("edit");
-    setForm({ ...provider });
+    // 旧配置可能没有 custom_headers 字段
+    setForm({ ...provider, custom_headers: provider.custom_headers ?? [] });
     // 模型列表转为文本：每行一个 id
     setModelsText(provider.models.map(m => m.id).join("\n"));
     // 初始化每个模型的自定义参数
@@ -202,12 +212,43 @@ export default function ModelConfig() {
     setShowModal(true);
   };
 
+  // ─── 自定义上游请求头编辑 ───
+
+  const addCustomHeader = () =>
+    setForm(f => ({ ...f, custom_headers: [...f.custom_headers, { key: "", value: "" }] }));
+
+  const updateCustomHeader = (idx: number, patch: Partial<UpstreamHeader>) =>
+    setForm(f => ({
+      ...f,
+      custom_headers: f.custom_headers.map((h, i) => (i === idx ? { ...h, ...patch } : h)),
+    }));
+
+  const removeCustomHeader = (idx: number) =>
+    setForm(f => ({ ...f, custom_headers: f.custom_headers.filter((_, i) => i !== idx) }));
+
+  /// 与后端 `proxy::headers::validate` 同规则：非法名称 / 传输层头 / 重名都拦在保存前，
+  /// 让用户当场看到问题，而不是保存时才被后端拒绝。报错只显示头名称（值可能是凭据）。
+  const validateCustomHeaders = (headers: UpstreamHeader[]): string | null => {
+    const seen = new Set<string>();
+    for (const h of headers) {
+      const key = h.key.trim();
+      // 未填写的占位行视为未配置
+      if (!key) continue;
+      if (!HEADER_NAME_RE.test(key)) return t("modelcfg.headerInvalid", { key });
+      const lower = key.toLowerCase();
+      if (FORBIDDEN_HEADER_NAMES.has(lower)) return t("modelcfg.headerForbidden", { key });
+      if (seen.has(lower)) return t("modelcfg.headerDuplicate", { key });
+      seen.add(lower);
+    }
+    return null;
+  };
+
   const validateForm = (): string | null => {
     if (!form.name.trim()) return t("modelcfg.nameRequired");
     if (!form.openai_url.trim() && !form.anthropic_url.trim() && !form.google_url.trim())
       return t("modelcfg.urlRequired");
     if (!form.api_key.trim()) return t("modelcfg.keyRequired");
-    return null;
+    return validateCustomHeaders(form.custom_headers);
   };
 
   // ─── 模型自定义启动参数编辑 ───
@@ -254,7 +295,11 @@ export default function ModelConfig() {
       const url = form.openai_url || form.anthropic_url || form.google_url || "";
       if (url && form.api_key) {
         try {
-          const fetched: string[] = await invoke("fetch_provider_models", { baseUrl: url, apiKey: form.api_key });
+          const fetched: string[] = await invoke("fetch_provider_models", {
+            baseUrl: url,
+            apiKey: form.api_key,
+            headers: form.custom_headers,
+          });
           autoModels = fetched.map(id => ({ id, name: id }));
         } catch {
           // 自动获取失败不阻塞保存，用户后续可手动点"自动获取"
@@ -305,6 +350,7 @@ export default function ModelConfig() {
       const models = await invoke<string[]>("fetch_provider_models", {
         baseUrl: url,
         apiKey: form.api_key,
+        headers: form.custom_headers,
       });
       if (models.length === 0) {
         setFormError(t("modelcfg.noModels"));
@@ -330,6 +376,7 @@ export default function ModelConfig() {
         baseUrl: testUrl,
         protocol: testProtocol,
         apiKey: provider.api_key,
+        headers: provider.custom_headers ?? [],
       });
       setTestResult({ id: provider.id, ok: result.success, msg: result.message });
     } catch (e: any) {
@@ -711,6 +758,51 @@ export default function ModelConfig() {
                     {showApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                   </button>
                 </div>
+              </div>
+
+              {/* 自定义上游请求头 */}
+              <div className="p-3 rounded-lg bg-slate-900/50 border border-white/5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] text-slate-400 font-semibold">{t("modelcfg.customHeaders")}</label>
+                  <button
+                    type="button"
+                    onClick={addCustomHeader}
+                    className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-200 cursor-pointer transition-all"
+                  >
+                    <Plus className="w-3 h-3" /> {t("modelcfg.addHeader")}
+                  </button>
+                </div>
+                <p className="text-[9px] text-slate-600">{t("modelcfg.customHeadersHint")}</p>
+                {form.custom_headers.length === 0 ? (
+                  <p className="text-[10px] text-slate-600">{t("modelcfg.noCustomHeaders")}</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {form.custom_headers.map((h, idx) => (
+                      <div key={idx} className="flex items-center gap-1.5">
+                        <input
+                          value={h.key}
+                          onChange={e => updateCustomHeader(idx, { key: e.target.value })}
+                          placeholder={t("modelcfg.headerName")}
+                          className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                        />
+                        <input
+                          value={h.value}
+                          onChange={e => updateCustomHeader(idx, { value: e.target.value })}
+                          placeholder={t("modelcfg.headerValue")}
+                          className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeCustomHeader(idx)}
+                          title={t("modelcfg.removeHeader")}
+                          className="p-1 rounded-md text-slate-500 hover:text-red-400 cursor-pointer transition-all"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* 协议端点 URL（每个支持的协议一个地址） */}

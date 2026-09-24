@@ -143,12 +143,16 @@ pub(crate) async fn start_tool_proxy_with_collab(
             }
 
             // 跨供应商路由：按实际模型名 → 其所属供应商的端点+key。
+            // 自定义请求头跟随各自供应商，保证「大模型 / 辅助模型」分属不同网关时都能带上
+            // 自己需要的头（抄自 CodexPlusPlus ea0ac5d）。
+            let main_headers = crate::proxy::headers::normalize(&p.custom_headers);
             let mut model_routes: HashMap<String, ModelRoute> = HashMap::new();
             if let Some(ref mid) = req.model_id {
                 if !mid.is_empty() {
                     model_routes.insert(mid.clone(), ModelRoute {
                         base_url: p.url_for(&chosen_outbound),
                         api_key: p.api_key.clone(),
+                        headers: main_headers.clone(),
                     });
                 }
             }
@@ -159,6 +163,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
                         model_routes.insert(fb.clone(), ModelRoute {
                             base_url: fp.url_for(&chosen_outbound),
                             api_key: fp.api_key.clone(),
+                            headers: crate::proxy::headers::normalize(&fp.custom_headers),
                         });
                     }
                 }
@@ -170,6 +175,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
                 model_routes.insert(claimed_fmt.clone(), ModelRoute {
                     base_url: p.url_for(&chosen_outbound),
                     api_key: p.api_key.clone(),
+                    headers: main_headers.clone(),
                 });
             }
 
@@ -212,6 +218,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
                         fallback_base_url: fallback_base_url.clone(),
                         fallback_api_key: fallback_api_key.clone(),
                         model_routes,
+                        upstream_headers: main_headers,
                         target_model,
                         timeout_secs: timeout,
                         model_aliases,
@@ -744,16 +751,30 @@ fn write_tool_config_generic(
         None => return Ok(()),
     };
 
-    // 解析路径（~ → HOME）
+    // 解析路径（~ → HOME），再按工具声明处理「目录覆盖 + 文件扩展名择优」：
+    // OpenCode v2 支持 OPENCODE_CONFIG_DIR / XDG_CONFIG_HOME 覆盖配置目录，且只在
+    // opencode.jsonc 里读配置（抄自 EchoBird c6f4bc25）。
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."));
-    let resolved_path = if cfg.path.starts_with("~/") {
+    let declared_path = if cfg.path.starts_with("~/") {
         home.join(&cfg.path[2..])
     } else {
         PathBuf::from(&cfg.path)
     };
+    let env_dirs: Vec<Option<String>> = cfg
+        .path_env_dirs
+        .iter()
+        .map(|name| std::env::var(name).ok())
+        .collect();
+    let resolved_path = crate::commands::ai::tool_config_path::resolve_config_path(
+        &declared_path,
+        &env_dirs,
+        cfg.xdg_subdir.as_deref(),
+        std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
+        &cfg.prefer_existing_extensions,
+    );
 
     // 确保父目录存在
     if let Some(parent) = resolved_path.parent() {

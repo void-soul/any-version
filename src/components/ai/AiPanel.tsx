@@ -7,9 +7,10 @@ import UsageStats from "./UsageStats";
 import SkillManager from "./SkillManager";
 import McpManager from "./McpManager";
 import CollabRoom from "./CollabRoom";
-import { Settings2, Rocket, BarChart3, Puzzle, Plug, MessagesSquare, Route } from "lucide-react";
+import CodexAuthPanel from "./CodexAuthPanel";
+import { Settings2, Rocket, BarChart3, Puzzle, Plug, MessagesSquare, Route, KeyRound } from "lucide-react";
 
-type AiSubTab = "model" | "aggregate" | "launcher" | "usage" | "skills" | "mcp" | "collab";
+type AiSubTab = "model" | "aggregate" | "launcher" | "usage" | "skills" | "mcp" | "collab" | "codex";
 
 const TABS = [
   { key: "model" as AiSubTab, label: "aipanel.model", icon: Settings2 },
@@ -18,6 +19,7 @@ const TABS = [
   { key: "skills" as AiSubTab, label: "aipanel.skills", icon: Puzzle },
   { key: "mcp" as AiSubTab, label: "MCP", icon: Plug },
   { key: "collab" as AiSubTab, label: "aipanel.collab", icon: MessagesSquare },
+  { key: "codex" as AiSubTab, label: "aipanel.codexAuth", icon: KeyRound },
   { key: "usage" as AiSubTab, label: "aipanel.usage", icon: BarChart3 }
 ];
 
@@ -91,6 +93,11 @@ export default function AiPanel() {
         {mountedTabs.has("collab") && (
           <div className={activeTab === "collab" ? "h-full" : "hidden"}>
             <CollabRoom />
+          </div>
+        )}
+        {mountedTabs.has("codex") && (
+          <div className={activeTab === "codex" ? "h-full" : "hidden"}>
+            <CodexAuthPanel />
           </div>
         )}
       </div>

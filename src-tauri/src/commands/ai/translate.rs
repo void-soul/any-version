@@ -774,6 +774,7 @@ mod global_default_tests {
                 .map(|m| ModelEntry { id: m.to_string(), name: m.to_string(), custom_params: vec![] })
                 .collect(),
             active_model_id: active.map(|s| s.to_string()),
+            custom_headers: Vec::new(),
         }
     }
 

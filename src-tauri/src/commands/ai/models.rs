@@ -216,6 +216,9 @@ pub struct AiProvider {
     pub google_url: String,
     pub models: Vec<ModelEntry>,
     pub active_model_id: Option<String>,
+    /// 自定义上游请求头（有序键值对；保存时已规范化，见 `proxy::headers::normalize`）。
+    /// 用于除 API Key 外还需额外头的网关（抄自 CodexPlusPlus ea0ac5d / issue #1685）。
+    pub custom_headers: Vec<crate::proxy::types::UpstreamHeader>,
 }
 
 impl AiProvider {
@@ -256,7 +259,7 @@ impl Serialize for AiProvider {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut st = serializer.serialize_struct("AiProvider", 10)?;
+        let mut st = serializer.serialize_struct("AiProvider", 11)?;
         st.serialize_field("id", &self.id)?;
         st.serialize_field("name", &self.name)?;
         st.serialize_field("category", &self.category)?;
@@ -267,6 +270,7 @@ impl Serialize for AiProvider {
         st.serialize_field("google_url", &self.google_url)?;
         st.serialize_field("models", &self.models)?;
         st.serialize_field("active_model_id", &self.active_model_id)?;
+        st.serialize_field("custom_headers", &self.custom_headers)?;
         st.end()
     }
 }
@@ -289,6 +293,10 @@ impl<'de> Deserialize<'de> for AiProvider {
             models: Vec<ModelEntry>,
             #[serde(default)]
             active_model_id: Option<String>,
+
+            // ─── 自定义上游请求头（旧数据没有该字段 → 空列表）───
+            #[serde(default)]
+            custom_headers: Vec<crate::proxy::types::UpstreamHeader>,
 
             // ─── 新格式：三个协议 URL ───
             #[serde(default)]
@@ -373,6 +381,7 @@ impl<'de> Deserialize<'de> for AiProvider {
             google_url,
             models: h.models,
             active_model_id: h.active_model_id,
+            custom_headers: crate::proxy::headers::normalize(&h.custom_headers),
         })
     }
 }

@@ -1600,6 +1600,7 @@ mod tests {
             google_url: "https://g".into(),
             models: vec![],
             active_model_id: None,
+            custom_headers: Vec::new(),
         };
         let (outbound, base) = pick_outbound(&provider).unwrap();
         assert_eq!(outbound, Outbound::OpenAi);

@@ -284,6 +284,7 @@ export default function FavoritesPanel() {
     invoke<string[]>("fetch_provider_models", {
       baseUrl: activeProvider.openai_url,
       apiKey: activeProvider.api_key,
+      headers: activeProvider.custom_headers ?? [],
     })
       .then((models) => setFetchedModels((prev) => ({ ...prev, [pid]: models })))
       .catch(() => setFetchedModels((prev) => ({ ...prev, [pid]: [] })))

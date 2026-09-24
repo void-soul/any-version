@@ -47,6 +47,10 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub model_routes: HashMap<String, ModelRoute>,
 
+    /// 全局（主供应商）自定义上游请求头；模型路由命中时用该路由自己的 headers。
+    #[serde(default)]
+    pub upstream_headers: Vec<UpstreamHeader>,
+
     /// 目标模型 ID（请求体写入的"实际模型 B"）
     pub target_model: String,
     /// 请求超时（秒）
@@ -100,6 +104,20 @@ pub struct ProxyConfig {
 pub struct ModelRoute {
     pub base_url: String,
     pub api_key: String,
+    /// 该模型所属供应商的自定义上游请求头（未配置则为空）。
+    #[serde(default)]
+    pub headers: Vec<UpstreamHeader>,
+}
+
+/// 供应商自定义上游请求头（有序键值对）。
+///
+/// 抄自 CodexPlusPlus ea0ac5d（issue #1685）：有些网关除 API Key 外还要求自定义头
+/// （如 `X-Request-Id`、厂商标识、绕过 CDN 的鉴权头）。有序列表而非 map，
+/// 便于前端做「可增删的键值行」编辑；校验与注入规则见 [`super::headers`]。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct UpstreamHeader {
+    pub key: String,
+    pub value: String,
 }
 
 impl Default for ProxyConfig {
@@ -116,6 +134,7 @@ impl Default for ProxyConfig {
             fallback_base_url: String::new(),
             fallback_api_key: String::new(),
             model_routes: HashMap::new(),
+            upstream_headers: Vec::new(),
             target_model: "gpt-4o".to_string(),
             timeout_secs: 300,
             model_aliases: HashMap::new(),
