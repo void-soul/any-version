@@ -300,6 +300,12 @@ pub struct AiToolDefDto {
     #[serde(default)]
     pub nickname: Option<String>,
     pub installed: bool,
+    /// 该工具是否**确实由它声明的包管理器安装**（npm/pip 全局注册表里查得到）。
+    ///
+    /// 仅供前端提示「这不是包管理器装的」，**不再**用来关闭升级/卸载入口：
+    /// 查不到往往只是 Kira 用的 npm 前缀与用户安装时不同，工具本身仍装在用户的
+    /// node/pip 下。后端此时会依次尝试「声明的包管理器 → 官方命令 → 按文件清理」。
+    pub pm_managed: bool,
     pub version: Option<String>,
     pub latest_version_cmd: Option<String>,
     pub install_cmd: String,
@@ -616,6 +622,9 @@ impl AiToolRegistry {
             avatar: config.avatar.clone(),
             nickname: config.nickname.clone(),
             installed,
+            // 这里是「未探测」的投影路径，不了解安装来源 → 保守填 false，
+            // 宁可不给卸载入口，也不要让用户点了才发现卸不掉。
+            pm_managed: false,
             version,
             latest_version_cmd: None,
             install_cmd: paths.install_cmd.clone(),

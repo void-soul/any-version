@@ -56,6 +56,8 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
         avatar: config.avatar.clone(),
         nickname: config.nickname.clone(),
         installed: false,
+        // 下面每个策略命中时各自覆盖；默认「不是 PM 管理」
+        pm_managed: false,
         version: None,
         latest_version_cmd: None,
         install_cmd: paths.install_cmd.clone(),
@@ -91,6 +93,9 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
                 eprintln!("[detect]   [策略 1] ✓ 成功 → version={}", ver);
                 return DetectedAiTool {
                     installed: true,
+                    // 策略 1 = 该包确实装在 PM 全局注册表里。只作前端提示用：
+                    // 为 false 不代表不能升级/卸载（后端会回落官方命令或按文件清理）
+                    pm_managed: true,
                     version: Some(ver),
                     ..not_found
                 };
@@ -132,8 +137,11 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
     not_found
 }
 
-/// 通过包管理器查询已安装版本（npm / pip）
-fn detect_via_pm(pm: &str, pkg_name: &str) -> Option<String> {
+/// 通过包管理器查询已安装版本（npm / pip）。
+///
+/// 同时被卸载/升级入口复用：只有这里查到版本，才说明工具**确实由包管理器安装**，
+/// 才轮得到 `npm uninstall -g` / `npm install -g` 这类操作。
+pub(crate) fn detect_via_pm(pm: &str, pkg_name: &str) -> Option<String> {
     match pm {
         "npm" => {
             // npm ls {pkg} -g --json

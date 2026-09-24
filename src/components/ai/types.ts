@@ -167,6 +167,8 @@ export interface DetectedAiTool {
   /** 协同模式昵称覆盖 */
   nickname: string | null;
   installed: boolean;
+  /** 是否由 Kira 声明的包管理器安装（npm/pip 全局注册表可查到）。false 仅作提示，不拦升级/卸载。 */
+  pm_managed: boolean;
   version: string | null;
   latest_version_cmd?: string;
   latest_version?: string | null;

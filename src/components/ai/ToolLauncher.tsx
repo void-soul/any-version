@@ -813,6 +813,15 @@ export default function ToolLauncher() {
                     {selectedTool.installed ? (
                       <>
                         <span className="text-[10px] text-emerald-400"><CheckCircle className="w-3 h-3 inline mr-0.5" />{selectedTool.version || t("toollaunch.installed")}</span>
+                        {!selectedTool.pm_managed && (
+                          // 只是提示，不拦操作：升级/卸载照旧可用（包管理器 → 官方渠道 → 按文件清理）
+                          <span
+                            className="text-[10px] text-amber-400/80 cursor-help"
+                            title={selectedTool.detected_path || selectedTool.uninstall_cmd || selectedTool.upgrade_cmd || undefined}
+                          >
+                            {t("toollaunch.externalInstallHint")}
+                          </span>
+                        )}
                         {!getBusy(selectedTool.id) && versionStatuses[selectedTool.id]?.latest && versionStatuses[selectedTool.id]?.status === "outdated" && (
                           <>
                             <span className="text-[10px] text-amber-400 ml-1">→ {t("toollaunch.latest")}: {versionStatuses[selectedTool.id].latest}</span>
