@@ -838,6 +838,56 @@ pub fn buddy_list_sessions(
     sessions::list_sessions(&platform, &filter)
 }
 
+/// 列出**当前登录账号**（作为合并目标）的待处理会话冲突。
+///
+/// 冲突文件按目标账号分文件落盘，来回切换会留下多份旧快照；只按当前账号
+/// 过滤，避免「横幅 7 个、弹窗 13 条」的错位（多出的是过时方向的旧记录）。
+/// 冲突目前只会产生于 CodeBuddy CN（WorkBuddy 的合并是共享库重映射，无基线差异）。
+#[tauri::command]
+pub fn buddy_list_session_conflicts(
+    platform: String,
+) -> Result<Vec<session_sync::PendingConflict>, String> {
+    match platform_from_str(&platform)? {
+        BuddyPlatform::CodebuddyCn => {
+            Ok(session_transfer::codebuddy::list_pending_conflicts_for_current_account())
+        }
+        BuddyPlatform::Workbuddy => Ok(Vec::new()),
+    }
+}
+
+/// 裁决一条会话冲突，返回当前账号剩余的待处理冲突。
+///
+/// `action`：`merge`（取较新）/ `overwrite`（用来源覆盖目标）/ `keep`（保留目标）。
+#[tauri::command]
+pub fn buddy_resolve_session_conflict(
+    platform: String,
+    conversation_id: String,
+    action: String,
+) -> Result<Vec<session_sync::PendingConflict>, String> {
+    match platform_from_str(&platform)? {
+        BuddyPlatform::CodebuddyCn => {
+            let action = session_transfer::codebuddy::ConflictAction::parse(&action)?;
+            session_transfer::codebuddy::resolve_conflict_command(&conversation_id, action)
+        }
+        BuddyPlatform::Workbuddy => Err("WorkBuddy 的会话合并不产生冲突，无需处理".to_string()),
+    }
+}
+
+/// 读取冲突会话某一侧（source / target）的对话内容预览。
+#[tauri::command]
+pub fn buddy_read_conflict_messages(
+    platform: String,
+    conversation_id: String,
+    side: String,
+) -> Result<Vec<session_transfer::codebuddy::ConflictMessage>, String> {
+    match platform_from_str(&platform)? {
+        BuddyPlatform::CodebuddyCn => {
+            session_transfer::codebuddy::read_conflict_messages(&conversation_id, &side)
+        }
+        BuddyPlatform::Workbuddy => Err("WorkBuddy 的会话合并不产生冲突，无需处理".to_string()),
+    }
+}
+
 // ─── 路径信息（供前端展示/诊断） ───
 
 #[tauri::command]

@@ -264,6 +264,120 @@ pub(crate) fn save_baseline(
     }
 }
 
+// ─── 待处理冲突 ───
+
+/// 一条待用户处理的会话冲突（切换账号时两侧都改过、被拒绝自动覆盖的会话）。
+///
+/// 合并流程只负责把它记下来，**如何取舍由用户决定**：查看明细后可选
+/// 合并（取较新）/ 覆盖目标（用来源）/ 保留目标（丢弃来源修改）。
+/// 记录里带全部定位信息（ide / workspace / 双方 uid），解析命令不必重新扫描全盘。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingConflict {
+    pub id: String,
+    /// 展示名（标题优先，回落到目录 —— 不再回落到裸 id）
+    pub label: String,
+    /// 所属工作区目录名（CodeBuddy history 下的一级目录，**原始哈希名**，
+    /// 解析命令靠它定位文件系统路径，不要改成显示用路径）
+    pub workspace: String,
+    /// 工作区对应的**真实项目路径**（由哈希还原，尽力而为；还原失败为 None，
+    /// 前端展示时回退到 workspace 原始名）
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+    /// IDE 目录名（uid 下的一级目录，定位来源/目标会话路径必需）
+    pub ide: String,
+    pub source_uid: String,
+    pub target_uid: String,
+    /// 来源侧最后消息时间（epoch 毫秒）
+    pub source_stamp: i64,
+    /// 目标侧最后消息时间（epoch 毫秒）
+    pub target_stamp: i64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PendingConflictFile {
+    version: u32,
+    conflicts: Vec<PendingConflict>,
+}
+
+const PENDING_CONFLICTS_VERSION: u32 = 1;
+
+/// 待处理冲突文件：与基线同目录，`<target_uid>.conflicts.json`。
+/// 冲突没有随基线写入（基线写了就等于替用户做了「保留目标」的决定），
+/// 单独落盘，切换结束后仍可逐条处理。
+pub(crate) fn pending_conflicts_file(platform_label: &str, target_uid: &str) -> Result<PathBuf, String> {
+    let dir = crate::commands::config::get_data_dir()
+        .join("buddy")
+        .join("session-sync")
+        .join(platform_label);
+    Ok(dir.join(format!("{}.conflicts.json", sanitize_file_component(target_uid)?)))
+}
+
+/// 读取待处理冲突；文件缺失或损坏时返回空（损坏只告警，不阻塞列表展示）。
+pub(crate) fn load_pending_conflicts(platform_label: &str, target_uid: &str) -> Vec<PendingConflict> {
+    let Ok(path) = pending_conflicts_file(platform_label, target_uid) else {
+        return Vec::new();
+    };
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    match serde_json::from_str::<PendingConflictFile>(&content) {
+        Ok(file) if file.version == PENDING_CONFLICTS_VERSION => file.conflicts,
+        Ok(_) => {
+            eprintln!(
+                "[Buddy SessionSync] 待处理冲突文件版本不认识，忽略: {}",
+                path.display()
+            );
+            Vec::new()
+        }
+        Err(error) => {
+            eprintln!(
+                "[Buddy SessionSync] 待处理冲突文件解析失败，忽略: path={}, error={}",
+                path.display(),
+                error
+            );
+            Vec::new()
+        }
+    }
+}
+
+/// 原子写入待处理冲突；列表为空时直接删文件（「全部处理完」也是一种要记住的状态）。
+pub(crate) fn save_pending_conflicts(
+    platform_label: &str,
+    target_uid: &str,
+    conflicts: &[PendingConflict],
+) {
+    let Ok(path) = pending_conflicts_file(platform_label, target_uid) else {
+        return;
+    };
+    if conflicts.is_empty() {
+        if let Err(error) = std::fs::remove_file(&path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                eprintln!(
+                    "[Buddy SessionSync] 清理待处理冲突文件失败: path={}, error={}",
+                    path.display(),
+                    error
+                );
+            }
+        }
+        return;
+    }
+    let payload = PendingConflictFile {
+        version: PENDING_CONFLICTS_VERSION,
+        conflicts: conflicts.to_vec(),
+    };
+    let Ok(serialized) = serde_json::to_string_pretty(&payload) else {
+        return;
+    };
+    if let Err(error) = super::store::write_atomic(&path, &serialized) {
+        eprintln!(
+            "[Buddy SessionSync] 待处理冲突写入失败: path={}, error={}",
+            path.display(),
+            error
+        );
+    }
+}
+
 // ─── 指纹 ───
 
 /// 文件指纹：`长度:修改时间(毫秒)`。取不到返回 None。
@@ -459,6 +573,49 @@ mod tests {
         assert!(baseline_file("workbuddy", "../evil").is_err());
         assert!(baseline_file("workbuddy", "a/b").is_err());
         assert!(baseline_file("workbuddy", "384c6dd0-c1bc-4ae2-a0d0-f70350c62f7b").is_ok());
+    }
+
+    #[test]
+    fn pending_conflicts_file_rejects_unsafe_uid() {
+        assert!(pending_conflicts_file("codebuddy-cn", "../evil").is_err());
+        assert!(pending_conflicts_file("codebuddy-cn", "a\\b").is_err());
+        assert!(
+            pending_conflicts_file("codebuddy-cn", "384c6dd0-c1bc-4ae2-a0d0-f70350c62f7b").is_ok()
+        );
+    }
+
+    #[test]
+    fn pending_conflict_serializes_camel_case_for_frontend() {
+        let conflict = PendingConflict {
+            id: "conv-1".to_string(),
+            label: "工作区 A 的会话".to_string(),
+            workspace: "ws-hash".to_string(),
+            workspace_path: Some("e:\\pro\\my\\any-version".to_string()),
+            ide: "CodeBuddy CN".to_string(),
+            source_uid: "uid-a".to_string(),
+            target_uid: "uid-b".to_string(),
+            source_stamp: 1_700_000_000_000,
+            target_stamp: 1_700_000_500_000,
+        };
+        let value = serde_json::to_value(&conflict).unwrap();
+        // 前端类型按 camelCase 读，字段名错了界面会静默显示 undefined
+        assert_eq!(value["sourceUid"], "uid-a");
+        assert_eq!(value["targetUid"], "uid-b");
+        assert_eq!(value["sourceStamp"], 1_700_000_000_000i64);
+        assert_eq!(value["workspace"], "ws-hash");
+        assert_eq!(value["workspacePath"], "e:\\pro\\my\\any-version");
+        // 落盘走同一结构，必须能无损读回
+        let back: PendingConflict = serde_json::from_value(value).unwrap();
+        assert_eq!(back.id, "conv-1");
+        assert_eq!(back.target_stamp, 1_700_000_500_000);
+        // 旧版本落盘的文件没有该字段：serde(default) 兜底，读回为 None 而不是报错
+        let legacy = serde_json::json!({
+            "id": "conv-2", "label": "l", "workspace": "ws", "ide": "ide",
+            "sourceUid": "a", "targetUid": "b",
+            "sourceStamp": 1i64, "targetStamp": 2i64
+        });
+        let legacy: PendingConflict = serde_json::from_value(legacy).unwrap();
+        assert!(legacy.workspace_path.is_none());
     }
 
     #[test]

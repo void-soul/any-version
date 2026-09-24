@@ -143,6 +143,34 @@ export interface BuddyTransferReport {
   sync?: BuddySessionSyncSummary;
 }
 
+/** 待用户裁决的会话冲突（后端 session_sync::PendingConflict，切换时两侧都改过的会话） */
+export interface BuddyPendingConflict {
+  id: string;
+  /** 展示名：标题优先，回落到目录 —— 不会是裸 id */
+  label: string;
+  /** 所属工作区目录（CodeBuddy 侧为 MD5 哈希名，定位文件用） */
+  workspace: string;
+  /** 哈希还原出的真实项目路径；还原失败为 null，展示时回退到 workspace */
+  workspacePath?: string | null;
+  /** IDE 目录名 */
+  ide: string;
+  sourceUid: string;
+  targetUid: string;
+  /** 双方最后消息时间（epoch 毫秒） */
+  sourceStamp: number;
+  targetStamp: number;
+}
+
+/** 用户对冲突的裁决方式：merge 取较新 / overwrite 用来源覆盖目标 / keep 保留目标 */
+type ConflictAction = "merge" | "overwrite" | "keep";
+
+/** 冲突会话一侧的对话消息预览（后端已从双层 JSON 抽出正文） */
+export interface BuddyConflictMessage {
+  role: string;
+  time: string;
+  text: string;
+}
+
 /** 同步明细里各状态的颜色（与 buddy.syncStatus.* 一一对应） */
 const SYNC_STATUS_CLASS: Record<string, string> = {
   copied: "text-emerald-400",
@@ -816,6 +844,16 @@ export default function BuddyPanel() {
   // 本轮切换是否已经弹过确认框：事件与命令返回值都可能带同一份台账，避免弹两次。
   // 用 ref 而非 state —— 事件闭包捕获的 state 是旧值，读不到「已经弹过」。
   const conflictDialogShownRef = useRef(false);
+  // 待裁决的会话冲突（切换时被搁置、等用户逐条决定的），切换结束/进入面板时都会拉一次
+  const [sessionConflicts, setSessionConflicts] = useState<BuddyPendingConflict[]>([]);
+  // 冲突处理弹窗（查看明细 + 合并/覆盖/保留）
+  const [conflictPanelOpen, setConflictPanelOpen] = useState(false);
+  // 「查看明细」展开到哪一条（两侧账号、IDE、时间都在明细里）
+  const [expandedConflictId, setExpandedConflictId] = useState<string | null>(null);
+  const [conflictBusyId, setConflictBusyId] = useState<string | null>(null);
+  // 对话内容预览（key = `${conflictId}:${side}`）：点「看对话」才拉取，避免展开就搬全部消息。
+  // 读取失败也用消息数组表达（role="error"），就地显示后端的可操作提示。
+  const [conflictMessages, setConflictMessages] = useState<Record<string, BuddyConflictMessage[] | "loading">>({});
   // 客户端路径设置（切换时关闭/重启的 WorkBuddy / CodeBuddy CN）
   const [clientPaths, setClientPaths] = useState<BuddyClientPath[]>([]);
   const [pathDraft, setPathDraft] = useState<Record<string, string>>({});
@@ -951,6 +989,71 @@ export default function BuddyPanel() {
   useEffect(() => {
     if (tab === "sessions") loadSessions();
   }, [tab, loadSessions]);
+
+  // 待裁决冲突：进入面板 / 切换平台 / 切换账号后都拉一次（切换时冲突落盘，之后随时可处理）
+  const loadConflicts = useCallback(async () => {
+    try {
+      const list = await invoke<BuddyPendingConflict[]>("buddy_list_session_conflicts", { platform });
+      setSessionConflicts(list);
+    } catch {
+      // 拉取失败不打扰用户：横幅与处理入口都依赖这份列表，失败时按「无冲突」降级
+      setSessionConflicts([]);
+    }
+  }, [platform]);
+
+  useEffect(() => {
+    void loadConflicts();
+  }, [loadConflicts]);
+
+  /** 对一条冲突执行裁决，用后端返回的剩余列表整体替换本地状态 */
+  const resolveConflict = async (conflict: BuddyPendingConflict, action: ConflictAction) => {
+    setConflictBusyId(conflict.id);
+    try {
+      const remaining = await invoke<BuddyPendingConflict[]>("buddy_resolve_session_conflict", {
+        platform,
+        conversationId: conflict.id,
+        action,
+      });
+      setSessionConflicts(remaining);
+      // 全部处理完时同步清掉切换台账里残留的冲突计数：
+      // 否则横幅会拿着过时计数继续亮，让人以为还有冲突没处理
+      if (remaining.length === 0) {
+        setSyncSummary((prev) => (prev && prev.conflict > 0 ? { ...prev, conflict: 0 } : prev));
+      }
+      setExpandedConflictId(null);
+      showMsg(true, t("buddy.conflictResolved", { label: conflict.label }));
+    } catch (e: any) {
+      showMsg(false, String(e));
+    } finally {
+      setConflictBusyId(null);
+    }
+  };
+
+  /** 拉取冲突会话某一侧的对话内容（点「看对话」才加载） */
+  const loadConflictMessages = async (conflictId: string, side: "source" | "target") => {
+    const key = `${conflictId}:${side}`;
+    if (conflictMessages[key] === "loading") return;
+    setConflictMessages((prev) => ({ ...prev, [key]: "loading" }));
+    try {
+      const list = await invoke<BuddyConflictMessage[]>("buddy_read_conflict_messages", {
+        platform,
+        conversationId: conflictId,
+        side,
+      });
+      setConflictMessages((prev) => ({ ...prev, [key]: list }));
+    } catch (e: any) {
+      // 错误信息就地显示（比如来源账号数据已被清理）
+      setConflictMessages((prev) => ({ ...prev, [key]: [{ role: "error", time: "", text: String(e) }] }));
+    }
+  };
+
+  /** 打开冲突处理弹窗：先强制刷新待处理列表再开。
+   *  本地列表可能过期（面板挂载后一直没切账号）或加载失败过（当时按空降级），
+   *  每次打开都向后端要最新数据，绝不能让「明明有冲突却打不开处理入口」。 */
+  const openConflictPanel = async () => {
+    await loadConflicts();
+    setConflictPanelOpen(true);
+  };
 
   // 关键字防抖：输入停止 300ms 后再触发查询
   useEffect(() => {
@@ -1469,6 +1572,8 @@ export default function BuddyPanel() {
         setSyncSummary(report.sync);
         focusConflicts(report.sync.conflict);
       }
+      // 本次切换落盘的冲突（若有）刷新进待处理列表
+      void loadConflicts();
       showMsg(true, parts.join("；"));
       await load();
     } catch (e) {
@@ -1913,24 +2018,30 @@ export default function BuddyPanel() {
       )}
 
       {/* 冲突会话重点提醒：两侧都改过的会话 Kira 不替用户选，必须一眼看到。
-          明细默认折叠且默认显示全部状态，只靠计数行里那个「冲突 N」必被漏掉。 */}
-      {syncSummary && syncSummary.conflict > 0 && !conflictAlertDismissed && (
+          整条横幅受 ✕ 控制：关掉就是关掉，下次切换会重新亮起（switchAccount 里重置）。
+          显示条件 = 有待处理冲突，或本次切换台账报了冲突（可能是旧快照，
+          点「处理冲突」会拿到真实数量）。全部处理完后台账计数会被清零，
+          横幅不会赖着不走。 */}
+      {!conflictAlertDismissed && ((sessionConflicts.length > 0 || (syncSummary?.conflict ?? 0) > 0)) ? (
         <div className="flex items-start gap-2 px-4 py-2 text-[11px] border-b bg-amber-500/15 text-amber-200 border-amber-500/30">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-[1px] text-amber-400" />
           <span className="min-w-0 flex-1 leading-relaxed">
             <span className="font-bold">
-              {t("buddy.conflictAlertTitle", { count: syncSummary.conflict })}
+              {t("buddy.conflictAlertTitle", {
+                // 优先显示当前账号的待处理数：台账计数是「本次切换」的快照，
+                // 可能包含后来已被处理掉的，两边数字不一致只会让人困惑
+                count: sessionConflicts.length || syncSummary?.conflict || 0,
+              })}
             </span>
             <span className="block text-amber-200/75">{t("buddy.conflictAlertDesc")}</span>
           </span>
+          {/* 唯一入口：处理冲突（openConflictPanel 会强制向后端重拉列表）。
+              原「查看冲突」（跳同步明细筛选）已删 —— 看得到明细做不了决定，等于没看。 */}
           <button
-            onClick={() => {
-              setSyncDetailsOpen(true);
-              setSyncStatusFilter("conflict");
-            }}
+            onClick={() => void openConflictPanel()}
             className="flex-shrink-0 px-2 py-0.5 rounded-md bg-amber-500/20 hover:bg-amber-500/30 font-semibold cursor-pointer transition-colors"
           >
-            {t("buddy.conflictAlertView")}
+            {t("buddy.conflictAlertResolve")}
           </button>
           <button
             onClick={() => setConflictAlertDismissed(true)}
@@ -1940,7 +2051,7 @@ export default function BuddyPanel() {
             ✕
           </button>
         </div>
-      )}
+      ) : null}
 
       {/* 会话同步台账：只处理有变化的会话，明细含 成功 / 跳过 / 冲突 / 失败 */}
       {syncSummary && syncSummary.total > 0 && (
@@ -2007,10 +2118,24 @@ export default function BuddyPanel() {
                   >
                     {detail.workspace || t("buddy.syncWorkspaceUnknown")}
                   </span>
-                  <span className="min-w-0 flex-1 break-all text-slate-300">{detail.label || detail.id}</span>
+                  {/* 名称列：无标题会话后端已回落到目录名；这里再兜一层，
+                      绝不让裸 id 直接怼到用户脸上 */}
+                  <span className="min-w-0 flex-1 break-all text-slate-300">
+                    {detail.label || detail.workspace || detail.id}
+                  </span>
                   <span className="flex-shrink-0 text-slate-500" title={t(`buddy.syncReason.${detail.reason}`)}>
                     {t(`buddy.syncReason.${detail.reason}`)}
                   </span>
+                  {/* 冲突行直达处理弹窗：只靠顶部横幅一个入口太脆弱，明细里看到冲突
+                      的人就该在冲突旁边拿到处理入口（弹窗打开前会强制刷新列表） */}
+                  {detail.status === "conflict" && (
+                    <button
+                      onClick={() => void openConflictPanel()}
+                      className="flex-shrink-0 px-1.5 py-0.5 rounded-md text-[10px] bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 font-semibold cursor-pointer transition-colors"
+                    >
+                      {t("buddy.conflictAlertResolve")}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -3536,15 +3661,193 @@ export default function BuddyPanel() {
               </button>
               <button
                 onClick={() => {
-                  setSyncDetailsOpen(true);
-                  setSyncStatusFilter("conflict");
                   setConflictDialogOpen(false);
+                  // 直接进处理弹窗逐条裁决（内部会先刷新列表，不依赖本地缓存）
+                  void openConflictPanel();
                 }}
                 className="px-4 py-1.5 rounded-lg text-[11px] bg-amber-600 hover:bg-amber-500 text-white font-semibold cursor-pointer"
               >
-                {t("buddy.conflictDialogView")}
+                {t("buddy.conflictAlertResolve")}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 冲突处理弹窗：逐条裁决（查看明细 / 合并 / 覆盖目标 / 保留目标）。
+          冲突在切换时被搁置（不猜不覆盖），这里就是补上「用户来决定」的出口。 */}
+      {conflictPanelOpen && (
+        <div className="fixed inset-0 z-[130] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-[560px] max-w-[95vw] max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl p-5">
+            <div className="flex items-center gap-2.5 mb-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
+                <AlertTriangle className="w-4 h-4 text-amber-400" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-bold text-white">
+                  {t("buddy.conflictPanelTitle", { count: sessionConflicts.length })}
+                </h3>
+                <p className="text-[10px] text-slate-500">{t("buddy.conflictPanelHint")}</p>
+              </div>
+              <button
+                onClick={() => setConflictPanelOpen(false)}
+                className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {sessionConflicts.length === 0 ? (
+              <div className="py-8 text-center text-xs text-slate-500">{t("buddy.conflictPanelEmpty")}</div>
+            ) : (
+              <div className="min-h-0 flex-1 overflow-y-auto border border-white/5 rounded-xl divide-y divide-white/5">
+                {sessionConflicts.map((conflict) => {
+                  const expanded = expandedConflictId === conflict.id;
+                  return (
+                    <div key={`${conflict.targetUid}-${conflict.id}`} className="px-3 py-2.5">
+                      {/* 主行：真实项目路径 + 会话名，两侧时间一目了然。
+                          后端已把 MD5 哈希目录还原成真实路径；还原失败才显示哈希。 */}
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <span
+                          className="flex-shrink-0 max-w-[220px] truncate text-slate-500 cursor-help"
+                          title={conflict.workspacePath || conflict.workspace}
+                        >
+                          {conflict.workspacePath || conflict.workspace || t("buddy.syncWorkspaceUnknown")}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-slate-200" title={conflict.label}>
+                          {conflict.label}
+                        </span>
+                        <span className="flex-shrink-0 text-slate-500">
+                          <span title={t("buddy.conflictSourceTime")}>{t("buddy.conflictSourceShort")}</span>
+                          {" "}
+                          <span className="text-slate-300">{new Date(conflict.sourceStamp).toLocaleString()}</span>
+                          {" · "}
+                          <span title={t("buddy.conflictTargetTime")}>{t("buddy.conflictTargetShort")}</span>
+                          {" "}
+                          <span className="text-slate-300">{new Date(conflict.targetStamp).toLocaleString()}</span>
+                        </span>
+                      </div>
+                      {/* 操作行：查看明细 + 三个裁决按钮 */}
+                      <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                        <button
+                          onClick={() => setExpandedConflictId(expanded ? null : conflict.id)}
+                          className="px-2 py-1 rounded-md text-[10px] text-slate-400 hover:bg-white/5 hover:text-white cursor-pointer transition-colors"
+                        >
+                          {expanded ? "▾" : "▸"} {t("buddy.conflictViewDetail")}
+                        </button>
+                        <span className="flex-1" />
+                        <button
+                          disabled={conflictBusyId !== null}
+                          onClick={() => void resolveConflict(conflict, "merge")}
+                          title={t("buddy.conflictActionMergeTip")}
+                          className="px-2.5 py-1 rounded-md text-[10px] bg-[var(--module-accent)]/20 hover:bg-[var(--module-accent)]/30 text-white font-semibold cursor-pointer disabled:opacity-50 transition-colors"
+                        >
+                          {t("buddy.conflictActionMerge")}
+                        </button>
+                        <button
+                          disabled={conflictBusyId !== null}
+                          onClick={() => void resolveConflict(conflict, "overwrite")}
+                          title={t("buddy.conflictActionOverwriteTip")}
+                          className="px-2.5 py-1 rounded-md text-[10px] bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 font-semibold cursor-pointer disabled:opacity-50 transition-colors"
+                        >
+                          {t("buddy.conflictActionOverwrite")}
+                        </button>
+                        <button
+                          disabled={conflictBusyId !== null}
+                          onClick={() => void resolveConflict(conflict, "keep")}
+                          title={t("buddy.conflictActionKeepTip")}
+                          className="px-2.5 py-1 rounded-md text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 font-semibold cursor-pointer disabled:opacity-50 transition-colors"
+                        >
+                          {t("buddy.conflictActionKeep")}
+                        </button>
+                      </div>
+                      {/* 明细：两侧账号 / IDE / 会话 id / 双方最后消息时间 */}
+                      {expanded && (
+                        <div className="mt-2 rounded-lg bg-black/30 border border-white/5 p-2.5 grid grid-cols-[64px_1fr] gap-x-2 gap-y-1 text-[10px]">
+                          <span className="text-slate-500">{t("buddy.conflictSourceTime")}</span>
+                          <span className="text-slate-300">
+                            {new Date(conflict.sourceStamp).toLocaleString()}
+                            <span className="text-slate-600 ml-2">uid: {conflict.sourceUid}</span>
+                          </span>
+                          <span className="text-slate-500">{t("buddy.conflictTargetTime")}</span>
+                          <span className="text-slate-300">
+                            {new Date(conflict.targetStamp).toLocaleString()}
+                            <span className="text-slate-600 ml-2">uid: {conflict.targetUid}</span>
+                          </span>
+                          <span className="text-slate-500">{t("buddy.conflictIde")}</span>
+                          <span className="text-slate-300 break-all">{conflict.ide}</span>
+                          <span className="text-slate-500">{t("buddy.conflictWorkspace")}</span>
+                          <span className="text-slate-300 break-all">
+                            {conflict.workspacePath || conflict.workspace}
+                          </span>
+                          <span className="text-slate-500">ID</span>
+                          <span className="text-slate-400 break-all font-mono">{conflict.id}</span>
+                        </div>
+                      )}
+                      {/* 对话内容预览：看真正的对话 JSON 正文，而不是只有名字和路径。
+                          懒加载 —— 点「看对话」才读文件，取两侧各自的最后 40 条。 */}
+                      {expanded && (
+                        <div className="mt-2 flex items-center gap-1.5">
+                          <button
+                            onClick={() => void loadConflictMessages(conflict.id, "source")}
+                            className={`px-2 py-1 rounded-md text-[10px] font-semibold cursor-pointer transition-colors ${
+                              conflictMessages[`${conflict.id}:source`]
+                                ? "bg-white/5 text-slate-400"
+                                : "bg-white/5 hover:bg-white/10 text-slate-300"
+                            }`}
+                          >
+                            {t("buddy.conflictViewSource")}
+                          </button>
+                          <button
+                            onClick={() => void loadConflictMessages(conflict.id, "target")}
+                            className="px-2 py-1 rounded-md text-[10px] font-semibold bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer transition-colors"
+                          >
+                            {t("buddy.conflictViewTarget")}
+                          </button>
+                          <span className="text-[9px] text-slate-600">{t("buddy.conflictPreviewHint")}</span>
+                        </div>
+                      )}
+                      {expanded &&
+                        (["source", "target"] as const).map((side) => {
+                          const state = conflictMessages[`${conflict.id}:${side}`];
+                          if (!state) return null;
+                          return (
+                            <div key={side} className="mt-1.5 rounded-lg bg-black/40 border border-white/5 p-2">
+                              <div className="text-[9px] font-semibold text-slate-500 mb-1">
+                                {side === "source" ? t("buddy.conflictSourceShort") : t("buddy.conflictTargetShort")}
+                              </div>
+                              {state === "loading" ? (
+                                <div className="text-[10px] text-slate-500 py-2">{t("buddy.conflictLoading")}</div>
+                              ) : state.length === 0 ? (
+                                <div className="text-[10px] text-slate-500 py-2">{t("buddy.conflictNoMessages")}</div>
+                              ) : (
+                                <div className="max-h-52 overflow-y-auto space-y-1.5">
+                                  {state.map((message, index) => (
+                                    <div key={index} className="text-[10px] leading-relaxed">
+                                      <span
+                                        className={`mr-1.5 font-semibold flex-shrink-0 ${
+                                          message.role === "user"
+                                            ? "text-cyan-300"
+                                            : message.role === "assistant"
+                                              ? "text-emerald-300"
+                                              : "text-slate-500"
+                                        }`}
+                                      >
+                                        {t(`buddy.conflictRole.${message.role}`)}
+                                      </span>
+                                      <span className="text-slate-300 whitespace-pre-wrap break-all">{message.text}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

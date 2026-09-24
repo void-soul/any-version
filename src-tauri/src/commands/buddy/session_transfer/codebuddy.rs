@@ -14,7 +14,7 @@ use std::path::{Component, Path};
 use serde_json::Value;
 
 use super::super::models::{BuddyAccount, BuddyPlatform};
-use super::super::session_sync::{SessionSyncStatus, SyncTracker};
+use super::super::session_sync::{PendingConflict, SessionSyncStatus, SyncTracker};
 use super::super::store;
 use super::SessionTransferReport;
 use super::TransferProgress;
@@ -117,6 +117,7 @@ fn transfer_local_sessions(
     // 上次同步基线（目标账号维度）：用于"只处理有变化的会话"与"两侧都改过即冲突"的判定。
     let baseline = super::super::session_sync::load_baseline(BACKUP_PLATFORM_LABEL, target_uid);
     let mut tracker = SyncTracker::new(baseline);
+    let mut pending_conflicts: Vec<PendingConflict> = Vec::new();
 
     report.scanned_workspaces = sync_history_between_accounts(
         &extension_data_dir,
@@ -125,6 +126,7 @@ fn transfer_local_sessions(
         &backup_root,
         progress,
         &mut tracker,
+        &mut pending_conflicts,
     )?;
     report.updated_session_rows = remap_session_vscdb_user_id(
         &user_data_dir.join("codebuddy-sessions.vscdb"),
@@ -147,6 +149,12 @@ fn transfer_local_sessions(
 
     let (summary, next_baseline) = tracker.finish();
     super::super::session_sync::save_baseline(BACKUP_PLATFORM_LABEL, target_uid, &next_baseline);
+    // 冲突落盘（空列表 = 清掉旧文件）：切换结束后用户仍可逐条裁决
+    super::super::session_sync::save_pending_conflicts(
+        BACKUP_PLATFORM_LABEL,
+        target_uid,
+        &pending_conflicts,
+    );
     report.sync = summary;
 
     eprintln!(
@@ -185,6 +193,431 @@ pub(crate) fn codebuddy_extension_data_dir() -> Result<std::path::PathBuf, Strin
     Ok(root)
 }
 
+// ─── 冲突裁决（切换结束后由用户逐条决定） ───
+
+/// 用户对冲突会话的裁决方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConflictAction {
+    /// 按标准合并规则取**较新**的一侧（另一侧先备份）
+    Merge,
+    /// 无条件用来源会话覆盖目标
+    Overwrite,
+    /// 保留目标会话，丢弃来源侧的修改
+    Keep,
+}
+
+impl ConflictAction {
+    pub(crate) fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "merge" => Ok(Self::Merge),
+            "overwrite" => Ok(Self::Overwrite),
+            "keep" => Ok(Self::Keep),
+            other => Err(format!("未知的冲突处理方式: {}", other)),
+        }
+    }
+}
+
+/// 待处理冲突文件所在目录（`{data_dir}/buddy/session-sync/codebuddy-cn/`）。
+fn pending_conflicts_dir() -> Result<std::path::PathBuf, String> {
+    Ok(crate::commands::config::get_data_dir()
+        .join("buddy")
+        .join("session-sync")
+        .join(BACKUP_PLATFORM_LABEL))
+}
+
+/// 从冲突文件名提取目标账号 uid（文件名 = `<uid>.conflicts.json`）。
+///
+/// 必须用 strip_suffix 而不是 `file_stem()`：`Path::file_stem` 只剥掉**最后一个**
+/// 扩展名，`"x.conflicts.json".file_stem()` 返回 `"x.conflicts"` —— 拿它拼回
+/// 完整文件名会多一段 `.conflicts`，读不到文件，列表永远是空（Q-0202 踩过的坑）。
+fn conflicts_stem(file_name: &str) -> Option<&str> {
+    file_name.strip_suffix(".conflicts.json")
+}
+
+/// 当前登录账号（CodeBuddy CN）的 uid；未登录/无 uid/uid 非法时返回 None。
+fn current_account_uid() -> Option<String> {
+    let platform = BuddyPlatform::CodebuddyCn;
+    let current_id = store::get_current_account_id(platform)?;
+    let accounts = store::list_accounts(platform);
+    let account = accounts.iter().find(|a| a.id == current_id)?;
+    let uid = account.uid.as_deref()?.trim().to_string();
+    if uid.is_empty() || validate_uid(&uid).is_err() {
+        return None;
+    }
+    Some(uid)
+}
+
+/// 列出**当前登录账号**（作为合并目标）的待处理冲突。
+///
+/// 只按当前账号过滤是有意的：冲突文件按目标账号分文件落盘，来回切换会留下
+/// 多个账号各自的旧快照——把所有文件混在一起展示，「明明只见 7 个冲突、
+/// 弹窗里却冒出 13 条」，多出来的还是过时方向（当前账号是来源而非目标）的记录。
+/// 用户要裁决的永远是「我现在登录的账号里哪些会话等着处理」。
+pub(crate) fn list_pending_conflicts_for_current_account() -> Vec<PendingConflict> {
+    let Some(uid) = current_account_uid() else {
+        return Vec::new();
+    };
+    let mut conflicts =
+        super::super::session_sync::load_pending_conflicts(BACKUP_PLATFORM_LABEL, &uid);
+    // 旧版本落盘的记录没有 workspace_path（或当时还原失败）：这里补解析，
+    // 不用等下一次切换才拿到真实路径
+    for conflict in &mut conflicts {
+        if conflict.workspace_path.is_none() {
+            conflict.workspace_path = resolve_workspace_display(&conflict.workspace);
+        }
+    }
+    conflicts.sort_by(|left, right| right.source_stamp.cmp(&left.source_stamp));
+    conflicts
+}
+
+/// 在全部冲突文件里按会话 id 查找记录（裁决入口用；展示层不走这里）。
+fn find_pending_conflict(conversation_id: &str) -> Result<Option<(PendingConflict, String)>, String> {
+    let dir = pending_conflicts_dir()?;
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok(None);
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some(stem) = conflicts_stem(file_name) else {
+            continue;
+        };
+        let conflicts =
+            super::super::session_sync::load_pending_conflicts(BACKUP_PLATFORM_LABEL, stem);
+        if let Some(conflict) = conflicts.iter().find(|c| c.id == conversation_id) {
+            return Ok(Some((conflict.clone(), stem.to_string())));
+        }
+    }
+    Ok(None)
+}
+
+/// 按会话 id 执行用户裁决，返回**当前账号**剩余的待处理冲突（前端直接整体替换）。
+pub(crate) fn resolve_conflict_command(
+    conversation_id: &str,
+    action: ConflictAction,
+) -> Result<Vec<PendingConflict>, String> {
+    validate_conversation_id(conversation_id)?;
+
+    let Some((conflict, stem)) = find_pending_conflict(conversation_id)? else {
+        return Err(format!(
+            "找不到会话 {} 的待处理冲突（可能已经处理过）",
+            conversation_id
+        ));
+    };
+    resolve_pending_conflict(&codebuddy_extension_data_dir()?, &conflict, action)?;
+
+    // 从所属文件移除该条（清空则删文件）
+    let conflicts =
+        super::super::session_sync::load_pending_conflicts(BACKUP_PLATFORM_LABEL, &stem);
+    let remaining: Vec<PendingConflict> = conflicts
+        .into_iter()
+        .filter(|c| c.id != conversation_id)
+        .collect();
+    super::super::session_sync::save_pending_conflicts(BACKUP_PLATFORM_LABEL, &stem, &remaining);
+    Ok(list_pending_conflicts_for_current_account())
+}
+
+/// 执行单条冲突裁决（命令入口）。
+///
+/// - `Overwrite` / `Merge`（来源较新）：备份目标 → 整目录替换 → 同步辅助目录 →
+///   更新目标 index.json 条目 → 基线写来源时间戳；
+/// - `Keep` / `Merge`（目标不旧）：什么都不动，基线写目标时间戳（冲突就此了结）。
+fn resolve_pending_conflict(
+    extension_data_dir: &Path,
+    conflict: &PendingConflict,
+    action: ConflictAction,
+) -> Result<String, String> {
+    // 与切换时的合并互斥：同一时刻只允许一边在动会话目录
+    let _guard = TRANSFER_LOCK
+        .lock()
+        .map_err(|_| "CodeBuddy CN 会话合并正在进行，请稍后重试".to_string())?;
+
+    // 备份目录沿用切换时的约定（每次裁决清掉旧的，只留最近一次）
+    let backup_root = super::prepare_backup_root(BACKUP_PLATFORM_LABEL, &conflict.target_uid)?;
+    let mut baseline =
+        super::super::session_sync::load_baseline(BACKUP_PLATFORM_LABEL, &conflict.target_uid);
+    let message = resolve_pending_conflict_at(
+        extension_data_dir,
+        conflict,
+        action,
+        &backup_root,
+        &mut baseline,
+    )?;
+    super::super::session_sync::save_baseline(BACKUP_PLATFORM_LABEL, &conflict.target_uid, &baseline);
+    Ok(message)
+}
+
+/// 冲突裁决的文件系统核心（基线以参数传入，便于测试注入临时目录）。
+fn resolve_pending_conflict_at(
+    extension_data_dir: &Path,
+    conflict: &PendingConflict,
+    action: ConflictAction,
+    backup_root: &Path,
+    baseline: &mut std::collections::BTreeMap<String, String>,
+) -> Result<String, String> {
+    validate_uid(&conflict.source_uid)?;
+    validate_uid(&conflict.target_uid)?;
+    validate_conversation_id(&conflict.id)?;
+    if conflict.ide.is_empty()
+        || conflict.ide.contains('/')
+        || conflict.ide.contains('\\')
+        || conflict.ide.contains("..")
+    {
+        return Err("待处理冲突的 IDE 目录名不安全".to_string());
+    }
+
+    // `<uid>/<IDE>/<uid>/history/<workspace>` 布局（与扫描时一致）
+    let source_account_root = extension_data_dir
+        .join(&conflict.source_uid)
+        .join(&conflict.ide)
+        .join(&conflict.source_uid);
+    let source_workspace = source_account_root.join("history").join(&conflict.workspace);
+    let target_account_root = extension_data_dir
+        .join(&conflict.target_uid)
+        .join(&conflict.ide)
+        .join(&conflict.target_uid);
+    let target_workspace = target_account_root.join("history").join(&conflict.workspace);
+    if !source_workspace.is_dir() {
+        return Err(format!(
+            "来源会话目录不存在（可能账号数据已被清理）: {}",
+            source_workspace.display()
+        ));
+    }
+    if !target_workspace.is_dir() {
+        return Err(format!(
+            "目标会话目录不存在: {}",
+            target_workspace.display()
+        ));
+    }
+    reject_symlink_if_exists(&source_workspace)?;
+    reject_symlink_if_exists(&target_workspace)?;
+
+    let source_index = read_workspace_index(&source_workspace.join("index.json"))?;
+    let target_index_path = target_workspace.join("index.json");
+    let mut target_index = read_workspace_index(&target_index_path)?;
+    let source_entry = conversations(&source_index)
+        .into_iter()
+        .find(|c| conversation_id(c) == Some(conflict.id.as_str()))
+        .ok_or_else(|| format!("来源索引里找不到会话 {}", conflict.id))?;
+    let target_entry = conversations(&target_index)
+        .into_iter()
+        .find(|c| conversation_id(c) == Some(conflict.id.as_str()))
+        .ok_or_else(|| format!("目标索引里找不到会话 {}", conflict.id))?;
+
+    // 裁决：overwrite 必换；keep 必留；merge 交给时间戳（与正常合并同一判定）
+    let overwrite_source = match action {
+        ConflictAction::Overwrite => true,
+        ConflictAction::Keep => false,
+        ConflictAction::Merge => {
+            let target_dir = target_workspace.join(&conflict.id);
+            if !target_dir.is_dir() {
+                return Err(format!(
+                    "目标会话目录缺失，无法按「合并」判定，请改用覆盖或保留: {}",
+                    target_dir.display()
+                ));
+            }
+            conversation_is_newer(&source_entry, &target_entry)
+        }
+    };
+
+    if overwrite_source {
+        let source_dir = source_workspace.join(&conflict.id);
+        let target_dir = target_workspace.join(&conflict.id);
+        if !source_dir.is_dir() {
+            return Err(format!("来源会话目录不存在: {}", source_dir.display()));
+        }
+        reject_symlink_if_exists(&target_dir)?;
+        if target_dir.exists() {
+            let backup = backup_root.join("conversations").join(&conflict.id);
+            if !backup.exists() {
+                copy_dir_recursive(&target_dir, &backup)?;
+            }
+        }
+        replace_dir_atomic(&source_dir, &target_dir)?;
+        copy_auxiliary_conversation(
+            &source_account_root,
+            &target_account_root,
+            std::ffi::OsStr::new(&conflict.workspace),
+            &conflict.id,
+            true,
+            &backup_root.join("auxiliary"),
+        )?;
+        // 目标 index.json：用来源条目替换（找不到就追加，保证会话在列表里可见）
+        let entry_list = target_index
+            .get_mut("conversations")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| "目标索引缺少 conversations 数组".to_string())?;
+        match entry_list
+            .iter_mut()
+            .find(|c| conversation_id(c) == Some(conflict.id.as_str()))
+        {
+            Some(slot) => *slot = source_entry.clone(),
+            None => entry_list.push(source_entry.clone()),
+        }
+        write_workspace_index(&target_index_path, &target_index)?;
+        // 基线推进到来源时间戳：这轮来源改动已确认落地
+        baseline.insert(conflict.id.clone(), conflict.source_stamp.to_string());
+        Ok(format!(
+            "已用来源会话（{}）覆盖目标（{}）",
+            fmt_stamp(conflict.source_stamp),
+            fmt_stamp(conflict.target_stamp)
+        ))
+    } else {
+        // 保留目标：基线推进到目标时间戳，冲突就此了结（来源侧改动视为放弃）
+        baseline.insert(conflict.id.clone(), conflict.target_stamp.to_string());
+        Ok(format!(
+            "已保留目标会话（{}），来源侧改动（{}）已放弃",
+            fmt_stamp(conflict.target_stamp),
+            fmt_stamp(conflict.source_stamp)
+        ))
+    }
+}
+
+/// epoch 毫秒 → 可读时间（报错信息与返回文案用）。
+fn fmt_stamp(stamp_ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(stamp_ms)
+        .map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| stamp_ms.to_string())
+}
+
+// ─── 冲突明细：对话内容预览 ───
+
+/// 对话预览里的一条消息（已从双层 JSON 里抽出正文）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictMessage {
+    /// user / assistant / tool
+    pub role: String,
+    pub time: String,
+    pub text: String,
+}
+
+/// 预览取**最后**多少条（裁决关心的是两边最近聊到哪了）
+const CONVERSATION_PREVIEW_MAX_MESSAGES: usize = 40;
+/// 单条正文截断长度（tool 输出可能巨大）
+const CONVERSATION_PREVIEW_MAX_CHARS: usize = 1200;
+
+/// 读取冲突会话某一侧（source / target）的对话内容。
+///
+/// 会话正文布局：`<uid>/<IDE>/<uid>/history/<workspace>/<convId>/index.json`
+/// 的 `messages` 数组按序存消息元数据，每条正文在 `messages/<messageId>.json`。
+pub(crate) fn read_conflict_messages(
+    conversation_id: &str,
+    side: &str,
+) -> Result<Vec<ConflictMessage>, String> {
+    let Some((conflict, _)) = find_pending_conflict(conversation_id)? else {
+        return Err(format!("找不到会话 {} 的待处理冲突", conversation_id));
+    };
+    let uid = match side {
+        "source" => &conflict.source_uid,
+        "target" => &conflict.target_uid,
+        other => return Err(format!("未知的会话侧: {}", other)),
+    };
+    validate_uid(uid)?;
+    let extension_data_dir = codebuddy_extension_data_dir()?;
+    let conv_dir = extension_data_dir
+        .join(uid)
+        .join(&conflict.ide)
+        .join(uid)
+        .join("history")
+        .join(&conflict.workspace)
+        .join(&conflict.id);
+    if !conv_dir.is_dir() {
+        return Err(format!("会话目录不存在: {}", conv_dir.display()));
+    }
+    reject_symlink_if_exists(&conv_dir)?;
+    let index = read_workspace_index(&conv_dir.join("index.json"))?;
+    let metas = index
+        .get("messages")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let start = metas.len().saturating_sub(CONVERSATION_PREVIEW_MAX_MESSAGES);
+    let mut out = Vec::new();
+    for meta in &metas[start..] {
+        let Some(id) = meta.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        if id.contains('/') || id.contains('\\') || id.contains("..") {
+            continue;
+        }
+        let path = conv_dir.join("messages").join(format!("{}.json", id));
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        extract_message_text(&raw, &mut out);
+    }
+    Ok(out)
+}
+
+/// 从消息文件原文抽出 `{role, time, text}`。
+///
+/// `message` 字段是**内嵌 JSON 字符串**，其 `content` 数组里 `type=text` 的才是
+/// 用户可读正文；tool-call 折叠成一行标记，避免工具输出把预览撑爆。
+fn extract_message_text(raw: &str, out: &mut Vec<ConflictMessage>) {
+    let Ok(value) = serde_json::from_str::<Value>(raw) else {
+        return;
+    };
+    let role = value
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("?")
+        .to_string();
+    let time = value
+        .get("createdAt")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let message = match value.get("message") {
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+        None => String::new(),
+    };
+    let mut text = String::new();
+    if let Ok(inner) = serde_json::from_str::<Value>(&message) {
+        if let Some(content) = inner.get("content").and_then(Value::as_array) {
+            for part in content {
+                match part.get("type").and_then(Value::as_str) {
+                    Some("text") => {
+                        if let Some(t) = part.get("text").and_then(Value::as_str) {
+                            if !text.is_empty() {
+                                text.push('\n');
+                            }
+                            text.push_str(t);
+                        }
+                    }
+                    Some("tool-call") => {
+                        let name = part
+                            .get("toolName")
+                            .and_then(Value::as_str)
+                            .unwrap_or("tool");
+                        if !text.is_empty() {
+                            text.push('\n');
+                        }
+                        text.push_str(&format!("[调用工具: {}]", name));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    // 双层解析失败就用原文兜底，别让一条消息悄悄消失
+    if text.is_empty() {
+        text = message;
+    }
+    // tool 输出（role=tool 的原始 JSON）对裁决没帮助，更紧地截断
+    let max_chars = if role == "tool" { 300 } else { CONVERSATION_PREVIEW_MAX_CHARS };
+    if text.chars().count() > max_chars {
+        text = text.chars().take(max_chars).collect::<String>() + "…";
+    }
+    out.push(ConflictMessage { role, time, text });
+}
+
 pub(crate) fn validate_uid(uid: &str) -> Result<(), String> {
     let trimmed = uid.trim();
     if trimmed.is_empty() || trimmed != uid {
@@ -201,7 +634,8 @@ pub(crate) fn validate_uid(uid: &str) -> Result<(), String> {
 }
 
 /// 合并来源账号 history 目录到目标账号（逐 IDE、逐工作区）。
-/// 返回扫描到的工作区数；逐会话结局写入 `tracker`（WorkBuddy 也复用本函数）。
+/// 返回扫描到的工作区数；逐会话结局写入 `tracker`，冲突详情追加进 `pending_conflicts`
+/// （WorkBuddy 也复用本函数，但它不会产生冲突分支）。
 pub(super) fn sync_history_between_accounts(
     extension_data_dir: &Path,
     source_uid: &str,
@@ -209,6 +643,7 @@ pub(super) fn sync_history_between_accounts(
     backup_root: &Path,
     progress: TransferProgress,
     tracker: &mut SyncTracker,
+    pending_conflicts: &mut Vec<PendingConflict>,
 ) -> Result<usize, String> {
     let source_outer = extension_data_dir.join(source_uid);
     if !source_outer.is_dir() {
@@ -275,6 +710,11 @@ pub(super) fn sync_history_between_accounts(
                 .join("history")
                 .join(&ide_name)
                 .join(&workspace_name);
+            let scan = ConflictScanContext {
+                ide: ide_name.to_string_lossy().to_string(),
+                source_uid: source_uid.to_string(),
+                target_uid: target_uid.to_string(),
+            };
             merge_workspace_history(
                 &source_workspace,
                 &target_workspace,
@@ -283,6 +723,8 @@ pub(super) fn sync_history_between_accounts(
                 &workspace_name,
                 &workspace_backup,
                 tracker,
+                &scan,
+                pending_conflicts,
             )?;
             scanned_workspaces += 1;
             emit_switch_progress(
@@ -336,8 +778,11 @@ pub(crate) fn decide_sync(
     }
 }
 
-/// 会话展示名：标题优先，其次 id。
-fn conversation_label(conversation: &Value, id: &str) -> String {
+/// 会话展示名：标题优先，其次**目录名**，最后才回落到 id。
+///
+/// 此前无标题的会话直接显示裸 id（一串哈希），用户根本认不出是哪个会话；
+/// 所属工作区目录对应真实项目，是比 id 有意义得多的 fallback。
+fn conversation_label(conversation: &Value, id: &str, workspace_fallback: &str) -> String {
     for key in ["title", "name", "label"] {
         if let Some(text) = conversation.get(key).and_then(Value::as_str) {
             let trimmed = text.trim();
@@ -346,7 +791,122 @@ fn conversation_label(conversation: &Value, id: &str) -> String {
             }
         }
     }
+    if !workspace_fallback.trim().is_empty() {
+        return workspace_fallback.trim().to_string();
+    }
     id.to_string()
+}
+
+// ─── 工作区哈希 → 真实项目路径 ───
+
+/// 进程级缓存：工作区哈希 → 解析出的真实路径（None = 解析失败也缓存，避免反复开库）。
+static WORKSPACE_PATH_CACHE: std::sync::LazyLock<
+    std::sync::Mutex<HashMap<String, Option<String>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+/// 把 history 下的工作区哈希目录名还原成真实项目路径。
+///
+/// 哈希规则（实测验证）：**MD5(项目路径)**，其中 Windows 路径盘符为小写、
+/// 分隔符为反斜杠（如 `md5("e:\pro\my\any-version") = 48399de9…`）。
+/// 候选路径取 CodeBuddy CN `state.vscdb` 的最近打开列表
+/// （`history.recentlyOpenedPathsList`：folderUri 与 workspace.configPath）。
+///
+/// 还原失败（最近列表被清理/从未在本机打开过）返回 None ——
+/// 显示层回退到原始哈希，不影响按哈希定位文件。
+pub(crate) fn resolve_workspace_display(workspace_hash: &str) -> Option<String> {
+    if let Some(cached) = WORKSPACE_PATH_CACHE
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(workspace_hash).cloned())
+    {
+        return cached;
+    }
+    let resolved = resolve_workspace_display_uncached(workspace_hash);
+    if let Ok(mut cache) = WORKSPACE_PATH_CACHE.lock() {
+        cache.insert(workspace_hash.to_string(), resolved.clone());
+    }
+    resolved
+}
+
+fn resolve_workspace_display_uncached(workspace_hash: &str) -> Option<String> {
+    let db = super::super::codebuddy_cn::default_state_db_path()?;
+    let conn = rusqlite::Connection::open(&db).ok()?;
+    let raw: String = conn
+        .query_row(
+            "SELECT value FROM ItemTable WHERE key = 'history.recentlyOpenedPathsList'",
+            [],
+            |row| row.get(0),
+        )
+        .ok()?;
+    let list: Value = serde_json::from_str(&raw).ok()?;
+    for entry in list.get("entries")?.as_array()? {
+        // 两种形态：folderUri（文件夹）与 workspace.configPath（.code-workspace 文件）
+        for key in ["folderUri", "configPath"] {
+            let Some(uri) = entry.get(key).and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(path) = uri_to_os_path(uri) else {
+                continue;
+            };
+            let digest = format!("{:x}", md5::compute(path.as_bytes()));
+            if digest == workspace_hash {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+/// `file:///e%3A/pro/my/any-version` → `e:\pro\my\any-version`（盘符小写，与哈希口径一致）。
+/// 非 file 协议（remote 等）返回 None。
+fn uri_to_os_path(uri: &str) -> Option<String> {
+    let rest = uri.strip_prefix("file://")?;
+    let decoded = percent_decode(rest);
+    let path = decoded.trim_start_matches('/');
+    if path.is_empty() {
+        return None;
+    }
+    if cfg!(target_os = "windows") {
+        // `e:/pro/x` → `e:\pro\x`，盘符转小写（实测哈希用小写盘符）
+        let mut chars = path.chars();
+        let drive = chars.next()?;
+        let tail: String = chars.collect();
+        let tail = tail.replace('/', "\\");
+        if !tail.starts_with(':') {
+            return None;
+        }
+        Some(format!("{}{}", drive.to_ascii_lowercase(), tail))
+    } else {
+        Some(format!("/{}", path))
+    }
+}
+
+/// 手写 percent-decode（不引入额外依赖；最近打开列表只含 `%3A` 这类盘符转义）。
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).ok();
+            if let Some(value) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                out.push(value);
+                index += 3;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+/// 待处理冲突文件的定位上下文：冲突落盘后，解析命令要靠这三个字段找回两侧会话。
+#[derive(Debug, Clone)]
+pub(crate) struct ConflictScanContext {
+    pub ide: String,
+    pub source_uid: String,
+    pub target_uid: String,
 }
 
 /// 合并单个工作区：会话目录 + index.json（去重、取新、保留 current）+ 辅助目录。
@@ -358,10 +918,17 @@ fn merge_workspace_history(
     workspace_name: &std::ffi::OsStr,
     backup_root: &Path,
     tracker: &mut SyncTracker,
+    scan: &ConflictScanContext,
+    pending_conflicts: &mut Vec<PendingConflict>,
 ) -> Result<(), String> {
+    let workspace_label = workspace_name.to_string_lossy().to_string();
+    // 哈希目录名对用户毫无意义（一串 32 位 MD5），能还原就还原成真实项目路径；
+    // 还原不了再用哈希。明细「目录」列、无标题会话的展示名都用它。
+    let workspace_display = resolve_workspace_display(&workspace_label)
+        .unwrap_or_else(|| workspace_label.clone());
     // 本次调用处理的就是 workspace_name 这一个工作区目录：设一次上下文，
     // 随后本函数内所有 record 都会带上它（明细里的「目录」列）。
-    tracker.set_workspace(Some(workspace_name.to_string_lossy().to_string()));
+    tracker.set_workspace(Some(workspace_display.clone()));
 
     let source_index_path = source_workspace.join("index.json");
     if !source_index_path.is_file() {
@@ -377,7 +944,7 @@ fn merge_workspace_history(
             let id = conversation_id(&conversation).unwrap_or_default().to_string();
             tracker.record(
                 &id,
-                &conversation_label(&conversation, &id),
+                &conversation_label(&conversation, &id, &workspace_display),
                 SessionSyncStatus::Copied,
                 "firstSync",
                 Some(conversation_timestamp(&conversation).to_string()),
@@ -414,7 +981,7 @@ fn merge_workspace_history(
         };
         validate_conversation_id(id)?;
         let source_conversation_dir = source_workspace.join(id);
-        let label = conversation_label(&source_conversation, id);
+        let label = conversation_label(&source_conversation, id, &workspace_display);
         let source_stamp = conversation_timestamp(&source_conversation).to_string();
         if !source_conversation_dir.is_dir() {
             eprintln!(
@@ -503,7 +1070,25 @@ fn merge_workspace_history(
                             "[Buddy SessionTransfer] 会话两侧都有更新，保留目标版本并记为冲突: id={}, source={}, target={}",
                             id, source_stamp, target_stamp
                         );
-                        // 不写基线：冲突未解决前每次切换都会再次提醒
+                        // 不写基线：冲突未解决前每次切换都会再次提醒。
+                        // 同时把定位信息落盘，用户在切换结束后仍可逐条裁决
+                        // （合并 / 覆盖目标 / 保留目标），不必赶在切换流程里做决定。
+                        pending_conflicts.push(PendingConflict {
+                            id: id.to_string(),
+                            label: label.clone(),
+                            // 文件系统定位用原始哈希名；真实路径另放一列给前端展示
+                            workspace: workspace_label.clone(),
+                            workspace_path: if workspace_display == workspace_label {
+                                None
+                            } else {
+                                Some(workspace_display.clone())
+                            },
+                            ide: scan.ide.clone(),
+                            source_uid: scan.source_uid.clone(),
+                            target_uid: scan.target_uid.clone(),
+                            source_stamp: conversation_timestamp(&source_conversation),
+                            target_stamp: conversation_timestamp(&merged[target_index_pos]),
+                        });
                         tracker.record(id, &label, SessionSyncStatus::Conflict, "bothChanged", None);
                         continue;
                     }
@@ -642,6 +1227,13 @@ pub(crate) fn read_workspace_index(path: &Path) -> Result<Value, String> {
         return Err(format!("CodeBuddy CN 工作区索引结构无效: {}", path.display()));
     }
     Ok(value)
+}
+
+/// 原子写入工作区索引（冲突裁决更新目标 index.json 用，与读取同一格式）。
+fn write_workspace_index(path: &Path, index: &Value) -> Result<(), String> {
+    let serialized = serde_json::to_string_pretty(index)
+        .map_err(|e| format!("序列化 CodeBuddy CN 工作区索引失败: {}", e))?;
+    store::write_atomic(&path.to_path_buf(), &serialized)
 }
 
 fn conversations(index: &Value) -> Vec<Value> {
@@ -983,6 +1575,186 @@ mod tests {
     }
 
     #[test]
+    fn conflicts_stem_strips_full_double_extension() {
+        // 回归：Path::file_stem 只剥最后一个扩展名，"x.conflicts.json" 的 stem 是
+        // "x.conflicts" 而不是 "x" —— 按它拼回文件名永远读不到，列表恒为空
+        // （Q-0202 返工时真实踩坑：后端落盘 6 条、前端列表 0 条）。
+        assert_eq!(
+            conflicts_stem("4dc9bdfa-7cb0-4961-9b2f-bfcbde7e78b2.conflicts.json"),
+            Some("4dc9bdfa-7cb0-4961-9b2f-bfcbde7e78b2")
+        );
+        assert_eq!(conflicts_stem("whatever.json"), None);
+        assert_eq!(conflicts_stem("conflicts.json"), None);
+    }
+
+    #[test]
+    fn conversation_label_falls_back_to_workspace_not_id() {
+        // 无标题的会话以前显示裸 id（一串哈希），用户认不出是哪个会话；
+        // 现在回落到所属工作区目录，只有目录也没有时才用 id
+        let untitled = serde_json::json!({"id": "abc123"});
+        assert_eq!(conversation_label(&untitled, "abc123", "my-project"), "my-project");
+        let titled = serde_json::json!({"id": "abc123", "title": "重构登录"});
+        assert_eq!(conversation_label(&titled, "abc123", "my-project"), "重构登录");
+        let blank_workspace = serde_json::json!({"id": "abc123"});
+        assert_eq!(conversation_label(&blank_workspace, "abc123", "  "), "abc123");
+    }
+
+    /// 构造一个「同 id 会话在来源/目标两侧都有」的冲突现场。
+    /// 返回 (扩展数据根目录, 冲突记录)。
+    fn conflict_fixture(
+        dest: &Path,
+        source_ts: i64,
+        target_ts: i64,
+    ) -> (std::path::PathBuf, PendingConflict) {
+        let data_root = dest.join("CodeBuddyExtension").join("Data");
+        let source_history = data_root
+            .join("src-uid").join("VSCode").join("src-uid").join("history").join("ws");
+        let target_history = data_root
+            .join("dst-uid").join("VSCode").join("dst-uid").join("history").join("ws");
+        for (history, body, ts) in [
+            (&source_history, "source-body", source_ts),
+            (&target_history, "target-body", target_ts),
+        ] {
+            std::fs::create_dir_all(history.join("conv-1")).unwrap();
+            std::fs::write(history.join("conv-1").join("messages.jsonl"), body).unwrap();
+            std::fs::write(
+                history.join("index.json"),
+                serde_json::to_vec_pretty(&serde_json::json!({
+                    "conversations": [{ "id": "conv-1", "lastMessageAt": ts }]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        let conflict = PendingConflict {
+            id: "conv-1".to_string(),
+            label: "ws".to_string(),
+            workspace: "ws".to_string(),
+            workspace_path: None,
+            ide: "VSCode".to_string(),
+            source_uid: "src-uid".to_string(),
+            target_uid: "dst-uid".to_string(),
+            source_stamp: source_ts,
+            target_stamp: target_ts,
+        };
+        (data_root, conflict)
+    }
+
+    #[test]
+    fn uri_to_os_path_matches_workspace_hash_convention() {
+        // 哈希口径（实测）：MD5(小写盘符 + 反斜杠路径)，如
+        // md5("e:\pro\my\any-version") = 48399de9e5eb08e5fe07dfb180314c02
+        let path = uri_to_os_path("file:///e%3A/pro/my/any-version").unwrap();
+        assert_eq!(path, "e:\\pro\\my\\any-version");
+        let digest = format!("{:x}", md5::compute(path.as_bytes()));
+        assert_eq!(digest, "48399de9e5eb08e5fe07dfb180314c02");
+
+        // workspace 配置文件（.code-workspace）路径同样参与匹配
+        let ws = uri_to_os_path("file:///e%3A/pro/gld/gld-web/wechat.code-workspace").unwrap();
+        assert_eq!(ws, "e:\\pro\\gld\\gld-web\\wechat.code-workspace");
+
+        // 非 file 协议不认；路径为空不认
+        assert!(uri_to_os_path("vscode-remote://file%2Be%3A/pro/x").is_none());
+        assert!(uri_to_os_path("file:///").is_none());
+    }
+
+    #[test]
+    fn resolve_conflict_overwrite_replaces_target_and_advances_baseline() {
+        let dest = make_temp();
+        let (data_root, conflict) = conflict_fixture(&dest, 1_700_000_000_000, 1_699_000_000_000);
+        let mut baseline = std::collections::BTreeMap::new();
+        let message = resolve_pending_conflict_at(
+            &data_root,
+            &conflict,
+            ConflictAction::Overwrite,
+            &dest.join("backup"),
+            &mut baseline,
+        )
+        .unwrap();
+        assert!(message.contains("覆盖"), "返回文案应说明做了覆盖: {message}");
+
+        // 目标会话正文被来源替换
+        let target_conv = data_root
+            .join("dst-uid").join("VSCode").join("dst-uid").join("history").join("ws").join("conv-1");
+        let body = std::fs::read_to_string(target_conv.join("messages.jsonl")).unwrap();
+        assert_eq!(body, "source-body");
+        // 目标 index.json 条目同步为来源的（时间戳变成来源侧）
+        let index: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(target_conv.parent().unwrap().join("index.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(index["conversations"][0]["lastMessageAt"], 1_700_000_000_000i64);
+        // 原目标正文有备份可回滚
+        let backup_body = std::fs::read_to_string(
+            dest.join("backup").join("conversations").join("conv-1").join("messages.jsonl"),
+        )
+        .unwrap();
+        assert_eq!(backup_body, "target-body");
+        // 基线推进到来源时间戳：这轮来源改动视为已落地
+        assert_eq!(baseline.get("conv-1").map(String::as_str), Some("1700000000000"));
+    }
+
+    #[test]
+    fn resolve_conflict_keep_discards_source_and_resolves() {
+        let dest = make_temp();
+        let (data_root, conflict) = conflict_fixture(&dest, 1_700_000_000_000, 1_699_000_000_000);
+        let mut baseline = std::collections::BTreeMap::new();
+        let message = resolve_pending_conflict_at(
+            &data_root,
+            &conflict,
+            ConflictAction::Keep,
+            &dest.join("backup"),
+            &mut baseline,
+        )
+        .unwrap();
+        assert!(message.contains("保留"), "返回文案应说明保留了目标: {message}");
+
+        // 目标一字未动
+        let body = std::fs::read_to_string(
+            data_root.join("dst-uid").join("VSCode").join("dst-uid")
+                .join("history").join("ws").join("conv-1").join("messages.jsonl"),
+        )
+        .unwrap();
+        assert_eq!(body, "target-body");
+        // 基线推进到目标时间戳：冲突了结，下次切换不再提醒
+        assert_eq!(baseline.get("conv-1").map(String::as_str), Some("1699000000000"));
+    }
+
+    #[test]
+    fn resolve_conflict_merge_picks_the_newer_side() {
+        // 来源较新 → 合并等价于覆盖
+        let dest = make_temp();
+        let (data_root, conflict) = conflict_fixture(&dest, 1_700_000_000_000, 1_699_000_000_000);
+        let mut baseline = std::collections::BTreeMap::new();
+        resolve_pending_conflict_at(
+            &data_root, &conflict, ConflictAction::Merge, &dest.join("backup"), &mut baseline,
+        )
+        .unwrap();
+        let body = std::fs::read_to_string(
+            data_root.join("dst-uid").join("VSCode").join("dst-uid")
+                .join("history").join("ws").join("conv-1").join("messages.jsonl"),
+        )
+        .unwrap();
+        assert_eq!(body, "source-body");
+
+        // 目标较新 → 合并等价于保留
+        let dest2 = make_temp();
+        let (data_root2, conflict2) = conflict_fixture(&dest2, 1_690_000_000_000, 1_699_000_000_000);
+        let mut baseline2 = std::collections::BTreeMap::new();
+        resolve_pending_conflict_at(
+            &data_root2, &conflict2, ConflictAction::Merge, &dest2.join("backup"), &mut baseline2,
+        )
+        .unwrap();
+        let body2 = std::fs::read_to_string(
+            data_root2.join("dst-uid").join("VSCode").join("dst-uid")
+                .join("history").join("ws").join("conv-1").join("messages.jsonl"),
+        )
+        .unwrap();
+        assert_eq!(body2, "target-body");
+        assert_eq!(baseline2.get("conv-1").map(String::as_str), Some("1699000000000"));
+    }
+
+    #[test]
     fn rejects_unsafe_uids() {
         for uid in ["", "../a", "a/b", "a\\b", "a..b", " a"] {
             assert!(validate_uid(uid).is_err(), "uid should be rejected: {uid}");
@@ -1079,6 +1851,7 @@ mod tests {
             &backup_root,
             no_progress(),
             &mut tracker,
+            &mut Vec::new(),
         )
         .unwrap();
         assert_eq!(scanned, 1);
@@ -1130,6 +1903,7 @@ mod tests {
             &dest.join("backup"),
             no_progress(),
             &mut tracker,
+            &mut Vec::new(),
         )
         .unwrap();
         assert_eq!(scanned, 1);
@@ -1184,6 +1958,7 @@ mod tests {
         let mut first = SyncTracker::new(std::collections::BTreeMap::new());
         sync_history_between_accounts(
             &data_root, "source", "target", &backup_root, no_progress(), &mut first,
+            &mut Vec::new(),
         )
         .unwrap();
         let (first_summary, baseline) = first.finish();
@@ -1193,6 +1968,7 @@ mod tests {
         let mut second = SyncTracker::new(baseline);
         sync_history_between_accounts(
             &data_root, "source", "target", &backup_root, no_progress(), &mut second,
+            &mut Vec::new(),
         )
         .unwrap();
         let (second_summary, _) = second.finish();

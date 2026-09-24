@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use super::super::models::{BuddyAccount, BuddyPlatform};
-use super::super::session_sync::{self, SessionSyncStatus, SyncTracker};
+use super::super::session_sync::{self, PendingConflict, SessionSyncStatus, SyncTracker};
 use super::super::store;
 use super::codebuddy;
 use super::SessionTransferReport;
@@ -155,6 +155,8 @@ fn transfer_local_sessions(
             source_uid
         );
     } else {
+        // WorkBuddy 的会话合并不产生冲突分支（共享库重映射语义），收集器只为满足签名
+        let mut pending_conflicts: Vec<PendingConflict> = Vec::new();
         for (label, extension_data_dir) in extension_roots {
             report.scanned_workspaces += codebuddy::sync_history_between_accounts(
                 &extension_data_dir,
@@ -163,6 +165,7 @@ fn transfer_local_sessions(
                 &backup_root.join(label),
                 progress,
                 &mut tracker,
+                &mut pending_conflicts,
             )?;
         }
     }
