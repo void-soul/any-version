@@ -12,7 +12,7 @@
   "supportsOpenai": true,
   "supportsAnthropic": false,
   "supportsGoogle": false,
-  "builtinModels": [],
+  "builtinModels": ["qwen3.8-max", "qwen3.8-flash"],
   "supportsOptimizer": true,
   "supportsRectifier": true,
 

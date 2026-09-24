@@ -246,9 +246,9 @@
     "id": "minimax-cn",
     "name": "MiniMax 国内",
     "category": "provider",
-    "website": "https://www.minimaxi.com",
-    "openaiUrl": "https://api.minimaxi.com/v1",
-    "anthropicUrl": "https://api.minimaxi.com/anthropic",
+    "website": "https://www.minimax.cn",
+    "openaiUrl": "https://api.minimax.cn/v1",
+    "anthropicUrl": "https://api.minimax.cn/anthropic",
     "googleUrl": ""
   },
   {
