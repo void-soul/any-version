@@ -23,6 +23,7 @@ import {
   FolderOpen,
 } from "lucide-react";
 import type { ModelEntry, AiProvider, AiConfig, ModelCustomParam, UpstreamHeader } from "./types";
+import { filterProviders } from "./providerSearch";
 
 type Preset = {
   id: string; name: string; category: string;
@@ -63,6 +64,8 @@ export default function ModelConfig() {
   const [showPresetPicker, setShowPresetPicker] = useState(false);
   const [presetSearch, setPresetSearch] = useState("");
   const [presetCategory, setPresetCategory] = useState<"all" | "provider" | "relay" | "local">("all");
+  // 「已添加的供应商」列表的搜索关键词（与预设弹窗的 presetSearch 互不影响）
+  const [providerSearch, setProviderSearch] = useState("");
   const [presets, setPresets] = useState<Preset[]>([]);
 
   // 弹框状态
@@ -134,6 +137,12 @@ export default function ModelConfig() {
       );
     });
   }, [presets, presetSearch, presetCategory]);
+
+  // 已添加供应商的搜索：与预设弹窗同一口径（显示名 / id / 官网 / 协议端点）
+  const filteredProviders = useMemo(
+    () => filterProviders(config?.providers ?? [], providerSearch),
+    [config?.providers, providerSearch],
+  );
 
   const presetCategoryCounts = useMemo(() => {
     const counts = { all: presets.length, provider: 0, relay: 0, local: 0 };
@@ -453,17 +462,39 @@ export default function ModelConfig() {
         </p>
       </div>
 
-      {/* Add Button */}
-      <div>
+      {/* Add Button + 已添加供应商的搜索 */}
+      <div className="flex items-center gap-2">
         <button onClick={() => {
           // 打开前重新拉取预设：「本地聚合」的端口取自聚合页设置，可能已改动
           void invoke<Preset[]>("get_provider_presets").then(list => setPresets(list)).catch(() => {});
           setPresetSearch("");
           setPresetCategory("all");
           setShowPresetPicker(true);
-        }} className="px-3.5 py-2 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-lg shadow-[var(--module-accent-ring)]">
+        }} className="px-3.5 py-2 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-lg shadow-[var(--module-accent-ring)] flex-shrink-0">
           <Plus className="w-3.5 h-3.5" /> {t("modelcfg.addProvider")}
         </button>
+        {/* 一个供应商都没添加时不显示搜索框：没有东西可筛 */}
+        {(config?.providers.length ?? 0) > 0 && (
+          <div className="relative flex-1 max-w-xs">
+            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              value={providerSearch}
+              onChange={e => setProviderSearch(e.target.value)}
+              placeholder={t("modelcfg.searchAddedPh")}
+              className="w-full h-9 rounded-xl bg-white/5 border border-white/10 pl-8 pr-7 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
+            />
+            {providerSearch && (
+              <button
+                type="button"
+                onClick={() => setProviderSearch("")}
+                title={t("modelcfg.searchClear")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Provider List（紧凑行：点击行打开详情弹窗） */}
@@ -472,9 +503,15 @@ export default function ModelConfig() {
           <Key className="w-8 h-8 text-slate-700 mb-2" />
           <span className="text-xs font-bold text-slate-400">{t("modelcfg.noProviders")}</span>
         </div>
+      ) : filteredProviders.length === 0 ? (
+        // 搜索没命中：与预设弹窗的空态同一套视觉
+        <div className="h-32 border border-dashed border-white/5 rounded-2xl flex flex-col items-center justify-center text-slate-600">
+          <Search className="w-6 h-6 mb-2" />
+          <span className="text-[10px] font-bold">{t("modelcfg.searchNoMatch")}</span>
+        </div>
       ) : (
         <div className="rounded-xl border border-white/5 overflow-hidden divide-y divide-white/[0.04]">
-          {config?.providers.map((provider) => {
+          {filteredProviders.map((provider) => {
             const hasEndpoint = !!(provider.openai_url || provider.anthropic_url || provider.google_url);
             return (
               <div key={provider.id}>
