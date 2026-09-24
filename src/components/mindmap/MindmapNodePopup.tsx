@@ -17,7 +17,7 @@ function normalizeHex(value: string): string | null {
 }
 
 /** 思维导图节点速记悬浮窗：复用内部表单（与 DetailModal 一致）。
- *  可编辑名称、描述、类型、进度、计划时间、颜色、详细内容（完整 Markdown 编辑器）。 */
+ *  可编辑名称、描述、类型、颜色、详细内容（完整 Markdown 编辑器）。 */
 export default function MindmapNodePopup() {
   const { t } = useTranslation();
   const [accent, setAccent] = useState(VEX_CYBER_ACCENT);
@@ -43,8 +43,6 @@ export default function MindmapNodePopup() {
   const [loadingDoc, setLoadingDoc] = useState(false);
   const [parentId, setParentId] = useState<string>("");
   const [name, setName] = useState("");
-  const [planAt, setPlanAt] = useState("");
-  const [repeat, setRepeat] = useState("none");
   const [color, setColor] = useState("");
   const [detail, setDetail] = useState("");
   const [busy, setBusy] = useState(false);
@@ -186,24 +184,23 @@ export default function MindmapNodePopup() {
       }
       const f = full && full.document.id === targetId ? full : await mmApi.load(targetId);
       if (!f) throw new Error(t("mindmap.docLoadFail"));
-      const now = new Date().toISOString();
       const c = normalizeHex(color) ?? kindColor("other");
       // 明确选择「新文件」时不自动挂到已有根节点，节点作为新文档的根
       const pid = creatingRoot ? null : (parentId || roots[0]?.id || null);
       const n: MindmapNode = {
         id: `n${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         documentId: targetId, parentId: pid, name: name.trim(), detail,
-        kind: "other", color: c, planAt: planAt.trim() || null, repeat,
-        positionX: 0, positionY: 0, createdAt: now, updatedAt: now,
+        kind: "other", color: c,
+        positionX: 0, positionY: 0,
       };
       await mmApi.upsertNode({ documentId: targetId, node: n });
       const pname = pid ? f.nodes.find((x) => x.id === pid)?.name ?? "" : t("mmdpop.rootNodePh");
       setDone(t("mmdpop.recordedTo2", { name: f.document.name, parent: pname }));
-      setName(""); setDetail(""); setPlanAt("");
+      setName(""); setDetail("");
       window.setTimeout(() => { void hide(); }, 2500);
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); }
-  }, [name, detail, busy, docId, newDocName, full, parentId, roots, planAt, repeat, color, creatingRoot, hide]);
+  }, [name, detail, busy, docId, newDocName, full, parentId, roots, color, creatingRoot, hide]);
 
   useEffect(() => { inputRef.current?.focus(); }, [full, docId]);
 
@@ -294,9 +291,7 @@ export default function MindmapNodePopup() {
         </div>
 
         <NodeFormFields ns="mmdpop"
-          planAt={planAt} repeat={repeat} color={color}
-          onPlanAt={(iso) => setPlanAt(iso ?? "")}
-          onRepeat={setRepeat}
+          color={color}
           onColor={setColor}
           showHexInput={false}
         />

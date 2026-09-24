@@ -250,8 +250,7 @@ async fn call_ai_json_for_explorer(
 
 fn json_to_mindmap_nodes(json: &serde_json::Value, document_id: &str, id_prefix: &str) -> Vec<MindmapNode> {
     let arr = match json.get("nodes").and_then(|v| v.as_array()) { Some(a) => a, None => return vec![] };
-    let ts = super::db::now_ts();
-    let colors = ["#22d3ee","#34d399","#fbbf24","#60a5fa","#fb7185","#a78bfa","#f97316","#f59e0b","#f8fafc","#94a3b8"];
+    let colors =["#22d3ee","#34d399","#fbbf24","#60a5fa","#fb7185","#a78bfa","#f97316","#f59e0b","#f8fafc","#94a3b8"];
     let ids: Vec<String> = arr.iter().enumerate().map(|(i, v)| {
         let raw = v.get("id").and_then(|x| x.as_str()).filter(|s| !s.trim().is_empty()).unwrap_or("");
         if raw.is_empty() { format!("{}n{}", id_prefix, i + 1) } else { format!("{}{}", id_prefix, raw) }
@@ -282,8 +281,6 @@ fn json_to_mindmap_nodes(json: &serde_json::Value, document_id: &str, id_prefix:
             },
             kind: if is_root { "root".to_string() } else { v.get("kind").and_then(|x| x.as_str()).unwrap_or("other").to_string() },
             color: v.get("color").and_then(|x| x.as_str()).unwrap_or(c).to_string(),
-            plan_at: v.get("plan_at").or_else(|| v.get("planAt")).and_then(|x| x.as_str()).map(|s| s.to_string()),
-            repeat: v.get("repeat").and_then(|x| x.as_str()).unwrap_or("none").to_string(),
             // 证据锚定：sources 数组（项目相对路径），去重、去空、限 6 个
             sources: {
                 let mut out: Vec<String> = Vec::new();
@@ -301,19 +298,17 @@ fn json_to_mindmap_nodes(json: &serde_json::Value, document_id: &str, id_prefix:
                 out
             },
             position_x: 0.0, position_y: 0.0,
-            created_at: ts.clone(), updated_at: ts.clone(),
         }
     }).collect()
 }
 
 fn ensure_import_root(nodes: &mut Vec<MindmapNode>, document_id: &str, id_prefix: &str, name: &str, summary: &str) {
     if nodes.iter().any(|n| n.parent_id.is_none()) { return; }
-    let ts = super::db::now_ts();
     nodes.insert(0, MindmapNode {
         id: format!("{}root", id_prefix), document_id: document_id.to_string(), parent_id: None,
         name: name.to_string(), detail: if summary.is_empty() { "AI 导入根节点".to_string() } else { summary.to_string() },
-        kind: "root".to_string(), color: "#f8fafc".to_string(), plan_at: None, repeat: "none".to_string(), sources: Vec::new(),
-        position_x: 0.0, position_y: 0.0, created_at: ts.clone(), updated_at: ts,
+        kind: "root".to_string(), color: "#f8fafc".to_string(), sources: Vec::new(),
+        position_x: 0.0, position_y: 0.0,
     });
 }
 
@@ -367,99 +362,6 @@ pub fn mm_update_positions(document_id: String, positions: Vec<PositionInput>) -
         if let Some(pos) = pm.get(n.id.as_str()) { n.position_x = pos.x; n.position_y = pos.y; }
     }
     super::db::batch_save_nodes(&nodes)
-}
-
-// ─── 计划日历 ───
-
-/// 指定日期范围（YYYY-MM-DD，含端点）内的具体计划发生记录；
-/// 重复计划在 SQL 中展开，前端只需按 occur_day 分组。
-#[tauri::command]
-pub fn mm_planned_occurrences(start: String, end: String) -> Result<Vec<PlannedOccurrence>, String> {
-    super::db::list_planned_occurrences(&start, &end)
-}
-
-/// 拖拽移动某次计划发生：按 from_day → to_day 的天数差改写 plan_at
-/// （保留钟点与重复规则；daily/weekly 整条顺延，none 单次移动）。
-#[tauri::command]
-pub fn mm_move_plan_occurrence(input: MovePlanOccurrenceInput) -> Result<(), String> {
-    super::db::move_plan_occurrence(&input.node_id, &input.from_day, &input.to_day)
-}
-
-// ─── 计划提醒（系统通知 + 托盘小红点） ───
-
-/// 计划时间 → 本地 HH:MM（用于通知正文）
-fn plan_local_hm(plan_at: &str) -> String {
-    if let Ok(t) = chrono::DateTime::parse_from_rfc3339(plan_at) {
-        return t.with_timezone(&chrono::Local).format("%H:%M").to_string();
-    }
-    plan_at.split('T').nth(1).and_then(|s| s.get(..5)).unwrap_or("").to_string()
-}
-
-/// 今天发生（含每天/每周重复）的计划，按时间排序。
-/// 复用范围展开查询（今天→今天），与计划日历的归日逻辑完全一致。
-pub fn mindmap_today_plans() -> Vec<PlannedOccurrence> {
-    let today = chrono::Local::now().date_naive().format("%Y-%m-%d").to_string();
-    super::db::list_planned_occurrences(&today, &today).unwrap_or_default()
-}
-
-/// 已发送今日通知的日期（同一天不重复弹）
-static LAST_PLAN_NOTIFY_DATE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-
-/// Windows 系统通知（经 PowerShell WinRT 的 Toast，零新增依赖）
-#[cfg(target_os = "windows")]
-fn show_win_toast(title: &str, body: &str) {
-    fn esc(s: &str) -> String {
-        s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
-            .replace('"', "&quot;").replace('\'', "&apos;")
-    }
-    let title = esc(title);
-    let body = esc(body);
-    let script = format!(
-        r#"$ErrorActionPreference='SilentlyContinue';
-try {{
-  [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
-  [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
-  $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
-  $xml.LoadXml('<toast><visual><binding template="ToastGeneric"><text>{title}</text><text>{body}</text></binding></visual></toast>')
-  $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
-  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('WindowsPowerShell').Show($toast)
-}} catch {{ }}"#,
-        title = title, body = body
-    );
-    let _ = crate::commands::hidden_cmd::hidden_cmd("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-STA", "-Command", &script])
-        .output();
-}
-
-#[cfg(not(target_os = "windows"))]
-fn show_win_toast(_title: &str, _body: &str) {}
-
-/// 刷新「今日计划」托盘小红点；今天有计划且当日未提醒过则弹系统通知。
-#[tauri::command]
-pub fn mm_refresh_plan_badge(app: tauri::AppHandle) -> Result<(), String> {
-    let plans = mindmap_today_plans();
-    let has = !plans.is_empty();
-    crate::tray::set_tray_badge(&app, has)?;
-    if has {
-        let today = chrono::Local::now().date_naive().to_string();
-        let mut guard = LAST_PLAN_NOTIFY_DATE.lock().unwrap_or_else(|e| e.into_inner());
-        if guard.as_deref() != Some(today.as_str()) {
-            *guard = Some(today);
-            drop(guard);
-            let summary = if plans.len() == 1 {
-                format!("「{}」计划于今天 {}", plans[0].name, plan_local_hm(&plans[0].plan_at))
-            } else {
-                format!("今天有 {} 项计划", plans.len())
-            };
-            let lines: Vec<String> = plans.iter().take(3)
-                .map(|p| format!("{} {} · {}", plan_local_hm(&p.plan_at), p.name, p.document_name))
-                .collect();
-            show_win_toast("思维导图计划提醒", &format!("{}\n{}", summary, lines.join("\n")));
-        }
-    } else if let Ok(mut g) = LAST_PLAN_NOTIFY_DATE.lock() {
-        *g = None; // 今日无计划，清掉标记以便下次有计划时重新提醒
-    }
-    Ok(())
 }
 
 // ─── 贴纸 ───
@@ -1101,9 +1003,9 @@ fn view_prompt(mode: &str, view: &str, depth: u8) -> String {
     };
     let tpl = r##"{opener}
 只允许输出一个 JSON 对象，不要 Markdown 代码围栏、解释文字或尾随逗号：
-{{"summary":"该视角的简明概述","nodes":[{{"id":"唯一稳定短 ID","name":"节点名称","parent_id":null,"detail":"节点说明：一句话职责 + 具体功能，可使用 Markdown","kind":"{kinds}","color":"#RRGGBB","plan_at":null,"repeat":"none","sources":["项目相对路径"]}}]}}
+{{"summary":"该视角的简明概述","nodes":[{{"id":"唯一稳定短 ID","name":"节点名称","parent_id":null,"detail":"节点说明：一句话职责 + 具体功能，可使用 Markdown","kind":"{kinds}","color":"#RRGGBB","sources":["项目相对路径"]}}]}}
 组织要求：{guidance}{evidence}{depth_req}
-结构要求：节点字段与思维导图节点数据结构一一对应（id/name/parent_id/detail/kind/color/plan_at/repeat/sources，其中 plan_at、repeat、sources 可省略）；至少一个根节点，根节点 parent_id 必须为 null；其余节点只能通过 parent_id 引用本次输出中的 id；每个节点的 detail 必须写明该模块/节点的说明（职责、边界、与相邻模块的关系，可用 Markdown），不得为空；color 必须是 6 位十六进制颜色；plan_at 为计划时间（ISO 8601 字符串，无计划填 null 或省略）；repeat 为重复周期（none/daily/weekly，无则 none 或省略）；节点总数控制在 {count} 个；只输出 JSON。{evidence_req}
+结构要求：节点字段与思维导图节点数据结构一一对应（id/name/parent_id/detail/kind/color/sources，其中 sources 可省略）；至少一个根节点，根节点 parent_id 必须为 null；其余节点只能通过 parent_id 引用本次输出中的 id；每个节点的 detail 必须写明该模块/节点的说明（职责、边界、与相邻模块的关系，可用 Markdown），不得为空；color 必须是 6 位十六进制颜色；节点总数控制在 {count} 个；只输出 JSON。{evidence_req}
 {substance}{ask_req}"##;
     let evidence_req = if mode == "project" {
         "\n证据要求：关键模块/组件/服务节点用 sources 字段标注 1 到 3 个真实文件（项目相对路径，必须在『目录结构』中出现），文件/配置类节点标注自身路径；sources 最多 6 个，只填真实存在的路径，不要臆造。"
@@ -1702,7 +1604,6 @@ fn agent_node_brief(n: &MindmapNode, with_detail: bool) -> serde_json::Value {
     if with_detail {
         v["detail"] = serde_json::json!(n.detail);
         v["color"] = serde_json::json!(n.color);
-        v["planAt"] = serde_json::json!(n.plan_at);
     }
     v
 }
@@ -2164,12 +2065,22 @@ mod agent_tests {
 
 // ─── 项目目录绑定与 @ 文件引用 ───
 
-/// 列出文件的跳过目录（依赖/构建产物，@ 引用不该出现它们）。
-const PROJECT_SKIP_DIRS: [&str; 10] = [
-    "node_modules", ".git", "target", "dist", "build", "out", ".next", "coverage", ".venv", ".idea",
+/// 列出文件的跳过目录（依赖/构建产物/缓存，@ 引用不该出现它们）。
+///
+/// 这里只列**具体目录名**，不再一刀切地跳过所有 `.` 开头的目录：`.github`、`.vscode`
+/// 这些恰恰是常被引用的（workflow、tasks.json），一刀切会让它们永远搜不到。
+/// 真正该挡掉的隐藏目录已逐条列在下面。
+const PROJECT_SKIP_DIRS: [&str; 20] = [
+    "node_modules", ".git", "target", "dist", "build", "out", "coverage", "__pycache__",
+    ".next", ".nuxt", ".svelte-kit", ".cache", ".turbo", ".parcel-cache", ".gradle",
+    ".pytest_cache", ".mypy_cache", ".ruff_cache", ".venv", ".idea",
 ];
 /// @ 引用候选的文件数上限。
-const PROJECT_FILES_MAX: usize = 800;
+///
+/// 原为 800：大仓库遍历到上限即截断，而遍历是深度优先 —— 被截掉的是**整块子树**，
+/// 用户会「明明有这个文件却搜不到」。候选清单只在绑定时拉取一次并缓存在前端，
+/// 放宽到 4000 的传输代价可以接受。
+const PROJECT_FILES_MAX: usize = 4000;
 /// 目录遍历深度上限。
 const PROJECT_WALK_MAX_DEPTH: usize = 12;
 /// 单个附件文件进上下文的字符上限。
@@ -2217,7 +2128,8 @@ fn walk_project_files(root: &std::path::Path, dir: &std::path::Path, depth: usiz
         let p = e.path();
         let name = e.file_name().to_string_lossy().to_string();
         if p.is_dir() {
-            if PROJECT_SKIP_DIRS.contains(&name.as_str()) || name.starts_with('.') {
+            // 只按跳过清单排除：隐藏目录不再整体屏蔽（见 PROJECT_SKIP_DIRS 注释）
+            if PROJECT_SKIP_DIRS.contains(&name.as_str()) {
                 continue;
             }
             walk_project_files(root, &p, depth + 1, out);
@@ -2260,12 +2172,12 @@ fn agent_attachments_block(document_dir: Option<&str>, attached: &[String]) -> S
 
 // ─── 子树重新分析 ───
 
-/// 子树重析 prompt：结构化 JSON 输出 + 校验约束（kind 白名单/color/progress/父引用）。
+/// 子树重析 prompt：结构化 JSON 输出 + 校验约束（kind 白名单/color/父引用）。
 fn regenerate_prompt() -> String {
     r##"你是一位资深软件架构师。请分析指定模块的内部结构，生成可直接导入思维导图的 JSON。
 只允许输出一个 JSON 对象，不要 Markdown 代码围栏、解释文字或尾随逗号：
-{"nodes":[{"id":"唯一稳定短 ID","name":"节点名称","parent_id":null,"detail":"节点说明：职责、边界与相邻模块关系，可使用 Markdown","kind":"root|module|component|service|route|config|file|task|requirement|constraint|risk|other","color":"#RRGGBB","plan_at":null,"repeat":"none"}]}
-要求：节点字段与思维导图节点数据结构一一对应（id/name/parent_id/detail/kind/color/plan_at/repeat，其中 plan_at、repeat 可省略）；第一个节点是该模块自身（parent_id 必须为 null，kind 用 root 或 module），其余 3 到 12 个节点是其子结构；所有子节点只能通过 parent_id 引用本批输出中的 id；每个节点的 detail 必须写明该模块/子模块的说明（职责、边界、与相邻模块的关系，可用 Markdown），不得为空；kind 必须在允许列表内；color 必须是 6 位十六进制颜色；plan_at 为计划时间（ISO 8601 字符串，无计划填 null 或省略）；repeat 为重复周期（none/daily/weekly，无则 none 或省略）；只输出 JSON。"##.to_string()
+{"nodes":[{"id":"唯一稳定短 ID","name":"节点名称","parent_id":null,"detail":"节点说明：职责、边界与相邻模块关系，可使用 Markdown","kind":"root|module|component|service|route|config|file|task|requirement|constraint|risk|other","color":"#RRGGBB"}]}
+要求：节点字段与思维导图节点数据结构一一对应（id/name/parent_id/detail/kind/color）；第一个节点是该模块自身（parent_id 必须为 null，kind 用 root 或 module），其余 3 到 12 个节点是其子结构；所有子节点只能通过 parent_id 引用本批输出中的 id；每个节点的 detail 必须写明该模块/子模块的说明（职责、边界、与相邻模块的关系，可用 Markdown），不得为空；kind 必须在允许列表内；color 必须是 6 位十六进制颜色；只输出 JSON。"##.to_string()
 }
 
 #[tauri::command]
@@ -2400,6 +2312,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn walk_project_files_keeps_hidden_project_dirs_but_skips_junk() {
+        // @ 引用候选的遍历口径：`.github/.vscode` 这类隐藏目录必须能搜到
+        // （原先被 `starts_with('.')` 一刀切挡掉，workflow 永远 @ 不出来），
+        // 而依赖/缓存目录仍要排除。
+        let dir = tmp_project("walk");
+        for sub in [".github/workflows", "node_modules/pkg", ".cache", "src"] {
+            std::fs::create_dir_all(dir.join(sub)).unwrap();
+        }
+        std::fs::write(dir.join(".github/workflows/ci.yml"), "on: push").unwrap();
+        std::fs::write(dir.join("node_modules/pkg/index.js"), "").unwrap();
+        std::fs::write(dir.join(".cache/blob"), "").unwrap();
+        std::fs::write(dir.join("src/main.rs"), "").unwrap();
+
+        let mut out: Vec<String> = Vec::new();
+        walk_project_files(&dir, &dir, 0, &mut out);
+        out.sort();
+
+        assert!(out.contains(&".github/workflows/ci.yml".to_string()), "隐藏项目目录应可见: {:?}", out);
+        assert!(out.contains(&"src/main.rs".to_string()));
+        assert!(!out.iter().any(|f| f.starts_with("node_modules/")), "依赖目录应排除: {:?}", out);
+        assert!(!out.iter().any(|f| f.starts_with(".cache/")), "缓存目录应排除: {:?}", out);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

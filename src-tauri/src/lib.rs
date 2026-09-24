@@ -397,14 +397,6 @@ pub fn run() {
             // 初始化启动器数据库，并注册「唤起/隐藏主窗口」全局快捷键。
             // 注意：该快捷键只负责切换窗口显示状态，不拦截普通输入框按键。
             let _ = commands::launcher::db::init_db();
-            // 思维导图计划提醒：延迟数秒（等托盘/界面就绪）后检查今天计划 → 弹系统通知 + 托盘小红点
-            {
-                let h = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_secs(6)).await;
-                    let _ = commands::mindmap::mm_refresh_plan_badge(h);
-                });
-            }
             // 剪贴板监控（启动器热键注册之后，便于复用其热键线程记录前台窗口）
             let _ = commands::clipboard::init_clipboard_state(app.handle());
             // picky 启动同步：延迟数秒（等自启服务就绪、界面加载完成）后拉取云端一次，
@@ -1025,9 +1017,6 @@ pub fn run() {
                 commands::mindmap::mm_agent_list_messages,
                 commands::mindmap::mm_bind_document_dir,
                 commands::mindmap::mm_list_project_files,
-                commands::mindmap::mm_planned_occurrences,
-                commands::mindmap::mm_move_plan_occurrence,
-                commands::mindmap::mm_refresh_plan_badge,
 
                 // ---- Node 项目管理器 ----
                 commands::node_manager::npm_list_projects,

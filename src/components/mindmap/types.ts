@@ -48,16 +48,11 @@ export interface MindmapNode {
   detail: string;       // Markdown 详细内容
   kind: string;          // root/task/requirement/module/constraint/risk/other...
   color: string;         // hex
-  /** 计划时间（ISO 8601，可空） */
-  planAt?: string | null;
-  /** 计划重复：none=不重复 / daily=每天 / weekly=每周 */
-  repeat?: string;
   /** 证据锚定：该节点对应的真实源码文件（项目相对路径，AI 标注 + 扫描校验） */
   sources?: string[];
   positionX: number;
   positionY: number;
-  createdAt: string;
-  updatedAt: string;
+  // 注：节点不再带 createdAt / updatedAt —— 时间账由库内部维护，节点只描述「是什么」
 }
 
 // ─── 贴纸 ───
@@ -254,33 +249,6 @@ export interface RegenerateInput {
   modelId?: string | null;
 }
 
-/** 指定日期范围内的具体计划发生记录（计划日历聚合展示用）。
- *  重复计划（daily/weekly）已由后端在查询时展开为逐次发生。 */
-export interface PlannedOccurrence {
-  id: string;
-  documentId: string;
-  documentName: string;
-  name: string;
-  kind: string;
-  color: string;
-  /** 原始计划时间（ISO 8601，用于打开详情时回显） */
-  planAt: string;
-  /** 计划重复：none / daily / weekly */
-  repeat?: string;
-  /** 本次发生的日期 YYYY-MM-DD（本地时间） */
-  occurDay: string;
-  /** 本次发生的具体时间（本地时间字符串，如 2026-08-30T09:00:00） */
-  occurAt: string;
-}
-
-export interface MovePlanOccurrenceInput {
-  nodeId: string;
-  /** 拖拽来源日期 YYYY-MM-DD（该次发生的 occurDay） */
-  fromDay: string;
-  /** 拖拽目标日期 YYYY-MM-DD */
-  toDay: string;
-}
-
 export interface MoveDocumentInput {
   documentId: string;
   folderId: string | null;
@@ -342,9 +310,6 @@ export const mmApi = {
   agentListMessages: (sessionId: string) => invoke<AgentMessageRow[]>("mm_agent_list_messages", { sessionId }),
   bindDocumentDir: (documentId: string, dir: string | null) => invoke<void>("mm_bind_document_dir", { documentId, dir }),
   listProjectFiles: (documentId: string) => invoke<string[]>("mm_list_project_files", { documentId }),
-
-  plannedOccurrences: (start: string, end: string) => invoke<PlannedOccurrence[]>("mm_planned_occurrences", { start, end }),
-  movePlanOccurrence: (i: MovePlanOccurrenceInput) => invoke<void>("mm_move_plan_occurrence", { input: i }),
 };
 
 // ─── AI Agent（右栏对话）───

@@ -1,20 +1,14 @@
 import { useTranslation } from "react-i18next";
-import { PlanDateTimePicker } from "./MindmapPanel";
 
-/** 思维导图节点表单的「计划时间 · 重复 + 颜色」整块。
+/** 思维导图节点表单的「颜色」块。
  *  画布内 DetailModal（ns="mindmap"）与速记悬浮窗（ns="mmdpop"）共用，
  *  差异仅翻译键命名空间与是否显示 hex 输入框。
  *  颜色精简为一行内联：自定义取色器 + 恢复默认，不再单独占一行。 */
 export function NodeFormFields({
-  ns, planAt, repeat, color,
-  onPlanAt, onRepeat, onColor, showHexInput = true,
+  ns, color, onColor, showHexInput = true,
 }: {
   ns: "mindmap" | "mmdpop";
-  planAt: string;
-  repeat: string;
   color: string;
-  onPlanAt: (iso: string | null) => void;
-  onRepeat: (v: string) => void;
   onColor: (v: string) => void;
   /** DetailModal 显示 hex 输入框，速记悬浮窗隐藏（更简洁）。 */
   showHexInput?: boolean;
@@ -22,28 +16,11 @@ export function NodeFormFields({
   const { t } = useTranslation();
   const isMm = ns === "mindmap";
   const focusCls = isMm ? "focus:border-cyan-400/60" : "focus:border-[var(--mm-accent)]";
-  // 两个命名空间的键名不同：mindmap 用 XxxLabel/planRepeat，mmdpop 用 短键。
-  const planTimeKey = isMm ? "mindmap.planTimeLabel" : "mmdpop.planTime";
-  const repeatKey = isMm ? "mindmap.planRepeat" : "mmdpop.repeat";
   const colorKey = isMm ? "mindmap.colorLabel" : "mmdpop.color";
   const hex = (color && /^#[0-9a-fA-F]{6}$/.test(color) ? color : null) ?? "#22d3ee";
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md border border-white/5 bg-white/[0.02] px-2.5 py-2">
-      {/* 计划时间 */}
-      <label className="flex items-center gap-1.5 text-[9px] uppercase font-semibold text-slate-500">{t(planTimeKey)}
-        <PlanDateTimePicker value={planAt} onChange={onPlanAt} />
-      </label>
-      {/* 重复 */}
-      <label className="flex items-center gap-1.5 text-[9px] uppercase font-semibold text-slate-500">{t(repeatKey)}
-        <select value={repeat} onChange={(e) => onRepeat(e.target.value)}
-          style={{ fontSize: 10 }}
-          className={`h-7 min-w-[58px] cursor-pointer rounded-md border border-white/10 bg-slate-950/70 px-1 text-slate-200 outline-none ${focusCls}`}>
-          <option value="none">{t(`${ns}.noRepeat`)}</option>
-          <option value="daily">{t(`${ns}.daily`)}</option>
-          <option value="weekly">{t(`${ns}.weekly`)}</option>
-        </select>
-      </label>
       {/* 颜色：内联进同一设置行（自定义取色器 + 恢复默认） */}
       <div className="flex min-w-0 items-center gap-1.5">
         <span className="shrink-0 text-[9px] uppercase font-semibold text-slate-500">{t(colorKey)}</span>
