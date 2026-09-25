@@ -21,7 +21,7 @@ pub mod cache;
 pub mod tools;
 pub mod tool_paths;
 pub mod tool_config_path;
-pub mod codex_auth;
+pub mod install_agent;
 pub mod collab;
 pub mod translate;
 
@@ -42,4 +42,3 @@ pub use cache::*;
 pub use tools::*;
 pub use tool_paths::*;
 pub use translate::*;
-pub use codex_auth::*;
