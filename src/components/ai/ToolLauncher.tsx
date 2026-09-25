@@ -784,7 +784,9 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
     return null;
   };
 
-  const canLaunch = selectedTool?.installed && (sessionMode === "resume" || projectPath);
+  // 桌面工具与项目目录无关（后端会用 exe 所在目录当工作目录），不该因为它被卡住
+  const canLaunch = !!selectedTool?.installed
+    && (selectedTool.tool_kind === "desktop" || sessionMode === "resume" || !!projectPath);
 
   // 列表分组（抄 EchoBird 的维度：先按已装/未装分开，未装的再按 CLI / 桌面端筛）
   const installedTools = tools.filter(t => t.installed);
@@ -952,6 +954,11 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                     {vs.icon}
                     {vs.label}
                   </span>
+                )}
+                {/* 没有版本状态可比（桌面应用按路径识别，拿不到版本号）时给个绿色小勾：
+                    这类工具的状态只有「已安装/未安装」两态，不显示就等于看不出来 */}
+                {!getBusy(tool.id) && !vs && tool.installed && (
+                  <CheckCircle className="w-3 h-3 ml-auto flex-shrink-0 text-emerald-400/80" />
                 )}
               </div>
               <div className="flex items-center gap-1.5 mt-0.5 ml-5.5">
@@ -1214,9 +1221,17 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                 </button>
               </div>
               <div className="text-[10px] text-slate-500 truncate">
-                {selectedTool.detected_path
-                  ? `${t("toollaunch.pathDetected")}: ${selectedTool.detected_path}`
-                  : t("toollaunch.pathNotDetected")}
+                {selectedTool.detected_path ? (
+                  `${t("toollaunch.pathDetected")}: ${selectedTool.detected_path}`
+                ) : selectedTool.custom_path ? (
+                  // 手动填了路径却在磁盘上找不到 → 明确说是「你填的那条不对」，
+                  // 而不是笼统的「未检测到」让用户以为自动检测失灵了
+                  <span className="text-amber-400/80">
+                    {t("toollaunch.pathInvalid", { path: selectedTool.custom_path })}
+                  </span>
+                ) : (
+                  t("toollaunch.pathNotDetected")
+                )}
               </div>
               {pathMsg && (
                 <div className={`text-[10px] ${pathMsg.ok ? "text-emerald-400" : "text-red-400"}`}>{pathMsg.msg}</div>

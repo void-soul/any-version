@@ -309,10 +309,10 @@ pub fn find_declared_exe(
     declared: &HashMap<String, Vec<String>>,
     command: &str,
 ) -> Option<PathBuf> {
-    let command = command.split_whitespace().next()?.trim();
-    if command.is_empty() {
-        return None;
-    }
+    // 命令名**可以为空**：桌面应用的 paths.json 就是 `startCommand: ""`（它们靠 exe 路径启动）。
+    // 以前这里直接 `？` 早退，导致这类工具无论默认路径还是用户手填的路径都不去磁盘上看一眼，
+    // 永远显示「未安装」——用户设了路径也没用。
+    let command = command.split_whitespace().next().unwrap_or("").trim();
     for raw in effective_tool_paths(tool_id, declared) {
         let expanded = expand_tool_path(&raw);
         if expanded.is_empty() {
@@ -323,13 +323,63 @@ pub fn find_declared_exe(
             return Some(path);
         }
         if path.is_dir() {
-            for suffix in command_suffixes() {
-                let candidate = path.join(format!("{}{}", command, suffix));
-                if candidate.is_file() {
-                    return Some(candidate);
+            if !command.is_empty() {
+                for suffix in command_suffixes() {
+                    let candidate = path.join(format!("{}{}", command, suffix));
+                    if candidate.is_file() {
+                        return Some(candidate);
+                    }
                 }
+            } else if let Some(guessed) = guess_exe_in_dir(&path, tool_id) {
+                // 没有命令名可拼：目录里的 exe 猜一个（见函数注释，猜不到就返回 None）
+                return Some(guessed);
             }
         }
+    }
+    None
+}
+
+/// 在没有命令名的情况下，从目录里猜可执行文件。
+///
+/// 两种情形才认（都要足够确定，宁可返回 None 让上层报「未安装」，也不要指到一个错的文件）：
+/// 1. 文件名与工具 id 同名（忽略大小写、连字符与扩展名）：`workbuddy` → `WorkBuddy.exe`；
+/// 2. 目录里**只有一个**像可执行文件的东西（Windows 看 .exe/.cmd/.bat/.ps1，其它平台不设限）。
+fn guess_exe_in_dir(dir: &std::path::Path, tool_id: &str) -> Option<PathBuf> {
+    let files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .collect();
+    if files.is_empty() {
+        return None;
+    }
+    let normalize = |s: &str| s.to_ascii_lowercase().replace(['-', '_'], "");
+    let needle = normalize(tool_id);
+    if let Some(hit) = files.iter().find(|p| {
+        p.file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| normalize(s) == needle)
+            .unwrap_or(false)
+    }) {
+        return Some(hit.clone());
+    }
+
+    let exe_like: Vec<&PathBuf> = if cfg!(windows) {
+        files
+            .iter()
+            .filter(|p| {
+                matches!(
+                    p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(),
+                    Some("exe") | Some("cmd") | Some("bat") | Some("ps1")
+                )
+            })
+            .collect()
+    } else {
+        files.iter().collect()
+    };
+    if exe_like.len() == 1 {
+        return Some(exe_like[0].clone());
     }
     None
 }
@@ -513,5 +563,39 @@ mod tests {
         assert!(find_declared_exe("__probe_test__", &HashMap::new(), "probe").is_none());
         let missing = declared_all_platforms(&[dir.join("nope").to_string_lossy().to_string()]);
         assert!(find_declared_exe("__probe_test__", &missing, "probe").is_none());
+    }
+
+    /// 桌面应用（`startCommand: ""`）的回归：命令名为空时**也要认路径**。
+    ///
+    /// 旧实现见不到命令名就直接返回 None，于是「默认路径 / 用户手填路径」都不查，
+    /// 这类工具永远显示未安装（WorkBuddy 就是这样）。
+    #[test]
+    fn find_declared_exe_works_without_a_command_name() {
+        // 用假 id：真实 id（如 workbuddy）可能被用户在 tool-paths.json 里配了路径，
+        // 那些用户路径优先级更高，会把测试指向别的目录。
+        const TOOL: &str = "__probe_no_cmd__";
+        let dir = probe_dir("no-command");
+        let exe_name = if cfg!(windows) { "__probe_no_cmd__.exe" } else { "__probe_no_cmd__" };
+        let exe = dir.join(exe_name);
+        std::fs::write(&exe, "").unwrap();
+
+        // ① 路径项是文件本身 → 不需要命令名
+        let by_file = declared_all_platforms(&[exe.to_string_lossy().to_string()]);
+        assert_eq!(find_declared_exe(TOOL, &by_file, "").expect("文件项应命中"), exe);
+
+        // ② 路径项是目录 + 无命令名 → 按 id 猜同名 exe
+        let by_dir = declared_all_platforms(&[dir.to_string_lossy().to_string()]);
+        assert_eq!(
+            find_declared_exe(TOOL, &by_dir, "").expect("目录项应猜中同名 exe"),
+            exe
+        );
+
+        // ③ 目录里还有别的可执行文件时，与 id 不同名就**不猜**（宁可不认，也不认错）
+        let other = dir.join(if cfg!(windows) { "unins000.exe" } else { "unins000" });
+        std::fs::write(&other, "").unwrap();
+        assert!(
+            find_declared_exe("__probe_other__", &by_dir, "").is_none(),
+            "有多个候选时不应该瞎猜"
+        );
     }
 }

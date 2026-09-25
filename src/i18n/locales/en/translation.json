@@ -2621,6 +2621,7 @@
     "pathClearHint": "Clear the manual path and fall back to auto-detection",
     "pathDetected": "Detected",
     "pathNotDetected": "No executable detected",
+    "pathInvalid": "The manual path does not exist: {{path}}",
     "pathSaved": "Saved, re-detecting...",
     "pathCleared": "Cleared, back to auto-detection",
     "cancel": "Cancel",

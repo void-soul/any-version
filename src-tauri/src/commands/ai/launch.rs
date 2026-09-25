@@ -12,6 +12,49 @@ use super::models::*;
 use super::config::{load_ai_config, load_last_launch_configs, save_last_launch_configs, load_sessions, save_sessions_to_file};
 use super::terminal::{get_terminal_exe_cfg, is_ext_terminal};
 
+/// 解析真正要执行的启动命令。
+///
+/// 1. 工具声明了 `startCommand` → 用它（如 `mimo .`，命令名交给方言解析）；
+/// 2. 没声明（桌面应用的 paths.json 就是空串）→ 用**检测到的 exe 绝对路径**
+///    （默认路径或用户在界面上手填的那条）；
+/// 3. 还没有 → 退回 `detect_cmd` 的命令名（CLI 工具装在 PATH 里时的老行为）；
+/// 4. 全都没有 → None，由调用方报错，而不是拿空命令去启动。
+pub(crate) fn resolve_start_command(
+    tool_id: &str,
+    paths: &crate::commands::ai_registry::PathConfig,
+    start_command: &str,
+) -> Option<String> {
+    let declared = start_command.trim();
+    if !declared.is_empty() {
+        return Some(declared.to_string());
+    }
+    if let Some(exe) = super::tool_paths::find_declared_exe(tool_id, &paths.paths, "") {
+        return Some(exe.to_string_lossy().to_string());
+    }
+    let fallback = paths.detect_cmd.split_whitespace().next().unwrap_or("").trim();
+    if fallback.is_empty() {
+        None
+    } else {
+        Some(fallback.to_string())
+    }
+}
+
+/// 启动时的工作目录：用户没填项目目录时，用启动命令所在目录（桌面应用按 exe 启动，
+/// exe 的目录最合理），再退到用户主目录。
+///
+/// 为什么要兜底：`cmd /c start /d ""`、`Set-Location -LiteralPath ''` 都会失败，
+/// 而桌面应用本来就与项目目录无关。
+pub(crate) fn default_work_dir(start_cmd: &str) -> String {
+    let first = start_cmd.split_whitespace().next().unwrap_or("");
+    let path = std::path::Path::new(first);
+    if path.is_file() {
+        if let Some(dir) = path.parent() {
+            return dir.to_string_lossy().to_string();
+        }
+    }
+    crate::commands::utils::get_home_dir().to_string_lossy().to_string()
+}
+
 /// 选择出站协议：若供应商支持工具「原生协议」，则同协议直连（不转换）；
 /// 否则取供应商首个支持的协议（由代理做协议转换）。
 /// 供应商未配置任何协议端点 URL 时返回 None。
@@ -642,8 +685,24 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
         .unwrap_or(&tool_config.id)
         .to_string();
 
-    // 启动命令（来自 startCommand，可能包含默认参数如 "mimo ."）
-    let start_cmd = tool_paths.start_command.clone();
+    // 启动命令（来自 startCommand，可能包含默认参数如 "mimo ."）。
+    // 桌面应用的 startCommand 是空的——它们按 exe 路径启动，这里补上检测到的绝对路径，
+    // 否则会拿着一条空命令去启（表现为「点了启动，终端里什么都没有」）。
+    let start_cmd = resolve_start_command(&req.tool_id, &tool_paths, &tool_paths.start_command)
+        .ok_or_else(|| {
+            format!(
+                "工具「{}」没有可用的启动命令：请在工具详情里手动指定安装路径",
+                tool_config.display_name
+            )
+        })?;
+    eprintln!("[cli] 解析后的启动命令: {:?}", start_cmd);
+
+    // 工作目录：`start /d ""` 与 `Set-Location ''` 都会失败，桌面应用尤其可能不带项目目录
+    let work_dir = if req.project_path.trim().is_empty() {
+        default_work_dir(&start_cmd)
+    } else {
+        req.project_path.clone()
+    };
 
     // resume / continue 参数
     let exe_prefix = format!("{} ", &tool_exe);
@@ -689,7 +748,7 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
     } else {
         hidden_cmd::hidden_cmd(&terminal_exe)
     };
-    cmd.current_dir(&req.project_path);
+    cmd.current_dir(&work_dir);
 
     // 装了但不在 PATH 里也要能启动：curl/scoop/choco 安装完的 `setx` 只对**之后**启动的
     // 进程生效，本进程 PATH 里没有该目录，裸命令在新终端里会「不是内部或外部命令」。
@@ -717,12 +776,12 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
     let start_cmd_parts: Vec<&str> = start_cmd.split_whitespace().collect();
 
     if terminal_exe.to_lowercase().contains("cmd") {
-        cmd.arg("/c").arg("start").arg("/d").arg(&req.project_path)
+        cmd.arg("/c").arg("start").arg("/d").arg(&work_dir)
            .arg("cmd").arg("/k");
         for p in &start_cmd_parts { cmd.arg(p); }
         for a in &tool_arg_parts { cmd.arg(a); }
     } else if terminal_exe.to_lowercase().contains("wt") {
-        cmd.arg("-d").arg(&req.project_path).arg("cmd").arg("/k");
+        cmd.arg("-d").arg(&work_dir).arg("cmd").arg("/k");
         for p in &start_cmd_parts { cmd.arg(p); }
         for a in &tool_arg_parts { cmd.arg(a); }
     } else if is_ext_terminal(&req.terminal_id) {
@@ -734,7 +793,7 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
         for p in &start_cmd_parts { cmd.arg(p); }
         for a in &tool_arg_parts { cmd.arg(a); }
     } else {
-        let escaped_path = req.project_path.replace('\'', "''");
+        let escaped_path = work_dir.replace('\'', "''");
         // 安全过滤 PowerShell 命令注入字符（白名单：仅允许字母数字、空格、连字符、点、下划线、斜杠）
         // 注意：PowerShell 支持多种注入方式（子表达式、调用运算符等），白名单比黑名单更安全
         let sanitize_pwsh = |s: &str| -> String {
@@ -1689,10 +1748,88 @@ async fn wait_for_proxy_ready(listen_address: &str, port: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        get_json_path, json_value_to_yaml, scan_text_key, set_yaml_path, strip_jsonc,
-        write_yaml_config,
+        default_work_dir, get_json_path, json_value_to_yaml, resolve_start_command, scan_text_key,
+        set_yaml_path, strip_jsonc, write_yaml_config,
     };
     use std::path::PathBuf;
+
+    /// 桌面应用（startCommand 为空）要靠「检测到的 exe 绝对路径」启动。
+    #[test]
+    fn start_command_falls_back_to_detected_exe() {
+        use crate::commands::ai_registry::PathConfig;
+        use std::collections::HashMap;
+
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("anyver-launch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe_name = if cfg!(windows) { "AnyverProbe.exe" } else { "AnyverProbe" };
+        let exe = dir.join(exe_name);
+        std::fs::write(&exe, "").unwrap();
+
+        let mk = |cmd: &str, detect: &str| PathConfig {
+            name: String::new(),
+            category: String::new(),
+            api_protocol: vec![],
+            command: String::new(),
+            start_command: cmd.to_string(),
+            detect_cmd: detect.to_string(),
+            install_cmd: String::new(),
+            uninstall_cmd: None,
+            paths: {
+                let mut m = HashMap::new();
+                for key in ["win32", "darwin", "linux"] {
+                    m.insert(key.to_string(), vec![exe.to_string_lossy().to_string()]);
+                }
+                m
+            },
+            launch_uri: None,
+            install_hints: None,
+        };
+
+        // 声明了 startCommand → 原样使用（命令名交给方言解析）
+        assert_eq!(
+            resolve_start_command("anyverprobe", &mk("probe --flag", ""), "probe --flag").as_deref(),
+            Some("probe --flag")
+        );
+        // 没声明 → 用检测到的 exe 绝对路径
+        assert_eq!(
+            resolve_start_command("anyverprobe", &mk("", ""), "").as_deref(),
+            Some(exe.to_string_lossy().as_ref())
+        );
+        // 既没命令也找不到 exe → 退回 detect_cmd；再没有就 None（由调用方报错）
+        let mut no_exe = mk("", "probe --version");
+        for key in ["win32", "darwin", "linux"] {
+            no_exe.paths.insert(
+                key.to_string(),
+                vec![dir.join("nope").to_string_lossy().to_string()],
+            );
+        }
+        assert_eq!(
+            resolve_start_command("anyverprobe", &no_exe, "").as_deref(),
+            Some("probe")
+        );
+        let mut nothing = no_exe.clone();
+        nothing.detect_cmd = String::new();
+        assert!(resolve_start_command("anyverprobe", &nothing, "").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 工作目录：exe 存在时用它所在目录，否则退到主目录（空目录会让 start /d 失败）。
+    #[test]
+    fn work_dir_falls_back_to_home() {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("anyver-wd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join(if cfg!(windows) { "anyver-wd.exe" } else { "anyver-wd" });
+        std::fs::write(&exe, "").unwrap();
+        assert_eq!(default_work_dir(&exe.to_string_lossy()), dir.to_string_lossy());
+        // 找不到文件（`probe --flag` 这种命令名）→ 主目录
+        let home = crate::commands::utils::get_home_dir().to_string_lossy().to_string();
+        assert_eq!(default_work_dir("probe --flag"), home);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn set_yaml_path_creates_nested_mapping() {

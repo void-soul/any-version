@@ -2627,6 +2627,7 @@
     "pathClearHint": "清除手动路径，回到自动检测",
     "pathDetected": "已检测到",
     "pathNotDetected": "未检测到可执行文件",
+    "pathInvalid": "手动指定的路径无效（文件不存在）：{{path}}",
     "pathSaved": "已保存，正在重新检测…",
     "pathCleared": "已清除，回到自动检测",
     "cancel": "取消",
