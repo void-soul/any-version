@@ -795,16 +795,16 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
         style={{ width: listWidth }}
         className="flex-shrink-0 border-r border-white/5 py-3 px-2 overflow-y-auto space-y-0.5 flex flex-col"
       >
-        <div className="flex items-center justify-between px-1 mb-1">
-          <span className="text-[9px] font-bold text-slate-500 uppercase">{t("toollaunch.aiTools")}</span>
-          {/* 形态筛选：只作用于「未安装」那一组（已装的就几个，再分组只会多找一层） */}
+        <div className="flex items-center gap-1 px-1 mb-1">
+          {/* 形态筛选：只作用于「未安装」那一组（已装的就几个，再分组只会多找一层）。
+              窄栏放不下「AI 工具」标题 + 三个 tab，标题去掉、tab 靠左铺满。 */}
           {notInstalledTools.length > 0 && (
-            <div className="flex items-center gap-0.5">
+            <div className="flex items-center gap-0.5 flex-1 min-w-0">
               {(["all", "cli", "desktop"] as ToolKindFilter[]).map(k => (
                 <button
                   key={k}
                   onClick={() => setKindFilter(k)}
-                  className={`px-1 py-0.5 rounded text-[8px] cursor-pointer transition-all ${
+                  className={`px-1 py-0.5 rounded text-[8px] cursor-pointer transition-all whitespace-nowrap ${
                     kindFilter === k
                       ? "bg-[var(--module-accent)]/25 text-white font-semibold"
                       : "text-slate-600 hover:text-slate-400"
@@ -816,7 +816,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
             </div>
           )}
           <button onClick={checkVersions} disabled={checkingVersions}
-            className="p-0.5 rounded text-slate-600 hover:text-slate-400 cursor-pointer"
+            className="ml-auto p-0.5 rounded text-slate-600 hover:text-slate-400 cursor-pointer"
             title={t("toollaunch.checkVersion")}>
             <RefreshCw className={`w-3 h-3 ${checkingVersions ? "animate-spin" : ""}`} />
           </button>

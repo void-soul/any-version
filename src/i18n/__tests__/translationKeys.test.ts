@@ -1,3 +1,6 @@
+// @ts-nocheck
+// 本测试需要 node:fs 扫描源码，而项目未安装 @types/node（其余源码不需要）。
+// vitest 运行时不受影响，这里对整个文件豁免类型检查。
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
