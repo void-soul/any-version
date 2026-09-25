@@ -45,13 +45,34 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS idx_favorite_status       ON favorite(status);
         CREATE INDEX IF NOT EXISTS idx_favorite_ai_locked    ON favorite(ai_locked);
 
-        -- 多标签：一个条目可以同时属于多个分类，不设「主分类」
+        -- 多标签：一个条目可以同时属于多个分类，不设「主分类」。
+        -- 历史遗留：分类改成树（favorite_category）后由 favorite_item_category 接管，
+        -- 这张表只用于一次性迁移，之后不再写入。
         CREATE TABLE IF NOT EXISTS favorite_tag (
             favorite_id INTEGER NOT NULL,
             tag         TEXT    NOT NULL,
             PRIMARY KEY (favorite_id, tag)
         );
         CREATE INDEX IF NOT EXISTS idx_favorite_tag_tag ON favorite_tag(tag);
+
+        -- 多级分类树（操作逻辑对齐启动模块的 launcher_classification）
+        CREATE TABLE IF NOT EXISTS favorite_category (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            parent_id  INTEGER,
+            name       TEXT    NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT    NOT NULL,
+            UNIQUE(parent_id, name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_fav_category_parent ON favorite_category(parent_id);
+
+        -- 条目 ↔ 分类（多对多）
+        CREATE TABLE IF NOT EXISTS favorite_item_category (
+            favorite_id INTEGER NOT NULL,
+            category_id INTEGER NOT NULL,
+            PRIMARY KEY (favorite_id, category_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_fav_item_category_cat ON favorite_item_category(category_id);
 
         CREATE TABLE IF NOT EXISTS favorite_import_state (
             source      TEXT PRIMARY KEY,
@@ -112,6 +133,46 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
         [],
     )
     .map_err(|e| format!("初始化收藏库失败: {}", e))?;
+    migrate_tags_to_categories(conn)?;
+    Ok(())
+}
+
+/// 老库升级：把「扁平标签」搬进分类树。
+///
+/// 幂等：只要分类树里已经有东西就认为搬过了（新库自然是空的，也走不到插入）。
+/// 旧标签全部建成**顶层**分类——老数据里没有层级信息，硬猜父子关系只会猜错。
+fn migrate_tags_to_categories(conn: &Connection) -> Result<(), String> {
+    let existing: i64 = conn
+        .query_row("SELECT COUNT(*) FROM favorite_category", [], |r| r.get(0))
+        .unwrap_or(0);
+    if existing > 0 {
+        return Ok(());
+    }
+    let Ok(mut stmt) = conn.prepare("SELECT favorite_id, tag FROM favorite_tag") else {
+        return Ok(());
+    };
+    let rows = match stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))) {
+        Ok(r) => r,
+        Err(_) => return Ok(()),
+    };
+    let mut pairs: Vec<(i64, String)> = Vec::new();
+    for row in rows {
+        if let Ok(p) = row {
+            pairs.push(p);
+        }
+    }
+    if pairs.is_empty() {
+        return Ok(());
+    }
+    for (favorite_id, tag) in pairs {
+        let category_id = resolve_category_by_name(conn, &tag)?;
+        conn.execute(
+            "INSERT OR IGNORE INTO favorite_item_category (favorite_id, category_id) VALUES (?1, ?2)",
+            rusqlite::params![favorite_id, category_id],
+        )
+        .map_err(|e| format!("迁移旧分类标签失败: {e}"))?;
+    }
+    eprintln!("[favorites] 旧标签已迁移为分类树");
     Ok(())
 }
 
@@ -313,7 +374,7 @@ pub fn select_unclassified(conn: &Connection, limit: usize) -> Result<Vec<Classi
              FROM favorite f \
              WHERE f.ai_locked = 0 \
                AND f.status != 'gone' \
-               AND NOT EXISTS (SELECT 1 FROM favorite_tag t WHERE t.favorite_id = f.id) \
+               AND NOT EXISTS (SELECT 1 FROM favorite_item_category ic WHERE ic.favorite_id = f.id) \
              ORDER BY f.id LIMIT ?1",
         )
         .map_err(|e| format!("查询待归类条目失败: {}", e))?;
@@ -375,15 +436,17 @@ pub fn apply_tags(
     let written = now_str();
     let mut count = 0usize;
     for (name, indices) in groups {
+        // 模型给的是分类名：没有同名分类就建一个顶层的（AI 归类不知道层级）
+        let category_id = resolve_category_by_name(conn, name)?;
         for index in indices {
             let Some(item) = items.get(*index) else {
                 continue;
             };
             conn.execute(
-                "INSERT OR IGNORE INTO favorite_tag (favorite_id, tag) VALUES (?1, ?2)",
-                rusqlite::params![item.id, name],
+                "INSERT OR IGNORE INTO favorite_item_category (favorite_id, category_id) VALUES (?1, ?2)",
+                rusqlite::params![item.id, category_id],
             )
-            .map_err(|e| format!("写入分类标签失败: {}", e))?;
+            .map_err(|e| format!("写入分类失败: {}", e))?;
             count += 1;
         }
     }
@@ -633,7 +696,8 @@ pub struct FavoriteRow {
 #[derive(Debug, Clone, Default)]
 pub struct ListFilter {
     pub source: Option<String>,
-    pub tag: Option<String>,
+    /// 按分类筛选（**含其所有子分类**）：分类是树，点父级就该看到子级的东西。
+    pub category_id: Option<i64>,
     pub status: Option<String>,
     pub keyword: Option<String>,
     /// 排序方式：`favorited`（按收藏时间）/ `created`（按入库时间）/ 其它/缺省 = 按最近更新
@@ -669,6 +733,17 @@ pub fn list(conn: &Connection, filter: &ListFilter) -> Result<Vec<FavoriteRow>, 
         .map(str::trim)
         .filter(|s| !s.is_empty());
 
+    // 分类筛选要带上子分类：递归展开后拼成 IN 列表（全是自己库里的整数 id，无注入风险）
+    let category_ids: Option<Vec<i64>> = match filter.category_id {
+        Some(id) => Some(descendant_ids(conn, id)?),
+        None => None,
+    };
+    // 没按分类筛时也要拼出合法 SQL：`IN ()` 在 SQLite 里合法且恒为假，配合 `?4 IS NULL` 短路
+    let category_in = category_ids
+        .as_ref()
+        .map(|ids| ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(","))
+        .unwrap_or_default();
+
     let sql = format!(
         "SELECT f.id, f.source, f.external_id, f.url, f.title, f.subtitle, f.description, \
                 f.status, f.checked_at, f.ai_locked, f.ai_model, f.created_at, f.updated_at, f.favorited_at \
@@ -676,7 +751,8 @@ pub fn list(conn: &Connection, filter: &ListFilter) -> Result<Vec<FavoriteRow>, 
          WHERE (?1 IS NULL OR f.source = ?1) \
            AND (?2 IS NULL OR f.status = ?2) \
            AND (?3 IS NULL OR f.title LIKE ?3 OR COALESCE(f.description, '') LIKE ?3) \
-           AND (?4 IS NULL OR EXISTS (SELECT 1 FROM favorite_tag t WHERE t.favorite_id = f.id AND t.tag = ?4)) \
+           AND (?4 IS NULL OR EXISTS (SELECT 1 FROM favorite_item_category ic \
+                                      WHERE ic.favorite_id = f.id AND ic.category_id IN ({category_in}))) \
            AND (?5 IS NULL OR COALESCE(f.favorited_at, f.created_at) >= ?5) \
          ORDER BY {} LIMIT {}",
         order_by_clause(filter.sort.as_deref()),
@@ -687,7 +763,13 @@ pub fn list(conn: &Connection, filter: &ListFilter) -> Result<Vec<FavoriteRow>, 
         .map_err(|e| format!("查询收藏列表失败: {}", e))?;
     let rows = statement
         .query_map(
-            rusqlite::params![filter.source, filter.status, keyword, filter.tag, since],
+            rusqlite::params![
+                filter.source,
+                filter.status,
+                keyword,
+                filter.category_id,
+                since
+            ],
             |row| {
                 Ok(FavoriteRow {
                     id: row.get(0)?,
@@ -714,17 +796,21 @@ pub fn list(conn: &Connection, filter: &ListFilter) -> Result<Vec<FavoriteRow>, 
     for row in rows {
         items.push(row.map_err(|e| format!("读取收藏条目失败: {}", e))?);
     }
-    // 标签单独查一次再挂回去：条目量上千时比每行一个子查询便宜得多
+    // 分类名单独查一次再挂回去：条目量上千时比每行一个子查询便宜得多
     let mut tag_map: std::collections::HashMap<i64, Vec<String>> = std::collections::HashMap::new();
     {
         let mut tag_statement = conn
-            .prepare("SELECT favorite_id, tag FROM favorite_tag ORDER BY tag")
-            .map_err(|e| format!("查询分类标签失败: {}", e))?;
+            .prepare(
+                "SELECT ic.favorite_id, c.name \
+                 FROM favorite_item_category ic JOIN favorite_category c ON c.id = ic.category_id \
+                 ORDER BY c.name",
+            )
+            .map_err(|e| format!("查询分类失败: {}", e))?;
         let tag_rows = tag_statement
             .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))
-            .map_err(|e| format!("查询分类标签失败: {}", e))?;
+            .map_err(|e| format!("读取分类失败: {}", e))?;
         for row in tag_rows {
-            let (id, tag) = row.map_err(|e| format!("读取分类标签失败: {}", e))?;
+            let (id, tag) = row.map_err(|e| format!("读取分类失败: {}", e))?;
             tag_map.entry(id).or_default().push(tag);
         }
     }
@@ -734,21 +820,378 @@ pub fn list(conn: &Connection, filter: &ListFilter) -> Result<Vec<FavoriteRow>, 
     Ok(items)
 }
 
+// ─── 分类树（多级分类，操作逻辑对齐启动模块的 classification） ───
+
+/// 分类树节点（给前端直接渲染用，`children` 已递归排好序）。
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CategoryNode {
+    pub id: i64,
+    pub parent_id: Option<i64>,
+    pub name: String,
+    pub sort_order: i32,
+    /// 直接挂在本分类下的条目数
+    pub count: i64,
+    /// 含所有子孙分类的条目数（前端侧栏显示这个才有意义：点父级要看全部）
+    pub total: i64,
+    pub children: Vec<CategoryNode>,
+}
+
+/// 扁平分类行（内部用）。
+struct CategoryFlat {
+    id: i64,
+    parent_id: Option<i64>,
+    name: String,
+    sort_order: i32,
+    count: i64,
+}
+
+fn load_flat_categories(conn: &Connection) -> Result<Vec<CategoryFlat>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT c.id, c.parent_id, c.name, c.sort_order, \
+                    (SELECT COUNT(*) FROM favorite_item_category ic WHERE ic.category_id = c.id) \
+             FROM favorite_category c \
+             ORDER BY c.parent_id IS NOT NULL, c.sort_order ASC, c.name ASC",
+        )
+        .map_err(|e| format!("查询分类失败: {e}"))?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(CategoryFlat {
+                id: r.get(0)?,
+                parent_id: r.get(1)?,
+                name: r.get(2)?,
+                sort_order: r.get(3)?,
+                count: r.get(4)?,
+            })
+        })
+        .map_err(|e| format!("读取分类失败: {e}"))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| format!("读取分类失败: {e}"))?);
+    }
+    Ok(out)
+}
+
+/// 列出整棵分类树（含条目数）。
+pub fn list_category_tree(conn: &Connection) -> Result<Vec<CategoryNode>, String> {
+    let flat = load_flat_categories(conn)?;
+    let mut nodes: std::collections::HashMap<i64, CategoryNode> = std::collections::HashMap::new();
+    for c in &flat {
+        nodes.insert(
+            c.id,
+            CategoryNode {
+                id: c.id,
+                parent_id: c.parent_id,
+                name: c.name.clone(),
+                sort_order: c.sort_order,
+                count: c.count,
+                total: c.count,
+                children: Vec::new(),
+            },
+        );
+    }
+    // 父节点可能排在子节点之后（sort_order 是「同级内」的序号），先收集再挂
+    let mut roots: Vec<i64> = Vec::new();
+    for c in &flat {
+        match c.parent_id {
+            Some(pid) if nodes.contains_key(&pid) => {}
+            _ => roots.push(c.id),
+        }
+    }
+    for c in &flat {
+        if let Some(pid) = c.parent_id {
+            if let Some(child) = nodes.get(&c.id).cloned() {
+                if let Some(parent) = nodes.get_mut(&pid) {
+                    parent.children.push(child);
+                }
+            }
+        }
+    }
+    // 自底向上累加 total：深层级先算，父级再叠
+    fn sum_total(ids: &[i64], nodes: &mut std::collections::HashMap<i64, CategoryNode>) -> i64 {
+        let mut acc = 0i64;
+        for id in ids {
+            let children: Vec<i64> = nodes.get(id).map(|n| n.children.iter().map(|c| c.id).collect()).unwrap_or_default();
+            let sub = sum_total(&children, nodes);
+            if let Some(n) = nodes.get_mut(id) {
+                n.total = n.count + sub;
+                acc += n.total;
+            }
+        }
+        acc
+    }
+    sum_total(&roots, &mut nodes);
+
+    let mut out: Vec<CategoryNode> = roots
+        .into_iter()
+        .filter_map(|id| nodes.remove(&id))
+        .collect();
+    out.sort_by(|a, b| a.sort_order.cmp(&b.sort_order).then(a.name.cmp(&b.name)));
+    Ok(out)
+}
+
+/// 取某分类的全部子孙 id（含自己），用于「按分类筛选时把子分类也算进来」。
+pub fn descendant_ids(conn: &Connection, id: i64) -> Result<Vec<i64>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id, parent_id FROM favorite_category")
+        .map_err(|e| format!("查询分类失败: {e}"))?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?)))
+        .map_err(|e| format!("读取分类失败: {e}"))?;
+    let mut pairs: Vec<(i64, Option<i64>)> = Vec::new();
+    for r in rows {
+        pairs.push(r.map_err(|e| format!("读取分类失败: {e}"))?);
+    }
+    let mut out = vec![id];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (cid, pid) in &pairs {
+            if pid == &Some(id) || out.contains(&pid.unwrap_or(-1)) {
+                if !out.contains(cid) {
+                    out.push(*cid);
+                    changed = true;
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// 同级重名检查（SQLite 的 UNIQUE 对 `parent_id IS NULL` 不去重，只能自己判）。
+fn sibling_name_taken(conn: &Connection, parent_id: Option<i64>, name: &str, except_id: Option<i64>) -> Result<bool, String> {
+    let mut stmt = conn
+        .prepare("SELECT id FROM favorite_category WHERE parent_id IS ?1 AND name = ?2")
+        .map_err(|e| format!("查询分类失败: {e}"))?;
+    let rows = stmt
+        .query_map(rusqlite::params![parent_id, name], |r| r.get::<_, i64>(0))
+        .map_err(|e| format!("读取分类失败: {e}"))?;
+    for r in rows {
+        let id = r.map_err(|e| format!("读取分类失败: {e}"))?;
+        if except_id != Some(id) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// 新建分类（同名同级拒绝），返回新 id。
+pub fn create_category(conn: &Connection, name: &str, parent_id: Option<i64>) -> Result<i64, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("分类名不能为空".to_string());
+    }
+    if let Some(pid) = parent_id {
+        let exists = conn
+            .query_row("SELECT 1 FROM favorite_category WHERE id = ?1", [pid], |_| Ok(()))
+            .is_ok();
+        if !exists {
+            return Err(format!("父分类不存在: {pid}"));
+        }
+    }
+    if sibling_name_taken(conn, parent_id, name, None)? {
+        return Err(format!("同级下已有同名分类: {name}"));
+    }
+    let next: i32 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM favorite_category WHERE parent_id IS ?1",
+            [parent_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("读取排序号失败: {e}"))?;
+    conn.execute(
+        "INSERT INTO favorite_category (parent_id, name, sort_order, created_at) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![parent_id, name, next, now_str()],
+    )
+    .map_err(|e| format!("新建分类失败: {e}"))?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// 重命名分类。
+pub fn rename_category(conn: &Connection, id: i64, name: &str) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("分类名不能为空".to_string());
+    }
+    let parent_id: Option<i64> = conn
+        .query_row("SELECT parent_id FROM favorite_category WHERE id = ?1", [id], |r| r.get(0))
+        .map_err(|_| format!("分类不存在: {id}"))?;
+    if sibling_name_taken(conn, parent_id, name, Some(id))? {
+        return Err(format!("同级下已有同名分类: {name}"));
+    }
+    conn.execute(
+        "UPDATE favorite_category SET name = ?1 WHERE id = ?2",
+        rusqlite::params![name, id],
+    )
+    .map_err(|e| format!("重命名分类失败: {e}"))?;
+    Ok(())
+}
+
+/// 移动分类（换父级）：目标不能是自己或自己的子孙，否则会成环。
+pub fn move_category(conn: &Connection, id: i64, new_parent: Option<i64>) -> Result<(), String> {
+    if let Some(pid) = new_parent {
+        if pid == id {
+            return Err("不能把分类移到自己下面".to_string());
+        }
+        if descendant_ids(conn, id)?.contains(&pid) {
+            return Err("不能把分类移到自己的子分类下面（会成环）".to_string());
+        }
+    }
+    conn.execute(
+        "UPDATE favorite_category SET parent_id = ?1 WHERE id = ?2",
+        rusqlite::params![new_parent, id],
+    )
+    .map_err(|e| format!("移动分类失败: {e}"))?;
+    Ok(())
+}
+
+/// 在指定父级下查同名分类的 id（只查不建）。
+pub fn find_child_id(conn: &Connection, parent_id: Option<i64>, name: &str) -> Result<Option<i64>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id FROM favorite_category WHERE parent_id IS ?1 AND name = ?2")
+        .map_err(|e| format!("查询分类失败: {e}"))?;
+    let found = stmt
+        .query_row(rusqlite::params![parent_id, name], |r| r.get::<_, i64>(0))
+        .ok();
+    Ok(found)
+}
+
+/// 按 (source, external_id) 查条目 id（导入后要给条目挂分类，需要这个 id）。
+pub fn find_favorite_id(conn: &Connection, source: &str, external_id: &str) -> Result<Option<i64>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id FROM favorite WHERE source = ?1 AND external_id = ?2")
+        .map_err(|e| format!("查询条目失败: {e}"))?;
+    let found = stmt
+        .query_row(rusqlite::params![source, external_id], |r| r.get::<_, i64>(0))
+        .ok();
+    Ok(found)
+}
+
+/// 追加一条「条目 ↔ 分类」挂载（已存在则忽略，不会重复）。
+pub fn link_item_category(conn: &Connection, favorite_id: i64, category_id: i64) -> Result<(), String> {
+    conn.execute(
+        "INSERT OR IGNORE INTO favorite_item_category (favorite_id, category_id) VALUES (?1, ?2)",
+        rusqlite::params![favorite_id, category_id],
+    )
+    .map_err(|e| format!("挂载分类失败: {e}"))?;
+    Ok(())
+}
+
+/// 在指定父级下按名字取分类，没有就建（供导入时按浏览器书签目录建树用）。
+pub fn ensure_category(conn: &Connection, parent_id: Option<i64>, name: &str) -> Result<i64, String> {
+    let mut stmt = conn
+        .prepare("SELECT id FROM favorite_category WHERE parent_id IS ?1 AND name = ?2")
+        .map_err(|e| format!("查询分类失败: {e}"))?;
+    let found = stmt
+        .query_row(rusqlite::params![parent_id, name], |r| r.get::<_, i64>(0))
+        .ok();
+    drop(stmt);
+    match found {
+        Some(id) => Ok(id),
+        None => create_category(conn, name, parent_id),
+    }
+}
+
+/// 删除分类（连同所有子孙分类与它们之间的挂载关系）。
+///
+/// 条目本身**不删**：分类只是标签，删掉分类不该把用户的收藏一起删掉
+/// （启动模块删分类会连带删项目，那是「项目归属」语义；这里是「打标签」语义）。
+pub fn delete_category(conn: &Connection, id: i64) -> Result<usize, String> {
+    let ids = descendant_ids(conn, id)?;
+    let tx = conn.unchecked_transaction().map_err(|e| format!("开启事务失败: {e}"))?;
+    for cid in &ids {
+        tx.execute(
+            "DELETE FROM favorite_item_category WHERE category_id = ?1",
+            [cid],
+        )
+        .map_err(|e| format!("清理分类关联失败: {e}"))?;
+        tx.execute("DELETE FROM favorite_category WHERE id = ?1", [cid])
+            .map_err(|e| format!("删除分类失败: {e}"))?;
+    }
+    tx.commit().map_err(|e| format!("提交事务失败: {e}"))?;
+    Ok(ids.len())
+}
+
+/// 同级排序：`[(id, sort_order)]` 批量写回。
+pub fn reorder_categories(conn: &Connection, orders: &[(i64, i32)]) -> Result<(), String> {
+    let tx = conn.unchecked_transaction().map_err(|e| format!("开启事务失败: {e}"))?;
+    for (id, order) in orders {
+        tx.execute(
+            "UPDATE favorite_category SET sort_order = ?1 WHERE id = ?2",
+            rusqlite::params![order, id],
+        )
+        .ok();
+    }
+    tx.commit().map_err(|e| format!("提交事务失败: {e}"))?;
+    Ok(())
+}
+
+/// 全量替换某条目的分类。
+pub fn set_item_categories(conn: &Connection, favorite_id: i64, ids: &[i64]) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM favorite_item_category WHERE favorite_id = ?1",
+        [favorite_id],
+    )
+    .map_err(|e| format!("清除旧分类失败: {e}"))?;
+    for cid in ids {
+        conn.execute(
+            "INSERT OR IGNORE INTO favorite_item_category (favorite_id, category_id) VALUES (?1, ?2)",
+            rusqlite::params![favorite_id, cid],
+        )
+        .map_err(|e| format!("写入分类失败: {e}"))?;
+    }
+    Ok(())
+}
+
+/// 按名字查分类（**只查不建**）。
+///
+/// 检索类入口用它：模型传来的名字可能是瞎猜的，不能在查询时顺手建出垃圾分类。
+pub fn find_category_by_name(conn: &Connection, name: &str) -> Result<Option<i64>, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    match conn.query_row(
+        "SELECT id FROM favorite_category WHERE name = ?1",
+        [name],
+        |r| r.get::<_, i64>(0),
+    ) {
+        Ok(id) => Ok(Some(id)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("查询分类失败: {e}")),
+    }
+}
+
+/// 按名字取分类（没有就在**顶层**建一个），供 AI 归类 / 旧的按名标签入口使用。
+pub fn resolve_category_by_name(conn: &Connection, name: &str) -> Result<i64, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("分类名不能为空".to_string());
+    }
+    if let Ok(id) = conn.query_row(
+        "SELECT id FROM favorite_category WHERE name = ?1",
+        [name],
+        |r| r.get::<_, i64>(0),
+    ) {
+        return Ok(id);
+    }
+    create_category(conn, name, None)
+}
+
 /// 人工设置标签（全量替换），并锁定：后续 AI 归类不再碰它。
+///
+/// 名字走「顶层分类」：旧调用方传的是纯名字（逗号分隔），这里按需建分类。
 pub fn set_tags(conn: &Connection, id: i64, tags: &[String]) -> Result<(), String> {
-    conn.execute("DELETE FROM favorite_tag WHERE favorite_id = ?1", [id])
-        .map_err(|e| format!("清除旧分类失败: {}", e))?;
+    let mut ids = Vec::new();
     for tag in tags {
         let trimmed = tag.trim();
         if trimmed.is_empty() {
             continue;
         }
-        conn.execute(
-            "INSERT OR IGNORE INTO favorite_tag (favorite_id, tag) VALUES (?1, ?2)",
-            rusqlite::params![id, trimmed],
-        )
-        .map_err(|e| format!("写入分类标签失败: {}", e))?;
+        ids.push(resolve_category_by_name(conn, trimmed)?);
     }
+    set_item_categories(conn, id, &ids)?;
     conn.execute(
         "UPDATE favorite SET ai_locked = 1, updated_at = ?1 WHERE id = ?2",
         rusqlite::params![now_str(), id],
@@ -759,8 +1202,11 @@ pub fn set_tags(conn: &Connection, id: i64, tags: &[String]) -> Result<(), Strin
 
 /// 删除本地条目（只删本地，不动平台）。
 pub fn delete(conn: &Connection, id: i64) -> Result<bool, String> {
-    conn.execute("DELETE FROM favorite_tag WHERE favorite_id = ?1", [id])
-        .map_err(|e| format!("删除分类标签失败: {}", e))?;
+    conn.execute(
+        "DELETE FROM favorite_item_category WHERE favorite_id = ?1",
+        [id],
+    )
+    .map_err(|e| format!("删除分类关联失败: {}", e))?;
     let removed = conn
         .execute("DELETE FROM favorite WHERE id = ?1", [id])
         .map_err(|e| format!("删除收藏条目失败: {}", e))?;
@@ -774,7 +1220,10 @@ pub struct FavoriteStats {
     pub unclassified: usize,
     pub gone: usize,
     pub by_source: Vec<(String, usize)>,
+    /// 兼容旧字段：扁平的「分类名 → 条数」。新前端一律读 `categories`。
     pub tags: Vec<(String, usize)>,
+    /// 分类树：侧栏按它渲染层级，条数是**含子分类**的合计。
+    pub categories: Vec<CategoryNode>,
 }
 
 /// 概览：总数 / 未归类 / 已失效 / 各源条数 / 各分类条数。
@@ -802,7 +1251,12 @@ pub fn stats(conn: &Connection) -> Result<FavoriteStats, String> {
     let mut tags: Vec<(String, usize)> = Vec::new();
     {
         let mut statement = conn
-            .prepare("SELECT tag, COUNT(*) FROM favorite_tag GROUP BY tag ORDER BY COUNT(*) DESC, tag")
+            .prepare(
+                "SELECT c.name, COUNT(ic.favorite_id) \
+                 FROM favorite_category c \
+                 LEFT JOIN favorite_item_category ic ON ic.category_id = c.id \
+                 GROUP BY c.id ORDER BY COUNT(ic.favorite_id) DESC, c.name",
+            )
             .map_err(|e| format!("统计分类失败: {}", e))?;
         let rows = statement
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, usize>(1)?)))
@@ -811,6 +1265,7 @@ pub fn stats(conn: &Connection) -> Result<FavoriteStats, String> {
             tags.push(row.map_err(|e| format!("读取分类统计失败: {}", e))?);
         }
     }
+    let categories = list_category_tree(conn)?;
 
     Ok(FavoriteStats {
         total,
@@ -818,6 +1273,7 @@ pub fn stats(conn: &Connection) -> Result<FavoriteStats, String> {
         gone,
         by_source,
         tags,
+        categories,
     })
 }
 
@@ -886,9 +1342,11 @@ pub fn count_all(conn: &Connection) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_status, apply_tags, count_all, delete, get_credential, get_import_cursor, list,
-        migrate, select_unclassified, set_credential, set_import_cursor, set_tags, stats, upsert,
-        FavoriteRow, FavoriteStats, ListFilter, NewFavorite, UpsertOutcome,
+        apply_status, apply_tags, count_all, create_category, delete, delete_category,
+        find_category_by_name, get_credential, get_import_cursor, list, list_category_tree,
+        migrate, move_category, rename_category, select_unclassified, set_credential,
+        set_import_cursor, set_item_categories, set_tags, stats, upsert, CategoryNode, FavoriteRow,
+        FavoriteStats, ListFilter, NewFavorite, UpsertOutcome,
     };
 
     /// 前后端的字段契约：这两个结构按 camelCase 序列化，前端读的是 `bySource` / `aiLocked`。
@@ -902,6 +1360,7 @@ mod tests {
             gone: 0,
             by_source: vec![("github".to_string(), 3)],
             tags: vec![("CLI".to_string(), 2)],
+            categories: vec![],
         };
         let value = serde_json::to_value(&overview).unwrap();
         assert!(value.get("by_source").is_none());
@@ -1190,6 +1649,94 @@ mod tests {
         assert_eq!(pending[0].id, 1);
     }
 
+    /// 多级分类：父子层级、按层级筛选（父级要能看到子级的东西）、成环一律拒绝。
+    #[test]
+    fn category_tree_supports_nesting_and_filtering() {
+        let conn = seeded();
+        let root = create_category(&conn, "技术", None).unwrap();
+        let child = create_category(&conn, "编译器", Some(root)).unwrap();
+        let grand = create_category(&conn, "LLVM", Some(child)).unwrap();
+
+        // 同级重名要拦住（父级不同则可以同名）
+        assert!(create_category(&conn, "技术", None).is_err());
+        assert!(create_category(&conn, "编译器", Some(grand)).is_ok());
+
+        set_item_categories(&conn, 1, &[grand]).unwrap();
+        set_item_categories(&conn, 2, &[]).unwrap();
+
+        // 点父分类要能把子孙分类下的条目一起筛出来
+        assert_eq!(
+            list(&conn, &ListFilter { category_id: Some(root), ..Default::default() })
+                .unwrap()
+                .len(),
+            1,
+            "按根分类筛选应包含子分类里的条目"
+        );
+        assert_eq!(
+            list(&conn, &ListFilter { category_id: Some(grand), ..Default::default() })
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // 不能移到自己 / 自己子孙下面（成环）
+        assert!(move_category(&conn, root, Some(root)).is_err());
+        assert!(move_category(&conn, root, Some(grand)).is_err());
+        assert!(move_category(&conn, grand, None).is_ok());
+
+        // 删分类只解开关联，不删条目
+        // grand 已被移到顶层，所以这次删的是 root + child 两级
+        let removed = delete_category(&conn, root).unwrap();
+        assert_eq!(removed, 2, "子孙分类要一起删");
+        assert!(find_category_by_name(&conn, "LLVM").unwrap().is_some(), "移走的分类不受影响");
+        assert_eq!(count_all(&conn).unwrap(), 2, "条目不能跟着分类一起没");
+    }
+
+    /// 分类树的条目数：自己挂的 + 所有子孙的（侧栏显示这个才有意义）。
+    #[test]
+    fn category_tree_counts_include_descendants() {
+        let conn = seeded();
+        let root = create_category(&conn, "A", None).unwrap();
+        let child = create_category(&conn, "B", Some(root)).unwrap();
+        set_item_categories(&conn, 1, &[root]).unwrap();
+        set_item_categories(&conn, 2, &[child]).unwrap();
+
+        let tree = list_category_tree(&conn).unwrap();
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].count, 1);
+        assert_eq!(tree[0].total, 2, "父级要算上子分类的条目");
+        assert_eq!(tree[0].children.len(), 1);
+        assert_eq!(tree[0].children[0].total, 1);
+
+        rename_category(&conn, child, "B2").unwrap();
+        let tree = list_category_tree(&conn).unwrap();
+        assert_eq!(tree[0].children[0].name, "B2");
+        let _: CategoryNode = tree[0].clone();
+    }
+
+    /// 旧库升级：扁平标签要变成顶层分类，条目关联不能丢。
+    #[test]
+    fn legacy_tags_are_migrated_into_category_tree() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        // 先建一张只有旧标签表的库，再补插旧数据，最后跑新版 migrate
+        conn.execute_batch(
+            "CREATE TABLE favorite_tag (favorite_id INTEGER NOT NULL, tag TEXT NOT NULL, PRIMARY KEY (favorite_id, tag));",
+        )
+        .unwrap();
+        conn.execute("INSERT INTO favorite_tag VALUES (1, 'CLI')", []).unwrap();
+        conn.execute("INSERT INTO favorite_tag VALUES (1, 'Web')", []).unwrap();
+        migrate(&conn).unwrap();
+
+        assert_eq!(find_category_by_name(&conn, "CLI").unwrap(), Some(1));
+        let linked: i64 = conn
+            .query_row("SELECT COUNT(*) FROM favorite_item_category WHERE favorite_id = 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(linked, 2, "两个旧标签都要变成分类关联");
+        // 再迁移一次不能重复建
+        migrate(&conn).unwrap();
+        assert_eq!(list_category_tree(&conn).unwrap().len(), 2);
+    }
+
     /// 归类只处理「没标签且没被人工改过」的条目。
     #[test]
     fn select_unclassified_skips_tagged_and_locked() {
@@ -1202,8 +1749,9 @@ mod tests {
         let pending = select_unclassified(&conn, 10).unwrap();
         assert_eq!(pending.len(), 3);
 
-        // 已有标签 → 不再归类
-        conn.execute("INSERT INTO favorite_tag VALUES (1, 'CLI')", []).unwrap();
+        // 已有分类 → 不再归类
+        let cli = create_category(&conn, "CLI", None).unwrap();
+        set_item_categories(&conn, 1, &[cli]).unwrap();
         // 人工锁定 → 永远不再归类
         conn.execute("UPDATE favorite SET ai_locked = 1 WHERE id = 2", []).unwrap();
 
@@ -1227,7 +1775,11 @@ mod tests {
         assert_eq!(written, 2, "多标签每条都要写");
 
         let tags: Vec<String> = conn
-            .prepare("SELECT tag FROM favorite_tag WHERE favorite_id = 1 ORDER BY tag")
+            .prepare(
+                "SELECT c.name FROM favorite_item_category ic \
+                 JOIN favorite_category c ON c.id = ic.category_id \
+                 WHERE ic.favorite_id = 1 ORDER BY c.name",
+            )
             .unwrap()
             .query_map([], |r| r.get(0))
             .unwrap()
@@ -1313,8 +1865,9 @@ mod tests {
         set_tags(&conn, 2, &["Web".to_string()]).unwrap();
 
         assert_eq!(list(&conn, &ListFilter::default()).unwrap().len(), 2);
+        let cli_id = find_category_by_name(&conn, "CLI").unwrap().expect("CLI 分类已建");
         assert_eq!(
-            list(&conn, &ListFilter { tag: Some("CLI".into()), ..Default::default() })
+            list(&conn, &ListFilter { category_id: Some(cli_id), ..Default::default() })
                 .unwrap()
                 .len(),
             1

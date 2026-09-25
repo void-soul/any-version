@@ -209,9 +209,21 @@ fn run_tool(name: &str, args: &serde_json::Value) -> String {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(20)
                 .min(50) as usize;
+            // 分类改成树之后按 id 筛：名字先解析成 id，
+            // 但**只查不建** —— 模型瞎猜的名字不该在检索时变成一个新分类。
+            let category_id = args
+                .get("tag")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .and_then(|name| {
+                    db::with_conn(|conn| db::find_category_by_name(conn, name))
+                        .ok()
+                        .flatten()
+                });
             let filter = db::ListFilter {
                 keyword: Some(keyword.to_string()),
-                tag: args.get("tag").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                category_id,
                 source: args.get("source").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 limit,
                 ..Default::default()
@@ -266,15 +278,24 @@ fn run_tool(name: &str, args: &serde_json::Value) -> String {
         }
         "list_favorite_tags" => match db::with_conn(|conn| db::stats(conn)) {
             Ok(stats) => {
-                if stats.tags.is_empty() {
+                if stats.categories.is_empty() {
                     "收藏库里还没有任何分类".to_string()
                 } else {
-                    stats
-                        .tags
-                        .iter()
-                        .map(|(tag, count)| format!("{}（{} 条）", tag, count))
-                        .collect::<Vec<_>>()
-                        .join("、")
+                    // 分类是多级的：给模型看「父/子」路径，它才知道该拿哪一层去筛
+                    fn walk(nodes: &[db::CategoryNode], prefix: &str, out: &mut Vec<String>) {
+                        for n in nodes {
+                            let path = if prefix.is_empty() {
+                                n.name.clone()
+                            } else {
+                                format!("{}/{}", prefix, n.name)
+                            };
+                            out.push(format!("{}（本层 {} 条 / 含子级 {} 条）", path, n.count, n.total));
+                            walk(&n.children, &path, out);
+                        }
+                    }
+                    let mut lines = Vec::new();
+                    walk(&stats.categories, "", &mut lines);
+                    lines.join("\n")
                 }
             }
             Err(e) => format!("读取分类失败：{}", e),

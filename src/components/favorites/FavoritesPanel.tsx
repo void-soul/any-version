@@ -24,7 +24,8 @@ import {
   Pencil,
   RefreshCw,
   Search,
-  Tag,
+  Plus,
+  X,
   Trash2,
   Bot,
   Send,
@@ -51,12 +52,23 @@ import {
   type FavoriteRow,
   type FavoriteSettings,
   type FavoriteStats,
+  type FavoriteCategoryNode,
   type FavoritesProgress,
   type ImportResult,
 } from "./types";
 
 /** 分类栏宽度：默认 180px（比原先固定的 160px 宽 20px），范围与后端 clamp 一致。 */
 const DEFAULT_LEFT_WIDTH = 180;
+
+/**
+ * 长任务名（与后端 `commands/favorites/commands.rs` 的 TASK_* 一致）。
+ *
+ * 三个平台的导入可以同时跑（各拉各的接口），但导入与「加工」（归类 / 失效检测）
+ * 必须互斥：加工要扫全库挑条目，和正在写入的导入抢同一份数据。
+ */
+type FavTask = "github" | "bilibili" | "zhihu" | "bookmark" | "classify" | "check";
+const IMPORT_TASKS: FavTask[] = ["github", "bilibili", "zhihu", "bookmark"];
+const isImportTask = (task: FavTask) => IMPORT_TASKS.includes(task);
 const MIN_LEFT_WIDTH = 140;
 const MAX_LEFT_WIDTH = 420;
 
@@ -65,7 +77,16 @@ export default function FavoritesPanel() {
 
   const [items, setItems] = useState<FavoriteRow[]>([]);
   const [stats, setStats] = useState<FavoriteStats | null>(null);
-  const [tag, setTag] = useState<string | null>(null);
+  // 分类筛选：走分类 id（树），名字只用于回显
+  const [categoryId, setCategoryId] = useState<number | null>(null);
+  const [categoryName, setCategoryName] = useState<string | null>(null);
+  // 分类树里展开的节点
+  const [expandedCats, setExpandedCats] = useState<Set<number>>(new Set());
+  // 分类右键菜单
+  const [catMenu, setCatMenu] = useState<{ id: number | null; name: string; x: number; y: number } | null>(null);
+  // 条目分类选择器
+  const [pickerFor, setPickerFor] = useState<FavoriteRow | null>(null);
+  const [pickerSelected, setPickerSelected] = useState<number[]>([]);
   const [source, setSource] = useState<string | null>(null);
   const [keyword, setKeyword] = useState("");
   // 排序默认按「收藏时间」：这是收藏模块，用户最关心的是「我什么时候收藏的」，
@@ -73,7 +94,15 @@ export default function FavoritesPanel() {
   const [sort, setSort] = useState<FavoritesSort>("favorited");
   // 收藏时间过滤（全部 / 近 7 天 / 近 30 天 / 近一年）
   const [since, setSince] = useState<SincePreset>("all");
-  const [busy, setBusy] = useState<string | null>(null);
+  // 正在跑的长任务（替换原先单个 busy 字段）：三个导入可以同时在列，
+  // 归类 / 失效检测与导入互斥，所以加工类任务在列时导入按钮全灰。
+  const [running, setRunning] = useState<FavTask[]>([]);
+  const startTask = (task: FavTask) =>
+    setRunning((prev) => (prev.includes(task) ? prev : [...prev, task]));
+  const endTask = (task: FavTask) => setRunning((prev) => prev.filter((x) => x !== task));
+  /** 有导入在跑 → 归类/检测禁用；有加工在跑 → 导入禁用。 */
+  const importRunning = running.some(isImportTask);
+  const processRunning = running.includes("classify") || running.includes("check");
 
   // AI 归类的模型选择：直接复用 AI 模块的配置，不另设一套
   const [providers, setProviders] = useState<AiProvider[]>([]);
@@ -100,8 +129,6 @@ export default function FavoritesPanel() {
   }, []);
 
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editingTags, setEditingTags] = useState("");
 
   // ── AI 检索助手（用户说需求 → agent 在本地库里找 → 整理成清单）──
   const [aiOpen, setAiOpen] = useState(false);
@@ -150,17 +177,36 @@ export default function FavoritesPanel() {
     }
   };
 
-  // 导入 / 归类的实时进度（后端 favorites-progress 事件）
-  const [progress, setProgress] = useState<FavoritesProgress | null>(null);
+  // 导入 / 归类的实时进度（后端 favorites-progress 事件）。
+  // 按任务分行存：三个导入同时跑时各显示各的，不会互相覆盖。
+  const [progressMap, setProgressMap] = useState<Record<string, FavoritesProgress>>({});
+  const clearProgress = (task: FavTask) =>
+    setProgressMap((prev) => {
+      if (!(task in prev)) return prev;
+      const next = { ...prev };
+      delete next[task];
+      return next;
+    });
 
   useEffect(() => {
     const unlisten = listen<FavoritesProgress>("favorites-progress", (event) => {
-      setProgress(event.payload);
+      const p = event.payload;
+      const key = p.task || p.stage;
+      setProgressMap((prev) =>
+        p.done
+          ? Object.fromEntries(Object.entries(prev).filter(([k]) => k !== key))
+          : { ...prev, [key]: p },
+      );
     });
     return () => {
       void unlisten.then((fn) => fn());
     };
   }, []);
+
+  /** 正在跑的任务的进度行（保持事件到达顺序）。 */
+  const progressRows = Object.entries(progressMap).filter(([key]) =>
+    running.includes(key as FavTask),
+  );
 
   // AI 归类的模型选择：配置里没存模型列表的供应商，现拉一次并按 provider 缓存
   const [fetchedModels, setFetchedModels] = useState<Record<string, string[]>>({});
@@ -191,7 +237,8 @@ export default function FavoritesPanel() {
     const [list, overview, creds] = await Promise.all([
       invoke<FavoriteRow[]>("fav_list", {
         source,
-        tag,
+        // 分类改成树之后按 id 筛（后端会把子分类一起算进来）
+        categoryId: categoryId ?? undefined,
         status: null,
         keyword: keyword.trim() || null,
         sort,
@@ -205,7 +252,133 @@ export default function FavoritesPanel() {
     setItems(list);
     setStats(overview);
     setCredStatus(creds);
-  }, [source, tag, keyword, sort, since]);
+  }, [source, categoryId, keyword, sort, since]);
+
+  // ── 分类树操作（对齐启动模块：新建子分类 / 重命名 / 删除 / 同级排序）──
+  const cats: FavoriteCategoryNode[] = stats?.categories || [];
+
+  const findCat = (id: number | null): FavoriteCategoryNode | null => {
+    if (id == null) return null;
+    const walk = (list: FavoriteCategoryNode[]): FavoriteCategoryNode | null => {
+      for (const c of list) {
+        if (c.id === id) return c;
+        const hit = walk(c.children);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    return walk(cats);
+  };
+
+  /** 按名字找分类（条目标签存的是名字，筛选要的是 id） */
+  const findCatByName = (name: string): FavoriteCategoryNode | null => {
+    const walk = (list: FavoriteCategoryNode[]): FavoriteCategoryNode | null => {
+      for (const c of list) {
+        if (c.name === name) return c;
+        const hit = walk(c.children);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    return walk(cats);
+  };
+
+  /** 同级排序用的 id 列表（上下移动时只重排这一层） */
+  const siblingsOf = (id: number | null): FavoriteCategoryNode[] => {
+    if (id == null) return cats;
+    const walk = (list: FavoriteCategoryNode[]): FavoriteCategoryNode[] | null => {
+      for (const c of list) {
+        if (c.id === id) return list;
+        const hit = walk(c.children);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    return walk(cats) || [];
+  };
+
+  const createCat = async (parentId: number | null) => {
+    const name = window.prompt(t(pickCatKey(parentId)));
+    if (!name?.trim()) return;
+    try {
+      const id = await invoke<number>("fav_create_category", { name: name.trim(), parentId });
+      if (parentId != null) setExpandedCats((s) => new Set(s).add(parentId));
+      setCategoryId(id);
+      setCategoryName(name.trim());
+      await refresh();
+    } catch (e) {
+      toast(String(e), "err");
+    }
+  };
+  function pickCatKey(parentId: number | null) {
+    return parentId == null ? "favorites.newCategoryPrompt" : "favorites.newSubCategoryPrompt";
+  }
+
+  const renameCat = async (id: number) => {
+    const cur = findCat(id);
+    const name = window.prompt(t("favorites.renameCategoryPrompt"), cur?.name || "");
+    if (!name?.trim()) return;
+    try {
+      await invoke("fav_rename_category", { id, name: name.trim() });
+      if (categoryId === id) setCategoryName(name.trim());
+      await refresh();
+    } catch (e) {
+      toast(String(e), "err");
+    }
+  };
+
+  const deleteCat = async (id: number) => {
+    const cur = findCat(id);
+    if (!window.confirm(t("favorites.deleteCategoryConfirm", { name: cur?.name || "" }))) return;
+    try {
+      await invoke("fav_delete_category", { id });
+      if (categoryId === id) {
+        setCategoryId(null);
+        setCategoryName(null);
+      }
+      await refresh();
+    } catch (e) {
+      toast(String(e), "err");
+    }
+  };
+
+  /** 同级上移 / 下移：只重排这一层，动完立刻落盘 */
+  const moveCat = async (id: number, dir: -1 | 1) => {
+    const list = siblingsOf(id);
+    const from = list.findIndex((c) => c.id === id);
+    const to = from + dir;
+    if (from < 0 || to < 0 || to >= list.length) return;
+    const next = [...list];
+    [next[from], next[to]] = [next[to], next[from]];
+    try {
+      await invoke("fav_reorder_categories", {
+        orders: next.map((c, i) => [c.id, i]),
+      });
+      await refresh();
+    } catch (e) {
+      toast(String(e), "err");
+    }
+  };
+
+  // ── 条目分类选择器 ──
+  const openPicker = (item: FavoriteRow) => {
+    setPickerFor(item);
+    const ids = (item.tags || [])
+      .map((name) => cats.find((c) => c.name === name)?.id)
+      .filter((v): v is number => typeof v === "number");
+    setPickerSelected(ids);
+  };
+
+  const submitPicker = async () => {
+    if (!pickerFor) return;
+    try {
+      await invoke("fav_set_item_categories", { id: pickerFor.id, categoryIds: pickerSelected });
+      setPickerFor(null);
+      await refresh();
+    } catch (e) {
+      toast(String(e), "err");
+    }
+  };
 
   useEffect(() => {
     void refresh().catch((e) => toast(String(e), "err"));
@@ -379,7 +552,7 @@ export default function FavoritesPanel() {
       setTokenOpen(true);
       return;
     }
-    setBusy("import");
+    startTask("github");
     try {
       const result = await invoke<ImportResult>("fav_import_github", { maxPages: null });
       await refresh();
@@ -398,8 +571,8 @@ export default function FavoritesPanel() {
     } catch (e) {
       toast(t("favorites.importFail", { err: String(e) }), "err");
     } finally {
-      setBusy(null);
-      setProgress(null);
+      endTask("github");
+      clearProgress("github");
     }
   };
 
@@ -439,7 +612,7 @@ export default function FavoritesPanel() {
   };
 
   const runImportBili = async () => {
-    setBusy("bili");
+    startTask("bilibili");
     try {
       const result = await invoke<ImportResult>("fav_import_bilibili");
       await refresh();
@@ -456,8 +629,8 @@ export default function FavoritesPanel() {
       // Cookie 失效是最常见原因：直接把配置弹窗递上去
       if (!biliConfigured) setCookieOpen(true);
     } finally {
-      setBusy(null);
-      setProgress(null);
+      endTask("bilibili");
+      clearProgress("bilibili");
     }
   };
 
@@ -467,7 +640,7 @@ export default function FavoritesPanel() {
       setZhihuCookieOpen(true);
       return;
     }
-    setBusy("zhihu");
+    startTask("zhihu");
     try {
       const result = await invoke<ImportResult>("fav_import_zhihu");
       await refresh();
@@ -498,13 +671,40 @@ export default function FavoritesPanel() {
       // Cookie 失效是最常见原因：把配置弹窗递上去
       setZhihuCookieOpen(true);
     } finally {
-      setBusy(null);
-      setProgress(null);
+      endTask("zhihu");
+      clearProgress("zhihu");
+    }
+  };
+
+  /** 浏览器收藏夹导入：书签目录会按层级建成多级分类（可反复导入，靠 URL 去重） */
+  const runImportBookmarks = async (browser: "edge" | "chrome") => {
+    startTask("bookmark");
+    try {
+      const result = await invoke<{
+        imported: number;
+        folders: number;
+        skipped: number;
+        file: string;
+      }>("fav_import_bookmarks", { browser, customPath: null });
+      await refresh();
+      toast(
+        t("favorites.importBookmarksDone", {
+          browser: browser === "edge" ? "Edge" : "Chrome",
+          count: result.imported,
+          folders: result.folders,
+        }),
+        "ok",
+      );
+    } catch (e) {
+      toast(t("favorites.importFail", { err: String(e) }), "err");
+    } finally {
+      endTask("bookmark");
+      clearProgress("bookmark");
     }
   };
 
   const runClassify = async () => {
-    setBusy("classify");
+    startTask("classify");
     try {
       const result = await invoke<ClassifyResult>("fav_classify", {
         providerId: providerId || null,
@@ -534,13 +734,13 @@ export default function FavoritesPanel() {
     } catch (e) {
       toast(t("favorites.classifyFail", { err: String(e) }), "err");
     } finally {
-      setBusy(null);
-      setProgress(null);
+      endTask("classify");
+      clearProgress("classify");
     }
   };
 
   const runCheck = async () => {
-    setBusy("check");
+    startTask("check");
     try {
       const result = await invoke<CheckResult>("fav_check_gone", { all: false });
       await refresh();
@@ -561,22 +761,8 @@ export default function FavoritesPanel() {
     } catch (e) {
       toast(t("favorites.checkFail", { err: String(e) }), "err");
     } finally {
-      setBusy(null);
-      setProgress(null);
-    }
-  };
-
-  const submitTags = async (id: number) => {
-    const tags = editingTags
-      .split(/[,，]/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    try {
-      await invoke("fav_set_tags", { id, tags });
-      setEditingId(null);
-      await refresh();
-    } catch (e) {
-      toast(t("favorites.tagFail", { err: String(e) }), "err");
+      endTask("check");
+      clearProgress("check");
     }
   };
 
@@ -606,18 +792,20 @@ export default function FavoritesPanel() {
    * （导入的一页 / 归类的一批 / 检测的一条），所以提示语要说清是「下一轮才停」，
    * 否则用户看界面没立刻反应会以为按钮坏了、再点几次。
    */
-  const requestStop = async () => {
+  const requestStop = async (task?: FavTask) => {
     try {
-      await invoke("fav_cancel");
+      await invoke("fav_cancel", { task: task ?? null });
       toast(t("favorites.stopRequested"), "info");
     } catch (e) {
       toast(String(e), "err");
     }
   };
 
-  /** 只在对应任务运行时出现的「停止」链接。 */
-  const stopLink = (active: boolean) =>
-    active ? <LinkButton label={t("favorites.stop")} danger onClick={() => void requestStop()} /> : null;
+  /** 只在对应任务运行时出现的「停止」链接（导入各自停各自的，互不牵连）。 */
+  const stopLink = (task: FavTask) =>
+    running.includes(task) ? (
+      <LinkButton label={t("favorites.stop")} danger onClick={() => void requestStop(task)} />
+    ) : null;
 
   /** 凭证按钮的悬停提示：有告警时把原因说清楚，别让用户猜角标是什么意思。 */
   const credTitle = (sourceKey: string, fallback: string) => {
@@ -641,11 +829,12 @@ export default function FavoritesPanel() {
           <span className="text-[11px] text-slate-200 font-medium">GitHub</span>
           <LinkButton
             label={t("favorites.import")}
-            busy={busy === "import"}
-            disabled={busy !== null}
+            busy={running.includes("github")}
+            disabled={running.includes("github") || processRunning}
+            title={processRunning ? t("favorites.importBlockedByProcess") : undefined}
             onClick={() => void runImport()}
           />
-          {stopLink(busy === "import")}
+          {stopLink("github")}
           <KeyLink
             label={t("favorites.key")}
             configured={tokenConfigured}
@@ -660,16 +849,34 @@ export default function FavoritesPanel() {
 
         <Divider />
 
+        {/* 浏览器收藏夹（从启动模块搬来）：书签目录会建成多级分类 */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-slate-200 font-medium">{t("favorites.browserLabel")}</span>
+          {(["edge", "chrome"] as const).map((b) => (
+            <LinkButton
+              key={b}
+              label={b === "edge" ? "Edge" : "Chrome"}
+              busy={running.includes("bookmark")}
+              disabled={running.includes("bookmark") || processRunning}
+              title={processRunning ? t("favorites.importBlockedByProcess") : t("favorites.importBookmarksHint")}
+              onClick={() => void runImportBookmarks(b)}
+            />
+          ))}
+        </div>
+
+        <Divider />
+
         {/* B站收藏 */}
         <div className="flex items-center gap-1.5">
           <span className="text-[11px] text-slate-200 font-medium">B站</span>
           <LinkButton
             label={t("favorites.import")}
-            busy={busy === "bili"}
-            disabled={busy !== null}
+            busy={running.includes("bilibili")}
+            disabled={running.includes("bilibili") || processRunning}
+            title={processRunning ? t("favorites.importBlockedByProcess") : undefined}
             onClick={() => (biliConfigured ? void runImportBili() : setCookieOpen(true))}
           />
-          {stopLink(busy === "bili")}
+          {stopLink("bilibili")}
           <KeyLink
             label={t("favorites.key")}
             configured={biliConfigured}
@@ -691,12 +898,16 @@ export default function FavoritesPanel() {
           <span className="text-[11px] text-slate-200 font-medium">知乎</span>
           <LinkButton
             label={t("favorites.import")}
-            busy={busy === "zhihu"}
-            disabled={busy !== null}
-            title={t("favorites.zhihuImportHint")}
+            busy={running.includes("zhihu")}
+            disabled={running.includes("zhihu") || processRunning}
+            title={
+              processRunning
+                ? t("favorites.importBlockedByProcess")
+                : t("favorites.zhihuImportHint")
+            }
             onClick={() => void runImportZhihu()}
           />
-          {stopLink(busy === "zhihu")}
+          {stopLink("zhihu")}
           {/* 密钥**永远打开弹窗**（回显已存的 Cookie）：之前配过就直接跑的写法
               让用户再也进不去弹窗，改不了一份过期 Cookie。 */}
           <KeyLink
@@ -763,21 +974,24 @@ export default function FavoritesPanel() {
           </select>
           <LinkButton
             label={t("favorites.classify")}
-            busy={busy === "classify"}
-            disabled={busy !== null || providers.length === 0}
+            busy={running.includes("classify")}
+            disabled={running.length > 0 || providers.length === 0}
+            title={importRunning ? t("favorites.processBlockedByImport") : undefined}
             onClick={() => void runClassify()}
           />
           <LinkButton
             label={t("favorites.check")}
-            busy={busy === "check"}
-            disabled={busy !== null}
+            busy={running.includes("check")}
+            disabled={running.length > 0}
+            title={importRunning ? t("favorites.processBlockedByImport") : undefined}
             onClick={() => void runCheck()}
           />
           {/* AI 检索：用自然语言说需求，agent 在本地收藏库里找并整理成清单 */}
           <LinkButton
             label={t("favorites.aiSearch")}
             busy={aiBusy}
-            disabled={busy !== null || providers.length === 0}
+            disabled={running.length > 0 || providers.length === 0}
+            title={importRunning ? t("favorites.processBlockedByImport") : undefined}
             onClick={() => {
               setAiError(null);
               setAiResult("");
@@ -785,7 +999,14 @@ export default function FavoritesPanel() {
               setAiOpen(true);
             }}
           />
-          {stopLink(busy === "classify" || busy === "check")}
+          {/* 加工类同一时刻只可能有一个在跑，停它即可（不传 task 时会停全部） */}
+          {processRunning && (
+            <LinkButton
+              label={t("favorites.stop")}
+              danger
+              onClick={() => void requestStop(running.find((x) => !isImportTask(x)))}
+            />
+          )}
         </div>
 
         <div className="ml-auto flex items-center gap-2">
@@ -836,100 +1057,103 @@ export default function FavoritesPanel() {
         </div>
       </div>
 
-      {/* 实时进度：导入 / 归类 / 失效检测三类共用一条进度条。
-          只按 stage 过滤**不**看 busy：检测失效在 picker 那侧没有 busy 之外的信号，
-          而导入/归类结束时后端会发 done=true，前端在 finally 里清掉即可。 */}
-      {progress && (
-        <div className="glass-panel px-3 py-2 space-y-1.5">
-          <div className="flex items-center gap-2 text-[10px] text-slate-300 flex-wrap">
-            <RefreshCw className="w-3 h-3 animate-spin text-[var(--module-accent)]" />
-            {progress.stage === "check" ? (
-              <>
-                <span>{t("favorites.checkProgress")}</span>
-                <span>
-                  {t("favorites.progressChecked", {
-                    checked: progress.checked ?? 0,
-                    total: progress.checkTotal ?? 0,
-                  })}
-                </span>
-                <span className="text-slate-500 truncate max-w-[260px]">
-                  {progress.message ?? ""}
-                </span>
-              </>
-            ) : progress.stage === "import" ? (
-              <>
-                <span>
-                  {SOURCE_LABELS[progress.source ?? ""] ?? progress.source ?? ""}
-                  {progress.folder ? ` · ${progress.folder}` : ""}
-                  {progress.message ? ` · ${progress.message}` : ""}
-                </span>
-                <span>{t("favorites.progressFetched", { fetched: progress.fetched ?? 0 })}</span>
-                <span className="text-emerald-400/80">
-                  {t("favorites.progressAdded", { added: progress.added ?? 0 })}
-                </span>
-                <span className="text-amber-400/80">
-                  {t("favorites.progressUpdated", { updated: progress.updated ?? 0 })}
-                </span>
-                <span className="text-slate-500">
-                  {t("favorites.progressSkipped", { skipped: progress.skipped ?? 0 })}
-                </span>
-              </>
-            ) : (
-              <>
-                <span>{progress.message}</span>
-                <span>
-                  {t("favorites.progressClassified", {
-                    classified: progress.classified ?? 0,
-                    remaining: progress.remaining ?? 0,
-                  })}
-                </span>
-                <span className="text-slate-400">
-                  {t("favorites.progressTags", { tags: progress.tagsWritten ?? 0 })}
-                </span>
-              </>
-            )}
-          </div>
-          <div className="h-1 rounded bg-white/5 overflow-hidden">
-            {progress.stage === "check" && (progress.checkTotal ?? 0) > 0 ? (
-              <div
-                className="h-full bg-[var(--module-accent)] transition-all duration-300"
-                style={{
-                  width: `${Math.min(
-                    100,
-                    ((progress.checked ?? 0) / (progress.checkTotal ?? 1)) * 100,
-                  )}%`,
-                }}
-              />
-            ) : progress.stage === "classify" &&
-            (progress.classified ?? 0) + (progress.remaining ?? 0) > 0 ? (
-              <div
-                className="h-full bg-[var(--module-accent)] transition-all duration-300"
-                style={{
-                  width: `${Math.min(
-                    100,
-                    ((progress.classified ?? 0) /
-                      ((progress.classified ?? 0) + (progress.remaining ?? 0))) *
-                      100,
-                  )}%`,
-                }}
-              />
-            ) : progress.stage === "import" &&
-              (progress.folderTotal ?? 0) > 0 &&
-              (progress.folderFetched ?? 0) > 0 ? (
-              // 知乎：服务端给了收藏夹总数（Totals），可以显示真实百分比
-              <div
-                className="h-full bg-[var(--module-accent)] transition-all duration-300"
-                style={{
-                  width: `${Math.min(
-                    100,
-                    ((progress.folderFetched ?? 0) / (progress.folderTotal ?? 1)) * 100,
-                  )}%`,
-                }}
-              />
-            ) : (
-              <div className="h-full w-1/3 bg-[var(--module-accent)] animate-pulse" />
-            )}
-          </div>
+      {/* 实时进度：**每个在跑的任务一行** —— 三个导入可以同时跑，各显示各的，
+          用一条进度条会让后到的事件盖掉前一个。任务结束由 done 事件（或 finally）清掉。 */}
+      {progressRows.length > 0 && (
+        <div className="space-y-1">
+          {progressRows.map(([key, p]) => (
+            <div key={key} className="glass-panel px-3 py-2 space-y-1.5">
+              <div className="flex items-center gap-2 text-[10px] text-slate-300 flex-wrap">
+                <RefreshCw className="w-3 h-3 animate-spin text-[var(--module-accent)]" />
+                {p.stage === "check" ? (
+                  <>
+                    <span>{t("favorites.checkProgress")}</span>
+                    <span>
+                      {t("favorites.progressChecked", {
+                        checked: p.checked ?? 0,
+                        total: p.checkTotal ?? 0,
+                      })}
+                    </span>
+                    <span className="text-slate-500 truncate max-w-[260px]">
+                      {p.message ?? ""}
+                    </span>
+                  </>
+                ) : p.stage === "import" ? (
+                  <>
+                    <span>
+                      {SOURCE_LABELS[p.source ?? ""] ?? p.source ?? ""}
+                      {p.folder ? ` · ${p.folder}` : ""}
+                      {p.message ? ` · ${p.message}` : ""}
+                    </span>
+                    <span>{t("favorites.progressFetched", { fetched: p.fetched ?? 0 })}</span>
+                    <span className="text-emerald-400/80">
+                      {t("favorites.progressAdded", { added: p.added ?? 0 })}
+                    </span>
+                    <span className="text-amber-400/80">
+                      {t("favorites.progressUpdated", { updated: p.updated ?? 0 })}
+                    </span>
+                    <span className="text-slate-500">
+                      {t("favorites.progressSkipped", { skipped: p.skipped ?? 0 })}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span>{p.message}</span>
+                    <span>
+                      {t("favorites.progressClassified", {
+                        classified: p.classified ?? 0,
+                        remaining: p.remaining ?? 0,
+                      })}
+                    </span>
+                    <span className="text-slate-400">
+                      {t("favorites.progressTags", { tags: p.tagsWritten ?? 0 })}
+                    </span>
+                  </>
+                )}
+              </div>
+              <div className="h-1 rounded bg-white/5 overflow-hidden">
+                {p.stage === "check" && (p.checkTotal ?? 0) > 0 ? (
+                  <div
+                    className="h-full bg-[var(--module-accent)] transition-all duration-300"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        ((p.checked ?? 0) / (p.checkTotal ?? 1)) * 100,
+                      )}%`,
+                    }}
+                  />
+                ) : p.stage === "classify" &&
+                  (p.classified ?? 0) + (p.remaining ?? 0) > 0 ? (
+                  <div
+                    className="h-full bg-[var(--module-accent)] transition-all duration-300"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        ((p.classified ?? 0) /
+                          ((p.classified ?? 0) + (p.remaining ?? 0))) *
+                          100,
+                      )}%`,
+                    }}
+                  />
+                ) : p.stage === "import" &&
+                  (p.folderTotal ?? 0) > 0 &&
+                  (p.folderFetched ?? 0) > 0 ? (
+                  // 知乎：服务端给了收藏夹总数（Totals），可以显示真实百分比
+                  <div
+                    className="h-full bg-[var(--module-accent)] transition-all duration-300"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        ((p.folderFetched ?? 0) / (p.folderTotal ?? 1)) * 100,
+                      )}%`,
+                    }}
+                  />
+                ) : (
+                  <div className="h-full w-1/3 bg-[var(--module-accent)] animate-pulse" />
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -940,9 +1164,9 @@ export default function FavoritesPanel() {
           style={{ width: leftWidth }}
         >
           <button
-            onClick={() => setTag(null)}
+            onClick={() => { setCategoryId(null); setCategoryName(null); }}
             className={`w-full text-left px-2 py-1 rounded text-[11px] cursor-pointer transition-colors ${
-              tag === null
+              categoryId === null
                 ? "bg-[var(--module-accent-soft)] text-white"
                 : "text-slate-400 hover:bg-white/5"
             }`}
@@ -950,23 +1174,32 @@ export default function FavoritesPanel() {
             {t("favorites.allTags")}
             <span className="float-right text-slate-500">{stats?.total ?? 0}</span>
           </button>
-          {(stats?.tags || []).map(([name, count]) => (
-            <button
-              key={name}
-              onClick={() => setTag(name)}
-              className={`w-full text-left px-2 py-1 rounded text-[11px] cursor-pointer transition-colors truncate ${
-                tag === name
-                  ? "bg-[var(--module-accent-soft)] text-white"
-                  : "text-slate-400 hover:bg-white/5"
-              }`}
-              title={name}
-            >
-              <Tag className="w-3 h-3 inline mr-1 opacity-70" />
-              {name}
-              <span className="float-right text-slate-500">{count}</span>
-            </button>
-          ))}
-          {(stats?.tags || []).length === 0 && (
+
+          {/* 分类树：可折叠，右键出菜单（新建子分类 / 重命名 / 上移下移 / 删除） */}
+          <CategoryTree
+            nodes={cats}
+            depth={0}
+            expanded={expandedCats}
+            selectedId={categoryId}
+            onToggle={(id) => setExpandedCats((s) => {
+              const next = new Set(s);
+              if (next.has(id)) next.delete(id); else next.add(id);
+              return next;
+            })}
+            onSelect={(id, name) => { setCategoryId(id); setCategoryName(name); }}
+            onContextMenu={(id, name, x, y) => setCatMenu({ id, name, x, y })}
+          />
+
+          <button
+            onClick={() => void createCat(null)}
+            className="w-full text-left px-2 py-1 mt-1 rounded text-[10px] text-slate-500 hover:text-slate-200 hover:bg-white/5 cursor-pointer"
+            title={t("favorites.newCategory")}
+          >
+            <Plus className="w-3 h-3 inline mr-1" />
+            {t("favorites.newCategory")}
+          </button>
+
+          {cats.length === 0 && (
             <p className="text-[10px] text-slate-500 px-2 py-1 leading-snug">
               {t("favorites.noTagsHint")}
             </p>
@@ -1048,46 +1281,31 @@ export default function FavoritesPanel() {
                       </p>
                     )}
 
-                    {editingId === item.id ? (
-                      <div className="flex items-center gap-1 mt-1">
-                        <input
-                          value={editingTags}
-                          onChange={(e) => setEditingTags(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") void submitTags(item.id);
-                            if (e.key === "Escape") setEditingId(null);
-                          }}
-                          autoFocus
-                          placeholder={t("favorites.tagPlaceholder")}
-                          className="bg-black/30 border border-white/10 rounded px-1.5 py-0.5 text-[10px] text-slate-100 outline-none w-64"
-                        />
-                        <SharedButton className="!h-6 !px-2 !text-[10px]" onClick={() => void submitTags(item.id)}>
-                          {t("common.save")}
-                        </SharedButton>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1 mt-1 flex-wrap">
-                        {item.tags.map((name) => (
+                    <div className="flex items-center gap-1 mt-1 flex-wrap">
+                      {item.tags.map((name) => {
+                        const hit = findCatByName(name);
+                        return (
                           <button
                             key={name}
-                            onClick={() => setTag(name)}
+                            onClick={() => {
+                              setCategoryId(hit?.id ?? null);
+                              setCategoryName(hit ? hit.name : name);
+                            }}
                             className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/5 text-slate-300 hover:bg-white/10 cursor-pointer"
+                            title={hit ? t("favorites.filterByCategory") : name}
                           >
                             {name}
                           </button>
-                        ))}
-                        <button
-                          onClick={() => {
-                            setEditingId(item.id);
-                            setEditingTags(item.tags.join(", "));
-                          }}
-                          className="p-0.5 rounded text-slate-600 hover:text-slate-300 cursor-pointer opacity-0 group-hover:opacity-100"
-                          title={t("favorites.editTags")}
-                        >
-                          <Pencil className="w-2.5 h-2.5" />
-                        </button>
-                      </div>
-                    )}
+                        );
+                      })}
+                      <button
+                        onClick={() => openPicker(item)}
+                        className="p-0.5 rounded text-slate-600 hover:text-slate-300 cursor-pointer opacity-0 group-hover:opacity-100"
+                        title={t("favorites.editTags")}
+                      >
+                        <Pencil className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-0.5">
@@ -1184,6 +1402,16 @@ export default function FavoritesPanel() {
           <span className="text-rose-400/80">
             {t("favorites.goneCount")}: {goneCount}
           </span>
+        )}
+        {/* 当前分类筛选（含子分类）：点了分类树就得让用户知道自己「在哪一层」 */}
+        {categoryId != null && categoryName && (
+          <button
+            onClick={() => { setCategoryId(null); setCategoryName(null); }}
+            className="px-1.5 py-0.5 rounded-full bg-[var(--module-accent-soft)] text-[var(--module-accent)] cursor-pointer"
+            title={t("favorites.clearCategoryFilter")}
+          >
+            {categoryName} ✕
+          </button>
         )}
         <span className="ml-auto">{t("favorites.readonlyHint")}</span>
       </div>
@@ -1298,7 +1526,182 @@ export default function FavoritesPanel() {
           </div>
         </div>
       )}
+
+      {/* 分类右键菜单 */}
+      {catMenu && (
+        <div
+          className="fixed z-[300] bg-surface-panel border border-white/15 rounded-lg shadow-2xl py-1 text-[11px] min-w-[140px]"
+          style={{ left: catMenu.x, top: catMenu.y }}
+          onMouseLeave={() => setCatMenu(null)}
+        >
+          <div className="px-2 py-1 text-slate-500 truncate border-b border-white/5 mb-1">
+            {catMenu.name}
+          </div>
+          <button className="w-full text-left px-2 py-1 hover:bg-white/10 text-slate-200 cursor-pointer"
+            onClick={() => { const id = catMenu.id; setCatMenu(null); void createCat(id); }}>
+            {t("favorites.newSubCategory")}
+          </button>
+          {catMenu.id != null && (
+            <>
+              <button className="w-full text-left px-2 py-1 hover:bg-white/10 text-slate-200 cursor-pointer"
+                onClick={() => { const id = catMenu.id!; setCatMenu(null); void renameCat(id); }}>
+                {t("favorites.renameCategory")}
+              </button>
+              <button className="w-full text-left px-2 py-1 hover:bg-white/10 text-slate-200 cursor-pointer"
+                onClick={() => { const id = catMenu.id!; setCatMenu(null); void moveCat(id, -1); }}>
+                {t("favorites.moveUp")}
+              </button>
+              <button className="w-full text-left px-2 py-1 hover:bg-white/10 text-slate-200 cursor-pointer"
+                onClick={() => { const id = catMenu.id!; setCatMenu(null); void moveCat(id, 1); }}>
+                {t("favorites.moveDown")}
+              </button>
+              <button className="w-full text-left px-2 py-1 hover:bg-rose-500/15 text-rose-300 cursor-pointer"
+                onClick={() => { const id = catMenu.id!; setCatMenu(null); void deleteCat(id); }}>
+                {t("favorites.deleteCategory")}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* 条目分类选择器：勾选式，支持多级 */}
+      {pickerFor && (
+        <div className="fixed inset-0 z-[300] modal-mask bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-surface-panel border border-white/15 rounded-2xl p-4 shadow-2xl space-y-3 text-xs">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white">{t("favorites.pickCategoryTitle")}</h3>
+              <button onClick={() => setPickerFor(null)} className="text-slate-400 hover:text-white p-1">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-[10px] text-slate-500 truncate">{pickerFor.title}</p>
+            <div className="max-h-64 overflow-y-auto space-y-0.5">
+              {cats.length === 0 && (
+                <p className="text-[11px] text-slate-500">{t("favorites.noTagsHint")}</p>
+              )}
+              <CategoryCheckTree
+                nodes={cats}
+                depth={0}
+                selected={pickerSelected}
+                onToggle={(id) => setPickerSelected((s) =>
+                  s.includes(id) ? s.filter((x) => x !== id) : [...s, id]
+                )}
+              />
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <SharedButton className="!h-7 !px-3 !text-[11px]" onClick={() => void submitPicker()}>
+                {t("common.save")}
+              </SharedButton>
+              <button onClick={() => setPickerFor(null)}
+                className="px-3 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[11px] text-slate-300 cursor-pointer">
+                {t("common.cancel")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+/** 选择器里的勾选树（缩进 + 复选框）。 */
+function CategoryCheckTree({
+  nodes, depth, selected, onToggle,
+}: {
+  nodes: FavoriteCategoryNode[];
+  depth: number;
+  selected: number[];
+  onToggle: (id: number) => void;
+}) {
+  return (
+    <>
+      {nodes.map((c) => (
+        <div key={c.id}>
+          <label
+            className="flex items-center gap-1.5 py-1 rounded hover:bg-white/5 cursor-pointer"
+            style={{ paddingLeft: depth * 12 }}
+          >
+            <input
+              type="checkbox"
+              checked={selected.includes(c.id)}
+              onChange={() => onToggle(c.id)}
+              className="accent-[var(--module-accent)] cursor-pointer"
+            />
+            <span className="text-[11px] text-slate-200 truncate">{c.name}</span>
+            <span className="ml-auto text-[10px] text-slate-500">{c.count}</span>
+          </label>
+          {c.children.length > 0 && (
+            <CategoryCheckTree
+              nodes={c.children}
+              depth={depth + 1}
+              selected={selected}
+              onToggle={onToggle}
+            />
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** 分类树（递归）：缩进表示层级，箭头展开/折叠，右键出操作菜单。
+ *  操作逻辑对齐启动模块的分类：点选筛选（含子分类）、右键改名/新建子分类/上下移/删除。 */
+function CategoryTree({
+  nodes, depth, expanded, selectedId, onToggle, onSelect, onContextMenu,
+}: {
+  nodes: FavoriteCategoryNode[];
+  depth: number;
+  expanded: Set<number>;
+  selectedId: number | null;
+  onToggle: (id: number) => void;
+  onSelect: (id: number, name: string) => void;
+  onContextMenu: (id: number, name: string, x: number, y: number) => void;
+}) {
+  return (
+    <>
+      {nodes.map((c) => {
+        const hasKids = c.children.length > 0;
+        const open = expanded.has(c.id);
+        return (
+          <div key={c.id}>
+            <div
+              className={`flex items-center gap-0.5 rounded text-[11px] cursor-pointer transition-colors ${
+                selectedId === c.id
+                  ? "bg-[var(--module-accent-soft)] text-white"
+                  : "text-slate-400 hover:bg-white/5"
+              }`}
+              style={{ paddingLeft: 4 + depth * 10 }}
+              onClick={() => onSelect(c.id, c.name)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                onContextMenu(c.id, c.name, e.clientX, e.clientY);
+              }}
+              title={c.name}
+            >
+              <button
+                onClick={(e) => { e.stopPropagation(); if (hasKids) onToggle(c.id); }}
+                className={`w-3 shrink-0 text-slate-600 hover:text-slate-300 ${hasKids ? "cursor-pointer" : "invisible"}`}
+              >
+                {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+              </button>
+              <span className="truncate flex-1 py-1">{c.name}</span>
+              <span className="pr-1 text-slate-500">{c.total}</span>
+            </div>
+            {open && hasKids && (
+              <CategoryTree
+                nodes={c.children}
+                depth={depth + 1}
+                expanded={expanded}
+                selectedId={selectedId}
+                onToggle={onToggle}
+                onSelect={onSelect}
+                onContextMenu={onContextMenu}
+              />
+            )}
+          </div>
+        );
+      })}
+    </>
   );
 }
 

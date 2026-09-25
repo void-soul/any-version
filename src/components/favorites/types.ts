@@ -22,13 +22,29 @@ export interface FavoriteRow {
   tags: string[];
 }
 
+/** 分类树节点（后端 `CategoryNode`，camelCase） */
+export interface FavoriteCategoryNode {
+  id: number;
+  parentId: number | null;
+  name: string;
+  sortOrder: number;
+  /** 直接挂在本分类下的条目数 */
+  count: number;
+  /** 含所有子孙分类的条目数 */
+  total: number;
+  children: FavoriteCategoryNode[];
+}
+
 export interface FavoriteStats {
   total: number;
   unclassified: number;
   gone: number;
   /** 各来源条数（后端 camelCase 序列化，故不是 by_source） */
   bySource: [string, number][];
+  /** 兼容字段：扁平分类名 → 条数 */
   tags: [string, number][];
+  /** 分类树：侧栏按它渲染层级 */
+  categories?: FavoriteCategoryNode[];
 }
 
 /** 收藏模块界面设置（后端 `favorites_settings.json`） */
@@ -72,9 +88,12 @@ export interface CheckResult {
   cancelled: boolean;
 }
 
-/** 后端实时进度事件（favorites-progress）：导入 / 归类 / 失效检测共用一个载荷 */
+/** 后端实时进度事件（favorites-progress）：导入 / 归类 / 失效检测共用一个载荷。
+ *  多个导入可以同时跑，所以带 task 用于分行展示，否则后一个会盖掉前一个。 */
 export interface FavoritesProgress {
   stage: "import" | "classify" | "check";
+  /** github | bilibili | zhihu | classify | check */
+  task?: string;
   source?: string | null;
   folder?: string | null;
   message?: string | null;
@@ -127,6 +146,8 @@ export const SOURCE_LABELS: Record<string, string> = {
   github: "GitHub",
   bilibili: "B站",
   zhihu: "知乎",
+  // 浏览器收藏夹（Edge / Chrome）导入的条目
+  bookmark: "浏览器",
 };
 
 /** 状态徽标样式：失效最醒目，未探测最弱 */

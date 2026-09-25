@@ -16,6 +16,7 @@ pub mod bilibili;
 pub mod zhihu;
 pub mod commands;
 pub mod agent;
+pub mod bookmarks;
 
 pub use commands::*;
 /// 界面设置命令（宽度 / 上次用的模型）与 db 命令平级导出，lib.rs 注册处无需带子模块名。

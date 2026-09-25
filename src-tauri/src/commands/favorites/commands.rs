@@ -2,7 +2,7 @@
 //!
 //! 全部**只读**：不调用任何平台的写入接口。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -14,8 +14,106 @@ use super::classify::{self, BATCH_SIZE};
 use super::db::{self, NewFavorite};
 use super::github;
 
-/// 用户点「取消导入」后，当前分页循环会在下一页开始前退出。
-static CANCEL: AtomicBool = AtomicBool::new(false);
+// ─── 任务调度：谁可以和谁同时跑 ───
+//
+// 三个平台的导入各拉各的接口、互不相干，**允许同时跑**（用户点三个「导入」就该三个一起跑）；
+// 但「导入」与「加工」（AI 归类 / 失效检测）必须互斥：加工要扫全库挑条目，
+// 和正在写入的导入抢同一份数据，也会把刚导入、还没稳定的条目算进去。
+//
+// 因此这里维护两张表（都按**任务名**分开记，不再是一个全局 bool）：
+// - RUNNING：当前正在跑的任务，用于互斥判定；
+// - CANCEL：用户点过「停止」的任务，用于循环里的中断检查。
+//
+// 用一张全局 bool 的时代，任一任务入口都会把它清掉 —— 并发下这等于顺手抹掉别人的
+// 停止请求；点「停止 GitHub」也会把同时跑的 B站/知乎一起停掉。
+
+const TASK_GITHUB: &str = "github";
+const TASK_BILIBILI: &str = "bilibili";
+const TASK_ZHIHU: &str = "zhihu";
+const TASK_CLASSIFY: &str = "classify";
+const TASK_CHECK: &str = "check";
+const ALL_TASKS: [&str; 5] = [TASK_GITHUB, TASK_BILIBILI, TASK_ZHIHU, TASK_CLASSIFY, TASK_CHECK];
+
+/// 当前正在跑的任务名（同一时刻最多：三个导入，或单独一个加工任务）。
+static RUNNING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// 被用户点「停止」的任务名。
+static CANCEL: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// 锁被毒化时照样取内容：这里存的是任务名列表，坏掉一个也不会让收藏模块不可用。
+fn tasks_lock<'a>(
+    g: std::sync::PoisonError<std::sync::MutexGuard<'a, Vec<String>>>,
+) -> std::sync::MutexGuard<'a, Vec<String>> {
+    g.into_inner()
+}
+
+fn is_import_task(task: &str) -> bool {
+    matches!(task, TASK_GITHUB | TASK_BILIBILI | TASK_ZHIHU)
+}
+
+fn task_label(task: &str) -> &'static str {
+    match task {
+        TASK_GITHUB => "GitHub 导入",
+        TASK_BILIBILI => "B站导入",
+        TASK_ZHIHU => "知乎导入",
+        TASK_CLASSIFY => "AI 归类",
+        TASK_CHECK => "失效检测",
+        _ => "其他任务",
+    }
+}
+
+/// 两个任务能否同时跑：只有「导入 × 导入」可以，其余一律互斥（含同名任务自身）。
+fn tasks_conflict(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    !(is_import_task(a) && is_import_task(b))
+}
+
+/// 任务开工：与在跑的任务互斥时直接报错，界面上按钮也是灰的，双保险。
+fn begin_task(task: &str) -> Result<(), String> {
+    let mut g = RUNNING.lock().unwrap_or_else(tasks_lock);
+    if let Some(other) = g.iter().find(|t| tasks_conflict(task, t)) {
+        return Err(format!(
+            "「{}」正在运行，请等它结束（或点「停止」）后再开始",
+            task_label(other)
+        ));
+    }
+    g.push(task.to_string());
+    Ok(())
+}
+
+/// 任务收工（成功失败都要调，否则后面的任务会被永久挡住）。
+fn end_task(task: &str) {
+    let mut g = RUNNING.lock().unwrap_or_else(tasks_lock);
+    if let Some(pos) = g.iter().position(|t| t == task) {
+        g.remove(pos);
+    }
+}
+
+/// 清掉本任务的停止标记：上一次点过停止，不该影响这一次。
+fn reset_cancel(task: &str) {
+    let mut g = CANCEL.lock().unwrap_or_else(tasks_lock);
+    g.retain(|t| t != task);
+}
+
+/// 用户是否点了本任务的「停止」。
+fn is_cancelled(task: &str) -> bool {
+    CANCEL.lock().unwrap_or_else(tasks_lock).iter().any(|t| t == task)
+}
+
+/// 请求停止：`task` 为 None 时停止所有任务（前端的兜底用法）。
+fn request_cancel(task: Option<&str>) {
+    let mut g = CANCEL.lock().unwrap_or_else(tasks_lock);
+    let targets: Vec<&str> = match task {
+        Some(t) if !t.trim().is_empty() => vec![t],
+        _ => ALL_TASKS.to_vec(),
+    };
+    for t in targets {
+        if !g.iter().any(|x| x == t) {
+            g.push(t.to_string());
+        }
+    }
+}
 
 /// 单次导入最多翻多少页：star 上千时防止一次跑太久（每页 100 条）。
 const MAX_PAGES: usize = 100;
@@ -29,6 +127,9 @@ const MAX_PAGES: usize = 100;
 struct FavoritesProgress {
     /// import | classify | check
     stage: &'static str,
+    /// 任务名（github / bilibili / zhihu / classify / check）：
+    /// 多个导入会同时发进度，前端按它分行展示，否则后一个会盖掉前一个。
+    task: String,
     source: Option<String>,
     /// 当前正在处理的收藏夹 / 阶段说明
     folder: Option<String>,
@@ -65,6 +166,8 @@ fn import_progress(
 ) -> FavoritesProgress {
     FavoritesProgress {
         stage,
+        // 导入阶段任务名就是来源名（github / bilibili / zhihu）
+        task: source.to_string(),
         source: Some(source.to_string()),
         folder,
         message,
@@ -112,9 +215,19 @@ pub async fn fav_import_github(
     app: tauri::AppHandle,
     max_pages: Option<usize>,
 ) -> Result<ImportResult, String> {
+    begin_task(TASK_GITHUB)?;
+    let out = import_github_inner(app, max_pages).await;
+    end_task(TASK_GITHUB);
+    out
+}
+
+async fn import_github_inner(
+    app: tauri::AppHandle,
+    max_pages: Option<usize>,
+) -> Result<ImportResult, String> {
     let token = favorites_github_token()?;
 
-    CANCEL.store(false, Ordering::SeqCst);
+    reset_cancel(TASK_GITHUB);
     let login = github::fetch_user_login(&token).await?;
 
     let mut url = github::starred_url(&login);
@@ -126,7 +239,7 @@ pub async fn fav_import_github(
 
     let mut page_no = 0usize;
     for _ in 0..limit {
-        if CANCEL.load(Ordering::SeqCst) {
+        if is_cancelled(TASK_GITHUB) {
             result.cancelled = true;
             break;
         }
@@ -195,14 +308,13 @@ pub async fn fav_import_github(
     Ok(result)
 }
 
-/// 停止当前长任务（导入 / AI 归类 / 失效检测）。
+/// 停止长任务（导入 / AI 归类 / 失效检测）。
 ///
-/// 三类任务共用这一个标志：同一时刻只可能有一个在跑（界面上的按钮互斥），
-/// 各自在**下一个循环开始前**检查它，所以停止是「不再往下走」而不是中断进行中的请求。
-/// 每个任务的入口都会先把它清掉，不会出现「上次取消了、这次一开就停」。
+/// 各任务在**下一个循环开始前**检查自己的停止标记，所以停止是「不再往下走」
+/// 而不是中断进行中的请求。`task` 为空时停止全部（导入可以同时跑，通常按名字停其中一个）。
 #[tauri::command]
-pub fn fav_cancel() -> Result<(), String> {
-    CANCEL.store(true, Ordering::SeqCst);
+pub fn fav_cancel(task: Option<String>) -> Result<(), String> {
+    request_cancel(task.as_deref());
     Ok(())
 }
 
@@ -232,10 +344,22 @@ pub async fn fav_classify(
     model_id: Option<String>,
     limit: Option<usize>,
 ) -> Result<ClassifyResult, String> {
+    begin_task(TASK_CLASSIFY)?;
+    let out = classify_inner(app, provider_id, model_id, limit).await;
+    end_task(TASK_CLASSIFY);
+    out
+}
+
+async fn classify_inner(
+    app: tauri::AppHandle,
+    provider_id: Option<String>,
+    model_id: Option<String>,
+    limit: Option<usize>,
+) -> Result<ClassifyResult, String> {
     let cfg = crate::commands::ai::config::load_ai_config();
     let (provider, model) = resolve_ai_target(&cfg, &provider_id, &model_id)?;
 
-    CANCEL.store(false, Ordering::SeqCst);
+    reset_cancel(TASK_CLASSIFY);
     let budget = limit.unwrap_or(usize::MAX);
     let mut result = ClassifyResult {
         model: model.clone(),
@@ -251,6 +375,7 @@ pub async fn fav_classify(
         &app,
         &FavoritesProgress {
             stage: "classify",
+            task: TASK_CLASSIFY.to_string(),
             source: None,
             message: Some(format!("每批 {} 条", BATCH_SIZE)),
             classified: Some(0),
@@ -264,7 +389,7 @@ pub async fn fav_classify(
     loop {
         // 停止检查放在**每批开始前**：进行中的那一批请求照跑完（已付的 token 不浪费），
         // 但不再发下一批。这样「停止」不会留下半截结果。
-        if CANCEL.load(Ordering::SeqCst) {
+        if is_cancelled(TASK_CLASSIFY) {
             result.cancelled = true;
             break;
         }
@@ -300,6 +425,7 @@ pub async fn fav_classify(
             &app,
             &FavoritesProgress {
                 stage: "classify",
+                task: TASK_CLASSIFY.to_string(),
                 message: Some(format!("第 {} 批（每批 {} 条）", batch_no, BATCH_SIZE)),
                 classified: Some(result.classified),
                 tags_written: Some(result.tags_written),
@@ -331,6 +457,7 @@ pub async fn fav_classify(
         &app,
         &FavoritesProgress {
             stage: "classify",
+            task: TASK_CLASSIFY.to_string(),
             classified: Some(result.classified),
             tags_written: Some(result.tags_written),
             remaining: Some(result.remaining),
@@ -363,9 +490,16 @@ pub async fn fav_check_gone(
     app: tauri::AppHandle,
     all: Option<bool>,
 ) -> Result<CheckResult, String> {
+    begin_task(TASK_CHECK)?;
+    let out = check_gone_inner(app, all).await;
+    end_task(TASK_CHECK);
+    out
+}
+
+async fn check_gone_inner(app: tauri::AppHandle, all: Option<bool>) -> Result<CheckResult, String> {
     // 与导入用同一个（收藏模块自己的）Token：同一份权限，不该出现「导入能用、检测不能用」
     let token = favorites_github_token()?;
-    CANCEL.store(false, Ordering::SeqCst);
+    reset_cancel(TASK_CHECK);
     let items = db::with_conn(|conn| db::select_for_check(conn, github::SOURCE, all.unwrap_or(false), 5_000))?;
 
     let total = items.len();
@@ -376,6 +510,7 @@ pub async fn fav_check_gone(
         &app,
         &FavoritesProgress {
             stage: "check",
+            task: TASK_CHECK.to_string(),
             source: Some(github::SOURCE.to_string()),
             checked: Some(0),
             check_total: Some(total),
@@ -385,7 +520,7 @@ pub async fn fav_check_gone(
     );
 
     for (id, full_name, _url) in items {
-        if CANCEL.load(Ordering::SeqCst) {
+        if is_cancelled(TASK_CHECK) {
             result.cancelled = true;
             break;
         }
@@ -416,6 +551,7 @@ pub async fn fav_check_gone(
             &app,
             &FavoritesProgress {
                 stage: "check",
+                task: TASK_CHECK.to_string(),
                 source: Some(github::SOURCE.to_string()),
                 message: Some(full_name),
                 checked: Some(result.checked),
@@ -440,6 +576,7 @@ pub async fn fav_check_gone(
         &app,
         &FavoritesProgress {
             stage: "check",
+            task: TASK_CHECK.to_string(),
             source: Some(github::SOURCE.to_string()),
             checked: Some(result.checked),
             check_total: Some(total),
@@ -456,10 +593,17 @@ pub async fn fav_check_gone(
 /// 同样幂等：第二次导入 added = 0。
 #[tauri::command]
 pub async fn fav_import_bilibili(app: tauri::AppHandle) -> Result<ImportResult, String> {
+    begin_task(TASK_BILIBILI)?;
+    let out = import_bilibili_inner(app).await;
+    end_task(TASK_BILIBILI);
+    out
+}
+
+async fn import_bilibili_inner(app: tauri::AppHandle) -> Result<ImportResult, String> {
     let cookie = db::with_conn(|conn| db::get_credential(conn, bilibili::SOURCE))?
         .ok_or_else(|| "未配置 B站 Cookie：请在收藏模块里粘贴登录后的 Cookie（含 SESSDATA）".to_string())?;
 
-    CANCEL.store(false, Ordering::SeqCst);
+    reset_cancel(TASK_BILIBILI);
     let session = bilibili::fetch_session(&cookie).await?;
     if session.mid.is_none() {
         return Err("Cookie 未生效（B站没返回登录用户），请重新粘贴 Cookie".to_string());
@@ -472,7 +616,7 @@ pub async fn fav_import_bilibili(app: tauri::AppHandle) -> Result<ImportResult, 
     let mut result = ImportResult::default();
     'outer: for (folder_id, folder_title) in &folders {
         for page in 1..=bilibili::MAX_PAGES {
-            if CANCEL.load(Ordering::SeqCst) {
+            if is_cancelled(TASK_BILIBILI) {
                 result.cancelled = true;
                 break 'outer;
             }
@@ -562,8 +706,15 @@ const ZHIHU_MAX_PAGES: usize = 2000;
 /// 所以间隔 [`zhihu::PAGE_DELAY_MS`] 是账号安全措施，不是性能参数。
 #[tauri::command]
 pub async fn fav_import_zhihu(app: tauri::AppHandle) -> Result<ImportResult, String> {
+    begin_task(TASK_ZHIHU)?;
+    let out = import_zhihu_inner(app).await;
+    end_task(TASK_ZHIHU);
+    out
+}
+
+async fn import_zhihu_inner(app: tauri::AppHandle) -> Result<ImportResult, String> {
     let cookie = zhihu_cookie()?;
-    CANCEL.store(false, Ordering::SeqCst);
+    reset_cancel(TASK_ZHIHU);
 
     // ① 拿用户 id：收藏夹列表要按 id 查，url_token 是主页地址那套
     let (status, body) = zhihu::cookie_get_path(&cookie, "/api/v4/me").await?;
@@ -596,7 +747,7 @@ pub async fn fav_import_zhihu(app: tauri::AppHandle) -> Result<ImportResult, Str
     let mut offset = 0usize;
     let mut pages = 0usize;
     loop {
-        if CANCEL.load(Ordering::SeqCst) {
+        if is_cancelled(TASK_ZHIHU) {
             result.cancelled = true;
             break;
         }
@@ -643,7 +794,7 @@ pub async fn fav_import_zhihu(app: tauri::AppHandle) -> Result<ImportResult, Str
         let mut offset = 0usize;
         let mut pages = 0usize;
         loop {
-            if CANCEL.load(Ordering::SeqCst) {
+            if is_cancelled(TASK_ZHIHU) {
                 result.cancelled = true;
                 break 'folders;
             }
@@ -842,7 +993,7 @@ pub fn fav_get_credential(source: String) -> Result<String, String> {
 #[tauri::command]
 pub fn fav_list(
     source: Option<String>,
-    tag: Option<String>,
+    category_id: Option<i64>,
     status: Option<String>,
     keyword: Option<String>,
     sort: Option<String>,
@@ -854,7 +1005,7 @@ pub fn fav_list(
             conn,
             &db::ListFilter {
                 source,
-                tag,
+                category_id,
                 status,
                 keyword,
                 sort,
@@ -863,6 +1014,63 @@ pub fn fav_list(
             },
         )
     })
+}
+
+/// 导入浏览器收藏夹（Edge / Chrome）。
+///
+/// 从启动模块搬过来的能力，但**书签目录会建成多级分类树**（以前压平成一层的做法
+/// 把用户整理好的目录结构丢了）。可以多设备/多 Profile 反复导入：靠
+/// `(source, external_id)` 去重，第二次只是把条目挂到新出现的目录上。
+#[tauri::command]
+pub fn fav_import_bookmarks(
+    browser: String,
+    custom_path: Option<String>,
+) -> Result<super::bookmarks::BookmarkImportResult, String> {
+    super::bookmarks::import(&browser, custom_path.as_deref())
+}
+
+// ─── 分类树（多级，操作逻辑对齐启动模块） ───
+
+/// 列出整棵分类树（含条目数）。
+#[tauri::command]
+pub fn fav_list_categories() -> Result<Vec<db::CategoryNode>, String> {
+    db::with_conn(|conn| db::list_category_tree(conn))
+}
+
+/// 新建分类（顶层传 null）。
+#[tauri::command]
+pub fn fav_create_category(name: String, parent_id: Option<i64>) -> Result<i64, String> {
+    db::with_conn(|conn| db::create_category(conn, &name, parent_id))
+}
+
+/// 重命名分类。
+#[tauri::command]
+pub fn fav_rename_category(id: i64, name: String) -> Result<(), String> {
+    db::with_conn(|conn| db::rename_category(conn, id, &name))
+}
+
+/// 移动分类（换父级；顶层传 null）。自己 / 子孙作目标会被拒绝。
+#[tauri::command]
+pub fn fav_move_category(id: i64, parent_id: Option<i64>) -> Result<(), String> {
+    db::with_conn(|conn| db::move_category(conn, id, parent_id))
+}
+
+/// 删除分类及其所有子分类（**不动条目本身**，只解开关联）。
+#[tauri::command]
+pub fn fav_delete_category(id: i64) -> Result<usize, String> {
+    db::with_conn(|conn| db::delete_category(conn, id))
+}
+
+/// 同级排序：`[(id, sort_order)]` 批量写回。
+#[tauri::command]
+pub fn fav_reorder_categories(orders: Vec<(i64, i32)>) -> Result<(), String> {
+    db::with_conn(|conn| db::reorder_categories(conn, &orders))
+}
+
+/// 全量替换某条目的分类。
+#[tauri::command]
+pub fn fav_set_item_categories(id: i64, category_ids: Vec<i64>) -> Result<(), String> {
+    db::with_conn(|conn| db::set_item_categories(conn, id, &category_ids))
 }
 
 /// 人工设置标签（全量替换 + 锁定，后续 AI 归类不再改动）。
@@ -917,4 +1125,65 @@ fn resolve_ai_target(
         .or_else(|| provider.models.first().map(|m| m.id.clone()))
         .ok_or_else(|| format!("供应商「{}」未配置任何模型", provider.name))?;
     Ok((provider, model))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 并发规则：三个平台的导入可以同时跑，加工任务（归类 / 检测）与一切互斥。
+    #[test]
+    fn import_tasks_can_run_concurrently_but_block_processing() {
+        assert!(!tasks_conflict(TASK_GITHUB, TASK_BILIBILI));
+        assert!(!tasks_conflict(TASK_BILIBILI, TASK_ZHIHU));
+        // 同一任务不能重入（界面已置灰，这里是兜底）
+        assert!(tasks_conflict(TASK_GITHUB, TASK_GITHUB));
+        // 导入 × 加工互斥（双向）
+        assert!(tasks_conflict(TASK_GITHUB, TASK_CLASSIFY));
+        assert!(tasks_conflict(TASK_CLASSIFY, TASK_GITHUB));
+        assert!(tasks_conflict(TASK_ZHIHU, TASK_CHECK));
+        // 加工任务之间也互斥
+        assert!(tasks_conflict(TASK_CLASSIFY, TASK_CHECK));
+        assert!(is_import_task(TASK_ZHIHU) && !is_import_task(TASK_CHECK));
+    }
+
+    /// 停止标记按任务分开：停掉 GitHub 不该顺手停掉正在跑的 B站导入，
+    /// 别的任务开工也不能把本任务的停止请求清掉（旧实现是全局 bool，两个问题都有）。
+    #[test]
+    fn cancel_flags_are_per_task() {
+        reset_cancel(TASK_GITHUB);
+        reset_cancel(TASK_BILIBILI);
+        request_cancel(Some(TASK_GITHUB));
+        assert!(is_cancelled(TASK_GITHUB));
+        assert!(!is_cancelled(TASK_BILIBILI), "停一个导入不能牵连另一个");
+
+        reset_cancel(TASK_BILIBILI);
+        assert!(
+            is_cancelled(TASK_GITHUB),
+            "别的任务开工不该抹掉本任务的停止请求"
+        );
+
+        // 不带任务名 = 全停
+        request_cancel(None);
+        assert!(is_cancelled(TASK_GITHUB) && is_cancelled(TASK_BILIBILI) && is_cancelled(TASK_ZHIHU));
+        for t in ALL_TASKS {
+            reset_cancel(t);
+        }
+        assert!(!is_cancelled(TASK_GITHUB));
+    }
+
+    /// 互斥登记：开工被拒不留残留，收工后同名任务可以再开工。
+    #[test]
+    fn begin_end_task_guards_conflicts() {
+        for t in ALL_TASKS {
+            end_task(t);
+        }
+        assert!(begin_task(TASK_GITHUB).is_ok());
+        assert!(begin_task(TASK_BILIBILI).is_ok(), "导入之间不互斥");
+        assert!(begin_task(TASK_CLASSIFY).is_err(), "有导入在跑时不能归类");
+        end_task(TASK_GITHUB);
+        end_task(TASK_BILIBILI);
+        assert!(begin_task(TASK_CLASSIFY).is_ok(), "导入结束后归类可开工");
+        end_task(TASK_CLASSIFY);
+    }
 }
