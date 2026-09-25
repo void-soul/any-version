@@ -39,7 +39,8 @@
       "model_providers.anyversion.base_url": "baseUrl",
       "model_providers.anyversion.env_key": "OPENAI_API_KEY",
       "env.OPENAI_MODEL": "model",
-      "web_search": "webSearchLive"
+      "web_search": "webSearchLive",
+      "auth.json#OPENAI_API_KEY": "apiKey"
     }
   }
 }

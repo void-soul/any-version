@@ -1096,6 +1096,8 @@ fn write_tool_config_generic(
                 base_url,
                 api_key,
                 upstream_url,
+                // 1M 开关与通用写入器同一套门槛（工具支持 + 用户勾选）
+                one_m: one_m_context && tool_config.support_one_m_context,
             },
         );
     }
@@ -1146,33 +1148,32 @@ fn write_tool_config_generic(
         .map(|m| m.split('/').next_back().unwrap_or(m).to_string())
         .unwrap_or_default();
 
-    for (path, value_template) in write_map {
+    for (raw_path, value_template) in write_map {
         // env.* 键只应作为进程环境变量注入（见 build_env_vars），不应写入工具配置文件：
-        // - opencode 及其 fork（mimocode / deveco / kilocode）的配置 schema 不识别顶层 env 键，
+        // - opencode 及其 fork（mimocode / kilocode / zcode）的配置 schema 不识别顶层 env 键，
         //   写入会触发 "Unrecognized key: env" 导致工具启动失败；
-        // - claude / codex / gemini / qwen 等原生配置虽支持 env，但进程 env 注入已足够，
-        //   统一跳过既避免重复写入，也规避 opencode 系 fork 的 schema 不兼容。
-        if path.starts_with("env.") {
-            eprintln!("[config_file] skip {} (env 仅注入进程环境，不写配置文件)", path);
+        // - 进程 env 注入对 CLI 已经够用。
+        if raw_path.starts_with("env.") {
+            eprintln!("[config_file] skip {} (env 仅注入进程环境，不写配置文件)", raw_path);
             continue;
         }
+        // fileEnv.* = 写进**配置文件**的 env.<KEY>。Claude Code / Qwen Code 这类工具是从
+        // settings.json 的 env 块读端点与凭据的：只注入进程环境的话，「只保存模型」（不启动、
+        // 不起代理）在这些工具上等于什么都没写。抄 EchoBird claudecode.rs（它把 env 块落盘）。
+        let path: String = match raw_path.strip_prefix("fileEnv.") {
+            Some(key) => format!("env.{key}"),
+            None => raw_path.clone(),
+        };
         // 动态键名替换：{model_name} → 主模型名；{fallback_model_name} → 小模型名
         // 模型名里的 "." 先转义为占位符，避免被 set_json_path 当成路径分隔符误拆
         if path.contains("{fallback_model_name}") && fallback_claimed.is_none() {
             eprintln!("[config_file] skip {} (no fallback model)", path);
             continue;
         }
-        // "文件#子路径"：写入 configFile 同目录的兄弟文件（子路径为 # 之后部分）
+        // "文件#子路径"：子路径写主文件的兄弟文件；文件部分可带 `~` / `%VAR%`（绝对路径，
+        // 如 MiMo 桌面端的 `%APPDATA%\Xiaomi MiMo\preferences.json` 就在别的目录）。
         let target_file = if let Some((file, _)) = path.split_once('#') {
-            let f = file.trim();
-            if f.is_empty() {
-                main_config_path.clone()
-            } else {
-                main_config_path
-                    .parent()
-                    .map(|p| p.join(f))
-                    .unwrap_or_else(|| main_config_path.clone())
-            }
+            resolve_write_target_file(&main_config_path, file)
         } else {
             main_config_path.clone()
         };
@@ -1261,6 +1262,25 @@ fn write_tool_config_generic(
                 }
                 serde_json::json!(api_key.to_string())
             },
+            // 包名随出站协议切换（openscience）：写死一个会让另一种协议直接失效。
+            "npmForProtocol" => serde_json::json!(
+                if chosen_protocol == "anthropic" { "@ai-sdk/anthropic" } else { "@ai-sdk/openai-compatible" }
+            ),
+            // ZCode 的 provider 判别符（作用等同于 opencode 的 npm 字段）
+            "zcodeKind" => serde_json::json!(
+                if chosen_protocol == "anthropic" { "anthropic" } else { "openai-compatible" }
+            ),
+            // `json:<字面量>`：用 JSON 表达数组 / 对象 / 数字——「路径 → 标量」说不清的东西
+            // （Qwen Code 的 modelProviders[]、ZCode 的 modalities[]、onboarding 的版本号…）。
+            // `{model}` `{modelName}` `{baseUrl}` `{apiKey}` 在字符串内按 JSON 规则转义替换。
+            other if other.starts_with("json:") => {
+                match render_json_template(&other[5..], &model, &model_name, base_url, api_key) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Err(format!("write 映射 {} 的 json: 模板非法: {e}", resolved_path))
+                    }
+                }
+            },
             "" => serde_json::json!(""),
             other => serde_json::json!(other.to_string()),
         };
@@ -1302,15 +1322,90 @@ fn write_tool_config_generic(
         } else {
             String::new()
         };
-        eprintln!("[config_file] 目标路径: {} (format={})", p.display(), cfg.format);
-        match cfg.format.as_str() {
-            "toml" => write_toml_config(&p, &existing, &ws)?,
-            "yaml" => write_yaml_config(&p, &existing, &ws)?,
-            _ => write_json_config(&p, &existing, &ws, cfg.schema.as_deref(), tool_config)?,
+        // 格式按**目标文件**判定：兄弟文件常与主文件不同（codex 的 config.toml + auth.json），
+        // 一律按主文件的 format 写会把 auth.json 写成 TOML。
+        let format = write_format_for(&p, &cfg.format);
+        eprintln!("[config_file] 目标路径: {} (format={:?})", p.display(), format);
+        match format {
+            WriteFormat::Toml => write_toml_config(&p, &existing, &ws)?,
+            WriteFormat::Yaml => write_yaml_config(&p, &existing, &ws)?,
+            // $schema 只往主配置文件里补，兄弟文件（auth.json 之类）不该被塞 schema
+            WriteFormat::Json if p == main_config_path => {
+                write_json_config(&p, &existing, &ws, cfg.schema.as_deref(), tool_config)?
+            }
+            WriteFormat::Json => write_json_config(&p, &existing, &ws, None, tool_config)?,
         }
         eprintln!("[config_file] ✓ 已写入配置到 {}", p.display());
     }
     Ok(())
+}
+
+/// 目标文件的写入格式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WriteFormat {
+    Json,
+    Toml,
+    Yaml,
+}
+
+/// 按目标文件扩展名挑写入格式；认不出来时用工具声明的 `format`。
+fn write_format_for(path: &std::path::Path, declared: &str) -> WriteFormat {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("json") | Some("jsonc") => WriteFormat::Json,
+        Some("toml") => WriteFormat::Toml,
+        Some("yaml") | Some("yml") => WriteFormat::Yaml,
+        _ => match declared {
+            "jsonc" | "json" => WriteFormat::Json,
+            "toml" => WriteFormat::Toml,
+            "yaml" | "yml" => WriteFormat::Yaml,
+            _ => WriteFormat::Json,
+        },
+    }
+}
+
+/// 解析 `write` 映射里「文件#子路径」的文件部分。
+///
+/// - 空 → 主配置文件自身；
+/// - 展开后是绝对路径（写 `~` 或 `%APPDATA%` 这类模板）→ 直接用；
+/// - 其余相对路径 → 主配置文件的同目录兄弟文件（历史行为，如 `auth.json`、`settings.json`）。
+fn resolve_write_target_file(main_config_path: &std::path::Path, file: &str) -> PathBuf {
+    let file = file.trim();
+    if file.is_empty() {
+        return main_config_path.to_path_buf();
+    }
+    let expanded = PathBuf::from(super::tool_paths::expand_tool_path(file));
+    if expanded.is_absolute() {
+        return expanded;
+    }
+    main_config_path
+        .parent()
+        .map(|p| p.join(&expanded))
+        .unwrap_or_else(|| main_config_path.to_path_buf())
+}
+
+/// 渲染 `json:` 模板：把占位符替换成按 JSON 规则转义的值后整体解析。
+///
+/// 模板写错要**报错**而不是静默写半份配置——写错的文件比不写更难排查。
+fn render_json_template(
+    template: &str,
+    model: &str,
+    model_name: &str,
+    base_url: &str,
+    api_key: &str,
+) -> Result<serde_json::Value, String> {
+    let escape = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let rendered = template
+        // 先长后短：`{modelName}` 必须先于 `{model}` 替换，否则会被截成 `Name}`
+        .replace("{modelName}", &escape(model_name))
+        .replace("{model}", &escape(model))
+        .replace("{baseUrl}", &escape(base_url))
+        .replace("{apiKey}", &escape(api_key));
+    serde_json::from_str(&rendered).map_err(|e| format!("{e}（渲染后: {rendered}）"))
 }
 
 /// 掩码打印含密钥的值
@@ -1378,9 +1473,15 @@ fn write_json_config(
 /// 动态基于写入列表与通用 AI 供应商环境变量前缀池（ANTHROPIC_, OPENAI_, GEMINI_, DEVECO_ 等）
 /// 清理属于受管范围但本次未写入的旧模型/Auth键，无硬编码适用于所有 CLI 工具。
 fn cleanup_managed_model_keys(doc: &mut serde_json::Value, writes: &[(String, serde_json::Value)]) {
+    // 写进配置文件 env 块的键有两种声明：`env.X`（进程环境变量，此时也计进来，
+    // 因为它同样占用同一个键名）与 `fileEnv.X`（映射后落盘为 `env.X`）。
     let current_env_keys: std::collections::HashSet<String> = writes
         .iter()
-        .filter_map(|(p, _)| p.strip_prefix("env.").map(|k| k.to_string()))
+        .filter_map(|(p, _)| {
+            p.strip_prefix("fileEnv.")
+                .or_else(|| p.strip_prefix("env."))
+                .map(|k| k.to_string())
+        })
         .collect();
 
     let mut managed_prefixes: Vec<String> = vec![
@@ -1780,10 +1881,246 @@ async fn wait_for_proxy_ready(listen_address: &str, port: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_work_dir, get_json_path, json_value_to_yaml, resolve_start_command, scan_text_key,
-        set_yaml_path, strip_jsonc, write_yaml_config,
+        default_work_dir, get_json_path, json_value_to_yaml, registry, render_json_template,
+        resolve_start_command, resolve_write_target_file, scan_text_key, set_yaml_path, strip_jsonc,
+        write_format_for, write_tool_config_from_spec, write_yaml_config, WriteFormat,
     };
+    use std::collections::HashMap;
     use std::path::PathBuf;
+
+    /// 兄弟文件（`文件#子路径`）的格式按**目标文件**判定：codex 的 config.toml 边上还有个
+    /// auth.json，一律用主文件的 toml 去写会把 auth.json 写成 TOML。
+    #[test]
+    fn write_format_follows_target_extension() {
+        assert_eq!(
+            write_format_for(std::path::Path::new("/x/auth.json"), "toml"),
+            WriteFormat::Json
+        );
+        assert_eq!(
+            write_format_for(std::path::Path::new("/x/settings.json"), "yaml"),
+            WriteFormat::Json
+        );
+        assert_eq!(
+            write_format_for(std::path::Path::new("/x/credentials.yaml"), "json"),
+            WriteFormat::Yaml
+        );
+        assert_eq!(
+            write_format_for(std::path::Path::new("/x/config.toml"), "jsonc"),
+            WriteFormat::Toml
+        );
+        // 没有可辨识扩展名 → 用工具声明的格式（jsonc 归到 json 写入器，它保留注释）
+        assert_eq!(
+            write_format_for(std::path::Path::new("/x/opencode"), "jsonc"),
+            WriteFormat::Json
+        );
+        assert_eq!(
+            write_format_for(std::path::Path::new("/x/whatever"), "yaml"),
+            WriteFormat::Yaml
+        );
+    }
+
+    /// `文件#子路径` 的文件部分：空 → 主文件；`~` → 展开成绝对路径（跨目录的偏好文件）；
+    /// 相对路径 → 主文件同目录的兄弟文件（auth.json / settings.json 的常规用法）。
+    #[test]
+    fn write_target_file_supports_home_and_siblings() {
+        let main = PathBuf::from("/base/dir/config.toml");
+        assert_eq!(resolve_write_target_file(&main, ""), main);
+        assert_eq!(
+            resolve_write_target_file(&main, "auth.json"),
+            PathBuf::from("/base/dir/auth.json")
+        );
+        let home_relative = resolve_write_target_file(&main, "~/prefs.json");
+        assert!(
+            home_relative.is_absolute() && home_relative.ends_with("prefs.json"),
+            "`~` 应展开成绝对路径: {}",
+            home_relative.display()
+        );
+        assert_ne!(home_relative, PathBuf::from("/base/dir/~/prefs.json"));
+    }
+
+    /// 测试用临时目录（每个用例独立，跑完删）。
+    fn temp_dir(name: &str) -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("anyver-writecfg-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 取**真实声明**并把它指向临时文件：这样验证的是 ai-tools/<id>/config.json 本身，
+    /// 声明改错就会在这里失败（且绝不动用户自己的配置文件）。
+    fn tool_cfg_at(id: &str, target: &std::path::Path) -> crate::commands::ai_registry::ToolConfig {
+        let mut cfg = registry()
+            .get_tool_config(id)
+            .unwrap_or_else(|| panic!("{id} 应在注册表里"))
+            .clone();
+        cfg.config_file.as_mut().expect("该工具应声明 configFile").path =
+            target.to_string_lossy().to_string();
+        cfg
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_for(
+        cfg: &crate::commands::ai_registry::ToolConfig,
+        fallback: Option<&str>,
+        protocol: &str,
+        web_search: bool,
+    ) -> Result<(), String> {
+        write_tool_config_from_spec(
+            cfg,
+            Some("deepseek-chat"),
+            Some("claude-opus-4"), // 声明模型名（伪装）
+            "http://127.0.0.1:15721",
+            "kira-token",
+            "https://api.deepseek.com",
+            fallback,
+            None,
+            false,
+            false,
+            true,
+            &[],
+            &HashMap::new(),
+            web_search,
+            protocol,
+        )
+    }
+
+    /// Claude Code：env 块必须**落盘**（只保存模型、不起 Kira 时也得生效），
+    /// 并且用 ANTHROPIC_AUTH_TOKEN（EchoBird claudecode.rs 同款），旧的 ANTHROPIC_API_KEY 要被清掉。
+    #[test]
+    fn claude_code_declaration_persists_env_block() {
+        let dir = temp_dir("claude-code");
+        let file = dir.join("settings.json");
+        // 预置一个旧键，验证「换供应商后旧值不残留」
+        std::fs::write(&file, r#"{"env":{"ANTHROPIC_API_KEY":"sk-old"},"permissions":{}}"#).unwrap();
+
+        let cfg = tool_cfg_at("claude-code", &file);
+        write_for(&cfg, Some("glm-4.6"), "anthropic", false).expect("写入应成功");
+
+        let doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(doc["env"]["ANTHROPIC_BASE_URL"], "http://127.0.0.1:15721");
+        assert_eq!(doc["env"]["ANTHROPIC_AUTH_TOKEN"], "kira-token");
+        assert_eq!(doc["env"]["ANTHROPIC_MODEL"], "claude-opus-4");
+        assert_eq!(doc["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "claude-opus-4");
+        assert_eq!(doc["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "glm-4.6");
+        assert_eq!(doc["env"]["API_TIMEOUT_MS"], "3000000");
+        assert!(doc["env"].get("ANTHROPIC_API_KEY").is_none(), "旧 key 应被清理");
+        // 用户自己的键不能被覆盖
+        assert!(doc["permissions"].is_object());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Codex / ChatGPT 桌面端：凭证要写进同目录的 `auth.json`，且按 JSON（不是 TOML）落盘。
+    #[test]
+    fn codex_declaration_writes_auth_json() {
+        let dir = temp_dir("codex");
+        let file = dir.join("config.toml");
+        let cfg = tool_cfg_at("codex-cli", &file);
+        write_for(&cfg, None, "openai", false).expect("写入应成功");
+
+        let toml_text = std::fs::read_to_string(&file).unwrap();
+        assert!(toml_text.contains("model = \"claude-opus-4\""), "toml: {toml_text}");
+        assert!(toml_text.contains("[model_providers.anyversion]"), "toml: {toml_text}");
+
+        let auth = dir.join("auth.json");
+        let doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&auth).expect("auth.json 应被创建"))
+                .expect("auth.json 必须是 JSON（不能按 toml 写）");
+        assert_eq!(doc["OPENAI_API_KEY"], "kira-token");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Qwen Code：缺 `modelProviders[]` 时它找不到自定义端点，必须写成数组，
+    /// 且数组里的 envKey 与配置文件 env 块里的键对得上。
+    #[test]
+    fn qwencode_declaration_registers_model_provider() {
+        let dir = temp_dir("qwencode");
+        let file = dir.join("settings.json");
+        let cfg = tool_cfg_at("qwencode", &file);
+        write_for(&cfg, None, "openai", false).expect("写入应成功");
+
+        let doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let list = doc["modelProviders"]["openai"].as_array().expect("应是数组");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["id"], "claude-opus-4");
+        assert_eq!(list[0]["baseUrl"], "http://127.0.0.1:15721");
+        assert_eq!(list[0]["envKey"], "ANYVERSION_API_KEY");
+        // envKey 指向的键要真落盘，否则 Qwen Code 拿不到 key
+        assert_eq!(doc["env"]["ANYVERSION_API_KEY"], "kira-token");
+        assert_eq!(doc["security"]["auth"]["selectedType"], "openai");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MiMo 桌面端：模型选择写它自己的 preferences.json，**不能**动顶层 model/small_model
+    /// （那是 MiMo Code CLI 的选择器，改了会连带改掉 CLI 的默认模型）。
+    #[test]
+    fn mimodesktop_declaration_writes_preferences_without_touching_cli_model() {
+        let dir = temp_dir("mimodesktop");
+        let file = dir.join("mimocode.jsonc");
+        let mut cfg = tool_cfg_at("mimodesktop", &file);
+        // 真实声明写的是 %APPDATA%\Xiaomi MiMo\preferences.json，测试里换成临时目录
+        let write = cfg.config_file.as_mut().unwrap().write.as_mut().unwrap();
+        let key = write
+            .keys()
+            .find(|k| k.contains("preferences.json"))
+            .expect("声明里应有 preferences.json 的写入项")
+            .clone();
+        let tpl = write.remove(&key).unwrap();
+        write.insert(format!("prefs.json#model"), tpl);
+
+        write_for(&cfg, None, "openai", false).expect("写入应成功");
+
+        let doc: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&file).unwrap().replace("//", ""),
+        )
+        .unwrap();
+        assert!(doc.get("model").is_none(), "不能写顶层 model（会改掉 CLI 默认模型）");
+        assert!(doc["provider"]["anyversion-desktop"].is_object());
+        let prefs: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("prefs.json")).unwrap()).unwrap();
+        assert_eq!(prefs["model"], "anyversion-desktop/claude-opus-4");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `json:` 值模板：数组/对象/数字都能表达，占位符在字符串内转义，
+    /// 模板非法时**报错**（静默写半份配置比不写更难排查）。
+    #[test]
+    fn json_value_template_renders_and_escapes() {
+        let v = render_json_template(
+            r#"[{"id":"{model}","name":"{modelName}","baseUrl":"{baseUrl}","envKey":"X"}]"#,
+            "anyversion/gpt-4o",
+            "gpt-4o",
+            "http://127.0.0.1:1",
+            "sk",
+        )
+        .unwrap();
+        assert_eq!(v[0]["id"], "anyversion/gpt-4o");
+        // {modelName} 不能被 {model} 抢先匹配（否则会变成 "Name}"）
+        assert_eq!(v[0]["name"], "gpt-4o");
+        assert_eq!(v[0]["baseUrl"], "http://127.0.0.1:1");
+
+        // 数字 / 布尔 / 嵌套对象
+        assert_eq!(render_json_template("2", "", "", "", "").unwrap(), serde_json::json!(2));
+        assert_eq!(
+            render_json_template(r#"{"a":[{"b":true}]}"#, "", "", "", "").unwrap(),
+            serde_json::json!({"a": [{"b": true}]})
+        );
+
+        // 模型名里的引号要转义，不能拼出坏 JSON
+        let quoted = render_json_template(
+            r#"{"m":"{model}"}"#,
+            "weird\"name",
+            "",
+            "",
+            "",
+        )
+        .unwrap();
+        assert_eq!(quoted["m"], "weird\"name");
+
+        assert!(render_json_template("{not json", "", "", "", "").is_err());
+    }
 
     /// 桌面应用（startCommand 为空）要靠「检测到的 exe 绝对路径」启动。
     #[test]

@@ -17,12 +17,16 @@
   "category": "桌面应用",
   "website": "https://claude.com/download",
   "apiProtocol": "anthropic",
-  "supportModel": false,
+  "supportModel": true,
   "supportsOpenai": false,
   "supportsAnthropic": true,
   "supportsGoogle": false,
   "cacheDirs": [
     ".claude"
   ],
-  "configFile": null
+  "configFile": {
+    "path": "%LOCALAPPDATA%/Claude-3p/configLibrary/profile.json",
+    "format": "json",
+    "custom": "claudedesktop"
+  }
 }

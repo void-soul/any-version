@@ -8,21 +8,32 @@
   "apiProtocol": "openai",
   "supportModel": true,
   "supportFallbackModel": false,
-
   "supportsOpenai": true,
   "supportsAnthropic": false,
   "supportsGoogle": false,
-  "builtinModels": ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.1-codex"],
+  "builtinModels": [
+    "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6-luna",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "gpt-5.3-codex",
+    "gpt-5.2-codex",
+    "gpt-5.1-codex"
+  ],
   "supportsOptimizer": true,
   "supportsRectifier": true,
-
   "resumeCmd": null,
   "continueCmd": "codex resume --last",
   "dispatchCmd": "codex exec --json --full-auto --model {model}",
   "dispatchResumeCmd": "codex exec --json --full-auto --model {model} resume {session_id}",
   "runner": "codex-json",
   "promptMode": "stdin",
-  "cacheDirs": [".codex"],
+  "cacheDirs": [
+    ".codex"
+  ],
   "pkgManager": "npm",
   "pkgName": "@openai/codex",
   "configFile": {
@@ -36,12 +47,15 @@
       "model_providers.anyversion.env_key": "OPENAI_API_KEY",
       "env.OPENAI_MODEL": "model",
       "env.CODEX_MODEL": "model",
-      "web_search": "webSearchLive"
+      "web_search": "webSearchLive",
+      "auth.json#OPENAI_API_KEY": "apiKey"
     }
   },
   "sessions": {
     "type": "jsonl",
-    "dirs": ["~/.codex/sessions.jsonl"]
+    "dirs": [
+      "~/.codex/sessions.jsonl"
+    ]
   },
   "skillsDir": "~/.codex/skills"
 }

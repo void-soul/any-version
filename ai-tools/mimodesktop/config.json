@@ -33,14 +33,20 @@
       "json"
     ],
     "write": {
-      "provider.anyversion.npm": "@ai-sdk/openai-compatible",
-      "provider.anyversion.name": "anyversion",
-      "provider.anyversion.options.baseURL": "baseUrl",
-      "provider.anyversion.options.apiKey": "apiKey",
-      "model": "model",
-      "provider.anyversion.models.{model_name}.name": "modelName",
+      "provider.anyversion-desktop.npm": "@ai-sdk/openai-compatible",
+      "provider.anyversion-desktop.name": "anyversion",
+      "provider.anyversion-desktop.options.baseURL": "baseUrl",
+      "provider.anyversion-desktop.options.apiKey": "apiKey",
+      "provider.anyversion-desktop.models.{model_name}.name": "modelName",
+      "provider.anyversion-desktop.models.{model_name}.modalities.input": "json:[\"text\"]",
+      "provider.anyversion-desktop.models.{model_name}.modalities.output": "json:[\"text\"]",
+      "%APPDATA%/Xiaomi MiMo/preferences.json#model": "model",
       "env.MIMO_MODEL": "model",
       "env.OPENAI_MODEL": "model"
     }
+  },
+  "modelFormat": {
+    "prefix": "anyversion-desktop/",
+    "extractLast": true
   }
 }

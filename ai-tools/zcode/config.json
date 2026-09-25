@@ -28,12 +28,22 @@
     "path": "~/.zcode/v2/config.json",
     "format": "json",
     "write": {
+      "provider.anyversion.kind": "zcodeKind",
+      "provider.anyversion.source": "custom",
       "provider.anyversion.name": "anyversion",
       "provider.anyversion.options.baseURL": "baseUrl",
       "provider.anyversion.options.apiKey": "apiKey",
+      "provider.anyversion.options.apiKeyRequired": "boolTrue",
       "provider.anyversion.models.{model_name}.name": "modelName",
+      "provider.anyversion.models.{model_name}.modalities.input": "json:[\"text\"]",
+      "provider.anyversion.models.{model_name}.modalities.output": "json:[\"text\"]",
       "model": "model",
       "small_model": "fallbackModel"
-    }
+    },
+    "schema": "https://opencode.ai/config.json"
+  },
+  "modelFormat": {
+    "prefix": "anyversion/",
+    "extractLast": true
   }
 }

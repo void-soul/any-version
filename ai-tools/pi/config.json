@@ -9,21 +9,21 @@
   "apiProtocol": "openai",
   "supportModel": true,
   "supportFallbackModel": false,
-
   "supportsOpenai": true,
   "supportsAnthropic": false,
   "supportsGoogle": false,
   "builtinModels": [],
   "supportsOptimizer": true,
   "supportsRectifier": true,
-
   "resumeCmd": null,
   "continueCmd": null,
   "dispatchCmd": "pi --provider anyversion --model {model} -p \"{prompt}\"",
   "dispatchResumeCmd": "pi --provider anyversion --model {model} -p -s {session_id} \"{prompt}\"",
   "runner": "stream-json",
   "promptMode": "arg",
-  "cacheDirs": [".pi"],
+  "cacheDirs": [
+    ".pi"
+  ],
   "pkgManager": "npm",
   "pkgName": "@earendil-works/pi-coding-agent",
   "configFile": {
@@ -37,7 +37,9 @@
       "providers.anyversion.compat.supportsDeveloperRole": "boolFalse",
       "providers.anyversion.compat.supportsReasoningEffort": "boolFalse",
       "env.PI_MODEL": "model",
-      "env.OPENAI_MODEL": "model"
+      "env.OPENAI_MODEL": "model",
+      "settings.json#defaultProvider": "anyversion",
+      "settings.json#defaultModel": "model"
     }
   },
   "modelFormat": {
@@ -46,7 +48,9 @@
   },
   "sessions": {
     "type": "pi",
-    "dirs": ["~/.pi/agent/sessions"]
+    "dirs": [
+      "~/.pi/agent/sessions"
+    ]
   },
   "skillsDir": "~/.pi/agent/skills"
 }

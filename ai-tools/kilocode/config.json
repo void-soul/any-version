@@ -8,26 +8,31 @@
   "apiProtocol": "openai",
   "supportModel": true,
   "supportFallbackModel": true,
-
   "supportsOpenai": true,
   "supportsAnthropic": false,
   "supportsGoogle": false,
   "builtinModels": [],
   "supportsOptimizer": true,
   "supportsRectifier": true,
-
   "resumeCmd": "kilo -s {session_id}",
   "continueCmd": "kilo -c",
   "dispatchCmd": "kilo run --format json --dangerously-skip-permissions \"{prompt}\"",
   "dispatchResumeCmd": "kilo run --format json --dangerously-skip-permissions -s {session_id} \"{prompt}\"",
   "runner": "opencode-json",
   "promptMode": "arg",
-  "cacheDirs": [".kilo", ".kilocode"],
+  "cacheDirs": [
+    ".kilo",
+    ".kilocode"
+  ],
   "pkgManager": "npm",
   "pkgName": "@kilocode/cli",
   "configFile": {
-    "path": "~/.config/kilocode/config.json",
+    "path": "~/.config/kilo/kilo.json",
     "format": "jsonc",
+    "schema": "https://app.kilo.ai/config.json",
+    "preferExistingExtensions": [
+      "jsonc"
+    ],
     "write": {
       "provider.anyversion.name": "anyversion",
       "provider.anyversion.npm": "@ai-sdk/openai-compatible",
@@ -47,7 +52,10 @@
   },
   "sessions": {
     "type": "opencode_style",
-    "dirs": ["~/.config/kilo", "~/.kilo"]
+    "dirs": [
+      "~/.config/kilo",
+      "~/.kilo"
+    ]
   },
   "skillsDir": "~/.kilocode/skills",
   "skillsDirXdg": "~/.config/kilo/skills"

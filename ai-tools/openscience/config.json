@@ -32,13 +32,19 @@
       "json"
     ],
     "write": {
-      "provider.anyversion.npm": "@ai-sdk/openai-compatible",
+      "provider.anyversion.npm": "npmForProtocol",
       "provider.anyversion.name": "anyversion",
       "provider.anyversion.options.baseURL": "baseUrl",
       "provider.anyversion.options.apiKey": "apiKey",
       "provider.anyversion.models.{model_name}.name": "modelName",
       "model": "model",
-      "small_model": "fallbackModel"
+      "small_model": "fallbackModel",
+      "settings.json#desktop_onboarding_version": "json:2",
+      "settings.json#desktop_onboarding_step": "done"
     }
+  },
+  "modelFormat": {
+    "prefix": "anyversion/",
+    "extractLast": true
   }
 }
