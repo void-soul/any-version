@@ -297,6 +297,19 @@ pub struct ToolConfigFileDto {
     pub format: String,
 }
 
+/// 由 paths.json 的形态分类推导粗粒度归类（CLI / 桌面端 / 其它）。
+///
+/// EchoBird 用 `category` 直接分组，这里多做一层归一：Desktop/IDE 都算
+/// 「桌面端」，CLI Code 算「命令行」，将来新增分类也不会让前端分组漏掉。
+pub fn tool_kind_of(category: Option<&str>) -> String {
+    match category.unwrap_or_default().trim().to_lowercase().as_str() {
+        "cli code" | "cli" => "cli".to_string(),
+        "desktop" | "ide" => "desktop".to_string(),
+        other if other.is_empty() => "other".to_string(),
+        _ => "other".to_string(),
+    }
+}
+
 /// 与前端交互的工具定义（从 JSON 构建）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiToolDefDto {
@@ -345,6 +358,16 @@ pub struct AiToolDefDto {
     /// 前端据此决定是否显示「只保存模型」入口 —— 没声明的工具摆个按钮只会骗人。
     #[serde(default)]
     pub config_file: Option<ToolConfigFileDto>,
+
+    /// 工具的**形态分类**（来自 paths.json 的 `category`：`CLI Code` / `Desktop` / `IDE` …），
+    /// 与 `category`（厂商维度）区分开：前者决定「怎么用」，后者决定「谁家的」。
+    /// 前端按它把列表分成 CLI / 桌面端（抄 EchoBird 的分组维度）。
+    #[serde(default)]
+    pub tool_category: Option<String>,
+
+    /// 由形态分类推导的粗粒度归类：`cli` / `desktop` / `other`。
+    #[serde(default)]
+    pub tool_kind: Option<String>,
 
     /// 进行中操作（"upgrading" | "installing" | "uninstalling"），由后端 TOOL_OPS 跟踪；
     /// 前端据此持续显示“升级中/安装中/卸载中”，即使切换 Agent / 页面后也能从 detect 结果恢复。
@@ -663,6 +686,8 @@ impl AiToolRegistry {
                 path: cf.path.clone(),
                 format: cf.format.clone(),
             }),
+            tool_category: Some(paths.category.clone()),
+            tool_kind: Some(tool_kind_of(Some(&paths.category))),
             busy: None,
         }
     }
@@ -888,10 +913,24 @@ pub fn update_tool_profile(tool_id: String, avatar: Option<String>, nickname: Op
 
 #[cfg(test)]
 mod tests {
-    use super::{ProviderPreset, ProviderPresetDto};
+    use super::{tool_kind_of, ProviderPreset, ProviderPresetDto};
 
     /// 回归：DTO 一旦被标上 `rename_all = "camelCase"`，URL 会序列化成
     /// `openaiUrl`，前端按 `openai_url` 读取全部落空 → 添加预设只剩名称/官网。
+    #[test]
+    fn tool_kind_normalizes_cli_and_desktop_categories() {
+        // 列表要按「CLI / 桌面端」分组（抄 EchoBird 的维度）：
+        // EchoBird 的 category 取值更细，这里归一层，前端只认 cli/desktop/other
+        assert_eq!(tool_kind_of(Some("CLI Code")), "cli");
+        assert_eq!(tool_kind_of(Some("cli code")), "cli");
+        assert_eq!(tool_kind_of(Some("Desktop")), "desktop");
+        assert_eq!(tool_kind_of(Some("IDE")), "desktop");
+        // 认不出的分类不会让分组崩掉，只是落到 other
+        assert_eq!(tool_kind_of(None), "other");
+        assert_eq!(tool_kind_of(Some("")), "other");
+        assert_eq!(tool_kind_of(Some("Science")), "other");
+    }
+
     #[test]
     fn provider_preset_dto_serializes_urls_as_snake_case() {
         let dto = ProviderPresetDto {

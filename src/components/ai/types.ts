@@ -206,6 +206,10 @@ export interface DetectedAiTool {
   detected_path: string | null;
   /** 工具自身的配置文件（有它才支持「设置模型」：模型会写进这个文件） */
   config_file?: { path: string; format: string } | null;
+  /** 形态分类（paths.json 的 category：`CLI Code` / `Desktop`） */
+  tool_category?: string | null;
+  /** 粗粒度归类：`cli` / `desktop` / `other`（列表按它分组） */
+  tool_kind?: string | null;
   /** 进行中操作（"upgrading" | "installing" | "uninstalling"），由后端跟踪，用于持续显示“升级中/安装中” */
   busy?: string | null;
 }

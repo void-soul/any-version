@@ -88,6 +88,8 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
                 format: cf.format.clone(),
             }
         }),
+        tool_category: Some(paths.category.clone()),
+        tool_kind: Some(crate::commands::ai_registry::tool_kind_of(Some(&paths.category))),
         busy: get_tool_busy(&config.id),
     };
 

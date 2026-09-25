@@ -26,6 +26,9 @@ const TABS = [
 export default function AiPanel() {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<AiSubTab>("model");
+  // 从「工具」页带过来的问题（未安装工具点「问助手」）：提升到这里，
+  // 才能既切到助手 Tab、又把问题塞进它的输入框
+  const [assistantSeed, setAssistantSeed] = useState("");
   // 懒挂载：仅渲染至少被访问过一次的 tab，避免全部子组件同时初始化
   const [mountedTabs, setMountedTabs] = useState<Set<AiSubTab>>(new Set(["model"]));
   const switchTab = (tab: AiSubTab) => {
@@ -72,7 +75,12 @@ export default function AiPanel() {
         )}
         {mountedTabs.has("launcher") && (
           <div className={activeTab === "launcher" ? "h-full" : "hidden"}>
-            <ToolLauncher />
+            <ToolLauncher
+              onAskAssistant={(question) => {
+                setAssistantSeed(question);
+                switchTab("installer");
+              }}
+            />
           </div>
         )}
         {mountedTabs.has("usage") && (
@@ -97,7 +105,7 @@ export default function AiPanel() {
         )}
         {mountedTabs.has("installer") && (
           <div className={activeTab === "installer" ? "h-full" : "hidden"}>
-            <InstallAgentPanel />
+            <InstallAgentPanel seed={assistantSeed} />
           </div>
         )}
       </div>

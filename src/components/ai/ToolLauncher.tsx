@@ -1,15 +1,15 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { Fragment, useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
+import { Note, ResultNote } from "../shared/Note";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Rocket,
   FolderOpen,
   CheckCircle,
-  AlertTriangle,
   RefreshCw,
 
   Bot,
@@ -143,9 +143,14 @@ function getProxyInfo(
   };
 }
 
-export default function ToolLauncher() {
+/** 未安装区的形态筛选：全部 / CLI / 桌面端（抄 EchoBird 的分组维度）。
+ *  已安装区不分组——装了的就那么几个，分组只会让人多找一层。 */
+type ToolKindFilter = "all" | "cli" | "desktop";
+
+export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (question: string) => void } = {}) {
   const { t } = useTranslation();
   const [tools, setTools] = useState<DetectedAiTool[]>([]);
+  const [kindFilter, setKindFilter] = useState<ToolKindFilter>("all");
   const [config, setConfig] = useState<AiConfig | null>(null);
   const [terminals, setTerminals] = useState<TerminalInfo[]>([]);
   const [sessions, setSessions] = useState<ToolSession[]>([]);
@@ -754,23 +759,60 @@ export default function ToolLauncher() {
 
   const canLaunch = selectedTool?.installed && (sessionMode === "resume" || projectPath);
 
+  // 列表分组（抄 EchoBird 的维度：先按已装/未装分开，未装的再按 CLI / 桌面端筛）
+  const installedTools = tools.filter(t => t.installed);
+  const notInstalledTools = tools.filter(t => !t.installed);
+  const visibleNotInstalled = kindFilter === "all"
+    ? notInstalledTools
+    : notInstalledTools.filter(t => (t.tool_kind ?? "other") === kindFilter);
+  const visibleTools = [...installedTools, ...visibleNotInstalled];
+
   return (
     <div className="h-full flex min-h-0 select-none">
       {/* ── 左侧工具列表 ── */}
       <div className="w-52 flex-shrink-0 border-r border-white/5 py-3 px-2 overflow-y-auto space-y-0.5 flex flex-col">
         <div className="flex items-center justify-between px-1 mb-1">
           <span className="text-[9px] font-bold text-slate-500 uppercase">{t("toollaunch.aiTools")}</span>
+          {/* 形态筛选：只作用于「未安装」那一组（已装的就几个，再分组只会多找一层） */}
+          {notInstalledTools.length > 0 && (
+            <div className="flex items-center gap-0.5">
+              {(["all", "cli", "desktop"] as ToolKindFilter[]).map(k => (
+                <button
+                  key={k}
+                  onClick={() => setKindFilter(k)}
+                  className={`px-1 py-0.5 rounded text-[8px] cursor-pointer transition-all ${
+                    kindFilter === k
+                      ? "bg-[var(--module-accent)]/25 text-white font-semibold"
+                      : "text-slate-600 hover:text-slate-400"
+                  }`}
+                >
+                  {k === "all" ? t("toollaunch.kindAll") : k === "cli" ? t("toollaunch.kindCli") : t("toollaunch.kindDesktop")}
+                </button>
+              ))}
+            </div>
+          )}
           <button onClick={checkVersions} disabled={checkingVersions}
             className="p-0.5 rounded text-slate-600 hover:text-slate-400 cursor-pointer"
             title={t("toollaunch.checkVersion")}>
             <RefreshCw className={`w-3 h-3 ${checkingVersions ? "animate-spin" : ""}`} />
           </button>
         </div>
-        {tools.map(tool => {
+        {visibleTools.map((tool, index) => {
           const vs = getVerStatus(tool.id);
           return (
+            <Fragment key={tool.id}>
+            {/* 分组标题：已安装区在前、未安装区在后，各一个抬头 */}
+            {index === 0 && installedTools.length > 0 && (
+              <div className="px-1 pt-1 pb-0.5 text-[9px] font-bold text-slate-600 uppercase">
+                {t("toollaunch.installedGroup")}（{installedTools.length}）
+              </div>
+            )}
+            {index === installedTools.length && visibleNotInstalled.length > 0 && (
+              <div className="px-1 pt-2 pb-0.5 text-[9px] font-bold text-slate-600 uppercase">
+                {t("toollaunch.notInstalledGroup")}（{visibleNotInstalled.length}）
+              </div>
+            )}
             <button
-              key={tool.id}
               onClick={async () => {
                 setSelectedToolId(tool.id);
                 // 重置默认值
@@ -846,9 +888,11 @@ export default function ToolLauncher() {
                 <span className="w-4 h-4 flex-shrink-0 flex items-center justify-center text-xs">{tool.avatar || '🤖'}</span>
                 <div className="flex items-center gap-1 min-w-0 flex-1">
                   <span className="text-[11px] font-semibold truncate">{tool.nickname || tool.display_name}</span>
+                  {/* 真实名称：选中态背景就是纯 accent，再叠 accent 半透明等于看不见，
+                      一律用白色半透明（任何主题色下都清晰） */}
                   {tool.nickname && tool.nickname !== tool.display_name && (
                     <span className={`text-[9px] truncate flex-shrink-0 ${
-                      selectedToolId === tool.id ? "text-[color-mix(in_srgb,var(--module-accent)_70%,transparent)]" : "text-slate-500"
+                      selectedToolId === tool.id ? "text-white/70" : "text-slate-500"
                     }`}>
                       ({tool.display_name})
                     </span>
@@ -874,12 +918,26 @@ export default function ToolLauncher() {
                 ) : getBusy(tool.id) === "uninstalling" ? (
                   <span className="text-[9px] text-blue-300 animate-pulse">{t("toollaunch.uninstalling")}...</span>
                 ) : tool.installed ? (
-                  <span className={`text-[9px] ${selectedToolId === tool.id ? "text-[var(--module-accent)]" : "text-slate-500"} font-mono`}>
+                  // 与真实名称同理：选中态底色就是 accent，文字不能再用 accent
+                  <span className={`text-[9px] ${selectedToolId === tool.id ? "text-white/70" : "text-slate-500"} font-mono`}>
                     {tool.version || t("toollaunch.installed")}
                   </span>
                 ) : (
                   <span className="flex items-center gap-1">
                     <span className="text-[9px] text-slate-600">{t("toollaunch.notInstalled")}</span>
+                    {/* 没装的工具一键去问助手：跳转并预填问题，省得用户自己敲 */}
+                    {onAskAssistant && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onAskAssistant(t("toollaunch.askInstallQuestion", { name: tool.display_name }));
+                        }}
+                        className="text-[8px] px-1 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer transition-colors"
+                        title={t("toollaunch.askAssistant")}
+                      >
+                        {t("toollaunch.askAssistant")}
+                      </button>
+                    )}
                     {tool.website && (
                       <a href={tool.website} target="_blank" rel="noopener noreferrer"
                         onClick={(e) => { e.preventDefault(); e.stopPropagation(); void openUrl(tool.website); }}
@@ -891,7 +949,7 @@ export default function ToolLauncher() {
                   </span>
                 )}
                 {lastLaunchConfigs[tool.id] && tool.installed && (
-                  <div className={`flex items-center gap-1 mt-0.5 ml-5.5 flex-wrap ${selectedToolId === tool.id ? "text-[color-mix(in_srgb,var(--module-accent)_70%,transparent)]" : "text-slate-600"}`}>
+                  <div className={`flex items-center gap-1 mt-0.5 ml-5.5 flex-wrap ${selectedToolId === tool.id ? "text-white/70" : "text-slate-600"}`}>
                     {lastLaunchConfigs[tool.id].use_official_model ? (
                       <span className="text-[9px]">{t("toollaunch.official")}</span>
                     ) : (
@@ -920,6 +978,7 @@ export default function ToolLauncher() {
                 )}
               </div>
             </button>
+            </Fragment>
           );
         })}
       </div>
@@ -1303,10 +1362,7 @@ export default function ToolLauncher() {
 
                     {/* 没有可用的供应商/模型时的警告 */}
                     {eligibleProviders.length === 0 && (
-                      <div className="p-3 rounded-xl border border-amber-500/20 bg-amber-500/5 text-[10px] text-amber-400 flex items-center gap-2">
-                        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                        <span>{t("toollaunch.noModelsWarn")}</span>
-                      </div>
+                      <Note tone="warn">{t("toollaunch.noModelsWarn")}</Note>
                     )}
 
                     {/* 模型伪装（仅当工具内置模型名列表非空） */}
@@ -1810,40 +1866,21 @@ export default function ToolLauncher() {
               </div>
             )}
 
+            {/* 结果提示统一走共用组件：四处结果块原本逐字重复，改样式要改四遍 */}
             {launchResult && (
-              <div className={`p-3 rounded-xl text-xs flex items-start gap-2 ${
-                launchResult.ok ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" : "bg-red-500/10 border border-red-500/20 text-red-400"
-              }`}>
-                {launchResult.ok ? <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
-                <span className="whitespace-pre-line">{launchResult.msg}</span>
-              </div>
+              <ResultNote ok={launchResult.ok} message={launchResult.msg} />
             )}
 
             {upgradeResult && upgradeResult.id === selectedTool?.id && (
-              <div className={`p-3 rounded-xl text-xs flex items-start gap-2 ${
-                upgradeResult.ok ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" : "bg-red-500/10 border border-red-500/20 text-red-400"
-              }`}>
-                {upgradeResult.ok ? <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
-                <span className="whitespace-pre-line">{upgradeResult.message}</span>
-              </div>
+              <ResultNote ok={upgradeResult.ok} message={upgradeResult.message} />
             )}
 
             {installResult && installResult.id === selectedTool?.id && (
-              <div className={`p-3 rounded-xl text-xs flex items-start gap-2 ${
-                installResult.ok ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" : "bg-red-500/10 border border-red-500/20 text-red-400"
-              }`}>
-                {installResult.ok ? <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
-                <span className="whitespace-pre-line">{installResult.message}</span>
-              </div>
+              <ResultNote ok={installResult.ok} message={installResult.message} />
             )}
 
             {uninstallResult && uninstallResult.id === selectedTool?.id && (
-              <div className={`p-3 rounded-xl text-xs flex items-start gap-2 ${
-                uninstallResult.ok ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" : "bg-red-500/10 border border-red-500/20 text-red-400"
-              }`}>
-                {uninstallResult.ok ? <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
-                <span className="whitespace-pre-line">{uninstallResult.message}</span>
-              </div>
+              <ResultNote ok={uninstallResult.ok} message={uninstallResult.message} />
             )}
           </>
         )}

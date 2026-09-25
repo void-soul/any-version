@@ -31,12 +31,16 @@ const TOOL_LABEL: Record<string, string> = {
   install_tool: "执行安装",
 };
 
-export default function InstallAgentPanel() {
+export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
   const { t } = useTranslation();
   const [config, setConfig] = useState<AiConfig | null>(null);
   const [providerId, setProviderId] = useState<string>("");
   const [modelId, setModelId] = useState<string>("");
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(seed ?? "");
+  // 从工具页带过来的问题（seed 可能重复触发同一句话，故用 effect 跟随更新）
+  useEffect(() => {
+    if (seed) setInput(seed);
+  }, [seed]);
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
