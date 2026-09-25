@@ -21,6 +21,7 @@ pub mod cache;
 pub mod tools;
 pub mod tool_paths;
 pub mod tool_config_path;
+pub mod tool_config_custom;
 pub mod install_agent;
 pub mod collab;
 pub mod translate;

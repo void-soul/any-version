@@ -114,6 +114,15 @@ pub struct ConfigFileDef {
     #[serde(default)]
     pub schema: Option<String>,
     pub write: Option<HashMap<String, String>>,
+    /// 自定义写入器：schema 复杂到「路径 → 值」表达不了的（WorkBuddy 的 models.json 就是
+    /// `{models:[{id,name,vendor,url,apiKey,…}], availableModels:[…]}`），交给 Rust 侧整份生成。
+    ///
+    /// 抄 EchoBird：它的 `tools/*/config.json` 用 `"custom": true` 标记，实际写入在
+    /// `src-tauri/src/services/tool_config_manager/<tool>.rs`（我们对应
+    /// `commands/ai/tool_config_custom.rs`）。`true` = 用工具 id 当写入器名；也可以写字符串
+    /// 显式指定（如 workbuddyai 复用 `"workbuddy"` 写入器，只是路径不同）。
+    #[serde(default, alias = "customWriter")]
+    pub custom: Option<CustomWriter>,
     /// 目录级环境变量覆盖（按顺序取第一个非空值作为配置目录）：如 OpenCode v2 的
     /// `OPENCODE_CONFIG_DIR`。目录确定后文件名沿用 `path` 的文件名。
     /// 抄自 EchoBird c6f4bc25。
@@ -125,6 +134,33 @@ pub struct ConfigFileDef {
     /// 同 stem 的其它扩展名文件已存在时优先沿用它（如 OpenCode v2 的 `opencode.jsonc`）。
     #[serde(default, alias = "preferExistingExtensions")]
     pub prefer_existing_extensions: Vec<String>,
+}
+
+/// `configFile.custom` 的两种写法（untagged：`true` 或 `"workbuddy"`）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CustomWriter {
+    Flag(bool),
+    Key(String),
+}
+
+impl ConfigFileDef {
+    /// 该工具要用的自定义写入器名（None = 走通用的「路径 → 值」写入）。
+    pub fn custom_writer(&self, tool_id: &str) -> Option<String> {
+        match self.custom.as_ref()? {
+            // `"custom": true` → 工具 id 就是写入器名（EchoBird 的写法）
+            CustomWriter::Flag(true) => Some(tool_id.to_string()),
+            CustomWriter::Flag(false) => None,
+            CustomWriter::Key(key) => {
+                let key = key.trim();
+                if key.is_empty() {
+                    None
+                } else {
+                    Some(key.to_string())
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

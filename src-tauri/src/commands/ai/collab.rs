@@ -1337,12 +1337,15 @@ async fn ensure_room_proxy(
                 .or_else(|| model_id.map(|s| s.to_string()));
             // 出站协议：collab 派发的工具均为单协议 JSON runner，native_protocol 即所选协议
             let chosen_protocol = tool_config.native_protocol();
+            // 真实上游（走本地代理时 base_url 是 127.0.0.1，展示用的「厂商」要用它）
+            let upstream = p.url_for(&chosen_protocol);
             if let Err(e) = super::launch::write_tool_config_from_spec(
                 tool_config,
                 model_id,
                 claimed_model.as_deref(),
                 &base_url,
                 &p.api_key,
+                &upstream,
                 options.fallback_model_id.as_deref(),
                 options.fallback_masquerade_model.as_deref(),
                 options.one_m_context,

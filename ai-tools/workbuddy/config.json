@@ -17,12 +17,16 @@
   "category": "桌面应用",
   "website": "https://www.codebuddy.cn/work/",
   "apiProtocol": "openai",
-  "supportModel": false,
+  "supportModel": true,
   "supportsOpenai": true,
   "supportsAnthropic": false,
   "supportsGoogle": false,
   "cacheDirs": [
     ".workbuddy"
   ],
-  "configFile": null
+  "configFile": {
+    "path": "~/.workbuddy/models.json",
+    "format": "json",
+    "custom": "workbuddy"
+  }
 }

@@ -363,6 +363,8 @@ pub fn set_ai_tool_model(
         Some(claimed_model.as_str()),
         &upstream_url,
         &provider.api_key,
+        // 只保存模型 = 直连，upstream_url 就是请求地址本身
+        &upstream_url,
         fallback_model_id.as_deref(),
         None,
         one_m_context.unwrap_or(false),
@@ -401,10 +403,6 @@ pub fn get_ai_tool_model(tool_id: String) -> Result<Option<String>, String> {
         Some(c) => c,
         None => return Ok(None),
     };
-    let write_map = match &cfg.write {
-        Some(w) => w,
-        None => return Ok(None),
-    };
 
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
@@ -427,6 +425,15 @@ pub fn get_ai_tool_model(tool_id: String) -> Result<Option<String>, String> {
         std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
         &cfg.prefer_existing_extensions,
     );
+    // 自定义写入器：读法也自成一套（WorkBuddy 的 models[0].id），不走 write 映射
+    if let Some(writer) = cfg.custom_writer(&tool_id) {
+        return Ok(crate::commands::ai::tool_config_custom::read_model(&writer, &resolved));
+    }
+
+    let write_map = match &cfg.write {
+        Some(w) => w,
+        None => return Ok(None),
+    };
     let Ok(text) = fs::read_to_string(&resolved) else {
         return Ok(None);
     };
@@ -637,6 +644,9 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                         claimed_model.as_deref(),
                         &effective_base_url,
                         &effective_api_key,
+                        // 真实上游：代理模式下 effective_base_url 是 127.0.0.1，
+                        // 写「厂商」这类展示信息要用上游（见 custom 写入器）
+                        &upstream_url,
                         req.fallback_model_id.as_deref(),
                         req.fallback_masquerade_model.as_deref(),
                         req.one_m_context,
@@ -941,6 +951,9 @@ pub(crate) fn write_tool_config_from_spec(
     claimed_model: Option<&str>,
     base_url: &str,
     api_key: &str,
+    // 真实上游端点。仅用于写「厂商」这类**展示用**元信息：走本地代理时 `base_url`
+    // 是 127.0.0.1，直接拿它当厂商名会显示成本机回环。留空表示直连（base_url 即上游）。
+    upstream_url: &str,
     fallback_model_id: Option<&str>,
     fallback_masquerade_model: Option<&str>,
     one_m_context: bool,
@@ -952,7 +965,7 @@ pub(crate) fn write_tool_config_from_spec(
     chosen_protocol: &str,
 ) -> Result<(), String> {
     // write_tool_config_generic 内部会检查 config_file 是否存在，无 configFile 时直接返回 Ok(())
-    write_tool_config_generic(tool_config, model_id, claimed_model, base_url, api_key, fallback_model_id, fallback_masquerade_model, one_m_context, fallback_one_m_context, proxy_mode, custom_params, custom_param_values, web_search, chosen_protocol)
+    write_tool_config_generic(tool_config, model_id, claimed_model, base_url, api_key, upstream_url, fallback_model_id, fallback_masquerade_model, one_m_context, fallback_one_m_context, proxy_mode, custom_params, custom_param_values, web_search, chosen_protocol)
 }
 
 /// 从 config_file.write 映射中提取 env.* 前缀的键，构建环境变量 HashMap。
@@ -1029,6 +1042,7 @@ fn write_tool_config_generic(
     claimed_model: Option<&str>,
     base_url: &str,
     api_key: &str,
+    upstream_url: &str,
     fallback_model_id: Option<&str>,
     fallback_masquerade_model: Option<&str>,
     one_m_context: bool,
@@ -1041,10 +1055,6 @@ fn write_tool_config_generic(
 ) -> Result<(), String> {
     let cfg = match &tool_config.config_file {
         Some(c) => c,
-        None => return Ok(()),
-    };
-    let write_map = match &cfg.write {
-        Some(w) => w,
         None => return Ok(()),
     };
 
@@ -1072,6 +1082,28 @@ fn write_tool_config_generic(
         std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
         &cfg.prefer_existing_extensions,
     );
+
+    // 自定义写入器整份接管：schema 不是「路径 → 值」能表达的（WorkBuddy 的 models.json）。
+    // 放在 write_map 之前——这类工具本来就没有 write 映射。
+    if let Some(writer) = cfg.custom_writer(&tool_config.id) {
+        eprintln!("[config_file] 使用自定义写入器: {} → {}", writer, resolved_path.display());
+        return crate::commands::ai::tool_config_custom::write_config(
+            &writer,
+            &resolved_path,
+            &crate::commands::ai::tool_config_custom::ModelWrite {
+                model: model_id.unwrap_or(""),
+                claimed: claimed_model.unwrap_or(""),
+                base_url,
+                api_key,
+                upstream_url,
+            },
+        );
+    }
+
+    let write_map = match &cfg.write {
+        Some(w) => w,
+        None => return Ok(()),
+    };
 
     // 确保父目录存在
     if let Some(parent) = resolved_path.parent() {
