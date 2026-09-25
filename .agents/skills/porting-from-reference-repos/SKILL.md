@@ -13,7 +13,7 @@ Systematically check reference repositories for recent updates, identify valuabl
 
 | Repo | Path | 核心能力 | 与 any-version 的关系 |
 |------|------|---------|---------------------|
-| **EchoBird** | `E:\pro\other-sdk\ai-tools\EchoBird` | 提供各 agent CLI 终端的启动，启动时可修改模型，**但不支持代理**（如将 OpenAI 协议转为 Anthropic 协议） | 架构相似（Tauri+Rust+React），UI/启动逻辑可参考 |
+| **EchoBird** | `E:\pro\other-sdk\ai-tools\EchoBird` | **各 AI 工具的「模型管理」**：给每个工具写模型配置（配置文件路径 + 字段映射 + 自定义写入器）与「还原官方模型」；**不做协议转换代理**（那是 cc-switch/CodexPlusPlus 的参考点，也是 any-version 自己的代理） | **唯一借鉴点 = 各种工具的模型管理**：工具声明 + 写配置 + 官方还原（详见下方「EchoBird 模型管理移植」） |
 | **cc-switch** | `E:\pro\other-sdk\ai-tools\cc-switch` | 提供 Claude Code 启动、管理。**支持协议对齐**、抹平第三方模型和 Claude Code 的差异 | 代理/协议转换能力是 any-version 的参考重点 |
 | **CodexPlusPlus** | `E:\pro\other-sdk\ai-tools\CodexPlusPlus` | 提供 Codex 桌面端的启动、**协议对齐**，Codex 官方插件、技能的处理 | 插件/技能管理逻辑可参考 |
 | **open-tag** | `E:\pro\other-sdk\ai-tools\open-tag` | 提供**多 agent 协同**，与 any-version 的 AI-协作功能非常相似 | 协作机制（多 agent 通信、任务分配）是重点参考对象 |
@@ -240,6 +240,38 @@ for line in open(r".agents\skills\porting-from-reference-repos\sync-point.txt", 
                           f"{pin}..HEAD"], capture_output=True, text=True).stdout.rstrip() or "(无变化)")
 PY
 ```
+
+## EchoBird 模型管理移植（专项）
+
+> 对 EchoBird 我们**只借鉴一件事**：它管理各 AI 工具「模型配置」的方式。协议转换、账号、UI 等
+> 一律不抄（协议转换是我们的代理自研，参考点其实是 cc-switch / CodexPlusPlus）。
+
+### 两边对应关系
+
+| EchoBird | any-version | 说明 |
+|----------|-------------|------|
+| `tools/<id>/config.json`（`configFile` + `format` + `custom`） | `ai-tools/<id>/config.json`（`configFile: { path, format, write, custom, pathEnvDirs, xdgSubdir, preferExistingExtensions }`） | 工具声明；我们多一层 `write` 映射（「配置路径 → 值模板」），EchoBird 是 per-tool Rust 模块 |
+| `src-tauri/src/services/tool_config_manager/<id>.rs`（per-tool 写入） | 通用写入器 `commands/ai/launch.rs::write_tool_config_generic` | 我们用声明式 `write` 表达「点号路径 → 标量」；schema 复杂的（WorkBuddy 的 `models.json`）才走自定义写入器 |
+| `src-tauri/src/services/tool_config_manager/<id>.rs`（`custom: true` 的工具，如 workbuddy / claudedesktop） | `commands/ai/tool_config_custom.rs` | 自定义写入器：`write_config` / `read_model` 分派 |
+| `tool_config_manager.rs::restore_tool_to_official` + 各 `restore_*` | `commands/ai/tool_config_restore.rs::restore_tool_config` | 还原官方模型：删掉自己写的 provider/键；无专属实现走「删整个文件」兜底 |
+
+### 移植规则（用户定的）
+
+1. **只管理 EchoBird 有模型配置方式的工具**：EchoBird 的 `tools/<id>` 里没有 configFile、也没有对应
+   per-tool 写入模块 → 该工具不支持配置模型 → **不纳入 any-version 管理**（直接删 `ai-tools/<id>/`）。
+2. **逐字段对齐**：EchoBird 写哪个文件/哪些字段，我们就写哪个文件/哪些字段（provider 名用 `anyversion` 而不是
+   `echobird`）；EchoBird 刻意不写的（如 mimodesktop 的顶层 `model`，因为它会连带改掉共享该文件的 CLI 默认模型）我们也别写。
+3. **官方模型还原语义**：删「自己写的键」而不是整份覆盖 —— 按声明里的 `write` 映射反推要删哪些；
+   接管像 `~/.codex/auth.json` 这种本来就有用户凭据的文件前先备份（`~/.any-version/config-backups/<tool>/`），
+   还原时先恢复备份。自定义写入器的还原：WorkBuddy 删 `models.json`；Claude Desktop 把 `deploymentMode` 由 `3p` 切回 `1p` 并删 profile。
+
+### 移植时易踩的坑（已踩过，记录在此）
+
+- 注册表加载对声明**缺字段即整体丢弃**：`ToolConfig` 里所有「可有可无」字段都要 `#[serde(default)]`，
+  否则少写一个 `cacheDirs` 会让整个工具从列表里消失（只留 stderr 一行 parse 失败）。
+- 运行时读的是 `src-tauri/_up_/ai-tools` 副本：`build.rs::sync_dir` 必须「加 + 删」双同步，否则从源目录删工具不生效。
+- 写 JSONC（带注释）配置文件时先用 `strip_jsonc` 解析，否则 `serde_json::from_str` 失败会当空文档**整份覆盖**。
+- 工具声明里的 `model` 值要带 `modelFormat.prefix`（如 `anyversion/`），否则 opencode 系工具选不中 provider。
 
 ## When NOT to Use
 

@@ -12,7 +12,7 @@
 
 ai-toolbox      e558b6f2  2026-09-24  同架构同定位，最高优先
 cc-switch       da193d4f  2026-09-23  协议对齐 / 代理
-EchoBird        0e2250bb  2026-09-23  启动器 / 路由 / 账号配额
+EchoBird        0e2250bb  2026-09-23  各工具的模型管理（声明 + 写配置 + 官方还原）
 CodexPlusPlus   693c8486  2026-09-24  原生浏览器注入为主，多数不适用
 headroom        a6a9cef9  2026-09-24  已作为托管服务集成，只跟版本
 farming         a93dbecf  2026-09-24  多 agent 会话监督
@@ -145,3 +145,21 @@ claude-code-cli 290fdc94  2026-03-31  2026-03 起停更
            验证：`cargo check --all-targets` 0 error；`cargo test --lib` 579 passed / 0 failed；
            `npx tsc --noEmit` 退出码 0；`npm test` 8 files / 44 tests 全绿。
            待真机验证：在一台装了 WorkBuddy AI 的机器上导入本地登录态，确认字段解析与切号写回。
+
+2026-09-26 模型管理专项对齐（用户澄清：对 EchoBird 只借鉴「各工具的模型管理」，EchoBird HEAD 仍是
+           0e2250bb 无新提交；本轮是把**已部分移植**的模型管理做彻底并对齐语义，QA 记录 Q-0230 ~ Q-0232）：
+
+落地：
+- 工具声明逐字段对齐 EchoBird 的 tool_config_manager/<id>.rs：claude-code（env 块落盘 + AUTH_TOKEN）、
+  codex/chatgptdesktop（补 auth.json）、kilocode（路径 ~/.config/kilo/kilo.json）、mimodesktop
+  （provider anyversion-desktop + preferences.json、不写顶层 model）、pi（settings.json 默认模型）、
+  openscience（npm 随协议 + onboarding）、qwencode（modelProviders[]）、zcode（kind/source/modalities）。
+- 自定义写入器对齐 EchoBird 的 custom 机制：WorkBuddy / WorkBuddy AI（models.json）、
+  Claude Desktop（3P profile + deploymentMode=3p + _meta.json）。
+- 官方还原（EchoBird restore_tool_to_official 的对应物）：commands/ai/tool_config_restore.rs ——
+  按声明反推删自己写的键、接管凭据文件前备份、Claude Desktop 切回 1p / WorkBuddy 删文件。
+- 按规则删掉 EchoBird 无模型配置方式的工具：cline / deveco / freebuff / reasonix（23 → 19）。
+- 顺带修：omp 因声明缺字段被注册表静默丢弃；_up_ 副本只加不删导致删工具不生效；JSONC 写入丢注释。
+
+明确不抄：EchoBird 的「本地 anthropic 常驻代理 bridge 模式」——我们没有常驻代理，只走「直写本次
+          base_url/api_key」的 relay 语义；协议转换能力是 any-version 自己的代理（参考 cc-switch）。
