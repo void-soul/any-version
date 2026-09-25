@@ -1,0 +1,24 @@
+{
+  "name": "ZCode",
+  "category": "Desktop",
+  "apiProtocol": [
+    "openai",
+    "anthropic"
+  ],
+  "command": "",
+  "startCommand": "",
+  "detectCmd": "",
+  "installCmd": "start https://zcode.z.ai/cn#all-downloads",
+  "paths": {
+    "win32": [
+      "%LOCALAPPDATA%\\Programs\\ZCode\\ZCode.exe"
+    ],
+    "darwin": [
+      "/Applications/ZCode.app/Contents/MacOS/ZCode"
+    ],
+    "linux": [
+      "/opt/ZCode/zcode",
+      "~/.local/bin/zcode"
+    ]
+  }
+}

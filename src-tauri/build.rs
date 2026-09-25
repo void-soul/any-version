@@ -1,4 +1,9 @@
 fn main() {
+    // ai-tools/ 是运行时注册表：会被复制进构建产物（target/<profile>/_up_/ai-tools），
+    // 运行时从那里加载。不声明依赖的话，新增/改工具定义后 build 脚本不会重跑，
+    // 于是出现「定义明明加了，运行时却读不到」。
+    println!("cargo:rerun-if-changed=../ai-tools");
+
     #[cfg(target_os = "windows")]
     {
         // 仅正式(release)构建让应用以管理员身份运行：通过 UAC manifest 请求 requireAdministrator。

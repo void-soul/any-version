@@ -1,0 +1,39 @@
+{
+  "supportFallbackModel": false,
+  "builtinModels": [],
+  "supportsOptimizer": false,
+  "supportsRectifier": false,
+  "resumeCmd": null,
+  "continueCmd": null,
+  "dispatchCmd": null,
+  "dispatchResumeCmd": null,
+  "promptMode": null,
+  "sessions": null,
+  "skillsDir": null,
+  "id": "kimidesktop",
+  "displayName": "Kimi Desktop",
+  "avatar": "🌙",
+  "nickname": "Kimi 桌面端",
+  "category": "桌面应用",
+  "website": "https://www.kimi.com/code/",
+  "apiProtocol": "both",
+  "supportModel": true,
+  "supportsOpenai": true,
+  "supportsAnthropic": true,
+  "supportsGoogle": false,
+  "cacheDirs": [
+    ".kimi-code"
+  ],
+  "configFile": {
+    "path": "~/.kimi-code/config.toml",
+    "format": "toml",
+    "write": {
+      "default_model": "anyversion",
+      "providers.anyversion.type": "openai",
+      "providers.anyversion.base_url": "baseUrl",
+      "providers.anyversion.api_key": "apiKey",
+      "models.anyversion.provider": "anyversion",
+      "models.anyversion.model": "model"
+    }
+  }
+}

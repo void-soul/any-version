@@ -1,0 +1,39 @@
+{
+  "supportFallbackModel": true,
+  "builtinModels": [],
+  "supportsOptimizer": false,
+  "supportsRectifier": false,
+  "resumeCmd": null,
+  "continueCmd": null,
+  "dispatchCmd": null,
+  "dispatchResumeCmd": null,
+  "promptMode": null,
+  "sessions": null,
+  "skillsDir": null,
+  "id": "zcode",
+  "displayName": "ZCode",
+  "avatar": "🖥️",
+  "nickname": "ZCode",
+  "category": "桌面应用",
+  "website": "https://zcode.z.ai",
+  "apiProtocol": "both",
+  "supportModel": true,
+  "supportsOpenai": true,
+  "supportsAnthropic": true,
+  "supportsGoogle": false,
+  "cacheDirs": [
+    ".zcode"
+  ],
+  "configFile": {
+    "path": "~/.zcode/v2/config.json",
+    "format": "json",
+    "write": {
+      "provider.anyversion.name": "anyversion",
+      "provider.anyversion.options.baseURL": "baseUrl",
+      "provider.anyversion.options.apiKey": "apiKey",
+      "provider.anyversion.models.{model_name}.name": "modelName",
+      "model": "model",
+      "small_model": "fallbackModel"
+    }
+  }
+}

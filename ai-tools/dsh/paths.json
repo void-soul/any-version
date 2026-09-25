@@ -1,0 +1,28 @@
+{
+  "name": "DeepSeek Harness",
+  "category": "Desktop",
+  "apiProtocol": [
+    "anthropic",
+    "openai"
+  ],
+  "command": "dsh",
+  "startCommand": "dsh web",
+  "detectCmd": "dsh --version",
+  "installCmd": "npm install -g @deepseek-ai/dsh",
+  "paths": {
+    "win32": [
+      "%APPDATA%\\npm\\dsh.cmd",
+      "%APPDATA%\\npm\\dsh"
+    ],
+    "darwin": [
+      "/usr/local/bin/dsh",
+      "/opt/homebrew/bin/dsh",
+      "~/.npm-global/bin/dsh"
+    ],
+    "linux": [
+      "/usr/local/bin/dsh",
+      "~/.npm-global/bin/dsh",
+      "~/.local/bin/dsh"
+    ]
+  }
+}

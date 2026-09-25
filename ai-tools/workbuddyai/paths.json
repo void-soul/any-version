@@ -1,0 +1,20 @@
+{
+  "name": "WorkBuddy AI",
+  "category": "Desktop",
+  "apiProtocol": [
+    "openai"
+  ],
+  "command": "",
+  "startCommand": "",
+  "detectCmd": "",
+  "installCmd": "start https://www.workbuddy.ai/",
+  "paths": {
+    "win32": [
+      "%LOCALAPPDATA%\\Programs\\WorkBuddyAI\\WorkBuddyAI.exe"
+    ],
+    "darwin": [
+      "/Applications/WorkBuddy AI.app/Contents/MacOS/WorkBuddy AI"
+    ],
+    "linux": []
+  }
+}

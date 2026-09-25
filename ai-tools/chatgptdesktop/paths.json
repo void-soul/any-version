@@ -1,0 +1,23 @@
+{
+  "name": "ChatGPT",
+  "category": "Desktop",
+  "apiProtocol": [
+    "openai"
+  ],
+  "command": "",
+  "startCommand": "",
+  "detectCmd": "",
+  "installCmd": "winget install --id 9PLM9XGG6VKS --source msstore --accept-package-agreements --accept-source-agreements",
+  "launchUri": "shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App",
+  "paths": {
+    "win32": [
+      "%LOCALAPPDATA%\\Programs\\ChatGPT\\ChatGPT.exe",
+      "%LOCALAPPDATA%\\Programs\\Codex\\Codex.exe"
+    ],
+    "darwin": [
+      "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+      "/Applications/Codex.app/Contents/MacOS/Codex"
+    ],
+    "linux": []
+  }
+}

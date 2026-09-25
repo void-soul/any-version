@@ -1,0 +1,22 @@
+{
+  "name": "Kimi Desktop",
+  "category": "Desktop",
+  "apiProtocol": [
+    "openai",
+    "anthropic"
+  ],
+  "command": "",
+  "startCommand": "",
+  "detectCmd": "",
+  "installCmd": "start https://www.kimi.com/code/",
+  "paths": {
+    "win32": [
+      "%LOCALAPPDATA%\\Programs\\Kimi Code\\Kimi Code.exe"
+    ],
+    "darwin": [
+      "/Applications/Kimi Code.app/Contents/MacOS/Kimi Code",
+      "~/Applications/Kimi Code.app/Contents/MacOS/Kimi Code"
+    ],
+    "linux": []
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "supportFallbackModel": false,
+  "builtinModels": [],
+  "supportsOptimizer": false,
+  "supportsRectifier": false,
+  "resumeCmd": null,
+  "continueCmd": null,
+  "dispatchCmd": null,
+  "dispatchResumeCmd": null,
+  "promptMode": null,
+  "sessions": null,
+  "skillsDir": null,
+  "id": "dsh",
+  "displayName": "DeepSeek Harness",
+  "avatar": "🐋",
+  "nickname": "DSH",
+  "category": "桌面应用",
+  "website": "https://www.deepseek.com/harness/",
+  "apiProtocol": "both",
+  "supportModel": true,
+  "supportsOpenai": true,
+  "supportsAnthropic": true,
+  "supportsGoogle": false,
+  "cacheDirs": [
+    ".dsh"
+  ],
+  "pkgManager": "npm",
+  "pkgName": "@deepseek-ai/dsh",
+  "configFile": {
+    "path": "~/.dsh/settings.yaml",
+    "format": "yaml",
+    "write": {
+      "llm-pi-ai.providers.anyversion.displayName": "AnyVersion",
+      "llm-pi-ai.providers.anyversion.apiKeyEnv": "ANYVERSION_API_KEY",
+      "llm-pi-ai.providers.anyversion.api": "openai-completions",
+      "llm-pi-ai.providers.anyversion.baseURL": "baseUrl",
+      "llm-pi-ai.providers.anyversion.models": "piModels",
+      "agent-default-model.provider": "anyversion",
+      "agent-default-model.model": "model",
+      ".credentials.yaml#ANYVERSION_API_KEY": "apiKey"
+    }
+  }
+}

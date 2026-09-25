@@ -1,0 +1,45 @@
+{
+  "supportFallbackModel": false,
+  "builtinModels": [],
+  "supportsOptimizer": false,
+  "supportsRectifier": false,
+  "resumeCmd": null,
+  "continueCmd": null,
+  "dispatchCmd": null,
+  "dispatchResumeCmd": null,
+  "promptMode": null,
+  "sessions": {
+    "type": "jsonl",
+    "dirs": [
+      "~/.codex/sessions.jsonl"
+    ]
+  },
+  "skillsDir": "~/.codex/skills",
+  "id": "chatgptdesktop",
+  "displayName": "ChatGPT Desktop",
+  "avatar": "💬",
+  "nickname": "ChatGPT 桌面端",
+  "category": "桌面应用",
+  "website": "https://openai.com/codex/",
+  "apiProtocol": "openai",
+  "supportModel": true,
+  "supportsOpenai": true,
+  "supportsAnthropic": false,
+  "supportsGoogle": false,
+  "cacheDirs": [
+    ".codex"
+  ],
+  "configFile": {
+    "path": "~/.codex/config.toml",
+    "format": "toml",
+    "write": {
+      "model": "model",
+      "model_provider": "anyversion",
+      "model_providers.anyversion.name": "AnyVersion",
+      "model_providers.anyversion.base_url": "baseUrl",
+      "model_providers.anyversion.env_key": "OPENAI_API_KEY",
+      "env.OPENAI_MODEL": "model",
+      "web_search": "webSearchLive"
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "supportFallbackModel": true,
+  "builtinModels": [],
+  "supportsOptimizer": false,
+  "supportsRectifier": false,
+  "resumeCmd": null,
+  "continueCmd": null,
+  "dispatchCmd": null,
+  "dispatchResumeCmd": null,
+  "promptMode": null,
+  "sessions": null,
+  "skillsDir": null,
+  "id": "openscience",
+  "displayName": "OpenScience",
+  "avatar": "🔬",
+  "nickname": "OpenScience",
+  "category": "桌面应用",
+  "website": "https://www.openscience.sh/download",
+  "apiProtocol": "both",
+  "supportModel": true,
+  "supportsOpenai": true,
+  "supportsAnthropic": true,
+  "supportsGoogle": false,
+  "cacheDirs": [
+    ".config/openscience"
+  ],
+  "configFile": {
+    "path": "~/.config/openscience/openscience.json",
+    "format": "json",
+    "preferExistingExtensions": [
+      "jsonc",
+      "json"
+    ],
+    "write": {
+      "provider.anyversion.npm": "@ai-sdk/openai-compatible",
+      "provider.anyversion.name": "anyversion",
+      "provider.anyversion.options.baseURL": "baseUrl",
+      "provider.anyversion.options.apiKey": "apiKey",
+      "provider.anyversion.models.{model_name}.name": "modelName",
+      "model": "model",
+      "small_model": "fallbackModel"
+    }
+  }
+}

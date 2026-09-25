@@ -1,0 +1,20 @@
+{
+  "name": "WorkBuddy",
+  "category": "Desktop",
+  "apiProtocol": [
+    "openai"
+  ],
+  "command": "",
+  "startCommand": "",
+  "detectCmd": "",
+  "installCmd": "winget install --id Tencent.WorkBuddy --accept-package-agreements --accept-source-agreements",
+  "paths": {
+    "win32": [
+      "%LOCALAPPDATA%\\Programs\\WorkBuddy\\WorkBuddy.exe"
+    ],
+    "darwin": [
+      "/Applications/WorkBuddy.app/Contents/MacOS/WorkBuddy"
+    ],
+    "linux": []
+  }
+}

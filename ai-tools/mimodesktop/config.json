@@ -1,0 +1,46 @@
+{
+  "supportFallbackModel": false,
+  "builtinModels": [],
+  "supportsOptimizer": false,
+  "supportsRectifier": false,
+  "resumeCmd": null,
+  "continueCmd": null,
+  "dispatchCmd": null,
+  "dispatchResumeCmd": null,
+  "promptMode": null,
+  "sessions": null,
+  "skillsDir": null,
+  "id": "mimodesktop",
+  "displayName": "MiMo Desktop",
+  "avatar": "🖥️",
+  "nickname": "MiMo 桌面端",
+  "category": "桌面应用",
+  "website": "https://mimo.xiaomimimo.com/desktop/invite/",
+  "apiProtocol": "openai",
+  "supportModel": true,
+  "supportsOpenai": true,
+  "supportsAnthropic": false,
+  "supportsGoogle": false,
+  "cacheDirs": [
+    ".mimocode"
+  ],
+  "configFile": {
+    "path": "~/.config/mimocode/mimocode.jsonc",
+    "format": "jsonc",
+    "schema": "https://mimo.xiaomi.com/mimocode/config.json",
+    "preferExistingExtensions": [
+      "jsonc",
+      "json"
+    ],
+    "write": {
+      "provider.anyversion.npm": "@ai-sdk/openai-compatible",
+      "provider.anyversion.name": "anyversion",
+      "provider.anyversion.options.baseURL": "baseUrl",
+      "provider.anyversion.options.apiKey": "apiKey",
+      "model": "model",
+      "provider.anyversion.models.{model_name}.name": "modelName",
+      "env.MIMO_MODEL": "model",
+      "env.OPENAI_MODEL": "model"
+    }
+  }
+}

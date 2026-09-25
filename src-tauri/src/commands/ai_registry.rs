@@ -913,10 +913,47 @@ pub fn update_tool_profile(tool_id: String, avatar: Option<String>, nickname: Op
 
 #[cfg(test)]
 mod tests {
-    use super::{tool_kind_of, ProviderPreset, ProviderPresetDto};
+    use super::{registry, tool_kind_of, ProviderPreset, ProviderPresetDto};
 
     /// 回归：DTO 一旦被标上 `rename_all = "camelCase"`，URL 会序列化成
     /// `openaiUrl`，前端按 `openai_url` 读取全部落空 → 添加预设只剩名称/官网。
+    #[test]
+    fn desktop_tools_are_registered_and_classified_as_desktop() {
+        // 从 EchoBird 移植进来的桌面端工具（category=Desktop）：
+        // 注册表读得到、且被归到 desktop —— 否则工具列表的「桌面端」分组永远是空的。
+        let reg = registry();
+        for id in [
+            "claudedesktop",
+            "chatgptdesktop",
+            "mimodesktop",
+            "kimidesktop",
+            "opencodedesktop",
+            "openscience",
+            "zcode",
+            "workbuddy",
+            "workbuddyai",
+            "dsh",
+        ] {
+            let Some((config, paths)) = reg.get_tool(id) else {
+                panic!("注册表里没有桌面端工具 {}（ai-tools/{}/ 是否完整？）", id, id);
+            };
+            assert_eq!(
+                tool_kind_of(Some(&paths.category)),
+                "desktop",
+                "{} 的形态是 {}，没被归到桌面端",
+                id,
+                paths.category
+            );
+            // 声明了 configFile 才允许显示「设置模型」入口，两者必须一致
+            assert_eq!(
+                config.config_file.is_some(),
+                config.support_model,
+                "{} 的 configFile 与 supportModel 不一致（会成为点了没效果的假入口）",
+                id
+            );
+        }
+    }
+
     #[test]
     fn tool_kind_normalizes_cli_and_desktop_categories() {
         // 列表要按「CLI / 桌面端」分组（抄 EchoBird 的维度）：

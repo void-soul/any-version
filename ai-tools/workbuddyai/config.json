@@ -1,0 +1,28 @@
+{
+  "supportFallbackModel": false,
+  "builtinModels": [],
+  "supportsOptimizer": false,
+  "supportsRectifier": false,
+  "resumeCmd": null,
+  "continueCmd": null,
+  "dispatchCmd": null,
+  "dispatchResumeCmd": null,
+  "promptMode": null,
+  "sessions": null,
+  "skillsDir": null,
+  "id": "workbuddyai",
+  "displayName": "WorkBuddy AI",
+  "avatar": "🧰",
+  "nickname": "WorkBuddy AI",
+  "category": "桌面应用",
+  "website": "https://www.workbuddy.ai/",
+  "apiProtocol": "openai",
+  "supportModel": false,
+  "supportsOpenai": true,
+  "supportsAnthropic": false,
+  "supportsGoogle": false,
+  "cacheDirs": [
+    ".workbuddy-ai"
+  ],
+  "configFile": null
+}

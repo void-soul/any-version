@@ -1,0 +1,24 @@
+{
+  "name": "MiMo Desktop",
+  "category": "Desktop",
+  "apiProtocol": [
+    "openai"
+  ],
+  "command": "",
+  "startCommand": "",
+  "detectCmd": "",
+  "installCmd": "start https://mimo.xiaomimimo.com/desktop/invite/",
+  "paths": {
+    "win32": [
+      "%LOCALAPPDATA%\\Programs\\Xiaomi MiMo\\Xiaomi MiMo.exe",
+      "%LOCALAPPDATA%\\Programs\\xiaomi-mimo-desktop\\Xiaomi MiMo.exe"
+    ],
+    "darwin": [
+      "/Applications/Xiaomi MiMo.app/Contents/MacOS/Xiaomi MiMo",
+      "~/Applications/Xiaomi MiMo.app/Contents/MacOS/Xiaomi MiMo"
+    ],
+    "linux": [
+      "~/.local/bin/mimodesktop.AppImage"
+    ]
+  }
+}

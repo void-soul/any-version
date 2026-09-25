@@ -1,0 +1,52 @@
+{
+  "supportFallbackModel": true,
+  "builtinModels": [],
+  "supportsOptimizer": false,
+  "supportsRectifier": false,
+  "resumeCmd": null,
+  "continueCmd": null,
+  "dispatchCmd": null,
+  "dispatchResumeCmd": null,
+  "promptMode": null,
+  "sessions": null,
+  "skillsDir": "~/.config/opencode/skills",
+  "id": "opencodedesktop",
+  "displayName": "OpenCode Desktop",
+  "avatar": "🖥️",
+  "nickname": "OpenCode 桌面端",
+  "category": "桌面应用",
+  "website": "https://opencode.ai/download",
+  "apiProtocol": "openai",
+  "supportModel": true,
+  "supportsOpenai": true,
+  "supportsAnthropic": false,
+  "supportsGoogle": false,
+  "cacheDirs": [
+    ".opencode"
+  ],
+  "configFile": {
+    "path": "~/.config/opencode/opencode.jsonc",
+    "format": "jsonc",
+    "pathEnvDirs": [
+      "OPENCODE_CONFIG_DIR"
+    ],
+    "xdgSubdir": "opencode",
+    "preferExistingExtensions": [
+      "jsonc"
+    ],
+    "write": {
+      "provider.anyversion.name": "anyversion",
+      "provider.anyversion.npm": "@ai-sdk/openai-compatible",
+      "provider.anyversion.options.baseURL": "baseUrl",
+      "provider.anyversion.options.apiKey": "apiKey",
+      "provider.anyversion.models.{model_name}.name": "modelName",
+      "provider.anyversion.models.{fallback_model_name}.name": "fallbackModelName",
+      "model": "model",
+      "small_model": "fallbackModel"
+    }
+  },
+  "modelFormat": {
+    "prefix": "anyversion/",
+    "extractLast": true
+  }
+}

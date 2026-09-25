@@ -1,0 +1,25 @@
+{
+  "name": "OpenScience",
+  "category": "Desktop",
+  "apiProtocol": [
+    "anthropic",
+    "openai"
+  ],
+  "command": "",
+  "startCommand": "",
+  "detectCmd": "",
+  "installCmd": "start https://www.openscience.sh/download",
+  "paths": {
+    "win32": [
+      "%LOCALAPPDATA%\\Programs\\OpenScience\\openscience.exe",
+      "%LOCALAPPDATA%\\Programs\\openscience\\openscience.exe"
+    ],
+    "darwin": [
+      "/Applications/OpenScience.app/Contents/MacOS/OpenScience",
+      "~/Applications/OpenScience.app/Contents/MacOS/OpenScience"
+    ],
+    "linux": [
+      "~/.local/bin/OpenScience.AppImage"
+    ]
+  }
+}

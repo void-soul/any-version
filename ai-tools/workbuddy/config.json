@@ -1,0 +1,28 @@
+{
+  "supportFallbackModel": false,
+  "builtinModels": [],
+  "supportsOptimizer": false,
+  "supportsRectifier": false,
+  "resumeCmd": null,
+  "continueCmd": null,
+  "dispatchCmd": null,
+  "dispatchResumeCmd": null,
+  "promptMode": null,
+  "sessions": null,
+  "skillsDir": null,
+  "id": "workbuddy",
+  "displayName": "WorkBuddy",
+  "avatar": "🧰",
+  "nickname": "WorkBuddy",
+  "category": "桌面应用",
+  "website": "https://www.codebuddy.cn/work/",
+  "apiProtocol": "openai",
+  "supportModel": false,
+  "supportsOpenai": true,
+  "supportsAnthropic": false,
+  "supportsGoogle": false,
+  "cacheDirs": [
+    ".workbuddy"
+  ],
+  "configFile": null
+}

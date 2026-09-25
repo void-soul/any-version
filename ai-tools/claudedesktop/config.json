@@ -1,0 +1,28 @@
+{
+  "supportFallbackModel": false,
+  "builtinModels": [],
+  "supportsOptimizer": false,
+  "supportsRectifier": false,
+  "resumeCmd": null,
+  "continueCmd": null,
+  "dispatchCmd": null,
+  "dispatchResumeCmd": null,
+  "promptMode": null,
+  "sessions": null,
+  "skillsDir": null,
+  "id": "claudedesktop",
+  "displayName": "Claude Desktop",
+  "avatar": "🖥️",
+  "nickname": "Claude 桌面端",
+  "category": "桌面应用",
+  "website": "https://claude.com/download",
+  "apiProtocol": "anthropic",
+  "supportModel": false,
+  "supportsOpenai": false,
+  "supportsAnthropic": true,
+  "supportsGoogle": false,
+  "cacheDirs": [
+    ".claude"
+  ],
+  "configFile": null
+}
