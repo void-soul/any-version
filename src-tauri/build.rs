@@ -1,8 +1,13 @@
+use std::fs;
+use std::path::Path;
+
 fn main() {
-    // ai-tools/ 是运行时注册表：会被复制进构建产物（target/<profile>/_up_/ai-tools），
-    // 运行时从那里加载。不声明依赖的话，新增/改工具定义后 build 脚本不会重跑，
-    // 于是出现「定义明明加了，运行时却读不到」。
+    // ai-tools/（仓库根）是工具注册表的**唯一源头**；运行时读的是 src-tauri/_up_/ai-tools，
+    // 由 npm 侧的 scripts/bundle-resources.mjs 复制过去。
+    // 但直接跑 cargo build / cargo test 时不会经过 npm，于是「定义加了却读不到」。
+    // 这里在构建脚本里也同步一次：声明依赖 + 覆盖复制，两条路都保证最新。
     println!("cargo:rerun-if-changed=../ai-tools");
+    sync_dir("../ai-tools", "_up_/ai-tools");
 
     #[cfg(target_os = "windows")]
     {
@@ -48,4 +53,39 @@ fn main() {
     }
     #[cfg(not(target_os = "windows"))]
     tauri_build::build()
+}
+
+/// 把源目录（相对 src-tauri）同步到目标目录：目录建齐、文件覆盖。
+///
+/// 只加不删（与 bundle-resources.mjs 行为一致），失败仅告警 —— 构建脚本抛错
+/// 会让整个项目编译不过，为资源同步失败中断编译不值当。
+fn sync_dir(src: &str, dst: &str) {
+    let src = Path::new(src);
+    let dst = Path::new(dst);
+    if !src.is_dir() {
+        println!("cargo:warning=资源源目录不存在，跳过同步: {}", src.display());
+        return;
+    }
+    if let Err(e) = fs::create_dir_all(dst) {
+        println!("cargo:warning=创建资源目录失败 {}：{}", dst.display(), e);
+        return;
+    }
+    if let Err(e) = copy_dir_all(src, dst) {
+        println!("cargo:warning=同步 {} → {} 失败：{}", src.display(), dst.display(), e);
+    }
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let target = dst.join(entry.file_name());
+        if path.is_dir() {
+            fs::create_dir_all(&target)?;
+            copy_dir_all(&path, &target)?;
+        } else {
+            fs::copy(&path, &target)?;
+        }
+    }
+    Ok(())
 }
