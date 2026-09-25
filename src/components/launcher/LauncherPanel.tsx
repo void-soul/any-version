@@ -18,9 +18,6 @@ import {
   ChevronRight,
   ChevronsUp,
   ChevronsDown,
-  Bookmark,
-
-
   ScanSearch,
   LayoutGrid,
   Settings2,
@@ -345,9 +342,6 @@ export default function LauncherPanel() {
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [targetClassificationId, setTargetClassificationId] = useState<number>(1);
 
-  // Bookmark import modal
-  const [bookmarkModalOpen, setBookmarkModalOpen] = useState(false);
-  const [importingBookmark, setImportingBookmark] = useState(false);
 
   // Context Menus state
   const [itemContextMenu, setItemContextMenu] = useState<{
@@ -654,27 +648,6 @@ export default function LauncherPanel() {
       showToast(t("launcher.moveFail", { err: String(e) }));
     } finally {
       setMoveItemsLoading(false);
-    }
-  };
-
-  // Import Browser Bookmarks
-  const handleImportBookmarks = async (browser: "edge" | "chrome") => {
-    setImportingBookmark(true);
-    try {
-      const res = await invoke<{ count: number; categoryId: number }>("launcher_import_browser_bookmarks", {
-        browser,
-        customPath: null,
-      });
-      setBookmarkModalOpen(false);
-      await loadData();
-      if (res && res.categoryId) {
-        setActiveParentId(res.categoryId);
-      }
-      showToast(t("launcher.importedCount", { count: res?.count || 0, browser: browser === "edge" ? "Edge" : "Chrome" }));
-    } catch (e: any) {
-      showToast(t("launcher.importFail", { err: String(e) }));
-    } finally {
-      setImportingBookmark(false);
     }
   };
 
@@ -1404,15 +1377,7 @@ export default function LauncherPanel() {
             <span className="text-[11px]">{t("launcher.search")}</span>
           </button>
 
-          {/* Import Bookmarks */}
-          <button
-            onClick={() => setBookmarkModalOpen(true)}
-            className="px-2.5 py-1 rounded-lg text-xs bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 hover:text-white transition cursor-pointer flex items-center gap-1.5"
-            title={t("launcher.importBookmarksTitle")}
-          >
-            <Bookmark className="w-3 h-3 text-amber-400" />
-            <span className="text-[11px]">{t("launcher.importBookmarks")}</span>
-          </button>
+          {/* 浏览器收藏夹导入已删除：该能力现在归收藏模块（favorites） */}
 
           {/* 检测 */}
           <button
@@ -2390,63 +2355,6 @@ export default function LauncherPanel() {
                 {moveItemsLoading ? t("launcher.moving") : t("launcher.confirmMove")}
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Browser Bookmarks Import Modal */}
-      {bookmarkModalOpen && (
-        <div
-          className="fixed inset-0 z-[250] modal-mask bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-100"
-        >
-          <div
-            className="w-full max-w-sm bg-surface-panel border border-white/15 rounded-2xl p-5 shadow-2xl space-y-4 text-xs"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-2 border-b border-white/10">
-              <div className="flex items-center gap-2">
-                <Bookmark className="w-4 h-4 text-amber-400" />
-                <h3 className="text-sm font-bold text-white">{t("launcher.importBmTitle")}</h3>
-              </div>
-              <button
-                onClick={() => setBookmarkModalOpen(false)}
-                className="text-slate-400 hover:text-white p-1"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              自动读取本机 Edge 或 Chrome 的书签文件，并自动同步其文件夹层级为启动器分类。
-            </p>
-
-            <div className="grid grid-cols-2 gap-3 pt-1">
-              <button
-                onClick={() => handleImportBookmarks("edge")}
-                disabled={importingBookmark}
-                className="p-3.5 rounded-xl border border-white/10 bg-white/5 hover:bg-[var(--module-accent-soft)] hover:border-[var(--module-accent-ring)] text-slate-200 transition cursor-pointer flex flex-col items-center text-center gap-2 disabled:opacity-50"
-              >
-                <Globe className="w-6 h-6 text-blue-400" />
-                <span className="font-bold text-xs">Microsoft Edge</span>
-                <span className="text-[9px] text-slate-500">{t("launcher.importBmSub")}</span>
-              </button>
-
-              <button
-                onClick={() => handleImportBookmarks("chrome")}
-                disabled={importingBookmark}
-                className="p-3.5 rounded-xl border border-white/10 bg-white/5 hover:bg-[var(--module-accent-soft)] hover:border-[var(--module-accent-ring)] text-slate-200 transition cursor-pointer flex flex-col items-center text-center gap-2 disabled:opacity-50"
-              >
-                <Globe className="w-6 h-6 text-emerald-400" />
-                <span className="font-bold text-xs">Google Chrome</span>
-                <span className="text-[9px] text-slate-500">{t("launcher.importBmSub")}</span>
-              </button>
-            </div>
-
-            {importingBookmark && (
-              <p className="text-center text-[var(--module-accent)] text-xs animate-pulse">
-                {t("launcher.importBmParsing")}
-              </p>
-            )}
           </div>
         </div>
       )}

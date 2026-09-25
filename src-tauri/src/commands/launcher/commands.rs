@@ -660,10 +660,4 @@ pub async fn launcher_process_dropped_paths(
     super::windows::process_dropped_paths(paths, classification_id)
 }
 
-#[tauri::command]
-pub async fn launcher_import_browser_bookmarks(
-    browser: String,
-    custom_path: Option<String>,
-) -> Result<super::models::BrowserImportResult, String> {
-    super::windows::import_browser_bookmarks(&browser, custom_path.as_deref())
-}
+// 浏览器收藏夹导入已移除：该能力归收藏模块（favorites）负责，启动模块不再维护。

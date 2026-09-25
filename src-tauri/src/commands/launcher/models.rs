@@ -384,10 +384,4 @@ pub struct ShortcutInfo {
     pub icon_base64: Option<String>,
 }
 
-/// 浏览器书签导入结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BrowserImportResult {
-    pub count: usize,
-    pub category_id: i64,
-}
+// 浏览器书签导入结果（该功能已移到收藏模块，结构体一并删除）
