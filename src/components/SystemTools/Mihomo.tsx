@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { mihomoApi } from "./mihomoApi";
 
 import { ModuleSettingsButton, SettingsGroup, SettingsRow, SettingsSwitch } from "../shared/ModuleSettings";
+import { Note } from "../shared/Note";
 
 import OverviewPanel from "./mihomo/OverviewPanel";
 import ProxiesPanel from "./mihomo/ProxiesPanel";
@@ -217,9 +218,10 @@ export default function Mihomo() {
 
       {/* 运行告警（TUN 需要管理员、内核缺失、内核日志里的关键错误） */}
       {Array.isArray(state?.warnings) && state.warnings.length > 0 && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 space-y-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-semibold text-amber-300">{t("mihomo.shellWarnings")}</span>
+        <Note
+          tone="warn"
+          title={t("mihomo.shellWarnings")}
+          action={
             <button
               onClick={() => act("dismiss", () => mihomoApi.clearWarnings())}
               disabled={busy === "dismiss"}
@@ -228,7 +230,8 @@ export default function Mihomo() {
             >
               {t("mihomo.shellClear")}
             </button>
-          </div>
+          }
+        >
           {state.warnings.map((w: string, i: number) => (
             <div key={i} className="flex items-start gap-2 text-xs text-amber-200">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-px" />
@@ -246,7 +249,7 @@ export default function Mihomo() {
               </button>
             </div>
           )}
-        </div>
+        </Note>
       )}
 
       {/* 子 Tab 栏 */}

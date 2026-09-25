@@ -36,6 +36,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
+import { Note } from "../shared/Note";
 
 // ---- 类型（与后端 node_manager.rs 对应，serde camelCase）----
 
@@ -964,23 +965,24 @@ function ProjectCard({
 
       {/* 端口冲突：明确端口 / 占用进程 / PID，并提供强制关闭 */}
       {portConflict && (
-        <div className="mx-5 mb-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center gap-2 flex-wrap">
-          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
-          <span className="text-[10px] text-amber-300 font-semibold">
-            {t("nodeproj.conflictDetail", {
-              port: st?.port ?? project.defaultPort,
-              proc: st?.conflictProcess ?? "?",
-              pid: st?.pid ?? "?",
-            })}
-          </span>
-          <button
-            type="button"
-            onClick={() => onKillPortOwner(st?.port ?? project.defaultPort)}
-            className="ml-auto px-2 py-1 rounded-md bg-red-600 hover:bg-red-500 text-[10px] font-semibold text-white cursor-pointer transition-all flex items-center gap-1"
-          >
-            <Square className="w-3 h-3" /> {t("nodeproj.forceKill")}
-          </button>
-        </div>
+        <Note
+          tone="warn"
+          className="mx-5 mb-2 !p-2.5"
+          title={t("nodeproj.conflictDetail", {
+            port: st?.port ?? project.defaultPort,
+            proc: st?.conflictProcess ?? "?",
+            pid: st?.pid ?? "?",
+          })}
+          action={
+            <button
+              type="button"
+              onClick={() => onKillPortOwner(st?.port ?? project.defaultPort)}
+              className="px-2 py-1 rounded-md bg-red-600 hover:bg-red-500 text-[10px] font-semibold text-white cursor-pointer transition-all flex items-center gap-1"
+            >
+              <Square className="w-3 h-3" /> {t("nodeproj.forceKill")}
+            </button>
+          }
+        />
       )}
 
       {/* 更新检查：git 模式对比 commit；npx 模式对比本地版本与 npm registry 远程版本 */}

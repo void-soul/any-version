@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { Note } from "./shared/Note";
 import {
   Languages,
   ArrowRightLeft,
@@ -563,10 +564,7 @@ export default function TranslatePanel() {
       )}
 
       {!isConfigured && (
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-[11px] text-amber-300 flex items-center gap-2">
-          <Pin className="w-3.5 h-3.5" />
-          {t("tranpanel.noProviderDesc")}
-        </div>
+        <Note tone="warn">{t("tranpanel.noProviderDesc")}</Note>
       )}
     </div>
 

@@ -3,10 +3,11 @@ import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { listen as listenEvent } from '@tauri-apps/api/event';
+import { Note } from '../shared/Note';
 import {
   Search, Tag, Boxes, Store, Download, Trash2,
   CheckCircle, AlertTriangle, ExternalLink, X, Package, Loader2,
-  ChevronDown, Settings2, Filter, Link2, Unlink, Info
+  ChevronDown, Settings2, Filter, Link2, Unlink
 } from 'lucide-react';
 import { DetectedAiTool } from './types';
 
@@ -522,20 +523,14 @@ export default function SkillManager() {
         {/* ════════ 工具 + 软链接集成 Tab ════════ */}
         {tab === 'tools' && (
           <div className="space-y-4 max-w-4xl">
-            {/* 提示警示区块 */}
-            <div className="rounded-xl bg-amber-500/10 border border-amber-500/20 p-3.5 space-y-1.5">
-              <div className="flex items-center gap-2 text-amber-300 text-xs font-bold">
-                <Info className="w-4 h-4 flex-shrink-0" />
-                <span>{t("skillmgr.symlinkWarnTitle")}</span>
-              </div>
-              <p className="text-[11px] text-slate-300 leading-relaxed">
+            {/* 提示警示区块 —— 这块样式被全软件采纳为统一提示组件（shared/Note） */}
+            <Note tone="warn" title={t("skillmgr.symlinkWarnTitle")}>
+              <p>
                 {t("skillmgr.symlinkWarn1")}
                 {t("skillmgr.symlinkWarn2")}
               </p>
-              <p className="text-[10px] text-slate-400">
-                {t("skillmgr.symlinkWarn3")}
-              </p>
-            </div>
+              <p className="text-[10px] text-slate-400">{t("skillmgr.symlinkWarn3")}</p>
+            </Note>
 
             {/* 工具状态与软链接开关列表 */}
             <div className="space-y-2">
