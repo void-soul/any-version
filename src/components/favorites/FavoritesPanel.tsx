@@ -26,9 +26,13 @@ import {
   Search,
   Tag,
   Trash2,
+  Bot,
+  Send,
+  Sparkles,
 } from "lucide-react";
 
 import { favoritedDateLabel, sinceToLocalString, type FavoritesSort, type SincePreset } from "./favoritedTime";
+import { parseAiResultLine } from "./aiResult";
 import { SharedButton } from "../shared/Button";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { toast } from "../shared/Toast";
@@ -98,6 +102,53 @@ export default function FavoritesPanel() {
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingTags, setEditingTags] = useState("");
+
+  // ── AI 检索助手（用户说需求 → agent 在本地库里找 → 整理成清单）──
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiInput, setAiInput] = useState("");
+  const [aiResult, setAiResult] = useState("");
+  const [aiSteps, setAiSteps] = useState<{ step: string; text: string; tool?: string }[]>([]);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const aiLogRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const unlisten = listen<{ step: string; text: string; tool?: string }>(
+      "favorites-agent-progress",
+      (event) => {
+        const s = event.payload;
+        if (s.step === "thinking" || s.step === "done") return;
+        setAiSteps((prev) => [...prev, s]);
+      },
+    );
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
+  useEffect(() => {
+    const el = aiLogRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [aiSteps]);
+
+  const runAiSearch = async () => {
+    const text = aiInput.trim();
+    if (!text || aiBusy) return;
+    setAiBusy(true);
+    setAiError(null);
+    setAiResult("");
+    setAiSteps([]);
+    try {
+      const reply = await invoke<{ text: string }>("fav_agent_search", {
+        providerId: providerId || null,
+        modelId: modelId || null,
+        prompt: text,
+      });
+      setAiResult(reply.text);
+    } catch (e: any) {
+      setAiError(String(e));
+    } finally {
+      setAiBusy(false);
+    }
+  };
 
   // 导入 / 归类的实时进度（后端 favorites-progress 事件）
   const [progress, setProgress] = useState<FavoritesProgress | null>(null);
@@ -722,6 +773,18 @@ export default function FavoritesPanel() {
             disabled={busy !== null}
             onClick={() => void runCheck()}
           />
+          {/* AI 检索：用自然语言说需求，agent 在本地收藏库里找并整理成清单 */}
+          <LinkButton
+            label={t("favorites.aiSearch")}
+            busy={aiBusy}
+            disabled={busy !== null || providers.length === 0}
+            onClick={() => {
+              setAiError(null);
+              setAiResult("");
+              setAiSteps([]);
+              setAiOpen(true);
+            }}
+          />
           {stopLink(busy === "classify" || busy === "check")}
         </div>
 
@@ -1169,9 +1232,125 @@ export default function FavoritesPanel() {
       />
 
       <ConfirmDialogHost request={confirmRequest} onClose={() => setConfirmRequest(null)} />
+
+      {/* AI 检索助手：把「我想要个做 X 的库」翻译成检索动作，并把结果整理成清单 */}
+      {aiOpen && (
+        <div className="fixed inset-0 z-[130] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-[620px] max-w-[95vw] max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl p-5">
+            <div className="flex items-center gap-2.5 mb-3">
+              <div className="w-9 h-9 rounded-xl bg-[var(--module-accent)]/15 border border-[var(--module-accent)]/30 flex items-center justify-center">
+                <Bot className="w-4 h-4 text-[var(--module-accent)]" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-bold text-white">{t("favorites.aiSearchTitle")}</h3>
+                <p className="text-[10px] text-slate-500">{t("favorites.aiSearchHint")}</p>
+              </div>
+              <button
+                onClick={() => setAiOpen(false)}
+                className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 mb-2">
+              <input
+                value={aiInput}
+                onChange={(e) => setAiInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void runAiSearch(); } }}
+                placeholder={t("favorites.aiSearchPh")}
+                className="flex-1 bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+              />
+              <button
+                onClick={() => void runAiSearch()}
+                disabled={aiBusy || !aiInput.trim()}
+                className="px-3 py-2 rounded-lg text-[11px] bg-[var(--module-accent)] hover:opacity-90 text-white font-semibold cursor-pointer disabled:opacity-40 flex items-center gap-1"
+              >
+                <Send className="w-3 h-3" />
+                {aiBusy ? t("favorites.aiSearchRunning") : t("favorites.aiSearchGo")}
+              </button>
+            </div>
+
+            {/* 检索过程：让用户看得见 agent 到底查了什么，而不是黑箱等结果 */}
+            {aiSteps.length > 0 && (
+              <div ref={aiLogRef} className="max-h-24 overflow-y-auto rounded-lg border border-white/5 bg-black/30 p-2 mb-2 space-y-1">
+                {aiSteps.map((s, i) => (
+                  <div key={i} className="text-[9px] text-slate-500 flex gap-1.5">
+                    <span className="flex-shrink-0 text-slate-600">{AI_TOOL_LABEL[s.tool ?? ""] ?? "过程"}</span>
+                    <span className="min-w-0 break-all">{s.text.slice(0, 160)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-white/5 bg-slate-900/30 p-3">
+              {aiError ? (
+                <div className="text-[11px] text-rose-400 break-all">{aiError}</div>
+              ) : aiResult ? (
+                <AiResultMarkdown text={aiResult} />
+              ) : (
+                <div className="text-[11px] text-slate-500 py-8 text-center">
+                  <Sparkles className="w-4 h-4 mx-auto mb-2 text-slate-600" />
+                  {t("favorites.aiSearchPlaceholder")}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+/** 极简 Markdown 渲染：只处理 agent 输出约定里的几种行（标题 / 列表项 / 普通段落）。
+ *  不引第三方渲染库——内容是可控的模型输出，够用且没有 XSS 面（链接走 openUrl）。 */
+function AiResultMarkdown({ text }: { text: string }) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-1.5">
+      {text.split("\n").map((raw, i) => {
+        const parsed = parseAiResultLine(raw);
+        switch (parsed.kind) {
+          case "blank":
+            return <div key={i} className="h-1" />;
+          case "heading":
+            return parsed.level === 2 ? (
+              <div key={i} className="text-xs font-bold text-white mt-2">{parsed.text}</div>
+            ) : (
+              <div key={i} className="text-[11px] font-bold text-slate-200 mt-2">{parsed.text}</div>
+            );
+          case "item":
+            return (
+              <div key={i} className="flex items-start gap-1.5 text-[11px]">
+                <span className="text-slate-600 mt-[3px]">•</span>
+                <button
+                  onClick={() => { void openUrl(parsed.url).catch(() => {}); }}
+                  className="text-[var(--module-accent)] hover:underline cursor-pointer text-left"
+                  title={parsed.url}
+                >
+                  {parsed.title}
+                </button>
+                {parsed.note && <span className="text-slate-400">{parsed.note}</span>}
+              </div>
+            );
+          case "bullet":
+            return <div key={i} className="text-[11px] text-slate-300 pl-2">• {parsed.text}</div>;
+          default:
+            return (
+              <div key={i} className="text-[11px] text-slate-300 whitespace-pre-wrap">{parsed.text}</div>
+            );
+        }
+      })}
+      <div className="pt-2 text-[9px] text-slate-600">{t("favorites.aiSearchDisclaimer")}</div>
+    </div>
+  );
+}
+
+const AI_TOOL_LABEL: Record<string, string> = {
+  search_favorites: "检索",
+  get_favorite_content: "读正文",
+  list_favorite_tags: "看分类",
+};
 
 /** 分组之间的细分隔线（比留白更明确地「断开」，又不至于像卡片那样围起来）。 */
 function Divider() {
