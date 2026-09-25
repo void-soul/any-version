@@ -213,6 +213,12 @@ fn open_db() -> Result<rusqlite::Connection, String> {
             tag_id TEXT NOT NULL,
             PRIMARY KEY (bookmark_id, tag_id)
         );
+        CREATE TABLE IF NOT EXISTS picky_tombstones (
+            entity TEXT NOT NULL,
+            id TEXT NOT NULL,
+            deleted_at TEXT NOT NULL,
+            PRIMARY KEY (entity, id)
+        );
         CREATE TABLE IF NOT EXISTS picky_sync_config (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             endpoint TEXT,
@@ -1177,6 +1183,63 @@ fn state_to_json(conn: &rusqlite::Connection) -> Result<PickyState, String> {
 // 收藏/评论：本地缺失 → 插入；已存在且云端 updatedAt 更新 → 覆盖本地（后写优先）。
 // 标签：按 id 只补缺失（避免覆盖本地改名）。标签关联：幂等补充。
 
+// ─── 删除墓碑（tombstone）───
+//
+// 云同步的合并语义是「并集 + LWW」：本地没有的条目就从云端补进来。
+// 这条规则本身没错，但它天生压过删除 —— 删掉 A 之后下一次同步，云端（还没收到删除）
+// 会把 A 原样补回来，于是出现「删 A，再删 B，A 又回来了；再删 C，A、B 都在」。
+// 删除必须留下痕迹，云端数据只有在**比删除更晚被改过**时才准它复活。
+
+const ENT_BOOKMARK: &str = "bookmark";
+const ENT_COMMENT: &str = "comment";
+const ENT_TAG: &str = "tag";
+/// 墓碑保留时长：留够久，避免另一端（Flutter 端 / 另一台机器）隔很久才同步、
+/// 又把旧数据带回来。到期清理只是不想让这张表无限膨胀。
+const TOMBSTONE_RETENTION_DAYS: i64 = 90;
+
+/// 记下「这些 id 是被我们删掉的」。删除命令里调用，必须在写库同一趟里完成。
+fn record_tombstones(conn: &rusqlite::Connection, entity: &str, ids: &[String]) -> Result<(), String> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let now = now_iso();
+    for id in ids {
+        conn.execute(
+            "INSERT OR REPLACE INTO picky_tombstones (entity, id, deleted_at) VALUES (?1,?2,?3)",
+            rusqlite::params![entity, id, now],
+        )
+        .map_err(|e| format!("记录删除墓碑失败: {}", e))?;
+    }
+    Ok(())
+}
+
+/// 该 id 是否曾被我们删掉；返回删除时间。
+fn tombstone_time(conn: &rusqlite::Connection, entity: &str, id: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT deleted_at FROM picky_tombstones WHERE entity=?1 AND id=?2",
+        rusqlite::params![entity, id],
+        |r| r.get(0),
+    )
+    .ok()
+}
+
+fn clear_tombstone(conn: &rusqlite::Connection, entity: &str, id: &str) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM picky_tombstones WHERE entity=?1 AND id=?2",
+        rusqlite::params![entity, id],
+    )
+    .map_err(|e| format!("清理删除墓碑失败: {}", e))?;
+    Ok(())
+}
+
+/// 清理过期墓碑（超过保留期的老删除记录，留着只会让表变大）。
+fn prune_tombstones(conn: &rusqlite::Connection) -> usize {
+    let cutoff =
+        (chrono::Utc::now() - chrono::Duration::days(TOMBSTONE_RETENTION_DAYS)).to_rfc3339();
+    conn.execute("DELETE FROM picky_tombstones WHERE deleted_at < ?1", [&cutoff])
+        .unwrap_or(0)
+}
+
 #[derive(Debug, Clone, Default)]
 struct MergeCounts {
     added_bookmarks: usize,
@@ -1184,6 +1247,8 @@ struct MergeCounts {
     added_comments: usize,
     updated_comments: usize,
     added_tags: usize,
+    /// 因本地已删除而被跳过的云端条目数（没有墓碑机制时它们会被「复活」）
+    skipped_deleted: usize,
 }
 
 /// 宽松解析 ISO 时间（rfc3339 / 无时区微秒两种格式，兼容 Flutter toIso8601String）。
@@ -1222,6 +1287,14 @@ fn merge_cloud_state(conn: &rusqlite::Connection, state: &JsonValue) -> Result<M
         for item in arr {
             match serde_json::from_value::<Bookmark>(item.clone()) {
                 Ok(bm) => {
+                    // 墓碑优先：本地删过 → 只有云端在这之后又改过才算「另一端重新加回来」。
+                    if let Some(deleted_at) = tombstone_time(conn, ENT_BOOKMARK, &bm.id) {
+                        if !incoming_is_newer(&bm.updated_at, &deleted_at) {
+                            counts.skipped_deleted += 1;
+                            continue;
+                        }
+                        clear_tombstone(conn, ENT_BOOKMARK, &bm.id)?;
+                    }
                     let local_updated: Option<String> = conn
                         .query_row("SELECT updated_at FROM picky_bookmarks WHERE id=?1", [&bm.id], |r| r.get(0))
                         .ok();
@@ -1258,6 +1331,18 @@ fn merge_cloud_state(conn: &rusqlite::Connection, state: &JsonValue) -> Result<M
     if let Some(arr) = state.get("comments").and_then(|v| v.as_array()) {
         for item in arr {
             if let Ok(c) = serde_json::from_value::<Comment>(item.clone()) {
+                // 评论自身被删过 → 同上；所属收藏被删过 → 也不要把孤儿评论补回来。
+                if let Some(deleted_at) = tombstone_time(conn, ENT_COMMENT, &c.id) {
+                    if !incoming_is_newer(&c.updated_at, &deleted_at) {
+                        counts.skipped_deleted += 1;
+                        continue;
+                    }
+                    clear_tombstone(conn, ENT_COMMENT, &c.id)?;
+                }
+                if tombstone_time(conn, ENT_BOOKMARK, &c.bookmark_id).is_some() {
+                    counts.skipped_deleted += 1;
+                    continue;
+                }
                 let local_updated: Option<String> = conn
                     .query_row("SELECT updated_at FROM picky_comments WHERE id=?1", [&c.id], |r| r.get(0))
                     .ok();
@@ -1281,6 +1366,11 @@ fn merge_cloud_state(conn: &rusqlite::Connection, state: &JsonValue) -> Result<M
                 if tag_exists(conn, &t.id) {
                     continue;
                 }
+                // 标签没有 updatedAt：本地删过就永远是删除优先，不复活。
+                if tombstone_time(conn, ENT_TAG, &t.id).is_some() {
+                    counts.skipped_deleted += 1;
+                    continue;
+                }
                 conn.execute(
                     "INSERT OR REPLACE INTO picky_tags (id, name, color, created_at) VALUES (?1,?2,?3,?4)",
                     rusqlite::params![t.id, t.name, t.color, t.created_at],
@@ -1295,6 +1385,12 @@ fn merge_cloud_state(conn: &rusqlite::Connection, state: &JsonValue) -> Result<M
             if let Some(ids) = val.as_array() {
                 for tid in ids {
                     if let Some(t) = tid.as_str() {
+                        // 收藏或标签任一方已被本地删除 → 这条关联也不该补回来
+                        if tombstone_time(conn, ENT_BOOKMARK, bid).is_some()
+                            || tombstone_time(conn, ENT_TAG, t).is_some()
+                        {
+                            continue;
+                        }
                         add_binding_if_absent(conn, bid, t);
                     }
                 }
@@ -1320,6 +1416,9 @@ fn format_merge_summary(counts: &MergeCounts, prefix: &str) -> String {
     }
     if counts.added_tags > 0 {
         parts.push(format!("新增标签 {}", counts.added_tags));
+    }
+    if counts.skipped_deleted > 0 {
+        parts.push(format!("忽略已删除 {}", counts.skipped_deleted));
     }
     if parts.is_empty() {
         format!("{}（无变化）", prefix)
@@ -1517,6 +1616,16 @@ async fn picky_refetch_metadata_inner(app: &tauri::AppHandle, id: &str) -> Resul
 pub fn picky_delete_bookmark(id: String) -> Result<(), String> {
     let conn = open_db()?;
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    // 先记墓碑再删：否则下一次云同步会把它们从云端（还没收到删除）原样补回来。
+    let comment_ids: Vec<String> = tx
+        .prepare("SELECT id FROM picky_comments WHERE bookmark_id=?1")
+        .and_then(|mut s| {
+            s.query_map([&id], |r| r.get(0))
+                .and_then(|rows| rows.collect::<Result<Vec<String>, _>>())
+        })
+        .map_err(|e| format!("读取待删评论失败: {}", e))?;
+    record_tombstones(&tx, ENT_COMMENT, &comment_ids)?;
+    record_tombstones(&tx, ENT_BOOKMARK, &[id.clone()])?;
     tx.execute("DELETE FROM picky_bookmarks WHERE id=?1", [&id])
         .map_err(|e| format!("删除收藏失败: {}", e))?;
     tx.execute("DELETE FROM picky_comments WHERE bookmark_id=?1", [&id])
@@ -1582,6 +1691,15 @@ pub fn picky_update_comment(comment: Comment) -> Result<(), String> {
 #[tauri::command]
 pub fn picky_delete_comment(id: String) -> Result<(), String> {
     let conn = open_db()?;
+    // 子回复一并删，墓碑也要一并记（漏记就会在下一次同步被补回来）
+    let ids: Vec<String> = conn
+        .prepare("SELECT id FROM picky_comments WHERE id=?1 OR parent_id=?1")
+        .and_then(|mut s| {
+            s.query_map([&id], |r| r.get(0))
+                .and_then(|rows| rows.collect::<Result<Vec<String>, _>>())
+        })
+        .map_err(|e| format!("读取待删评论失败: {}", e))?;
+    record_tombstones(&conn, ENT_COMMENT, &ids)?;
     conn.execute("DELETE FROM picky_comments WHERE id=?1 OR parent_id=?1", [&id])
         .map_err(|e| format!("删除评论失败: {}", e))?;
     schedule_auto_sync();
@@ -1628,6 +1746,7 @@ pub fn picky_add_tag(name: String, color: Option<String>) -> Result<Tag, String>
 pub fn picky_delete_tag(id: String) -> Result<(), String> {
     let conn = open_db()?;
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    record_tombstones(&tx, ENT_TAG, &[id.clone()])?;
     tx.execute("DELETE FROM picky_tags WHERE id=?1", [&id])
         .map_err(|e| format!("删除标签失败: {}", e))?;
     tx.execute("DELETE FROM picky_bookmark_tags WHERE tag_id=?1", [&id])
@@ -1764,6 +1883,8 @@ pub async fn picky_sync_now() -> Result<String, String> {
     let merged = match client.download_full_state().await? {
         Some(cloud) => {
             let counts = merge_cloud_state(&conn, &cloud)?;
+            // 老墓碑到期清理：本次已按墓碑跳过云端旧数据，接下来只留近期删除记录
+            prune_tombstones(&conn);
             let s = format_merge_summary(&counts, "已合并云端");
             crate::exit_log!("[picky-sync] 下载并合并云端成功: {}", s);
             s
@@ -1875,5 +1996,106 @@ mod tests {
         let bm: Bookmark = serde_json::from_value(json).expect("布尔也应可解析");
         assert!(bm.refined);
         assert!(!bm.meta_fetched);
+    }
+
+    /// 建一张最小化的内存库（只含合并测试用到的表）。
+    fn test_conn() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE picky_bookmarks (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', description TEXT,
+                url TEXT, image_url TEXT, favicon_url TEXT, created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT '', refined INTEGER NOT NULL DEFAULT 0,
+                meta_fetched INTEGER NOT NULL DEFAULT 0, extra TEXT NOT NULL DEFAULT '{}', content TEXT
+            );
+            CREATE TABLE picky_comments (
+                id TEXT PRIMARY KEY, bookmark_id TEXT NOT NULL DEFAULT '',
+                content TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT '', parent_id TEXT
+            );
+            CREATE TABLE picky_tags (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
+                color TEXT NOT NULL DEFAULT '#4FC3F7', created_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE picky_bookmark_tags (
+                bookmark_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY (bookmark_id, tag_id)
+            );
+            CREATE TABLE picky_tombstones (
+                entity TEXT NOT NULL, id TEXT NOT NULL, deleted_at TEXT NOT NULL,
+                PRIMARY KEY (entity, id)
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    /// 回归测试（真实事故）：云同步合并是「并集 + LWW」，本地没有的从云端补。
+    /// 删掉 A 后同步，云端（还没收到删除）会把 A 补回来 —— 表现就是
+    /// 「删 A，再删 B，A 又出现了；再删 C，A、B 都在」。删除必须留墓碑。
+    #[test]
+    fn merge_cloud_state_does_not_resurrect_deleted_items() {
+        let conn = test_conn();
+        let a = Bookmark { id: "A".into(), title: "A".into(), ..Default::default() };
+        let b = Bookmark { id: "B".into(), title: "B".into(), ..Default::default() };
+        insert_bookmark(&conn, &a).unwrap();
+        insert_bookmark(&conn, &b).unwrap();
+
+        // 本地删掉 A：正文清掉 + 留墓碑（与 picky_delete_bookmark 同一套动作）
+        conn.execute("DELETE FROM picky_bookmarks WHERE id='A'", []).unwrap();
+        record_tombstones(&conn, ENT_BOOKMARK, &["A".to_string()]).unwrap();
+
+        // 云端快照仍是删除前的 A、B
+        let cloud = serde_json::json!({ "bookmarks": [a, b] });
+        let counts = merge_cloud_state(&conn, &cloud).unwrap();
+        assert_eq!(counts.skipped_deleted, 1, "云端旧数据应被墓碑挡住");
+
+        let alive: Vec<String> = conn
+            .prepare("SELECT id FROM picky_bookmarks ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|x| x.unwrap())
+            .collect();
+        assert_eq!(alive, vec!["B".to_string()], "A 不该被复活");
+    }
+
+    /// 墓碑不是「永久封杀」：另一端在删除之后又改过条目（updatedAt 更晚），
+    /// 说明是对方有意加回来的，应当恢复并清掉墓碑。
+    #[test]
+    fn merge_cloud_state_resurrects_when_cloud_is_newer_than_tombstone() {
+        let conn = test_conn();
+        let mut a = Bookmark { id: "A".into(), title: "A".into(), ..Default::default() };
+        insert_bookmark(&conn, &a).unwrap();
+        conn.execute("DELETE FROM picky_bookmarks WHERE id='A'", []).unwrap();
+        record_tombstones(&conn, ENT_BOOKMARK, &["A".to_string()]).unwrap();
+        let deleted_at = tombstone_time(&conn, ENT_BOOKMARK, "A").unwrap();
+
+        // 云端这条的 updatedAt 晚于删除时间
+        a.updated_at = (chrono::Utc::now() + chrono::Duration::hours(1))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        assert!(incoming_is_newer(&a.updated_at, &deleted_at));
+        let counts = merge_cloud_state(&conn, &serde_json::json!({ "bookmarks": [a] })).unwrap();
+        assert_eq!(counts.added_bookmarks, 1);
+        assert!(
+            tombstone_time(&conn, ENT_BOOKMARK, "A").is_none(),
+            "复活后墓碑应被清掉"
+        );
+    }
+
+    /// 收藏删掉后，它的评论也不该被云端补回来（否则列表里会冒出孤儿评论）。
+    #[test]
+    fn merge_cloud_state_skips_comments_of_deleted_bookmark() {
+        let conn = test_conn();
+        record_tombstones(&conn, ENT_BOOKMARK, &["A".to_string()]).unwrap();
+        let cloud = serde_json::json!({
+            "comments": [{ "id": "c1", "bookmarkId": "A", "content": "hi",
+                           "createdAt": "2026-01-01T00:00:00", "updatedAt": "2026-01-01T00:00:00" }]
+        });
+        let counts = merge_cloud_state(&conn, &cloud).unwrap();
+        assert_eq!(counts.skipped_deleted, 1);
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM picky_comments", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
     }
 }
