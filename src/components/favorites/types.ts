@@ -86,6 +86,8 @@ export interface CheckResult {
   aborted: boolean;
   /** 用户点了停止 */
   cancelled: boolean;
+  /** 库里有 GitHub 条目但没配 Token → 这批没查（其它来源照查） */
+  skippedNoToken?: number;
 }
 
 /** 后端实时进度事件（favorites-progress）：导入 / 归类 / 失效检测共用一个载荷。
