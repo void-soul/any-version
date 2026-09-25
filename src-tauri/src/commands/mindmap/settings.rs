@@ -1,9 +1,12 @@
 //! 思维导图设置：存储在数据目录 `mindmap_settings.json`。
 //!
-//! 两部分内容：
-//! - **AI 探索预算**：探索循环（AI 点单读文件）的轮数与每批预算原本是硬编码常量，
+//! 三部分内容：
+//! - **AI 探索预算**：探索循环（AI 点单读**本地文件**）的轮数与每批预算原本是硬编码常量，
 //!   现开放为可调参数，让用户按模型窗口/项目规模自行权衡「分析深度 ↔ 成本」。
 //!   这些字段带硬钳制，防止极端值（如 0 轮、单文件 100MB）拖垮上下文或产生天价账单。
+//! - **Agent 交互轮数**：右栏对话的单轮 LLM 交互次数上限（含工具轮）。与「探索轮数」是
+//!   **两件不同的事**——探索轮数是读文件的轮数，这个是 Agent 的交互次数，各自独立配置。
+//!   原本硬编码 8，导致「设了探索轮数 12 还是 8 轮就停」，现已开放。
 //! - **上次使用的 AI 模型**：思维导图不提供显式「默认模型」设置项，选择模型时自动记录，
 //!   下次打开沿用（见 `last_provider_id` / `last_model_id`）。
 
@@ -14,6 +17,8 @@ pub const DEFAULT_EXPLORER_ROUNDS: u32 = 6;
 pub const DEFAULT_EXPLORER_FILES_PER_ROUND: u32 = 8;
 pub const DEFAULT_EXPLORER_CHARS_PER_FILE: u32 = 4000;
 pub const DEFAULT_EXPLORER_BATCH_CHARS: u32 = 24000;
+/// Agent（右栏对话）单轮交互次数默认值（与原硬编码 8 一致，行为无迁移断层）。
+pub const DEFAULT_AGENT_ROUNDS: u32 = 8;
 
 // 钳制范围：下限保证最小可用性，上限防止上下文爆炸/账单失控。
 // 每轮上限 24 → 最多 24×6=144 文件，接近大仓库分析的现实上限。
@@ -25,6 +30,9 @@ pub const MIN_CHARS_PER_FILE: u32 = 500;
 pub const MAX_CHARS_PER_FILE: u32 = 20_000;
 pub const MIN_BATCH_CHARS: u32 = 4_000;
 pub const MAX_BATCH_CHARS: u32 = 60_000;
+// Agent 交互轮数：每轮一次 LLM 调用，上限防失控（30 轮已是相当昂贵的单轮对话）。
+pub const MIN_AGENT_ROUNDS: u32 = 1;
+pub const MAX_AGENT_ROUNDS: u32 = 30;
 
 /// 思维导图设置（AI 探索预算 + 上次使用的模型记忆）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +46,9 @@ pub struct ExplorerSettings {
     pub explorer_chars_per_file: u32,
     /// 每轮追加内容的总字符预算
     pub explorer_batch_chars: u32,
+    /// Agent（右栏对话）单轮的最大 LLM 交互次数（含工具轮）。
+    /// 与 `explorer_rounds`（读文件轮数）是两件事，各自独立配置。
+    pub agent_rounds: u32,
     /// 上次使用的 AI 供应商 id（None = 尚未选择过，前端回退到默认供应商）
     pub last_provider_id: Option<String>,
     /// 上次使用的 AI 模型 id（None = 尚未选择过，前端回退到激活模型）
@@ -51,6 +62,7 @@ impl Default for ExplorerSettings {
             explorer_files_per_round: DEFAULT_EXPLORER_FILES_PER_ROUND,
             explorer_chars_per_file: DEFAULT_EXPLORER_CHARS_PER_FILE,
             explorer_batch_chars: DEFAULT_EXPLORER_BATCH_CHARS,
+            agent_rounds: DEFAULT_AGENT_ROUNDS,
             last_provider_id: None,
             last_model_id: None,
         }
@@ -72,6 +84,7 @@ impl ExplorerSettings {
             self.explorer_chars_per_file.max(MIN_BATCH_CHARS),
             MAX_BATCH_CHARS,
         );
+        self.agent_rounds = self.agent_rounds.clamp(MIN_AGENT_ROUNDS, MAX_AGENT_ROUNDS);
         self
     }
 }
@@ -122,6 +135,9 @@ mod tests {
         assert_eq!(d.explorer_files_per_round, 8);
         assert_eq!(d.explorer_chars_per_file, 4000);
         assert_eq!(d.explorer_batch_chars, 24_000);
+        // Agent 交互轮数默认 8（与原硬编码一致）
+        assert_eq!(d.agent_rounds, DEFAULT_AGENT_ROUNDS);
+        assert_eq!(d.agent_rounds, 8);
     }
 
     #[test]
@@ -131,6 +147,7 @@ mod tests {
             explorer_files_per_round: 99,
             explorer_chars_per_file: 1,
             explorer_batch_chars: 1,
+            agent_rounds: 999,
             last_provider_id: None,
             last_model_id: None,
         }
@@ -140,6 +157,21 @@ mod tests {
         assert_eq!(s.explorer_chars_per_file, 500);
         // batch_chars 被拉到 chars_per_file 之上（防 per_file 恒为 0）
         assert!(s.explorer_batch_chars >= s.explorer_chars_per_file);
+        // Agent 轮数也被钳制（999 → 上限 30）
+        assert_eq!(s.agent_rounds, MAX_AGENT_ROUNDS);
+    }
+
+    /// Agent 轮数是**独立**参数：调它不影响探索轮数，反之亦然。
+    #[test]
+    fn agent_rounds_is_independent_of_explorer_rounds() {
+        let s = ExplorerSettings {
+            explorer_rounds: 12,
+            agent_rounds: 8,
+            ..Default::default()
+        }
+        .clamped();
+        assert_eq!(s.explorer_rounds, 12);
+        assert_eq!(s.agent_rounds, 8);
     }
 
     #[test]
@@ -149,6 +181,7 @@ mod tests {
             explorer_files_per_round: 8,
             explorer_chars_per_file: 20_000,
             explorer_batch_chars: 4_000,
+            agent_rounds: 8,
             last_provider_id: None,
             last_model_id: None,
         }
@@ -164,6 +197,7 @@ mod tests {
             explorer_files_per_round: 12,
             explorer_chars_per_file: 6_000,
             explorer_batch_chars: 40_000,
+            agent_rounds: 20,
             last_provider_id: Some("openai".to_string()),
             last_model_id: Some("gpt-5".to_string()),
         };
@@ -171,6 +205,7 @@ mod tests {
         let back: ExplorerSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.explorer_rounds, 9);
         assert_eq!(back.explorer_batch_chars, 40_000);
+        assert_eq!(back.agent_rounds, 20);
         // 「上次使用的模型」记忆随文件持久化
         assert_eq!(back.last_provider_id.as_deref(), Some("openai"));
         assert_eq!(back.last_model_id.as_deref(), Some("gpt-5"));
@@ -184,5 +219,7 @@ mod tests {
         assert_eq!(cfg.explorer_rounds, 4);
         assert!(cfg.last_provider_id.is_none());
         assert!(cfg.last_model_id.is_none());
+        // 没有 agentRounds 字段的旧文件 → 回退默认 8（不因新增字段而破坏旧配置）
+        assert_eq!(cfg.agent_rounds, DEFAULT_AGENT_ROUNDS);
     }
 }

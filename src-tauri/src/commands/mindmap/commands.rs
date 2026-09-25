@@ -1501,8 +1501,10 @@ pub async fn mm_ai_from_text(app: tauri::AppHandle, input: AiGenerateTextInput) 
 // 写操作后端只裁决不执行：ops 以事件发给前端，由前端走既有写路径应用
 // （撤销快照 / 画布刷新 / 持久化保持单一来源），后端阻塞等待前端回填结果。
 
-/// 单轮对话的 LLM 调用轮数上限（含读工具轮），防止循环失控。
-const AGENT_MAX_ROUNDS: usize = 8;
+// 注意：Agent 交互轮数**不是**这里的常量，而是「思维导图设置」里的 `agentRounds`
+// （见 `settings::ExplorerSettings::agent_rounds`）。两件事不要混：
+//   · 探索轮数  = AI 导入时点单读本地文件的轮数（settings::explorer_rounds）
+//   · Agent 轮数 = 右栏对话的单轮 LLM 交互次数（settings::agent_rounds）
 /// 单批写 ops 的节点数上限。
 const AGENT_MAX_OPS: usize = 50;
 /// 会话历史的字符预算（粗略 4 字符 ≈ 1 token，只求「不会无限膨胀」，精确计数交给网关）。
@@ -1813,7 +1815,9 @@ async fn agent_run(
 ) -> Result<AgentTurn, String> {
     let hooks = MmHooks { app, cancel };
     let mut all_ops: Vec<serde_json::Value> = Vec::new();
-    for round in 0..AGENT_MAX_ROUNDS {
+    // 轮数上限来自设置（「AI 探索参数」里的 Agent 轮数），不再硬编码
+    let max_rounds = super::settings::load_explorer_settings().agent_rounds as usize;
+    for round in 0..max_rounds {
         cancel_err(app, cancel)?;
         let outcome = ai::channel::complete_chat_messages(&hooks, provider, model, messages, 0.4, Some(AGENT_TOOLS_SPEC))
             .await
@@ -1885,7 +1889,10 @@ async fn agent_run(
         }
         messages.extend(tool_results);
     }
-    Err(format!("Agent 连续 {} 轮未给出最终回答，已停止", AGENT_MAX_ROUNDS))
+    Err(format!(
+        "Agent 连续 {} 轮未给出最终回答，已停止。可在「思维导图设置 → AI 探索参数」调大 Agent 轮数后重试",
+        max_rounds
+    ))
 }
 
 /// Agent 一轮对话入口：确保会话 → 构建上下文与历史 → 跑工具循环 → 落库并返回。

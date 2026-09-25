@@ -20,6 +20,8 @@ export interface ExplorerSettings {
   explorerFilesPerRound: number;
   explorerCharsPerFile: number;
   explorerBatchChars: number;
+  /** 右栏对话 Agent 的单轮最大交互次数（与 explorerRounds 是两件事） */
+  agentRounds: number;
   /** 上次使用的 AI 供应商（思维导图专用记忆，无显式设置项） */
   lastProviderId?: string | null;
   /** 上次使用的 AI 模型 */
@@ -32,6 +34,7 @@ const EXPLORER_LIMITS = {
   explorerFilesPerRound: { min: 1, max: 24 },
   explorerCharsPerFile: { min: 500, max: 20000 },
   explorerBatchChars: { min: 4000, max: 60000 },
+  agentRounds: { min: 1, max: 30 },
 } as const;
 
 export function MindmapModuleSettings() {
@@ -158,6 +161,7 @@ export function MindmapModuleSettings() {
               ["explorerFilesPerRound", "settings.explorerFilesHint", ""],
               ["explorerCharsPerFile", "settings.explorerCharsFile", ""],
               ["explorerBatchChars", "settings.explorerCharsBatch", ""],
+              ["agentRounds", "settings.agentRounds", "settings.agentRoundsHint"],
             ] as const
           ).map(([key, label, hint]) => {
             const lim = EXPLORER_LIMITS[key];

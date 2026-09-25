@@ -533,6 +533,8 @@
     "explorerParamsHint": "AI 分析项目时自主读文件的轮数与每轮预算，按模型上下文窗口与项目规模调整。保存后下次 AI 导入生效。",
     "explorerRounds": "探索轮数",
     "explorerRoundsHint": "AI 点单读文件的最大轮数",
+    "agentRounds": "Agent 轮数",
+    "agentRoundsHint": "右栏对话里 Agent 单轮的最大交互次数（含工具调用轮，与探索轮数无关）",
     "explorerFilesHint": "每轮文件数",
     "explorerCharsFile": "单文件字符上限",
     "explorerCharsBatch": "每轮总字符预算",

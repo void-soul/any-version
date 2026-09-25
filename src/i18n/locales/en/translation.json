@@ -527,6 +527,8 @@
     "explorerParamsHint": "Rounds and per-round budget for autonomous file reading during project analysis. Tune by model context window and project size. Takes effect on next AI import.",
     "explorerRounds": "Exploration rounds",
     "explorerRoundsHint": "Max rounds of AI file requests",
+    "agentRounds": "Agent rounds",
+    "agentRoundsHint": "Max agent interactions per turn in the side panel chat (incl. tool calls; unrelated to exploration rounds)",
     "explorerFilesHint": "Files per round",
     "explorerCharsFile": "Chars per file cap",
     "explorerCharsBatch": "Chars per round budget",
