@@ -82,6 +82,7 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
         detected_path: declared_exe
             .as_ref()
             .map(|exe| exe.to_string_lossy().to_string()),
+        custom_path: super::tool_paths::custom_path_for(&config.id),
         config_file: config.config_file.as_ref().map(|cf| {
             crate::commands::ai_registry::ToolConfigFileDto {
                 path: cf.path.clone(),

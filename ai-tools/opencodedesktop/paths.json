@@ -12,7 +12,10 @@
     "win32": [
       "%LOCALAPPDATA%\\Programs\\OpenCode\\OpenCode.exe",
       "%LOCALAPPDATA%\\Programs\\opencode\\OpenCode.exe",
-      "%LOCALAPPDATA%\\Programs\\OpenCode Beta\\OpenCode Beta.exe"
+      "%LOCALAPPDATA%\\Programs\\OpenCode Beta\\OpenCode Beta.exe",
+      "%LOCALAPPDATA%\\Programs\\@opencode-aidesktop\\OpenCode.exe",
+      "%LOCALAPPDATA%\\Programs\\@opencode-aidesktop\\opencode.exe",
+      "%LOCALAPPDATA%\\Programs\\@opencode-ai\\desktop\\OpenCode.exe"
     ],
     "darwin": [
       "/Applications/OpenCode.app/Contents/MacOS/OpenCode",

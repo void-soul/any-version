@@ -334,7 +334,98 @@ pub fn find_declared_exe(
     None
 }
 
+// ─── 手动指定路径（用户在界面上填的那一条） ───
+
+/// 注册表里该工具在当前 OS 的默认路径（用于把「用户自己填的」从文件里认出来）。
+fn registry_default_paths(tool_id: &str) -> Vec<String> {
+    match crate::commands::ai_registry::registry().get_path_config(tool_id) {
+        Some(pc) => get_current_os_paths(&pc.paths),
+        None => Vec::new(),
+    }
+}
+
+/// 读取用户在界面上手动指定的路径。
+///
+/// 覆盖文件里默认路径与用户路径混在一起（`apply_user_path_overrides` 需要这个形态），
+/// 所以「哪条是用户填的」只能靠与注册表默认路径做差集得出。
+pub fn custom_path_for(tool_id: &str) -> Option<String> {
+    let defaults = registry_default_paths(tool_id);
+    let saved = load_user_path_overrides().get(tool_id).cloned()?;
+    saved.into_iter().find(|p| !defaults.contains(p))
+}
+
+/// 写入（或清除）用户手动指定的路径。
+///
+/// 保留注册表默认路径垫在后面：手动填错时还能靠默认路径认出已安装的工具，
+/// 不至于「填一次错的就再也检测不到」。传 `None` / 空串 = 清除，回到纯默认。
+pub fn set_custom_path(tool_id: &str, path: Option<&str>) -> Result<(), String> {
+    let home = get_home().ok_or("无法获取用户 HOME 目录")?;
+    let dir = home.join(".any-version");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建 .any-version 目录失败: {}", e))?;
+    let file = dir.join("tool-paths.json");
+
+    // 现有内容优先；文件不存在/坏掉时从注册表种子重建（其余工具的条目不丢）
+    let mut map: serde_json::Map<String, serde_json::Value> = match std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+        .and_then(|v| match v {
+            serde_json::Value::Object(m) => Some(m),
+            _ => None,
+        }) {
+        Some(m) => m,
+        None => {
+            let mut m = serde_json::Map::new();
+            for (id, paths) in default_override_seed() {
+                m.insert(
+                    id,
+                    serde_json::Value::Array(
+                        paths.into_iter().map(serde_json::Value::String).collect(),
+                    ),
+                );
+            }
+            m
+        }
+    };
+
+    let defaults = registry_default_paths(tool_id);
+    let mut merged: Vec<String> = Vec::new();
+    if let Some(p) = path.map(str::trim).filter(|p| !p.is_empty()) {
+        merged.push(p.to_string());
+    }
+    for d in &defaults {
+        if !merged.contains(d) {
+            merged.push(d.clone());
+        }
+    }
+
+    if merged.is_empty() {
+        map.remove(tool_id);
+    } else {
+        map.insert(
+            tool_id.to_string(),
+            serde_json::Value::Array(merged.into_iter().map(serde_json::Value::String).collect()),
+        );
+    }
+
+    let content = serde_json::to_string_pretty(&serde_json::Value::Object(map))
+        .map_err(|e| format!("序列化覆盖文件失败: {}", e))?;
+    std::fs::write(&file, format!("{}\n", content))
+        .map_err(|e| format!("写入覆盖文件失败: {}", e))?;
+    Ok(())
+}
+
 // ─── Tauri 命令 ───
+
+/// 手动指定某工具的安装路径（可执行文件本身或安装目录皆可）。
+///
+/// 传空串/null 表示清除，回到注册表默认路径。
+#[tauri::command]
+pub fn ai_set_tool_custom_path(tool_id: String, path: Option<String>) -> Result<(), String> {
+    if tool_id.trim().is_empty() {
+        return Err("工具 id 不能为空".to_string());
+    }
+    set_custom_path(&tool_id, path.as_deref())
+}
 
 /// 获取/创建工具路径覆盖文件路径（含自愈）
 ///

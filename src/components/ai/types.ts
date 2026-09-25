@@ -57,6 +57,10 @@ export interface AiProvider {
   active_model_id: string | null;
   /** 自定义上游请求头（转发、连通性测试、模型列表三处共用） */
   custom_headers: UpstreamHeader[];
+  /** OpenAI 端点拼接时是否带 `/v1`：null/undefined = 自动（URL 结尾已是 /v1 则不补） */
+  openai_include_v1?: boolean | null;
+  /** Anthropic 端点拼接时是否带 `/v1`（语义同上） */
+  anthropic_include_v1?: boolean | null;
 }
 
 export interface ProviderPreset {
@@ -204,6 +208,8 @@ export interface DetectedAiTool {
   launch_uri: string | null;
   /** 检测到的可执行文件路径（GUI/桌面应用启动用） */
   detected_path: string | null;
+  /** 用户在界面上手动指定的路径（空 = 未指定，走注册表默认路径） */
+  custom_path?: string | null;
   /** 工具自身的配置文件（有它才支持「设置模型」：模型会写进这个文件） */
   config_file?: { path: string; format: string } | null;
   /** 形态分类（paths.json 的 category：`CLI Code` / `Desktop`） */

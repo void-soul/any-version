@@ -34,7 +34,7 @@ import {
   ToggleRight,
   Download,
   Shield,
-  Cpu, Pencil, Check, History, Terminal,
+  Cpu, Check, History, Terminal,
 } from "lucide-react";
 import type {
   AiProvider,
@@ -329,33 +329,39 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
     } catch { /* ignore */ }
   }, []);
 
-  // 协同身份（头像/昵称）编辑，维护在 AI 工具页，供协同对话使用
-  const [editProfile, setEditProfile] = useState(false);
-  const [pAvatar, setPAvatar] = useState("");
-  const [pNick, setPNick] = useState("");
-  const [profileMsg, setProfileMsg] = useState<{ ok: boolean; msg: string } | null>(null);
+  // 手动指定安装路径：自动检测认不出来（绿色安装包装在别的目录、自定义安装位置等）
+  // 时由用户直接给出可执行文件或其所在目录，写进 ~/.any-version/tool-paths.json。
+  const [pathInput, setPathInput] = useState("");
+  const [pathMsg, setPathMsg] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [pathSaving, setPathSaving] = useState(false);
 
-  const openProfile = () => {
+  // 切换工具时把输入框同步成该工具已存的手动路径
+  useEffect(() => {
+    setPathInput(selectedTool?.custom_path || "");
+    setPathMsg(null);
+  }, [selectedTool?.id, selectedTool?.custom_path]);
+
+  const saveCustomPath = async (value: string | null) => {
     if (!selectedTool) return;
-    setPAvatar(selectedTool.avatar || "");
-    setPNick(selectedTool.nickname || "");
-    setProfileMsg(null);
-    setEditProfile(true);
-  };
-  const saveProfile = async () => {
-    if (!selectedTool) return;
-    setProfileMsg(null);
+    setPathSaving(true);
+    setPathMsg(null);
     try {
-      await invoke("update_tool_profile", {
-        toolId: selectedTool.id,
-        avatar: pAvatar.trim() || null,
-        nickname: pNick.trim() || null,
-      });
-      setProfileMsg({ ok: true, msg: t("toollaunch.profileSaved") });
-      setEditProfile(false);
+      await invoke("ai_set_tool_custom_path", { toolId: selectedTool.id, path: value });
+      setPathMsg({ ok: true, msg: value ? t("toollaunch.pathSaved") : t("toollaunch.pathCleared") });
+      // 重新探测：手动路径会直接影响「已安装 / 未安装」的判定
       await reloadTools();
     } catch (e) {
-      setProfileMsg({ ok: false, msg: String(e) });
+      setPathMsg({ ok: false, msg: String(e) });
+    } finally {
+      setPathSaving(false);
+    }
+  };
+
+  const browseCustomPath = async () => {
+    const picked = await open({ multiple: false, directory: false, title: t("toollaunch.pathBrowse") });
+    if (typeof picked === "string" && picked.trim()) {
+      setPathInput(picked);
+      await saveCustomPath(picked);
     }
   };
 
@@ -821,17 +827,8 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
             <RefreshCw className={`w-3 h-3 ${checkingVersions ? "animate-spin" : ""}`} />
           </button>
         </div>
-        {/* 已安装区为空时也抬头说明，不然「列表里少一半」会让人以为工具没被识别 */}
-        {installedTools.length === 0 && (
-          <div className="px-1 pt-1 pb-0.5 text-[9px] font-bold text-slate-600 uppercase">
-            {t("toollaunch.installedGroup")}（0）
-          </div>
-        )}
-        {notInstalledTools.length > 0 && (
-          <div className="px-1 pt-2 pb-0.5 text-[9px] font-bold text-slate-600 uppercase">
-            {t("toollaunch.notInstalledGroup")}（{visibleNotInstalled.length}）
-          </div>
-        )}
+        {/* 不再打「已安装 / 未安装」分组标题：列表里每项自己就带状态（绿点 + 版本号），
+            标题只是重复这句话，还占掉两行高度。 */}
         {/* 筛选后一个都不剩：明说原因，别让整段静默消失 */}
         {notInstalledTools.length > 0 && visibleNotInstalled.length === 0 && (
           <div className="px-1 py-1.5 text-[9px] text-slate-600">{t("toollaunch.kindEmpty")}</div>
@@ -906,7 +903,9 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
               }}
               className={`w-full px-3 py-2.5 rounded-lg text-left transition-all cursor-pointer ${
                 selectedToolId === tool.id
-                  ? "bg-[var(--module-accent)] text-white shadow-md shadow-[var(--module-accent-ring)]"
+                  // 选中态用**半透明**主题色：纯色块会盖掉整行的层次（形态徽标、
+                  // 版本号、状态色全被吞掉），半透明既标得清又不压内容。
+                  ? "bg-[var(--module-accent)]/25 text-white ring-1 ring-[var(--module-accent)]/40"
                   : tool.installed
                     ? "text-slate-300 hover:text-white hover:bg-white/5"
                     : "text-slate-600 hover:text-slate-400 hover:bg-white/[0.03]"
@@ -963,13 +962,18 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                 ) : getBusy(tool.id) === "uninstalling" ? (
                   <span className="text-[9px] text-blue-300 animate-pulse">{t("toollaunch.uninstalling")}...</span>
                 ) : tool.installed ? (
-                  // 与真实名称同理：选中态底色就是 accent，文字不能再用 accent
-                  <span className={`text-[9px] ${selectedToolId === tool.id ? "text-white/70" : "text-slate-500"} font-mono`}>
-                    {tool.version || t("toollaunch.installed")}
-                  </span>
+                  // 与真实名称同理：选中态底色就是 accent，文字不能再用 accent。
+                  // 版本号取不到时**不写「已安装」**：装没装从头像的明暗/右侧状态就看得出来，
+                  // 写一行字反而把列表塞满重复信息。
+                  tool.version ? (
+                    <span className={`text-[9px] ${selectedToolId === tool.id ? "text-white/70" : "text-slate-500"} font-mono`}>
+                      {tool.version}
+                    </span>
+                  ) : null
                 ) : (
                   <span className="flex items-center gap-1">
-                    <span className="text-[9px] text-slate-600">{t("toollaunch.notInstalled")}</span>
+                    {/* 未安装也不再写字：灰掉的样式本身就在表达「没装」，
+                        只留下真正有用的入口（问助手 / 官网） */}
                     {/* 没装的工具一键去问助手：跳转并预填问题，省得用户自己敲 */}
                     {onAskAssistant && (
                       <button
@@ -1173,49 +1177,49 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
               )}
             </div>
 
-            {/* 协同身份（头像/昵称，用于协同对话），维护在 AI 工具页 */}
+            {/* 安装路径：自动检测认不出来时手动指定（可执行文件本身或其所在目录） */}
             <div className="p-3 rounded-xl bg-slate-900/30 border border-white/5 space-y-2">
               <div className="flex items-center justify-between">
                 <div className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                  <Bot className="w-3.5 h-3.5" /> {t("toollaunch.coopIdentity")}
+                  <FolderOpen className="w-3.5 h-3.5" /> {t("toollaunch.installPath")}
                 </div>
-                {!editProfile && (
-                  <button onClick={openProfile}
-                    className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-white/10 text-[10px] text-slate-300 flex items-center gap-1">
-                    <Pencil className="w-3 h-3" /> {t("toollaunch.edit")}
-                  </button>
+                {selectedTool.custom_path && (
+                  <span className="text-[9px] px-1.5 py-px rounded bg-[var(--module-accent)]/20 text-[var(--module-accent)]">
+                    {t("toollaunch.pathManual")}
+                  </span>
                 )}
               </div>
-              {!editProfile ? (
-                <div className="flex items-center gap-2">
-                  <span className="w-8 h-8 rounded-md bg-white/5 border border-white/10 flex items-center justify-center text-lg">
-                    {selectedTool.avatar || '🤖'}
-                  </span>
-                  <div className="min-w-0">
-                    <div className="text-sm text-slate-200 truncate">{selectedTool.nickname || selectedTool.display_name}</div>
-                    <div className="text-[10px] text-slate-500">{t("toollaunch.coopHint")}</div>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <input value={pAvatar} onChange={(e) => setPAvatar(e.target.value)} maxLength={4} placeholder="🤖"
-                      className="w-12 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-sm text-center focus:outline-none focus:border-emerald-500/50" />
-                    <input value={pNick} onChange={(e) => setPNick(e.target.value)} placeholder={t("toollaunch.nickPh")}
-                      className="flex-1 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[11px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500/50" />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button onClick={saveProfile}
-                      className="px-2 py-1 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 text-[10px] text-emerald-200 flex items-center gap-1">
-                      <Check className="w-3 h-3" /> {t("toollaunch.save")}
-                    </button>
-                    <button onClick={() => setEditProfile(false)}
-                      className="px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-[10px] text-slate-300">{t("toollaunch.cancel")}</button>
-                  </div>
-                  {profileMsg && (
-                    <div className={`text-[10px] ${profileMsg.ok ? "text-emerald-400" : "text-red-400"}`}>{profileMsg.msg}</div>
-                  )}
-                </div>
+              <div className="flex items-center gap-1.5">
+                <input
+                  value={pathInput}
+                  onChange={(e) => setPathInput(e.target.value)}
+                  placeholder={selectedTool.detected_path || t("toollaunch.pathPlaceholder")}
+                  className="flex-1 min-w-0 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[11px] text-slate-200 placeholder-slate-600 font-mono truncate focus:outline-none focus:border-[var(--module-accent)]/50"
+                />
+                <button onClick={() => void browseCustomPath()} disabled={pathSaving}
+                  className="px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-[10px] text-slate-300 flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  title={t("toollaunch.pathBrowse")}>
+                  <FolderOpen className="w-3 h-3" />
+                </button>
+                <button onClick={() => void saveCustomPath(pathInput.trim() || null)} disabled={pathSaving}
+                  className="px-2 py-1 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 text-[10px] text-emerald-200 flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  title={t("toollaunch.pathSaveHint")}>
+                  <Check className="w-3 h-3" /> {t("toollaunch.save")}
+                </button>
+                <button onClick={() => { setPathInput(""); void saveCustomPath(null); }}
+                  disabled={pathSaving || !selectedTool.custom_path}
+                  className="px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-[10px] text-slate-300 cursor-pointer disabled:opacity-40"
+                  title={t("toollaunch.pathClearHint")}>
+                  {t("toollaunch.clear")}
+                </button>
+              </div>
+              <div className="text-[10px] text-slate-500 truncate">
+                {selectedTool.detected_path
+                  ? `${t("toollaunch.pathDetected")}: ${selectedTool.detected_path}`
+                  : t("toollaunch.pathNotDetected")}
+              </div>
+              {pathMsg && (
+                <div className={`text-[10px] ${pathMsg.ok ? "text-emerald-400" : "text-red-400"}`}>{pathMsg.msg}</div>
               )}
             </div>
 

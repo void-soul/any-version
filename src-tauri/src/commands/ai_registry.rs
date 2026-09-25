@@ -353,6 +353,10 @@ pub struct AiToolDefDto {
     pub launch_uri: Option<String>,
     /// 检测到的可执行文件路径（GUI/桌面应用启动用）
     pub detected_path: Option<String>,
+    /// 用户在界面上手动指定的路径（`~/.any-version/tool-paths.json` 里非默认的那一条）。
+    /// 为空表示未指定，走注册表默认路径。
+    #[serde(default)]
+    pub custom_path: Option<String>,
 
     /// 工具自身的配置文件（**只有声明了这个字段才支持「设置模型」**）。
     /// 前端据此决定是否显示「只保存模型」入口 —— 没声明的工具摆个按钮只会骗人。
@@ -682,6 +686,7 @@ impl AiToolRegistry {
             supports_rectifier: config.supports_rectifier,
             launch_uri: paths.launch_uri.clone(),
             detected_path: None,
+            custom_path: None,
             config_file: config.config_file.as_ref().map(|cf| ToolConfigFileDto {
                 path: cf.path.clone(),
                 format: cf.format.clone(),
@@ -857,56 +862,6 @@ pub fn update_tool_category(tool_id: String, category: String) -> Result<(), Str
     let data = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     fs::write(&config_path, data).map_err(|e| e.to_string())?;
 
-    let _ = reload_ai_registry();
-    Ok(())
-}
-
-/// 把传入的 Option<String> 规整：trim 后为空 → None，否则保留 trim 后的内容。
-/// 前端传 null 或空串都表示清除该字段。
-fn clean_opt(s: Option<String>) -> Option<String> {
-    let t = s.map(|s| s.trim().to_string()).unwrap_or_default();
-    if t.is_empty() {
-        None
-    } else {
-        Some(t)
-    }
-}
-
-/// Tauri 命令：修改某工具在协同对话中的头像与昵称
-/// （仅补丁式写回 ai-tools/<id>/config.json 的 avatar / nickname 字段并热重载）。
-#[tauri::command]
-pub fn update_tool_profile(tool_id: String, avatar: Option<String>, nickname: Option<String>) -> Result<(), String> {
-    if tool_id.is_empty() {
-        return Err("工具 id 不能为空".to_string());
-    }
-    let dir = AiToolRegistry::find_registry_dir();
-    let config_path = dir.join(&tool_id).join("config.json");
-    if !config_path.exists() {
-        return Err(format!("工具 {} 的 config.json 不存在", tool_id));
-    }
-
-    let raw = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-    let mut config: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-    if let Some(obj) = config.as_object_mut() {
-        obj.insert(
-            "avatar".to_string(),
-            match clean_opt(avatar) {
-                Some(s) => serde_json::Value::String(s),
-                None => serde_json::Value::Null,
-            },
-        );
-        obj.insert(
-            "nickname".to_string(),
-            match clean_opt(nickname) {
-                Some(s) => serde_json::Value::String(s),
-                None => serde_json::Value::Null,
-            },
-        );
-    }
-    let data = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
-    fs::write(&config_path, data).map_err(|e| e.to_string())?;
-
-    // 配置已写入磁盘；热重载失败不阻断保存（仅影响内存态即时刷新），忽略其返回值。
     let _ = reload_ai_registry();
     Ok(())
 }
