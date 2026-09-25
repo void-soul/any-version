@@ -1083,7 +1083,9 @@ export default function CollabRoom() {
               <div className="flex flex-wrap gap-1 items-center">
                 <span className="text-[9px] text-slate-500 mr-1">{t("collab.atTool")}</span>
                 {toolsLoading && <span className="text-[9px] text-slate-400 animate-pulse">{t("collab.loading")}</span>}
-                {tools.filter((tl) => tl.installed).map((tl) => {
+                {/* 协同只带得上 CLI 工具：桌面端是 GUI 程序，@ 它没法接任务
+                    （后端 dispatch 也会拦一道，这里先在 UI 上不让它出现） */}
+                {tools.filter((tl) => tl.installed && (tl.tool_kind ?? "other") === "cli").map((tl) => {
                   const on = selectedTool === tl.id;
                   const avatar = getToolAvatar(tools, tl.id);
                   const nickname = getToolNickname(tools, tl.id) || tl.display_name;

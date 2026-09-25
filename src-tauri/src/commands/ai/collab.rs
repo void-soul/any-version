@@ -2489,14 +2489,33 @@ async fn dispatch_to_tool(
 ) {
     eprintln!("[collab] ═══ 派发开始 ═══ tool={}, room={}, placeholder={}, prompt_len={}, model={:?}, provider={:?}",
         tool_id, room_id, placeholder_id, prompt.len(), model_id, provider_id);
-    let tool_config = match registry().get_tool_config(&tool_id) {
-        Some(c) => c.clone(),
+    let (_tool_config, tool_paths) = match registry().get_tool(&tool_id) {
+        Some((c, p)) => (c.clone(), p.clone()),
         None => {
             eprintln!("[collab] ✗ 未知工具: {}", tool_id);
             finalize_message(app, &room_id, &placeholder_id, "error", "⚠ 未知工具".to_string(), None, None, None, None);
             return;
         }
     };
+    // 协同只认 CLI 工具：桌面端是 GUI 程序，spawn 起来也接不到这条任务，
+    // 与其启动后失败，不如在这里直接说清楚（前端 @ 列表同样只列 CLI）
+    let kind = crate::commands::ai_registry::tool_kind_of(Some(&tool_paths.category));
+    if kind != "cli" {
+        eprintln!("[collab] ✗ 该工具不是 CLI（kind={}），不支持协同: {}", kind, tool_id);
+        finalize_message(
+            app,
+            &room_id,
+            &placeholder_id,
+            "error",
+            format!("⚠ {} 是桌面端工具，不支持协同派发（只有 CLI 工具可以）", tool_id),
+            None,
+            None,
+            None,
+            None,
+        );
+        return;
+    }
+    let tool_config = _tool_config;
 
     // 会话绑定：已有 id 则续聊（不再开新会话）
     let session_key = format!("{}::{}", room_id, tool_id);

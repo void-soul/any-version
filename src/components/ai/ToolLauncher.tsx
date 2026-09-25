@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { Note, ResultNote } from "../shared/Note";
+import { useToolListWidth } from "./paneWidth";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Rocket,
@@ -151,6 +152,26 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
   const { t } = useTranslation();
   const [tools, setTools] = useState<DetectedAiTool[]>([]);
   const [kindFilter, setKindFilter] = useState<ToolKindFilter>("all");
+  // 左栏宽度：可拖动，宽度持久化在 localStorage（纯 UI 偏好，不惊动后端）
+  const [listWidth, setListWidth] = useToolListWidth();
+  const startListResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = listWidth;
+    let next = startWidth;
+    const onMove = (ev: MouseEvent) => {
+      next = startWidth + (ev.clientX - startX);
+      setListWidth(next);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      // 松手才落盘：拖动中每像素都写一次太浪费
+      setListWidth(next);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
   const [config, setConfig] = useState<AiConfig | null>(null);
   const [terminals, setTerminals] = useState<TerminalInfo[]>([]);
   const [sessions, setSessions] = useState<ToolSession[]>([]);
@@ -769,8 +790,11 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
 
   return (
     <div className="h-full flex min-h-0 select-none">
-      {/* ── 左侧工具列表 ── */}
-      <div className="w-52 flex-shrink-0 border-r border-white/5 py-3 px-2 overflow-y-auto space-y-0.5 flex flex-col">
+      {/* ── 左侧工具列表（宽度可拖动，见下方分隔条） ── */}
+      <div
+        style={{ width: listWidth }}
+        className="flex-shrink-0 border-r border-white/5 py-3 px-2 overflow-y-auto space-y-0.5 flex flex-col"
+      >
         <div className="flex items-center justify-between px-1 mb-1">
           <span className="text-[9px] font-bold text-slate-500 uppercase">{t("toollaunch.aiTools")}</span>
           {/* 形态筛选：只作用于「未安装」那一组（已装的就几个，再分组只会多找一层） */}
@@ -797,21 +821,25 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
             <RefreshCw className={`w-3 h-3 ${checkingVersions ? "animate-spin" : ""}`} />
           </button>
         </div>
-        {visibleTools.map((tool, index) => {
+        {/* 已安装区为空时也抬头说明，不然「列表里少一半」会让人以为工具没被识别 */}
+        {installedTools.length === 0 && (
+          <div className="px-1 pt-1 pb-0.5 text-[9px] font-bold text-slate-600 uppercase">
+            {t("toollaunch.installedGroup")}（0）
+          </div>
+        )}
+        {notInstalledTools.length > 0 && (
+          <div className="px-1 pt-2 pb-0.5 text-[9px] font-bold text-slate-600 uppercase">
+            {t("toollaunch.notInstalledGroup")}（{visibleNotInstalled.length}）
+          </div>
+        )}
+        {/* 筛选后一个都不剩：明说原因，别让整段静默消失 */}
+        {notInstalledTools.length > 0 && visibleNotInstalled.length === 0 && (
+          <div className="px-1 py-1.5 text-[9px] text-slate-600">{t("toollaunch.kindEmpty")}</div>
+        )}
+        {visibleTools.map((tool) => {
           const vs = getVerStatus(tool.id);
           return (
             <Fragment key={tool.id}>
-            {/* 分组标题：已安装区在前、未安装区在后，各一个抬头 */}
-            {index === 0 && installedTools.length > 0 && (
-              <div className="px-1 pt-1 pb-0.5 text-[9px] font-bold text-slate-600 uppercase">
-                {t("toollaunch.installedGroup")}（{installedTools.length}）
-              </div>
-            )}
-            {index === installedTools.length && visibleNotInstalled.length > 0 && (
-              <div className="px-1 pt-2 pb-0.5 text-[9px] font-bold text-slate-600 uppercase">
-                {t("toollaunch.notInstalledGroup")}（{visibleNotInstalled.length}）
-              </div>
-            )}
             <button
               onClick={async () => {
                 setSelectedToolId(tool.id);
@@ -887,6 +915,23 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
               <div className="flex items-center gap-2">
                 <span className="w-4 h-4 flex-shrink-0 flex items-center justify-center text-xs">{tool.avatar || '🤖'}</span>
                 <div className="flex items-center gap-1 min-w-0 flex-1">
+                  {/* 形态徽标：一行就能看出是 CLI 还是桌面工具。
+                      选中态底色是纯 accent，所以徽标也走 text-white/70 + bg-white/10 */}
+                  <span className={`text-[8px] px-1 py-px rounded flex-shrink-0 font-semibold ${
+                    selectedToolId === tool.id
+                      ? "bg-white/15 text-white/80"
+                      : tool.tool_kind === "desktop"
+                        ? "bg-sky-500/20 text-sky-300"
+                        : tool.tool_kind === "cli"
+                          ? "bg-slate-500/20 text-slate-400"
+                          : "bg-white/5 text-slate-600"
+                  }`}>
+                    {tool.tool_kind === "desktop"
+                      ? t("toollaunch.kindDesktop")
+                      : tool.tool_kind === "cli"
+                        ? t("toollaunch.kindCli")
+                        : t("toollaunch.kindOther")}
+                  </span>
                   <span className="text-[11px] font-semibold truncate">{tool.nickname || tool.display_name}</span>
                   {/* 真实名称：选中态背景就是纯 accent，再叠 accent 半透明等于看不见，
                       一律用白色半透明（任何主题色下都清晰） */}
@@ -982,6 +1027,15 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
           );
         })}
       </div>
+
+      {/* 分栏拖拽把手：拖动改变左栏宽度，松手落盘 */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        title={t("toollaunch.dragResize")}
+        onMouseDown={startListResize}
+        className="w-1.5 flex-shrink-0 cursor-col-resize hover:bg-[var(--module-accent)]/30 active:bg-[var(--module-accent)]/50 transition-colors"
+      />
 
       {/* ── 右侧设置面板 ── */}
       <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4">
