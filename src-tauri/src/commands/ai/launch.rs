@@ -68,6 +68,32 @@ fn pick_outbound_protocol(native: &str, provider: &AiProvider) -> Option<String>
     None
 }
 
+/// 上游端点是否指向**本地聚合服务**（127.0.0.1:<聚合端口>）。
+///
+/// 是的话代理不再自己做「整流重试 + 协议回退」——聚合自己已经会失败切换、冷却与协议转换，
+/// 代理再叠一层只会把重试次数放大（并重复触发聚合的冷却）。端口匹配要求后面紧跟 `/`/`?`/结尾，
+/// 避免把 `:15721` 误匹配到 `:157210`。
+fn is_aggregate_upstream(base_url: &str, aggregate_port: u16) -> bool {
+    if aggregate_port == 0 {
+        return false;
+    }
+    let base = base_url.trim().to_ascii_lowercase();
+    if !(base.starts_with("http://127.0.0.1")
+        || base.starts_with("http://localhost")
+        || base.starts_with("https://127.0.0.1"))
+    {
+        return false;
+    }
+    let marker = format!(":{aggregate_port}");
+    match base.find(&marker) {
+        Some(idx) => {
+            let after = &base[idx + marker.len()..];
+            after.is_empty() || after.starts_with('/') || after.starts_with('?')
+        }
+        None => false,
+    }
+}
+
 /// 供应商端点「要不要补 `/v1`」开关（按出站协议取对应字段）。`None` = 自动。
 ///
 /// 以前只有聚合认这个开关，协议转换代理（工具启动路径）不认：同一个 `openai_include_v1=false`
@@ -279,6 +305,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
                         model_routes,
                         upstream_headers: main_headers,
                         upstream_include_v1: provider_include_v1(p, &chosen_outbound),
+                        upstream_is_aggregate: is_aggregate_upstream(&upstream_base_url, config.aggregate.port),
                         target_model,
                         timeout_secs: timeout,
                         model_aliases,
@@ -1937,9 +1964,9 @@ async fn wait_for_proxy_ready(listen_address: &str, port: u16) -> bool {
 mod tests {
     use super::{
         default_work_dir, get_json_path, json_value_to_yaml, registry, render_json_template,
-        resolve_start_command, resolve_write_target_file, scan_text_key, set_yaml_path, strip_jsonc,
-        write_format_for, write_json_config, write_tool_config_from_spec, write_yaml_config,
-        WriteFormat,
+        is_aggregate_upstream, resolve_start_command, resolve_write_target_file, scan_text_key,
+        set_yaml_path, strip_jsonc, write_format_for, write_json_config, write_tool_config_from_spec,
+        write_yaml_config, WriteFormat,
     };
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -1992,6 +2019,18 @@ mod tests {
             home_relative.display()
         );
         assert_ne!(home_relative, PathBuf::from("/base/dir/~/prefs.json"));
+    }
+
+    /// 聚合上游识别：只有「回环主机 + 恰好等于聚合端口」才算（端口后面必须是 `/`/`?`/结尾）。
+    #[test]
+    fn is_aggregate_upstream_matches_only_the_exact_port() {
+        assert!(is_aggregate_upstream("http://127.0.0.1:15721", 15721));
+        assert!(is_aggregate_upstream("http://127.0.0.1:15721/v1", 15721));
+        assert!(is_aggregate_upstream("http://localhost:15721", 15721));
+        // 端口前缀误匹配 / 非回环 / 端口为 0 都不能算聚合
+        assert!(!is_aggregate_upstream("http://127.0.0.1:157210", 15721));
+        assert!(!is_aggregate_upstream("http://api.openai.com:15721", 15721));
+        assert!(!is_aggregate_upstream("http://127.0.0.1:15721", 0));
     }
 
     /// 测试用临时目录（每个用例独立，跑完删）。

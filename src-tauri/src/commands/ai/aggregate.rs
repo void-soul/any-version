@@ -370,6 +370,35 @@ fn build_candidates(
     out
 }
 
+/// 把「与请求模型名匹配」的候选提到最前（其余保持链序）。
+///
+/// 「聚合挂代理上游」的关键：工具经协议转换代理把真实模型名透传给聚合，聚合据此优先落到
+/// 配置了该模型的供应商，而不是机械地按链序第一个候选走。请求名是聚合的入口名（`kiro-proxy`
+/// 或用户自定义的 entry_model）时视为「无偏好」，保持链序。
+///
+/// 找不到任何匹配则原样返回（纯链序，向后兼容）。
+fn prioritize_by_model(
+    candidates: Vec<AggCandidate>,
+    requested_model: &str,
+    entry_model_name: &str,
+) -> Vec<AggCandidate> {
+    let requested = requested_model.trim();
+    if requested.is_empty() || requested == entry_model_name || requested == AGGREGATE_MODEL_ID {
+        return candidates;
+    }
+    let mut matched = Vec::with_capacity(candidates.len());
+    let mut rest = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        if candidate.model_id == requested {
+            matched.push(candidate);
+        } else {
+            rest.push(candidate);
+        }
+    }
+    matched.extend(rest);
+    matched
+}
+
 // ─── Headroom 压缩旁路 + 多轮前缀缓存 ───
 
 #[derive(Clone, Debug)]
@@ -581,9 +610,16 @@ pub async fn start_aggregate_service(app: tauri::AppHandle) -> Result<AggregateS
 
     let router = Router::new()
         .route("/health", get(|| async { "ok" }))
+        // 与协议转换代理的路由保持一致：同时挂「带 /v1」与「不带 /v1」两种前缀，
+        // 否则把 baseUrl 配成不含 /v1 的工具（opencode 系自己补 /chat/completions）会 404。
         .route("/v1/chat/completions", post(chat_completions))
+        .route("/chat/completions", post(chat_completions))
         .route("/v1/messages", post(messages))
+        .route("/messages", post(messages))
+        .route("/v1/messages/count_tokens", post(count_tokens))
+        .route("/messages/count_tokens", post(count_tokens))
         .route("/v1/models", get(list_models))
+        .route("/models", get(list_models))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
@@ -693,6 +729,17 @@ async fn chat_completions(State(state): State<AggState>, Json(body): Json<Value>
 
 async fn messages(State(state): State<AggState>, Json(body): Json<Value>) -> Response {
     forward(state, "anthropic", body).await
+}
+
+/// `/v1/messages/count_tokens`：Anthropic 入站时的 token 估算（Claude Code 会先探测这个端点）。
+/// 与协议转换代理同款估算（按 UTF-16 长度 / 4），够用即可——真正计费以真实上游 usage 为准。
+async fn count_tokens(Json(body): Json<Value>) -> Json<Value> {
+    let text_len = body
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .map(|arr| arr.iter().map(|m| m.to_string()).collect::<String>().len())
+        .unwrap_or(0);
+    Json(serde_json::json!({ "input_tokens": (text_len / 4).max(1) }))
 }
 
 /// 请求体中实际携带的 messages 数组（两种入口协议字段相同）。
@@ -829,6 +876,11 @@ async fn forward(state: AggState, inbound: &'static str, mut body: Value) -> Res
     let started = std::time::Instant::now();
     let stream_requested = body.get("stream").and_then(|s| s.as_bool()).unwrap_or(false);
     let mut last_error = String::new();
+
+    // 「聚合挂代理上游」：按请求模型名优先路由（匹配不到按链序，入口名 = 无偏好）
+    let entry_name = entry_model(&config.aggregate);
+    let requested_model = body.get("model").and_then(|m| m.as_str()).unwrap_or_default().to_string();
+    let candidates = prioritize_by_model(candidates, &requested_model, &entry_name);
 
     for (idx, candidate) in candidates.iter().enumerate() {
         // 运行期兜底：万一端口改动后候选变成自引用，直接跳过而不是递归打自己
@@ -1010,21 +1062,15 @@ fn finish_non_stream(
     request_model: &str,
     elapsed_ms: u128,
 ) -> Response {
-    let converted = match (inbound, candidate.outbound) {
-        ("openai", Outbound::OpenAi) | ("anthropic", Outbound::Anthropic) => upstream,
-        ("openai", Outbound::Anthropic) => {
-            crate::proxy::transform::anthropic_response_to_openai(&upstream, request_model)
-        }
-        ("openai", Outbound::Google) => {
-            crate::proxy::google::google_response_to_openai(&upstream, request_model)
-        }
-        ("anthropic", Outbound::OpenAi) => {
-            crate::proxy::transform::openai_response_to_anthropic(&upstream, request_model)
-        }
-        ("anthropic", Outbound::Google) => {
-            crate::proxy::google::google_response_to_anthropic(&upstream, request_model)
-        }
-        _ => upstream,
+    let converted = if inbound == candidate.outbound.as_str() {
+        upstream
+    } else {
+        crate::proxy::convert::convert_response(
+            candidate.outbound.as_str(),
+            inbound,
+            &upstream,
+            request_model,
+        )
     };
     record_usage(inbound, candidate, &converted, elapsed_ms);
     (StatusCode::OK, Json(converted)).into_response()
@@ -1049,39 +1095,18 @@ async fn try_candidate(
     stream_requested: bool,
 ) -> Result<Response, CandidateError> {
     let model = &candidate.model_id;
-    // 请求体转换：入口协议 → 候选出站协议（model 统一改为候选模型）
-    let (upstream_body, upstream_stream) = match (inbound, candidate.outbound) {
-        ("openai", Outbound::OpenAi) | ("anthropic", Outbound::Anthropic) => {
-            // 同协议也要改写：入口模型是 kiro-proxy，上游只认自己配置的模型名
-            (rewrite_upstream_model(body.clone(), model), stream_requested)
+    let outbound = candidate.outbound.as_str();
+    // 同协议只改模型名（入口是 kiro-proxy，上游只认自己配置的模型名）；跨协议先按非流式
+    // 整体转换（流式转换仅覆盖 a↔o 主流组合）。转换分发表统一走 proxy::convert，与代理一致。
+    let cross = inbound != outbound;
+    let (upstream_body, upstream_stream) = if !cross {
+        (rewrite_upstream_model(body.clone(), model), stream_requested)
+    } else {
+        let mut b = body.clone();
+        if stream_requested {
+            b["stream"] = Value::Bool(false);
         }
-        // 跨协议：v1 先按非流式请求并整体转换（流式转换仅覆盖 a↔o 主流组合）
-        (_, _) => {
-            let mut b = body.clone();
-            if stream_requested {
-                b["stream"] = Value::Bool(false);
-            }
-            (b, false)
-        }
-    };
-    let upstream_body = match (inbound, candidate.outbound) {
-        ("openai", Outbound::OpenAi) | ("anthropic", Outbound::Anthropic) => {
-            upstream_body
-        }
-        ("openai", Outbound::Anthropic) => {
-            crate::proxy::transform::openai_to_anthropic(&upstream_body, model, None)
-        }
-        ("anthropic", Outbound::OpenAi) => {
-            crate::proxy::transform::anthropic_to_openai(&upstream_body, model, None)
-        }
-        ("openai", Outbound::Google) => {
-            crate::proxy::google::openai_to_google(&upstream_body, model)
-        }
-        ("anthropic", Outbound::Google) => {
-            crate::proxy::google::anthropic_to_google(&upstream_body, model)
-        }
-        // 入口协议只有 openai/anthropic（axum 路由保证），兜底防御
-        _ => upstream_body,
+        (crate::proxy::convert::convert_request(inbound, outbound, &b, model), false)
     };
 
     let (url, auth_name) = build_candidate_url(
@@ -1363,6 +1388,33 @@ mod tests {
             include_v1: None,
             headers: vec![],
         }
+    }
+
+    #[test]
+    fn prioritize_by_model_moves_match_to_front_and_keeps_chain_order() {
+        use super::{Outbound, AGGREGATE_MODEL_ID};
+        let mk = |provider: &str, model: &str| AggCandidate {
+            provider_id: provider.into(),
+            provider_name: provider.to_uppercase(),
+            outbound: Outbound::OpenAi,
+            base_url: "https://x".into(),
+            api_key: "k".into(),
+            model_id: model.into(),
+            include_v1: None,
+            headers: vec![],
+        };
+        let chain = vec![mk("a", "m1"), mk("b", "m2"), mk("c", "m1")];
+        // 命中 m2 → 提到最前，其余保持原相对顺序
+        let ordered = prioritize_by_model(chain.clone(), "m2", AGGREGATE_MODEL_ID);
+        assert_eq!(
+            ordered.iter().map(|c| c.model_id.as_str()).collect::<Vec<_>>(),
+            vec!["m2", "m1", "m1"]
+        );
+        // 入口名 / 空名 = 无偏好，保持链序
+        assert_eq!(prioritize_by_model(chain.clone(), AGGREGATE_MODEL_ID, AGGREGATE_MODEL_ID)[0].provider_id, "a");
+        assert_eq!(prioritize_by_model(chain.clone(), "", AGGREGATE_MODEL_ID)[0].provider_id, "a");
+        // 无匹配 → 原顺序
+        assert_eq!(prioritize_by_model(chain, "m9", AGGREGATE_MODEL_ID)[0].provider_id, "a");
     }
 
     #[test]

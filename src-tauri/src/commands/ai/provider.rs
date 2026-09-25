@@ -270,6 +270,7 @@ pub async fn start_proxy(port: u16) -> Result<(), String> {
             "openai" => provider.openai_include_v1,
             _ => None,
         },
+        upstream_is_aggregate: false,
         app_handle: None,
         collab_room_id: None,
     };

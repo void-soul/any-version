@@ -56,6 +56,11 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub upstream_include_v1: Option<bool>,
 
+    /// 上游是否指向**本地聚合服务**。是则代理不再自己做「整流重试 + 协议回退」：
+    /// 聚合自己已经会失败切换、冷却与协议转换，代理再叠一层只会放大重试次数。
+    #[serde(default)]
+    pub upstream_is_aggregate: bool,
+
     /// 目标模型 ID（请求体写入的"实际模型 B"）
     pub target_model: String,
     /// 请求超时（秒）
@@ -144,6 +149,7 @@ impl Default for ProxyConfig {
             model_routes: HashMap::new(),
             upstream_headers: Vec::new(),
             upstream_include_v1: None,
+            upstream_is_aggregate: false,
             target_model: "gpt-4o".to_string(),
             timeout_secs: 300,
             model_aliases: HashMap::new(),

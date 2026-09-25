@@ -11,7 +11,7 @@
 //! ⑨ 模型伪装回填 C → ⑩ 统计落库(强制)
 
 use super::{
-    google, optimizers, sse, transform,
+    convert, google, optimizers, sse, transform,
     types::{ProxyConfig, UpstreamHeader},
 };
 use axum::{
@@ -764,12 +764,15 @@ async fn process_request(
         }));
 
         // ⑦ 反应式整流：修正后重试一次
-        if let Some(rectified) = optimizers::try_reactive_rectify(status.as_u16(), &error_body, &out_body, &config, &outbound) {
-            let retry_req = build_upstream_request(&state.client, headers, &upstream_url, &auth_name, &route_api_key, &route_headers, &rectified);
-            if let Ok(retry_resp) = retry_req.send().await {
-                if retry_resp.status().is_success() {
-                    log_proxy(&format!("↻ retry succeeded after rectify  ({}ms)", start.elapsed().as_millis()));
-                    return process_response(state, retry_resp, &config, inbound, &outbound, &claimed_model, &actual_model, is_stream).await;
+        // 上游是聚合时跳过：聚合自己会按失败类别重试/切换/冷却，代理再整流重试是重复放大。
+        if !config.upstream_is_aggregate {
+            if let Some(rectified) = optimizers::try_reactive_rectify(status.as_u16(), &error_body, &out_body, &config, &outbound) {
+                let retry_req = build_upstream_request(&state.client, headers, &upstream_url, &auth_name, &route_api_key, &route_headers, &rectified);
+                if let Ok(retry_resp) = retry_req.send().await {
+                    if retry_resp.status().is_success() {
+                        log_proxy(&format!("↻ retry succeeded after rectify  ({}ms)", start.elapsed().as_millis()));
+                        return process_response(state, retry_resp, &config, inbound, &outbound, &claimed_model, &actual_model, is_stream).await;
+                    }
                 }
             }
         }
@@ -778,9 +781,11 @@ async fn process_request(
         // anthropic 出站遇 401/404 且配置了 openai 回退端点时，说明该供应商的
         // anthropic_url 实际并不兼容 Anthropic 协议（仅 OpenAI 兼容，如
         // longcat/sensenova）。用"另一协议"端点以 openai 出站（a2o 转换）重发一次。
+        // 上游是聚合时同样跳过：聚合自己会做协议转换与切换。
         if outbound == "anthropic"
             && (status == StatusCode::UNAUTHORIZED || status == StatusCode::NOT_FOUND)
             && !config.fallback_base_url.is_empty()
+            && !config.upstream_is_aggregate
         {
             let mut fb_config = config.clone();
             fb_config.outbound_protocol = "openai".to_string();
@@ -1248,32 +1253,14 @@ fn apply_masquerade(inbound: &str, body: &mut Value, claimed: &str, aliases: Opt
     actual
 }
 
-/// ③ 协议转换请求：P_in → P_out。同协议直接克隆。
+/// ③/⑧ 协议转换分发表已下沉到 `proxy::convert`（与聚合共用），此处只留别名包装，
+/// 让本文件里的调用点（`convert_request(...)` / `convert_response(...)`）不动。
 fn convert_request(inbound: &str, outbound: &str, body: &Value, model: &str) -> Value {
-    match (inbound, outbound) {
-        (a, b) if a == b => body.clone(),
-        ("anthropic", "openai") => transform::anthropic_to_openai(body, model, None),
-        ("openai", "anthropic") => transform::openai_to_anthropic(body, model, None),
-        ("anthropic", "google") => google::anthropic_to_google(body, model),
-        ("openai", "google") => google::openai_to_google(body, model),
-        ("google", "anthropic") => google::google_to_anthropic(body, model),
-        ("google", "openai") => google::google_to_openai(body, model),
-        _ => body.clone(),
-    }
+    convert::convert_request(inbound, outbound, body, model)
 }
 
-/// ⑧ 协议转换响应：P_out → P_in。
 fn convert_response(outbound: &str, inbound: &str, resp: &Value, claimed: &str) -> Value {
-    match (outbound, inbound) {
-        (a, b) if a == b => resp.clone(),
-        ("openai", "anthropic") => transform::openai_response_to_anthropic(resp, claimed),
-        ("anthropic", "openai") => transform::anthropic_response_to_openai(resp, claimed),
-        ("google", "anthropic") => google::google_response_to_anthropic(resp, claimed),
-        ("google", "openai") => google::google_response_to_openai(resp, claimed),
-        ("anthropic", "google") => google::anthropic_response_to_google(resp, claimed),
-        ("openai", "google") => google::openai_response_to_google(resp, claimed),
-        _ => resp.clone(),
-    }
+    convert::convert_response(outbound, inbound, resp, claimed)
 }
 
 /// ⑨ 响应 model 字段回填为声明名 C。
