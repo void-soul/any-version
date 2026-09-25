@@ -21,7 +21,9 @@ pub struct ToolConfig {
     /// 协同模式中显示的昵称覆盖（为空时使用 display_name）。
     #[serde(default)]
     pub nickname: Option<String>,
+    #[serde(default)]
     pub category: String,
+    #[serde(default)]
     pub website: String,
     /// 官网地址（优先于 website；website 可能指向 GitHub 仓库）
     #[serde(default)]
@@ -31,8 +33,11 @@ pub struct ToolConfig {
     pub github: Option<String>,
     /// 工具「原生」协议（兼容旧逻辑：one_m 后缀、配置清理判定）。
     /// 新逻辑以 supports_openai/anthropic/google 三标志为准。
+    #[serde(default)]
     pub api_protocol: String,
+    #[serde(default)]
     pub support_model: bool,
+    #[serde(default)]
     pub support_fallback_model: bool,
     #[serde(default)]
     pub support_one_m_context: bool,
@@ -55,12 +60,23 @@ pub struct ToolConfig {
     pub supports_rectifier: bool,
     pub resume_cmd: Option<String>,
     pub continue_cmd: Option<String>,
+    // 以下都是「可有可无」的声明。必须给 `#[serde(default)]`：漏一个字段整份 config.json
+    // 就解析失败，而这个工具会被**整个从注册表里丢掉**（表现为「列表里莫名少了一个工具」，
+    // 只有 stderr 上一行 parse 失败，界面完全看不出来）。现状：omp 因为少写 cacheDirs
+    // 一直没进注册表。
+    #[serde(default)]
     pub cache_dirs: Vec<String>,
+    #[serde(default)]
     pub pkg_manager: Option<String>,
+    #[serde(default)]
     pub pkg_name: Option<String>,
+    #[serde(default)]
     pub config_file: Option<ConfigFileDef>,
+    #[serde(default)]
     pub model_format: Option<ModelFormatDef>,
+    #[serde(default)]
     pub sessions: Option<SessionScanDef>,
+    #[serde(default)]
     pub skills_dir: Option<String>,
     /// 非交互派发命令模板（协同模式）：`{prompt_file}` 占位符会被替换为提示词文件路径（已加引号）。
     #[serde(default)]
@@ -77,6 +93,7 @@ pub struct ToolConfig {
     /// 提示词传入方式："file"(--input-file 占位) / "stdin"(子进程 stdin 喂临时文件) / "arg"(`{prompt}` 内联)，省略默认 file。
     #[serde(default)]
     pub prompt_mode: Option<String>,
+    #[serde(default)]
     pub skills_dir_xdg: Option<String>,
 }
 
@@ -943,6 +960,34 @@ mod tests {
                 id
             );
         }
+    }
+
+    /// 每个工具目录都必须能加载进注册表。
+    ///
+    /// 回归的是「少写一个字段 → 整份 config.json 解析失败 → 工具被静默丢掉」：
+    /// omp 就因为没有 `cacheDirs` 一直没出现在列表里，只在 stderr 留了一行 parse 失败。
+    #[test]
+    fn every_tool_directory_loads_into_the_registry() {
+        let dir = super::AiToolRegistry::find_registry_dir();
+        let mut dirs: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("读不到 ai-tools 目录 {}: {e}", dir.display()))
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        dirs.sort();
+        assert!(!dirs.is_empty(), "{} 下没有工具目录", dir.display());
+
+        let reg = registry();
+        let missing: Vec<String> = dirs
+            .iter()
+            .filter(|id| reg.get_tool_config(id).is_none())
+            .cloned()
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "这些工具目录没能加载（config.json 多半缺字段，解析失败会被整个丢掉）: {missing:?}"
+        );
     }
 
     #[test]

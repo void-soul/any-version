@@ -55,10 +55,13 @@ fn main() {
     tauri_build::build()
 }
 
-/// 把源目录（相对 src-tauri）同步到目标目录：目录建齐、文件覆盖。
+/// 把源目录（相对 src-tauri）同步到目标目录：目录建齐、文件覆盖、**多余项删除**。
 ///
-/// 只加不删（与 bundle-resources.mjs 行为一致），失败仅告警 —— 构建脚本抛错
-/// 会让整个项目编译不过，为资源同步失败中断编译不值当。
+/// 早先只加不删，于是「从 ai-tools 删掉一个工具」在 cargo 构建/dev 下不生效 ——
+/// 运行时读到的还是 _up_ 里的旧副本，工具列表里那个不该存在的工具一直在
+/// （npm 侧的 bundle-resources.mjs 是整目录重建的，没这个问题；这里补上删除）。
+///
+/// 失败仅告警：构建脚本抛错会让整个项目编译不过，为资源同步失败中断编译不值当。
 fn sync_dir(src: &str, dst: &str) {
     let src = Path::new(src);
     let dst = Path::new(dst);
@@ -73,6 +76,31 @@ fn sync_dir(src: &str, dst: &str) {
     if let Err(e) = copy_dir_all(src, dst) {
         println!("cargo:warning=同步 {} → {} 失败：{}", src.display(), dst.display(), e);
     }
+    if let Err(e) = prune_dir(src, dst) {
+        println!("cargo:warning=清理残留资源失败 {}：{}", dst.display(), e);
+    }
+}
+
+/// 递归删掉目标目录里源目录已经没有的条目（只双向比对文件名）。
+fn prune_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
+    for entry in fs::read_dir(dst)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let counterpart = src.join(&name);
+        if !counterpart.exists() {
+            let path = entry.path();
+            if path.is_dir() {
+                fs::remove_dir_all(&path)?;
+            } else {
+                fs::remove_file(&path)?;
+            }
+            continue;
+        }
+        if entry.path().is_dir() && counterpart.is_dir() {
+            prune_dir(&counterpart, &entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
