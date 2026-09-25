@@ -152,6 +152,15 @@ struct FavoritesProgress {
 
 fn emit_progress(app: &tauri::AppHandle, progress: &FavoritesProgress) {
     use tauri::Emitter;
+    // `task` 是前端分行的键：漏填（默认空串）时事件会被前端按任务名过滤掉，
+    // 表现为「后端在跑、界面一行进度都没有」——不会报错，只能靠日志看出来。
+    // 这里留一条兜底告警；真正的把关是 `every_progress_literal_sets_task` 那条测试。
+    if progress.task.is_empty() {
+        eprintln!(
+            "[收藏] 进度事件缺 task（前端会丢弃它）: stage={}, source={:?}",
+            progress.stage, progress.source
+        );
+    }
     let _ = app.emit("favorites-progress", progress);
 }
 
@@ -479,12 +488,16 @@ pub struct CheckResult {
     pub aborted: bool,
     /// 用户点了停止（已检测的条目状态已落库）
     pub cancelled: bool,
+    /// 库里有 GitHub 条目但没配 Token → 这批没查（其它来源照查）
+    pub skipped_no_token: usize,
 }
 
-/// 手动检测失效（目前只覆盖 GitHub）。
+/// 手动检测失效（覆盖所有来源）。
 ///
+/// GitHub 走官方接口（能认出改名/转让）；浏览器书签、B站、知乎等走 HTTP 探测
+/// （404/410 = 失效，403/429/5xx/超时 = 未知，**不会**把活着的页面误标成失效）。
 /// `all = false` 时只探测没查过的条目；`all = true` 全量重测。
-/// 撞到限流（403/429）就**停下并如实上报**，而不是把活着的收藏误标成失效。
+/// GitHub 撞到限流（403/429）只停 GitHub 那一段并如实上报。
 #[tauri::command]
 pub async fn fav_check_gone(
     app: tauri::AppHandle,
@@ -496,95 +509,143 @@ pub async fn fav_check_gone(
     out
 }
 
+/// 一次并发探测多少个 URL（太小慢、太大容易被目标站按 IP 限流）。
+const PROBE_CONCURRENCY: usize = 8;
+
 async fn check_gone_inner(app: tauri::AppHandle, all: Option<bool>) -> Result<CheckResult, String> {
-    // 与导入用同一个（收藏模块自己的）Token：同一份权限，不该出现「导入能用、检测不能用」
-    let token = favorites_github_token()?;
     reset_cancel(TASK_CHECK);
-    let items = db::with_conn(|conn| db::select_for_check(conn, github::SOURCE, all.unwrap_or(false), 5_000))?;
+    let all = all.unwrap_or(false);
 
-    let total = items.len();
-    let mut result = CheckResult::default();
-    // 探测是**逐条串行**的，几千条会跑很久：没有进度用户会以为卡死。
-    // 先发一条 0/N 把进度条点亮，之后每查完一条更新一次。
-    emit_progress(
-        &app,
-        &FavoritesProgress {
-            stage: "check",
-            task: TASK_CHECK.to_string(),
-            source: Some(github::SOURCE.to_string()),
-            checked: Some(0),
-            check_total: Some(total),
-            done: false,
-            ..FavoritesProgress::default()
-        },
-    );
+    // GitHub 与其它来源分开：前者走 API（能认出改名），后者走 HTTP 探测。
+    // 没配 Token 只影响 GitHub 那一段，**不能**让整轮检测直接失败
+    // （以前是硬要求，等于浏览器书签这些永远查不了失效）。
+    let token = db::with_conn(|conn| db::get_credential(conn, github::SOURCE)).ok().flatten();
+    let sources = db::with_conn(|conn| db::all_sources(conn))?;
+    let gh_source = github::SOURCE.to_string();
+    let non_gh: Vec<String> = sources.iter().filter(|s| **s != gh_source).cloned().collect();
 
-    for (id, full_name, _url) in items {
-        if is_cancelled(TASK_CHECK) {
-            result.cancelled = true;
-            break;
-        }
-        let (status, body) = github::fetch_repo(&token, &full_name).await?;
-        if status == 403 || status == 429 {
-            result.aborted = true;
-            break;
-        }
-        match check::classify_repo_response(status, body.as_ref(), &full_name) {
-            check::GoneStatus::Ok => {
-                db::with_conn(|conn| db::apply_status(conn, id, "ok", None))?;
-            }
-            check::GoneStatus::Gone => {
-                db::with_conn(|conn| db::apply_status(conn, id, "gone", None))?;
-                result.gone += 1;
-            }
-            check::GoneStatus::Redirect(new_url) => {
-                db::with_conn(|conn| db::apply_status(conn, id, "redirect", Some(&new_url)))?;
-                result.redirect += 1;
-            }
-            check::GoneStatus::Unknown => {
-                db::with_conn(|conn| db::apply_status(conn, id, "unknown", None))?;
-                result.unknown += 1;
-            }
-        }
-        result.checked += 1;
+    let gh_items = if token.is_some() {
+        db::with_conn(|conn| {
+            db::select_for_check_multi(conn, &[gh_source.clone()], all, 5_000)
+        })?
+    } else {
+        Vec::new()
+    };
+    // 没 Token 但库里有 GitHub 条目：如实计入「跳过」，不要假装检测过
+    let skipped_no_token = if token.is_none() {
+        db::with_conn(|conn| db::select_for_check_multi(conn, &[gh_source.clone()], all, 5_000))?.len()
+    } else {
+        0
+    };
+    let url_items = db::with_conn(|conn| {
+        db::select_for_check_multi(conn, &non_gh, all, 5_000)
+    })?;
+
+    let total = gh_items.len() + url_items.len();
+    let mut result = CheckResult {
+        skipped_no_token,
+        ..CheckResult::default()
+    };
+    // 探测很慢（串行几秒一条 / 并发也要数百毫秒一条）：先把进度条点亮，
+    // 之后每查完一条更新一次。
+    let mut emit = |result: &CheckResult, source: &str, message: Option<String>, done: bool| {
         emit_progress(
             &app,
             &FavoritesProgress {
                 stage: "check",
                 task: TASK_CHECK.to_string(),
-                source: Some(github::SOURCE.to_string()),
-                message: Some(full_name),
+                source: Some(source.to_string()),
+                message,
                 checked: Some(result.checked),
                 check_total: Some(total),
-                done: false,
+                done,
                 ..FavoritesProgress::default()
             },
         );
+    };
+    emit(&result, github::SOURCE, None, false);
+
+    // ── 第一阶段：GitHub（官方接口，能识别改名） ──
+    if let Some(token) = token.as_deref() {
+        for (id, _source, full_name, _url) in gh_items {
+            if is_cancelled(TASK_CHECK) {
+                result.cancelled = true;
+                break;
+            }
+            let (status, body) = github::fetch_repo(token, &full_name).await?;
+            if status == 403 || status == 429 {
+                // 限流：GitHub 这段停下（后面别的来源不受影响）
+                result.aborted = true;
+                break;
+            }
+            let verdict = check::classify_repo_response(status, body.as_ref(), &full_name);
+            apply_verdict(id, &verdict, &mut result)?;
+            emit(&result, github::SOURCE, Some(full_name), false);
+        }
+    }
+
+    // ── 第二阶段：其余来源走 HTTP 探测（并发，逐块落库） ──
+    if !url_items.is_empty() && !result.aborted {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .map_err(|e| format!("构建 HTTP 客户端失败: {e}"))?;
+        for chunk in url_items.chunks(PROBE_CONCURRENCY) {
+            if is_cancelled(TASK_CHECK) {
+                result.cancelled = true;
+                break;
+            }
+            let probes = futures_util::future::join_all(
+                chunk.iter().map(|(_, _, _, url)| check::probe_url(&client, url)),
+            )
+            .await;
+            for ((id, source, title, _url), verdict) in chunk.iter().zip(probes) {
+                apply_verdict(*id, &verdict, &mut result)?;
+                emit(&result, source, Some(title.clone()), false);
+            }
+        }
     }
 
     crate::exit_log!(
-        "[收藏] 失效检测完成: checked={}, gone={}, redirect={}, unknown={}, aborted={}",
+        "[收藏] 失效检测完成: checked={}, gone={}, redirect={}, unknown={}, aborted={}, skipped_no_token={}",
         result.checked,
         result.gone,
         result.redirect,
         result.unknown,
-        result.aborted
+        result.aborted,
+        result.skipped_no_token
     );
     // done 事件带上最终计数，前端据此收尾（aborted 时总数还是原值，进度条会停在中途，
     // 这是刻意的：让用户看到「没跑完」而不是假装 100%）
-    emit_progress(
-        &app,
-        &FavoritesProgress {
-            stage: "check",
-            task: TASK_CHECK.to_string(),
-            source: Some(github::SOURCE.to_string()),
-            checked: Some(result.checked),
-            check_total: Some(total),
-            done: true,
-            ..FavoritesProgress::default()
-        },
-    );
+    emit(&result, github::SOURCE, None, true);
     Ok(result)
+}
+
+/// 把一条探测结论落库并累计计数（GitHub / HTTP 两条路共用）。
+fn apply_verdict(
+    id: i64,
+    verdict: &check::GoneStatus,
+    result: &mut CheckResult,
+) -> Result<(), String> {
+    match verdict {
+        check::GoneStatus::Ok => {
+            db::with_conn(|conn| db::apply_status(conn, id, "ok", None))?;
+        }
+        check::GoneStatus::Gone => {
+            db::with_conn(|conn| db::apply_status(conn, id, "gone", None))?;
+            result.gone += 1;
+        }
+        check::GoneStatus::Redirect(new_url) => {
+            db::with_conn(|conn| db::apply_status(conn, id, "redirect", Some(new_url)))?;
+            result.redirect += 1;
+        }
+        check::GoneStatus::Unknown => {
+            db::with_conn(|conn| db::apply_status(conn, id, "unknown", None))?;
+            result.unknown += 1;
+        }
+    }
+    result.checked += 1;
+    Ok(())
 }
 
 /// 导入 B站收藏（只读，需要 Cookie）。
@@ -742,6 +803,19 @@ async fn import_zhihu_inner(app: tauri::AppHandle) -> Result<ImportResult, Strin
         ..ImportResult::default()
     };
 
+    // 先点亮进度条：第一页要等网络 + 400ms 间隔，不先发一条用户会以为没点动
+    emit_progress(
+        &app,
+        &import_progress(
+            "import",
+            zhihu::SOURCE,
+            Some("正在获取收藏夹列表".to_string()),
+            None,
+            &result,
+            false,
+        ),
+    );
+
     // ② 收藏夹列表（分页）
     let mut collections: Vec<zhihu::CookieCollection> = Vec::new();
     let mut offset = 0usize;
@@ -787,6 +861,18 @@ async fn import_zhihu_inner(app: tauri::AppHandle) -> Result<ImportResult, Strin
     crate::exit_log!(
         "[收藏] 知乎(Cookie) 共 {} 个收藏夹，开始导入内容",
         collections.len()
+    );
+    // 收藏夹数量确定后立刻发一条：进度条的分母（folderTotal）由此而来
+    emit_progress(
+        &app,
+        &import_progress(
+            "import",
+            zhihu::SOURCE,
+            Some(format!("共 {} 个收藏夹", collections.len())),
+            None,
+            &result,
+            false,
+        ),
     );
 
     // ③ 逐个收藏夹抓内容
@@ -850,6 +936,9 @@ async fn import_zhihu_inner(app: tauri::AppHandle) -> Result<ImportResult, Strin
                 &app,
                 &FavoritesProgress {
                     stage: "import",
+                    // `task` 必须填：前端按它分行展示进度，漏填会让这条事件被丢掉
+                    // （知乎导入之前就是这样：后端在发、界面什么都不显示）
+                    task: TASK_ZHIHU.to_string(),
                     source: Some(zhihu::SOURCE.to_string()),
                     folder: Some(collection.title.clone()),
                     message: Some(format!("已抓取 {} 条", result.fetched)),
@@ -1067,10 +1156,10 @@ pub fn fav_reorder_categories(orders: Vec<(i64, i32)>) -> Result<(), String> {
     db::with_conn(|conn| db::reorder_categories(conn, &orders))
 }
 
-/// 全量替换某条目的分类。
+/// 全量替换某条目的分类（人工操作 → 同时锁定，AI 归类不再改动它）。
 #[tauri::command]
 pub fn fav_set_item_categories(id: i64, category_ids: Vec<i64>) -> Result<(), String> {
-    db::with_conn(|conn| db::set_item_categories(conn, id, &category_ids))
+    db::with_conn(|conn| db::set_item_categories_manual(conn, id, &category_ids))
 }
 
 /// 人工设置标签（全量替换 + 锁定，后续 AI 归类不再改动）。
@@ -1091,45 +1180,138 @@ pub fn fav_stats() -> Result<db::FavoriteStats, String> {
     db::with_conn(|conn| db::stats(conn))
 }
 
-/// 解析「用哪个供应商的哪个模型」：显式指定优先，否则沿用 AI 模块的默认供应商。
+/// 供应商：必须是用户**显式选的**那个，不做任何兜底。
 ///
-/// 与翻译共用同一套回退链（默认供应商 → 第一个可用供应商），避免两个模块各写一份。
+/// 以前缺省时会回落到「AI 模块的默认供应商」，结果是「以为跑在 A 上，其实花的是 B 的额度」。
+fn pick_explicit_provider<'a>(
+    providers: &'a [crate::commands::ai::models::AiProvider],
+    provider_id: &Option<String>,
+) -> Result<&'a crate::commands::ai::models::AiProvider, String> {
+    let pid = provider_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "请先选择供应商（收藏模块的归类不使用 AI 模块的默认供应商）".to_string())?;
+    providers
+        .iter()
+        .find(|p| p.id == pid)
+        .ok_or_else(|| format!("未找到供应商: {pid}"))
+}
+
+/// 模型：同样必须显式选，**不**回落供应商的激活模型 / 首个模型。
+fn pick_explicit_model(
+    provider: &crate::commands::ai::models::AiProvider,
+    model_id: &Option<String>,
+) -> Result<String, String> {
+    model_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            format!(
+                "请先选择模型（供应商「{}」的激活模型/首个模型不会自动沿用）",
+                provider.name
+            )
+        })
+}
+
+/// 解析「用哪个供应商的哪个模型」——两项都必须显式指定。
 fn resolve_ai_target(
     cfg: &crate::commands::ai::models::AiConfig,
     provider_id: &Option<String>,
     model_id: &Option<String>,
 ) -> Result<(crate::commands::ai::models::AiProvider, String), String> {
-    let provider = match provider_id {
-        Some(pid) => cfg
-            .providers
-            .iter()
-            .find(|p| &p.id == pid)
-            .cloned()
-            .ok_or_else(|| format!("未找到供应商: {}", pid))?,
-        None => cfg
-            .providers
-            .iter()
-            .find(|p| !p.api_key.is_empty() && !p.openai_url.is_empty())
-            .cloned()
-            .ok_or_else(|| "没有配置了 OpenAI 端点和 API Key 的供应商".to_string())?,
-    };
+    let provider = pick_explicit_provider(&cfg.providers, provider_id)?.clone();
+    let model = pick_explicit_model(&provider, model_id)?;
     if provider.openai_url.is_empty() {
         return Err(format!("供应商「{}」未配置 OpenAI 兼容端点", provider.name));
     }
     if provider.api_key.is_empty() {
         return Err(format!("供应商「{}」未配置 API Key", provider.name));
     }
-    let model = model_id
-        .clone()
-        .or_else(|| provider.active_model_id.clone())
-        .or_else(|| provider.models.first().map(|m| m.id.clone()))
-        .ok_or_else(|| format!("供应商「{}」未配置任何模型", provider.name))?;
     Ok((provider, model))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::{pick_explicit_model, pick_explicit_provider};
+
+    /// 归类用的供应商与模型都必须由用户显式选定：不挑「第一个可用供应商」，
+    /// 也不沿用供应商的激活模型/首个模型——否则用户看到的与实际调用到的会不一致。
+    #[test]
+    fn classify_target_must_be_explicit() {
+        use crate::commands::ai::models::AiProvider;
+        let provider: AiProvider = serde_json::from_value(serde_json::json!({
+            "id": "p1",
+            "name": "P1",
+            "api_key": "sk-x",
+            "openai_url": "https://api.example.com/v1",
+            "models": [{ "id": "m1", "name": "M1" }],
+            "active_model_id": "m1"
+        }))
+        .expect("provider 能反序列化");
+        let providers = vec![provider];
+
+        // 没选供应商 → 报错（旧实现会回落到「第一个可用供应商」）
+        assert!(pick_explicit_provider(&providers, &None).is_err());
+        assert!(pick_explicit_provider(&providers, &Some("  ".into())).is_err());
+        // 选了不存在的供应商 → 报错
+        assert!(pick_explicit_provider(&providers, &Some("nope".into())).is_err());
+
+        let picked = pick_explicit_provider(&providers, &Some("p1".into())).unwrap();
+        assert_eq!(picked.id, "p1");
+        // 选了供应商但没选模型 → 报错（旧实现会沿用 active_model_id）
+        assert!(pick_explicit_model(picked, &None).is_err());
+        assert_eq!(pick_explicit_model(picked, &Some("m1".into())).unwrap(), "m1");
+        assert_eq!(
+            pick_explicit_model(picked, &Some(" m9 ".into())).unwrap(),
+            "m9",
+            "选了什么就发什么（模型列表可能更新过）"
+        );
+    }
+
+    /// 所有 `FavoritesProgress { ... }` 构造点都必须**显式**写 `task`。
+    ///
+    /// `task` 有默认值（空串）：漏填既不会编译报错、也不会运行时报错，只会在前端
+    /// 按任务名过滤进度时被静默丢弃——知乎导入就是这样「点了没有任何进度条」。
+    /// 用源码扫描把它钉死：以后新增进度事件忘写 task，这条测试立刻红。
+    #[test]
+    fn every_progress_literal_sets_task() {
+        const MARK: &str = "FavoritesProgress {";
+        let src = include_str!("commands.rs");
+        // 只扫生产代码：测试模块自己也会出现这个字符串，混进来就成了「自己证明自己」
+        let scan = src.split("#[cfg(test)]").next().unwrap_or(src);
+
+        let mut cursor = 0usize;
+        let mut found = 0usize;
+        while let Some(pos) = scan[cursor..].find(MARK) {
+            let idx = cursor + pos;
+            let line_start = scan[..idx].rfind('\n').map(|p| p + 1).unwrap_or(0);
+            let head = &scan[line_start..idx];
+            let after = idx + MARK.len();
+            // 两类不是「构造点」的命中要跳过：
+            // - 结构体定义（`struct FavoritesProgress {`）：字段列表里当然有 task
+            // - 函数返回类型（`fn f() -> FavoritesProgress {`）：真正的构造点紧跟其后
+            let is_decl = head.contains("struct") || head.trim_end().ends_with("->");
+            if !is_decl {
+                let end = scan[after..]
+                    .find(MARK)
+                    .map(|p| after + p)
+                    .unwrap_or(scan.len());
+                let block = &scan[after..end];
+                assert!(
+                    block.contains("task:"),
+                    "进度事件漏了 task 字段（前端会静默丢弃它）: {}",
+                    block.chars().take(240).collect::<String>()
+                );
+                found += 1;
+            }
+            cursor = after;
+        }
+        assert!(found >= 5, "没扫到进度事件构造点，测试本身失效了（只有 {found} 处）");
+    }
 
     /// 并发规则：三个平台的导入可以同时跑，加工任务（归类 / 检测）与一切互斥。
     #[test]

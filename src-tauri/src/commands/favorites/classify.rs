@@ -16,12 +16,15 @@ pub const BATCH_SIZE: usize = 40;
 /// 单条送入的字符上限（描述很长的仓库会挤掉别的条目）。
 const MAX_TITLE_CHARS: usize = 120;
 const MAX_DESC_CHARS: usize = 200;
+/// 链接留够长度（带查询串的文档站地址可能很长），但别让它把一行的预算吃光
+const MAX_URL_CHARS: usize = 120;
 
 pub const SYSTEM_PROMPT: &str = "你是一个信息整理助手。用户会给你一批收藏条目，每行格式：\n\
-`序号|名称|简介|语言|标签|热度`\n\
+`序号|名称|简介|语言|标签|热度|链接`\n\
 字段说明：\n\
 - 条目可能来自不同平台：GitHub 仓库名形如 `owner/repo`，「语言」是主要编程语言、「标签」是官方 topics、\n\
   「热度」是 star 数（视频/文章条目的语言、标签、热度可能为空，此时靠名称与简介判断）；\n\
+- 「链接」是原始地址。浏览器书签常常只有名称和链接（没有简介/语言/标签），此时域名与路径是主要线索；\n\
 - 热度只代表流行程度，不是分类依据，仅作参考。\n\
 请按**主题**把它们分成若干组，输出**严格 JSON**，不要任何解释文字：\n\
 {\"groups\":[{\"name\":\"分类名\",\"items\":[0,1,5]}]}\n\
@@ -47,13 +50,14 @@ pub fn build_prompt(items: &[ClassifyItem]) -> String {
             _ => String::new(),
         };
         lines.push(format!(
-            "{}|{}|{}|{}|{}{}",
+            "{}|{}|{}|{}|{}{}|{}",
             index,
             clamp(&item.title, MAX_TITLE_CHARS),
             clamp(&item.description, MAX_DESC_CHARS),
             clamp(&item.language, 20),
             clamp(&item.topics.join(","), 60),
             stars,
+            clamp(&item.url, MAX_URL_CHARS),
         ));
     }
     lines.push("只输出 JSON：".to_string());
@@ -143,6 +147,7 @@ mod tests {
             language: lang.to_string(),
             topics: topics.iter().map(|t| t.to_string()).collect(),
             stars: None,
+            url: String::new(),
         }
     }
 
@@ -169,6 +174,19 @@ mod tests {
             prompt
         );
         assert!(!prompt.contains("||||"), "空热度不应留下空段: {}", prompt);
+    }
+
+    /// 浏览器书签只有名称和链接：链接必须进 prompt，否则模型没有任何线索。
+    #[test]
+    fn prompt_includes_url_for_bookmarks() {
+        let mut bm = item("Python 官方文档", "", "", &[]);
+        bm.url = "https://docs.python.org/3/".to_string();
+        let prompt = build_prompt(&[bm]);
+        assert!(
+            prompt.contains("https://docs.python.org/3/"),
+            "书签链接必须喂给模型: {}",
+            prompt
+        );
     }
 
     #[test]

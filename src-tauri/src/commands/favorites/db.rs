@@ -267,6 +267,9 @@ pub struct ClassifyItem {
     pub topics: Vec<String>,
     /// GitHub star 数（热度参考）；视频/文章条目为 None
     pub stars: Option<i64>,
+    /// 原始链接。浏览器书签没有语言/topics/简介，域名往往是唯一的分类线索
+    /// （`docs.python.org` → Python 文档），所以一并喂给模型。
+    pub url: String,
 }
 
 /// upsert 的结果：新增 / 有变化已更新 / 完全没变（跨次导入去重的正常结局）。
@@ -363,18 +366,22 @@ pub fn upsert(conn: &Connection, item: &NewFavorite) -> Result<UpsertOutcome, St
     Ok(UpsertOutcome::Updated)
 }
 
-/// 取一批「待归类」条目：**没有标签** 且 **未被人工锁定** 且 **未失效**。
+/// 取一批「待归类」条目：**还没被 AI 归类过** 且 **未被人工锁定** 且 **未失效**。
 ///
-/// - 人工改过标签的条目（`ai_locked = 1`）永不再进入归类批次——用户的选择优先于模型；
+/// 判据是 `ai_model IS NULL`（而不是「没有任何分类」）：浏览器书签导入时**自带**
+/// 目录分类（书签栏/技术/GitHub），如果用「无分类」判据，这批条目永远进不了归类批次，
+/// 等于在收藏库里当二等公民。AI 归类是在已有分类之上**追加**主题分类（多标签语义）。
+///
+/// - 人工改过分类的条目（`ai_locked = 1`）永不再进入归类批次——用户的选择优先于模型；
 /// - 已失效（`gone`）的条目同样跳过：给一个打不开的仓库归类没有意义，还白花 token。
 pub fn select_unclassified(conn: &Connection, limit: usize) -> Result<Vec<ClassifyItem>, String> {
     let mut statement = conn
         .prepare(
-            "SELECT f.id, f.title, COALESCE(f.description, ''), COALESCE(f.extra_json, '') \
+            "SELECT f.id, f.title, COALESCE(f.description, ''), COALESCE(f.extra_json, ''), f.url \
              FROM favorite f \
              WHERE f.ai_locked = 0 \
                AND f.status != 'gone' \
-               AND NOT EXISTS (SELECT 1 FROM favorite_item_category ic WHERE ic.favorite_id = f.id) \
+               AND f.ai_model IS NULL \
              ORDER BY f.id LIMIT ?1",
         )
         .map_err(|e| format!("查询待归类条目失败: {}", e))?;
@@ -385,13 +392,14 @@ pub fn select_unclassified(conn: &Connection, limit: usize) -> Result<Vec<Classi
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
             ))
         })
         .map_err(|e| format!("查询待归类条目失败: {}", e))?;
 
     let mut items = Vec::new();
     for row in rows {
-        let (id, title, description, extra_json) =
+        let (id, title, description, extra_json, url) =
             row.map_err(|e| format!("读取待归类条目失败: {}", e))?;
         let extra: serde_json::Value =
             serde_json::from_str(&extra_json).unwrap_or(serde_json::Value::Null);
@@ -421,6 +429,7 @@ pub fn select_unclassified(conn: &Connection, limit: usize) -> Result<Vec<Classi
             language,
             topics,
             stars,
+            url,
         });
     }
     Ok(items)
@@ -621,25 +630,43 @@ pub fn find_by_id(
     }
 }
 
-/// 待探测条目：`(id, full_name, url)`。`all = false` 时跳过已探测过的。
-pub fn select_for_check(
+/// 待探测条目：`(id, source, title, url)`。`all = false` 时跳过已探测过的。
+///
+/// 不限来源：GitHub 走 API（能识别改名），其余（浏览器书签 / B站 / 知乎…）
+/// 走 HTTP 探测——导入来的条目应当一视同仁地能查失效。
+pub fn select_for_check_multi(
     conn: &Connection,
-    source: &str,
+    sources: &[String],
     all: bool,
     limit: usize,
-) -> Result<Vec<(i64, String, String)>, String> {
+) -> Result<Vec<(i64, String, String, String)>, String> {
+    if sources.is_empty() {
+        return Ok(Vec::new());
+    }
+    let list = sources
+        .iter()
+        .map(|s| format!("'{}'", s.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(",");
     let sql = if all {
-        "SELECT id, title, url FROM favorite WHERE source = ?1 ORDER BY id LIMIT ?2"
+        format!("SELECT id, source, title, url FROM favorite WHERE source IN ({list}) ORDER BY id LIMIT ?1")
     } else {
-        "SELECT id, title, url FROM favorite WHERE source = ?1 AND checked_at IS NULL \
-         ORDER BY id LIMIT ?2"
+        format!(
+            "SELECT id, source, title, url FROM favorite \
+             WHERE source IN ({list}) AND checked_at IS NULL ORDER BY id LIMIT ?1"
+        )
     };
     let mut statement = conn
-        .prepare(sql)
+        .prepare(&sql)
         .map_err(|e| format!("查询待探测条目失败: {}", e))?;
     let rows = statement
-        .query_map(rusqlite::params![source, limit as i64], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        .query_map(rusqlite::params![limit as i64], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
         })
         .map_err(|e| format!("查询待探测条目失败: {}", e))?;
     let mut items = Vec::new();
@@ -647,6 +674,21 @@ pub fn select_for_check(
         items.push(row.map_err(|e| format!("读取待探测条目失败: {}", e))?);
     }
     Ok(items)
+}
+
+/// 库里出现过的所有来源（探测时按它分派：GitHub 走 API，其余走 HTTP）。
+pub fn all_sources(conn: &Connection) -> Result<Vec<String>, String> {
+    let mut statement = conn
+        .prepare("SELECT DISTINCT source FROM favorite ORDER BY source")
+        .map_err(|e| format!("查询来源失败: {}", e))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| format!("查询来源失败: {}", e))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| format!("读取来源失败: {}", e))?);
+    }
+    Ok(out)
 }
 
 /// 落探测结论；改名的顺手把 URL 指到新地址。
@@ -1057,6 +1099,24 @@ pub fn find_child_id(conn: &Connection, parent_id: Option<i64>, name: &str) -> R
     Ok(found)
 }
 
+/// 人工设置分类（界面选择器走这条）：顺手 `ai_locked = 1`。
+///
+/// 归类判据是「`ai_model IS NULL`」，如果不锁定，用户手选的分类会在下一轮 AI 归类里
+/// 被模型再叠一层——那不是用户要的「我改过了」。
+pub fn set_item_categories_manual(
+    conn: &Connection,
+    favorite_id: i64,
+    ids: &[i64],
+) -> Result<(), String> {
+    set_item_categories(conn, favorite_id, ids)?;
+    conn.execute(
+        "UPDATE favorite SET ai_locked = 1, updated_at = ?1 WHERE id = ?2",
+        rusqlite::params![now_str(), favorite_id],
+    )
+    .map_err(|e| format!("锁定条目失败: {}", e))?;
+    Ok(())
+}
+
 /// 按 (source, external_id) 查条目 id（导入后要给条目挂分类，需要这个 id）。
 pub fn find_favorite_id(conn: &Connection, source: &str, external_id: &str) -> Result<Option<i64>, String> {
     let mut stmt = conn
@@ -1345,8 +1405,8 @@ mod tests {
         apply_status, apply_tags, count_all, create_category, delete, delete_category,
         find_category_by_name, get_credential, get_import_cursor, list, list_category_tree,
         migrate, move_category, rename_category, select_unclassified, set_credential,
-        set_import_cursor, set_item_categories, set_tags, stats, upsert, CategoryNode, FavoriteRow,
-        FavoriteStats, ListFilter, NewFavorite, UpsertOutcome,
+        set_import_cursor, set_item_categories, set_item_categories_manual, set_tags, stats, upsert,
+        CategoryNode, FavoriteRow, FavoriteStats, ListFilter, NewFavorite, UpsertOutcome,
     };
 
     /// 前后端的字段契约：这两个结构按 camelCase 序列化，前端读的是 `bySource` / `aiLocked`。
@@ -1737,27 +1797,35 @@ mod tests {
         assert_eq!(list_category_tree(&conn).unwrap().len(), 2);
     }
 
-    /// 归类只处理「没标签且没被人工改过」的条目。
+    /// 归类候选 = 「AI 还没归类过」且未人工锁定、未失效。
+    ///
+    /// 关键回归：**只有分类（浏览器书签带来的目录）但没有 ai_model 的条目仍然要进候选** ——
+    /// 否则浏览器收藏在收藏库里永远是二等公民，AI 归类永远碰不到它们。
     #[test]
-    fn select_unclassified_skips_tagged_and_locked() {
+    fn select_unclassified_skips_locked_classified_and_gone() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         migrate(&conn).unwrap();
         insert_raw(&conn, 1, "1", "{}");
         insert_raw(&conn, 2, "2", "{}");
         insert_raw(&conn, 3, "3", "{}");
+        insert_raw(&conn, 4, "4", "{}");
 
         let pending = select_unclassified(&conn, 10).unwrap();
-        assert_eq!(pending.len(), 3);
+        assert_eq!(pending.len(), 4);
 
-        // 已有分类 → 不再归类
+        // 只有目录分类（书签导入形态）、没有 ai_model → 仍要归类
         let cli = create_category(&conn, "CLI", None).unwrap();
         set_item_categories(&conn, 1, &[cli]).unwrap();
-        // 人工锁定 → 永远不再归类
-        conn.execute("UPDATE favorite SET ai_locked = 1 WHERE id = 2", []).unwrap();
+        // 人工改分类（界面选择器）会顺手锁定 → 永远不再归类
+        set_item_categories_manual(&conn, 2, &[cli]).unwrap();
+        // AI 归类过（ai_model 非空）→ 不再重复归类
+        conn.execute("UPDATE favorite SET ai_model = 'gpt-x' WHERE id = 3", []).unwrap();
+        // 已失效 → 跳过
+        apply_status(&conn, 4, "gone", None).unwrap();
 
         let pending = select_unclassified(&conn, 10).unwrap();
-        assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].id, 3);
+        assert_eq!(pending.len(), 1, "只剩「有目录分类但没 AI 归类过」的那条");
+        assert_eq!(pending[0].id, 1);
     }
 
     /// 多标签：一个条目落两个分类要写两行；写完之后它就不再是「待归类」。
