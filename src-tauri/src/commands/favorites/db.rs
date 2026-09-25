@@ -67,9 +67,12 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS idx_fav_category_parent ON favorite_category(parent_id);
 
         -- 条目 ↔ 分类（多对多）
+        -- source 记录这条关联是「谁」建立的：ai（AI 归类）/ bookmark（浏览器书签目录）/ manual（人工）。
+        -- 「重新归类」只清 source='ai' 的关联，书签目录与人工选择都保留。
         CREATE TABLE IF NOT EXISTS favorite_item_category (
             favorite_id INTEGER NOT NULL,
             category_id INTEGER NOT NULL,
+            source      TEXT    NOT NULL DEFAULT 'manual',
             PRIMARY KEY (favorite_id, category_id)
         );
         CREATE INDEX IF NOT EXISTS idx_fav_item_category_cat ON favorite_item_category(category_id);
@@ -133,6 +136,26 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
         [],
     )
     .map_err(|e| format!("初始化收藏库失败: {}", e))?;
+    // favorite_item_category 补「来源」列：区分 AI / 书签目录 / 人工，「重新归类」只清 AI 那部分。
+    if !has_column(conn, "favorite_item_category", "source")? {
+        conn.execute(
+            "ALTER TABLE favorite_item_category ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'",
+            [],
+        )
+        .map_err(|e| format!("升级收藏库失败（item_category.source）: {}", e))?;
+        // 回填来源：老数据没记来源，按条目当前状态推断——
+        // 人工锁定 → manual；AI 归类过（有 ai_model）→ ai；其余（书签目录、还没 AI 归类）→ bookmark。
+        // 局限：书签条目若同时被旧版 AI 归类过，其书签目录关联也会被推成 ai，
+        // 重新归类时会被一并清掉，属于可接受的旧数据边缘情况（书签目录可重新导入恢复）。
+        conn.execute(
+            "UPDATE favorite_item_category SET source = CASE \
+                WHEN EXISTS (SELECT 1 FROM favorite f WHERE f.id = favorite_id AND f.ai_locked = 1) THEN 'manual' \
+                WHEN EXISTS (SELECT 1 FROM favorite f WHERE f.id = favorite_id AND f.ai_model IS NOT NULL) THEN 'ai' \
+                ELSE 'bookmark' END",
+            [],
+        )
+        .map_err(|e| format!("回填分类来源失败: {}", e))?;
+    }
     migrate_tags_to_categories(conn)?;
     Ok(())
 }
@@ -366,6 +389,21 @@ pub fn upsert(conn: &Connection, item: &NewFavorite) -> Result<UpsertOutcome, St
     Ok(UpsertOutcome::Updated)
 }
 
+/// 「重新归类」准备：把待重归条目（未锁定、未失效、且 AI 归类过）的 AI 标记清空，
+/// 让它们重新进入「未归类」批次（`ai_model IS NULL`），由正常的归类循环重新处理。
+///
+/// 旧的 AI 分类关联不在这里清——由 [`apply_tags`] 在逐批写入时按 `source='ai'` 清掉，
+/// 这样「停止」中断时，还没处理到的条目仍保留旧分类，下次重归再接着清。
+/// 返回被重置的条数。
+pub fn reset_classification(conn: &Connection) -> Result<usize, String> {
+    conn.execute(
+        "UPDATE favorite SET ai_model = NULL, ai_at = NULL \
+         WHERE ai_locked = 0 AND status != 'gone' AND ai_model IS NOT NULL",
+        [],
+    )
+    .map_err(|e| format!("重置归类标记失败: {e}"))
+}
+
 /// 取一批「待归类」条目：**还没被 AI 归类过** 且 **未被人工锁定** 且 **未失效**。
 ///
 /// 判据是 `ai_model IS NULL`（而不是「没有任何分类」）：浏览器书签导入时**自带**
@@ -374,6 +412,9 @@ pub fn upsert(conn: &Connection, item: &NewFavorite) -> Result<UpsertOutcome, St
 ///
 /// - 人工改过分类的条目（`ai_locked = 1`）永不再进入归类批次——用户的选择优先于模型；
 /// - 已失效（`gone`）的条目同样跳过：给一个打不开的仓库归类没有意义，还白花 token。
+///
+/// 「重新归类」在开工前先调 [`reset_classification`] 把已归类条目的 `ai_model` 清空，
+/// 于是它们也会被这里选中——重归复用同一条「逐批取未归类」的进度推进，不会死循环。
 pub fn select_unclassified(conn: &Connection, limit: usize) -> Result<Vec<ClassifyItem>, String> {
     let mut statement = conn
         .prepare(
@@ -436,23 +477,45 @@ pub fn select_unclassified(conn: &Connection, limit: usize) -> Result<Vec<Classi
 }
 
 /// 写入一批归类结果（多标签：一个条目可落多个分类），并记录所用模型。
+///
+/// `groups` 的每组是 `(分类路径段, 条目下标列表)`：路径逐级 `ensure_category` 建树，
+/// 条目挂到叶子分类。`reclassify = true` 时先把本批条目旧的 `ai` 来源关联清掉，
+/// 书签目录与人工选择（`bookmark` / `manual`）保留。
 pub fn apply_tags(
     conn: &Connection,
     items: &[ClassifyItem],
-    groups: &[(String, Vec<usize>)],
+    groups: &[(Vec<String>, Vec<usize>)],
     model: &str,
+    reclassify: bool,
 ) -> Result<usize, String> {
     let written = now_str();
     let mut count = 0usize;
-    for (name, indices) in groups {
-        // 模型给的是分类名：没有同名分类就建一个顶层的（AI 归类不知道层级）
-        let category_id = resolve_category_by_name(conn, name)?;
+
+    // 重新归类：清掉旧的 AI 分类（只清 ai 来源，书签目录与人工选择不动）
+    if reclassify {
+        for item in items {
+            conn.execute(
+                "DELETE FROM favorite_item_category WHERE favorite_id = ?1 AND source = 'ai'",
+                [item.id],
+            )
+            .map_err(|e| format!("清除旧 AI 分类失败: {}", e))?;
+        }
+    }
+
+    for (path, indices) in groups {
+        // 模型给的是「/」分隔的多级分类名：逐级 ensure（同名复用），条目挂到叶子
+        let mut parent: Option<i64> = None;
+        let mut category_id: i64 = 0;
+        for seg in path {
+            category_id = ensure_category(conn, parent, seg)?;
+            parent = Some(category_id);
+        }
         for index in indices {
             let Some(item) = items.get(*index) else {
                 continue;
             };
             conn.execute(
-                "INSERT OR IGNORE INTO favorite_item_category (favorite_id, category_id) VALUES (?1, ?2)",
+                "INSERT OR IGNORE INTO favorite_item_category (favorite_id, category_id, source) VALUES (?1, ?2, 'ai')",
                 rusqlite::params![item.id, category_id],
             )
             .map_err(|e| format!("写入分类失败: {}", e))?;
@@ -1131,7 +1194,7 @@ pub fn find_favorite_id(conn: &Connection, source: &str, external_id: &str) -> R
 /// 追加一条「条目 ↔ 分类」挂载（已存在则忽略，不会重复）。
 pub fn link_item_category(conn: &Connection, favorite_id: i64, category_id: i64) -> Result<(), String> {
     conn.execute(
-        "INSERT OR IGNORE INTO favorite_item_category (favorite_id, category_id) VALUES (?1, ?2)",
+        "INSERT OR IGNORE INTO favorite_item_category (favorite_id, category_id, source) VALUES (?1, ?2, 'bookmark')",
         rusqlite::params![favorite_id, category_id],
     )
     .map_err(|e| format!("挂载分类失败: {e}"))?;
@@ -1196,7 +1259,7 @@ pub fn set_item_categories(conn: &Connection, favorite_id: i64, ids: &[i64]) -> 
     .map_err(|e| format!("清除旧分类失败: {e}"))?;
     for cid in ids {
         conn.execute(
-            "INSERT OR IGNORE INTO favorite_item_category (favorite_id, category_id) VALUES (?1, ?2)",
+            "INSERT OR IGNORE INTO favorite_item_category (favorite_id, category_id, source) VALUES (?1, ?2, 'manual')",
             rusqlite::params![favorite_id, cid],
         )
         .map_err(|e| format!("写入分类失败: {e}"))?;
@@ -1403,10 +1466,11 @@ pub fn count_all(conn: &Connection) -> Result<usize, String> {
 mod tests {
     use super::{
         apply_status, apply_tags, count_all, create_category, delete, delete_category,
-        find_category_by_name, get_credential, get_import_cursor, list, list_category_tree,
-        migrate, move_category, rename_category, select_unclassified, set_credential,
-        set_import_cursor, set_item_categories, set_item_categories_manual, set_tags, stats, upsert,
-        CategoryNode, FavoriteRow, FavoriteStats, ListFilter, NewFavorite, UpsertOutcome,
+        find_category_by_name, get_credential, get_import_cursor, link_item_category, list,
+        list_category_tree, migrate, move_category, rename_category, reset_classification,
+        select_unclassified, set_credential, set_import_cursor, set_item_categories,
+        set_item_categories_manual, set_tags, stats, upsert, CategoryNode, FavoriteRow,
+        FavoriteStats, ListFilter, NewFavorite, UpsertOutcome,
     };
 
     /// 前后端的字段契约：这两个结构按 camelCase 序列化，前端读的是 `bySource` / `aiLocked`。
@@ -1836,10 +1900,10 @@ mod tests {
         insert_raw(&conn, 1, "1", "{}");
         let items = select_unclassified(&conn, 10).unwrap();
         let groups = vec![
-            ("LLM".to_string(), vec![0usize]),
-            ("运维".to_string(), vec![0usize]),
+            (vec!["LLM".to_string()], vec![0usize]),
+            (vec!["运维".to_string()], vec![0usize]),
         ];
-        let written = apply_tags(&conn, &items, &groups, "gpt-x").unwrap();
+        let written = apply_tags(&conn, &items, &groups, "gpt-x", false).unwrap();
         assert_eq!(written, 2, "多标签每条都要写");
 
         let tags: Vec<String> = conn
@@ -1860,6 +1924,88 @@ mod tests {
             .query_row("SELECT ai_model FROM favorite WHERE id = 1", [], |r| r.get(0))
             .unwrap();
         assert_eq!(model, "gpt-x");
+    }
+
+    /// 多级分类名要建成真正的父子层级：条目挂到叶子，父分类是叶子分类的 parent。
+    #[test]
+    fn apply_tags_builds_multi_level_tree() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        insert_raw(&conn, 1, "1", "{}");
+        let items = select_unclassified(&conn, 10).unwrap();
+
+        let groups = vec![(vec!["编程语言".to_string(), "Rust".to_string()], vec![0usize])];
+        let written = apply_tags(&conn, &items, &groups, "gpt-x", false).unwrap();
+        assert_eq!(written, 1);
+
+        let root_id = find_category_by_name(&conn, "编程语言").unwrap().unwrap();
+        let leaf_id = find_category_by_name(&conn, "Rust").unwrap().unwrap();
+        let parent: Option<i64> = conn
+            .query_row("SELECT parent_id FROM favorite_category WHERE id = ?1", [leaf_id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(parent, Some(root_id), "叶子分类应挂在父分类下");
+
+        // 条目挂在叶子分类上，且来源是 ai
+        let (linked, source): (i64, String) = conn
+            .query_row(
+                "SELECT COUNT(*), COALESCE(MAX(source), '') FROM favorite_item_category \
+                 WHERE favorite_id = 1 AND category_id = ?1",
+                [leaf_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(linked, 1);
+        assert_eq!(source, "ai");
+    }
+
+    /// 重新归类只清 AI 加的关联，书签目录与人工选择都保留。
+    #[test]
+    fn reclassify_clears_only_ai_links() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        insert_raw(&conn, 1, "1", "{}");
+
+        // 书签目录分类（bookmark）
+        let bm = create_category(&conn, "书签栏", None).unwrap();
+        link_item_category(&conn, 1, bm).unwrap();
+
+        // 第一次 AI 归类（ai）→ 旧分类
+        let items = select_unclassified(&conn, 10).unwrap();
+        apply_tags(
+            &conn,
+            &items,
+            &[(vec!["旧分类".to_string()], vec![0usize])],
+            "gpt-x",
+            false,
+        )
+        .unwrap();
+        let old_id = find_category_by_name(&conn, "旧分类").unwrap().unwrap();
+
+        // 重新归类：先清掉 AI 标记，已归类过的条目重新进「未归类」批次
+        let reset = reset_classification(&conn).unwrap();
+        assert_eq!(reset, 1, "只有 AI 归类过的那条被重置");
+        let items = select_unclassified(&conn, 10).unwrap();
+        assert_eq!(items.len(), 1, "重置后已归类的条目也要进重归批次");
+        apply_tags(
+            &conn,
+            &items,
+            &[(vec!["新分类".to_string()], vec![0usize])],
+            "gpt-x",
+            true,
+        )
+        .unwrap();
+
+        let link_count = |cat_id: i64| -> i64 {
+            conn.query_row(
+                "SELECT COUNT(*) FROM favorite_item_category WHERE favorite_id = 1 AND category_id = ?1",
+                [cat_id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(link_count(old_id), 0, "旧的 AI 分类要被清掉");
+        assert_eq!(link_count(bm), 1, "书签目录分类要保留");
+        assert_eq!(link_count(find_category_by_name(&conn, "新分类").unwrap().unwrap()), 1);
     }
 
     /// 归类要能读到语言与 topics（这是判断分类最有用的两个信号）。

@@ -341,9 +341,11 @@ pub struct ClassifyResult {
     pub cancelled: bool,
 }
 
-/// 用 AI 给**未归类**的条目打分类标签（多标签）。
+/// 用 AI 给收藏打分类标签（多标签，支持多级，如「编程语言/Rust」）。
 ///
-/// - 只对「没有标签且未被人工锁定」的条目跑，反复点击不会浪费已归类的部分；
+/// - 默认只对「AI 还没归类过」且未被人工锁定的条目跑；
+/// - `reclassify = true` 时对**所有**未锁定、未失效的条目跑：先清掉旧的 AI 分类
+///   （只清 AI 加的，浏览器书签目录与人工选择保留），再写新结果；
 /// - 每批 [`BATCH_SIZE`] 条，一批失败就整批放弃并报错（不写半截错误分类）；
 /// - `limit` 给一个上限，方便先试 40 条看效果再决定要不要全量跑。
 #[tauri::command]
@@ -352,9 +354,10 @@ pub async fn fav_classify(
     provider_id: Option<String>,
     model_id: Option<String>,
     limit: Option<usize>,
+    reclassify: Option<bool>,
 ) -> Result<ClassifyResult, String> {
     begin_task(TASK_CLASSIFY)?;
-    let out = classify_inner(app, provider_id, model_id, limit).await;
+    let out = classify_inner(app, provider_id, model_id, limit, reclassify.unwrap_or(false)).await;
     end_task(TASK_CLASSIFY);
     out
 }
@@ -364,6 +367,7 @@ async fn classify_inner(
     provider_id: Option<String>,
     model_id: Option<String>,
     limit: Option<usize>,
+    reclassify: bool,
 ) -> Result<ClassifyResult, String> {
     let cfg = crate::commands::ai::config::load_ai_config();
     let (provider, model) = resolve_ai_target(&cfg, &provider_id, &model_id)?;
@@ -374,9 +378,13 @@ async fn classify_inner(
         model: model.clone(),
         ..ClassifyResult::default()
     };
-    // 总盘子 = 开始时未归类的条数；进度条用它算百分比
-    let total_pending =
-        db::with_conn(|conn| db::select_unclassified(conn, 1_000_000))?.len();
+    // 重新归类：先把已归类条目的 AI 标记清空，让它们重新进「未归类」批次。
+    // 旧的 AI 分类关联由 apply_tags 在逐批写入时清掉（只清 ai 来源）。
+    if reclassify {
+        db::with_conn(|conn| db::reset_classification(conn))?;
+    }
+    // 总盘子 = 开始时待处理的条数；进度条用它算百分比
+    let total_pending = db::with_conn(|conn| db::select_unclassified(conn, 1_000_000))?.len();
     let mut batch_no = 0usize;
 
     // 先发一条 0/N：每批要等模型返回（几十秒都可能），不先点亮进度条用户会以为没反应
@@ -386,7 +394,11 @@ async fn classify_inner(
             stage: "classify",
             task: TASK_CLASSIFY.to_string(),
             source: None,
-            message: Some(format!("每批 {} 条", BATCH_SIZE)),
+            message: Some(if reclassify {
+                format!("重新归类，每批 {} 条", BATCH_SIZE)
+            } else {
+                format!("每批 {} 条", BATCH_SIZE)
+            }),
             classified: Some(0),
             tags_written: Some(0),
             remaining: Some(total_pending),
@@ -426,7 +438,7 @@ async fn classify_inner(
 
         // 解析失败 → 直接返回错误：整批不落库，避免写进半截错误分类
         let groups = classify::parse_groups(&outcome.text, batch.len())?;
-        let written = db::with_conn(|conn| db::apply_tags(conn, &batch, &groups, &model))?;
+        let written = db::with_conn(|conn| db::apply_tags(conn, &batch, &groups, &model, reclassify))?;
         result.tags_written += written;
         result.classified += batch.len();
 

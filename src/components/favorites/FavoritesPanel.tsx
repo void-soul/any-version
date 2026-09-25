@@ -2,8 +2,9 @@
 //
 // 设计要点：
 // - 导入是幂等的（后端按平台原生 id 去重），重复点「导入」只会得到 added=0；
-// - 归类只处理未归类且未被人工改过的条目，人工改标签后该条目被锁定；
-// - 一个条目可以属于多个分类（多标签），所以同一条目会在多个分类下出现。
+// - 归类默认只处理未归类且未被人工改过的条目；「全部重新归类」会重跑所有条目并替换 AI 旧分类；
+// - 一个条目可以属于多个分类（多标签），所以同一条目会在多个分类下出现；
+// - AI 归类支持多级分类（如「编程语言/Rust」），人工改标签后该条目被锁定。
 import {
   useCallback,
   useEffect,
@@ -703,7 +704,7 @@ export default function FavoritesPanel() {
     }
   };
 
-  const runClassify = async () => {
+  const runClassify = async (reclassify: boolean) => {
     // 双保险：按钮已禁用，但键盘/脚本路径也要挡住——后端同样会拒绝
     if (!providerId || !modelId) {
       toast(t("favorites.needProviderModel"), "info");
@@ -715,20 +716,26 @@ export default function FavoritesPanel() {
         providerId,
         modelId,
         limit: null,
+        reclassify,
       });
       await refresh();
       if (result.cancelled) {
         // 停掉了也要说清「已归类多少条被保留」，否则用户不知道白干了没有
         toast(
-          t("favorites.classifyCancelled", {
-            classified: result.classified,
-            remaining: result.remaining,
-          }),
+          t(
+            reclassify
+              ? "favorites.classifyReclassifyCancelled"
+              : "favorites.classifyCancelled",
+            {
+              classified: result.classified,
+              remaining: result.remaining,
+            },
+          ),
           "info",
         );
       } else {
         toast(
-          t("favorites.classifyDone", {
+          t(reclassify ? "favorites.classifyReclassifyDone" : "favorites.classifyDone", {
             classified: result.classified,
             tags: result.tagsWritten,
             remaining: result.remaining,
@@ -964,7 +971,7 @@ export default function FavoritesPanel() {
           ))}
         </select>
 
-        <LinkButton
+        <Menu
           label={t("favorites.classify")}
           busy={running.includes("classify")}
           disabled={running.length > 0 || !providerId || !modelId}
@@ -975,7 +982,19 @@ export default function FavoritesPanel() {
                 ? t("favorites.processBlockedByImport")
                 : t("favorites.classifyHint")
           }
-          onClick={() => void runClassify()}
+          items={[
+            {
+              key: "unclassified",
+              label: t("favorites.classifyUnclassified"),
+              hint: stats?.unclassified != null ? String(stats.unclassified) : undefined,
+              onSelect: () => void runClassify(false),
+            },
+            {
+              key: "reclassify",
+              label: t("favorites.classifyReclassify"),
+              onSelect: () => void runClassify(true),
+            },
+          ]}
         />
 
         <LinkButton

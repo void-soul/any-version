@@ -148,7 +148,9 @@
     "importBlockedByProcess": "Classify / check is running — finish or stop it before importing",
     "processBlockedByImport": "Import is running — finish or stop it before this action",
     "classify": "Classify",
-    "classifyHint": "Adds topic categories to items the AI has not classified yet (folder categories from bookmark imports and your manual edits stay untouched).",
+    "classifyHint": "Assign topic categories with AI (multi-level, e.g. \"Programming/Rust\"). By default only unclassified items; \"Reclassify all\" re-runs everything and replaces old AI categories (bookmark folders and manual edits are kept).",
+    "classifyUnclassified": "Unclassified only",
+    "classifyReclassify": "Reclassify all",
     "check": "Check validity",
     "searchPlaceholder": "Search title / description",
     "allSources": "All sources",
@@ -210,6 +212,7 @@
     "importCancelled": "Import cancelled (already imported entries are kept)",
     "importFail": "Import failed: {{err}}",
     "classifyDone": "Classified {{classified}} items into {{tags}} tags, {{remaining}} left unclassified",
+    "classifyReclassifyDone": "Reclassified {{classified}} items into {{tags}} tags, {{remaining}} left to process",
     "classifyFail": "Classify failed: {{err}}",
     "checkProgress": "Checking validity",
     "checkHint": "GitHub goes through the official API (detects renames); bookmarks, Bilibili and Zhihu are probed over HTTP: only 404/410 count as gone, while 403/429/timeouts are reported as unconfirmed.",
@@ -283,6 +286,7 @@
     "statusRedirect": "Renamed",
     "statusUnknown": "Unknown",
     "classifyCancelled": "Stopped: {{classified}} items classified so far, {{remaining}} left",
+    "classifyReclassifyCancelled": "Stopped: {{classified}} items reclassified so far, {{remaining}} left to process",
     "checkCancelled": "Check stopped after {{checked}} items (results saved)"
   },
   "common": {

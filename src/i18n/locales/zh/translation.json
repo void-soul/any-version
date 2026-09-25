@@ -148,7 +148,9 @@
     "importBlockedByProcess": "归类 / 检测正在跑，等它结束（或点「停止」）后才能导入",
     "processBlockedByImport": "导入正在进行，等它结束（或点「停止」）后才能加工",
     "classify": "AI 归类",
-    "classifyHint": "给「AI 还没归类过」的条目追加主题分类（浏览器书签自带的目录分类、以及你手动改过的分类都不会被覆盖）。",
+    "classifyHint": "用 AI 给收藏打主题分类（支持多级，如「编程语言/Rust」）。默认只处理未归类的；「全部重新归类」会重跑所有条目并替换 AI 旧分类（书签目录与人工分类保留）。",
+    "classifyUnclassified": "仅未归类",
+    "classifyReclassify": "全部重新归类",
     "check": "检测有效性",
     "searchPlaceholder": "搜索标题 / 简介",
     "allSources": "全部来源",
@@ -210,6 +212,7 @@
     "importCancelled": "已取消导入（已导入的部分保留）",
     "importFail": "导入失败: {{err}}",
     "classifyDone": "已归类 {{classified}} 条，写入 {{tags}} 个分类标签，还剩 {{remaining}} 条未归类",
+    "classifyReclassifyDone": "已重新归类 {{classified}} 条，写入 {{tags}} 个分类标签，还剩 {{remaining}} 条待处理",
     "classifyFail": "归类失败: {{err}}",
     "checkProgress": "检测有效性中",
     "checkHint": "GitHub 走官方接口（能识别改名/转让）；浏览器书签、B站、知乎走 HTTP 探测：只有 404/410 算失效，403/429/超时一律记为「未确认」，不会误标。",
@@ -283,6 +286,7 @@
     "statusRedirect": "已改名",
     "statusUnknown": "未探明",
     "classifyCancelled": "已停止：本轮归类 {{classified}} 条已保留，还剩 {{remaining}} 条未归类",
+    "classifyReclassifyCancelled": "已停止：本轮重新归类 {{classified}} 条已保留，还剩 {{remaining}} 条待处理",
     "checkCancelled": "已停止检测：已检测 {{checked}} 条（结果已保存）"
   },
   "common": {

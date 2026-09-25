@@ -29,11 +29,13 @@ pub const SYSTEM_PROMPT: &str = "你是一个信息整理助手。用户会给�
 请按**主题**把它们分成若干组，输出**严格 JSON**，不要任何解释文字：\n\
 {\"groups\":[{\"name\":\"分类名\",\"items\":[0,1,5]}]}\n\
 规则：\n\
-1. 分类名用中文，简短（不超过 8 个字），总数不超过 12 个；\n\
-2. 一个序号可以出现在多个组里（多标签），但每个组内的序号不要重复；\n\
-3. `items` 里的序号必须是输入里出现过的序号，不要编造；也不要臆造输入里没有的主题；\n\
-4. 无法确定归属的放进「其他」；\n\
-5. 只输出 JSON。";
+1. 分类名用中文，简短（每级不超过 8 个字），组总数不超过 12 个；\n\
+2. 分类名可以是多级，用 `/` 分隔层级（如 \"编程语言/Rust\"、\"前端/框架/React\"），层级不超过 3 级；\n\
+   没有合适子类时用单级即可，不要为了分层硬凑；\n\
+3. 一个序号可以出现在多个组里（多标签），但每个组内的序号不要重复；\n\
+4. `items` 里的序号必须是输入里出现过的序号，不要编造；也不要臆造输入里没有的主题；\n\
+5. 无法确定归属的放进「其他」；\n\
+6. 只输出 JSON。";
 
 /// 把一批条目压成 prompt：每条一行，`序号|名称|简介|语言|标签`。
 ///
@@ -71,11 +73,12 @@ fn clamp(text: &str, max_chars: usize) -> &str {
     }
 }
 
-/// 解析模型输出 → `Vec<(分类名, 条目下标列表)>`。
+/// 解析模型输出 → `Vec<(分类路径段, 条目下标列表)>`。
 ///
+/// 分类名允许用 `/` 分隔多级（如「编程语言/Rust」），这里拆成路径段。
 /// 容错链：剥代码围栏 → 取首个 `{` 到末个 `}` → 解析 → 校验序号在范围内 → 组内去重。
 /// 任一步失败都返回 Err，由调用方决定整批放弃。
-pub fn parse_groups(raw: &str, len: usize) -> Result<Vec<(String, Vec<usize>)>, String> {
+pub fn parse_groups(raw: &str, len: usize) -> Result<Vec<(Vec<String>, Vec<usize>)>, String> {
     let json_text = strip_fence(raw).ok_or_else(|| "模型输出里没有找到 JSON".to_string())?;
     let value: Value = serde_json::from_str(&json_text)
         .map_err(|e| format!("模型输出的 JSON 无法解析: {}", e))?;
@@ -84,7 +87,7 @@ pub fn parse_groups(raw: &str, len: usize) -> Result<Vec<(String, Vec<usize>)>, 
         .and_then(|g| g.as_array())
         .ok_or_else(|| "模型输出缺少 groups 数组".to_string())?;
 
-    let mut parsed: Vec<(String, Vec<usize>)> = Vec::with_capacity(groups.len());
+    let mut parsed: Vec<(Vec<String>, Vec<usize>)> = Vec::with_capacity(groups.len());
     for group in groups {
         let name = group
             .get("name")
@@ -92,6 +95,16 @@ pub fn parse_groups(raw: &str, len: usize) -> Result<Vec<(String, Vec<usize>)>, 
             .map(|n| n.trim().to_string())
             .filter(|n| !n.is_empty())
             .ok_or_else(|| "分组缺少 name".to_string())?;
+        // 多级分类名按 `/` 拆层级，逐段 trim 并丢弃空段
+        let path: Vec<String> = name
+            .split('/')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        if path.is_empty() {
+            return Err(format!("分组「{}」的分类名不能为空", name));
+        }
         // items 缺失视为空组（模型可能会对空分类省略 items），不算错误
         let mut indices: Vec<usize> = Vec::new();
         if let Some(items) = group.get("items").and_then(|i| i.as_array()) {
@@ -111,7 +124,7 @@ pub fn parse_groups(raw: &str, len: usize) -> Result<Vec<(String, Vec<usize>)>, 
                 }
             }
         }
-        parsed.push((name, indices));
+        parsed.push((path, indices));
     }
     if parsed.is_empty() {
         return Err("模型没有给出任何分组".to_string());
@@ -201,7 +214,7 @@ mod tests {
     fn parses_plain_json() {
         let groups = parse_groups(r#"{"groups":[{"name":"CLI","items":[0,1]}]}"#, 5).unwrap();
         assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].0, "CLI");
+        assert_eq!(groups[0].0, vec!["CLI".to_string()]);
         assert_eq!(groups[0].1, vec![0, 1]);
     }
 
@@ -209,11 +222,22 @@ mod tests {
     #[test]
     fn parses_fenced_and_chatty_output() {
         let raw = "好的，分类如下：\n```json\n{\"groups\":[{\"name\":\"CLI\",\"items\":[0]}]}\n```";
-        assert_eq!(parse_groups(raw, 3).unwrap()[0].0, "CLI");
+        assert_eq!(parse_groups(raw, 3).unwrap()[0].0, vec!["CLI".to_string()]);
         assert_eq!(
             parse_groups("```\n{\"groups\":[{\"name\":\"X\",\"items\":[0]}]}\n```", 3).unwrap()[0].0,
-            "X"
+            vec!["X".to_string()]
         );
+    }
+
+    /// 多级分类名用 `/` 分隔，解析时要拆成路径段。
+    #[test]
+    fn parses_multilevel_path() {
+        let raw = r#"{"groups":[{"name":"编程语言/Rust","items":[0]},{"name":"前端/框架/React","items":[1]}]}"#;
+        let groups = parse_groups(raw, 5).unwrap();
+        assert_eq!(groups[0].0, vec!["编程语言".to_string(), "Rust".to_string()]);
+        assert_eq!(groups[1].0, vec!["前端".to_string(), "框架".to_string(), "React".to_string()]);
+        // 多级里也能多标签
+        assert_eq!(groups[1].1, vec![1]);
     }
 
     /// 多标签：同一个序号出现在两个组里都要保留。
