@@ -389,6 +389,31 @@ pub fn set_ai_tool_model(
     ))
 }
 
+/// 把某工具还原成「官方模型」：清掉 Kira 写进去的自定义模型配置（含接管前备份的凭据恢复）。
+///
+/// 供「使用官方模型」按钮与启动时的官方分支调用。幂等，没写入过时是空操作。
+#[tauri::command]
+pub fn restore_ai_tool_config(tool_id: String) -> Result<String, String> {
+    let tool_config = registry()
+        .get_tool_config(&tool_id)
+        .ok_or("未知工具")?
+        .clone();
+    let outcome = crate::commands::ai::tool_config_restore::restore_tool_config(&tool_config)?;
+    let mut msg = if outcome.files.is_empty() {
+        format!("{} 没有 Kira 写进去的自定义模型，已处于官方配置", tool_config.display_name)
+    } else {
+        format!(
+            "已把 {} 还原为官方配置（清理了 {} 个文件）",
+            tool_config.display_name,
+            outcome.files.len()
+        )
+    };
+    for note in outcome.notes {
+        msg.push_str(&format!("\n· {note}"));
+    }
+    Ok(msg)
+}
+
 /// 读取工具配置文件里**当前写定**的模型（回显用，读不到返回 None）。
 ///
 /// 只认 `configFile.write` 映射里值模板为 `model` / `modelName` 的那些路径
@@ -404,27 +429,7 @@ pub fn get_ai_tool_model(tool_id: String) -> Result<Option<String>, String> {
         None => return Ok(None),
     };
 
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."));
-    let declared_path = if cfg.path.starts_with("~/") {
-        home.join(&cfg.path[2..])
-    } else {
-        PathBuf::from(&cfg.path)
-    };
-    let env_dirs: Vec<Option<String>> = cfg
-        .path_env_dirs
-        .iter()
-        .map(|name| std::env::var(name).ok())
-        .collect();
-    let resolved = crate::commands::ai::tool_config_path::resolve_config_path(
-        &declared_path,
-        &env_dirs,
-        cfg.xdg_subdir.as_deref(),
-        std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
-        &cfg.prefer_existing_extensions,
-    );
+    let resolved = resolve_declared_config_path(cfg);
     // 自定义写入器：读法也自成一套（WorkBuddy 的 models[0].id），不走 write 映射
     if let Some(writer) = cfg.custom_writer(&tool_id) {
         return Ok(crate::commands::ai::tool_config_custom::read_model(&writer, &resolved));
@@ -482,7 +487,7 @@ fn get_json_path(doc: &serde_json::Value, path: &str) -> Option<String> {
 
 /// 剥掉 JSONC 的注释（行注释与块注释），**跳过字符串字面量内部**的 `//` 与 `/*`。
 /// 只在需要解析工具配置回显时用；写入侧保持原样（保留用户注释）。
-fn strip_jsonc(text: &str) -> String {
+pub(crate) fn strip_jsonc(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
@@ -675,7 +680,21 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                 eprintln!("[config_file] (未配置 API Key，跳过)");
             }
         } else {
-            eprintln!("[config_file] (未选择 Provider，跳过)");
+            // 勾了「使用官方模型」：不是「什么都不写」，而是**把我们写进去的还原掉**。
+            // 否则工具还在用上一次写入的 Kira 代理地址/自定义 provider —— 代理早随着上次
+            // 启动退出了，请求只会连不上（或继续走 Kira 的模型，与用户选择相反）。
+            eprintln!("[config_file] 使用官方模型 → 还原工具自带配置");
+            match crate::commands::ai::tool_config_restore::restore_tool_config(&tool_config) {
+                Ok(outcome) => {
+                    for note in &outcome.notes {
+                        eprintln!("[config_file]   {note}");
+                    }
+                    for file in &outcome.files {
+                        eprintln!("[config_file]   已还原: {file}");
+                    }
+                }
+                Err(e) => eprintln!("[config_file] ⚠ 还原失败: {e}"),
+            }
         }
     } else {
         eprintln!("[config_file] (无 configFile 定义，跳过配置写入)");
@@ -1058,30 +1077,7 @@ fn write_tool_config_generic(
         None => return Ok(()),
     };
 
-    // 解析路径（~ → HOME），再按工具声明处理「目录覆盖 + 文件扩展名择优」：
-    // OpenCode v2 支持 OPENCODE_CONFIG_DIR / XDG_CONFIG_HOME 覆盖配置目录，且只在
-    // opencode.jsonc 里读配置（抄自 EchoBird c6f4bc25）。
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."));
-    let declared_path = if cfg.path.starts_with("~/") {
-        home.join(&cfg.path[2..])
-    } else {
-        PathBuf::from(&cfg.path)
-    };
-    let env_dirs: Vec<Option<String>> = cfg
-        .path_env_dirs
-        .iter()
-        .map(|name| std::env::var(name).ok())
-        .collect();
-    let resolved_path = crate::commands::ai::tool_config_path::resolve_config_path(
-        &declared_path,
-        &env_dirs,
-        cfg.xdg_subdir.as_deref(),
-        std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
-        &cfg.prefer_existing_extensions,
-    );
+    let resolved_path = resolve_declared_config_path(cfg);
 
     // 自定义写入器整份接管：schema 不是「路径 → 值」能表达的（WorkBuddy 的 models.json）。
     // 放在 write_map 之前——这类工具本来就没有 write 映射。
@@ -1326,6 +1322,14 @@ fn write_tool_config_generic(
         // 一律按主文件的 format 写会把 auth.json 写成 TOML。
         let format = write_format_for(&p, &cfg.format);
         eprintln!("[config_file] 目标路径: {} (format={:?})", p.display(), format);
+        // 兄弟文件（如 codex 的 auth.json、dsh 的 .credentials.yaml）里本来就可能有用户自己的
+        // 官方凭据，第一次接管前先存一份：勾「使用官方模型」还原时把它放回去，
+        // 否则「用 Kira 跑一次」就把用户的官方 Key 冲掉了（EchoBird 同样做法：codex-auth.bak.json）。
+        if p != main_config_path {
+            if let Err(e) = crate::commands::ai::tool_config_restore::backup_before_overwrite(&tool_config.id, &p) {
+                eprintln!("[config_file] ⚠ 备份 {} 失败（继续写入）: {}", p.display(), e);
+            }
+        }
         match format {
             WriteFormat::Toml => write_toml_config(&p, &existing, &ws)?,
             WriteFormat::Yaml => write_yaml_config(&p, &existing, &ws)?,
@@ -1340,16 +1344,45 @@ fn write_tool_config_generic(
     Ok(())
 }
 
+/// 解析工具配置文件的实际落盘路径：`~` → HOME（Windows 用 USERPROFILE），
+/// 再按声明处理「目录环境变量覆盖 / XDG_CONFIG_HOME / 同 stem 扩展名择优」。
+/// OpenCode v2 支持 `OPENCODE_CONFIG_DIR`，且只在 `opencode.jsonc` 里读配置（抄自 EchoBird c6f4bc25）。
+pub(crate) fn resolve_declared_config_path(
+    cfg: &crate::commands::ai_registry::ConfigFileDef,
+) -> PathBuf {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let declared_path = if cfg.path.starts_with("~/") {
+        home.join(&cfg.path[2..])
+    } else {
+        PathBuf::from(&cfg.path)
+    };
+    let env_dirs: Vec<Option<String>> = cfg
+        .path_env_dirs
+        .iter()
+        .map(|name| std::env::var(name).ok())
+        .collect();
+    crate::commands::ai::tool_config_path::resolve_config_path(
+        &declared_path,
+        &env_dirs,
+        cfg.xdg_subdir.as_deref(),
+        std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
+        &cfg.prefer_existing_extensions,
+    )
+}
+
 /// 目标文件的写入格式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WriteFormat {
+pub(crate) enum WriteFormat {
     Json,
     Toml,
     Yaml,
 }
 
 /// 按目标文件扩展名挑写入格式；认不出来时用工具声明的 `format`。
-fn write_format_for(path: &std::path::Path, declared: &str) -> WriteFormat {
+pub(crate) fn write_format_for(path: &std::path::Path, declared: &str) -> WriteFormat {
     match path
         .extension()
         .and_then(|e| e.to_str())
@@ -1373,7 +1406,7 @@ fn write_format_for(path: &std::path::Path, declared: &str) -> WriteFormat {
 /// - 空 → 主配置文件自身；
 /// - 展开后是绝对路径（写 `~` 或 `%APPDATA%` 这类模板）→ 直接用；
 /// - 其余相对路径 → 主配置文件的同目录兄弟文件（历史行为，如 `auth.json`、`settings.json`）。
-fn resolve_write_target_file(main_config_path: &std::path::Path, file: &str) -> PathBuf {
+pub(crate) fn resolve_write_target_file(main_config_path: &std::path::Path, file: &str) -> PathBuf {
     let file = file.trim();
     if file.is_empty() {
         return main_config_path.to_path_buf();
@@ -1432,7 +1465,12 @@ fn write_json_config(
     let mut doc: serde_json::Value = if existing.trim().is_empty() {
         serde_json::json!({})
     } else {
-        serde_json::from_str(existing).unwrap_or(serde_json::json!({}))
+        // 先当纯 JSON 解析；失败再剥注释当 JSONC 解析。以前只做前者，于是
+        // mimocode.jsonc / opencode.jsonc 这类带注释的配置文件解析失败 → 被当成空文档
+        // **整份覆盖**，用户自己的配置全没了。
+        serde_json::from_str(existing)
+            .or_else(|_| serde_json::from_str(&strip_jsonc(existing)))
+            .unwrap_or(serde_json::json!({}))
     };
     if let Some(s) = schema {
         doc.as_object_mut()
@@ -1883,7 +1921,8 @@ mod tests {
     use super::{
         default_work_dir, get_json_path, json_value_to_yaml, registry, render_json_template,
         resolve_start_command, resolve_write_target_file, scan_text_key, set_yaml_path, strip_jsonc,
-        write_format_for, write_tool_config_from_spec, write_yaml_config, WriteFormat,
+        write_format_for, write_json_config, write_tool_config_from_spec, write_yaml_config,
+        WriteFormat,
     };
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -2081,6 +2120,35 @@ mod tests {
         let prefs: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(dir.join("prefs.json")).unwrap()).unwrap();
         assert_eq!(prefs["model"], "anyversion-desktop/claude-opus-4");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 写 JSONC（带注释）配置文件不能把用户已有的内容整份冲掉。
+    ///
+    /// 回归：以前 `serde_json::from_str` 解析带注释的 jsonc 失败 → 被当成空文档 → 整份覆盖。
+    #[test]
+    fn write_json_config_preserves_jsonc_comments_and_user_keys() {
+        let dir = temp_dir("jsonc");
+        let file = dir.join("opencode.jsonc");
+        let original = "{\n  // 我的注释\n  \"model\": \"official/model\",\n  \"permissions\": { \"allow\": [\"Read\"] }\n}\n";
+        std::fs::write(&file, original).unwrap();
+        write_json_config(
+            &file,
+            &original,
+            &[(
+                "provider.anyversion.options.baseURL".to_string(),
+                serde_json::json!("http://127.0.0.1:1"),
+            )],
+            None,
+            &crate::commands::ai_registry::registry().get_tool_config("opencode").unwrap(),
+        )
+        .unwrap();
+        let out = std::fs::read_to_string(&file).unwrap();
+        let doc: serde_json::Value =
+            serde_json::from_str(&strip_jsonc(&out)).expect("写回后仍是合法 JSONC");
+        // 用户的权限没丢，我们写的键加上了
+        assert_eq!(doc["permissions"]["allow"][0], "Read");
+        assert_eq!(doc["provider"]["anyversion"]["options"]["baseURL"], "http://127.0.0.1:1");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

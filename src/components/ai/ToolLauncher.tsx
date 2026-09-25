@@ -603,6 +603,22 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
     }
   };
 
+  /** 还原官方配置：清掉 Kira 写进去的自定义模型（含恢复接管前的官方凭据）。 */
+  const restoreOfficial = async () => {
+    if (!selectedTool) return;
+    setApplyModelBusy(true);
+    setApplyModelMsg(null);
+    try {
+      const msg = await invoke<string>("restore_ai_tool_config", { toolId: selectedTool.id });
+      setApplyModelMsg({ ok: true, text: msg });
+      await loadAppliedModel(selectedTool.id);
+    } catch (e: any) {
+      setApplyModelMsg({ ok: false, text: String(e) });
+    } finally {
+      setApplyModelBusy(false);
+    }
+  };
+
   const askUninstall = async (tool: DetectedAiTool) => {
     await loadCacheInfos();
     const dirs = cacheInfos.filter((c) => c.tool_id === tool.id && c.exists);
@@ -1469,6 +1485,14 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                             className="px-2.5 py-1 rounded-md text-[10px] font-semibold bg-[var(--module-accent)]/20 hover:bg-[var(--module-accent)]/30 text-white cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                           >
                             {applyModelBusy ? t("toollaunch.applyingModel") : t("toollaunch.applyModel")}
+                          </button>
+                          {/* 还原官方配置：清掉 Kira 写进去的自定义模型（含恢复接管前的官方凭据） */}
+                          <button
+                            onClick={() => void restoreOfficial()}
+                            disabled={applyModelBusy}
+                            className="px-2.5 py-1 rounded-md text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                          >
+                            {t("toollaunch.restoreOfficial")}
                           </button>
                         </div>
                         <div className="mt-1.5 text-[9px] text-slate-500 break-all">

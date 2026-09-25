@@ -715,6 +715,7 @@ pub fn run() {
             commands::ai::provider::start_proxy,
             commands::ai::launch::set_ai_tool_model,
             commands::ai::launch::get_ai_tool_model,
+            commands::ai::launch::restore_ai_tool_config,
             commands::ai::install_agent::install_agent_chat,
             commands::favorites::agent::fav_agent_search,
             commands::ai::terminal::detect_terminals,

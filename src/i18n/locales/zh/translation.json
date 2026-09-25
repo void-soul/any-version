@@ -2711,6 +2711,7 @@
     "modelNone": "仅支持官方模型",
     "applyModel": "只保存模型",
     "applyingModel": "写入中…",
+    "restoreOfficial": "恢复官方配置",
     "applyModelHint": "把选定的模型写进工具自己的配置文件（不启动工具）",
     "configFileLabel": "配置文件：",
     "currentConfigModel": "当前配置：",

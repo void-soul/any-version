@@ -355,6 +355,44 @@ pub fn write_claudedesktop_with(
     Ok(())
 }
 
+/// 把 Claude Desktop 还原成官方模式：两份配置的 `deploymentMode` 由 `3p` 回到 `1p`，
+/// 删掉我们写的 profile 与 `_meta.json`（对应 EchoBird 的 `restore_claudedesktop_to_official`）。
+pub fn restore_claudedesktop() -> Result<super::tool_config_restore::RestoreOutcome, String> {
+    let Some(layout) = claude_desktop_layout() else {
+        return Err("Claude Desktop 只支持 Windows 与 macOS".to_string());
+    };
+    let mut outcome = super::tool_config_restore::RestoreOutcome::default();
+    for cfg in [&layout.official_cfg, &layout.threep_cfg] {
+        if !cfg.exists() {
+            continue;
+        }
+        set_deployment_mode(cfg, "1p")?;
+        outcome.files.push(cfg.display().to_string());
+    }
+    for file in [
+        layout
+            .lib_dir
+            .join(format!("{CLAUDE_DESKTOP_PROFILE_ID}.json")),
+        layout.lib_dir.join("_meta.json"),
+    ] {
+        if file.exists() {
+            std::fs::remove_file(&file)
+                .map_err(|e| format!("删除 {} 失败: {e}", file.display()))?;
+            outcome.files.push(file.display().to_string());
+        }
+    }
+    if outcome.files.is_empty() {
+        outcome
+            .notes
+            .push("没有发现 Kira 写入的 3P profile，无需还原".to_string());
+    } else {
+        outcome
+            .notes
+            .push("已切回官方模式（deploymentMode=1p）并删除 3P profile，需完全退出再打开 Claude Desktop".to_string());
+    }
+    Ok(outcome)
+}
+
 fn read_claudedesktop(_declared_path: &Path) -> Option<String> {
     let layout = claude_desktop_layout()?;
     read_json_or_empty(&layout.lib_dir.join(format!("{CLAUDE_DESKTOP_PROFILE_ID}.json")))

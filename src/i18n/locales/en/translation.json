@@ -2705,6 +2705,7 @@
     "modelNone": "Official models only",
     "applyModel": "Save model only",
     "applyingModel": "Writing…",
+    "restoreOfficial": "Restore official config",
     "applyModelHint": "Write the selected model into the tool's own config file (without launching it)",
     "configFileLabel": "Config file: ",
     "currentConfigModel": "Current: ",
