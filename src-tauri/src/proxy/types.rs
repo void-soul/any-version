@@ -51,6 +51,11 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub upstream_headers: Vec<UpstreamHeader>,
 
+    /// 全局（主供应商）端点拼接时「要不要补 `/v1`」：None = 自动（URL 结尾已是 /v1 就不补）。
+    /// 由启动时代理配置按供应商的 `openai_include_v1` / `anthropic_include_v1` 填充。
+    #[serde(default)]
+    pub upstream_include_v1: Option<bool>,
+
     /// 目标模型 ID（请求体写入的"实际模型 B"）
     pub target_model: String,
     /// 请求超时（秒）
@@ -107,6 +112,9 @@ pub struct ModelRoute {
     /// 该模型所属供应商的自定义上游请求头（未配置则为空）。
     #[serde(default)]
     pub headers: Vec<UpstreamHeader>,
+    /// 该模型所属供应商端点「要不要补 `/v1`」（None = 自动）。
+    #[serde(default)]
+    pub include_v1: Option<bool>,
 }
 
 /// 供应商自定义上游请求头（有序键值对）。
@@ -135,6 +143,7 @@ impl Default for ProxyConfig {
             fallback_api_key: String::new(),
             model_routes: HashMap::new(),
             upstream_headers: Vec::new(),
+            upstream_include_v1: None,
             target_model: "gpt-4o".to_string(),
             timeout_secs: 300,
             model_aliases: HashMap::new(),

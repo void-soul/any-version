@@ -68,6 +68,18 @@ fn pick_outbound_protocol(native: &str, provider: &AiProvider) -> Option<String>
     None
 }
 
+/// 供应商端点「要不要补 `/v1`」开关（按出站协议取对应字段）。`None` = 自动。
+///
+/// 以前只有聚合认这个开关，协议转换代理（工具启动路径）不认：同一个 `openai_include_v1=false`
+/// 的供应商，走聚合能连上、走工具启动就拼错 URL 404。这里补上，两边统一。
+fn provider_include_v1(provider: &AiProvider, outbound: &str) -> Option<bool> {
+    match outbound {
+        "anthropic" => provider.anthropic_include_v1,
+        "openai" => provider.openai_include_v1,
+        _ => None,
+    }
+}
+
 /// 生成本地代理的每次启动随机鉴权 token（32 字节加密随机 → hex）。
 /// 工具通过 env / 配置文件携带该 token 访问本地代理，真实上游 key 不再暴露给工具进程。
 fn fresh_proxy_token() -> String {
@@ -189,6 +201,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
             // 自定义请求头跟随各自供应商，保证「大模型 / 辅助模型」分属不同网关时都能带上
             // 自己需要的头（抄自 CodexPlusPlus ea0ac5d）。
             let main_headers = crate::proxy::headers::normalize(&p.custom_headers);
+            let main_include_v1 = provider_include_v1(p, &chosen_outbound);
             let mut model_routes: HashMap<String, ModelRoute> = HashMap::new();
             if let Some(ref mid) = req.model_id {
                 if !mid.is_empty() {
@@ -196,6 +209,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
                         base_url: p.url_for(&chosen_outbound),
                         api_key: p.api_key.clone(),
                         headers: main_headers.clone(),
+                        include_v1: main_include_v1,
                     });
                 }
             }
@@ -207,6 +221,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
                             base_url: fp.url_for(&chosen_outbound),
                             api_key: fp.api_key.clone(),
                             headers: crate::proxy::headers::normalize(&fp.custom_headers),
+                            include_v1: provider_include_v1(fp, &chosen_outbound),
                         });
                     }
                 }
@@ -219,6 +234,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
                     base_url: p.url_for(&chosen_outbound),
                     api_key: p.api_key.clone(),
                     headers: main_headers.clone(),
+                    include_v1: main_include_v1,
                 });
             }
 
@@ -262,6 +278,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
                         fallback_api_key: fallback_api_key.clone(),
                         model_routes,
                         upstream_headers: main_headers,
+                        upstream_include_v1: provider_include_v1(p, &chosen_outbound),
                         target_model,
                         timeout_secs: timeout,
                         model_aliases,

@@ -265,6 +265,11 @@ pub async fn start_proxy(port: u16) -> Result<(), String> {
         optimizer_deepseek: config.optimizer.deepseek_normalize,
         model_routes: std::collections::HashMap::new(),
         upstream_headers: crate::proxy::headers::normalize(&provider.custom_headers),
+        upstream_include_v1: match outbound_protocol.as_str() {
+            "anthropic" => provider.anthropic_include_v1,
+            "openai" => provider.openai_include_v1,
+            _ => None,
+        },
         app_handle: None,
         collab_room_id: None,
     };

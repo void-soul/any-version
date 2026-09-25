@@ -5,6 +5,7 @@ pub mod server;
 pub mod sse;
 pub mod transform;
 pub mod types;
+pub mod upstream;
 
 /// 归一化函数参数的 JSON Schema，确保 `type` 始终为 "object"。
 ///

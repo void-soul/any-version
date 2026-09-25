@@ -11,7 +11,7 @@
 //! ⑨ 模型伪装回填 C → ⑩ 统计落库(强制)
 
 use super::{
-    google, headers as upstream_headers, optimizers, sse, transform,
+    google, optimizers, sse, transform,
     types::{ProxyConfig, UpstreamHeader},
 };
 use axum::{
@@ -1407,65 +1407,23 @@ fn extract_stream_usage(inbound: &str, cj: &Value) -> (u64, u64) {
 /// 按实际模型名 B 查 `model_routes`：命中则用该模型所属供应商的端点与 key，
 /// 否则回退到全局 upstream_base_url / upstream_api_key（大模型供应商）。
 /// 返回 (url, auth_header_name, api_key, 自定义请求头)。
+/// 拼接与鉴权统一走 `proxy::upstream`（与聚合共用，避免两处漂移）。
 fn build_upstream_url(
     config: &ProxyConfig,
     outbound: &str,
     model: &str,
     is_stream: bool,
 ) -> (String, String, String, Vec<UpstreamHeader>) {
-    let (base, api_key, headers) = config.model_routes.get(model)
-        .map(|r| (r.base_url.clone(), r.api_key.clone(), r.headers.clone()))
+    let (base, api_key, headers, include_v1) = config.model_routes.get(model)
+        .map(|r| (r.base_url.clone(), r.api_key.clone(), r.headers.clone(), r.include_v1))
         .unwrap_or_else(|| (
             config.upstream_base_url.clone(),
             config.upstream_api_key.clone(),
             config.upstream_headers.clone(),
+            config.upstream_include_v1,
         ));
-    let base = base.trim_end_matches('/');
-    let (url, auth_name) = match outbound {
-        "anthropic" => {
-            // 参照 EchoBird messages_handler.rs: 小心拼接，避免 /v1/v1/messages
-            // 这类重复（baseURL 已含 /v1 时只补 /messages）。
-            let url = if base.contains("/messages") {
-                base.to_string()
-            } else if base.ends_with("/v1") {
-                format!("{}/messages", base)
-            } else {
-                format!("{}/v1/messages", base)
-            };
-            (url, "x-api-key".to_string())
-        }
-        "openai" => {
-            // base 通常形如 https://xxx/v1（OpenAI 兼容端点）。避免重复 /v1：
-            // 已含 /chat/completions 则保持；已以 /v1 结尾只补 /chat/completions；
-            // 否则补 /v1/chat/completions。否则会得到 .../chat/completions 导致上游 404。
-            let url = if base.ends_with("/chat/completions") {
-                base.to_string()
-            } else if base.ends_with("/v1") {
-                format!("{}/chat/completions", base)
-            } else {
-                format!("{}/v1/chat/completions", base)
-            };
-            (url, "Authorization".to_string())
-        }
-        "google" => {
-            // base 通常形如 https://generativelanguage.googleapis.com（不含 /v1beta）。
-            // 若用户配置的 google_url 已带 /v1beta，去掉避免重复拼接导致上游解析异常。
-            let gbase = if base.ends_with("/v1beta") {
-                &base[..base.len() - 6]
-            } else {
-                base
-            };
-            let gbase = gbase.trim_end_matches('/');
-            let url = if is_stream {
-                format!("{}/v1beta/models/{}:streamGenerateContent?alt=sse", gbase, model)
-            } else {
-                format!("{}/v1beta/models/{}:generateContent", gbase, model)
-            };
-            (url, "x-goog-api-key".to_string())
-        }
-        _ => (String::new(), "Authorization".to_string()),
-    };
-    (url, auth_name, api_key, headers)
+    let (url, auth_name) = super::upstream::resolve_url(outbound, &base, model, is_stream, include_v1);
+    (url, auth_name.to_string(), api_key, headers)
 }
 
 /// 构建上游请求（携带对应鉴权头 + 供应商自定义头）。
@@ -1481,42 +1439,13 @@ fn build_upstream_request(
     custom_headers: &[UpstreamHeader],
     body: &Value,
 ) -> reqwest::RequestBuilder {
-    let mut req = client.post(upstream_url);
-    match auth_name {
-        "x-api-key" => {
-            // 参照 EchoBird: Anthropic 兼容上游有的只认 x-api-key、有的只认
-            // Bearer。两者都发，最大化兼容（真实 Anthropic 也接受 Bearer）。
-            if !upstream_headers::overrides(custom_headers, "x-api-key") {
-                req = req.header("x-api-key", api_key);
-            }
-            if !upstream_headers::has_authorization(custom_headers) {
-                req = req.header("Authorization", format!("Bearer {}", api_key));
-            }
-            if !upstream_headers::overrides(custom_headers, "anthropic-version") {
-                req = req.header("anthropic-version", "2023-06-01");
-            }
-            req = req.json(body);
-        }
-        "x-goog-api-key" => {
-            if !upstream_headers::overrides(custom_headers, "x-goog-api-key") {
-                req = req.header("x-goog-api-key", api_key);
-            }
-            req = req.json(body);
-        }
-        _ => {
-            if !upstream_headers::has_authorization(custom_headers) {
-                req = req.header("Authorization", format!("Bearer {}", api_key));
-            }
-            req = req.json(body);
-        }
-    }
+    let mut req = super::upstream::inject_auth(client.post(upstream_url), auth_name, api_key, custom_headers);
     if let Some(beta) = headers.get("anthropic-beta") {
         if let Ok(val) = beta.to_str() {
             req = req.header("anthropic-beta", val);
         }
     }
-    // 自定义头最后注入，覆盖上面可能已写入的同名默认值
-    upstream_headers::apply(req, custom_headers)
+    req.json(body)
 }
 
 #[cfg(test)]

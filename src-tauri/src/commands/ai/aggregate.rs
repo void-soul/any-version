@@ -277,6 +277,7 @@ enum Outbound {
 }
 
 impl Outbound {
+    /// 转成 `proxy::upstream::resolve_url` 用的协议字符串。
     fn as_str(&self) -> &'static str {
         match self {
             Outbound::OpenAi => "openai",
@@ -297,22 +298,13 @@ struct AggCandidate {
     model_id: String,
     /// 该候选拼接时是否补 `/v1`：None = 自动（URL 结尾已是 /v1 就不补）。
     include_v1: Option<bool>,
-}
-
-/// 是否需要在 base 后面补一段 `/v1`。
-///
-/// - `Some(true)`：一定补（除非 base 结尾已经是 `/v1`，否则会拼出 `/v1/v1`）；
-/// - `Some(false)`：一定不补（对接把版本号写进网关路径、或根本没有版本号的兼容层）；
-/// - `None`：自动 —— 沿用「URL 结尾已是 `/v1` 就不重复补」的旧规则。
-fn needs_v1(base: &str, want: Option<bool>) -> bool {
-    match want {
-        Some(v) => v && !base.ends_with("/v1"),
-        None => !base.ends_with("/v1"),
-    }
+    /// 该供应商的自定义上游请求头（未配置则为空）。以前聚合转发完全忽略这个字段，
+    /// 导致需要 X-Request-Id / 厂商标识的网关在聚合路径被拒。
+    headers: Vec<crate::proxy::types::UpstreamHeader>,
 }
 
 /// 按出站协议拼上游 URL，返回 (url, 鉴权头名)。
-/// 拼接规则与 proxy::server::build_upstream_url 一致（避免 /v1/v1 之类的重复）。
+/// 拼接统一走 `proxy::upstream`（与协议转换代理共用，避免 /v1/v1 重复或行为漂移）。
 pub fn build_candidate_url(
     outbound: Outbound,
     base: &str,
@@ -320,43 +312,7 @@ pub fn build_candidate_url(
     is_stream: bool,
     include_v1: Option<bool>,
 ) -> (String, &'static str) {
-    let base = base.trim().trim_end_matches('/');
-    match outbound {
-        Outbound::OpenAi => {
-            let url = if base.ends_with("/chat/completions") {
-                base.to_string()
-            } else if needs_v1(base, include_v1) {
-                format!("{base}/v1/chat/completions")
-            } else {
-                format!("{base}/chat/completions")
-            };
-            (url, "Authorization")
-        }
-        Outbound::Anthropic => {
-            let url = if base.ends_with("/messages") {
-                base.to_string()
-            } else if needs_v1(base, include_v1) {
-                format!("{base}/v1/messages")
-            } else {
-                format!("{base}/messages")
-            };
-            (url, "x-api-key")
-        }
-        Outbound::Google => {
-            let gbase = if let Some(stripped) = base.strip_suffix("/v1beta") {
-                stripped
-            } else {
-                base
-            };
-            let gbase = gbase.trim_end_matches('/');
-            let url = if is_stream {
-                format!("{gbase}/v1beta/models/{model}:streamGenerateContent?alt=sse")
-            } else {
-                format!("{gbase}/v1beta/models/{model}:generateContent")
-            };
-            (url, "x-goog-api-key")
-        }
-    }
+    crate::proxy::upstream::resolve_url(outbound.as_str(), base, model, is_stream, include_v1)
 }
 
 /// 从供应商配置选出出站协议与端点（openai → anthropic → google 优先级）。
@@ -408,6 +364,7 @@ fn build_candidates(
             api_key: provider.api_key.clone(),
             model_id: candidate.model_id.clone(),
             include_v1,
+            headers: crate::proxy::headers::normalize(&provider.custom_headers),
         });
     }
     out
@@ -1142,12 +1099,13 @@ async fn try_candidate(
             message: format!("HTTP 客户端构建失败: {}", e),
             retry_after: None,
         })?;
-    let mut req = client.post(&url);
-    req = match auth_name {
-        "x-api-key" => req.header("x-api-key", &candidate.api_key).header("anthropic-version", "2023-06-01"),
-        "x-goog-api-key" => req.header("x-goog-api-key", &candidate.api_key),
-        _ => req.bearer_auth(&candidate.api_key),
-    };
+    // 鉴权 + 自定义头统一走 proxy::upstream（与协议转换代理一致：anthropic 双头、显式头优先）
+    let req = crate::proxy::upstream::inject_auth(
+        client.post(&url),
+        auth_name,
+        &candidate.api_key,
+        &candidate.headers,
+    );
     let resp = req
         .json(&upstream_body)
         .send()
@@ -1403,6 +1361,7 @@ mod tests {
             api_key: "sk".into(),
             model_id: "m".into(),
             include_v1: None,
+            headers: vec![],
         }
     }
 
