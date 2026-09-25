@@ -373,6 +373,13 @@ export default function ToolLauncher() {
       .then(setSessions).catch(() => setSessions([]));
   }, [selectedTool]);
 
+  // 切换工具时回显「它配置文件里现在写的是哪个模型」（未声明 configFile 的工具清空）
+  useEffect(() => {
+    setApplyModelMsg(null);
+    if (selectedTool?.config_file) void loadAppliedModel(selectedTool.id);
+    else setAppliedModel(null);
+  }, [selectedTool?.id, selectedTool?.config_file]);
+
   // ── 模型供应商（统一列表）──
   // 新设计下代理会自动做协议转换，因此 ANY 提供模型列表的供应商都可选；
   // 协议差异由代理的入站/出站转换负责。这里合并为单一列表（按供应商分组）。
@@ -526,6 +533,44 @@ export default function ToolLauncher() {
   };
 
   /** 打开卸载确认：先刷新数据目录清单，再把该工具实际占用的目录逐条列出来 */
+  // 「只设置模型、不启动工具」：写进工具自己的配置文件
+  const [applyModelBusy, setApplyModelBusy] = useState(false);
+  const [appliedModel, setAppliedModel] = useState<string | null>(null);
+  const [applyModelMsg, setApplyModelMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  /** 读回工具配置文件里当前写定的模型（切换工具时刷新一次） */
+  const loadAppliedModel = async (toolId: string) => {
+    try {
+      const current = await invoke<string | null>("get_ai_tool_model", { toolId });
+      setAppliedModel(current ?? null);
+    } catch {
+      setAppliedModel(null);
+    }
+  };
+
+  const applyModelOnly = async () => {
+    if (!selectedTool || !selectedModel || !selectedModelProvider) return;
+    setApplyModelBusy(true);
+    setApplyModelMsg(null);
+    try {
+      const msg = await invoke<string>("set_ai_tool_model", {
+        toolId: selectedTool.id,
+        providerId: selectedModelProvider,
+        modelId: selectedModel,
+        fallbackModelId: selectedFallbackModel || null,
+        masqueradeModel: masqueradeModel || null,
+        oneMContext: selectedTool.support_one_m_context ? oneMContext : false,
+        webSearch: webSearchEnabled,
+      });
+      setApplyModelMsg({ ok: true, text: msg });
+      await loadAppliedModel(selectedTool.id);
+    } catch (e: any) {
+      setApplyModelMsg({ ok: false, text: String(e) });
+    } finally {
+      setApplyModelBusy(false);
+    }
+  };
+
   const askUninstall = async (tool: DetectedAiTool) => {
     await loadCacheInfos();
     const dirs = cacheInfos.filter((c) => c.tool_id === tool.id && c.exists);
@@ -1278,6 +1323,40 @@ export default function ToolLauncher() {
                             <option key={c} value={c} />
                           ))}
                         </datalist>
+                      </div>
+                    )}
+
+                    {/* 只设置模型、不启动工具：把模型写进工具自己的配置文件。
+                        启动会顺带写，但很多人只想先配好（之后直接双击工具图标用）。 */}
+                    {selectedTool.config_file && (
+                      <div className="mt-3 rounded-lg border border-white/5 bg-slate-900/30 p-2.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-slate-400 flex-1 min-w-0">
+                            {t("toollaunch.applyModelHint")}
+                          </span>
+                          <button
+                            onClick={() => void applyModelOnly()}
+                            disabled={!selectedModel || !selectedModelProvider || applyModelBusy}
+                            className="px-2.5 py-1 rounded-md text-[10px] font-semibold bg-[var(--module-accent)]/20 hover:bg-[var(--module-accent)]/30 text-white cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                          >
+                            {applyModelBusy ? t("toollaunch.applyingModel") : t("toollaunch.applyModel")}
+                          </button>
+                        </div>
+                        <div className="mt-1.5 text-[9px] text-slate-500 break-all">
+                          {t("toollaunch.configFileLabel")}
+                          <span className="font-mono text-slate-400">{selectedTool.config_file.path}</span>
+                        </div>
+                        {appliedModel !== null && (
+                          <div className="mt-1 text-[9px] text-slate-500">
+                            {t("toollaunch.currentConfigModel")}
+                            <span className="font-mono text-slate-300">{appliedModel || t("toollaunch.unknownModel")}</span>
+                          </div>
+                        )}
+                        {applyModelMsg && (
+                          <div className={`mt-1 text-[9px] break-all ${applyModelMsg.ok ? "text-emerald-400" : "text-rose-400"}`}>
+                            {applyModelMsg.text}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

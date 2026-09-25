@@ -290,6 +290,13 @@ pub struct ProviderPresetDto {
     pub google_url: String,
 }
 
+/// 工具配置文件的简要信息（给前端看「模型会写到哪里」）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolConfigFileDto {
+    pub path: String,
+    pub format: String,
+}
+
 /// 与前端交互的工具定义（从 JSON 构建）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiToolDefDto {
@@ -333,6 +340,11 @@ pub struct AiToolDefDto {
     pub launch_uri: Option<String>,
     /// 检测到的可执行文件路径（GUI/桌面应用启动用）
     pub detected_path: Option<String>,
+
+    /// 工具自身的配置文件（**只有声明了这个字段才支持「设置模型」**）。
+    /// 前端据此决定是否显示「只保存模型」入口 —— 没声明的工具摆个按钮只会骗人。
+    #[serde(default)]
+    pub config_file: Option<ToolConfigFileDto>,
 
     /// 进行中操作（"upgrading" | "installing" | "uninstalling"），由后端 TOOL_OPS 跟踪；
     /// 前端据此持续显示“升级中/安装中/卸载中”，即使切换 Agent / 页面后也能从 detect 结果恢复。
@@ -647,6 +659,10 @@ impl AiToolRegistry {
             supports_rectifier: config.supports_rectifier,
             launch_uri: paths.launch_uri.clone(),
             detected_path: None,
+            config_file: config.config_file.as_ref().map(|cf| ToolConfigFileDto {
+                path: cf.path.clone(),
+                format: cf.format.clone(),
+            }),
             busy: None,
         }
     }

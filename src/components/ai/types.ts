@@ -204,6 +204,8 @@ export interface DetectedAiTool {
   launch_uri: string | null;
   /** 检测到的可执行文件路径（GUI/桌面应用启动用） */
   detected_path: string | null;
+  /** 工具自身的配置文件（有它才支持「设置模型」：模型会写进这个文件） */
+  config_file?: { path: string; format: string } | null;
   /** 进行中操作（"upgrading" | "installing" | "uninstalling"），由后端跟踪，用于持续显示“升级中/安装中” */
   busy?: string | null;
 }

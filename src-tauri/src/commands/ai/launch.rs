@@ -263,6 +263,244 @@ pub(crate) async fn start_tool_proxy_with_collab(
 }
 
 
+// ─── 只设置模型（不启动工具） ───
+
+/// 把选定模型写入工具自己的配置文件，**不启动工具、不启动本地代理**。
+///
+/// 与启动的区别：启动时代理会接管（baseUrl 指向 127.0.0.1、key 用随机 token），
+/// 只设置模型时没有代理在跑，因此 baseUrl 直连供应商端点、apiKey 用真实 key ——
+/// 这样即使不开 Kira，工具本身也能正常使用这个模型。
+///
+/// 仅对**声明了 configFile 的工具**生效（即「支持配置模型」的工具）；
+/// 未声明的工具直接报错，避免用户以为设置成功其实什么都没写。
+#[tauri::command]
+pub fn set_ai_tool_model(
+    tool_id: String,
+    provider_id: Option<String>,
+    model_id: String,
+    fallback_model_id: Option<String>,
+    masquerade_model: Option<String>,
+    one_m_context: Option<bool>,
+    web_search: Option<bool>,
+) -> Result<String, String> {
+    let config = load_ai_config();
+    let tool_config = registry()
+        .get_tool_config(&tool_id)
+        .ok_or("未知工具")?
+        .clone();
+    if tool_config.config_file.is_none() {
+        return Err(format!("{} 不支持通过配置文件设置模型", tool_config.display_name));
+    }
+    let provider = provider_id
+        .as_ref()
+        .and_then(|pid| config.providers.iter().find(|p| &p.id == pid))
+        .ok_or_else(|| "未选择供应商（或该供应商已不存在）".to_string())?;
+    if provider.api_key.trim().is_empty() {
+        return Err(format!("供应商「{}」还没有填 API Key", provider.name));
+    }
+    if model_id.trim().is_empty() {
+        return Err("请先选择一个模型".to_string());
+    }
+
+    let outbound = pick_outbound_protocol(&tool_config.native_protocol(), provider)
+        .unwrap_or_else(|| provider.primary_protocol());
+    let upstream_url = provider.url_for(&outbound);
+    if upstream_url.is_empty() {
+        return Err(format!("供应商「{}」没有配置 {} 协议的端点", provider.name, outbound));
+    }
+    // 声明模型名 C：配了伪装就用伪装名，否则就是实际模型 B
+    let claimed_model = masquerade_model
+        .clone()
+        .filter(|c| !c.trim().is_empty())
+        .unwrap_or_else(|| model_id.clone());
+
+    write_tool_config_from_spec(
+        &tool_config,
+        Some(model_id.as_str()),
+        Some(claimed_model.as_str()),
+        &upstream_url,
+        &provider.api_key,
+        fallback_model_id.as_deref(),
+        None,
+        one_m_context.unwrap_or(false),
+        false,
+        false,
+        &[],
+        &HashMap::new(),
+        web_search.unwrap_or(false),
+        &outbound,
+    )?;
+
+    Ok(format!(
+        "已把 {} 的模型设置为 {}（{}），配置写入 {}",
+        tool_config.display_name,
+        claimed_model,
+        provider.name,
+        tool_config
+            .config_file
+            .as_ref()
+            .map(|c| c.path.clone())
+            .unwrap_or_default()
+    ))
+}
+
+/// 读取工具配置文件里**当前写定**的模型（回显用，读不到返回 None）。
+///
+/// 只认 `configFile.write` 映射里值模板为 `model` / `modelName` 的那些路径
+/// （与写入同一套声明），`env.*` 前缀的跳过——它们不落盘。
+#[tauri::command]
+pub fn get_ai_tool_model(tool_id: String) -> Result<Option<String>, String> {
+    let tool_config = registry()
+        .get_tool_config(&tool_id)
+        .ok_or("未知工具")?
+        .clone();
+    let cfg = match &tool_config.config_file {
+        Some(c) => c,
+        None => return Ok(None),
+    };
+    let write_map = match &cfg.write {
+        Some(w) => w,
+        None => return Ok(None),
+    };
+
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let declared_path = if cfg.path.starts_with("~/") {
+        home.join(&cfg.path[2..])
+    } else {
+        PathBuf::from(&cfg.path)
+    };
+    let env_dirs: Vec<Option<String>> = cfg
+        .path_env_dirs
+        .iter()
+        .map(|name| std::env::var(name).ok())
+        .collect();
+    let resolved = crate::commands::ai::tool_config_path::resolve_config_path(
+        &declared_path,
+        &env_dirs,
+        cfg.xdg_subdir.as_deref(),
+        std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
+        &cfg.prefer_existing_extensions,
+    );
+    let Ok(text) = fs::read_to_string(&resolved) else {
+        return Ok(None);
+    };
+
+    let value = match cfg.format.as_str() {
+        "json" | "jsonc" => serde_json::from_str::<serde_json::Value>(&strip_jsonc(&text)).ok(),
+        _ => None,
+    };
+    for (path, template) in write_map {
+        if template != "model" && template != "modelName" {
+            continue;
+        }
+        if path.starts_with("env.") {
+            continue;
+        }
+        // 只取主文件路径（"文件#子路径" 这种兄弟文件写法跳过）
+        if path.contains('#') {
+            continue;
+        }
+        if let Some(doc) = &value {
+            if let Some(found) = get_json_path(doc, path) {
+                return Ok(Some(found));
+            }
+        }
+        // toml / yaml：退化为按顶层键做一次文本扫描，够回显用
+        if let Some(found) = scan_text_key(&text, path.rsplit('.').next().unwrap_or(path)) {
+            return Ok(Some(found));
+        }
+    }
+    Ok(None)
+}
+
+/// 按点号路径取值（模型名里的 "." 已被转义为占位符，取值时还原）。
+fn get_json_path(doc: &serde_json::Value, path: &str) -> Option<String> {
+    let mut cur = doc;
+    for part in path.split('.') {
+        let key = part.replace(MODEL_NAME_DOT_ESCAPE, ".");
+        cur = cur.get(&key)?;
+    }
+    match cur {
+        serde_json::Value::String(s) => Some(s.clone()),
+        other if !other.is_null() => Some(other.to_string()),
+        _ => None,
+    }
+}
+
+/// 剥掉 JSONC 的注释（行注释与块注释），**跳过字符串字面量内部**的 `//` 与 `/*`。
+/// 只在需要解析工具配置回显时用；写入侧保持原样（保留用户注释）。
+fn strip_jsonc(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    let mut in_string = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_string {
+            out.push(c);
+            if c == '\\' && i + 1 < chars.len() {
+                out.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+            if c == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '"' => {
+                in_string = true;
+                out.push(c);
+                i += 1;
+            }
+            '/' if i + 1 < chars.len() && chars[i + 1] == '/' => {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+            }
+            '/' if i + 1 < chars.len() && chars[i + 1] == '*' => {
+                i += 2;
+                while i + 1 < chars.len() && !(chars[i] == '*' && chars[i + 1] == '/') {
+                    i += 1;
+                }
+                i += 2.min(chars.len());
+            }
+            other => {
+                out.push(other);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// 文本扫描：`model = "x"` / `model: x` 形态取一次（toml、yaml 回显兜底）。
+fn scan_text_key(text: &str, key: &str) -> Option<String> {
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.starts_with('#') || line.starts_with("//") {
+            continue;
+        }
+        let (left, right) = match line.split_once('=').or_else(|| line.split_once(':')) {
+            Some((l, r)) => (l.trim(), r.trim()),
+            None => continue,
+        };
+        if left != key {
+            continue;
+        }
+        let value = right.trim_matches('"').trim_matches('\'').trim();
+        if !value.is_empty() {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
 // ─── 启动 AI 工具 ───
 
 #[tauri::command]
@@ -1450,7 +1688,10 @@ async fn wait_for_proxy_ready(listen_address: &str, port: u16) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{json_value_to_yaml, set_yaml_path, write_yaml_config};
+    use super::{
+        get_json_path, json_value_to_yaml, scan_text_key, set_yaml_path, strip_jsonc,
+        write_yaml_config,
+    };
     use std::path::PathBuf;
 
     #[test]
@@ -1504,5 +1745,43 @@ mod tests {
         assert_eq!(yv["a"].as_str(), Some("x"));
         assert_eq!(yv["b"][1].as_i64(), Some(2));
         assert_eq!(yv["c"]["nested"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn strip_jsonc_keeps_comment_marks_inside_strings() {
+        // 回显「工具当前用的模型」要能解析 jsonc；URL 里常含 //，不能误删
+        let raw = "{\n // 注释\n \"model\": \"gpt-5\",\n \"baseUrl\": \"http://127.0.0.1:9/v1\", /* 块注释 */\n \"x\": \"a/*b*/c\"\n}";
+        let cleaned = strip_jsonc(raw);
+        let value: serde_json::Value = serde_json::from_str(&cleaned).unwrap();
+        assert_eq!(value["model"].as_str(), Some("gpt-5"));
+        assert_eq!(value["baseUrl"].as_str(), Some("http://127.0.0.1:9/v1"));
+        assert_eq!(value["x"].as_str(), Some("a/*b*/c"));
+    }
+
+    #[test]
+    fn get_json_path_reads_nested_and_escaped_model_names() {
+        let doc = serde_json::json!({
+            "provider": { "anyversion": { "models": { "LongCat-2.0": { "name": "LongCat-2.0" } } } },
+            "model": "gpt-5"
+        });
+        assert_eq!(get_json_path(&doc, "model").as_deref(), Some("gpt-5"));
+        // 模型名里的 "." 在写入时被转义成占位符，读取时要还原
+        assert_eq!(
+            get_json_path(&doc, "provider.anyversion.models.LongCat-2__DOT__0.name").as_deref(),
+            Some("LongCat-2.0")
+        );
+        assert!(get_json_path(&doc, "provider.missing.key").is_none());
+    }
+
+    #[test]
+    fn scan_text_key_reads_toml_and_yaml_shapes() {
+        assert_eq!(
+            scan_text_key("model = \"gpt-5\"\nmodel_provider = \"anyversion\"\n", "model").as_deref(),
+            Some("gpt-5")
+        );
+        assert_eq!(scan_text_key("model: gpt-5\n", "model").as_deref(), Some("gpt-5"));
+        // 注释行里的同名键不算
+        assert_eq!(scan_text_key("# model = old\nmodel = new\n", "model").as_deref(), Some("new"));
+        assert!(scan_text_key("other = 1\n", "model").is_none());
     }
 }
