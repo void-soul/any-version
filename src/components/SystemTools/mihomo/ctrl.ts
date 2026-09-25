@@ -180,16 +180,33 @@ export const changeProxy = (group: string, proxy: string) =>
 // 复刻 mihomoUnfixedProxy：DELETE /proxies/:group（取消 URLTest/Fallback 固定）
 export const unfixedProxy = (group: string) => ctrlDelete(`/proxies/${encodeURIComponent(group)}`);
 
-// 单节点延迟（复刻 mihomoProxyDelay）
-export async function proxyDelay(name: string, url: string, timeout: number): Promise<number> {
+/// 测速目标：订阅（provider）里的节点没有 `/proxies/{name}/delay` 路由，
+/// 必须走 provider 的 healthcheck —— 否则单节点测速恒 404（表现为「点了没反应，数字不变」）。
+export interface DelayTarget {
+  name: string;
+  provider?: string;
+}
+
+// 单节点延迟（复刻 mihomoProxyDelay，含 provider 分支）
+export async function proxyDelay(
+  name: string,
+  url: string,
+  timeout: number,
+  provider?: string,
+): Promise<number> {
+  const q = `url=${encodeURIComponent(url)}&timeout=${timeout}`;
   try {
     const r = await ctrlGet(
-      `/proxies/${encodeURIComponent(name)}/delay?url=${encodeURIComponent(url)}&timeout=${timeout}`
+      provider
+        ? `/providers/proxies/${encodeURIComponent(provider)}/${encodeURIComponent(name)}/healthcheck?${q}`
+        : `/proxies/${encodeURIComponent(name)}/delay?${q}`,
     );
     // 与 lastDelay() 保持一致：测速缺失/失败返回 -1（表示未测速），避免与真实 0ms 混淆
     const d = r?.delay;
     return typeof d === "number" ? d : -1;
   } catch {
+    // provider 路由失败时退回全局路由（mihomo 各版本 provider 端点略有差异）
+    if (provider) return proxyDelay(name, url, timeout);
     return -1;
   }
 }
@@ -205,16 +222,39 @@ export async function groupDelay(name: string, url: string, timeout: number): Pr
 }
 
 // 并发池（复刻 clash-party 渲染端搜索态分批测延迟，concurrency 默认 50）
-export async function pooledDelayTest(names: string[], url: string, timeout: number, concurrency = 50) {
-  const queue = [...names];
+export async function pooledDelayTest(
+  targets: DelayTarget[],
+  url: string,
+  timeout: number,
+  concurrency = 50,
+) {
+  const queue = [...targets];
   const workers = Array.from({ length: Math.max(1, Math.min(concurrency, queue.length)) }, async () => {
     while (queue.length) {
-      const n = queue.shift();
-      if (!n) break;
-      await proxyDelay(n, url, timeout);
+      const t = queue.shift();
+      if (!t) break;
+      await proxyDelay(t.name, url, timeout, t.provider);
     }
   });
   await Promise.all(workers);
+}
+
+/// 稳定性采样：同一节点连测 `samples` 次取**最小值**。
+///
+/// 单次采样抖动极大（实测同一节点同 URL：1192ms → 697ms），直接显示一次的结果
+/// 会把偶发抖动当成节点质量。最小值最接近「这条链路的真实下限」，也是最常见的做法。
+export async function proxyDelayStable(
+  target: DelayTarget,
+  url: string,
+  timeout: number,
+  samples = 2,
+): Promise<number> {
+  let best = -1;
+  for (let i = 0; i < Math.max(1, samples); i++) {
+    const d = await proxyDelay(target.name, url, timeout, target.provider);
+    if (d > 0 && (best < 0 || d < best)) best = d;
+  }
+  return best;
 }
 
 // ---------- Provider ----------

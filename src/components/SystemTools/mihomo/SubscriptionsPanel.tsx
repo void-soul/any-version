@@ -676,6 +676,13 @@ function EditInfoModal({ item, overrides, onClose, onSaved }: any) {
             onChange={(e) => set("update_interval", Math.max(1, Number(e.target.value) || 1) * 60)} />
         </div>
         <div>
+          <label className={labelCls}>{t("subs.updateCron")}</label>
+          <input className={inputCls} value={v.update_cron || ""} placeholder="0 4 * * *"
+            onChange={(e) => set("update_cron", e.target.value)} />
+          {/* 填了 cron 就以它为准（每天固定时刻更新），间隔只作兜底 */}
+          <div className="mt-1 text-[10px] text-slate-500">{t("subs.updateCronHint")}</div>
+        </div>
+        <div>
           <label className={labelCls}>{t("subs.updateTimeout")}</label>
           <input className={inputCls} type="number" min={5}
             value={v.update_timeout || 30}

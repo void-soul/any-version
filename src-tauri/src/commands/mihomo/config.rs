@@ -77,6 +77,16 @@ pub struct AppConfig {
     pub webdav_auto_backup: bool,
     pub current_profile: String,
     pub auto_close_proxy: bool,
+    /// 启动核心时立即刷新一次订阅（对齐 clash-party `autoUpdateProfileOnStart`）。
+    /// 关掉的话，订阅只在到达间隔/cron 时才更新，开机后要等很久才拿到最新节点。
+    #[serde(default)]
+    pub auto_update_profile_on_start: bool,
+    /// SSID 感知：按当前 Wi-Fi 名称自动切换订阅配置。
+    #[serde(default)]
+    pub ssid_switch_enabled: bool,
+    /// SSID → 配置 id 的映射（命中第一条即切换；未命中保持当前配置）。
+    #[serde(default)]
+    pub ssid_rules: Vec<SsidRule>,
     /// 其余任意配置键（对齐 clash-party appConfig 的丰富字段：delayTestUrl、
     /// proxyDisplayMode、proxyDisplayOrder、autoCloseConnection、connectionDirection、
     /// logLevel 过滤偏好等），flatten 持久化，patch 深合并后不丢失
@@ -117,6 +127,9 @@ impl Default for AppConfig {
             webdav_auto_backup: false,
             current_profile: "default".into(),
             auto_close_proxy: false,
+            auto_update_profile_on_start: false,
+            ssid_switch_enabled: false,
+            ssid_rules: Vec::new(),
             extra: serde_json::Map::new(),
         }
     }
@@ -129,6 +142,9 @@ pub struct Subscription {
     pub url: String,
     #[serde(default = "default_interval")]
     pub interval: u64,
+    /// cron 表达式（5 段：分 时 日 月 周）。非空时**取代** `interval`。
+    #[serde(default)]
+    pub cron: Option<String>,
     #[serde(default = "default_false")]
     pub auto_update: bool,
     pub updated_at: Option<u64>,
@@ -143,6 +159,9 @@ pub struct RuleProviderEntry {
     pub url: String,
     #[serde(default = "default_interval")]
     pub interval: u64,
+    /// cron 表达式（5 段）。非空时**取代** `interval`。
+    #[serde(default)]
+    pub cron: Option<String>,
     #[serde(default = "default_false")]
     pub auto_update: bool,
     pub updated_at: Option<u64>,
@@ -189,6 +208,9 @@ pub struct ProfileItem {
     pub skip_verify: bool,
     #[serde(default = "default_interval")]
     pub update_interval: u64, // 更新间隔（秒）
+    /// 订阅更新的 cron 表达式（5 段：分 时 日 月 周）。非空时**取代** `update_interval`。
+    #[serde(default)]
+    pub update_cron: Option<String>,
     #[serde(default = "default_update_timeout")]
     pub update_timeout: u64, // 更新超时时间（秒）
     #[serde(default)]
@@ -206,6 +228,17 @@ pub struct SubscriptionUserInfo {
     pub download: u64,
     pub total: u64,
     pub expire: u64,
+}
+
+/// SSID 感知规则：连上某个 Wi-Fi 就自动切到指定订阅配置。
+/// 抄 clash-party `sys/ssid.ts`（它只支持「SSID 变化时按 profile 列表匹配」，
+/// 这里做成显式映射表，规则一目了然，也不用猜「哪个 profile 属于哪个网」）。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SsidRule {
+    /// Wi-Fi 名称（精确匹配，大小写不敏感）
+    pub ssid: String,
+    /// 命中后要切换到的订阅配置 id
+    pub profile_id: String,
 }
 
 /// 二级代理（家庭 socks5）节点配置
@@ -256,6 +289,7 @@ impl Default for ProfileItem {
             auto_update: false,
             skip_verify: false,
             update_interval: default_interval(),
+            update_cron: None,
             update_timeout: default_update_timeout(),
             override_ids: Vec::new(),
             subscription_userinfo: None,

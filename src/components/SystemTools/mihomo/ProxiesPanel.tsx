@@ -1,12 +1,12 @@
 // 代理页 —— 1:1 复刻 clash-party src/renderer/src/pages/proxies.tsx 行为
 import { useEffect, useRef, useState } from "react";
-import { Zap, ChevronDown, ChevronUp, Search, Pin, LocateFixed, ArrowDownUp, RefreshCw, X } from "lucide-react";
+import { Zap, ChevronDown, ChevronUp, Search, Pin, LocateFixed, ArrowDownUp, RefreshCw, X, SlidersHorizontal } from "lucide-react";
 import "flag-icons/css/flag-icons.min.css";
 import { mihomoApi } from "../mihomoApi";
 import {
   IMihomoMixedGroup, IMihomoProxy, getMixedGroups, lastDelay, changeProxy, unfixedProxy,
-  proxyDelay, groupDelay, pooledDelayTest, ctrlGet, closeConnection,
-  FAKE_GROUP_TYPE,
+  proxyDelayStable, groupDelay, pooledDelayTest, ctrlGet, closeConnection,
+  FAKE_GROUP_TYPE, type DelayTarget,
 } from "./ctrl";
 import { btnSec, cardCls, delayColor, delayText, Toggle } from "./ui";
 import { useTranslation } from "react-i18next";
@@ -19,7 +19,10 @@ function Flag({ name }: { name: string }) {
   return <span className={`fi fi-${code} shrink-0 rounded-[2px]`} style={{ width: 16, height: 12 }} />;
 }
 
-const DEFAULT_DELAY_URL = "https://www.gstatic.com/generate_204";
+/// 默认测速地址用 **HTTP**：mihomo 的 `unified-delay=false` 只排除 TCP/代理握手，
+/// TLS 握手仍计入耗时 —— 实测同一节点 HTTPS 约 700~1400ms、HTTP 约 400ms，
+/// 差的这 300~800ms 全是 TLS 的两次往返，跟节点质量无关，显示为「延迟」纯属误导。
+const DEFAULT_DELAY_URL = "http://www.gstatic.com/generate_204";
 
 type OrderMode = "default" | "delay" | "name";
 const ORDER_LABEL: Record<OrderMode, string> = { default: "defaultOrder", delay: "delayOrder", name: "nameOrder" };
@@ -39,6 +42,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
   const [curProfile, setCurProfile] = useState<string>("");
   const [err, setErr] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [delaySettingsOpen, setDelaySettingsOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   // 刚刚手动切换过的组，短时间内不让轮询结果覆盖乐观值
   const pinnedRef = useRef<Record<string, number>>({});
@@ -51,6 +55,8 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
   const delayUrl: string = cfg?.delayTestUrl || DEFAULT_DELAY_URL;
   const delayTimeout: number = Number(cfg?.delayTestTimeout) || 5000;
   const concurrency: number = Number(cfg?.delayTestConcurrency) || 50;
+  // 单节点测速的采样次数（取最小值），1 = 单次即显示
+  const delaySamples: number = Math.min(5, Math.max(1, Number(cfg?.delayTestSamples) || 2));
   const autoClose: boolean = !!cfg?.autoCloseConnection;
 
   const refresh = async () => {
@@ -185,17 +191,21 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
     refresh();
   };
 
-  // 计算某组的测速目标节点名（有搜索则仅命中项）
-  const delayTargets = (g: IMihomoMixedGroup): string[] => {
+  // 计算某组的测速目标（有搜索则仅命中项）。带 provider 名 —— 订阅节点只能走
+  // provider healthcheck，直接打 /proxies/{name}/delay 会 404。
+  const delayTargets = (g: IMihomoMixedGroup): DelayTarget[] => {
     const kw = (search[g.name] || "").trim().toLowerCase();
-    return (kw ? g.all.filter((p) => p.name.toLowerCase().includes(kw)) : g.all).map((p) => p.name);
+    return (kw ? g.all.filter((p) => p.name.toLowerCase().includes(kw)) : g.all).map((p) => ({
+      name: p.name,
+      provider: p.provider,
+    }));
   };
   // 实际发起测速（无搜索走核心组测速；有搜索走前端并发池）
-  const runDelay = (g: IMihomoMixedGroup, names: string[]): Promise<void> => {
+  const runDelay = (g: IMihomoMixedGroup, targets: DelayTarget[]): Promise<void> => {
     const url = g.testUrl || delayUrl;
-    if (!names.length) return Promise.resolve();
+    if (!targets.length) return Promise.resolve();
     return (search[g.name]?.trim()
-      ? pooledDelayTest(names, url, delayTimeout, concurrency)
+      ? pooledDelayTest(targets, url, delayTimeout, concurrency)
       : groupDelay(g.name, url, delayTimeout));
   };
 
@@ -235,11 +245,17 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
     }
   };
 
-  const onProxyDelay = async (group: IMihomoMixedGroup, name: string) => {
+  const onProxyDelay = async (group: IMihomoMixedGroup, p: IMihomoProxy) => {
     try {
-      await proxyDelay(name, group.testUrl || delayUrl, delayTimeout);
+      // 稳定性采样（取最小值）：单次结果抖动可达 2 倍，直接显示会把偶发抖动当质量
+      await proxyDelayStable(
+        { name: p.name, provider: p.provider },
+        group.testUrl || delayUrl,
+        delayTimeout,
+        delaySamples,
+      );
     } catch (e: any) {
-      setErr(t("proxies.testNodeFail", { name, err: String(e) }));
+      setErr(t("proxies.testNodeFail", { name: p.name, err: String(e) }));
     }
     refresh();
   };
@@ -296,9 +312,58 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
             {t("proxies.testAll")}
           </span>
         </button>
+        <button
+          className={`${btnSec} ${delaySettingsOpen ? "text-[var(--module-accent)]" : ""}`}
+          onClick={() => setDelaySettingsOpen((v) => !v)}
+          title={t("proxies.delaySettingsTitle")}
+        >
+          <span className="inline-flex items-center gap-1"><SlidersHorizontal className="w-3 h-3" />{t("proxies.delaySettings")}</span>
+        </button>
         <div className="flex-1" />
         <Toggle label={t("proxies.autoClose")} v={autoClose} onChange={(v) => patchCfg({ autoCloseConnection: v })} />
       </div>
+
+      {/* 测速设置：URL / 超时 / 并发 / 采样次数（clash-party 放在设置页，这里就近放，改完立刻生效） */}
+      {delaySettingsOpen && (
+        <div className={`${cardCls} p-3 space-y-2`}>
+          <div className="text-[10px] text-slate-500">{t("proxies.delaySettingsHint")}</div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-400 w-16 flex-shrink-0">{t("proxies.delayUrl")}</span>
+            <input
+              value={delayUrl}
+              onChange={(e) => patchCfg({ delayTestUrl: e.target.value })}
+              placeholder={DEFAULT_DELAY_URL}
+              className="flex-1 min-w-0 px-2 py-1 rounded-md bg-slate-900 border border-white/10 text-[11px] font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-[var(--module-accent)]/50"
+            />
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <label className="flex items-center gap-1.5 text-[10px] text-slate-400">
+              {t("proxies.delayTimeout")}
+              <input
+                type="number" min={500} step={500} value={delayTimeout}
+                onChange={(e) => patchCfg({ delayTestTimeout: Number(e.target.value) || 5000 })}
+                className="w-20 px-2 py-1 rounded-md bg-slate-900 border border-white/10 text-[11px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/50"
+              />
+            </label>
+            <label className="flex items-center gap-1.5 text-[10px] text-slate-400">
+              {t("proxies.delayConcurrency")}
+              <input
+                type="number" min={1} max={200} value={concurrency}
+                onChange={(e) => patchCfg({ delayTestConcurrency: Number(e.target.value) || 50 })}
+                className="w-16 px-2 py-1 rounded-md bg-slate-900 border border-white/10 text-[11px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/50"
+              />
+            </label>
+            <label className="flex items-center gap-1.5 text-[10px] text-slate-400">
+              {t("proxies.delaySamples")}
+              <input
+                type="number" min={1} max={5} value={delaySamples}
+                onChange={(e) => patchCfg({ delayTestSamples: Math.min(5, Math.max(1, Number(e.target.value) || 1)) })}
+                className="w-14 px-2 py-1 rounded-md bg-slate-900 border border-white/10 text-[11px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/50"
+              />
+            </label>
+          </div>
+        </div>
+      )}
 
       {err && (
         <div className="flex items-start gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-200">
@@ -427,7 +492,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
                           <button
                             className={`text-[10px] font-mono flex-shrink-0 cursor-pointer hover:underline ${delayColor(d)}`}
                             title={t("proxies.testDelay")}
-                            onClick={(e) => { e.stopPropagation(); onProxyDelay(g, p.name); }}
+                            onClick={(e) => { e.stopPropagation(); onProxyDelay(g, p); }}
                           >
                             {isTesting(g, p.name) ? (
                               <span className="inline-block w-3 h-3 rounded-full border border-white/30 border-t-white animate-spin align-middle" />

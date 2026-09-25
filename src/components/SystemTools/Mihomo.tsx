@@ -23,6 +23,8 @@ import NetworkPanel from "./mihomo/NetworkPanel";
 import TunPanel from "./mihomo/TunPanel";
 import DnsPanel from "./mihomo/DnsPanel";
 import SnifferPanel from "./mihomo/SnifferPanel";
+import SsidPanel from "./mihomo/SsidPanel";
+import GroupsPanel from "./mihomo/GroupsPanel";
 import CorePanel from "./mihomo/CorePanel";
 import { startTrafficLogger, stopTrafficLogger } from "./mihomo/trafficDb";
 
@@ -30,6 +32,7 @@ const TABS = [
   { k: "overview", t: "tabOverview" },
   { k: "profiles", t: "tabProfiles" },
   { k: "proxies", t: "tabProxies" },
+  { k: "groups", t: "tabGroups" },
   { k: "secondary", t: "tabSecondary" },
   { k: "rules", t: "tabRules" },
   { k: "connections", t: "tabConnections" },
@@ -42,6 +45,7 @@ const TABS = [
   { k: "tun", t: "tabTun" },
   { k: "dns", t: "tabDns" },
   { k: "sniffer", t: "tabSniffer" },
+  { k: "ssid", t: "tabSsid" },
   { k: "core", t: "tabCore" },
 ];
 
@@ -274,6 +278,7 @@ export default function Mihomo() {
       <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 pt-4">
       {tab === "overview" && <OverviewPanel info={info} running={running} onNavigate={setTab} />}
       {tab === "proxies" && <ProxiesPanel running={running} />}
+      {tab === "groups" && <GroupsPanel />}
       {tab === "secondary" && <SecondaryProxiesPanel running={running} />}
       {tab === "profiles" && <SubscriptionsPanel running={running} onNavigate={setTab} />}
       {tab === "rules" && <RulesPanel running={running} onNavigate={setTab} />}
@@ -287,6 +292,7 @@ export default function Mihomo() {
       {tab === "tun" && <TunPanel />}
       {tab === "dns" && <DnsPanel />}
       {tab === "sniffer" && <SnifferPanel />}
+      {tab === "ssid" && <SsidPanel />}
       {tab === "core" && <CorePanel onCoreChanged={refreshAll} />}
       </div>
     </div>

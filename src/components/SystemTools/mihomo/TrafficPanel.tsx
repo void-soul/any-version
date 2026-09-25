@@ -2,6 +2,7 @@
 // （1h/24h/7d/30d 时间范围 / 4 维度视图 / 汇总卡片 / 排行榜 / 趋势图 / 下钻明细 / 清空）
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { invoke } from "@tauri-apps/api/core";
 import { Trash2, ChevronDown, ChevronRight } from "lucide-react";
 import {
   trafficDb, getTrafficOverview, getSubStatsByHost, getDevicesByHost, getProxyStatsByHost,
@@ -45,12 +46,22 @@ export default function TrafficPanel() {
   const [selectedSubRow, setSelectedSubRow] = useState<string | null>(null);
   const [totalStats, setTotalStats] = useState({ upload: 0, download: 0, total: 0, count: 0 });
   const [bucketSizeMs, setBucketSizeMs] = useState(3600e3);
+  // 后端常驻采样（Rust 侧每 2s 落 SQLite）：不依赖本页是否打开
+  const [backend, setBackend] = useState<any>(null);
+  const backendPoints: { ts_ms: number; upload: number; download: number }[] = backend?.points || [];
+  const maxBackend = Math.max(1, ...backendPoints.map((p) => p.upload + p.download));
   const genRef = useRef(0);
 
   const load = useCallback(async (resetSelection = true) => {
     const gen = genRef.current;
     const { start, end, bucketSizeMs: bms } = getTimeRange(timeRange);
     const { rankings: agg, trend: tr } = await getTrafficOverview(activeView, start, end, bms);
+    // 后端采样与前端统计并行拉取：一边失败不影响另一边
+    const ov = await invoke<any>("mihomo_traffic_overview", {
+      sinceSecs: Math.floor(start / 1000),
+      bucketSecs: Math.max(60, Math.round(bms / 1000)),
+    }).catch(() => null);
+    if (gen === genRef.current) setBackend(ov);
     if (gen !== genRef.current) return;
     setBucketSizeMs(bms);
     setRankings(agg);
@@ -120,7 +131,12 @@ export default function TrafficPanel() {
           ))}
         </div>
         <div className="flex-1" />
-        <button className={btnSec} title={t("traffic.clearStatsTip")} onClick={async () => { await trafficDb.clearAll(); load(); }}>
+        <button className={btnSec} title={t("traffic.clearStatsTip")} onClick={async () => {
+          await trafficDb.clearAll();
+          // 后端那份常驻采样也要一起清，否则「清空」后曲线还在
+          await invoke("mihomo_traffic_clear").catch(() => {});
+          load();
+        }}>
           <Trash2 className="w-3.5 h-3.5 text-rose-300" />
         </button>
       </div>
@@ -138,6 +154,35 @@ export default function TrafficPanel() {
             <span className="mt-0.5 text-sm font-bold text-white">{value}</span>
           </div>
         ))}
+      </div>
+
+      {/* 后端常驻采样总览：页面没打开、切到别的模块时也在采，是完整历史的唯一来源 */}
+      <div className={`${cardCls} p-3`}>
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-[11px] font-semibold text-slate-300">{t("traffic.backendTitle")}</span>
+          <span className={`px-1.5 py-px rounded text-[9px] font-bold ${
+            backend ? "bg-emerald-500/15 text-emerald-400" : "bg-white/5 text-slate-500"
+          }`}>
+            {backend?.recording ? t("traffic.recording") : t("traffic.notRecording")}
+          </span>
+          <div className="flex-1" />
+          <span className="text-[10px] text-slate-500">
+            ↑ {calcTraffic(backend?.upload || 0)} · ↓ {calcTraffic(backend?.download || 0)}
+          </span>
+        </div>
+        {backendPoints.length === 0 ? (
+          <div className="text-[10px] text-slate-500">{t("traffic.backendEmpty")}</div>
+        ) : (
+          <div className="flex items-end gap-px h-12">
+            {backendPoints.slice(-120).map((p) => {
+              const h = Math.max(2, ((p.upload + p.download) / maxBackend) * 100);
+              return (
+                <div key={p.ts_ms} className="flex-1 bg-[var(--module-accent)]/60 rounded-t-sm" style={{ height: `${h}%` }}
+                  title={`↑ ${calcTraffic(p.upload)} ↓ ${calcTraffic(p.download)}`} />
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* 维度切换 */}
