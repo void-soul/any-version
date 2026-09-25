@@ -404,6 +404,39 @@ pub fn reset_classification(conn: &Connection) -> Result<usize, String> {
     .map_err(|e| format!("重置归类标记失败: {e}"))
 }
 
+/// 清理所有「空」分类（既没有条目关联、也没有子分类）。
+///
+/// 「重新归类」会清掉旧的 AI 关联：被 AI 用过、现在不再有内容的分类（含历史遗留的）
+/// 会残留成空节点，侧栏看着乱。这里把这类分类**连同跟着变空的祖先**一起收掉，
+/// 反复扫描直到没有可删的为止；只要某层还有条目或子分类就停，所以有内容的分类不受影响。
+///
+/// 注意：这会把「用户手动创建但还没归类任何条目」的空分类也一并收掉——重新归类
+/// 本就是把分类树重新整理的语义，空分类一律清掉才符合「别留乱」的预期。
+/// 返回删除的分类数。
+pub fn prune_all_empty_categories(conn: &Connection) -> Result<usize, String> {
+    let mut removed = 0usize;
+    loop {
+        let found = conn.query_row(
+            "SELECT c.id FROM favorite_category c \
+             WHERE NOT EXISTS (SELECT 1 FROM favorite_item_category ic WHERE ic.category_id = c.id) \
+               AND NOT EXISTS (SELECT 1 FROM favorite_category child WHERE child.parent_id = c.id) \
+             LIMIT 1",
+            [],
+            |r| r.get::<_, i64>(0),
+        );
+        match found {
+            Ok(id) => {
+                conn.execute("DELETE FROM favorite_category WHERE id = ?1", [id])
+                    .map_err(|e| format!("删除空分类失败: {e}"))?;
+                removed += 1;
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => break,
+            Err(e) => return Err(format!("查找空分类失败: {e}")),
+        }
+    }
+    Ok(removed)
+}
+
 /// 取一批「待归类」条目：**还没被 AI 归类过** 且 **未被人工锁定** 且 **未失效**。
 ///
 /// 判据是 `ai_model IS NULL`（而不是「没有任何分类」）：浏览器书签导入时**自带**
@@ -1467,10 +1500,10 @@ mod tests {
     use super::{
         apply_status, apply_tags, count_all, create_category, delete, delete_category,
         find_category_by_name, get_credential, get_import_cursor, link_item_category, list,
-        list_category_tree, migrate, move_category, rename_category, reset_classification,
-        select_unclassified, set_credential, set_import_cursor, set_item_categories,
-        set_item_categories_manual, set_tags, stats, upsert, CategoryNode, FavoriteRow,
-        FavoriteStats, ListFilter, NewFavorite, UpsertOutcome,
+        list_category_tree, migrate, move_category, prune_all_empty_categories, rename_category,
+        reset_classification, select_unclassified, set_credential, set_import_cursor,
+        set_item_categories, set_item_categories_manual, set_tags, stats, upsert, CategoryNode,
+        FavoriteRow, FavoriteStats, ListFilter, NewFavorite, UpsertOutcome,
     };
 
     /// 前后端的字段契约：这两个结构按 camelCase 序列化，前端读的是 `bySource` / `aiLocked`。
@@ -2006,6 +2039,39 @@ mod tests {
         assert_eq!(link_count(old_id), 0, "旧的 AI 分类要被清掉");
         assert_eq!(link_count(bm), 1, "书签目录分类要保留");
         assert_eq!(link_count(find_category_by_name(&conn, "新分类").unwrap().unwrap()), 1);
+    }
+
+    /// 重新归类后的空分类清理：只删「既无关联又无子分类」的，且级联向上收掉变空的祖先。
+    #[test]
+    fn prune_all_empty_categories_removes_only_empty() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        // 有内容的分类（保留）
+        let used = create_category(&conn, "有内容", None).unwrap();
+        link_item_category(&conn, 1, used).unwrap();
+
+        // 空叶子（删）
+        let _ = create_category(&conn, "空叶子", None).unwrap();
+
+        // 空父 + 空子：父子都空 → 级联删
+        let empty_parent = create_category(&conn, "空父", None).unwrap();
+        let _ = create_category(&conn, "空子", Some(empty_parent)).unwrap();
+
+        // 父分类下有「有内容」的子分类：父不删
+        let parent = create_category(&conn, "父", None).unwrap();
+        let used_child = create_category(&conn, "有内容子", Some(parent)).unwrap();
+        link_item_category(&conn, 1, used_child).unwrap();
+
+        let removed = prune_all_empty_categories(&conn).unwrap();
+        assert_eq!(removed, 3, "空叶子 + 空父 + 空子 三个被删");
+
+        assert!(find_category_by_name(&conn, "有内容").unwrap().is_some());
+        assert!(find_category_by_name(&conn, "父").unwrap().is_some());
+        assert!(find_category_by_name(&conn, "有内容子").unwrap().is_some());
+        assert!(find_category_by_name(&conn, "空叶子").unwrap().is_none());
+        assert!(find_category_by_name(&conn, "空父").unwrap().is_none());
+        assert!(find_category_by_name(&conn, "空子").unwrap().is_none());
     }
 
     /// 归类要能读到语言与 topics（这是判断分类最有用的两个信号）。

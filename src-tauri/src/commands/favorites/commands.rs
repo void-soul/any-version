@@ -467,6 +467,16 @@ async fn classify_inner(
     }
 
     result.remaining = db::with_conn(|conn| db::select_unclassified(conn, 1_000_000))?.len();
+
+    // 重新归类收尾：清掉旧的 AI 关联后，被 AI 用过、现在空了的分类（含历史遗留）要收掉，
+    // 否则侧栏会堆一堆 0 条目的空节点，看着乱。
+    if reclassify {
+        let removed = db::with_conn(|conn| db::prune_all_empty_categories(conn))?;
+        if removed > 0 {
+            crate::exit_log!("[收藏] 重新归类后清理空分类 {} 个", removed);
+        }
+    }
+
     crate::exit_log!(
         "[收藏] AI 归类完成: model={}, classified={}, tags={}, remaining={}",
         result.model,
