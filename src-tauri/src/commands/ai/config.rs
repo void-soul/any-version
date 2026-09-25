@@ -313,6 +313,8 @@ mod tests {
             models: Vec::<ModelEntry>::new(),
             active_model_id: None,
             custom_headers: Vec::new(),
+            openai_include_v1: None,
+            anthropic_include_v1: None,
         };
 
         let mut providers = vec![
@@ -516,6 +518,8 @@ mod tests {
                 models: vec![ModelEntry { id: "m1".into(), name: "M1".into(), custom_params: vec![] }],
                 active_model_id: None,
                 custom_headers: Vec::new(),
+                openai_include_v1: None,
+                anthropic_include_v1: None,
             }],
             proxy_port: 15721,
             default_project_path: String::new(),

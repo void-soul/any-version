@@ -35,7 +35,16 @@ const EMPTY_PROVIDER: AiProvider = {
   id: "", name: "", category: "provider", api_key: "", website: "",
   openai_url: "", anthropic_url: "", google_url: "",
   models: [], active_model_id: null, custom_headers: [],
+  openai_include_v1: null, anthropic_include_v1: null,
 };
+
+/// 「是否包含 /v1」三态 → 下拉框字符串（null 即自动）。
+function v1ToSelect(v?: boolean | null): string {
+  return v === true ? "yes" : v === false ? "no" : "auto";
+}
+function selectToV1(s: string): boolean | null {
+  return s === "yes" ? true : s === "no" ? false : null;
+}
 
 /// 传输层 / 逐跳头：由 HTTP 客户端按实际报文决定，后端也会拒绝，这里提前拦。
 const FORBIDDEN_HEADER_NAMES = new Set([
@@ -712,13 +721,19 @@ export default function ModelConfig() {
               <div className="p-3 rounded-lg bg-slate-900/50 border border-white/5 space-y-1.5">
                 <label className="text-[10px] text-slate-400 font-semibold">{t("modelcfg.endpoints")}</label>
                 {([
-                  [t("modelcfg.openaiUrl"), detailProvider.openai_url, "text-blue-300"],
-                  [t("modelcfg.anthropicUrl"), detailProvider.anthropic_url, "text-amber-300"],
-                  [t("modelcfg.googleUrl"), detailProvider.google_url, "text-green-300"],
-                ] as const).map(([label, url, cls]) => url ? (
+                  [t("modelcfg.openaiUrl"), detailProvider.openai_url, "text-blue-300", detailProvider.openai_include_v1 ?? null],
+                  [t("modelcfg.anthropicUrl"), detailProvider.anthropic_url, "text-amber-300", detailProvider.anthropic_include_v1 ?? null],
+                  [t("modelcfg.googleUrl"), detailProvider.google_url, "text-green-300", null],
+                ] as const).map(([label, url, cls, includeV1]) => url ? (
                   <div key={label} className="flex items-start gap-2 text-[10px]">
                     <span className={`${cls} font-semibold flex-shrink-0 w-24`}>{label}</span>
                     <span className="font-mono text-slate-400 break-all">{url}</span>
+                    {/* 只有显式改过才标出来：「自动」是默认行为，写出来反而像配置项丢了 */}
+                    {includeV1 !== null && (
+                      <span className="flex-shrink-0 px-1 py-px rounded bg-white/5 text-[8px] text-slate-400">
+                        /v1 {includeV1 ? t("modelcfg.v1Yes") : t("modelcfg.v1No")}
+                      </span>
+                    )}
                   </div>
                 ) : null)}
               </div>
@@ -852,6 +867,18 @@ export default function ModelConfig() {
                   <input value={form.openai_url} onChange={e => setForm({ ...form, openai_url: e.target.value })}
                     placeholder="https://api.openai.com/v1"
                     className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500" />
+                  {/* 兼容层差异：有的端点要 `{base}/v1/chat/completions`，有的是 `{base}/chat/completions` */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[9px] text-slate-500">{t("modelcfg.includeV1")}</span>
+                    <select value={v1ToSelect(form.openai_include_v1)}
+                      onChange={e => setForm({ ...form, openai_include_v1: selectToV1(e.target.value) })}
+                      className="bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-[9px] text-slate-300 cursor-pointer focus:outline-none focus:border-blue-500"
+                      title={t("modelcfg.includeV1Hint")}>
+                      <option value="auto">{t("modelcfg.v1Auto")}</option>
+                      <option value="yes">{t("modelcfg.v1Yes")}</option>
+                      <option value="no">{t("modelcfg.v1No")}</option>
+                    </select>
+                  </div>
                 </div>
 
                 <div className="space-y-1">
@@ -859,6 +886,17 @@ export default function ModelConfig() {
                   <input value={form.anthropic_url} onChange={e => setForm({ ...form, anthropic_url: e.target.value })}
                     placeholder="https://api.anthropic.com"
                     className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-amber-500" />
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[9px] text-slate-500">{t("modelcfg.includeV1")}</span>
+                    <select value={v1ToSelect(form.anthropic_include_v1)}
+                      onChange={e => setForm({ ...form, anthropic_include_v1: selectToV1(e.target.value) })}
+                      className="bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-[9px] text-slate-300 cursor-pointer focus:outline-none focus:border-amber-500"
+                      title={t("modelcfg.includeV1Hint")}>
+                      <option value="auto">{t("modelcfg.v1Auto")}</option>
+                      <option value="yes">{t("modelcfg.v1Yes")}</option>
+                      <option value="no">{t("modelcfg.v1No")}</option>
+                    </select>
+                  </div>
                 </div>
 
                 <div className="space-y-1">

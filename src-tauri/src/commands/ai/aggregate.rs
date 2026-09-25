@@ -295,6 +295,20 @@ struct AggCandidate {
     base_url: String,
     api_key: String,
     model_id: String,
+    /// 该候选拼接时是否补 `/v1`：None = 自动（URL 结尾已是 /v1 就不补）。
+    include_v1: Option<bool>,
+}
+
+/// 是否需要在 base 后面补一段 `/v1`。
+///
+/// - `Some(true)`：一定补（除非 base 结尾已经是 `/v1`，否则会拼出 `/v1/v1`）；
+/// - `Some(false)`：一定不补（对接把版本号写进网关路径、或根本没有版本号的兼容层）；
+/// - `None`：自动 —— 沿用「URL 结尾已是 `/v1` 就不重复补」的旧规则。
+fn needs_v1(base: &str, want: Option<bool>) -> bool {
+    match want {
+        Some(v) => v && !base.ends_with("/v1"),
+        None => !base.ends_with("/v1"),
+    }
 }
 
 /// 按出站协议拼上游 URL，返回 (url, 鉴权头名)。
@@ -304,26 +318,27 @@ pub fn build_candidate_url(
     base: &str,
     model: &str,
     is_stream: bool,
+    include_v1: Option<bool>,
 ) -> (String, &'static str) {
     let base = base.trim().trim_end_matches('/');
     match outbound {
         Outbound::OpenAi => {
             let url = if base.ends_with("/chat/completions") {
                 base.to_string()
-            } else if base.ends_with("/v1") {
-                format!("{base}/chat/completions")
-            } else {
+            } else if needs_v1(base, include_v1) {
                 format!("{base}/v1/chat/completions")
+            } else {
+                format!("{base}/chat/completions")
             };
             (url, "Authorization")
         }
         Outbound::Anthropic => {
             let url = if base.ends_with("/messages") {
                 base.to_string()
-            } else if base.ends_with("/v1") {
-                format!("{base}/messages")
-            } else {
+            } else if needs_v1(base, include_v1) {
                 format!("{base}/v1/messages")
+            } else {
+                format!("{base}/messages")
             };
             (url, "x-api-key")
         }
@@ -345,18 +360,20 @@ pub fn build_candidate_url(
 }
 
 /// 从供应商配置选出出站协议与端点（openai → anthropic → google 优先级）。
-fn pick_outbound(provider: &AiProvider) -> Option<(Outbound, String)> {
+///
+/// 第二个返回值是该协议「要不要补 `/v1`」的开关（None = 自动）。
+fn pick_outbound(provider: &AiProvider) -> Option<(Outbound, String, Option<bool>)> {
     let openai = provider.openai_url.trim().to_string();
     let anthropic = provider.anthropic_url.trim().to_string();
     let google = provider.google_url.trim().to_string();
     if !openai.is_empty() {
-        return Some((Outbound::OpenAi, openai));
+        return Some((Outbound::OpenAi, openai, provider.openai_include_v1));
     }
     if !anthropic.is_empty() {
-        return Some((Outbound::Anthropic, anthropic));
+        return Some((Outbound::Anthropic, anthropic, provider.anthropic_include_v1));
     }
     if !google.is_empty() {
-        return Some((Outbound::Google, google));
+        return Some((Outbound::Google, google, None));
     }
     None
 }
@@ -373,7 +390,7 @@ fn build_candidates(
         let Some(provider) = providers.iter().find(|p| p.id == candidate.provider_id) else {
             continue;
         };
-        let Some((outbound, base)) = pick_outbound(provider) else {
+        let Some((outbound, base, include_v1)) = pick_outbound(provider) else {
             continue;
         };
         let base = base.trim().trim_end_matches('/').to_string();
@@ -390,6 +407,7 @@ fn build_candidates(
             base_url: base,
             api_key: provider.api_key.clone(),
             model_id: candidate.model_id.clone(),
+            include_v1,
         });
     }
     out
@@ -1109,7 +1127,13 @@ async fn try_candidate(
         _ => upstream_body,
     };
 
-    let (url, auth_name) = build_candidate_url(candidate.outbound, &candidate.base_url, model, upstream_stream);
+    let (url, auth_name) = build_candidate_url(
+        candidate.outbound,
+        &candidate.base_url,
+        model,
+        upstream_stream,
+        candidate.include_v1,
+    );
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
         .build()
@@ -1378,6 +1402,7 @@ mod tests {
             base_url: base.into(),
             api_key: "sk".into(),
             model_id: "m".into(),
+            include_v1: None,
         }
     }
 
@@ -1574,17 +1599,56 @@ mod tests {
     #[test]
     fn test_build_candidate_url_avoids_double_v1() {
         use Outbound::*;
-        let (url, auth) = build_candidate_url(OpenAi, "https://api.x.com/v1", "m", false);
+        let (url, auth) = build_candidate_url(OpenAi, "https://api.x.com/v1", "m", false, None);
         assert_eq!(url, "https://api.x.com/v1/chat/completions");
         assert_eq!(auth, "Authorization");
-        let (url, auth) = build_candidate_url(Anthropic, "https://api.anthropic.com", "m", false);
+        let (url, auth) = build_candidate_url(Anthropic, "https://api.anthropic.com", "m", false, None);
         assert_eq!(url, "https://api.anthropic.com/v1/messages");
         assert_eq!(auth, "x-api-key");
-        let (url, auth) = build_candidate_url(Anthropic, "https://x.com/anthropic/v1", "m", false);
+        let (url, auth) = build_candidate_url(Anthropic, "https://x.com/anthropic/v1", "m", false, None);
         assert_eq!(url, "https://x.com/anthropic/v1/messages");
-        let (url, auth) = build_candidate_url(Google, "https://g.com", "m", true);
+        let (url, auth) = build_candidate_url(Google, "https://g.com", "m", true, None);
         assert_eq!(url, "https://g.com/v1beta/models/m:streamGenerateContent?alt=sse");
         assert_eq!(auth, "x-goog-api-key");
+    }
+
+    /// 「是否包含 /v1」开关：自动之外的两种显式取值都必须被尊重。
+    /// 场景：某些兼容层把 `/v1` 写进网关路径（要关掉），某些则完全没有版本号（要打开）。
+    #[test]
+    fn test_build_candidate_url_honors_include_v1_switch() {
+        use Outbound::*;
+        // 自动（None）：URL 结尾没有 /v1 → 补；有 → 不补
+        assert_eq!(
+            build_candidate_url(OpenAi, "https://x.com/api", "m", false, None).0,
+            "https://x.com/api/v1/chat/completions"
+        );
+        assert_eq!(
+            build_candidate_url(OpenAi, "https://x.com/api/v1", "m", false, None).0,
+            "https://x.com/api/v1/chat/completions"
+        );
+        // 显式「包含」：即使 URL 里已经写了 /v1 也不能拼出 /v1/v1
+        assert_eq!(
+            build_candidate_url(OpenAi, "https://x.com/api", "m", false, Some(true)).0,
+            "https://x.com/api/v1/chat/completions"
+        );
+        assert_eq!(
+            build_candidate_url(OpenAi, "https://x.com/api/v1", "m", false, Some(true)).0,
+            "https://x.com/api/v1/chat/completions"
+        );
+        // 显式「不包含」：直接用 base（网关自带版本段 / 或根本不带版本号）
+        assert_eq!(
+            build_candidate_url(OpenAi, "https://x.com/api/v9", "m", false, Some(false)).0,
+            "https://x.com/api/v9/chat/completions"
+        );
+        // Anthropic 同样受控
+        assert_eq!(
+            build_candidate_url(Anthropic, "https://x.com/anthropic", "m", false, Some(false)).0,
+            "https://x.com/anthropic/messages"
+        );
+        assert_eq!(
+            build_candidate_url(Anthropic, "https://x.com/anthropic", "m", false, Some(true)).0,
+            "https://x.com/anthropic/v1/messages"
+        );
     }
 
     #[test]
@@ -1601,13 +1665,15 @@ mod tests {
             models: vec![],
             active_model_id: None,
             custom_headers: Vec::new(),
+            openai_include_v1: None,
+            anthropic_include_v1: None,
         };
-        let (outbound, base) = pick_outbound(&provider).unwrap();
+        let (outbound, base, _) = pick_outbound(&provider).unwrap();
         assert_eq!(outbound, Outbound::OpenAi);
         assert_eq!(base, "https://x/v1");
         // 只有 anthropic → 用 anthropic
         provider.openai_url = String::new();
-        let (outbound, base) = pick_outbound(&provider).unwrap();
+        let (outbound, base, _) = pick_outbound(&provider).unwrap();
         assert_eq!(outbound, Outbound::Anthropic);
         assert_eq!(base, "https://x/anthropic");
         // 全空 → None

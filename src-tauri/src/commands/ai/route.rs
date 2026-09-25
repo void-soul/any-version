@@ -159,6 +159,8 @@ mod tests {
                 .collect(),
             active_model_id: None,
             custom_headers: Vec::new(),
+            openai_include_v1: None,
+            anthropic_include_v1: None,
         }
     }
 

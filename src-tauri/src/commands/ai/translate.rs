@@ -775,6 +775,8 @@ mod global_default_tests {
                 .collect(),
             active_model_id: active.map(|s| s.to_string()),
             custom_headers: Vec::new(),
+            openai_include_v1: None,
+            anthropic_include_v1: None,
         }
     }
 

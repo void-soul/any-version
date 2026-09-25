@@ -219,6 +219,24 @@ pub struct AiProvider {
     /// 自定义上游请求头（有序键值对；保存时已规范化，见 `proxy::headers::normalize`）。
     /// 用于除 API Key 外还需额外头的网关（抄自 CodexPlusPlus ea0ac5d / issue #1685）。
     pub custom_headers: Vec<crate::proxy::types::UpstreamHeader>,
+    /// OpenAI 端点在拼接 `/chat/completions` 时**要不要带 `/v1`**。
+    ///
+    /// `None` = 自动（沿用旧规则：URL 结尾已经是 `/v1` 就不重复补）；
+    /// `Some(true)` = 一定补；`Some(false)` = 一定不补（对接把 `/v1` 写进网关路径
+    /// 或干脆不带版本号的兼容层时用）。Anthropic 的 `/v1/messages` 同理。
+    pub openai_include_v1: Option<bool>,
+    pub anthropic_include_v1: Option<bool>,
+}
+
+impl AiProvider {
+    /// 某协议端点是否需要在拼接时补 `/v1`（聚合/代理拼 URL 时统一走这里）。
+    pub fn include_v1_for(&self, protocol: &str) -> Option<bool> {
+        match protocol {
+            "openai" => self.openai_include_v1,
+            "anthropic" => self.anthropic_include_v1,
+            _ => None,
+        }
+    }
 }
 
 impl AiProvider {
@@ -259,7 +277,7 @@ impl Serialize for AiProvider {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut st = serializer.serialize_struct("AiProvider", 11)?;
+        let mut st = serializer.serialize_struct("AiProvider", 13)?;
         st.serialize_field("id", &self.id)?;
         st.serialize_field("name", &self.name)?;
         st.serialize_field("category", &self.category)?;
@@ -271,6 +289,8 @@ impl Serialize for AiProvider {
         st.serialize_field("models", &self.models)?;
         st.serialize_field("active_model_id", &self.active_model_id)?;
         st.serialize_field("custom_headers", &self.custom_headers)?;
+        st.serialize_field("openai_include_v1", &self.openai_include_v1)?;
+        st.serialize_field("anthropic_include_v1", &self.anthropic_include_v1)?;
         st.end()
     }
 }
@@ -297,6 +317,12 @@ impl<'de> Deserialize<'de> for AiProvider {
             // ─── 自定义上游请求头（旧数据没有该字段 → 空列表）───
             #[serde(default)]
             custom_headers: Vec<crate::proxy::types::UpstreamHeader>,
+
+            // ─── 端点是否自带 /v1（旧数据没有 → None = 自动判断）───
+            #[serde(default)]
+            openai_include_v1: Option<bool>,
+            #[serde(default)]
+            anthropic_include_v1: Option<bool>,
 
             // ─── 新格式：三个协议 URL ───
             #[serde(default)]
@@ -382,6 +408,8 @@ impl<'de> Deserialize<'de> for AiProvider {
             models: h.models,
             active_model_id: h.active_model_id,
             custom_headers: crate::proxy::headers::normalize(&h.custom_headers),
+            openai_include_v1: h.openai_include_v1,
+            anthropic_include_v1: h.anthropic_include_v1,
         })
     }
 }
