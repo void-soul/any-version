@@ -1300,7 +1300,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                               {cache.exists && (
                                 <div className="flex items-center gap-1 flex-shrink-0">
                                   <button onClick={() => handleOpenCacheDir(cache.full_path)}
-                                    className="p-1 rounded text-slate-600 hover:text-blue-400 hover:bg-blue-500/10 cursor-pointer"
+                                    className="p-1 rounded text-slate-600 hover:text-[var(--module-accent)] hover:bg-blue-500/10 cursor-pointer"
                                     title={t("toollaunch.openDir")}>
                                     <FolderOpen className="w-3 h-3" />
                                   </button>

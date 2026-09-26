@@ -4093,7 +4093,7 @@ export default function BuddyPanel() {
                     href={oauth.verificationUri}
                     target="_blank"
                     rel="noreferrer"
-                    className="flex items-center gap-2 text-caption text-[var(--module-accent)] hover:underline break-all"
+                    className="flex items-center gap-2 text-caption ui-link break-all"
                   >
                     <ExternalLink className="w-3 h-3 flex-shrink-0" />
                     {oauth.verificationUri}

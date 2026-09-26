@@ -1620,7 +1620,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
                 onClick={expandAllTree} title={t("mindmap.treeExpandAll")}>{t("mindmap.treeExpandAllShort")}</button>
               <button type="button" className="shrink-0 rounded border border-white/10 px-1 py-px text-micro text-slate-500 transition hover:bg-white/10 hover:text-white"
                 onClick={collapseAllTree} title={t("mindmap.treeCollapseAll")}>{t("mindmap.treeCollapseAllShort")}</button>
-              <button type="button" className="rounded p-0.5 text-slate-500 transition hover:bg-white/10 hover:text-white" onClick={() => setTreeOpen(false)} title={t("mindmap.treeNavHide")}>
+              <button type="button" className="ui-icon-btn p-0.5" onClick={() => setTreeOpen(false)} title={t("mindmap.treeNavHide")}>
                 <ChevronRight className="h-3 w-3" />
               </button>
             </div>
@@ -1668,7 +1668,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
                         title={t("mindmap.previewOnly")}>
                         <Eye className="h-3 w-3" />
                       </button>
-                      <button type="button" className="rounded p-0.5 text-slate-500 transition hover:bg-white/10 hover:text-white"
+                      <button type="button" className="ui-icon-btn p-0.5"
                         onClick={() => { navToNode(x.node.id); const n = byId.get(x.node.id); if (n) openDetail(n); }}
                         title={t("mindmap.viewDetail")}>
                         <Pencil className="h-3 w-3" />

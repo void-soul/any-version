@@ -875,7 +875,7 @@ export default function ProjectDetailPanel({
                   <span className="text-slate-600 text-tiny">.</span>
                   <button
                     onClick={handleSelectCustomPath}
-                    className="text-tiny text-blue-400 hover:text-blue-300 hover:underline transition-colors flex items-center gap-0.5 cursor-pointer font-medium"
+                    className="text-tiny ui-link transition-colors flex items-center gap-0.5 cursor-pointer font-medium"
                   >
                     {status.install_root ? t("projdetail.modifyPath") : t("projdetail.manualSpecifyDir")}
                   </button>

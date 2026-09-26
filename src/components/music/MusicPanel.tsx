@@ -552,7 +552,7 @@ export default function MusicPanel() {
                             void openRename(track);
                           }}
                           title={t("music.rename")}
-                          className="p-1 rounded text-slate-500 hover:text-blue-400 hover:bg-blue-500/10 cursor-pointer transition-all"
+                          className="p-1 rounded text-slate-500 hover:text-[var(--module-accent)] hover:bg-blue-500/10 cursor-pointer transition-all"
                         >
                           <Pencil className="w-3 h-3" />
                         </button>

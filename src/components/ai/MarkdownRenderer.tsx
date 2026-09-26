@@ -81,7 +81,7 @@ function MarkdownRendererBase({ content }: { content: string }) {
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] underline underline-offset-1"
+              className="ui-link"
             >
               {children}
             </a>

@@ -137,6 +137,24 @@
     color: var(--color-text-primary);
   }
 
+  /* 图标按钮：只放一个图标的小方钮（此前各模块是 p-0.5 / p-1 / h-6 w-6 各写一套 hover） */
+  .ui-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-ctl);
+    border: 1px solid transparent;
+    background-color: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .ui-icon-btn:hover:not(:disabled) {
+    background-color: rgb(255 255 255 / 0.1);
+    color: var(--color-text-primary);
+  }
+  .ui-icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
   /* 表单 */
   .ui-input {
     border-radius: var(--radius-ctl);

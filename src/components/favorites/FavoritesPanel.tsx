@@ -1950,7 +1950,7 @@ function AiResultMarkdown({ text }: { text: string }) {
                 <span className="text-slate-600 mt-[3px]">•</span>
                 <button
                   onClick={() => { void openUrl(parsed.url).catch(() => {}); }}
-                  className="text-[var(--module-accent)] hover:underline cursor-pointer text-left"
+                  className="ui-link cursor-pointer text-left"
                   title={parsed.url}
                 >
                   {parsed.title}

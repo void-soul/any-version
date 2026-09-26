@@ -772,7 +772,7 @@ export default function RssReader() {
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
-                      <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-400 transition-all" />
+                      <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-[var(--module-accent)] transition-all" />
                     </div>
                   </div>
                   <h3 className="text-body font-bold text-slate-200 group-hover:text-white transition-all leading-relaxed">
@@ -902,7 +902,7 @@ export default function RssReader() {
                         {!status && (
                           <button
                             onClick={() => testRssUrl(url)}
-                            className="text-slate-400 hover:text-slate-200 underline cursor-pointer"
+                            className="ui-link cursor-pointer"
                           >
                             {t("rss.test")}
                           </button>

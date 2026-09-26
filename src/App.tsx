@@ -524,13 +524,11 @@ export default function App() {
                               switchPage(m.id);
                               setMoreOpen(false);
                             }}
-                            className={`w-full px-3 py-2 rounded-md text-caption font-medium flex items-center gap-2 transition-all cursor-pointer text-left ${
-                              activePage === m.id
-                                ? "bg-[var(--module-accent-ring)] text-white"
-                                : "text-slate-300 hover:bg-[var(--module-accent-soft)]"
-                            }`}
+                            // 「更多」里的模块条目与顶栏胶囊共用 moduleTabClass：
+                            // 同一个东西不该有第二种长相（原先这里是第二套字号/内边距/半透明选中态）
+                            className={moduleTabClass(activePage === m.id, "w-full justify-start gap-2")}
                           >
-                            <Icon className="w-3.5 h-3.5 text-[var(--module-accent)]" />
+                            <Icon className={`w-3.5 h-3.5 ${activePage === m.id ? "text-white" : "text-[var(--module-accent)]"}`} />
                             {moduleLabel(m.id)}
                           </button>
                         );

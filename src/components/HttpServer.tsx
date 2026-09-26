@@ -201,7 +201,7 @@ export default function HttpServer() {
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
                     <button
                       onClick={() => openUrl(`http://localhost:${srv.port}`)}
-                      className="text-body font-bold font-mono text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
+                      className="text-body font-bold font-mono ui-link flex items-center gap-1 cursor-pointer"
                     >
                       http://localhost:{srv.port}
                       <ExternalLink className="w-3 h-3" />

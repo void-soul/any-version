@@ -207,10 +207,10 @@ export default function PkgManager() {
                         <button
                           onClick={() => openUrl(pkg.homepage)}
                           title={t("pkgmgr2.openHome", { name: pkg.homepage })}
-                          className="inline-flex items-center gap-1.5 hover:text-blue-400 transition-colors cursor-pointer group"
+                          className="inline-flex items-center gap-1.5 hover:text-[var(--module-accent)] transition-colors cursor-pointer group"
                         >
                           {pkg.name}
-                          <ExternalLink className="w-3 h-3 text-slate-500 group-hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-all" />
+                          <ExternalLink className="w-3 h-3 text-slate-500 group-hover:text-[var(--module-accent)] opacity-0 group-hover:opacity-100 transition-all" />
                         </button>
                       </td>
                       <td className="p-4 font-mono">{pkg.current_version}</td>

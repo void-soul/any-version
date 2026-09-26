@@ -467,7 +467,7 @@ export default function McpManager() {
                     <div className="flex items-center gap-0.5 ml-auto flex-shrink-0">
                       <button
                         onClick={() => openEdit(s)}
-                        className="p-1 rounded text-slate-600 hover:text-blue-400 hover:bg-blue-500/10 cursor-pointer transition-all"
+                        className="p-1 rounded text-slate-600 hover:text-[var(--module-accent)] hover:bg-blue-500/10 cursor-pointer transition-all"
                         title={t("mcp.edit")}
                       >
                         <Edit3 className="w-3.5 h-3.5" />

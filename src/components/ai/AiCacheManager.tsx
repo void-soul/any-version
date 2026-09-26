@@ -253,7 +253,7 @@ export default function AiCacheManager() {
                           <div className="flex items-center gap-1 flex-shrink-0">
                             <button
                               onClick={() => handleOpen(cache.dir_name)}
-                              className="p-1.5 rounded text-slate-600 hover:text-blue-400 hover:bg-blue-500/10 cursor-pointer transition-all"
+                              className="p-1.5 rounded text-slate-600 hover:text-[var(--module-accent)] hover:bg-blue-500/10 cursor-pointer transition-all"
                               title={t("aicache.openDir")}
                             >
                               <FolderOpen className="w-3.5 h-3.5" />

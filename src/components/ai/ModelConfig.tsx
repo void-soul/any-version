@@ -557,7 +557,7 @@ export default function ModelConfig() {
                     <Zap className={`w-3.5 h-3.5 ${testing === provider.id ? "animate-pulse text-yellow-400" : ""}`} />
                   </button>
                   <button onClick={(e) => { e.stopPropagation(); openEditModal(provider); }}
-                    className="p-1 rounded-md text-slate-600 hover:text-blue-400 hover:bg-blue-500/10 cursor-pointer transition-all" title={t("modelcfg.edit")}>
+                    className="p-1 rounded-md text-slate-600 hover:text-[var(--module-accent)] hover:bg-blue-500/10 cursor-pointer transition-all" title={t("modelcfg.edit")}>
                     <Settings2 className="w-3.5 h-3.5" />
                   </button>
                   <button onClick={(e) => { e.stopPropagation(); setDeleteTarget(provider.id); }}
@@ -629,7 +629,7 @@ export default function ModelConfig() {
                           {added && <span className="ml-auto text-[8px] text-slate-600 flex-shrink-0">{t("modelcfg.added")}</span>}
                           {!added && p.website && (
                             <a href={p.website} target="_blank" rel="noopener noreferrer" onClick={(e) => { e.preventDefault(); e.stopPropagation(); void openUrl(p.website); }}
-                              className="ml-auto text-slate-600 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                              className="ml-auto text-slate-600 hover:text-[var(--module-accent)] opacity-0 group-hover:opacity-100 transition-opacity"
                               title={t("modelcfg.openSite")}>
                               <ExternalLink className="w-3 h-3" />
                             </a>
