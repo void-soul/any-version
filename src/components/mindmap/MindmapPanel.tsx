@@ -1904,8 +1904,7 @@ export default function MindmapPanel() {
   const [sidebarW, setSidebarW] = usePaneWidth("sidebar");
   // 右栏 AI 对话面板宽度（与左栏把手同一套拖拽逻辑，方向相反）
   const [aiPanelW, setAiPanelW] = usePaneWidth("ai");
-  // Agent 待确认变更清单（删除/移动类 op，等用户裁决后经 mm_ai_answer 回填）
-  const [pendingOps, setPendingOps] = useState<{ runId: string; ops: AgentOp[]; autoApplied: number } | null>(null);
+  // Agent 的写操作全部直接应用（不再有待确认清单）：回退走 Ctrl+Z 撤销快照
   // 当前文档的 Agent 会话 id（按文档持久化，后端 mm_agent_get_session 保证存在）
   const agentSessionRef = useRef<string | null>(null);
   // 绑定目录下的文件清单（@ 引用候选）
@@ -2427,77 +2426,40 @@ export default function MindmapPanel() {
   }, []);
 
   // ─── 思维导图 Agent（右栏对话）───
-  // 后端只裁决不执行：写 ops 经 agentOps 事件到达这里，分级应用
-  // （新增/编辑直接落图 + Ctrl+Z 兜底；删除/移动进确认清单），结果经 mm_ai_answer 回填。
+  // 后端只裁决不执行：写 ops 经 agentOps 事件到达这里后**全部直接落图**
+  // （删除/移动不再弹确认清单；想回退用 Ctrl+Z，落图前先压撤销快照）。
 
-  const applyAgentOps = useCallback(async (runId: string, ops: AgentOp[]) => {
+  const applyAgentOps = useCallback(async (_runId: string, ops: AgentOp[]) => {
     const docId = full?.document.id;
-    if (!docId) {
-      await mmApi.aiAnswer(runId, { status: "denied", note: "no open document" }).catch(() => {});
-      return;
-    }
-    const { auto, confirm } = partitionAgentOps(ops);
+    if (!docId) return;
+    const { auto } = partitionAgentOps(ops);
+    if (!auto.length) return;
+    commitHistory(); // 先压撤销快照，再写入
     let applied = 0;
-    if (auto.length) {
-      commitHistory(); // 先压撤销快照，再写入
-      for (const op of auto) {
-        try {
-          if (op.action === "add" && op.id) {
-            await mmApi.upsertNode({
-              documentId: docId,
-              node: {
-                id: op.id, documentId: docId, parentId: op.parentId ?? null,
-                name: op.name ?? "", detail: op.detail ?? "", kind: op.kind ?? "other",
-                color: op.color ?? "#f59e0b",
-                // 模型给了 sources 就用它的；没给但本轮引用了文件，则锚到被分析的文件上
-                sources: op.sources?.length ? op.sources : agentAttachmentsRef.current.slice(0, 3),
-                positionX: 0, positionY: 0,
-              },
-            });
-            applied++;
-          } else if (op.action === "update" && op.id) {
-            // 只改 op 携带的字段：以库内现值为底，避免把未提及字段清空
-            const f = await mmApi.load(docId);
-            const n = f?.nodes.find((x) => x.id === op.id);
-            if (n) {
-              await mmApi.upsertNode({ documentId: docId, node: { ...n, name: op.name ?? n.name, detail: op.detail ?? n.detail, color: op.color ?? n.color } });
-              applied++;
-            }
-          }
-        } catch (e) { console.error("应用 Agent 变更失败:", e); }
-      }
-      const f = await mmApi.load(docId);
-      if (f) onDocumentUpdated(f);
-    }
-    if (confirm.length) {
-      // 破坏性操作：进右栏确认清单，等用户裁决后再回填
-      setPendingOps({ runId, ops: confirm, autoApplied: applied });
-      return;
-    }
-    await mmApi.aiAnswer(runId, { status: "applied", applied }).catch(() => {});
-  }, [full?.document.id, commitHistory, onDocumentUpdated]);
-
-  // 事件缓冲在面板重挂时会重放历史，用事件时间戳去重，避免重放导致重复应用/重复弹确认
-  useEffect(() => {
-    for (const e of aiProgress) {
-      if (e.step !== "agentOps" || !e.ops?.length || !e.runId || !e.at) continue;
-      if (handledAgentOpsAt.has(e.at)) continue;
-      handledAgentOpsAt.add(e.at);
-      void applyAgentOps(e.runId, e.ops);
-    }
-  }, [aiProgress, applyAgentOps]);
-
-  const confirmPendingOps = useCallback(async () => {
-    const p = pendingOps;
-    if (!p || !full?.document.id) return;
-    setPendingOps(null);
-    const docId = full.document.id;
-    commitHistory();
-    let applied = 0;
-    let lastErr = "";
-    for (const op of p.ops) {
+    for (const op of auto) {
       try {
-        if (op.action === "delete" && op.id) {
+        if (op.action === "add" && op.id) {
+          await mmApi.upsertNode({
+            documentId: docId,
+            node: {
+              id: op.id, documentId: docId, parentId: op.parentId ?? null,
+              name: op.name ?? "", detail: op.detail ?? "", kind: op.kind ?? "other",
+              color: op.color ?? "#f59e0b",
+              // 模型给了 sources 就用它的；没给但本轮引用了文件，则锚到被分析的文件上
+              sources: op.sources?.length ? op.sources : agentAttachmentsRef.current.slice(0, 3),
+              positionX: 0, positionY: 0,
+            },
+          });
+          applied++;
+        } else if (op.action === "update" && op.id) {
+          // 只改 op 携带的字段：以库内现值为底，避免把未提及字段清空
+          const f = await mmApi.load(docId);
+          const n = f?.nodes.find((x) => x.id === op.id);
+          if (n) {
+            await mmApi.upsertNode({ documentId: docId, node: { ...n, name: op.name ?? n.name, detail: op.detail ?? n.detail, color: op.color ?? n.color } });
+            applied++;
+          }
+        } else if (op.action === "delete" && op.id) {
           // 后端按子树级联删除
           await mmApi.deleteNode({ documentId: docId, nodeId: op.id });
           applied++;
@@ -2509,19 +2471,21 @@ export default function MindmapPanel() {
             applied++;
           }
         }
-      } catch (e) { lastErr = String(e); }
+      } catch (e) { console.error("应用 Agent 变更失败:", e); }
     }
     const f = await mmApi.load(docId);
     if (f) onDocumentUpdated(f);
-    await mmApi.aiAnswer(p.runId, { status: applied > 0 ? "applied" : "denied", applied, note: lastErr || undefined }).catch(() => {});
-  }, [pendingOps, full?.document.id, commitHistory, onDocumentUpdated]);
+  }, [full?.document.id, commitHistory, onDocumentUpdated]);
 
-  const denyPendingOps = useCallback(async () => {
-    const p = pendingOps;
-    if (!p) return;
-    setPendingOps(null);
-    await mmApi.aiAnswer(p.runId, { status: "denied", note: "user rejected" }).catch(() => {});
-  }, [pendingOps]);
+  // 事件缓冲在面板重挂时会重放历史，用事件时间戳去重，避免重放导致重复应用/重复弹确认
+  useEffect(() => {
+    for (const e of aiProgress) {
+      if (e.step !== "agentOps" || !e.ops?.length || !e.runId || !e.at) continue;
+      if (handledAgentOpsAt.has(e.at)) continue;
+      handledAgentOpsAt.add(e.at);
+      void applyAgentOps(e.runId, e.ops);
+    }
+  }, [aiProgress, applyAgentOps]);
 
   const runAgentChat = useCallback(async (instruction: string) => {
     const docId = full?.document.id;
@@ -2785,33 +2749,7 @@ export default function MindmapPanel() {
                     className="flex h-6 w-6 items-center justify-center rounded-md px-1.5 text-slate-400 transition hover:bg-white/10 hover:text-white">✕</button>
                 </div>
               </div>
-              {/* 待确认变更清单：破坏性 op（删除/移动）等用户裁决，确认/拒绝经 mm_ai_answer 回填 */}
-              {pendingOps && (
-                <div className="mx-2 mt-2 shrink-0 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5">
-                  <div className="mb-1 text-[10px] font-bold text-amber-200">
-                    {t("mindmap.agentConfirmTitle", { count: pendingOps.ops.length })}
-                  </div>
-                  <ul className="mb-2 space-y-0.5 text-[10px] text-amber-100/85">
-                    {pendingOps.ops.slice(0, 6).map((op, i) => {
-                      const name = full?.nodes.find((n) => n.id === op.id)?.name ?? op.id ?? "?";
-                      return (
-                        <li key={`${op.id}-${i}`} className="truncate">
-                          {op.action === "delete"
-                            ? t("mindmap.agentOpDelete", { name })
-                            : t("mindmap.agentOpMove", { name, parent: op.parentId ?? "" })}
-                        </li>
-                      );
-                    })}
-                    {pendingOps.ops.length > 6 && <li className="text-amber-200/60">…</li>}
-                  </ul>
-                  <div className="flex justify-end gap-1.5">
-                    <button type="button" onClick={() => void denyPendingOps()}
-                      className="cursor-pointer rounded-md px-2 py-1 text-[10px] text-slate-400 transition hover:bg-white/10">{t("mindmap.agentDeny")}</button>
-                    <button type="button" onClick={() => void confirmPendingOps()}
-                      className="cursor-pointer rounded-md bg-amber-600 px-2.5 py-1 text-[10px] font-semibold text-white transition hover:bg-amber-500">{t("mindmap.agentConfirm")}</button>
-                  </div>
-                </div>
-              )}
+              {/* 说明：Agent 的改动直接落到画布，不再有待确认清单（回退用 Ctrl+Z） */}
               {/* AI 智能体工作台（项目/文档共用）：会话式多轮 + 阶段计划 + 工具透明 + 流式反馈 */}
               <div className="min-h-0 flex-1 overflow-y-auto">
                 <AgentWorkbench

@@ -319,7 +319,8 @@ export interface AgentOp {
   action: "add" | "update" | "delete" | "move";
   /** add = 后端生成的节点 id；update/delete/move = 目标节点 id */
   id?: string;
-  parentId?: string;
+  /** add/move 携带；`null` = 建根节点（无父节点） */
+  parentId?: string | null;
   name?: string;
   detail?: string;
   kind?: string;
@@ -358,17 +359,14 @@ export interface AgentChatResult {
 }
 
 /**
- * 分级确认：删除/移动是破坏性操作（丢内容或打乱结构），进右栏确认清单；
- * 新增/编辑可随时 Ctrl+Z 撤销，直接应用。
+ * Agent 的写操作**全部直接应用**，不再弹确认清单。
+ *
+ * 早先删除/移动要等用户在右栏裁决（后端阻塞最长 10 分钟，模型只能干等），
+ * 现在统一直接落图 —— 界面有撤销快照，用户随时 Ctrl+Z 回退。
+ * 保留这个函数是为了集中表达这条策略（也让调用方保持单一入口）。
  */
 export function partitionAgentOps(ops: AgentOp[]): { auto: AgentOp[]; confirm: AgentOp[] } {
-  const auto: AgentOp[] = [];
-  const confirm: AgentOp[] = [];
-  for (const op of ops) {
-    if (op.action === "delete" || op.action === "move") confirm.push(op);
-    else auto.push(op);
-  }
-  return { auto, confirm };
+  return { auto: ops, confirm: [] };
 }
 
 // ─── 节点颜色映射 ───

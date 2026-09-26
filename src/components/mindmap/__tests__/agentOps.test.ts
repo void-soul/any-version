@@ -6,25 +6,23 @@ function op(action: AgentOp["action"], id?: string): AgentOp {
 }
 
 describe("partitionAgentOps", () => {
-  it("把删除/移动分进确认组，新增/编辑分进直接应用组", () => {
+  it("所有 op 都直接应用（不再有待确认清单）", () => {
+    // 早先删除/移动要弹确认清单、后端阻塞等用户裁决；现在统一直接落图，
+    // 回退交给界面上的 Ctrl+Z 撤销快照。
     const { auto, confirm } = partitionAgentOps([
       op("add", "a1"),
       op("delete", "d1"),
       op("update", "u1"),
       op("move", "m1"),
     ]);
-    expect(auto.map((o) => o.action)).toEqual(["add", "update"]);
-    expect(confirm.map((o) => o.action)).toEqual(["delete", "move"]);
+    expect(auto.map((o) => o.action)).toEqual(["add", "delete", "update", "move"]);
+    expect(confirm).toEqual([]);
   });
 
-  it("保持各组内的原始顺序", () => {
-    const { auto, confirm } = partitionAgentOps([
-      op("delete", "d1"),
-      op("delete", "d2"),
-      op("move", "m1"),
-    ]);
-    expect(confirm.map((o) => o.id)).toEqual(["d1", "d2", "m1"]);
-    expect(auto).toEqual([]);
+  it("保持原始顺序（ops 有先后依赖：父必须先于子落图）", () => {
+    const ops = [op("delete", "d1"), op("delete", "d2"), op("move", "m1")];
+    const { auto } = partitionAgentOps(ops);
+    expect(auto.map((o) => o.id)).toEqual(["d1", "d2", "m1"]);
   });
 
   it("空数组返回两个空组", () => {
