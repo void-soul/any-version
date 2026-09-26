@@ -24,6 +24,8 @@ interface ReservedRange {
   start: number;
   end: number;
   process: string;
+  /** 系统动态保留（netsh 输出带 `*`）：不是用户加的段，删除通常被拒绝 */
+  managed?: boolean;
 }
 
 export default function PortScanner() {
@@ -36,6 +38,60 @@ export default function PortScanner() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [reservedRanges, setReservedRanges] = useState<ReservedRange[] | null>(null);
   const [loadingReserved, setLoadingReserved] = useState(false);
+  // 保留端口管理：起始端口 + 数量（添加/删除都按「起始 + 数量」这一组参数，与 netsh 一致）
+  const [rangeStart, setRangeStart] = useState("");
+  const [rangeCount, setRangeCount] = useState("");
+  const [rangeBusy, setRangeBusy] = useState(false);
+
+  const runRange = async (action: "add" | "delete") => {
+    const start = Number(rangeStart.trim());
+    const count = Number(rangeCount.trim() || "1");
+    if (!Number.isInteger(start) || !Number.isInteger(count)) {
+      setErrorMsg(t("portscan.rangeInvalid"));
+      return;
+    }
+    setRangeBusy(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      await invoke(action === "add" ? "add_reserved_ports" : "delete_reserved_ports", {
+        start,
+        count,
+        protocol: "tcp",
+      });
+      setSuccessMsg(
+        action === "add"
+          ? t("portscan.addedRange", { start, end: start + count - 1 })
+          : t("portscan.deletedRange", { start, end: start + count - 1 }),
+      );
+      // 列表变了，重新拉一次
+      setReservedRanges(await invoke<ReservedRange[]>("get_reserved_ports"));
+    } catch (e: any) {
+      setErrorMsg(String(e));
+    } finally {
+      setRangeBusy(false);
+    }
+  };
+
+  const deleteRow = async (r: ReservedRange) => {
+    if (r.managed) return;
+    setRangeBusy(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      await invoke("delete_reserved_ports", {
+        start: r.start,
+        count: r.end - r.start + 1,
+        protocol: "tcp",
+      });
+      setSuccessMsg(t("portscan.deletedRange", { start: r.start, end: r.end }));
+      setReservedRanges(await invoke<ReservedRange[]>("get_reserved_ports"));
+    } catch (e: any) {
+      setErrorMsg(String(e));
+    } finally {
+      setRangeBusy(false);
+    }
+  };
 
   const handleCheck = async () => {
     if (!portInput.trim()) return;
@@ -188,6 +244,39 @@ export default function PortScanner() {
           </button>
         </div>
 
+        {/* 管理：添加 / 删除一段保留端口（netsh excludedportrange，需要管理员权限） */}
+        {reservedRanges && (
+          <div className="mt-3 shrink-0 flex flex-wrap items-center gap-2">
+            <input
+              value={rangeStart}
+              onChange={(e) => setRangeStart(e.target.value)}
+              placeholder={t("portscan.rangeStartPh")}
+              className="w-24 glass-input px-2 py-1 text-[10px]"
+            />
+            <input
+              value={rangeCount}
+              onChange={(e) => setRangeCount(e.target.value)}
+              placeholder={t("portscan.rangeCountPh")}
+              className="w-20 glass-input px-2 py-1 text-[10px]"
+            />
+            <button
+              onClick={() => void runRange("add")}
+              disabled={rangeBusy || !rangeStart.trim()}
+              className="px-2.5 py-1 rounded-md text-[10px] font-semibold bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 cursor-pointer disabled:opacity-50"
+            >
+              {t("portscan.addRange")}
+            </button>
+            <button
+              onClick={() => void runRange("delete")}
+              disabled={rangeBusy || !rangeStart.trim()}
+              className="px-2.5 py-1 rounded-md text-[10px] font-semibold bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 cursor-pointer disabled:opacity-50"
+            >
+              {t("portscan.deleteRange")}
+            </button>
+          </div>
+        )}
+        {reservedRanges && <p className="mt-1.5 shrink-0 text-[9px] text-slate-500">{t("portscan.rangeAdminHint")}</p>}
+
         <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
           {reservedRanges && (
             reservedRanges.length === 0 ? (
@@ -199,16 +288,30 @@ export default function PortScanner() {
                     <td className="py-1.5 pr-3">{t("portscan.startPort")}</td>
                     <td className="py-1.5 pr-3">{t("portscan.endPort")}</td>
                     <td className="py-1.5 pr-3">{t("portscan.portCount")}</td>
-                    <td className="py-1.5">{t("portscan.relatedProc")}</td>
+                    <td className="py-1.5 pr-3">{t("portscan.relatedProc")}</td>
+                    <td className="py-1.5">{t("portscan.op")}</td>
                   </tr>
                 </thead>
                 <tbody className="text-slate-300 divide-y divide-white/[0.03]">
                   {reservedRanges.map((r, i) => (
                     <tr key={i} className="hover:bg-white/[0.02]">
-                      <td className="py-1 font-mono">{r.start}</td>
+                      <td className="py-1 font-mono">
+                        {r.managed && <span className="mr-0.5 text-amber-400" title={t("portscan.managedHint")}>*</span>}
+                        {r.start}
+                      </td>
                       <td className="py-1 font-mono">{r.end}</td>
                       <td className="py-1 font-mono text-slate-500">{r.end - r.start + 1}</td>
                       <td className="py-1 text-slate-400">{r.process || "-"}</td>
+                      <td className="py-1">
+                        <button
+                          onClick={() => void deleteRow(r)}
+                          disabled={rangeBusy || r.managed}
+                          title={r.managed ? t("portscan.managedHint") : t("portscan.deleteRow")}
+                          className="px-1.5 py-0.5 rounded text-[9px] bg-rose-600/15 hover:bg-rose-600/25 text-rose-300 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                          {t("portscan.deleteRow")}
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

@@ -851,7 +851,7 @@ export default function BuddyPanel() {
   const [paths, setPaths] = useState<BuddyPaths | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
-  // 切换进度（关闭 → 合并 → 写入 → 启动），由后端 buddy-switch-progress 事件驱动
+  // 切换进度（检查客户端已退出 → 合并 → 写入 → 启动），由后端 buddy-switch-progress 事件驱动
   const [switchProgress, setSwitchProgress] = useState<BuddySwitchProgress | null>(null);
   // 最近一次切换的会话同步台账（成功/跳过/冲突/失败明细），切换结束后保留给用户查看
   const [syncSummary, setSyncSummary] = useState<BuddySessionSyncSummary | null>(null);

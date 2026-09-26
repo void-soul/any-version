@@ -314,6 +314,25 @@ fn wait_pids_exit(pids: &[u32], timeout: Duration) -> bool {
     }
 }
 
+/// 切换账号前**只检查**客户端是否已退出（不替用户关客户端）。
+///
+/// 约定：客户端由用户自己关闭，程序不强制关闭——进程占用 db/会话目录，
+/// 强杀或代关都可能让客户端来不及落盘，丢掉未保存的会话。仍在运行就直接报错，
+/// 让用户手动退出后重试。
+///
+/// 与 [`close_running`] 的区别：那个是「主动去关」，这个是「只看一眼」。切换流程用这个。
+pub fn ensure_not_running(platform: BuddyPlatform) -> Result<(), String> {
+    let running = running_pids(platform);
+    if running.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "检测到 {} 仍在运行（pid: {:?}）。请手动退出客户端后再切换——Kira 不会强行关闭它，以免丢失未保存的会话。",
+        app_display_name(platform),
+        running
+    ))
+}
+
 /// 关闭运行中的客户端（按平台区分强杀策略）：
 /// - WorkBuddy：优雅退出 → 超时升级强杀剩余进程，保证切换可以继续；
 /// - CodeBuddy CN：只做优雅退出，超时后返回可操作错误，提示用户手动退出后再切换

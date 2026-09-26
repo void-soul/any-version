@@ -443,13 +443,13 @@ pub async fn buddy_switch_account(
     let account = store::load_account(platform, &account_id)
         .ok_or_else(|| format!("账号不存在: {}", account_id))?;
 
-    // 复刻 cockpit-tools 切换时序：关闭运行中的客户端 → 合并来源会话 → 写入登录态 → 重新启动。
+    // 切换时序：检查客户端已退出 → 合并来源会话 → 写入登录态 → 重新启动。
     // 各阶段通过 buddy-switch-progress 事件上报前端；合并统计随报告一并返回（前端渲染为文本）。
     tauri::async_runtime::spawn_blocking(move || {
-        // 1) 请求关闭正在运行的客户端（进程占用 db/会话目录，必须先关再合并）。
-        //    只做优雅退出、不强杀；客户端不响应时 close_running 报错，切换随之中止并提示手动退出。
-        emit_switch_progress(Some(&app), platform, &account_id, "closing", 0, None);
-        client_process::close_running(platform, 20)?;
+        // 1) **只检查**客户端是否已退出：约定由用户自己关闭，程序不代关（更不会强杀），
+        //    进程占用 db/会话目录，强关可能丢未落盘的会话。仍在运行 → 中止并提示手动退出。
+        emit_switch_progress(Some(&app), platform, &account_id, "checking", 0, None);
+        client_process::ensure_not_running(platform)?;
 
         // 2) 切换之前合并来源账号本地会话（合并进度在 session_transfer 内部上报）
         let transfer_report = session_transfer::transfer_on_switch(platform, &account, Some(&app))?;

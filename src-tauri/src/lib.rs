@@ -552,6 +552,8 @@ pub fn run() {
             commands::port::check_port_status,
             commands::port::kill_port_owner,
             commands::port::get_reserved_ports,
+            commands::port::add_reserved_ports,
+            commands::port::delete_reserved_ports,
             commands::network::net_connections,
             commands::network::ping_host,
             commands::pkg::get_global_packages,
