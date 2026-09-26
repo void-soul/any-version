@@ -176,7 +176,9 @@ pub struct Config {
 struct ConfigPathsFile {
     #[serde(default)]
     pub data_dir: String,
-    #[serde(default)]
+    /// 同样属于派生路径：默认 `data_dir/node-projects`，**只有用户显式改到别处才落盘**
+    /// （空 = 派生，跟 versions_dir / links_dir / sdk_dir 一个思路）。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub node_projects_dir: String,
 }
 
@@ -483,7 +485,8 @@ fn default_config() -> Config {
         has_run_before: false,
         tray_menu: TrayMenuConfig::default(),
         last_servers: LastServerConfig::default(),
-        node_projects_dir: base_dir.join("node-projects").to_string_lossy().to_string(),
+        // 留空 = 派生为 data_dir/node-projects（改数据目录时自动跟着走，不会变成过期值）
+        node_projects_dir: String::new(),
         auto_start_services: std::collections::HashSet::new(),
         module_theme_colors: std::collections::HashMap::new(),
         global_font: String::new(),
@@ -510,6 +513,14 @@ fn fill_legacy_dirs(config: &mut Config, base_dir: &Path) {
     config.versions_dir = sdk.join("_versions").to_string_lossy().to_string();
     config.links_dir = sdk.to_string_lossy().to_string();
     config.sdk_dir = sdk.to_string_lossy().to_string();
+
+    // node_projects_dir 默认就是 data_dir/node-projects：存一份等于默认值的路径没有意义，
+    // 而且数据目录一改它就变成过期值。这里统一清掉，让「空」代表派生。
+    let derived_node = data.join("node-projects");
+    let configured = config.node_projects_dir.trim();
+    if !configured.is_empty() && PathBuf::from(configured) == derived_node {
+        config.node_projects_dir.clear();
+    }
 }
 
 /// 把损坏的 config.json 备份为 config.json.corrupt-<unix秒>.bak，避免用户数据直接丢失。
@@ -1042,6 +1053,7 @@ pub fn update_config(app_handle: tauri::AppHandle, data_dir: String) -> Result<M
     let old_versions_dir = old_config.versions_dir.clone();
     let old_links_dir = old_config.links_dir.clone();
 
+    let old_data_dir = old_config.data_dir.trim().to_string();
     let mut config = old_config;
     let base_dir = get_base_dir();
     // 选项文件跟着数据目录走：记下旧位置，写进新目录后把旧的那份删掉
@@ -1075,6 +1087,20 @@ pub fn update_config(app_handle: tauri::AppHandle, data_dir: String) -> Result<M
     // 同步填充废弃字段，保证现有引用一致
     config.versions_dir = new_versions_dir.to_string_lossy().to_string();
     config.links_dir = new_links_dir.to_string_lossy().to_string();
+
+    // node_projects_dir 默认派生自 data_dir：原本落在旧数据目录/base_dir 下的，
+    // 迁移后就是过期值，清空让它重新派生到新目录；用户自定义在别处的路径则原样保留。
+    if !config.node_projects_dir.trim().is_empty() {
+        let configured = PathBuf::from(config.node_projects_dir.trim());
+        let old_root = if old_data_dir.is_empty() {
+            base_dir.clone()
+        } else {
+            PathBuf::from(&old_data_dir)
+        };
+        if configured.starts_with(&old_root) || configured.starts_with(&base_dir) {
+            config.node_projects_dir.clear();
+        }
+    }
 
     // 2. data_dir 变化时，迁移 base_dir 下其余可变数据（含 node-projects）
     if new_data_dir != base_dir {
@@ -1533,6 +1559,7 @@ mod tests {
         let (paths, settings) = split_config(&config);
         let json = serde_json::to_value(&paths).unwrap();
         let keys: Vec<String> = json.as_object().unwrap().keys().cloned().collect();
+        // 显式设了 node_projects_dir 才会落盘
         assert_eq!(keys.len(), 2, "config.json 字段: {:?}", keys);
         assert!(keys.iter().any(|k| k == "data_dir"));
         assert!(keys.iter().any(|k| k == "node_projects_dir"));
@@ -1569,6 +1596,28 @@ mod tests {
         assert!(settings.managed_items.contains("go"));
         assert_eq!(settings.rss_sources, vec!["https://a/feed".to_string()]);
         assert!(!settings.tray_menu.enabled);
+    }
+
+    /// node_projects_dir 默认派生自 data_dir：没显式改过就不该出现在 config.json 里。
+    #[test]
+    fn derived_paths_are_not_persisted() {
+        let mut config = default_config();
+        assert_eq!(config.node_projects_dir, "", "默认应为派生（空）");
+        config.data_dir = "D:/any-versions".to_string();
+        let (paths, _) = split_config(&config);
+        let json = serde_json::to_value(&paths).unwrap();
+        let keys: Vec<String> = json.as_object().unwrap().keys().cloned().collect();
+        assert_eq!(keys, vec!["data_dir".to_string()], "config.json 字段: {:?}", keys);
+
+        // 等于派生值的显式路径也要被清掉（fill_legacy_dirs 里做）
+        config.node_projects_dir = "D:/any-versions/node-projects".to_string();
+        fill_legacy_dirs(&mut config, &get_base_dir());
+        assert_eq!(config.node_projects_dir, "", "等于默认值应被归一化为空");
+
+        // 用户自定义到别处的路径必须保留
+        config.node_projects_dir = "E:/node-projects".to_string();
+        fill_legacy_dirs(&mut config, &get_base_dir());
+        assert_eq!(config.node_projects_dir, "E:/node-projects");
     }
 
     /// 缺省字段的旧 settings.json 也要能读（全 default，不能因为缺字段整份解析失败）。
