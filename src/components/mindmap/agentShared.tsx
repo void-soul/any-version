@@ -378,7 +378,7 @@ function SessionBar({
           }}
           onBlur={() => setRenaming(false)}
           placeholder={t("agent.sessionNamePh")}
-          className="min-w-0 flex-1 rounded border border-cyan-400/40 bg-slate-950 px-1.5 py-0.5 text-[10px] text-slate-200 outline-none"
+          className="min-w-0 flex-1 rounded border border-cyan-400/40 bg-slate-950 px-1.5 py-0.5 text-tiny text-slate-200 outline-none"
         />
       ) : (
         <select
@@ -434,8 +434,8 @@ const PHASE_KEYS_TEXT = ["agent.phaseGenerate", "agent.phaseValidate", "agent.ph
 /** AI 输入框自动增高的上限（px）：到顶后内部滚动，否则长指令会把对话区挤没 */
 const INPUT_MAX_HEIGHT = 160;
 
-const wbSelect = "h-8 min-w-0 rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400/60 disabled:opacity-50";
-const wbBtn = "inline-flex cursor-pointer items-center gap-1 rounded-md border border-white/10 bg-white/[0.05] px-2 py-1.5 text-[10px] text-slate-300 transition hover:bg-white/[0.1] hover:text-white disabled:cursor-default disabled:opacity-40";
+const wbSelect = "ui-input h-8 min-w-0 px-2 disabled:opacity-50";
+const wbBtn = "ui-btn px-2 py-1.5 disabled:opacity-40";
 
 /** 阶段步进器：按事件流推导各阶段状态（待办/进行/完成/失败） */
 function PhaseStepper({ mode, entries, loading, t }: { mode: AgentWorkbenchMode; entries: readonly AiProgressEntry[]; loading: boolean; t: (k: string, o?: any) => string }) {
@@ -496,7 +496,7 @@ function ActivityLine({ e, projectRoot, t }: { e: AiProgressEntry; projectRoot?:
       <span className="mt-0.5 shrink-0 font-mono text-[7px] text-slate-600">{e.at ? fmtClock(e.at) : ""}</span>
       <span className="mt-0.5 shrink-0">{STEP_ICONS[e.step] ?? <Terminal className="h-3 w-3 text-slate-400" />}</span>
       <div className="min-w-0 flex-1">
-        <div className="text-[9px] leading-4 text-slate-300">
+        <div className="text-micro leading-4 text-slate-300">
           {e.step === "read" && (e.files?.length ?? 0) > 0 ? t("mindmap.aiStepReadFiles", { count: (e.files ?? []).length }) : progressText(e, t)}
         </div>
         {files.length > 0 && (
@@ -520,7 +520,7 @@ function ActivityLine({ e, projectRoot, t }: { e: AiProgressEntry; projectRoot?:
         )}
         {/* 思考过程：模型调用工具前的想法 / 模型产出的推理文本（长文可展开） */}
         {(e.step === "agentThought" || e.step === "agentReasoning") && !!e.text && (
-          <div className={`mt-0.5 max-h-24 overflow-y-auto whitespace-pre-wrap rounded border px-1.5 py-1 text-[9px] leading-4 ${
+          <div className={`mt-0.5 max-h-24 overflow-y-auto whitespace-pre-wrap rounded border px-1.5 py-1 text-micro leading-4 ${
             e.step === "agentReasoning"
               ? "border-fuchsia-400/20 bg-fuchsia-400/[0.04] text-fuchsia-200/80"
               : "border-violet-400/20 bg-violet-400/[0.04] text-violet-200/80"
@@ -543,7 +543,7 @@ function ResultCard({ result, t, onShowReport }: { result: AiImportResult; t: (k
     <div className="overflow-hidden rounded-ctl border border-emerald-400/20 bg-emerald-400/[0.04]">
       <div className="flex items-center gap-2 border-b border-emerald-400/15 px-2.5 py-1.5">
         <Check className="h-3 w-3 text-emerald-300" />
-        <span className="text-[10px] font-semibold text-emerald-200">{t("agent.resultTitle", { count: result.documents.length })}</span>
+        <span className="text-tiny font-semibold text-emerald-200">{t("agent.resultTitle", { count: result.documents.length })}</span>
         <span className="ml-auto font-mono text-[8px] tabular-nums text-slate-400">
           {t("mindmap.aiRunUsageLine", { req: usage.requests, in: fmtNum(usage.inputTokens), out: fmtNum(usage.outputTokens), total: fmtNum(usage.totalTokens) })}
         </span>
@@ -553,7 +553,7 @@ function ResultCard({ result, t, onShowReport }: { result: AiImportResult; t: (k
           const r = result.reports.find((x) => x.documentId === d.document.id);
           const ok = (r?.diagnostics.length ?? 0) === 0;
           return (
-            <div key={d.document.id} className="flex items-center gap-1.5 text-[9px]">
+            <div key={d.document.id} className="flex items-center gap-1.5 text-micro">
               <span className="shrink-0 rounded border border-cyan-400/40 bg-cyan-400/10 px-1.5 py-px text-[8px] text-cyan-300">{viewLabel(t, r?.view ?? "architecture")}</span>
               <span className="min-w-0 flex-1 truncate text-slate-300" title={d.document.name}>{d.document.name}</span>
               <span className="shrink-0 font-mono text-[8px] text-slate-500">{r ? t("mindmap.nodeCount", { count: r.nodeCount }) : `${d.nodes.length}`}</span>
@@ -571,7 +571,7 @@ function ResultCard({ result, t, onShowReport }: { result: AiImportResult; t: (k
         </div>
       </div>
       <div className="border-t border-emerald-400/15 px-2.5 py-1.5">
-        <button type="button" onClick={onShowReport} className="cursor-pointer text-[9px] font-medium text-cyan-300 transition hover:text-cyan-200">
+        <button type="button" onClick={onShowReport} className="cursor-pointer text-micro font-medium text-cyan-300 transition hover:text-cyan-200">
           {t("agent.viewReport")} →
         </button>
       </div>
@@ -615,38 +615,38 @@ function AskForm({ ask, onSubmit, t }: {
         <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-amber-400/20 text-amber-300">
           <Sparkles className="h-3 w-3" />
         </span>
-        <span className="text-[10px] font-semibold text-amber-200">{t("agent.askTitle")}</span>
+        <span className="text-tiny font-semibold text-amber-200">{t("agent.askTitle")}</span>
         <span className="ml-auto text-[8px] text-amber-300/70">{t("agent.askRound", { n: ask.round, max: ask.max })}</span>
       </div>
-      {ask.question && <p className="mb-2 text-[10px] leading-4 text-slate-200">{ask.question}</p>}
+      {ask.question && <p className="mb-2 text-tiny leading-4 text-slate-200">{ask.question}</p>}
       <div className="space-y-2">
         {ask.fields.map((f) => (
           <div key={f.key}>
-            <label className="mb-0.5 block text-[9px] font-medium text-slate-400">{f.label}</label>
+            <label className="mb-0.5 block text-micro font-medium text-slate-400">{f.label}</label>
             {f.type === "select" ? (
               <select value={values[f.key] ?? ""} onChange={(e) => setField(f.key, e.target.value)}
-                className="h-7 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-[10px] text-slate-200 outline-none focus:border-amber-400/60">
+                className="h-7 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-tiny text-slate-200 outline-none focus:border-amber-400/60">
                 <option value="">{t("agent.askPick")}</option>
                 {(f.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
             ) : f.type === "textarea" ? (
               <textarea value={values[f.key] ?? ""} onChange={(e) => setField(f.key, e.target.value)} rows={2}
-                className="w-full resize-none rounded-md border border-white/10 bg-slate-950/70 px-2 py-1.5 text-[10px] text-slate-200 outline-none focus:border-amber-400/60" />
+                className="w-full resize-none rounded-md border border-white/10 bg-slate-950/70 px-2 py-1.5 text-tiny text-slate-200 outline-none focus:border-amber-400/60" />
             ) : (
               <input value={values[f.key] ?? ""} onChange={(e) => setField(f.key, e.target.value)}
-                className="h-7 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-[10px] text-slate-200 outline-none focus:border-amber-400/60" />
+                className="h-7 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-tiny text-slate-200 outline-none focus:border-amber-400/60" />
             )}
           </div>
         ))}
         {ask.fields.length === 0 && (
           <textarea value={freeText} onChange={(e) => setFreeText(e.target.value)} rows={2}
             placeholder={t("agent.askFreePh")}
-            className="w-full resize-none rounded-md border border-white/10 bg-slate-950/70 px-2 py-1.5 text-[10px] text-slate-200 outline-none focus:border-amber-400/60" />
+            className="w-full resize-none rounded-md border border-white/10 bg-slate-950/70 px-2 py-1.5 text-tiny text-slate-200 outline-none focus:border-amber-400/60" />
         )}
       </div>
       <div className="mt-2 flex justify-end">
         <button type="button" onClick={submit}
-          className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-amber-400/40 bg-amber-400/15 px-3 py-1 text-[10px] font-semibold text-amber-100 transition hover:bg-amber-400/25">
+          className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-amber-400/40 bg-amber-400/15 px-3 py-1 text-tiny font-semibold text-amber-100 transition hover:bg-amber-400/25">
           <Send className="h-3 w-3" />{t("agent.askSubmit")}
         </button>
       </div>
@@ -847,11 +847,11 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
       )}
       {/* 状态条：阶段计划 + 实时统计 */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-ctl border border-white/10 bg-slate-950/70 px-2 py-1.5">
-        <span className="inline-flex shrink-0 items-center gap-1 text-[9px] font-semibold uppercase tracking-wide text-slate-400">
+        <span className="inline-flex shrink-0 items-center gap-1 text-micro font-semibold uppercase tracking-wide text-slate-400">
           <Brain className={`h-3 w-3 ${loading ? "animate-pulse text-cyan-300" : "text-slate-500"}`} />
           {t("agent.consoleTitle")}
         </span>
-        <span className={`text-[9px] font-medium ${statusColor}`}>{loading ? t("agent.working") : runError ? t("agent.failed") : t("agent.ready")}</span>
+        <span className={`text-micro font-medium ${statusColor}`}>{loading ? t("agent.working") : runError ? t("agent.failed") : t("agent.ready")}</span>
         <div className="min-w-0 flex-1 overflow-x-auto">
           <PhaseStepper mode={mode} entries={entries} loading={loading} t={t} />
         </div>
@@ -879,14 +879,14 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
         {isFirstRun && !loading && (
           <div className="flex items-center gap-2 rounded-ctl border border-dashed border-white/10 bg-white/[0.02] px-3 py-2.5">
             <Sparkles className="h-4 w-4 shrink-0 text-cyan-300/70" />
-            <p className="text-[10px] leading-4 text-slate-400">
+            <p className="text-tiny leading-4 text-slate-400">
               {mode === "project" ? t("agent.hintProject") : t("agent.hintText")}
             </p>
           </div>
         )}
         {messages.map((m) => (
           <div key={m.id} className={`group flex items-end gap-1 ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-[85%] rounded-ctl px-2.5 py-1.5 text-[10px] leading-4 ${m.role === "user" ? "border border-cyan-400/25 bg-cyan-400/10 text-cyan-100" : "border border-white/10 bg-white/[0.04] text-slate-300"}`}>
+            <div className={`max-w-[85%] rounded-ctl px-2.5 py-1.5 text-tiny leading-4 ${m.role === "user" ? "border border-cyan-400/25 bg-cyan-400/10 text-cyan-100" : "border border-white/10 bg-white/[0.04] text-slate-300"}`}>
               {m.text}
             </div>
             {/* 从这条分叉：复制该条及之前的历史到新会话（原会话不动） */}
@@ -907,7 +907,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
               <div className="flex items-start gap-1.5">
                 <span className="mt-0.5 shrink-0"><Terminal className="h-3 w-3 animate-pulse text-emerald-300" /></span>
                 <div className="min-w-0 flex-1">
-                  <div className="text-[9px] text-emerald-200/90">{t("mindmap.aiStepStream")}</div>
+                  <div className="text-micro text-emerald-200/90">{t("mindmap.aiStepStream")}</div>
                   <div className="mt-0.5 max-h-[72px] overflow-y-auto rounded border border-emerald-400/15 bg-emerald-400/[0.03] px-1.5 py-1 font-mono text-[8px] leading-3.5 whitespace-pre-wrap text-emerald-100/80">
                     {lastStream.text || "…"}
                     <span className="ml-0.5 inline-block h-2 w-1 animate-pulse bg-emerald-300 align-middle" />
@@ -935,7 +935,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
         <button type="button" onClick={() => setCfgOpen(!cfgOpen)}
           className="flex w-full cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-left">
           <ChevronDown className={`h-3 w-3 shrink-0 text-slate-500 transition-transform ${cfgOpen ? "" : "-rotate-90"}`} />
-          <span className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">{t("agent.configTitle")}</span>
+          <span className="text-micro font-semibold uppercase tracking-wide text-slate-400">{t("agent.configTitle")}</span>
           <span className="ml-auto text-[8px] text-slate-600">
             {mode === "chat"
               ? (projectDir || t("mindmap.agentNoDir"))
@@ -988,20 +988,20 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
                 </div>
                 <div>
                   <div className="mb-0.5 flex items-center justify-between">
-                    <span className="text-[9px] font-semibold uppercase tracking-wide text-slate-500">{t("mindmap.aiDepthTitle")}</span>
-                    <span className="text-[9px] font-semibold text-cyan-300">{t(`mindmap.aiDepth${aiDepth}`)}</span>
+                    <span className="text-micro font-semibold uppercase tracking-wide text-slate-500">{t("mindmap.aiDepthTitle")}</span>
+                    <span className="text-micro font-semibold text-cyan-300">{t(`mindmap.aiDepth${aiDepth}`)}</span>
                   </div>
                   <input type="range" min={1} max={5} step={1} value={aiDepth} onChange={(e) => onDepthChange(Number(e.target.value))} className="w-full accent-cyan-400" />
                   <p className="mt-0.5 text-[8px] leading-3.5 text-slate-600">{t(`mindmap.aiDepthDesc${aiDepth}`)}</p>
                 </div>
                 <div>
-                  <div className="mb-0.5 text-[9px] font-semibold uppercase tracking-wide text-slate-500">{t("mindmap.aiViewsTitle")}</div>
+                  <div className="mb-0.5 text-micro font-semibold uppercase tracking-wide text-slate-500">{t("mindmap.aiViewsTitle")}</div>
                   <div className="flex flex-wrap gap-1">
                     {["architecture", "workflow", "dataflow"].map((v) => {
                       const on = aiViews.includes(v);
                       return (
                         <button key={v} type="button"
-                          className={`cursor-pointer rounded-md border px-1.5 py-0.5 text-[9px] transition ${on ? "border-cyan-400/60 bg-cyan-400/15 text-white" : "border-white/10 bg-slate-950/60 text-slate-400 hover:text-slate-200"}`}
+                          className={`cursor-pointer rounded-md border px-1.5 py-0.5 text-micro transition ${on ? "border-cyan-400/60 bg-cyan-400/15 text-white" : "border-white/10 bg-slate-950/60 text-slate-400 hover:text-slate-200"}`}
                           onClick={() => onViewsChange(on ? aiViews.filter((x) => x !== v) : [...aiViews, v])}>
                           {viewLabel(t, v)}
                         </button>
@@ -1013,8 +1013,8 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
               </>
             ) : (
               <div>
-                <label className="mb-0.5 block text-[9px] font-semibold uppercase tracking-wide text-slate-500">{t("mindmap.reqTitlePh")}</label>
-                <input className={`w-full rounded-md border border-white/10 bg-slate-950/70 px-2 py-1.5 text-[10px] text-slate-200 outline-none focus:border-cyan-400/60`}
+                <label className="mb-0.5 block text-micro font-semibold uppercase tracking-wide text-slate-500">{t("mindmap.reqTitlePh")}</label>
+                <input className={`w-full rounded-md border border-white/10 bg-slate-950/70 px-2 py-1.5 text-tiny text-slate-200 outline-none focus:border-cyan-400/60`}
                   value={textTitle} onChange={(e) => onTextTitleChange(e.target.value)} placeholder={t("mindmap.reqTitlePh")} />
               </div>
             )}
@@ -1029,7 +1029,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
           <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-40 overflow-y-auto rounded-ctl border border-white/10 bg-slate-900/95 py-1 shadow-xl">
             {atMatches.map((f, i) => (
               <button key={f} type="button" onMouseDown={(e) => { e.preventDefault(); pickAt(f); }}
-                className={`block w-full cursor-pointer truncate px-2.5 py-1 text-left font-mono text-[10px] transition ${i === atIndex ? "bg-[var(--module-accent)]/25 text-white" : "text-slate-300 hover:bg-white/5"}`}>
+                className={`block w-full cursor-pointer truncate px-2.5 py-1 text-left font-mono text-tiny transition ${i === atIndex ? "bg-[var(--module-accent)]/25 text-white" : "text-slate-300 hover:bg-white/5"}`}>
                 {f}
               </button>
             ))}
@@ -1055,11 +1055,11 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
               : t("agent.inputPhFollowUp")
           }
           disabled={loading}
-          className="min-h-[34px] flex-1 resize-none overflow-y-auto rounded-ctl border border-white/10 bg-slate-950/70 px-2.5 py-2 text-[11px] leading-relaxed text-slate-200 outline-none focus:border-cyan-400/60 disabled:opacity-50"
+          className="min-h-[34px] flex-1 resize-none overflow-y-auto rounded-ctl border border-white/10 bg-slate-950/70 px-2.5 py-2 text-caption leading-relaxed text-slate-200 outline-none focus:border-cyan-400/60 disabled:opacity-50"
         />
         {!loading && (
           <button type="button" onClick={submit} disabled={sendDisabled}
-            className="inline-flex h-[34px] shrink-0 cursor-pointer items-center gap-1 rounded-ctl px-3 text-[10px] font-semibold text-white transition disabled:cursor-default disabled:opacity-40"
+            className="inline-flex h-[34px] shrink-0 cursor-pointer items-center gap-1 rounded-ctl px-3 text-tiny font-semibold text-white transition disabled:cursor-default disabled:opacity-40"
             style={{ backgroundColor: "var(--module-accent, #22d3ee)" }}>
             <Send className="h-3 w-3" />
             {isFirstRun ? t("agent.runFirst") : t("agent.followUp")}
@@ -1069,7 +1069,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
         {mode !== "chat" && messages.length > 0 && !loading && (
           <button type="button"
             onClick={() => { clearAgentMessages(); onNewSession(); }}
-            className="inline-flex h-[34px] shrink-0 cursor-pointer items-center gap-1 rounded-ctl border border-white/10 bg-white/[0.04] px-2 text-[9px] text-slate-400 transition hover:text-slate-200"
+            className="inline-flex h-[34px] shrink-0 cursor-pointer items-center gap-1 rounded-ctl border border-white/10 bg-white/[0.04] px-2 text-micro text-slate-400 transition hover:text-slate-200"
             title={t("agent.newSessionTip")}>
             <RotateCcw className="h-3 w-3" />
             {t("agent.newSession")}

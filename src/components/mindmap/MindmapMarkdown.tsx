@@ -50,7 +50,7 @@ function LocalImage({ path, alt, onOpenFile }: { path: string; alt: string; onOp
     return () => { cancelled = true; };
   }, [path]);
   if (failed) {
-    return <button type="button" className="my-2 block max-w-full text-left text-[9px] text-red-300" onClick={() => onOpenFile(path)} title={t("mmdmark.openFile")}>{t("mmdmark.imgLoadFail")}</button>;
+    return <button type="button" className="my-2 block max-w-full text-left text-micro text-red-300" onClick={() => onOpenFile(path)} title={t("mmdmark.openFile")}>{t("mmdmark.imgLoadFail")}</button>;
   }
   if (!src) {
     return <div className="my-2 h-16 animate-pulse rounded border border-white/10 bg-slate-900/60" />;
@@ -97,7 +97,7 @@ function TreeItem({ node, depth }: { node: MmTree; depth: number }) {
           </button>
         ) : <span className="inline-block w-3.5 shrink-0" />}
         <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: dot, boxShadow: `0 0 5px ${dot}66` }} />
-        <span className="min-w-0 break-words text-[10px] leading-4 text-slate-200">{node.name}</span>
+        <span className="min-w-0 break-words text-tiny leading-4 text-slate-200">{node.name}</span>
       </div>
       {open && hasChildren && (
         <div className="ml-3 border-l border-white/10 pl-2">
@@ -113,10 +113,10 @@ function MindmapBlock({ code }: { code: string }) {
   const tree = useMemo(() => parseMindmapTree(code.split("\n")), [code]);
   return (
     <div className="my-2 rounded-ctl border border-cyan-400/20 bg-slate-950/70 p-2.5">
-      <div className="mb-1.5 flex items-center gap-1 text-[9px] uppercase tracking-wide text-cyan-300/80">
+      <div className="mb-1.5 flex items-center gap-1 text-micro uppercase tracking-wide text-cyan-300/80">
         <ListTree className="h-3 w-3" />{t("mmdmark.builtinMindmap")}
       </div>
-      {tree.length === 0 ? <div className="text-[10px] text-slate-500">{t("mmdmark.empty")}</div> : tree.map((n, i) => <TreeItem key={i} node={n} depth={0} />)}
+      {tree.length === 0 ? <div className="text-tiny text-slate-500">{t("mmdmark.empty")}</div> : tree.map((n, i) => <TreeItem key={i} node={n} depth={0} />)}
     </div>
   );
 }
@@ -175,10 +175,10 @@ export const MindmapMarkdown = memo(function MindmapMarkdown({ content }: { cont
   };
 
   return (
-    <div className="mindmap-markdown text-[11px] leading-relaxed text-slate-200 break-words">
+    <div className="mindmap-markdown text-caption leading-relaxed text-slate-200 break-words">
       {toc.length >= 2 && (
         <div className="mb-3 rounded-ctl border border-white/10 bg-slate-900/60">
-          <button type="button" className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-[9px] uppercase tracking-wide text-slate-400 hover:text-slate-200"
+          <button type="button" className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-micro uppercase tracking-wide text-slate-400 hover:text-slate-200"
             onClick={() => setShowToc(!showToc)}>
             <PanelRight className="h-3 w-3" />{t("mmdmark.toc")}
             {showToc ? <ChevronDown className="h-3 w-3 ml-auto" /> : <ChevronRight className="h-3 w-3 ml-auto" />}
@@ -187,7 +187,7 @@ export const MindmapMarkdown = memo(function MindmapMarkdown({ content }: { cont
             <nav className="max-h-40 overflow-y-auto px-2.5 pb-2">
               {toc.map((t, i) => (
                 <button key={i} type="button"
-                  className="block w-full truncate rounded px-1.5 py-0.5 text-left text-[10px] text-slate-400 hover:bg-white/5 hover:text-cyan-300"
+                  className="block w-full truncate rounded px-1.5 py-0.5 text-left text-tiny text-slate-400 hover:bg-white/5 hover:text-cyan-300"
                   style={{ paddingLeft: `${8 + (t.level - 1) * 12}px` }}
                   onClick={() => scrollTo(t.id)}>{t.text}</button>
               ))}
@@ -202,10 +202,10 @@ export const MindmapMarkdown = memo(function MindmapMarkdown({ content }: { cont
         components={{
           h1: heading(1, "mt-3 mb-2 text-base font-bold text-white first:mt-0"),
           h2: heading(2, "mt-3 mb-1.5 text-sm font-bold text-slate-100"),
-          h3: heading(3, "mt-2.5 mb-1 text-[12px] font-semibold text-slate-200"),
-          h4: heading(4, "mt-2 mb-1 text-[11px] font-semibold text-slate-300"),
-          h5: heading(5, "mt-2 mb-1 text-[11px] font-semibold text-slate-400"),
-          h6: heading(6, "mt-2 mb-1 text-[10px] font-semibold text-slate-400"),
+          h3: heading(3, "mt-2.5 mb-1 text-body font-semibold text-slate-200"),
+          h4: heading(4, "mt-2 mb-1 text-caption font-semibold text-slate-300"),
+          h5: heading(5, "mt-2 mb-1 text-caption font-semibold text-slate-400"),
+          h6: heading(6, "mt-2 mb-1 text-tiny font-semibold text-slate-400"),
           p: ({ children }) => <p className="my-1.5 first:mt-0 last:mb-0">{children}</p>,
           ul: ({ children }) => <ul className="my-1.5 list-disc space-y-0.5 pl-5">{children}</ul>,
           ol: ({ children }) => <ol className="my-1.5 list-decimal space-y-0.5 pl-5">{children}</ol>,
@@ -218,9 +218,9 @@ export const MindmapMarkdown = memo(function MindmapMarkdown({ content }: { cont
             if (lang === "mindmap") {
               return <MindmapBlock code={String(children).replace(/\n$/, "")} />;
             }
-            return <code className="rounded bg-slate-700/60 px-1 py-0.5 font-mono text-[10px] text-cyan-200">{children}</code>;
+            return <code className="rounded bg-slate-700/60 px-1 py-0.5 font-mono text-tiny text-cyan-200">{children}</code>;
           },
-          pre: ({ children }) => <pre className="my-2 overflow-x-auto rounded border border-white/10 bg-slate-950 p-2 font-mono text-[10px] text-slate-300">{children}</pre>,
+          pre: ({ children }) => <pre className="my-2 overflow-x-auto rounded border border-white/10 bg-slate-950 p-2 font-mono text-tiny text-slate-300">{children}</pre>,
           a: ({ href, children }) => {
             const target = href ?? "";
             const local = isLocalFilePath(target);
@@ -235,7 +235,7 @@ export const MindmapMarkdown = memo(function MindmapMarkdown({ content }: { cont
             }
             return <img src={target} alt={alt ?? ""} className="max-h-64 max-w-full rounded border border-white/10 object-contain" />;
           },
-          table: ({ children }) => <div className="my-2 overflow-x-auto rounded border border-white/10"><table className="min-w-full text-[10px]">{children}</table></div>,
+          table: ({ children }) => <div className="my-2 overflow-x-auto rounded border border-white/10"><table className="min-w-full text-tiny">{children}</table></div>,
           thead: ({ children }) => <thead className="bg-slate-800/80">{children}</thead>,
           th: ({ children }) => <th className="border-b border-white/10 px-2 py-1 text-left text-cyan-200">{children}</th>,
           td: ({ children }) => <td className="border-b border-white/5 px-2 py-1 text-slate-300">{children}</td>,

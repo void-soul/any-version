@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next";
 import type { LauncherSetting } from "../launcher/types";
 import { HotkeyRecorder } from "../shared/HotkeyRecorder";
 import { SettingsGroup, SettingsRow } from "../shared/ModuleSettings";
+import { theamedAlert } from "../shared/ThemedAlert";
 
 /** 与后端 mindmap::settings::ExplorerSettings 对应（camelCase 序列化） */
 export interface ExplorerSettings {
@@ -87,12 +88,12 @@ export function MindmapModuleSettings() {
         await saveLauncher({ externalEditor: selected as string });
       }
     } catch {
-      alert(t("settings.folderPickerUnavailable"));
+      theamedAlert(t("settings.folderPickerUnavailable"));
     }
   };
 
   if (!launcher || !explorer) {
-    return <div className="text-[11px] text-slate-500">…</div>;
+    return <div className="text-caption text-slate-500">…</div>;
   }
 
   return (
@@ -131,7 +132,7 @@ export function MindmapModuleSettings() {
               }
             }}
             placeholder={t("settings.externalEditorPh")}
-            className="flex-1 h-9 px-2.5 rounded-card bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
+            className="flex-1 h-9 px-2.5 rounded-card bg-white/5 border border-white/10 text-body text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
           />
           <button
             type="button"
@@ -142,16 +143,16 @@ export function MindmapModuleSettings() {
             <FolderOpen className="w-4 h-4" />
           </button>
         </div>
-        <p className="text-[10px] text-slate-500 leading-relaxed">
+        <p className="text-tiny text-slate-500 leading-relaxed">
           {t("settings.externalEditorHint")}
         </p>
-        <p className="text-[10px] text-slate-600 leading-relaxed">
+        <p className="text-tiny text-slate-600 leading-relaxed">
           {t("settings.externalEditorExample")}
         </p>
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.explorerParams")}>
-        <p className="text-[10px] text-slate-500 leading-relaxed">
+        <p className="text-tiny text-slate-500 leading-relaxed">
           {t("settings.explorerParamsHint")}
         </p>
         <div className="grid grid-cols-2 gap-2">
@@ -167,7 +168,7 @@ export function MindmapModuleSettings() {
             const lim = EXPLORER_LIMITS[key];
             return (
               <div key={key}>
-                <label className="text-[9px] text-slate-400">{t(label)}</label>
+                <label className="text-micro text-slate-400">{t(label)}</label>
                 <input
                   type="number"
                   min={lim.min}
@@ -183,7 +184,7 @@ export function MindmapModuleSettings() {
                     const n = Math.min(lim.max, Math.max(lim.min, Number(e.target.value) || lim.min));
                     void saveExplorer({ [key]: n } as Partial<ExplorerSettings>);
                   }}
-                  className="w-full h-9 px-2.5 rounded-card bg-white/5 border border-white/10 text-xs text-white font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                  className="w-full h-9 px-2.5 rounded-card bg-white/5 border border-white/10 text-body text-white font-mono focus:outline-none focus:border-[var(--module-accent)]"
                 />
                 {hint ? <p className="text-[8px] text-slate-600 mt-0.5">{t(hint)}</p> : null}
               </div>

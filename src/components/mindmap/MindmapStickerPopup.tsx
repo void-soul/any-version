@@ -140,7 +140,7 @@ export default function MindmapStickerPopup() {
       <div className="flex shrink-0 cursor-grab items-center gap-2 border-b border-white/10 px-3 py-2 active:cursor-grabbing" onMouseDown={onTitleMouseDown} style={{ backgroundColor: "var(--mm-accent-soft)" }}>
         <VexGlowAvatar size={18} />
         <StickyNote className="h-4 w-4" style={{ color: "var(--mm-accent)" }} />
-        <span className="text-xs font-semibold text-white">{t("mmdpop.stickerTitle")}</span>
+        <span className="text-body font-semibold text-white">{t("mmdpop.stickerTitle")}</span>
         <div className="flex-1" />
         <button className="rounded p-1 text-slate-400 hover:bg-white/10 hover:text-white" onClick={() => void hide()} title={t("mmdpop.close")}>
           <X className="h-3.5 w-3.5" />
@@ -149,7 +149,7 @@ export default function MindmapStickerPopup() {
 
       {/* 提示 */}
       <div className="flex shrink-0 items-center gap-1.5 border-b border-white/5 bg-white/[0.02] px-3 py-1.5">
-        <span className="text-[9px] italic leading-snug text-slate-400">
+        <span className="text-micro italic leading-snug text-slate-400">
           💬<VexGreeting seconds={10} />
         </span>
       </div>
@@ -157,34 +157,34 @@ export default function MindmapStickerPopup() {
       <div ref={contentRef} className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
         {/* 目标导图（必须选择） */}
         <div>
-          <label className="mb-1 flex items-center justify-between text-[9px] uppercase font-semibold text-slate-500">
+          <label className="mb-1 flex items-center justify-between text-micro uppercase font-semibold text-slate-500">
             <span>{t("mmdpop.targetDoc")}</span>
             <span className="font-normal normal-case text-amber-400/70">{t("mmdpop.required")}</span>
           </label>
           {docs && docs.length > 0 ? (
-            <select value={docId} onChange={(e) => setDocId(e.target.value)} className="h-8 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]">
+            <select value={docId} onChange={(e) => setDocId(e.target.value)} className="h-8 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-body text-slate-200 outline-none focus:border-[var(--mm-accent)]">
               {docs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           ) : docs && docs.length === 0 ? (
             <input value={newDocName} onChange={(e) => setNewDocName(e.target.value)} placeholder={t("mmdpop.newDocPh")}
-              className="h-8 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
+              className="h-8 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-body text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
           ) : (
-            <div className="text-[10px] text-slate-600">{t("mmdpop.loading")}</div>
+            <div className="text-tiny text-slate-600">{t("mmdpop.loading")}</div>
           )}
         </div>
 
         {/* 贴纸内容 */}
         <div className="flex min-h-0 flex-1 flex-col">
-          <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">{t("mmdpop.stickerContent")}</label>
+          <label className="mb-1 block text-micro uppercase font-semibold text-slate-500">{t("mmdpop.stickerContent")}</label>
           <textarea ref={inputRef} value={content} onChange={(e) => setContent(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void submit(); } }}
             placeholder={t("mmdpop.stickerPh")}
-            className="min-h-[100px] flex-1 resize-none rounded-md border border-white/10 bg-slate-950/70 px-3 py-2 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
+            className="min-h-[100px] flex-1 resize-none rounded-md border border-white/10 bg-slate-950/70 px-3 py-2 text-body text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
         </div>
 
         {/* 贴纸颜色 */}
         <div>
-          <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">{t("mmdpop.color")}</label>
+          <label className="mb-1 block text-micro uppercase font-semibold text-slate-500">{t("mmdpop.color")}</label>
           <div className="flex flex-wrap items-center gap-1.5">
             {STICKER_PALETTE.map((cl) => <button key={cl} type="button" className="h-5 w-5 rounded-full border border-white/20"
               style={{ backgroundColor: cl, boxShadow: color === cl ? `0 0 6px ${cl}` : "none" }}
@@ -197,11 +197,11 @@ export default function MindmapStickerPopup() {
           </div>
         </div>
 
-        {error && <div className="rounded-md border border-red-500/20 bg-red-500/10 px-2.5 py-1.5 text-[10px] text-red-300">{error}</div>}
-        {done && <div className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-[10px] text-emerald-300">✓ {done}</div>}
+        {error && <div className="rounded-md border border-red-500/20 bg-red-500/10 px-2.5 py-1.5 text-tiny text-red-300">{error}</div>}
+        {done && <div className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-tiny text-emerald-300">✓ {done}</div>}
 
         <button onClick={() => void submit()} disabled={busy || !content.trim() || (!docId && !newDocName.trim())}
-          className="shrink-0 rounded-ctl py-2 text-xs font-semibold text-white disabled:opacity-40"
+          className="shrink-0 rounded-ctl py-2 text-body font-semibold text-white disabled:opacity-40"
           style={{ backgroundColor: "var(--mm-accent)" }}>
           {busy ? t("mmdpop.recording") : t("mmdpop.asSticker")}
         </button>

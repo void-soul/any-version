@@ -210,7 +210,7 @@ export default function MindmapNodePopup() {
       <div className="flex shrink-0 cursor-grab items-center gap-2 border-b border-white/10 px-3 py-2 active:cursor-grabbing" onMouseDown={onTitleMouseDown} style={{ backgroundColor: "var(--mm-accent-soft)" }}>
         <VexGlowAvatar size={18} />
         <Brain className="h-4 w-4" style={{ color: "var(--mm-accent)" }} />
-        <span className="text-xs font-semibold text-white">{t("mmdpop.nodeTitle")}</span>
+        <span className="text-body font-semibold text-white">{t("mmdpop.nodeTitle")}</span>
         <div className="flex-1" />
         <button className="rounded p-1 text-slate-400 hover:bg-white/10 hover:text-white" onClick={() => void hide()} title={t("mmdpop.close")}>
           <X className="h-3.5 w-3.5" />
@@ -220,9 +220,9 @@ export default function MindmapNodePopup() {
       <div ref={contentRef} className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2.5">
         {/* 目标导图 + 上级节点：树形选择器（文档 → 节点树 / 新文件） */}
         <div ref={pickRef} className="relative">
-          <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">{t("mmdpop.map")}</label>
+          <label className="mb-1 block text-micro uppercase font-semibold text-slate-500">{t("mmdpop.map")}</label>
           <button type="button" onClick={() => setPickOpen((v) => !v)}
-            className="flex h-7 w-full items-center justify-between gap-1 truncate rounded-md border border-white/10 bg-slate-950/70 px-2 text-[11px] text-slate-200 outline-none hover:border-[var(--mm-accent)] focus:border-[var(--mm-accent)]">
+            className="flex h-7 w-full items-center justify-between gap-1 truncate rounded-md border border-white/10 bg-slate-950/70 px-2 text-caption text-slate-200 outline-none hover:border-[var(--mm-accent)] focus:border-[var(--mm-accent)]">
             <span className="min-w-0 truncate">{currentMapLabel}{!creatingRoot && parentId ? ` · ${childTargets.find((c) => c.id === parentId)?.label?.trim() ?? ""}` : ""}</span>
             <ChevronDown className={`h-3 w-3 shrink-0 text-slate-500 transition-transform ${pickOpen ? "rotate-180" : ""}`} />
           </button>
@@ -230,7 +230,7 @@ export default function MindmapNodePopup() {
             <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto rounded-md border border-white/10 bg-surface-modal shadow-2xl shadow-black/50">
               {/* 新增根节点：创建新文档，节点作为根 */}
               <button type="button" onClick={pickNewRoot}
-                className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[11px] hover:bg-white/[0.06] ${creatingRoot ? "text-[var(--mm-accent)]" : "text-slate-300"}`}>
+                className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-caption hover:bg-white/[0.06] ${creatingRoot ? "text-[var(--mm-accent)]" : "text-slate-300"}`}>
                 <Plus className="h-3 w-3 shrink-0 text-emerald-400" />
                 {t("mmdpop.newFile")}
               </button>
@@ -238,7 +238,7 @@ export default function MindmapNodePopup() {
                 return (
                   <div key={d.id}>
                     <button type="button" onClick={() => pickDoc(d.id)}
-                      className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[11px] hover:bg-white/[0.06] ${docId === d.id && !creatingRoot ? "text-[var(--mm-accent)]" : "text-slate-200"}`}>
+                      className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-caption hover:bg-white/[0.06] ${docId === d.id && !creatingRoot ? "text-[var(--mm-accent)]" : "text-slate-200"}`}>
                       <ListTree className="h-3 w-3 shrink-0 text-slate-500" />
                       <span className="min-w-0 flex-1 truncate">{d.name}</span>
                     </button>
@@ -251,7 +251,7 @@ export default function MindmapNodePopup() {
                           const isCurrent = parentId === ct.id && !creatingRoot;
                           return (
                             <button key={ct.id} type="button" onClick={() => pickNode(ct.id)}
-                              className={`flex w-full items-center gap-1 py-1 pr-2 text-left text-[10px] hover:bg-white/[0.06] ${isCurrent ? "text-[var(--mm-accent)]" : "text-slate-400"}`}
+                              className={`flex w-full items-center gap-1 py-1 pr-2 text-left text-tiny hover:bg-white/[0.06] ${isCurrent ? "text-[var(--mm-accent)]" : "text-slate-400"}`}
                               style={{ paddingLeft: 10 + indent * 12 }}>
                               <span className="h-1 w-1 shrink-0 rounded-full" style={{ background: isCurrent ? "var(--mm-accent)" : "#64748b" }} />
                               <span className="min-w-0 flex-1 truncate">{ct.label.trim()}</span>
@@ -268,13 +268,13 @@ export default function MindmapNodePopup() {
           {/* 新文件命名（选择「新文件」时显示） */}
           {creatingRoot && (
             <input value={newDocName} onChange={(e) => setNewDocName(e.target.value)} placeholder={t("mmdpop.newDocPh2")}
-              className="mt-1 h-7 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-[11px] text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
+              className="mt-1 h-7 w-full rounded-md border border-white/10 bg-slate-950/70 px-2 text-caption text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
           )}
         </div>
         {/* 上级节点（只读展示当前选择；节点选择在上方树形菜单完成） */}
         <div>
-          <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">{t("mmdpop.parentNode")}</label>
-          <div className="flex h-7 w-full items-center truncate rounded-md border border-white/10 bg-slate-950/70 px-2 text-[11px] text-slate-400">
+          <label className="mb-1 block text-micro uppercase font-semibold text-slate-500">{t("mmdpop.parentNode")}</label>
+          <div className="flex h-7 w-full items-center truncate rounded-md border border-white/10 bg-slate-950/70 px-2 text-caption text-slate-400">
             {loadingDoc ? t("mmdpop.loading") : creatingRoot ? t("mmdpop.rootNodePh") : parentId ? (childTargets.find((c) => c.id === parentId)?.label?.trim() ?? t("mmdpop.rootNodePh")) : t("mmdpop.rootNodePh")}
           </div>
         </div>
@@ -282,11 +282,11 @@ export default function MindmapNodePopup() {
         {/* 节点名 + 描述：同一行（名称 1 行，描述自动换行补足高度） */}
         <div className="grid grid-cols-[1.1fr_1fr] items-start gap-2">
           <div className="flex min-h-0 flex-col">
-            <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">{t("mmdpop.content")}</label>
+            <label className="mb-1 block text-micro uppercase font-semibold text-slate-500">{t("mmdpop.content")}</label>
             <textarea ref={inputRef} value={name} onChange={(e) => setName(e.target.value)} rows={2}
               onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void submit(); } }}
               placeholder={t("mmdpop.contentPh")}
-              className="min-h-[56px] resize-none rounded-md border border-white/10 bg-slate-950/70 px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
+              className="min-h-[56px] resize-none rounded-md border border-white/10 bg-slate-950/70 px-2.5 py-1.5 text-body text-slate-200 outline-none focus:border-[var(--mm-accent)]" />
           </div>
         </div>
 
@@ -298,17 +298,17 @@ export default function MindmapNodePopup() {
 
         {/* 详细内容（完整 Markdown 编辑器） */}
         <div className="flex min-h-0 flex-col">
-          <label className="mb-1 block text-[9px] uppercase font-semibold text-slate-500">{t("mmdpop.detailMd")}</label>
+          <label className="mb-1 block text-micro uppercase font-semibold text-slate-500">{t("mmdpop.detailMd")}</label>
           <div style={{ minHeight: 150 }}>
             <MarkdownFieldEditor value={detail} onChange={setDetail} minHeight="150px" />
           </div>
         </div>
 
-        {error && <div className="rounded-md border border-red-500/20 bg-red-500/10 px-2.5 py-1.5 text-[10px] text-red-300">{error}</div>}
-        {done && <div className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-[10px] text-emerald-300">✓ {done}</div>}
+        {error && <div className="rounded-md border border-red-500/20 bg-red-500/10 px-2.5 py-1.5 text-tiny text-red-300">{error}</div>}
+        {done && <div className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-tiny text-emerald-300">✓ {done}</div>}
 
         <button onClick={() => void submit()} disabled={busy || !name.trim()}
-          className="shrink-0 rounded-ctl py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+          className="shrink-0 rounded-ctl py-1.5 text-body font-semibold text-white disabled:opacity-40"
           style={{ backgroundColor: "var(--mm-accent)" }}>
           {busy ? t("mmdpop.recording") : t("mmdpop.recordNode")}
         </button>

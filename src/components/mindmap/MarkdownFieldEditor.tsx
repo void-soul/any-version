@@ -126,7 +126,7 @@ export const MarkdownFieldEditor = memo(function MarkdownFieldEditor({ value, on
     });
   }, [pickFile, applyTransform]);
 
-  const tbtn = "inline-flex items-center justify-center h-6 w-6 rounded-md text-slate-300 bg-white/5 hover:bg-white/10 transition-colors cursor-pointer disabled:opacity-30";
+  const tbtn = "ui-btn justify-center h-6 w-6 disabled:opacity-30";
 
   const preview = useMemo(() => (
     <div className="overflow-y-auto p-3">
@@ -196,7 +196,7 @@ export const MarkdownFieldEditor = memo(function MarkdownFieldEditor({ value, on
             onChange={handleChange}
             onKeyDown={onKeyDown}
             spellCheck={false}
-            className={`min-h-0 flex-1 resize-none bg-transparent px-3 py-2 text-[11px] leading-5 text-slate-200 font-mono outline-none ${split ? "border-r border-white/10 max-w-[50%]" : ""}`}
+            className={`min-h-0 flex-1 resize-none bg-transparent px-3 py-2 text-caption leading-5 text-slate-200 font-mono outline-none ${split ? "border-r border-white/10 max-w-[50%]" : ""}`}
             style={{ minHeight }}
             placeholder={t("mmd.placeholder")}
           />

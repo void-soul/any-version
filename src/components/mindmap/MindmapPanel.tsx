@@ -49,7 +49,8 @@ const ACCENT = moduleAccent();
 const handledAgentOpsAt = new Set<number>();
 const MM_LAST_DOC_KEY = "any_version_mindmap_last_doc";
 
-const button = "inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.05] px-2 py-1.5 text-[10px] text-slate-300 transition hover:bg-white/[0.1] hover:text-white disabled:opacity-40";
+// 外观走通用层 ui-btn，这里只保留本模块的尺寸（第二栏底栏按钮）
+const button = "ui-btn px-2 py-1.5 disabled:opacity-40";
 const DOC_SOURCE_ICONS: Record<string, (cls: string) => React.ReactNode> = {
   manual: (c) => <ListTree className={c} />,
   ai_project: (c) => <Code2 className={c} />,
@@ -173,7 +174,7 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>)
             {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
           </button>
         )}
-        <span className="min-w-0 flex-1 truncate text-[11px] font-semibold" style={{ color: c }}>{node.name}</span>
+        <span className="min-w-0 flex-1 truncate text-caption font-semibold" style={{ color: c }}>{node.name}</span>
         {/* 折叠徽标：一眼看出该节点折叠隐藏了多少子节点（点击箭头可展开） */}
         {isFolded && (
           <span className="nodrag nopan shrink-0 inline-flex items-center gap-0.5 rounded-full border border-amber-400/50 bg-amber-400/15 px-1.5 py-0.5 text-[8px] font-bold text-amber-300 shadow-[0_0_8px_rgba(251,191,36,0.35)]"
@@ -238,7 +239,7 @@ const RelationEdge = memo(function RelationEdge({ id, sourceX, sourceY, targetX,
       style={{ stroke: color, strokeWidth: 1.6, strokeDasharray: "6 4" }} />
     <EdgeLabelRenderer>
       <div className="nodrag nopan" style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "all" }}>
-        <div className="group/link flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[9px] shadow backdrop-blur"
+        <div className="group/link flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-micro shadow backdrop-blur"
           style={{ borderColor: `${color}77`, backgroundColor: "color-mix(in srgb, var(--color-surface-panel) 92%, transparent)", color }}>
           <button type="button" className="max-w-[140px] cursor-pointer truncate hover:underline" title={t("mindmap.linkEditHint")}
             onClick={(e) => { e.stopPropagation(); onEdit?.(e); }}>{label || t("mindmap.linkMode")}</button>
@@ -299,7 +300,7 @@ const StickerFlowNode = memo(function StickerFlowNode({ data }: NodeProps<Node<S
         <div className="flex min-h-[80px] items-center justify-center overflow-hidden border border-black/10 bg-white/35">
           <img src={sticker.imageData} alt={sticker.content || t("mindmap.imageStickerAlt")} className="block max-h-[180px] max-w-full object-contain" draggable={false} />
         </div>
-        <textarea className="nodrag nowheel mt-2 w-full resize-none bg-transparent text-[10px] leading-4 text-slate-800 outline-none" value={sticker.content}
+        <textarea className="nodrag nowheel mt-2 w-full resize-none bg-transparent text-tiny leading-4 text-slate-800 outline-none" value={sticker.content}
           onChange={(e) => onUpdate({ content: e.target.value })} rows={2} placeholder={t("mindmap.imageCaptionPh")} />
       </>
     ) : (
@@ -309,11 +310,11 @@ const StickerFlowNode = memo(function StickerFlowNode({ data }: NodeProps<Node<S
         title={expanded ? t("mindmap.stickerCollapseHint") : t("mindmap.stickerExpandHint")}
       >
         {expanded ? (
-          <textarea ref={taRef} className="nodrag nowheel w-full resize-none bg-transparent text-[10px] leading-4 text-slate-800 outline-none" value={sticker.content}
+          <textarea ref={taRef} className="nodrag nowheel w-full resize-none bg-transparent text-tiny leading-4 text-slate-800 outline-none" value={sticker.content}
             onChange={(e) => onUpdate({ content: e.target.value })}
             rows={Math.max(3, sticker.content.split("\n").length)} placeholder={t("mindmap.stickerPh")} />
         ) : (
-          <div className="line-clamp-3 whitespace-pre-wrap break-words text-[10px] leading-4 text-slate-800">
+          <div className="line-clamp-3 whitespace-pre-wrap break-words text-tiny leading-4 text-slate-800">
             {sticker.content || <span className="text-slate-500">{t("mindmap.stickerPh")}</span>}
           </div>
         )}
@@ -344,10 +345,10 @@ function ConfirmModal({ title, message, accent, confirmText = "mindmap.confirmDe
           <AlertTriangle className="h-4 w-4 shrink-0" style={{ color: accent }} />
           <h3 className="text-sm font-semibold text-white">{title}</h3>
         </div>
-        <div className="px-4 py-3 text-[11px] leading-5 text-slate-300">{message}</div>
+        <div className="px-4 py-3 text-caption leading-5 text-slate-300">{message}</div>
         <div className="flex justify-end gap-2 px-4 pb-4">
-          <button type="button" className="rounded-md border border-white/10 bg-white/[0.05] px-4 py-1.5 text-[11px] text-slate-300 hover:bg-white/10 hover:text-white" onClick={onClose}>{t("mindmap.cancel")}</button>
-          <button type="button" className="rounded-md px-4 py-1.5 text-[11px] font-semibold text-white" style={{ backgroundColor: "#ef4444", boxShadow: `0 0 14px ${accent}66` }} onClick={onConfirm}>{confirmLabel}</button>
+          <button type="button" className="rounded-md border border-white/10 bg-white/[0.05] px-4 py-1.5 text-caption text-slate-300 hover:bg-white/10 hover:text-white" onClick={onClose}>{t("mindmap.cancel")}</button>
+          <button type="button" className="rounded-md px-4 py-1.5 text-caption font-semibold text-white" style={{ backgroundColor: "#ef4444", boxShadow: `0 0 14px ${accent}66` }} onClick={onConfirm}>{confirmLabel}</button>
         </div>
       </div>
     </div>, document.body);
@@ -492,15 +493,15 @@ function DetailModal({ node, onUpdate, onClose, projectRoot }: { node: MindmapNo
       <div ref={cardRef} className={`flex ${fullscreen ? "h-full w-full" : "w-[min(92vw,680px)]"} flex-col overflow-hidden rounded-card border border-white/10 bg-surface-panel shadow-2xl`} style={fullscreen ? undefined : { height: fitH ?? "auto" }} onClick={(e) => e.stopPropagation()}>
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/10 px-3" style={{ backgroundColor: `${c}1f` }}>
           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: c, boxShadow: `0 0 9px ${c}` }} />
-          <input className="min-w-0 flex-1 bg-transparent text-[12px] font-semibold text-slate-100 outline-none" value={name} onChange={(e) => setName(e.target.value)} onBlur={save} />
+          <input className="min-w-0 flex-1 bg-transparent text-body font-semibold text-slate-100 outline-none" value={name} onChange={(e) => setName(e.target.value)} onBlur={save} />
           <div className="flex items-center gap-1 ml-1">
-            <button type="button" className={`nodrag nopan rounded p-1 text-[10px] ${fullscreen ? "bg-white/10 text-white" : "text-slate-400"} hover:bg-white/10 hover:text-white`} onClick={() => setFullscreen(!fullscreen)} title={fullscreen ? t("mindmap.fullscreenExit") : t("mindmap.fullscreen")}>{fullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}</button>
+            <button type="button" className={`nodrag nopan rounded p-1 text-tiny ${fullscreen ? "bg-white/10 text-white" : "text-slate-400"} hover:bg-white/10 hover:text-white`} onClick={() => setFullscreen(!fullscreen)} title={fullscreen ? t("mindmap.fullscreenExit") : t("mindmap.fullscreen")}>{fullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}</button>
             <button type="button" className="nodrag nopan rounded p-1 text-slate-400 hover:text-white" onClick={onClose}><X className="h-4 w-4" /></button>
           </div>
         </div>
         {/* 文件（原「证据文件」）：点击用编辑器打开；可增删（手动输入路径或从项目内选择文件） */}
         <div className="shrink-0 border-b border-white/5 bg-white/[0.02] px-4 py-2">
-          <div className="mb-1 flex items-center gap-1 text-[9px] text-slate-500">
+          <div className="mb-1 flex items-center gap-1 text-micro text-slate-500">
             <File className="h-2.5 w-2.5" />{t("mindmap.evidence", { count: sources.length })}
             <span className="text-slate-600">{t("mindmap.evidenceHintEdit")}</span>
           </div>
@@ -547,7 +548,7 @@ function DetailModal({ node, onUpdate, onClose, projectRoot }: { node: MindmapNo
         </div>
         {/* 详细内容：完整 Markdown 编辑器，占满剩余高度（不再留大片空白） */}
         <div className="flex min-h-0 flex-1 flex-col px-4 pb-4">
-          <label className="mb-1 block text-[9px] text-slate-500">{t("mindmap.detailLabel")}</label>
+          <label className="mb-1 block text-micro text-slate-500">{t("mindmap.detailLabel")}</label>
           <div className="flex min-h-0 flex-1 flex-col">
             <MarkdownFieldEditor value={detail} onChange={(v) => setDetail(v)} />
           </div>
@@ -572,9 +573,9 @@ function CreateDocModal({ onClose, onCreate, folderId }: { onClose: () => void; 
           <button type="button" className="text-slate-500 hover:text-white" onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
         <div className="space-y-3">
-          <div><label className="text-[10px] text-slate-400 block mb-1">{t("mindmap.nameLabel")}</label><input ref={inputRef} className="w-full h-9 rounded-ctl bg-slate-900 border border-white/10 px-3 text-xs text-white outline-none" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("mindmap.mapNamePh")} onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) onCreate(name.trim(), desc, folderId); }} /></div>
-          <div><label className="text-[10px] text-slate-400 block mb-1">{t("mindmap.descLabel")}</label><textarea className="w-full h-16 rounded-ctl bg-slate-900 border border-white/10 px-3 py-2 text-xs text-white outline-none resize-none" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t("mindmap.descPh")} /></div>
-          <button type="button" className="w-full rounded-ctl py-2 text-[11px] font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }}
+          <div><label className="text-tiny text-slate-400 block mb-1">{t("mindmap.nameLabel")}</label><input ref={inputRef} className="w-full h-9 rounded-ctl bg-slate-900 border border-white/10 px-3 text-body text-white outline-none" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("mindmap.mapNamePh")} onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) onCreate(name.trim(), desc, folderId); }} /></div>
+          <div><label className="text-tiny text-slate-400 block mb-1">{t("mindmap.descLabel")}</label><textarea className="w-full h-16 rounded-ctl bg-slate-900 border border-white/10 px-3 py-2 text-body text-white outline-none resize-none" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t("mindmap.descPh")} /></div>
+          <button type="button" className="w-full rounded-ctl py-2 text-caption font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }}
             disabled={!name.trim()} onClick={() => { if (name.trim()) onCreate(name.trim(), desc, folderId); }}>{t("mindmap.create")}</button>
         </div>
       </div>
@@ -606,17 +607,17 @@ function AiRunningPill({ onRestore, onStop, running }: { onRestore: () => void; 
         ? <MessageCircle className="h-3.5 w-3.5 shrink-0 animate-pulse text-amber-300" />
         : <Brain className={`h-3.5 w-3.5 shrink-0 ${running ? "animate-pulse text-cyan-300" : "text-slate-400"}`} />}
       <div className="min-w-0 text-left">
-        <div className={`text-[10px] font-semibold leading-tight ${waitingForAnswer ? "text-amber-200" : "text-white"}`}>
+        <div className={`text-tiny font-semibold leading-tight ${waitingForAnswer ? "text-amber-200" : "text-white"}`}>
           {waitingForAnswer ? t("aiMinimized.waiting") : running ? t("aiMinimized.running") : t("aiMinimized.minimized")}
         </div>
         {/* 未运行时不再显示「用时」：那是只对在跑任务有意义的读数，
             这里要说的只有「草稿还在，点一下就能继续」 */}
         {running ? (
-          <div className="max-w-[240px] truncate text-[9px] leading-tight text-slate-400" title={last ? progressText(last, t) : ""}>
+          <div className="max-w-[240px] truncate text-micro leading-tight text-slate-400" title={last ? progressText(last, t) : ""}>
             {last ? progressText(last, t) : "…"} · {t("aiMinimized.elapsed")} {fmtDur(elapsed)}
           </div>
         ) : (
-          <div className="max-w-[240px] truncate text-[9px] leading-tight text-slate-400">{t("aiMinimized.minimizedHint")}</div>
+          <div className="max-w-[240px] truncate text-micro leading-tight text-slate-400">{t("aiMinimized.minimizedHint")}</div>
         )}
       </div>
       <button type="button" onClick={onRestore} title={t("aiMinimized.restore")}
@@ -654,7 +655,7 @@ function AiImportReportModal({ result, onClose, onOpenDoc }: {
         </div>
         {/* 本次运行总消耗（含路由/探索阶段，来自后端累计） */}
         {result.usage && (result.usage.requests > 0 || result.usage.totalTokens > 0) && (
-          <div className="mb-2 flex items-center gap-2 rounded-ctl border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[9px]">
+          <div className="mb-2 flex items-center gap-2 rounded-ctl border border-white/10 bg-white/[0.03] px-3 py-1.5 text-micro">
             <BarChart3 className="h-3 w-3 shrink-0 text-emerald-300" />
             <span className="shrink-0 font-semibold text-slate-300">{t("mindmap.aiRunUsage")}</span>
             <span className="font-mono tabular-nums text-slate-400">{t("mindmap.aiRunUsageLine", { req: result.usage.requests, in: fmtNum(result.usage.inputTokens), out: fmtNum(result.usage.outputTokens), total: fmtNum(result.usage.totalTokens) })}</span>
@@ -668,7 +669,7 @@ function AiImportReportModal({ result, onClose, onOpenDoc }: {
               <button type="button"
                 onClick={() => setExpOpen(v => !v)}
                 className="flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-left">
-                <span className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-300">
+                <span className="flex items-center gap-1.5 text-tiny font-semibold text-slate-300">
                   <Search className="h-3 w-3 text-cyan-300" />
                   {t("mindmap.aiExploreTitle", { rounds: result.exploration.length, files: expFiles })}
                 </span>
@@ -678,7 +679,7 @@ function AiImportReportModal({ result, onClose, onOpenDoc }: {
                 <div className="space-y-1.5 border-t border-white/5 px-3 py-2">
                   {result.exploration.map(r => (
                     <div key={r.round}>
-                      <div className="text-[9px] text-slate-400">
+                      <div className="text-micro text-slate-400">
                         <span className="mr-1 rounded border border-cyan-400/30 bg-cyan-400/10 px-1 py-px font-mono text-cyan-300">#{r.round}</span>
                         {r.reason || t("mindmap.aiExploreNoReason")}
                       </div>
@@ -701,7 +702,7 @@ function AiImportReportModal({ result, onClose, onOpenDoc }: {
         })()}
         <div className="max-h-[60vh] space-y-2 overflow-y-auto pr-1">
           {result.reports.length === 0 && (
-            <p className="py-4 text-center text-[10px] text-slate-500">{t("mindmap.noViewsGenerated")}</p>
+            <p className="py-4 text-center text-tiny text-slate-500">{t("mindmap.noViewsGenerated")}</p>
           )}
           {result.reports.map(r => {
             const doc = result.documents.find(d => d.document.id === r.documentId);
@@ -712,13 +713,13 @@ function AiImportReportModal({ result, onClose, onOpenDoc }: {
                 className="block w-full cursor-pointer rounded-ctl border border-white/10 bg-white/[0.03] px-3 py-2 text-left transition hover:bg-white/[0.08]"
                 title={t("mindmap.openDoc")}>
                 <div className="flex items-center justify-between gap-2">
-                  <span className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-slate-200">
-                    <span className="shrink-0 rounded border border-cyan-400/40 bg-cyan-400/10 px-1.5 py-0.5 text-[9px] text-cyan-300">{viewLabel(t, r.view)}</span>
+                  <span className="flex min-w-0 items-center gap-1.5 text-caption font-semibold text-slate-200">
+                    <span className="shrink-0 rounded border border-cyan-400/40 bg-cyan-400/10 px-1.5 py-0.5 text-micro text-cyan-300">{viewLabel(t, r.view)}</span>
                     <span className="truncate">{doc?.document.name ?? t("mindmap.docPlaceholder")}</span>
                   </span>
-                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] ${ok ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-300"}`}>{ok ? t("mindmap.validationOk") : t("mindmap.validationError")}</span>
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-micro ${ok ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-300"}`}>{ok ? t("mindmap.validationOk") : t("mindmap.validationError")}</span>
                 </div>
-                <div className="mt-1 text-[9px] text-slate-500">
+                <div className="mt-1 text-micro text-slate-500">
                   {t("mindmap.nodeCount", { count: r.nodeCount })} · {r.repairRounds === 1 ? t("mindmap.repairFirstPass") : t("mindmap.repairRound", { count: r.repairRounds })}
                   {(r.usage?.requests ?? 0) > 0 && (
                     <span className="ml-1 font-mono text-emerald-300/80" title={t("mindmap.aiRunUsage")}>⚡ {fmtNum(r.usage?.totalTokens ?? 0)} tok</span>
@@ -727,7 +728,7 @@ function AiImportReportModal({ result, onClose, onOpenDoc }: {
                     <span className="ml-1 text-slate-600">{t("mindmap.aiDocUsage", { imports: doc!.document.aiImports, tokens: fmtNum((doc!.document.aiInputTokens ?? 0) + (doc!.document.aiOutputTokens ?? 0)) })}</span>
                   )}
                 </div>
-                <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[9px]">
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-micro">
                   <span className="text-slate-500">{t("mindmap.evidenceStats", { nodes: r.evidenceNodes, count: r.evidenceCount })}</span>
                   {r.nodeCount - r.evidenceNodes > 0 && (
                     <span className="text-slate-600">{t("mindmap.aiInferred", { count: r.nodeCount - r.evidenceNodes })}</span>
@@ -739,23 +740,23 @@ function AiImportReportModal({ result, onClose, onOpenDoc }: {
                   )}
                 </div>
                 {r.diagnostics.length > 0 && (
-                  <div className="mt-1.5 rounded border border-red-500/20 bg-red-500/10 px-2 py-1 text-[9px] leading-relaxed text-red-300">{r.diagnostics.join("；")}</div>
+                  <div className="mt-1.5 rounded border border-red-500/20 bg-red-500/10 px-2 py-1 text-micro leading-relaxed text-red-300">{r.diagnostics.join("；")}</div>
                 )}
               </button>
             );
           })}
           {result.failures.length > 0 && (
             <div className="rounded-ctl border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2">
-              <div className="text-[10px] font-semibold text-amber-300">{t("mindmap.failedViews")}</div>
+              <div className="text-tiny font-semibold text-amber-300">{t("mindmap.failedViews")}</div>
               {result.failures.map((f, i) => (
-                <div key={i} className="mt-1 text-[9px] leading-relaxed text-amber-200/80">「{viewLabel(t, f.view)}」：{f.reason}</div>
+                <div key={i} className="mt-1 text-micro leading-relaxed text-amber-200/80">「{viewLabel(t, f.view)}」：{f.reason}</div>
               ))}
             </div>
           )}
         </div>
         <div className="mt-3 flex items-center justify-between gap-2">
-          <span className={`text-[9px] ${allOk ? "text-emerald-300" : "text-slate-500"}`}>{allOk ? t("mindmap.allViewsOk") : t("mindmap.someViewsError")}</span>
-          <button type="button" className="cursor-pointer rounded bg-cyan-500 px-3 py-1.5 text-[10px] font-semibold text-slate-950 hover:bg-cyan-400" onClick={onClose}>{t("mindmap.closeBtn")}</button>
+          <span className={`text-micro ${allOk ? "text-emerald-300" : "text-slate-500"}`}>{allOk ? t("mindmap.allViewsOk") : t("mindmap.someViewsError")}</span>
+          <button type="button" className="cursor-pointer rounded bg-cyan-500 px-3 py-1.5 text-tiny font-semibold text-slate-950 hover:bg-cyan-400" onClick={onClose}>{t("mindmap.closeBtn")}</button>
         </div>
       </div>
     </div>, document.body);
@@ -1579,7 +1580,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
 
       {/* 连线规则提示：拖线＝改上级（拖到节点卡片上松手同样改上级）；关系线模式下拖线＝加一条带文字的关系线 */}
       <div className="pointer-events-none absolute bottom-2 left-1/2 z-10 -translate-x-1/2">
-        <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-1 text-[9px] shadow backdrop-blur ${linkMode ? "border-cyan-400/40 bg-cyan-950/80 text-cyan-200" : "border-white/10 bg-slate-900/80 text-slate-400"}`}>
+        <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-1 text-micro shadow backdrop-blur ${linkMode ? "border-cyan-400/40 bg-cyan-950/80 text-cyan-200" : "border-white/10 bg-slate-900/80 text-slate-400"}`}>
           <Link2 className="h-2.5 w-2.5 text-cyan-300/80" />
           {linkFrom
             ? t("mindmap.linkFromHint", { name: byId.get(linkFrom)?.name ?? linkFrom })
@@ -1589,7 +1590,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
 
       {/* 画布轻提示：改上级 / 建关系线的即时反馈 */}
       {canvasNotice && (
-        <div className="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-full border border-cyan-400/30 bg-slate-900/95 px-3 py-1.5 text-[10px] text-cyan-200 shadow-xl">
+        <div className="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-full border border-cyan-400/30 bg-slate-900/95 px-3 py-1.5 text-tiny text-cyan-200 shadow-xl">
           {canvasNotice}
         </div>
       )}
@@ -1613,11 +1614,11 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
               <div className="flex min-h-0 flex-1 flex-col border-b border-white/10">
             <div className="flex items-center gap-1.5 border-b border-white/10 px-2 py-1.5">
               <ListTree className="h-3 w-3 shrink-0 text-slate-500" />
-              <span className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-wide text-slate-400">{t("mindmap.treeNavTitle")}</span>
+              <span className="min-w-0 flex-1 truncate text-tiny font-semibold uppercase tracking-wide text-slate-400">{t("mindmap.treeNavTitle")}</span>
               {/* 全部展开 / 全部折叠：树上折完想一眼恢复时用，避免逐个点箭头 */}
-              <button type="button" className="shrink-0 rounded border border-white/10 px-1 py-px text-[9px] text-slate-500 transition hover:bg-white/10 hover:text-white"
+              <button type="button" className="shrink-0 rounded border border-white/10 px-1 py-px text-micro text-slate-500 transition hover:bg-white/10 hover:text-white"
                 onClick={expandAllTree} title={t("mindmap.treeExpandAll")}>{t("mindmap.treeExpandAllShort")}</button>
-              <button type="button" className="shrink-0 rounded border border-white/10 px-1 py-px text-[9px] text-slate-500 transition hover:bg-white/10 hover:text-white"
+              <button type="button" className="shrink-0 rounded border border-white/10 px-1 py-px text-micro text-slate-500 transition hover:bg-white/10 hover:text-white"
                 onClick={collapseAllTree} title={t("mindmap.treeCollapseAll")}>{t("mindmap.treeCollapseAllShort")}</button>
               <button type="button" className="rounded p-0.5 text-slate-500 transition hover:bg-white/10 hover:text-white" onClick={() => setTreeOpen(false)} title={t("mindmap.treeNavHide")}>
                 <ChevronRight className="h-3 w-3" />
@@ -1629,7 +1630,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
                 const rowColor = effectiveNodeColor(x.node);
                 return (
                   <div key={x.node.id} data-tree-idx={i} role="button" tabIndex={-1}
-                    className={`group/row flex w-full items-center gap-1 py-1 pr-1.5 text-left text-[10px] transition hover:bg-white/[0.06] ${on ? "text-white" : "text-slate-400"}`}
+                    className={`group/row flex w-full items-center gap-1 py-1 pr-1.5 text-left text-tiny transition hover:bg-white/[0.06] ${on ? "text-white" : "text-slate-400"}`}
                     style={{ paddingLeft: 2 + x.depth * 12 }}>
                     {/* 行首折叠箭头：与文件夹树同一套写法（无子节点时给等宽占位，保证缩进对齐） */}
                     {childrenCount.get(x.node.id) ? (
@@ -1751,7 +1752,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
           <div className="fixed z-[220] w-[248px] rounded-ctl border border-cyan-400/25 bg-surface-modal p-2 shadow-2xl"
             style={{ left: Math.max(8, Math.min(linkDraft.x, window.innerWidth - 256)), top: Math.max(8, Math.min(linkDraft.y, window.innerHeight - 132)) }}
             onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
-            <div className="mb-1.5 flex items-center gap-1 text-[10px] text-slate-400">
+            <div className="mb-1.5 flex items-center gap-1 text-tiny text-slate-400">
               <Link2 className="h-3 w-3 shrink-0 text-cyan-300" />
               <span className="min-w-0 truncate" title={`${fromName} → ${toName}`}>{t("mindmap.linkTitle", { from: fromName, to: toName })}</span>
             </div>
@@ -1761,17 +1762,17 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
                 if (e.key === "Enter") { e.preventDefault(); saveLinkDraft(); }
                 else if (e.key === "Escape") { e.preventDefault(); setLinkDraft(null); }
               }}
-              className="w-full rounded border border-white/10 bg-slate-900/80 px-2 py-1 text-[11px] text-slate-200 outline-none focus:border-cyan-400/60" />
+              className="w-full rounded border border-white/10 bg-slate-900/80 px-2 py-1 text-caption text-slate-200 outline-none focus:border-cyan-400/60" />
             <div className="mt-2 flex items-center justify-between gap-1">
               <span className="text-[8px] text-slate-600">{t("mindmap.linkHint")}</span>
               <div className="flex shrink-0 items-center gap-1">
                 {!linkDraft.isNew && (
-                  <button type="button" className="rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-[10px] text-red-300 hover:bg-red-500/20"
+                  <button type="button" className="rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-tiny text-red-300 hover:bg-red-500/20"
                     onClick={() => removeLink(linkDraft.id)}>{t("mindmap.delete")}</button>
                 )}
-                <button type="button" className="rounded border border-white/10 bg-white/[0.05] px-2 py-1 text-[10px] text-slate-300 hover:bg-white/[0.1] hover:text-white"
+                <button type="button" className="rounded border border-white/10 bg-white/[0.05] px-2 py-1 text-tiny text-slate-300 hover:bg-white/[0.1] hover:text-white"
                   onClick={() => setLinkDraft(null)}>{t("mindmap.cancel")}</button>
-                <button type="button" className="rounded bg-cyan-500 px-2 py-1 text-[10px] font-semibold text-slate-950 hover:bg-cyan-400"
+                <button type="button" className="rounded bg-cyan-500 px-2 py-1 text-tiny font-semibold text-slate-950 hover:bg-cyan-400"
                   onClick={saveLinkDraft}>{t("mindmap.save")}</button>
               </div>
             </div>
@@ -1781,12 +1782,12 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
 
       {ctxMenu && (
         <div className="fixed z-50 min-w-[160px] rounded-ctl border border-white/10 bg-surface-modal py-1 shadow-2xl" style={{ left: ctxMenu.x, top: ctxMenu.y }} onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
-          <div className="border-b border-white/10 px-3 py-1.5 text-[10px] font-semibold text-slate-400">{byId.get(ctxMenu.nodeId)?.name ?? ctxMenu.nodeId}</div>
-          <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-[11px] text-slate-300 transition hover:bg-white/[0.08] hover:text-white"
+          <div className="border-b border-white/10 px-3 py-1.5 text-tiny font-semibold text-slate-400">{byId.get(ctxMenu.nodeId)?.name ?? ctxMenu.nodeId}</div>
+          <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-caption text-slate-300 transition hover:bg-white/[0.08] hover:text-white"
             onClick={() => { const n = byId.get(ctxMenu.nodeId); if (n) setDetailNode(n); setCtxMenu(null); }}><Sparkles className="h-3.5 w-3.5" />{t("mindmap.viewDetail")}</button>
-          <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-[11px] text-slate-300 transition hover:bg-white/[0.08] hover:text-white"
+          <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-caption text-slate-300 transition hover:bg-white/[0.08] hover:text-white"
             onClick={() => { addChildNode(ctxMenu.nodeId); setCtxMenu(null); }}><Plus className="h-3.5 w-3.5" />{t("mindmap.addChild")}</button>
-          <button type="button" disabled={byId.get(ctxMenu.nodeId)?.parentId === null} className="flex w-full items-center gap-2 px-3 py-2 text-[11px] text-slate-300 transition hover:bg-white/[0.08] hover:text-white disabled:opacity-40"
+          <button type="button" disabled={byId.get(ctxMenu.nodeId)?.parentId === null} className="flex w-full items-center gap-2 px-3 py-2 text-caption text-slate-300 transition hover:bg-white/[0.08] hover:text-white disabled:opacity-40"
             onClick={() => { makeRoot(ctxMenu.nodeId); setCtxMenu(null); }}><ListTree className="h-3.5 w-3.5" />{t("mindmap.makeRoot")}</button>
           {(byId.get(ctxMenu.nodeId)?.sources?.length ?? 0) > 0 && (() => {
             const n = byId.get(ctxMenu.nodeId)!;
@@ -1795,11 +1796,11 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
             return (<>
               <div className="border-t border-white/10" />
               {srcs.length === 1 && root && (() => { const p = `${root.replace(/\\/g, "/")}/${srcs[0]}`; return (
-                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-[11px] text-slate-300 transition hover:bg-white/[0.08] hover:text-white"
+                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-caption text-slate-300 transition hover:bg-white/[0.08] hover:text-white"
                   onClick={() => { void invoke("launcher_reveal_file", { path: p }).catch((e) => console.error("定位文件失败:", p, e)); setCtxMenu(null); }}><Folder className="h-3.5 w-3.5" />{t("mindmap.openFolder")}</button>
               ); })()}
               {srcs.map((s, i) => (
-                <button key={i} type="button" className="flex w-full items-center gap-2 px-3 py-2 text-[11px] text-slate-300 transition hover:bg-white/[0.08] hover:text-white"
+                <button key={i} type="button" className="flex w-full items-center gap-2 px-3 py-2 text-caption text-slate-300 transition hover:bg-white/[0.08] hover:text-white"
                   onClick={() => {
                     if (root) openSourceFile(root, s);
                     setCtxMenu(null);
@@ -1808,7 +1809,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
             </>);
           })()}
           <div className="border-t border-white/10" />
-          <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-[11px] text-red-300 transition hover:bg-white/[0.08] hover:text-red-100"
+          <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-caption text-red-300 transition hover:bg-white/[0.08] hover:text-red-100"
             onClick={() => { deleteNode(ctxMenu.nodeId); setCtxMenu(null); }}><Trash2 className="h-3.5 w-3.5" />{t("mindmap.delete")}</button>
         </div>)}
       {/* 悬浮只读预览气泡（跟随鼠标；鼠标移入气泡后保持打开，可滚动查看长内容） */}
@@ -1824,7 +1825,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
             <div className="w-[350px] rounded-card border border-white/10 bg-surface-panel shadow-2xl">
               <div className="flex items-center gap-1.5 border-b border-white/10 px-3 py-2">
                 <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: pc, boxShadow: `0 0 6px ${pc}` }} />
-                <span className="min-w-0 truncate text-[11px] font-semibold" style={{ color: pc }}>{preview.node.name}</span>
+                <span className="min-w-0 truncate text-caption font-semibold" style={{ color: pc }}>{preview.node.name}</span>
               </div>
               <div className="max-h-[300px] overflow-y-auto p-3">
                 <MindmapMarkdown content={preview.node.detail || t("mindmap.missingView")} />
@@ -2371,8 +2372,8 @@ export default function MindmapPanel() {
             )}
             <button type="button" className="flex min-w-0 flex-1 items-center gap-1.5 text-left cursor-pointer" onClick={() => setActiveFolderId(f.id)} title={t("mindmap.enterFolder", { name: f.name })}>
               <Folder className={`h-3.5 w-3.5 shrink-0 ${depth === 0 ? "text-amber-400" : "text-amber-400/60"}`} />
-              <span className="truncate text-[10px] text-slate-300">{f.name}</span>
-              <span className="shrink-0 text-[9px] text-slate-400">{f.documentCount}</span>
+              <span className="truncate text-tiny text-slate-300">{f.name}</span>
+              <span className="shrink-0 text-micro text-slate-400">{f.documentCount}</span>
             </button>
             <button type="button" className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-300 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto hover:bg-white/10 hover:text-white"
               onClick={() => { setEditingFolder(f); setFolderName(f.name); }} title={t("mindmap.rename")}><Pencil className="h-3 w-3" /></button>
@@ -2791,17 +2792,17 @@ export default function MindmapPanel() {
             {/* Search */}
             <div className="border-b border-white/10 px-2 py-1.5 flex items-center gap-1.5">
               <Search className="h-3 w-3 shrink-0 text-slate-600" />
-              <input className="min-w-0 flex-1 bg-transparent text-[10px] text-slate-300 outline-none placeholder:text-slate-700" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("mindmap.searchPh")} />
+              <input className="min-w-0 flex-1 bg-transparent text-tiny text-slate-300 outline-none placeholder:text-slate-700" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("mindmap.searchPh")} />
               {search && <button type="button" className="text-slate-600 hover:text-white" onClick={() => setSearch("")}><X className="h-3 w-3" /></button>}
             </div>
             {!activeFolderId && folders.length === 0 && (
-              <div className="px-3 pt-1 text-[9px] text-slate-500">{t("mindmap.noFolders")}</div>
+              <div className="px-3 pt-1 text-micro text-slate-500">{t("mindmap.noFolders")}</div>
             )}
             <div className="min-h-0 flex-1 overflow-y-auto p-1.5 select-none" data-drop-root>
               {/* 面包屑：路径上级均可点击进入；也是移回相应目录的投放目标 */}
               {activeFolderId && (
                 <div className="mb-1 space-y-0.5">
-                  <button type="button" className={`mb-0.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-[10px] select-none ${dragOverFolderId === "__root" ? "ring-1 ring-cyan-400/70 bg-cyan-400/10 text-white" : "text-slate-400 hover:bg-white/[0.05] hover:text-white"}`}
+                  <button type="button" className={`mb-0.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-tiny select-none ${dragOverFolderId === "__root" ? "ring-1 ring-cyan-400/70 bg-cyan-400/10 text-white" : "text-slate-400 hover:bg-white/[0.05] hover:text-white"}`}
                     onClick={() => setActiveFolderId(null)}
                     data-drop-root>
                     <ChevronRight className="h-3 w-3 -rotate-180" />{t("mindmap.allDocs")} <span className="text-[8px] text-slate-500">{t("mindmap.backToRoot")}</span>
@@ -2811,20 +2812,20 @@ export default function MindmapPanel() {
                     const over = dragOverFolderId === f.id;
                     if (isLast) {
                       return (
-                        <div key={f.id} className={`mb-0.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-[10px] ${over ? "ring-1 ring-cyan-400/70 bg-cyan-400/10 text-white" : "text-slate-400"}`}>
+                        <div key={f.id} className={`mb-0.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-tiny ${over ? "ring-1 ring-cyan-400/70 bg-cyan-400/10 text-white" : "text-slate-400"}`}>
                           <Folder className="h-3 w-3 shrink-0 text-amber-400/70" />
                           <span className="truncate">{f.name}</span>
-                          <span className="shrink-0 text-[9px] text-slate-500">{f.documentCount}</span>
+                          <span className="shrink-0 text-micro text-slate-500">{f.documentCount}</span>
                         </div>
                       );
                     }
                     return (
-                      <button key={f.id} type="button" className={`mb-0.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-[10px] cursor-pointer select-none ${over ? "ring-1 ring-cyan-400/70 bg-cyan-400/10 text-white" : "text-slate-400 hover:bg-white/[0.05] hover:text-white"}`}
+                      <button key={f.id} type="button" className={`mb-0.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-tiny cursor-pointer select-none ${over ? "ring-1 ring-cyan-400/70 bg-cyan-400/10 text-white" : "text-slate-400 hover:bg-white/[0.05] hover:text-white"}`}
                         onClick={() => setActiveFolderId(f.id)}
                         data-drop-folder={f.id}>
                         <Folder className="h-3 w-3 shrink-0 text-amber-400/70" />
                         <span className="truncate">{f.name}</span>
-                        <span className="shrink-0 text-[9px] text-slate-500">{f.documentCount}</span>
+                        <span className="shrink-0 text-micro text-slate-500">{f.documentCount}</span>
                         <ChevronRight className="h-2.5 w-2.5 shrink-0 text-slate-600" />
                       </button>
                     );
@@ -2834,7 +2835,7 @@ export default function MindmapPanel() {
               {/* 文件夹树 —— 可拖拽整理：文件↔目录、目录↔目录/根 */}
               {treeRoots.length > 0 && <div className="mb-1.5">{renderFolderNodes(treeRoots, 0)}</div>}
               {/* Documents */}
-              {filteredDocs.length === 0 && <div className="py-8 text-center text-[10px] text-slate-500">{search ? t("mindmap.noMatchDocs") : t("mindmap.noDocs")}</div>}
+              {filteredDocs.length === 0 && <div className="py-8 text-center text-tiny text-slate-500">{search ? t("mindmap.noMatchDocs") : t("mindmap.noDocs")}</div>}
               {filteredDocs.map(d => {
                 const IconFn = DOC_SOURCE_ICONS[d.sourceType] ?? DOC_SOURCE_ICONS.manual;
                 return (
@@ -2851,11 +2852,11 @@ export default function MindmapPanel() {
                           onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}
                           onKeyDown={e => { e.stopPropagation(); if (e.key === "Enter") void saveRenameDoc(d); else if (e.key === "Escape") setRenamingDocId(null); }}
                           onBlur={() => void saveRenameDoc(d)}
-                          className="w-full rounded border border-cyan-400/50 bg-slate-900 px-1.5 py-0.5 text-[11px] text-white outline-none" />
+                          className="w-full rounded border border-cyan-400/50 bg-slate-900 px-1.5 py-0.5 text-caption text-white outline-none" />
                       ) : (
-                        <span className="truncate text-[11px] text-slate-200">{d.name}</span>
+                        <span className="truncate text-caption text-slate-200">{d.name}</span>
                       )}
-                      <span className="text-[9px] text-slate-400">{formatTime(d.updatedAt)}</span>
+                      <span className="text-micro text-slate-400">{formatTime(d.updatedAt)}</span>
                     </span>
                   </button>
                   {activeFolderId && <button type="button" className="shrink-0 text-[8px] text-slate-300 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto hover:text-white" onClick={() => void moveDoc(d.id, null)}>{t("mindmap.moveOut")}</button>}
@@ -2929,7 +2930,7 @@ export default function MindmapPanel() {
               className="h-full"
             />
           ))}
-          {error && !showAi && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 max-w-md rounded-md border border-red-400/20 bg-slate-900 px-3 py-2 text-[11px] text-red-300 shadow-xl">{error}<button type="button" className="ml-2 text-slate-400 hover:text-white" onClick={() => setError("")}>✕</button></div>}
+          {error && !showAi && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 max-w-md rounded-md border border-red-400/20 bg-slate-900 px-3 py-2 text-caption text-red-300 shadow-xl">{error}<button type="button" className="ml-2 text-slate-400 hover:text-white" onClick={() => setError("")}>✕</button></div>}
         </main>
         {/* 右栏：AI 对话常驻（替代原弹窗）。showAi=展开；最小化时画布只留恢复胶囊。
             与左栏同构：可拖宽、可收起，收起后经左栏「AI 分析」按钮或画布胶囊恢复。 */}
@@ -2938,7 +2939,7 @@ export default function MindmapPanel() {
             <div className="flex h-full min-h-0 flex-col">
               <div className="flex flex-shrink-0 items-center gap-2 border-b border-white/5 px-3 py-2">
                 <Brain className="h-3.5 w-3.5" style={{ color: ACCENT }} />
-                <span className="truncate text-[11px] font-bold text-slate-200">{t("mindmap.aiUnifiedTitle")}</span>
+                <span className="truncate text-caption font-bold text-slate-200">{t("mindmap.aiUnifiedTitle")}</span>
                 <div className="ml-auto flex items-center gap-1">
                   <button type="button" onClick={() => setAiMinimized(true)} title={t("aiMinimized.minimize")}
                     className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 transition hover:bg-white/10 hover:text-white">
@@ -3015,8 +3016,8 @@ export default function MindmapPanel() {
         )}
       </div>
       {showCreate && <CreateDocModal onClose={() => setShowCreate(false)} onCreate={(n,d,fid) => { void createDoc(n,d,fid); }} folderId={activeFolderId} />}
-      {error && showAi && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 max-w-md rounded-md border border-red-400/20 bg-slate-900 px-3 py-2 text-[11px] text-red-300 shadow-xl">{error}<button type="button" className="ml-2 text-slate-400 hover:text-white" onClick={() => setError("")}>✕</button></div>}
-      {notice && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-[11px] text-slate-200 shadow-xl">{notice}</div>}
+      {error && showAi && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 max-w-md rounded-md border border-red-400/20 bg-slate-900 px-3 py-2 text-caption text-red-300 shadow-xl">{error}<button type="button" className="ml-2 text-slate-400 hover:text-white" onClick={() => setError("")}>✕</button></div>}
+      {notice && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-caption text-slate-200 shadow-xl">{notice}</div>}
       {/* AI 弹框关闭确认：任务进行中询问，确认后停止任务再关闭 */}
       <ConfirmDialog
         open={aiCloseGuard}
@@ -3032,7 +3033,7 @@ export default function MindmapPanel() {
       {aiReport && <AiImportReportModal result={aiReport} onClose={() => setAiReport(null)} onOpenDoc={(id) => void openReportDoc(id)} />}
       {/* 拖拽浮层：跟随鼠标，提示当前落点是否有效 */}
       {ghost && (
-        <div className="pointer-events-none fixed z-[9998] flex items-center gap-1.5 rounded-md border border-cyan-400/50 bg-slate-900/95 px-2 py-1 text-[10px] text-slate-200 shadow-2xl"
+        <div className="pointer-events-none fixed z-[9998] flex items-center gap-1.5 rounded-md border border-cyan-400/50 bg-slate-900/95 px-2 py-1 text-tiny text-slate-200 shadow-2xl"
           style={{ left: ghost.x + 14, top: ghost.y + 16 }}>
           {ghost.kind === "folder" ? <Folder className="h-3 w-3 shrink-0 text-amber-400" /> : <FileText className="h-3 w-3 shrink-0 text-slate-400" />}
           <span className="max-w-[150px] truncate font-medium">{ghost.name}</span>
@@ -3044,26 +3045,26 @@ export default function MindmapPanel() {
         <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]">
           <div className="w-[380px] rounded-card border border-white/10 bg-surface-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="mb-1 text-sm font-semibold text-white">{t("mindmap.importTargetTitle")}</h3>
-            <p className="mb-4 truncate text-[10px] text-slate-500" title={importPick.path}>{t("mindmap.importTargetDesc", { file: importPick.path.split(/[\\/]/).pop() ?? importPick.path })}</p>
+            <p className="mb-4 truncate text-tiny text-slate-500" title={importPick.path}>{t("mindmap.importTargetDesc", { file: importPick.path.split(/[\\/]/).pop() ?? importPick.path })}</p>
             <div className="space-y-1.5">
               <button type="button"
-                className="w-full rounded-ctl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-[11px] text-slate-200 transition hover:border-cyan-400/50 hover:text-white"
+                className="w-full rounded-ctl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-caption text-slate-200 transition hover:border-cyan-400/50 hover:text-white"
                 onClick={() => { const p = importPick; setImportPick(null); void runImportJson(p.path, null).catch((e) => setError(String(e))); }}>
                 <Plus className="mr-1.5 inline h-3 w-3" />{t("mindmap.importTargetNew")}
               </button>
               <button type="button"
-                className="w-full rounded-ctl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-[11px] text-slate-200 transition hover:border-cyan-400/50 hover:text-white"
+                className="w-full rounded-ctl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-caption text-slate-200 transition hover:border-cyan-400/50 hover:text-white"
                 onClick={() => confirmImportTarget(false)}>
                 <FileDown className="mr-1.5 inline h-3 w-3" />{t("mindmap.importTargetAppend", { name: importPick.docName })}
               </button>
               <button type="button"
-                className="w-full rounded-ctl border border-rose-400/25 bg-rose-500/[0.06] px-3 py-2 text-left text-[11px] text-rose-300 transition hover:border-rose-400/60 hover:text-rose-200"
+                className="w-full rounded-ctl border border-rose-400/25 bg-rose-500/[0.06] px-3 py-2 text-left text-caption text-rose-300 transition hover:border-rose-400/60 hover:text-rose-200"
                 onClick={() => confirmImportTarget(true)}>
                 <Trash2 className="mr-1.5 inline h-3 w-3" />{t("mindmap.importTargetReplace", { name: importPick.docName })}
               </button>
             </div>
             <div className="mt-4 flex justify-end">
-              <button type="button" className="rounded-md px-4 py-1.5 text-[11px] text-slate-400 hover:text-white" onClick={() => setImportPick(null)}>{t("mindmap.cancel")}</button>
+              <button type="button" className="rounded-md px-4 py-1.5 text-caption text-slate-400 hover:text-white" onClick={() => setImportPick(null)}>{t("mindmap.cancel")}</button>
             </div>
           </div>
         </div>, document.body)}
@@ -3072,10 +3073,10 @@ export default function MindmapPanel() {
         <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]">
           <div className="w-[340px] rounded-card border border-white/10 bg-surface-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="mb-4 text-sm font-semibold text-white">{t("mindmap.newFolderTitle")}</h3>
-            <input className="w-full h-9 rounded-ctl bg-slate-900 border border-white/10 px-3 text-xs text-white outline-none mb-4" value={folderName} onChange={(e) => setFolderName(e.target.value)} placeholder={t("mindmap.folderNamePh")} autoFocus onKeyDown={(e) => e.key === "Enter" && createFolder()} />
+            <input className="w-full h-9 rounded-ctl bg-slate-900 border border-white/10 px-3 text-body text-white outline-none mb-4" value={folderName} onChange={(e) => setFolderName(e.target.value)} placeholder={t("mindmap.folderNamePh")} autoFocus onKeyDown={(e) => e.key === "Enter" && createFolder()} />
             <div className="flex justify-end gap-2">
-              <button type="button" className="rounded-md px-4 py-1.5 text-[11px] text-slate-400 hover:text-white" onClick={() => setShowFolderCreate(false)}>{t("mindmap.cancel")}</button>
-              <button type="button" className="rounded-md px-4 py-1.5 text-[11px] font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }} disabled={!folderName.trim()} onClick={createFolder}>{t("mindmap.create")}</button>
+              <button type="button" className="rounded-md px-4 py-1.5 text-caption text-slate-400 hover:text-white" onClick={() => setShowFolderCreate(false)}>{t("mindmap.cancel")}</button>
+              <button type="button" className="rounded-md px-4 py-1.5 text-caption font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }} disabled={!folderName.trim()} onClick={createFolder}>{t("mindmap.create")}</button>
             </div>
           </div>
         </div>, document.body)}
@@ -3083,10 +3084,10 @@ export default function MindmapPanel() {
         <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]">
           <div className="w-[340px] rounded-card border border-white/10 bg-surface-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="mb-4 text-sm font-semibold text-white">{t("mindmap.renameFolderTitle")}</h3>
-            <input className="w-full h-9 rounded-ctl bg-slate-900 border border-white/10 px-3 text-xs text-white outline-none mb-4" value={folderName} onChange={(e) => setFolderName(e.target.value)} autoFocus onKeyDown={(e) => e.key === "Enter" && updateFolder()} />
+            <input className="w-full h-9 rounded-ctl bg-slate-900 border border-white/10 px-3 text-body text-white outline-none mb-4" value={folderName} onChange={(e) => setFolderName(e.target.value)} autoFocus onKeyDown={(e) => e.key === "Enter" && updateFolder()} />
             <div className="flex justify-end gap-2">
-              <button type="button" className="rounded-md px-4 py-1.5 text-[11px] text-slate-400 hover:text-white" onClick={() => setEditingFolder(null)}>{t("mindmap.cancel")}</button>
-              <button type="button" className="rounded-md px-4 py-1.5 text-[11px] font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }} disabled={!folderName.trim()} onClick={updateFolder}>{t("mindmap.save")}</button>
+              <button type="button" className="rounded-md px-4 py-1.5 text-caption text-slate-400 hover:text-white" onClick={() => setEditingFolder(null)}>{t("mindmap.cancel")}</button>
+              <button type="button" className="rounded-md px-4 py-1.5 text-caption font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }} disabled={!folderName.trim()} onClick={updateFolder}>{t("mindmap.save")}</button>
             </div>
           </div>
         </div>, document.body)}
