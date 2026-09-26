@@ -461,6 +461,14 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
     setLaunching(true);
     setLaunchResult(null);
     try {
+      // 启动即决定配置文件的去向，不再单独提供「只保存模型」：
+      // - 勾选「使用官方模型」→ 先还原工具自己的官方配置（清掉 Kira 写进去的模型），再启动；
+      // - 选了第三方模型 → 启动流程本身就会把该模型写进工具配置（后端 launch_ai_tool 已做）。
+      if (useOfficialModel && selectedTool.config_file) {
+        const msg = await invoke<string>("restore_ai_tool_config", { toolId: selectedTool.id });
+        setApplyModelMsg({ ok: true, text: msg });
+        await loadAppliedModel(selectedTool.id);
+      }
       const result = await invoke<{ success: boolean; message: string }>("launch_ai_tool", {
         req: {
           tool_id: selectedTool.id,
@@ -584,30 +592,8 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
     }
   };
 
-  const applyModelOnly = async () => {
-    if (!selectedTool || !selectedModel || !selectedModelProvider) return;
-    setApplyModelBusy(true);
-    setApplyModelMsg(null);
-    try {
-      const msg = await invoke<string>("set_ai_tool_model", {
-        toolId: selectedTool.id,
-        providerId: selectedModelProvider,
-        modelId: selectedModel,
-        fallbackModelId: selectedFallbackModel || null,
-        masqueradeModel: masqueradeModel || null,
-        oneMContext: selectedTool.support_one_m_context ? oneMContext : false,
-        webSearch: webSearchEnabled,
-      });
-      setApplyModelMsg({ ok: true, text: msg });
-      await loadAppliedModel(selectedTool.id);
-    } catch (e: any) {
-      setApplyModelMsg({ ok: false, text: String(e) });
-    } finally {
-      setApplyModelBusy(false);
-    }
-  };
-
-  /** 还原官方配置：清掉 Kira 写进去的自定义模型（含恢复接管前的官方凭据）。 */
+  /** 还原官方配置：清掉 Kira 写进去的自定义模型（含恢复接管前的官方凭据）。
+   *  勾选「使用官方模型」启动时会自动走一遍；这里保留手动入口（不启动也能还原）。 */
   const restoreOfficial = async () => {
     if (!selectedTool) return;
     setApplyModelBusy(true);
@@ -1476,28 +1462,21 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                       </div>
                     )}
 
-                    {/* 只设置模型、不启动工具：把模型写进工具自己的配置文件。
-                        启动会顺带写，但很多人只想先配好（之后直接双击工具图标用）。 */}
+                    {/* 配置文件面板：只做「展示 + 手动还原」，写入交给启动流程 ——
+                        启动时选第三方模型会自动写，勾选官方模型会自动还原。 */}
                     {selectedTool.config_file && (
                       <div className="mt-3 rounded-lg border border-white/5 bg-slate-900/30 p-2.5">
                         <div className="flex items-center gap-2">
                           <span className="text-[10px] text-slate-400 flex-1 min-w-0">
-                            {t("toollaunch.applyModelHint")}
+                            {t("toollaunch.configAutoHint")}
                           </span>
-                          <button
-                            onClick={() => void applyModelOnly()}
-                            disabled={!selectedModel || !selectedModelProvider || applyModelBusy}
-                            className="px-2.5 py-1 rounded-md text-[10px] font-semibold bg-[var(--module-accent)]/20 hover:bg-[var(--module-accent)]/30 text-white cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                          >
-                            {applyModelBusy ? t("toollaunch.applyingModel") : t("toollaunch.applyModel")}
-                          </button>
-                          {/* 还原官方配置：清掉 Kira 写进去的自定义模型（含恢复接管前的官方凭据） */}
+                          {/* 手动还原：不启动也能清掉 Kira 写进去的自定义模型 */}
                           <button
                             onClick={() => void restoreOfficial()}
                             disabled={applyModelBusy}
                             className="px-2.5 py-1 rounded-md text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                           >
-                            {t("toollaunch.restoreOfficial")}
+                            {applyModelBusy ? t("toollaunch.restoring") : t("toollaunch.restoreOfficial")}
                           </button>
                         </div>
                         <div className="mt-1.5 text-[9px] text-slate-500 break-all">
