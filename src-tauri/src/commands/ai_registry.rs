@@ -60,6 +60,11 @@ pub struct ToolConfig {
     pub supports_rectifier: bool,
     pub resume_cmd: Option<String>,
     pub continue_cmd: Option<String>,
+    /// 分叉命令模板（带 `{session_id}` 占位）：从指定会话复制一份新会话再进入，原会话不动。
+    /// 只有 CLI 自己实现了 fork 才有意义（如 claude `--resume {session_id} --fork-session`）；
+    /// 未声明的工具前端不显示「分叉」入口。
+    #[serde(default)]
+    pub fork_cmd: Option<String>,
     // 以下都是「可有可无」的声明。必须给 `#[serde(default)]`：漏一个字段整份 config.json
     // 就解析失败，而这个工具会被**整个从注册表里丢掉**（表现为「列表里莫名少了一个工具」，
     // 只有 stderr 上一行 parse 失败，界面完全看不出来）。现状：omp 因为少写 cacheDirs
@@ -390,6 +395,7 @@ pub struct AiToolDefDto {
     pub supports_fallback_model: bool,
     pub resume_cmd: Option<String>,
     pub continue_cmd: Option<String>,
+    pub fork_cmd: Option<String>,
     pub cache_dirs: Vec<String>,
     pub category: String,
     pub support_one_m_context: bool,
@@ -728,6 +734,7 @@ impl AiToolRegistry {
             supports_fallback_model: config.support_fallback_model,
             resume_cmd: config.resume_cmd.clone(),
             continue_cmd: config.continue_cmd.clone(),
+            fork_cmd: config.fork_cmd.clone(),
             cache_dirs: config.cache_dirs.clone(),
             category: config.category.clone(),
             support_one_m_context: config.support_one_m_context,

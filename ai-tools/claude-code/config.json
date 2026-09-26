@@ -27,6 +27,7 @@
   "supportsRectifier": true,
   "supportOneMContext": true,
   "resumeCmd": "claude --resume {session_id}",
+  "forkCmd": "claude --resume {session_id} --fork-session",
   "continueCmd": "claude --continue",
   "dispatchCmd": "claude -p --output-format stream-json --verbose --dangerously-skip-permissions --permission-mode bypassPermissions --include-partial-messages",
   "dispatchResumeCmd": "claude -p --output-format stream-json --verbose --dangerously-skip-permissions --permission-mode bypassPermissions --include-partial-messages --resume {session_id}",

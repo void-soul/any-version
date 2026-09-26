@@ -34,7 +34,7 @@ import {
   ToggleRight,
   Download,
   Shield,
-  Cpu, Check, History, Terminal,
+  Cpu, Check, History, Terminal, GitFork,
 } from "lucide-react";
 import type {
   AiProvider,
@@ -185,7 +185,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
   const [customParamValues, setCustomParamValues] = useState<Record<string, string>>({});
   const [projectPath, setProjectPath] = useState("");
   const [selectedTerminal, setSelectedTerminal] = useState("cmd");
-  const [sessionMode, setSessionMode] = useState<"new" | "continue" | "resume">("new");
+  const [sessionMode, setSessionMode] = useState<"new" | "continue" | "resume" | "fork">("new");
   const [selectedSession, setSelectedSession] = useState<ToolSession | null>(null);
   const [showSessionPicker, setShowSessionPicker] = useState(false);
 
@@ -472,7 +472,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
       const result = await invoke<{ success: boolean; message: string }>("launch_ai_tool", {
         req: {
           tool_id: selectedTool.id,
-          project_path: sessionMode === "resume" && selectedSession ? selectedSession.project_path : projectPath,
+          project_path: (sessionMode === "resume" || sessionMode === "fork") && selectedSession ? selectedSession.project_path : projectPath,
           model_id: useOfficialModel ? null : (selectedModel || null),
           provider_id: useOfficialModel ? null : (selectedModelProvider || null),
           fallback_model_id: useOfficialModel ? null : (selectedFallbackModel || null),
@@ -519,7 +519,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
           optimizer_enabled: useOfficialModel ? null : optimizerEnabled,
           rectifier_enabled: useOfficialModel ? null : rectifierEnabled,
           custom_param_values: useOfficialModel ? {} : customParamValues,
-          project_path: sessionMode === "resume" && selectedSession ? selectedSession.project_path : projectPath,
+          project_path: (sessionMode === "resume" || sessionMode === "fork") && selectedSession ? selectedSession.project_path : projectPath,
           last_launched_at: new Date().toISOString(),
         };
         await invoke("save_last_launch_config", { toolId: selectedTool.id, config: lc }).catch(() => {});
@@ -792,7 +792,9 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
 
   // 桌面工具与项目目录无关（后端会用 exe 所在目录当工作目录），不该因为它被卡住
   const canLaunch = !!selectedTool?.installed
-    && (selectedTool.tool_kind === "desktop" || sessionMode === "resume" || !!projectPath);
+    && (selectedTool.tool_kind === "desktop" || sessionMode === "resume" || sessionMode === "fork" || !!projectPath)
+    // 分叉必须挑一条会话（没有源会话就无从复制）
+    && (sessionMode !== "fork" || !!selectedSession);
 
   // 列表分组（抄 EchoBird 的维度：先按已装/未装分开，未装的再按 CLI / 桌面端筛）
   const installedTools = tools.filter(t => t.installed);
@@ -1733,9 +1735,20 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                         <Clock className="w-3 h-3" /> {t("toollaunch.historySessions", { count: sessions.length })}
                       </button>
                     )}
+                    {/* 分叉：只有工具自己实现了 fork（注册表 forkCmd）才显示——
+                        复制一份会话再进入，原会话保持不动 */}
+                    {sessions.length > 0 && selectedTool?.fork_cmd && (
+                      <button onClick={() => { setSessionMode("fork"); setShowSessionPicker(true); setSelectedSession(null); }}
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-all ${
+                          sessionMode === "fork" ? "bg-[var(--module-accent)] text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"
+                        }`}
+                        title={t("toollaunch.forkSessionTip")}>
+                        <GitFork className="w-3 h-3" /> {t("toollaunch.forkSession")}
+                      </button>
+                    )}
                   </div>
 
-                  {showSessionPicker && sessionMode === "resume" && (
+                  {showSessionPicker && (sessionMode === "resume" || sessionMode === "fork") && (
                     <div className="mb-2">
                       <div className="flex items-center gap-2">
                         <div className="flex-1 relative">
@@ -1763,7 +1776,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                     </div>
                   )}
 
-                  {showSessionPicker && sessionMode === "resume" && (
+                  {showSessionPicker && (sessionMode === "resume" || sessionMode === "fork") && (
                     <div className="rounded-lg border border-white/5 bg-slate-900/30 overflow-hidden">
                       <div className="max-h-72 overflow-y-auto divide-y divide-white/[0.03]">
                         {filteredSessions.length === 0 ? (

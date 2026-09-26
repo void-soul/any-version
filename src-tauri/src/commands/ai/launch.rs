@@ -699,7 +699,7 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
         req.project_path.clone()
     };
 
-    // resume / continue 参数
+    // resume / continue / fork 参数
     let exe_prefix = format!("{} ", &tool_exe);
     let extra_args = if req.session_mode == "resume" {
         req.session_id.as_ref().and_then(|sid| {
@@ -709,6 +709,19 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
                     .unwrap_or(&s.replace("{session_id}", sid))
                     .to_string()
             })
+        }).unwrap_or_default()
+    } else if req.session_mode == "fork" {
+        // 分叉：由 CLI 自己复制一份会话再进入（如 claude --resume <sid> --fork-session），
+        // 原会话保持不变。未声明 fork_cmd 的工具退化为普通 resume（前端本就不该给出该入口）。
+        req.session_id.as_ref().and_then(|sid| {
+            tool_config.fork_cmd.as_ref()
+                .or(tool_config.resume_cmd.as_ref())
+                .map(|s| {
+                    s.replace("{session_id}", sid)
+                        .strip_prefix(&exe_prefix)
+                        .unwrap_or(&s.replace("{session_id}", sid))
+                        .to_string()
+                })
         }).unwrap_or_default()
     } else if req.session_mode == "continue" {
         tool_config.continue_cmd.as_ref().map(|s| {

@@ -26,6 +26,7 @@
   "supportsOptimizer": true,
   "supportsRectifier": true,
   "resumeCmd": null,
+  "forkCmd": "codex fork {session_id}",
   "continueCmd": "codex resume --last",
   "dispatchCmd": "codex exec --json --full-auto --model {model}",
   "dispatchResumeCmd": "codex exec --json --full-auto --model {model} resume {session_id}",

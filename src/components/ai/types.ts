@@ -198,6 +198,8 @@ export interface DetectedAiTool {
   supports_fallback_model: boolean;
   resume_cmd: string | null;
   continue_cmd: string | null;
+  /** 分叉命令模板（带 {session_id}）：从该会话复制一份新会话再进入；null = 该工具不支持分叉 */
+  fork_cmd: string | null;
   cache_dirs: string[];
   category: string;
   supports_openai: boolean;

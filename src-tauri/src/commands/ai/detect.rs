@@ -69,6 +69,7 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
         supports_fallback_model: config.support_fallback_model,
         resume_cmd: config.resume_cmd.clone(),
         continue_cmd: config.continue_cmd.clone(),
+        fork_cmd: config.fork_cmd.clone(),
         cache_dirs: config.cache_dirs.clone(),
         category: config.category.clone(),
         support_one_m_context: config.support_one_m_context,
