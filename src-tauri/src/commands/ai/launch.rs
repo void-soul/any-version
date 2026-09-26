@@ -351,92 +351,13 @@ pub(crate) async fn start_tool_proxy_with_collab(
 }
 
 
-// ─── 只设置模型（不启动工具） ───
-
-/// 把选定模型写入工具自己的配置文件，**不启动工具、不启动本地代理**。
-///
-/// 与启动的区别：启动时代理会接管（baseUrl 指向 127.0.0.1、key 用随机 token），
-/// 只设置模型时没有代理在跑，因此 baseUrl 直连供应商端点、apiKey 用真实 key ——
-/// 这样即使不开 Kira，工具本身也能正常使用这个模型。
-///
-/// 仅对**声明了 configFile 的工具**生效（即「支持配置模型」的工具）；
-/// 未声明的工具直接报错，避免用户以为设置成功其实什么都没写。
-#[tauri::command]
-pub fn set_ai_tool_model(
-    tool_id: String,
-    provider_id: Option<String>,
-    model_id: String,
-    fallback_model_id: Option<String>,
-    masquerade_model: Option<String>,
-    one_m_context: Option<bool>,
-    web_search: Option<bool>,
-) -> Result<String, String> {
-    let config = load_ai_config();
-    let tool_config = registry()
-        .get_tool_config(&tool_id)
-        .ok_or("未知工具")?
-        .clone();
-    if tool_config.config_file.is_none() {
-        return Err(format!("{} 不支持通过配置文件设置模型", tool_config.display_name));
-    }
-    let provider = provider_id
-        .as_ref()
-        .and_then(|pid| config.providers.iter().find(|p| &p.id == pid))
-        .ok_or_else(|| "未选择供应商（或该供应商已不存在）".to_string())?;
-    if provider.api_key.trim().is_empty() {
-        return Err(format!("供应商「{}」还没有填 API Key", provider.name));
-    }
-    if model_id.trim().is_empty() {
-        return Err("请先选择一个模型".to_string());
-    }
-
-    let outbound = pick_outbound_protocol(&tool_config.native_protocol(), provider)
-        .unwrap_or_else(|| provider.primary_protocol());
-    let upstream_url = provider.url_for(&outbound);
-    if upstream_url.is_empty() {
-        return Err(format!("供应商「{}」没有配置 {} 协议的端点", provider.name, outbound));
-    }
-    // 声明模型名 C：配了伪装就用伪装名，否则就是实际模型 B
-    let claimed_model = masquerade_model
-        .clone()
-        .filter(|c| !c.trim().is_empty())
-        .unwrap_or_else(|| model_id.clone());
-
-    write_tool_config_from_spec(
-        &tool_config,
-        Some(model_id.as_str()),
-        Some(claimed_model.as_str()),
-        &upstream_url,
-        &provider.api_key,
-        // 只保存模型 = 直连，upstream_url 就是请求地址本身
-        &upstream_url,
-        fallback_model_id.as_deref(),
-        None,
-        one_m_context.unwrap_or(false),
-        false,
-        false,
-        &[],
-        &HashMap::new(),
-        web_search.unwrap_or(false),
-        &outbound,
-    )?;
-
-    Ok(format!(
-        "已把 {} 的模型设置为 {}（{}），配置写入 {}",
-        tool_config.display_name,
-        claimed_model,
-        provider.name,
-        tool_config
-            .config_file
-            .as_ref()
-            .map(|c| c.path.clone())
-            .unwrap_or_default()
-    ))
-}
+// 注：这里原本还有个 `set_ai_tool_model`（「只保存模型、不启动工具」）。
+// 已删除 —— 启动时就会写入配置（官方模式则还原），单独保存一次没有必要，
+// 留着只会让「配置什么时候生效」出现两条互相打架的路径。
 
 /// 把某工具还原成「官方模型」：清掉 Kira 写进去的自定义模型配置（含接管前备份的凭据恢复）。
 ///
-/// 供「使用官方模型」按钮与启动时的官方分支调用。幂等，没写入过时是空操作。
+/// 供「恢复官方配置」按钮与**官方模式启动**调用。幂等，没写入过时是空操作。
 #[tauri::command]
 pub fn restore_ai_tool_config(tool_id: String) -> Result<String, String> {
     let tool_config = registry()

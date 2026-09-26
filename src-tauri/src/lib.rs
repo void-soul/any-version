@@ -713,7 +713,6 @@ pub fn run() {
             commands::ai::sessions::get_ai_sessions,
             commands::ai::sessions::remove_ai_session,
             commands::ai::provider::start_proxy,
-            commands::ai::launch::set_ai_tool_model,
             commands::ai::launch::get_ai_tool_model,
             commands::ai::launch::restore_ai_tool_config,
             commands::ai::install_agent::install_agent_chat,

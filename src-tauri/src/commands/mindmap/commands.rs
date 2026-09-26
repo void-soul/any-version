@@ -242,7 +242,7 @@ async fn call_ai_json_for_explorer(
         }
     };
     if let Some(u) = usage {
-        record_and_emit_usage(app, acc, model, &provider.id, &u);
+        record_and_emit_usage(app, acc, model, &u);
     }
     Ok(json)
 }
@@ -691,9 +691,9 @@ impl<'a> ai::channel::ChannelHooks for MmHooks<'a> {
 }
 
 /// 从 usage JSON 提取 token 数：累计进本次运行计数器，并推送 step=usage 事件（前端实时统计）。
-/// 同时落库到 AI 模块的全局用量统计（tool_id=mindmap）：思维导图不经代理、直连共享通道，
-/// 不落库的话 AI 模块用量面板看不到这部分消耗。
-fn record_and_emit_usage(app: &Option<tauri::AppHandle>, acc: &UsageAcc, model: &str, provider_id: &str, u: &serde_json::Value) {
+///
+/// 落库不在这里：已下沉到 `ai::channel`（调用必传 tool_id，统一记账，tool_id=mindmap）。
+fn record_and_emit_usage(app: &Option<tauri::AppHandle>, acc: &UsageAcc, model: &str, u: &serde_json::Value) {
     use std::sync::atomic::Ordering;
     let prompt_tokens = u.get("prompt_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
     let completion_tokens = u.get("completion_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
@@ -746,7 +746,7 @@ async fn call_ai_json(
         }
     };
     if let Some(u) = outcome.usage {
-        record_and_emit_usage(app, acc, model, &provider.id, &u);
+        record_and_emit_usage(app, acc, model, &u);
     }
     let streamed = outcome.text;
     emit_progress(app, "stream", serde_json::json!({ "done": true, "length": streamed.chars().count() }));
@@ -2039,7 +2039,7 @@ async fn agent_run(
                 }
             })?;
         if let Some(u) = &outcome.usage {
-            record_and_emit_usage(app, acc, model, &provider.id, u);
+            record_and_emit_usage(app, acc, model, u);
         }
         let message = outcome.message.clone().ok_or("AI响应缺少 message")?;
         let tool_calls = message
