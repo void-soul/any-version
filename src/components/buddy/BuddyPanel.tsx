@@ -764,8 +764,7 @@ function formatRelative(t: number | null | undefined): string {
 }
 
 // 账号行右侧小图标按钮统一样式
-const ACC_BTN =
-  "px-1.5 py-1 rounded-md bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 cursor-pointer transition disabled:opacity-40";
+const ACC_BTN = "ui-btn px-1.5 py-1 disabled:opacity-40";
 
 // 额度余量进度条：宽 = 剩余占比，色 = 剩余多少（≥50 绿 / ≥20 黄 / <20 红）
 function QuotaBar({
@@ -787,7 +786,7 @@ function QuotaBar({
       <span className="h-1 flex-1 min-w-[20px] bg-white/10 rounded-full overflow-hidden">
         <span className={`block h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
       </span>
-      <span className="text-slate-400 tabular-nums text-[9px]">{formatQuotaNumber(remain)}</span>
+      <span className="text-slate-400 tabular-nums text-micro">{formatQuotaNumber(remain)}</span>
     </span>
   );
 }
@@ -2020,7 +2019,7 @@ export default function BuddyPanel() {
             <button
               key={p.id}
               onClick={() => setPlatform(p.id)}
-              className={`px-2.5 py-1 rounded-md text-[11px] transition cursor-pointer ${
+              className={`px-2.5 py-1 rounded-md text-caption transition cursor-pointer ${
                 platform === p.id
                   ? "bg-[var(--module-accent)]/25 text-white font-semibold"
                   : "text-slate-400 hover:text-white"
@@ -2037,7 +2036,7 @@ export default function BuddyPanel() {
             <button
               key={tabItem.id}
               onClick={() => setTab(tabItem.id)}
-              className={`px-2.5 py-1 rounded-md text-[11px] transition cursor-pointer flex items-center gap-1 ${
+              className={`px-2.5 py-1 rounded-md text-caption transition cursor-pointer flex items-center gap-1 ${
                 tab === tabItem.id
                   ? "bg-[var(--module-accent)]/25 text-white font-semibold"
                   : "text-slate-400 hover:text-white"
@@ -2054,7 +2053,7 @@ export default function BuddyPanel() {
             <button
               onClick={refreshAll}
               disabled={busy || accounts.length === 0}
-              className="px-2.5 py-1.5 rounded-ctl text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
+              className="px-2.5 py-1.5 rounded-ctl text-caption bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
               title={t("buddy.refreshAllTitle")}
             >
               <RefreshCw className="w-3 h-3" /> {t("buddy.refreshAll")}
@@ -2062,21 +2061,21 @@ export default function BuddyPanel() {
             <button
               onClick={exportSelected}
               disabled={selectedCount === 0}
-              className="px-2.5 py-1.5 rounded-ctl text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
+              className="px-2.5 py-1.5 rounded-ctl text-caption bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
             >
               <Upload className="w-3 h-3" /> {t("buddy.export")}
             </button>
             <button
               onClick={importFromJson}
               disabled={busy}
-              className="px-2.5 py-1.5 rounded-ctl text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
+              className="px-2.5 py-1.5 rounded-ctl text-caption bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
             >
               <Download className="w-3 h-3" /> {t("buddy.importJson")}
             </button>
             <button
               onClick={() => selectedCount > 0 && setDeleteIds([...selectedIds])}
               disabled={selectedCount === 0}
-              className="px-2.5 py-1.5 rounded-ctl text-[11px] bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
+              className="px-2.5 py-1.5 rounded-ctl text-caption bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
             >
               <Trash2 className="w-3 h-3" /> {t("buddy.delete", { count: selectedCount })}
             </button>
@@ -2084,7 +2083,7 @@ export default function BuddyPanel() {
               <button
                 onClick={syncToOther}
                 disabled={busy || accounts.length === 0}
-                className="px-2.5 py-1.5 rounded-ctl text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                className="px-2.5 py-1.5 rounded-ctl text-caption bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
                 title={t("buddy.syncImport", { target: otherPlatform.label })}
               >
                 <Users className="w-3 h-3" /> {t("buddy.syncImport", { target: otherPlatform.label })}
@@ -2097,7 +2096,7 @@ export default function BuddyPanel() {
                 setTokenInput("");
                 setShowAdd(true);
               }}
-              className="px-2.5 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition"
+              className="px-2.5 py-1.5 rounded-ctl text-caption ui-btn-primary text-white font-semibold flex items-center gap-1 cursor-pointer transition"
             >
               <Plus className="w-3 h-3" /> {t("buddy.addAccount")}
             </button>
@@ -2107,7 +2106,7 @@ export default function BuddyPanel() {
 
       {/* 切换进度（关闭 → 合并 → 写入 → 启动） */}
       {switchProgress && (
-        <div className="flex items-center gap-2 px-4 py-2 text-[11px] border-b bg-sky-500/10 text-sky-300 border-sky-500/20">
+        <div className="flex items-center gap-2 px-4 py-2 text-caption border-b bg-sky-500/10 text-sky-300 border-sky-500/20">
           <Loader2 className="w-3 h-3 flex-shrink-0 animate-spin" />
           <span className="break-all">
             {t(`buddy.switchStage.${switchProgress.stage}`, {
@@ -2120,7 +2119,7 @@ export default function BuddyPanel() {
       {/* 状态提示 */}
       {message && (
         <div
-          className={`flex items-center gap-2 px-4 py-2 text-[11px] border-b ${
+          className={`flex items-center gap-2 px-4 py-2 text-caption border-b ${
             message.ok
               ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
               : "bg-rose-500/10 text-rose-300 border-rose-500/20"
@@ -2142,7 +2141,7 @@ export default function BuddyPanel() {
           点「处理冲突」会拿到真实数量）。全部处理完后台账计数会被清零，
           横幅不会赖着不走。 */}
       {!conflictAlertDismissed && ((sessionConflicts.length > 0 || (syncSummary?.conflict ?? 0) > 0)) ? (
-        <div className="flex items-start gap-2 px-4 py-2 text-[11px] border-b bg-amber-500/15 text-amber-200 border-amber-500/30">
+        <div className="flex items-start gap-2 px-4 py-2 text-caption border-b bg-amber-500/15 text-amber-200 border-amber-500/30">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-[1px] text-amber-400" />
           <span className="min-w-0 flex-1 leading-relaxed">
             <span className="font-bold">
@@ -2177,7 +2176,7 @@ export default function BuddyPanel() {
         <div className="border-b border-white/5 bg-white/[0.02] flex-shrink-0">
           <button
             onClick={() => setSyncDetailsOpen((open) => !open)}
-            className="w-full flex items-center gap-2 px-4 py-1.5 text-[11px] text-left hover:bg-white/5 cursor-pointer"
+            className="w-full flex items-center gap-2 px-4 py-1.5 text-caption text-left hover:bg-white/5 cursor-pointer"
           >
             <span className="text-slate-500 w-3">{syncDetailsOpen ? "▾" : "▸"}</span>
             <span className="font-semibold text-slate-300">{t("buddy.syncTitle")}</span>
@@ -2205,7 +2204,7 @@ export default function BuddyPanel() {
                   <button
                     key={status}
                     onClick={() => setSyncStatusFilter(status)}
-                    className={`px-1.5 py-0.5 rounded-md text-[10px] cursor-pointer transition-all ${
+                    className={`px-1.5 py-0.5 rounded-md text-tiny cursor-pointer transition-all ${
                       syncStatusFilter === status
                         ? "bg-[var(--module-accent)]/25 text-white font-semibold"
                         : "text-slate-400 hover:bg-white/5"
@@ -2216,12 +2215,12 @@ export default function BuddyPanel() {
                 ))}
               </div>
               {syncSummary.unchanged && (
-                <div className="px-4 py-1.5 text-[11px] text-slate-500">{t("buddy.syncUnchanged")}</div>
+                <div className="px-4 py-1.5 text-caption text-slate-500">{t("buddy.syncUnchanged")}</div>
               )}
               {/* 明细 ≤500 条，直接两次调用纯过滤函数即可，无需额外 state。
                   「已处理」一档要传处理结果集合（它不是后端状态，是前端视图）。 */}
               {filterSyncDetails(syncSummary.details, syncStatusFilter, resolvedConflictIds).length === 0 && !syncSummary.unchanged && (
-                <div className="px-4 py-1.5 text-[11px] text-slate-500">{t("buddy.syncFilterEmpty")}</div>
+                <div className="px-4 py-1.5 text-caption text-slate-500">{t("buddy.syncFilterEmpty")}</div>
               )}
               {filterSyncDetails(syncSummary.details, syncStatusFilter, resolvedConflictIds).map((detail, index) => {
                 // 处理结果：裁决过的会话显示「已合并 / 已覆盖 / 已保留」+ 时间，
@@ -2230,7 +2229,7 @@ export default function BuddyPanel() {
                 return (
                 <div
                   key={`${detail.id}-${index}`}
-                  className="flex items-start gap-2 px-4 py-1 text-[11px] border-b border-white/5 last:border-b-0"
+                  className="flex items-start gap-2 px-4 py-1 text-caption border-b border-white/5 last:border-b-0"
                 >
                   <span className={`flex-shrink-0 w-16 ${SYNC_STATUS_CLASS[detail.status] ?? "text-slate-400"}`}>
                     {t(`buddy.syncStatus.${detail.status}`)}
@@ -2238,7 +2237,7 @@ export default function BuddyPanel() {
                   {resolution && (
                     <>
                       <span
-                        className="flex-shrink-0 px-1.5 py-0.5 rounded-md text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/25"
+                        className="flex-shrink-0 px-1.5 py-0.5 rounded-md text-tiny bg-emerald-500/15 text-emerald-300 border border-emerald-500/25"
                         title={resolution.message}
                       >
                         {t(`buddy.conflictResult.${resolution.action}`)}
@@ -2272,7 +2271,7 @@ export default function BuddyPanel() {
                   {detail.status === "conflict" && !resolution && (
                     <button
                       onClick={() => void openConflictPanel()}
-                      className="flex-shrink-0 px-1.5 py-0.5 rounded-md text-[10px] bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 font-semibold cursor-pointer transition-colors"
+                      className="flex-shrink-0 px-1.5 py-0.5 rounded-md text-tiny bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 font-semibold cursor-pointer transition-colors"
                     >
                       {t("buddy.conflictAlertResolve")}
                     </button>
@@ -2288,7 +2287,7 @@ export default function BuddyPanel() {
       {/* ─── 账号 Tab ─── */}
       {tab === "accounts" && (
         <>
-          <div className="flex items-center gap-2 px-4 py-1.5 border-b border-white/5 flex-shrink-0 text-[10px]">
+          <div className="flex items-center gap-2 px-4 py-1.5 border-b border-white/5 flex-shrink-0 text-tiny">
             <span className="text-slate-500">
               {t("buddy.count", { count: accounts.length, platform: platformLabel })}
             </span>
@@ -2312,7 +2311,7 @@ export default function BuddyPanel() {
               value={accountView.orderMode}
               onChange={(e) => void changeOrderMode(e.target.value)}
               title={t("buddy.sortBy")}
-              className="bg-black/30 border border-white/10 rounded px-1 py-0.5 text-[10px] text-slate-300 outline-none cursor-pointer"
+              className="bg-black/30 border border-white/10 rounded px-1 py-0.5 text-tiny text-slate-300 outline-none cursor-pointer"
             >
               <option value="lastUsed">{t("buddy.sortDefault")}</option>
               <option value="quota">{t("buddy.sortQuota")}</option>
@@ -2335,7 +2334,7 @@ export default function BuddyPanel() {
                     }
                   }}
                   placeholder={t("buddy.columnNamePlaceholder")}
-                  className="w-28 bg-black/40 border border-white/15 rounded px-1.5 py-1 text-[10px] text-white outline-none placeholder:text-slate-600"
+                  className="w-28 bg-black/40 border border-white/15 rounded px-1.5 py-1 text-tiny text-white outline-none placeholder:text-slate-600"
                 />
                 <button onClick={() => void addColumn()} disabled={colBusy} className="text-emerald-300 disabled:opacity-50 cursor-pointer"><Check className="w-3 h-3" /></button>
                 <button onClick={() => { setAddingColumn(false); setNewColumnName(""); }} className="text-slate-500 cursor-pointer"><X className="w-3 h-3" /></button>
@@ -2351,7 +2350,7 @@ export default function BuddyPanel() {
           </div>
 
           {rotationCandidate && (
-            <div className="flex items-center gap-2 px-4 py-1.5 border-b border-amber-500/20 bg-amber-500/10 text-[10px] text-amber-200 flex-shrink-0">
+            <div className="flex items-center gap-2 px-4 py-1.5 border-b border-amber-500/20 bg-amber-500/10 text-tiny text-amber-200 flex-shrink-0">
               <AlertTriangle className="w-3 h-3 flex-shrink-0" />
               <span className="truncate">
                 {t("buddy.rotation.suggest", {
@@ -2373,8 +2372,8 @@ export default function BuddyPanel() {
             {accounts.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-3 p-6">
                 <Users className="w-10 h-10 text-slate-600" />
-                <p className="text-xs">{t("buddy.noAccounts")}</p>
-                <p className="text-[10px] text-slate-600 max-w-sm text-center">{t("buddy.noAccountsHint")}</p>
+                <p className="text-body">{t("buddy.noAccounts")}</p>
+                <p className="text-tiny text-slate-600 max-w-sm text-center">{t("buddy.noAccountsHint")}</p>
                 <button
                   onClick={() => {
                     setAddMode("oauth");
@@ -2382,7 +2381,7 @@ export default function BuddyPanel() {
                     setTokenInput("");
                     setShowAdd(true);
                   }}
-                  className="mt-1 px-3 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold cursor-pointer transition"
+                  className="mt-1 px-3 py-1.5 rounded-ctl text-caption ui-btn-primary text-white font-semibold cursor-pointer transition"
                 >
                   {t("buddy.addAccount")}
                 </button>
@@ -2390,7 +2389,7 @@ export default function BuddyPanel() {
             ) : (
               <div style={{ minWidth: COL_INFO + COL_QUOTA + (expiryColumns.length + 1) * COL_W + COL_ACTIONS }}>
                 {/* 表头 */}
-                <div className="flex items-stretch sticky top-0 z-10 bg-slate-950 border-b border-white/10 text-[10px] text-slate-500">
+                <div className="flex items-stretch sticky top-0 z-10 bg-slate-950 border-b border-white/10 text-tiny text-slate-500">
                   <div style={{ width: COL_INFO }} className="px-3 py-1.5 flex-shrink-0">{t("buddy.colAccount")}</div>
                   <div style={{ width: COL_QUOTA }} className="px-2 py-1.5 flex-shrink-0">{t("buddy.quotaTotal")}</div>
                   {/* 内置「到期」列：登录 token 过期时刻，只读，不属于自定义列 schema */}
@@ -2409,7 +2408,7 @@ export default function BuddyPanel() {
                                 void commitRenameColumn(col.id);
                               }
                             }}
-                            className="min-w-0 flex-1 bg-black/40 border border-white/15 rounded px-1 py-0.5 text-[10px] text-white outline-none"
+                            className="min-w-0 flex-1 bg-black/40 border border-white/15 rounded px-1 py-0.5 text-tiny text-white outline-none"
                           />
                           <button onClick={() => void commitRenameColumn(col.id)} className="text-emerald-300 cursor-pointer"><Check className="w-3 h-3" /></button>
                           <button onClick={() => setEditingColumnId(null)} className="text-slate-500 cursor-pointer"><X className="w-3 h-3" /></button>
@@ -2436,7 +2435,7 @@ export default function BuddyPanel() {
                   return (
                     <div
                       key={acc.id}
-                      className={`flex items-stretch border-b border-white/5 text-[10px] ${
+                      className={`flex items-stretch border-b border-white/5 text-tiny ${
                         isCurrent ? "bg-emerald-500/[0.06]" : isSelected ? "bg-sky-500/[0.06]" : "hover:bg-white/[0.03]"
                       }`}
                     >
@@ -2458,7 +2457,7 @@ export default function BuddyPanel() {
                           <Star className="w-3 h-3" fill={isPrimary ? "currentColor" : "none"} />
                         </button>
                         <span
-                          className={`inline-flex items-center text-[9px] px-1.5 py-0.5 rounded border flex-shrink-0 ${
+                          className={`inline-flex items-center text-micro px-1.5 py-0.5 rounded border flex-shrink-0 ${
                             planBadge === "PRO"
                               ? "bg-amber-500/15 text-amber-300 border-amber-500/25"
                               : planBadge === "TRIAL"
@@ -2541,18 +2540,18 @@ export default function BuddyPanel() {
                                   }
                                 }}
                                 placeholder={t("buddy.timeInputPlaceholder")}
-                                className={`w-full bg-black/40 border rounded px-1 py-0.5 text-[10px] text-white outline-none ${
+                                className={`w-full bg-black/40 border rounded px-1 py-0.5 text-tiny text-white outline-none ${
                                   cellEditingAcc.value.trim() && parseTimeInput(cellEditingAcc.value) == null
                                     ? "border-rose-400/60"
                                     : "border-[var(--module-accent)]/50"
                                 }`}
                               />
                               <div className="flex items-center gap-1 mt-1">
-                                <button onClick={() => commitCell(acc)} className="px-1.5 py-0.5 rounded bg-[var(--module-accent)] text-white text-[9px] cursor-pointer">{t("buddy.saveLabels")}</button>
+                                <button onClick={() => commitCell(acc)} className="px-1.5 py-0.5 rounded bg-[var(--module-accent)] text-white text-micro cursor-pointer">{t("buddy.saveLabels")}</button>
                                 {ts && ts > 0 && (
-                                  <button onClick={() => clearCell(acc, col.id)} className="px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 text-[9px] cursor-pointer">{t("buddy.clear")}</button>
+                                  <button onClick={() => clearCell(acc, col.id)} className="px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 text-micro cursor-pointer">{t("buddy.clear")}</button>
                                 )}
-                                <button onClick={() => setEditingCell(null)} className="px-1.5 py-0.5 rounded text-slate-400 text-[9px] hover:bg-white/5 cursor-pointer">{t("buddy.cancel")}</button>
+                                <button onClick={() => setEditingCell(null)} className="px-1.5 py-0.5 rounded text-slate-400 text-micro hover:bg-white/5 cursor-pointer">{t("buddy.cancel")}</button>
                               </div>
                             </div>
                           );
@@ -2617,13 +2616,13 @@ export default function BuddyPanel() {
                 onChange={(e) => setSessionKeyword(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && loadSessions()}
                 placeholder={t("buddy.sessions.searchPlaceholder")}
-                className="bg-transparent text-[11px] text-white outline-none w-full placeholder:text-slate-600"
+                className="bg-transparent text-caption text-white outline-none w-full placeholder:text-slate-600"
               />
             </div>
             <select
               value={sessionStatus}
               onChange={(e) => setSessionStatus(e.target.value)}
-              className="bg-black/30 border border-white/10 rounded-ctl px-2 py-1 text-[11px] text-slate-300 outline-none cursor-pointer"
+              className="bg-black/30 border border-white/10 rounded-ctl px-2 py-1 text-caption text-slate-300 outline-none cursor-pointer"
             >
               <option value="">{t("buddy.sessions.statusAll")}</option>
               <option value="Completed">{t("buddy.sessions.statusCompleted")}</option>
@@ -2633,7 +2632,7 @@ export default function BuddyPanel() {
             <button
               onClick={toggleSelectAllSessions}
               disabled={sessions.length === 0}
-              className="px-2 py-1 rounded-md text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 cursor-pointer transition disabled:opacity-50"
+              className="px-2 py-1 rounded-md text-tiny bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 cursor-pointer transition disabled:opacity-50"
             >
               {sessions.length > 0 && selectedSessionIds.size === sessions.length
                 ? t("buddy.sessions.selectAllClear")
@@ -2647,7 +2646,7 @@ export default function BuddyPanel() {
                 })
               }
               disabled={selectedSessionIds.size === 0 || sessionsBusy}
-              className="px-2 py-1 rounded-md text-[10px] bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+              className="px-2 py-1 rounded-md text-tiny bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
             >
               <Trash2 className="w-3 h-3" />
               {t("buddy.sessions.deleteSelected", { count: selectedSessionIds.size })}
@@ -2655,7 +2654,7 @@ export default function BuddyPanel() {
             <button
               onClick={loadSessions}
               disabled={sessionsBusy}
-              className="px-2 py-1 rounded-md text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
+              className="px-2 py-1 rounded-md text-tiny bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
             >
               {sessionsBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
               {t("buddy.refresh")}
@@ -2665,7 +2664,7 @@ export default function BuddyPanel() {
             {sessions.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-2">
                 <MessageSquareText className="w-10 h-10 text-slate-600" />
-                <p className="text-xs">{t("buddy.sessions.noSessions")}</p>
+                <p className="text-body">{t("buddy.sessions.noSessions")}</p>
               </div>
             ) : (
               <div className="space-y-2">
@@ -2694,18 +2693,18 @@ export default function BuddyPanel() {
                           <ChevronRight className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
                         )}
                         <Folder className="w-3.5 h-3.5 text-[var(--module-accent)] flex-shrink-0" />
-                        <span className="text-[12px] font-semibold text-white truncate">
+                        <span className="text-body font-semibold text-white truncate">
                           {resolveGroupLabel(group.cwd)}
                         </span>
-                        <span className="inline-flex items-center text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-slate-400 border border-white/10 flex-shrink-0">
+                        <span className="inline-flex items-center text-micro px-1.5 py-0.5 rounded bg-white/5 text-slate-400 border border-white/10 flex-shrink-0">
                           {group.sessions.length}
                         </span>
                         {group.cwd && (
-                          <span className="text-[9px] text-slate-600 truncate hidden sm:inline">
+                          <span className="text-micro text-slate-600 truncate hidden sm:inline">
                             {formatCwd(group.cwd)}
                           </span>
                         )}
-                        <span className="ml-auto text-[9px] text-slate-500 flex-shrink-0">
+                        <span className="ml-auto text-micro text-slate-500 flex-shrink-0">
                           {formatRelative(group.latestUpdatedAt)}
                         </span>
                       </div>
@@ -2726,7 +2725,7 @@ export default function BuddyPanel() {
                               />
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
-                                  <span className="text-[11px] font-semibold text-white truncate">
+                                  <span className="text-caption font-semibold text-white truncate">
                                     {s.title || "（无标题）"}
                                   </span>
                                   <span
@@ -2746,11 +2745,11 @@ export default function BuddyPanel() {
                                     </span>
                                   )}
                                 </div>
-                                <div className="text-[10px] text-slate-500 mt-0.5 truncate" title={s.cwd}>
+                                <div className="text-tiny text-slate-500 mt-0.5 truncate" title={s.cwd}>
                                   <FolderOpen className="w-2.5 h-2.5 inline mr-1" />
                                   {formatCwd(s.cwd) || "—"}
                                 </div>
-                                <div className="text-[9px] text-slate-600 mt-0.5 flex items-center gap-2 flex-wrap">
+                                <div className="text-micro text-slate-600 mt-0.5 flex items-center gap-2 flex-wrap">
                                   <span>ID: {s.conversationId.slice(0, 12)}…</span>
                                   <span>
                                     {t("buddy.sessions.updated")}: {formatRelative(sessionActivityAt(s))}
@@ -2821,9 +2820,9 @@ export default function BuddyPanel() {
                 >
                   {checkinCollapsed.growth ? <ChevronRight className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
                   <Gauge className="w-4 h-4 text-[var(--module-accent)]" />
-                  <span className="text-[13px] font-bold text-white">{t("buddy.growth.title")}</span>
+                  <span className="text-title font-bold text-white">{t("buddy.growth.title")}</span>
                 </button>
-                <span className="text-[11px] text-slate-500 truncate max-w-[40%]">
+                <span className="text-caption text-slate-500 truncate max-w-[40%]">
                   {growthTarget
                     ? growthTarget.nickname || growthTarget.email || growthTarget.id
                     : t("buddy.growth.noAccount")}
@@ -2833,21 +2832,21 @@ export default function BuddyPanel() {
                   type="button"
                   disabled={!growthTargetId || growthBusy}
                   onClick={() => void loadGrowth(growthTargetId, true)}
-                  className="flex items-center gap-1 px-2 py-1 rounded-ctl text-[11px] bg-white/5 hover:bg-white/10 disabled:opacity-40 cursor-pointer"
+                  className="flex items-center gap-1 px-2 py-1 rounded-ctl text-caption bg-white/5 hover:bg-white/10 disabled:opacity-40 cursor-pointer"
                 >
                   {growthBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
                   {t("buddy.growth.refresh")}
                 </button>
               </div>
               {!checkinCollapsed.growth && (<>
-              {growthError && <div className="text-[11px] text-amber-300 break-all">{growthError}</div>}
+              {growthError && <div className="text-caption text-amber-300 break-all">{growthError}</div>}
               {!growthError && !growth && (
-                <div className="text-[11px] text-slate-500">
+                <div className="text-caption text-slate-500">
                   {growthBusy ? t("buddy.growth.loading") : t("buddy.growth.empty")}
                 </div>
               )}
               {growth && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-caption">
                   <div className="rounded-ctl bg-white/[0.03] border border-white/5 p-2.5">
                     <div className="flex items-center gap-2 mb-1.5">
                       <span className="font-semibold text-slate-300">{t("buddy.growth.taskProgress")}</span>
@@ -2982,7 +2981,7 @@ export default function BuddyPanel() {
                     </div>
                   )}
                   {growth.warnings.length > 0 && (
-                    <div className="md:col-span-2 text-[10px] text-slate-600 break-all">
+                    <div className="md:col-span-2 text-tiny text-slate-600 break-all">
                       {t("buddy.growth.warnings", { count: growth.warnings.length })}
                     </div>
                   )}
@@ -2996,7 +2995,7 @@ export default function BuddyPanel() {
               <button type="button" onClick={() => toggleCheckinSection("accounts")} className="flex items-center gap-2 cursor-pointer select-none">
                 {checkinCollapsed.accounts ? <ChevronRight className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
                 <ListChecks className="w-4 h-4 text-[var(--module-accent)]" />
-                <span className="text-[13px] font-bold text-white">{t("buddy.accountStatus.title")}</span>
+                <span className="text-title font-bold text-white">{t("buddy.accountStatus.title")}</span>
               </button>
                 <div className="flex-1" />
                 <button
@@ -3004,17 +3003,17 @@ export default function BuddyPanel() {
                     void loadAutoCheckin();
                     void loadCalendar(calendarMonth);
                   }}
-                  className="px-2 py-1 rounded-md text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition"
+                  className="px-2 py-1 rounded-md text-tiny bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition"
                 >
                   <RefreshCw className="w-3 h-3" /> {t("buddy.auto.refresh")}
                 </button>
               </div>
               {!checkinCollapsed.accounts && (<>
               {platform !== "workbuddy" && (
-                <p className="text-[9px] text-amber-300/80 mb-2">{t("buddy.accountStatus.wbOnly")}</p>
+                <p className="text-micro text-amber-300/80 mb-2">{t("buddy.accountStatus.wbOnly")}</p>
               )}
               {wbAccounts.length === 0 ? (
-                <div className="text-[10px] text-slate-600">{t("buddy.auto.noTasks")}</div>
+                <div className="text-tiny text-slate-600">{t("buddy.auto.noTasks")}</div>
               ) : (
                 <div className="grid grid-cols-4 gap-1.5 items-start">
                   {wbAccounts.map((acc) => {
@@ -3090,7 +3089,7 @@ export default function BuddyPanel() {
                     }
                     return (
                       <div key={acc.id} className="rounded-ctl border border-white/5 bg-black/20 px-2.5 py-2 min-w-0">
-                        <div className="text-[10px] text-slate-200 truncate mb-1.5" title={acc.email}>
+                        <div className="text-tiny text-slate-200 truncate mb-1.5" title={acc.email}>
                           {acc.email || acc.id}
                         </div>
                         <div className="flex flex-col gap-1.5">
@@ -3098,9 +3097,9 @@ export default function BuddyPanel() {
                           <div className="space-y-0.5 min-w-0">
                             <div className="flex items-center gap-1.5">
                               <CalendarCheck className="w-3 h-3 text-slate-500 flex-shrink-0" />
-                              <span className={`text-[10px] font-semibold ${checkinCls}`}>{checkinState}</span>
+                              <span className={`text-tiny font-semibold ${checkinCls}`}>{checkinState}</span>
                             </div>
-                            <div className="text-[9px] text-slate-500 pl-[18px]">
+                            <div className="text-micro text-slate-500 pl-[18px]">
                               {t("buddy.accountStatus.planTime", { time: task?.scheduledTime ?? "—" })}
                               {task?.lastCheckinTime
                                 ? ` · ${t("buddy.accountStatus.actualTime", { time: task.lastCheckinTime })}`
@@ -3111,12 +3110,12 @@ export default function BuddyPanel() {
                           <div className="space-y-0.5 min-w-0">
                             <div className="flex items-center gap-1.5">
                               <Cat className="w-3 h-3 text-slate-500 flex-shrink-0" />
-                              <span className={`text-[10px] font-semibold ${travelCls}`}>{travelState}</span>
+                              <span className={`text-tiny font-semibold ${travelCls}`}>{travelState}</span>
                             </div>
-                            <div className="text-[9px] text-slate-500 pl-[18px]">
+                            <div className="text-micro text-slate-500 pl-[18px]">
                               {t("buddy.accountStatus.travelCount", { count: travel?.departCount ?? 0 })}
                             </div>
-                            <div className="text-[9px] text-slate-500 pl-[18px]">
+                            <div className="text-micro text-slate-500 pl-[18px]">
                               {t("buddy.accountStatus.planTime", { time: travel?.planTime ?? "—" })}
                               {travel?.departTime
                                 ? ` · ${t("buddy.accountStatus.departTime", { time: travel.departTime })}`
@@ -3126,7 +3125,7 @@ export default function BuddyPanel() {
                                 : ""}
                             </div>
                             {travel?.status === "traveling" && travel.departTime && (
-                              <div className="text-[9px] text-slate-500 pl-[18px]">
+                              <div className="text-micro text-slate-500 pl-[18px]">
                                 {t("buddy.accountStatus.expectedReturn", {
                                   from: addMinutes(travel.departTime, 60),
                                   to: addMinutes(travel.departTime, 240),
@@ -3149,8 +3148,8 @@ export default function BuddyPanel() {
                 <button type="button" onClick={() => toggleCheckinSection("calendar")} className="flex items-center gap-2 cursor-pointer select-none">
                   {checkinCollapsed.calendar ? <ChevronRight className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
                   <CalendarDays className="w-4 h-4 text-[var(--module-accent)]" />
-                  <span className="text-[13px] font-bold text-white">{t("buddy.calendar.title")}</span>
-                  <span className="text-[9px] text-slate-500 hidden md:inline">
+                  <span className="text-title font-bold text-white">{t("buddy.calendar.title")}</span>
+                  <span className="text-micro text-slate-500 hidden md:inline">
                     {t("buddy.calendar.hint")}
                   </span>
                 </button>
@@ -3162,7 +3161,7 @@ export default function BuddyPanel() {
                 >
                   <ChevronLeft className="w-3 h-3" />
                 </button>
-                <span className="text-[11px] font-mono text-slate-200 w-[62px] text-center">
+                <span className="text-caption font-mono text-slate-200 w-[62px] text-center">
                   {calendarMonth}
                 </span>
                 <button
@@ -3177,7 +3176,7 @@ export default function BuddyPanel() {
                     setCalendarMonth(localMonthStr());
                     setCalendarDay(localDateStr());
                   }}
-                  className="px-2 py-1 rounded-md text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 cursor-pointer transition"
+                  className="px-2 py-1 rounded-md text-tiny bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 cursor-pointer transition"
                 >
                   {t("buddy.calendar.today")}
                 </button>
@@ -3187,7 +3186,7 @@ export default function BuddyPanel() {
                 {t("buddy.calendar.weekdays")
                   .split(",")
                   .map((weekday) => (
-                    <div key={weekday} className="text-center text-[9px] text-slate-500">
+                    <div key={weekday} className="text-center text-micro text-slate-500">
                       {weekday}
                     </div>
                   ))}
@@ -3214,7 +3213,7 @@ export default function BuddyPanel() {
                     >
                       <div className="flex items-center justify-between">
                         <span
-                          className={`text-[10px] font-mono ${
+                          className={`text-tiny font-mono ${
                             allDone ? "text-emerald-300" : "text-slate-300"
                           }`}
                         >
@@ -3250,21 +3249,21 @@ export default function BuddyPanel() {
               {calendarDay && (
                 <div className="mt-3 pt-3 border-t border-white/5">
                   <div className="flex items-center gap-2 mb-2">
-                    <span className="text-[11px] font-semibold text-slate-200">{calendarDay}</span>
-                    <span className="text-[9px] text-slate-500">{t("buddy.calendar.detailHint")}</span>
+                    <span className="text-caption font-semibold text-slate-200">{calendarDay}</span>
+                    <span className="text-micro text-slate-500">{t("buddy.calendar.detailHint")}</span>
                     <div className="flex-1" />
                     <button
                       onClick={() => setCalendarDay(null)}
-                      className="text-[9px] text-slate-500 hover:text-slate-300 cursor-pointer"
+                      className="text-micro text-slate-500 hover:text-slate-300 cursor-pointer"
                     >
                       {t("buddy.calendar.collapse")}
                     </button>
                   </div>
                   {Object.keys(dailyRecords[calendarDay] ?? {}).length === 0 ? (
-                    <div className="text-[10px] text-slate-600">{t("buddy.calendar.noData")}</div>
+                    <div className="text-tiny text-slate-600">{t("buddy.calendar.noData")}</div>
                   ) : (
                     <div className="space-y-1">
-                      <div className="grid grid-cols-3 gap-2 text-[9px] text-slate-500 px-2">
+                      <div className="grid grid-cols-3 gap-2 text-micro text-slate-500 px-2">
                         <span>{t("buddy.calendar.colAccount")}</span>
                         <span>{t("buddy.calendar.colCheckin")}</span>
                         <span>{t("buddy.calendar.colTravel")}</span>
@@ -3272,7 +3271,7 @@ export default function BuddyPanel() {
                       {Object.entries(dailyRecords[calendarDay]).map(([accountId, record]) => (
                         <div
                           key={accountId}
-                          className="grid grid-cols-3 gap-2 text-[10px] bg-black/20 rounded-ctl px-2 py-1.5"
+                          className="grid grid-cols-3 gap-2 text-tiny bg-black/20 rounded-ctl px-2 py-1.5"
                         >
                           <span className="text-slate-300 truncate" title={record.email || accountId}>
                             {record.email || accountId}
@@ -3313,26 +3312,26 @@ export default function BuddyPanel() {
               <div className="flex items-center gap-2 mb-3">
                 <button type="button" onClick={() => toggleCheckinSection("logs")} className="flex items-center gap-2 cursor-pointer select-none">
                   {checkinCollapsed.logs ? <ChevronRight className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
-                  <span className="text-[13px] font-bold text-white">{t("buddy.actionLogs.title")}</span>
+                  <span className="text-title font-bold text-white">{t("buddy.actionLogs.title")}</span>
                 </button>
                 <div className="flex-1" />
                 <button
                   onClick={clearAutoLogs}
-                  className="px-2 py-1 rounded-md text-[10px] bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 flex items-center gap-1 cursor-pointer transition"
+                  className="px-2 py-1 rounded-md text-tiny bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 flex items-center gap-1 cursor-pointer transition"
                 >
                   <Eraser className="w-3 h-3" /> {t("buddy.auto.clearLogs")}
                 </button>
               </div>
               {!checkinCollapsed.logs && (<>
               {actionLogs.length === 0 ? (
-                <div className="text-[10px] text-slate-600">{t("buddy.actionLogs.empty")}</div>
+                <div className="text-tiny text-slate-600">{t("buddy.actionLogs.empty")}</div>
               ) : (
                 <div className="space-y-1 max-h-[40vh] overflow-y-auto">
                   {actionLogs.map((entry) => {
                     const okStatus = ["success", "already_checked", "claimed", "departed"].includes(entry.status);
                     const badStatus = ["failed", "inactive"].includes(entry.status);
                     return (
-                      <div key={entry.id} className="flex items-center gap-2 text-[10px] font-mono">
+                      <div key={entry.id} className="flex items-center gap-2 text-tiny font-mono">
                         <span
                           className={`px-1 py-0.5 rounded border flex-shrink-0 ${
                             entry.kind === "travel"
@@ -3373,7 +3372,7 @@ export default function BuddyPanel() {
           <div className="rounded-card border border-white/10 bg-white/[0.03] p-4 space-y-3">
             <div className="flex items-center gap-2 mb-1">
               <CalendarCheck className="w-4 h-4 text-[var(--module-accent)]" />
-              <span className="text-[13px] font-bold text-white">{t("buddy.auto.title")}</span>
+              <span className="text-title font-bold text-white">{t("buddy.auto.title")}</span>
             </div>
             {autoConfig ? (
               <div className="space-y-3">
@@ -3384,34 +3383,34 @@ export default function BuddyPanel() {
                     onChange={(e) => setAutoConfig({ ...autoConfig, enabled: e.target.checked })}
                     className="accent-[var(--module-accent)] w-3.5 h-3.5"
                   />
-                  <span className="text-[11px] text-slate-300">{t("buddy.auto.enabled")}</span>
+                  <span className="text-caption text-slate-300">{t("buddy.auto.enabled")}</span>
                 </label>
                 <div className="flex items-center gap-3">
                   <label className="flex items-center gap-2">
-                    <span className="text-[10px] text-slate-500">{t("buddy.auto.startTime")}</span>
+                    <span className="text-tiny text-slate-500">{t("buddy.auto.startTime")}</span>
                     <input
                       type="time"
                       value={autoConfig.startTime}
                       onChange={(e) => setAutoConfig({ ...autoConfig, startTime: e.target.value })}
-                      className="bg-black/30 border border-white/10 rounded-ctl px-2 py-1 text-[11px] text-white outline-none"
+                      className="bg-black/30 border border-white/10 rounded-ctl px-2 py-1 text-caption text-white outline-none"
                     />
                   </label>
                   <label className="flex items-center gap-2">
-                    <span className="text-[10px] text-slate-500">{t("buddy.auto.endTime")}</span>
+                    <span className="text-tiny text-slate-500">{t("buddy.auto.endTime")}</span>
                     <input
                       type="time"
                       value={autoConfig.endTime}
                       onChange={(e) => setAutoConfig({ ...autoConfig, endTime: e.target.value })}
-                      className="bg-black/30 border border-white/10 rounded-ctl px-2 py-1 text-[11px] text-white outline-none"
+                      className="bg-black/30 border border-white/10 rounded-ctl px-2 py-1 text-caption text-white outline-none"
                     />
                   </label>
                 </div>
-                <p className="text-[9px] text-slate-600">{t("buddy.auto.hint")}</p>
+                <p className="text-micro text-slate-600">{t("buddy.auto.hint")}</p>
                 <div className="flex gap-2">
                   <button
                     onClick={saveAutoConfig}
                     disabled={autoBusy}
-                    className="px-3 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                    className="px-3 py-1.5 rounded-ctl text-caption ui-btn-primary text-white font-semibold flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
                   >
                     {autoBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
                     {t("buddy.auto.save")}
@@ -3419,20 +3418,20 @@ export default function BuddyPanel() {
                   <button
                     onClick={() => void runAutoCheckin(true)}
                     disabled={autoBusy}
-                    className="px-3 py-1.5 rounded-ctl text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                    className="px-3 py-1.5 rounded-ctl text-caption bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
                   >
                     <Play className="w-3 h-3" /> {t("buddy.auto.runNow")}
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="text-[10px] text-slate-600">{t("buddy.auto.loading")}</div>
+              <div className="text-tiny text-slate-600">{t("buddy.auto.loading")}</div>
             )}
           </div>
           <div className="rounded-card border border-white/10 bg-white/[0.03] p-4 space-y-3">
             <div className="flex items-center gap-2 mb-1">
               <Cat className="w-4 h-4 text-[var(--module-accent)]" />
-              <span className="text-[13px] font-bold text-white">{t("buddy.travel.title")}</span>
+              <span className="text-title font-bold text-white">{t("buddy.travel.title")}</span>
             </div>
             {travelConfig ? (
               <div className="space-y-3">
@@ -3443,35 +3442,35 @@ export default function BuddyPanel() {
                     onChange={(e) => setTravelConfig({ ...travelConfig, enabled: e.target.checked })}
                     className="accent-[var(--module-accent)] w-3.5 h-3.5"
                   />
-                  <span className="text-[11px] text-slate-300">{t("buddy.travel.enabled")}</span>
+                  <span className="text-caption text-slate-300">{t("buddy.travel.enabled")}</span>
                 </label>
                 <div className="flex items-center gap-3 flex-wrap">
                   <label className="flex items-center gap-2">
-                    <span className="text-[10px] text-slate-500">{t("buddy.travel.startTime")}</span>
+                    <span className="text-tiny text-slate-500">{t("buddy.travel.startTime")}</span>
                     <input
                       type="time"
                       value={travelConfig.startTime}
                       onChange={(e) => setTravelConfig({ ...travelConfig, startTime: e.target.value })}
-                      className="bg-black/30 border border-white/10 rounded-ctl px-2 py-1 text-[11px] text-white outline-none"
+                      className="bg-black/30 border border-white/10 rounded-ctl px-2 py-1 text-caption text-white outline-none"
                     />
                   </label>
                   <label className="flex items-center gap-2">
-                    <span className="text-[10px] text-slate-500">{t("buddy.travel.endTime")}</span>
+                    <span className="text-tiny text-slate-500">{t("buddy.travel.endTime")}</span>
                     <input
                       type="time"
                       value={travelConfig.endTime}
                       onChange={(e) => setTravelConfig({ ...travelConfig, endTime: e.target.value })}
-                      className="bg-black/30 border border-white/10 rounded-ctl px-2 py-1 text-[11px] text-white outline-none"
+                      className="bg-black/30 border border-white/10 rounded-ctl px-2 py-1 text-caption text-white outline-none"
                     />
                   </label>
                   <label className="flex items-center gap-2">
-                    <span className="text-[10px] text-slate-500">{t("buddy.travel.location")}</span>
+                    <span className="text-tiny text-slate-500">{t("buddy.travel.location")}</span>
                     <select
                       value={travelConfig.locationId}
                       onChange={(e) =>
                         setTravelConfig({ ...travelConfig, locationId: Number(e.target.value) })
                       }
-                      className="bg-black/30 border border-white/10 rounded-ctl px-2 py-1 text-[11px] text-white outline-none"
+                      className="bg-black/30 border border-white/10 rounded-ctl px-2 py-1 text-caption text-white outline-none"
                     >
                       {TRAVEL_LOCATIONS.map((loc) => (
                         <option key={loc.id} value={loc.id}>
@@ -3481,12 +3480,12 @@ export default function BuddyPanel() {
                     </select>
                   </label>
                 </div>
-                <p className="text-[9px] text-slate-600">{t("buddy.travel.hint")}</p>
+                <p className="text-micro text-slate-600">{t("buddy.travel.hint")}</p>
                 <div className="flex gap-2">
                   <button
                     onClick={saveTravelConfig}
                     disabled={autoBusy}
-                    className="px-3 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                    className="px-3 py-1.5 rounded-ctl text-caption ui-btn-primary text-white font-semibold flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
                   >
                     {autoBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
                     {t("buddy.auto.save")}
@@ -3494,19 +3493,19 @@ export default function BuddyPanel() {
                   <button
                     onClick={() => void runAutoTravel()}
                     disabled={autoBusy}
-                    className="px-3 py-1.5 rounded-ctl text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                    className="px-3 py-1.5 rounded-ctl text-caption bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
                   >
                     <Play className="w-3 h-3" /> {t("buddy.travel.runNow")}
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="text-[10px] text-slate-600">{t("buddy.auto.loading")}</div>
+              <div className="text-tiny text-slate-600">{t("buddy.auto.loading")}</div>
             )}
           </div>
           <div className="rounded-card border border-white/10 bg-white/[0.03] p-4">
-            <div className="text-[13px] font-bold text-white mb-1">{t("buddy.clientPaths.title")}</div>
-            <p className="text-[9px] text-slate-600 mb-3">{t("buddy.clientPaths.hint")}</p>
+            <div className="text-title font-bold text-white mb-1">{t("buddy.clientPaths.title")}</div>
+            <p className="text-micro text-slate-600 mb-3">{t("buddy.clientPaths.hint")}</p>
             <div className="space-y-3">
               {clientPaths.map((entry) => {
                 const draft = pathDraft[entry.platform];
@@ -3515,9 +3514,9 @@ export default function BuddyPanel() {
                 return (
                   <div key={entry.platform} className="rounded-ctl border border-white/10 bg-black/20 p-2.5">
                     <div className="flex items-center gap-2 mb-1.5">
-                      <span className="text-[11px] font-semibold text-white">{entry.label}</span>
+                      <span className="text-caption font-semibold text-white">{entry.label}</span>
                       <span
-                        className={`px-1.5 py-0.5 rounded text-[9px] border ${
+                        className={`px-1.5 py-0.5 rounded text-micro border ${
                           entry.configured
                             ? "text-sky-300 bg-sky-500/10 border-sky-500/25"
                             : entry.resolved
@@ -3539,24 +3538,24 @@ export default function BuddyPanel() {
                       }
                       placeholder={entry.resolved ?? t("buddy.clientPaths.placeholder")}
                       spellCheck={false}
-                      className="w-full bg-black/30 border border-white/10 rounded-ctl px-2 py-1.5 text-[11px] text-white outline-none focus:border-[var(--module-accent)]/50"
+                      className="w-full bg-black/30 border border-white/10 rounded-ctl px-2 py-1.5 text-caption text-white outline-none focus:border-[var(--module-accent)]/50"
                     />
                     {entry.resolved && (
-                      <div className="text-[9px] text-slate-600 mt-1 break-all">
+                      <div className="text-micro text-slate-600 mt-1 break-all">
                         {t("buddy.clientPaths.resolved")}: {entry.resolved}
                       </div>
                     )}
                     <div className="flex gap-2 mt-2">
                       <button
                         onClick={() => void browseClientPath(entry)}
-                        className="px-2.5 py-1 rounded-md text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition"
+                        className="px-2.5 py-1 rounded-md text-tiny bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition"
                       >
                         <FolderOpen className="w-3 h-3" /> {t("buddy.clientPaths.browse")}
                       </button>
                       <button
                         onClick={() => void saveClientPath(entry.platform, current)}
                         disabled={pathBusy || !dirty}
-                        className="px-2.5 py-1 rounded-md text-[10px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                        className="px-2.5 py-1 rounded-md text-tiny ui-btn-primary text-white font-semibold flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
                       >
                         {pathBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}{" "}
                         {t("buddy.clientPaths.save")}
@@ -3565,7 +3564,7 @@ export default function BuddyPanel() {
                         <button
                           onClick={() => void saveClientPath(entry.platform, "")}
                           disabled={pathBusy}
-                          className="px-2.5 py-1 rounded-md text-[10px] bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                          className="px-2.5 py-1 rounded-md text-tiny bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
                         >
                           <Eraser className="w-3 h-3" /> {t("buddy.clientPaths.clear")}
                         </button>
@@ -3580,7 +3579,7 @@ export default function BuddyPanel() {
       )}
 
       {paths && (paths.stateDb || paths.authFile || paths.dataDir) && (
-        <div className="px-4 py-2 border-t border-white/5 flex-shrink-0 flex flex-wrap gap-x-4 gap-y-1 text-[9px] text-slate-600">
+        <div className="px-4 py-2 border-t border-white/5 flex-shrink-0 flex flex-wrap gap-x-4 gap-y-1 text-micro text-slate-600">
           {paths.dataDir && <span>{t("buddy.dataDir")}: {paths.dataDir}</span>}
           {paths.stateDb && <span>state.vscdb: {paths.stateDb}</span>}
           {paths.authFile && <span>auth: {paths.authFile}</span>}
@@ -3602,10 +3601,10 @@ export default function BuddyPanel() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <h3 className="text-sm font-bold text-white truncate">{displayName(usageAccount)}</h3>
-                    <p className="text-[10px] text-slate-500 truncate">{usageAccount.email}</p>
+                    <p className="text-tiny text-slate-500 truncate">{usageAccount.email}</p>
                   </div>
                   {planBadge !== "UNKNOWN" && (
-                    <span className="inline-flex items-center text-[9px] px-1.5 py-0.5 rounded bg-slate-500/15 text-slate-300 border border-slate-500/25 flex-shrink-0">
+                    <span className="inline-flex items-center text-micro px-1.5 py-0.5 rounded bg-slate-500/15 text-slate-300 border border-slate-500/25 flex-shrink-0">
                       {t(`buddy.plan.${planBadge.toLowerCase()}`, { defaultValue: planBadge })}
                     </span>
                   )}
@@ -3618,7 +3617,7 @@ export default function BuddyPanel() {
                 </div>
 
                 {quotaItems.length === 0 ? (
-                  <div className="text-[11px] text-slate-600 mb-3">
+                  <div className="text-caption text-slate-600 mb-3">
                     {usageAccount.quotaQueryLastError
                       ? `${t("buddy.usageError")}: ${usageAccount.quotaQueryLastError}`
                       : t("buddy.noUsage")}
@@ -3632,7 +3631,7 @@ export default function BuddyPanel() {
                           : null;
                       return (
                         <div key={idx}>
-                          <div className="flex items-center justify-between text-[10px] mb-1">
+                          <div className="flex items-center justify-between text-tiny mb-1">
                             <span className="text-slate-300 truncate">
                               {item.packageName || t("buddy.quota.package")}
                             </span>
@@ -3662,7 +3661,7 @@ export default function BuddyPanel() {
                             </div>
                           )}
                           {item.cycleEndTime && (
-                            <div className="text-[9px] text-slate-600 mt-0.5">
+                            <div className="text-micro text-slate-600 mt-0.5">
                               {t("buddy.quota.cycleEnd")}: {item.cycleEndTime}
                             </div>
                           )}
@@ -3672,14 +3671,14 @@ export default function BuddyPanel() {
                   </div>
                 )}
 
-                {dosageText && <div className="text-[10px] text-slate-400 mb-1">{dosageText}</div>}
+                {dosageText && <div className="text-tiny text-slate-400 mb-1">{dosageText}</div>}
                 {usageAccount.paymentType && (
-                  <div className="text-[9px] text-slate-600 mb-1">
+                  <div className="text-micro text-slate-600 mb-1">
                     {t("buddy.paymentType")}: {usageAccount.paymentType}
                   </div>
                 )}
                 {usageAccount.usageUpdatedAt ? (
-                  <div className="text-[9px] text-slate-600 mb-3">
+                  <div className="text-micro text-slate-600 mb-3">
                     {t("buddy.usageUpdatedAt")}: {formatTime(usageAccount.usageUpdatedAt)}
                   </div>
                 ) : null}
@@ -3688,14 +3687,14 @@ export default function BuddyPanel() {
                   <button
                     onClick={() => refreshAccount(usageAccount.id)}
                     disabled={busy}
-                    className="px-3 py-1.5 rounded-ctl text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                    className="px-3 py-1.5 rounded-ctl text-caption bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
                   >
                     {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
                     {t("buddy.refresh")}
                   </button>
                   <button
                     onClick={() => setUsageAccountId(null)}
-                    className="px-4 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold cursor-pointer"
+                    className="px-4 py-1.5 rounded-ctl text-caption ui-btn-primary text-white font-semibold cursor-pointer"
                   >
                     {t("buddy.close")}
                   </button>
@@ -3715,13 +3714,13 @@ export default function BuddyPanel() {
               </div>
               <div className="flex-1">
                 <h3 className="text-sm font-bold text-white">{t("buddy.delTitle")}</h3>
-                <p className="text-[10px] text-slate-500">{t("buddy.delHint")}</p>
+                <p className="text-tiny text-slate-500">{t("buddy.delHint")}</p>
               </div>
               <button onClick={() => setDeleteIds(null)} className="p-1.5 rounded-ctl hover:bg-white/10 text-slate-400 cursor-pointer">
                 ✕
               </button>
             </div>
-            <p className="text-xs text-slate-300 leading-relaxed mb-5">
+            <p className="text-body text-slate-300 leading-relaxed mb-5">
               {deleteIds.length === 1
                 ? (() => {
                     const target = accounts.find((a) => a.id === deleteIds[0]);
@@ -3732,13 +3731,13 @@ export default function BuddyPanel() {
                 : t("buddy.delMsg", { count: deleteIds.length, platform: platformLabel })}
             </p>
             <div className="flex justify-end gap-2">
-              <button onClick={() => setDeleteIds(null)} className="px-3 py-1.5 rounded-ctl text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer">
+              <button onClick={() => setDeleteIds(null)} className="px-3 py-1.5 rounded-ctl text-caption text-slate-400 hover:bg-white/5 cursor-pointer">
                 {t("buddy.cancel")}
               </button>
               <button
                 onClick={() => void deleteAccounts(deleteIds)}
                 disabled={busy}
-                className="px-4 py-1.5 rounded-ctl text-[11px] bg-rose-600 hover:bg-rose-500 text-white font-semibold cursor-pointer disabled:opacity-50"
+                className="px-4 py-1.5 rounded-ctl text-caption bg-rose-600 hover:bg-rose-500 text-white font-semibold cursor-pointer disabled:opacity-50"
               >
                 {t("buddy.deleteConfirm")}
               </button>
@@ -3762,19 +3761,19 @@ export default function BuddyPanel() {
                 ✕
               </button>
             </div>
-            <p className="text-xs text-slate-300 leading-relaxed mb-5 break-all">
+            <p className="text-body text-slate-300 leading-relaxed mb-5 break-all">
               {sessionDelete.ids.length === 1
                 ? t("buddy.sessions.deleteConfirm", { title: sessionDelete.label })
                 : t("buddy.sessions.deleteConfirmBatch", { count: sessionDelete.ids.length })}
             </p>
             <div className="flex justify-end gap-2">
-              <button onClick={() => setSessionDelete(null)} className="px-3 py-1.5 rounded-ctl text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer">
+              <button onClick={() => setSessionDelete(null)} className="px-3 py-1.5 rounded-ctl text-caption text-slate-400 hover:bg-white/5 cursor-pointer">
                 {t("buddy.cancel")}
               </button>
               <button
                 onClick={() => void deleteSessionsByIds(sessionDelete.ids)}
                 disabled={sessionsBusy}
-                className="px-4 py-1.5 rounded-ctl text-[11px] bg-rose-600 hover:bg-rose-500 text-white font-semibold cursor-pointer disabled:opacity-50"
+                className="px-4 py-1.5 rounded-ctl text-caption bg-rose-600 hover:bg-rose-500 text-white font-semibold cursor-pointer disabled:opacity-50"
               >
                 {t("buddy.deleteConfirm")}
               </button>
@@ -3796,16 +3795,16 @@ export default function BuddyPanel() {
                 <h3 className="text-sm font-bold text-white">
                   {t("buddy.conflictDialogTitle", { count: syncSummary.conflict })}
                 </h3>
-                <p className="text-[10px] text-slate-500">{t("buddy.conflictDialogHint")}</p>
+                <p className="text-tiny text-slate-500">{t("buddy.conflictDialogHint")}</p>
               </div>
             </div>
-            <p className="text-xs text-slate-300 leading-relaxed mb-5">
+            <p className="text-body text-slate-300 leading-relaxed mb-5">
               {t("buddy.conflictDialogDesc")}
             </p>
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setConflictDialogOpen(false)}
-                className="px-3 py-1.5 rounded-ctl text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer"
+                className="px-3 py-1.5 rounded-ctl text-caption text-slate-400 hover:bg-white/5 cursor-pointer"
               >
                 {t("buddy.conflictDialogOk")}
               </button>
@@ -3815,7 +3814,7 @@ export default function BuddyPanel() {
                   // 直接进处理弹窗逐条裁决（内部会先刷新列表，不依赖本地缓存）
                   void openConflictPanel();
                 }}
-                className="px-4 py-1.5 rounded-ctl text-[11px] bg-amber-600 hover:bg-amber-500 text-white font-semibold cursor-pointer"
+                className="px-4 py-1.5 rounded-ctl text-caption bg-amber-600 hover:bg-amber-500 text-white font-semibold cursor-pointer"
               >
                 {t("buddy.conflictAlertResolve")}
               </button>
@@ -3837,7 +3836,7 @@ export default function BuddyPanel() {
                 <h3 className="text-sm font-bold text-white">
                   {t("buddy.conflictPanelTitle", { count: sessionConflicts.length })}
                 </h3>
-                <p className="text-[10px] text-slate-500">{t("buddy.conflictPanelHint")}</p>
+                <p className="text-tiny text-slate-500">{t("buddy.conflictPanelHint")}</p>
               </div>
               <button
                 onClick={closeConflictPanel}
@@ -3848,7 +3847,7 @@ export default function BuddyPanel() {
             </div>
 
             {sessionConflicts.length === 0 ? (
-              <div className="py-8 text-center text-xs text-slate-500">{t("buddy.conflictPanelEmpty")}</div>
+              <div className="py-8 text-center text-body text-slate-500">{t("buddy.conflictPanelEmpty")}</div>
             ) : (
               <>
               {/* 批量处理条：勾选后一次对多条执行同一裁决。
@@ -3856,11 +3855,11 @@ export default function BuddyPanel() {
               <div className="mb-2 flex flex-wrap items-center gap-1.5 rounded-ctl border border-white/10 bg-white/[0.03] px-2.5 py-2">
                 <button
                   onClick={toggleConflictSelectAll}
-                  className="px-2 py-1 rounded-md text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer"
+                  className="px-2 py-1 rounded-md text-tiny bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer"
                 >
                   {conflictSelectedIds.size === sessionConflicts.length ? t("buddy.sessions.selectAllClear") : t("buddy.sessions.selectAll")}
                 </button>
-                <span className="text-[10px] text-slate-500">
+                <span className="text-tiny text-slate-500">
                   {t("buddy.conflictSelectedCount", { count: conflictSelectedIds.size, total: sessionConflicts.length })}
                 </span>
                 <span className="flex-1" />
@@ -3870,7 +3869,7 @@ export default function BuddyPanel() {
                     disabled={conflictSelectedIds.size === 0 || conflictBatchBusy || conflictBusyId !== null}
                     onClick={() => void resolveConflictsBatch(action)}
                     title={t(`buddy.conflictAction${action[0].toUpperCase()}${action.slice(1)}Tip`)}
-                    className={`px-2.5 py-1 rounded-md text-[10px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors ${
+                    className={`px-2.5 py-1 rounded-md text-tiny font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors ${
                       action === "merge"
                         ? "bg-[var(--module-accent)]/20 hover:bg-[var(--module-accent)]/30 text-white"
                         : action === "overwrite"
@@ -3889,7 +3888,7 @@ export default function BuddyPanel() {
                     <div key={`${conflict.targetUid}-${conflict.id}`} className="px-3 py-2.5">
                       {/* 主行：真实项目路径 + 会话名，两侧时间一目了然。
                           后端已把 MD5 哈希目录还原成真实路径；还原失败才显示哈希。 */}
-                      <div className="flex items-center gap-2 text-[11px]">
+                      <div className="flex items-center gap-2 text-caption">
                         <input
                           type="checkbox"
                           checked={conflictSelectedIds.has(conflict.id)}
@@ -3920,7 +3919,7 @@ export default function BuddyPanel() {
                       <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
                         <button
                           onClick={() => setExpandedConflictId(expanded ? null : conflict.id)}
-                          className="px-2 py-1 rounded-md text-[10px] text-slate-400 hover:bg-white/5 hover:text-white cursor-pointer transition-colors"
+                          className="px-2 py-1 rounded-md text-tiny text-slate-400 hover:bg-white/5 hover:text-white cursor-pointer transition-colors"
                         >
                           {expanded ? "▾" : "▸"} {t("buddy.conflictViewDetail")}
                         </button>
@@ -3929,7 +3928,7 @@ export default function BuddyPanel() {
                           disabled={conflictBusyId !== null}
                           onClick={() => void resolveConflict(conflict, "merge")}
                           title={t("buddy.conflictActionMergeTip")}
-                          className="px-2.5 py-1 rounded-md text-[10px] bg-[var(--module-accent)]/20 hover:bg-[var(--module-accent)]/30 text-white font-semibold cursor-pointer disabled:opacity-50 transition-colors"
+                          className="px-2.5 py-1 rounded-md text-tiny bg-[var(--module-accent)]/20 hover:bg-[var(--module-accent)]/30 text-white font-semibold cursor-pointer disabled:opacity-50 transition-colors"
                         >
                           {t("buddy.conflictActionMerge")}
                         </button>
@@ -3937,7 +3936,7 @@ export default function BuddyPanel() {
                           disabled={conflictBusyId !== null}
                           onClick={() => void resolveConflict(conflict, "overwrite")}
                           title={t("buddy.conflictActionOverwriteTip")}
-                          className="px-2.5 py-1 rounded-md text-[10px] bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 font-semibold cursor-pointer disabled:opacity-50 transition-colors"
+                          className="px-2.5 py-1 rounded-md text-tiny bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 font-semibold cursor-pointer disabled:opacity-50 transition-colors"
                         >
                           {t("buddy.conflictActionOverwrite")}
                         </button>
@@ -3945,14 +3944,14 @@ export default function BuddyPanel() {
                           disabled={conflictBusyId !== null}
                           onClick={() => void resolveConflict(conflict, "keep")}
                           title={t("buddy.conflictActionKeepTip")}
-                          className="px-2.5 py-1 rounded-md text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 font-semibold cursor-pointer disabled:opacity-50 transition-colors"
+                          className="px-2.5 py-1 rounded-md text-tiny bg-white/5 hover:bg-white/10 text-slate-300 font-semibold cursor-pointer disabled:opacity-50 transition-colors"
                         >
                           {t("buddy.conflictActionKeep")}
                         </button>
                       </div>
                       {/* 明细：两侧账号 / IDE / 会话 id / 双方最后消息时间 */}
                       {expanded && (
-                        <div className="mt-2 rounded-ctl bg-black/30 border border-white/5 p-2.5 grid grid-cols-[64px_1fr] gap-x-2 gap-y-1 text-[10px]">
+                        <div className="mt-2 rounded-ctl bg-black/30 border border-white/5 p-2.5 grid grid-cols-[64px_1fr] gap-x-2 gap-y-1 text-tiny">
                           <span className="text-slate-500">{t("buddy.conflictSourceTime")}</span>
                           <span className="text-slate-300">
                             {new Date(conflict.sourceStamp).toLocaleString()}
@@ -3979,7 +3978,7 @@ export default function BuddyPanel() {
                         <div className="mt-2 flex items-center gap-1.5">
                           <button
                             onClick={() => void loadConflictMessages(conflict.id, "source")}
-                            className={`px-2 py-1 rounded-md text-[10px] font-semibold cursor-pointer transition-colors ${
+                            className={`px-2 py-1 rounded-md text-tiny font-semibold cursor-pointer transition-colors ${
                               conflictMessages[`${conflict.id}:source`]
                                 ? "bg-white/5 text-slate-400"
                                 : "bg-white/5 hover:bg-white/10 text-slate-300"
@@ -3989,11 +3988,11 @@ export default function BuddyPanel() {
                           </button>
                           <button
                             onClick={() => void loadConflictMessages(conflict.id, "target")}
-                            className="px-2 py-1 rounded-md text-[10px] font-semibold bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer transition-colors"
+                            className="px-2 py-1 rounded-md text-tiny font-semibold bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer transition-colors"
                           >
                             {t("buddy.conflictViewTarget")}
                           </button>
-                          <span className="text-[9px] text-slate-600">{t("buddy.conflictPreviewHint")}</span>
+                          <span className="text-micro text-slate-600">{t("buddy.conflictPreviewHint")}</span>
                         </div>
                       )}
                       {expanded &&
@@ -4002,17 +4001,17 @@ export default function BuddyPanel() {
                           if (!state) return null;
                           return (
                             <div key={side} className="mt-1.5 rounded-ctl bg-black/40 border border-white/5 p-2">
-                              <div className="text-[9px] font-semibold text-slate-500 mb-1">
+                              <div className="text-micro font-semibold text-slate-500 mb-1">
                                 {side === "source" ? t("buddy.conflictSourceShort") : t("buddy.conflictTargetShort")}
                               </div>
                               {state === "loading" ? (
-                                <div className="text-[10px] text-slate-500 py-2">{t("buddy.conflictLoading")}</div>
+                                <div className="text-tiny text-slate-500 py-2">{t("buddy.conflictLoading")}</div>
                               ) : state.length === 0 ? (
-                                <div className="text-[10px] text-slate-500 py-2">{t("buddy.conflictNoMessages")}</div>
+                                <div className="text-tiny text-slate-500 py-2">{t("buddy.conflictNoMessages")}</div>
                               ) : (
                                 <div className="max-h-52 overflow-y-auto space-y-1.5">
                                   {state.map((message, index) => (
-                                    <div key={index} className="text-[10px] leading-relaxed">
+                                    <div key={index} className="text-tiny leading-relaxed">
                                       <span
                                         className={`mr-1.5 font-semibold flex-shrink-0 ${
                                           message.role === "user"
@@ -4062,7 +4061,7 @@ export default function BuddyPanel() {
             <div className="flex items-center gap-1 bg-black/30 rounded-ctl border border-white/10 p-0.5 mb-4">
               <button
                 onClick={() => setAddMode("oauth")}
-                className={`flex-1 px-2 py-1.5 rounded-md text-[11px] transition cursor-pointer ${
+                className={`flex-1 px-2 py-1.5 rounded-md text-caption transition cursor-pointer ${
                   addMode === "oauth" ? "bg-[var(--module-accent)]/25 text-white font-semibold" : "text-slate-400"
                 }`}
               >
@@ -4070,7 +4069,7 @@ export default function BuddyPanel() {
               </button>
               <button
                 onClick={() => setAddMode("token")}
-                className={`flex-1 px-2 py-1.5 rounded-md text-[11px] transition cursor-pointer ${
+                className={`flex-1 px-2 py-1.5 rounded-md text-caption transition cursor-pointer ${
                   addMode === "token" ? "bg-[var(--module-accent)]/25 text-white font-semibold" : "text-slate-400"
                 }`}
               >
@@ -4078,7 +4077,7 @@ export default function BuddyPanel() {
               </button>
               <button
                 onClick={() => setAddMode("local")}
-                className={`flex-1 px-2 py-1.5 rounded-md text-[11px] transition cursor-pointer ${
+                className={`flex-1 px-2 py-1.5 rounded-md text-caption transition cursor-pointer ${
                   addMode === "local" ? "bg-[var(--module-accent)]/25 text-white font-semibold" : "text-slate-400"
                 }`}
               >
@@ -4089,30 +4088,30 @@ export default function BuddyPanel() {
             {addMode === "oauth" ? (
               oauth ? (
                 <div className="space-y-3">
-                  <p className="text-[11px] text-slate-400 leading-relaxed">{t("buddy.oauthWaitHint")}</p>
+                  <p className="text-caption text-slate-400 leading-relaxed">{t("buddy.oauthWaitHint")}</p>
                   <a
                     href={oauth.verificationUri}
                     target="_blank"
                     rel="noreferrer"
-                    className="flex items-center gap-2 text-[11px] text-[var(--module-accent)] hover:underline break-all"
+                    className="flex items-center gap-2 text-caption text-[var(--module-accent)] hover:underline break-all"
                   >
                     <ExternalLink className="w-3 h-3 flex-shrink-0" />
                     {oauth.verificationUri}
                   </a>
-                  <p className="text-[9px] text-slate-600">
+                  <p className="text-micro text-slate-600">
                     {t("buddy.oauthExpires", { minutes: Math.round(oauth.expiresIn / 60) })}
                   </p>
                   <div className="flex justify-end gap-2 pt-2">
                     <button
                       onClick={() => void cancelOAuth()}
-                      className="px-3 py-1.5 rounded-ctl text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer"
+                      className="px-3 py-1.5 rounded-ctl text-caption text-slate-400 hover:bg-white/5 cursor-pointer"
                     >
                       {t("buddy.cancel")}
                     </button>
                     <button
                       onClick={() => void completeOAuth()}
                       disabled={oauthBusy}
-                      className="px-4 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                      className="px-4 py-1.5 rounded-ctl text-caption ui-btn-primary text-white font-semibold flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
                     >
                       {oauthBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
                       {t("buddy.oauthComplete")}
@@ -4121,11 +4120,11 @@ export default function BuddyPanel() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <p className="text-[11px] text-slate-400 leading-relaxed">{t("buddy.oauthStartHint")}</p>
+                  <p className="text-caption text-slate-400 leading-relaxed">{t("buddy.oauthStartHint")}</p>
                   <button
                     onClick={startOAuth}
                     disabled={oauthBusy}
-                    className="w-full px-3 py-2 rounded-ctl text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center justify-center gap-1 cursor-pointer transition disabled:opacity-50"
+                    className="w-full px-3 py-2 rounded-ctl text-caption ui-btn-primary text-white font-semibold flex items-center justify-center gap-1 cursor-pointer transition disabled:opacity-50"
                   >
                     {oauthBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <LogIn className="w-3 h-3" />}
                     {t("buddy.oauthStart")}
@@ -4139,19 +4138,19 @@ export default function BuddyPanel() {
                   onChange={(e) => setTokenInput(e.target.value)}
                   placeholder={t("buddy.tokenPlaceholder")}
                   rows={4}
-                  className="w-full bg-black/30 border border-white/10 rounded-ctl px-3 py-2 text-[11px] text-white outline-none focus:border-[var(--module-accent)]/50 placeholder:text-slate-600 resize-none"
+                  className="w-full bg-black/30 border border-white/10 rounded-ctl px-3 py-2 text-caption text-white outline-none focus:border-[var(--module-accent)]/50 placeholder:text-slate-600 resize-none"
                 />
                 <div className="flex justify-end gap-2">
                   <button
                     onClick={() => setShowAdd(false)}
-                    className="px-3 py-1.5 rounded-ctl text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer"
+                    className="px-3 py-1.5 rounded-ctl text-caption text-slate-400 hover:bg-white/5 cursor-pointer"
                   >
                     {t("buddy.cancel")}
                   </button>
                   <button
                     onClick={() => void addWithToken()}
                     disabled={busy || !tokenInput.trim()}
-                    className="px-4 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                    className="px-4 py-1.5 rounded-ctl text-caption ui-btn-primary text-white font-semibold flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
                   >
                     <KeyRound className="w-3 h-3" /> {t("buddy.addTokenSubmit")}
                   </button>
@@ -4159,18 +4158,18 @@ export default function BuddyPanel() {
               </div>
             ) : (
               <div className="space-y-3">
-                <p className="text-[11px] text-slate-400 leading-relaxed">{t("buddy.importLocalHint")}</p>
+                <p className="text-caption text-slate-400 leading-relaxed">{t("buddy.importLocalHint")}</p>
                 <button
                   onClick={() => void importFromLocal()}
                   disabled={busy}
-                  className="w-full px-3 py-2 rounded-ctl text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center justify-center gap-1 cursor-pointer transition disabled:opacity-50"
+                  className="w-full px-3 py-2 rounded-ctl text-caption ui-btn-primary text-white font-semibold flex items-center justify-center gap-1 cursor-pointer transition disabled:opacity-50"
                 >
                   {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
                   {t("buddy.importLocal")}
                 </button>
 
                 {/* 第三方工具导出文件（不读取对方数据目录，仅解析导出的 JSON） */}
-                <p className="text-[10px] text-slate-500 pt-3 border-t border-white/10">{t("buddy.importSourceTitle")}</p>
+                <p className="text-tiny text-slate-500 pt-3 border-t border-white/10">{t("buddy.importSourceTitle")}</p>
 
                 {platform === "workbuddy" && (
                   <div className="space-y-1.5">
@@ -4179,17 +4178,17 @@ export default function BuddyPanel() {
                       value={workdaddyPassword}
                       onChange={(e) => setWorkdaddyPassword(e.target.value)}
                       placeholder={t("buddy.importWorkdaddyPassword")}
-                      className="w-full bg-black/30 border border-white/10 rounded-ctl px-3 py-2 text-[11px] text-white outline-none focus:border-[var(--module-accent)]/50 placeholder:text-slate-600"
+                      className="w-full bg-black/30 border border-white/10 rounded-ctl px-3 py-2 text-caption text-white outline-none focus:border-[var(--module-accent)]/50 placeholder:text-slate-600"
                     />
                     <button
                       onClick={() => void importThirdParty("workdaddy")}
                       disabled={busy}
-                      className="w-full px-3 py-2 rounded-ctl text-[11px] border border-white/10 hover:border-[var(--module-accent)]/40 hover:bg-white/5 text-slate-200 flex items-center justify-center gap-1 cursor-pointer transition disabled:opacity-50"
+                      className="w-full px-3 py-2 rounded-ctl text-caption border border-white/10 hover:border-[var(--module-accent)]/40 hover:bg-white/5 text-slate-200 flex items-center justify-center gap-1 cursor-pointer transition disabled:opacity-50"
                     >
                       {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Package className="w-3 h-3" />}
                       {t("buddy.importWorkdaddy")}
                     </button>
-                    <p className="text-[9px] text-slate-600 leading-relaxed">{t("buddy.importWorkdaddyHint")}</p>
+                    <p className="text-micro text-slate-600 leading-relaxed">{t("buddy.importWorkdaddyHint")}</p>
                   </div>
                 )}
 
@@ -4197,12 +4196,12 @@ export default function BuddyPanel() {
                   <button
                     onClick={() => void importThirdParty("cockpit-tools")}
                     disabled={busy}
-                    className="w-full px-3 py-2 rounded-ctl text-[11px] border border-white/10 hover:border-[var(--module-accent)]/40 hover:bg-white/5 text-slate-200 flex items-center justify-center gap-1 cursor-pointer transition disabled:opacity-50"
+                    className="w-full px-3 py-2 rounded-ctl text-caption border border-white/10 hover:border-[var(--module-accent)]/40 hover:bg-white/5 text-slate-200 flex items-center justify-center gap-1 cursor-pointer transition disabled:opacity-50"
                   >
                     {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <FolderOpen className="w-3 h-3" />}
                     {t("buddy.importCockpit")}
                   </button>
-                  <p className="text-[9px] text-slate-600 leading-relaxed">{t("buddy.importCockpitHint")}</p>
+                  <p className="text-micro text-slate-600 leading-relaxed">{t("buddy.importCockpitHint")}</p>
                 </div>
               </div>
             )}
