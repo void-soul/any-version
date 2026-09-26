@@ -94,7 +94,7 @@ export default function SysproxyPanel() {
         <div className="flex items-center justify-between mb-1">
           <h3 className="text-sm font-bold text-white">{t("sysproxy.title")}</h3>
           <div className="flex items-center gap-2">
-            {msg && <span className="text-[11px] text-slate-400">{msg}</span>}
+            {msg && <span className="text-caption text-slate-400">{msg}</span>}
             {changed && <button className={btnPrimary} onClick={onSave}>{t("common.save")}</button>}
           </div>
         </div>
@@ -114,7 +114,7 @@ export default function SysproxyPanel() {
               <button
                 key={k}
                 onClick={() => setValues({ ...values, mode: k })}
-                className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
+                className={`px-3 py-1.5 text-caption font-semibold cursor-pointer transition-all ${
                   values.mode === k ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200"
                 }`}
               >
@@ -146,7 +146,7 @@ export default function SysproxyPanel() {
               </button>
             </SettingItem>
             <div className="pt-3">
-              <h4 className="text-[12px] text-slate-300 font-semibold mb-2">{t("sysproxy.bypassList")}</h4>
+              <h4 className="text-body text-slate-300 font-semibold mb-2">{t("sysproxy.bypassList")}</h4>
               {[...values.bypass, ""].map((domain, index) => (
                 <div key={index} className="mb-1.5 flex gap-2">
                   <input
@@ -182,7 +182,7 @@ export default function SysproxyPanel() {
           }
         >
           <textarea
-            className="w-full h-80 p-3 rounded-card bg-black/40 border border-white/10 text-[12px] font-mono text-slate-200 focus:outline-none focus:border-emerald-500 resize-none"
+            className="w-full h-80 p-3 rounded-card bg-black/40 border border-white/10 text-body font-mono text-slate-200 focus:outline-none focus:border-emerald-500 resize-none"
             value={pacDraft}
             onChange={(e) => setPacDraft(e.target.value)}
             spellCheck={false}

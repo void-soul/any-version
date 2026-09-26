@@ -37,7 +37,7 @@ function SegTabs({ options, value, onChange }: { options: [string, string][]; va
     <div className="flex rounded-ctl bg-white/5 border border-white/10 overflow-hidden">
       {options.map(([k, t]) => (
         <button key={k} onClick={() => onChange(k)}
-          className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
+          className={`px-3 py-1.5 text-caption font-semibold cursor-pointer transition-all ${
             value === k ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200"
           }`}>
           {t}
@@ -203,7 +203,7 @@ export default function DnsPanel() {
         <div className="flex items-center justify-between mb-1">
           <h3 className="text-sm font-bold text-white">{t("mihomo.dnsTitle")}</h3>
           <div className="flex items-center gap-2">
-            {msg && <span className="text-[11px] text-slate-400">{msg}</span>}
+            {msg && <span className="text-caption text-slate-400">{msg}</span>}
             {changed && <button className={btnPrimary} onClick={onSave}>{controlDns ? t("mihomo.dnsSave") : t("mihomo.dnsSaveOnly")}</button>}
           </div>
         </div>
@@ -233,7 +233,7 @@ export default function DnsPanel() {
               />
             </SettingItem>
             <div className="py-2 border-b border-white/5">
-              <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.dnsRealIpRespond")}</h4>
+              <h4 className="text-body text-slate-300 font-semibold">{t("mihomo.dnsRealIpRespond")}</h4>
               {renderListInputs("fakeIPFilter", values.fakeIPFilterMode === "rule" ? t("mihomo.dnsExampleRuleSet") : t("mihomo.dnsExampleLan"))}
             </div>
           </>
@@ -247,19 +247,19 @@ export default function DnsPanel() {
         </SettingItem>
 
         <div className="py-2 border-b border-white/5">
-          <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.dnsDefaultNs")}</h4>
+          <h4 className="text-body text-slate-300 font-semibold">{t("mihomo.dnsDefaultNs")}</h4>
           {renderListInputs("defaultNameserver", t("mihomo.dnsExampleTls"))}
         </div>
         <div className="py-2 border-b border-white/5">
-          <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.dnsProxyNs")}</h4>
+          <h4 className="text-body text-slate-300 font-semibold">{t("mihomo.dnsProxyNs")}</h4>
           {renderListInputs("proxyServerNameserver", t("mihomo.dnsExampleDoh"))}
         </div>
         <div className="py-2 border-b border-white/5">
-          <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.dnsNs")}</h4>
+          <h4 className="text-body text-slate-300 font-semibold">{t("mihomo.dnsNs")}</h4>
           {renderListInputs("nameserver", t("mihomo.dnsExampleDoh"))}
         </div>
         <div className="py-2 border-b border-white/5">
-          <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.dnsDirectNs")}</h4>
+          <h4 className="text-body text-slate-300 font-semibold">{t("mihomo.dnsDirectNs")}</h4>
           {renderListInputs("directNameserver", t("mihomo.dnsExampleSystem"))}
         </div>
 
@@ -268,7 +268,7 @@ export default function DnsPanel() {
         </SettingItem>
         {values.useNameserverPolicy && (
           <div className="py-2 border-b border-white/5">
-            <h4 className="text-[12px] text-slate-300 font-semibold mb-2">{t("mihomo.dnsPolicyList")}</h4>
+            <h4 className="text-body text-slate-300 font-semibold mb-2">{t("mihomo.dnsPolicyList")}</h4>
             {renderKvInputs("nameserverPolicy", t("mihomo.dnsPolicyDomainPh"), t("mihomo.dnsPolicyValuePh"))}
           </div>
         )}
@@ -281,13 +281,13 @@ export default function DnsPanel() {
         </SettingItem>
         {values.useHosts && (
           <div className="py-2 border-b border-white/5">
-            <h4 className="text-[12px] text-slate-300 font-semibold mb-2">{t("mihomo.dnsHostsList")}</h4>
+            <h4 className="text-body text-slate-300 font-semibold mb-2">{t("mihomo.dnsHostsList")}</h4>
             {renderKvInputs("hosts", t("mihomo.dnsDomain"), t("mihomo.dnsHostsValuePh"))}
           </div>
         )}
 
         <div className="py-2">
-          <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.dnsFallback")}</h4>
+          <h4 className="text-body text-slate-300 font-semibold">{t("mihomo.dnsFallback")}</h4>
           {renderListInputs("fallback", t("mihomo.dnsExampleTls8844"))}
         </div>
       </div>
@@ -303,11 +303,11 @@ export default function DnsPanel() {
             onChange={(e) => setValues({ ...values, fallbackGeoipCode: e.target.value })} />
         </SettingItem>
         <div className="py-2 border-b border-white/5">
-          <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.dnsIpcidr")}</h4>
+          <h4 className="text-body text-slate-300 font-semibold">{t("mihomo.dnsIpcidr")}</h4>
           {renderListInputs("fallbackIpcidr", t("mihomo.dnsExampleIpcidr"))}
         </div>
         <div className="py-2">
-          <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.dnsDomainFilter")}</h4>
+          <h4 className="text-body text-slate-300 font-semibold">{t("mihomo.dnsDomainFilter")}</h4>
           {renderListInputs("fallbackDomain", t("mihomo.dnsExampleDomain"))}
         </div>
       </div>

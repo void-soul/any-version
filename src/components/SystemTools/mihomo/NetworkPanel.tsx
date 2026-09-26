@@ -212,15 +212,15 @@ const TopoNodeRow: React.FC<{
         onClick={() => hasChildren && toggle(node.id)}
       >
         <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${TYPE_DOT[node.type]}`} />
-        <span className={`text-[12px] font-semibold ${TYPE_COLORS[node.type]}`}>{node.name}</span>
-        <span className="text-[10px] text-slate-500 bg-white/5 rounded px-1.5 py-0.5">
+        <span className={`text-body font-semibold ${TYPE_COLORS[node.type]}`}>{node.name}</span>
+        <span className="text-tiny text-slate-500 bg-white/5 rounded px-1.5 py-0.5">
           {t("network.connections", { count: node.connections })}
         </span>
         {node.traffic > 0 && (
-          <span className="text-[10px] text-slate-500">{fmtTraffic(node.traffic)}</span>
+          <span className="text-tiny text-slate-500">{fmtTraffic(node.traffic)}</span>
         )}
         {hasChildren && (
-          <span className="text-[10px] text-slate-500 ml-auto">{isCollapsed ? "▶" : "▼"}</span>
+          <span className="text-tiny text-slate-500 ml-auto">{isCollapsed ? "▶" : "▼"}</span>
         )}
       </div>
       {showChildren &&
@@ -407,7 +407,7 @@ export default function NetworkPanel() {
   const renderIpCard = (type: "direct" | "proxy") => (
     <div className={`${cardCls} p-3 flex-1 min-w-[220px]`}>
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[12px] font-semibold text-slate-300 flex items-center gap-1.5">
+        <span className="text-body font-semibold text-slate-300 flex items-center gap-1.5">
           {type === "direct" ? (
             <Laptop className="w-3.5 h-3.5 text-amber-300" />
           ) : (
@@ -415,7 +415,7 @@ export default function NetworkPanel() {
           )}
           {type === "direct" ? t("network.directIf") : t("network.proxyIf")}
         </span>
-        <span className="text-[10px] text-slate-500">{type === "direct" ? t("network.bypass") : t("network.thruProxy")}</span>
+        <span className="text-tiny text-slate-500">{type === "direct" ? t("network.bypass") : t("network.thruProxy")}</span>
       </div>
       {IP_PROVIDERS.map((p) => {
         const info = ipInfos[p.key]?.[type];
@@ -423,7 +423,7 @@ export default function NetworkPanel() {
         return (
           <div key={p.key} className="mb-2 last:mb-0">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-slate-400">{p.label}</span>
+              <span className="text-caption text-slate-400">{p.label}</span>
               {info?.ip && (
                 <button onClick={() => copy(info.ip)} title={t("network.copyIp")}>
                   <Copy className="w-3 h-3 text-slate-500 hover:text-slate-200" />
@@ -431,16 +431,16 @@ export default function NetworkPanel() {
               )}
             </div>
             {err ? (
-              <div className="text-[11px] text-rose-300/80">{err}</div>
+              <div className="text-caption text-rose-300/80">{err}</div>
             ) : info ? (
-              <div className="text-[12px] text-white font-mono">
+              <div className="text-body text-white font-mono">
                 {hideIp ? "•••.•••.•••.•••" : info.ip}
                 {!hideIp && getConciseIp(info) && (
                   <span className="text-slate-400 ml-1 font-sans">· {getConciseIp(info)}</span>
                 )}
               </div>
             ) : (
-              <div className="text-[11px] text-slate-500">{t("network.querying")}</div>
+              <div className="text-caption text-slate-500">{t("network.querying")}</div>
             )}
           </div>
         );
@@ -511,7 +511,7 @@ export default function NetworkPanel() {
                 onBlur={() => persistTargets(latencyTargets)}
               />
               <span
-                className={`text-[12px] font-mono ${
+                className={`text-body font-mono ${
                   latencyResults[t.name] == null
                     ? "text-slate-500"
                     : latencyResults[t.name]! < 300
@@ -556,7 +556,7 @@ export default function NetworkPanel() {
             {t("network.topology")}
           </h3>
           <div className="flex items-center gap-3">
-            <div className="flex flex-wrap gap-x-2 text-[11px] text-slate-500">
+            <div className="flex flex-wrap gap-x-2 text-caption text-slate-500">
               <span>{t("network.clients", { count: stats.clientCount })}</span>·<span>{t("network.rules", { count: stats.ruleCount })}</span>·<span>
                 {t("network.groups", { count: stats.groupCount })}
               </span>·<span>{t("network.proxies", { count: stats.proxyCount })}</span>·<span>{fmtTraffic(stats.totalTraffic)}</span>
@@ -566,7 +566,7 @@ export default function NetworkPanel() {
             </button>
           </div>
         </div>
-        <div className="flex flex-wrap gap-3 text-[11px] text-slate-400 mb-2">
+        <div className="flex flex-wrap gap-3 text-caption text-slate-400 mb-2">
           <span className="flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />
             {t("network.legendGroup")}
@@ -615,15 +615,15 @@ export default function NetworkPanel() {
           </button>
         </div>
         {interfaces.length === 0 ? (
-          <div className="text-[12px] text-slate-500">{loadingItf ? t("network.ifaceLoading") : t("network.ifaceNone")}</div>
+          <div className="text-body text-slate-500">{loadingItf ? t("network.ifaceLoading") : t("network.ifaceNone")}</div>
         ) : (
           <div className="space-y-2">
             {interfaces.map((itf, i) => (
               <div key={i} className="rounded-ctl bg-white/5 border border-white/10 p-3">
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[13px] font-semibold text-white">{itf.name}</span>
+                  <span className="text-title font-semibold text-white">{itf.name}</span>
                   <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded ${
+                    className={`text-tiny px-1.5 py-0.5 rounded ${
                       itf.status === "Up"
                         ? "bg-emerald-500/20 text-emerald-300"
                         : "bg-slate-500/20 text-slate-400"
@@ -632,8 +632,8 @@ export default function NetworkPanel() {
                     {itf.status}
                   </span>
                 </div>
-                <div className="text-[11px] text-slate-400 mb-1.5">{itf.description}</div>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                <div className="text-caption text-slate-400 mb-1.5">{itf.description}</div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-caption">
                   <span className="text-slate-500">MAC</span>
                   <span className="text-slate-300 font-mono">{itf.mac || "—"}</span>
                   <span className="text-slate-500">{t("network.ifaceSpeed")}</span>

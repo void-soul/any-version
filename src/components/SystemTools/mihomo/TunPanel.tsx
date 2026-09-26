@@ -116,7 +116,7 @@ export default function TunPanel() {
       <div className="flex items-center justify-between mb-1">
         <h3 className="text-sm font-bold text-white">{t("tun.title")}</h3>
         <div className="flex items-center gap-2">
-          {msg && <span className="text-[11px] text-slate-400">{msg}</span>}
+          {msg && <span className="text-caption text-slate-400">{msg}</span>}
           {changed && <button className={btnPrimary} onClick={onSave}>{t("common.save")}</button>}
         </div>
       </div>
@@ -145,7 +145,7 @@ export default function TunPanel() {
             <button
               key={k}
               onClick={() => setValues({ ...values, stack: k })}
-              className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
+              className={`px-3 py-1.5 text-caption font-semibold cursor-pointer transition-all ${
                 values.stack === k ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200"
               }`}
             >
@@ -186,7 +186,7 @@ export default function TunPanel() {
       </SettingItem>
 
       <div className="pt-3">
-        <h4 className="text-[12px] text-slate-300 font-semibold mb-2">{t("tun.excludeCidrs")}</h4>
+        <h4 className="text-body text-slate-300 font-semibold mb-2">{t("tun.excludeCidrs")}</h4>
         {excludeInputs.map((address, index) => {
           const invalid = address.trim() !== "" && !ipCIDRValidator(address.trim());
           return (
@@ -204,11 +204,11 @@ export default function TunPanel() {
                   </button>
                 )}
               </div>
-              {invalid && <div className="text-[10px] text-rose-400 mt-0.5 px-1">{t("tun.invalidCidr")}</div>}
+              {invalid && <div className="text-tiny text-rose-400 mt-0.5 px-1">{t("tun.invalidCidr")}</div>}
             </div>
           );
         })}
-        {hasInvalid && <div className="text-[10px] text-rose-400 px-1">{t("tun.invalidEntries")}</div>}
+        {hasInvalid && <div className="text-tiny text-rose-400 px-1">{t("tun.invalidEntries")}</div>}
       </div>
     </div>
   );

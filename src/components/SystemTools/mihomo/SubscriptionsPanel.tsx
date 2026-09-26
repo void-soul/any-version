@@ -403,7 +403,7 @@ export default function SubscriptionsPanel({
             </span>
           </button>
         </div>
-        {msg && <div className="mt-2 text-[11px] text-emerald-300">{msg}</div>}
+        {msg && <div className="mt-2 text-caption text-emerald-300">{msg}</div>}
       </div>
 
       {/* 配置卡片列表 */}
@@ -425,7 +425,7 @@ export default function SubscriptionsPanel({
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
-                    <span className={`text-[13px] font-semibold break-all ${cur ? "text-emerald-300" : "text-white"}`} title={it.name}>{it.name}</span>
+                    <span className={`text-title font-semibold break-all ${cur ? "text-emerald-300" : "text-white"}`} title={it.name}>{it.name}</span>
                     <span className={tagCls}>{it.url ? t("subs.tagSub") : t("subs.tagLocal")}</span>
                     {st && (
                       <span className={tagCls}>
@@ -434,7 +434,7 @@ export default function SubscriptionsPanel({
                     )}
                   </div>
                   {it.url && (
-                    <div className="text-[10px] text-slate-500 truncate mt-0.5" title={it.url}>
+                    <div className="text-tiny text-slate-500 truncate mt-0.5" title={it.url}>
                       {it.url}
                     </div>
                   )}
@@ -476,7 +476,7 @@ export default function SubscriptionsPanel({
               {/* 流量用量（显式展示本月剩余流量） */}
               {ui && (
                 <div className="mt-2.5">
-                  <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
+                  <div className="flex items-center justify-between text-tiny text-slate-400 mb-1">
                     <span>
                       {ui.total > 0 ? (
                         <>
@@ -503,7 +503,7 @@ export default function SubscriptionsPanel({
                 </div>
               )}
 
-              <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500">
+              <div className="mt-2 flex items-center justify-between text-tiny text-slate-500">
                 <span>{fmtTime(it.updated_at, t)}</span>
                 <span className="flex items-center gap-2">
                   {it.auto_update && <span className={tagCls}>{t("subs.autoUpdateShort", { min: Math.round((it.update_interval || 0) / 60) })}</span>}
@@ -515,7 +515,7 @@ export default function SubscriptionsPanel({
           );
         })}
         {cfg.items.length === 0 && (
-          <div className="text-center text-xs text-slate-500 py-10 col-span-full">
+          <div className="text-center text-body text-slate-500 py-10 col-span-full">
             {t("subs.empty")}
           </div>
         )}
@@ -527,7 +527,7 @@ export default function SubscriptionsPanel({
           className="flex items-center justify-between cursor-pointer select-none"
           onClick={() => setShowLog((v) => !v)}
         >
-          <div className="flex items-center gap-2 text-[12px] font-semibold text-white">
+          <div className="flex items-center gap-2 text-body font-semibold text-white">
             <ScrollText className="w-4 h-4 text-emerald-400" />
             {t("subs.logTitle")}
             <span className={tagCls}>{logs.length}</span>
@@ -535,7 +535,7 @@ export default function SubscriptionsPanel({
           <div className="flex items-center gap-3">
             {logs.length > 0 && (
               <button
-                className="text-[11px] text-slate-400 hover:text-rose-300"
+                className="text-caption text-slate-400 hover:text-rose-300"
                 onClick={(e) => { e.stopPropagation(); setLogs([]); }}
               >
                 {t("subs.clear")}
@@ -549,7 +549,7 @@ export default function SubscriptionsPanel({
         {showLog && (
           <div className="mt-3 space-y-1 max-h-64 overflow-y-auto pr-1">
             {logs.length === 0 && (
-              <div className="text-[11px] text-slate-500">
+              <div className="text-caption text-slate-500">
                 {t("subs.logEmpty")}
               </div>
             )}
@@ -558,7 +558,7 @@ export default function SubscriptionsPanel({
               return (
                 <div
                   key={l.id}
-                  className={`flex items-center gap-2 text-[11px] border-l-2 pl-2 py-0.5 ${border}`}
+                  className={`flex items-center gap-2 text-caption border-l-2 pl-2 py-0.5 ${border}`}
                 >
                   <span className="text-slate-500 shrink-0">
                     {new Date(l.time).toLocaleTimeString("zh-CN", { hour12: false })}
@@ -680,7 +680,7 @@ function EditInfoModal({ item, overrides, onClose, onSaved }: any) {
           <input className={inputCls} value={v.update_cron || ""} placeholder="0 4 * * *"
             onChange={(e) => set("update_cron", e.target.value)} />
           {/* 填了 cron 就以它为准（每天固定时刻更新），间隔只作兜底 */}
-          <div className="mt-1 text-[10px] text-slate-500">{t("subs.updateCronHint")}</div>
+          <div className="mt-1 text-tiny text-slate-500">{t("subs.updateCronHint")}</div>
         </div>
         <div>
           <label className={labelCls}>{t("subs.updateTimeout")}</label>
@@ -701,13 +701,13 @@ function EditInfoModal({ item, overrides, onClose, onSaved }: any) {
         <div className="col-span-2">
           <label className={labelCls}>{t("subs.applyOverrides")}</label>
           <div className="flex flex-wrap gap-2">
-            {overrides.length === 0 && <span className="text-[11px] text-slate-500">{t("subs.noOverrides")}</span>}
+            {overrides.length === 0 && <span className="text-caption text-slate-500">{t("subs.noOverrides")}</span>}
             {overrides.map((o: any) => {
               const on = (v.override_ids || []).includes(o.id);
               return (
                 <button
                   key={o.id}
-                  className={`px-2.5 py-1 rounded-ctl text-[11px] border transition-all cursor-pointer ${
+                  className={`px-2.5 py-1 rounded-ctl text-caption border transition-all cursor-pointer ${
                     on
                       ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)] border-[var(--module-accent-ring)]"
                       : "bg-white/5 text-slate-400 border-white/10 hover:text-white"
@@ -755,7 +755,7 @@ function EditFileModal({ item, initial, isCurrent, onClose, onSaved }: any) {
       busyText={t("subs.savingReload")}
       footer={
         <>
-          <span className="text-[11px] text-slate-500 mr-auto">{t("subs.lines", { count: lines })}</span>
+          <span className="text-caption text-slate-500 mr-auto">{t("subs.lines", { count: lines })}</span>
           <button className={btnSec} onClick={onClose} disabled={saving}>{t("subs.cancel")}</button>
           <button className={btnPrimary} onClick={save} disabled={saving}>{saving ? t("subs.saving") : t("subs.save")}</button>
         </>

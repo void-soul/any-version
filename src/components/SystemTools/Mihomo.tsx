@@ -167,22 +167,22 @@ export default function Mihomo() {
             <h3 className="text-base font-bold text-white flex items-center gap-2">
               {t("mihomo.shellTitle")}
               {running ? (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-caption font-medium bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]">
                   <span className="w-2 h-2 rounded-full bg-[var(--module-accent)] animate-pulse" />
                   {t("mihomo.shellRunning")}
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-white/5 text-slate-400 border border-white/10">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-caption font-medium bg-white/5 text-slate-400 border border-white/10">
                   ○ {t("mihomo.shellStopped")}
                 </span>
               )}
               {state?.core_version && (
-                <span className="text-[11px] px-2 py-0.5 rounded-md bg-white/5 text-slate-300 border border-white/10 font-mono">
+                <span className="text-caption px-2 py-0.5 rounded-md bg-white/5 text-slate-300 border border-white/10 font-mono">
                   {state.core_version}
                 </span>
               )}
             </h3>
-            <p className="text-xs text-slate-400 mt-0.5">
+            <p className="text-body text-slate-400 mt-0.5">
               {t("mihomo.shellDesc")}
             </p>
           </div>
@@ -193,7 +193,7 @@ export default function Mihomo() {
             <button
               onClick={() => act("start", () => mihomoApi.start())}
               disabled={busy === "start"}
-              className="px-3.5 py-2 rounded-card bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-[var(--module-accent-ring)] cursor-pointer disabled:opacity-50"
+              className="px-3.5 py-2 rounded-card bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-body font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-[var(--module-accent-ring)] cursor-pointer disabled:opacity-50"
             >
               <Play className="w-3.5 h-3.5 fill-current" /> {busy === "start" ? t("mihomo.shellStarting") : t("mihomo.shellStart")}
             </button>
@@ -201,7 +201,7 @@ export default function Mihomo() {
             <button
               onClick={() => act("stop", () => mihomoApi.stop())}
               disabled={busy === "stop"}
-              className="px-3.5 py-2 rounded-card bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+              className="px-3.5 py-2 rounded-card bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-body font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
             >
               <Square className="w-3.5 h-3.5 fill-current" /> {t("mihomo.shellStop")}
             </button>
@@ -209,7 +209,7 @@ export default function Mihomo() {
           <button
             onClick={() => act("restart", () => mihomoApi.restart())}
             disabled={busy === "restart"}
-            className="px-3.5 py-2 rounded-card bg-white/10 hover:bg-white/20 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+            className="px-3.5 py-2 rounded-card bg-white/10 hover:bg-white/20 text-slate-200 text-body font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${busy === "restart" ? "animate-spin" : ""}`} /> {t("mihomo.shellRestart")}
           </button>
@@ -229,7 +229,7 @@ export default function Mihomo() {
             <button
               onClick={() => act("dismiss", () => mihomoApi.clearWarnings())}
               disabled={busy === "dismiss"}
-              className="text-amber-300 hover:text-amber-100 text-[11px] font-semibold cursor-pointer disabled:opacity-50"
+              className="text-amber-300 hover:text-amber-100 text-caption font-semibold cursor-pointer disabled:opacity-50"
               title={t("mihomo.shellClearWarnings")}
             >
               {t("mihomo.shellClear")}
@@ -237,7 +237,7 @@ export default function Mihomo() {
           }
         >
           {state.warnings.map((w: string, i: number) => (
-            <div key={i} className="flex items-start gap-2 text-xs text-amber-200">
+            <div key={i} className="flex items-start gap-2 text-body text-amber-200">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-px" />
               <span className="break-all">{w}</span>
             </div>
@@ -247,7 +247,7 @@ export default function Mihomo() {
               <button
                 onClick={() => act("elevate", () => mihomoApi.restartAsAdmin())}
                 disabled={busy === "elevate"}
-                className="px-3 py-1.5 rounded-ctl bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 text-[11px] font-semibold cursor-pointer disabled:opacity-50"
+                className="px-3 py-1.5 rounded-ctl bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 text-caption font-semibold cursor-pointer disabled:opacity-50"
               >
                 {busy === "elevate" ? t("mihomo.shellRestarting") : t("mihomo.shellRestartAsAdmin")}
               </button>
@@ -262,7 +262,7 @@ export default function Mihomo() {
           <button
             key={tb.k}
             onClick={() => setTab(tb.k)}
-            className={`px-3 py-2 text-xs font-medium cursor-pointer border-b-2 -mb-px transition-all whitespace-nowrap ${
+            className={`px-3 py-2 text-body font-medium cursor-pointer border-b-2 -mb-px transition-all whitespace-nowrap ${
               tab === tb.k
                 ? "text-[var(--module-accent)] border-[var(--module-accent)]"
                 : "text-slate-400 border-transparent hover:text-slate-200"

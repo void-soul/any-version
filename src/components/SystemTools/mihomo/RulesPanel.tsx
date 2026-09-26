@@ -101,14 +101,14 @@ function RuleOverrideEditor({
   const List = ({ k, title, hint }: { k: keyof RuleOverride; title: string; hint: string }) => (
     <div>
       <div className="flex items-center justify-between mb-1">
-        <span className="text-[11px] text-slate-300 font-semibold">{title}</span>
-        <span className="text-[10px] text-slate-500">{hint}</span>
+        <span className="text-caption text-slate-300 font-semibold">{title}</span>
+        <span className="text-tiny text-slate-500">{hint}</span>
       </div>
       <div className="rounded-card border border-white/10 bg-white/[0.02] divide-y divide-white/5 max-h-32 overflow-y-auto">
-        {data[k].length === 0 && <div className="px-3 py-2 text-[11px] text-slate-500">{t("rules.empty")}</div>}
+        {data[k].length === 0 && <div className="px-3 py-2 text-caption text-slate-500">{t("rules.empty")}</div>}
         {data[k].map((r, i) => (
           <div key={`${r}-${i}`} className="px-3 py-1.5 flex items-center gap-2">
-            <span className="flex-1 text-[11px] text-slate-200 font-mono truncate select-text">{r}</span>
+            <span className="flex-1 text-caption text-slate-200 font-mono truncate select-text">{r}</span>
             <button className="text-rose-400 hover:text-rose-300 cursor-pointer" onClick={() => remove(k, i)}>
               <Trash2 className="w-3 h-3" />
             </button>
@@ -135,7 +135,7 @@ function RuleOverrideEditor({
       }
     >
       {loading ? (
-        <div className="text-xs text-slate-400 py-6 text-center">{t("rules.loading")}</div>
+        <div className="text-body text-slate-400 py-6 text-center">{t("rules.loading")}</div>
       ) : (
         <div className="space-y-3">
           <div className="grid grid-cols-12 gap-2 items-end">
@@ -187,16 +187,16 @@ function RuleOverrideEditor({
             </div>
           </div>
           {NO_RESOLVE_TYPES.includes(type) && (
-            <label className="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer">
+            <label className="flex items-center gap-1.5 text-caption text-slate-400 cursor-pointer">
               <input type="checkbox" checked={noResolve} onChange={(e) => setNoResolve(e.target.checked)} />
               {t("rules.noResolve")}
             </label>
           )}
-          {err && <div className="text-[11px] text-rose-400">{err}</div>}
+          {err && <div className="text-caption text-rose-400">{err}</div>}
           <List k="prepend" title={t("rules.prependTitle")} hint={t("rules.prependHint")} />
           <List k="append" title={t("rules.appendTitle")} hint={t("rules.appendHint")} />
           <List k="delete" title={t("rules.deleteTitle")} hint={t("rules.deleteHint")} />
-          <div className="text-[10px] text-slate-500 leading-relaxed">
+          <div className="text-tiny text-slate-500 leading-relaxed">
             {t("rules.offsetDesc")}
           </div>
         </div>
@@ -272,7 +272,7 @@ export default function RulesPanel({ running }: { running: boolean; onNavigate?:
     }
   };
 
-  if (!running) return <div className={`${cardCls} p-6 text-center text-xs text-slate-400`}>{t("rules.coreNotRunning")}</div>;
+  if (!running) return <div className={`${cardCls} p-6 text-center text-body text-slate-400`}>{t("rules.coreNotRunning")}</div>;
 
   const providerList = Object.entries(providers);
 
@@ -282,7 +282,7 @@ export default function RulesPanel({ running }: { running: boolean; onNavigate?:
         <div className="relative flex-1">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
-            className="w-full h-8 pl-8 pr-2.5 rounded-ctl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+            className="w-full h-8 pl-8 pr-2.5 rounded-ctl bg-white/5 border border-white/10 text-body text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
             placeholder={t("rules.filterPh")}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
@@ -309,13 +309,13 @@ export default function RulesPanel({ running }: { running: boolean; onNavigate?:
       {/* 规则集 provider（对齐 clash-party resources 规则集更新能力，就近放规则页） */}
       {providerList.length > 0 && (
         <div className={`${cardCls} p-3`}>
-          <div className="text-[11px] text-slate-400 mb-2 font-semibold">{t("rules.ruleSets", { count: providerList.length })}</div>
+          <div className="text-caption text-slate-400 mb-2 font-semibold">{t("rules.ruleSets", { count: providerList.length })}</div>
           <div className="grid grid-cols-2 gap-1.5">
             {providerList.map(([name, p]) => (
               <div key={name} className="flex items-center gap-2 px-2.5 py-1.5 rounded-ctl bg-white/[0.03] border border-white/5">
                 <div className="min-w-0 flex-1">
-                  <div className="text-[11px] text-slate-200 truncate">{name}</div>
-                  <div className="text-[10px] text-slate-500">
+                  <div className="text-caption text-slate-200 truncate">{name}</div>
+                  <div className="text-tiny text-slate-500">
                     {t("rules.providerCount", { count: p.ruleCount })} · {p.behavior} · {p.vehicleType}
                   </div>
                 </div>
@@ -328,14 +328,14 @@ export default function RulesPanel({ running }: { running: boolean; onNavigate?:
         </div>
       )}
 
-      <div className="text-[11px] text-slate-400 px-1">{t("rules.rulesCount", { count: filtered.length })}</div>
+      <div className="text-caption text-slate-400 px-1">{t("rules.rulesCount", { count: filtered.length })}</div>
       <div className={`${cardCls} max-h-[56vh] overflow-y-auto divide-y divide-white/5`}>
         {filtered.slice(0, 2000).map((r, i) => (
           <div key={i} className="px-3 py-2 flex items-center gap-3 hover:bg-white/[0.02]">
-            <span className="text-[10px] text-slate-600 w-8 flex-shrink-0 font-mono">{i + 1}</span>
+            <span className="text-tiny text-slate-600 w-8 flex-shrink-0 font-mono">{i + 1}</span>
             <div className="min-w-0 flex-1">
-              <div className="text-[12px] text-slate-200 truncate select-text">{r.payload || "-"}</div>
-              <div className="text-[10px] text-slate-500">
+              <div className="text-body text-slate-200 truncate select-text">{r.payload || "-"}</div>
+              <div className="text-tiny text-slate-500">
                 {r.type}
                 {typeof r.size === "number" && r.size >= 0 ? t("rules.ruleCount", { count: r.size }) : ""}
               </div>
@@ -343,7 +343,7 @@ export default function RulesPanel({ running }: { running: boolean; onNavigate?:
             <span className={tagCls}>{r.proxy}</span>
           </div>
         ))}
-        {filtered.length === 0 && <div className="p-6 text-center text-xs text-slate-400">{t("rules.noMatch")}</div>}
+        {filtered.length === 0 && <div className="p-6 text-center text-body text-slate-400">{t("rules.noMatch")}</div>}
       </div>
     </div>
   );

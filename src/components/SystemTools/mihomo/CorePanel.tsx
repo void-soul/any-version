@@ -225,7 +225,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
       <div className={`${cardCls} p-4`}>
         <div className="flex items-center justify-between mb-1">
           <h3 className="text-sm font-bold text-white">{t("mihomo.coreVersion")}</h3>
-          <span className="text-[10px] text-slate-500">{t("mihomo.corePreinstalled")}</span>
+          <span className="text-tiny text-slate-500">{t("mihomo.corePreinstalled")}</span>
         </div>
         {[
           ["mihomo", t("mihomo.coreStable"), t("mihomo.coreStableDesc")],
@@ -241,13 +241,13 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
               title={
                 <span className="inline-flex items-center gap-2">
                   {name}
-                  {active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)]">{t("mihomo.coreInUse")}</span>}
-                  <span className="text-[10px] text-slate-500">{info?.version || desc}</span>
+                  {active && <span className="text-tiny px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)]">{t("mihomo.coreInUse")}</span>}
+                  <span className="text-tiny text-slate-500">{info?.version || desc}</span>
                 </span>
               }
             >
               <div className="flex items-center gap-2">
-                <span className={`text-[10px] ${info?.installed ? "text-slate-500" : "text-rose-400"}`}>
+                <span className={`text-tiny ${info?.installed ? "text-slate-500" : "text-rose-400"}`}>
                   {info?.installed ? t("mihomo.coreReady") : t("mihomo.coreMissing")}
                 </span>
                 <button
@@ -273,7 +273,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
           </SettingItem>
           <SettingItem title={t("mihomo.coreStrategy")}>
             <select
-              className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
+              className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-caption text-slate-200 cursor-pointer focus:outline-none"
               value={app?.smartCoreStrategy ?? "sticky-sessions"}
               onChange={(e) => patchApp({ smartCoreStrategy: e.target.value }, true)}
             >
@@ -306,7 +306,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
         <div className="flex items-center justify-between mb-1">
           <h3 className="text-sm font-bold text-white">{t("mihomo.coreSettings")}</h3>
           <div className="flex items-center gap-2">
-            {msg && <span className="text-[11px] text-slate-400">{msg}</span>}
+            {msg && <span className="text-caption text-slate-400">{msg}</span>}
             <button
               className={btnSec}
               disabled={upgrading}
@@ -379,7 +379,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
                   <ExternalLink className="w-3 h-3 text-slate-400" />
                 </button></span>}>
                 <select
-                  className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
+                  className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-caption text-slate-200 cursor-pointer focus:outline-none"
                   value={externalUiUrl}
                   onChange={async (e) => {
                     await onChangeNeedRestart({ "external-ui-url": e.target.value });
@@ -406,13 +406,13 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
         {!!c?.["allow-lan"] && (
           <>
             <div className="py-2 border-b border-white/5">
-              <h4 className="text-[12px] text-slate-300 font-semibold mb-1">{t("mihomo.coreLanAllowed")}</h4>
+              <h4 className="text-body text-slate-300 font-semibold mb-1">{t("mihomo.coreLanAllowed")}</h4>
               {renderList(lanAllowed, setLanAllowed, t("mihomo.coreLanExample"),
                 c?.["lan-allowed-ips"] ?? DEFAULT_LAN_ALLOWED,
                 () => onChangeNeedRestart({ "lan-allowed-ips": lanAllowed }))}
             </div>
             <div className="py-2 border-b border-white/5">
-              <h4 className="text-[12px] text-slate-300 font-semibold mb-1">{t("mihomo.coreLanDisallowed")}</h4>
+              <h4 className="text-body text-slate-300 font-semibold mb-1">{t("mihomo.coreLanDisallowed")}</h4>
               {renderList(lanDisallowed, setLanDisallowed, t("mihomo.coreLanExample"),
                 c?.["lan-disallowed-ips"] ?? [],
                 () => onChangeNeedRestart({ "lan-disallowed-ips": lanDisallowed }))}
@@ -423,7 +423,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
         {/* 用户验证（user:pass 双输入，复刻 authentication） */}
         <div className="py-2 border-b border-white/5">
           <div className="flex items-center justify-between mb-1">
-            <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.coreAuth")}</h4>
+            <h4 className="text-body text-slate-300 font-semibold">{t("mihomo.coreAuth")}</h4>
             {JSON.stringify(auth) !== JSON.stringify(c?.authentication ?? []) && (
               <button className={btnPrimary} onClick={() => onChangeNeedRestart({ authentication: auth })}>{t("mihomo.coreConfirm")}</button>
             )}
@@ -453,7 +453,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
         </div>
 
         <div className="py-2 border-b border-white/5">
-          <h4 className="text-[12px] text-slate-300 font-semibold mb-1">{t("mihomo.coreSkipAuth")}</h4>
+          <h4 className="text-body text-slate-300 font-semibold mb-1">{t("mihomo.coreSkipAuth")}</h4>
           {renderList(skipAuth, setSkipAuth, t("mihomo.coreSkipAuthExample"),
             c?.["skip-auth-prefixes"] ?? DEFAULT_SKIP_AUTH,
             () => onChangeNeedRestart({ "skip-auth-prefixes": skipAuth }), true)}
@@ -474,7 +474,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
 
         <SettingItem title={t("mihomo.coreLogLevel")}>
           <select
-            className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
+            className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-caption text-slate-200 cursor-pointer focus:outline-none"
             value={c?.["log-level"] ?? "info"}
             onChange={(e) => onChangeNeedRestart({ "log-level": e.target.value })}
           >
@@ -485,7 +485,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
         </SettingItem>
         <SettingItem title={t("mihomo.coreFindProcess")} divider={false}>
           <select
-            className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
+            className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-caption text-slate-200 cursor-pointer focus:outline-none"
             value={c?.["find-process-mode"] ?? "strict"}
             onChange={(e) => onChangeNeedRestart({ "find-process-mode": e.target.value })}
           >
@@ -502,7 +502,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
 
         <SettingItem title={t("mihomo.coreCpuPriority")}>
           <select
-            className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
+            className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-caption text-slate-200 cursor-pointer focus:outline-none"
             value={app?.cpuPriority ?? "NORMAL_PRIORITY_CLASS"}
             onChange={(e) => patchApp({ cpuPriority: e.target.value }, true)}
           >

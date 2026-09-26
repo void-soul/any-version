@@ -129,20 +129,20 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
     <div className="space-y-3">
       {/* 顶栏 */}
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex items-center gap-2 text-xs text-slate-400 min-w-0">
+        <div className="flex items-center gap-2 text-body text-slate-400 min-w-0">
           <Info className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
           <span className="truncate">{t("secproxy.chainLabel", { name: currentProxy || t("secproxy.notSet") })}</span>
         </div>
         <div className="flex-1" />
         {/* 列数切换（与代理页一致） */}
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-slate-400">{t("secproxy.colsLabel")}</span>
+          <span className="text-tiny text-slate-400">{t("secproxy.colsLabel")}</span>
           <div className="flex items-center rounded-ctl bg-white/10 p-0.5">
             {[1, 2, 3, 4].map((c) => (
               <button
                 key={c}
                 onClick={async () => { await mihomoApi.patchAppConfig({ proxy_cols: c }); load(); }}
-                className={`min-w-[22px] h-6 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
+                className={`min-w-[22px] h-6 rounded-md text-caption font-semibold transition-colors cursor-pointer ${
                   cols === c ? "bg-white/20 text-white" : "text-slate-400 hover:text-slate-200"
                 }`}
               >
@@ -160,13 +160,13 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
           </span>
         </button>
         <button
-          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-card bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[12px] font-semibold cursor-pointer transition-all whitespace-nowrap"
+          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-card bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-body font-semibold cursor-pointer transition-all whitespace-nowrap"
           onClick={() => { setEditing({ id: genId(), name: "", host: "", port: 0, username: "", password: "" }); setIsNew(true); }}
         >
           <Plus className="w-4 h-4" /> {t("secproxy.addSec")}
         </button>
       </div>
-      {msg && <div className="text-[11px] text-emerald-300 px-1">{msg}</div>}
+      {msg && <div className="text-caption text-emerald-300 px-1">{msg}</div>}
 
       {/* 二级代理网格（与代理页一致的列数 + 绿色选中） */}
       <div className={`grid gap-1.5`} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))` }}>
@@ -179,11 +179,11 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
         >
           <div className="flex items-center gap-1.5">
             <Layers className={`w-3.5 h-3.5 flex-shrink-0 ${empty ? "text-emerald-300" : "text-slate-400"}`} />
-            <span className={`text-[12px] truncate flex-1 ${empty ? "text-emerald-300 font-semibold" : "text-slate-200"}`}>
+            <span className={`text-body truncate flex-1 ${empty ? "text-emerald-300 font-semibold" : "text-slate-200"}`}>
               {t("secproxy.noSec")}
             </span>
           </div>
-          <div className="mt-0.5 text-[10px] text-slate-500 truncate">{t("secproxy.noSecDesc")}</div>
+          <div className="mt-0.5 text-tiny text-slate-500 truncate">{t("secproxy.noSecDesc")}</div>
         </div>
 
         {items.map((s) => {
@@ -201,11 +201,11 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
             >
               <div className="flex items-center gap-1.5">
                 <Layers className={`w-3.5 h-3.5 flex-shrink-0 ${isActive ? "text-emerald-300" : "text-slate-400"}`} />
-                <span className={`text-[12px] truncate flex-1 ${isActive ? "text-emerald-300 font-semibold" : "text-slate-200"}`}>
+                <span className={`text-body truncate flex-1 ${isActive ? "text-emerald-300 font-semibold" : "text-slate-200"}`}>
                   {s.name}
                 </span>
                 <button
-                  className={`text-[10px] font-mono flex-shrink-0 cursor-pointer hover:underline ${delayColor(d)}`}
+                  className={`text-tiny font-mono flex-shrink-0 cursor-pointer hover:underline ${delayColor(d)}`}
                   title={t("secproxy.testTip")}
                   disabled={testingNow}
                   onClick={(e) => { e.stopPropagation(); onProxyDelay(s); }}
@@ -217,11 +217,11 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
                   )}
                 </button>
               </div>
-              <div className="mt-0.5 text-[10px] text-slate-500 truncate font-mono">
+              <div className="mt-0.5 text-tiny text-slate-500 truncate font-mono">
                 {s.host}:{s.port}
               </div>
               <div className="mt-1 flex items-center justify-between">
-                <span className={`text-[9px] px-1.5 py-0.5 rounded ${isActive ? "bg-emerald-500/15 text-emerald-300" : "bg-white/5 text-slate-500"}`}>
+                <span className={`text-micro px-1.5 py-0.5 rounded ${isActive ? "bg-emerald-500/15 text-emerald-300" : "bg-white/5 text-slate-500"}`}>
                   {isActive ? t("secproxy.inUse") : t("secproxy.notEnabled")}
                 </span>
                 <div className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
@@ -244,7 +244,7 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
       <SecondaryPresetPanel running={running} profileId={profileId} />
 
       {/* 使用说明 */}
-      <div className={`${cardCls} p-3 text-[11px] text-slate-400 space-y-1`}>
+      <div className={`${cardCls} p-3 text-caption text-slate-400 space-y-1`}>
         <div className="text-slate-300 font-semibold">{t("secproxy.usageTitle")}</div>
         <div>{t("secproxy.usage1")}</div>
         <div>{t("secproxy.usage2")}</div>
@@ -426,22 +426,22 @@ function SecondaryPresetPanel({ profileId }: { running: boolean; profileId: stri
         <div className="flex items-center gap-2">
           <Filter className="w-3.5 h-3.5 text-emerald-400" />
           <div>
-            <div className="text-[13px] font-bold text-white">{t("secproxy.presetTitle")}</div>
-            <div className="text-[10px] text-slate-500">{t("secproxy.presetDesc")}</div>
+            <div className="text-title font-bold text-white">{t("secproxy.presetTitle")}</div>
+            <div className="text-tiny text-slate-500">{t("secproxy.presetDesc")}</div>
           </div>
         </div>
         <div className="flex items-center gap-1.5">
           <button className={btnSec} disabled={busy || !checked.size} onClick={removeRules}>
             <span className="inline-flex items-center gap-1"><X className="w-3 h-3" />{t("secproxy.removeSelected")}</span>
           </button>
-          <button className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-card bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[12px] font-semibold cursor-pointer disabled:opacity-40"
+          <button className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-card bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-body font-semibold cursor-pointer disabled:opacity-40"
             disabled={busy || !checked.size} onClick={applyRules}>
             <Check className="w-3.5 h-3.5" /> {t("secproxy.addToSec", { n: totalChecked ? `(${totalChecked})` : "" })}
           </button>
         </div>
       </div>
-      {err && <div className="mt-1.5 text-[11px] text-rose-300">{err}</div>}
-      {applied && <div className="mt-1.5 text-[11px] text-emerald-300">{t("secproxy.appliedMsg")}</div>}
+      {err && <div className="mt-1.5 text-caption text-rose-300">{err}</div>}
+      {applied && <div className="mt-1.5 text-caption text-emerald-300">{t("secproxy.appliedMsg")}</div>}
 
       <div className="mt-2.5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
         {SECONDARY_PRESETS.map((item) => {
@@ -457,10 +457,10 @@ function SecondaryPresetPanel({ profileId }: { running: boolean; profileId: stri
                   onChange={() => toggleCat(item.cat)}
                   className="accent-emerald-500 cursor-pointer"
                 />
-                <button className="flex-1 text-left text-[12px] font-semibold text-white cursor-pointer flex items-center gap-1"
+                <button className="flex-1 text-left text-body font-semibold text-white cursor-pointer flex items-center gap-1"
                   onClick={() => toggleCollapse(item.cat)}>
                   {t(item.cat)}
-                  <span className="text-[9px] font-normal text-slate-500">{cnt}/{item.domains.length}</span>
+                  <span className="text-micro font-normal text-slate-500">{cnt}/{item.domains.length}</span>
                   <ChevronDown className={`w-3 h-3 text-slate-500 transition-transform ${isOpen ? "rotate-180" : ""}`} />
                 </button>
               </div>
@@ -469,7 +469,7 @@ function SecondaryPresetPanel({ profileId }: { running: boolean; profileId: stri
                   {item.domains.map((d) => (
                     <button key={d}
                       onClick={() => toggle(d)}
-                      className={`px-1.5 py-0.5 rounded-md text-[10px] border transition-colors cursor-pointer ${
+                      className={`px-1.5 py-0.5 rounded-md text-tiny border transition-colors cursor-pointer ${
                         checked.has(d) ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-300" : "bg-white/[0.03] border-white/5 text-slate-400 hover:border-white/20"
                       }`}>
                       {d}
@@ -481,7 +481,7 @@ function SecondaryPresetPanel({ profileId }: { running: boolean; profileId: stri
           );
         })}
       </div>
-      <div className="mt-2 text-[10px] text-slate-500">
+      <div className="mt-2 text-tiny text-slate-500">
         {t("secproxy.presetHint")}
       </div>
     </div>

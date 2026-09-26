@@ -19,7 +19,7 @@ const NEEDS_TEST: GroupType[] = ["url-test", "fallback"];
 const DEFAULT_TEST_URL = "http://www.gstatic.com/generate_204";
 
 const inputCls =
-  "px-2 py-1 rounded-md bg-slate-900 border border-white/10 text-[11px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-[var(--module-accent)]/50";
+  "px-2 py-1 rounded-md ui-input text-caption text-slate-200 placeholder-slate-600 focus:outline-none focus:border-[var(--module-accent)]/50";
 
 export default function GroupsPanel() {
   const { t } = useTranslation();
@@ -119,14 +119,14 @@ export default function GroupsPanel() {
       <div className={`${cardCls} p-3 space-y-2`}>
         <div className="flex items-center gap-2">
           <Wand2 className="w-3.5 h-3.5 text-[var(--module-accent)]" />
-          <span className="text-xs font-semibold text-slate-200">{t("groups.simpleTitle")}</span>
+          <span className="text-body font-semibold text-slate-200">{t("groups.simpleTitle")}</span>
           <div className="flex-1" />
           <select className={inputCls} value={simpleGroup}
             onChange={(e) => setSimpleGroup(e.target.value)}>
             {groups.map((g) => <option key={g.name} value={g.name}>{g.name}</option>)}
           </select>
         </div>
-        <div className="text-[10px] text-slate-500">{t("groups.simpleHint")}</div>
+        <div className="text-tiny text-slate-500">{t("groups.simpleHint")}</div>
         <div className="flex items-center gap-2 flex-wrap">
           {[
             ["rule", "groups.modeRule"],
@@ -143,9 +143,9 @@ export default function GroupsPanel() {
       {/* 策略组编辑 */}
       <div className={`${cardCls} p-3 space-y-3`}>
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-slate-200">{t("groups.title")}</span>
+          <span className="text-body font-semibold text-slate-200">{t("groups.title")}</span>
           {hasOverride && (
-            <span className="px-1.5 py-px rounded bg-[var(--module-accent)]/20 text-[9px] text-[var(--module-accent)]">
+            <span className="px-1.5 py-px rounded bg-[var(--module-accent)]/20 text-micro text-[var(--module-accent)]">
               {t("groups.overrideOn")}
             </span>
           )}
@@ -154,9 +154,9 @@ export default function GroupsPanel() {
           <button className={btnSec} onClick={() => void save()} disabled={busy}><Save className="w-3 h-3" />{t("groups.save")}</button>
           <button className={btnSec} onClick={() => void reset()} disabled={busy}><RotateCcw className="w-3 h-3" />{t("groups.restore")}</button>
         </div>
-        <div className="text-[10px] text-slate-500">{t("groups.hint")}</div>
+        <div className="text-tiny text-slate-500">{t("groups.hint")}</div>
 
-        {groups.length === 0 && <div className="text-[11px] text-slate-500">{t("groups.empty")}</div>}
+        {groups.length === 0 && <div className="text-caption text-slate-500">{t("groups.empty")}</div>}
 
         {groups.map((g, gi) => (
           <div key={gi} className="rounded-ctl border border-white/5 bg-slate-900/40 p-2.5 space-y-2">
@@ -180,12 +180,12 @@ export default function GroupsPanel() {
               <div className="flex items-center gap-2 flex-wrap">
                 <input className={`${inputCls} flex-1 min-w-[180px]`} value={g.url ?? ""}
                   placeholder={DEFAULT_TEST_URL} onChange={(e) => patch(gi, { url: e.target.value })} />
-                <label className="flex items-center gap-1 text-[10px] text-slate-400">
+                <label className="flex items-center gap-1 text-tiny text-slate-400">
                   {t("groups.interval")}
                   <input className={`${inputCls} w-20`} type="number" min={10}
                     value={g.interval ?? 300} onChange={(e) => patch(gi, { interval: Number(e.target.value) || 300 })} />
                 </label>
-                <label className="flex items-center gap-1 text-[10px] text-slate-400">
+                <label className="flex items-center gap-1 text-tiny text-slate-400">
                   {t("groups.tolerance")}
                   <input className={`${inputCls} w-16`} type="number" min={0}
                     value={g.tolerance ?? 0} onChange={(e) => patch(gi, { tolerance: Number(e.target.value) || 0 })} />
@@ -196,7 +196,7 @@ export default function GroupsPanel() {
             <div className="space-y-1">
               {g.proxies.map((p, mi) => (
                 <div key={`${p}-${mi}`} className="flex items-center gap-1.5">
-                  <span className="flex-1 min-w-0 truncate text-[11px] text-slate-300">{p}</span>
+                  <span className="flex-1 min-w-0 truncate text-caption text-slate-300">{p}</span>
                   <button className="p-0.5 rounded hover:bg-white/10 text-slate-500 cursor-pointer"
                     onClick={() => moveMember(gi, mi, -1)}><ArrowUp className="w-3 h-3" /></button>
                   <button className="p-0.5 rounded hover:bg-white/10 text-slate-500 cursor-pointer"
@@ -220,7 +220,7 @@ export default function GroupsPanel() {
         ))}
       </div>
 
-      {msg && <div className={`text-[11px] ${msg.ok ? "text-emerald-400" : "text-rose-300"}`}>{msg.text}</div>}
+      {msg && <div className={`text-caption ${msg.ok ? "text-emerald-400" : "text-rose-300"}`}>{msg.text}</div>}
     </div>
   );
 }

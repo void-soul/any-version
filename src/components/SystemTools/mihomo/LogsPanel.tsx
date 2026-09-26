@@ -71,7 +71,7 @@ export default function LogsPanel({ info, running, logLevel }: { info: any; runn
         <div className="relative flex-1">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
-            className="w-full h-8 pl-8 pr-2.5 rounded-ctl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+            className="w-full h-8 pl-8 pr-2.5 rounded-ctl bg-white/5 border border-white/10 text-body text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
             placeholder={t("logs.filterPh")}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
@@ -92,7 +92,7 @@ export default function LogsPanel({ info, running, logLevel }: { info: any; runn
           <Trash2 className="w-3.5 h-3.5 text-rose-300" />
         </button>
       </div>
-      <div ref={boxRef} className={`${cardCls} p-3 h-[62vh] overflow-y-auto font-mono text-[11px] leading-relaxed`}>
+      <div ref={boxRef} className={`${cardCls} p-3 h-[62vh] overflow-y-auto font-mono text-caption leading-relaxed`}>
         {filtered.length === 0 && <div className="text-slate-500 text-center pt-8">{running ? t("logs.noLogs") : t("logs.coreNotRunning")}</div>}
         {filtered.map((l, i) => (
           <div key={i} className="flex gap-2 py-0.5 border-b border-white/[0.03]">

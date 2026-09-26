@@ -93,13 +93,13 @@ export default function OverviewPanel({ info, running, onNavigate }: {
 
   return (
     <div className="space-y-3">
-      {msg && <div className="text-[11px] text-rose-300 px-1">{msg}</div>}
+      {msg && <div className="text-caption text-rose-300 px-1">{msg}</div>}
 
       {/* 出站模式（复刻 outbound-mode-switcher） */}
       <div className={`${cardCls} p-2 flex`}>
         {([["rule", "overview.rule"], ["global", "overview.global"], ["direct", "overview.direct"]] as const).map(([k, label]) => (
           <button key={k} onClick={() => onChangeMode(k)} disabled={!running}
-            className={`flex-1 py-2 rounded-card text-[12px] font-semibold cursor-pointer transition-all disabled:opacity-40 ${
+            className={`flex-1 py-2 rounded-card text-body font-semibold cursor-pointer transition-all disabled:opacity-40 ${
               mode === k ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
             }`}>{t(label)}</button>
         ))}
@@ -111,8 +111,8 @@ export default function OverviewPanel({ info, running, onNavigate }: {
           <div className="flex items-center gap-3">
             <Globe className="w-6 h-6 text-emerald-400" />
             <div>
-              <div className="text-[13px] font-bold text-white">{t("overview.sysProxy")}</div>
-              <div className="text-[10px] text-slate-500">{sysProxyEnabled ? t("overview.on") : t("overview.off")}</div>
+              <div className="text-title font-bold text-white">{t("overview.sysProxy")}</div>
+              <div className="text-tiny text-slate-500">{sysProxyEnabled ? t("overview.on") : t("overview.off")}</div>
             </div>
           </div>
           <Toggle v={sysProxyEnabled} disabled={busy || !running} onChange={toggleSysProxy} />
@@ -123,8 +123,8 @@ export default function OverviewPanel({ info, running, onNavigate }: {
           <div className="flex items-center gap-3">
             <Shield className="w-6 h-6 text-sky-400" />
             <div>
-              <div className="text-[13px] font-bold text-white">{t("overview.tun")}</div>
-              <div className="text-[10px] text-slate-500">{tunEnabled ? t("overview.on") : t("overview.off")}</div>
+              <div className="text-title font-bold text-white">{t("overview.tun")}</div>
+              <div className="text-tiny text-slate-500">{tunEnabled ? t("overview.on") : t("overview.off")}</div>
             </div>
           </div>
           <Toggle v={tunEnabled} disabled={busy || !running} onChange={toggleTun} />
@@ -141,25 +141,25 @@ export default function OverviewPanel({ info, running, onNavigate }: {
           <div className="flex items-center justify-between relative">
             <Link2 className="w-6 h-6 text-emerald-400" />
             <div className="text-right space-y-0.5">
-              <div className="flex items-center justify-end gap-1.5 text-[12px] text-slate-200 font-mono">
+              <div className="flex items-center justify-end gap-1.5 text-body text-slate-200 font-mono">
                 {calcTraffic(up)}/s <ArrowUpCircle className="w-3.5 h-3.5 text-sky-400" />
               </div>
-              <div className="flex items-center justify-end gap-1.5 text-[12px] text-slate-200 font-mono">
+              <div className="flex items-center justify-end gap-1.5 text-body text-slate-200 font-mono">
                 {calcTraffic(down)}/s <ArrowDownCircle className="w-3.5 h-3.5 text-emerald-400" />
               </div>
             </div>
           </div>
-          <div className="text-[13px] font-bold text-white mt-3 relative">{t("overview.connections")}</div>
+          <div className="text-title font-bold text-white mt-3 relative">{t("overview.connections")}</div>
         </div>
 
         {/* 内核卡片（内存） */}
         <div className={`${cardCls} p-4 cursor-pointer hover:border-white/20`} onClick={() => onNavigate?.("core")}>
           <div className="flex items-center justify-between">
             <Cpu className="w-6 h-6 text-amber-400" />
-            <div className="text-[12px] text-slate-200 font-mono">{running ? calcTraffic(memory) : "-"}</div>
+            <div className="text-body text-slate-200 font-mono">{running ? calcTraffic(memory) : "-"}</div>
           </div>
-          <div className="text-[13px] font-bold text-white mt-3">{t("overview.kernel")}</div>
-          <div className="text-[10px] text-slate-500">{running ? t("overview.runningMem") : t("overview.notRunning")}</div>
+          <div className="text-title font-bold text-white mt-3">{t("overview.kernel")}</div>
+          <div className="text-tiny text-slate-500">{running ? t("overview.runningMem") : t("overview.notRunning")}</div>
         </div>
       </div>
     </div>

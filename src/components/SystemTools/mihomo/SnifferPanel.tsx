@@ -122,7 +122,7 @@ export default function SnifferPanel() {
       <div className="flex items-center justify-between mb-1">
         <h3 className="text-sm font-bold text-white">{t("mihomo.sniffTitle")}</h3>
         <div className="flex items-center gap-2">
-          {msg && <span className="text-[11px] text-slate-400">{msg}</span>}
+          {msg && <span className="text-caption text-slate-400">{msg}</span>}
           {changed && <button className={btnPrimary} onClick={onSave}>{controlSniff ? t("mihomo.sniffSave") : t("mihomo.sniffSaveOnly")}</button>}
         </div>
       </div>
@@ -163,19 +163,19 @@ export default function SnifferPanel() {
       </SettingItem>
 
       <div className="py-2 border-b border-white/5">
-        <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.sniffSkipDomain")}</h4>
+        <h4 className="text-body text-slate-300 font-semibold">{t("mihomo.sniffSkipDomain")}</h4>
         {renderListInputs("skipDomain", t("mihomo.sniffEg", { example: "+.push.apple.com" }))}
       </div>
       <div className="py-2 border-b border-white/5">
-        <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.sniffForceDomain")}</h4>
+        <h4 className="text-body text-slate-300 font-semibold">{t("mihomo.sniffForceDomain")}</h4>
         {renderListInputs("forceDomain", t("mihomo.sniffEg", { example: "+.v2ex.com" }))}
       </div>
       <div className="py-2 border-b border-white/5">
-        <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.sniffSkipDst")}</h4>
+        <h4 className="text-body text-slate-300 font-semibold">{t("mihomo.sniffSkipDst")}</h4>
         {renderListInputs("skipDstAddress", t("mihomo.sniffEg", { example: "91.105.192.0/23" }))}
       </div>
       <div className="py-2">
-        <h4 className="text-[12px] text-slate-300 font-semibold">{t("mihomo.sniffSkipSrc")}</h4>
+        <h4 className="text-body text-slate-300 font-semibold">{t("mihomo.sniffSkipSrc")}</h4>
         {renderListInputs("skipSrcAddress", t("mihomo.sniffEgSrc", { example: "192.168.1.0/24" }))}
       </div>
     </div>

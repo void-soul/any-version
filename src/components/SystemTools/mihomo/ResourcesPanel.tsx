@@ -92,7 +92,7 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
 
   return (
     <div className="space-y-3">
-      {msg && <div className="text-[11px] text-rose-300 px-1">{msg}</div>}
+      {msg && <div className="text-caption text-rose-300 px-1">{msg}</div>}
 
       {/* GeoData 卡片 */}
       <div className={`${cardCls} p-4`}>
@@ -105,7 +105,7 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
           <div className="flex rounded-ctl bg-white/5 border border-white/10 overflow-hidden">
             {([["db", false], ["dat", true]] as const).map(([t, v]) => (
               <button key={t} onClick={() => patchC({ "geodata-mode": v })}
-                className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
+                className={`px-3 py-1.5 text-caption font-semibold cursor-pointer transition-all ${
                   geoMode === v ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200"
                 }`}>{t}</button>
             ))}
@@ -146,7 +146,7 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
                   <span className={tagCls}>{p.proxies?.length || 0}</span>
                 </span>
               } divider={!p.subscriptionInfo && index !== ppList.length - 1}>
-                <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                <div className="flex items-center gap-2 text-caption text-slate-400">
                   <span>{fromNow(p.updatedAt)}</span>
                   <span className={tagCls}>{p.vehicleType}</span>
                   <button className={btnSec} title={t("resources.update")} onClick={() => doUpdate("proxy", name)}>
@@ -160,7 +160,7 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
                     {calcTraffic((p.subscriptionInfo.Upload || 0) + (p.subscriptionInfo.Download || 0))} / {calcTraffic(p.subscriptionInfo.Total || 0)}
                   </span>
                 } divider={index !== ppList.length - 1}>
-                  <span className="text-[11px] text-slate-400">
+                  <span className="text-caption text-slate-400">
                     {p.subscriptionInfo.Expire ? new Date(p.subscriptionInfo.Expire * 1000).toLocaleDateString() : t("resources.longTerm")}
                   </span>
                 </SettingItem>
@@ -182,7 +182,7 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
                 <span className={tagCls}>{p.ruleCount}</span>
               </span>
             } divider={index !== rpList.length - 1}>
-              <div className="flex items-center gap-2 text-[11px] text-slate-400">
+              <div className="flex items-center gap-2 text-caption text-slate-400">
                 <span>{fromNow(p.updatedAt)}</span>
                 <span className={tagCls}>{p.behavior}</span>
                 <span className={tagCls}>{p.vehicleType}</span>
@@ -194,7 +194,7 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
           ))}
         </div>
       )}
-      {!running && <div className={`${cardCls} p-4 text-center text-xs text-slate-400`}>{t("resources.coreStopped")}</div>}
+      {!running && <div className={`${cardCls} p-4 text-center text-body text-slate-400`}>{t("resources.coreStopped")}</div>}
     </div>
   );
 }

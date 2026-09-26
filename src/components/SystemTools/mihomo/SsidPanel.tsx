@@ -11,9 +11,9 @@ type ProfileItem = { id: string; name: string };
 
 const cardCls = "rounded-card border border-white/5 bg-slate-900/30 p-3 space-y-3";
 const inputCls =
-  "px-2 py-1 rounded-md bg-slate-900 border border-white/10 text-[11px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-[var(--module-accent)]/50";
+  "px-2 py-1 rounded-md ui-input text-caption text-slate-200 placeholder-slate-600 focus:outline-none focus:border-[var(--module-accent)]/50";
 const btnSec =
-  "px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-[10px] text-slate-300 cursor-pointer flex items-center gap-1 disabled:opacity-50";
+  "px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-tiny text-slate-300 cursor-pointer flex items-center gap-1 disabled:opacity-50";
 
 export default function SsidPanel() {
   const { t } = useTranslation();
@@ -69,17 +69,17 @@ export default function SsidPanel() {
       <div className={cardCls}>
         <div className="flex items-center gap-2">
           <Wifi className="w-4 h-4 text-[var(--module-accent)]" />
-          <span className="text-xs font-semibold text-slate-200">{t("ssid.title")}</span>
+          <span className="text-body font-semibold text-slate-200">{t("ssid.title")}</span>
           <div className="flex-1" />
           <button className={btnSec} onClick={() => void refresh()} disabled={busy}>
             <RefreshCw className="w-3 h-3" /> {t("ssid.refresh")}
           </button>
         </div>
-        <div className="text-[11px] text-slate-400">
+        <div className="text-caption text-slate-400">
           {t("ssid.current")}:{" "}
           <span className="font-mono text-slate-200">{ssid || t("ssid.notConnected")}</span>
         </div>
-        <div className="text-[10px] text-slate-500">{t("ssid.hint")}</div>
+        <div className="text-tiny text-slate-500">{t("ssid.hint")}</div>
         <Toggle
           label={t("ssid.enable")}
           v={enabled}
@@ -89,7 +89,7 @@ export default function SsidPanel() {
 
       <div className={cardCls}>
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-slate-200">{t("ssid.rules")}</span>
+          <span className="text-body font-semibold text-slate-200">{t("ssid.rules")}</span>
           <div className="flex-1" />
           <button className={btnSec} onClick={addRule} disabled={!profiles.length}>
             <Plus className="w-3 h-3" /> {t("ssid.add")}
@@ -100,7 +100,7 @@ export default function SsidPanel() {
         </div>
 
         {rules.length === 0 && (
-          <div className="text-[11px] text-slate-500">{t("ssid.noRules")}</div>
+          <div className="text-caption text-slate-500">{t("ssid.noRules")}</div>
         )}
 
         {rules.map((r, i) => (
@@ -111,7 +111,7 @@ export default function SsidPanel() {
               placeholder={t("ssid.ssidPh")}
               onChange={(e) => setRules((rs) => rs.map((x, j) => (j === i ? { ...x, ssid: e.target.value } : x)))}
             />
-            <span className="text-slate-600 text-[11px]">→</span>
+            <span className="text-slate-600 text-caption">→</span>
             <select
               className={`${inputCls} max-w-[180px]`}
               value={r.profile_id}
@@ -133,7 +133,7 @@ export default function SsidPanel() {
       </div>
 
       {msg && (
-        <div className={`text-[11px] ${msg.ok ? "text-emerald-400" : "text-rose-300"}`}>{msg.text}</div>
+        <div className={`text-caption ${msg.ok ? "text-emerald-400" : "text-rose-300"}`}>{msg.text}</div>
       )}
     </div>
   );

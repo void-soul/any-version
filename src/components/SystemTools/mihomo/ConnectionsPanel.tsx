@@ -145,7 +145,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
   };
 
   if (!running) {
-    return <div className={`${cardCls} p-6 text-center text-xs text-slate-400`}>{t("mihomo.coreNotRunning")}</div>;
+    return <div className={`${cardCls} p-6 text-center text-body text-slate-400`}>{t("mihomo.coreNotRunning")}</div>;
   }
 
   return (
@@ -157,7 +157,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
             <button
               key={k}
               onClick={() => setTab(k)}
-              className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
+              className={`px-3 py-1.5 text-caption font-semibold cursor-pointer transition-all ${
                 tab === k ? (k === "active" ? "bg-[var(--module-accent)] text-white" : "bg-rose-500/60 text-white") : "text-slate-400 hover:text-slate-200"
               }`}
             >
@@ -168,7 +168,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
         <div className="relative flex-1 min-w-40">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
-            className="w-full h-8 pl-8 pr-2.5 rounded-ctl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
+            className="w-full h-8 pl-8 pr-2.5 rounded-ctl bg-white/5 border border-white/10 text-body text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
             placeholder={t("mihomo.connFilter")}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
@@ -177,7 +177,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
         {viewMode === "list" && (
           <>
             <select
-              className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
+              className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-caption text-slate-200 cursor-pointer focus:outline-none"
               value={orderBy}
               onChange={(e) => patchCfg({ connectionOrderBy: e.target.value })}
             >
@@ -199,7 +199,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
         </button>
       </div>
 
-      <div className="text-[11px] text-slate-400 px-1">
+      <div className="text-caption text-slate-400 px-1">
         ↑ {calcTraffic(connInfo.uploadTotal)} &nbsp; ↓ {calcTraffic(connInfo.downloadTotal)} &nbsp;·&nbsp; {t("mihomo.connCount", { count: filtered.length })}
       </div>
 
@@ -213,15 +213,15 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
               onClick={() => setDetail(c)}
             >
               <div className="min-w-0 flex-1">
-                <div className="text-[12px] text-white truncate font-medium">
+                <div className="text-body text-white truncate font-medium">
                   {connHost(c)}
                   {c.metadata.process && <span className="text-slate-400 font-normal"> · {c.metadata.process}</span>}
                 </div>
-                <div className="text-[10px] text-slate-500 truncate">
+                <div className="text-tiny text-slate-500 truncate">
                   {c.metadata.type}({c.metadata.network}) · {c.rule}{c.rulePayload ? `(${c.rulePayload})` : ""} · {(c.chains || []).slice().reverse().join(" → ")}
                 </div>
               </div>
-              <div className="text-[10px] text-slate-400 text-right flex-shrink-0 font-mono">
+              <div className="text-tiny text-slate-400 text-right flex-shrink-0 font-mono">
                 <div>↑ {calcTraffic(c.upload)} ↓ {calcTraffic(c.download)}</div>
                 <div>
                   {(c.uploadSpeed || c.downloadSpeed) ? `↑ ${calcTraffic(c.uploadSpeed || 0)}/s ↓ ${calcTraffic(c.downloadSpeed || 0)}/s` : timeAgo(c.start, t)}
@@ -235,11 +235,11 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
               </button>
             </div>
           ))}
-          {filtered.length === 0 && <div className={`${cardCls} p-6 text-center text-xs text-slate-400`}>{t("mihomo.connEmpty")}</div>}
+          {filtered.length === 0 && <div className={`${cardCls} p-6 text-center text-body text-slate-400`}>{t("mihomo.connEmpty")}</div>}
         </div>
       ) : (
         <div className={`${cardCls} overflow-auto max-h-[60vh]`}>
-          <table className="w-full text-[11px] whitespace-nowrap">
+          <table className="w-full text-caption whitespace-nowrap">
             <thead className="sticky top-0 bg-surface-raised z-10">
               <tr className="text-slate-400 text-left">
                 <th className="px-2 py-2 font-medium"></th>
@@ -270,14 +270,14 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
               ))}
             </tbody>
           </table>
-          {filtered.length === 0 && <div className="p-6 text-center text-xs text-slate-400">{t("mihomo.connEmpty")}</div>}
+          {filtered.length === 0 && <div className="p-6 text-center text-body text-slate-400">{t("mihomo.connEmpty")}</div>}
         </div>
       )}
 
       {/* 详情弹窗（复刻 connection-detail-modal：展示全部字段） */}
       {detail && (
         <Modal title={t("mihomo.connDetailTitle")} onClose={() => setDetail(null)}>
-          <div className="space-y-1 text-[11px]">
+          <div className="space-y-1 text-caption">
             {[
               [t("mihomo.connDId"), detail.id],
               [t("mihomo.connDHost"), connHost(detail)],

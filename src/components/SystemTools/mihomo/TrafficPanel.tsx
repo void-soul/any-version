@@ -125,7 +125,7 @@ export default function TrafficPanel() {
         <div className="flex rounded-ctl bg-white/5 border border-white/10 overflow-hidden">
           {TIME_RANGES.map((r) => (
             <button key={r} onClick={() => setTimeRange(r)}
-              className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
+              className={`px-3 py-1.5 text-caption font-semibold cursor-pointer transition-all ${
                 timeRange === r ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200"
               }`}>{t(TIME_LABEL[r])}</button>
           ))}
@@ -150,7 +150,7 @@ export default function TrafficPanel() {
           [t("traffic.total"), calcTraffic(totalStats.total)],
         ].map(([label, value]) => (
           <div key={label} className={`${cardCls} flex flex-col items-center py-3`}>
-            <span className="text-[10px] text-slate-500 uppercase tracking-wide">{label}</span>
+            <span className="text-tiny text-slate-500 uppercase tracking-wide">{label}</span>
             <span className="mt-0.5 text-sm font-bold text-white">{value}</span>
           </div>
         ))}
@@ -159,19 +159,19 @@ export default function TrafficPanel() {
       {/* 后端常驻采样总览：页面没打开、切到别的模块时也在采，是完整历史的唯一来源 */}
       <div className={`${cardCls} p-3`}>
         <div className="flex items-center gap-2 mb-2">
-          <span className="text-[11px] font-semibold text-slate-300">{t("traffic.backendTitle")}</span>
-          <span className={`px-1.5 py-px rounded text-[9px] font-bold ${
+          <span className="text-caption font-semibold text-slate-300">{t("traffic.backendTitle")}</span>
+          <span className={`px-1.5 py-px rounded text-micro font-bold ${
             backend ? "bg-emerald-500/15 text-emerald-400" : "bg-white/5 text-slate-500"
           }`}>
             {backend?.recording ? t("traffic.recording") : t("traffic.notRecording")}
           </span>
           <div className="flex-1" />
-          <span className="text-[10px] text-slate-500">
+          <span className="text-tiny text-slate-500">
             ↑ {calcTraffic(backend?.upload || 0)} · ↓ {calcTraffic(backend?.download || 0)}
           </span>
         </div>
         {backendPoints.length === 0 ? (
-          <div className="text-[10px] text-slate-500">{t("traffic.backendEmpty")}</div>
+          <div className="text-tiny text-slate-500">{t("traffic.backendEmpty")}</div>
         ) : (
           <div className="flex items-end gap-px h-12">
             {backendPoints.slice(-120).map((p) => {
@@ -189,7 +189,7 @@ export default function TrafficPanel() {
       <div className="flex rounded-ctl bg-white/5 border border-white/10 overflow-hidden w-fit">
         {(Object.keys(VIEW_LABEL) as DataUsageType[]).map((v) => (
           <button key={v} onClick={() => setActiveView(v)}
-            className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
+            className={`px-3 py-1.5 text-caption font-semibold cursor-pointer transition-all ${
               activeView === v ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200"
             }`}>{t(VIEW_LABEL[v])}</button>
         ))}
@@ -198,13 +198,13 @@ export default function TrafficPanel() {
       {/* 排行 + 趋势 */}
       <div className="grid grid-cols-4 gap-3">
         <div className={`${cardCls} col-span-1 h-56 p-3 overflow-y-auto`}>
-          <div className="text-[11px] text-slate-400 font-semibold mb-2">{t("traffic.rankingTitle", { view: t(VIEW_LABEL[activeView]) })}</div>
-          {rankings.length === 0 && <div className="text-[11px] text-slate-500 text-center pt-8">{t("traffic.noData")}</div>}
+          <div className="text-caption text-slate-400 font-semibold mb-2">{t("traffic.rankingTitle", { view: t(VIEW_LABEL[activeView]) })}</div>
+          {rankings.length === 0 && <div className="text-caption text-slate-500 text-center pt-8">{t("traffic.noData")}</div>}
           {rankings.slice(0, 50).map((r) => (
             <div key={r.label}
               className={`px-2 py-1.5 rounded-ctl cursor-pointer mb-0.5 ${selectedRow === r.label ? "bg-emerald-500/15" : "hover:bg-white/5"}`}
               onClick={() => handleSelectRow(r.label)}>
-              <div className="flex justify-between gap-2 text-[11px]">
+              <div className="flex justify-between gap-2 text-caption">
                 <span className="text-slate-200 truncate">{r.label}</span>
                 <span className="text-slate-400 font-mono flex-shrink-0">{calcTraffic(r.total)}</span>
               </div>
@@ -216,20 +216,20 @@ export default function TrafficPanel() {
         </div>
         {/* 趋势图（纯 CSS 柱状，上传/下载堆叠） */}
         <div className={`${cardCls} col-span-3 h-56 p-3 flex flex-col`}>
-          <div className="text-[11px] text-slate-400 font-semibold mb-2">{t("traffic.trendTitle")}</div>
+          <div className="text-caption text-slate-400 font-semibold mb-2">{t("traffic.trendTitle")}</div>
           <div className="flex-1 flex items-end gap-px min-h-0">
             {trend.map((t) => (
               <div key={t.timestamp} className="flex-1 flex flex-col justify-end h-full group relative">
                 <div className="w-full bg-sky-500/70 rounded-t-sm" style={{ height: `${(t.upload / maxTrend) * 100}%` }} />
                 <div className="w-full bg-emerald-500/70" style={{ height: `${(t.download / maxTrend) * 100}%` }} />
-                <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 rounded-ctl bg-black/90 text-[10px] text-white whitespace-nowrap z-20 pointer-events-none">
+                <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 rounded-ctl bg-black/90 text-tiny text-white whitespace-nowrap z-20 pointer-events-none">
                   {fmtBucketTime(t.timestamp, bucketSizeMs)}<br />
                   ↑ {calcTraffic(t.upload)} ↓ {calcTraffic(t.download)}
                 </div>
               </div>
             ))}
           </div>
-          <div className="flex justify-between text-[9px] text-slate-500 mt-1">
+          <div className="flex justify-between text-micro text-slate-500 mt-1">
             <span>{trend.length ? fmtBucketTime(trend[0].timestamp, bucketSizeMs) : ""}</span>
             <span className="flex gap-3">
               <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-sm bg-sky-500/70 inline-block" />{t("traffic.upload")}</span>
@@ -243,10 +243,10 @@ export default function TrafficPanel() {
       {/* 下钻明细表 */}
       {selectedRow && (
         <div className={`${cardCls} p-3`}>
-          <div className="text-[11px] text-slate-400 font-semibold mb-2">
+          <div className="text-caption text-slate-400 font-semibold mb-2">
             {activeView === "host" ? t("traffic.detailDevices", { name: selectedRow }) : t("traffic.detailDomains", { name: selectedRow })}
           </div>
-          <table className="w-full text-[11px]">
+          <table className="w-full text-caption">
             <thead>
               <tr className="text-slate-500 text-left">
                 <th className="py-1 font-medium">{activeView === "host" ? t("traffic.sourceIP") : t("traffic.thDomain")}</th>

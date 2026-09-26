@@ -580,7 +580,7 @@ export default function MarkdownReader() {
   }, [activePath, setContent]);
 
   const btn =
-    "flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-slate-300 bg-white/5 hover:bg-white/10 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed";
+    "flex items-center gap-1 rounded-md px-2 py-1 text-caption font-medium text-slate-300 bg-white/5 hover:bg-white/10 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed";
   const tbtn =
     "inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-300 bg-white/5 hover:bg-white/10 transition-colors cursor-pointer disabled:opacity-30";
   const assocAll = assoc ? assoc.md && assoc.markdown : false;
@@ -596,7 +596,7 @@ export default function MarkdownReader() {
     };
 
   const preview = active && !active.loading && !active.error && (
-    <div className="px-6 py-5 max-w-4xl mx-auto text-[12px] leading-7 text-slate-200 break-words">
+    <div className="px-6 py-5 max-w-4xl mx-auto text-body leading-7 text-slate-200 break-words">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -604,8 +604,8 @@ export default function MarkdownReader() {
           h2: heading(2, "text-lg font-bold text-slate-100 mt-5 mb-2.5 pb-1 border-b border-white/5 first:mt-0"),
           h3: heading(3, "text-base font-bold text-slate-200 mt-4 mb-2 first:mt-0"),
           h4: heading(4, "text-sm font-bold text-slate-200 mt-3 mb-1.5 first:mt-0"),
-          h5: heading(5, "text-[12px] font-semibold text-slate-300 mt-3 mb-1 first:mt-0"),
-          h6: heading(6, "text-[11px] font-semibold text-slate-400 mt-3 mb-1 first:mt-0"),
+          h5: heading(5, "text-body font-semibold text-slate-300 mt-3 mb-1 first:mt-0"),
+          h6: heading(6, "text-caption font-semibold text-slate-400 mt-3 mb-1 first:mt-0"),
           p: ({ children }) => <p className="my-2.5 first:mt-0 last:mb-0">{children}</p>,
           ul: ({ children }) => <ul className="list-disc my-2.5 space-y-1 pl-6">{children}</ul>,
           ol: ({ children }) => <ol className="list-decimal my-2.5 space-y-1 pl-6">{children}</ol>,
@@ -627,7 +627,7 @@ export default function MarkdownReader() {
             const match = /language-(\w+)/.exec(className || "");
             if (!match) {
               return (
-                <code className="px-1 py-0.5 rounded bg-slate-700/60 text-[11px] text-emerald-300 font-mono">
+                <code className="px-1 py-0.5 rounded bg-slate-700/60 text-caption text-emerald-300 font-mono">
                   {children}
                 </code>
               );
@@ -659,7 +659,7 @@ export default function MarkdownReader() {
           ),
           table: ({ children }) => (
             <div className="overflow-x-auto my-3 rounded border border-white/10">
-              <table className="min-w-full text-[11px]">{children}</table>
+              <table className="min-w-full text-caption">{children}</table>
             </div>
           ),
           thead: ({ children }) => <thead className="bg-slate-800/80">{children}</thead>,
@@ -743,7 +743,7 @@ export default function MarkdownReader() {
             }
           }}
           spellCheck={false}
-          className={`min-h-0 flex-1 resize-none bg-transparent px-6 py-5 text-[12px] leading-6 text-slate-200 font-mono outline-none ${split ? "border-r border-white/10 max-w-[50%]" : ""}`}
+          className={`min-h-0 flex-1 resize-none bg-transparent px-6 py-5 text-body leading-6 text-slate-200 font-mono outline-none ${split ? "border-r border-white/10 max-w-[50%]" : ""}`}
           placeholder={t("mdreader.editorPh")}
         />
         {split && (
@@ -753,7 +753,7 @@ export default function MarkdownReader() {
         )}
       </div>
       {/* 状态栏：光标位置 + 实时字数统计 */}
-      <div className="flex-shrink-0 flex items-center gap-3 px-3 py-1 border-t border-white/5 bg-white/[0.02] text-[10px] text-slate-500 select-none">
+      <div className="flex-shrink-0 flex items-center gap-3 px-3 py-1 border-t border-white/5 bg-white/[0.02] text-tiny text-slate-500 select-none">
         <span className="font-mono">Ln {cursor.line}, Col {cursor.col}</span>
         <span className="w-px h-3 bg-white/10" />
         <span title={t("mdreader.charsTip")}>{t("mdreader.statsChars", { n: stats.chars })}</span>
@@ -828,13 +828,13 @@ export default function MarkdownReader() {
           {t("mdreader.assocBtn")}{assoc ? (assocAll ? " ✓" : "") : ""}
         </button>
         {notice && (
-          <div className="flex items-center gap-1 text-[10px] text-amber-300">
+          <div className="flex items-center gap-1 text-tiny text-amber-300">
             <AlertCircle className="w-3 h-3" />
             {notice}
           </div>
         )}
         {active && (
-          <span className="text-[10px] text-slate-500 truncate max-w-[30%]" title={active.path}>
+          <span className="text-tiny text-slate-500 truncate max-w-[30%]" title={active.path}>
             {active.path}
           </span>
         )}
@@ -843,7 +843,7 @@ export default function MarkdownReader() {
       {/* 文件关联面板 */}
       {showAssoc && (
         <div className="flex-shrink-0 px-4 py-2.5 border-b border-white/5 bg-white/[0.02] space-y-2">
-          <div className="text-[10px] text-slate-400">
+          <div className="text-tiny text-slate-400">
             {t("mdreader.assocDesc")}
           </div>
           <div className="flex items-center gap-2">
@@ -856,7 +856,7 @@ export default function MarkdownReader() {
               {t("mdreader.unregisterAssoc")}
             </button>
             {assoc && (
-              <span className="text-[10px] text-slate-500 font-mono truncate">
+              <span className="text-tiny text-slate-500 font-mono truncate">
                 .md: {assoc.md ? "✓" : "✗"} · .markdown: {assoc.markdown ? "✓" : "✗"} · {assoc.exePath}
               </span>
             )}
@@ -872,7 +872,7 @@ export default function MarkdownReader() {
               key={tab.path}
               onClick={() => { setActivePath(tab.path); setMode("view"); }}
               title={tab.path}
-              className={`group flex items-center gap-1.5 px-2.5 py-1.5 rounded-t-md text-[11px] whitespace-nowrap cursor-pointer transition-colors max-w-[200px] ${
+              className={`group flex items-center gap-1.5 px-2.5 py-1.5 rounded-t-md text-caption whitespace-nowrap cursor-pointer transition-colors max-w-[200px] ${
                 tab.path === activePath
                   ? "bg-emerald-600/20 text-emerald-200 border-b-2 border-emerald-500"
                   : "text-slate-400 hover:text-slate-200 hover:bg-white/5 border-b-2 border-transparent"
@@ -897,7 +897,7 @@ export default function MarkdownReader() {
         {showSidebar && (
           <div className="w-56 flex-shrink-0 border-r border-white/5 flex flex-col min-h-0">
             <div className="flex-shrink-0 px-2 py-2 border-b border-white/5">
-              <div className="flex items-center gap-1.5 mb-1.5 text-[10px] text-slate-500">
+              <div className="flex items-center gap-1.5 mb-1.5 text-tiny text-slate-500">
                 <ListTree className="w-3 h-3" />
                 <span className="truncate" title={siblingRoot}>
                   {siblingRoot ? siblingRoot.split(/[\\/]/).pop() : t("mdreader.fileList")}
@@ -913,13 +913,13 @@ export default function MarkdownReader() {
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
                   placeholder={t("mdreader.filterPh")}
-                  className="w-full bg-white/5 rounded pl-6 pr-2 py-1 text-[10px] text-slate-200 placeholder:text-slate-600 outline-none focus:bg-white/10"
+                  className="w-full bg-white/5 rounded pl-6 pr-2 py-1 text-tiny text-slate-200 placeholder:text-slate-600 outline-none focus:bg-white/10"
                 />
               </div>
             </div>
             <div className="flex-1 overflow-y-auto py-1">
               {filtered.length === 0 && (
-                <div className="px-3 py-4 text-[10px] text-slate-600 text-center">
+                <div className="px-3 py-4 text-tiny text-slate-600 text-center">
                   {siblings.length === 0 ? t("mdreader.siblingsEmpty") : t("mdreader.noMatch")}
                 </div>
               )}
@@ -928,7 +928,7 @@ export default function MarkdownReader() {
                   key={s.path}
                   onClick={() => openPath(s.path)}
                   title={`${s.rel} · ${formatSize(s.size)}`}
-                  className={`w-full text-left px-2.5 py-1 text-[10px] flex items-center gap-1.5 transition-colors ${
+                  className={`w-full text-left px-2.5 py-1 text-tiny flex items-center gap-1.5 transition-colors ${
                     s.path === activePath
                       ? "bg-emerald-600/20 text-emerald-200"
                       : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
@@ -947,7 +947,7 @@ export default function MarkdownReader() {
           {!active && (
             <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-600">
               <FileText className="w-10 h-10 opacity-30" />
-              <div className="text-[11px]">{t("mdreader.noDocOpen")}</div>
+              <div className="text-caption">{t("mdreader.noDocOpen")}</div>
               <div className="flex gap-2">
                 <button onClick={pickFiles} className={btn}>
                   <FolderOpen className="w-3.5 h-3.5" />
@@ -962,17 +962,17 @@ export default function MarkdownReader() {
                   {t("mdreader.newFile")}
                 </button>
               </div>
-              <div className="text-[10px] text-slate-700 max-w-xs text-center leading-relaxed">
+              <div className="text-tiny text-slate-700 max-w-xs text-center leading-relaxed">
                 {t("mdreader.emptyDesc1")}
                 {t("mdreader.emptyDesc2")}
               </div>
             </div>
           )}
           {active?.loading && (
-            <div className="px-6 py-6 text-[11px] text-slate-500">{t("mdreader.loading")}</div>
+            <div className="px-6 py-6 text-caption text-slate-500">{t("mdreader.loading")}</div>
           )}
           {active?.error && (
-            <div className="px-6 py-6 text-[11px] text-red-300 flex items-start gap-2">
+            <div className="px-6 py-6 text-caption text-red-300 flex items-start gap-2">
               <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
               <span className="break-all">{active.error}</span>
             </div>
@@ -985,7 +985,7 @@ export default function MarkdownReader() {
         {/* 右侧：大纲 */}
         {active && headings.length > 0 && (
           <div className="w-48 flex-shrink-0 border-l border-white/5 overflow-y-auto py-2">
-            <div className="px-3 pb-1.5 text-[10px] text-slate-500">{t("mdreader.outline")}</div>
+            <div className="px-3 pb-1.5 text-tiny text-slate-500">{t("mdreader.outline")}</div>
             {headings.map((h, i) => (
               <button
                 key={`${h.id}-${i}`}
@@ -994,7 +994,7 @@ export default function MarkdownReader() {
                   el?.scrollIntoView({ behavior: "smooth", block: "start" });
                 }}
                 style={{ paddingLeft: `${8 + (h.level - 1) * 10}px` }}
-                className="w-full text-left pr-2 py-0.5 text-[10px] text-slate-500 hover:text-emerald-300 hover:bg-white/5 truncate transition-colors"
+                className="w-full text-left pr-2 py-0.5 text-tiny text-slate-500 hover:text-emerald-300 hover:bg-white/5 truncate transition-colors"
                 title={h.text}
               >
                 {h.text}
@@ -1044,17 +1044,17 @@ function CodeBlock({ lang, children }: { lang: string; children: React.ReactNode
   return (
     <div className="relative my-3 rounded-ctl overflow-hidden border border-white/10 bg-slate-900/80">
       <div className="flex items-center justify-between px-2.5 py-1 bg-slate-800/60 border-b border-white/5">
-        <span className="text-[9px] font-mono text-slate-400 uppercase tracking-wide">
+        <span className="text-micro font-mono text-slate-400 uppercase tracking-wide">
           {lang || "text"}
         </span>
         <button
           onClick={handleCopy}
-          className="text-[9px] text-slate-500 hover:text-slate-200 transition-colors cursor-pointer"
+          className="text-micro text-slate-500 hover:text-slate-200 transition-colors cursor-pointer"
         >
           {copied ? t("mdreader.codeCopied") : t("mdreader.codeCopy")}
         </button>
       </div>
-      <pre className="overflow-x-auto p-3 text-[11px] leading-relaxed">
+      <pre className="overflow-x-auto p-3 text-caption leading-relaxed">
         <code
           className="font-mono hljs"
           style={{ background: "transparent", color: "#e2e8f0", padding: 0 }}

@@ -270,7 +270,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
   };
 
   if (!running) {
-    return <div className={`${cardCls} p-6 text-center text-xs text-slate-400`}>{t("proxies.coreNotRunning")}</div>;
+    return <div className={`${cardCls} p-6 text-center text-body text-slate-400`}>{t("proxies.coreNotRunning")}</div>;
   }
 
   return (
@@ -285,13 +285,13 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
         </button>
         {/* 列数切换：紧凑分段按钮，避免文字过大被截断 */}
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-slate-400">{t("proxies.columns")}</span>
+          <span className="text-tiny text-slate-400">{t("proxies.columns")}</span>
           <div className="flex items-center rounded-ctl bg-white/10 p-0.5">
             {[1, 2, 3, 4].map((c) => (
               <button
                 key={c}
                 onClick={() => patchCfg({ proxy_cols: c })}
-                className={`min-w-[22px] h-6 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
+                className={`min-w-[22px] h-6 rounded-md text-caption font-semibold transition-colors cursor-pointer ${
                   cols === c ? "bg-white/20 text-white" : "text-slate-400 hover:text-slate-200"
                 }`}
               >
@@ -326,39 +326,39 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
       {/* 测速设置：URL / 超时 / 并发 / 采样次数（clash-party 放在设置页，这里就近放，改完立刻生效） */}
       {delaySettingsOpen && (
         <div className={`${cardCls} p-3 space-y-2`}>
-          <div className="text-[10px] text-slate-500">{t("proxies.delaySettingsHint")}</div>
+          <div className="text-tiny text-slate-500">{t("proxies.delaySettingsHint")}</div>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-slate-400 w-16 flex-shrink-0">{t("proxies.delayUrl")}</span>
+            <span className="text-tiny text-slate-400 w-16 flex-shrink-0">{t("proxies.delayUrl")}</span>
             <input
               value={delayUrl}
               onChange={(e) => patchCfg({ delayTestUrl: e.target.value })}
               placeholder={DEFAULT_DELAY_URL}
-              className="flex-1 min-w-0 px-2 py-1 rounded-md bg-slate-900 border border-white/10 text-[11px] font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-[var(--module-accent)]/50"
+              className="flex-1 min-w-0 px-2 py-1 rounded-md ui-input text-caption font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-[var(--module-accent)]/50"
             />
           </div>
           <div className="flex items-center gap-3 flex-wrap">
-            <label className="flex items-center gap-1.5 text-[10px] text-slate-400">
+            <label className="flex items-center gap-1.5 text-tiny text-slate-400">
               {t("proxies.delayTimeout")}
               <input
                 type="number" min={500} step={500} value={delayTimeout}
                 onChange={(e) => patchCfg({ delayTestTimeout: Number(e.target.value) || 5000 })}
-                className="w-20 px-2 py-1 rounded-md bg-slate-900 border border-white/10 text-[11px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/50"
+                className="w-20 px-2 py-1 rounded-md ui-input text-caption text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/50"
               />
             </label>
-            <label className="flex items-center gap-1.5 text-[10px] text-slate-400">
+            <label className="flex items-center gap-1.5 text-tiny text-slate-400">
               {t("proxies.delayConcurrency")}
               <input
                 type="number" min={1} max={200} value={concurrency}
                 onChange={(e) => patchCfg({ delayTestConcurrency: Number(e.target.value) || 50 })}
-                className="w-16 px-2 py-1 rounded-md bg-slate-900 border border-white/10 text-[11px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/50"
+                className="w-16 px-2 py-1 rounded-md ui-input text-caption text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/50"
               />
             </label>
-            <label className="flex items-center gap-1.5 text-[10px] text-slate-400">
+            <label className="flex items-center gap-1.5 text-tiny text-slate-400">
               {t("proxies.delaySamples")}
               <input
                 type="number" min={1} max={5} value={delaySamples}
                 onChange={(e) => patchCfg({ delayTestSamples: Math.min(5, Math.max(1, Number(e.target.value) || 1)) })}
-                className="w-14 px-2 py-1 rounded-md bg-slate-900 border border-white/10 text-[11px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/50"
+                className="w-14 px-2 py-1 rounded-md ui-input text-caption text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/50"
               />
             </label>
           </div>
@@ -366,7 +366,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
       )}
 
       {err && (
-        <div className="flex items-start gap-2 rounded-card border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-200">
+        <div className="flex items-start gap-2 rounded-card border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-caption text-rose-200">
           <span className="flex-1 break-all">{err}</span>
           <button className="text-rose-300 hover:text-white cursor-pointer" onClick={() => setErr("")}>
             <X className="w-3.5 h-3.5" />
@@ -377,17 +377,17 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
       {groups.length === 0 && (
         <div className={`${cardCls} p-6 text-center text-sm text-slate-300 space-y-3`}>
           <div className="text-base font-semibold text-white">{t("proxies.noNodes")}</div>
-          <div className="text-xs text-slate-400">
+          <div className="text-body text-slate-400">
             {t("proxies.noNodesDesc1", { profile: curProfile || t("common.none") })}
             {t("proxies.noNodesDesc2")}
           </div>
           {profiles.filter((p) => p.id !== curProfile).length > 0 && (
             <div className="flex flex-wrap items-center justify-center gap-2">
-              <span className="text-[11px] text-slate-500">{t("proxies.quickSwitch")}</span>
+              <span className="text-caption text-slate-500">{t("proxies.quickSwitch")}</span>
               {profiles.filter((p) => p.id !== curProfile).map((p) => (
                 <button
                   key={p.id}
-                  className="px-2.5 py-1 rounded-ctl bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] text-[11px] text-[var(--module-accent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] cursor-pointer"
+                  className="px-2.5 py-1 rounded-ctl bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] text-caption text-[var(--module-accent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] cursor-pointer"
                   onClick={async () => {
                     try {
                       await mihomoApi.changeCurrentProfile(p.id);
@@ -419,15 +419,15 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
               ) : null}
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-[13px] font-semibold text-white truncate">{g.name}</span>
+                  <span className="text-title font-semibold text-white truncate">{g.name}</span>
                 </div>
-                <div className="flex items-center gap-1.5 text-[11px] text-slate-400 truncate">
+                <div className="flex items-center gap-1.5 text-caption text-slate-400 truncate">
                   <span>{g.type} ·</span>
                   <Flag name={g.now} />
                   <span className="truncate">{g.now}</span>
                 </div>
               </div>
-              <span className="text-[11px] text-slate-500">{g.all.length}</span>
+              <span className="text-caption text-slate-500">{g.all.length}</span>
               <button
                 className="p-1.5 rounded-ctl hover:bg-white/10 text-slate-300 cursor-pointer"
                 title={t("proxies.locateNode")}
@@ -463,7 +463,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
                   <input
-                    className="w-full h-8 pl-8 pr-2.5 rounded-ctl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
+                    className="w-full h-8 pl-8 pr-2.5 rounded-ctl bg-white/5 border border-white/10 text-body text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
                     placeholder={t("proxies.searchNode")}
                     value={search[g.name] || ""}
                     onChange={(e) => setSearch((s) => ({ ...s, [g.name]: e.target.value }))}
@@ -486,11 +486,11 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
                       >
                         <div className="flex items-center gap-1.5">
                           <Flag name={p.name} />
-                          <span className={`text-[12px] truncate flex-1 ${selected ? "text-[var(--module-accent)] font-semibold" : "text-slate-200"}`}>
+                          <span className={`text-body truncate flex-1 ${selected ? "text-[var(--module-accent)] font-semibold" : "text-slate-200"}`}>
                             {p.name}
                           </span>
                           <button
-                            className={`text-[10px] font-mono flex-shrink-0 cursor-pointer hover:underline ${delayColor(d)}`}
+                            className={`text-tiny font-mono flex-shrink-0 cursor-pointer hover:underline ${delayColor(d)}`}
                             title={t("proxies.testDelay")}
                             onClick={(e) => { e.stopPropagation(); onProxyDelay(g, p); }}
                           >
@@ -502,7 +502,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
                           </button>
                         </div>
                         {mode === "full" && (
-                          <div className="mt-0.5 text-[10px] text-slate-500 truncate">
+                          <div className="mt-0.5 text-tiny text-slate-500 truncate">
                             {p.type}
                             {p.udp ? " · UDP" : ""}
                             {p.provider ? ` · ${p.provider}` : ""}

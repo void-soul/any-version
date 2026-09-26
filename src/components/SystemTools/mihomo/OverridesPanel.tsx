@@ -144,7 +144,7 @@ export default function OverridesPanel() {
                 [t("overrides.newYaml"), () => addItem({ id: genId(), name: t("overrides.newYaml"), type: "local", ext: "yaml", global: false }, DEFAULT_YAML)],
                 [t("overrides.newJs"), () => addItem({ id: genId(), name: t("overrides.newJs"), type: "local", ext: "js", global: false }, DEFAULT_JS)],
               ].map(([t, fn]: any) => (
-                <button key={t} className="w-full text-left px-3 py-2 text-[11px] text-slate-200 hover:bg-white/10 cursor-pointer"
+                <button key={t} className="w-full text-left px-3 py-2 text-caption text-slate-200 hover:bg-white/10 cursor-pointer"
                   onClick={() => { fn(); setAddMenu(false); }}>
                   {t}
                 </button>
@@ -155,7 +155,7 @@ export default function OverridesPanel() {
         <input ref={fileRef} type="file" accept=".js,.yaml" className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) onLocalFile(f); e.target.value = ""; }} />
       </div>
-      {msg && <div className="text-[11px] text-rose-300 px-1">{msg}</div>}
+      {msg && <div className="text-caption text-rose-300 px-1">{msg}</div>}
 
       {/* 卡片网格 */}
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
@@ -167,7 +167,7 @@ export default function OverridesPanel() {
             onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenuFor(item.id); }}
           >
             <div className="flex items-center justify-between gap-1">
-              <h3 className="text-[13px] font-bold text-white truncate" title={item.name}>{item.name}</h3>
+              <h3 className="text-title font-bold text-white truncate" title={item.name}>{item.name}</h3>
               <div className="flex items-center flex-shrink-0">
                 <button className="p-1 rounded-md hover:bg-white/10 text-slate-400 cursor-pointer" title={t("overrides.moveUp")}
                   onClick={(e) => { e.stopPropagation(); move(index, -1); }}>
@@ -191,32 +191,32 @@ export default function OverridesPanel() {
             </div>
             <div className="mt-2 flex items-center justify-between">
               <div className="flex gap-1.5">
-                {item.global && <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">{t("overrides.global")}</span>}
+                {item.global && <span className="text-tiny px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">{t("overrides.global")}</span>}
                 <span className={tagCls}>{item.ext === "yaml" ? "YAML" : "JavaScript"}</span>
               </div>
-              {item.type === "remote" && <span className="text-[10px] text-slate-500">{fromNow(item.updated, t)}</span>}
+              {item.type === "remote" && <span className="text-tiny text-slate-500">{fromNow(item.updated, t)}</span>}
             </div>
 
             {/* 菜单（复刻 menuItems：编辑信息/编辑文件/执行日志(js)/删除） */}
             {menuFor === item.id && (
               <div className="absolute right-2 top-9 z-30 w-32 rounded-card border border-white/10 bg-surface-panel shadow-xl overflow-hidden"
                 onClick={(e) => e.stopPropagation()}>
-                <button className="w-full text-left px-3 py-2 text-[11px] text-slate-200 hover:bg-white/10 cursor-pointer"
+                <button className="w-full text-left px-3 py-2 text-caption text-slate-200 hover:bg-white/10 cursor-pointer"
                   onClick={() => { setEditInfo(item); setMenuFor(null); }}>{t("overrides.editInfo")}</button>
-                <button className="w-full text-left px-3 py-2 text-[11px] text-slate-200 hover:bg-white/10 cursor-pointer"
+                <button className="w-full text-left px-3 py-2 text-caption text-slate-200 hover:bg-white/10 cursor-pointer"
                   onClick={() => { setEditFile(item); setMenuFor(null); }}>{t("overrides.editFile")}</button>
                 {item.ext === "js" && (
-                  <button className="w-full text-left px-3 py-2 text-[11px] text-slate-200 hover:bg-white/10 cursor-pointer border-b border-white/5"
+                  <button className="w-full text-left px-3 py-2 text-caption text-slate-200 hover:bg-white/10 cursor-pointer border-b border-white/5"
                     onClick={() => { setExecLog(item); setMenuFor(null); }}>{t("overrides.execLog")}</button>
                 )}
-                <button className="w-full text-left px-3 py-2 text-[11px] text-rose-300 hover:bg-rose-500/15 cursor-pointer"
+                <button className="w-full text-left px-3 py-2 text-caption text-rose-300 hover:bg-rose-500/15 cursor-pointer"
                   onClick={() => { remove(item.id); setMenuFor(null); }}>{t("overrides.delete")}</button>
               </div>
             )}
           </div>
         ))}
         {items.length === 0 && (
-          <div className={`${cardCls} p-6 text-center text-xs text-slate-400 col-span-full`}>
+          <div className={`${cardCls} p-6 text-center text-body text-slate-400 col-span-full`}>
             {t("overrides.empty")}
           </div>
         )}
@@ -312,7 +312,7 @@ function EditOverrideFileModal({ item, onClose }: any) {
             options={{ minimap: { enabled: false }, fontSize: 12, scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true }}
           />
         </div>
-      ) : <div className="text-xs text-slate-400 p-4">{t("overrides.loading")}</div>}
+      ) : <div className="text-body text-slate-400 p-4">{t("overrides.loading")}</div>}
     </Modal>
   );
 }
@@ -327,7 +327,7 @@ function ExecLogModal({ item, onClose }: any) {
   return (
     <Modal title={t("overrides.execLogTitle", { name: item.name })} wide onClose={onClose}
       footer={<button className={btnSec} onClick={onClose}>{t("overrides.close")}</button>}>
-      <div className="max-h-96 overflow-y-auto font-mono text-[11px] text-slate-300 space-y-1">
+      <div className="max-h-96 overflow-y-auto font-mono text-caption text-slate-300 space-y-1">
         {log.length === 0 && <div className="text-slate-500">{t("overrides.logEmpty")}</div>}
         {log.map((l, i) => <div key={i} className="break-all select-text">{l}</div>)}
       </div>
