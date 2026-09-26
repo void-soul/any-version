@@ -38,6 +38,28 @@
   --color-text-muted: #64748b;
 }
 
+/* ─── 形状 / 字号 / 语义色令牌（全局外观统一标准）───
+   标准文档：docs/plans/2026-09-27-ui-consistency-design.md
+   圆角只三档、字号只五档：新样式一律从这里取值，不要再写 rounded-lg/xl/2xl
+   或 text-[9px]~[13px] 这类散值。语义色（ok/warn/danger/info）给提示类用；
+   强调色仍然只用运行时注入的 --module-accent 系列，不在这里另立一支。 */
+@theme {
+  --radius-ctl: 0.5rem;     /* 控件：按钮 / 输入框 / chip / 图标按钮 */
+  --radius-card: 0.75rem;   /* 卡片 / 列表项 / 小面板 */
+  --radius-panel: 1rem;     /* 面板 / 弹窗 / 大容器 */
+
+  --text-micro: 0.5625rem;  /* 9px  徽标 / 时间戳 / 脚注 */
+  --text-tiny: 0.625rem;    /* 10px 次要说明 / 密集列表 */
+  --text-caption: 0.6875rem;/* 11px 正文 / 按钮默认 */
+  --text-body: 0.75rem;     /* 12px 表单 / 输入 / 弹窗正文 */
+  --text-title: 0.8125rem;  /* 13px 卡片标题 / 弹窗标题 */
+
+  --color-ok: #10b981;
+  --color-warn: #f59e0b;
+  --color-danger: #f43f5e;
+  --color-info: #22d3ee;
+}
+
 @layer base {
   body {
     /* 底色统一走皮肤 token（原硬编码 #0f131f 与 surface 不同，属历史漂移） */
@@ -52,6 +74,198 @@
     -webkit-user-select: auto !important;
     user-select: auto !important;
   }
+}
+
+/* ─── 通用外观层 ui-* ───
+   全局外观统一的落点：各模块不再自造按钮/输入/卡片常量，一律组合这里的 class。
+   约定：这些 class **只管外观**（底色 / 描边 / 圆角 / 字号 / 过渡），
+   尺寸与布局继续用 Tailwind 原子类给（px-2 h-8 w-full …），保持可组合。
+
+   强调色统一取 --module-accent（运行时注入，见 utils/brand.ts），
+   写 var() 时都带上 --vex-fallback-primary 兜底（悬浮窗未注入时也能看）。 */
+@layer components {
+  /* 选中态：实心 accent + 白字 + accent 辉光（标杆 = 启动模块工具条 / 搜索结果行） */
+  .ui-selected {
+    background-color: var(--module-accent, var(--vex-fallback-primary));
+    color: #fff;
+    box-shadow: 0 1px 6px var(--module-accent-ring, transparent);
+  }
+
+  /* 按钮 */
+  .ui-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    border-radius: var(--radius-ctl);
+    border: 1px solid var(--color-border);
+    background-color: rgb(255 255 255 / 0.05);
+    color: var(--color-text-secondary);
+    font-size: var(--text-caption);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .ui-btn:hover:not(:disabled) {
+    background-color: rgb(255 255 255 / 0.1);
+    color: var(--color-text-primary);
+  }
+  .ui-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .ui-btn-primary {
+    background-color: var(--module-accent, var(--vex-fallback-primary));
+    border-color: transparent;
+    color: #fff;
+    font-weight: 600;
+  }
+  .ui-btn-primary:hover:not(:disabled) { opacity: 0.85; }
+
+  /* 危险操作保持红色：跟「确定」长一样会让人误点 */
+  .ui-btn-danger {
+    background-color: rgb(244 63 94 / 0.15);
+    border-color: rgb(244 63 94 / 0.3);
+    color: #fda4af;
+  }
+  .ui-btn-danger:hover:not(:disabled) { background-color: rgb(244 63 94 / 0.25); }
+
+  .ui-btn-ghost {
+    background-color: transparent;
+    border-color: transparent;
+    color: var(--color-text-muted);
+  }
+  .ui-btn-ghost:hover:not(:disabled) {
+    background-color: rgb(255 255 255 / 0.05);
+    color: var(--color-text-primary);
+  }
+
+  /* 表单 */
+  .ui-input {
+    border-radius: var(--radius-ctl);
+    border: 1px solid var(--color-border);
+    background-color: rgb(255 255 255 / 0.05);
+    color: var(--color-text-primary);
+    font-size: var(--text-body);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .ui-input::placeholder { color: var(--color-text-muted); }
+  .ui-input:focus {
+    outline: none;
+    border-color: var(--module-accent, var(--vex-fallback-primary));
+    box-shadow: 0 0 0 2px var(--module-accent-ring, transparent);
+  }
+
+  /* 容器 */
+  .ui-card {
+    border-radius: var(--radius-card);
+    border: 1px solid var(--color-border);
+    background-color: rgb(255 255 255 / 0.02);
+  }
+  .ui-panel {
+    border-radius: var(--radius-panel);
+    border: 1px solid var(--color-border);
+    background-color: var(--color-surface-panel);
+  }
+
+  /* 列表行：hover 是预告（浅一档），选中是落定（实心 accent） */
+  .ui-row {
+    display: flex;
+    align-items: center;
+    border-radius: var(--radius-ctl);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .ui-row:hover {
+    background-color: var(--module-accent-soft, rgb(255 255 255 / 0.06));
+    color: var(--color-text-primary);
+  }
+  .ui-row-active {
+    background-color: var(--module-accent, var(--vex-fallback-primary));
+    color: #fff;
+    font-weight: 500;
+    box-shadow: 0 1px 6px var(--module-accent-ring, transparent);
+  }
+
+  /* chip */
+  .ui-chip {
+    border-radius: 9999px;
+    border: 1px solid var(--color-border);
+    background-color: rgb(255 255 255 / 0.05);
+    color: var(--color-text-secondary);
+    font-size: var(--text-micro);
+  }
+  .ui-chip-active {
+    background-color: var(--module-accent, var(--vex-fallback-primary));
+    border-color: transparent;
+    color: #fff;
+  }
+
+  /* 链接：跟随主题色（不写死 cyan，保证换主题色时一起变） */
+  .ui-link {
+    color: var(--module-accent, var(--vex-fallback-primary));
+    text-decoration: none;
+  }
+  .ui-link:hover { text-decoration: underline; }
+
+  /* 提示条：info 用主题色，warn/error/ok 用语义色 */
+  .ui-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.375rem;
+    border-radius: var(--radius-ctl);
+    border: 1px solid;
+    padding: 0.4rem 0.55rem;
+    font-size: var(--text-tiny);
+    line-height: 1.5;
+  }
+  .ui-note-info {
+    background-color: var(--module-accent-soft, rgb(255 255 255 / 0.06));
+    border-color: var(--module-accent-ring, var(--color-border));
+    color: var(--color-text-secondary);
+  }
+  .ui-note-warn {
+    background-color: rgb(245 158 11 / 0.1);
+    border-color: rgb(245 158 11 / 0.25);
+    color: #fcd34d;
+  }
+  .ui-note-error {
+    background-color: rgb(244 63 94 / 0.1);
+    border-color: rgb(244 63 94 / 0.25);
+    color: #fda4af;
+  }
+  .ui-note-ok {
+    background-color: rgb(16 185 129 / 0.1);
+    border-color: rgb(16 185 129 / 0.25);
+    color: #6ee7b7;
+  }
+
+  /* 弹窗：容器随主题（accent 只用在标题/主按钮），遮罩此前各模块各写一份 */
+  .ui-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: rgb(0 0 0 / 0.65);
+    backdrop-filter: blur(4px);
+  }
+  .ui-modal {
+    border-radius: var(--radius-panel);
+    border: 1px solid var(--color-border);
+    background-color: var(--color-surface-modal);
+    box-shadow: 0 20px 60px rgb(0 0 0 / 0.5);
+  }
+}
+
+/* 弹框淡入：此前 animate-fadeIn 是个死 class（没有 keyframes，且 tw-animate-css 未安装），
+   这里补齐定义，避免几十处调用点没有任何动画。 */
+@keyframes ui-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.animate-fadeIn { animation: ui-fade-in 0.16s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .animate-fadeIn { animation: none; }
 }
 
 /* 皮肤级共享组件样式：配合 src/components/shared 使用。 */

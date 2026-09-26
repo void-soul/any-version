@@ -16,27 +16,29 @@ import { AlertTriangle, CheckCircle2, Info, XCircle } from "lucide-react";
  */
 export type NoteTone = "warn" | "info" | "success" | "error";
 
+// 容器外观走 App.css 的 `ui-note*`（统一圆角 / 内边距 / 语义色），
+// 这里只保留图标与标题的强调色 —— 提示块全站一张脸。
 const TONE_STYLE: Record<NoteTone, { box: string; iconWrap: string; title: string; body: string }> = {
   warn: {
-    box: "bg-amber-500/10 border-amber-500/20",
+    box: "ui-note ui-note-warn",
     iconWrap: "text-amber-300",
     title: "text-amber-200",
     body: "text-slate-300",
   },
   info: {
-    box: "bg-sky-500/10 border-sky-500/20",
+    box: "ui-note ui-note-info",
     iconWrap: "text-sky-300",
     title: "text-sky-200",
     body: "text-slate-300",
   },
   success: {
-    box: "bg-emerald-500/10 border-emerald-500/20",
+    box: "ui-note ui-note-ok",
     iconWrap: "text-emerald-300",
     title: "text-emerald-200",
     body: "text-slate-300",
   },
   error: {
-    box: "bg-rose-500/10 border-rose-500/20",
+    box: "ui-note ui-note-error",
     iconWrap: "text-rose-300",
     title: "text-rose-200",
     body: "text-slate-300",
@@ -73,16 +75,16 @@ export function Note({
 }) {
   const style = TONE_STYLE[tone];
   return (
-    <div className={`rounded-xl border p-3.5 space-y-1.5 ${style.box} ${className}`}>
+    <div className={`p-3.5 space-y-1.5 ${style.box} ${className}`}>
       {(title || tone !== "success") && (
-        <div className={`flex items-center gap-2 text-xs font-bold ${style.title}`}>
+        <div className={`flex items-center gap-2 text-body font-bold ${style.title}`}>
           <span className={`flex-shrink-0 ${style.iconWrap}`}>{toneIcon(tone, "w-4 h-4")}</span>
           {title && <span>{title}</span>}
           {action && <span className="ml-auto">{action}</span>}
         </div>
       )}
       {children && (
-        <div className={`text-[11px] leading-relaxed ${style.body} space-y-1`}>{children}</div>
+        <div className={`text-caption leading-relaxed ${style.body} space-y-1`}>{children}</div>
       )}
     </div>
   );

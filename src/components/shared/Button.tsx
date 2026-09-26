@@ -1,29 +1,29 @@
 // 共享样式常量：跨模块统一按钮 / 输入框 / 卡片外观。
-// 主题色相关均使用 --module-accent 系列 CSS 变量，随模块动态主题色联动。
-// 各模块里的局部 btnXxx/inputCls/cardCls 可逐步迁移到这里。
+//
+// 外观一律走 App.css 里的 `ui-*` 通用层（圆角 / 字号 / 底色 / 描边取自统一令牌），
+// 这里只负责尺寸与间距（px-3 h-8 …）——「外观归通用层、布局归调用处」，
+// 各模块自造的 btnXxx/inputCls/cardCls 逐步迁移到这里的常量即可。
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 /* ---------- 可复用 className 常量（直接拼接在已有 className 处） ---------- */
-export const btnBase =
-  "vex-btn-neon inline-flex items-center justify-center gap-1.5 rounded-lg transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed select-none";
+export const btnBase = "ui-btn select-none";
 
-/** 次级按钮：中性底 / 描边 */
-export const btnSecondary = `${btnBase} px-3 h-8 bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-slate-300`;
+/** 次级按钮：中性底 / 描边（`ui-btn` 的默认态） */
+export const btnSecondary = `${btnBase} px-3 h-8`;
 
-/** 主按钮：用模块主题色（常态带霓虹环） */
-export const btnPrimary = `${btnBase} px-3 h-8 bg-[var(--module-accent)] hover:opacity-85 text-[11px] font-semibold text-white vex-btn-neon-primary`;
+/** 主按钮：用主题色（实心 accent） */
+export const btnPrimary = `${btnBase} ui-btn-primary px-3 h-8`;
 
-/** 危险按钮：红 */
-export const btnDanger = `${btnBase} px-3 h-8 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-[11px] text-rose-300 vex-btn-neon-danger`;
+/** 危险按钮：红（与「确定」必须长得不一样，避免误点） */
+export const btnDanger = `${btnBase} ui-btn-danger px-3 h-8`;
 
 /** 幽灵按钮：只有文字，无底 */
-export const btnGhost = `${btnBase} px-3 h-8 text-[11px] text-slate-400 hover:text-white hover:bg-white/5`;
+export const btnGhost = `${btnBase} ui-btn-ghost px-3 h-8`;
 
 /* ---------- 输入框 / 卡片 ---------- */
-export const inputCls =
-  "vex-input-cyan w-full h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none";
-export const labelCls = "text-[11px] text-slate-400 mb-1 block font-medium";
-export const cardCls = "glass-panel rounded-2xl border border-white/10 bg-white/[0.02]";
+export const inputCls = "ui-input w-full h-9 px-2.5 placeholder-slate-500";
+export const labelCls = "text-caption text-slate-400 mb-1 block font-medium";
+export const cardCls = "ui-card";
 
 /* ---------- 组件 ---------- */
 type Variant = "primary" | "secondary" | "danger" | "ghost";

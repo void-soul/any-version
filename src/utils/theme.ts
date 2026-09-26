@@ -4,16 +4,28 @@
 // （任务模块默认主题色），避免返回空串导致节点变色异常。
 let cached: { value: string; at: number } | null = null;
 
+/** 逐个候选元素读取 `--module-accent`，取第一个非空值。 */
+function readAccent(): string {
+  if (typeof document === "undefined") return "";
+  // 变量注入点：main.tsx 首帧预置在 documentElement，App 再挂在根 div / 内容区 div。
+  // 以前只查 #app-content（该元素并不存在），于是永远走兜底色、与主色脱节。
+  const candidates = [
+    document.documentElement,
+    document.getElementById("app-content"),
+    document.body,
+  ];
+  for (const el of candidates) {
+    if (!el) continue;
+    const v = getComputedStyle(el).getPropertyValue("--module-accent").trim();
+    if (v) return v;
+  }
+  return "";
+}
+
 export function moduleAccent(): string {
   const now = Date.now();
   if (cached && now - cached.at < 5000) return cached.value;
-  let value = "";
-  if (typeof document !== "undefined") {
-    const el = document.getElementById("app-content");
-    if (el) {
-      value = getComputedStyle(el).getPropertyValue("--module-accent").trim();
-    }
-  }
+  let value = readAccent();
   if (!/^#[0-9a-f]{6}$/i.test(value)) value = "#f59e0b";
   cached = { value, at: now };
   return value;

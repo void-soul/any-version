@@ -55,17 +55,19 @@ export function SharedModal({
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[300] modal-mask flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    // 遮罩与面板外观走通用层 ui-mask / ui-modal（底色取皮肤 token、圆角取 --radius-panel）；
+    // 保留 modal-mask 标记，让 main.tsx 的「弹框打开时屏蔽全局快捷键」继续生效。
+    <div className="ui-mask modal-mask z-[300] p-4">
       <div
         role="dialog"
         aria-modal="true"
-        className={`relative w-full rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl shadow-black/60 ${className}`}
+        className={`ui-modal relative w-full shadow-2xl shadow-black/60 ${className}`}
         style={{ maxWidth: width, maxHeight: "88vh" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* 顶栏：标题 + 关闭按钮（主题色装饰线） */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 sticky top-0 bg-slate-900/95 z-10 rounded-t-2xl">
-          <h3 className="text-sm font-bold text-white flex items-center gap-2 min-w-0">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 sticky top-0 z-10 rounded-t-panel">
+          <h3 className="text-title font-bold text-white flex items-center gap-2 min-w-0">
             <span className="w-1 h-4 rounded-full bg-[var(--module-accent)] flex-shrink-0" />
             <span className="truncate">{title}</span>
           </h3>
@@ -86,7 +88,7 @@ export function SharedModal({
         </div>
         {/* 底部操作区 */}
         {footer && (
-          <div className="px-4 py-3 border-t border-white/10 flex justify-end gap-2 sticky bottom-0 bg-slate-900/95 z-10 rounded-b-2xl">
+          <div className="px-4 py-3 border-t border-white/10 flex justify-end gap-2 sticky bottom-0 z-10 rounded-b-panel">
             {footer}
           </div>
         )}
