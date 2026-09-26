@@ -852,6 +852,8 @@ pub struct CollabDispatchOptions {
     #[serde(default)]
     pub rectifier_media_fallback: Option<bool>,
     #[serde(default)]
+    pub rectifier_media_heuristic: Option<bool>,
+    #[serde(default)]
     pub rectifier_protocol_mismatch: Option<bool>,
     /// 模型自定义启动参数模板（决定如何传参）
     #[serde(default)]
@@ -1299,6 +1301,7 @@ async fn ensure_room_proxy(
             rectifier_thinking_signature: options.rectifier_thinking_signature,
             rectifier_thinking_budget: options.rectifier_thinking_budget,
             rectifier_media_fallback: options.rectifier_media_fallback,
+            rectifier_media_heuristic: options.rectifier_media_heuristic,
             rectifier_protocol_mismatch: options.rectifier_protocol_mismatch,
             optimizer_cache_injection: options.optimizer_cache_injection,
             optimizer_thinking: options.optimizer_thinking,

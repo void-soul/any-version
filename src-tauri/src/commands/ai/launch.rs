@@ -316,6 +316,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
                         rectifier_thinking_signature: req.rectifier_thinking_signature.unwrap_or(config.rectifier.thinking_signature),
                         rectifier_thinking_budget: req.rectifier_thinking_budget.unwrap_or(config.rectifier.thinking_budget),
                         rectifier_media_fallback: req.rectifier_media_fallback.unwrap_or(config.rectifier.media_fallback),
+                        rectifier_media_heuristic: req.rectifier_media_heuristic.unwrap_or(config.rectifier.media_heuristic),
                         rectifier_protocol_mismatch: req.rectifier_protocol_mismatch.unwrap_or(config.rectifier.protocol_mismatch),
                         optimizer_enabled: optimizer_on,
                         optimizer_cache_injection: req.optimizer_cache_injection.unwrap_or(config.optimizer.cache_injection),

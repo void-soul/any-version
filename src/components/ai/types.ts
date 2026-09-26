@@ -151,6 +151,8 @@ export interface AiConfig {
     thinking_signature: boolean;
     thinking_budget: boolean;
     media_fallback: boolean;
+    /** 纯文本模型预判：按已确认的纯文本注册表，发送前就剥掉图片块 */
+    media_heuristic: boolean;
     protocol_mismatch: boolean;
   };
   headroom: HeadroomConfig;
@@ -371,6 +373,7 @@ export interface CollabDispatchOptions {
   rectifier_thinking_signature: boolean | null;
   rectifier_thinking_budget: boolean | null;
   rectifier_media_fallback: boolean | null;
+  rectifier_media_heuristic: boolean | null;
   rectifier_protocol_mismatch: boolean | null;
   /** 模型自定义启动参数模板 */
   custom_params?: ModelCustomParam[];

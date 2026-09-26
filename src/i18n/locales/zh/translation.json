@@ -2686,6 +2686,8 @@
     "recThinkingBudgetDesc": "budget_tokens 太小时自动修正为 32000",
     "recMedia": "图片降级",
     "recMediaDesc": "上游不支持图片时自动替换为文本标记",
+    "recMediaHeuristic": "纯文本模型预判",
+    "recMediaHeuristicDesc": "发送前按已确认的纯文本模型注册表剥离图片，省掉一次必然失败的往返",
     "recProtocol": "协议不匹配修复",
     "recProtocolDesc": "协议转换后残留专有字段被上游拒绝时自动剥离并重试",
     "sessions": "会话",

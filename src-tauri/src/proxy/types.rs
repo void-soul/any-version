@@ -88,6 +88,10 @@ pub struct ProxyConfig {
     pub rectifier_thinking_budget: bool,
     #[serde(default)]
     pub rectifier_media_fallback: bool,
+    /// 纯文本模型预判：按已确认的纯文本模型注册表，发送前就剥掉图片块
+    /// （抄 cc-switch 的 `request_media_heuristic`；与「上游报错后降级」是两条独立路径）
+    #[serde(default)]
+    pub rectifier_media_heuristic: bool,
     /// 协议不匹配整流：剥离转换后仍残留的协议专有字段（如 Anthropic thinking 落到 OpenAI 上游）
     #[serde(default)]
     pub rectifier_protocol_mismatch: bool,
@@ -160,6 +164,7 @@ impl Default for ProxyConfig {
             rectifier_thinking_signature: true,
             rectifier_thinking_budget: true,
             rectifier_media_fallback: true,
+            rectifier_media_heuristic: true,
             rectifier_protocol_mismatch: true,
             optimizer_enabled: true,
             optimizer_cache_injection: true,

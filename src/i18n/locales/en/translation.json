@@ -2680,6 +2680,8 @@
     "recThinkingBudgetDesc": "Auto-fixes budget_tokens when too small (32000)",
     "recMedia": "Image fallback",
     "recMediaDesc": "Replaces images with text markers when upstream doesn't support them",
+    "recMediaHeuristic": "Text-only model precheck",
+    "recMediaHeuristicDesc": "Strips images before sending for confirmed text-only models, saving a doomed round-trip",
     "recProtocol": "Protocol mismatch fix",
     "recProtocolDesc": "Strips leftover proprietary fields rejected by upstream after protocol conversion and retries",
     "sessions": "Sessions",

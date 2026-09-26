@@ -119,14 +119,21 @@ pub fn is_thinking_signature_error(status: u16, body: &str) -> bool {
 
 /// 从消息历史中剥离所有 thinking/redacted_thinking 块。
 /// 同时移除非 thinking 块中的 signature 字段。
-pub fn strip_thinking_blocks(body: &mut Value) {
+///
+/// 返回「实际剥掉了多少东西」（块数 + 顶层 thinking 是否被移除）：反应式整流靠它判断
+/// 该不该认领这个错误 —— 剥不出东西说明请求里本来就没有 thinking，重试也没用，
+/// 应该把错误让给后面的 budget / media / unknown-field 分支。
+pub fn strip_thinking_blocks(body: &mut Value) -> usize {
+    let mut removed = 0usize;
     if let Some(messages) = body.get_mut("messages").and_then(|v| v.as_array_mut()) {
         for msg in messages.iter_mut() {
             if let Some(content) = msg.get_mut("content").and_then(|v| v.as_array_mut()) {
+                let before = content.len();
                 content.retain(|block| {
                     let btype = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
                     btype != "thinking" && btype != "redacted_thinking"
                 });
+                removed += before.saturating_sub(content.len());
                 // 移除剩余块中的 signature 字段
                 for block in content.iter_mut() {
                     block.as_object_mut().map(|o| o.remove("signature"));
@@ -135,7 +142,12 @@ pub fn strip_thinking_blocks(body: &mut Value) {
         }
     }
     // 移除顶层 thinking 配置
-    body.as_object_mut().map(|o| o.remove("thinking"));
+    if let Some(o) = body.as_object_mut() {
+        if o.remove("thinking").is_some() {
+            removed += 1;
+        }
+    }
+    removed
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -306,6 +318,61 @@ pub fn is_unsupported_image_error(status: u16, body: &str) -> bool {
         || lower.contains("cannot process")
         || lower.contains("cannot handle");
     mentions_image && mentions_unsupported
+}
+
+// ─── 纯文本模型注册表（发送前预判）────────────────────────
+//
+// 抄 cc-switch 的 `request_media_heuristic`：它维护一份「已确认纯文本」的模型注册表，
+// 命中就在**发送前**剥掉图片块，省掉一次必然失败的往返（而不是等上游报错再降级）。
+//
+// 只收**已确认**的家族：误判会把用户发的图片静默丢掉，代价远大于漏判 ——
+// 漏判还有「上游报错后降级（media_fallback）」那条路兜底。
+const TEXT_ONLY_MODEL_PREFIXES: &[&str] = &[
+    "deepseek-",    // deepseek-chat / -reasoner / -coder 全部纯文本（其 API 无视觉模型）
+    "qwq-",         // QwQ 推理模型
+    "glm-",         // GLM 文本系列（视觉版 glm-4v / glm-4.5v 由下面的「以 v 结尾」规则排除）
+    "moonshot-v1-", // Moonshot 文本系列（视觉版 moonshot-v1-vision）
+    "qwen",         // Qwen 文本系列（qwen-vl / qwen2-vl / qvq 由 VISION_HINTS 排除）
+    "ernie-",       // 文心一言文本系列
+    "o1-mini",      // OpenAI o1-mini（o1 / o3 支持图片，不在此列）
+];
+
+/// 名字里带这些片段 = 该模型**支持**图片，即使在上面注册表里也要跳过。
+const VISION_HINTS: &[&str] = &["-vl", "vl-", "-vision", "vision-", "4v", "qvq", "-audio", "-omni"];
+
+/// 该模型是否已确认「不接受图片输入」。
+pub fn is_text_only_model(model: &str) -> bool {
+    let m = model.trim().to_lowercase();
+    if m.is_empty() || VISION_HINTS.iter().any(|h| m.contains(h)) {
+        return false;
+    }
+    // 视觉版的常见后缀：glm-4v / glm-4.5v（这些名字里没有可匹配的特征片段）
+    if m.ends_with("v") {
+        return false;
+    }
+    TEXT_ONLY_MODEL_PREFIXES.iter().any(|p| m.starts_with(p))
+}
+
+/// 纯文本模型预判：命中注册表就把图片块降级为文本标记，返回降级块数。
+///
+/// 与 `ProxyConfig` 解耦是有意的 —— 单测里构造 ProxyConfig 会把 tauri 运行时
+/// 链接进测试二进制（Windows 上直接加载失败），所以开关判断留在调用方，
+/// 这里只做「模型 → 降级」这件纯事。
+pub fn strip_images_for_text_only_model(body: &mut Value) -> usize {
+    // 先拷出模型名再改 body：不可变借用在 mutable 借用前结束
+    let text_only = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .map(is_text_only_model)
+        .unwrap_or(false);
+    if !text_only {
+        return 0;
+    }
+    let n = replace_image_blocks(body);
+    if n > 0 {
+        eprintln!("[rectifier] 纯文本模型预判：该模型不支持图片，发送前降级 {n} 个图片块");
+    }
+    n
 }
 
 /// 替换所有图片内容块为文本标记。
@@ -606,6 +673,15 @@ pub fn apply_preventive_rectifiers(body: &mut Value, outbound_protocol: &str, co
     if !config.rectifier_enabled {
         return;
     }
+
+    // 纯文本模型预判（与协议无关，先于协议分支执行）：已确认不接受图片的模型，
+    // 发送前就把图片块降级成文本标记，省掉一次必然失败的往返。
+    // 与「上游报错后降级（media_fallback）」是两条独立路径 —— 关掉这项只停用
+    // 注册表预判，报错兜底仍在，且不会改动模型目录里的能力声明。
+    if config.rectifier_media_heuristic {
+        strip_images_for_text_only_model(body);
+    }
+
     match outbound_protocol {
         "anthropic" => {
             // thinking signature 几乎必然触发的场景：预防式剥离历史 thinking + signature
@@ -618,6 +694,13 @@ pub fn apply_preventive_rectifiers(body: &mut Value, outbound_protocol: &str, co
         }
         _ => {}
     }
+}
+
+/// 签名整流：剥得动才返回 Some（剥不动说明请求里本来就没有 thinking，
+/// 不该由签名整流认领这个错误 —— 让后面的 media / unknown-field 分支有机会处理）。
+pub fn rectify_thinking_signature(body: &Value) -> Option<Value> {
+    let mut fixed = body.clone();
+    (strip_thinking_blocks(&mut fixed) > 0).then_some(fixed)
 }
 
 /// 反应式整流：上游报错后尝试修正一次。
@@ -637,6 +720,15 @@ pub fn try_reactive_rectify(
         let mut fixed = body.clone();
         fix_thinking_budget(&mut fixed);
         return Some(fixed);
+    }
+
+    // Thinking 签名整流：上游报签名不合法时剥离 thinking 后重试一次（cc-switch 同款语义）。
+    // 预防式已在 anthropic 出站剥过一轮，能走到这儿说明还有残留（例如入站的
+    // redacted_thinking 是转换后才暴露的）。
+    if config.rectifier_thinking_signature && is_thinking_signature_error(status, error_body) {
+        if let Some(fixed) = rectify_thinking_signature(body) {
+            return Some(fixed);
+        }
     }
 
     if config.rectifier_media_fallback && is_unsupported_image_error(status, error_body) {
@@ -716,6 +808,80 @@ pub fn strip_unknown_fields(body: &mut Value, outbound_protocol: &str) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn body_with_image(model: &str) -> Value {
+        json!({
+            "model": model,
+            "messages": [
+                { "role": "user", "content": [
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAA" } },
+                    { "type": "text", "text": "这是什么？" }
+                ] }
+            ]
+        })
+    }
+
+    fn body_with_thinking() -> Value {
+        json!({
+            "model": "claude-sonnet-4-5",
+            "thinking": { "type": "enabled", "budget_tokens": 1024 },
+            "messages": [
+                { "role": "assistant", "content": [
+                    { "type": "thinking", "thinking": "...", "signature": "bad" },
+                    { "type": "text", "text": "hi" }
+                ] }
+            ]
+        })
+    }
+
+    /// 纯文本注册表：宁可漏判也不能误判 —— 误判会把用户发的图片静默丢掉。
+    #[test]
+    fn text_only_registry_is_conservative() {
+        for m in ["deepseek-chat", "deepseek-reasoner", "glm-4.6", "qwen-max", "qwq-32b", "moonshot-v1-8k", "o1-mini"] {
+            assert!(is_text_only_model(m), "{m} 应判定为纯文本");
+        }
+        // 视觉版本 / 视觉模型必须排除（名字里带 vl、vision、4v、qvq）
+        for m in ["glm-4v", "qwen-vl-max", "qwen2-vl-72b", "moonshot-v1-8k-vision", "qvq-72b", "gpt-4o", "claude-sonnet-4-5", ""] {
+            assert!(!is_text_only_model(m), "{m} 不该被判定为纯文本");
+        }
+        // 大小写不敏感（供应商回填的模型名可能带大写）
+        assert!(is_text_only_model("DeepSeek-V3"));
+    }
+
+    /// 发送前预判：命中注册表就降级图片，未命中则原样转发。
+    #[test]
+    fn text_only_models_get_images_stripped_before_send() {
+        let mut body = body_with_image("deepseek-chat");
+        assert_eq!(strip_images_for_text_only_model(&mut body), 1);
+        let first = &body["messages"][0]["content"][0];
+        assert_eq!(first["type"], "text", "图片块应在发送前被降级: {body}");
+        assert_eq!(first["text"], "[Unsupported Image]");
+        // 相邻的文本块不能被动到
+        assert_eq!(body["messages"][0]["content"][1]["text"], "这是什么？");
+
+        // 支持图片的模型不受影响
+        let mut kept = body_with_image("gpt-4o");
+        assert_eq!(strip_images_for_text_only_model(&mut kept), 0);
+        assert_eq!(kept["messages"][0]["content"][0]["type"], "image_url");
+    }
+
+    /// 签名整流：剥得动才认领错误（重试），剥不动就交给后面的分支。
+    #[test]
+    fn signature_rectify_only_claims_errors_it_can_fix() {
+        let fixed = rectify_thinking_signature(&body_with_thinking())
+            .expect("含 thinking 的请求应能被签名整流修正");
+        assert!(fixed.get("thinking").is_none(), "顶层 thinking 应被移除: {fixed}");
+        let content = fixed["messages"][0]["content"].as_array().unwrap();
+        assert!(content.iter().all(|b| b["type"] != "thinking"), "{fixed}");
+        assert_eq!(content[0]["text"], "hi", "非 thinking 块要保留");
+
+        // 请求里本来就没有 thinking：剥不出东西 → 不认领，也不白重试一次
+        let no_thinking = json!({ "model": "claude-sonnet-4-5", "messages": [{ "role": "user", "content": "hi" }] });
+        assert!(
+            rectify_thinking_signature(&no_thinking).is_none(),
+            "没有 thinking 可剥就不该重试"
+        );
+    }
 
     #[test]
     fn supports_reasoning_effort_covers_modern_families() {

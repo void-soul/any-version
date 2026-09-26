@@ -204,7 +204,8 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
   const [rectifierEnabled, setRectifierEnabled] = useState(true);
   // 整流器 / 优化器各策略（默认沿用全局配置 AiConfig.rectifier / optimizer）
   const [rectifierStrategies, setRectifierStrategies] = useState({
-    thinking_signature: true, thinking_budget: true, media_fallback: true, protocol_mismatch: true,
+    thinking_signature: true, thinking_budget: true, media_fallback: true,
+    media_heuristic: true, protocol_mismatch: true,
   });
   const [optimizerStrategies, setOptimizerStrategies] = useState({
     cache_injection: true, thinking_optimizer: true, deepseek_normalize: true,
@@ -294,7 +295,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
     try {
       const [t, c, term, lcs] = await Promise.all([
         invoke<DetectedAiTool[]>("detect_ai_tools").catch(() => []),
-        invoke<AiConfig>("get_ai_config").catch(() => ({ providers: [], proxy_port: 15721, default_project_path: "", rectifier: { enabled: false, thinking_signature: false, thinking_budget: false, media_fallback: false, protocol_mismatch: false }, headroom: { enabled: false, port: 8791, on_unavailable: "failOpen", disable_kompress: false, timeout_ms: 1500 }, optimizer: { enabled: false, cache_injection: false, thinking_optimizer: false, deepseek_normalize: false }, skills_dir: "" })),
+        invoke<AiConfig>("get_ai_config").catch(() => ({ providers: [], proxy_port: 15721, default_project_path: "", rectifier: { enabled: false, thinking_signature: false, thinking_budget: false, media_fallback: false, media_heuristic: false, protocol_mismatch: false }, headroom: { enabled: false, port: 8791, on_unavailable: "failOpen", disable_kompress: false, timeout_ms: 1500 }, optimizer: { enabled: false, cache_injection: false, thinking_optimizer: false, deepseek_normalize: false }, skills_dir: "" })),
         invoke<TerminalInfo[]>("detect_terminals").catch(() => []),
         invoke<Record<string, LastLaunchConfig>>("get_all_last_launch_configs").catch(() => ({})),
       ]);
@@ -315,6 +316,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
         thinking_signature: c.rectifier?.thinking_signature !== false,
         thinking_budget: c.rectifier?.thinking_budget !== false,
         media_fallback: c.rectifier?.media_fallback !== false,
+        media_heuristic: c.rectifier?.media_heuristic !== false,
         protocol_mismatch: c.rectifier?.protocol_mismatch !== false,
       });
     } catch (e) { console.error(e); }
@@ -480,6 +482,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
           rectifier_thinking_signature: useOfficialModel ? null : rectifierStrategies.thinking_signature,
           rectifier_thinking_budget: useOfficialModel ? null : rectifierStrategies.thinking_budget,
           rectifier_media_fallback: useOfficialModel ? null : rectifierStrategies.media_fallback,
+          rectifier_media_heuristic: useOfficialModel ? null : rectifierStrategies.media_heuristic,
           rectifier_protocol_mismatch: useOfficialModel ? null : rectifierStrategies.protocol_mismatch,
           web_search_enabled: useOfficialModel ? false : webSearchEnabled,
           custom_params: useOfficialModel ? [] : currentModelCustomParams,
@@ -885,6 +888,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                   thinking_signature: config?.rectifier?.thinking_signature !== false,
                   thinking_budget: config?.rectifier?.thinking_budget !== false,
                   media_fallback: config?.rectifier?.media_fallback !== false,
+                  media_heuristic: config?.rectifier?.media_heuristic !== false,
                   protocol_mismatch: config?.rectifier?.protocol_mismatch !== false,
                 });
                 setSelectedTerminal("cmd");
@@ -1690,6 +1694,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                               { key: "thinking_signature" as const, label: t("toollaunch.recThinkingSig"), desc: t("toollaunch.recThinkingSigDesc") },
                               { key: "thinking_budget" as const, label: t("toollaunch.recThinkingBudget"), desc: t("toollaunch.recThinkingBudgetDesc") },
                               { key: "media_fallback" as const, label: t("toollaunch.recMedia"), desc: t("toollaunch.recMediaDesc") },
+                              { key: "media_heuristic" as const, label: t("toollaunch.recMediaHeuristic"), desc: t("toollaunch.recMediaHeuristicDesc") },
                               { key: "protocol_mismatch" as const, label: t("toollaunch.recProtocol"), desc: t("toollaunch.recProtocolDesc") },
                             ].map(item => (
                               <label key={item.key} className="flex items-center gap-2 cursor-pointer">

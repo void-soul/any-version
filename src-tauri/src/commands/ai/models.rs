@@ -19,6 +19,9 @@ pub struct RectifierConfig {
     /// 图片降级整流器
     #[serde(default = "default_true")]
     pub media_fallback: bool,
+    /// 纯文本模型预判：按已确认的纯文本模型注册表，发送前就剥掉图片块
+    #[serde(default = "default_true")]
+    pub media_heuristic: bool,
     /// 协议不匹配整流器：剥离转换后残留的协议专有字段
     #[serde(default = "default_true")]
     pub protocol_mismatch: bool,
@@ -31,6 +34,7 @@ impl Default for RectifierConfig {
             thinking_signature: true,
             thinking_budget: true,
             media_fallback: true,
+            media_heuristic: true,
             protocol_mismatch: true,
         }
     }
@@ -773,6 +777,8 @@ pub struct LaunchAiToolRequest {
     pub rectifier_thinking_budget: Option<bool>,
     #[serde(default)]
     pub rectifier_media_fallback: Option<bool>,
+    #[serde(default)]
+    pub rectifier_media_heuristic: Option<bool>,
     #[serde(default)]
     pub rectifier_protocol_mismatch: Option<bool>,
     /// 优化器各策略开关（None = 沿用全局配置 AiConfig.optimizer.*）
