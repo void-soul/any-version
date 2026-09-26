@@ -157,7 +157,7 @@ export default function CategoryModal({
         <form onSubmit={handleSubmit} className="p-5 overflow-y-auto space-y-4 flex-1">
           {/* Classification Type Selector */}
           <div>
-            <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("category.typeLabel")}</label>
+            <label className="block text-body font-medium text-slate-400 mb-1.5">{t("category.typeLabel")}</label>
             <div className="grid grid-cols-2 gap-2">
               {[
                 { type: 0, label: t("category.typeNormal"), desc: t("category.typeNormalDesc") },
@@ -176,8 +176,8 @@ export default function CategoryModal({
                       : "bg-white/[0.02] border-white/5 text-slate-400 hover:bg-white/[0.05]"
                   }`}
                 >
-                  <span className="text-xs font-medium text-slate-200">{opt.label}</span>
-                  <span className="text-[10px] text-slate-500 mt-0.5">{opt.desc}</span>
+                  <span className="text-body font-medium text-slate-200">{opt.label}</span>
+                  <span className="text-tiny text-slate-500 mt-0.5">{opt.desc}</span>
                 </button>
               ))}
             </div>
@@ -186,7 +186,7 @@ export default function CategoryModal({
           {/* Name & Parent */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("category.nameLabel")}</label>
+              <label className="block text-body font-medium text-slate-400 mb-1.5">{t("category.nameLabel")}</label>
               <input
                 autoFocus
                 type="text"
@@ -196,11 +196,11 @@ export default function CategoryModal({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder={t("category.namePh")}
-                className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 transition select-text"
+                className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-purple-500 transition select-text"
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("category.parentLabel")}</label>
+              <label className="block text-body font-medium text-slate-400 mb-1.5">{t("category.parentLabel")}</label>
               <CategoryTreeSelect
                 classifications={parentCategories}
                 value={parentId || 0}
@@ -216,7 +216,7 @@ export default function CategoryModal({
 
           {/* Icon / Emoji Selection */}
           <div>
-            <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("category.iconLabel")}</label>
+            <label className="block text-body font-medium text-slate-400 mb-1.5">{t("category.iconLabel")}</label>
             <div className="flex items-center gap-2 mb-2">
               <div className="w-9 h-9 rounded-card bg-white/5 border border-white/10 flex items-center justify-center text-lg flex-shrink-0">
                 {icon || <span className="text-slate-600">∅</span>}
@@ -231,7 +231,7 @@ export default function CategoryModal({
                   if (e.target.value) setIcon(e.target.value);
                 }}
                 placeholder={t("category.iconPh")}
-                className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-1.5 text-body text-white focus:outline-none focus:border-purple-500 select-text"
               />
               <button
                 type="button"
@@ -267,7 +267,7 @@ export default function CategoryModal({
           {classificationType === 1 && (
             <div className="p-3.5 rounded-card bg-purple-500/5 border border-purple-500/20 space-y-3">
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">{t("category.folderPathLabel")}</label>
+                <label className="block text-body font-medium text-slate-300 mb-1">{t("category.folderPathLabel")}</label>
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
@@ -277,12 +277,12 @@ export default function CategoryModal({
                     value={associateFolderPath}
                     onChange={(e) => setAssociateFolderPath(e.target.value)}
                     placeholder={t("category.folderPathPh")}
-                    className="flex-1 bg-black/30 border border-white/10 rounded-card px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                    className="ui-input flex-1 px-3 py-2 select-text"
                   />
                   <button
                     type="button"
                     onClick={handleSelectFolder}
-                    className="px-3 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded-card transition cursor-pointer flex items-center gap-1.5"
+                    className="px-3 py-2 bg-purple-600 hover:bg-purple-500 text-white text-body rounded-card transition cursor-pointer flex items-center gap-1.5"
                   >
                     <Folder className="w-3.5 h-3.5" />
                     {t("category.browse")}
@@ -292,11 +292,11 @@ export default function CategoryModal({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">{t("category.showOnly")}</label>
+                  <label className="block text-body font-medium text-slate-300 mb-1">{t("category.showOnly")}</label>
                   <select
                     value={itemShowOnly}
                     onChange={(e: any) => setItemShowOnly(e.target.value)}
-                    className="w-full bg-surface-inset border border-white/10 rounded-card px-3 py-1.5 text-xs text-white focus:outline-none"
+                    className="w-full bg-surface-inset border border-white/10 rounded-card px-3 py-1.5 text-body text-white focus:outline-none"
                   >
                     <option value="default">{t("category.optAll")}</option>
                     <option value="file">{t("category.optFile")}</option>
@@ -304,7 +304,7 @@ export default function CategoryModal({
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">{t("category.hideFilter")}</label>
+                  <label className="block text-body font-medium text-slate-300 mb-1">{t("category.hideFilter")}</label>
                   <input
                     type="text"
                     autoComplete="off"
@@ -312,7 +312,7 @@ export default function CategoryModal({
                     value={associateFolderHiddenItems}
                     onChange={(e) => setAssociateFolderHiddenItems(e.target.value)}
                     placeholder={t("category.hideFilterPh")}
-                    className="w-full bg-black/30 border border-white/10 rounded-card px-3 py-1.5 text-xs text-white focus:outline-none select-text"
+                    className="ui-input w-full px-3 py-1.5 select-text"
                   />
                 </div>
               </div>
@@ -321,7 +321,7 @@ export default function CategoryModal({
 
           {/* Additional switches */}
           <div className="pt-2 space-y-2.5">
-            <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
+            <label className="flex items-center gap-2 cursor-pointer text-body text-slate-300">
               <input
                 type="checkbox"
                 checked={excludeSearch}
@@ -331,7 +331,7 @@ export default function CategoryModal({
               <span>{t("category.excludeSearch")}</span>
             </label>
             <label
-              className="flex items-start gap-2 cursor-pointer text-xs text-slate-300"
+              className="flex items-start gap-2 cursor-pointer text-body text-slate-300"
               title={t("category.collapseTip")}
             >
               <input
@@ -342,7 +342,7 @@ export default function CategoryModal({
               />
               <span>
                 {t("category.collapseLabel")}
-                <span className="block text-[10px] text-slate-500 mt-0.5">
+                <span className="block text-tiny text-slate-500 mt-0.5">
                   {t("category.collapseDesc")}
                 </span>
               </span>
@@ -354,14 +354,14 @@ export default function CategoryModal({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-card text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
+              className="px-4 py-2 rounded-card text-body font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
             >
               {t("common.cancel")}
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="px-5 py-2 rounded-card text-xs font-semibold bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              className="px-5 py-2 rounded-card text-body font-semibold bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
             >
               <Check className="w-3.5 h-3.5" />
               {saving ? t("category.saving") : t("category.saveCategory")}

@@ -1375,7 +1375,7 @@ export default function LauncherPanel() {
             )}
             <span>{cat.name}</span>
             {groupItems.length > 0 && (
-              <span className="text-[10px] text-slate-500 font-normal ml-0.5">
+              <span className="text-tiny text-slate-500 font-normal ml-0.5">
                 {groupItems.length}
               </span>
             )}
@@ -1415,7 +1415,7 @@ export default function LauncherPanel() {
               setTargetClassificationId(cat.id);
               setItemModalOpen(true);
             }}
-            className="border border-dashed border-white/5 hover:border-[var(--module-accent-ring)] rounded-card min-h-[64px] flex items-center justify-center py-3 text-center text-slate-600 hover:text-slate-400 text-[11px] cursor-pointer transition"
+            className="border border-dashed border-white/5 hover:border-[var(--module-accent-ring)] rounded-card min-h-[64px] flex items-center justify-center py-3 text-center text-slate-600 hover:text-slate-400 text-caption cursor-pointer transition"
           >
             + {t("launcher.clickAddToGroup")}
           </div>
@@ -1446,9 +1446,9 @@ export default function LauncherPanel() {
         <div className="absolute inset-x-0 top-12 z-50 flex justify-center pointer-events-none animate-in fade-in slide-in-from-top-2 duration-150">
           <div className="bg-[color-mix(in_srgb,var(--module-accent)_90%,transparent)] backdrop-blur-md border border-[var(--module-accent)] text-white px-5 py-2.5 rounded-panel shadow-[0_0_16px_color-mix(in_srgb,var(--module-accent)_45%,transparent),0_0_40px_color-mix(in_srgb,var(--module-accent)_25%,transparent)] flex items-center gap-2.5">
             <UploadCloud className="w-5 h-5 text-[var(--module-accent)] animate-bounce" />
-            <div className="text-xs">
+            <div className="text-body">
               <span className="font-bold">{t("launcher.dropAdd", { name: currentDragTargetName })}</span>
-              <span className="text-[var(--module-accent)] text-[10px] ml-1.5">{t("launcher.dropSupport")}</span>
+              <span className="text-[var(--module-accent)] text-tiny ml-1.5">{t("launcher.dropSupport")}</span>
             </div>
           </div>
         </div>
@@ -1458,7 +1458,7 @@ export default function LauncherPanel() {
       <div className="h-10 border-b border-white/5 px-4 flex items-center justify-between bg-black/20 flex-shrink-0">
         <div className="flex items-center gap-2">
           <span className="text-sm">{activeTopCategory?.data.icon || "📁"}</span>
-          <span className="text-xs font-bold text-slate-200 tracking-wide">
+          <span className="text-body font-bold text-slate-200 tracking-wide">
             {activeTopCategory?.name || t("launcher.quickLaunch")}
           </span>
         </div>
@@ -1471,14 +1471,14 @@ export default function LauncherPanel() {
               if (isSearchOpen) closeSearch();
               else openSearch();
             }}
-            className={`px-2.5 py-1 rounded-ctl text-xs flex items-center gap-1.5 border transition cursor-pointer ${
+            className={`px-2.5 py-1 rounded-ctl text-body flex items-center gap-1.5 border transition cursor-pointer ${
               isSearchOpen
-                ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white shadow-md shadow-[var(--module-accent-ring)]"
-                : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
+                ? "ui-selected"
+                : "ui-btn"
             }`}             title={t("launcher.searchAll")}
           >
             <Search className="w-3 h-3" />
-            <span className="text-[11px]">{t("launcher.search")}</span>
+            <span className="text-caption">{t("launcher.search")}</span>
           </button>
 
           {/* 浏览器收藏夹导入已删除：该能力现在归收藏模块（favorites） */}
@@ -1487,10 +1487,10 @@ export default function LauncherPanel() {
           <button
             onClick={runCheck}
             disabled={checking || allItems.length === 0}
-            className={`px-2.5 py-1 rounded-ctl text-xs flex items-center gap-1.5 border transition cursor-pointer ${
+            className={`px-2.5 py-1 rounded-ctl text-body flex items-center gap-1.5 border transition cursor-pointer ${
               missingCount > 0
                 ? "bg-red-600/20 border-red-500/40 text-red-300 hover:bg-red-600/30"
-                : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
+                : "ui-btn"
             } ${checking ? "opacity-60 cursor-wait" : ""}`}
             title={t("launcher.checkTitle")}
           >
@@ -1499,9 +1499,9 @@ export default function LauncherPanel() {
             ) : (
               <ScanSearch className="w-3 h-3 text-emerald-400" />
             )}
-            <span className="text-[11px]">{checking ? t("launcher.checking") : t("launcher.check")}</span>
+            <span className="text-caption">{checking ? t("launcher.checking") : t("launcher.check")}</span>
             {missingCount > 0 && !checking && (
-              <span className="w-3.5 h-3.5 rounded-full bg-red-500 text-[9px] text-white flex items-center justify-center font-bold">
+              <span className="w-3.5 h-3.5 rounded-full bg-red-500 text-micro text-white flex items-center justify-center font-bold">
                 {missingCount}
               </span>
             )}
@@ -1514,25 +1514,25 @@ export default function LauncherPanel() {
               checking ||
               (missingCount === 0 && !allItems.some((it) => it.data.exists === false))
             }
-            className={`px-2.5 py-1 rounded-ctl text-xs flex items-center gap-1.5 border transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+            className={`px-2.5 py-1 rounded-ctl text-body flex items-center gap-1.5 border transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
               missingCount > 0
                 ? "bg-red-600/20 border-red-500/40 text-red-300 hover:bg-red-600/30"
-                : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
+                : "ui-btn"
             }`}
             title={t("launcher.cleanInvalidTitle")}
           >
             <Trash2 className="w-3 h-3 text-red-400" />
-            <span className="text-[11px]">{t("launcher.cleanInvalid")}</span>
+            <span className="text-caption">{t("launcher.cleanInvalid")}</span>
           </button>
 
           {/* 收缩/展开全部子分组 */}
           <button
             onClick={handleToggleCollapseAll}
             disabled={activeSubIds.length === 0}
-            className={`px-2.5 py-1 rounded-ctl text-xs flex items-center gap-1.5 border transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+            className={`px-2.5 py-1 rounded-ctl text-body flex items-center gap-1.5 border transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
               isAllCollapsed
                 ? "bg-[var(--module-accent)]/15 border-[var(--module-accent)]/40 text-[var(--module-accent)]"
-                : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
+                : "ui-btn"
             }`}
             title={isAllCollapsed ? t("launcher.expandAllTitle") : t("launcher.collapseAllTitle")}
           >
@@ -1541,42 +1541,42 @@ export default function LauncherPanel() {
             ) : (
               <ChevronsUp className="w-3 h-3 text-cyan-400" />
             )}
-            <span className="text-[11px]">{isAllCollapsed ? t("launcher.expandAll") : t("launcher.collapseAll")}</span>
+            <span className="text-caption">{isAllCollapsed ? t("launcher.expandAll") : t("launcher.collapseAll")}</span>
           </button>
 
           {/* 使用统计 */}
           <button
             onClick={() => setUsageStatsOpen((v) => !v)}
-            className={`px-2.5 py-1 rounded-ctl text-xs flex items-center gap-1.5 border transition cursor-pointer ${
+            className={`px-2.5 py-1 rounded-ctl text-body flex items-center gap-1.5 border transition cursor-pointer ${
               usageStatsOpen
-                ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white"
-                : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
+                ? "ui-selected"
+                : "ui-btn"
             }`}
             title={t("launcher.usageStatsTitle")}
           >
             <BarChart3 className="w-3 h-3 text-amber-400" />
-            <span className="text-[11px]">{t("launcher.usageStats")}</span>
+            <span className="text-caption">{t("launcher.usageStats")}</span>
           </button>
 
           {/* 视图设置 */}
           <div className="relative" ref={viewSettingsRef}>
             <button
               onClick={() => setViewSettingsOpen((v) => !v)}
-              className={`px-2.5 py-1 rounded-ctl text-xs flex items-center gap-1.5 border transition cursor-pointer ${
+              className={`px-2.5 py-1 rounded-ctl text-body flex items-center gap-1.5 border transition cursor-pointer ${
                 viewSettingsOpen
-                  ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white"
-                  : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
+                  ? "ui-selected"
+                  : "ui-btn"
               }`}
               title={t("launcher.viewTitle")}
             >
               <LayoutGrid className="w-3 h-3 text-cyan-400" />
-              <span className="text-[11px]">{t("launcher.view")}</span>
+              <span className="text-caption">{t("launcher.view")}</span>
             </button>
 
             {viewSettingsOpen && (
               <div className="absolute right-0 mt-1 z-[150] w-64 bg-surface-panel border border-white/15 rounded-card shadow-2xl shadow-black/50 p-3 space-y-3 max-h-[75vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-100">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-slate-200 flex items-center gap-1">
+                  <span className="text-caption font-semibold text-slate-200 flex items-center gap-1">
                     <Settings2 className="w-3 h-3 text-[var(--module-accent)]" />
                     {t("launcher.globalViewSettings")}
                   </span>
@@ -1584,7 +1584,7 @@ export default function LauncherPanel() {
 
                 {/* 图标大小 */}
                 <div>
-                  <label className="block text-[10px] text-slate-400 mb-1">
+                  <label className="block text-tiny text-slate-400 mb-1">
                     {t("launcher.iconSize", { size: settings.itemIconSize ?? 32 })}
                   </label>
                   <input
@@ -1600,15 +1600,15 @@ export default function LauncherPanel() {
 
                 {/* 网格列数 */}
                 <div>
-                  <label className="block text-[10px] text-slate-400 mb-1">{t("launcher.colsPerRow")}</label>
+                  <label className="block text-tiny text-slate-400 mb-1">{t("launcher.colsPerRow")}</label>
                   <div className="flex flex-wrap gap-1">
                     {[0, 3, 4, 5, 6, 7, 8].map((col) => (
                       <button
                         key={col}
                         onClick={() => saveViewSettings({ itemColumnNumber: col })}
-                        className={`px-2 py-1 rounded-ctl text-[10px] border transition cursor-pointer ${
+                        className={`px-2 py-1 rounded-ctl text-tiny border transition cursor-pointer ${
                           (settings.itemColumnNumber ?? 0) === col
-                            ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white"
+                            ? "ui-selected"
                             : "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10"
                         }`}
                       >
@@ -1620,7 +1620,7 @@ export default function LauncherPanel() {
 
                 {/* 卡片密度 */}
                 <div>
-                  <label className="block text-[10px] text-slate-400 mb-1">{t("launcher.cardDensity")}</label>
+                  <label className="block text-tiny text-slate-400 mb-1">{t("launcher.cardDensity")}</label>
                   <div className="grid grid-cols-3 gap-1">
                     {[
                       { key: "compact", label: "launcher.compact" },
@@ -1630,9 +1630,9 @@ export default function LauncherPanel() {
                       <button
                         key={opt.key}
                         onClick={() => saveViewSettings({ cardDensity: opt.key as LauncherSetting["cardDensity"] })}
-                        className={`px-2 py-1.5 rounded-ctl text-[10px] border transition cursor-pointer ${
+                        className={`px-2 py-1.5 rounded-ctl text-tiny border transition cursor-pointer ${
                           (settings.cardDensity ?? "cozy") === opt.key
-                            ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white"
+                            ? "ui-selected"
                             : "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10"
                         }`}
                       >
@@ -1644,7 +1644,7 @@ export default function LauncherPanel() {
 
                 {/* 项目文字大小 */}
                 <div>
-                  <label className="block text-[10px] text-slate-400 mb-1">
+                  <label className="block text-tiny text-slate-400 mb-1">
                     {t("launcher.itemFontSize", { size: settings.itemFontSize ?? 12 })}
                   </label>
                   <input
@@ -1660,7 +1660,7 @@ export default function LauncherPanel() {
 
                 {/* 分类文字大小 */}
                 <div>
-                  <label className="block text-[10px] text-slate-400 mb-1">
+                  <label className="block text-tiny text-slate-400 mb-1">
                     {t("launcher.catFontSize", { size: settings.categoryFontSize ?? 12 })}
                   </label>
                   <input
@@ -1676,7 +1676,7 @@ export default function LauncherPanel() {
 
                 {/* 项目圆角 */}
                 <div>
-                  <label className="block text-[10px] text-slate-400 mb-1">
+                  <label className="block text-tiny text-slate-400 mb-1">
                     {t("launcher.itemRadius", { size: settings.itemRadius ?? 12 })}
                   </label>
                   <input
@@ -1692,7 +1692,7 @@ export default function LauncherPanel() {
 
                 {/* 分类间距 */}
                 <div>
-                  <label className="block text-[10px] text-slate-400 mb-1">
+                  <label className="block text-tiny text-slate-400 mb-1">
                     {t("launcher.catGap", { size: settings.categoryGap ?? 24 })}
                   </label>
                   <input
@@ -1709,7 +1709,7 @@ export default function LauncherPanel() {
                 {/* 开关 */}
                 <div className="space-y-1.5">
                   <label className="flex items-center justify-between cursor-pointer">
-                    <span className="text-[10px] text-slate-400">{t("launcher.validOnly")}</span>
+                    <span className="text-tiny text-slate-400">{t("launcher.validOnly")}</span>
                     <button
                       onClick={() => saveViewSettings({ showOnlyValid: !(settings.showOnlyValid ?? false) })}
                       className={`w-7 h-4 rounded-full transition relative cursor-pointer ${
@@ -1725,7 +1725,7 @@ export default function LauncherPanel() {
                     </button>
                   </label>
                   <label className="flex items-center justify-between cursor-pointer">
-                    <span className="text-[10px] text-slate-400">{t("launcher.itemBorder")}</span>
+                    <span className="text-tiny text-slate-400">{t("launcher.itemBorder")}</span>
                     <button
                       onClick={() => saveViewSettings({ itemBorder: !(settings.itemBorder ?? true) })}
                       className={`w-7 h-4 rounded-full transition relative cursor-pointer ${
@@ -1740,7 +1740,7 @@ export default function LauncherPanel() {
                     </button>
                   </label>
                   <label className="flex items-center justify-between cursor-pointer">
-                    <span className="text-[10px] text-slate-400">{t("launcher.showItemName")}</span>
+                    <span className="text-tiny text-slate-400">{t("launcher.showItemName")}</span>
                     <button
                       onClick={() => saveViewSettings({ showItemName: !(settings.showItemName ?? true) })}
                       className={`w-7 h-4 rounded-full transition relative cursor-pointer ${
@@ -1755,7 +1755,7 @@ export default function LauncherPanel() {
                     </button>
                   </label>
                   <label className="flex items-center justify-between cursor-pointer">
-                    <span className="text-[10px] text-slate-400">{t("launcher.iconBgColor")}</span>
+                    <span className="text-tiny text-slate-400">{t("launcher.iconBgColor")}</span>
                     <button
                       onClick={() => saveViewSettings({ iconBackgroundColor: !(settings.iconBackgroundColor ?? false) })}
                       className={`w-7 h-4 rounded-full transition relative cursor-pointer ${
@@ -1781,10 +1781,10 @@ export default function LauncherPanel() {
               setTargetClassificationId(activeTopCategory ? activeTopCategory.id : 1);
               setItemModalOpen(true);
             }}
-            className="px-3 py-1 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-ctl text-xs font-medium transition cursor-pointer shadow-md shadow-[var(--module-accent-ring)] flex items-center gap-1"
+            className="px-3 py-1 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-ctl text-body font-medium transition cursor-pointer shadow-md shadow-[var(--module-accent-ring)] flex items-center gap-1"
           >
             <Plus className="w-3 h-3" />
-            <span className="text-[11px]">{t("launcher.addItem")}</span>
+            <span className="text-caption">{t("launcher.addItem")}</span>
           </button>
         </div>
       </div>
@@ -1792,7 +1792,7 @@ export default function LauncherPanel() {
       {/* Kira 贴心问候（生命力）：头像 + 时段开场白 + 轮换问候 */}
       <div className="flex items-center gap-2.5 px-4 py-1.5 bg-[var(--module-accent)]/5 border-b border-white/5 flex-shrink-0">
         <VexGlowAvatar size={26} />
-        <span className="text-[11px] text-slate-300 truncate">
+        <span className="text-caption text-slate-300 truncate">
           <VexGreeting />
         </span>
       </div>
@@ -1807,7 +1807,7 @@ export default function LauncherPanel() {
           {checking && (
             <button
               onClick={stopCheck}
-              className="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-medium bg-red-600/20 border border-red-500/40 text-red-300 hover:bg-red-600/30 transition cursor-pointer"
+              className="shrink-0 px-2 py-0.5 rounded-md text-tiny font-medium bg-red-600/20 border border-red-500/40 text-red-300 hover:bg-red-600/30 transition cursor-pointer"
               title={t("launcher.stopCheckTitle")}
             >
               {t("launcher.stop")}
@@ -1870,10 +1870,11 @@ export default function LauncherPanel() {
                     e.preventDefault();
                     setCategoryContextMenu({ x: e.clientX, y: e.clientY, category: cat });
                   }}
-                  className={`w-full px-3 py-2 rounded-card text-xs flex items-center justify-between transition cursor-pointer group ${
+                  className={`w-full px-3 py-2 rounded-card text-body flex items-center justify-between transition cursor-pointer group ${
                     isActive
-                      ? "bg-slate-200 text-slate-900 font-bold shadow-md"
-                      : "text-slate-400 hover:text-slate-200 hover:bg-white/5 font-medium"
+                      // 选中态全站一致：实心 accent（原来是亮底 bg-slate-200，在暗色 UI 里很突兀）
+                      ? "ui-selected font-bold"
+                      : "ui-row font-medium hover:bg-white/5"
                   } ${
                     targetDragSubId === cat.id
                       ? "!bg-[var(--module-accent)] !text-slate-50 shadow-md ring-2 ring-[var(--module-accent-ring)]"
@@ -1888,7 +1889,7 @@ export default function LauncherPanel() {
                   </span>
                   <ChevronRight
                     className={`w-3.5 h-3.5 flex-shrink-0 transition ${
-                      isActive ? "text-slate-900" : "opacity-40 group-hover:opacity-100"
+                      isActive ? "text-white" : "opacity-40 group-hover:opacity-100"
                     }`}
                   />
                 </Droppable>
@@ -1904,7 +1905,7 @@ export default function LauncherPanel() {
                 setCategoryParentId(null);
                 setCategoryModalOpen(true);
               }}
-              className="w-full py-1.5 px-2 rounded-card text-slate-400 hover:text-slate-200 hover:bg-white/5 text-[11px] font-medium flex items-center justify-center gap-1 border border-dashed border-white/10 hover:border-white/20 transition cursor-pointer"
+              className="w-full py-1.5 px-2 rounded-card text-slate-400 hover:text-slate-200 hover:bg-white/5 text-caption font-medium flex items-center justify-center gap-1 border border-dashed border-white/10 hover:border-white/20 transition cursor-pointer"
             >
               <Plus className="w-3 h-3" />
               <span>{t("launcher.newCategory")}</span>
@@ -1960,7 +1961,7 @@ export default function LauncherPanel() {
                       </span>
                       <span>{t("launcher.otherItems")}</span>
                       {directItems.length > 0 && (
-                        <span className="text-[10px] text-slate-600 font-normal">
+                        <span className="text-tiny text-slate-600 font-normal">
                           {directItems.length}
                         </span>
                       )}
@@ -1996,7 +1997,7 @@ export default function LauncherPanel() {
                   <div className="py-20 text-center text-slate-500 flex flex-col items-center justify-center">
                     <UploadCloud className="w-12 h-12 mb-3 opacity-30 text-[var(--module-accent)]" />
                     <p className="text-sm font-medium text-slate-300">{t("launcher.emptyCategory")}</p>
-                    <p className="text-xs text-slate-500 mt-1 max-w-sm">
+                    <p className="text-body text-slate-500 mt-1 max-w-sm">
                       {t("launcher.emptyCategoryHint")}
                       <span className="text-[var(--module-accent)] font-medium">{t("launcher.dragHere")}</span>
                     </p>
@@ -2010,7 +2011,7 @@ export default function LauncherPanel() {
                           );
                           setItemModalOpen(true);
                         }}
-                        className="px-3.5 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-xs font-medium rounded-card transition cursor-pointer flex items-center gap-1.5"
+                        className="px-3.5 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-body font-medium rounded-card transition cursor-pointer flex items-center gap-1.5"
                       >
                         <Plus className="w-3.5 h-3.5" />
                         {t("launcher.addItem")}
@@ -2024,7 +2025,7 @@ export default function LauncherPanel() {
                           );
                           setCategoryModalOpen(true);
                         }}
-                        className="px-3.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-medium rounded-card border border-white/10 transition cursor-pointer flex items-center gap-1.5"
+                        className="px-3.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 text-body font-medium rounded-card border border-white/10 transition cursor-pointer flex items-center gap-1.5"
                       >
                         <FolderPlus className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                         {t("launcher.newSubCategory")}
@@ -2044,7 +2045,7 @@ export default function LauncherPanel() {
                 <BarChart3 className="w-4 h-4 text-amber-400" />
                 <div>
                   <h3 className="text-sm font-bold text-white">{t("launcher.usageStats")}</h3>
-                  <p className="text-[10px] text-slate-500">{t("launcher.usageStatsHint")}</p>
+                  <p className="text-tiny text-slate-500">{t("launcher.usageStatsHint")}</p>
                 </div>
               </div>
               <button type="button" onClick={() => setUsageStatsOpen(false)} className="rounded-ctl p-1.5 text-slate-400 hover:bg-white/10 hover:text-white" title={t("launcher.closeUsageStats")}>
@@ -2055,7 +2056,7 @@ export default function LauncherPanel() {
               {usageStats.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-slate-500">
                   <BarChart3 className="w-10 h-10 opacity-30" />
-                  <p className="text-xs">{t("launcher.noUsageStats")}</p>
+                  <p className="text-body">{t("launcher.noUsageStats")}</p>
                 </div>
               ) : (
                 <div className="mx-auto grid max-w-3xl grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -2063,15 +2064,15 @@ export default function LauncherPanel() {
                     const cat = classificationMap.get(item.classificationId);
                     return (
                       <button key={item.id} type="button" onClick={() => { setUsageStatsOpen(false); setActiveParentId(cat?.parentId ?? cat?.id ?? activeParentId); handleExecuteItem(item); }} className="group flex items-center gap-3 rounded-card border border-white/10 bg-white/[0.03] px-3 py-2.5 text-left transition hover:border-[var(--module-accent-ring)] hover:bg-[var(--module-accent-soft)]">
-                        <span className="w-6 shrink-0 text-center font-mono text-[10px] text-slate-600">{index + 1}</span>
+                        <span className="w-6 shrink-0 text-center font-mono text-tiny text-slate-600">{index + 1}</span>
                         <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-ctl bg-white/10">
                           {item.data.icon ? <img src={item.data.icon} className="h-7 w-7 object-contain" alt="" /> : item.data.htmlIcon ? <span className="text-lg">{item.data.htmlIcon}</span> : <FileText className="h-5 w-5 text-[var(--module-accent)]" />}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-xs font-medium text-slate-200 group-hover:text-white">{item.name}</div>
-                          <div className="truncate text-[9px] text-slate-500">{cat?.data.icon ?? "📁"} {cat?.name ?? t("launcher.currentCat")}</div>
+                          <div className="truncate text-body font-medium text-slate-200 group-hover:text-white">{item.name}</div>
+                          <div className="truncate text-micro text-slate-500">{cat?.data.icon ?? "📁"} {cat?.name ?? t("launcher.currentCat")}</div>
                         </div>
-                        <span className="shrink-0 rounded-md bg-amber-400/10 px-1.5 py-1 font-mono text-[10px] font-bold text-amber-300">{t("launcher.openCount", { count: item.data.openNumber ?? 0 })}</span>
+                        <span className="shrink-0 rounded-md bg-amber-400/10 px-1.5 py-1 font-mono text-tiny font-bold text-amber-300">{t("launcher.openCount", { count: item.data.openNumber ?? 0 })}</span>
                       </button>
                     );
                   })}
@@ -2143,7 +2144,7 @@ export default function LauncherPanel() {
                         handleExecuteItem(item);
                         closeSearch();
                       }}
-                      className={`flex items-center gap-3 px-3.5 py-2.5 rounded-card text-xs transition cursor-pointer ${
+                      className={`flex items-center gap-3 px-3.5 py-2.5 rounded-card text-body transition cursor-pointer ${
                         isSelected
                           ? "bg-[var(--module-accent)] text-white font-medium shadow-md shadow-[var(--module-accent-ring)]"
                           : "text-slate-200 hover:bg-white/5"
@@ -2154,7 +2155,7 @@ export default function LauncherPanel() {
                         {item.data.icon ? (
                           <img src={item.data.icon} className="w-5 h-5 object-contain" alt="" />
                         ) : item.data.htmlIcon ? (
-                          <span className="text-xs">{item.data.htmlIcon}</span>
+                          <span className="text-body">{item.data.htmlIcon}</span>
                         ) : item.itemType === 1 ? (
                           <Folder className="w-4 h-4 text-amber-400" />
                         ) : item.itemType === 2 ? (
@@ -2169,7 +2170,7 @@ export default function LauncherPanel() {
                         <span className="truncate text-sm">{item.name}</span>
                         {parentName && (
                           <span
-                            className={`text-xs px-1.5 py-0.5 rounded ${
+                            className={`text-body px-1.5 py-0.5 rounded ${
                               isSelected ? "bg-black/20 text-[var(--module-accent)]" : "bg-white/5 text-slate-400"
                             }`}
                           >
@@ -2185,17 +2186,17 @@ export default function LauncherPanel() {
                   );
                 })
               ) : searchQuery.trim() ? (
-                <div className="py-14 text-center text-slate-500 text-xs flex flex-col items-center gap-3">
+                <div className="py-14 text-center text-slate-500 text-body flex flex-col items-center gap-3">
                   <VexGlowAvatar size={44} className="opacity-80" />
                   <div>
                     <p>{t("launcher.searchNoResult", { query: searchQuery })}</p>
-                    <p className="text-[11px] text-slate-600 mt-1">{t("launcher.searchNoResultHint")}</p>
+                    <p className="text-caption text-slate-600 mt-1">{t("launcher.searchNoResultHint")}</p>
                   </div>
                 </div>
               ) : (
-                <div className="py-12 text-center text-slate-500 text-xs space-y-1">
+                <div className="py-12 text-center text-slate-500 text-body space-y-1">
                   <p>{t("launcher.searchHint")}</p>
-                  <p className="text-[11px] text-slate-600">{t("launcher.searchHintKeys")}</p>
+                  <p className="text-caption text-slate-600">{t("launcher.searchHintKeys")}</p>
                 </div>
               )}
             </div>
@@ -2223,7 +2224,7 @@ export default function LauncherPanel() {
               ? { bottom: (typeof window !== "undefined" ? window.innerHeight : 0) - itemContextMenu.y, top: "auto" }
               : { top: itemContextMenu.y }),
           }}
-          className="fixed z-[200] bg-surface-panel border border-white/15 rounded-card shadow-2xl p-1.5 min-w-[160px] text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100"
+          className="fixed z-[200] bg-surface-panel border border-white/15 rounded-card shadow-2xl p-1.5 min-w-[160px] text-body space-y-0.5 animate-in fade-in zoom-in-95 duration-100"
           onClick={(e) => e.stopPropagation()}
         >
           <button
@@ -2309,7 +2310,7 @@ export default function LauncherPanel() {
               ? { bottom: (typeof window !== "undefined" ? window.innerHeight : 0) - categoryContextMenu.y, top: "auto" }
               : { top: categoryContextMenu.y }),
           }}
-          className="fixed z-[200] bg-surface-panel border border-white/15 rounded-card shadow-2xl p-1.5 min-w-[150px] text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100"
+          className="fixed z-[200] bg-surface-panel border border-white/15 rounded-card shadow-2xl p-1.5 min-w-[150px] text-body space-y-0.5 animate-in fade-in zoom-in-95 duration-100"
           onClick={(e) => e.stopPropagation()}
         >
           <button
@@ -2376,7 +2377,7 @@ export default function LauncherPanel() {
           className="fixed inset-0 z-[250] modal-mask bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-100"
         >
           <div
-            className="w-full max-w-sm bg-surface-panel border border-white/15 rounded-panel p-5 shadow-2xl space-y-4 text-xs"
+            className="w-full max-w-sm bg-surface-panel border border-white/15 rounded-panel p-5 shadow-2xl space-y-4 text-body"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-2 border-b border-white/10">
@@ -2392,7 +2393,7 @@ export default function LauncherPanel() {
               </button>
             </div>
 
-            <p className="text-[11px] text-slate-400 leading-relaxed">
+            <p className="text-caption text-slate-400 leading-relaxed">
               {t("launcher.moveExplain1")}
               <span className="text-slate-200 font-medium">{moveItemsSource.name}</span>
               {t("launcher.moveExplain2")}
@@ -2401,10 +2402,10 @@ export default function LauncherPanel() {
             </p>
 
             <div>
-              <label className="block text-[11px] text-slate-400 mb-1.5">{t("launcher.pickTargetCat")}</label>
+              <label className="block text-caption text-slate-400 mb-1.5">{t("launcher.pickTargetCat")}</label>
               <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
                 {moveItemsTargetList.length === 0 ? (
-                  <p className="text-[11px] text-slate-500">{t("launcher.noTargetCat")}</p>
+                  <p className="text-caption text-slate-500">{t("launcher.noTargetCat")}</p>
                 ) : (
                   moveItemsTargetList.map((c) => {
                     const depth = (() => {
@@ -2424,7 +2425,7 @@ export default function LauncherPanel() {
                         onClick={() => setMoveItemsTarget(c.id)}
                         className={`w-full text-left px-3 py-1.5 rounded-ctl border transition cursor-pointer flex items-center gap-2 ${
                           isSelected
-                            ? "bg-cyan-500/20 border-cyan-500 text-white"
+                            ? "ui-selected"
                             : "bg-white/[0.02] border-white/5 text-slate-300 hover:bg-white/[0.05]"
                         }`}
                       >
@@ -2445,7 +2446,7 @@ export default function LauncherPanel() {
                 type="button"
                 disabled={moveItemsLoading}
                 onClick={() => setMoveItemsModalOpen(false)}
-                className="px-4 py-2 rounded-card text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer disabled:opacity-50"
+                className="px-4 py-2 rounded-card text-body font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer disabled:opacity-50"
               >
                 {t("launcher.cancel")}
               </button>
@@ -2453,7 +2454,7 @@ export default function LauncherPanel() {
                 type="button"
                 disabled={moveItemsLoading || moveItemsTarget === null}
                 onClick={handleMoveItemsConfirm}
-                className="px-5 py-2 rounded-card text-xs font-semibold bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg shadow-cyan-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                className="ui-btn ui-btn-primary px-5 py-2 disabled:opacity-50 flex items-center gap-1.5"
               >
                 <ArrowRightLeft className="w-3.5 h-3.5" />
                 {moveItemsLoading ? t("launcher.moving") : t("launcher.confirmMove")}
@@ -2465,7 +2466,7 @@ export default function LauncherPanel() {
 
       {/* Toast Notification */}
       {toastMsg && (
-        <div className="fixed bottom-6 right-6 z-[300] bg-[var(--module-accent)] text-white text-xs px-4 py-2.5 rounded-card shadow-[0_0_14px_color-mix(in_srgb,var(--module-accent)_48%,transparent),0_0_36px_color-mix(in_srgb,var(--module-accent)_26%,transparent)] flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-150">
+        <div className="fixed bottom-6 right-6 z-[300] bg-[var(--module-accent)] text-white text-body px-4 py-2.5 rounded-card shadow-[0_0_14px_color-mix(in_srgb,var(--module-accent)_48%,transparent),0_0_36px_color-mix(in_srgb,var(--module-accent)_26%,transparent)] flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-150">
           <Check className="w-4 h-4" />
           <span>{toastMsg}</span>
         </div>
@@ -2512,7 +2513,7 @@ export default function LauncherPanel() {
               <h3 className="text-sm font-semibold text-white">{t("launcher.delCatTitle")}</h3>
             </div>
             <div className="p-5 space-y-3.5">
-              <p className="text-xs leading-relaxed text-slate-300">
+              <p className="text-body leading-relaxed text-slate-300">
                 {t("launcher.delCatConfirm")}
                 <span
                   className="mx-1 px-1.5 py-0.5 rounded font-medium"
@@ -2525,7 +2526,7 @@ export default function LauncherPanel() {
                 </span>
                 {t("launcher.delCatConfirmTail")}
               </p>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-caption text-slate-400">
                 {t("launcher.delCatScope", {
                   cats: scopeOf(pendingDeleteCategory).cats,
                   items: scopeOf(pendingDeleteCategory).items,
@@ -2541,7 +2542,7 @@ export default function LauncherPanel() {
                   onChange={() => setDeleteCascade(true)}
                   className="mt-0.5 accent-red-500"
                 />
-                <span className="text-xs text-slate-200">{t("launcher.delCatModeDelete")}</span>
+                <span className="text-body text-slate-200">{t("launcher.delCatModeDelete")}</span>
               </label>
 
               {/* 选项二：保留内容，但必须指定新上级 */}
@@ -2554,12 +2555,12 @@ export default function LauncherPanel() {
                     onChange={() => setDeleteCascade(false)}
                     className="mt-0.5 accent-[var(--module-accent)]"
                   />
-                  <span className="text-xs text-slate-200">{t("launcher.delCatModeMove")}</span>
+                  <span className="text-body text-slate-200">{t("launcher.delCatModeMove")}</span>
                 </label>
                 {!deleteCascade && (
                   <div className="ml-6 space-y-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-slate-400 shrink-0">
+                      <span className="text-caption text-slate-400 shrink-0">
                         {t("launcher.delCatMoveTarget")}
                       </span>
                       <CategoryTreeSelect
@@ -2582,10 +2583,10 @@ export default function LauncherPanel() {
                           if (e.target.value.trim()) setDeleteTarget(NEW_CATEGORY_VALUE);
                         }}
                         placeholder={t("launcher.delCatNewName")}
-                        className="glass-input flex-1 px-2 py-1 text-[11px]"
+                        className="glass-input flex-1 px-2 py-1 text-caption"
                       />
                     </div>
-                    <p className="text-[10px] text-slate-500">{t("launcher.delCatMoveHint")}</p>
+                    <p className="text-tiny text-slate-500">{t("launcher.delCatMoveHint")}</p>
                   </div>
                 )}
               </div>
@@ -2595,7 +2596,7 @@ export default function LauncherPanel() {
                   type="button"
                   disabled={deletingCategory}
                   onClick={() => setPendingDeleteCategory(null)}
-                  className="px-4 py-2 rounded-card text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer disabled:opacity-50"
+                  className="px-4 py-2 rounded-card text-body font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer disabled:opacity-50"
                 >
                   {t("common.cancel")}
                 </button>
@@ -2603,7 +2604,7 @@ export default function LauncherPanel() {
                   type="button"
                   disabled={deletingCategory}
                   onClick={confirmDeleteCategory}
-                  className={`px-5 py-2 rounded-card text-xs font-semibold text-white shadow-lg transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5 ${
+                  className={`px-5 py-2 rounded-card text-body font-semibold text-white shadow-lg transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5 ${
                     deleteCascade
                       ? "bg-red-600 hover:bg-red-500 shadow-red-600/30"
                       : "bg-[var(--module-accent)] hover:brightness-110"

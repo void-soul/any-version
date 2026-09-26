@@ -365,7 +365,7 @@ export default function AddItemModal({
               <h3 className="text-sm font-semibold text-white">
                 {editingItem ? t("additem.editTitle") : t("additem.addTitle")}
               </h3>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-caption text-slate-400">
                 {t("additem.subtitle")}
               </p>
             </div>
@@ -397,7 +397,7 @@ export default function AddItemModal({
                 if (t.id === 5 && startMenuList.length === 0) handleScanStartMenu();
                 if (t.id === 4 && appxList.length === 0) handleScanAppx();
               }}
-              className={`px-3 py-1.5 rounded-card text-xs font-medium flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
+              className={`px-3 py-1.5 rounded-card text-body font-medium flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
                 activeTab === t.id
                   ? "bg-purple-600 text-white shadow-md shadow-purple-600/20"
                   : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
@@ -414,7 +414,7 @@ export default function AddItemModal({
           {/* Classification Selection */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("additem.classification")}</label>
+              <label className="block text-body font-medium text-slate-400 mb-1.5">{t("additem.classification")}</label>
               <CategoryTreeSelect
                 classifications={classifications}
                 value={targetClassificationId}
@@ -423,7 +423,7 @@ export default function AddItemModal({
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("additem.itemName")}</label>
+              <label className="block text-body font-medium text-slate-400 mb-1.5">{t("additem.itemName")}</label>
               <input
                 autoFocus
                 type="text"
@@ -433,14 +433,14 @@ export default function AddItemModal({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder={t("additem.nameExample")}
-                className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text transition"
+                className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-purple-500 select-text transition"
               />
             </div>
           </div>
 
           {/* 图标编辑（参考 DawnLauncher） */}
           <div className="pt-1">
-            <label className="block text-xs font-medium text-slate-400 mb-2">{t("additem.itemIcon")}</label>
+            <label className="block text-body font-medium text-slate-400 mb-2">{t("additem.itemIcon")}</label>
             <div className="flex items-center gap-3">
               {/* 图标预览 */}
               <div
@@ -463,7 +463,7 @@ export default function AddItemModal({
                   type="button"
                   onClick={handleUploadIcon}
                   title={t("additem.uploadImageTitle")}
-                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-ctl transition cursor-pointer flex items-center gap-1.5"
+                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-body rounded-ctl transition cursor-pointer flex items-center gap-1.5"
                 >
                   <ImageIcon className="w-3.5 h-3.5 text-purple-400" />
                   {t("additem.uploadImage")}
@@ -475,7 +475,7 @@ export default function AddItemModal({
                     if (!netIconUrl) setNetIconUrl(target.trim().startsWith("http") ? target.trim() : "");
                   }}
                   title={t("additem.netIconTitle")}
-                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-ctl transition cursor-pointer flex items-center gap-1.5"
+                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-body rounded-ctl transition cursor-pointer flex items-center gap-1.5"
                 >
                   <Link2 className="w-3.5 h-3.5 text-blue-400" />
                   {t("additem.netIcon")}
@@ -485,7 +485,7 @@ export default function AddItemModal({
                   onClick={handleRestoreDefaultIcon}
                   disabled={!target.trim()}
                   title={t("additem.restoreDefaultTitle")}
-                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-ctl transition cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-body rounded-ctl transition cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <RotateCcw className="w-3.5 h-3.5 text-cyan-400" />
                   {t("additem.restoreDefault")}
@@ -495,7 +495,7 @@ export default function AddItemModal({
                   onClick={handleClearIcon}
                   disabled={!icon && !htmlIcon}
                   title={t("additem.clearIconTitle")}
-                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-ctl transition cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-body rounded-ctl transition cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <X className="w-3.5 h-3.5 text-red-400" />
                   {t("additem.clearIcon")}
@@ -505,10 +505,10 @@ export default function AddItemModal({
                     type="button"
                     onClick={() => setIconBg((v) => !v)}
                     title={t("additem.iconBgTitle")}
-                    className={`px-2.5 py-1.5 border text-xs rounded-ctl transition cursor-pointer flex items-center gap-1.5 ${
+                    className={`px-2.5 py-1.5 border text-body rounded-ctl transition cursor-pointer flex items-center gap-1.5 ${
                       iconBg
                         ? "bg-white/10 border-[var(--module-accent-ring)] text-white"
-                        : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
+                        : "ui-btn"
                     }`}
                   >
                     <span
@@ -545,26 +545,26 @@ export default function AddItemModal({
                     value={netIconUrl}
                     onChange={(e) => setNetIconUrl(e.target.value)}
                     placeholder={t("additem.netIconPlaceholder")}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-1.5 text-body text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                   <button
                     type="button"
                     onClick={handleDownloadNetIcon}
                     disabled={netIconLoading || !netIconUrl.trim()}
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs rounded-card transition cursor-pointer flex items-center gap-1.5"
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-body rounded-card transition cursor-pointer flex items-center gap-1.5"
                   >
                     <Download className={`w-3.5 h-3.5 ${netIconLoading ? "animate-pulse" : ""}`} />
                     {netIconLoading ? t("additem.downloading") : t("additem.download")}
                   </button>
                 </div>
                 {netIconError && (
-                  <p className="mt-1.5 text-[11px] text-red-400 leading-relaxed break-all">
+                  <p className="mt-1.5 text-caption text-red-400 leading-relaxed break-all">
                     {t("additem.downloadFailed", { err: netIconError })}
                   </p>
                 )}
               </>
             )}
-            <p className="text-[10px] text-slate-500 mt-1.5 leading-relaxed">
+            <p className="text-tiny text-slate-500 mt-1.5 leading-relaxed">
               {t("additem.iconHint")}
             </p>
           </div>
@@ -573,7 +573,7 @@ export default function AddItemModal({
           {activeTab === 0 && (
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("additem.fileTarget")}</label>
+                <label className="block text-body font-medium text-slate-400 mb-1.5">{t("additem.fileTarget")}</label>
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
@@ -583,12 +583,12 @@ export default function AddItemModal({
                     value={target}
                     onChange={(e) => setTarget(e.target.value)}
                     placeholder={t("additem.fileTargetPlaceholder")}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                   <button
                     type="button"
                     onClick={handleSelectFile}
-                    className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded-card transition cursor-pointer flex items-center gap-1.5"
+                    className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-body rounded-card transition cursor-pointer flex items-center gap-1.5"
                   >
                     <Upload className="w-3.5 h-3.5" />
                     {t("additem.browseFile")}
@@ -598,7 +598,7 @@ export default function AddItemModal({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("additem.params")}</label>
+                  <label className="block text-body font-medium text-slate-400 mb-1.5">{t("additem.params")}</label>
                   <input
                     type="text"
                     autoComplete="off"
@@ -606,11 +606,11 @@ export default function AddItemModal({
                     value={params}
                     onChange={(e) => setParams(e.target.value)}
                     placeholder={t("additem.paramsExample")}
-                    className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                    className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("additem.startDir")}</label>
+                  <label className="block text-body font-medium text-slate-400 mb-1.5">{t("additem.startDir")}</label>
                   <input
                     type="text"
                     autoComplete="off"
@@ -618,7 +618,7 @@ export default function AddItemModal({
                     value={startLocation}
                     onChange={(e) => setStartLocation(e.target.value)}
                     placeholder={t("additem.startDirPlaceholder")}
-                    className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                    className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                 </div>
               </div>
@@ -628,7 +628,7 @@ export default function AddItemModal({
           {/* TAB 1: Folder */}
           {activeTab === 1 && (
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("additem.folderTarget")}</label>
+              <label className="block text-body font-medium text-slate-400 mb-1.5">{t("additem.folderTarget")}</label>
               <div className="flex items-center gap-2">
                 <input
                   type="text"
@@ -638,12 +638,12 @@ export default function AddItemModal({
                   value={target}
                   onChange={(e) => setTarget(e.target.value)}
                   placeholder={t("additem.folderPlaceholder")}
-                  className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                  className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-purple-500 select-text"
                 />
                 <button
                   type="button"
                   onClick={handleSelectFolder}
-                  className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded-card transition cursor-pointer flex items-center gap-1.5"
+                  className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-body rounded-card transition cursor-pointer flex items-center gap-1.5"
                 >
                   <Folder className="w-3.5 h-3.5" />
                   {t("additem.browseFolder")}
@@ -656,7 +656,7 @@ export default function AddItemModal({
           {activeTab === 2 && (
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("additem.urlLabel")}</label>
+                <label className="block text-body font-medium text-slate-400 mb-1.5">{t("additem.urlLabel")}</label>
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
@@ -666,13 +666,13 @@ export default function AddItemModal({
                     value={target}
                     onChange={(e) => setTarget(e.target.value)}
                     placeholder={t("additem.urlExample")}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                   <button
                     type="button"
                     onClick={handleFetchUrl}
                     disabled={urlFetching || !target.trim()}
-                    className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs rounded-card transition cursor-pointer flex items-center gap-1.5"
+                    className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-body rounded-card transition cursor-pointer flex items-center gap-1.5"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${urlFetching ? "animate-spin" : ""}`} />
                     {urlFetching ? t("additem.fetching") : t("additem.fetchInfo")}
@@ -685,7 +685,7 @@ export default function AddItemModal({
           {/* TAB 3: System Tools */}
           {activeTab === 3 && (
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("additem.pickSystemTool")}</label>
+              <label className="block text-body font-medium text-slate-400 mb-1.5">{t("additem.pickSystemTool")}</label>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto p-1 bg-white/[0.02] border border-white/5 rounded-card">
                 {PRESET_SYSTEM_TOOLS.map((sys) => (
                   <button
@@ -708,7 +708,7 @@ export default function AddItemModal({
                   >
                     <span className="text-lg">{sys.icon}</span>
                     <div className="min-w-0">
-                      <p className="text-xs font-medium truncate">{t(sys.name)}</p>
+                      <p className="text-body font-medium truncate">{t(sys.name)}</p>
                     </div>
                   </button>
                 ))}
@@ -720,12 +720,12 @@ export default function AddItemModal({
           {activeTab === 4 && (
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-slate-400">{t("additem.appxLabel")}</label>
+                <label className="text-body font-medium text-slate-400">{t("additem.appxLabel")}</label>
                 <button
                   type="button"
                   onClick={handleScanAppx}
                   disabled={appxScanning}
-                  className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1 cursor-pointer"
+                  className="text-body text-purple-400 hover:text-purple-300 flex items-center gap-1 cursor-pointer"
                 >
                   <RefreshCw className={`w-3 h-3 ${appxScanning ? "animate-spin" : ""}`} />
                   {t("additem.rescan")}
@@ -741,7 +741,7 @@ export default function AddItemModal({
                   value={appxSearch}
                   onChange={(e) => setAppxSearch(e.target.value)}
                   placeholder={t("additem.searchAppx")}
-                  className="w-full bg-white/5 border border-white/10 rounded-card pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                  className="w-full bg-white/5 border border-white/10 rounded-card pl-9 pr-3 py-1.5 text-body text-white focus:outline-none focus:border-purple-500 select-text"
                 />
               </div>
 
@@ -774,8 +774,8 @@ export default function AddItemModal({
                         <span className="text-base">📱</span>
                       )}
                       <div className="min-w-0">
-                        <p className="text-xs font-medium truncate">{app.displayName}</p>
-                        <p className="text-[10px] text-slate-500 truncate">{app.familyName}</p>
+                        <p className="text-body font-medium truncate">{app.displayName}</p>
+                        <p className="text-tiny text-slate-500 truncate">{app.familyName}</p>
                       </div>
                     </button>
                   ))}
@@ -787,12 +787,12 @@ export default function AddItemModal({
           {activeTab === 5 && (
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-slate-400">{t("additem.startMenuLabel")}</label>
+                <label className="text-body font-medium text-slate-400">{t("additem.startMenuLabel")}</label>
                 <button
                   type="button"
                   onClick={handleScanStartMenu}
                   disabled={startMenuScanning}
-                  className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1 cursor-pointer"
+                  className="text-body text-purple-400 hover:text-purple-300 flex items-center gap-1 cursor-pointer"
                 >
                   <RefreshCw className={`w-3 h-3 ${startMenuScanning ? "animate-spin" : ""}`} />
                   {t("additem.rescanMenu")}
@@ -808,7 +808,7 @@ export default function AddItemModal({
                   value={startMenuSearch}
                   onChange={(e) => setStartMenuSearch(e.target.value)}
                   placeholder={t("additem.searchStartMenu")}
-                  className="w-full bg-white/5 border border-white/10 rounded-card pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                  className="w-full bg-white/5 border border-white/10 rounded-card pl-9 pr-3 py-1.5 text-body text-white focus:outline-none focus:border-purple-500 select-text"
                 />
               </div>
 
@@ -841,8 +841,8 @@ export default function AddItemModal({
                         <span className="text-base">🚀</span>
                       )}
                       <div className="min-w-0">
-                        <p className="text-xs font-medium truncate">{prog.name}</p>
-                        <p className="text-[10px] text-slate-500 truncate">{prog.category || prog.target}</p>
+                        <p className="text-body font-medium truncate">{prog.name}</p>
+                        <p className="text-tiny text-slate-500 truncate">{prog.category || prog.target}</p>
                       </div>
                     </button>
                   ))}
@@ -854,7 +854,7 @@ export default function AddItemModal({
           {activeTab === 6 && (
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-slate-400">{t("additem.multiLabel")}</label>
+                <label className="text-body font-medium text-slate-400">{t("additem.multiLabel")}</label>
                 <button
                   type="button"
                   onClick={() =>
@@ -863,7 +863,7 @@ export default function AddItemModal({
                       { name: t("additem.subTaskName", { n: prev.length + 1 }), target: "", params: "", runAsAdmin: false, delayMs: 500 },
                     ])
                   }
-                  className="px-2.5 py-1 bg-purple-600/30 hover:bg-purple-600/50 text-purple-300 text-xs rounded-ctl flex items-center gap-1 cursor-pointer"
+                  className="px-2.5 py-1 bg-purple-600/30 hover:bg-purple-600/50 text-purple-300 text-body rounded-ctl flex items-center gap-1 cursor-pointer"
                 >
                   <Plus className="w-3 h-3" />
                   {t("additem.addSubItem")}
@@ -873,7 +873,7 @@ export default function AddItemModal({
               <div className="space-y-2 max-h-48 overflow-y-auto">
                 {multiItems.map((sub, idx) => (
                   <div key={idx} className="p-2.5 rounded-card bg-white/[0.02] border border-white/5 flex items-center gap-2">
-                    <span className="text-xs text-slate-500 w-5 text-center">{idx + 1}</span>
+                    <span className="text-body text-slate-500 w-5 text-center">{idx + 1}</span>
                     <input
                       type="text"
                       autoComplete="off"
@@ -885,7 +885,7 @@ export default function AddItemModal({
                         setMultiItems(next);
                       }}
                       placeholder={t("additem.subItemName")}
-                      className="w-24 bg-black/20 border border-white/10 rounded-ctl px-2 py-1 text-xs text-white select-text"
+                      className="w-24 bg-black/20 border border-white/10 rounded-ctl px-2 py-1 text-body text-white select-text"
                     />
                     <input
                       type="text"
@@ -898,10 +898,10 @@ export default function AddItemModal({
                         setMultiItems(next);
                       }}
                       placeholder={t("additem.subTarget")}
-                      className="flex-1 bg-black/20 border border-white/10 rounded-ctl px-2 py-1 text-xs text-white select-text"
+                      className="flex-1 bg-black/20 border border-white/10 rounded-ctl px-2 py-1 text-body text-white select-text"
                     />
                     <div className="flex items-center gap-1">
-                      <span className="text-[10px] text-slate-400">{t("additem.delay")}</span>
+                      <span className="text-tiny text-slate-400">{t("additem.delay")}</span>
                       <input
                         type="number"
                         min={0}
@@ -912,11 +912,11 @@ export default function AddItemModal({
                           next[idx] = { ...next[idx], delayMs: Number(e.target.value) };
                           setMultiItems(next);
                         }}
-                        className="w-16 bg-black/20 border border-white/10 rounded-ctl px-1.5 py-1 text-xs text-white text-center select-text"
+                        className="w-16 bg-black/20 border border-white/10 rounded-ctl px-1.5 py-1 text-body text-white text-center select-text"
                       />
-                      <span className="text-[10px] text-slate-500">ms</span>
+                      <span className="text-tiny text-slate-500">ms</span>
                     </div>
-                    <label className="flex items-center gap-1 text-[10px] text-amber-300 cursor-pointer">
+                    <label className="flex items-center gap-1 text-tiny text-amber-300 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={sub.runAsAdmin}
@@ -945,7 +945,7 @@ export default function AddItemModal({
           {/* Admin Run & Remarks */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
             <div className="flex items-center gap-2">
-              <label className="flex items-center gap-2 cursor-pointer text-xs text-amber-400 font-medium">
+              <label className="flex items-center gap-2 cursor-pointer text-body text-amber-400 font-medium">
                 <input
                   type="checkbox"
                   checked={runAsAdmin}
@@ -964,7 +964,7 @@ export default function AddItemModal({
                 value={remark}
                 onChange={(e) => setRemark(e.target.value)}
                 placeholder={t("additem.remarkPlaceholder")}
-                className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-1.5 text-body text-white focus:outline-none focus:border-purple-500 select-text"
               />
             </div>
           </div>
@@ -974,14 +974,14 @@ export default function AddItemModal({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-card text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
+              className="px-4 py-2 rounded-card text-body font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
             >
               {t("additem.cancel")}
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="px-5 py-2 rounded-card text-xs font-semibold bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              className="px-5 py-2 rounded-card text-body font-semibold bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
             >
               <Check className="w-3.5 h-3.5" />
               {saving ? t("additem.saving") : t("additem.saveItem")}
