@@ -17,6 +17,11 @@ pub const DEFAULT_LEFT_WIDTH: f64 = 180.0;
 pub const MIN_LEFT_WIDTH: f64 = 140.0;
 pub const MAX_LEFT_WIDTH: f64 = 420.0;
 
+/// AI 检索栏（常驻右栏，不再是弹窗）：默认 360px，范围同样做了钳制。
+pub const DEFAULT_AI_WIDTH: f64 = 360.0;
+pub const MIN_AI_WIDTH: f64 = 260.0;
+pub const MAX_AI_WIDTH: f64 = 640.0;
+
 /// 收藏模块的界面设置。字段缺失时各自回默认，方便旧文件升级。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -34,6 +39,20 @@ pub struct FavoriteSettings {
     /// 每轮一次 LLM 调用，调大更会找但更费 token）
     #[serde(default = "default_agent_rounds")]
     pub agent_rounds: usize,
+    /// AI 检索栏宽度（px）：常驻右栏，可拖动
+    #[serde(default = "default_ai_width")]
+    pub ai_width: f64,
+    /// AI 检索栏是否展开（关掉后条目列表占满）
+    #[serde(default = "default_ai_open")]
+    pub ai_open: bool,
+}
+
+fn default_ai_width() -> f64 {
+    DEFAULT_AI_WIDTH
+}
+
+fn default_ai_open() -> bool {
+    true
 }
 
 fn default_agent_rounds() -> usize {
@@ -56,6 +75,8 @@ impl Default for FavoriteSettings {
             provider_id: None,
             model_id: None,
             agent_rounds: DEFAULT_AGENT_ROUNDS,
+            ai_width: DEFAULT_AI_WIDTH,
+            ai_open: true,
         }
     }
 }
@@ -80,6 +101,15 @@ fn clamp_left_width(width: f64) -> f64 {
     }
 }
 
+/// AI 检索栏宽度钳制（与左栏同一套路：坏值回默认，越界收敛）。
+fn clamp_ai_width(width: f64) -> f64 {
+    if !width.is_finite() || width <= 0.0 {
+        DEFAULT_AI_WIDTH
+    } else {
+        width.clamp(MIN_AI_WIDTH, MAX_AI_WIDTH)
+    }
+}
+
 /// 读设置：文件不存在 / JSON 坏 / 字段类型不对，一律回默认值，不报错。
 pub fn load_settings() -> FavoriteSettings {
     let mut settings = std::fs::read_to_string(settings_path())
@@ -88,6 +118,7 @@ pub fn load_settings() -> FavoriteSettings {
         .unwrap_or_default();
     settings.left_width = clamp_left_width(settings.left_width);
     settings.agent_rounds = clamp_agent_rounds(settings.agent_rounds);
+    settings.ai_width = clamp_ai_width(settings.ai_width);
     settings
 }
 
@@ -96,6 +127,7 @@ pub fn save_settings(settings: &FavoriteSettings) -> Result<(), String> {
     let mut normalized = settings.clone();
     normalized.left_width = clamp_left_width(normalized.left_width);
     normalized.agent_rounds = clamp_agent_rounds(normalized.agent_rounds);
+    normalized.ai_width = clamp_ai_width(normalized.ai_width);
     let data = serde_json::to_string_pretty(&normalized).map_err(|e| e.to_string())?;
     atomic_write_file(&settings_path(), data.as_bytes())
 }
@@ -151,6 +183,8 @@ mod tests {
             provider_id: Some("p1".to_string()),
             model_id: Some("m1".to_string()),
             agent_rounds: 8,
+            ai_width: 400.0,
+            ai_open: true,
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert!(json.contains("\"leftWidth\""));
@@ -158,6 +192,9 @@ mod tests {
         assert!(json.contains("\"modelId\""));
         // Agent 轮数同样按 camelCase 下发，前端按 agentRounds 读
         assert!(json.contains("\"agentRounds\""));
+        // AI 检索右栏：宽度与显隐同样按 camelCase 下发
+        assert!(json.contains("\"aiWidth\""));
+        assert!(json.contains("\"aiOpen\""));
         let back: FavoriteSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(back, settings);
     }
