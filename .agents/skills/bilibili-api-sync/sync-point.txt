@@ -1,0 +1,28 @@
+# B站接口契约同步点（bilibili-api-sync）
+
+## 上游状态（最重要的一条）
+
+- 仓库：https://github.com/SocialSisterYi/bilibili-API-collect
+- 状态：**已永久关停（2026-01-28 律师函，文档与源码已删除）**
+- 默认分支：deprecated（内容仅 README + reason.jpg）
+- 本地克隆：E:\pro\other-sdk\tools\bilibili-API-collect
+- 克隆 HEAD：4c00347d4f3494318903eeb11fb00d7b9c1f8c68（"Update README"）
+- 结论：**没有上游可追**。后续维护以「契约自持 + 本地自检」为准（见 SKILL.md §0）
+
+## 契约版本
+
+- v1 —— 2026-09-26 首次固化，与当时 wbi.rs / bilibili.rs 一致
+- 内容：WBI 算法 + 混洗表 + 官方向量 + 3 个端点 + 请求头 + 风控参数 + 错误码
+- 落点：references/contracts.md
+
+## 自检记录
+
+| 日期 | 触发 | 结果 | 动作 |
+|---|---|---|---|
+| 2026-09-26 | 技能创建 | 上游已关停；本地克隆仅剩 deprecated 分支；契约已固化 | 建立 sync-point，改为自检制 |
+
+## 已知未做（等用户确认后才动）
+
+- 写操作（取消收藏 / 建收藏夹）：需要 bili_jct（CSRF=写权限），风险高于只读；
+  且要先改 commands/favorites/mod.rs 顶部「不反向操作平台」的硬规则
+- 上游若出现继任项目：先评估合规，不要直接镜像

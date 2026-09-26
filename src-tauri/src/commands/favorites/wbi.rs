@@ -6,6 +6,12 @@
 //!
 //! 这是**逆向得到**的签名，B站随时可能改；文档里的官方测试向量在下面测试里固定住，
 //! 一旦 B站换了算法或常量，这个测试会先炸（而不是用户点了导入才发现拉不到数据）。
+//!
+//! ⚠️ 原公开出处 `SocialSisterYi/bilibili-API-collect` 已于 2026-01-28 收到 B站委托
+//! 律所的律师函后永久关停（文档与源码已删除），上面的链接不再可用。**契约基线现由本项目
+//! 自持**：`.agents/skills/bilibili-api-sync/references/contracts.md`（含算法、混洗表、
+//! 官方向量与端点），维护流程见该技能的 SKILL.md。改动前先跑
+//! `.agents/skills/bilibili-api-sync/scripts/sync.ps1` 自检。
 
 /// 重排映射表（长 64，只取前 32 项参与 mixin_key）。
 const MIXIN_KEY_ENC_TAB: [usize; 64] = [
