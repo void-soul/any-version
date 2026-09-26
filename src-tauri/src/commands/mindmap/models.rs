@@ -148,6 +148,40 @@ pub struct CreateDocumentInput {
     pub folder_id: Option<String>,
 }
 
+/// 从外部文件导入思维导图的输入。
+///
+/// `path` 与 `content` 二选一（都给时以 content 为准）；导入到已有文档时传
+/// `document_id`，否则新建（`name` 回退到 JSON 里的 name/title，再回退到文件名）。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MindmapImportInput {
+    /// 待导入的 .mindmap.json 文件路径
+    #[serde(default)]
+    pub path: Option<String>,
+    /// 直接给内容（不想落盘时用；与 path 二选一）
+    #[serde(default)]
+    pub content: Option<String>,
+    /// 导入到已有文档（追加；配合 replace_existing 可整体替换）
+    #[serde(default)]
+    pub document_id: Option<String>,
+    /// 新建文档时放进哪个文件夹
+    #[serde(default)]
+    pub folder_id: Option<String>,
+    /// true = 先清空该文档的已有节点再导入
+    #[serde(default)]
+    pub replace_existing: bool,
+}
+
+/// 导入结果：导出的文档 id 与实际写入的节点数（前端据此提示与刷新）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MindmapImportResult {
+    pub document_id: String,
+    pub node_count: usize,
+    /// 被规范化的项（kind 越界、颜色非法…），仅供提示，不阻断导入
+    pub warnings: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateDocumentInput {

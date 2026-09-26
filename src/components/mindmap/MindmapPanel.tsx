@@ -16,7 +16,7 @@ import {
   AlertTriangle, BarChart3, Brain, File, Folder, FolderOpen, LayoutGrid,
   ScrollText, Sparkles, StickyNote, Image, Trash2, X, Plus, Pencil, Eye,
   ChevronDown, ChevronRight, ChevronsRight, ChevronLeft, FolderPlus, Search, Maximize2, Minimize2, Code2, FileText, ListTree, RotateCcw, RotateCw, Link2, Square, MessageCircle, LocateFixed,
-  ArrowLeft, ArrowRight, ArrowUp, ArrowDown,
+  ArrowLeft, ArrowRight, ArrowUp, ArrowDown, FileDown,
 } from "lucide-react";
 import type { AiConfig } from "../ai/types";
 import { AgentSessionRow, AiImportResult, DocumentFull, MindmapDocument, MindmapFolder, MindmapLink, MindmapNode, MindmapSticker, PositionInput, kindColor, mmApi } from "./types";
@@ -2666,6 +2666,64 @@ export default function MindmapPanel() {
     setAiMinimized(false);
   }, [stopAi]);
 
+  /** 真正执行导入。`target` 为空 = 新建文档；否则导入到该文档（replace 时先清空）。 */
+  const runImportJson = useCallback(async (path: string, target: { id: string; replace: boolean } | null) => {
+    const r = await invoke<{ documentId: string; nodeCount: number; warnings: string[] }>("mm_import_nodes", {
+      input: {
+        path,
+        documentId: target?.id ?? null,
+        folderId: null,
+        replaceExisting: target?.replace ?? false,
+      },
+    });
+    const f = await mmApi.load(r.documentId);
+    if (f) onDocumentUpdated(f);
+    flash(
+      r.warnings.length > 0
+        ? t("mindmap.importedWithWarnings", { count: r.nodeCount, n: r.warnings.length })
+        : t("mindmap.imported", { count: r.nodeCount }),
+    );
+  }, [onDocumentUpdated, flash, t]);
+
+  // 导入目标选择：{ 文件路径, 当前文档名 }（null = 不弹选择框）
+  const [importPick, setImportPick] = useState<{ path: string; docName: string } | null>(null);
+
+  /** 从 JSON 文件导入导图（文件由其它 Agent / 脚本生成，格式见 mindmap-import 技能）。
+   *  有当前文档时先让用户选目标：新建 / 追加 / 替换（替换再加一次确认，它要先清空）。 */
+  const importJsonFile = useCallback(async () => {
+    const picked = await openDialog({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "Mindmap JSON", extensions: ["json", "mindmap.json"] }],
+      title: t("mindmap.importJson"),
+    });
+    if (typeof picked !== "string" || !picked) return;
+    // 没有打开的文档 → 只能是新建，不必多问一次
+    if (!full) {
+      try { await runImportJson(picked, null); } catch (e) { setError(String(e)); }
+      return;
+    }
+    setImportPick({ path: picked, docName: full.document.name });
+  }, [full, runImportJson, t]);
+
+  /** 导入目标确认：追加 / 替换都动当前文档，替换尤其危险（先清空），要再确认一次。 */
+  const confirmImportTarget = useCallback((replace: boolean) => {
+    const pick = importPick;
+    if (!pick || !full) return;
+    const target = { id: full.document.id, replace };
+    setImportPick(null);
+    if (replace) {
+      // 二次确认：替换会先清空当前文档的全部节点
+      setConfirmState({
+        title: t("mindmap.importReplaceTitle"),
+        message: t("mindmap.importReplaceConfirm", { name: pick.docName }),
+        action: () => { void runImportJson(pick.path, target).catch((e) => setError(String(e))); },
+      });
+      return;
+    }
+    void runImportJson(pick.path, target).catch((e) => setError(String(e)));
+  }, [importPick, full, runImportJson, t]);
+
   const exportMd = useCallback(async () => {
     if (!full) return;
     try {
@@ -2779,6 +2837,11 @@ export default function MindmapPanel() {
                 <button type="button" className={button} onClick={() => { setShowFolderCreate(true); setFolderName(""); }} title={t("mindmap.newFolder")}><FolderPlus className="h-3 w-3" />{t("mindmap.folder")}</button>
                 <button type="button" className={button} onClick={() => setShowCreate(true)} title={t("mindmap.newDoc")}><Plus className="h-3 w-3" />{t("mindmap.doc")}</button>
               </div>
+              {/* 从 JSON 文件导入：别的 Agent / 脚本按 .agents/skills/mindmap-import 的
+                  格式生成文件后，这里一键进导图（不需要 AI） */}
+              <button type="button" className={`${button} w-full justify-center`} onClick={() => void importJsonFile()} title={t("mindmap.importJsonTip")}>
+                <FileDown className="h-3 w-3" />{t("mindmap.importJson")}
+              </button>
               {/* 模块专属设置（热键 / 外部编辑器 / AI 探索参数） */}
               <ModuleSettingsButton
                 title={t("mindmap.settingsTitle")}
@@ -2939,6 +3002,34 @@ export default function MindmapPanel() {
           <span className={`${ghost.ok ? "text-cyan-300" : "text-slate-500"}`}>{ghost.ok ? t("mindmap.dropOk") : t("mindmap.dropTarget")}</span>
         </div>
       )}
+      {/* 导入目标选择：新建 / 追加到当前文档 / 替换当前文档内容 */}
+      {importPick && createPortal(
+        <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]">
+          <div className="w-[380px] rounded-xl border border-white/10 bg-surface-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-1 text-sm font-semibold text-white">{t("mindmap.importTargetTitle")}</h3>
+            <p className="mb-4 truncate text-[10px] text-slate-500" title={importPick.path}>{t("mindmap.importTargetDesc", { file: importPick.path.split(/[\\/]/).pop() ?? importPick.path })}</p>
+            <div className="space-y-1.5">
+              <button type="button"
+                className="w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-[11px] text-slate-200 transition hover:border-cyan-400/50 hover:text-white"
+                onClick={() => { const p = importPick; setImportPick(null); void runImportJson(p.path, null).catch((e) => setError(String(e))); }}>
+                <Plus className="mr-1.5 inline h-3 w-3" />{t("mindmap.importTargetNew")}
+              </button>
+              <button type="button"
+                className="w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-[11px] text-slate-200 transition hover:border-cyan-400/50 hover:text-white"
+                onClick={() => confirmImportTarget(false)}>
+                <FileDown className="mr-1.5 inline h-3 w-3" />{t("mindmap.importTargetAppend", { name: importPick.docName })}
+              </button>
+              <button type="button"
+                className="w-full rounded-lg border border-rose-400/25 bg-rose-500/[0.06] px-3 py-2 text-left text-[11px] text-rose-300 transition hover:border-rose-400/60 hover:text-rose-200"
+                onClick={() => confirmImportTarget(true)}>
+                <Trash2 className="mr-1.5 inline h-3 w-3" />{t("mindmap.importTargetReplace", { name: importPick.docName })}
+              </button>
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button type="button" className="rounded-md px-4 py-1.5 text-[11px] text-slate-400 hover:text-white" onClick={() => setImportPick(null)}>{t("mindmap.cancel")}</button>
+            </div>
+          </div>
+        </div>, document.body)}
       {/* Folder create/edit modal */}
       {showFolderCreate && createPortal(
         <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]">

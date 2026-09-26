@@ -1003,6 +1003,7 @@ pub fn run() {
                 commands::mindmap::mm_update_document,
                 commands::mindmap::mm_delete_document,
                 commands::mindmap::mm_load_document,
+                commands::mindmap::mm_import_nodes,
                 commands::mindmap::mm_list_folders,
                 commands::mindmap::mm_create_folder,
                 commands::mindmap::mm_update_folder,
