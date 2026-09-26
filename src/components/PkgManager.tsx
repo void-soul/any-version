@@ -1,5 +1,7 @@
-import { useState, useEffect, useMemo } from "react";
+﻿import { useState, useEffect, useMemo } from "react";
+
 import { useTranslation } from "react-i18next";
+import { theamedAlert } from "./shared/ThemedAlert";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -64,7 +66,7 @@ export default function PkgManager() {
     setErrorMsg(null);
     try {
       await invoke("upgrade_global_package", { sdkName: activeSdk, pkgName });
-      alert(t("pkgmgr2.upgraded", { name: pkgName }));
+      theamedAlert(t("pkgmgr2.upgraded", { name: pkgName }));
       await fetchPackages(activeSdk);
     } catch (e: any) {
       setErrorMsg(t("pkgmgr2.upgradeFail", { name: pkgName, err: String(e) }));

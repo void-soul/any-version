@@ -1,5 +1,7 @@
-import { useState, useEffect } from "react";
+﻿import { useState, useEffect } from "react";
+
 import { useTranslation } from "react-i18next";
+import { alertError } from "./shared/ThemedAlert";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ShieldCheck,
@@ -74,7 +76,7 @@ export default function EnvBackupManager() {
       await fetchBackups();
       setSelectedBackup(newBackup);
     } catch (e: any) {
-      alert(t("envbackup.createFail", { err: String(e) }));
+      alertError(t("envbackup.createFail", { err: String(e) }));
     } finally {
       setCreating(false);
     }
@@ -91,7 +93,7 @@ export default function EnvBackupManager() {
       }
       await fetchBackups();
     } catch (e: any) {
-      alert(t("envbackup.delFail", { err: String(e) }));
+      alertError(t("envbackup.delFail", { err: String(e) }));
     } finally {
       setDeletingId(null);
     }
@@ -111,7 +113,7 @@ export default function EnvBackupManager() {
       if (raw.includes("系统级环境变量恢复失败")) {
         setRestoreMessage({ text: String(e), isError: true });
       } else {
-        alert(t("envbackup.restoreFail", { err: String(e) }));
+        alertError(t("envbackup.restoreFail", { err: String(e) }));
       }
     } finally {
       setRestoring(false);

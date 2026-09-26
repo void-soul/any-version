@@ -1,7 +1,9 @@
-import { useState, useRef } from "react";
+﻿import { useState, useRef } from "react";
+
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
+import { theamedAlert, alertError } from "./shared/ThemedAlert";
 import { 
   Upload, 
   Image as ImageIcon, 
@@ -191,10 +193,10 @@ export default function ImageBase64() {
           base64Str: previewSrc,
           filePath: savePath
         });
-        alert(t("imgbase64.saveOk"));
+        theamedAlert(t("imgbase64.saveOk"));
       }
     } catch (e: any) {
-      alert(t("imgbase64.saveFail", { err: String(e) }));
+      alertError(t("imgbase64.saveFail", { err: String(e) }));
     } finally {
       setSaveLoading(false);
     }

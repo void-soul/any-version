@@ -1,5 +1,7 @@
-import { useState, useEffect } from "react";
+﻿import { useState, useEffect } from "react";
+
 import { useTranslation } from "react-i18next";
+import { alertError } from "./shared/ThemedAlert";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -56,7 +58,7 @@ export default function HttpServer() {
       }
     } catch (e) {
       console.error(e);
-      alert(t("httpserver.pickerFail"));
+      alertError(t("httpserver.pickerFail"));
     }
   };
 
@@ -93,7 +95,7 @@ export default function HttpServer() {
       await invoke("stop_http_server", { port: p });
       await fetchRunningServers();
     } catch (err: any) {
-      alert(t("httpserver.stopFail", { err: String(err) }));
+      alertError(t("httpserver.stopFail", { err: String(err) }));
     }
   };
 

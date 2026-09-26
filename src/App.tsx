@@ -19,13 +19,14 @@ import { moduleLabel } from "./moduleRegistry";
 import { kiraQuoteLine } from "./utils/kiraQuotes";
 import { vexSay, onVexSay, type VexSayKind } from "./utils/vexSay";
 import { useTranslation } from "react-i18next";
+import { theamedAlert } from "./components/shared/ThemedAlert";
 import "./App.css";
 
 /** 模块按钮统一样式：胶囊里的模块入口、「更多」下拉里的模块条目共用同一套外观与 hover。
  *  同一种东西不该有第二种长相 —— 下拉条目原先另写了一套（字号 11 / 内边距 py-2 / 图标 3.5 /
  *  自配色 hover），悬停表现与胶囊不一致，看起来像两个不同层级的控件。 */
 const moduleTabClass = (active: boolean, extra = "") =>
-  `px-3 py-1.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer vex-nav-tab ${
+  `px-3 py-1.5 rounded-md text-tiny font-semibold flex items-center gap-1 transition-all cursor-pointer vex-nav-tab ${
     active ? "vex-nav-tab-active text-white" : "text-slate-400 hover:text-slate-200"
   } ${extra}`;
 
@@ -246,7 +247,7 @@ export default function App() {
       const selected = await open({ directory: true, title: "选择数据目录" });
       if (selected) setBinDataDir(selected as string);
     } catch {
-      alert("文件夹选择器不可用，请手动输入路径。");
+      theamedAlert(t("settings.folderPickerUnavailable"));
     }
   };
 
@@ -371,7 +372,7 @@ export default function App() {
             <div className="text-xl font-black tracking-[0.35em] text-white">
               K<span className="text-[var(--module-accent)]">i</span>ra
             </div>
-            <div className="mt-1 text-[10px] tracking-[0.3em] text-slate-500">{t("app.tagline")}</div>
+            <div className="mt-1 text-tiny tracking-[0.3em] text-slate-500">{t("app.tagline")}</div>
           </div>
           <div className="h-1 w-48 overflow-hidden rounded-full bg-white/10">
             <div
@@ -406,7 +407,7 @@ export default function App() {
             }}
           >
             <VexGlowAvatar size={26} />
-            <span className="text-[11px] text-slate-200">{vexToast.msg}</span>
+            <span className="text-caption text-slate-200">{vexToast.msg}</span>
           </div>
         </div>
       )}
@@ -419,10 +420,10 @@ export default function App() {
               <VexGlowAvatar size={46} />
               <div>
                 <div className="text-sm font-black text-white">hi，我是 {t("app.name")}</div>
-                <div className="text-[10px] text-slate-400">{t("app.tagline")}</div>
+                <div className="text-tiny text-slate-400">{t("app.tagline")}</div>
               </div>
             </div>
-            <div className="mt-4 min-h-[72px] text-[12px] leading-relaxed text-slate-300">
+            <div className="mt-4 min-h-[72px] text-body leading-relaxed text-slate-300">
               {introStep === 0 && (
                 <>我会一直住在这台电脑里：顶栏、落地页、悬浮窗还有托盘都看得见我。平时不用管我，需要时喊一声就行。</>
               )}
@@ -442,11 +443,11 @@ export default function App() {
               <div className="flex gap-2">
                 {introStep < 2 ? (
                   <>
-                    <button onClick={finishIntro} className="px-3 py-1.5 rounded-ctl text-[11px] text-slate-400 hover:text-white transition cursor-pointer">跳过</button>
-                    <button onClick={() => setIntroStep((s) => s + 1)} className="px-4 py-1.5 rounded-ctl text-[11px] font-semibold text-white transition cursor-pointer" style={{ background: activeModuleColor }}>下一步 →</button>
+                    <button onClick={finishIntro} className="px-3 py-1.5 rounded-ctl text-caption text-slate-400 hover:text-white transition cursor-pointer">跳过</button>
+                    <button onClick={() => setIntroStep((s) => s + 1)} className="px-4 py-1.5 rounded-ctl text-caption font-semibold text-white transition cursor-pointer" style={{ background: activeModuleColor }}>下一步 →</button>
                   </>
                 ) : (
-                  <button onClick={finishIntro} className="px-5 py-1.5 rounded-ctl text-[11px] font-semibold text-white transition cursor-pointer" style={{ background: `linear-gradient(90deg, ${activeModuleColor}, ${VEX_CYBER_CYAN})` }}>开始吧</button>
+                  <button onClick={finishIntro} className="px-5 py-1.5 rounded-ctl text-caption font-semibold text-white transition cursor-pointer" style={{ background: `linear-gradient(90deg, ${activeModuleColor}, ${VEX_CYBER_CYAN})` }}>开始吧</button>
                 )}
               </div>
             </div>
@@ -467,7 +468,7 @@ export default function App() {
         {/* Left: Logo + Name */}
         <div className="flex shrink-0 items-center gap-2 pointer-events-none px-1" data-tauri-drag-region>
           <VexGlowAvatar size={22} color={activeModuleColor} avatarClassName="vex-neon-breathe" />
-          <span className="vex-neon-text text-[11px] font-black tracking-wide">Kira</span>
+          <span className="vex-neon-text text-caption font-black tracking-wide">Kira</span>
         </div>
 
         {/* Center: Navigation Capsule —— 水平居中；模块多时在胶囊内横向滚动，不挤占两侧 */}
@@ -523,7 +524,7 @@ export default function App() {
                               switchPage(m.id);
                               setMoreOpen(false);
                             }}
-                            className={`w-full px-3 py-2 rounded-md text-[11px] font-medium flex items-center gap-2 transition-all cursor-pointer text-left ${
+                            className={`w-full px-3 py-2 rounded-md text-caption font-medium flex items-center gap-2 transition-all cursor-pointer text-left ${
                               activePage === m.id
                                 ? "bg-[var(--module-accent-ring)] text-white"
                                 : "text-slate-300 hover:bg-[var(--module-accent-soft)]"
@@ -618,10 +619,10 @@ export default function App() {
                 <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0" />
                 <h2 className="text-[15px] font-bold text-white">需要下载运行组件</h2>
               </div>
-              <p className="text-[12px] text-slate-400 leading-relaxed mb-3">
+              <p className="text-body text-slate-400 leading-relaxed mb-3">
                 以下运行组件缺失，应用部分功能（代理 / 媒体流 / 证书等）依赖它们。
                 请下载后继续使用（约 209&nbsp;MB，解压至{" "}
-                <code className="text-[10px] text-amber-300/90 break-all">
+                <code className="text-tiny text-amber-300/90 break-all">
                   {effectiveBinDir}\bin
                 </code>
                 ）。
@@ -630,7 +631,7 @@ export default function App() {
                 {binAssets.missing.map((m) => (
                   <span
                     key={m}
-                    className="px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-300 font-mono"
+                    className="px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-tiny text-amber-300 font-mono"
                   >
                     {m}
                   </span>
@@ -641,11 +642,11 @@ export default function App() {
               <div className="mb-4 rounded-card border border-white/10 bg-white/[0.03] p-3">
                 <div className="flex items-center gap-1.5 mb-2">
                   <FolderOpen className="w-3.5 h-3.5 text-sky-400 flex-shrink-0" />
-                  <span className="text-[11px] font-semibold text-slate-300">
+                  <span className="text-caption font-semibold text-slate-300">
                     数据目录（全局路径 data_dir）
                   </span>
                   {binDataDir.trim() && normalizePath(binDataDir) !== normalizePath(binOldDataDir) && (
-                    <span className="ml-auto text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5 flex-shrink-0">
+                    <span className="ml-auto text-micro text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5 flex-shrink-0">
                       已修改，下载前将迁移
                     </span>
                   )}
@@ -656,7 +657,7 @@ export default function App() {
                     value={binDataDir}
                     disabled={binDownloading}
                     onChange={(e) => setBinDataDir(e.target.value)}
-                    className="flex-1 min-w-0 glass-input px-3 py-2 text-[11px] font-mono bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-sky-400/50 disabled:opacity-50"
+                    className="flex-1 min-w-0 glass-input px-3 py-2 text-caption font-mono bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-sky-400/50 disabled:opacity-50"
                     placeholder="e.g. D:\Kira"
                   />
                   <button
@@ -668,7 +669,7 @@ export default function App() {
                     <FolderOpen className="w-3.5 h-3.5" />
                   </button>
                 </div>
-                <p className="text-[9px] text-slate-500 mt-1.5 leading-relaxed">
+                <p className="text-micro text-slate-500 mt-1.5 leading-relaxed">
                   所有可变数据（SDK、运行组件、Node 服务、证书、数据库）都存储在此目录下
                   {binOldDataDir ? (
                     <>
@@ -678,7 +679,7 @@ export default function App() {
                   ) : null}
                   。
                 </p>
-                <div className="mt-1.5 text-[9px] font-mono text-slate-500 space-y-0.5 leading-relaxed break-all">
+                <div className="mt-1.5 text-micro font-mono text-slate-500 space-y-0.5 leading-relaxed break-all">
                   <div>
                     <span className="text-amber-400">运行组件</span>{" "}
                     {effectiveBinDir}\bin
@@ -697,7 +698,7 @@ export default function App() {
               </div>
 
               {binProgress.phase === "extracting" && (
-                <p className="text-[11px] text-sky-300 mb-2 flex items-center gap-1.5">
+                <p className="text-caption text-sky-300 mb-2 flex items-center gap-1.5">
                   <Loader2 className="w-3 h-3 animate-spin" /> 正在解压…
                 </p>
               )}
@@ -712,7 +713,7 @@ export default function App() {
                       }}
                     />
                   </div>
-                  <div className="flex justify-between mt-1 text-[10px] text-slate-500 font-mono">
+                  <div className="flex justify-between mt-1 text-tiny text-slate-500 font-mono">
                     <span>
                       {(binProgress.downloaded / 1024 / 1024).toFixed(1)} / {(binProgress.total / 1024 / 1024).toFixed(1)} MB
                     </span>
@@ -722,13 +723,13 @@ export default function App() {
               )}
 
               {binError && (
-                <p className="text-[11px] text-red-400 mb-3 break-all">下载失败：{binError}</p>
+                <p className="text-caption text-red-400 mb-3 break-all">下载失败：{binError}</p>
               )}
 
               <button
                 onClick={downloadBinAssets}
                 disabled={binDownloading}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-card bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-[13px] font-bold text-slate-900 transition-all"
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-card bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-title font-bold text-slate-900 transition-all"
               >
                 {binDownloading ? (
                   binMigrating ? (
