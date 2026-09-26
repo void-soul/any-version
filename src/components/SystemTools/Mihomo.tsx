@@ -1,5 +1,6 @@
 // Mihomo 代理管理（功能对齐 clash-party，外观沿用 SystemTools 风格：Tailwind + emerald + glass-panel）
 import { useState, useEffect } from "react";
+import { alertError } from "../shared/ThemedAlert";
 import { useTranslation } from "react-i18next";
 import { Waypoints, Play, Square, RefreshCw, AlertTriangle } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -148,7 +149,7 @@ export default function Mihomo() {
 
   const act = async (key: string, fn: () => Promise<any>) => {
     setBusy(key);
-    try { await fn(); } catch (e: any) { alert(String(e)); }
+    try { await fn(); } catch (e: any) { alertError(String(e)); }
     await refreshAll();
     setBusy("");
   };

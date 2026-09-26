@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { alertError } from "../shared/ThemedAlert";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
@@ -257,7 +258,7 @@ export default function RtspServer() {
       await invoke("stop_all_rtsp_servers");
       await pollStatuses();
     } catch (e: any) {
-      alert(t("rtsp.stopAllFail", { err: String(e) }));
+      alertError(t("rtsp.stopAllFail", { err: String(e) }));
     }
   };
 
@@ -455,7 +456,7 @@ export default function RtspServer() {
       }
     } catch (e) {
       console.error(e);
-      alert(t("rtsp.pickerFail"));
+      alertError(t("rtsp.pickerFail"));
     }
   };
 

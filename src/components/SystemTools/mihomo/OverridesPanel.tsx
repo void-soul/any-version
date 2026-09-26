@@ -2,6 +2,7 @@
 // （URL 导入(剪贴板粘贴) / 打开本地文件 / 新建 YAML·JS / 卡片：远程更新+编辑信息+
 //   编辑文件+执行日志(js)+删除 / 双击编辑文件 / 排序(上下移替代拖拽) / global 标识）
 import { useEffect, useRef, useState } from "react";
+import { alertError } from "../../shared/ThemedAlert";
 import { useTranslation } from "react-i18next";
 import MonacoEditor from "../../shared/MonacoEditor";
 import { RefreshCw, MoreVertical, Plus, ClipboardPaste, ArrowUp, ArrowDown } from "lucide-react";
@@ -244,7 +245,7 @@ function EditOverrideInfoModal({ item, onClose, onSaved }: any) {
       onSaved();
       onClose();
     } catch (e: any) {
-      alert(t("overrides.saveFailed", { err: String(e) }));
+      alertError(t("overrides.saveFailed", { err: String(e) }));
     } finally {
       setSaving(false);
     }
@@ -288,7 +289,7 @@ function EditOverrideFileModal({ item, onClose }: any) {
       await mihomoApi.updateRuntimeConfig();
       onClose();
     } catch (e: any) {
-      alert(t("overrides.saveFailed", { err: String(e) }));
+      alertError(t("overrides.saveFailed", { err: String(e) }));
     } finally {
       setSaving(false);
     }

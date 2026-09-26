@@ -1,5 +1,6 @@
 // 订阅页（对齐 clash-party profiles.tsx + profile-item + edit-info-modal）
 import { useEffect, useMemo, useRef, useState } from "react";
+import { alertError } from "../../shared/ThemedAlert";
 import { useTranslation } from "react-i18next";
 import MonacoEditor from "../../shared/MonacoEditor";
 import {
@@ -632,7 +633,7 @@ function EditInfoModal({ item, overrides, onClose, onSaved }: any) {
   const save = async () => {
     setSaving(true);
     try { await mihomoApi.updateProfile(v); onSaved(); }
-    catch (e: any) { alert(t("subs.saveFailed", { err: String(e) })); }
+    catch (e: any) { alertError(t("subs.saveFailed", { err: String(e) })); }
     setSaving(false);
   };
 
@@ -742,7 +743,7 @@ function EditFileModal({ item, initial, isCurrent, onClose, onSaved }: any) {
       await mihomoApi.setProfileStr(item.id, text);
       if (isCurrent) await mihomoApi.updateRuntimeConfig();
       onSaved();
-    } catch (e: any) { alert(t("subs.saveFailed", { err: String(e) })); }
+    } catch (e: any) { alertError(t("subs.saveFailed", { err: String(e) })); }
     setSaving(false);
   };
 
