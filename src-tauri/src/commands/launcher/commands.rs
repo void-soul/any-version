@@ -5,8 +5,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use super::db;
 use super::models::{
-    AppxItem, CheckProgress, Classification, Item, ItemCheckResult, LauncherSetting, ScannedProgram,
-    ShortcutInfo, UrlMetadata,
+    AppxItem, CheckProgress, Classification, DeleteClassificationResult, Item, ItemCheckResult,
+    LauncherSetting, ScannedProgram, ShortcutInfo, UrlMetadata,
 };
 use super::windows::{
     extract_file_icon, fetch_url_metadata, fetch_url_metadata_with_timeout, resolve_shortcut,
@@ -24,9 +24,23 @@ pub async fn launcher_save_classification(classification: Classification) -> Res
     db::save_classification(&classification)
 }
 
+/// 删除分类：`cascade = true` 连同子分类与项目一起删；
+/// `cascade = false` 时**必须**给 new_parent_id（前端保证用户已选或新建了上级），
+/// 子分类与项目会被迁过去，避免出现「看不见也删不掉」的孤儿项目。
 #[tauri::command]
-pub async fn launcher_delete_classification(id: i64) -> Result<(), String> {
-    db::delete_classification(id)
+pub async fn launcher_delete_classification(
+    id: i64,
+    cascade: bool,
+    new_parent_id: Option<i64>,
+) -> Result<DeleteClassificationResult, String> {
+    let mode = if cascade {
+        db::DeleteMode::Cascade
+    } else {
+        db::DeleteMode::Reassign {
+            new_parent_id: new_parent_id.ok_or("选择保留内容时必须指定新的上级分类")?,
+        }
+    };
+    db::delete_classification(id, mode)
 }
 
 #[tauri::command]

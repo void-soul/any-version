@@ -11,6 +11,14 @@ export interface Classification {
   itemCount?: number;
 }
 
+/** 删除分类的结果（两种模式共用：级联看 deleted_*，迁移看 moved_*） */
+export interface DeleteClassificationResult {
+  deletedCategories: number;
+  deletedItems: number;
+  movedCategories: number;
+  movedItems: number;
+}
+
 export interface ClassificationData {
   icon?: string | null;
   associateFolderPath?: string | null;

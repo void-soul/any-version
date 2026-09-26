@@ -20,6 +20,19 @@ pub struct Classification {
     pub item_count: Option<usize>,
 }
 
+/// 删除分类的结果：两种模式共用（级联只看 deleted_*，迁移只看 moved_* 与 deleted_categories）。
+///
+/// 前端拿它给用户一个明确的交代（「删了 3 个子分类 / 12 个项目」或「迁移了 2 个子分类 / 9 个项目」），
+/// 而不是只说一句「已删除」。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteClassificationResult {
+    pub deleted_categories: usize,
+    pub deleted_items: usize,
+    pub moved_categories: usize,
+    pub moved_items: usize,
+}
+
 /// 分类附加数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]

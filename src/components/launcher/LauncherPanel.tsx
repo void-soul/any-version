@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   Search,
   Plus,
@@ -56,10 +56,12 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useTranslation } from "react-i18next";
 import {
   Classification,
+  DeleteClassificationResult,
   Item,
   ItemCheckResult,
   LauncherSetting,
 } from "./types";
+import CategoryTreeSelect from "./CategoryTreeSelect";
 import { matchPinyin } from "./pinyin";
 import { sortLauncherItemsByUsage } from "./usageStats";
 import { buildReorderOrders } from "./reorder";
@@ -249,6 +251,22 @@ function SortableItem(props: {
       <ItemCardBody item={item} view={view} checkResults={checkResults} />
     </div>
   );
+}
+
+/// 迁移目标里「新建一个分类」的哨兵值（分类 id 都是正整数，不会撞）。
+const NEW_CATEGORY_VALUE = "__new__";
+
+/** 把分类树摊平成一维（默认迁移目标候选用）。 */
+function flattenCategories(list: Classification[]): Classification[] {
+  const out: Classification[] = [];
+  const walk = (nodes: Classification[]) => {
+    for (const n of nodes) {
+      out.push(n);
+      if (n.childList?.length) walk(n.childList);
+    }
+  };
+  walk(list);
+  return out;
 }
 
 export default function LauncherPanel() {
@@ -541,18 +559,103 @@ export default function LauncherPanel() {
     await loadData();
   };
 
-  // Delete Category (确认弹框)
+  // Delete Category（确认弹框）
+  //
+  // 删除分类会产生孤儿：子分类的 parent_id、项目的 classification_id 都指向已删除的
+  // 分类，它们在界面上不可达（看不见也删不掉）。所以这里必须让用户二选一：
+  // ① 连同子分类与项目一起删；② 保留内容 —— 但**必须**指定新的上级（可新建）。
   const [pendingDeleteCategory, setPendingDeleteCategory] = useState<Classification | null>(null);
   const [deletingCategory, setDeletingCategory] = useState(false);
+  const [deleteCascade, setDeleteCascade] = useState(true);
+  const [deleteTarget, setDeleteTarget] = useState("");
+  const [deleteNewName, setDeleteNewName] = useState("");
+
+  /** 收集一棵分类树的全部子孙 id（含自己），用于排除非法迁移目标与统计影响范围。 */
+  const subtreeIds = useCallback((cat: Classification): number[] => {
+    const out: number[] = [cat.id];
+    const walk = (list?: Classification[]) => {
+      for (const c of list ?? []) {
+        out.push(c.id);
+        walk(c.childList);
+      }
+    };
+    walk(cat.childList);
+    return out;
+  }, []);
+
+  /** 影响范围：子分类数（含孙级）与项目数（含孙级分类里的）。 */
+  const scopeOf = useCallback(
+    (cat: Classification) => {
+      let cats = 0;
+      let items = 0;
+      const walk = (list?: Classification[]) => {
+        for (const c of list ?? []) {
+          cats += 1;
+          items += c.itemCount ?? 0;
+          walk(c.childList);
+        }
+      };
+      walk(cat.childList);
+      return { cats, items: items + (cat.itemCount ?? 0) };
+    },
+    [],
+  );
+
   const handleDeleteCategory = (cat: Classification) => {
     setPendingDeleteCategory(cat);
+    setDeleteCascade(true);
+    setDeleteNewName("");
+    // 默认给一个合法目标：同级里第一个「不是自己、也不是自己子孙」的分类
+    const banned = new Set(subtreeIds(cat));
+    const first = flattenCategories(classifications).find((c) => !banned.has(c.id));
+    setDeleteTarget(first ? String(first.id) : NEW_CATEGORY_VALUE);
   };
+
   const confirmDeleteCategory = async () => {
     if (!pendingDeleteCategory) return;
     setDeletingCategory(true);
     try {
-      await invoke("launcher_delete_classification", { id: pendingDeleteCategory.id });
-      showToast(t("launcher.catDeleted"));
+      let newParentId: number | null = null;
+      if (!deleteCascade) {
+        if (deleteTarget === NEW_CATEGORY_VALUE) {
+          if (!deleteNewName.trim()) {
+            showToast(t("launcher.delCatNeedTarget"));
+            setDeletingCategory(false);
+            return;
+          }
+          // 「新建上级」：建在被删分类原来的位置上，再把内容迁进去
+          newParentId = await invoke<number>("launcher_save_classification", {
+            classification: {
+              id: 0,
+              parentId: pendingDeleteCategory.parentId ?? null,
+              name: deleteNewName.trim(),
+              classificationType: 0,
+              data: {},
+              shortcutKey: null,
+              globalShortcutKey: false,
+              order: pendingDeleteCategory.order ?? 0,
+            },
+          });
+        } else {
+          newParentId = Number(deleteTarget);
+        }
+      }
+      const res = await invoke<DeleteClassificationResult>("launcher_delete_classification", {
+        id: pendingDeleteCategory.id,
+        cascade: deleteCascade,
+        newParentId,
+      });
+      showToast(
+        deleteCascade
+          ? t("launcher.catDeletedCascade", {
+              cats: res.deletedCategories,
+              items: res.deletedItems,
+            })
+          : t("launcher.catDeletedMoved", {
+              cats: res.movedCategories,
+              items: res.movedItems,
+            }),
+      );
       setPendingDeleteCategory(null);
       await loadData();
     } catch (e: any) {
@@ -2393,13 +2496,13 @@ export default function LauncherPanel() {
         />
       )}
 
-      {/* 删除分类确认弹框 */}
+      {/* 删除分类确认弹框：必须先决定「子分类与项目」的去向，避免留下孤儿数据 */}
       {pendingDeleteCategory && (
         <div
           className="fixed inset-0 z-[110] modal-mask flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
         >
           <div
-            className="bg-surface-panel border rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-100"
+            className="bg-surface-panel border rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-100"
             style={{ borderColor: "var(--module-accent-ring)" }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -2407,7 +2510,7 @@ export default function LauncherPanel() {
               <span className="text-xl">{pendingDeleteCategory.data?.icon || "📁"}</span>
               <h3 className="text-sm font-semibold text-white">{t("launcher.delCatTitle")}</h3>
             </div>
-            <div className="p-5 space-y-4">
+            <div className="p-5 space-y-3.5">
               <p className="text-xs leading-relaxed text-slate-300">
                 {t("launcher.delCatConfirm")}
                 <span
@@ -2419,8 +2522,73 @@ export default function LauncherPanel() {
                 >
                   {pendingDeleteCategory.name}
                 </span>
-                及其下的所有项目吗？此操作不可恢复。
+                {t("launcher.delCatConfirmTail")}
               </p>
+              <p className="text-[11px] text-slate-400">
+                {t("launcher.delCatScope", {
+                  cats: scopeOf(pendingDeleteCategory).cats,
+                  items: scopeOf(pendingDeleteCategory).items,
+                })}
+              </p>
+
+              {/* 选项一：连内容一起删 */}
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="del-cat-mode"
+                  checked={deleteCascade}
+                  onChange={() => setDeleteCascade(true)}
+                  className="mt-0.5 accent-red-500"
+                />
+                <span className="text-xs text-slate-200">{t("launcher.delCatModeDelete")}</span>
+              </label>
+
+              {/* 选项二：保留内容，但必须指定新上级 */}
+              <div className="space-y-2">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="del-cat-mode"
+                    checked={!deleteCascade}
+                    onChange={() => setDeleteCascade(false)}
+                    className="mt-0.5 accent-[var(--module-accent)]"
+                  />
+                  <span className="text-xs text-slate-200">{t("launcher.delCatModeMove")}</span>
+                </label>
+                {!deleteCascade && (
+                  <div className="ml-6 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-slate-400 shrink-0">
+                        {t("launcher.delCatMoveTarget")}
+                      </span>
+                      <CategoryTreeSelect
+                        classifications={classifications}
+                        value={deleteTarget === NEW_CATEGORY_VALUE ? 0 : Number(deleteTarget) || 0}
+                        onChange={(id) => {
+                          setDeleteTarget(String(id));
+                          setDeleteNewName("");
+                        }}
+                        excludeId={pendingDeleteCategory.id}
+                        hideDescendantsOfExclude
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={deleteNewName}
+                        onChange={(e) => {
+                          setDeleteNewName(e.target.value);
+                          if (e.target.value.trim()) setDeleteTarget(NEW_CATEGORY_VALUE);
+                        }}
+                        placeholder={t("launcher.delCatNewName")}
+                        className="glass-input flex-1 px-2 py-1 text-[11px]"
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-500">{t("launcher.delCatMoveHint")}</p>
+                  </div>
+                )}
+              </div>
+
               <div className="flex items-center justify-end gap-2.5 pt-1">
                 <button
                   type="button"
@@ -2428,16 +2596,24 @@ export default function LauncherPanel() {
                   onClick={() => setPendingDeleteCategory(null)}
                   className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer disabled:opacity-50"
                 >
-                  取消
+                  {t("common.cancel")}
                 </button>
                 <button
                   type="button"
                   disabled={deletingCategory}
                   onClick={confirmDeleteCategory}
-                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                  className={`px-5 py-2 rounded-xl text-xs font-semibold text-white shadow-lg transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5 ${
+                    deleteCascade
+                      ? "bg-red-600 hover:bg-red-500 shadow-red-600/30"
+                      : "bg-[var(--module-accent)] hover:brightness-110"
+                  }`}
                 >
                   <Trash2 className="w-3.5 h-3.5" />
-                  {deletingCategory ? "删除中..." : "删除"}
+                  {deletingCategory
+                    ? t("launcher.deleting")
+                    : deleteCascade
+                      ? t("common.delete")
+                      : t("launcher.delCatMoveAction")}
                 </button>
               </div>
             </div>
