@@ -57,7 +57,7 @@ export default function ProjectListPanel({
               placeholder={t("projlist.searchPh")}
               value={search}
               onChange={(e) => onSearchChange(e.target.value)}
-              className="w-full glass-input pl-7 pr-2 py-1 text-[11px]"
+              className="w-full glass-input pl-7 pr-2 py-1 text-caption"
             />
           </div>
           <button
@@ -82,7 +82,7 @@ export default function ProjectListPanel({
         <div className="flex gap-1">
           {FILTERS.map((f) => (
             <button key={f.key} onClick={() => onFilterChange(f.key)}
-              className={`flex-1 py-0.5 rounded text-[11px] font-semibold transition-all cursor-pointer ${
+              className={`flex-1 py-0.5 rounded text-caption font-semibold transition-all cursor-pointer ${
                 filter === f.key ? "bg-[var(--module-accent)] text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"
               }`}>
               {t(f.labelKey)}
@@ -93,9 +93,9 @@ export default function ProjectListPanel({
 
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <div className="p-6 text-center text-slate-500 text-[11px]">{t("projlist.loading")}</div>
+          <div className="p-6 text-center text-slate-500 text-caption">{t("projlist.loading")}</div>
         ) : filtered.length === 0 ? (
-          <div className="p-6 text-center text-slate-500 text-[11px]">{t("projlist.noMatch")}</div>
+          <div className="p-6 text-center text-slate-500 text-caption">{t("projlist.noMatch")}</div>
         ) : (
           filtered.map((p) => {
             const isSelected = selectedId === p.id;
@@ -106,7 +106,7 @@ export default function ProjectListPanel({
                     : "hover:bg-white/[0.03] border-l-2 border-l-transparent"
                 }`}>
                 <div className="flex-1 min-w-0 flex items-center gap-2">
-                  <span className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                  <span className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-tiny font-bold ${
                     p.managed 
                       ? p.is_simple_managed 
                         ? "bg-amber-500/15 text-amber-400" 
@@ -116,7 +116,7 @@ export default function ProjectListPanel({
                     {p.managed ? "✓" : "✗"}
                   </span>
                   <div className="min-w-0 flex items-center gap-1">
-                    <span className={`font-semibold text-[11px] truncate ${
+                    <span className={`font-semibold text-caption truncate ${
                       p.managed 
                         ? p.is_simple_managed 
                           ? "text-amber-100/90" 
@@ -138,7 +138,7 @@ export default function ProjectListPanel({
                 <div className="flex-shrink-0 ml-2 relative z-10 flex items-center gap-1">
                   {(p.category === "service" || p.service_status) && p.service_status?.running && (
                     <span
-                      className={`px-1.5 py-px rounded text-[9px] font-semibold border ${
+                      className={`px-1.5 py-px rounded text-micro font-semibold border ${
                         p.service_status.external || p.service_status.status === "external_running"
                           ? "bg-sky-500/10 text-sky-300 border-sky-500/20"
                           : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
@@ -150,14 +150,14 @@ export default function ProjectListPanel({
                   )}
                   {p.installed ? (
                     p.active_version ? (
-                      <span className="px-1.5 py-px rounded text-[9px] font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
+                      <span className="px-1.5 py-px rounded text-micro font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
                         v{p.active_version}
                       </span>
                     ) : (
-                      <span className="px-1.5 py-px rounded text-[9px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">{t("projlist.installed")}</span>
+                      <span className="px-1.5 py-px rounded text-micro font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">{t("projlist.installed")}</span>
                     )
                   ) : (
-                    <span className="px-1.5 py-px rounded text-[9px] font-semibold bg-red-500/10 text-red-400 border border-red-500/20">{t("projlist.notInstalled")}</span>
+                    <span className="px-1.5 py-px rounded text-micro font-semibold bg-red-500/10 text-red-400 border border-red-500/20">{t("projlist.notInstalled")}</span>
                   )}
                 </div>
               </div>

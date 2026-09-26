@@ -710,8 +710,8 @@ export default function ProjectDetailPanel({
     return (
       <div className="h-full flex flex-col items-center justify-center text-slate-500">
         <Info className="w-8 h-8 text-slate-700 mb-2" />
-        <span className="text-xs font-bold text-slate-400">{t("projdetail.selectLeftHint")}</span>
-        <span className="text-[10px] text-slate-600 mt-1">{t("projdetail.selectLeftDesc")}</span>
+        <span className="text-body font-bold text-slate-400">{t("projdetail.selectLeftHint")}</span>
+        <span className="text-tiny text-slate-600 mt-1">{t("projdetail.selectLeftDesc")}</span>
       </div>
     );
   }
@@ -818,7 +818,7 @@ export default function ProjectDetailPanel({
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-base font-semibold text-white">{status.display_name}</h3>
-              <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold border ${
+              <span className={`px-1.5 py-0.5 rounded text-micro font-semibold border ${
                 status.category === "language"
                   ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
                   : status.category === "tool"
@@ -829,62 +829,62 @@ export default function ProjectDetailPanel({
               </span>
               {status.managed ? (
                 status.is_simple_managed ? (
-                  <span className="px-1.5 py-0.5 rounded text-[9px] bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold flex items-center gap-0.5">
+                  <span className="px-1.5 py-0.5 rounded text-micro bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold flex items-center gap-0.5">
                     <ShieldCheck className="w-2.5 h-2.5" /> {t("projdetail.simpleManaging")}
                   </span>
                 ) : (
-                  <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold flex items-center gap-0.5">
+                  <span className="px-1.5 py-0.5 rounded text-micro bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold flex items-center gap-0.5">
                     <ShieldCheck className="w-2.5 h-2.5" /> {t("projdetail.managing")}
                   </span>
                 )
               ) : (
-                <span className="px-1.5 py-0.5 rounded text-[9px] bg-slate-500/10 text-slate-400 border border-slate-500/20 font-medium">
+                <span className="px-1.5 py-0.5 rounded text-micro bg-slate-500/10 text-slate-400 border border-slate-500/20 font-medium">
                   {t("projdetail.notManaged")}
                 </span>
               )}
               {status.installed ? (
                 status.active_version ? (
-                  <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
+                  <span className="px-1.5 py-0.5 rounded text-micro font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
                     v{status.active_version}
                   </span>
                 ) : (
-                  <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                  <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
                     {t("projdetail.installed")}
                   </span>
                 )
               ) : (
-                <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-red-500/10 text-red-400 border border-red-500/20">
+                <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-red-500/10 text-red-400 border border-red-500/20">
                   {t("projdetail.notInstalled")}
                 </span>
               )}
             </div>
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
               {def?.official_website && (
-                <button onClick={() => openUrl(def.official_website)} className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-0.5 cursor-pointer mr-1">
+                <button onClick={() => openUrl(def.official_website)} className="text-tiny text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-0.5 cursor-pointer mr-1">
                   {t("projdetail.officialSite")} <ExternalLink className="w-2.5 h-2.5" />
                 </button>
               )}
               {status.install_source && (
-                <><span className="text-slate-600 text-[10px]">.</span><span className="text-[10px] text-slate-400">{t("projdetail.installMethod")}: {status.install_source}</span></>
+                <><span className="text-slate-600 text-tiny">.</span><span className="text-tiny text-slate-400">{t("projdetail.installMethod")}: {status.install_source}</span></>
               )}
               {status.install_root && (
-                <><span className="text-slate-600 text-[10px]">.</span><span className="text-[10px] text-slate-400 font-mono truncate max-w-[300px]" title={status.install_root}>{t("projdetail.installPath")}: {status.install_root}</span></>
+                <><span className="text-slate-600 text-tiny">.</span><span className="text-tiny text-slate-400 font-mono truncate max-w-[300px]" title={status.install_root}>{t("projdetail.installPath")}: {status.install_root}</span></>
               )}
               {(!status.managed || status.is_simple_managed) && (!status.install_root || status.install_source === "手动指定") && (
                 <>
-                  <span className="text-slate-600 text-[10px]">.</span>
+                  <span className="text-slate-600 text-tiny">.</span>
                   <button
                     onClick={handleSelectCustomPath}
-                    className="text-[10px] text-blue-400 hover:text-blue-300 hover:underline transition-colors flex items-center gap-0.5 cursor-pointer font-medium"
+                    className="text-tiny text-blue-400 hover:text-blue-300 hover:underline transition-colors flex items-center gap-0.5 cursor-pointer font-medium"
                   >
                     {status.install_root ? t("projdetail.modifyPath") : t("projdetail.manualSpecifyDir")}
                   </button>
                   {status.install_source === "手动指定" && (
                     <>
-                      <span className="text-slate-600 text-[10px]">.</span>
+                      <span className="text-slate-600 text-tiny">.</span>
                       <button
                         onClick={handleClearCustomPath}
-                        className="text-[10px] text-amber-500 hover:text-amber-400 hover:underline transition-colors flex items-center gap-0.5 cursor-pointer font-medium"
+                        className="text-tiny text-amber-500 hover:text-amber-400 hover:underline transition-colors flex items-center gap-0.5 cursor-pointer font-medium"
                       >
                         {t("projdetail.restoreAutoDetect")}
                       </button>
@@ -898,7 +898,7 @@ export default function ProjectDetailPanel({
             {status.managed && (
               <button
                 onClick={() => setShowMenuConfig(!showMenuConfig)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-ctl text-[10px] border cursor-pointer transition-all ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-ctl text-tiny border cursor-pointer transition-all ${
                   showMenuConfig 
                     ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white" 
                     : "bg-white/5 border-white/5 text-slate-300 hover:bg-white/10"
@@ -911,7 +911,7 @@ export default function ProjectDetailPanel({
             <button
               onClick={async () => { if (pid) { await loadDetail(pid); await onRefresh(); } }}
               disabled={ui.detailLoading}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-ctl text-[10px] border border-white/5 cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-ctl text-tiny border border-white/5 cursor-pointer"
             >
               <RefreshCw className={`w-3 h-3 ${ui.detailLoading ? "animate-spin" : ""}`} /> {t("projdetail.refresh")}
             </button>
@@ -923,19 +923,19 @@ export default function ProjectDetailPanel({
       {showMenuConfig && status.managed && (
         <div className="mx-5 mt-4 p-4 glass-panel border border-white/5 rounded-panel bg-white/2 space-y-3 animate-fadeIn flex-shrink-0">
           <div className="flex items-center justify-between border-b border-white/5 pb-2">
-            <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+            <span className="text-body font-semibold text-white flex items-center gap-1.5">
               <Settings className="w-3.5 h-3.5 text-[var(--module-accent)]" />
               {t("projdetail.trayConfigTitle")}
             </span>
             <button 
               onClick={() => setShowMenuConfig(false)}
-              className="text-[10px] text-slate-400 hover:text-slate-200 cursor-pointer"
+              className="text-tiny text-slate-400 hover:text-slate-200 cursor-pointer"
             >
               {t("projdetail.close")}
             </button>
           </div>
           <div className="flex flex-wrap gap-6 py-1">
-            <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 select-none">
+            <label className="flex items-center gap-2 cursor-pointer text-body text-slate-300 select-none">
               <input
                 type="checkbox"
                 checked={status.show_version !== false}
@@ -955,7 +955,7 @@ export default function ProjectDetailPanel({
             </label>
             {(def?.category === "service" || def?.is_service) && (
               <>
-                <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 select-none">
+                <label className="flex items-center gap-2 cursor-pointer text-body text-slate-300 select-none">
                   <input
                     type="checkbox"
                     checked={status.show_service !== false}
@@ -973,7 +973,7 @@ export default function ProjectDetailPanel({
                   />
                   {t("projdetail.showServiceControl")}
                 </label>
-                <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 select-none">
+                <label className="flex items-center gap-2 cursor-pointer text-body text-slate-300 select-none">
                   <input
                     type="checkbox"
                     checked={pid ? autoStartServices.includes(pid) : false}
@@ -995,7 +995,7 @@ export default function ProjectDetailPanel({
               </>
             )}
           </div>
-          <p className="text-[10px] text-slate-500 leading-normal">
+          <p className="text-tiny text-slate-500 leading-normal">
             {t("projdetail.trayHint")}
           </p>
         </div>
@@ -1008,13 +1008,13 @@ export default function ProjectDetailPanel({
           </div>
           <div>
             <p className="text-sm font-medium text-slate-300">{t("projdetail.noLocalInstall")}</p>
-            <p className="text-[11px] text-slate-500 mt-1 max-w-sm">
+            <p className="text-caption text-slate-500 mt-1 max-w-sm">
               {t("projdetail.simpleManagedHint")}
             </p>
           </div>
           <button
             onClick={handleSelectCustomPath}
-            className="px-5 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-card text-xs font-semibold shadow-lg shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]"
+            className="px-5 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-card text-body font-semibold shadow-lg shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]"
           >
             {"手动指定目录"}
           </button>
@@ -1022,11 +1022,11 @@ export default function ProjectDetailPanel({
       ) : (
         <>
           {!status.managed && (
-            <div className="mx-5 mt-4 p-3 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-card flex items-start gap-2.5 text-xs text-[var(--module-accent)]">
+            <div className="mx-5 mt-4 p-3 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-card flex items-start gap-2.5 text-body text-[var(--module-accent)]">
               <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
               <div>
                 <p className="font-semibold text-slate-200">{t("projdetail.notManagedTitle")}</p>
-                <p className="text-[10px] text-slate-400 mt-0.5">
+                <p className="text-tiny text-slate-400 mt-0.5">
                   {t("projdetail.notManagedDesc")}
                 </p>
               </div>
@@ -1038,7 +1038,7 @@ export default function ProjectDetailPanel({
                 <button
                   key={tab}
                   onClick={() => pid && patch(pid, { activeSubTab: tab })}
-                  className={`flex-1 py-1.5 rounded-ctl text-[10px] font-semibold transition-all cursor-pointer ${
+                  className={`flex-1 py-1.5 rounded-ctl text-tiny font-semibold transition-all cursor-pointer ${
                     activeTab === tab ? "bg-[var(--module-accent)] text-white shadow-md" : "text-slate-400 hover:text-slate-200"
                   }`}
                 >
@@ -1053,9 +1053,9 @@ export default function ProjectDetailPanel({
               <div className="flex flex-col items-center justify-center py-12 space-y-4">
                 <Loader className="w-6 h-6 animate-spin text-[var(--module-accent)]" />
                 <div className="text-center space-y-2 max-w-sm">
-                  <p className="text-xs text-[var(--module-accent)] font-medium">{ui.detectStep || t("projdetail.switching", { version: ui.switchingVersion })}</p>
+                  <p className="text-body text-[var(--module-accent)] font-medium">{ui.detectStep || t("projdetail.switching", { version: ui.switchingVersion })}</p>
                   <div className="w-64 mx-auto">
-                    <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1">
+                    <div className="flex items-center justify-between text-tiny text-slate-500 mb-1">
                       <span>{t("projdetail.detectStep")}</span>
                       <span>{ui.detectIndex}/{ui.detectTotal}</span>
                     </div>
@@ -1066,11 +1066,11 @@ export default function ProjectDetailPanel({
                       />
                     </div>
                   </div>
-                  <p className="text-[10px] text-slate-500">{t("projdetail.firstScanHint")}</p>
+                  <p className="text-tiny text-slate-500">{t("projdetail.firstScanHint")}</p>
                 </div>
               </div>
             ) : ui.detailLoading && !ui.detailLoaded ? (
-              <div className="flex items-center justify-center gap-2 text-xs text-slate-400 py-8">
+              <div className="flex items-center justify-center gap-2 text-body text-slate-400 py-8">
                 <Loader className="w-4 h-4 animate-spin text-[var(--module-accent)]" /> {t("projdetail.loadingDetail")}
               </div>
             ) : (
@@ -1134,7 +1134,7 @@ export default function ProjectDetailPanel({
               <div className={`relative w-full max-w-lg max-h-[82vh] rounded-panel border shadow-2xl flex flex-col overflow-hidden animate-fadeIn ${isUnmanage ? "bg-surface-panel border-red-500/25" : "bg-surface-panel border-[var(--module-accent-ring)]"}`}>
                 {/* 头部 */}
                 <div className="flex-shrink-0 px-4 py-3 border-b border-white/10 bg-white/[0.02] flex items-center justify-between">
-                  <h4 className={`text-xs font-semibold flex items-center gap-1.5 ${isUnmanage ? "text-red-300" : "text-[var(--module-accent)]"}`}>
+                  <h4 className={`text-body font-semibold flex items-center gap-1.5 ${isUnmanage ? "text-red-300" : "text-[var(--module-accent)]"}`}>
                     <Info className="w-3.5 h-3.5" />
                     {isUnmanage ? t("projdetail.unmanagePreview") : t("projdetail.manageOptions")}
                   </h4>
@@ -1145,13 +1145,13 @@ export default function ProjectDetailPanel({
                 {/* 滚动内容区 */}
                 <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
                   {isUnmanage && (
-                    <p className="text-[11px] text-slate-400">{t("projdetail.willExecute")}</p>
+                    <p className="text-caption text-slate-400">{t("projdetail.willExecute")}</p>
                   )}
               {!isUnmanage && localDelegation && (
                 <div className="p-3 bg-white/5 border border-white/10 rounded-card space-y-3">
-                  <span className="text-[11px] font-semibold text-slate-300 block">{t("projdetail.chooseOptions")}</span>
+                  <span className="text-caption font-semibold text-slate-300 block">{t("projdetail.chooseOptions")}</span>
                   
-                  <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="grid grid-cols-2 gap-3 text-body">
                     {/* 1. 环境变量 */}
                     {envVars.length > 0 && (
                       <div className="space-y-1.5 p-2 bg-black/25 border border-white/5 rounded-ctl col-span-2">
@@ -1172,7 +1172,7 @@ export default function ProjectDetailPanel({
                         </label>
                         <div className="pl-6 grid grid-cols-2 gap-2 mt-1">
                           {envVars.filter(v => v.tier !== "compat").map(v => (
-                            <label key={v.name} className="flex items-center gap-2 cursor-pointer text-[10px] text-slate-400 hover:text-slate-200">
+                            <label key={v.name} className="flex items-center gap-2 cursor-pointer text-tiny text-slate-400 hover:text-slate-200">
                               <input
                                 type="checkbox"
                                 className="rounded border-white/10 bg-slate-800 text-[var(--module-accent)] focus:ring-[var(--module-accent)] focus:ring-offset-0"
@@ -1209,7 +1209,7 @@ export default function ProjectDetailPanel({
                         </label>
                         <div className="pl-6 grid grid-cols-2 gap-2 mt-1">
                           {def.bin_dirs.map(binDir => (
-                            <label key={binDir} className="flex items-center gap-2 cursor-pointer text-[10px] text-slate-400 hover:text-slate-200">
+                            <label key={binDir} className="flex items-center gap-2 cursor-pointer text-tiny text-slate-400 hover:text-slate-200">
                               <input
                                 type="checkbox"
                                 className="rounded border-white/10 bg-slate-800 text-[var(--module-accent)] focus:ring-[var(--module-accent)] focus:ring-offset-0"
@@ -1242,7 +1242,7 @@ export default function ProjectDetailPanel({
                           />
                           <div className="flex flex-col">
                             <span>{t("projdetail.versionControl")}</span>
-                            <span className="text-[9px] text-slate-400 font-normal">{t("projdetail.versionControlDesc")}</span>
+                            <span className="text-micro text-slate-400 font-normal">{t("projdetail.versionControlDesc")}</span>
                           </div>
                         </label>
                       </div>
@@ -1261,7 +1261,7 @@ export default function ProjectDetailPanel({
                         />
                         <div className="flex flex-col">
                           <span>{t("projdetail.createLink")}</span>
-                          <span className="text-[9px] text-slate-400 font-normal">{t("projdetail.createLinkDesc")}</span>
+                          <span className="text-micro text-slate-400 font-normal">{t("projdetail.createLinkDesc")}</span>
                         </div>
                       </label>
                     </div>
@@ -1279,7 +1279,7 @@ export default function ProjectDetailPanel({
                         />
                         <div className="flex flex-col">
                           <span>{t("projdetail.manageInstallDir")}</span>
-                          <span className="text-[9px] text-slate-400 font-normal">{t("projdetail.manageInstallDirDesc")}</span>
+                          <span className="text-micro text-slate-400 font-normal">{t("projdetail.manageInstallDirDesc")}</span>
                         </div>
                       </label>
                     </div>
@@ -1298,7 +1298,7 @@ export default function ProjectDetailPanel({
                           />
                           <div className="flex flex-col">
                             <span>{t("projdetail.redirectDataDir")}</span>
-                            <span className="text-[9px] text-slate-400 font-normal">{t("projdetail.redirectDataDirDesc")}</span>
+                            <span className="text-micro text-slate-400 font-normal">{t("projdetail.redirectDataDirDesc")}</span>
                           </div>
                         </label>
                       </div>
@@ -1318,7 +1318,7 @@ export default function ProjectDetailPanel({
                           />
                           <div className="flex flex-col">
                             <span>{t("projdetail.redirectCacheDir")}</span>
-                            <span className="text-[9px] text-slate-400 font-normal">{t("projdetail.redirectCacheDirDesc")}</span>
+                            <span className="text-micro text-slate-400 font-normal">{t("projdetail.redirectCacheDirDesc")}</span>
                           </div>
                         </label>
                       </div>
@@ -1342,7 +1342,7 @@ export default function ProjectDetailPanel({
                           />
                           <div className="flex flex-col">
                             <span>{t("projdetail.manageTools", { name: pm.display_name })}</span>
-                            <span className="text-[9px] text-slate-400 font-normal">{t("projdetail.manageToolsDesc", { name: pm.display_name })}</span>
+                            <span className="text-micro text-slate-400 font-normal">{t("projdetail.manageToolsDesc", { name: pm.display_name })}</span>
                           </div>
                         </label>
                       </div>
@@ -1360,7 +1360,7 @@ export default function ProjectDetailPanel({
                           />
                           <div className="flex flex-col">
                             <span>{t("projdetail.showInTray")}</span>
-                            <span className="text-[9px] text-slate-400 font-normal">{t("projdetail.showInTrayDesc")}</span>
+                            <span className="text-micro text-slate-400 font-normal">{t("projdetail.showInTrayDesc")}</span>
                           </div>
                         </label>
                       </div>
@@ -1375,7 +1375,7 @@ export default function ProjectDetailPanel({
                             />
                             <div className="flex flex-col">
                               <span>{t("projdetail.showServiceControl")}</span>
-                              <span className="text-[9px] text-slate-400 font-normal">{t("projdetail.showServiceInTrayDesc")}</span>
+                              <span className="text-micro text-slate-400 font-normal">{t("projdetail.showServiceInTrayDesc")}</span>
                             </div>
                           </label>
                         </div>
@@ -1387,27 +1387,27 @@ export default function ProjectDetailPanel({
 
               {/* 动态步骤预览 */}
               <div className="space-y-2">
-                <span className="text-xs font-semibold text-slate-300 block">{t("projdetail.stepPreview")}</span>
+                <span className="text-body font-semibold text-slate-300 block">{t("projdetail.stepPreview")}</span>
                 {preview?.steps?.map((step, idx) => (
-                  <div key={idx} className="flex items-start gap-2 text-[11px]">
-                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0 mt-0.5 ${stepColorMap[step.action] || "bg-[var(--module-accent-soft)] text-[var(--module-accent)]"}`}>
+                  <div key={idx} className="flex items-start gap-2 text-caption">
+                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-micro font-bold flex-shrink-0 mt-0.5 ${stepColorMap[step.action] || "bg-[var(--module-accent-soft)] text-[var(--module-accent)]"}`}>
                       {idx + 1}
                     </span>
                     <div className="min-w-0">
                       <span className="text-slate-200 font-medium">{step.description}</span>
                       {step.target && (
-                        <p className="font-mono text-[10px] text-slate-500 mt-0.5 whitespace-pre-wrap break-all">{step.target}</p>
+                        <p className="font-mono text-tiny text-slate-500 mt-0.5 whitespace-pre-wrap break-all">{step.target}</p>
                       )}
                     </div>
                   </div>
                 ))}
                 {(!preview?.steps || preview.steps.length === 0) && (
-                  <p className="text-[11px] text-slate-500 italic pl-1">{t("projdetail.noSteps")}</p>
+                  <p className="text-caption text-slate-500 italic pl-1">{t("projdetail.noSteps")}</p>
                 )}
               </div>
 
               {preview?.has_local_install && (
-                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-ctl text-[10px]">
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-ctl text-tiny">
                   <span className="text-emerald-300 font-medium">{t("projdetail.detectedLocal")}</span>
                   {preview.local_install_root && (
                     <p className="text-slate-400 mt-0.5">{t("projdetail.pathLabel", { path: preview.local_install_root })}</p>
@@ -1420,7 +1420,7 @@ export default function ProjectDetailPanel({
               )}
 
               {!(ui.isSimpleManage || status.is_simple_managed) && (
-                <div className="p-2.5 rounded-ctl bg-black/20 border border-white/5 text-[10px] space-y-1.5">
+                <div className="p-2.5 rounded-ctl bg-black/20 border border-white/5 text-tiny space-y-1.5">
                   <div className="flex items-center gap-1.5 text-slate-300">
                     <span className="font-semibold text-slate-200">{t("projdetail.backupLocation")}</span>
                     <span className="font-mono text-[var(--module-accent)]">%USERPROFILE%\\.any-version\\backup\\manage_{pid}_*.json</span>
@@ -1436,15 +1436,15 @@ export default function ProjectDetailPanel({
                 {/* 底部固定按钮区 */}
                 <div className="flex-shrink-0 px-4 py-3 border-t border-white/10 bg-white/[0.02] flex items-center gap-2">
                   {isUnmanage ? (
-                    <button onClick={handleUnmanage} disabled={ui.unmanaging} className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-card text-xs font-semibold cursor-pointer transition-all">
+                    <button onClick={handleUnmanage} disabled={ui.unmanaging} className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-card text-body font-semibold cursor-pointer transition-all">
                       {ui.unmanaging ? t("projdetail.executing") : t("projdetail.confirmUnmanage")}
                     </button>
                   ) : (
-                    <button onClick={() => handleManage()} disabled={ui.managing} className="px-4 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-card text-xs font-semibold cursor-pointer transition-all">
+                    <button onClick={() => handleManage()} disabled={ui.managing} className="px-4 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-card text-body font-semibold cursor-pointer transition-all">
                       {ui.managing ? t("projdetail.executing") : t("projdetail.confirmManage")}
                     </button>
                   )}
-                  <button onClick={() => patch(pid!, { showManagePreview: false, managePreview: null })} className="px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-card text-xs font-medium cursor-pointer border border-white/10">
+                  <button onClick={() => patch(pid!, { showManagePreview: false, managePreview: null })} className="px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-card text-body font-medium cursor-pointer border border-white/10">
                     {t("projdetail.cancel")}
                   </button>
                 </div>
@@ -1454,7 +1454,7 @@ export default function ProjectDetailPanel({
         })()}
 
         <div className="flex items-center justify-between">
-          <div className="text-[10px] text-slate-500">
+          <div className="text-tiny text-slate-500">
             {status.managed 
               ? status.is_simple_managed 
                 ? t("projdetail.simpleManagingDesc") 
@@ -1463,11 +1463,11 @@ export default function ProjectDetailPanel({
           </div>
           <div className="flex items-center gap-2">
             {status.managed ? (
-              <button onClick={handlePreviewUnmanage} disabled={ui.unmanaging || isOperating} className="px-4 py-2 bg-red-600/80 hover:bg-red-500 disabled:opacity-50 text-white rounded-card text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5">
+              <button onClick={handlePreviewUnmanage} disabled={ui.unmanaging || isOperating} className="px-4 py-2 bg-red-600/80 hover:bg-red-500 disabled:opacity-50 text-white rounded-card text-body font-semibold cursor-pointer transition-all flex items-center gap-1.5">
                 {ui.unmanaging ? t("projdetail.unmanaging") : t("projdetail.unmanage")}
               </button>
             ) : (
-              <button onClick={() => handlePreviewManage()} disabled={ui.managing} className="px-5 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-card text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]">
+              <button onClick={() => handlePreviewManage()} disabled={ui.managing} className="px-5 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-card text-body font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]">
                 {ui.managing ? t("projdetail.managingBtn") : t("projdetail.manageProject")}
               </button>
             )}

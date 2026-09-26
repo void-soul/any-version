@@ -770,13 +770,13 @@ export function PackageManagerTab({
       return (
         <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
-            <span className={`text-[12px] font-semibold ${accentText}`}>
+            <span className={`text-body font-semibold ${accentText}`}>
               {t("pkgmgr.wfStepHeader", { kind: kindLabel, step: 1, total: totalSteps, label: stepLabels.method })}
             </span>
-            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">✕ {t("common.cancel")}</button>
+            <button onClick={closeWorkflow} className="text-caption text-slate-500 hover:text-slate-300 cursor-pointer">✕ {t("common.cancel")}</button>
           </div>
           <div className="space-y-1.5">
-            <p className="text-[12px] text-slate-300">{t("pkgmgr.chooseMethod")}</p>
+            <p className="text-body text-slate-300">{t("pkgmgr.chooseMethod")}</p>
             <label className={`flex items-start gap-2 p-2.5 rounded-ctl cursor-pointer transition-all border ${workflowMethod === "junction"
               ? `${accentBorder} bg-white/5`
               : "border-white/5 hover:bg-white/[0.02]"
@@ -784,8 +784,8 @@ export function PackageManagerTab({
               <input type="radio" name="wf_method" value="junction" checked={workflowMethod === "junction"}
                 onChange={() => setWorkflowMethod("junction")} className="mt-0.5" />
               <div>
-                <span className="text-[12px] font-semibold text-slate-200">{t("pkgmgr.junctionTitle")}</span>
-                <p className="text-[13px] text-slate-500 mt-0.5">
+                <span className="text-body font-semibold text-slate-200">{t("pkgmgr.junctionTitle")}</span>
+                <p className="text-title text-slate-500 mt-0.5">
                   {t("pkgmgr.junctionDesc", { kind: kindLabel })}
                 </p>
               </div>
@@ -798,8 +798,8 @@ export function PackageManagerTab({
                 <input type="radio" name="wf_method" value="point" checked={workflowMethod === "point"}
                   onChange={() => setWorkflowMethod("point")} className="mt-0.5" />
                 <div>
-                  <span className="text-[12px] font-semibold text-purple-300">{t("pkgmgr.pointTitle")}</span>
-                  <p className="text-[13px] text-slate-500 mt-0.5">
+                  <span className="text-body font-semibold text-purple-300">{t("pkgmgr.pointTitle")}</span>
+                  <p className="text-title text-slate-500 mt-0.5">
                     {t("pkgmgr.pointDesc", { name: pm.display_name, kind: kindLabel })}
                   </p>
                 </div>
@@ -808,7 +808,7 @@ export function PackageManagerTab({
           </div>
           <div className="flex justify-end">
             <button onClick={workflowNext}
-              className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors`}>
+              className={`px-3 py-1 ${btnBg} text-white rounded text-caption font-semibold cursor-pointer transition-colors`}>
               {t("pkgmgr.next")}
             </button>
           </div>
@@ -821,23 +821,23 @@ export function PackageManagerTab({
       return (
         <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
-            <span className={`text-[12px] font-semibold ${accentText}`}>
+            <span className={`text-body font-semibold ${accentText}`}>
               {t("pkgmgr.wfStepHeader", { kind: kindLabel, step: 2, total: totalSteps, label: stepLabels.paths })}
             </span>
-            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">✕ {t("common.cancel")}</button>
+            <button onClick={closeWorkflow} className="text-caption text-slate-500 hover:text-slate-300 cursor-pointer">✕ {t("common.cancel")}</button>
           </div>
 
           {workflowMethod === "junction" ? (
             <>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-caption text-slate-400">
                 <span className="font-semibold text-slate-300">{t("pkgmgr.junctionMode")}</span> — {t("pkgmgr.junctionModeDesc")}
               </p>
               <div className="space-y-1.5">
                 <div>
-                  <label className="text-[13px] text-slate-500 block mb-0.5">{t("pkgmgr.linkPathLabel", { name: pm.display_name, kind: kindLabel })}</label>
+                  <label className="text-title text-slate-500 block mb-0.5">{t("pkgmgr.linkPathLabel", { name: pm.display_name, kind: kindLabel })}</label>
                   <div className="flex items-center gap-1">
                     <input type="text" value={workflowLinkPath} onChange={(e) => setWorkflowLinkPath(e.target.value)}
-                      className="flex-1 glass-input px-1.5 py-1 text-[12px] font-mono" placeholder={t("pkgmgr.sourcePathPh", { kind: kindLabel })} />
+                      className="flex-1 glass-input px-1.5 py-1 text-body font-mono" placeholder={t("pkgmgr.sourcePathPh", { kind: kindLabel })} />
                     <button onClick={() => browseWorkflowPath(setWorkflowLinkPath)}
                       className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
                       <FolderOpen className="w-3 h-3" />
@@ -845,10 +845,10 @@ export function PackageManagerTab({
                   </div>
                 </div>
                 <div>
-                  <label className="text-[13px] text-slate-500 block mb-0.5">{t("pkgmgr.actualPathLabel")}</label>
+                  <label className="text-title text-slate-500 block mb-0.5">{t("pkgmgr.actualPathLabel")}</label>
                   <div className="flex items-center gap-1">
                     <input type="text" value={workflowActualPath} onChange={(e) => setWorkflowActualPath(e.target.value)}
-                      className="flex-1 glass-input px-1.5 py-1 text-[12px] font-mono" placeholder={t("pkgmgr.targetPathPh")} />
+                      className="flex-1 glass-input px-1.5 py-1 text-body font-mono" placeholder={t("pkgmgr.targetPathPh")} />
                     <button onClick={() => browseWorkflowPath(setWorkflowActualPath)}
                       className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
                       <FolderOpen className="w-3 h-3" />
@@ -859,14 +859,14 @@ export function PackageManagerTab({
             </>
           ) : (
             <>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-caption text-slate-400">
                 <span className="font-semibold text-purple-300">{t("pkgmgr.pointMode")}</span> — {t("pkgmgr.pointModeDesc", { name: pm.display_name })}
               </p>
               <div>
-                <label className="text-[13px] text-slate-500 block mb-0.5">{t("pkgmgr.pointPathLabel", { name: pm.display_name, kind: kindLabel })}</label>
+                <label className="text-title text-slate-500 block mb-0.5">{t("pkgmgr.pointPathLabel", { name: pm.display_name, kind: kindLabel })}</label>
                 <div className="flex items-center gap-1">
                   <input type="text" value={workflowPointPath} onChange={(e) => setWorkflowPointPath(e.target.value)}
-                    className="flex-1 glass-input px-1.5 py-1 text-[12px] font-mono"
+                    className="flex-1 glass-input px-1.5 py-1 text-body font-mono"
                     placeholder={pm.cache_default_path || t("pkgmgr.newPathPh")} />
                   <button onClick={() => browseWorkflowPath(setWorkflowPointPath)}
                     className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
@@ -879,14 +879,14 @@ export function PackageManagerTab({
 
           {/* 旧文件处理方式（Junction 和 Point 共用） */}
           <div className="pt-1 space-y-1">
-            <p className="text-[13px] text-slate-400 font-semibold">{t("pkgmgr.oldFileAction")}</p>
+            <p className="text-title text-slate-400 font-semibold">{t("pkgmgr.oldFileAction")}</p>
             {/* 移动旧文件 */}
             <label className={`flex items-start gap-2 p-2 rounded-ctl cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)]" : "border-white/5 hover:bg-white/[0.02]"}`}>
               <input type="radio" name="wf_file_action" value="move" checked={workflowFileAction === "move"}
                 onChange={() => setWorkflowFileAction("move")} className="mt-0.5" />
               <div>
-                <span className="text-[13px] font-semibold text-[var(--module-accent)]">{t("pkgmgr.moveOldFiles")}</span>
-                <p className="text-[11px] text-slate-500 mt-0.5">{t("pkgmgr.moveOldDesc", { action: workflowMethod === "junction" ? t("pkgmgr.createLink") : t("pkgmgr.modifyPoint") })}</p>
+                <span className="text-title font-semibold text-[var(--module-accent)]">{t("pkgmgr.moveOldFiles")}</span>
+                <p className="text-caption text-slate-500 mt-0.5">{t("pkgmgr.moveOldDesc", { action: workflowMethod === "junction" ? t("pkgmgr.createLink") : t("pkgmgr.modifyPoint") })}</p>
               </div>
             </label>
             {/* 删除旧文件 */}
@@ -894,8 +894,8 @@ export function PackageManagerTab({
               <input type="radio" name="wf_file_action" value="delete" checked={workflowFileAction === "delete"}
                 onChange={() => setWorkflowFileAction("delete")} className="mt-0.5" />
               <div>
-                <span className="text-[13px] font-semibold text-red-300">{t("pkgmgr.deleteOldFiles")}</span>
-                <p className="text-[11px] text-slate-500 mt-0.5">
+                <span className="text-title font-semibold text-red-300">{t("pkgmgr.deleteOldFiles")}</span>
+                <p className="text-caption text-slate-500 mt-0.5">
                   {isData ? t("pkgmgr.deleteDataDesc") : t("pkgmgr.deleteCacheDesc")}
                 </p>
               </div>
@@ -905,22 +905,22 @@ export function PackageManagerTab({
               <input type="radio" name="wf_file_action" value="keep" checked={workflowFileAction === "keep"}
                 onChange={() => setWorkflowFileAction("keep")} className="mt-0.5" />
               <div>
-                <span className="text-[13px] font-semibold text-slate-300">{t("pkgmgr.keepOldFiles")}</span>
-                <p className="text-[11px] text-slate-500 mt-0.5">{t("pkgmgr.keepDesc", { action: workflowMethod === "junction" ? t("pkgmgr.createLinkToDir") : t("pkgmgr.modifyPointToPath") })}</p>
+                <span className="text-title font-semibold text-slate-300">{t("pkgmgr.keepOldFiles")}</span>
+                <p className="text-caption text-slate-500 mt-0.5">{t("pkgmgr.keepDesc", { action: workflowMethod === "junction" ? t("pkgmgr.createLinkToDir") : t("pkgmgr.modifyPointToPath") })}</p>
               </div>
             </label>
           </div>
 
           <div className="flex justify-between">
             <button onClick={workflowPrev}
-              className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[11px] font-semibold cursor-pointer transition-colors">
+              className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-caption font-semibold cursor-pointer transition-colors">
               {t("pkgmgr.prev")}
             </button>
             <button onClick={workflowNext}
               disabled={workflowMethod === "junction"
                 ? (!workflowLinkPath || !workflowActualPath || workflowLinkPath === workflowActualPath)
                 : !workflowPointPath}
-              className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed`}>
+              className={`px-3 py-1 ${btnBg} text-white rounded text-caption font-semibold cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed`}>
               {t("pkgmgr.preview")}
             </button>
           </div>
@@ -933,39 +933,39 @@ export function PackageManagerTab({
       return (
         <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
-            <span className={`text-[12px] font-semibold ${accentText}`}>
+            <span className={`text-body font-semibold ${accentText}`}>
               {t("pkgmgr.wfStepHeader", { kind: kindLabel, step: 3, total: totalSteps, label: stepLabels.confirm })}
             </span>
-            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">✕ {t("common.cancel")}</button>
+            <button onClick={closeWorkflow} className="text-caption text-slate-500 hover:text-slate-300 cursor-pointer">✕ {t("common.cancel")}</button>
           </div>
 
           {/* 预览卡片 */}
           <div className="p-3 bg-black/20 rounded-ctl border border-white/5 space-y-2">
-            <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">{t("pkgmgr.opPreview")}</p>
+            <p className="text-caption text-slate-400 font-semibold uppercase tracking-wider">{t("pkgmgr.opPreview")}</p>
             <div className="space-y-1.5">
-              <div className="flex items-center gap-2 text-[12px]">
-                <span className={`px-1.5 py-0.5 rounded text-[13px] font-semibold ${workflowMethod === "junction" ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "bg-purple-500/10 text-purple-400"
+              <div className="flex items-center gap-2 text-body">
+                <span className={`px-1.5 py-0.5 rounded text-title font-semibold ${workflowMethod === "junction" ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "bg-purple-500/10 text-purple-400"
                   }`}>
                   {workflowMethod === "junction" ? "Junction" : t("pkgmgr.point")}
                 </span>
                 {workflowMethod === "junction" ? (
                   <div className="font-mono text-slate-300 space-y-0.5">
                     <p className="flex items-center gap-1">
-                      <span className="text-[13px] text-slate-500 flex-shrink-0">{t("pkgmgr.linkPath")}</span>
-                      <span className="text-[11px] break-all">{workflowLinkPath}</span>
+                      <span className="text-title text-slate-500 flex-shrink-0">{t("pkgmgr.linkPath")}</span>
+                      <span className="text-caption break-all">{workflowLinkPath}</span>
                     </p>
                     <p className="flex items-center gap-1">
-                      <span className="text-[13px] text-[var(--module-accent)] flex-shrink-0">{t("pkgmgr.linkTo")}</span>
-                      <span className="text-[11px] text-[var(--module-accent)] break-all">{workflowActualPath}</span>
+                      <span className="text-title text-[var(--module-accent)] flex-shrink-0">{t("pkgmgr.linkTo")}</span>
+                      <span className="text-caption text-[var(--module-accent)] break-all">{workflowActualPath}</span>
                     </p>
                   </div>
                 ) : (
-                  <p className="font-mono text-slate-300 text-[12px] break-all">
+                  <p className="font-mono text-slate-300 text-body break-all">
                     {t("pkgmgr.pointTo")} {workflowPointPath || t("pkgmgr.notSet")}
                   </p>
                 )}
               </div>
-              <div className="flex items-center gap-2 text-[12px]">
+              <div className="flex items-center gap-2 text-body">
                 <span className="text-slate-500">{t("pkgmgr.oldFileHandling")}</span>
                 <span className={
                   workflowFileAction === "delete" ? "text-red-400 font-semibold" :
@@ -977,7 +977,7 @@ export function PackageManagerTab({
                 </span>
               </div>
               {(workflowMethod === "junction" && workflowLinkPath.toLowerCase().startsWith("c:")) && (
-                <p className="text-[13px] text-red-400/80 flex items-center gap-1">
+                <p className="text-title text-red-400/80 flex items-center gap-1">
                   <AlertTriangle className="w-2.5 h-2.5" />{t("pkgmgr.cDriveWarn")}
                 </p>
               )}
@@ -986,11 +986,11 @@ export function PackageManagerTab({
 
           <div className="flex justify-between">
             <button onClick={workflowPrev}
-              className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[11px] font-semibold cursor-pointer transition-colors">
+              className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-caption font-semibold cursor-pointer transition-colors">
               {t("pkgmgr.prev")}
             </button>
             <button onClick={workflowNext} disabled={workflowExecuting}
-              className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors disabled:opacity-40`}>
+              className={`px-3 py-1 ${btnBg} text-white rounded text-caption font-semibold cursor-pointer transition-colors disabled:opacity-40`}>
               {t("pkgmgr.confirmExec")}
             </button>
           </div>
@@ -1004,13 +1004,13 @@ export function PackageManagerTab({
         <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center gap-2">
             <Loader className="w-3.5 h-3.5 animate-spin text-[var(--module-accent)]" />
-            <span className={`text-[12px] font-semibold ${accentText}`}>
+            <span className={`text-body font-semibold ${accentText}`}>
               {t("pkgmgr.executing", { stage: workflowProgress?.stage || t("pkgmgr.preparing") })}
             </span>
           </div>
           {workflowProgress && (
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-[13px] text-slate-400">
+              <div className="flex items-center justify-between text-title text-slate-400">
                 <span>{workflowProgress.stage}</span>
                 <span className="font-mono">{workflowProgress.current}/{workflowProgress.total}</span>
               </div>
@@ -1021,12 +1021,12 @@ export function PackageManagerTab({
                 />
               </div>
               {workflowProgress.file_name && (
-                <p className="text-[13px] text-slate-500 truncate font-mono">{workflowProgress.file_name}</p>
+                <p className="text-title text-slate-500 truncate font-mono">{workflowProgress.file_name}</p>
               )}
             </div>
           )}
           {!workflowProgress && (
-            <p className="text-[11px] text-slate-400 flex items-center gap-1">
+            <p className="text-caption text-slate-400 flex items-center gap-1">
               <Loader className="w-3 h-3 animate-spin" />{t("pkgmgr.starting")}
             </p>
           )}
@@ -1040,14 +1040,14 @@ export function PackageManagerTab({
         <div className={`mt-3 p-3 rounded-card border border-emerald-500/20 bg-emerald-500/5 space-y-3 animate-fadeIn`}>
           <div className="flex items-center gap-2">
             <CheckCircle className="w-4 h-4 text-emerald-400" />
-            <span className="text-[12px] font-semibold text-emerald-300">{t("pkgmgr.opSuccess")}</span>
+            <span className="text-body font-semibold text-emerald-300">{t("pkgmgr.opSuccess")}</span>
           </div>
-          <p className="text-[11px] text-emerald-400/70">
+          <p className="text-caption text-emerald-400/70">
             {t("pkgmgr.opDone", { kind: kindLabel, action: workflowMethod === "junction" ? t("pkgmgr.migrate") : t("pkgmgr.reconfig") })}
           </p>
           <div className="flex justify-end">
             <button onClick={closeWorkflow}
-              className="px-3 py-1 bg-emerald-600/50 hover:bg-emerald-600 text-white rounded text-[11px] font-semibold cursor-pointer transition-colors">
+              className="px-3 py-1 bg-emerald-600/50 hover:bg-emerald-600 text-white rounded text-caption font-semibold cursor-pointer transition-colors">
               {t("common.close")}
             </button>
           </div>
@@ -1082,15 +1082,15 @@ export function PackageManagerTab({
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-bold text-white">{pm.display_name}</h3>
                 {pm.built_in && (
-                  <span className="px-1.5 py-0.5 rounded text-[11px] bg-purple-500/10 text-purple-400 border border-purple-500/20 font-semibold">{t("pkgmgr.builtIn")}</span>
+                  <span className="px-1.5 py-0.5 rounded text-caption bg-purple-500/10 text-purple-400 border border-purple-500/20 font-semibold">{t("pkgmgr.builtIn")}</span>
                 )}
               </div>
               {installed ? (
-                <span className="text-[13px] text-emerald-400 font-mono">{version || t("pkgmgr.installed")}</span>
+                <span className="text-title text-emerald-400 font-mono">{version || t("pkgmgr.installed")}</span>
               ) : checking ? (
-                <span className="text-[13px] text-[var(--module-accent)] flex items-center gap-1"><Loader className="w-3 h-3 animate-spin" />{t("pkgmgr.checking")}</span>
+                <span className="text-title text-[var(--module-accent)] flex items-center gap-1"><Loader className="w-3 h-3 animate-spin" />{t("pkgmgr.checking")}</span>
               ) : (
-                <span className="text-[13px] text-slate-400">{t("pkgmgr.notInstalled")}</span>
+                <span className="text-title text-slate-400">{t("pkgmgr.notInstalled")}</span>
               )}
             </div>
           </div>
@@ -1101,16 +1101,16 @@ export function PackageManagerTab({
             {installed && !pm.built_in && pm.install_cmd && (
               <>
                 {latestVersion && version && versionGt(latestVersion, version) ? (
-                  <button onClick={handleUpgrade} disabled={!projectStatus?.managed || upgrading || installing} className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-ctl text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1.5" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
+                  <button onClick={handleUpgrade} disabled={!projectStatus?.managed || upgrading || installing} className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-ctl text-caption font-semibold cursor-pointer transition-all flex items-center gap-1.5" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
                     <Download className="w-3.5 h-3.5" />{upgrading ? t("pkgmgr.upgrading") : t("pkgmgr.upgradeTo", { version: latestVersion })}
                   </button>
                 ) : latestVersion && version && !versionGt(latestVersion, version) ? (
-                  <span className="text-[11px] text-emerald-400 px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/20 font-semibold">{t("pkgmgr.latest")}</span>
+                  <span className="text-caption text-emerald-400 px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/20 font-semibold">{t("pkgmgr.latest")}</span>
                 ) : null}
               </>
             )}
             {!installed && pm.install_cmd && (
-              <button onClick={handleInstall} disabled={!projectStatus?.managed || installing || upgrading} className="px-4 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-ctl text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1.5" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
+              <button onClick={handleInstall} disabled={!projectStatus?.managed || installing || upgrading} className="px-4 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-ctl text-caption font-semibold cursor-pointer transition-all flex items-center gap-1.5" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
                 <Download className="w-3.5 h-3.5" />{installing ? t("pkgmgr.installing") : t("pkgmgr.install")}
               </button>
             )}
@@ -1119,7 +1119,7 @@ export function PackageManagerTab({
         {/* 安装/升级进度条 */}
         {installProgress && (
           <div className="mt-3 space-y-1.5 animate-fadeIn">
-            <div className="flex items-center gap-2 text-[13px] text-[var(--module-accent)]">
+            <div className="flex items-center gap-2 text-title text-[var(--module-accent)]">
               <Loader className="w-3 h-3 animate-spin" />
               {upgrading ? t("pkgmgr.upgradeProgress", { name: pm.display_name }) : t("pkgmgr.installProgress", { name: pm.display_name })}
             </div>
@@ -1129,7 +1129,7 @@ export function PackageManagerTab({
           </div>
         )}
         {detectStep && (
-          <div className="mt-3 flex items-center gap-2 text-[13px] text-[var(--module-accent)]">
+          <div className="mt-3 flex items-center gap-2 text-title text-[var(--module-accent)]">
             <Loader className="w-3 h-3 animate-spin" />{detectStep}
           </div>
         )}
@@ -1141,8 +1141,8 @@ export function PackageManagerTab({
           <div className="flex items-center gap-2.5 flex-1 min-w-0">
             <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
             <div className="min-w-0">
-              <p className="text-xs font-bold text-amber-300">{t("pkgmgr.gitNewUpdate", { name: pm.display_name })}</p>
-              <p className="text-[11px] text-amber-400/80 mt-0.5 truncate">
+              <p className="text-body font-bold text-amber-300">{t("pkgmgr.gitNewUpdate", { name: pm.display_name })}</p>
+              <p className="text-caption text-amber-400/80 mt-0.5 truncate">
                 {t("pkgmgr.curVersionLabel")} <span className="font-mono">{gitRepoStatus.current_commit}</span> {t("pkgmgr.latestVersionLabel")} <span className="font-mono">{gitRepoStatus.latest_commit}</span>
               </p>
             </div>
@@ -1163,7 +1163,7 @@ export function PackageManagerTab({
               }
             }}
             disabled={updatingGitRepo}
-            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-ctl text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1 flex-shrink-0 ml-2"
+            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-ctl text-tiny font-semibold cursor-pointer transition-all flex items-center gap-1 flex-shrink-0 ml-2"
           >
             {updatingGitRepo ? (
               <><Loader className="w-3 h-3 animate-spin" />{t("pkgmgr.updating")}</>
@@ -1180,7 +1180,7 @@ export function PackageManagerTab({
           <Package className="w-10 h-10 text-[var(--module-accent)] mx-auto opacity-70 animate-pulse" />
           <div>
             <p className="text-[var(--module-accent)] text-sm font-semibold">{t("pkgmgr.notInitTitle", { name: pm.display_name })}</p>
-            <p className="text-[12px] text-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] mt-1 max-w-md mx-auto leading-relaxed">
+            <p className="text-body text-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] mt-1 max-w-md mx-auto leading-relaxed">
               {t("pkgmgr.notInitDesc", { name: pm.display_name })}
             </p>
           </div>
@@ -1200,7 +1200,7 @@ export function PackageManagerTab({
               }
             }}
             disabled={bootstrapping}
-            className="px-5 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-card text-xs font-semibold cursor-pointer transition-all inline-flex items-center gap-1.5"
+            className="px-5 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-card text-body font-semibold cursor-pointer transition-all inline-flex items-center gap-1.5"
           >
             {bootstrapping ? (
               <><Loader className="w-3.5 h-3.5 animate-spin" />{t("pkgmgr.compilingInit")}</>
@@ -1216,7 +1216,7 @@ export function PackageManagerTab({
         <div className="glass-panel rounded-panel p-6 border border-white/5 bg-white/2 text-center animate-fadeIn">
           <Package className="w-10 h-10 text-slate-500 mx-auto mb-3 opacity-50" />
           <p className="text-slate-400 text-sm font-semibold">{t("pkgmgr.notInstalledTitle", { name: pm.display_name })}</p>
-          <p className="text-[13px] text-slate-500 mt-1">{t("pkgmgr.notInstalledDesc")}</p>
+          <p className="text-title text-slate-500 mt-1">{t("pkgmgr.notInstalledDesc")}</p>
         </div>
       )}
 
@@ -1226,8 +1226,8 @@ export function PackageManagerTab({
         <div className="glass-panel rounded-panel p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             <HardDrive className="w-4 h-4 text-amber-400" />
-            <h4 className="text-xs font-semibold text-white">{t("pkgmgr.cacheTitle")}</h4>
-            <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">{t("pkgmgr.cacheTag")}</span>
+            <h4 className="text-body font-semibold text-white">{t("pkgmgr.cacheTitle")}</h4>
+            <span className="text-caption px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">{t("pkgmgr.cacheTag")}</span>
           </div>
 
           {/* 主缓存（pnpm 的 store 等） */}
@@ -1237,29 +1237,29 @@ export function PackageManagerTab({
                 <div className="space-y-1 flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     {cacheInfo.detect_source && (
-                      <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-[10px] inline-flex items-center font-mono">
+                      <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-tiny inline-flex items-center font-mono">
                         {cacheInfo.detect_source}
                       </span>
                     )}
                     {cacheInfo.real_target ? (
-                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] inline-flex items-center font-semibold">
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-tiny inline-flex items-center font-semibold">
                         {t("pkgmgr.migratedJunction")}
                       </span>
                     ) : (
-                      <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 text-[10px] inline-flex items-center">
+                      <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 text-tiny inline-flex items-center">
                         {t("pkgmgr.defaultPath")}
                       </span>
                     )}
                   </div>
-                  <p className="font-mono text-[12px] text-slate-400 break-all">{cacheInfo.path}</p>
+                  <p className="font-mono text-body text-slate-400 break-all">{cacheInfo.path}</p>
                   {cacheInfo.real_target && (
-                    <p className="font-mono text-[11px] text-slate-500 break-all">
+                    <p className="font-mono text-caption text-slate-500 break-all">
                       {t("pkgmgr.actualTarget", { path: cacheInfo.real_target })}
                     </p>
                   )}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-slate-300 font-mono text-[13px] font-semibold bg-white/5 px-2.5 py-1 rounded-ctl">
+                  <span className="text-slate-300 font-mono text-title font-semibold bg-white/5 px-2.5 py-1 rounded-ctl">
                     {cacheInfo.size}
                   </span>
                 </div>
@@ -1268,17 +1268,17 @@ export function PackageManagerTab({
               {/* 操作行 */}
               <div className="pt-2 border-t border-white/5 flex items-center gap-2">
                 <button onClick={() => openWorkflow("cache")} disabled={!projectStatus?.managed || workflowType !== null}
-                  className="px-3 py-1.5 bg-amber-600/80 hover:bg-amber-600 disabled:opacity-40 text-white rounded-ctl text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
+                  className="px-3 py-1.5 bg-amber-600/80 hover:bg-amber-600 disabled:opacity-40 text-white rounded-ctl text-body font-semibold cursor-pointer flex items-center gap-1 transition-all" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
                   <FolderSync className="w-3.5 h-3.5" />{t("pkgmgr.startChange")}
                 </button>
                 <button onClick={handleCleanCache} disabled={!projectStatus?.managed || cleaningCache || workflowType !== null}
-                  className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 disabled:opacity-40 text-white rounded-ctl text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
+                  className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 disabled:opacity-40 text-white rounded-ctl text-body font-semibold cursor-pointer flex items-center gap-1 transition-all" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
                   <Trash2 className="w-3.5 h-3.5" />{cleaningCache ? t("pkgmgr.cleaning") : t("pkgmgr.cleanCache")}
                 </button>
               </div>
               {cleanProgress && (
                 <div className="space-y-1 pt-1">
-                  <div className="flex items-center justify-between text-[13px] text-slate-400">
+                  <div className="flex items-center justify-between text-title text-slate-400">
                     <span>{cleanProgress.stage}</span>
                     <span>{cleanProgress.current}/{cleanProgress.total}</span>
                   </div>
@@ -1287,7 +1287,7 @@ export function PackageManagerTab({
                       style={{ width: `${cleanProgress.total > 0 ? (cleanProgress.current / cleanProgress.total) * 100 : 0}%` }} />
                   </div>
                   {cleanProgress.file_name && (
-                    <p className="text-[13px] text-slate-500 truncate font-mono">{cleanProgress.file_name}</p>
+                    <p className="text-title text-slate-500 truncate font-mono">{cleanProgress.file_name}</p>
                   )}
                 </div>
               )}
@@ -1296,7 +1296,7 @@ export function PackageManagerTab({
               {workflowType === "cache" && !workflowExtraCacheId && renderWorkflow()}
             </div>
           ) : (pm.cache_default_path || pm.cache_detect_cmd || pm.cache_env_var) ? (
-            <p className="text-[13px] text-slate-500">{t("pkgmgr.cacheNotDetected")} <span className="font-mono text-slate-400">{pm.cache_default_path || t("pkgmgr.notConfigured")}</span></p>
+            <p className="text-title text-slate-500">{t("pkgmgr.cacheNotDetected")} <span className="font-mono text-slate-400">{pm.cache_default_path || t("pkgmgr.notConfigured")}</span></p>
           ) : null}
 
           {/* 附加缓存目录（pnpm.cache 等），与主缓存平行独立展示 */}
@@ -1309,28 +1309,28 @@ export function PackageManagerTab({
                     <div className="flex items-start justify-between gap-2">
                       <div className="space-y-1 flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-[12px] font-semibold text-slate-200">{extra.display_name}</span>
+                          <span className="text-body font-semibold text-slate-200">{extra.display_name}</span>
                           {eInfo?.real_target ? (
-                            <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] inline-flex items-center font-semibold">
+                            <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-tiny inline-flex items-center font-semibold">
                               {t("pkgmgr.migratedJunction")}
                             </span>
                           ) : (
-                            <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 text-[10px] inline-flex items-center">
+                            <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 text-tiny inline-flex items-center">
                               {t("pkgmgr.defaultPath")}
                             </span>
                           )}
                         </div>
-                        <p className="font-mono text-[12px] text-slate-400 break-all">{eInfo?.path || extra.default_path || t("pkgmgr.pathNotDetected")}</p>
+                        <p className="font-mono text-body text-slate-400 break-all">{eInfo?.path || extra.default_path || t("pkgmgr.pathNotDetected")}</p>
                         {eInfo?.real_target && (
-                          <p className="font-mono text-[11px] text-slate-500 break-all">{t("pkgmgr.actualTarget", { path: eInfo.real_target })}</p>
+                          <p className="font-mono text-caption text-slate-500 break-all">{t("pkgmgr.actualTarget", { path: eInfo.real_target })}</p>
                         )}
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         {eInfo && (
-                          <span className="text-slate-300 font-mono text-[13px] font-semibold bg-white/5 px-2.5 py-1 rounded-ctl">{eInfo.size}</span>
+                          <span className="text-slate-300 font-mono text-title font-semibold bg-white/5 px-2.5 py-1 rounded-ctl">{eInfo.size}</span>
                         )}
                         <button onClick={() => openWorkflow("cache", extra.id)} disabled={!projectStatus?.managed || workflowType !== null}
-                          className="px-3 py-1.5 bg-amber-600/70 hover:bg-amber-600 disabled:opacity-40 text-white rounded-ctl text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
+                          className="px-3 py-1.5 bg-amber-600/70 hover:bg-amber-600 disabled:opacity-40 text-white rounded-ctl text-body font-semibold cursor-pointer flex items-center gap-1 transition-all" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
                           <FolderSync className="w-3.5 h-3.5" />{t("pkgmgr.adjustPath")}
                         </button>
                       </div>
@@ -1350,8 +1350,8 @@ export function PackageManagerTab({
         <div className="glass-panel rounded-panel p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             <HardDrive className="w-4 h-4 text-red-400" />
-            <h4 className="text-xs font-semibold text-white">{t("pkgmgr.dataTitle")}</h4>
-            <span className="text-[11px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20">{t("pkgmgr.dataTag")}</span>
+            <h4 className="text-body font-semibold text-white">{t("pkgmgr.dataTitle")}</h4>
+            <span className="text-caption px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20">{t("pkgmgr.dataTag")}</span>
           </div>
           <div className="p-4 bg-black/20 rounded-card border border-white/5 space-y-3">
             {/* 数据状态 */}
@@ -1360,50 +1360,50 @@ export function PackageManagerTab({
                 <div className="space-y-1 flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     {dataInfo.detect_source && (
-                      <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-[10px] inline-flex items-center font-mono">
+                      <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-tiny inline-flex items-center font-mono">
                         {dataInfo.detect_source}
                       </span>
                     )}
                     {dataInfo.real_target ? (
-                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] inline-flex items-center font-semibold">
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-tiny inline-flex items-center font-semibold">
                         {t("pkgmgr.migratedJunction")}
                       </span>
                     ) : (
-                      <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 text-[10px] inline-flex items-center">
+                      <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 text-tiny inline-flex items-center">
                         {t("pkgmgr.defaultPath")}
                       </span>
                     )}
                   </div>
-                  <p className="font-mono text-[12px] text-slate-400 break-all">{dataInfo.path}</p>
+                  <p className="font-mono text-body text-slate-400 break-all">{dataInfo.path}</p>
                   {dataInfo.real_target && (
-                    <p className="font-mono text-[11px] text-slate-500 break-all">
+                    <p className="font-mono text-caption text-slate-500 break-all">
                       {t("pkgmgr.actualTarget", { path: dataInfo.real_target })}
                     </p>
                   )}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-slate-300 font-mono text-[13px] font-semibold bg-white/5 px-2.5 py-1 rounded-ctl">
+                  <span className="text-slate-300 font-mono text-title font-semibold bg-white/5 px-2.5 py-1 rounded-ctl">
                     {dataInfo.size}
                   </span>
                 </div>
               </div>
             ) : (
               <div className="space-y-1">
-                <p className="text-[12px] text-slate-500 flex items-center gap-1.5">
+                <p className="text-body text-slate-500 flex items-center gap-1.5">
                   <AlertTriangle className="w-3 h-3 text-yellow-400" />
                   <span>{t("pkgmgr.notSetDetect")} </span>
-                  <span className="text-[11px] font-mono text-slate-400">{pm.data_detect_cmd}</span>
+                  <span className="text-caption font-mono text-slate-400">{pm.data_detect_cmd}</span>
                   <span> {t("pkgmgr.noValidPath")}</span>
                 </p>
               </div>
             )}
 
-            <p className="text-[11px] text-red-400/70">{t("pkgmgr.dataSafeWarn")}</p>
+            <p className="text-caption text-red-400/70">{t("pkgmgr.dataSafeWarn")}</p>
 
             {/* 操作行 */}
             <div className="pt-2 border-t border-white/5 flex items-center gap-2">
               <button onClick={() => openWorkflow("data")} disabled={!projectStatus?.managed || workflowType !== null}
-                className="px-3 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white rounded-ctl text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-colors" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white rounded-ctl text-body font-semibold cursor-pointer flex items-center gap-1 transition-colors" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
                 <FolderSync className="w-3.5 h-3.5" />{dataInfo ? t("pkgmgr.startMigrate") : t("pkgmgr.setDataDir")}
               </button>
             </div>
@@ -1419,8 +1419,8 @@ export function PackageManagerTab({
         <div className="glass-panel rounded-panel p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             <Globe className="w-4 h-4 text-[var(--module-accent)]" />
-            <h4 className="text-xs font-semibold text-white">{t("pkgmgr.mirrorTitle")}</h4>
-            <span className="ml-auto text-[11px] text-slate-400 font-mono bg-black/20 px-2 py-0.5 rounded border border-white/5 break-all max-w-[400px]">
+            <h4 className="text-body font-semibold text-white">{t("pkgmgr.mirrorTitle")}</h4>
+            <span className="ml-auto text-caption text-slate-400 font-mono bg-black/20 px-2 py-0.5 rounded border border-white/5 break-all max-w-[400px]">
               {t("pkgmgr.currentLabel")} {currentMirror || t("pkgmgr.officialDefault")}
             </span>
           </div>
@@ -1429,11 +1429,11 @@ export function PackageManagerTab({
               const isCurrent = opt.url === "" ? !currentMirror : currentMirror === opt.url;
               return (
                 <button key={opt.mirror_type} onClick={() => handleSwitchMirror(opt.url, opt.mirror_type)} disabled={!projectStatus?.managed || switchingMirror !== null || isCurrent}
-                  className={`flex items-center justify-between px-3 py-2 rounded-ctl text-[13px] font-medium cursor-pointer transition-all border
+                  className={`flex items-center justify-between px-3 py-2 rounded-ctl text-title font-medium cursor-pointer transition-all border
                     ${isCurrent ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300" : "bg-black/20 border-white/5 text-slate-300 hover:bg-white/5"}`} title={!projectStatus?.managed ? "请先托管项目" : ""}>
                   <span>{opt.name}</span>
                   <div className="flex items-center gap-1.5 ml-auto">
-                    <span className={`text-[12px] ${isCurrent ? "text-emerald-400" : "text-slate-500"} font-mono`}>
+                    <span className={`text-body ${isCurrent ? "text-emerald-400" : "text-slate-500"} font-mono`}>
                       {opt.url || t("pkgmgr.default")}
                     </span>
                     {switchingMirror === opt.url ? <Loader className="w-3 h-3 animate-spin text-[var(--module-accent)]" /> : isCurrent && <CheckCircle className="w-3 h-3 text-emerald-400" />}
@@ -1450,21 +1450,21 @@ export function PackageManagerTab({
         <div className="glass-panel rounded-panel p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             {proxyDetected ? <Wifi className="w-4 h-4 text-emerald-400" /> : <WifiOff className="w-4 h-4 text-slate-500" />}
-            <h4 className="text-xs font-semibold text-white">{t("pkgmgr.proxyTitle")}</h4>
-            {proxyDetected && <span className="text-[12px] text-emerald-400 font-mono">{t("pkgmgr.configured")}</span>}
+            <h4 className="text-body font-semibold text-white">{t("pkgmgr.proxyTitle")}</h4>
+            {proxyDetected && <span className="text-body text-emerald-400 font-mono">{t("pkgmgr.configured")}</span>}
           </div>
           {proxyDetected && (
-            <p className="font-mono text-[13px] text-slate-300 truncate" title={proxyDetected}>{t("pkgmgr.currentProxy")} {proxyDetected}</p>
+            <p className="font-mono text-title text-slate-300 truncate" title={proxyDetected}>{t("pkgmgr.currentProxy")} {proxyDetected}</p>
           )}
           <div className="flex items-center gap-1.5">
             <input type="text" value={proxyInput} onChange={(e) => setProxyInput(e.target.value)} disabled={!projectStatus?.managed}
-              className="flex-1 glass-input px-3 py-1.5 text-[13px] font-mono disabled:opacity-50 disabled:cursor-not-allowed" placeholder="http://proxy.example.com:8080" />
+              className="flex-1 glass-input px-3 py-1.5 text-title font-mono disabled:opacity-50 disabled:cursor-not-allowed" placeholder="http://proxy.example.com:8080" />
             <button onClick={handleSetProxy} disabled={!projectStatus?.managed || settingProxy}
-              className="px-3 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-ctl text-[13px] font-semibold cursor-pointer flex-shrink-0" title={!projectStatus?.managed ? "请先托管项目" : ""}>
+              className="px-3 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-ctl text-title font-semibold cursor-pointer flex-shrink-0" title={!projectStatus?.managed ? "请先托管项目" : ""}>
               {settingProxy ? t("pkgmgr.settingProxy") : proxyInput ? t("pkgmgr.setProxy") : t("pkgmgr.clearProxy")}
             </button>
           </div>
-          <p className="text-[12px] text-slate-500">{t("pkgmgr.proxyHint")}</p>
+          <p className="text-body text-slate-500">{t("pkgmgr.proxyHint")}</p>
         </div>
       )}
 
@@ -1474,19 +1474,19 @@ export function PackageManagerTab({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Package className="w-4 h-4 text-[var(--module-accent)]" />
-              <h4 className="text-xs font-semibold text-white">{t("pkgmgr.packagesTitle")}</h4>
+              <h4 className="text-body font-semibold text-white">{t("pkgmgr.packagesTitle")}</h4>
             </div>
-            <button onClick={loadPackages} disabled={loadingPackages} className="flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded-ctl text-[13px] border border-white/5 cursor-pointer">
+            <button onClick={loadPackages} disabled={loadingPackages} className="flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded-ctl text-title border border-white/5 cursor-pointer">
               <RefreshCw className={`w-3 h-3 ${loadingPackages ? "animate-spin" : ""}`} />{t("pkgmgr.refresh")}
             </button>
           </div>
           {loadingPackages ? (
-            <div className="flex items-center gap-2 text-[13px] text-slate-400 py-2"><Loader className="w-3 h-3 animate-spin text-[var(--module-accent)]" />{t("pkgmgr.scanning")}</div>
+            <div className="flex items-center gap-2 text-title text-slate-400 py-2"><Loader className="w-3 h-3 animate-spin text-[var(--module-accent)]" />{t("pkgmgr.scanning")}</div>
           ) : packages.length === 0 ? (
-            <p className="text-[13px] text-slate-500">{t("pkgmgr.noPackages")}</p>
+            <p className="text-title text-slate-500">{t("pkgmgr.noPackages")}</p>
           ) : (
             <div className="max-h-[250px] overflow-y-auto">
-              <table className="w-full text-left text-[13px]">
+              <table className="w-full text-left text-title">
                 <thead><tr className="text-slate-500 border-b border-white/5"><th className="p-2">{t("pkgmgr.colName")}</th><th className="p-2 w-20">{t("pkgmgr.colCurrent")}</th><th className="p-2 w-20">{t("pkgmgr.colLatest")}</th><th className="p-2 w-16">{t("pkgmgr.colStatus")}</th><th className="p-2 w-16 text-center">{t("pkgmgr.colAction")}</th></tr></thead>
                 <tbody className="divide-y divide-white/5">
                   {packages.map((p) => (
@@ -1496,9 +1496,9 @@ export function PackageManagerTab({
                       </td>
                       <td className="p-2 font-mono">{p.current_version}</td>
                       <td className="p-2 font-mono text-slate-400">{p.latest_version}</td>
-                      <td className="p-2">{p.status === "outdated" ? <span className="text-[11px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">{t("pkgmgr.upgradable")}</span> : <span className="text-[11px] px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">{t("pkgmgr.latestShort")}</span>}</td>
+                      <td className="p-2">{p.status === "outdated" ? <span className="text-caption px-1 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">{t("pkgmgr.upgradable")}</span> : <span className="text-caption px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">{t("pkgmgr.latestShort")}</span>}</td>
                       <td className="p-2 text-center">
-                        {p.status === "outdated" && <button onClick={() => handleUpgradePackage(p.name)} disabled={!projectStatus?.managed || upgradingPkg === p.name} className="px-2 py-0.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded text-[11px] font-semibold cursor-pointer" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>{upgradingPkg === p.name ? t("pkgmgr.upgradingPkg") : t("pkgmgr.upgradePkg")}</button>}
+                        {p.status === "outdated" && <button onClick={() => handleUpgradePackage(p.name)} disabled={!projectStatus?.managed || upgradingPkg === p.name} className="px-2 py-0.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded text-caption font-semibold cursor-pointer" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>{upgradingPkg === p.name ? t("pkgmgr.upgradingPkg") : t("pkgmgr.upgradePkg")}</button>}
                       </td>
                     </tr>
                   ))}

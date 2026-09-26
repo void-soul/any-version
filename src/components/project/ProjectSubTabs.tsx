@@ -103,14 +103,14 @@ export function VersionsTab({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Loader className="w-4 h-4 text-[var(--module-accent)] animate-spin" />
-              <h4 className="text-xs font-semibold text-[var(--module-accent)]">
+              <h4 className="text-body font-semibold text-[var(--module-accent)]">
                 {t("projsub.installing", { name: project.display_name, ver: currentVersionNumber })}
               </h4>
             </div>
             {onCancelInstall && (
               <button
                 onClick={onCancelInstall}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-ctl bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 text-[11px] font-semibold border border-red-500/20 cursor-pointer transition-all"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-ctl bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 text-caption font-semibold border border-red-500/20 cursor-pointer transition-all"
                 title={t("projsub.cancelInstall")}
               >
                 <X className="w-3 h-3" /> {t("projsub.cancelInstall")}
@@ -131,7 +131,7 @@ export function VersionsTab({
                     <div className={`flex-1 h-0.5 rounded-full ${isCompleted ? "bg-emerald-500" : isActive ? "bg-[var(--module-accent)]" : "bg-white/10"}`} />
                   )}
                   <div className="flex items-center gap-1.5">
-                    <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold border ${isCompleted
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center text-caption font-bold border ${isCompleted
                       ? "bg-emerald-500 text-white border-emerald-500"
                       : isActive
                         ? "bg-[var(--module-accent)] text-white border-[var(--module-accent)] animate-pulse"
@@ -139,7 +139,7 @@ export function VersionsTab({
                       }`}>
                       {isCompleted ? <Check className="w-3 h-3" /> : idx + 1}
                     </div>
-                    <span className={`text-[13px] font-medium ${isActive ? "text-[var(--module-accent)]" : isCompleted ? "text-emerald-400" : "text-slate-500"}`}>
+                    <span className={`text-title font-medium ${isActive ? "text-[var(--module-accent)]" : isCompleted ? "text-emerald-400" : "text-slate-500"}`}>
                       {step}
                     </span>
                   </div>
@@ -151,11 +151,11 @@ export function VersionsTab({
           {/* 下载进度条 */}
           {downloadProgress && installStep === t("projsub.stepDownload") && (
             <div className="space-y-2">
-              <div className="flex items-center justify-between text-[13px]">
+              <div className="flex items-center justify-between text-title">
                 <span className="text-slate-400">{t("projsub.downloadProgress", { ver: currentVersionNumber })}</span>
                 <div className="flex items-center gap-3">
                   {downloadProgress.speed_str && (
-                    <span className="text-cyan-400 font-mono font-semibold text-[11px]">
+                    <span className="text-cyan-400 font-mono font-semibold text-caption">
                       ↓ {downloadProgress.speed_str}
                     </span>
                   )}
@@ -168,7 +168,7 @@ export function VersionsTab({
                   style={{ width: `${downloadProgress.pct}%` }}
                 />
               </div>
-              <div className="flex items-center justify-between text-[13px] text-slate-500">
+              <div className="flex items-center justify-between text-title text-slate-500">
                 <span>{(downloadProgress.downloaded / 1024 / 1024).toFixed(1)} MB</span>
                 <span>{(downloadProgress.total / 1024 / 1024).toFixed(1)} MB</span>
               </div>
@@ -176,7 +176,7 @@ export function VersionsTab({
           )}
 
           {/* 当前步骤文字说明 */}
-          <p className="text-[13px] text-slate-400">
+          <p className="text-title text-slate-400">
             {installStep === t("projsub.stepDownload") && t("projsub.dlHint", { ver: currentVersionNumber })}
             {installStep === t("projsub.stepExtract") && t("projsub.extractHint", { ver: currentVersionNumber })}
             {installStep === t("projsub.stepLink") && t("projsub.linkHint", { ver: currentVersionNumber })}
@@ -188,11 +188,11 @@ export function VersionsTab({
       {/* 已安装版本 */}
       <div className="space-y-3">
         <div>
-          <h4 className="text-xs font-semibold text-slate-300">{t("projsub.localVersionsTitle")}</h4>
-          <p className="text-[13px] text-slate-500 mt-0.5">{t("projsub.localVersionsDesc")}</p>
+          <h4 className="text-body font-semibold text-slate-300">{t("projsub.localVersionsTitle")}</h4>
+          <p className="text-title text-slate-500 mt-0.5">{t("projsub.localVersionsDesc")}</p>
         </div>
         {!project.installed_versions || project.installed_versions.length === 0 ? (
-          <p className="text-[11px] text-slate-500">{t("projsub.noLocalVersions")}</p>
+          <p className="text-caption text-slate-500">{t("projsub.noLocalVersions")}</p>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {project.installed_versions.map((v) => {
@@ -206,9 +206,9 @@ export function VersionsTab({
                     }`}
                 >
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs font-medium">{v}</span>
+                    <span className="font-mono text-body font-medium">{v}</span>
                     {isActive && (
-                      <span className="px-1.5 py-0.5 rounded text-[11px] bg-[var(--module-accent)] text-white font-bold">{t("projsub.current")}</span>
+                      <span className="px-1.5 py-0.5 rounded text-caption bg-[var(--module-accent)] text-white font-bold">{t("projsub.current")}</span>
                     )}
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -216,7 +216,7 @@ export function VersionsTab({
                       <button
                         onClick={() => onUse(v)}
                         disabled={isOperating || !project.managed || !project.delegation?.version_control}
-                        className="p-1.5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed rounded-ctl text-slate-400 hover:text-slate-200 text-[13px] cursor-pointer transition-all flex items-center gap-0.5"
+                        className="p-1.5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed rounded-ctl text-slate-400 hover:text-slate-200 text-title cursor-pointer transition-all flex items-center gap-0.5"
                         title={
                           !project.managed 
                             ? t("projsub.needHostToEnable") 
@@ -491,7 +491,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
             {t("projsub.disableConfirmVars", { count: clearVars.length })}
           </p>
           {clearVars.map((v) => (
-            <p key={v.name} className="font-mono text-[11px] break-all pl-2">
+            <p key={v.name} className="font-mono text-caption break-all pl-2">
               • {v.name}
               <span className="text-slate-500">　[{levelLabel(v.level)}]　{v.current_value ?? t("projsub.notSet")}</span>
             </p>
@@ -501,7 +501,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
         {keptVars.length > 0 && (
           <div className="space-y-0.5">
             <p className="text-emerald-300 font-semibold">{t("projsub.disableConfirmKept")}</p>
-            <p className="font-mono text-[11px] break-all pl-2">
+            <p className="font-mono text-caption break-all pl-2">
               • {keptVars.map((v) => v.name).join("　• ")}
             </p>
           </div>
@@ -512,7 +512,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
             {t("projsub.disableConfirmPathUser", { count: up.length })}
           </p>
           {up.map((p) => (
-            <p key={p} className="font-mono text-[11px] break-all pl-2 text-slate-400">• {p}</p>
+            <p key={p} className="font-mono text-caption break-all pl-2 text-slate-400">• {p}</p>
           ))}
         </div>
 
@@ -521,7 +521,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
             {t("projsub.disableConfirmPathSystem", { count: sp.length })}
           </p>
           {sp.map((p) => (
-            <p key={p} className="font-mono text-[11px] break-all pl-2 text-slate-400">• {p}</p>
+            <p key={p} className="font-mono text-caption break-all pl-2 text-slate-400">• {p}</p>
           ))}
         </div>
 
@@ -611,13 +611,13 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
       return (
         <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
-            <span className={`text-[12px] font-semibold ${accentText}`}>
+            <span className={`text-body font-semibold ${accentText}`}>
               {t("projsub.wfTitle", { step: 1, total: totalSteps, label: stepLabels.method })}
             </span>
-            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
+            <button onClick={closeWorkflow} className="text-caption text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
           </div>
           <div className="space-y-1.5">
-            <p className="text-[12px] text-slate-300">{t("projsub.pickMethod")}</p>
+            <p className="text-body text-slate-300">{t("projsub.pickMethod")}</p>
             <label className={`flex items-start gap-2 p-2.5 rounded-ctl cursor-pointer transition-all border ${workflowMethod === "junction"
               ? `${accentBorder} bg-white/5`
               : "border-white/5 hover:bg-white/[0.02]"
@@ -625,8 +625,8 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
               <input type="radio" name="wf_method" value="junction" checked={workflowMethod === "junction"}
                 onChange={() => setWorkflowMethod("junction")} className="mt-0.5" />
               <div>
-                <span className="text-[12px] font-semibold text-slate-200">{t("projsub.optAJunction")}</span>
-                <p className="text-[13px] text-slate-500 mt-0.5">
+                <span className="text-body font-semibold text-slate-200">{t("projsub.optAJunction")}</span>
+                <p className="text-title text-slate-500 mt-0.5">
                   {t("projsub.optADesc")}
                 </p>
               </div>
@@ -638,8 +638,8 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
               <input type="radio" name="wf_method" value="point" checked={workflowMethod === "point"}
                 onChange={() => setWorkflowMethod("point")} className="mt-0.5" />
               <div>
-                <span className="text-[12px] font-semibold text-purple-300">{t("projsub.optBPoint")}</span>
-                <p className="text-[13px] text-slate-500 mt-0.5">
+                <span className="text-body font-semibold text-purple-300">{t("projsub.optBPoint")}</span>
+                <p className="text-title text-slate-500 mt-0.5">
                   {t("projsub.optBDesc")}
                 </p>
               </div>
@@ -647,7 +647,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
           </div>
           <div className="flex justify-end">
             <button onClick={workflowNext}
-              className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors`}>
+              className={`px-3 py-1 ${btnBg} text-white rounded text-caption font-semibold cursor-pointer transition-colors`}>
               {t("projsub.nextStep")}
             </button>
           </div>
@@ -660,23 +660,23 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
       return (
         <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
-            <span className={`text-[12px] font-semibold ${accentText}`}>
+            <span className={`text-body font-semibold ${accentText}`}>
               {t("projsub.wfTitle", { step: 2, total: totalSteps, label: stepLabels.paths })}
             </span>
-            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
+            <button onClick={closeWorkflow} className="text-caption text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
           </div>
 
           {workflowMethod === "junction" ? (
             <>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-caption text-slate-400">
                 <span className="font-semibold text-slate-300">{t("projsub.junctionModeDesc")}</span> — {t("projsub.linkFrom")} → {t("projsub.linkTo")}
               </p>
               <div className="space-y-1.5">
                 <div>
-                  <label className="text-[13px] text-slate-500 block mb-0.5">{t("projsub.linkFrom")}</label>
+                  <label className="text-title text-slate-500 block mb-0.5">{t("projsub.linkFrom")}</label>
                   <div className="flex items-center gap-1">
                     <input type="text" value={workflowLinkPath} onChange={(e) => setWorkflowLinkPath(e.target.value)}
-                      className="flex-1 glass-input px-1.5 py-1 text-[12px] font-mono" placeholder={t("projsub.linkFromPh")} />
+                      className="flex-1 glass-input px-1.5 py-1 text-body font-mono" placeholder={t("projsub.linkFromPh")} />
                     <button onClick={() => browseWorkflowPath(setWorkflowLinkPath)}
                       className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
                       <FolderOpen className="w-3 h-3" />
@@ -684,10 +684,10 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                   </div>
                 </div>
                 <div>
-                  <label className="text-[13px] text-slate-500 block mb-0.5">{t("projsub.linkTo")}</label>
+                  <label className="text-title text-slate-500 block mb-0.5">{t("projsub.linkTo")}</label>
                   <div className="flex items-center gap-1">
                     <input type="text" value={workflowActualPath} onChange={(e) => setWorkflowActualPath(e.target.value)}
-                      className="flex-1 glass-input px-1.5 py-1 text-[12px] font-mono" placeholder={t("projsub.linkToPh", { id: mgr.id })} />
+                      className="flex-1 glass-input px-1.5 py-1 text-body font-mono" placeholder={t("projsub.linkToPh", { id: mgr.id })} />
                     <button onClick={() => browseWorkflowPath(setWorkflowActualPath)}
                       className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
                       <FolderOpen className="w-3 h-3" />
@@ -698,14 +698,14 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
             </>
           ) : (
             <>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-caption text-slate-400">
                 <span className="font-semibold text-purple-300">{t("projsub.pointModeDesc")}</span> {t("projsub.pointModeHint")}
               </p>
               <div>
-                <label className="text-[13px] text-slate-500 block mb-0.5">{t("projsub.pointPathLabel")}</label>
+                <label className="text-title text-slate-500 block mb-0.5">{t("projsub.pointPathLabel")}</label>
                 <div className="flex items-center gap-1">
                   <input type="text" value={workflowPointPath} onChange={(e) => setWorkflowPointPath(e.target.value)}
-                    className="flex-1 glass-input px-1.5 py-1 text-[12px] font-mono"
+                    className="flex-1 glass-input px-1.5 py-1 text-body font-mono"
                     placeholder={mgr.cache_path || t("projsub.pointPathPh")} />
                   <button onClick={() => browseWorkflowPath(setWorkflowPointPath)}
                     className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
@@ -718,35 +718,35 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
 
           {/* 旧文件处理方式（本卡片默认为移动/保留） */}
           <div className="pt-1 space-y-1">
-            <p className="text-[13px] text-slate-400 font-semibold">{t("projsub.oldFilesLabel")}</p>
+            <p className="text-title text-slate-400 font-semibold">{t("projsub.oldFilesLabel")}</p>
             <label className={`flex items-start gap-2 p-2 rounded-ctl cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)]" : "border-white/5 hover:bg-white/[0.02]"}`}>
               <input type="radio" name="wf_file_action" value="move" checked={workflowFileAction === "move"}
                 onChange={() => setWorkflowFileAction("move")} className="mt-0.5" />
               <div>
-                <span className="text-[13px] font-semibold text-[var(--module-accent)]">{t("projsub.moveOld")}</span>
-                <p className="text-[11px] text-slate-500 mt-0.5">{t("projsub.moveOldDesc", { action: workflowMethod === "junction" ? t("projsub.actionCreateLink") : t("projsub.actionModifyEnv") })}</p>
+                <span className="text-title font-semibold text-[var(--module-accent)]">{t("projsub.moveOld")}</span>
+                <p className="text-caption text-slate-500 mt-0.5">{t("projsub.moveOldDesc", { action: workflowMethod === "junction" ? t("projsub.actionCreateLink") : t("projsub.actionModifyEnv") })}</p>
               </div>
             </label>
             <label className={`flex items-start gap-2 p-2 rounded-ctl cursor-pointer border transition-all ${workflowFileAction === "keep" ? "border-slate-500/30 bg-slate-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
               <input type="radio" name="wf_file_action" value="keep" checked={workflowFileAction === "keep"}
                 onChange={() => setWorkflowFileAction("keep")} className="mt-0.5" />
               <div>
-                <span className="text-[13px] font-semibold text-slate-300">{t("projsub.keepOld")}</span>
-                <p className="text-[11px] text-slate-500 mt-0.5">{t("projsub.keepOldDesc", { action: workflowMethod === "junction" ? t("projsub.actionLinkToNew") : t("projsub.actionModifyEnv") })}</p>
+                <span className="text-title font-semibold text-slate-300">{t("projsub.keepOld")}</span>
+                <p className="text-caption text-slate-500 mt-0.5">{t("projsub.keepOldDesc", { action: workflowMethod === "junction" ? t("projsub.actionLinkToNew") : t("projsub.actionModifyEnv") })}</p>
               </div>
             </label>
           </div>
 
           <div className="flex justify-between">
             <button onClick={workflowPrev}
-              className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[11px] font-semibold cursor-pointer transition-colors">
+              className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-caption font-semibold cursor-pointer transition-colors">
               {t("projsub.prevStep")}
             </button>
             <button onClick={workflowNext}
               disabled={workflowMethod === "junction"
                 ? (!workflowLinkPath || !workflowActualPath || workflowLinkPath === workflowActualPath)
                 : !workflowPointPath}
-              className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed`}>
+              className={`px-3 py-1 ${btnBg} text-white rounded text-caption font-semibold cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed`}>
               {t("projsub.preview")}
             </button>
           </div>
@@ -759,15 +759,15 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
       return (
         <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
-            <span className={`text-[12px] font-semibold ${accentText}`}>
+            <span className={`text-body font-semibold ${accentText}`}>
               {t("projsub.wfTitle", { step: 3, total: totalSteps, label: stepLabels.confirm })}
             </span>
-            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
+            <button onClick={closeWorkflow} className="text-caption text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
           </div>
 
           <div className="p-3 bg-black/20 rounded-ctl border border-white/5 space-y-2">
-            <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">{t("projsub.opPreview")}</p>
-            <div className="text-[12px] text-slate-300 space-y-1 font-mono">
+            <p className="text-caption text-slate-400 font-semibold uppercase tracking-wider">{t("projsub.opPreview")}</p>
+            <div className="text-body text-slate-300 space-y-1 font-mono">
               {workflowMethod === "junction" ? (
                 <>
                   <div><span className="text-slate-500">{t("projsub.mode")}</span> {t("projsub.modeJunction")}</div>
@@ -786,11 +786,11 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
 
           <div className="flex justify-between">
             <button onClick={workflowPrev}
-              className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[11px] font-semibold cursor-pointer transition-colors">
+              className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-caption font-semibold cursor-pointer transition-colors">
               {t("projsub.prevStep")}
             </button>
             <button onClick={executeWorkflow}
-              className={`px-4 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors flex items-center gap-1`}>
+              className={`px-4 py-1 ${btnBg} text-white rounded text-caption font-semibold cursor-pointer transition-colors flex items-center gap-1`}>
               <CheckCircle className="w-3 h-3" />
               {t("projsub.confirmExec")}
             </button>
@@ -808,13 +808,13 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
       return (
         <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
-            <span className={`text-[12px] font-semibold ${accentText}`}>
+            <span className={`text-body font-semibold ${accentText}`}>
               {t("projsub.wfTitle", { step: 4, total: totalSteps, label: stepLabels.executing })}
             </span>
           </div>
 
           <div className="p-3 bg-black/20 rounded-ctl border border-white/5 space-y-3">
-            <div className="flex items-center justify-between text-xs text-slate-300">
+            <div className="flex items-center justify-between text-body text-slate-300">
               <span>{workflowProgress?.stage || t("projsub.executingStage")}</span>
               <span className="font-mono">{progressPercent}%</span>
             </div>
@@ -825,7 +825,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
             </div>
 
             {workflowProgress && (
-              <div className="text-[11px] text-slate-500 font-mono space-y-0.5">
+              <div className="text-caption text-slate-500 font-mono space-y-0.5">
                 <div className="truncate">{t("projsub.wfFile", { name: workflowProgress.file_name || "-" })}</div>
                 <div>{t("projsub.wfProgress", { cur: workflowProgress.current, total: workflowProgress.total })}</div>
               </div>
@@ -840,22 +840,22 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
       return (
         <div className={`mt-3 p-3 rounded-card border border-emerald-500/20 bg-emerald-500/10 space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
-            <span className="text-[12px] font-semibold text-emerald-400">
+            <span className="text-body font-semibold text-emerald-400">
               {t("projsub.wfDoneTitle", { label: stepLabels.done })}
             </span>
           </div>
 
           <div className="p-3 bg-black/20 rounded-ctl border border-white/5 space-y-1">
-            <p className="text-[12px] text-emerald-300 font-semibold flex items-center gap-1">
+            <p className="text-body text-emerald-300 font-semibold flex items-center gap-1">
               <CheckCircle className="w-3.5 h-3.5" />
               {t("projsub.wfDoneMsg")}
             </p>
-            <p className="text-[11px] text-slate-500 mt-1">{t("projsub.wfDoneDesc")}</p>
+            <p className="text-caption text-slate-500 mt-1">{t("projsub.wfDoneDesc")}</p>
           </div>
 
           <div className="flex justify-end">
             <button onClick={closeWorkflow}
-              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-semibold cursor-pointer transition-colors">
+              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-caption font-semibold cursor-pointer transition-colors">
               {t("projsub.closeWizard")}
             </button>
           </div>
@@ -939,9 +939,9 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <span className="text-xs font-semibold text-slate-300">{t("projsub.envVarsTitle")}</span>
-            <span className="text-[13px] text-slate-500 ml-1.5">{t("projsub.envVarCount", { count: vars.length })}</span>
-            <p className="text-[13px] text-slate-500 mt-0.5">{t("projsub.envVarsDesc")}</p>
+            <span className="text-body font-semibold text-slate-300">{t("projsub.envVarsTitle")}</span>
+            <span className="text-title text-slate-500 ml-1.5">{t("projsub.envVarCount", { count: vars.length })}</span>
+            <p className="text-title text-slate-500 mt-0.5">{t("projsub.envVarsDesc")}</p>
           </div>
           {onRepairEnv && (
             <button
@@ -959,7 +959,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
               }}
               disabled={isOperating || repairingEnv}
               title={t("projsub.repairTitle")}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-ctl bg-amber-500/10 hover:bg-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed text-amber-300 border border-amber-500/20 text-[13px] font-semibold cursor-pointer transition-all whitespace-nowrap"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-ctl bg-amber-500/10 hover:bg-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed text-amber-300 border border-amber-500/20 text-title font-semibold cursor-pointer transition-all whitespace-nowrap"
             >
               {repairingEnv ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
               {t("projsub.repairEnv")}
@@ -967,10 +967,10 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
           )}
         </div>
         {vars.length === 0 ? (
-          <p className="text-[11px] text-slate-500">{t("projsub.noEnvVars")}</p>
+          <p className="text-caption text-slate-500">{t("projsub.noEnvVars")}</p>
         ) : (
           <div className="border border-white/5 rounded-card overflow-hidden overflow-x-auto">
-            <table className="w-full text-left border-collapse text-[13px] min-w-[450px]">
+            <table className="w-full text-left border-collapse text-title min-w-[450px]">
               <thead>
                 <tr className="bg-white/3 border-b border-white/5 text-slate-400 font-medium">
                   <th className="p-2.5 w-32">{t("projsub.thVarName")}</th>
@@ -987,11 +987,11 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                     <td className="p-2.5 font-semibold text-slate-200">{v.name}</td>
                     <td className="p-2.5">
                       {v.tier === "core" ? (
-                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[12px] font-semibold">Core</span>
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-body font-semibold">Core</span>
                       ) : v.tier === "package" ? (
-                        <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-[12px] font-semibold">Package</span>
+                        <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-body font-semibold">Package</span>
                       ) : (
-                        <span className="px-1.5 py-0.5 rounded bg-white/5 text-slate-500 border border-white/5 text-[12px]">-</span>
+                        <span className="px-1.5 py-0.5 rounded bg-white/5 text-slate-500 border border-white/5 text-body">-</span>
                       )}
                     </td>
                     <td className="p-2.5 text-slate-400 font-sans">{v.desc}</td>
@@ -1000,11 +1000,11 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                     </td>
                     <td className="p-2.5">
                       {v.source === "HKCU" ? (
-                        <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-[12px] font-semibold">{t("projsub.userLevel")}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-body font-semibold">{t("projsub.userLevel")}</span>
                       ) : v.source === "HKLM" ? (
-                        <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[12px] font-semibold">{t("projsub.systemLevel")}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-body font-semibold">{t("projsub.systemLevel")}</span>
                       ) : (
-                        <span className="px-1.5 py-0.5 rounded bg-white/5 text-slate-500 border border-white/5 text-[12px]">{t("projsub.notSet")}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-white/5 text-slate-500 border border-white/5 text-body">{t("projsub.notSet")}</span>
                       )}
                     </td>
                     <td className="p-2.5">
@@ -1029,14 +1029,14 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
       {managedPaths.length > 0 && (
         <div className="border-t border-white/5 pt-4">
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-xs font-semibold text-slate-300">{t("projsub.managedPathsTitle")}</span>
+            <span className="text-body font-semibold text-slate-300">{t("projsub.managedPathsTitle")}</span>
             {!fullyManaged && (
-              <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[12px] font-semibold">{t("projsub.managedPathsResidual")}</span>
+              <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-body font-semibold">{t("projsub.managedPathsResidual")}</span>
             )}
-            <span className="text-[12px] text-slate-500">{t("projsub.managedPathsHint")}</span>
+            <span className="text-body text-slate-500">{t("projsub.managedPathsHint")}</span>
           </div>
           <div className="border border-white/5 rounded-card overflow-hidden overflow-x-auto">
-            <table className="w-full text-left border-collapse text-[13px] min-w-[420px]">
+            <table className="w-full text-left border-collapse text-title min-w-[420px]">
               <thead>
                 <tr className="bg-white/3 border-b border-white/5 text-slate-400 font-medium">
                   <th className="p-2.5">{t("projsub.thManagedPath")}</th>
@@ -1054,12 +1054,12 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                   const ok = p.in_path && p.exists;
                   return (
                     <tr key={p.path} className="hover:bg-white/1">
-                      <td className="p-2.5 break-all select-text font-mono text-[12px] text-slate-200">{p.path}</td>
+                      <td className="p-2.5 break-all select-text font-mono text-body text-slate-200">{p.path}</td>
                       <td className="p-2.5">
                         {p.kind === "cache_bin" ? (
-                          <span className="px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20 text-[12px] font-semibold">{t("projsub.managedKindCache")}</span>
+                          <span className="px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20 text-body font-semibold">{t("projsub.managedKindCache")}</span>
                         ) : (
-                          <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-[12px] font-semibold">{t("projsub.managedKindSdk")}</span>
+                          <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-body font-semibold">{t("projsub.managedKindSdk")}</span>
                         )}
                       </td>
                       <td className="p-2.5">
@@ -1077,7 +1077,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
               </tbody>
             </table>
           </div>
-          <p className="text-[11px] text-slate-500 mt-1.5">{t("projsub.managedPathsFootnote")}</p>
+          <p className="text-caption text-slate-500 mt-1.5">{t("projsub.managedPathsFootnote")}</p>
         </div>
       )}
 
@@ -1091,27 +1091,27 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
             >
               <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${advanced ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
             </button>
-            <span className="text-xs font-semibold text-slate-300">{t("projsub.advModeTitle")}</span>
+            <span className="text-body font-semibold text-slate-300">{t("projsub.advModeTitle")}</span>
             {advanced && (
-              <span className="px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 text-[11px] font-semibold">{t("projsub.advBadge")}</span>
+              <span className="px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 text-caption font-semibold">{t("projsub.advBadge")}</span>
             )}
           </div>
           {advanced && (
-            <button onClick={loadUserVars} disabled={loadingUserVars} className="flex items-center gap-1 px-2 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[13px] border border-white/5 cursor-pointer">
+            <button onClick={loadUserVars} disabled={loadingUserVars} className="flex items-center gap-1 px-2 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-title border border-white/5 cursor-pointer">
               <RefreshCw className={`w-3 h-3 ${loadingUserVars ? "animate-spin" : ""}`} />{t("projsub.refreshList")}
             </button>
           )}
         </div>
 
         {!advanced ? (
-          <p className="text-[13px] text-slate-500">{t("projsub.advDesc", { name: def?.display_name || t("projsub.project") })}</p>
+          <p className="text-title text-slate-500">{t("projsub.advDesc", { name: def?.display_name || t("projsub.project") })}</p>
         ) : loadingUserVars ? (
-          <div className="flex items-center gap-2 text-[13px] text-slate-400 py-4"><Loader className="w-3 h-3 animate-spin text-[var(--module-accent)]" />{t("projsub.loading")}</div>
+          <div className="flex items-center gap-2 text-title text-slate-400 py-4"><Loader className="w-3 h-3 animate-spin text-[var(--module-accent)]" />{t("projsub.loading")}</div>
         ) : userVars.length === 0 ? (
-          <p className="text-[13px] text-slate-500">{t("projsub.noRuntimeVars")}</p>
+          <p className="text-title text-slate-500">{t("projsub.noRuntimeVars")}</p>
         ) : (
           <div className="border border-white/5 rounded-card overflow-hidden overflow-x-auto">
-            <table className="w-full text-left border-collapse text-[13px]">
+            <table className="w-full text-left border-collapse text-title">
               <thead>
                 <tr className="bg-white/3 border-b border-white/5 text-slate-400 font-medium">
                   <th className="p-2.5 w-40">{t("projsub.thVarName")}</th>
@@ -1132,18 +1132,18 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                       <td className="p-2.5">
                         {isEditing ? (
                           v.options ? (
-                            <select value={editValue} onChange={(e) => setEditValue(e.target.value)} className="glass-input px-2 py-1 text-[13px] font-mono rounded w-full">
+                            <select value={editValue} onChange={(e) => setEditValue(e.target.value)} className="glass-input px-2 py-1 text-title font-mono rounded w-full">
                               <option value="">{t("projsub.unsetOpt")}</option>
                               {v.options.map(o => <option key={o} value={o}>{o}</option>)}
                             </select>
                           ) : v.var_type === "boolean" ? (
-                            <select value={editValue} onChange={(e) => setEditValue(e.target.value)} className="glass-input px-2 py-1 text-[13px] font-mono rounded w-full">
+                            <select value={editValue} onChange={(e) => setEditValue(e.target.value)} className="glass-input px-2 py-1 text-title font-mono rounded w-full">
                               <option value="">{t("projsub.unsetOpt")}</option>
                               <option value="1">{t("projsub.enabled1")}</option>
                               <option value="0">{t("projsub.disabled0")}</option>
                             </select>
                           ) : (
-                            <input type="text" value={editValue} onChange={(e) => setEditValue(e.target.value)} className="glass-input px-2 py-1 text-[13px] font-mono rounded w-full" placeholder={v.placeholder} />
+                            <input type="text" value={editValue} onChange={(e) => setEditValue(e.target.value)} className="glass-input px-2 py-1 text-title font-mono rounded w-full" placeholder={v.placeholder} />
                           )
                         ) : (
                           hasValue ? (
@@ -1159,13 +1159,13 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                       <td className="p-2.5 text-center">
                         {isEditing ? (
                           <div className="flex items-center gap-1 justify-center">
-                            <button onClick={() => handleSetVar(v.name, editValue)} disabled={savingVar === v.name} className="px-2 py-0.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded text-[11px] font-semibold cursor-pointer">
+                            <button onClick={() => handleSetVar(v.name, editValue)} disabled={savingVar === v.name} className="px-2 py-0.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded text-caption font-semibold cursor-pointer">
                               {savingVar === v.name ? t("projsub.saving") : t("projsub.save")}
                             </button>
-                            <button onClick={() => setEditingVar(null)} className="px-2 py-0.5 bg-white/5 hover:bg-white/10 text-slate-400 rounded text-[11px] cursor-pointer">{t("projsub.cancel")}</button>
+                            <button onClick={() => setEditingVar(null)} className="px-2 py-0.5 bg-white/5 hover:bg-white/10 text-slate-400 rounded text-caption cursor-pointer">{t("projsub.cancel")}</button>
                           </div>
                         ) : (
-                          <button onClick={() => { setEditingVar(v.name); setEditValue(v.current_value || ""); }} className="px-2 py-0.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[11px] border border-white/5 cursor-pointer">
+                          <button onClick={() => { setEditingVar(v.name); setEditValue(v.current_value || ""); }} className="px-2 py-0.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-caption border border-white/5 cursor-pointer">
                             {hasValue ? t("projsub.modify") : t("projsub.set")}
                           </button>
                         )}
@@ -1185,19 +1185,19 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
           <div>
             <div className="flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-400" />
-              <h4 className="text-xs font-semibold text-slate-300">{t("projsub.conflictTitle")}</h4>
+              <h4 className="text-body font-semibold text-slate-300">{t("projsub.conflictTitle")}</h4>
             </div>
-            <p className="text-[13px] text-slate-500 mt-0.5">
+            <p className="text-title text-slate-500 mt-0.5">
               {t("projsub.conflictDesc")}
             </p>
           </div>
 
           {loadingConflicts ? (
-            <div className="flex items-center gap-2 text-[13px] text-slate-400 py-2">
+            <div className="flex items-center gap-2 text-title text-slate-400 py-2">
               <Loader className="w-3.5 h-3.5 animate-spin text-[var(--module-accent)]" />{t("projsub.scanningEnv")}
             </div>
           ) : conflictManagers.length === 0 ? (
-            <p className="text-[13px] text-slate-500">{t("projsub.noConflict")}</p>
+            <p className="text-title text-slate-500">{t("projsub.noConflict")}</p>
           ) : (
             <div className="space-y-4">
               {conflictManagers.map((mgr) => {
@@ -1216,11 +1216,11 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                     <div className="flex items-center justify-between pb-2 border-b border-white/3">
                       <span className="text-[14px] font-semibold text-slate-200">{mgr.display_name}</span>
                       {mgr.is_disabled ? (
-                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px] font-semibold">{t("projsub.statusExclusive")}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-caption font-semibold">{t("projsub.statusExclusive")}</span>
                       ) : mgr.installed ? (
-                        <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[11px] font-semibold animate-pulse">{t("projsub.statusActive")}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-caption font-semibold animate-pulse">{t("projsub.statusActive")}</span>
                       ) : (
-                        <span className="px-1.5 py-0.5 rounded bg-white/5 text-slate-500 border border-white/5 text-[11px] font-semibold">{t("projsub.statusNotRunning")}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-white/5 text-slate-500 border border-white/5 text-caption font-semibold">{t("projsub.statusNotRunning")}</span>
                       )}
                     </div>
 
@@ -1229,37 +1229,37 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                       <div className="p-3 bg-white/2 rounded-card border border-white/5 space-y-3">
                         <div className="flex items-center gap-1.5">
                           <HardDrive className="w-3.5 h-3.5 text-[var(--module-accent)]" />
-                          <span className="text-[12px] font-semibold text-slate-300">{t("projsub.cacheDirTitle")}</span>
+                          <span className="text-body font-semibold text-slate-300">{t("projsub.cacheDirTitle")}</span>
                         </div>
                         
                         {/* 路径与大小状态 */}
-                        <div className="flex items-start justify-between text-[12px] p-2.5 bg-black/20 rounded-ctl border border-white/3">
+                        <div className="flex items-start justify-between text-body p-2.5 bg-black/20 rounded-ctl border border-white/3">
                           <div className="space-y-1 flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
                               {hasEnvConfigured ? (
-                                <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-[10px] inline-flex items-center font-mono">
+                                <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-tiny inline-flex items-center font-mono">
                                   {t("projsub.envConfigured")}
                                 </span>
                               ) : (
-                                <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 text-[10px] inline-flex items-center">
+                                <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 text-tiny inline-flex items-center">
                                   {t("projsub.envNotConfigured")}
                                 </span>
                               )}
                               
                               {isJunction ? (
-                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] inline-flex items-center font-semibold">
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-tiny inline-flex items-center font-semibold">
                                   {t("projsub.migratedJunction")}
                                 </span>
                               ) : (
-                                <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 text-[10px] inline-flex items-center">
+                                <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 text-tiny inline-flex items-center">
                                   {t("projsub.defaultPath")}
                                 </span>
                               )}
                             </div>
-                            <p className="font-mono text-[12px] text-slate-300 break-all mt-1">{mgr.cache_path}</p>
+                            <p className="font-mono text-body text-slate-300 break-all mt-1">{mgr.cache_path}</p>
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0 ml-3">
-                            <span className="text-slate-300 font-mono text-[12px] font-semibold bg-white/5 px-2 py-0.5 rounded-md border border-white/5">
+                            <span className="text-slate-300 font-mono text-body font-semibold bg-white/5 px-2 py-0.5 rounded-md border border-white/5">
                               {mgr.cache_size}
                             </span>
                           </div>
@@ -1270,7 +1270,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                           <button
                             onClick={() => handleConflictAction(mgr.id, "clean")}
                             disabled={isOperating || isOperatingMgr || workflowManagerId !== null}
-                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-ctl bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all font-semibold text-[11px]"
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-ctl bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all font-semibold text-caption"
                           >
                             <Trash2 className="w-3 h-3" />
                             {t("projsub.cleanCache")}
@@ -1279,7 +1279,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                           <button
                             onClick={() => openWorkflow(mgr)}
                             disabled={isOperating || isOperatingMgr || workflowManagerId !== null}
-                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-ctl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 font-semibold text-[11px] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-ctl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 font-semibold text-caption cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                           >
                             <FolderSync className="w-3 h-3" />
                             {t("projsub.startChange")}
@@ -1295,15 +1295,15 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                     <div className="p-3 bg-white/2 rounded-card border border-white/5 space-y-3">
                       <div className="flex items-center gap-1.5">
                         <Wrench className="w-3.5 h-3.5 text-amber-400" />
-                        <span className="text-[12px] font-semibold text-slate-300">{t("projsub.conflictRegVars")}</span>
+                        <span className="text-body font-semibold text-slate-300">{t("projsub.conflictRegVars")}</span>
                       </div>
 
-                      <div className="text-[12px] text-slate-400 space-y-1.5 bg-black/20 p-2.5 rounded-ctl border border-white/3">
+                      <div className="text-body text-slate-400 space-y-1.5 bg-black/20 p-2.5 rounded-ctl border border-white/3">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
                           <span className="text-slate-500">{t("projsub.regVar")}</span>
                           {Object.entries(mgr.env_vars_status).map(([key, val]) => (
-                            <span key={key} className="font-mono text-[11px] bg-white/3 px-1.5 py-0.5 rounded border border-white/5">
-                              {key}={val ? <span className="text-slate-300 break-all select-text">"{val as string}"</span> : <span className="text-slate-600 font-sans text-[10px]">{t("projsub.notSet")}</span>}
+                            <span key={key} className="font-mono text-caption bg-white/3 px-1.5 py-0.5 rounded border border-white/5">
+                              {key}={val ? <span className="text-slate-300 break-all select-text">"{val as string}"</span> : <span className="text-slate-600 font-sans text-tiny">{t("projsub.notSet")}</span>}
                             </span>
                           ))}
                         </div>
@@ -1311,11 +1311,11 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                           <div className="pt-1">
                             <span className="text-slate-500">{t("projsub.conflictPathInPath")}</span>
                             {mgr.path_status.map((p: string) => (
-                              <div key={p} className="font-mono text-[11px] text-amber-300/80 break-all select-text ml-4 mt-0.5">• {p}</div>
+                              <div key={p} className="font-mono text-caption text-amber-300/80 break-all select-text ml-4 mt-0.5">• {p}</div>
                             ))}
                           </div>
                         ) : (
-                          <div className="text-emerald-400/80 font-semibold text-[11px] pt-1">{t("projsub.noConflictPath")}</div>
+                          <div className="text-emerald-400/80 font-semibold text-caption pt-1">{t("projsub.noConflictPath")}</div>
                         )}
                       </div>
 
@@ -1324,7 +1324,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                           <button
                             onClick={() => handleConflictAction(mgr.id, "disable")}
                             disabled={isOperating || isOperatingMgr}
-                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-ctl bg-orange-500/10 hover:bg-orange-500/20 text-orange-300 border border-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all font-semibold text-[11px]"
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-ctl bg-orange-500/10 hover:bg-orange-500/20 text-orange-300 border border-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all font-semibold text-caption"
                             title={t("projsub.deactivateTitle")}
                           >
                             <X className="w-3.5 h-3.5" />
@@ -1332,7 +1332,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                           </button>
                         </div>
                       ) : (
-                        <div className="text-[12px] text-emerald-400 font-semibold flex items-center gap-1 bg-emerald-500/5 p-2 rounded-ctl border border-emerald-500/10">
+                        <div className="text-body text-emerald-400 font-semibold flex items-center gap-1 bg-emerald-500/5 p-2 rounded-ctl border border-emerald-500/10">
                           <Check className="w-3.5 h-3.5 text-emerald-400" />
                           {t("projsub.exclusiveMsg")}
                         </div>
@@ -1370,8 +1370,8 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
     return (
       <div className="p-8 text-center text-slate-500">
         <Activity className="w-10 h-10 mx-auto text-slate-600 mb-3" />
-        <p className="text-xs font-medium text-slate-400">{t("projsub.noSvcInfo")}</p>
-        <p className="text-[13px] text-slate-500 mt-1">{t("projsub.noSvcDesc")}</p>
+        <p className="text-body font-medium text-slate-400">{t("projsub.noSvcInfo")}</p>
+        <p className="text-title text-slate-500 mt-1">{t("projsub.noSvcDesc")}</p>
       </div>
     );
   }
@@ -1396,33 +1396,33 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
       <div className="glass-panel border border-white/5 rounded-panel p-5 bg-white/2 space-y-4">
         <div className="flex items-center gap-2 border-b border-white/5 pb-3">
           <Activity className="w-4 h-4 text-[var(--module-accent)]" />
-          <h4 className="text-xs font-semibold text-white">{t("projsub.svcConsole")}</h4>
+          <h4 className="text-body font-semibold text-white">{t("projsub.svcConsole")}</h4>
         </div>
 
         {externallyRunning && (
-          <div className="p-3 rounded-card border border-sky-500/20 bg-sky-500/10 text-[12px] text-sky-200 flex items-start gap-2">
+          <div className="p-3 rounded-card border border-sky-500/20 bg-sky-500/10 text-body text-sky-200 flex items-start gap-2">
             <Info className="w-4 h-4 text-sky-400 flex-shrink-0 mt-0.5" />
             <span>{t("projsub.svcExternal", { proc: svc.process_name ? t("projsub.procInfo", { name: svc.process_name, pid: svc.pid ? t("projsub.pidInfo", { pid: svc.pid }) : "" }) : "" })}</span>
           </div>
         )}
 
         {hasConflict && (
-          <div className="p-3 rounded-card border border-amber-500/20 bg-amber-500/10 text-[12px] text-amber-200 flex items-start gap-2">
+          <div className="p-3 rounded-card border border-amber-500/20 bg-amber-500/10 text-body text-amber-200 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
             <span>{t("projsub.portOccupied", { port: svc.port || def?.default_port || "?", proc: svc.process_name || t("projsub.otherProcess") })}</span>
           </div>
         )}
 
         {notInstalled && (
-          <div className="p-3 rounded-card border border-slate-500/20 bg-slate-500/10 text-[12px] text-slate-300 flex items-start gap-2">
+          <div className="p-3 rounded-card border border-slate-500/20 bg-slate-500/10 text-body text-slate-300 flex items-start gap-2">
             <Info className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
             <span>{t("projsub.noInstallDir")}</span>
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-body">
           <div className="p-3 bg-black/20 rounded-card border border-white/5 space-y-1.5">
-            <span className="text-[13px] text-slate-400 font-semibold uppercase tracking-wider block">{t("projsub.curStatus")}</span>
+            <span className="text-title text-slate-400 font-semibold uppercase tracking-wider block">{t("projsub.curStatus")}</span>
             <div className="flex items-center gap-2">
               {externallyRunning ? (
                 <span className="px-2.5 py-1 rounded-ctl bg-sky-500/10 text-sky-300 border border-sky-500/20 font-semibold flex items-center gap-1 animate-fadeIn">
@@ -1445,7 +1445,7 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
           </div>
 
           <div className="p-3 bg-black/20 rounded-card border border-white/5 space-y-1">
-            <span className="text-[13px] text-slate-400 font-semibold uppercase tracking-wider block">{t("projsub.runParams")}</span>
+            <span className="text-title text-slate-400 font-semibold uppercase tracking-wider block">{t("projsub.runParams")}</span>
             <div className="text-slate-300 font-mono space-y-0.5">
               <p>{t("projsub.port", { port: svc.port || def?.default_port || "-" })}</p>
               <p>{t("projsub.process", { name: svc.process_name || t("projsub.notDetected") })}</p>
@@ -1456,35 +1456,35 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
             <button
               onClick={onServiceToggle}
               disabled={!canToggle}
-              className={`px-4 py-2 ${svc.running ? "bg-red-600 hover:bg-red-500" : "bg-emerald-600 hover:bg-emerald-500"} disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-card text-xs cursor-pointer shadow-md transition-all flex items-center gap-1`}
+              className={`px-4 py-2 ${svc.running ? "bg-red-600 hover:bg-red-500" : "bg-emerald-600 hover:bg-emerald-500"} disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-card text-body cursor-pointer shadow-md transition-all flex items-center gap-1`}
             >
               {serviceCtrlLoading ? t("projsub.operating") : externallyRunning ? t("projsub.externalRun") : svc.running ? t("projsub.stopSvc") : t("projsub.startSvc")}
             </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs pt-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-body pt-2">
           {svc.install_root && (
             <div className="p-3 bg-black/20 rounded-card border border-white/5">
-              <span className="text-[13px] text-slate-400 font-semibold block">{t("projsub.installDir")}</span>
+              <span className="text-title text-slate-400 font-semibold block">{t("projsub.installDir")}</span>
               <p className="font-mono text-slate-300 truncate mt-1" title={svc.install_root}>{svc.install_root}</p>
             </div>
           )}
           {svc.config_file && (
             <div className="p-3 bg-black/20 rounded-card border border-white/5">
-              <span className="text-[13px] text-slate-400 font-semibold block">{t("projsub.configFile")}</span>
+              <span className="text-title text-slate-400 font-semibold block">{t("projsub.configFile")}</span>
               <p className="font-mono text-slate-300 truncate mt-1" title={svc.config_file}>{svc.config_file}</p>
             </div>
           )}
           {svc.data_dir && (
             <div className="p-3 bg-black/20 rounded-card border border-white/5">
-              <span className="text-[13px] text-slate-400 font-semibold block">{t("projsub.dataDir")}</span>
+              <span className="text-title text-slate-400 font-semibold block">{t("projsub.dataDir")}</span>
               <p className="font-mono text-slate-300 truncate mt-1" title={svc.data_dir}>{svc.data_dir}</p>
             </div>
           )}
           {svc.log_dir && (
             <div className="p-3 bg-black/20 rounded-card border border-white/5">
-              <span className="text-[13px] text-slate-400 font-semibold block">{t("projsub.logDir")}</span>
+              <span className="text-title text-slate-400 font-semibold block">{t("projsub.logDir")}</span>
               <p className="font-mono text-slate-300 truncate mt-1" title={svc.log_dir}>{svc.log_dir}</p>
             </div>
           )}
@@ -1566,12 +1566,12 @@ function RemoteVersionSelector({
       {/* 标题行：含上次更新时间和刷新按钮 */}
       <div className="flex items-center justify-between">
         <div>
-          <h4 className="text-xs font-semibold text-slate-300">{t("projsub.remoteInstallTitle")}</h4>
-          <p className="text-[13px] text-slate-500 mt-0.5">{t("projsub.remoteInstallDesc")}</p>
+          <h4 className="text-body font-semibold text-slate-300">{t("projsub.remoteInstallTitle")}</h4>
+          <p className="text-title text-slate-500 mt-0.5">{t("projsub.remoteInstallDesc")}</p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           {versionsUpdatedAt && !loadingRemote && (
-            <span className="text-[11px] text-slate-600">
+            <span className="text-caption text-slate-600">
               {t("projsub.lastUpdate", { time: formatUpdatedAt(versionsUpdatedAt) })}
             </span>
           )}
@@ -1580,7 +1580,7 @@ function RemoteVersionSelector({
               onClick={onRefresh}
               disabled={disabled || loadingRemote || !!installingVersion}
               title={disabled ? disabledReason : t("projsub.refreshList")}
-              className="flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300 rounded-ctl text-[11px] border border-white/8 cursor-pointer transition-all"
+              className="flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300 rounded-ctl text-caption border border-white/8 cursor-pointer transition-all"
             >
               <RefreshCw className={`w-3 h-3 ${loadingRemote ? "animate-spin text-[var(--module-accent)]" : ""}`} />
               {loadingRemote ? t("projsub.updating") : t("projsub.updateList")}
@@ -1590,14 +1590,14 @@ function RemoteVersionSelector({
       </div>
 
       {loadingRemote && remoteVersions.length === 0 ? (
-        <div className="flex items-center gap-2 text-slate-400 text-xs py-2">
+        <div className="flex items-center gap-2 text-slate-400 text-body py-2">
           <RefreshCw className="w-4 h-4 animate-spin text-[var(--module-accent)]" />
           {t("projsub.fetchingRemote")}
         </div>
       ) : (
         <div className="space-y-2">
           {disabled && disabledReason && (
-            <div className="p-3 rounded-card border border-amber-500/15 bg-amber-500/5 text-amber-400 text-[11px] mb-2 leading-relaxed flex items-center gap-1.5 animate-fadeIn">
+            <div className="p-3 rounded-card border border-amber-500/15 bg-amber-500/5 text-amber-400 text-caption mb-2 leading-relaxed flex items-center gap-1.5 animate-fadeIn">
               <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
               <span>{disabledReason}</span>
             </div>
@@ -1613,14 +1613,14 @@ function RemoteVersionSelector({
                   onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
                   onFocus={() => setOpen(true)}
                   placeholder={disabled ? disabledReason : t("projsub.remoteFilterPh")}
-                  className="w-full glass-input pl-9 pr-9 py-2 text-xs"
+                  className="w-full glass-input pl-9 pr-9 py-2 text-body"
                 />
                 {search && (
                   <button
                     onClick={() => { setSearch(""); setOpen(true); }}
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 cursor-pointer"
                   >
-                    <span className="text-xs">×</span>
+                    <span className="text-body">×</span>
                   </button>
                 )}
               </div>
@@ -1628,7 +1628,7 @@ function RemoteVersionSelector({
                 onClick={handleInstall}
                 disabled={disabled || installingVersion !== null || isOperating || !search.trim() || !remoteVersions.includes(search.trim())}
                 title={disabled ? disabledReason : t("projsub.oneClickInstall")}
-                className="px-5 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-card text-xs font-semibold shadow-md shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5"
+                className="px-5 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-card text-body font-semibold shadow-md shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5"
               >
                 <Download className="w-3.5 h-3.5" />
                 {installingVersion ? t("projsub.installingVer") : t("projsub.oneClickInstall")}
@@ -1642,7 +1642,7 @@ function RemoteVersionSelector({
                   <button
                     key={v}
                     onClick={() => handleSelect(v)}
-                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] transition-colors cursor-pointer ${search.trim() === v ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "text-slate-300"
+                    className={`w-full text-left px-3 py-1.5 text-body hover:bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] transition-colors cursor-pointer ${search.trim() === v ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "text-slate-300"
                       }`}
                   >
                     {v}
@@ -1654,13 +1654,13 @@ function RemoteVersionSelector({
             {/* 无匹配提示 */}
             {open && search.trim() && filtered.length === 0 && (
               <div className="absolute z-50 mt-1 w-full glass-panel rounded-card border border-white/10 bg-surface-panel shadow-2xl p-3 text-center">
-                <p className="text-[13px] text-slate-500">{t("projsub.noMatch", { kw: search })}</p>
+                <p className="text-title text-slate-500">{t("projsub.noMatch", { kw: search })}</p>
               </div>
             )}
           </div>
 
           {/* 版本统计 */}
-          <p className="text-[12px] text-slate-600">
+          <p className="text-body text-slate-600">
             {t("projsub.remoteCount", {
               count: remoteVersions.length,
               extra: search.trim() && filtered.length !== remoteVersions.length ? t("projsub.matchCount", { count: filtered.length }) : "",
@@ -1705,7 +1705,7 @@ export function LegacyTab({ projectId }: { projectId: string }) {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center gap-2 text-xs text-slate-400 py-8">
+      <div className="flex items-center justify-center gap-2 text-body text-slate-400 py-8">
         <Loader className="w-4 h-4 animate-spin text-[var(--module-accent)]" /> {t("projsub.loadingOldData")}
       </div>
     );
@@ -1715,8 +1715,8 @@ export function LegacyTab({ projectId }: { projectId: string }) {
     return (
       <div className="p-8 text-center text-slate-500">
         <FolderOpen className="w-10 h-10 mx-auto text-slate-600 mb-3" />
-        <p className="text-xs">{t("projsub.noOldData")}</p>
-        <p className="text-[13px] text-slate-500 mt-1">{t("projsub.noOldDataDesc")}</p>
+        <p className="text-body">{t("projsub.noOldData")}</p>
+        <p className="text-title text-slate-500 mt-1">{t("projsub.noOldDataDesc")}</p>
       </div>
     );
   }
@@ -1732,8 +1732,8 @@ export function LegacyTab({ projectId }: { projectId: string }) {
             <AlertTriangle className="w-4.5 h-4.5 text-amber-400" />
           </div>
           <div>
-            <h4 className="text-xs font-semibold text-amber-300">{t("projsub.legacyTitle")}</h4>
-            <p className="text-[13px] text-amber-400/60 mt-0.5">
+            <h4 className="text-body font-semibold text-amber-300">{t("projsub.legacyTitle")}</h4>
+            <p className="text-title text-amber-400/60 mt-0.5">
               {t("projsub.legacyDesc")}
             </p>
           </div>
@@ -1745,9 +1745,9 @@ export function LegacyTab({ projectId }: { projectId: string }) {
         <div className="glass-panel rounded-panel p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             <Download className="w-4 h-4 text-slate-400" />
-            <h4 className="text-xs font-semibold text-white">{t("projsub.oldInstallInfo")}</h4>
+            <h4 className="text-body font-semibold text-white">{t("projsub.oldInstallInfo")}</h4>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[13px]">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-title">
             {data.version && (
               <div className="p-2.5 bg-black/20 rounded-card border border-white/5">
                 <span className="text-slate-500 block mb-0.5">{t("projsub.thVersion")}</span>
@@ -1763,7 +1763,7 @@ export function LegacyTab({ projectId }: { projectId: string }) {
             {data.install_root && (
               <div className="p-2.5 bg-black/20 rounded-card border border-white/5">
                 <span className="text-slate-500 block mb-0.5">{t("projsub.thInstallPath")}</span>
-                <span className="font-mono text-slate-200 text-[12px] break-all">{data.install_root}</span>
+                <span className="font-mono text-slate-200 text-body break-all">{data.install_root}</span>
               </div>
             )}
           </div>
@@ -1775,17 +1775,17 @@ export function LegacyTab({ projectId }: { projectId: string }) {
         <div className="glass-panel rounded-panel p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             <Globe className="w-4 h-4 text-[var(--module-accent)]" />
-            <h4 className="text-xs font-semibold text-white">{t("projsub.backedEnv")}</h4>
-            <span className="text-[12px] text-slate-500">{t("projsub.envCount", { count: envVarEntries.length })}</span>
+            <h4 className="text-body font-semibold text-white">{t("projsub.backedEnv")}</h4>
+            <span className="text-body text-slate-500">{t("projsub.envCount", { count: envVarEntries.length })}</span>
           </div>
           <div className="w-full">
-            <table className="w-full text-left text-[13px]">
+            <table className="w-full text-left text-title">
               <thead><tr className="text-slate-500 border-b border-white/5"><th className="p-2 w-48">{t("projsub.thVarName")}</th><th className="p-2">{t("projsub.thOriginalVal")}</th></tr></thead>
               <tbody className="divide-y divide-white/5">
                 {envVarEntries.map(([name, val]) => (
                   <tr key={name} className="hover:bg-white/2 text-slate-300">
                     <td className="p-2 font-mono font-semibold">{name}</td>
-                    <td className="p-2 font-mono text-[12px] break-all text-slate-400">{val || t("projsub.emptyVal")}</td>
+                    <td className="p-2 font-mono text-body break-all text-slate-400">{val || t("projsub.emptyVal")}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1799,12 +1799,12 @@ export function LegacyTab({ projectId }: { projectId: string }) {
         <div className="glass-panel rounded-panel p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             <Trash2 className="w-4 h-4 text-red-400" />
-            <h4 className="text-xs font-semibold text-white">{t("projsub.removedPathEntries")}</h4>
-            <span className="text-[12px] text-slate-500">{t("projsub.entryCount", { count: data.removed_path_entries.length })}</span>
+            <h4 className="text-body font-semibold text-white">{t("projsub.removedPathEntries")}</h4>
+            <span className="text-body text-slate-500">{t("projsub.entryCount", { count: data.removed_path_entries.length })}</span>
           </div>
           <div className="w-full space-y-1">
             {data.removed_path_entries.map((entry, idx) => (
-              <div key={idx} className="p-2 bg-black/20 rounded-ctl border border-white/5 text-[12px] font-mono text-slate-400 break-all">
+              <div key={idx} className="p-2 bg-black/20 rounded-ctl border border-white/5 text-body font-mono text-slate-400 break-all">
                 {entry}
               </div>
             ))}
@@ -2031,13 +2031,13 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
       return (
         <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
-            <span className={`text-[12px] font-semibold ${accentText}`}>
+            <span className={`text-body font-semibold ${accentText}`}>
               {t("projsub.wfStoreTitle", { step: 1, total: totalSteps, label: stepLabels.method })}
             </span>
-            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
+            <button onClick={closeWorkflow} className="text-caption text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
           </div>
           <div className="space-y-1.5">
-            <p className="text-[12px] text-slate-300">{t("projsub.pickStoreMethod")}</p>
+            <p className="text-body text-slate-300">{t("projsub.pickStoreMethod")}</p>
             <label className={`flex items-start gap-2 p-2.5 rounded-ctl cursor-pointer transition-all border ${workflowMethod === "junction"
               ? `${accentBorder} bg-white/5`
               : "border-white/5 hover:bg-white/[0.02]"
@@ -2045,8 +2045,8 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
               <input type="radio" name="wf_method" value="junction" checked={workflowMethod === "junction"}
                 onChange={() => setWorkflowMethod("junction")} className="mt-0.5" />
               <div>
-                <span className="text-[12px] font-semibold text-slate-200">{t("projsub.optAStore")}</span>
-                <p className="text-[11px] text-slate-500 mt-0.5">
+                <span className="text-body font-semibold text-slate-200">{t("projsub.optAStore")}</span>
+                <p className="text-caption text-slate-500 mt-0.5">
                   {t("projsub.optAStoreDesc")}
                 </p>
               </div>
@@ -2059,8 +2059,8 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                 <input type="radio" name="wf_method" value="point" checked={workflowMethod === "point"}
                   onChange={() => setWorkflowMethod("point")} className="mt-0.5" />
                 <div>
-                  <span className="text-[12px] font-semibold text-purple-300">{t("projsub.optBStore")}</span>
-                  <p className="text-[11px] text-slate-500 mt-0.5">
+                  <span className="text-body font-semibold text-purple-300">{t("projsub.optBStore")}</span>
+                  <p className="text-caption text-slate-500 mt-0.5">
                     {t("projsub.optBStoreDesc", { name: project.display_name })}
                   </p>
                 </div>
@@ -2074,7 +2074,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
               }
               setWorkflowStep("paths");
             }}
-              className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors`}>
+              className={`px-3 py-1 ${btnBg} text-white rounded text-caption font-semibold cursor-pointer transition-colors`}>
               {t("projsub.nextStep")}
             </button>
           </div>
@@ -2087,23 +2087,23 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
       return (
         <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
-            <span className={`text-[12px] font-semibold ${accentText}`}>
+            <span className={`text-body font-semibold ${accentText}`}>
               {t("projsub.wfStoreTitle", { step: 2, total: totalSteps, label: stepLabels.paths })}
             </span>
-            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
+            <button onClick={closeWorkflow} className="text-caption text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
           </div>
 
           {workflowMethod === "junction" ? (
             <>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-caption text-slate-400">
                 <span className="font-semibold text-slate-300">{t("projsub.storeJunctionDesc")}</span> — {t("projsub.storeLinkFrom")} → {t("projsub.storeLinkTo")}
               </p>
               <div className="space-y-1.5">
                 <div>
-                  <label className="text-[11px] text-slate-500 block mb-0.5">{t("projsub.storeLinkFrom")}</label>
+                  <label className="text-caption text-slate-500 block mb-0.5">{t("projsub.storeLinkFrom")}</label>
                   <div className="flex items-center gap-1">
                     <input type="text" value={workflowLinkPath} onChange={(e) => setWorkflowLinkPath(e.target.value)}
-                      className="flex-1 glass-input px-1.5 py-1 text-[11px] font-mono" placeholder={t("projsub.storeLinkFromPh")} />
+                      className="flex-1 glass-input px-1.5 py-1 text-caption font-mono" placeholder={t("projsub.storeLinkFromPh")} />
                     <button onClick={() => browseWorkflowPath(setWorkflowLinkPath)}
                       className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
                       <FolderOpen className="w-3 h-3" />
@@ -2111,10 +2111,10 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                   </div>
                 </div>
                 <div>
-                  <label className="text-[11px] text-slate-500 block mb-0.5">{t("projsub.storeLinkTo")}</label>
+                  <label className="text-caption text-slate-500 block mb-0.5">{t("projsub.storeLinkTo")}</label>
                   <div className="flex items-center gap-1">
                     <input type="text" value={workflowActualPath} onChange={(e) => setWorkflowActualPath(e.target.value)}
-                      className="flex-1 glass-input px-1.5 py-1 text-[11px] font-mono" placeholder={t("projsub.storeLinkToPh")} />
+                      className="flex-1 glass-input px-1.5 py-1 text-caption font-mono" placeholder={t("projsub.storeLinkToPh")} />
                     <button onClick={() => browseWorkflowPath(setWorkflowActualPath)}
                       className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
                       <FolderOpen className="w-3 h-3" />
@@ -2125,15 +2125,15 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
             </>
           ) : (
             <>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-caption text-slate-400">
                 <span className="font-semibold text-purple-300">{t("projsub.storePointDesc")}</span> {t("projsub.storePointHint", { name: project.display_name })}
               </p>
               <div className="space-y-1.5">
                 <div>
-                  <label className="text-[11px] text-slate-500 block mb-0.5">{t("projsub.storePointLabel")}</label>
+                  <label className="text-caption text-slate-500 block mb-0.5">{t("projsub.storePointLabel")}</label>
                   <div className="flex items-center gap-1">
                     <input type="text" value={workflowPointPath} onChange={(e) => setWorkflowPointPath(e.target.value)}
-                      className="flex-1 glass-input px-1.5 py-1 text-[11px] font-mono"
+                      className="flex-1 glass-input px-1.5 py-1 text-caption font-mono"
                       placeholder={t("projsub.storePointPh")} />
                     <button onClick={() => browseWorkflowPath(setWorkflowPointPath)}
                       className="p-1 bg-white/5 hover:bg-white/10 text-slate-400 rounded border border-white/5 cursor-pointer">
@@ -2145,21 +2145,21 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                 {/* 旧文件处理方式（仅 Pointing 模式下） */}
                 {dir.exists && (
                   <div className="pt-1 space-y-1">
-                    <p className="text-[12px] text-slate-400 font-semibold">{t("projsub.storeOldLabel")}</p>
+                    <p className="text-body text-slate-400 font-semibold">{t("projsub.storeOldLabel")}</p>
                     <label className={`flex items-start gap-2 p-2 rounded-ctl cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)]" : "border-white/5 hover:bg-white/[0.02]"}`}>
                       <input type="radio" name="wf_file_action" value="move" checked={workflowFileAction === "move"}
                         onChange={() => setWorkflowFileAction("move")} className="mt-0.5" />
                       <div>
-                        <span className="text-[12px] font-semibold text-[var(--module-accent)]">{t("projsub.storeMoveOld")}</span>
-                        <p className="text-[10px] text-slate-500 mt-0.5">{t("projsub.storeMoveOldDesc")}</p>
+                        <span className="text-body font-semibold text-[var(--module-accent)]">{t("projsub.storeMoveOld")}</span>
+                        <p className="text-tiny text-slate-500 mt-0.5">{t("projsub.storeMoveOldDesc")}</p>
                       </div>
                     </label>
                     <label className={`flex items-start gap-2 p-2 rounded-ctl cursor-pointer border transition-all ${workflowFileAction === "keep" ? "border-slate-500/30 bg-slate-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
                       <input type="radio" name="wf_file_action" value="keep" checked={workflowFileAction === "keep"}
                         onChange={() => setWorkflowFileAction("keep")} className="mt-0.5" />
                       <div>
-                        <span className="text-[12px] font-semibold text-slate-300">{t("projsub.storeKeepOld")}</span>
-                        <p className="text-[10px] text-slate-500 mt-0.5">{t("projsub.storeKeepOldDesc")}</p>
+                        <span className="text-body font-semibold text-slate-300">{t("projsub.storeKeepOld")}</span>
+                        <p className="text-tiny text-slate-500 mt-0.5">{t("projsub.storeKeepOldDesc")}</p>
                       </div>
                     </label>
                   </div>
@@ -2170,14 +2170,14 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
 
           <div className="flex justify-between">
             <button onClick={workflowPrev}
-              className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[11px] font-semibold cursor-pointer transition-colors">
+              className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-caption font-semibold cursor-pointer transition-colors">
               {t("projsub.prevStep")}
             </button>
             <button onClick={workflowNext}
               disabled={workflowMethod === "junction"
                 ? (!workflowLinkPath || !workflowActualPath || workflowLinkPath === workflowActualPath)
                 : !workflowPointPath}
-              className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed`}>
+              className={`px-3 py-1 ${btnBg} text-white rounded text-caption font-semibold cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed`}>
               {t("projsub.preview")}
             </button>
           </div>
@@ -2193,22 +2193,22 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
       return (
         <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
-            <span className={`text-[12px] font-semibold ${accentText}`}>
+            <span className={`text-body font-semibold ${accentText}`}>
               {t("projsub.wfStoreTitle", { step: 3, total: totalSteps, label: stepLabels.confirm })}
             </span>
-            <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
+            <button onClick={closeWorkflow} className="text-caption text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
           </div>
 
           <div className="p-3 bg-black/20 rounded-ctl border border-white/5 space-y-2">
-            <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">{t("projsub.storePreviewOp")}</p>
+            <p className="text-tiny text-slate-400 font-semibold uppercase tracking-wider">{t("projsub.storePreviewOp")}</p>
             <div className="space-y-1.5">
-              <div className="flex items-center gap-2 text-[12px]">
-                <span className={`px-1.5 py-0.5 rounded text-[11px] font-semibold ${workflowMethod === "junction" ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "bg-purple-500/10 text-purple-400"
+              <div className="flex items-center gap-2 text-body">
+                <span className={`px-1.5 py-0.5 rounded text-caption font-semibold ${workflowMethod === "junction" ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "bg-purple-500/10 text-purple-400"
                   }`}>
                   {workflowMethod === "junction" ? t("projsub.storeModeJunction") : t("projsub.storeModePoint")}
                 </span>
                 {workflowMethod === "junction" ? (
-                  <div className="font-mono text-slate-300 space-y-0.5 text-[11px]">
+                  <div className="font-mono text-slate-300 space-y-0.5 text-caption">
                     <p className="flex items-center gap-1">
                       <span className="text-slate-500 flex-shrink-0">{t("projsub.storeOrigPath")}</span>
                       <span className="break-all">{workflowLinkPath}</span>
@@ -2219,13 +2219,13 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                     </p>
                   </div>
                 ) : (
-                  <p className="font-mono text-slate-300 text-[11px] break-all">
+                  <p className="font-mono text-slate-300 text-caption break-all">
                     {t("projsub.storePointTo", { path: workflowPointPath })}
                   </p>
                 )}
               </div>
               {workflowMethod === "point" && dir.exists && (
-                <div className="flex items-center gap-2 text-[12px]">
+                <div className="flex items-center gap-2 text-body">
                   <span className="text-slate-500">{t("projsub.storeOldHandle")}</span>
                   <span className={workflowFileAction === "move" ? "text-[var(--module-accent)] font-semibold" : "text-slate-400"}>
                     {workflowFileAction === "move" ? t("projsub.storeMoveToNew") : t("projsub.storeKeep")}
@@ -2233,7 +2233,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                 </div>
               )}
               {workflowMethod === "junction" && (
-                <div className="flex items-center gap-2 text-[12px]">
+                <div className="flex items-center gap-2 text-body">
                   <span className="text-slate-500">{t("projsub.storeMigrate")}</span>
                   <span className="text-[var(--module-accent)] font-semibold">
                     {pathsSame ? t("projsub.storeDirectLink") : t("projsub.storeMoveLink")}
@@ -2245,11 +2245,11 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
 
           <div className="flex justify-between">
             <button onClick={workflowPrev}
-              className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-[11px] font-semibold cursor-pointer transition-colors">
+              className="px-3 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded text-caption font-semibold cursor-pointer transition-colors">
               {t("projsub.prevStep")}
             </button>
             <button onClick={() => executeWorkflow(dir.id, dir.path, dir.exists)} disabled={workflowExecuting}
-              className={`px-3 py-1 ${btnBg} text-white rounded text-[11px] font-semibold cursor-pointer transition-colors disabled:opacity-40`}>
+              className={`px-3 py-1 ${btnBg} text-white rounded text-caption font-semibold cursor-pointer transition-colors disabled:opacity-40`}>
               {t("projsub.storeConfirmExec")}
             </button>
           </div>
@@ -2263,13 +2263,13 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
         <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center gap-2">
             <Loader className="w-3.5 h-3.5 animate-spin text-[var(--module-accent)]" />
-            <span className={`text-[12px] font-semibold ${accentText}`}>
+            <span className={`text-body font-semibold ${accentText}`}>
               {t("projsub.storeExecuting", { stage: workflowProgress?.stage || t("projsub.storePreparing") })}
             </span>
           </div>
           {workflowProgress && (
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-[11px] text-slate-400">
+              <div className="flex items-center justify-between text-caption text-slate-400">
                 <span>{workflowProgress.stage}</span>
                 <span className="font-mono">{workflowProgress.current}/{workflowProgress.total}</span>
               </div>
@@ -2280,7 +2280,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                 />
               </div>
               {workflowProgress.file_name && (
-                <p className="text-[11px] text-slate-500 truncate font-mono">{workflowProgress.file_name}</p>
+                <p className="text-caption text-slate-500 truncate font-mono">{workflowProgress.file_name}</p>
               )}
             </div>
           )}
@@ -2294,14 +2294,14 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
         <div className={`mt-3 p-3 rounded-card border border-emerald-500/20 bg-emerald-500/5 space-y-3 animate-fadeIn`}>
           <div className="flex items-center gap-2">
             <CheckCircle className="w-4 h-4 text-emerald-400" />
-            <span className="text-[12px] font-semibold text-emerald-300">{t("projsub.storeSuccess")}</span>
+            <span className="text-body font-semibold text-emerald-300">{t("projsub.storeSuccess")}</span>
           </div>
-          <p className="text-[11px] text-emerald-400/70">
+          <p className="text-caption text-emerald-400/70">
             {t("projsub.storeSuccessDesc")}
           </p>
           <div className="flex justify-end">
             <button onClick={closeWorkflow}
-              className="px-3 py-1 bg-emerald-600/50 hover:bg-emerald-600 text-white rounded text-[11px] font-semibold cursor-pointer transition-colors">
+              className="px-3 py-1 bg-emerald-600/50 hover:bg-emerald-600 text-white rounded text-caption font-semibold cursor-pointer transition-colors">
               {t("projsub.storeClose")}
             </button>
           </div>
@@ -2346,12 +2346,12 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
           <HardDrive className="w-5 h-5 text-[var(--module-accent)]" />
           <div>
             <h4 className="text-sm font-semibold text-white">{t("projsub.dataFilesTitle")}</h4>
-            <p className="text-[11px] text-slate-500 mt-0.5">{t("projsub.dataFilesDesc")}</p>
+            <p className="text-caption text-slate-500 mt-0.5">{t("projsub.dataFilesDesc")}</p>
           </div>
         </div>
 
         {dataDirs.length === 0 ? (
-          <p className="text-[13px] text-slate-400 py-2">{t("projsub.noDataRules")}</p>
+          <p className="text-title text-slate-400 py-2">{t("projsub.noDataRules")}</p>
         ) : (
           <div className="space-y-4">
             {dataDirs.map((dir) => {
@@ -2364,44 +2364,44 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                   <div className="flex items-start justify-between">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[13px] font-semibold text-white">{dir.display_name}</span>
+                        <span className="text-title font-semibold text-white">{dir.display_name}</span>
                         {kindLabel && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] font-semibold">
+                          <span className="text-tiny px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] font-semibold">
                             {kindLabel}
                           </span>
                         )}
                         {dir.is_link && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">
+                          <span className="text-tiny px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">
                             {t("projsub.migratedJunction")}
                           </span>
                         )}
                         {!dir.exists && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20">
+                          <span className="text-tiny px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20">
                             {t("projsub.noPathFound")}
                           </span>
                         )}
                       </div>
-                      <p className="font-mono text-[12px] text-slate-400 break-all">{dir.path}</p>
+                      <p className="font-mono text-body text-slate-400 break-all">{dir.path}</p>
                       {dir.is_link && dir.real_target && (
-                        <p className="font-mono text-[11px] text-slate-500 break-all">
+                        <p className="font-mono text-caption text-slate-500 break-all">
                           {t("projsub.realTarget", { path: dir.real_target })}
                         </p>
                       )}
                       {sourceLabel && (
-                        <p className="text-[11px] text-slate-500">
+                        <p className="text-caption text-slate-500">
                           {t("projsub.dirSource")}{" "}
                           <span className="text-slate-400">{sourceLabel}</span>
                         </p>
                       )}
                       {!dir.exists && dirDef?.required_for_start && !dirDef?.auto_create && (
-                        <p className="text-[11px] text-amber-400/80">{t("projsub.dirMustExist")}</p>
+                        <p className="text-caption text-amber-400/80">{t("projsub.dirMustExist")}</p>
                       )}
                       {!dir.exists && dirDef?.auto_create && (
-                        <p className="text-[11px] text-slate-500">{t("projsub.dirAutoCreate")}</p>
+                        <p className="text-caption text-slate-500">{t("projsub.dirAutoCreate")}</p>
                       )}
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-slate-300 font-mono text-[13px] font-semibold bg-white/5 px-2.5 py-1 rounded-ctl">
+                      <span className="text-slate-300 font-mono text-title font-semibold bg-white/5 px-2.5 py-1 rounded-ctl">
                         {dir.size}
                       </span>
                     </div>
@@ -2412,13 +2412,13 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                     <div className="flex items-center gap-2 pt-1 border-t border-white/5">
                       <button
                         onClick={() => openWorkflow(dir)}
-                        className="px-3 py-1.5 bg-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] hover:bg-[var(--module-accent)] text-white rounded-ctl text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
+                        className="px-3 py-1.5 bg-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] hover:bg-[var(--module-accent)] text-white rounded-ctl text-body font-semibold cursor-pointer flex items-center gap-1 transition-all"
                       >
                         <FolderSync className="w-3.5 h-3.5" /> {t("projsub.startChangeBtn")}
                       </button>
                       <button
                         onClick={() => handleDelete(dir.path)}
-                        className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded-ctl text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
+                        className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded-ctl text-body font-semibold cursor-pointer flex items-center gap-1 transition-all"
                       >
                         <Trash2 className="w-3.5 h-3.5" /> {t("projsub.deleteData")}
                       </button>
@@ -2640,15 +2640,15 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
         <div className="glass-panel border border-white/5 rounded-panel p-5 bg-white/2 space-y-4">
           <div className="flex items-center gap-2 border-b border-white/5 pb-3">
             <Wrench className="w-4 h-4 text-[var(--module-accent)]" />
-            <h4 className="text-xs font-semibold text-white">{t("projsub.runParamsTitle")}</h4>
+            <h4 className="text-body font-semibold text-white">{t("projsub.runParamsTitle")}</h4>
           </div>
 
           <div className="flex items-center justify-between p-3 bg-black/20 rounded-card border border-white/5">
             <div>
-              <span className="text-[13px] text-slate-400 font-semibold block">{t("projsub.listenPort")}</span>
-              <span className="text-[11px] text-slate-500 mt-0.5">{t("projsub.listenPortDesc")}</span>
+              <span className="text-title text-slate-400 font-semibold block">{t("projsub.listenPort")}</span>
+              <span className="text-caption text-slate-500 mt-0.5">{t("projsub.listenPortDesc")}</span>
             </div>
-            <span className="text-slate-300 font-mono text-[13px] font-bold bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] px-3 py-1 rounded-ctl">
+            <span className="text-slate-300 font-mono text-title font-bold bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] px-3 py-1 rounded-ctl">
               {port}
             </span>
           </div>
@@ -2662,8 +2662,8 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
             <div className="flex items-center gap-2">
               <FileText className="w-4 h-4 text-[var(--module-accent)]" />
               <div>
-                <h4 className="text-xs font-semibold text-white">{t("projsub.visEditTitle")}</h4>
-                <p className="text-[10px] text-slate-500 mt-0.5 font-mono select-all break-all" title={configPath}>
+                <h4 className="text-body font-semibold text-white">{t("projsub.visEditTitle")}</h4>
+                <p className="text-tiny text-slate-500 mt-0.5 font-mono select-all break-all" title={configPath}>
                   {t("projsub.editingPath", { path: configPath })}
                 </p>
               </div>
@@ -2672,7 +2672,7 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
               <button
                 onClick={handleSaveConfig}
                 disabled={savingConfig}
-                className="px-3 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-ctl text-xs font-semibold cursor-pointer flex items-center gap-1 transition-all"
+                className="px-3 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-ctl text-body font-semibold cursor-pointer flex items-center gap-1 transition-all"
               >
                 {savingConfig ? <Loader className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
                 {t("projsub.saveConfig")}
@@ -2681,15 +2681,15 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
           </div>
 
           {loadingConfig ? (
-            <div className="flex items-center justify-center gap-2 text-xs text-slate-400 py-12">
+            <div className="flex items-center justify-center gap-2 text-body text-slate-400 py-12">
               <Loader className="w-4 h-4 animate-spin text-[var(--module-accent)]" /> {t("projsub.readingConfig")}
             </div>
           ) : errorMessage ? (
-            <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-xs rounded-card space-y-2">
+            <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-body rounded-card space-y-2">
               <p>{t("projsub.loadConfigFail", { err: errorMessage })}</p>
               <button
                 onClick={loadConfigContent}
-                className="px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/5 text-slate-300 rounded text-[11px] cursor-pointer"
+                className="px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/5 text-slate-300 rounded text-caption cursor-pointer"
               >
                 {t("projsub.retryLoad")}
               </button>
@@ -2716,7 +2716,7 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
                   }}
                 />
               </div>
-              <p className="text-[11px] text-slate-500">
+              <p className="text-caption text-slate-500">
                 {t("projsub.editorHint")}
               </p>
             </div>

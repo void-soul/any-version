@@ -110,7 +110,7 @@ export function GithubTokenDialog({
       }
     >
       {/* 为什么要设置 */}
-      <div className="text-[12px] text-slate-300 leading-relaxed">
+      <div className="text-body text-slate-300 leading-relaxed">
         {t(hintKey)}
       </div>
 
@@ -119,14 +119,14 @@ export function GithubTokenDialog({
         {/* 步骤 1 */}
         <div className="p-2.5 rounded-card bg-white/[0.03] border border-white/5">
           <div className="flex items-start gap-2">
-            <span className="flex-shrink-0 w-4 h-4 rounded-full bg-[var(--module-accent)]/20 text-[var(--module-accent)] text-[10px] font-bold flex items-center justify-center mt-px">1</span>
+            <span className="flex-shrink-0 w-4 h-4 rounded-full bg-[var(--module-accent)]/20 text-[var(--module-accent)] text-tiny font-bold flex items-center justify-center mt-px">1</span>
             <div className="min-w-0 flex-1">
-              <p className="text-[12px] text-slate-200 font-semibold">{t("projlist.githubTokenStep1")}</p>
+              <p className="text-body text-slate-200 font-semibold">{t("projlist.githubTokenStep1")}</p>
               <div className="flex flex-wrap gap-1.5 mt-1.5">
-                <SharedButton variant="secondary" className="!h-6 !px-2 !text-[10px]" onClick={() => openUrl(TOKEN_PAGE_FINE)}>
+                <SharedButton variant="secondary" className="!h-6 !px-2 !text-tiny" onClick={() => openUrl(TOKEN_PAGE_FINE)}>
                   {t("projlist.githubTokenLinkFine")} <ExternalLink className="w-2.5 h-2.5" />
                 </SharedButton>
-                <SharedButton variant="ghost" className="!h-6 !px-2 !text-[10px]" onClick={() => openUrl(TOKEN_PAGE_CLASSIC)}>
+                <SharedButton variant="ghost" className="!h-6 !px-2 !text-tiny" onClick={() => openUrl(TOKEN_PAGE_CLASSIC)}>
                   {t("projlist.githubTokenLinkClassic")} <ExternalLink className="w-2.5 h-2.5" />
                 </SharedButton>
               </div>
@@ -136,19 +136,19 @@ export function GithubTokenDialog({
         {/* 步骤 2 */}
         <div className="p-2.5 rounded-card bg-white/[0.03] border border-white/5">
           <div className="flex items-start gap-2">
-            <span className="flex-shrink-0 w-4 h-4 rounded-full bg-[var(--module-accent)]/20 text-[var(--module-accent)] text-[10px] font-bold flex items-center justify-center mt-px">2</span>
+            <span className="flex-shrink-0 w-4 h-4 rounded-full bg-[var(--module-accent)]/20 text-[var(--module-accent)] text-tiny font-bold flex items-center justify-center mt-px">2</span>
             <div className="min-w-0 flex-1">
-              <p className="text-[12px] text-slate-200 font-semibold">{t("projlist.githubTokenStep2")}</p>
-              <p className="text-[11px] text-slate-400 mt-0.5">{t("projlist.githubTokenScopeNote")}</p>
+              <p className="text-body text-slate-200 font-semibold">{t("projlist.githubTokenStep2")}</p>
+              <p className="text-caption text-slate-400 mt-0.5">{t("projlist.githubTokenScopeNote")}</p>
             </div>
           </div>
         </div>
         {/* 步骤 3 */}
         <div className="p-2.5 rounded-card bg-white/[0.03] border border-white/5">
           <div className="flex items-start gap-2">
-            <span className="flex-shrink-0 w-4 h-4 rounded-full bg-[var(--module-accent)]/20 text-[var(--module-accent)] text-[10px] font-bold flex items-center justify-center mt-px">3</span>
+            <span className="flex-shrink-0 w-4 h-4 rounded-full bg-[var(--module-accent)]/20 text-[var(--module-accent)] text-tiny font-bold flex items-center justify-center mt-px">3</span>
             <div className="min-w-0 flex-1">
-              <p className="text-[12px] text-slate-200 font-semibold">{t("projlist.githubTokenStep3")}</p>
+              <p className="text-body text-slate-200 font-semibold">{t("projlist.githubTokenStep3")}</p>
               <div className="flex items-center gap-1 mt-1.5">
                 <input
                   type={show ? "text" : "password"}
@@ -157,7 +157,7 @@ export function GithubTokenDialog({
                   placeholder={t("projlist.githubTokenPh")}
                   spellCheck={false}
                   autoComplete="off"
-                  className="flex-1 min-w-0 glass-input px-2 h-7 text-[11px] font-mono"
+                  className="flex-1 min-w-0 glass-input px-2 h-7 text-caption font-mono"
                 />
                 <button
                   onClick={() => setShow(!show)}
@@ -168,20 +168,20 @@ export function GithubTokenDialog({
                 </button>
               </div>
               {hasSaved && (
-                <p className="text-[10px] text-emerald-400 mt-1.5 flex items-center gap-1">
+                <p className="text-tiny text-emerald-400 mt-1.5 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                   {t("projlist.githubTokenSet")}
                 </p>
               )}
               {loadError && (
-                <p className="text-[10px] text-amber-400 mt-1.5">{t("projlist.githubTokenLoadFail")}</p>
+                <p className="text-tiny text-amber-400 mt-1.5">{t("projlist.githubTokenLoadFail")}</p>
               )}
             </div>
           </div>
         </div>
       </div>
 
-      <p className="text-[10px] text-slate-500 leading-snug">{t(noteKey)}</p>
+      <p className="text-tiny text-slate-500 leading-snug">{t(noteKey)}</p>
     </SharedModal>
   );
 }
