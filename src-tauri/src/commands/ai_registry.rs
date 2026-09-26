@@ -962,6 +962,31 @@ mod tests {
         }
     }
 
+    /// 回归：只要工具支持「设置模型」，就必须同时声明支持优化器 / 整流器。
+    ///
+    /// 这两组能力是代理侧的协议层能力（cache 注入、thinking 自适应、报错后改写重试…），
+    /// 与工具是 CLI 还是桌面端无关 —— 通过 Kira 启动时写进工具配置的就是本地代理地址，
+    /// 流量必然过代理。早先桌面端一律 `false`（保守默认），导致「桌面端选了模型
+    /// 却看不到这两组开关」，看起来像能力缺失。
+    #[test]
+    fn model_capable_tools_allow_optimizer_and_rectifier() {
+        let reg = registry();
+        for (id, (config, _)) in reg.tool_iter() {
+            if !config.support_model {
+                continue;
+            }
+            assert!(
+                config.supports_optimizer && config.supports_rectifier,
+                "{} 支持设置模型（流量走本地代理），却声明 supports_optimizer={} / supports_rectifier={}\
+                 → 启动页看不到「请求优化器 / 协议整流器」，请检查 ai-tools/{}/config.json",
+                id,
+                config.supports_optimizer,
+                config.supports_rectifier,
+                id,
+            );
+        }
+    }
+
     /// 每个工具目录都必须能加载进注册表。
     ///
     /// 回归的是「少写一个字段 → 整份 config.json 解析失败 → 工具被静默丢掉」：

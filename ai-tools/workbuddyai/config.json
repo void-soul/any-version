@@ -1,8 +1,8 @@
 {
   "supportFallbackModel": false,
   "builtinModels": [],
-  "supportsOptimizer": false,
-  "supportsRectifier": false,
+  "supportsOptimizer": true,
+  "supportsRectifier": true,
   "resumeCmd": null,
   "continueCmd": null,
   "dispatchCmd": null,
