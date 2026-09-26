@@ -249,8 +249,9 @@ fn collect_dir_files(data_dir: &Path, rel_dir: &str) -> Vec<String> {
 /// config.json 是数据入口，固定留在 base_dir（即使 data_dir 被改到其它盘）。
 /// 其余文件/目录都在 data_dir 下。
 fn resolve_snapshot_path(rel: &str) -> PathBuf {
-    // 入口配置与选项文件固定留在 base_dir（即使 data_dir 被改到其它盘）
-    if rel == "config.json" || rel == "settings.json" {
+    // 只有 config.json 是数据入口，固定留在 base_dir；
+    // settings.json（业务选项）与其它数据一样在 data_dir 下。
+    if rel == "config.json" {
         get_base_dir().join(rel)
     } else {
         get_data_dir().join(rel)
@@ -445,12 +446,15 @@ mod tests {
         assert_eq!(plain, data);
     }
 
-    /// config.json / settings.json 是入口，必须落在 base_dir 而不是 data_dir。
+    /// 只有 config.json 是入口（base_dir）；settings.json 跟着数据目录走。
     #[test]
-    fn entry_configs_resolve_to_base_dir() {
+    fn entry_config_resolves_to_base_dir() {
         let base = get_base_dir();
         assert_eq!(resolve_snapshot_path("config.json"), base.join("config.json"));
-        assert_eq!(resolve_snapshot_path("settings.json"), base.join("settings.json"));
+        assert_eq!(
+            resolve_snapshot_path("settings.json"),
+            get_data_dir().join("settings.json")
+        );
         assert_eq!(
             resolve_snapshot_path("favorites.db"),
             get_data_dir().join("favorites.db")

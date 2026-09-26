@@ -161,7 +161,7 @@ pub struct Config {
     pub language: String,
 }
 
-// ─── 落盘形态：config.json 只存数据路径，其余选项存 settings.json ───
+// ─── 落盘形态：config.json 只存数据路径，其余选项存数据目录下的 settings.json ───
 //
 // 以前所有东西都堆在 config.json 里（SDK 托管、RSS 订阅、外观、托盘…），
 // 而 config.json 是「数据在哪」的入口，混在一起后：
@@ -169,6 +169,7 @@ pub struct Config {
 //   2）备份/排障时没法只看路径。
 // 现在拆分：内存里仍是完整的 `Config`（所有现有读取点不变），
 // 落盘时拆成两个文件，读取时再合并回来。
+// config.json 固定留在 base_dir（数据入口），settings.json 跟着 data_dir 走。
 
 /// `config.json` 的落盘形态：**只有数据路径**。
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -211,10 +212,21 @@ struct SettingsFile {
     pub language: String,
 }
 
-/// 业务选项文件（与 config.json 同目录，都留在 base_dir：
-/// 它们不随 data_dir 迁移，切换数据目录时选项保持原样）。
+/// 业务选项文件：**跟随数据目录**（它是数据，不是入口配置；config.json 才是入口）。
+///
+/// 注意这里不能调 `get_data_dir()`——那条链路是 `get_data_dir → load_config →
+/// load_settings_file → settings_file_path`，会无限递归。所以只从 config.json
+/// 里取 `data_dir` 字段（读不到就回退 base_dir）。
 pub(crate) fn settings_file_path() -> PathBuf {
-    get_base_dir().join("settings.json")
+    let base_dir = get_base_dir();
+    let data_dir = fs::read_to_string(base_dir.join("config.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<ConfigPathsFile>(&raw).ok())
+        .map(|p| p.data_dir.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or(base_dir);
+    data_dir.join("settings.json")
 }
 
 /// 完整配置 → 两个落盘文件的拆分。
@@ -1032,6 +1044,8 @@ pub fn update_config(app_handle: tauri::AppHandle, data_dir: String) -> Result<M
 
     let mut config = old_config;
     let base_dir = get_base_dir();
+    // 选项文件跟着数据目录走：记下旧位置，写进新目录后把旧的那份删掉
+    let old_settings_path = settings_file_path();
 
     let new_data_dir = if data_dir.trim().is_empty() {
         base_dir.clone()
@@ -1068,6 +1082,15 @@ pub fn update_config(app_handle: tauri::AppHandle, data_dir: String) -> Result<M
     }
 
     save_config(&config)?;
+
+    // settings.json 已随新数据目录写出；旧目录里那份是过期副本，留着会导致
+    // 将来切回旧目录时读到一套陈旧选项，所以删掉（删除失败不影响迁移结果）。
+    let new_settings_path = settings_file_path();
+    if old_settings_path != new_settings_path && old_settings_path.is_file() {
+        if let Err(e) = fs::remove_file(&old_settings_path) {
+            eprintln!("[config] 删除旧选项文件失败 {}: {}", old_settings_path.display(), e);
+        }
+    }
 
     Ok(result)
 }
