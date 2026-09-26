@@ -4939,6 +4939,7 @@
       "overwrite": "overwritten",
       "keep": "target kept"
     },
+    "conflictResolvedAt": "resolved at {{time}}",
     "conflictDialogTitle": "{{count}} conflicting sessions need a decision",
     "conflictDialogHint": "Both sides changed; Kira did not overwrite",
     "conflictDialogDesc": "Both sides changed in these sessions. To avoid discarding your edits in the target account, Kira kept the target version and skipped syncing them. Other sessions were synced as planned.",
@@ -4958,7 +4959,8 @@
       "skipped": "Skipped",
       "partial": "Partial",
       "conflict": "Conflict",
-      "failed": "Failed"
+      "failed": "Failed",
+      "resolved": "Resolved"
     },
     "syncReason": {
       "unchanged": "Matches the last sync",

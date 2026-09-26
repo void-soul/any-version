@@ -1109,6 +1109,9 @@ export default function BuddyPanel() {
     });
   };
 
+  /** 处理过的冲突会话 id 集合（明细「已处理」筛选用；它不是后端状态，是前端视图） */
+  const resolvedConflictIds = useMemo(() => new Set(Object.keys(conflictResolutions)), [conflictResolutions]);
+
   const toggleConflictSelectAll = () => {
     setConflictSelectedIds((prev) =>
       prev.size === sessionConflicts.length ? new Set() : new Set(sessionConflicts.map((c) => c.id)),
@@ -2215,11 +2218,12 @@ export default function BuddyPanel() {
               {syncSummary.unchanged && (
                 <div className="px-4 py-1.5 text-[11px] text-slate-500">{t("buddy.syncUnchanged")}</div>
               )}
-              {/* 明细 ≤500 条，直接两次调用纯过滤函数即可，无需额外 state */}
-              {filterSyncDetails(syncSummary.details, syncStatusFilter).length === 0 && !syncSummary.unchanged && (
+              {/* 明细 ≤500 条，直接两次调用纯过滤函数即可，无需额外 state。
+                  「已处理」一档要传处理结果集合（它不是后端状态，是前端视图）。 */}
+              {filterSyncDetails(syncSummary.details, syncStatusFilter, resolvedConflictIds).length === 0 && !syncSummary.unchanged && (
                 <div className="px-4 py-1.5 text-[11px] text-slate-500">{t("buddy.syncFilterEmpty")}</div>
               )}
-              {filterSyncDetails(syncSummary.details, syncStatusFilter).map((detail, index) => {
+              {filterSyncDetails(syncSummary.details, syncStatusFilter, resolvedConflictIds).map((detail, index) => {
                 // 处理结果：裁决过的会话显示「已合并 / 已覆盖 / 已保留」+ 时间，
                 // 而不是永远停在切换那一刻的初始状态（conflict / bothChanged）
                 const resolution = conflictResolutions[detail.id];
@@ -2232,12 +2236,20 @@ export default function BuddyPanel() {
                     {t(`buddy.syncStatus.${detail.status}`)}
                   </span>
                   {resolution && (
-                    <span
-                      className="flex-shrink-0 px-1.5 py-0.5 rounded-md text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/25"
-                      title={`${new Date(resolution.atMs).toLocaleString()} · ${resolution.message}`}
-                    >
-                      {t(`buddy.conflictResult.${resolution.action}`)}
-                    </span>
+                    <>
+                      <span
+                        className="flex-shrink-0 px-1.5 py-0.5 rounded-md text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/25"
+                        title={resolution.message}
+                      >
+                        {t(`buddy.conflictResult.${resolution.action}`)}
+                      </span>
+                      <span
+                        className="flex-shrink-0 text-slate-500"
+                        title={t("buddy.conflictResolvedAt", { time: new Date(resolution.atMs).toLocaleString() })}
+                      >
+                        {new Date(resolution.atMs).toLocaleString()}
+                      </span>
+                    </>
                   )}
                   {/* 目录列：这条会话属于哪个项目；超长按宽度折叠，悬停看完整路径 */}
                   <span

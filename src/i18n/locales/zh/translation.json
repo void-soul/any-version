@@ -4867,6 +4867,7 @@
       "overwrite": "已覆盖",
       "keep": "已保留目标"
     },
+    "conflictResolvedAt": "处理于 {{time}}",
     "conflictDialogTitle": "{{count}} 个会话冲突待确认",
     "conflictDialogHint": "两侧都有改动，Kira 没有自动覆盖",
     "conflictDialogDesc": "这些会话在两边都有改动。为避免丢掉你在目标账号里的修改，Kira 保留了目标版本、跳过这一条没同步。其余会话已按计划同步。",
@@ -4886,7 +4887,8 @@
       "skipped": "跳过",
       "partial": "部分",
       "conflict": "冲突",
-      "failed": "失败"
+      "failed": "失败",
+      "resolved": "已处理"
     },
     "syncReason": {
       "unchanged": "与上次同步一致",

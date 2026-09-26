@@ -30,7 +30,17 @@ describe("filterSyncDetails", () => {
     expect(details.map((d) => d.id)).toEqual(["a", "b", "c", "d"]);
   });
 
-  it("筛选项覆盖后端全部状态", () => {
+  // 「已处理」不是后端状态，而是「有冲突处理结果」的前端视图：只有传入 resolvedIds 才筛得出东西
+  it("resolved 按处理结果过滤", () => {
+    const resolved = new Set(["b", "c"]);
+    expect(filterSyncDetails(details, "resolved", resolved).map((d) => d.id)).toEqual(["b", "c"]);
+  });
+
+  it("resolved 未传处理结果集合时为空", () => {
+    expect(filterSyncDetails(details, "resolved")).toEqual([]);
+  });
+
+  it("筛选项覆盖后端全部状态并追加已处理", () => {
     expect(SYNC_STATUS_FILTERS).toEqual([
       "all",
       "copied",
@@ -38,6 +48,7 @@ describe("filterSyncDetails", () => {
       "partial",
       "conflict",
       "failed",
+      "resolved",
     ]);
   });
 });
